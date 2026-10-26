@@ -58,7 +58,7 @@ public enum WorktreeFolders {
         if let file = error as? RuntimeFileError {
             return .workspace("\(path) could not be read (\(file.code)).")
         }
-        return .workspace("\(path) could not be read (\(failureText(error))).")
+        return .workspace("\(path) could not be read (\(CodedFailure.text(of: error))).")
     }
 
     /// Whether a folder is there and is a folder. `false` means *not there*;

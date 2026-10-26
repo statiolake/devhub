@@ -162,15 +162,15 @@ final class HeadWatcherTests: XCTestCase {
         let plain = try GitTestSupport.temporaryDirectory("devhub-plain-")
         cleanups.append { GitTestSupport.remove(plain) }
         XCTAssertThrowsError(try GitDirectory.of(runtime, worktree: plain)) { error in
-            XCTAssertEqual(failureText(error), "\(plain)/.git does not exist")
+            XCTAssertEqual(CodedFailure.text(of: error), "\(plain)/.git does not exist")
         }
         try GitTestSupport.write(Path.join(plain, ".git"), "nonsense\n")
         XCTAssertThrowsError(try GitDirectory.of(runtime, worktree: plain)) { error in
-            XCTAssertEqual(failureText(error), "\(plain)/.git is not a directory and does not name one")
+            XCTAssertEqual(CodedFailure.text(of: error), "\(plain)/.git is not a directory and does not name one")
         }
         try GitTestSupport.write(Path.join(plain, ".git"), "gitdir:   \n")
         XCTAssertThrowsError(try GitDirectory.of(runtime, worktree: plain)) { error in
-            XCTAssertEqual(failureText(error), "\(plain)/.git names an empty gitdir")
+            XCTAssertEqual(CodedFailure.text(of: error), "\(plain)/.git names an empty gitdir")
         }
         try GitTestSupport.write(Path.join(plain, ".git"), "gitdir: ../elsewhere/.git/worktrees/x\n")
         XCTAssertEqual(try GitDirectory.of(runtime, worktree: plain), GitDirectory.resolve(plain, "../elsewhere/.git/worktrees/x"))

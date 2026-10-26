@@ -521,7 +521,7 @@ public struct GitCommand: Sendable {
         } catch {
             // Not swallowed: without leave to go on, this is the answer, and
             // the person is told what git said and asked what to do about it.
-            if !options.allowStaleBase { throw CodedFailure.fetch(failureText(error)) }
+            if !options.allowStaleBase { throw CodedFailure.fetch(CodedFailure.text(of: error)) }
             return false
         }
     }

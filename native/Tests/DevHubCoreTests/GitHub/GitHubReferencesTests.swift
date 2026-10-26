@@ -311,13 +311,13 @@ final class GitHubReferencesTests: XCTestCase {
         let made = try Projects.createProject(Path.join(parent, "fresh"), home: home)
         XCTAssertTrue(GitTestSupport.isDirectory(made))
         XCTAssertThrowsError(try Projects.createProject(made, home: home)) { error in
-            XCTAssertEqual(failureText(error), "\(made) already exists.")
+            XCTAssertEqual(CodedFailure.text(of: error), "\(made) already exists.")
         }
         XCTAssertThrowsError(try Projects.createProject("relative/path", home: home)) { error in
-            XCTAssertEqual(failureText(error), "A folder needs a full path; relative/path is not one.")
+            XCTAssertEqual(CodedFailure.text(of: error), "A folder needs a full path; relative/path is not one.")
         }
         XCTAssertThrowsError(try Projects.createProject("  ", home: home)) { error in
-            XCTAssertEqual(failureText(error), "Enter a path for the folder.")
+            XCTAssertEqual(CodedFailure.text(of: error), "Enter a path for the folder.")
         }
         // Today's workspace is the same folder whether or not anything made it.
         XCTAssertEqual(try Projects.ensureWorkspaceFolder(made, home: home), made)

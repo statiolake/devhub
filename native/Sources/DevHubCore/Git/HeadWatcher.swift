@@ -135,7 +135,7 @@ public final class HeadWatcher: HeadWatching, @unchecked Sendable {
                 // what this class is asked about, and the caller shows it. The
                 // safety poll keeps the branch true meanwhile.
                 locked {
-                    failed[key] = WatchFailure(key: key, worktree: repository.worktree, reason: failureText(error))
+                    failed[key] = WatchFailure(key: key, worktree: repository.worktree, reason: CodedFailure.text(of: error))
                     failureOrder.append(key)
                 }
             }

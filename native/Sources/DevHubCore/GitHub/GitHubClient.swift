@@ -195,7 +195,7 @@ public enum GitHubCLI {
         } catch ExecFailure.timedOut {
             return .unrunnable("`gh \(args.joined(separator: " "))` did not answer within \(Int(timeoutSeconds)) seconds")
         } catch {
-            return .unrunnable(failureText(error))
+            return .unrunnable(CodedFailure.text(of: error))
         }
     }
 
@@ -617,7 +617,7 @@ public struct GitHubClient: Sendable {
         } catch {
             // The reason is the network's, and it is said as it came. What
             // must not appear is the request, which carries the token.
-            throw CodedFailure.gitHub(failureText(error))
+            throw CodedFailure.gitHub(CodedFailure.text(of: error))
         }
         if answer.status == 401 || answer.status == 403 {
             throw CodedFailure.gitHub("GitHub refused DevHub's credentials. Run `gh auth login` and try again.")

@@ -515,7 +515,7 @@ public actor RepositoryStatusWatcher {
         do {
             command = try await deps.gitCommand(runtime)
         } catch {
-            diagnostic = failureText(error)
+            diagnostic = CodedFailure.text(of: error)
         }
         if let command { commands[runtime.id] = command } else { commands[runtime.id] = nil }
 
@@ -538,7 +538,7 @@ public actor RepositoryStatusWatcher {
                     } catch {
                         // `nil` is the one case that is not a failure; anything
                         // thrown is git refusing, and it is git's own last line.
-                        let reason = "DevHub could not read this repository: \(failureText(error))"
+                        let reason = "DevHub could not read this repository: \(CodedFailure.text(of: error))"
                         entry.reason = reason
                         return (index, entry, reason)
                     }
@@ -613,8 +613,8 @@ public actor RepositoryStatusWatcher {
                     } catch {
                         // Anything else is a bug in DevHub, said as itself
                         // rather than drawn as a status line.
-                        diagnostic = failureText(error)
-                        unreadable[key] = failureText(error)
+                        diagnostic = CodedFailure.text(of: error)
+                        unreadable[key] = CodedFailure.text(of: error)
                     }
                 }
             }

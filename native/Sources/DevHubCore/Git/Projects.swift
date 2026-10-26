@@ -202,7 +202,7 @@ public enum Projects {
     public static func createProject(_ path: String, runtime: RepositoryRuntime = LocalRepositoryRuntime(), home: String) throws -> String {
         let target = try requireAbsolute(path, home: home)
         try refuseIfPresent(runtime, target)
-        do { try runtime.makeDirectory(target) } catch { throw CodedFailure.workspace(failureText(error)) }
+        do { try runtime.makeDirectory(target) } catch { throw CodedFailure.workspace(CodedFailure.text(of: error)) }
         return target
     }
 
@@ -211,7 +211,7 @@ public enum Projects {
     /// the same folder whether or not anything has made it yet.
     public static func ensureWorkspaceFolder(_ path: String, runtime: RepositoryRuntime = LocalRepositoryRuntime(), home: String) throws -> String {
         let target = try requireAbsolute(path, home: home)
-        do { try runtime.makeDirectory(target) } catch { throw CodedFailure.workspace(failureText(error)) }
+        do { try runtime.makeDirectory(target) } catch { throw CodedFailure.workspace(CodedFailure.text(of: error)) }
         return target
     }
 
@@ -223,7 +223,7 @@ public enum Projects {
         let parent = try requireAbsolute(parentDirectory, home: home)
         let target = joinPath(parent, name)
         try refuseIfPresent(command.runtime, target)
-        do { try command.runtime.makeDirectory(parent) } catch { throw CodedFailure.workspace(failureText(error)) }
+        do { try command.runtime.makeDirectory(parent) } catch { throw CodedFailure.workspace(CodedFailure.text(of: error)) }
         // `--` so a URL that begins with a dash is a URL and not an option.
         _ = try await command.run(["clone", "--", url.jsTrimmed, target], timeoutMs: GitCommand.networkTimeoutMs)
         return target

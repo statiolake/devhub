@@ -90,9 +90,11 @@ public struct CodedFailure: Error, Equatable, Sendable, CustomStringConvertible 
     }
 }
 
-/// Any failure as one line of text (`failureText`): a coded failure as its
-/// title and its detail, anything else as its own description.
-public func failureText(_ error: Error) -> String {
-    if let coded = error as? CodedFailure { return coded.text }
-    return String(describing: error)
+extension CodedFailure {
+    /// Any failure as one line of text (`failureText`): a coded failure as
+    /// its title and its detail, anything else as its own description.
+    public static func text(of error: Error) -> String {
+        if let coded = error as? CodedFailure { return coded.text }
+        return String(describing: error)
+    }
 }

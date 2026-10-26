@@ -70,7 +70,7 @@ enum GitTestSupport {
             XCTFail("expected a failure", file: file, line: line)
         } catch {
             if let pattern {
-                let text = failureText(error)
+                let text = CodedFailure.text(of: error)
                 XCTAssertNotNil(text.range(of: pattern, options: .regularExpression), "\(text) does not match \(pattern)", file: file, line: line)
             }
             check?(error)
