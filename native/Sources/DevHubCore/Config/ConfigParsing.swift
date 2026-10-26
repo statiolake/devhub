@@ -197,7 +197,7 @@ public enum ConfigParsing {
 
     /// An absolute path, `~`, or one starting with `~/`: what a folder setting takes.
     public static func isHomeOrAbsolutePath(_ path: String) -> Bool {
-        !path.contains("\0") && (path.hasPrefix("/") || path == "~" || path.hasPrefix("~/"))
+        !path.jsIncludes("\0") && (path.jsStartsWith("/") || path == "~" || path.jsStartsWith("~/"))
     }
 
     static func validatePath(_ path: String, _ key: String) throws {
@@ -211,22 +211,22 @@ public enum ConfigParsing {
 
     /// `model/conversation.ts` `resumeMessageProblem`.
     static func resumeMessageProblem(_ text: String) -> Bool {
-        JSString.trim(text).isEmpty || text.contains("\0")
+        JSString.trim(text).isEmpty || text.jsIncludes("\0")
     }
 
     // MARK: validation
 
     static func validateRuntimes(_ runtimes: RuntimeConfig) throws {
         for (key, value) in [("shell", runtimes.shell), ("git", runtimes.git), ("tmux", runtimes.tmux)] {
-            if value.contains("\0") { throw fail(.invalidString, "runtimes.\(key)") }
-            let valid = value.hasPrefix("/") || value == "~" || value.hasPrefix("~/") || (!value.isEmpty && !value.contains("/"))
+            if value.jsIncludes("\0") { throw fail(.invalidString, "runtimes.\(key)") }
+            let valid = value.jsStartsWith("/") || value == "~" || value.jsStartsWith("~/") || (!value.isEmpty && !value.jsIncludes("/"))
             if !valid { throw fail(.invalidRuntime, "runtimes.\(key)") }
         }
         if !isValidSocketName(runtimes.tmuxSocketName) {
             throw fail(.invalidSocketName, "runtimes.tmux_socket_name")
         }
         for (index, argument) in runtimes.tmuxArgs.enumerated() {
-            if argument.contains("\0") { throw fail(.invalidString, "runtimes.tmux_args[\(index)]") }
+            if argument.jsIncludes("\0") { throw fail(.invalidString, "runtimes.tmux_args[\(index)]") }
             if !isSafeTmuxArgument(argument) { throw fail(.forbiddenTmuxArgument, "runtimes.tmux_args[\(index)]") }
         }
     }
@@ -291,7 +291,7 @@ public enum ConfigParsing {
                 if hasDirectory && hasGit { throw fail(.invalidWorkspaceKind, "\(prefix).kinds") }
                 for (excludeIndex, name) in source.excludeNames.enumerated() {
                     let glob = name.unicodeScalars.contains { "*?[]{}".unicodeScalars.contains($0) }
-                    if name.isEmpty || name.contains("\0") || name.contains("/") || name.contains("\\") || glob {
+                    if name.isEmpty || name.jsIncludes("\0") || name.jsIncludes("/") || name.jsIncludes("\\") || glob {
                         throw fail(.invalidExclusion, "\(prefix).exclude_names[\(excludeIndex)]")
                     }
                 }
@@ -309,7 +309,7 @@ public enum ConfigParsing {
                     )
                 }
             case .command(let source):
-                if source.command.isEmpty || source.command.contains(where: { $0.contains("\0") }) {
+                if source.command.isEmpty || source.command.contains(where: { $0.jsIncludes("\0") }) {
                     throw fail(.invalidCommand, "\(prefix).command")
                 }
                 if source.timeoutMs < 100 || source.timeoutMs > 30000 { throw fail(.invalidTimeout, "\(prefix).timeout_ms") }
@@ -341,19 +341,19 @@ public enum ConfigParsing {
             if let previous = seen[profile.id] { throw fail(.duplicateIdentity, "\(prefix).id (also \(previous))") }
             seen[profile.id] = index
             try validateId(profile.id, "\(prefix).id")
-            if JSString.trim(profile.displayName).isEmpty || profile.displayName.contains("\0") {
+            if JSString.trim(profile.displayName).isEmpty || profile.displayName.jsIncludes("\0") {
                 throw fail(.invalidProfile, "\(prefix).display_name")
             }
-            if JSString.trim(profile.command).isEmpty || profile.command.contains("\0") {
+            if JSString.trim(profile.command).isEmpty || profile.command.jsIncludes("\0") {
                 throw fail(.invalidProfile, "\(prefix).command")
             }
-            if profile.args.contains(where: { $0.contains("\0") }) { throw fail(.invalidProfile, "\(prefix).args") }
+            if profile.args.contains(where: { $0.jsIncludes("\0") }) { throw fail(.invalidProfile, "\(prefix).args") }
             if let presentation = profile.presentation, !profile.kind.presentations.contains(presentation) {
                 throw fail(.invalidProfile, "\(prefix).presentation")
             }
             for (key, value) in profile.env {
                 if !isEnvironmentName(key) { throw fail(.invalidEnvironmentKey, "\(prefix).env") }
-                if value.contains("\0") { throw fail(.invalidString, "\(prefix).env") }
+                if value.jsIncludes("\0") { throw fail(.invalidString, "\(prefix).env") }
             }
         }
     }

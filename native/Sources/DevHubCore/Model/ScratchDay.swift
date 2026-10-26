@@ -32,7 +32,7 @@ public enum ScratchDaily {
 
     /// What is wrong with this `daily` value, if anything.
     public static func problem(_ template: String) -> ScratchDailyProblem? {
-        if template.isEmpty || template.contains("\0") || (!template.hasPrefix("/") && !template.hasPrefix("~/")) {
+        if template.isEmpty || template.jsIncludes("\0") || (!template.jsStartsWith("/") && !template.jsStartsWith("~/")) {
             return .notAPath
         }
         if !DateTemplate.bracketsBalance(template) { return .unbalancedBrackets }
@@ -62,9 +62,9 @@ public enum ScratchDaily {
     /// `~/…` against this machine's home; an absolute path as it is.
     public static func expandHome(_ path: String, home: String) -> String {
         if path == "~" { return home }
-        if path.hasPrefix("~/") {
+        if path.jsStartsWith("~/") {
             var trimmed = home
-            while trimmed.hasSuffix("/") { trimmed.removeLast() }
+            while trimmed.jsEndsWith("/") { trimmed.removeLast() }
             return trimmed + path.dropFirst()
         }
         return path

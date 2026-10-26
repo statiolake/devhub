@@ -306,7 +306,7 @@ private final class Editor {
         while start != 0 {
             var above = start - 1
             while above > 0 && source[above - 1] != Self.newline { above -= 1 }
-            if !JSString.trimStart(slice(above, start)).hasPrefix("#") { break }
+            if !JSString.trimStart(slice(above, start)).jsStartsWith("#") { break }
             start = above
         }
         var end = table.range.1
@@ -399,11 +399,15 @@ private final class Editor {
         }
         var text = String(decoding: output, as: UTF16.self)
         if !appended.isEmpty {
-            let separator = text.hasSuffix("\n") ? "" : "\n"
+            let separator = endsWithNewline(text) ? "" : "\n"
             text = "\(text)\(separator)\n\(appended.joined(separator: "\n\n"))\n"
         }
-        return text.hasSuffix("\n") ? text : text + "\n"
+        return endsWithNewline(text) ? text : text + "\n"
     }
+
+    /// `text.endsWith("\n")`, by code unit: a Swift `Character` holds a CRLF
+    /// as one, so `hasSuffix("\n")` would say no to a CRLF document.
+    func endsWithNewline(_ text: String) -> Bool { text.utf16.last == Self.newline }
 
     /// Reconcile one table's worth of keys: `body` is where the pairs live,
     /// `path` is what that table is called, and `existing`/`target` are the two

@@ -111,3 +111,30 @@ public enum JSString {
     /// `[...text].length`: code points.
     public static func codePointCount(_ text: String) -> Int { text.unicodeScalars.count }
 }
+
+extension String {
+    /// `startsWith`, by UTF-16 code unit as JavaScript compares. Swift's
+    /// `hasPrefix` compares grapheme clusters, so `"/\u{301}x"` would not
+    /// start with `/` and a CRLF document would not end with `\n`.
+    public func jsStartsWith(_ prefix: String) -> Bool {
+        let units = Array(utf16), other = Array(prefix.utf16)
+        return units.count >= other.count && Array(units[0..<other.count]) == other
+    }
+
+    /// `endsWith`, by UTF-16 code unit.
+    public func jsEndsWith(_ suffix: String) -> Bool {
+        let units = Array(utf16), other = Array(suffix.utf16)
+        return units.count >= other.count && Array(units[(units.count - other.count)...]) == other
+    }
+
+    /// `includes`, by UTF-16 code unit.
+    public func jsIncludes(_ needle: String) -> Bool {
+        let units = Array(utf16), other = Array(needle.utf16)
+        if other.isEmpty { return true }
+        if other.count > units.count { return false }
+        for start in 0...(units.count - other.count) where units[start] == other[0] {
+            if Array(units[start..<(start + other.count)]) == other { return true }
+        }
+        return false
+    }
+}

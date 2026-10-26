@@ -265,3 +265,13 @@ final class TomlEditingTests: XCTestCase {
         XCTAssertTomlEqual(try documentOf(try TomlDocument.update(source, desired: wanted)), wanted)
     }
 }
+
+final class TomlCRLFTests: XCTestCase {
+    func testEditsACRLFDocumentWithoutAddingALineEnding() throws {
+        let source = "version = 1\r\n[general]\r\nnotice_seconds = 8\r\n"
+        var desired = try TomlDocument.parseValue(source)
+        desired["general"] = ["notice_seconds": 3]
+        XCTAssertEqual(try TomlDocument.update(source, desired: desired), "version = 1\r\n[general]\r\nnotice_seconds = 3\r\n")
+        XCTAssertEqual(try TomlDocument.update(source, desired: try TomlDocument.parseValue(source)), source)
+    }
+}
