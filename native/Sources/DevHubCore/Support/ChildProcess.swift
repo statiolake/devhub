@@ -129,10 +129,16 @@ public final class ChildProcess: @unchecked Sendable {
         stdout: Stream = .pipe,
         stderr: Stream = .pipe
     ) throws -> ChildProcess {
+        // Opaque pointers on Darwin, structs on glibc.
+        #if canImport(Darwin)
+        var actions: posix_spawn_file_actions_t?
+        var attributes: posix_spawnattr_t?
+        #else
         var actions = posix_spawn_file_actions_t()
+        var attributes = posix_spawnattr_t()
+        #endif
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
-        var attributes = posix_spawnattr_t()
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
 
