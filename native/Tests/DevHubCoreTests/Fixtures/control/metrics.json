@@ -1,0 +1,133 @@
+{
+  "takenAt": "2026-01-02T03:04:05.678Z",
+  "uptimeMs": 61000,
+  "titleBar": "hidden",
+  "workbench": "terminal",
+  "mainProcessCpu": {
+    "userMs": 12000,
+    "systemMs": 8000
+  },
+  "processes": [
+    {
+      "pid": 7,
+      "type": "Tab",
+      "name": "x",
+      "cpuPercent": 5,
+      "memoryKb": 2000,
+      "workbench": {
+        "pid": 7,
+        "id": 2,
+        "surfaceKey": "workspace:shown",
+        "onScreen": true
+      }
+    },
+    {
+      "pid": 1,
+      "type": "Browser",
+      "cpuPercent": 2.5,
+      "memoryKb": 1000
+    },
+    {
+      "pid": 9,
+      "type": "Tab",
+      "cpuPercent": 2.5,
+      "memoryKb": 3,
+      "workbench": {
+        "pid": 9,
+        "id": 3,
+        "onScreen": false
+      }
+    }
+  ],
+  "views": [
+    {
+      "pid": 7,
+      "id": 1,
+      "surfaceKey": "workspace:hidden",
+      "onScreen": false
+    },
+    {
+      "pid": 7,
+      "id": 2,
+      "surfaceKey": "workspace:shown",
+      "onScreen": true
+    },
+    {
+      "pid": 9,
+      "id": 3,
+      "onScreen": false
+    }
+  ],
+  "totalCpuPercent": 10,
+  "counters": {
+    "elapsedMs": 60000,
+    "counters": [
+      {
+        "name": "process.tmux",
+        "total": 600,
+        "perMinuteSinceStart": 600
+      }
+    ]
+  },
+  "terminalClients": [
+    {
+      "tty": "/dev/ttys003",
+      "session": "ws-abc"
+    }
+  ],
+  "terminalLauncher": [
+    {
+      "machine": "local",
+      "installed": true,
+      "path": "/x/devhub-terminal"
+    }
+  ],
+  "pendingSweeps": [
+    "ssh:box"
+  ],
+  "repositoryRounds": [
+    {
+      "workspaceId": "w1",
+      "lastRepositoryRound": {
+        "at": "2026-01-02T03:04:00.000Z",
+        "trigger": "head"
+      }
+    }
+  ],
+  "notices": {
+    "lastMinute": {},
+    "flickering": []
+  },
+  "runtimes": [
+    {
+      "id": "local",
+      "connected": true,
+      "medianRoundTripMs": 1.5,
+      "reconcileIntervalMs": 2000,
+      "execsLastMinute": 90,
+      "muxSessionsHeld": 0,
+      "muxSessionsWaiting": 0,
+      "muxFallbacks": 0,
+      "loginEnvironmentNames": [
+        "PATH"
+      ],
+      "roundsPerMin": 30,
+      "execPerRound": 3
+    },
+    {
+      "id": "ssh:box",
+      "connected": false,
+      "masterPid": 4242,
+      "medianRoundTripMs": 40,
+      "reconcileIntervalMs": 5000,
+      "execsLastMinute": 7,
+      "muxSessionsHeld": 2,
+      "muxSessionsWaiting": 1,
+      "muxFallbacks": 3,
+      "loginEnvironmentNames": [],
+      "lastFailure": "box did not answer",
+      "roundsPerMin": 0,
+      "execPerRound": 0
+    }
+  ]
+}
