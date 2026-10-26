@@ -933,7 +933,7 @@ final class TmuxRealTests: RealTmuxCase {
         _ = try await test.runtime.ensure(.localScratch)
         let rebound = try SocketName("dhrebind\(getpid())\(nextSequence())")
         defer {
-            _ = try? RealFixture(home: test.home, runtime: test.runtime, socket: rebound, environment: test.environment, runLog: nil).killServer()
+            RealFixture(home: test.home, runtime: test.runtime, socket: rebound, environment: test.environment, runLog: nil).killServer()
         }
 
         // A transition holds the gate: inventory the old socket, adopt the new
