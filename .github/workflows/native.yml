@@ -1,0 +1,117 @@
+name: Native
+
+# The native macOS DevHub (Swift, no TypeScript): native/ on the native-macos
+# branch. See native/docs/PLAN.md and native/README.md.
+#
+#   Core + CLI on Linux (swift:6.1-noble) ──┐
+#   Build, test, bundle on macOS ───────────┘  in parallel
+#
+# The Linux job is the same check the agents run locally in Docker: it keeps
+# DevHubCore free of AppKit/CryptoKit. The macOS job is the real one: it
+# builds the App target too, runs the tests, bundles DevHub.app, runs its
+# self-test (a window on screen, the terminal surface linked) and uploads the
+# bundle.
+on:
+  push:
+    branches: [native-macos, "native-macos-*"]
+    paths:
+      - "native/**"
+      - ".github/workflows/native.yml"
+  pull_request:
+    paths:
+      - "native/**"
+      - ".github/workflows/native.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: "Native: Core + CLI (Linux)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: swift:6.1-noble
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: CLI answers --version
+        run: .build/debug/devhub --version
+
+  macos:
+    name: "Native: build, test and bundle DevHub.app (macOS)"
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: |
+          xcode-select -p
+          swift --version
+          sw_vers
+
+      - name: Cache SwiftPM checkouts
+        uses: actions/cache@v4
+        with:
+          path: native/.build/checkouts
+          key: spm-${{ runner.os }}-${{ hashFiles('native/Package.swift', 'native/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Resolve dependencies
+        run: |
+          swift package resolve
+          cat Package.resolved
+
+      - name: Build (debug)
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Bundle DevHub.app (release)
+        run: Scripts/bundle-app.sh --output "$RUNNER_TEMP/native"
+
+      - name: Self-test the bundle
+        timeout-minutes: 3
+        run: |
+          app="$RUNNER_TEMP/native/DevHub.app"
+          "$app/Contents/Resources/bin/devhub" --version
+          "$app/Contents/MacOS/DevHub" --self-test
+
+      - name: Zip
+        run: |
+          cd "$RUNNER_TEMP/native"
+          ditto -c -k --keepParent DevHub.app DevHub-native.zip
+
+      - name: Upload DevHub.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevHub-native-${{ github.sha }}
+          path: ${{ runner.temp }}/native/DevHub-native.zip
+          retention-days: 14
+          if-no-files-found: error
