@@ -109,7 +109,7 @@ public struct ScratchFolder: Equatable, Sendable {
             }
             return ScratchFolder(path: canonical, failure: nil)
         } catch {
-            return ScratchFolder(path: path, failure: "Today's Scratch folder \(path) could not be made: \(failureText(error))")
+            return ScratchFolder(path: path, failure: "Today's Scratch folder \(path) could not be made: \(scratchFailureText(error))")
         }
     }
 
@@ -121,7 +121,7 @@ public struct ScratchFolder: Equatable, Sendable {
 
 /// The sentence a failure is told with: its own description, not Foundation's
 /// boilerplate around it.
-func failureText(_ error: Error) -> String {
+fileprivate func scratchFailureText(_ error: Error) -> String {
     guard type(of: error) is NSError.Type else { return String(describing: error) }
     let ns = error as NSError
     if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
