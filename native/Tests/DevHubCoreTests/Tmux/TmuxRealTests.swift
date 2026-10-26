@@ -1451,3 +1451,193 @@ final class TmuxRealAcceptanceTests: RealTmuxCase {
         XCTAssertEqual(verdicts, [PaneVerdict(workspaceId: workspaceId, pane: pane.pane, running: true, inView: pane.inView)])
     }
 }
+
+/// A model with Workspaces the test changes as it goes.
+final class WiringModel: TerminalAgentModel, @unchecked Sendable {
+    private let lock = NSLock()
+    private var held: [TerminalAgentWorkspace]
+    private let machineId: RuntimeId
+    init(_ workspaces: [TerminalAgentWorkspace], machine: RuntimeId = .local) {
+        held = workspaces
+        machineId = machine
+    }
+    func workspaces() -> [TerminalAgentWorkspace] { lock.withLock { held } }
+    func machine(of workspaceId: String) -> RuntimeId? {
+        lock.withLock { held.contains { $0.id == workspaceId } ? machineId : nil }
+    }
+    func remove(agent: String) {
+        lock.withLock { held = held.map { TerminalAgentWorkspace(id: $0.id, root: $0.root, agents: $0.agents.filter { $0.id != agent }) } }
+    }
+}
+
+/// The terminal half of `wireAgents` against a real tmux: launch, the round
+/// that reads status and delivers queued text, stop, and a workspace close.
+final class TmuxRealWiringTests: RealTmuxCase {
+    let workspaceId = "00000000-0000-4000-8000-0000000000e1"
+    let agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaae1"
+
+    func wiring(_ test: RealFixture, _ model: WiringModel) -> TerminalAgentWiring {
+        let runtime = test.runtime
+        return TerminalAgentWiring(
+            runtimeFor: { _ in runtime },
+            model: model,
+            machineRuntime: { _ in LocalRuntime(environment: { [environment = test.environment] in environment }) },
+            log: { _ in }
+        )
+    }
+
+    /// A stand-in CLI that draws a captured idle Claude screen, then waits.
+    func idleClaude(_ test: RealFixture) throws -> TerminalAgentProfile {
+        let screenFile = Path.join(test.home, "screen.txt")
+        try DetectFixture.claude["CLAUDE_IDLE"]!.screen.write(toFile: screenFile, atomically: true, encoding: .utf8)
+        let script = Path.join(test.home, "claude")
+        try "#!/bin/sh\ncat '\(screenFile)'\nexec sleep 30\n".write(toFile: script, atomically: true, encoding: .utf8)
+        chmod(script, 0o755)
+        return TerminalAgentProfile(kind: .claude, command: script, args: [])
+    }
+
+    func testLaunchesReadsAnIdleAgentDeliversQueuedTextAndStopsIt() async throws {
+        let test = try fixture("wiring")
+        let profile = try idleClaude(test)
+        let model = WiringModel([TerminalAgentWorkspace(id: workspaceId, root: test.home, agents: [
+            TerminalAgentRecord(id: agentId, displayName: "Claude", profile: profile, presentation: .tui),
+        ])])
+        let wiring = wiring(test, model)
+        _ = try await test.runtime.ensure(.localScratch)
+
+        let launched = await wiring.launch(workspaceId: workspaceId, agentId: agentId, profile: profile, workspaceRoot: test.home)
+        XCTAssertEqual(launched, .started)
+        let injection = try wiring.queueInjection(agentId, text: "hello there", review: false)
+        XCTAssertFalse(injection.isEmpty)
+
+        var last: TerminalAgentObservation?
+        let delivered = try await poll(15) {
+            let round = try await wiring.reconcile(machine: .local)
+            XCTAssertEqual(round.exited, [])
+            last = round.observations.first { $0.agentId == self.agentId }
+            return last?.status == .idle && last?.injection.queued == 0
+        }
+        XCTAssertTrue(delivered, "\(String(describing: last))")
+        XCTAssertEqual(last?.runtimeHealth, "healthy")
+        XCTAssertEqual(last?.injection.lastResult, .sent)
+
+        let _w1 = await wiring.stop(agentId)
+        XCTAssertEqual(_w1, .stopped)
+        let after = try await wiring.reconcile(machine: .local)
+        XCTAssertEqual(after.exited, [agentId])
+        XCTAssertEqual(after.observations, [])
+    }
+
+    func testRefusesALaunchWhoseWorkspaceIsNoLongerOpenAsAFailedResult() async throws {
+        let test = try fixture("wiring-gone")
+        let wiring = wiring(test, WiringModel([]))
+        let result = await wiring.launch(workspaceId: workspaceId, agentId: agentId, profile: TerminalAgentProfile(kind: .custom, command: "/bin/sh", args: []), workspaceRoot: test.home)
+        guard case .failed(let refusal) = result else { return XCTFail("\(result)") }
+        XCTAssertEqual(refusal.detail, "the Workspace this Agent belongs to is no longer open")
+    }
+
+    func testClosingAWorkspaceStopsEveryOneOfItsAgents() async throws {
+        let test = try fixture("wiring-close")
+        let other = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaae2"
+        let profile = TerminalAgentProfile(kind: .custom, command: "/bin/sh", args: ["-c", "sleep 30"])
+        let model = WiringModel([TerminalAgentWorkspace(id: workspaceId, root: test.home, agents: [agentId, other].map {
+            TerminalAgentRecord(id: $0, displayName: "Shell", profile: profile, presentation: .tui)
+        })])
+        let wiring = wiring(test, model)
+        _ = try await test.runtime.ensure(.localScratch)
+        for id in [agentId, other] {
+            let launched = await wiring.launch(workspaceId: workspaceId, agentId: id, profile: profile, workspaceRoot: test.home)
+            XCTAssertEqual(launched, .started)
+        }
+        let _w2 = try await wiring.sessions.list(.local).count
+        XCTAssertEqual(_w2, 2)
+        try await wiring.closeWorkspaceAgents(workspaceId)
+        let _w3 = try await wiring.sessions.list(.local)
+        XCTAssertEqual(_w3, [])
+    }
+
+    /// An Agent that ended on its own is reported once as exited, and what it
+    /// was never told goes with it.
+    func testReportsAnAgentWhoseCommandEndedAsExited() async throws {
+        let test = try fixture("wiring-exit")
+        let profile = TerminalAgentProfile(kind: .custom, command: "/bin/sh", args: ["-c", "sleep 0.3"])
+        let model = WiringModel([TerminalAgentWorkspace(id: workspaceId, root: test.home, agents: [
+            TerminalAgentRecord(id: agentId, displayName: "Shell", profile: profile, presentation: .tui),
+        ])])
+        let wiring = wiring(test, model)
+        _ = try await test.runtime.ensure(.localScratch)
+        let launched = await wiring.launch(workspaceId: workspaceId, agentId: agentId, profile: profile, workspaceRoot: test.home)
+        XCTAssertEqual(launched, .started)
+        _ = try wiring.queueInjection(agentId, text: "never sent", review: true)
+        let ended = try await poll(10) { try await wiring.reconcile(machine: .local).exited == [self.agentId] }
+        XCTAssertTrue(ended)
+        XCTAssertEqual(wiring.injections.state(agentId, status: .idle).queued, 0)
+    }
+
+    /// Restart Session is for a terminal Agent whose session can be told: a
+    /// GUI Agent, or a CLI with no sessions, is refused rather than started on
+    /// a new conversation.
+    func testRefusesARestartItCannotResumeAndKeepsThePaneAsItWas() async throws {
+        let test = try fixture("wiring-restart")
+        let gui = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaae3"
+        let profile = TerminalAgentProfile(kind: .custom, command: "/bin/sh", args: ["-c", "exec sleep 30"])
+        let model = WiringModel([TerminalAgentWorkspace(id: workspaceId, root: test.home, agents: [
+            TerminalAgentRecord(id: agentId, displayName: "Shell", profile: profile, presentation: .tui),
+            TerminalAgentRecord(id: gui, displayName: "Window", profile: profile, presentation: .gui),
+        ])])
+        let wiring = wiring(test, model)
+        _ = try await test.runtime.ensure(.localScratch)
+        let launched = await wiring.launch(workspaceId: workspaceId, agentId: agentId, profile: profile, workspaceRoot: test.home)
+        XCTAssertEqual(launched, .started)
+        let before = try await wiring.sessions.panePid(.local, agentId: agentId, workspaceId: workspaceId)
+
+        do {
+            try await wiring.restartTerminal(gui)
+            XCTFail("a GUI Agent was restarted as a terminal one")
+        } catch {
+            XCTAssertEqual("\(error)", "Window is not a terminal Agent")
+        }
+        do {
+            try await wiring.restartTerminal(agentId)
+            XCTFail("a CLI with no sessions was restarted")
+        } catch {}
+        let _w4 = try await wiring.sessions.panePid(.local, agentId: agentId, workspaceId: workspaceId)
+        XCTAssertEqual(_w4, before)
+    }
+}
+
+/// One adapter per machine, built from that machine's own answers.
+final class TmuxRealRuntimesTests: RealTmuxCase {
+    func testBuildsOneAdapterPerMachineAndForgetsOne() async throws {
+        let home = try directory(try fixture("runtimes-home"), "home")
+        var environment = ProcessInfo.processInfo.environment
+        environment["TMUX_TMPDIR"] = makeSocketRoot("runtimes")
+        let frozen = environment
+        let local = LocalRuntime(environment: { frozen }, home: { home })
+        let runtimes = TerminalRuntimes(TerminalRuntimes.Options(
+            settings: TmuxRuntimeSettings(tmux: realTmux!, shell: "/bin/sh"),
+            effectiveSocketName: "dhruntimes\(getpid())",
+            userTmuxConfigPath: Path.join(home, "tmux.conf"),
+            controlSocketPath: Path.join(home, "control.sock"),
+            log: { _ in }
+        ))
+        let first = try await runtimes.adapter(for: local)
+        let again = try await runtimes.adapter(for: local)
+        XCTAssertTrue(first === again)
+        XCTAssertEqual(first.machine, .local)
+        XCTAssertEqual(first.contextHome, home)
+        XCTAssertTrue(first.adapterAvailable, first.unavailableReason ?? "")
+        let _w5 = await runtimes.live().count
+        XCTAssertEqual(_w5, 1)
+
+        await runtimes.setEffectiveSocket(try SocketName("dhrebound\(getpid())"))
+        // The socket every adapter is on changes for all of them at once.
+        XCTAssertEqual(try first.attachArgv("scratch"), ["-L", "dhrebound\(getpid())", "attach-session", "-t", "scratch"])
+
+        runtimes.forget(.local)
+        let _w6 = await runtimes.live().count
+        XCTAssertEqual(_w6, 0)
+        let rebuilt = try await runtimes.adapter(for: local)
+        XCTAssertFalse(first === rebuilt)
+    }
+}
