@@ -39,6 +39,10 @@ import {
   TERMINAL_MIN_SHARE,
   clampTerminalShare,
 } from "../../../model/agentTerminal";
+import {
+  terminalModeSupports,
+  terminalModeUnsupported,
+} from "../../../model/terminalMode";
 import type {
   TerminalSeamWire,
   WorkbenchAreaWire,
@@ -326,7 +330,9 @@ export function Unavailable({
  * area a few pixels from where the eye says the seam is.
  */
 export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
-  const { dispatch, closeWorkspace, chooseWorkspaceFolder } = useShellPage();
+  const { dispatch, closeWorkspace, chooseWorkspaceFolder, appearance } =
+    useShellPage();
+  const terminalMode = appearance?.workbench === "terminal";
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const placeholders = useEditorPlaceholders();
@@ -451,6 +457,23 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     // draw under it. The workbenches stay built and running behind both: this
     // is an Agent covering a workbench, not a workbench going away.
     surfaceState = "agent";
+  } else if (
+    terminalMode &&
+    workspace !== undefined &&
+    !terminalModeSupports(workspace)
+  ) {
+    // Terminal mode draws the editor area from the Workspace's own tmux
+    // session, and this one's is on a host or in a container that phase 1
+    // does not reach (`docs/terminal-mode.md`). No view is laid here, so
+    // this page says so in the rectangle one would have had.
+    surfaceState = "editor-unsupported";
+    editorKey = layout.editorKey;
+    body = (
+      <Failure
+        summary={terminalModeUnsupported(workspace)}
+        detail="Its Agents and their terminals work as usual. Set Settings ▸ General ▸ Editor area to VS Code to edit it in this DevHub."
+      />
+    );
   } else if (placeholders.has(layout.editorKey)) {
     // The workbench is being rebuilt in this same slot, asleep, or waking.
     // The selection has not moved and must not: what changed is that there

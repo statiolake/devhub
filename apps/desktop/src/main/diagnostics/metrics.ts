@@ -94,6 +94,13 @@ export interface MetricsReport {
 	 */
 	readonly titleBar: TitleBarMode;
 	/**
+	 * What the editor area is in this process — `general.workbench` as it was
+	 * at launch: `vscode`, or `terminal` with no workbench at all
+	 * (`docs/terminal-mode.md`). A reading with no workbench processes in it
+	 * means something different in each.
+	 */
+	readonly workbench: "vscode" | "terminal";
+	/**
 	 * What the OS has charged the main process since it started.
 	 *
 	 * Electron's own per-process CPU is here too, but it does not see all of
@@ -242,6 +249,8 @@ export interface MetricsInput {
 	readonly takenAt: number;
 	readonly uptimeMs: number;
 	readonly titleBar: TitleBarMode;
+	/** Absent is `vscode`. */
+	readonly workbench?: "vscode" | "terminal";
 	readonly mainProcessCpu: CpuTime;
 	readonly processMetrics: readonly ProcessMetricInput[];
 	readonly views: readonly ViewIdentity[];
@@ -288,6 +297,7 @@ export function metricsReport(input: MetricsInput): MetricsReport {
 		takenAt: new Date(input.takenAt).toISOString(),
 		uptimeMs: input.uptimeMs,
 		titleBar: input.titleBar,
+		workbench: input.workbench ?? "vscode",
 		mainProcessCpu: input.mainProcessCpu,
 		processes,
 		views: input.views,

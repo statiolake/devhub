@@ -179,6 +179,7 @@ export function appearanceWire(
   config: AppearanceConfig,
   sequence: number,
   vsCodeTerminal: TerminalPaletteWire | undefined,
+  workbench: "vscode" | "terminal" = "vscode",
 ): AppAppearanceWire {
   const wire: AppAppearanceWire = {
     sequence,
@@ -191,6 +192,7 @@ export function appearanceWire(
     terminalScrollSensitivity: config.terminalScrollSensitivity,
     terminalMargin: config.terminalMargin,
     terminalTheme: terminalThemeWire(config.terminalTheme, vsCodeTerminal),
+    ...(workbench === "terminal" ? { workbench } : {}),
   };
   validateAppearanceWire(wire);
   return wire;

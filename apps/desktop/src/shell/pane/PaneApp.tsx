@@ -21,6 +21,15 @@
  *
  * A person who wants a second shell splits inside it with tmux's own keys;
  * DevHub draws one terminal pane.
+ *
+ * # The editor area, in terminal mode
+ *
+ * The same page is the editor area when there is no VS Code workbench
+ * (`docs/terminal-mode.md`): a fragment of `workspace:<id>` names a
+ * Workspace instead of an Agent terminal, and the surface is that
+ * Workspace's own tmux session (`workspace-terminal:<id>`) — the session the
+ * editor's DevHub terminal tabs attach to in VS Code mode. One terminal
+ * surface for both, not a second implementation.
  */
 
 import { useMemo } from "react";
@@ -36,7 +45,13 @@ import type {
   AgentWire,
   AppSnapshot,
 } from "../../ipc/appShell";
-import { paneTerminalSurfaceKey } from "../../ipc/terminal";
+import {
+  paneTerminalSurfaceKey,
+  workspaceTerminalSurfaceKey,
+} from "../../ipc/terminal";
+
+/** The fragment that names a Workspace's editor-area terminal. */
+const WORKSPACE_FRAGMENT = "workspace:";
 
 export function PaneApp({ terminalId }: { readonly terminalId: string }) {
   const bridge = useMemo(() => devhub(), []);
@@ -46,6 +61,27 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
   const { state, attempt } = useProjection(bridge, reportFailure, () => {});
   const appearance = useAppearance(bridge, reportFailure, attempt);
   if (state.status !== "ready") return null;
+  if (terminalId.startsWith(WORKSPACE_FRAGMENT)) {
+    const workspaceId = terminalId.slice(WORKSPACE_FRAGMENT.length);
+    const workspace = state.snapshot.workspaces.find(
+      (candidate) => candidate.id === workspaceId,
+    );
+    // Like an Agent terminal's: main takes the view away once its Workspace
+    // is gone from the model.
+    if (!workspace) return null;
+    return (
+      <div className="app-shell pane-page">
+        <div className="pane-body">
+          <TerminalSurface
+            surfaceKey={workspaceTerminalSurfaceKey(workspaceId)}
+            surfaceLabel={`${workspace.label} terminal`}
+            appearance={appearance}
+            hideTitle
+          />
+        </div>
+      </div>
+    );
+  }
   const found = findTerminal(state.snapshot, terminalId);
   // The pane outlives its terminal by at most one projection: main takes the
   // view away once the terminal is gone from the model.

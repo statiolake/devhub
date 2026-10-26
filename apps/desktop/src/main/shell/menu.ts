@@ -42,6 +42,12 @@ export interface MenuHost {
 	focusedWindow(): "shell" | "settings" | "none";
 	/** Show or hide the integrated terminal in the workbench on screen. */
 	toggleIntegratedTerminal(): void;
+	/**
+	 * Whether this process has VS Code workbenches at all. Absent is yes;
+	 * terminal mode (`docs/terminal-mode.md`) says no, and the items that
+	 * only a workbench can act on are not offered.
+	 */
+	hasWorkbenches?(): boolean;
 	closeWorkspace(workspaceId: string): void;
 	openWorkspacePicker(): void;
 	openSettings(): void;
@@ -172,16 +178,20 @@ function template(menuHost: MenuHost): Electron.MenuItemConstructorOptions[] {
 		{
 			label: "View",
 			submenu: [
-				{
-					// Not a checkbox: whether the panel is up is the workbench's own
-					// state, and a checkmark drawn from a fact DevHub does not hold
-					// would be right only by luck.
-					label: "Toggle Integrated Terminal",
-					click: () => {
-						menuHost.toggleIntegratedTerminal();
-					},
-				},
-				{ type: "separator" },
+				...(menuHost.hasWorkbenches?.() === false
+					? []
+					: [
+							{
+								// Not a checkbox: whether the panel is up is the workbench's
+								// own state, and a checkmark drawn from a fact DevHub does
+								// not hold would be right only by luck.
+								label: "Toggle Integrated Terminal",
+								click: () => {
+									menuHost.toggleIntegratedTerminal();
+								},
+							},
+							{ type: "separator" as const },
+						]),
 				{ role: "togglefullscreen", registerAccelerator: false },
 			],
 		},

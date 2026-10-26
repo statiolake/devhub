@@ -14,6 +14,7 @@ import {
 	type LifecycleEffect,
 	type WorkbenchPhase,
 } from "./workbenchLifecycle.js";
+import { workspacesWantingWorkbenches } from "./workbenchMode.js";
 
 interface Workspace {
 	sleepable: boolean;
@@ -1084,3 +1085,44 @@ describe("logging", () => {
 function harnessCap(app: ReturnType<typeof harness>, max: number) {
 	return app.planWith({ awakeMax: max });
 }
+
+describe("terminal mode", () => {
+	// The executor plans from `workspacesWantingWorkbenches`; in terminal mode
+	// it wants none, and that is the whole of "no workbench is created".
+	const workspaces = [
+		{ key: "scratch", state: { kind: "ready" } },
+		{ key: "a", state: { kind: "ready" } },
+		{ key: "gone", state: { kind: "unavailable" } },
+	];
+	const planFor = (mode: "vscode" | "terminal", tick = false) => {
+		const life = new WorkbenchLifecycle(new EditorSupervisor(), () => {});
+		return life.plan({
+			now: 0,
+			wanted: workspacesWantingWorkbenches(mode, workspaces).map((one) => ({
+				folder: one.key,
+				surfaceKey: `workspace-editor:${one.key}`,
+				sleepable: true,
+				closing: false,
+				awayMs: undefined,
+			})),
+			selected: "a",
+			views: [],
+			awakeMax: 2,
+			hibernateAfterMs: 600_000,
+			tick,
+		});
+	};
+
+	it("wants every Workspace whose folder is there in VS Code mode", () => {
+		expect(
+			workspacesWantingWorkbenches("vscode", workspaces).map((one) => one.key),
+		).toEqual(["scratch", "a"]);
+		expect(planFor("vscode").filter((e) => e.kind === "open")).toHaveLength(2);
+	});
+
+	it("opens nothing, not even the selected one, and stands nothing in for one", () => {
+		expect(workspacesWantingWorkbenches("terminal", workspaces)).toEqual([]);
+		expect(planFor("terminal")).toEqual([]);
+		expect(planFor("terminal", true)).toEqual([]);
+	});
+});

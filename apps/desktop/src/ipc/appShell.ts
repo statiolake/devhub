@@ -245,6 +245,14 @@ export interface AppAppearanceWire {
 	readonly terminalScrollSensitivity: number;
 	readonly terminalMargin: number;
 	readonly terminalTheme: TerminalThemeWire;
+	/**
+	 * `terminal` when there are no VS Code workbenches in this process and the
+	 * editor area is each Workspace's tmux session (`docs/terminal-mode.md`);
+	 * absent for VS Code mode. Fixed for the life of the process, like
+	 * `titleBar`, and here for the same reason: it says what the chrome
+	 * offers — a page hides what only a workbench could act on.
+	 */
+	readonly workbench?: "terminal";
 }
 /** `open_microphone_settings` opens System Settings at Privacy & Security → Microphone. */
 export type AppErrorActionWire =

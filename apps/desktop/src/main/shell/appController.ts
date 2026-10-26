@@ -15,7 +15,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
@@ -512,6 +512,15 @@ import {
 	inputSourceHelperPath,
 } from "./inputSourceHelper.js";
 import type { Landing } from "./chords.js";
+import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
+import { resolveExecutable } from "./runtimes.js";
+import {
+	isTerminalMode,
+	workbenchMode,
+	workspacesWantingWorkbenches,
+	terminalModeSupports,
+	terminalModeUnsupported,
+} from "./workbenchMode.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
 	COMMANDS,
@@ -789,6 +798,12 @@ export class AppController {
 	/** Page requests still waiting on a deferred chain, by operation identity. */
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
+	/**
+	 * Terminal mode's file jumps: one Neovim per Workspace, DevHub's own.
+	 * Built with the terminal runtime it runs on; see
+	 * `editor/managedNeovim.ts`.
+	 */
+	private managedNeovims: ManagedNeovims | undefined;
 	/** This profile's user-data directory, from `startRuntimes`. */
 	private userDataPath: string | undefined;
 	/** The launcher installation, asked for once per machine. */
@@ -1166,6 +1181,7 @@ export class AppController {
 			model: () => this.coordinator.model,
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
+		this.managedNeovims = this.createManagedNeovims(userDataPath);
 		const skill = this.writeAgentSkill(userDataPath);
 		this.agentWiring = wireAgents({
 			// This Mac's skill is written at startup; another machine's is
@@ -1330,6 +1346,71 @@ export class AppController {
 	}
 
 	/**
+	 * The managed Neovims of terminal mode, on this Mac's tmux. Built in
+	 * either mode — it costs nothing until a jump asks — and only ever asked
+	 * in terminal mode.
+	 */
+	private createManagedNeovims(userDataPath: string): ManagedNeovims {
+		const local = async () => {
+			const wiring = this.terminalsWiring;
+			if (!wiring) throw new Error("the terminal runtime is not running");
+			const runtime = await wiring.local();
+			if (!runtime.adapterAvailable) {
+				throw new Error(
+					runtime.unavailableReason ?? "there is no tmux on this Mac",
+				);
+			}
+			return runtime;
+		};
+		// DevHub's own directory first; a path too long for a socket address
+		// (a long home on macOS) falls back to the temporary one. Neither
+		// fitting is said at the first jump, not thrown at startup.
+		const candidates = [
+			join(userDataPath, "devhub", "nvim"),
+			join(tmpdir(), `devhub-nvim-${String(userInfo().uid)}`),
+		];
+		let socketDirectory = candidates[1] as string;
+		let socketProblem: string | undefined;
+		try {
+			socketDirectory = socketDirectoryFor(candidates);
+		} catch (error: unknown) {
+			socketProblem = failureText(error);
+		}
+		return new ManagedNeovims({
+			panes: {
+				open: async (target, argv) =>
+					(await local()).openEditorWindow(target, argv),
+				state: async (target, paneId) =>
+					(await local()).editorPaneState(target, paneId),
+				activate: async (target, paneId) => {
+					await (await local()).activateEditorPane(target, paneId);
+				},
+				kill: async (target, paneId) => {
+					await (await local()).killEditorPane(target, paneId);
+				},
+			},
+			// The person's own `nvim`, on the login PATH DevHub imported: the
+			// same lookup `runtimes.*` gets, so DevHub and a shell inside it
+			// cannot disagree about which Neovim there is.
+			nvim: async () => {
+				if (socketProblem !== undefined) throw new Error(socketProblem);
+				const resolved = await resolveExecutable(
+					"nvim",
+					this.launchEnvironment.PATH ?? "",
+				);
+				if (resolved.kind === "unavailable") {
+					throw new Error(this.executableMissingMessage(resolved));
+				}
+				return resolved.value;
+			},
+			socketDirectory,
+			onExit: (workspaceId) => {
+				console.log(`[devhub] the managed Neovim of ${workspaceId} ended`);
+			},
+		});
+	}
+
+	/**
 	 * The `/devhub` skill and its launcher, rewritten for this run (see
 	 * `agent/devhubSkill.ts`). A skill that cannot be written is said and
 	 * skipped: the Agents start without it, which is how they started before.
@@ -1442,6 +1523,7 @@ export class AppController {
 			toggleIntegratedTerminal: () => {
 				this.toggleIntegratedTerminal();
 			},
+			hasWorkbenches: () => !isTerminalMode(),
 			// The menu item is the same command as the chord and the sidebar's
 			// button, so it is the same line. It used to go straight to
 			// `requestCloseWorkspace`, around the worktree rule — so File ▸ Close
@@ -2955,6 +3037,9 @@ export class AppController {
 		// much as a terminal's. That is the point of putting them on the same
 		// runtime: coming back finds the same work still running.
 		this.terminalsWiring?.service.dispose();
+		// The managed Neovims too: they run on in tmux, and the next DevHub
+		// adopts them by their sockets.
+		this.managedNeovims?.dispose();
 	}
 
 	//#endregion
@@ -3068,6 +3153,7 @@ export class AppController {
 			// `terminal_theme = "vscode"`. A controller built without a
 			// theme (in a test) has the built-in palettes.
 			shellThemeIfInstalled()?.terminalPalette(),
+			workbenchMode(),
 		);
 	}
 
@@ -3318,6 +3404,11 @@ export class AppController {
 		shell.syncTerminalViews(
 			model.agentTerminals().map((one) => one.terminalId),
 		);
+		// Terminal mode's editor area: a view for every Workspace shown so far,
+		// on its own tmux session, in the place a workbench would be.
+		if (isTerminalMode()) {
+			shell.syncEditorTerminalViews(this.editorTerminalViews(editorKey));
+		}
 		const paneFocus = model.paneFocus;
 		const keyboard: KeyboardHalf = this.keyboardInSidebar
 			? "sidebar"
@@ -3363,6 +3454,31 @@ export class AppController {
 		// an anchor, and a tooltip pointing at the invisible half points at
 		// nothing.
 		this.send(CHANNELS.sidebarAreaChanged, shell.sidebarArea());
+	}
+
+	/**
+	 * Terminal mode: the Workspaces whose editor-area terminal has been on
+	 * screen, by editor key. Each keeps its view — attached, hidden — once it
+	 * has been shown, the way an Agent terminal's does; one whose Workspace
+	 * has gone, or cannot have one, is dropped. See `docs/terminal-mode.md`.
+	 */
+	private readonly editorTerminalsShown = new Set<string>();
+
+	private editorTerminalViews(
+		onScreen: string | undefined,
+	): readonly { readonly editorKey: string; readonly workspaceId: string }[] {
+		if (onScreen !== undefined) this.editorTerminalsShown.add(onScreen);
+		const entries: { editorKey: string; workspaceId: string }[] = [];
+		for (const workspace of this.coordinator.model.workspaces) {
+			if (!this.editorTerminalsShown.has(workspace.key)) continue;
+			if (!terminalModeSupports(workspace)) continue;
+			entries.push({ editorKey: workspace.key, workspaceId: workspace.id });
+		}
+		const kept = new Set(entries.map((entry) => entry.editorKey));
+		for (const key of [...this.editorTerminalsShown]) {
+			if (!kept.has(key)) this.editorTerminalsShown.delete(key);
+		}
+		return entries;
 	}
 
 	/**
@@ -4795,7 +4911,11 @@ export class AppController {
 			try {
 				vetoed = await withCloseDeadline(
 					step,
-					this.askEditorToClose(workspaceId),
+					// Terminal mode's editor is the managed Neovim: it goes with
+					// its Workspace, in the step a workbench's unload is in.
+					isTerminalMode()
+						? this.closeManagedNeovim(closing).then(() => undefined)
+						: this.askEditorToClose(workspaceId),
 				);
 			} finally {
 				// A question the workbench raised while this step waited — an
@@ -5652,19 +5772,23 @@ export class AppController {
 			DEFAULT_WORKBENCH_HIBERNATE_MINUTES;
 		return this.workbenches.plan({
 			now,
-			wanted: model.workspaces
-				.filter((workspace) => workspace.state.kind !== "unavailable")
-				.map((workspace) => ({
-					folder: workspace.key,
-					surfaceKey: `workspace-editor:${workspace.id}`,
-					// Not SSH or a dev container: their weight is on the far
-					// machine, and reconnecting costs.
-					sleepable:
-						workspace.location.kind === "local" &&
-						workspace.editor.kind === "host",
-					closing: workspace.close.kind === "running",
-					awayMs: shell.editorAwayMs(workspace.key, now),
-				})),
+			// Terminal mode wants none, so the plan opens, sleeps, caps and
+			// reports nothing — and raises no placeholder for a workbench that
+			// will never come. See `workspacesWantingWorkbenches`.
+			wanted: workspacesWantingWorkbenches(
+				workbenchMode(),
+				model.workspaces,
+			).map((workspace) => ({
+				folder: workspace.key,
+				surfaceKey: `workspace-editor:${workspace.id}`,
+				// Not SSH or a dev container: their weight is on the far
+				// machine, and reconnecting costs.
+				sleepable:
+					workspace.location.kind === "local" &&
+					workspace.editor.kind === "host",
+				closing: workspace.close.kind === "running",
+				awayMs: shell.editorAwayMs(workspace.key, now),
+			})),
 			selected:
 				selectedKey === undefined
 					? undefined
@@ -5955,6 +6079,18 @@ export class AppController {
 		});
 	}
 
+	/** A closing Workspace's managed Neovim, if it has one on this Mac. */
+	private async closeManagedNeovim(
+		workspace: Workspace | undefined,
+	): Promise<void> {
+		if (workspace === undefined || !terminalModeSupports(workspace)) return;
+		await this.managedNeovims?.close({
+			machine: "local",
+			workspaceId: workspace.id,
+			root: workspace.root,
+		});
+	}
+
 	/**
 	 * Which editor surface a workbench view is, in the page's own vocabulary.
 	 *
@@ -6090,6 +6226,14 @@ export class AppController {
 		target: ContainerTarget,
 	): Promise<string> {
 		const { path, position, waitMarkerPath } = request;
+		if (isTerminalMode()) {
+			throw new Error(
+				terminalModeUnsupported({
+					location: { kind: "local" },
+					editor: { kind: "devContainer" },
+				}),
+			);
+		}
 		const id = containerHostId(target);
 		const workspace = this.coordinator.model.workspaces.find((candidate) => {
 			const attached = containerTargetOf(candidate.location, candidate.editor);
@@ -6150,6 +6294,16 @@ export class AppController {
 		if (!workspace) {
 			throw new Error(
 				`no workspace ${workspaceId} is open to attach an editor to`,
+			);
+		}
+		// There is no VS Code editor to move in terminal mode, and the
+		// Workspace's terminal does not follow a dev container yet.
+		if (isTerminalMode()) {
+			throw workspaceFailure(
+				terminalModeUnsupported({
+					location: { kind: "local" },
+					editor: { kind: "devContainer" },
+				}),
 			);
 		}
 		const bringUp = (target: ContainerTarget) =>
@@ -6551,6 +6705,13 @@ export class AppController {
 	 * that open. Never an open of its own — the plan is the one executor.
 	 */
 	private async selectedWorkbench(folder: string): Promise<ICodeWindow> {
+		// The callers that wait for a folder's workbench would wait for ever
+		// in terminal mode, where none is ever opened.
+		if (isTerminalMode()) {
+			throw new Error(
+				"DevHub is in terminal mode, so there is no VS Code editor to open this in.",
+			);
+		}
 		this.workbenches.needed(folder, Date.now());
 		await this.syncEditorView();
 		return await this.workbenchWindow(folder);
@@ -6852,6 +7013,16 @@ export class AppController {
 		waitMarkerPath: string | undefined,
 		before: NavigationSelection,
 	): Promise<string> {
+		if (isTerminalMode()) {
+			return this.openInManagedNeovim(
+				destination,
+				machine,
+				target,
+				position,
+				waitMarkerPath,
+				before,
+			);
+		}
 		if (destination.kind === "scratch") {
 			openFileInWorkbench(
 				await this.scratchWorkbench(),
@@ -6917,6 +7088,84 @@ export class AppController {
 			? `, beside the Agent ${besideAgent.displayName}`
 			: "";
 		return `${target.path}${at(position)} is open in the workspace at ${root}${beside}: ${because(destination.reason)}`;
+	}
+
+	/**
+	 * `openRouted` in terminal mode: the same Workspace, selected the same
+	 * way — beside the Agent that asked, for a conversation link — with the
+	 * editor area in front and the keyboard in it, and the file opened in that
+	 * Workspace's managed Neovim (`editor/managedNeovim.ts`), started in a new
+	 * window of its tmux session if it is not running.
+	 */
+	private async openInManagedNeovim(
+		destination: OpenDestination,
+		machine: RuntimeId,
+		target: ResolvedPath,
+		position: FileSelection | undefined,
+		waitMarkerPath: string | undefined,
+		before: NavigationSelection,
+	): Promise<string> {
+		const neovims = this.managedNeovims;
+		if (!neovims) throw new Error("the terminal runtime is not running");
+		const workspace =
+			destination.kind === "scratch"
+				? this.scratchWorkspace()
+				: this.workspaceAt(
+						destination.workspace.root,
+						runtimeMachine(destination.workspace.machine),
+					);
+		if (!terminalModeSupports(workspace) || machine !== "local") {
+			throw new Error(terminalModeUnsupported(workspace));
+		}
+		const besideAgent =
+			destination.kind !== "scratch" && destination.reason === "origin-agent"
+				? this.runningAgent(destination.agentId)
+				: undefined;
+		this.keyboardInSidebar = false;
+		if (destination.kind === "scratch") {
+			await this.dispatchAwaiting({ type: "new_window" });
+		} else {
+			if (besideAgent) {
+				await this.dispatchAwaiting({
+					type: "select_context",
+					context: { kind: "agent", agentId: besideAgent.id },
+					presentation: "beside",
+				});
+			}
+			await this.dispatchAwaiting({
+				type: "select_context",
+				context: { kind: "workspace", workspaceId: workspace.id },
+				presentation: besideAgent ? "beside" : "full",
+			});
+		}
+		// The keyboard goes to the editor area, out of an Agent's terminal if
+		// it was in one: the jump is handing the person something to type in.
+		if (this.coordinator.model.paneFocus !== undefined) {
+			this.dispatchOwn({ type: "focus_pane", target: { kind: "content" } });
+		}
+		// Laid out first, so the editor area is attached while Neovim starts.
+		this.placeKeyboardOnSurface();
+		const { started } = await neovims.open(
+			{ machine: "local", workspaceId: workspace.id, root: workspace.root },
+			{
+				path: target.path,
+				...(position === undefined
+					? {}
+					: { line: position.line, column: position.column }),
+				...(waitMarkerPath === undefined ? {} : { waitMarkerPath }),
+			},
+		);
+		this.rememberWaitReturn(waitMarkerPath, before);
+		this.bringToFront();
+		const where =
+			destination.kind === "scratch"
+				? `Scratch (${workspace.root})`
+				: `the workspace at ${workspace.root}`;
+		const beside = besideAgent
+			? `, beside the Agent ${besideAgent.displayName}`
+			: "";
+		const editor = started ? "a new Neovim" : "its Neovim";
+		return `${target.path}${at(position)} is open in ${editor} in ${where}${beside}: ${because(destination.reason)}`;
 	}
 
 	/**
@@ -7133,6 +7382,7 @@ export class AppController {
 				takenAt: Date.now(),
 				uptimeMs: Math.round(process.uptime() * 1000),
 				titleBar: shellWindow().titleBar,
+				workbench: workbenchMode(),
 				mainProcessCpu: {
 					userMs: Math.round(cpu.user / 1000),
 					systemMs: Math.round(cpu.system / 1000),

@@ -265,6 +265,14 @@ export class ShellWindow {
 	 * with its scrollback. Made and ended by `syncTerminalViews`.
 	 */
 	private readonly terminalViews = new Map<string, ChromeView>();
+	/**
+	 * Terminal mode's editor area: one view per Workspace shown so far, by
+	 * its editor key, on that Workspace's own tmux session. The Agent
+	 * terminal pane's page, named by a `workspace:` fragment — the same
+	 * terminal surface, not a second one. Made and ended by
+	 * `syncEditorTerminalViews`; empty in VS Code mode.
+	 */
+	private readonly editorTerminalViews = new Map<string, ChromeView>();
 	/** Where the pages are served from, for the terminal panes made later. */
 	private readonly pageBase: string;
 	private readonly panePreload: string;
@@ -470,6 +478,7 @@ export class ShellWindow {
 		this.tooltip.openPage();
 		this.picker.openPage();
 		for (const view of this.terminalViews.values()) view.openPage();
+		for (const view of this.editorTerminalViews.values()) view.openPage();
 		// A sheet is modal: any other contents of this window taking the
 		// keyboard while one stands — a renderer focusing itself, which no
 		// gate in main sees — gives it straight back. See
@@ -638,10 +647,57 @@ export class ShellWindow {
 		if (changed) this.layout();
 	}
 
+	/**
+	 * Make a view for every Workspace terminal the editor area has shown, and
+	 * end the ones whose Workspace has gone (terminal mode).
+	 *
+	 * Kept, like an Agent terminal's view, so that coming back to a Workspace
+	 * finds its terminal attached and where it was rather than reattaching and
+	 * reflowing. A click into one is the editor half taking the keyboard.
+	 */
+	syncEditorTerminalViews(
+		entries: readonly {
+			readonly editorKey: string;
+			readonly workspaceId: string;
+		}[],
+	): void {
+		if (this.window.isDestroyed()) return;
+		const wanted = new Map(
+			entries.map((entry) => [entry.editorKey, entry.workspaceId]),
+		);
+		let changed = false;
+		for (const [key, view] of [...this.editorTerminalViews]) {
+			if (wanted.has(key)) continue;
+			this.editorTerminalViews.delete(key);
+			view.dispose(this.window);
+			changed = true;
+		}
+		for (const [key, workspaceId] of wanted) {
+			if (this.editorTerminalViews.has(key)) continue;
+			const view = new ChromeView(
+				this.panePreload,
+				`${this.pageBase}/pane.html#workspace:${encodeURIComponent(workspaceId)}`,
+			);
+			view.adopt(this.window);
+			const contents = view.contents();
+			contents?.on("focus", () => {
+				this.picker.reclaimFrom(contents);
+				this.contentFocused({ kind: "editor" });
+			});
+			this.editorTerminalViews.set(key, view);
+			if (this.pageOpened) view.openPage();
+			changed = true;
+		}
+		if (changed) this.layout();
+	}
+
 	/** Every terminal pane's page, for the audiences that tell pages things. */
 	paneTerminalContents(): readonly Electron.WebContents[] {
 		const all: Electron.WebContents[] = [];
-		for (const view of this.terminalViews.values()) {
+		for (const view of [
+			...this.terminalViews.values(),
+			...this.editorTerminalViews.values(),
+		]) {
 			const contents = view.contents();
 			if (contents) all.push(contents);
 		}
@@ -1079,6 +1135,11 @@ export class ShellWindow {
 					this.terminalViews.get(identity.terminalId)?.contents() ??
 					this.window.webContents
 				);
+			case "editorTerminal":
+				return (
+					this.editorTerminalViews.get(identity.editorKey)?.contents() ??
+					this.window.webContents
+				);
 			case "toasts":
 				return this.toasts.contents() ?? this.window.webContents;
 			case "picker":
@@ -1318,6 +1379,7 @@ export class ShellWindow {
 			tooltip: this.tooltip.placement(),
 			attached: this.attachedPlacements(),
 			terminals: [...this.terminalViews.keys()],
+			editorTerminals: [...this.editorTerminalViews.keys()],
 		};
 	}
 
@@ -1397,6 +1459,12 @@ export class ShellWindow {
 					?.place(this.window, child.rect, false);
 				continue;
 			}
+			if (child.identity.kind === "editorTerminal" && !child.visible) {
+				this.editorTerminalViews
+					.get(child.identity.editorKey)
+					?.place(this.window, child.rect, false);
+				continue;
+			}
 			if (child.identity.kind !== "editor") continue;
 			const view = this.viewForEditorKey(child.identity.editorKey);
 			if (!view) continue;
@@ -1449,6 +1517,12 @@ export class ShellWindow {
 					if (!child.visible) break;
 					this.terminalViews
 						.get(child.identity.terminalId)
+						?.place(this.window, child.rect, true);
+					break;
+				case "editorTerminal":
+					if (!child.visible) break;
+					this.editorTerminalViews
+						.get(child.identity.editorKey)
 						?.place(this.window, child.rect, true);
 					break;
 				case "toasts":

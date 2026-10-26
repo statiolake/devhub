@@ -1201,8 +1201,13 @@ export function Sidebar({ snapshot }: SidebarProps) {
     void devhub().openModal({ kind: "agent-rename", agentId: agent.id });
   }, []);
 
-  const { reopenEditorLocally, reopenEditorInContainer, continueAgent } =
-    useSidebar();
+  const {
+    reopenEditorLocally,
+    reopenEditorInContainer,
+    continueAgent,
+    appearance,
+  } = useSidebar();
+  const noWorkbenches = appearance?.workbench === "terminal";
 
   /**
    * The row's context menu: a native menu over the window (`rowMenu.ts`), so
@@ -1230,12 +1235,18 @@ export function Sidebar({ snapshot }: SidebarProps) {
           reopenInContainer: reopenEditorInContainer,
           reopenLocally: reopenEditorLocally,
           close: closeWorkspaceRow,
+          noWorkbenches,
           ...menu,
         }),
         at,
       );
     },
-    [closeWorkspaceRow, reopenEditorInContainer, reopenEditorLocally],
+    [
+      closeWorkspaceRow,
+      noWorkbenches,
+      reopenEditorInContainer,
+      reopenEditorLocally,
+    ],
   );
 
   const resize = useCallback(

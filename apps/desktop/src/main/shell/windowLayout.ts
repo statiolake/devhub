@@ -208,6 +208,15 @@ export interface LayoutInput {
 	 * absent is none.
 	 */
 	readonly terminals?: readonly string[];
+	/**
+	 * Terminal mode's editor area: every Workspace terminal that has a view,
+	 * by the editor key a workbench would have had. Drawn exactly where a
+	 * workbench would be — the whole content area, or a split's left half —
+	 * and never alongside one: in terminal mode there are no workbenches, and
+	 * in VS Code mode this is empty. See `docs/terminal-mode.md`. Optional so
+	 * that every caller from before it still reads; absent is none.
+	 */
+	readonly editorTerminals?: readonly string[];
 }
 
 /**
@@ -272,6 +281,8 @@ export type ChildIdentity =
 	  }
 	/** An Agent's terminal, with its Agent — see `model/agentTerminal.ts`. */
 	| { readonly kind: "terminal"; readonly terminalId: string }
+	/** Terminal mode's editor area: a Workspace's own tmux session. */
+	| { readonly kind: "editorTerminal"; readonly editorKey: string }
 	| { readonly kind: "toasts" }
 	| { readonly kind: "picker" }
 	| { readonly kind: "tooltip" };
@@ -675,6 +686,34 @@ export function onScreenEditor(input: LayoutInput): string | undefined {
 }
 
 /**
+ * Which Workspace terminal is in the editor area, if any (terminal mode).
+ *
+ * The same reading as `onScreenEditor` without the question: a terminal never
+ * asks anything of the picker, so only the arrangement decides.
+ */
+export function onScreenEditorTerminal(input: LayoutInput): string | undefined {
+	const surface = input.state.surface;
+	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
+	return surface.hidden !== true &&
+		(input.editorTerminals ?? []).includes(surface.editorKey)
+		? surface.editorKey
+		: undefined;
+}
+
+/**
+ * What is in the editor area as a child the keyboard can go to: the
+ * workbench on screen, or in terminal mode the Workspace terminal there.
+ */
+function editorChild(input: LayoutInput): ChildIdentity | undefined {
+	const editorKey = onScreenEditor(input);
+	if (editorKey !== undefined) return { kind: "editor", editorKey };
+	const terminalKey = onScreenEditorTerminal(input);
+	return terminalKey === undefined
+		? undefined
+		: { kind: "editorTerminal", editorKey: terminalKey };
+}
+
+/**
  * Which child the keys go to — by identity, not by contents.
  *
  * A standing question owns the keyboard for as long as it stands; it is on top
@@ -698,9 +737,9 @@ export function keyboardChild(input: LayoutInput): ChildIdentity {
 			input.state.terminal?.terminalId === keyboard.terminal &&
 			terminalPlacement(input.windowSize, input.state) !== undefined;
 		if (placed) return { kind: "terminal", terminalId: keyboard.terminal };
-		const editorKey = onScreenEditor(input);
-		if (editorKey !== undefined && input.state.surface.kind !== "agent") {
-			return { kind: "editor", editorKey };
+		const editor = editorChild(input);
+		if (editor !== undefined && input.state.surface.kind !== "agent") {
+			return editor;
 		}
 		return agentsVisible(input.state) ? { kind: "agents" } : { kind: "shell" };
 	}
@@ -712,10 +751,7 @@ export function keyboardChild(input: LayoutInput): ChildIdentity {
 		// the window's own page, which is always there.
 		return agentsVisible(input.state) ? { kind: "agents" } : { kind: "shell" };
 	}
-	const editorKey = onScreenEditor(input);
-	return editorKey === undefined
-		? { kind: "shell" }
-		: { kind: "editor", editorKey };
+	return editorChild(input) ?? { kind: "shell" };
 }
 
 /** Whether an Agent is drawn at all: over the content area, or beside it. */
@@ -865,6 +901,26 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			visible: child.visible,
 		});
 	}
+	// Terminal mode's editor area, in the workbenches' place and for their
+	// reasons: every one sized whether or not it is drawn, the one on screen
+	// last. There are no workbenches in that mode, so nothing above is ever
+	// under one of these; in VS Code mode the list is empty.
+	const onScreenTerminal = onScreenEditorTerminal(input);
+	for (const editorKey of input.editorTerminals ?? []) {
+		if (editorKey === onScreenTerminal) continue;
+		children.push({
+			identity: { kind: "editorTerminal", editorKey },
+			rect: editorRect,
+			visible: false,
+		});
+	}
+	if (onScreenTerminal !== undefined) {
+		children.push({
+			identity: { kind: "editorTerminal", editorKey: onScreenTerminal },
+			rect: editorRect,
+			visible: true,
+		});
+	}
 	// One view for every Agent there is, showing the selected one. It is drawn
 	// exactly when a workbench is not — or beside one, which is what a split
 	// is — so "one of {the Agents, a workbench} is on the content area" is a
@@ -955,6 +1011,9 @@ export function sameIdentity(
 	}
 	if (left.kind === "terminal" && right.kind === "terminal") {
 		return left.terminalId === right.terminalId;
+	}
+	if (left.kind === "editorTerminal" && right.kind === "editorTerminal") {
+		return left.editorKey === right.editorKey;
 	}
 	return true;
 }

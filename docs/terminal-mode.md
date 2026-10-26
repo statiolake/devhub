@@ -326,6 +326,10 @@ copy, not a download).
   (and the marker with it), and the next jump opens a new window. Should a
   `--wait` jump instead open its buffer in a *new* Neovim that ends with it,
   the way `git commit`'s editor usually does?
+- **The activity mark.** A Workspace's row shows "working" while a non-shell
+  program in its session prints, and Neovim redrawing as the person types is
+  that. Should an editor (`nvim`, `vim`) in front of a pane count as a prompt
+  rather than as work?
 - **The setting's name.** `general.workbench` names what is chosen (whether a
   workbench exists). If a third mode ever appears this stays right; an
   `editor = …` would not.
