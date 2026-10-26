@@ -220,7 +220,6 @@ None of these error; they are not offered, or have nothing to act on.
 - **Reopen Editor in Container / Locally** on a Workspace row: not in the menu.
 - **Workbench placeholders** (asleep, waking, restarting, gave up): never
   raised.
-- **Terminal colours read from a workbench**: there is none to read; see Theme.
 
 Agents, Agent terminals, the Sidebar, notices, chords, usage, the `devhub`
 command and every tmux-side feature (`devhub --tell terminal …`, moving an
@@ -229,12 +228,14 @@ are unchanged.
 
 ## Theme
 
-The chrome and the terminal palette come from DevHub's own configuration's VS
-Code colour theme (`appearance.theme_dark` / `appearance.theme_light`, "Phase
-A"), not from a workbench's report: in this mode there is no workbench to
-report. Until that source is present the palettes are the last ones kept
-(`terminal-colors.json`) or the configured `appearance.terminal_theme`, which
-is what an Agent pane uses before any workbench is up today.
+The chrome and the terminal palette come from the VS Code colour theme
+DevHub's own settings name (`appearance.theme_dark` / `appearance.theme_light`,
+read by `colorThemeCatalog.ts` and `shellTheme.ts` from the extensions on
+disk), not from a workbench's report. That source never needed a workbench —
+it paints the window from a cold start and with every workbench asleep — so
+terminal mode uses it unchanged: the editor area's terminal is an Agent pane's
+surface and wears the same `terminal_theme` (the theme's terminal colours by
+default, or the configured palettes).
 
 ## Later phases: SSH and dev containers by terraforming
 
