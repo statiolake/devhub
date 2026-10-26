@@ -132,6 +132,7 @@ function host(zoomActs = true) {
 		renameAgent: record("renameAgent"),
 		markAgentUnread: record("markAgentUnread"),
 		dismissAlert: record("dismissAlert"),
+		showNotifications: record("showNotifications"),
 		terminalZoom: (direction) => {
 			calls.push(`terminalZoom ${direction}`);
 			return zoomActs;

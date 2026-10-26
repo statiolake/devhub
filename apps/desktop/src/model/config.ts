@@ -33,6 +33,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { DEFAULT_NOTICE_SECONDS } from "./noticeCenter.js";
 import {
   ACTION_TRIGGERS,
   BUILT_IN_ACTIONS,
@@ -371,6 +372,12 @@ export interface GeneralConfig {
   readonly notify_on_idle: boolean;
   /** Play a sound with that notification. */
   readonly notify_sound: boolean;
+  /**
+   * How long one of DevHub's own notices stays on screen before it hides
+   * itself into the notice center, in seconds. `0` never hides one. See
+   * `shell/toasts/autoHide.ts`.
+   */
+  readonly notice_seconds: number;
   /**
    * How long a command in a Workspace terminal may print nothing before the
    * Sidebar counts it as finished, in seconds. `0` never counts a quiet
@@ -755,6 +762,7 @@ export function defaultConfig(): Config {
       import_login_environment: true,
       notify_on_idle: true,
       notify_sound: true,
+      notice_seconds: DEFAULT_NOTICE_SECONDS,
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
       workbench_hibernate_minutes: DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
       workbench_awake_max: DEFAULT_WORKBENCH_AWAKE_MAX,
@@ -1975,6 +1983,7 @@ export function interpretConfig(document: unknown): Config {
       "import_login_environment",
       "notify_on_idle",
       "notify_sound",
+      "notice_seconds",
       "terminal_idle_seconds",
       "workbench_hibernate_minutes",
       "workbench_awake_max",
@@ -2065,6 +2074,11 @@ export function interpretConfig(document: unknown): Config {
         "notify_sound",
         "general",
         true,
+      ),
+      notice_seconds: generalDuration(
+        generalTable,
+        "notice_seconds",
+        DEFAULT_NOTICE_SECONDS,
       ),
       terminal_idle_seconds: generalDuration(
         generalTable,
@@ -2276,6 +2290,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       import_login_environment: config.general.import_login_environment,
       notify_on_idle: config.general.notify_on_idle,
       notify_sound: config.general.notify_sound,
+      notice_seconds: config.general.notice_seconds,
       terminal_idle_seconds: config.general.terminal_idle_seconds,
       workbench_hibernate_minutes: config.general.workbench_hibernate_minutes,
       workbench_awake_max: config.general.workbench_awake_max,

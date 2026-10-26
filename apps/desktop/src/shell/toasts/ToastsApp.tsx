@@ -22,8 +22,12 @@
  *   stopped the echo. See `main/shell/publishAudience.ts`.
  * - `devhub:app-condition` — a standing condition going up, or its own source
  *   taking it down.
- * - `devhub:menu-command` — only `dismiss_alert`, which is `Cmd+Q D`. Main
- *   sends it to the page that has notices, which is this one.
+ * - `devhub:menu-command` — `dismiss_alert` (`Cmd+Q D`) and
+ *   `show_notifications` (`Cmd+Q M`, which opens or closes the notice center;
+ *   main has already put the keyboard in this view). Main sends them to the
+ *   page that has notices, which is this one.
+ * - `devhub:notice-settings` — how long a toast stays up
+ *   (`general.notice_seconds`).
  * - `devhub:action-started` — the person asked DevHub for something. One of
  *   the three rules that retire a failure, and the only one this page cannot
  *   see for itself: it has no model, so main says it.
@@ -43,15 +47,19 @@
  * - `devhub:retry-app` — "Try Again". What it restarts is the App Shell page's
  *   projection, which is another page, so main is what joins the two ends.
  * - `devhub:open-settings` — "Open Settings".
+ * - `devhub:focus-surface` — the notice center closed from the keyboard: the
+ *   keys go back to whatever is on screen.
  *
  * That is all of it. The snapshot is not in it, the appearance is not in it,
  * the workspaces are not in it: a notice is about DevHub, and nothing about
  * DevHub's model is needed to draw one.
  */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { DEFAULT_NOTICE_SECONDS } from "../../model/noticeCenter";
 import { devhub } from "./client";
 import { useAppNotices } from "../notices";
+import { NoticeCenter } from "./NoticeCenter";
 import { ToastStack } from "./ToastStack";
 import { useStackSize } from "./stackSize";
 
@@ -63,6 +71,12 @@ export function ToastsApp() {
     clearFailure,
     dismiss,
     dismissNewest,
+    hide,
+    seen,
+    center,
+    readAll,
+    remove,
+    clearAll,
   } = useAppNotices(
     useCallback((retired) => {
       // `void` and not awaited: a retirement is a thing to write down, and a
@@ -89,15 +103,60 @@ export function ToastsApp() {
   // no evidence at all that it is over. See `notices.ts`.
   useEffect(() => devhub().onActionStarted(clearFailure), [clearFailure]);
 
-  // `Cmd+Q D`. The chord layer is in main and the notice is here, so the chord
-  // arrives as a message; a page with nothing on screen answers with nothing,
-  // which is what makes one chord right in every window.
+  const [hideAfterSeconds, setHideAfterSeconds] = useState(
+    DEFAULT_NOTICE_SECONDS,
+  );
+  useEffect(
+    () =>
+      devhub().onNoticeSettings((settings) => {
+        setHideAfterSeconds(settings.hideAfterSeconds);
+      }),
+    [],
+  );
+
+  // The notice center, and which of its entries were news when it opened:
+  // opening it is seeing them, so they are read from then on, and marked New
+  // for as long as it stays open.
+  const [open, setOpen] = useState<ReadonlySet<number> | null>(null);
+  const openCenter = useCallback(() => {
+    setOpen(
+      new Set(center.filter((entry) => !entry.read).map((entry) => entry.key)),
+    );
+  }, [center]);
+  // What arrives while it is open is seen as it arrives.
+  useEffect(() => {
+    if (open) readAll();
+  }, [open, center, readAll]);
+  const closeCenter = useCallback(() => {
+    setOpen(null);
+    void devhub().focusSurface();
+  }, []);
+  // Clicking anywhere else in the window puts it away, as a popover does.
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = () => {
+      setOpen(null);
+    };
+    window.addEventListener("blur", away);
+    return () => {
+      window.removeEventListener("blur", away);
+    };
+  }, [open]);
+
+  // `Cmd+Q D` and `Cmd+Q M`. The chord layer is in main and the notice is
+  // here, so the chord arrives as a message; a page with nothing on screen
+  // answers `dismiss_alert` with nothing, which is what makes one chord right
+  // in every window.
   useEffect(
     () =>
       devhub().onMenuCommand((command) => {
         if (command === "dismiss_alert") dismissNewest();
+        if (command === "show_notifications") {
+          if (open) closeCenter();
+          else openCenter();
+        }
       }),
-    [dismissNewest],
+    [dismissNewest, open, openCenter, closeCenter],
   );
 
   // After every listener above: effects run in order, so by now whatever main
@@ -107,23 +166,44 @@ export function ToastsApp() {
     devhub().reportListening();
   }, []);
 
-  const measure = useStackSize(notices.length);
+  const measure = useStackSize(notices.length, open !== null);
+  const actions = {
+    onRetry: () => {
+      devhub().retryApp();
+    },
+    onOpenSettings: () => {
+      void devhub().openSettings();
+    },
+    onOpenMicrophoneSettings: () => {
+      void devhub().openMicrophoneSettings();
+    },
+    onCopy: (text: string) => devhub().writeClipboard(text),
+  };
 
+  // Open, the center is drawn in place of the stack: the toasts on screen
+  // are its newest entries, and their clocks start again when it closes.
+  if (open) {
+    return (
+      <NoticeCenter
+        ref={measure}
+        entries={center}
+        unread={open}
+        onClose={closeCenter}
+        onRemove={remove}
+        onClearAll={clearAll}
+        {...actions}
+      />
+    );
+  }
   return (
     <ToastStack
       ref={measure}
       notices={notices}
+      hideAfterSeconds={hideAfterSeconds}
       onDismiss={dismiss}
-      onRetry={() => {
-        devhub().retryApp();
-      }}
-      onOpenSettings={() => {
-        void devhub().openSettings();
-      }}
-      onOpenMicrophoneSettings={() => {
-        void devhub().openMicrophoneSettings();
-      }}
-      onCopy={(text) => devhub().writeClipboard(text)}
+      onHide={hide}
+      onSeen={seen}
+      {...actions}
     />
   );
 }

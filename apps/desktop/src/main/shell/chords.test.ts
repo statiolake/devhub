@@ -850,6 +850,13 @@ describe("the commands that need nothing at all", () => {
 		});
 	});
 
+	it("asks for the notice center whether or not anything was said", () => {
+		// The page decides open or close; an empty center is still a center.
+		expect(run("show_notifications", snapshotOf())).toEqual({
+			kind: "show-notifications",
+		});
+	});
+
 	it("resolves the double prefix to nothing: the router forwards it", () => {
 		expect(run("forward_prefix", snapshotOf())).toBeUndefined();
 	});
@@ -892,6 +899,8 @@ describe("the default table", () => {
 		expect(press("b", "KeyB")).toBe("toggle_sidebar");
 		expect(press("u", "KeyU")).toBe("mark_agent_unread");
 		expect(press("d", "KeyD")).toBe("dismiss_alert");
+		expect(press("m", "KeyM")).toBe("show_notifications");
+		expect(press("M", "KeyM", { shift: true })).toBeUndefined();
 	});
 
 	it("keeps the case rule: lower acts inside, upper reaches further", () => {

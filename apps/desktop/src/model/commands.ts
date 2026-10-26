@@ -66,6 +66,7 @@
  * | `Cmd+Q R`                   | `refresh_repositories`    |
  * | `Cmd+Q U`                   | `mark_agent_unread`       |
  * | `Cmd+Q D`                   | `dismiss_alert`           |
+ * | `Cmd+Q M`                   | `show_notifications`      |
  * | `Cmd+Q Shift+,`             | `open_settings`           |
  * | (palette only)              | `open_log`                |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
@@ -270,6 +271,11 @@
  * DevHub window has the keyboard answers it, because "the alert" means the one
  * you are looking at.
  *
+ * **`Cmd+Q M` shows the notice center.** A notice hides itself after a while
+ * (`general.notice_seconds`) into a list of what DevHub said this run; `M`
+ * opens that list and closes it again, the way `Shift+,` toggles Settings. M
+ * for messages: the letter was free, and `D` beside it puts one away.
+ *
  * **`Cmd+Q Shift+,` closes Settings when Settings is in front.** One chord, one
  * command: the key that opens the window is the key that puts it away, the way
  * a palette toggles. There is no second command for closing it, because there
@@ -393,6 +399,7 @@ export type CommandId =
   | "toggle_terminal"
   | "refresh_repositories"
   | "dismiss_alert"
+  | "show_notifications"
   | "open_settings"
   | "open_log"
   | "show_chord_help"
@@ -717,6 +724,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
     needs: "nothing",
     category: "DevHub",
     defaultKeys: ["d"],
+  },
+  {
+    // The notice center, drawn by the page that has the notices; a second
+    // press closes it.
+    id: "show_notifications",
+    label: "Show Notifications",
+    needs: "nothing",
+    category: "DevHub",
+    defaultKeys: ["m"],
   },
 
   {

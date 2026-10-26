@@ -43,9 +43,17 @@
  * A retraction also forgets that the condition was dismissed, which is the
  * right thing for the same reason: the condition genuinely ended, so its
  * coming back is news rather than the repeat the dismissal was about.
+ *
+ * # Hiding is not dismissing
+ *
+ * A toast hides itself after a while (`hide`, reason `timeout`) the way the
+ * person's × would put it away — so a repeat does not bring it straight back —
+ * but what it said is kept in the notice center (`model/noticeCenter.ts`),
+ * unread if nobody looked at it. Every notice that reaches the screen is an
+ * entry there, whichever way it leaves.
  */
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   appConditionIdentity,
   appFailureIdentity,
@@ -53,6 +61,13 @@ import {
   type AppErrorActionWire,
   type NoticeRetiredWire,
 } from "../ipc/appShell";
+import {
+  noticeRemoved,
+  noticesEnded,
+  noticeShown,
+  noticesRead,
+  type NoticeCenter,
+} from "../model/noticeCenter";
 import { NoticeEpisodes } from "../model/noticeEpisodes";
 import { useAlertLifetime } from "./alertLifetime";
 
@@ -149,6 +164,18 @@ export interface AppNotices {
   readonly dismiss: (identity: string) => void;
   /** The person put the newest notice away — what `dismiss_alert` reaches. */
   readonly dismissNewest: () => void;
+  /** Its time on screen ran out: off the stack, kept in the center. */
+  readonly hide: (identity: string) => void;
+  /** The person looked at it (pointer or keyboard on the toast). */
+  readonly seen: (identity: string) => void;
+  /** Everything that reached the screen this run, newest first. */
+  readonly center: NoticeCenter<Notice>;
+  /** The center was opened: everything in it has been seen. */
+  readonly readAll: () => void;
+  /** Take one entry out of the center, and its toast off screen with it. */
+  readonly remove: (key: number) => void;
+  /** Empty the center, and the stack with it. */
+  readonly clearAll: () => void;
 }
 
 export function useAppNotices(
@@ -192,6 +219,34 @@ export function useAppNotices(
   const reportRef = useRef(report);
   reportRef.current = report;
 
+  const [center, setCenter] = useState<NoticeCenter<Notice>>([]);
+  const nextKey = useRef(0);
+  // What reached the screen goes into the center. An effect on what is held,
+  // rather than at each raise, because a raise the lifetime rule refused
+  // never reached the screen.
+  const record = useCallback((notice: Notice) => {
+    const key = nextKey.current;
+    nextKey.current += 1;
+    setCenter((current) => {
+      // A newer failure replaces the one on screen, so that one is over.
+      const ended =
+        notice.live === "alert"
+          ? noticesEnded(
+              current,
+              (each) =>
+                each.live === "alert" && each.identity !== notice.identity,
+            )
+          : current;
+      return noticeShown(ended, notice, Date.now(), key);
+    });
+  }, []);
+  useEffect(() => {
+    if (conditionAlert) record(conditionAlert);
+  }, [conditionAlert, record]);
+  useEffect(() => {
+    if (failureAlert) record(failureAlert);
+  }, [failureAlert, record]);
+
   /**
    * The seam every app-scoped notice passes through, and the one rule that
    * makes a publisher's rate stop mattering.
@@ -225,6 +280,9 @@ export function useAppNotices(
     // worse than the flicker the holding back is for.
     failureEpisodes.current.endedAll();
     clearFailureNotice();
+    setCenter((center) =>
+      noticesEnded(center, (notice) => notice.live === "alert"),
+    );
   }, [clearFailureNotice]);
 
   // Which channel spoke last, kept as state rather than a ref because the
@@ -276,6 +334,13 @@ export function useAppNotices(
           reportRef.current({ identity: retiring.identity, reason: "source" });
           conditionEpisodes.current.ended(retiring.identity);
         }
+        // This source's own condition is over, on screen or hidden: a hidden
+        // one is not held, and its coming back is news all the same.
+        const own = appConditionIdentity(source);
+        conditionEpisodes.current.ended(own);
+        setCenter((center) =>
+          noticesEnded(center, (notice) => notice.identity === own),
+        );
         clearCondition();
         return;
       }
@@ -297,15 +362,17 @@ export function useAppNotices(
     [clearCondition, raiseConditionNotice, promote],
   );
 
-  const dismiss = useCallback(
-    (identity: string) => {
+  // Off the stack, by the person or by the clock. Either way the lifetime
+  // rule remembers it, so a repeat does not put it straight back.
+  const putAway = useCallback(
+    (identity: string, reason: "person" | "timeout") => {
       const matched =
         conditionAlert?.identity === identity ||
         failureAlert?.identity === identity;
       if (conditionAlert?.identity === identity) dismissCondition();
       if (failureAlert?.identity === identity) dismissFailure();
       if (!matched) return;
-      reportRef.current({ identity, reason: "person" });
+      reportRef.current({ identity, reason });
       // Ended in the channel it was drawn in, so a dismissal of one does not
       // let the other start over.
       if (conditionAlert?.identity === identity) {
@@ -318,10 +385,48 @@ export function useAppNotices(
     [conditionAlert, failureAlert, dismissCondition, dismissFailure],
   );
 
+  const seen = useCallback((identity: string) => {
+    setCenter((center) => noticesRead(center, identity));
+  }, []);
+
+  const dismiss = useCallback(
+    (identity: string) => {
+      // Put away by hand is seen; it stays in the center, read.
+      seen(identity);
+      putAway(identity, "person");
+    },
+    [putAway, seen],
+  );
+
+  const hide = useCallback(
+    (identity: string) => {
+      putAway(identity, "timeout");
+    },
+    [putAway],
+  );
+
   const dismissNewest = useCallback(() => {
     const newest = notices[notices.length - 1];
     if (newest) dismiss(newest.identity);
   }, [dismiss, notices]);
+
+  const readAll = useCallback(() => {
+    setCenter((center) => noticesRead(center));
+  }, []);
+
+  const remove = useCallback(
+    (key: number) => {
+      const entry = center.find((each) => each.key === key);
+      if (entry?.current) putAway(entry.notice.identity, "person");
+      setCenter((current) => noticeRemoved(current, key));
+    },
+    [center, putAway],
+  );
+
+  const clearAll = useCallback(() => {
+    for (const notice of notices) putAway(notice.identity, "person");
+    setCenter([]);
+  }, [notices, putAway]);
 
   return useMemo(
     () => ({
@@ -331,6 +436,12 @@ export function useAppNotices(
       clearFailure,
       dismiss,
       dismissNewest,
+      hide,
+      seen,
+      center,
+      readAll,
+      remove,
+      clearAll,
     }),
     [
       notices,
@@ -339,6 +450,12 @@ export function useAppNotices(
       clearFailure,
       dismiss,
       dismissNewest,
+      hide,
+      seen,
+      center,
+      readAll,
+      remove,
+      clearAll,
     ],
   );
 }

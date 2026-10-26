@@ -202,6 +202,8 @@ export type ChordEffect =
 	| { readonly kind: "mark-agent-unread"; readonly agentId: string }
 	/** Whichever failure is on screen in whichever window is in front. */
 	| { readonly kind: "dismiss-alert" }
+	/** The notice center, opened or closed by the page that draws it. */
+	| { readonly kind: "show-notifications" }
 	| { readonly kind: "close-agent"; readonly agentId: string }
 	| { readonly kind: "restart-agent"; readonly agentId: string }
 	/** Close it, and delete the worktree if that is what it is. */
@@ -450,6 +452,9 @@ export function resolveChord(
 			// model, so it is not decidable here. The page answers with nothing
 			// when it has nothing to put away.
 			return { kind: "dismiss-alert" };
+
+		case "show_notifications":
+			return { kind: "show-notifications" };
 
 		case "open_settings":
 			return { kind: "open-settings" };

@@ -1344,6 +1344,12 @@ export interface PaneBridge
 		AppearanceBridge,
 		TerminalSurfaceBridge {}
 
+/** `general.notice_seconds`, the one setting the notices page reads. */
+export interface NoticeSettingsWire {
+	/** `0` never hides a toast by itself. */
+	readonly hideAfterSeconds: number;
+}
+
 /** The page DevHub speaks from — `toasts.html`. No model, by design. */
 export interface ToastsBridge extends PageBridge {
 	/** Failures that happen between requests, such as a startup mount. */
@@ -1352,8 +1358,17 @@ export interface ToastsBridge extends PageBridge {
 	onAppCondition(listener: (condition: AppConditionWire) => void): () => void;
 	/** The person started another action; see `actionStarted` in `CHANNELS`. */
 	onActionStarted(listener: () => void): () => void;
-	/** Only `dismiss_alert`: the notice is here, so the chord is delivered here. */
+	/**
+	 * `dismiss_alert` and `show_notifications`: the notices are here, so the
+	 * chords are delivered here.
+	 */
 	onMenuCommand(listener: (command: MenuCommand) => void): () => void;
+	/** How long a toast stays up; pushed on listening and on every config. */
+	onNoticeSettings(
+		listener: (settings: NoticeSettingsWire) => void,
+	): () => void;
+	/** The notice center closed from the keyboard: keys back to the surface. */
+	focusSurface(): Promise<void>;
 	/**
 	 * Tell main a notice has left the screen, and by which rule.
 	 *
@@ -1735,6 +1750,8 @@ export const CHANNELS = {
 	noticeRetired: "devhub:notice-retired",
 	/** The `toasts` page saying its notice listeners are in place. */
 	noticesListening: "devhub:notices-listening",
+	/** `general.notice_seconds`, to the `toasts` page. */
+	noticeSettings: "devhub:notice-settings",
 	workspacePicker: "devhub:workspace-picker",
 	/** A menu command the page has to carry out itself, e.g. open the picker. */
 	menuCommand: "devhub:menu-command",
@@ -1976,6 +1993,13 @@ export type MenuCommand =
 	 * what makes one chord right in every window.
 	 */
 	| "dismiss_alert"
+	/**
+	 * Open the notice center, or close it if it is open — `Cmd+Q M`.
+	 *
+	 * Main has already given this view the keyboard; the page knows whether
+	 * the center is open, so it decides which.
+	 */
+	| "show_notifications"
 	/**
 	 * Start the projection over — "Try Again" on an app-scoped notice.
 	 *

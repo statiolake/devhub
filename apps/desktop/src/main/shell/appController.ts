@@ -80,6 +80,7 @@ import {
 	type AgentActionWire,
 	type AppConditionWire,
 	type ChordHelpRowWire,
+	type NoticeSettingsWire,
 	type LayoutPreviewWire,
 	type AssignmentBranchWire,
 	type IssueAssignment,
@@ -217,6 +218,7 @@ import {
 	type Config,
 	type ConfiguredAgentProfile,
 } from "../../model/config.js";
+import { DEFAULT_NOTICE_SECONDS } from "../../model/noticeCenter.js";
 import {
 	applySnapshot,
 	hydrateModel,
@@ -1647,6 +1649,17 @@ export class AppController {
 				// Dismiss button is ordinary DOM in a window where Tab works, so
 				// it was never out of the keyboard's reach.
 				this.sendToDisplay(CHANNELS.menuCommand, "dismiss_alert");
+			},
+			showNotifications: () => {
+				// Under a question the keyboard is the question's, and the
+				// notices are drawn under it.
+				const window = shellWindow();
+				if (window.picker.openModals().length > 0) return;
+				// The page knows whether the center is open and decides; the
+				// keyboard goes to it either way, since only main can move it
+				// between views. Closing hands it back (`focusSurface`).
+				this.sendToDisplay(CHANNELS.menuCommand, "show_notifications");
+				window.toasts.contents()?.focus();
 			},
 			// A close typed from the keyboard is a move like every other chord
 			// that goes somewhere: it ends on the row the model repairs the
@@ -3123,6 +3136,14 @@ export class AppController {
 			source,
 			...(summary === undefined ? {} : { summary }),
 		} satisfies AppConditionWire);
+	}
+
+	/** `general.notice_seconds`, to the page that draws the notices. */
+	private publishNoticeSettings(): void {
+		this.sendToDisplay(CHANNELS.noticeSettings, {
+			hideAfterSeconds:
+				this.config?.general.notice_seconds ?? DEFAULT_NOTICE_SECONDS,
+		} satisfies NoticeSettingsWire);
 	}
 
 	private publishSnapshot(): void {
@@ -7694,6 +7715,7 @@ export class AppController {
 		// workbench and the shell's own chrome follow from that.
 		appearanceMode().apply(config.appearance.mode);
 		this.publishAppearance();
+		this.publishNoticeSettings();
 		this.publishProfiles();
 		this.publishActions();
 		// `[agents] auto_compact_*` is read when a conversation changes; an
@@ -8627,6 +8649,7 @@ export class AppController {
 		// anywhere to say what went wrong before it existed. See
 		// `noteStartupFailure`.
 		receive(CHANNELS.noticesListening, () => {
+			this.publishNoticeSettings();
 			const pending = this.startupFailures;
 			this.startupFailures = [];
 			for (const failure of pending) this.publishError(failure);

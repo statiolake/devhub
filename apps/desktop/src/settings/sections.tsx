@@ -178,6 +178,24 @@ export function GeneralSection({
             update({ ...config, general: { ...config.general, notifySound } });
           }}
         />
+        <Row
+          label="Hide DevHub's notices after (seconds)"
+          help="A notice from DevHub itself hides into Notifications (Cmd+Q M) after this long, unless the pointer or keyboard is on it. 0 keeps it until it is dismissed or over. Default 8."
+        >
+          <NumberField
+            label="Hide DevHub's notices after (seconds)"
+            value={config.general.noticeSeconds}
+            min={0}
+            max={3_600}
+            unit="s"
+            onCommit={(noticeSeconds) => {
+              update({
+                ...config,
+                general: { ...config.general, noticeSeconds },
+              });
+            }}
+          />
+        </Row>
       </Group>
 
       <Group

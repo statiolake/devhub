@@ -615,7 +615,12 @@ export function appConditionIdentity(source: string): string {
  * showing a raise with nothing after it cannot say whether the notice is still
  * up — which is the difference between "it flickered" and "it is standing".
  */
-export type NoticeRetirementWire = "person" | "next_action" | "source";
+export type NoticeRetirementWire =
+	| "person"
+	| "next_action"
+	| "source"
+	/** Its time on screen ran out; it is kept in the notice center. */
+	| "timeout";
 
 export interface NoticeRetiredWire {
 	readonly identity: string;

@@ -134,6 +134,8 @@ export interface ChordHost {
 	markAgentUnread(agentId: string): void;
 	/** Put away whichever failure the window in front is showing. */
 	dismissAlert(): void;
+	/** Open or close the notice center, with the keyboard in it. */
+	showNotifications(): void;
 	/**
 	 * Zoom every Agent pane's text one step, or forget the zoom.
 	 *
@@ -283,6 +285,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "dismiss-alert":
 			host.dismissAlert();
+			return;
+		case "show-notifications":
+			host.showNotifications();
 			return;
 		case "close-agent":
 			host.closeAgent(effect.agentId);

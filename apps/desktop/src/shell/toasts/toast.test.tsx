@@ -83,6 +83,8 @@ function mount() {
       menuCommand = listener;
       return () => undefined;
     },
+    onNoticeSettings: () => () => undefined,
+    focusSurface: () => Promise.resolve(),
     reportNoticeRetired: () => Promise.resolve(),
     reportToastsSize: (size: { width: number; height: number }) => {
       sizes.push(`${String(size.width)}x${String(size.height)}`);

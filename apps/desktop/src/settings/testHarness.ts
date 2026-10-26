@@ -43,6 +43,7 @@ export function testConfig(
       importLoginEnvironment: true,
       notifyOnIdle: true,
       notifySound: true,
+      noticeSeconds: 8,
       terminalIdleSeconds: 5,
       workbenchHibernateMinutes: 10,
       workbenchAwakeMax: 2,

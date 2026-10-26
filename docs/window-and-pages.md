@@ -114,7 +114,7 @@ role.)
 | the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showContextMenu`, `showTooltip`, `hideTooltip`, `releaseTooltip`                              |
 | the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
 | an Agent's terminal   | `pane.html`     | an Agent's own terminal, on the right: a terminal surface and nothing else, no header                           | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`                                                                                                                                                                                                    |
-| the notices           | `toasts.html`   | what the application has to say, over whatever is on screen                                                     | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`                                                                                                                                        |
+| the notices           | `toasts.html`   | what the application has to say, over whatever is on screen, and the notice center                              | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
 | the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; the facts that name a page are links              | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                                               |
 | the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings              | `settings.html` | its own window                                                                                                  | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
@@ -251,6 +251,43 @@ The Settings window is the one exception, and it is about being seen rather
 than about routing: a failure that began there is drawn there, because a report
 about the window the person is looking at, drawn on a window they are not, is a
 report nobody reads.
+
+## The notices hide themselves into the notice center
+
+A toast stays up for `general.notice_seconds` (default 8, Settings > General >
+Notifications; `0` never hides one) and then hides itself
+(`shell/toasts/autoHide.ts`). The clock stops while the pointer is on the
+toast, while the keyboard is in it, and while words in it are selected; when
+the person moves away it runs on from where it stopped, with at least two
+seconds left. Both kinds hide: a failure, and a standing condition (a `gh`
+missing, a machine not answering) — a condition has been said once it has
+been seen, and keeping it in the corner for as long as it holds is what made
+the corner noisy. Hiding is not dismissing, but it is put away the same way:
+the lifetime rule remembers it, so a repeat does not bring it straight back,
+and main's journal hears it left with reason `timeout`.
+
+What reached the screen is kept in the **notice center**
+(`model/noticeCenter.ts`, `shell/toasts/NoticeCenter.tsx`): the last 100, in
+memory, newest first, each with its time, its kind (Error, or a condition that
+is Ongoing or Resolved), its words selectable and copyable, and its actions
+while it is still in force — a failure until the person's next action or a
+newer failure, a condition until its source retracts it. An entry is unread
+until the person has seen it: the pointer or the keyboard on its toast, the
+toast's ×, or opening the center. The toast's × keeps the entry, read; the
+center's own × (or Delete) and Clear All remove entries, and the toast with
+them.
+
+It is drawn by the notices page itself, in place of the stack: that page
+already holds every notice and is already a layer over the whole window, so
+the center is the stack grown into a list, measured and placed by the same
+rule, with no copy of the notices in another page. `Cmd+Q M` (Show
+Notifications, also in the palette) sends `show_notifications` to that page
+and gives its view the keyboard — not under a question, which holds the
+keyboard; the page opens the center, or closes it if it is open. Arrows move
+between entries; Escape, the chord again, or a click elsewhere closes it, and
+Escape hands the keyboard back with `focusSurface`. There is no unread count
+outside the center: the Sidebar and the title bar are other pages with no
+notices in them, and a badge there would be a second copy of this state.
 
 ## The palette is a third audience
 
@@ -451,7 +488,8 @@ chord in one view and completing it in another is one chord, and the split into
 six chrome children cost it nothing. `focus_agent_pane`, `focus_sidebar` and
 `dismiss_alert` used to be routed _to the page_ because what they acted on was
 drawn there; two of them are now plain "focus that view" calls in main, and
-`dismiss_alert` is delivered to the page that has the notices.
+`dismiss_alert` (with `show_notifications`) is delivered to the page that has
+the notices.
 
 ## An Agent's terminal, with its Agent
 

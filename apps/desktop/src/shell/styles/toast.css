@@ -181,3 +181,121 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
 }
+
+/*
+ * The notice center: the stack grown into a list (`toasts/NoticeCenter.tsx`).
+ * Out of the flow and sized by its content like the stack, for the same
+ * measurement reason; its height is bounded here, because the page cannot see
+ * the window, and the list scrolls inside it.
+ */
+.notice-center {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: 420px;
+  max-height: 480px;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--raised);
+  box-shadow: var(--shadow-raised);
+  outline: none;
+}
+
+.notice-center-header {
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  gap: var(--space-2);
+}
+
+.notice-center-title {
+  flex: 1;
+  margin: 0;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notice-center-count {
+  color: var(--secondary);
+  font-size: 11px;
+}
+
+.notice-center-empty {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+.notice-center-list {
+  min-height: 0;
+  flex: 1;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  overflow-y: auto;
+}
+
+.notice-entry {
+  display: grid;
+  align-items: start;
+  grid-template-columns: 16px minmax(0, 1fr) 20px;
+  padding: var(--space-2);
+  border-radius: var(--radius-control);
+  gap: var(--space-2);
+}
+
+/* The toast's named areas are not this grid's. */
+.notice-entry > .toast-mark,
+.notice-entry > .toast-close {
+  grid-area: auto;
+}
+
+.notice-entry + .notice-entry {
+  margin-top: 2px;
+}
+
+.notice-entry[data-unread] {
+  background: var(--wash);
+}
+
+.notice-entry[data-severity="alert"] .toast-mark {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.notice-entry-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notice-entry-meta {
+  margin: 0;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+
+.notice-entry-new {
+  color: var(--secondary);
+  font-weight: 600;
+}
+
+.notice-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+  gap: var(--space-1);
+}
+
+.notice-entry:focus-visible,
+.notice-center .toast-action:focus-visible,
+.notice-center .toast-close:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}

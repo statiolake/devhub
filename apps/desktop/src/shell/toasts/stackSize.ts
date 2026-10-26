@@ -43,6 +43,8 @@ function same(
  */
 export function useStackSize(
   noticeCount: number,
+  /** The notice center is open: something is drawn, whatever the count. */
+  centerOpen = false,
 ): (element: HTMLElement | null) => void {
   const element = useRef<HTMLElement | null>(null);
   const sent = useRef({ width: 0, height: 0 });
@@ -62,7 +64,7 @@ export function useStackSize(
 
   useEffect(() => {
     const node = element.current;
-    if (!node || noticeCount === 0) {
+    if (!node || (noticeCount === 0 && !centerOpen)) {
       report(0, 0);
       return;
     }
@@ -76,7 +78,7 @@ export function useStackSize(
     return () => {
       observer.disconnect();
     };
-  }, [noticeCount, report]);
+  }, [noticeCount, centerOpen, report]);
 
   return measure;
 }

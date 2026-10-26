@@ -65,6 +65,8 @@ function mount() {
       return () => undefined;
     },
     onMenuCommand: () => () => undefined,
+    onNoticeSettings: () => () => undefined,
+    focusSurface: () => Promise.resolve(),
     reportNoticeRetired: () => Promise.resolve(),
     reportToastsSize: () => undefined,
     retryApp: () => undefined,

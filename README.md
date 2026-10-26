@@ -300,6 +300,10 @@ older `config.toml` is renamed into place the same way.
 version = 3
 
 [general]
+notice_seconds = 8          # DevHub's own notices (a failure, `gh` missing) hide
+                            # after this long into Notifications (Cmd+Q m); not
+                            # while the pointer or keyboard is on one or its words
+                            # are selected. 0: they stay. Settings > General.
 terminal_idle_seconds = 5   # a Workspace row wears the Agents' working mark while a
                             # command (not the shell) in one of its tmux panes is
                             # printing, and their unread mark once it exits or prints

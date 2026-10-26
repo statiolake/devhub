@@ -102,6 +102,8 @@ export interface SettingsGeneralWire {
 	readonly importLoginEnvironment: boolean;
 	readonly notifyOnIdle: boolean;
 	readonly notifySound: boolean;
+	/** `general.notice_seconds`. */
+	readonly noticeSeconds: number;
 	/** `general.terminal_idle_seconds`. */
 	readonly terminalIdleSeconds: number;
 	/** `general.workbench_hibernate_minutes`. */

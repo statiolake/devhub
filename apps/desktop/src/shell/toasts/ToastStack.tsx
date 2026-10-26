@@ -38,6 +38,7 @@
 import { useEffect, useRef, useState } from "react";
 import { isImeComposing } from "../accessibility/ime";
 import type { Notice } from "../notices";
+import { useAutoHide } from "./autoHide";
 
 /** What Cmd+C puts on the clipboard with nothing selected: the whole notice. */
 export function noticeText(notice: Notice): string {
@@ -46,14 +47,20 @@ export function noticeText(notice: Notice): string {
 
 function Toast({
   notice,
+  hideAfterSeconds,
   onDismiss,
+  onHide,
+  onSeen,
   onRetry,
   onOpenSettings,
   onOpenMicrophoneSettings,
   onCopy,
 }: {
   readonly notice: Notice;
+  readonly hideAfterSeconds: number;
   readonly onDismiss: () => void;
+  readonly onHide: () => void;
+  readonly onSeen: () => void;
   readonly onRetry: () => void;
   readonly onOpenSettings: () => void;
   readonly onOpenMicrophoneSettings?: () => void;
@@ -61,6 +68,7 @@ function Toast({
 }) {
   const dismiss = useRef(onDismiss);
   dismiss.current = onDismiss;
+  const clock = useAutoHide(hideAfterSeconds, onHide);
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return undefined;
@@ -73,8 +81,20 @@ function Toast({
   }, [copied]);
   return (
     <div
+      ref={clock.ref}
       className="toast"
       role={notice.live}
+      // The person with it is the person seeing it, and the clock waits.
+      onPointerEnter={() => {
+        clock.onPointerEnter();
+        onSeen();
+      }}
+      onPointerLeave={clock.onPointerLeave}
+      onFocus={() => {
+        clock.onFocus();
+        onSeen();
+      }}
+      onBlur={clock.onBlur}
       // In the focus order, because a notice that can only be reached with the
       // pointer is a notice a keyboard cannot answer. Escape closes the one
       // that has the focus; `Cmd+Q D` closes the newest without going there.
@@ -170,7 +190,13 @@ function Toast({
 
 export interface ToastStackProps {
   readonly notices: readonly Notice[];
+  /** `general.notice_seconds`: how long a toast stays up; `0` for ever. */
+  readonly hideAfterSeconds: number;
   readonly onDismiss: (identity: string) => void;
+  /** Its time ran out: it goes to the notice center. */
+  readonly onHide: (identity: string) => void;
+  /** The pointer or the keyboard reached it. */
+  readonly onSeen: (identity: string) => void;
   readonly onRetry: () => void;
   readonly onOpenSettings: () => void;
   /** System Settings → Privacy & Security → Microphone. */
@@ -189,7 +215,10 @@ export interface ToastStackProps {
 
 export function ToastStack({
   notices,
+  hideAfterSeconds,
   onDismiss,
+  onHide,
+  onSeen,
   onRetry,
   onOpenSettings,
   onOpenMicrophoneSettings,
@@ -208,8 +237,15 @@ export function ToastStack({
         <Toast
           key={notice.identity}
           notice={notice}
+          hideAfterSeconds={hideAfterSeconds}
           onDismiss={() => {
             onDismiss(notice.identity);
+          }}
+          onHide={() => {
+            onHide(notice.identity);
+          }}
+          onSeen={() => {
+            onSeen(notice.identity);
           }}
           onRetry={onRetry}
           onOpenSettings={onOpenSettings}

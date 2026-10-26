@@ -12,10 +12,17 @@ import {
 	CHANNELS,
 	type AppConditionWire,
 	type MenuCommand,
+	type NoticeSettingsWire,
 	type ToastsBridge,
 } from "../ipc/contract.js";
 import type { AppError, NoticeRetiredWire } from "../ipc/appShell.js";
-import { on, openSettings, pageBridge, writeClipboard } from "./bridge.js";
+import {
+	focusSurface,
+	on,
+	openSettings,
+	pageBridge,
+	writeClipboard,
+} from "./bridge.js";
 
 const api: ToastsBridge = {
 	...pageBridge(),
@@ -25,6 +32,9 @@ const api: ToastsBridge = {
 		on<AppConditionWire>(CHANNELS.appCondition, listener),
 	onActionStarted: (listener) => on<void>(CHANNELS.actionStarted, listener),
 	onMenuCommand: (listener) => on<MenuCommand>(CHANNELS.menuCommand, listener),
+	onNoticeSettings: (listener) =>
+		on<NoticeSettingsWire>(CHANNELS.noticeSettings, listener),
+	focusSurface,
 
 	reportNoticeRetired: (retired: NoticeRetiredWire) =>
 		ipcRenderer.invoke(CHANNELS.noticeRetired, retired) as Promise<void>,
