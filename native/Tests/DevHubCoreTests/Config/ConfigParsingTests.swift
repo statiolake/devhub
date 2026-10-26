@@ -9,12 +9,12 @@ let MINIMAL = "version = 1\n"
 let EMPTY_FONT = "version = 1\n[appearance]\nterminal_font_family = \"\"\n"
 let SCHEMA = ConfigConstants.schemaVersion
 
-func codeOf(_ run: () throws -> Any) -> ValidationCode? {
+func configCodeOf(_ run: () throws -> Any) -> ValidationCode? {
     do { _ = try run() } catch let error as ConfigError { return error.code } catch { return nil }
     return nil
 }
 
-func pathOf(_ run: () throws -> Any) -> String? {
+func configPathOf(_ run: () throws -> Any) -> String? {
     do { _ = try run() } catch let error as ConfigError { return error.diagnostic.path } catch { return nil }
     return nil
 }
@@ -22,7 +22,7 @@ func pathOf(_ run: () throws -> Any) -> String? {
 func parseConfig(_ text: String) throws -> Config { try ConfigParsing.parse(text) }
 func configToToml(_ config: Config) throws -> String { try ConfigParsing.toToml(config) }
 func configOntoDocument(_ source: String, _ config: Config) throws -> String { try ConfigParsing.ontoDocument(source, config) }
-func lines(_ parts: String...) -> String { parts.joined(separator: "\n") }
+func configLines(_ parts: String...) -> String { parts.joined(separator: "\n") }
 
 final class ConfigParsingTests: XCTestCase {
     func testFillsEverySectionFromDefaultsWhenOnlyTheVersionIsPresent() throws {
@@ -33,7 +33,7 @@ final class ConfigParsingTests: XCTestCase {
         XCTAssertEqual(try parseConfig(MINIMAL).general.workbenchHibernateMinutes, 10)
         XCTAssertEqual(try parseConfig(MINIMAL).general.workbenchAwakeMax, 2)
         XCTAssertEqual(try parseConfig("version = 1\n[general]\nworkbench_hibernate_minutes = 0\n").general.workbenchHibernateMinutes, 0)
-        XCTAssertEqual(pathOf { try parseConfig("version = 1\n[general]\nworkbench_hibernate_minutes = -1\n") }, "general.workbench_hibernate_minutes")
+        XCTAssertEqual(configPathOf { try parseConfig("version = 1\n[general]\nworkbench_hibernate_minutes = -1\n") }, "general.workbench_hibernate_minutes")
     }
 
     func testLeavesARowAtTheFontsOwnLineBox() throws {
@@ -47,20 +47,20 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testReadsADatedSourceAndDefaultsItToOfferingTodayBeforeItExists() throws {
-        let source = lines("version = 1", "", "[[workspace_sources]]", #"type = "date""#, #"id = "daily""#, #"path = "~/workspace/daily/YYYY/MMDD""#, "")
+        let source = configLines("version = 1", "", "[[workspace_sources]]", #"type = "date""#, #"id = "daily""#, #"path = "~/workspace/daily/YYYY/MMDD""#, "")
         XCTAssertEqual(try parseConfig(source).workspaceSources, [.date(DateSource(id: "daily", path: "~/workspace/daily/YYYY/MMDD", createIfMissing: true))])
         XCTAssertEqual(try parseConfig(configToToml(parseConfig(source))), try parseConfig(source))
     }
 
     func testRefusesADatedSourceWhoseBracketsDoNotClose() {
-        let source = lines("version = 1", "", "[[workspace_sources]]", #"type = "date""#, #"id = "daily""#, #"path = "~/[YYYY""#, "")
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidDateTemplate)
+        let source = configLines("version = 1", "", "[[workspace_sources]]", #"type = "date""#, #"id = "daily""#, #"path = "~/[YYYY""#, "")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidDateTemplate)
     }
 
     func testRefusesADatedSourceWhoseFolderNameWouldExpand() {
-        let source = lines("version = 1", "", "[[workspace_sources]]", #"type = "date""#, #"id = "daily""#, #"path = "~/Documents/summaries/YYYY""#, "")
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .ambiguousDateToken)
-        let at = pathOf { try parseConfig(source) } ?? ""
+        let source = configLines("version = 1", "", "[[workspace_sources]]", #"type = "date""#, #"id = "daily""#, #"path = "~/Documents/summaries/YYYY""#, "")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .ambiguousDateToken)
+        let at = configPathOf { try parseConfig(source) } ?? ""
         XCTAssertTrue(at.contains(#"source "daily""#))
         XCTAssertTrue(at.contains(#"the segment "summaries""#))
         XCTAssertTrue(at.contains("date token mm"))
@@ -69,12 +69,12 @@ final class ConfigParsingTests: XCTestCase {
 
     func testTakesADatedSourceThatSaysWhichPartsAreText() {
         func dated(_ path: String) -> String {
-            lines("version = 1", "", "[[workspace_sources]]", #"type = "date""#, #"id = "daily""#, "path = \"\(path)\"", "")
+            configLines("version = 1", "", "[[workspace_sources]]", #"type = "date""#, #"id = "daily""#, "path = \"\(path)\"", "")
         }
         for path in ["~/Documents/[summaries]/YYYY", "~/YYYY-MM-DD", "~/workspace/daily/YYYY/MMDD"] {
             XCTAssertNoThrow(try parseConfig(dated(path)))
         }
-        XCTAssertEqual(codeOf { try parseConfig(dated("~/logsYYYY")) }, .ambiguousDateToken)
+        XCTAssertEqual(configCodeOf { try parseConfig(dated("~/logsYYYY")) }, .ambiguousDateToken)
     }
 
     func testShipsOneActionPerThingThatCanFireOne() throws {
@@ -90,7 +90,7 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testAddsTheFilesActionsToTheOnesDevHubShips() throws {
-        let source = lines(
+        let source = configLines(
             "version = 1", "", "[agent_actions.issue.implement]", #"display_name = "Work on it""#, #"template = "read {{ISSUE_URL}}""#, "",
             "[agent_actions.issue.review]", #"display_name = "Review it""#, #"template = "review {{ISSUE_URL}}""#, ""
         )
@@ -110,34 +110,34 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testReadsAnUntouchedBuiltInsStoredTrueAsTheOldDefault() throws {
-        let source = lines("version = 1", "", "[agent_actions.commit.commit_changes]", #"display_name = "Commit the changes""#, "confirm_before_send = true", "")
+        let source = configLines("version = 1", "", "[agent_actions.commit.commit_changes]", #"display_name = "Commit the changes""#, "confirm_before_send = true", "")
         let config = try parseConfig(source)
         XCTAssertEqual(config.agentActions.first { $0.id == "commit_changes" }?.confirmBeforeSend, false)
         XCTAssertEqual(config.version, SCHEMA)
     }
 
     func testLeavesAStoredTrueAloneOnceTheFileIsInTheNewShape() throws {
-        let source = lines("version = \(JSString.number(SCHEMA))", "", "[agent_actions.commit.commit_changes]", "confirm_before_send = true", "")
+        let source = configLines("version = \(JSString.number(SCHEMA))", "", "[agent_actions.commit.commit_changes]", "confirm_before_send = true", "")
         XCTAssertEqual(try parseConfig(source).agentActions.first { $0.id == "commit_changes" }?.confirmBeforeSend, true)
     }
 
     func testLeavesAStoredTrueAloneOnABuiltInSomebodyHasReworded() throws {
-        let source = lines("version = 1", "", "[agent_actions.commit.commit_changes]", #"template = "commit it my way""#, "confirm_before_send = true", "")
+        let source = configLines("version = 1", "", "[agent_actions.commit.commit_changes]", #"template = "commit it my way""#, "confirm_before_send = true", "")
         XCTAssertEqual(try parseConfig(source).agentActions.first { $0.id == "commit_changes" }?.confirmBeforeSend, true)
     }
 
     func testLeavesAStoredTrueAloneOnAnActionSomebodyWrote() throws {
-        let source = lines("version = 1", "", "[agent_actions.commit.commit_in_pieces]", #"display_name = "Commit in pieces""#, #"template = "commit it in pieces""#, "confirm_before_send = true", "")
+        let source = configLines("version = 1", "", "[agent_actions.commit.commit_in_pieces]", #"display_name = "Commit in pieces""#, #"template = "commit it in pieces""#, "confirm_before_send = true", "")
         XCTAssertEqual(try parseConfig(source).agentActions.first { $0.id == "commit_in_pieces" }?.confirmBeforeSend, true)
     }
 
     func testKeepsTheIssueActionsSheet() throws {
-        let source = lines("version = 1", "", "[agent_actions.issue.issue_assignment]", "confirm_before_send = true", "")
+        let source = configLines("version = 1", "", "[agent_actions.issue.issue_assignment]", "confirm_before_send = true", "")
         XCTAssertEqual(try parseConfig(source).agentActions.first { $0.id == "issue_assignment" }?.confirmBeforeSend, true)
     }
 
     func testTakesTheFilesWordAboutAnActionDevHubShips() throws {
-        let source = lines("version = 1", "", "[agent_actions.commit.commit_changes]", #"template = "commit it""#, "confirm_before_send = false", "")
+        let source = configLines("version = 1", "", "[agent_actions.commit.commit_changes]", #"template = "commit it""#, "confirm_before_send = false", "")
         let action = try parseConfig(source).agentActions.first { $0.id == "commit_changes" }
         XCTAssertEqual(action?.template, "commit it")
         XCTAssertEqual(action?.confirmBeforeSend, false)
@@ -145,14 +145,14 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testTakesAnActionAwayOnlyWhenTheFileSaysSo() throws {
-        let source = lines("version = 1", "", "[agent_actions.push.push_commits]", "enabled = false", "")
+        let source = configLines("version = 1", "", "[agent_actions.push.push_commits]", "enabled = false", "")
         let actions = try parseConfig(source).agentActions
         XCTAssertTrue(actions.map(\.id).contains("push_commits"))
         XCTAssertEqual(actions.first { $0.id == "push_commits" }?.enabled, false)
     }
 
     func testReadsTheSmartButtonTriggersAndWhetherEachActionIsAButton() throws {
-        let source = lines(
+        let source = configLines(
             "version = 3", "", "[agent_actions.ci_failing.fix_ci]", "button = false", "",
             "[agent_actions.unresolved_review_comments.answer_reviewers]", #"display_name = "Answer the reviewers""#,
             #"template = "{{PR_URL}} has {{UNRESOLVED}} open threads""#, ""
@@ -171,28 +171,28 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testRefusesButtonOnAnIssueAction() {
-        let source = lines("version = 3", "", "[agent_actions.issue.issue_assignment]", "button = true", "")
-        XCTAssertEqual(pathOf { try parseConfig(source) }, "agent_actions.issue.issue_assignment.button")
+        let source = configLines("version = 3", "", "[agent_actions.issue.issue_assignment]", "button = true", "")
+        XCTAssertEqual(configPathOf { try parseConfig(source) }, "agent_actions.issue.issue_assignment.button")
     }
 
     func testRefusesATriggerDevHubHasNoRuleFor() {
-        let source = lines("version = 3", "", "[agent_actions.deploy.ship_it]", #"display_name = "Ship it""#, #"template = "ship""#, "")
-        XCTAssertNotNil(codeOf { try parseConfig(source) })
-        XCTAssertEqual(pathOf { try parseConfig(source) }, "agent_actions.deploy")
+        let source = configLines("version = 3", "", "[agent_actions.deploy.ship_it]", #"display_name = "Ship it""#, #"template = "ship""#, "")
+        XCTAssertNotNil(configCodeOf { try parseConfig(source) })
+        XCTAssertEqual(configPathOf { try parseConfig(source) }, "agent_actions.deploy")
     }
 
     func testPutsASecondActionUnderATriggerAfterTheOneDevHubShips() throws {
-        let source = lines("version = 1", "", "[agent_actions.commit.commit_in_pieces]", #"display_name = "Commit in pieces""#, #"template = "commit each change on its own""#, "")
+        let source = configLines("version = 1", "", "[agent_actions.commit.commit_in_pieces]", #"display_name = "Commit in pieces""#, #"template = "commit each change on its own""#, "")
         XCTAssertEqual(try parseConfig(source).agentActions.filter { $0.trigger == .commit }.map(\.id), ["commit_changes", "commit_in_pieces"])
     }
 
     func testOrdersATriggersActionsTheWayTheFileAsks() throws {
-        let source = lines("version = 1", "", "[agent_actions.commit.commit_in_pieces]", #"display_name = "Commit in pieces""#, #"template = "one at a time""#, "order = -1", "")
+        let source = configLines("version = 1", "", "[agent_actions.commit.commit_in_pieces]", #"display_name = "Commit in pieces""#, #"template = "one at a time""#, "order = -1", "")
         XCTAssertEqual(try parseConfig(source).agentActions.filter { $0.trigger == .commit }.map(\.id), ["commit_in_pieces", "commit_changes"])
     }
 
     func testReadsAFileWrittenInTheOldArrayShapeAndRestoresWhatItDropped() throws {
-        let source = lines("version = 1", "", "[[agent_actions]]", #"id = "issue_assignment""#, #"display_name = "Work on the Issue""#, #"template = "mine, edited""#, "")
+        let source = configLines("version = 1", "", "[[agent_actions]]", #"id = "issue_assignment""#, #"display_name = "Work on the Issue""#, #"template = "mine, edited""#, "")
         let actions = try parseConfig(source).agentActions
         XCTAssertEqual(actions.map(\.id), [
             "issue_assignment", "commit_changes", "push_commits", "open_pull_request",
@@ -206,22 +206,22 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testRefusesTwoActionsWithOneIdentifier() {
-        let source = lines(
+        let source = configLines(
             "version = 1", "", "[agent_actions.issue.same]", #"display_name = "One""#, #"template = "a""#, "",
             "[agent_actions.commit.same]", #"display_name = "Two""#, #"template = "b""#, ""
         )
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .duplicateIdentity)
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .duplicateIdentity)
     }
 
     func testRefusesAnActionWithNoNameToShow() {
-        let source = lines("version = 1", "", "[[agent_actions]]", #"id = "nameless""#, #"display_name = "  ""#, #"template = "a""#, "")
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidProfile)
+        let source = configLines("version = 1", "", "[[agent_actions]]", #"id = "nameless""#, #"display_name = "  ""#, #"template = "a""#, "")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidProfile)
     }
 
     func testRefusesAnUnknownKeyRatherThanIgnoringATypo() {
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\nnonsense = true\n") }, .unknownKey)
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[general]\nnope = true\n") }, .unknownKey)
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[appearance.terminal_theme.light]\nnope = 1\n") }, .unknownKey)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\nnonsense = true\n") }, .unknownKey)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[general]\nnope = true\n") }, .unknownKey)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[appearance.terminal_theme.light]\nnope = 1\n") }, .unknownKey)
     }
 
     func testStillLoadsAFileWithARetiredKeyAndNamesIt() throws {
@@ -235,11 +235,11 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testRefusesAVersionItDoesNotImplement() {
-        XCTAssertEqual(codeOf { try parseConfig("version = \(JSString.number(SCHEMA + 1))\n") }, .unsupportedVersion)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = \(JSString.number(SCHEMA + 1))\n") }, .unsupportedVersion)
     }
 
     func testReportsASyntaxErrorAsAParseDiagnostic() {
-        XCTAssertEqual(codeOf { try parseConfig("version = \n") }, .parse)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = \n") }, .parse)
         do {
             _ = try parseConfig("version = \n")
         } catch let error as ConfigError {
@@ -248,7 +248,7 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testRejectsARuntimeThatIsNeitherAPathNorABareCommandName() throws {
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[runtimes]\nshell = \"bin/zsh\"\n") }, .invalidRuntime)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[runtimes]\nshell = \"bin/zsh\"\n") }, .invalidRuntime)
         XCTAssertEqual(try parseConfig("version = 1\n[runtimes]\nshell = \"~/bin/zsh\"\n").runtimes.shell, "~/bin/zsh")
     }
 
@@ -256,7 +256,7 @@ final class ConfigParsingTests: XCTestCase {
         XCTAssertTrue(ConfigParsing.isSafeTmuxArgument("-u"))
         XCTAssertTrue(ConfigParsing.isSafeTmuxArgument("-2"))
         XCTAssertFalse(ConfigParsing.isSafeTmuxArgument("-L"))
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[runtimes]\ntmux_args = [\"-L\", \"other\"]\n") }, .forbiddenTmuxArgument)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[runtimes]\ntmux_args = [\"-L\", \"other\"]\n") }, .forbiddenTmuxArgument)
     }
 
     func testValidatesTheSocketNameCharacterSet() {
@@ -266,10 +266,10 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testRejectsAppearanceValuesOutsideTheSupportedRange() {
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[appearance]\nterminal_font_size = 40\n") }, .invalidAppearance)
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[appearance]\nsidebar_density = \"roomy\"\n") }, .invalidAppearance)
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[appearance]\nmode = \"midnight\"\n") }, .invalidAppearance)
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[appearance]\ntitle_bar = \"floating\"\n") }, .invalidAppearance)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[appearance]\nterminal_font_size = 40\n") }, .invalidAppearance)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[appearance]\nsidebar_density = \"roomy\"\n") }, .invalidAppearance)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[appearance]\nmode = \"midnight\"\n") }, .invalidAppearance)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[appearance]\ntitle_bar = \"floating\"\n") }, .invalidAppearance)
     }
 
     func testTitleBarIsShownUnlessTheFileSaysOtherwise() throws {
@@ -305,9 +305,9 @@ final class ConfigParsingTests: XCTestCase {
 
     func testWorkbenchRefusesAnythingButTheTwoModes() {
         let text = "version = 1\n[general]\nworkbench = \"neovim\"\n"
-        XCTAssertEqual(codeOf { try parseConfig(text) }, .invalidWorkbench)
-        XCTAssertEqual(pathOf { try parseConfig(text) }, "general.workbench")
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[general]\nworkbench = 1\n") }, .invalidType)
+        XCTAssertEqual(configCodeOf { try parseConfig(text) }, .invalidWorkbench)
+        XCTAssertEqual(configPathOf { try parseConfig(text) }, "general.workbench")
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[general]\nworkbench = 1\n") }, .invalidType)
     }
 
     func testWorkbenchIsReadableOnItsOwn() {
@@ -324,7 +324,7 @@ final class ConfigParsingTests: XCTestCase {
         XCTAssertEqual(parsed.appearance.terminalScrollSensitivity, 5.5)
         XCTAssertTrue(try configOntoDocument("version = 1\n", parsed).contains("terminal_scroll_sensitivity = 5.5"))
         for value in ["0", "-2", "1000"] {
-            XCTAssertEqual(codeOf { try parseConfig("version = 1\n[appearance]\nterminal_scroll_sensitivity = \(value)\n") }, .invalidAppearance)
+            XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[appearance]\nterminal_scroll_sensitivity = \(value)\n") }, .invalidAppearance)
         }
     }
 
@@ -352,8 +352,8 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testNamesTheFontFamilyItselfWhenItIsTheValueThatIsWrong() {
-        XCTAssertEqual(codeOf { try parseConfig(EMPTY_FONT) }, .invalidFontFamily)
-        XCTAssertEqual(pathOf { try parseConfig(EMPTY_FONT) }, "appearance.terminal_font_family")
+        XCTAssertEqual(configCodeOf { try parseConfig(EMPTY_FONT) }, .invalidFontFamily)
+        XCTAssertEqual(configPathOf { try parseConfig(EMPTY_FONT) }, "appearance.terminal_font_family")
         XCTAssertFalse(FontFamily.isValid(""))
         XCTAssertFalse(FontFamily.isValid("   "))
         XCTAssertFalse(FontFamily.isValid("Men\u{0}lo"))
@@ -362,22 +362,22 @@ final class ConfigParsingTests: XCTestCase {
     }
 
     func testRejectsADuplicateIdentityInEitherArray() {
-        let sources = lines(
+        let sources = configLines(
             "version = 1", "[[workspace_sources]]", #"type = "command""#, #"id = "one""#, #"command = ["a"]"#,
             "[[workspace_sources]]", #"type = "command""#, #"id = "one""#, #"command = ["b"]"#, ""
         )
-        XCTAssertEqual(codeOf { try parseConfig(sources) }, .duplicateIdentity)
-        XCTAssertEqual(pathOf { try parseConfig(sources) }, "workspace_sources[1].id (also 0)")
+        XCTAssertEqual(configCodeOf { try parseConfig(sources) }, .duplicateIdentity)
+        XCTAssertEqual(configPathOf { try parseConfig(sources) }, "workspace_sources[1].id (also 0)")
     }
 
     func testRejectsAFilesystemSourceThatMixesDirectoryAndGitKinds() {
-        let source = lines("version = 1", "[[workspace_sources]]", #"type = "filesystem""#, #"id = "mixed""#, #"path = "~/dev""#, #"kinds = ["directory", "git_repository"]"#, "")
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidWorkspaceKind)
+        let source = configLines("version = 1", "[[workspace_sources]]", #"type = "filesystem""#, #"id = "mixed""#, #"path = "~/dev""#, #"kinds = ["directory", "git_repository"]"#, "")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidWorkspaceKind)
     }
 
     func testRejectsAnEnvironmentKeyThatIsNotAnEnvironmentName() {
-        let profile = lines("version = 1", "[[agent_profiles]]", #"id = "codex""#, #"display_name = "Codex""#, #"kind = "codex""#, "[agent_profiles.env]", #""not a name" = "x""#, "")
-        XCTAssertEqual(codeOf { try parseConfig(profile) }, .invalidEnvironmentKey)
+        let profile = configLines("version = 1", "[[agent_profiles]]", #"id = "codex""#, #"display_name = "Codex""#, #"kind = "codex""#, "[agent_profiles.env]", #""not a name" = "x""#, "")
+        XCTAssertEqual(configCodeOf { try parseConfig(profile) }, .invalidEnvironmentKey)
     }
 }
 
@@ -409,19 +409,19 @@ final class ConfigRoundTripTests: XCTestCase {
     }
 
     func testDefaultsACursorProfileToCursorAgentNotCursor() throws {
-        let source = lines("version = 1", "", "[[agent_profiles]]", #"id = "cursor""#, #"display_name = "Cursor""#, #"kind = "cursor""#, "args = []", "", "[agent_profiles.env]", "")
+        let source = configLines("version = 1", "", "[[agent_profiles]]", #"id = "cursor""#, #"display_name = "Cursor""#, #"kind = "cursor""#, "args = []", "", "[agent_profiles.env]", "")
         let parsed = try parseConfig(source)
         XCTAssertEqual(parsed.agentProfiles.first?.kind, .cursor)
         XCTAssertEqual(parsed.agentProfiles.first?.command, "cursor-agent")
     }
 
     func testLetsACursorProfileNameItsOwnCommand() throws {
-        let source = lines("version = 1", "", "[[agent_profiles]]", #"id = "cursor""#, #"display_name = "Cursor""#, #"kind = "cursor""#, #"command = "/opt/example/cursor-agent""#, "args = []", "", "[agent_profiles.env]", "")
+        let source = configLines("version = 1", "", "[[agent_profiles]]", #"id = "cursor""#, #"display_name = "Cursor""#, #"kind = "cursor""#, #"command = "/opt/example/cursor-agent""#, "args = []", "", "[agent_profiles.env]", "")
         XCTAssertEqual(try parseConfig(source).agentProfiles.first?.command, "/opt/example/cursor-agent")
     }
 
     func testStillAcceptsACursorProfileLeftOnTheCustomKind() throws {
-        let source = lines("version = 1", "", "[[agent_profiles]]", #"id = "cursor""#, #"display_name = "Cursor""#, #"kind = "custom""#, #"command = "cursor-agent""#, "args = []", "", "[agent_profiles.env]", "")
+        let source = configLines("version = 1", "", "[[agent_profiles]]", #"id = "cursor""#, #"display_name = "Cursor""#, #"kind = "custom""#, #"command = "cursor-agent""#, "args = []", "", "[agent_profiles.env]", "")
         let parsed = try parseConfig(source)
         XCTAssertEqual(parsed.agentProfiles.first?.kind, .custom)
         XCTAssertEqual(parsed.agentProfiles.first?.command, "cursor-agent")
@@ -462,8 +462,8 @@ final class ConfigRoundTripTests: XCTestCase {
 
     func testRefusesAnAppWideDefaultThatIsNeither() {
         let source = "version = 3\n[agents]\ndefault_presentation = \"sideways\"\n"
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidProfile)
-        XCTAssertEqual(pathOf { try parseConfig(source) }, "agents.default_presentation")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidProfile)
+        XCTAssertEqual(configPathOf { try parseConfig(source) }, "agents.default_presentation")
     }
 
     func testTakesTheTuiEveryOlderFileWroteForTheDefaultItWasOnce() throws {
@@ -496,21 +496,21 @@ final class ConfigRoundTripTests: XCTestCase {
             let source = kind == "custom"
                 ? profile(kind, "gui").replacingOccurrences(of: #"presentation = "gui""#, with: "command = \"my-agent\"\npresentation = \"gui\"")
                 : profile(kind, "gui")
-            XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidProfile, kind)
-            XCTAssertEqual(pathOf { try parseConfig(source) }, "agent_profiles[0].presentation", kind)
+            XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidProfile, kind)
+            XCTAssertEqual(configPathOf { try parseConfig(source) }, "agent_profiles[0].presentation", kind)
         }
     }
 
     func testRefusesAPresentationThatIsNeither() {
         let source = profile("claude", "sideways")
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidProfile)
-        XCTAssertEqual(pathOf { try parseConfig(source) }, "agent_profiles[0].presentation")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidProfile)
+        XCTAssertEqual(configPathOf { try parseConfig(source) }, "agent_profiles[0].presentation")
     }
 
     func testRefusesAPresentationThatIsNotAString() {
         let source = profile("claude").replacingOccurrences(of: #"kind = "claude""#, with: "kind = \"claude\"\npresentation = true")
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidType)
-        XCTAssertEqual(pathOf { try parseConfig(source) }, "agent_profiles[0].presentation")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidType)
+        XCTAssertEqual(configPathOf { try parseConfig(source) }, "agent_profiles[0].presentation")
     }
 
     func testPresentationIsWrittenBackAndReadBackTheSame() throws {
@@ -526,13 +526,13 @@ final class ConfigRoundTripTests: XCTestCase {
         let source = profile("cursor")
         var config = try parseConfig(source)
         config.agentProfiles = config.agentProfiles.map { var one = $0; one.presentation = .gui; return one }
-        XCTAssertEqual(codeOf { try configOntoDocument(source, config) }, .invalidProfile)
+        XCTAssertEqual(configCodeOf { try configOntoDocument(source, config) }, .invalidProfile)
     }
 
     // MARK: saving over documents
 
     func testSwitchesAProfileToACustomRuntimeAndStillReParses() throws {
-        let source = lines(
+        let source = configLines(
             "version = 1", "", "[[agent_profiles]]", #"id = "codex""#, #"display_name = "Codex""#, #"kind = "codex""#, "args = []", "",
             "[agent_profiles.env]", "", "[[agent_profiles]]", #"id = "claude""#, #"display_name = "Claude""#, #"kind = "claude""#,
             "args = []", "", "[agent_profiles.env]", ""
@@ -551,7 +551,7 @@ final class ConfigRoundTripTests: XCTestCase {
     }
 
     func testSavesEveryFieldOfHandWrittenProfilesThatHaveNoEnvTable() throws {
-        let source = lines(
+        let source = configLines(
             "version = 1", "", "# mine", "[[agent_profiles]]", #"id = "codex""#, #"display_name = "Codex""#, #"kind = "codex""#, "",
             "[[agent_profiles]]", #"id = "claude""#, #"display_name = "Claude""#, #"kind = "claude""#, "",
             "[scratch]", #"daily = "~/work/YYYYMMDD""#, ""
@@ -590,7 +590,7 @@ final class ConfigRoundTripTests: XCTestCase {
     }
 
     func testRemovesTheTableOfAnActionThatIsNoLongerInTheModel() throws {
-        let source = lines(
+        let source = configLines(
             "version = 1", "", "# why this one exists", "[agent_actions.issue.mine]", #"display_name = "Mine""#,
             #"template = "do it""#, "confirm_before_send = true", "enabled = true", "order = 1", ""
         )
@@ -604,7 +604,7 @@ final class ConfigRoundTripTests: XCTestCase {
     }
 
     func testKeepsTheRestOfTheFileWhenAStaleActionsTableGoes() throws {
-        let source = lines(
+        let source = configLines(
             "# my configuration", "version = 1", "", "[appearance]", "# I like it large", "terminal_font_size = 19", "",
             "[agent_actions.issue.gone]", #"display_name = "Gone""#, #"template = "x""#, "confirm_before_send = true", "enabled = true", "order = 9", ""
         )
@@ -619,7 +619,7 @@ final class ConfigRoundTripTests: XCTestCase {
     }
 
     func testRoundTripsAFileWhoseActionIdsAreHandWrittenSlugs() throws {
-        let source = lines(
+        let source = configLines(
             "version = 1", "", "[agent_actions.issue.implement]", #"display_name = "Work on it""#, #"template = "implement {{ISSUE_URL}}""#,
             "confirm_before_send = true", "enabled = true", "order = 0", "", "[agent_actions.issue.review]", #"display_name = "Review it""#,
             #"template = "review {{ISSUE_URL}}""#, "confirm_before_send = true", "enabled = true", "order = 1", ""
@@ -658,11 +658,11 @@ final class ConfigKeyboardTests: XCTestCase {
     }
 
     func testRefusesACommandIdDevHubDoesNotHave() {
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[keybindings.chords]\ng = \"teleport\"\n") }, .unknownCommand)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[keybindings.chords]\ng = \"teleport\"\n") }, .unknownCommand)
     }
 
     func testRefusesAModifierThatIsNotOne() {
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[keybindings]\nprefix = \"Hyper+q\"\n") }, .invalidKeybinding)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[keybindings]\nprefix = \"Hyper+q\"\n") }, .invalidKeybinding)
     }
 
     func testReadsAStrokeWrittenAsACharacterOrAsShiftAndItsBase() throws {
@@ -677,20 +677,20 @@ final class ConfigKeyboardTests: XCTestCase {
     }
 
     func testRefusesTwoSpellingsOfOneKey() {
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[keybindings.chords]\n\"Shift+n\" = \"next_tab\"\n\"N\" = \"previous_tab\"\n") }, .duplicateIdentity)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[keybindings.chords]\n\"Shift+n\" = \"next_tab\"\n\"N\" = \"previous_tab\"\n") }, .duplicateIdentity)
     }
 
     func testRefusesAValueThatIsNotACommandIdAtAll() {
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[keybindings.chords]\ng = 3\n") }, .invalidType)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[keybindings.chords]\ng = 3\n") }, .invalidType)
     }
 
     func testRefusesAnUnknownKeyUnderKeybindings() {
-        XCTAssertEqual(codeOf { try parseConfig("version = 1\n[keybindings]\nsuffix = \"x\"\n") }, .unknownKey)
+        XCTAssertEqual(configCodeOf { try parseConfig("version = 1\n[keybindings]\nsuffix = \"x\"\n") }, .unknownKey)
     }
 }
 
 final class ConfigProjectsTests: XCTestCase {
-    func projectsSetting(_ line: String) -> String { lines("version = 1", "", "[projects]", line, "") }
+    func projectsSetting(_ line: String) -> String { configLines("version = 1", "", "[projects]", line, "") }
 
     func testIsUnsetWhenTheFileDoesNotMentionIt() throws {
         XCTAssertEqual(try parseConfig(MINIMAL).projects, ProjectsConfig(directory: nil))
@@ -712,14 +712,14 @@ final class ConfigProjectsTests: XCTestCase {
     func testRefusesAnEmptyOrRelativeValueNamingTheKey() {
         for directory in ["", "dev/new", "./dev", "~user/dev"] {
             let source = projectsSetting("directory = \"\(directory)\"")
-            XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidProjectDirectory, directory)
-            XCTAssertEqual(pathOf { try parseConfig(source) }, "projects.directory", directory)
+            XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidProjectDirectory, directory)
+            XCTAssertEqual(configPathOf { try parseConfig(source) }, "projects.directory", directory)
         }
     }
 
     func testRefusesAValueThatIsNotAStringAndAKeyItDoesNotKnow() {
-        XCTAssertEqual(codeOf { try parseConfig(self.projectsSetting("directory = 3")) }, .invalidType)
-        XCTAssertEqual(codeOf { try parseConfig(self.projectsSetting(#"clone_into = "~/dev""#)) }, .unknownKey)
+        XCTAssertEqual(configCodeOf { try parseConfig(self.projectsSetting("directory = 3")) }, .invalidType)
+        XCTAssertEqual(configCodeOf { try parseConfig(self.projectsSetting(#"clone_into = "~/dev""#)) }, .unknownKey)
     }
 
     func testDropsTheTableWhenASaveUnsetsIt() throws {
@@ -754,8 +754,8 @@ final class ConfigColourThemeTests: XCTestCase {
     }
 
     func testRefusesANameThatIsNotAStringOrIsEmpty() {
-        XCTAssertEqual(pathOf { try parseConfig("\(self.version)\n[appearance]\ntheme_dark = 1\n") }, "appearance.theme_dark")
-        XCTAssertEqual(codeOf { try parseConfig("\(self.version)\n[appearance]\ntheme_light = \"\"\n") }, .invalidAppearance)
+        XCTAssertEqual(configPathOf { try parseConfig("\(self.version)\n[appearance]\ntheme_dark = 1\n") }, "appearance.theme_dark")
+        XCTAssertEqual(configCodeOf { try parseConfig("\(self.version)\n[appearance]\ntheme_light = \"\"\n") }, .invalidAppearance)
     }
 
     func testIsReadableOnItsOwn() {
@@ -795,12 +795,12 @@ final class ConfigTerminalThemeTests: XCTestCase {
 
     func testRefusesAnyOtherWord() {
         let source = "\(version)\n[appearance]\nterminal_theme = \"solarized\"\n"
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidAppearance)
-        XCTAssertEqual(pathOf { try parseConfig(source) }, "appearance.terminal_theme")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidAppearance)
+        XCTAssertEqual(configPathOf { try parseConfig(source) }, "appearance.terminal_theme")
     }
 
     func testWearsPalettesTheFileNamesFillingASchemeItLeavesOut() throws {
-        let source = lines(version, "[appearance.terminal_theme.light]", ##"background = "#FAFAFA""##, "")
+        let source = configLines(version, "[appearance.terminal_theme.light]", ##"background = "#FAFAFA""##, "")
         XCTAssertEqual(try parseConfig(source).appearance.terminalTheme, .palettes(TerminalPalettes(light: ownLight, dark: .defaultDark)))
     }
 
@@ -826,12 +826,12 @@ final class ConfigTerminalThemeTests: XCTestCase {
     }
 
     func testKeepsPalettesAnOlderFileChangedAnywhere() throws {
-        let source = lines("version = 1", "[appearance.terminal_theme.light]", ##"background = "#FAFAFA""##, "")
+        let source = configLines("version = 1", "[appearance.terminal_theme.light]", ##"background = "#FAFAFA""##, "")
         XCTAssertEqual(try parseConfig(source).appearance.terminalTheme, .palettes(TerminalPalettes(light: ownLight, dark: .defaultDark)))
     }
 
     func testDropsTheTablesWhenASaveSwitchesToFollowingTheTheme() throws {
-        let source = lines("# mine", version, "[appearance]", "terminal_font_size = 13", "", "[appearance.terminal_theme.light]", ##"background = "#FAFAFA""##, "")
+        let source = configLines("# mine", version, "[appearance]", "terminal_font_size = 13", "", "[appearance.terminal_theme.light]", ##"background = "#FAFAFA""##, "")
         var config = try parseConfig(source)
         config.appearance.terminalTheme = .vscode
         let saved = try configOntoDocument(source, config)
@@ -873,14 +873,14 @@ final class ConfigUsageLimitTests: XCTestCase {
     func testRefusesAnEmptyMessageNamingTheKey() {
         for message in [#""""#, #""   ""#, #""a\u0000b""#] {
             let source = withAgents("resume_after_limit_message = \(message)")
-            XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidResumeMessage, message)
-            XCTAssertEqual(pathOf { try parseConfig(source) }, "agents.resume_after_limit_message", message)
+            XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidResumeMessage, message)
+            XCTAssertEqual(configPathOf { try parseConfig(source) }, "agents.resume_after_limit_message", message)
         }
     }
 
     func testRefusesASwitchThatIsNotTrueOrFalse() {
         let source = withAgents(#"resume_after_limit = "yes""#)
-        XCTAssertEqual(codeOf { try parseConfig(source) }, .invalidType)
-        XCTAssertEqual(pathOf { try parseConfig(source) }, "agents.resume_after_limit")
+        XCTAssertEqual(configCodeOf { try parseConfig(source) }, .invalidType)
+        XCTAssertEqual(configPathOf { try parseConfig(source) }, "agents.resume_after_limit")
     }
 }

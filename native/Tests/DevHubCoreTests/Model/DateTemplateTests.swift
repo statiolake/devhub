@@ -78,7 +78,7 @@ final class ScratchDayTests: XCTestCase {
 
     func testRefusesWhatIsNotOneFolderPerDay() {
         for daily in ["~/junk", "~/junk/YYYYMMDD-HH", "~/junk/YYYY/MM", "~/[junk/YYYYMMDD", "~/summaries/YYYYMMDD", "junk/YYYYMMDD"] {
-            XCTAssertEqual(codeOf { try ConfigParsing.parse(self.scratchSetting(daily)) }, .invalidScratchDaily, daily)
+            XCTAssertEqual(configCodeOf { try ConfigParsing.parse(self.scratchSetting(daily)) }, .invalidScratchDaily, daily)
         }
         XCTAssertEqual(ScratchDaily.problem("~/junk/YYYYMMDD-HH"), .notOneDay)
         XCTAssertEqual(ScratchDaily.problem("~/junk"), .notOneDay)
@@ -88,7 +88,7 @@ final class ScratchDayTests: XCTestCase {
     }
 
     func testRefusesAnUnknownKeyInTheTable() {
-        XCTAssertEqual(codeOf { try ConfigParsing.parse("version = 2\n[scratch]\nfolder = \"~/x\"\n") }, .unknownKey)
+        XCTAssertEqual(configCodeOf { try ConfigParsing.parse("version = 2\n[scratch]\nfolder = \"~/x\"\n") }, .unknownKey)
     }
 
     func testNamesTheLocalDay() throws {

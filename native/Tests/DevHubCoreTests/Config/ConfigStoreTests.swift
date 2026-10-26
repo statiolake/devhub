@@ -104,7 +104,7 @@ final class ConfigStoreTests: ScratchDirectoryTestCase {
     }
 
     func testSavesOverAFileWrittenInTheOldArrayShape() async throws {
-        try write(path, lines("version = 1", "", "[[agent_actions]]", #"id = "issue_assignment""#, #"display_name = "Work on the Issue""#, #"template = "mine, edited""#, ""))
+        try write(path, configLines("version = 1", "", "[[agent_actions]]", #"id = "issue_assignment""#, #"display_name = "Work on the Issue""#, #"template = "mine, edited""#, ""))
         let store = ConfigStore(paths: paths)
         let loaded = try await store.load()
         let saved = try await store.save(expectedRevision: loaded.revision, config: loaded.config)
@@ -117,7 +117,7 @@ final class ConfigStoreTests: ScratchDirectoryTestCase {
     }
 
     func testResetsASectionBackToTheDefaults() async throws {
-        try write(path, lines("version = 1", "", "[appearance]", "terminal_font_size = 19", ""))
+        try write(path, configLines("version = 1", "", "[appearance]", "terminal_font_size = 19", ""))
         let store = ConfigStore(paths: paths)
         let loaded = try await store.load()
         let reset = try await store.resetScope(expectedRevision: loaded.revision, keys: [.appearance])
@@ -126,7 +126,7 @@ final class ConfigStoreTests: ScratchDirectoryTestCase {
     }
 
     func testLeavesTheSectionsAResetDoesNotNameAlone() async throws {
-        try write(path, lines("version = 1", "", "[appearance]", "terminal_font_size = 19", "", "[runtimes]", #"shell = "/bin/bash""#, ""))
+        try write(path, configLines("version = 1", "", "[appearance]", "terminal_font_size = 19", "", "[runtimes]", #"shell = "/bin/bash""#, ""))
         let store = ConfigStore(paths: paths)
         let loaded = try await store.load()
         let reset = try await store.resetScope(expectedRevision: loaded.revision, keys: [.appearance])
@@ -187,7 +187,7 @@ final class ConfigHandWrittenFileTests: ScratchDirectoryTestCase {
     var paths: ConfigPaths { ConfigPaths(file: path) }
 
     func testKeepsTheCommentsGroupingAndOrderThePersonWrote() async throws {
-        let handWritten = lines(
+        let handWritten = configLines(
             "# My DevHub config. Do not reformat.", "version = 1", "", "# Small on this display.", "[appearance]",
             "terminal_font_size = 13", #"terminal_font_family = "SF Mono""#, "", "[runtimes]", #"shell = "/bin/zsh"   # not fish, on purpose"#, ""
         )
@@ -217,7 +217,7 @@ final class ConfigHandWrittenFileTests: ScratchDirectoryTestCase {
     }
 
     func testSavesEveryFontFamilySpellingAndKeepsTheCommentsAroundIt() async throws {
-        let handWritten = lines("# My DevHub config. Do not reformat.", "version = 1", "", "[appearance]", #"terminal_font_family = "ui-monospace""#, "")
+        let handWritten = configLines("# My DevHub config. Do not reformat.", "version = 1", "", "[appearance]", #"terminal_font_family = "ui-monospace""#, "")
         for family in ["SF Mono", "Menlo", "JetBrains Mono, Menlo, monospace", "\"Fira Code\""] {
             try write(path, handWritten, mode: 0o600)
             let store = ConfigStore(paths: paths)

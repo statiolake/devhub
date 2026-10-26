@@ -7,7 +7,7 @@ func XCTAssertTomlEqual(_ actual: TomlTable, _ expected: TomlTable, file: Static
     XCTAssertTrue(tomlValuesEqual(.table(actual), .table(expected)), "\(actual) is not \(expected)", file: file, line: line)
 }
 
-func count(_ needle: String, in haystack: String) -> Int {
+func occurrences(_ needle: String, in haystack: String) -> Int {
     haystack.components(separatedBy: needle).count - 1
 }
 
@@ -119,12 +119,12 @@ final class TomlEditingTests: XCTestCase {
         ]))
         XCTAssertTrue(next.contains(#"display_name = "Codex CLI""#))
         XCTAssertTrue(next.contains(#"display_name = "Claude""#))
-        XCTAssertEqual(count("[[agent_profiles]]", in: next), 2)
+        XCTAssertEqual(occurrences("[[agent_profiles]]", in: next), 2)
     }
 
     func testRemovesAnArrayOfTablesEntryWithItsOwnBlockOnly() throws {
         let next = try TomlDocument.update(source, desired: with(document, "agent_profiles", [.table(profiles[0])]))
-        XCTAssertEqual(count("[[agent_profiles]]", in: next), 1)
+        XCTAssertEqual(occurrences("[[agent_profiles]]", in: next), 1)
         XCTAssertTrue(next.contains(#"id = "codex""#))
         XCTAssertFalse(next.contains(#"id = "claude""#))
         XCTAssertTrue(next.contains("# I like it small."))
@@ -152,7 +152,7 @@ final class TomlEditingTests: XCTestCase {
 
         let refilled = try TomlDocument.update(emptied, desired: with(try documentOf(emptied), "agent_profiles", [.table(profiles[1])]))
         XCTAssertFalse(refilled.contains("agent_profiles = []"))
-        XCTAssertEqual(count("[[agent_profiles]]", in: refilled), 1)
+        XCTAssertEqual(occurrences("[[agent_profiles]]", in: refilled), 1)
         XCTAssertTomlEqual(try documentOf(refilled), with(document, "agent_profiles", [.table(profiles[1])]))
     }
 
@@ -202,7 +202,7 @@ final class TomlEditingTests: XCTestCase {
         ]
         let next = try TomlDocument.update(withEmptyEnv, desired: with(try documentOf(withEmptyEnv), "agent_profiles", wanted))
         XCTAssertFalse(next.contains("env = {}"))
-        XCTAssertEqual(count("[agent_profiles.env]", in: next), 2)
+        XCTAssertEqual(occurrences("[agent_profiles.env]", in: next), 2)
         XCTAssertTomlEqual(try documentOf(next), ["version": 1, "agent_profiles": wanted])
     }
 
