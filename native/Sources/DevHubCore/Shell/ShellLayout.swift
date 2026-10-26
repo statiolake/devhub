@@ -111,13 +111,6 @@ extension WorkspaceWire {
     public var terminalModeSupported: Bool {
         location == .local && editor == .host
     }
-
-    /// `terminalModeUnsupported`, on the projection.
-    public var terminalModeUnsupportedSentence: String {
-        location == .local
-            ? "Terminal mode does not support Workspaces whose editor is in a dev container yet."
-            : "Terminal mode does not support Workspaces on SSH hosts yet."
-    }
 }
 
 /// The Workspaces whose editor-area terminal has been on screen, by editor key

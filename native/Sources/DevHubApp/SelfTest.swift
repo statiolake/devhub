@@ -256,6 +256,8 @@ final class SelfTest {
         try? fm.createDirectory(atPath: locations.configDirectory, withIntermediateDirectories: true)
         try? fm.createDirectory(atPath: home + "/scratch", withIntermediateDirectories: true)
         let settings = """
+            version = \(Int(ConfigConstants.schemaVersion))
+
             [general]
             import_login_environment = false
             workbench = "terminal"
@@ -300,6 +302,8 @@ final class SelfTest {
             return shell.window.editorTerminals.values.contains { $0.surfaceKey == TerminalSurfaceKeys.workspace(snapshot.scratchWorkspaceId) }
         }
         check(scratchKey, "live: Scratch's editor area has no terminal view")
+        let accepted = await until(5) { shell.config?.general.importLoginEnvironment == false }
+        check(accepted, "live: the self-test's settings were not accepted")
         let pane = shell.snapshot.flatMap { snapshot in
             shell.window.editorTerminals.values.first { $0.surfaceKey == TerminalSurfaceKeys.workspace(snapshot.scratchWorkspaceId) }
         }
@@ -324,6 +328,7 @@ final class SelfTest {
             pane.type("echo devhub-live\r")
             let echoed = await until(10) { pane.screenText().contains("devhub-live") }
             check(echoed, "live: what was typed in the editor terminal did not come back")
+            print("self-test live: \(pane.surfaceKey) attached on tmux -L \(locations.tmuxSocketName), client \(clientSize())")
         }
         shell.window.disposeAll()
         await runtime.shutdown()

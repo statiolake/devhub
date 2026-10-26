@@ -451,17 +451,12 @@ final class SidebarListView: NSView {
                 enabled: row.createAgentEnabled, hoverOnly: true))
             right = box.minX
         }
-        // `.row-marks`: the pull request last, the editor before it, the
-        // failure, the spinner — 1pt apart.
+        // `.row-marks`: the pull request last, the failure before it, the
+        // spinner — 1pt apart. (Terminal mode has no editor elsewhere to mark.)
         let narrow = rect.width <= 190
         if let pr = row.pullRequest {
             let box = CGRect(x: right - button, y: mid - button / 2, width: button, height: button)
             controls.append(ControlBox(control: .link(pr.url), rect: box, tooltip: pr.tooltip))
-            right = box.minX - 1
-        }
-        if let fact = row.editorFact, !narrow {
-            let box = CGRect(x: right - button, y: mid - button / 2, width: button, height: button)
-            controls.append(ControlBox(control: .mark, rect: box, tooltip: [.fact(TooltipFact(text: fact.text))]))
             right = box.minX - 1
         }
         if let unavailable = row.unavailable {

@@ -60,12 +60,11 @@ final class ShellLayoutTests: XCTestCase {
         XCTAssertEqual(gone.editorTerminals.map(\.workspaceId), [F.scratchId])
     }
 
-    func testAWorkspaceTerminalModeCannotServeGetsNoEditorArea() {
+    func testAWorkspaceTerminalModeDoesNotServeGetsNoEditorArea() {
         let remote = F.workspace("r", location: .ssh(host: "nas"))
         let arrangement = arrange(F.snapshot([remote], context: .workspace("r")))
         XCTAssertEqual(arrangement.state.surface, .editor(editorKey: "/work/r"))
         XCTAssertEqual(arrangement.editorTerminals, [])
-        XCTAssertEqual(remote.terminalModeUnsupportedSentence, "Terminal mode does not support Workspaces on SSH hosts yet.")
     }
 
     func testTheViewsAgentsTerminalIsLaidOutWithItsAgentAndNeverWithTheEditorAlone() {

@@ -227,8 +227,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         restack(ordered)
         lastChildren = children
         backdrop.render(
-            snapshot: snapshot, state: arrangement.state, size: input.windowSize, title: SurfaceLabels.windowTitle(snapshot),
-            terminalModeOK: true)
+            snapshot: snapshot, state: arrangement.state, size: input.windowSize, title: SurfaceLabels.windowTitle(snapshot))
         positionTrafficLights()
         let keyboard = WindowLayout.keyboardChild(input)
         if keyboard != lastKeyboardChild {

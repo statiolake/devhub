@@ -71,7 +71,7 @@ final class ShellBackdropView: NSView {
 
     // MARK: Rendering
 
-    func render(snapshot: AppSnapshotWire, state: LayoutState, size: LayoutSize, title: String, terminalModeOK: Bool) {
+    func render(snapshot: AppSnapshotWire, state: LayoutState, size: LayoutSize, title: String) {
         self.snapshot = snapshot
         self.state = state
         self.title = title
@@ -129,12 +129,7 @@ final class ShellBackdropView: NSView {
         case .agent:
             return nil
         case .workbench, .split:
-            if let workspace, !workspace.terminalModeSupported {
-                return .failure(
-                    title: workspace.terminalModeUnsupportedSentence,
-                    detail: "Its Agents and their terminals work as usual. Set Settings ▸ General ▸ Editor area to VS Code to edit it in this DevHub.",
-                    actions: [])
-            }
+            // Terminal mode offers only what it can draw: nothing to say here.
             return nil
         }
     }
