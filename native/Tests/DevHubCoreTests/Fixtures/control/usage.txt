@@ -1,0 +1,54 @@
+devhub — drive the running DevHub from a terminal.
+
+usage:
+  devhub                           bring DevHub to the front
+  devhub <folder>                  make the folder a workspace, show it, and
+                                   bring DevHub to the front
+  devhub <file>                    open the file in the workspace whose root
+                                   contains it, or in the Scratch editor when
+                                   no open workspace does
+  devhub -                         open what is piped in as an editor, the way
+                                   'code -' does; it lands in Scratch, like any
+                                   other file no open workspace contains
+  devhub -w|--wait <file>          open the file and do not return until its
+                                   editor is closed again, so that this can be
+                                   your EDITOR; closing it puts DevHub back
+                                   where it was; combines with - and --goto
+  devhub -g|--goto <file:line[:col]>
+                                   open the file the same way and put the
+                                   cursor on that line and column
+  devhub --agent <profile> [-- <args>...]
+                                   add an agent with that profile to the
+                                   workspace containing the current directory
+                                   and select it; <args> are appended to the
+                                   profile's own arguments
+
+extensions:
+  devhub --install-extension <ext-id|path-to-vsix>
+                                   install an extension from the gallery, or
+                                   from a .vsix file; repeat the option to
+                                   install several
+  devhub --uninstall-extension <ext-id>
+                                   uninstall an extension; repeat for several
+  --force                          install over an extension that is already
+                                   there, and uninstall one the user marked as
+                                   built in
+  devhub --list-extensions         list the installed extensions, one per line
+  --show-versions                  list them as <ext-id>@<version>
+
+  devhub -v|--version              print DevHub's version, VS Code's, and the
+                                   commit it was built from
+  devhub --metrics                 print, as JSON, what the running DevHub is
+                                   costing: every process's CPU and memory,
+                                   which workbench each renderer is showing,
+                                   and how often DevHub polls. Take two
+                                   readings a known time apart to get a rate.
+  devhub --tell <subcommand> ...   ask DevHub to do what its window does:
+                                   list workspaces and agents, open a
+                                   workspace, start an agent, hand it an
+                                   Issue, read, message and answer agents.
+                                   'devhub --tell help' lists them all
+  devhub -h|--help                 show this text
+
+The command talks to DevHub over its control socket. If DevHub is not running
+it is started first, and the command then does what it was asked.

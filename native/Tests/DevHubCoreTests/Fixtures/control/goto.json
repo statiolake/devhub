@@ -1,0 +1,158 @@
+[
+ {
+  "spec": "src/main.ts:42:7",
+  "result": {
+   "path": "src/main.ts",
+   "position": {
+    "line": 42,
+    "column": 7
+   }
+  }
+ },
+ {
+  "spec": "src/main.ts:42",
+  "result": {
+   "path": "src/main.ts",
+   "position": {
+    "line": 42,
+    "column": 1
+   }
+  }
+ },
+ {
+  "spec": "src/main.ts",
+  "result": {
+   "path": "src/main.ts"
+  }
+ },
+ {
+  "spec": "/w/odd:name/a.ts",
+  "result": {
+   "path": "/w/odd:name/a.ts"
+  }
+ },
+ {
+  "spec": "/w/odd:name/a.ts:3:4",
+  "result": {
+   "path": "/w/odd:name/a.ts",
+   "position": {
+    "line": 3,
+    "column": 4
+   }
+  }
+ },
+ {
+  "spec": "a.ts:",
+  "error": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7."
+ },
+ {
+  "spec": "a.ts:0",
+  "error": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7."
+ },
+ {
+  "spec": "a.ts:-3",
+  "error": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7."
+ },
+ {
+  "spec": "a.ts:2.5",
+  "error": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7."
+ },
+ {
+  "spec": "a.ts:3:0",
+  "error": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7."
+ },
+ {
+  "spec": "12",
+  "error": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7."
+ },
+ {
+  "spec": "a.ts:1:2:3",
+  "result": {
+   "path": "a.ts",
+   "position": {
+    "line": 1,
+    "column": 2
+   }
+  }
+ },
+ {
+  "spec": "a.ts:+4",
+  "result": {
+   "path": "a.ts",
+   "position": {
+    "line": 4,
+    "column": 1
+   }
+  }
+ },
+ {
+  "spec": "a.ts:.5",
+  "error": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7."
+ },
+ {
+  "spec": "a.ts:5.",
+  "result": {
+   "path": "a.ts",
+   "position": {
+    "line": 5,
+    "column": 1
+   }
+  }
+ },
+ {
+  "spec": "a.ts:0b11",
+  "result": {
+   "path": "a.ts",
+   "position": {
+    "line": 3,
+    "column": 1
+   }
+  }
+ },
+ {
+  "spec": "a.ts:0o7",
+  "result": {
+   "path": "a.ts",
+   "position": {
+    "line": 7,
+    "column": 1
+   }
+  }
+ },
+ {
+  "spec": "a.ts:1_000",
+  "result": {
+   "path": "a.ts:1_000"
+  }
+ },
+ {
+  "spec": ":3",
+  "error": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7."
+ },
+ {
+  "spec": "a:b:c",
+  "result": {
+   "path": "a:b:c"
+  }
+ },
+ {
+  "spec": "a.ts:007",
+  "result": {
+   "path": "a.ts",
+   "position": {
+    "line": 7,
+    "column": 1
+   }
+  }
+ },
+ {
+  "spec": "a.ts:\t8",
+  "result": {
+   "path": "a.ts",
+   "position": {
+    "line": 8,
+    "column": 1
+   }
+  }
+ }
+]

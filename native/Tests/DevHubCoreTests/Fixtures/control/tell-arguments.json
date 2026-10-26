@@ -1,0 +1,788 @@
+[
+ {
+  "argv": [],
+  "command": "{\"verb\":\"help\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "help"
+  ],
+  "command": "{\"verb\":\"help\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "--help"
+  ],
+  "command": "{\"verb\":\"help\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "-h"
+  ],
+  "command": "{\"verb\":\"help\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "--json",
+   "agents"
+  ],
+  "command": "{\"verb\":\"agents\"}",
+  "json": true
+ },
+ {
+  "argv": [
+   "agents"
+  ],
+  "command": "{\"verb\":\"agents\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "--json",
+   "--json",
+   "workspaces"
+  ],
+  "command": "{\"verb\":\"workspaces\"}",
+  "json": true
+ },
+ {
+  "argv": [
+   "workspaces"
+  ],
+  "command": "{\"verb\":\"workspaces\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "workspaces",
+   "x"
+  ],
+  "invalid": "unexpected \"x\"."
+ },
+ {
+  "argv": [
+   "agents",
+   "--workspace",
+   "scratch"
+  ],
+  "command": "{\"verb\":\"agents\",\"workspace\":\"scratch\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agents",
+   "--workspace=~/src/app"
+  ],
+  "command": "{\"verb\":\"agents\",\"workspace\":\"~/src/app\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agents",
+   "--workspace"
+  ],
+  "invalid": "--workspace needs a value."
+ },
+ {
+  "argv": [
+   "agents",
+   "--workspace",
+   "a",
+   "--workspace",
+   "b"
+  ],
+  "invalid": "--workspace is given more than once."
+ },
+ {
+  "argv": [
+   "commands"
+  ],
+  "command": "{\"verb\":\"commands\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "workspace",
+   "open",
+   "~/src/app"
+  ],
+  "command": "{\"verb\":\"workspace-open\",\"path\":\"~/src/app\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "workspace",
+   "open",
+   ".",
+   "--worktree",
+   "12-fix-login"
+  ],
+  "command": "{\"verb\":\"workspace-open\",\"path\":\".\",\"worktree\":\"12-fix-login\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "workspace",
+   "close",
+   "."
+  ],
+  "invalid": "workspace takes one subcommand: open."
+ },
+ {
+  "argv": [
+   "workspace",
+   "open"
+  ],
+  "invalid": "missing <path>."
+ },
+ {
+  "argv": [
+   "workspace"
+  ],
+  "invalid": "workspace takes one subcommand: open."
+ },
+ {
+  "argv": [
+   "workspace",
+   "open",
+   "a",
+   "b"
+  ],
+  "invalid": "unexpected \"b\"."
+ },
+ {
+  "argv": [
+   "agent",
+   "new",
+   "--profile",
+   "claude"
+  ],
+  "command": "{\"verb\":\"agent-new\",\"profile\":\"claude\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "new",
+   "--workspace",
+   "w1",
+   "--profile",
+   "claude",
+   "--name",
+   "API fix",
+   "--prompt",
+   "fix it",
+   "--gui"
+  ],
+  "command": "{\"verb\":\"agent-new\",\"workspace\":\"w1\",\"profile\":\"claude\",\"name\":\"API fix\",\"prompt\":\"fix it\",\"presentation\":\"gui\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "new",
+   "--workspace",
+   "w",
+   "--gui",
+   "--tui"
+  ],
+  "invalid": "--gui and --tui ask for different things."
+ },
+ {
+  "argv": [
+   "agent",
+   "new",
+   "--tui"
+  ],
+  "command": "{\"verb\":\"agent-new\",\"presentation\":\"tui\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "new",
+   "extra"
+  ],
+  "invalid": "unexpected \"extra\"."
+ },
+ {
+  "argv": [
+   "agent",
+   "new",
+   "--gui=yes"
+  ],
+  "invalid": "--gui=yes is not an option here."
+ },
+ {
+  "argv": [
+   "issue",
+   "assign",
+   "https://github.com/o/r/issues/123",
+   "--branch",
+   "123-fix-login-timeout",
+   "--prompt-extra",
+   "keep it small"
+  ],
+  "command": "{\"verb\":\"issue-assign\",\"url\":\"https://github.com/o/r/issues/123\",\"place\":\"worktree\",\"editorOnly\":false,\"branch\":\"123-fix-login-timeout\",\"prompt\":\"keep it small\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "issue",
+   "assign",
+   "u",
+   "--root",
+   "--editor-only",
+   "--repo",
+   "~/r"
+  ],
+  "command": "{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"root\",\"editorOnly\":true,\"repo\":\"~/r\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "issue",
+   "assign",
+   "u",
+   "--root",
+   "--worktree"
+  ],
+  "invalid": "--root and --worktree ask for different things."
+ },
+ {
+  "argv": [
+   "issue",
+   "assign"
+  ],
+  "invalid": "missing <url>."
+ },
+ {
+  "argv": [
+   "issue",
+   "close",
+   "u"
+  ],
+  "invalid": "issue takes one subcommand: assign."
+ },
+ {
+  "argv": [
+   "issue",
+   "assign",
+   "u",
+   "--prompt",
+   "a",
+   "--prompt-extra",
+   "b",
+   "--action",
+   "fix",
+   "--profile",
+   "p",
+   "--gui"
+  ],
+  "command": "{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"worktree\",\"editorOnly\":false,\"profile\":\"p\",\"action\":\"fix\",\"prompt\":\"a\",\"presentation\":\"gui\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "read",
+   "a1",
+   "--last",
+   "5",
+   "--since",
+   "e9"
+  ],
+  "command": "{\"verb\":\"agent-read\",\"agent\":\"a1\",\"last\":5,\"since\":\"e9\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "read",
+   "a1"
+  ],
+  "command": "{\"verb\":\"agent-read\",\"agent\":\"a1\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "read",
+   "a1",
+   "--last",
+   "x"
+  ],
+  "invalid": "--last takes a whole number."
+ },
+ {
+  "argv": [
+   "agent",
+   "read",
+   "a1",
+   "--last",
+   "0"
+  ],
+  "invalid": "--last takes a number from 1 to 1000."
+ },
+ {
+  "argv": [
+   "agent",
+   "read",
+   "a1",
+   "--last",
+   "1001"
+  ],
+  "invalid": "--last takes a number from 1 to 1000."
+ },
+ {
+  "argv": [
+   "agent",
+   "read",
+   "a1",
+   "--last",
+   "99999999999999999999"
+  ],
+  "invalid": "--last takes a number from 1 to 1000."
+ },
+ {
+  "argv": [
+   "agent",
+   "send",
+   "a1",
+   "please",
+   "--also",
+   "this"
+  ],
+  "command": "{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"please --also this\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "send",
+   "a1",
+   "-"
+  ],
+  "command": "{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"-\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "send",
+   "a1"
+  ],
+  "invalid": "missing <text> (or - for stdin)."
+ },
+ {
+  "argv": [
+   "agent",
+   "send"
+  ],
+  "invalid": "missing <agent>."
+ },
+ {
+  "argv": [
+   "agent",
+   "interrupt",
+   "a1"
+  ],
+  "command": "{\"verb\":\"agent-interrupt\",\"agent\":\"a1\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "requests",
+   "a1"
+  ],
+  "command": "{\"verb\":\"agent-requests\",\"agent\":\"a1\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "requests"
+  ],
+  "invalid": "missing <agent>."
+ },
+ {
+  "argv": [
+   "agent",
+   "wait",
+   "a1"
+  ],
+  "command": "{\"verb\":\"agent-wait\",\"agent\":\"a1\",\"until\":\"any\",\"timeoutSeconds\":300}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "wait",
+   "a1",
+   "--until",
+   "idle",
+   "--timeout",
+   "30"
+  ],
+  "command": "{\"verb\":\"agent-wait\",\"agent\":\"a1\",\"until\":\"idle\",\"timeoutSeconds\":30}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "wait",
+   "a1",
+   "--until",
+   "soon"
+  ],
+  "invalid": "--until takes idle, waiting or any."
+ },
+ {
+  "argv": [
+   "agent",
+   "wait",
+   "a1",
+   "--timeout",
+   "9999"
+  ],
+  "invalid": "--timeout takes a number from 1 to 600."
+ },
+ {
+  "argv": [
+   "agent",
+   "answer",
+   "a1",
+   "r1",
+   "--option",
+   "2",
+   "--option",
+   "3"
+  ],
+  "command": "{\"verb\":\"agent-answer\",\"agent\":\"a1\",\"request\":\"r1\",\"options\":[2,3]}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "answer",
+   "a1",
+   "r1",
+   "--text",
+   "Postgres"
+  ],
+  "command": "{\"verb\":\"agent-answer\",\"agent\":\"a1\",\"request\":\"r1\",\"options\":[],\"text\":\"Postgres\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "agent",
+   "answer",
+   "a1",
+   "r1"
+  ],
+  "invalid": "agent answer needs --option <n> or --text <t>."
+ },
+ {
+  "argv": [
+   "agent",
+   "answer",
+   "a1",
+   "r1",
+   "--allow"
+  ],
+  "invalid": "permission prompts are answered in DevHub, by the person, and never from the command line."
+ },
+ {
+  "argv": [
+   "agent",
+   "answer",
+   "a1",
+   "r1",
+   "--deny"
+  ],
+  "invalid": "permission prompts are answered in DevHub, by the person, and never from the command line."
+ },
+ {
+  "argv": [
+   "agent",
+   "answer",
+   "a1"
+  ],
+  "invalid": "missing <request>."
+ },
+ {
+  "argv": [
+   "agent",
+   "answer",
+   "a1",
+   "r1",
+   "--option",
+   "101"
+  ],
+  "invalid": "--option takes a number from 1 to 100."
+ },
+ {
+  "argv": [
+   "launch-missiles"
+  ],
+  "invalid": "\"launch-missiles\" is not a --tell subcommand. Run 'devhub --tell help'."
+ },
+ {
+  "argv": [
+   "agents",
+   "--bogus"
+  ],
+  "invalid": "--bogus is not an option here."
+ },
+ {
+  "argv": [
+   "agents",
+   "extra"
+  ],
+  "invalid": "unexpected \"extra\"."
+ },
+ {
+  "argv": [
+   "agent",
+   "dance"
+  ],
+  "invalid": "agent takes: new, read, send, interrupt, requests, answer, wait."
+ },
+ {
+  "argv": [
+   "agent"
+  ],
+  "invalid": "agent takes: new, read, send, interrupt, requests, answer, wait."
+ },
+ {
+  "argv": [
+   "run",
+   "next_agent"
+  ],
+  "command": "{\"verb\":\"run\",\"command\":\"next_agent\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "run"
+  ],
+  "invalid": "missing <command-id>."
+ },
+ {
+  "argv": [
+   "focus",
+   "a1"
+  ],
+  "command": "{\"verb\":\"focus\",\"target\":\"a1\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "notify",
+   "all",
+   "done"
+  ],
+  "command": "{\"verb\":\"notify\",\"text\":\"all done\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "notify"
+  ],
+  "invalid": "missing <text>."
+ },
+ {
+  "argv": [
+   "terminal",
+   "open"
+  ],
+  "command": "{\"verb\":\"terminal-open\",\"focus\":false}",
+  "json": false
+ },
+ {
+  "argv": [
+   "terminal",
+   "open",
+   "--command",
+   "npm run dev",
+   "--focus"
+  ],
+  "command": "{\"verb\":\"terminal-open\",\"focus\":true,\"command\":\"npm run dev\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "terminal",
+   "open",
+   "--split",
+   "x"
+  ],
+  "invalid": "--split is not an option here."
+ },
+ {
+  "argv": [
+   "terminal",
+   "open",
+   "--cwd",
+   "x"
+  ],
+  "invalid": "--cwd is not an option here."
+ },
+ {
+  "argv": [
+   "terminal",
+   "open",
+   "--below"
+  ],
+  "invalid": "--below is not an option here."
+ },
+ {
+  "argv": [
+   "terminal",
+   "resolve",
+   "right"
+  ],
+  "invalid": "terminal takes: open, status (or show), close, panes, bring. It is always your own terminal, shown with your pane."
+ },
+ {
+  "argv": [
+   "terminal",
+   "list"
+  ],
+  "invalid": "terminal takes: open, status (or show), close, panes, bring. It is always your own terminal, shown with your pane."
+ },
+ {
+  "argv": [
+   "terminal",
+   "close",
+   "Tests"
+  ],
+  "invalid": "unexpected \"Tests\"."
+ },
+ {
+  "argv": [
+   "terminal",
+   "status"
+  ],
+  "command": "{\"verb\":\"terminal-status\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "terminal",
+   "show"
+  ],
+  "command": "{\"verb\":\"terminal-status\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "terminal",
+   "close"
+  ],
+  "command": "{\"verb\":\"terminal-close\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "terminal",
+   "panes"
+  ],
+  "command": "{\"verb\":\"terminal-panes\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "terminal",
+   "bring",
+   "%7"
+  ],
+  "command": "{\"verb\":\"terminal-bring\",\"pane\":\"%7\",\"focus\":false}",
+  "json": false
+ },
+ {
+  "argv": [
+   "terminal",
+   "bring",
+   "%7",
+   "--focus"
+  ],
+  "command": "{\"verb\":\"terminal-bring\",\"pane\":\"%7\",\"focus\":true}",
+  "json": false
+ },
+ {
+  "argv": [
+   "terminal",
+   "bring"
+  ],
+  "invalid": "missing <pane>."
+ },
+ {
+  "argv": [
+   "terminal",
+   "bring",
+   "ws-1:0.1"
+  ],
+  "invalid": "bring takes a tmux pane id, like %7: see 'devhub --tell terminal panes'."
+ },
+ {
+  "argv": [
+   "terminal"
+  ],
+  "invalid": "terminal takes: open, status (or show), close, panes, bring. It is always your own terminal, shown with your pane."
+ },
+ {
+  "argv": [
+   "agents",
+   "--",
+   "x"
+  ],
+  "invalid": "unexpected \"x\"."
+ },
+ {
+  "argv": [
+   "agents",
+   "--workspace",
+   "--"
+  ],
+  "command": "{\"verb\":\"agents\",\"workspace\":\"--\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "notify",
+   "--json",
+   "x"
+  ],
+  "command": "{\"verb\":\"notify\",\"text\":\"--json x\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "focus",
+   "--",
+   "--weird"
+  ],
+  "command": "{\"verb\":\"focus\",\"target\":\"--weird\"}",
+  "json": false
+ },
+ {
+  "argv": [
+   "run",
+   "\"quoted\"",
+   "x"
+  ],
+  "invalid": "unexpected \"x\"."
+ },
+ {
+  "argv": [
+   "日本"
+  ],
+  "invalid": "\"日本\" is not a --tell subcommand. Run 'devhub --tell help'."
+ }
+]

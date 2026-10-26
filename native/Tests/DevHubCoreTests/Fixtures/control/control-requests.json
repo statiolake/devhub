@@ -1,0 +1,294 @@
+[
+ {
+  "line": "{\"kind\":\"ping\"}",
+  "request": "{\"kind\":\"ping\"}"
+ },
+ {
+  "line": "{\"kind\":\"activate\"}",
+  "request": "{\"kind\":\"activate\"}"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\"}",
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/srv/app/f.txt\",\"cwd\":\"/srv/app\",\"machine\":\"ssh:build-host\"}",
+  "request": "{\"kind\":\"open\",\"path\":\"/srv/app/f.txt\",\"cwd\":\"/srv/app\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"machine\":7}",
+  "error": "machine must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"origin\":\"local\\tw\\tnone\",\"position\":{\"line\":42,\"column\":7},\"waitMarkerPath\":\"/tmp/m\"}",
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"origin\":\"local\\tw\\tnone\",\"position\":{\"line\":42,\"column\":7},\"waitMarkerPath\":\"/tmp/m\"}"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/COMMIT_EDITMSG\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}",
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/COMMIT_EDITMSG\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"marker\"}",
+  "error": "waitMarkerPath must be an absolute path"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"position\":{\"line\":0,\"column\":1}}",
+  "error": "line must be a whole number from 1 up"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"position\":{\"line\":1,\"column\":0}}",
+  "error": "column must be a whole number from 1 up"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"position\":{\"line\":2.5,\"column\":1}}",
+  "error": "line must be a whole number from 1 up"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"position\":{\"line\":\"3\",\"column\":1}}",
+  "error": "line must be a whole number from 1 up"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/work/a/f.txt\",\"cwd\":\"/work/a\",\"position\":3}",
+  "error": "position must be an object"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"f.txt\",\"cwd\":\"/work\"}",
+  "error": "path must be an absolute path"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"/a\\u0000b\",\"cwd\":\"/work\"}",
+  "error": "path must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"path\":\"\",\"cwd\":\"/work\"}",
+  "error": "path must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"open\",\"cwd\":\"/work\"}",
+  "error": "path must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"wait-ended\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}",
+  "request": "{\"kind\":\"wait-ended\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "line": "{\"kind\":\"wait-ended\",\"waitMarkerPath\":\"marker\"}",
+  "error": "waitMarkerPath must be an absolute path"
+ },
+ {
+  "line": "{\"kind\":\"install-extensions\",\"targets\":[\"publisher.name\",\"./a.vsix\"],\"force\":true,\"cwd\":\"/work/a\"}",
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"publisher.name\",\"./a.vsix\"],\"force\":true,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "line": "{\"kind\":\"install-extensions\",\"targets\":[],\"force\":false,\"cwd\":\"/work\"}",
+  "error": "targets must be a non-empty array of non-empty strings"
+ },
+ {
+  "line": "{\"kind\":\"install-extensions\",\"targets\":[\"a\",\"\"],\"force\":false,\"cwd\":\"/work\"}",
+  "error": "targets must be a non-empty array of non-empty strings"
+ },
+ {
+  "line": "{\"kind\":\"install-extensions\",\"targets\":[\"a\"],\"force\":\"yes\",\"cwd\":\"/work\"}",
+  "error": "force must be a boolean"
+ },
+ {
+  "line": "{\"kind\":\"list-extensions\",\"showVersions\":true}",
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":true}"
+ },
+ {
+  "line": "{\"kind\":\"list-extensions\",\"showVersions\":\"yes\"}",
+  "error": "showVersions must be a boolean"
+ },
+ {
+  "line": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"publisher.name\"],\"force\":false}",
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"publisher.name\"],\"force\":false}"
+ },
+ {
+  "line": "{\"kind\":\"uninstall-extensions\",\"ids\":[1],\"force\":false}",
+  "error": "ids must be an array of strings"
+ },
+ {
+  "line": "{\"kind\":\"version\"}",
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "line": "{\"kind\":\"metrics\"}",
+  "request": "{\"kind\":\"metrics\"}"
+ },
+ {
+  "line": "{\"kind\":\"install-cli\"}",
+  "request": "{\"kind\":\"install-cli\"}"
+ },
+ {
+  "line": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\"},\"origin\":\"local\\tscratch\\tA1\"}",
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "line": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-answer\",\"agent\":\"a\",\"request\":\"r\",\"options\":[1]}}",
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-answer\",\"agent\":\"a\",\"request\":\"r\",\"options\":[1]}}"
+ },
+ {
+  "line": "{\"kind\":\"tell\",\"command\":{\"verb\":\"rm -rf\"}}",
+  "error": "unknown tell command: rm -rf"
+ },
+ {
+  "line": "{\"kind\":\"tell\"}",
+  "error": "a tell command must be a JSON object"
+ },
+ {
+  "line": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\"},\"machine\":\"\"}",
+  "error": "machine must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\"},\"machine\":\"ssh:box\",\"origin\":\"ssh:box\\tw\\tA\"}",
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\"},\"origin\":\"ssh:box\\tw\\tA\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "line": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[\"--help\",\"--\",\"-x\"],\"cwd\":\"/work/a\"}",
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[\"--help\",\"--\",\"-x\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "line": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":\"x\",\"cwd\":\"/work/a\"}",
+  "error": "args must be an array of strings"
+ },
+ {
+  "line": "{\"kind\":\"add-agent\",\"profileId\":\"\",\"args\":[],\"cwd\":\"/work/a\"}",
+  "error": "profileId must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"resolve-remote\",\"machine\":\"ssh:box\",\"attempt\":3}",
+  "request": "{\"kind\":\"resolve-remote\",\"machine\":\"ssh:box\",\"attempt\":3}"
+ },
+ {
+  "line": "{\"kind\":\"resolve-remote\",\"machine\":\"ssh:box\"}",
+  "error": "attempt must be a whole number from 0 up"
+ },
+ {
+  "line": "{\"kind\":\"resolve-remote\",\"attempt\":1}",
+  "error": "machine must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"resolve-remote\",\"machine\":\"ssh:box\",\"attempt\":-1}",
+  "error": "attempt must be a whole number from 0 up"
+ },
+ {
+  "line": "{\"kind\":\"terminal-profile\",\"machine\":\"local\",\"root\":\"/work/a\"}",
+  "request": "{\"kind\":\"terminal-profile\",\"machine\":\"local\",\"root\":\"/work/a\"}"
+ },
+ {
+  "line": "{\"kind\":\"terminal-profile\",\"machine\":\"local\",\"root\":null}",
+  "request": "{\"kind\":\"terminal-profile\",\"machine\":\"local\",\"root\":null}"
+ },
+ {
+  "line": "{\"kind\":\"terminal-profile\",\"root\":\"/work/a\"}",
+  "error": "machine must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"terminal-profile\",\"machine\":\"local\",\"root\":\"/work/a\",\"workspace\":\"w1\"}",
+  "request": "{\"kind\":\"terminal-profile\",\"machine\":\"local\",\"root\":\"/work/a\",\"workspace\":\"w1\"}"
+ },
+ {
+  "line": "{\"kind\":\"terminal-profile\",\"machine\":\"local\"}",
+  "error": "root must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"terminal-profile\",\"machine\":\"local\",\"root\":\"rel\"}",
+  "error": "root must be an absolute path"
+ },
+ {
+  "line": "{\"kind\":\"dev-container-configs\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/work/a\",\"fsPath\":\"/work/a\"}}",
+  "request": "{\"kind\":\"dev-container-configs\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/work/a\",\"fsPath\":\"/work/a\"}}"
+ },
+ {
+  "line": "{\"kind\":\"dev-container-configs\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/work/a\"}}",
+  "error": "window.fsPath must be a string"
+ },
+ {
+  "line": "{\"kind\":\"dev-container-configs\"}",
+  "error": "window must be the window's folder URI"
+ },
+ {
+  "line": "{\"kind\":\"dev-container-build-log\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"},\"configPath\":\"/w/.devcontainer/devcontainer.json\"}",
+  "request": "{\"kind\":\"dev-container-build-log\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"},\"configPath\":\"/w/.devcontainer/devcontainer.json\"}"
+ },
+ {
+  "line": "{\"kind\":\"dev-container-build-log\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"}}",
+  "error": "configPath must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"reattach-editor\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"},\"to\":{\"kind\":\"host\"}}",
+  "request": "{\"kind\":\"reattach-editor\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"},\"to\":{\"kind\":\"host\"}}"
+ },
+ {
+  "line": "{\"kind\":\"reattach-editor\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"},\"to\":{\"configPath\":\"/w/d.json\"},\"rebuild\":\"no-cache\"}",
+  "request": "{\"kind\":\"reattach-editor\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"},\"to\":{\"configPath\":\"/w/d.json\"},\"rebuild\":\"no-cache\"}"
+ },
+ {
+  "line": "{\"kind\":\"reattach-editor\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"}}",
+  "error": "to must say where the editor goes"
+ },
+ {
+  "line": "{\"kind\":\"reattach-editor\",\"window\":{\"scheme\":\"file\",\"authority\":\"\",\"path\":\"/w\",\"fsPath\":\"/w\"},\"to\":{\"kind\":\"host\"},\"rebuild\":\"always\"}",
+  "error": "rebuild must be \"cache\" or \"no-cache\""
+ },
+ {
+  "line": "{\"kind\":\"forward-port\",\"machine\":\"container:x\",\"host\":\"localhost\",\"port\":3000}",
+  "request": "{\"kind\":\"forward-port\",\"machine\":\"container:x\",\"host\":\"localhost\",\"port\":3000}"
+ },
+ {
+  "line": "{\"kind\":\"forward-port\",\"machine\":\"container:x\",\"host\":\"localhost\",\"port\":3000,\"localPort\":0,\"requireLocalPort\":true}",
+  "request": "{\"kind\":\"forward-port\",\"machine\":\"container:x\",\"host\":\"localhost\",\"port\":3000,\"requireLocalPort\":true}"
+ },
+ {
+  "line": "{\"kind\":\"forward-port\",\"machine\":\"container:x\",\"host\":\"localhost\",\"port\":3000,\"localPort\":4000}",
+  "request": "{\"kind\":\"forward-port\",\"machine\":\"container:x\",\"host\":\"localhost\",\"port\":3000,\"localPort\":4000}"
+ },
+ {
+  "line": "{\"kind\":\"forward-port\",\"machine\":\"container:x\",\"host\":\"localhost\",\"port\":70000}",
+  "error": "port must be a port number"
+ },
+ {
+  "line": "{\"kind\":\"dev-container-ports\",\"machine\":\"container:x\"}",
+  "request": "{\"kind\":\"dev-container-ports\",\"machine\":\"container:x\"}"
+ },
+ {
+  "line": "{\"kind\":\"dev-container-ports\"}",
+  "error": "machine must be a non-empty string"
+ },
+ {
+  "line": "{\"kind\":\"eval\"}",
+  "error": "unknown control request: eval"
+ },
+ {
+  "line": "{}",
+  "error": "unknown control request: undefined"
+ },
+ {
+  "line": "[]",
+  "error": "unknown control request: undefined"
+ },
+ {
+  "line": "null",
+  "error": "a control request must be a JSON object"
+ },
+ {
+  "line": "5",
+  "error": "a control request must be a JSON object"
+ },
+ {
+  "line": "\"x\"",
+  "error": "a control request must be a JSON object"
+ },
+ {
+  "line": "not json",
+  "error": "<json>"
+ },
+ {
+  "line": "{\"kind\":\"ping\"} trailing",
+  "error": "<json>"
+ },
+ {
+  "line": "{\"kind\":\"ping\",\"kind\":\"activate\"}",
+  "request": "{\"kind\":\"activate\"}"
+ }
+]

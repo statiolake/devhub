@@ -1,0 +1,4959 @@
+[
+ {
+  "name": "workspaces",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "workspaces"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "help"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "* w1  app  /src/app  (branch 12-fix, 1 agent)\n  scratch-id  Scratch  /scratch/today  (2 agents)",
+    "data": "{\"workspaces\":[{\"id\":\"w1\",\"name\":\"app\",\"root\":\"/src/app\",\"machine\":\"local\",\"scratch\":false,\"selected\":true,\"branch\":\"12-fix\",\"agents\":[\"aaaa1111-0000\"]},{\"id\":\"scratch-id\",\"name\":\"Scratch\",\"root\":\"/scratch/today\",\"machine\":\"local\",\"scratch\":true,\"selected\":false,\"agents\":[\"bbbb2222-0000\",\"cccc3333-0000\"]}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "devhub --tell — ask the running DevHub to do what its window does.\n\nusage: devhub --tell [--json] <subcommand> [arguments]\n\n  --json  print the answer as JSON (for scripts and agents) instead of text\n\nworkspaces\n  workspaces                       list open workspaces: id, name, path,\n                                   machine, branch, worktree, Issue\n  workspace open <path> [--worktree <branch>]\n                                   open a folder as a workspace (Cmd+Q f);\n                                   with --worktree, open (making it if needed)\n                                   the worktree of <branch> in the clone at\n                                   <path>; the branch must name an Issue\n                                   number, like 123-fix-login\n\nagents\n  agents [--workspace <w>]         list agents: id, name, kind, status,\n                                   unread, open requests, activity\n  agent new [--workspace <w>] [--profile <p>] [--name <n>] [--gui|--tui]\n            [--prompt <text>|-]    start an agent (Cmd+Q c) and, with\n                                   --prompt, tell it something once it is up;\n                                   without --workspace, in the workspace of\n                                   the terminal or agent asking\n  agent read <a> [--last <n>] [--since <cursor>]\n                                   the transcript of a GUI agent, as text;\n                                   prints a cursor to pass as --since\n  agent send <a> <text>|-          say something to an agent; queued while\n                                   it is busy, like the composer does\n  agent interrupt <a>              stop the agent's current turn\n  agent requests <a>               the questions it is waiting on, with ids\n                                   (permission prompts are listed, but are\n                                   answered in DevHub only)\n  agent answer <a> <request> [--option <n>]... [--text <t>]\n                                   answer an AskUserQuestion-style question\n  agent wait <a> [--until idle|waiting|any] [--timeout <seconds>]\n                                   return when the agent is idle, waiting on\n                                   somebody, or either (default: any)\n\nissues\n  issue assign <url> [--repo <path>] [--branch <name>] [--root]\n               [--profile <p>] [--action <id>] [--prompt <text>|-]\n               [--editor-only] [--gui|--tui]\n                                   hand an Issue or pull request to a new\n                                   agent (Cmd+Q i), in a worktree of\n                                   <branch> (default: the Issue's own\n                                   feature/<n>-wip)\n\nterminal (your own: one per agent, beside your pane; hidden with the editor alone)\n  terminal open [--command <cmd>] [--focus]\n                                   open your terminal, or show it if it is\n                                   already open (the same one every time: a\n                                   tmux session of its own, in your workspace,\n                                   on its machine); prints the tmux handle.\n                                   --command is typed into it only when this\n                                   starts it\n  terminal status                  your terminal: open/visible/focused, and the\n                                   tmux handle with every pane in it (the\n                                   person may have split it), each with where\n                                   it is (top-left, bottom-right, ...)\n  terminal close                   close it, and its session\n  terminal panes                   the panes of your workspace's editor\n                                   terminals: id, window, what runs in front\n                                   (its command line, e.g. ssh host), cwd,\n                                   title\n  terminal bring <pane> [--focus]  move one of them (by id, %N) into your\n                                   terminal, still running: it opens your\n                                   terminal with it, or adds it as a split.\n                                   An editor terminal left with no pane ends\n\napp\n  commands                         list the command palette's commands\n  run <command-id>                 run one of them, exactly as the palette\n                                   does (it asks first wherever the window\n                                   would)\n  focus <agent|workspace>          select it in DevHub\n  notify <text>                    show a notification in DevHub\n\n<w> is a workspace id, its folder, its name, or \"scratch\". A folder is a\nfolder on the machine devhub runs on: on an SSH host, the host's.\n<a> is an agent id (or a unique prefix of one) or its name.",
+    "data": "{\"usage\":\"devhub --tell — ask the running DevHub to do what its window does.\\n\\nusage: devhub --tell [--json] <subcommand> [arguments]\\n\\n  --json  print the answer as JSON (for scripts and agents) instead of text\\n\\nworkspaces\\n  workspaces                       list open workspaces: id, name, path,\\n                                   machine, branch, worktree, Issue\\n  workspace open <path> [--worktree <branch>]\\n                                   open a folder as a workspace (Cmd+Q f);\\n                                   with --worktree, open (making it if needed)\\n                                   the worktree of <branch> in the clone at\\n                                   <path>; the branch must name an Issue\\n                                   number, like 123-fix-login\\n\\nagents\\n  agents [--workspace <w>]         list agents: id, name, kind, status,\\n                                   unread, open requests, activity\\n  agent new [--workspace <w>] [--profile <p>] [--name <n>] [--gui|--tui]\\n            [--prompt <text>|-]    start an agent (Cmd+Q c) and, with\\n                                   --prompt, tell it something once it is up;\\n                                   without --workspace, in the workspace of\\n                                   the terminal or agent asking\\n  agent read <a> [--last <n>] [--since <cursor>]\\n                                   the transcript of a GUI agent, as text;\\n                                   prints a cursor to pass as --since\\n  agent send <a> <text>|-          say something to an agent; queued while\\n                                   it is busy, like the composer does\\n  agent interrupt <a>              stop the agent's current turn\\n  agent requests <a>               the questions it is waiting on, with ids\\n                                   (permission prompts are listed, but are\\n                                   answered in DevHub only)\\n  agent answer <a> <request> [--option <n>]... [--text <t>]\\n                                   answer an AskUserQuestion-style question\\n  agent wait <a> [--until idle|waiting|any] [--timeout <seconds>]\\n                                   return when the agent is idle, waiting on\\n                                   somebody, or either (default: any)\\n\\nissues\\n  issue assign <url> [--repo <path>] [--branch <name>] [--root]\\n               [--profile <p>] [--action <id>] [--prompt <text>|-]\\n               [--editor-only] [--gui|--tui]\\n                                   hand an Issue or pull request to a new\\n                                   agent (Cmd+Q i), in a worktree of\\n                                   <branch> (default: the Issue's own\\n                                   feature/<n>-wip)\\n\\nterminal (your own: one per agent, beside your pane; hidden with the editor alone)\\n  terminal open [--command <cmd>] [--focus]\\n                                   open your terminal, or show it if it is\\n                                   already open (the same one every time: a\\n                                   tmux session of its own, in your workspace,\\n                                   on its machine); prints the tmux handle.\\n                                   --command is typed into it only when this\\n                                   starts it\\n  terminal status                  your terminal: open/visible/focused, and the\\n                                   tmux handle with every pane in it (the\\n                                   person may have split it), each with where\\n                                   it is (top-left, bottom-right, ...)\\n  terminal close                   close it, and its session\\n  terminal panes                   the panes of your workspace's editor\\n                                   terminals: id, window, what runs in front\\n                                   (its command line, e.g. ssh host), cwd,\\n                                   title\\n  terminal bring <pane> [--focus]  move one of them (by id, %N) into your\\n                                   terminal, still running: it opens your\\n                                   terminal with it, or adds it as a split.\\n                                   An editor terminal left with no pane ends\\n\\napp\\n  commands                         list the command palette's commands\\n  run <command-id>                 run one of them, exactly as the palette\\n                                   does (it asks first wherever the window\\n                                   would)\\n  focus <agent|workspace>          select it in DevHub\\n  notify <text>                    show a notification in DevHub\\n\\n<w> is a workspace id, its folder, its name, or \\\"scratch\\\". A folder is a\\nfolder on the machine devhub runs on: on an SSH host, the host's.\\n<a> is an agent id (or a unique prefix of one) or its name.\"}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "agents",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "scratch"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "nope"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "/src/app/"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "scra"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "scratch-id"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "aaaa1111-0000  Claude 1  claude/gui  working  2 request(s)  in app\nbbbb2222-0000  Coordinator  claude/gui  working  in Scratch\ncccc3333-0000  Shell  shell/tui  idle  in Scratch",
+    "data": "{\"agents\":[{\"id\":\"aaaa1111-0000\",\"name\":\"Claude 1\",\"workspaceId\":\"w1\",\"profileId\":\"claude\",\"kind\":\"claude\",\"presentation\":\"gui\",\"status\":\"working\",\"workspace\":\"app\",\"requests\":2},{\"id\":\"bbbb2222-0000\",\"name\":\"Coordinator\",\"workspaceId\":\"scratch-id\",\"profileId\":\"claude\",\"kind\":\"claude\",\"presentation\":\"gui\",\"status\":\"working\",\"workspace\":\"Scratch\"},{\"id\":\"cccc3333-0000\",\"name\":\"Shell\",\"workspaceId\":\"scratch-id\",\"profileId\":\"claude\",\"kind\":\"shell\",\"presentation\":\"tui\",\"status\":\"idle\",\"workspace\":\"Scratch\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "bbbb2222-0000  Coordinator  claude/gui  working  in Scratch\ncccc3333-0000  Shell  shell/tui  idle  in Scratch",
+    "data": "{\"agents\":[{\"id\":\"bbbb2222-0000\",\"name\":\"Coordinator\",\"workspaceId\":\"scratch-id\",\"profileId\":\"claude\",\"kind\":\"claude\",\"presentation\":\"gui\",\"status\":\"working\",\"workspace\":\"Scratch\"},{\"id\":\"cccc3333-0000\",\"name\":\"Shell\",\"workspaceId\":\"scratch-id\",\"profileId\":\"claude\",\"kind\":\"shell\",\"presentation\":\"tui\",\"status\":\"idle\",\"workspace\":\"Scratch\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "no open workspace is called \"nope\". Run 'devhub --tell workspaces' to see them.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "aaaa1111-0000  Claude 1  claude/gui  working  2 request(s)  in app",
+    "data": "{\"agents\":[{\"id\":\"aaaa1111-0000\",\"name\":\"Claude 1\",\"workspaceId\":\"w1\",\"profileId\":\"claude\",\"kind\":\"claude\",\"presentation\":\"gui\",\"status\":\"working\",\"workspace\":\"app\",\"requests\":2}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "bbbb2222-0000  Coordinator  claude/gui  working  in Scratch\ncccc3333-0000  Shell  shell/tui  idle  in Scratch",
+    "data": "{\"agents\":[{\"id\":\"bbbb2222-0000\",\"name\":\"Coordinator\",\"workspaceId\":\"scratch-id\",\"profileId\":\"claude\",\"kind\":\"claude\",\"presentation\":\"gui\",\"status\":\"working\",\"workspace\":\"Scratch\"},{\"id\":\"cccc3333-0000\",\"name\":\"Shell\",\"workspaceId\":\"scratch-id\",\"profileId\":\"claude\",\"kind\":\"shell\",\"presentation\":\"tui\",\"status\":\"idle\",\"workspace\":\"Scratch\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "bbbb2222-0000  Coordinator  claude/gui  working  in Scratch\ncccc3333-0000  Shell  shell/tui  idle  in Scratch",
+    "data": "{\"agents\":[{\"id\":\"bbbb2222-0000\",\"name\":\"Coordinator\",\"workspaceId\":\"scratch-id\",\"profileId\":\"claude\",\"kind\":\"claude\",\"presentation\":\"gui\",\"status\":\"working\",\"workspace\":\"Scratch\"},{\"id\":\"cccc3333-0000\",\"name\":\"Shell\",\"workspaceId\":\"scratch-id\",\"profileId\":\"claude\",\"kind\":\"shell\",\"presentation\":\"tui\",\"status\":\"idle\",\"workspace\":\"Scratch\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "machine",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "pushWorkspace",
+    "workspace": {
+     "id": "w2",
+     "name": "app-on-box",
+     "root": "/src/app",
+     "machine": "ssh:box",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": []
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "/src/app"
+    },
+    "machine": "ssh:box"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "/src/app"
+    },
+    "origin": "local\tw1\tnone"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "/src/app"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agents",
+     "workspace": "/src/app"
+    },
+    "machine": "ssh:elsewhere"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "workspaces"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "No agents are running.",
+    "data": "{\"agents\":[]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "aaaa1111-0000  Claude 1  claude/gui  working  2 request(s)  in app",
+    "data": "{\"agents\":[{\"id\":\"aaaa1111-0000\",\"name\":\"Claude 1\",\"workspaceId\":\"w1\",\"profileId\":\"claude\",\"kind\":\"claude\",\"presentation\":\"gui\",\"status\":\"working\",\"workspace\":\"app\",\"requests\":2}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "\"/src/app\" names 2 workspaces; use an id: w1, w2.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "no open workspace is called \"/src/app\". Run 'devhub --tell workspaces' to see them.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "* w1  app  /src/app  (branch 12-fix, 1 agent)\n  scratch-id  Scratch  /scratch/today  (2 agents)\n* w2  app-on-box  /src/app  (ssh:box, branch 12-fix, 0 agents)",
+    "data": "{\"workspaces\":[{\"id\":\"w1\",\"name\":\"app\",\"root\":\"/src/app\",\"machine\":\"local\",\"scratch\":false,\"selected\":true,\"branch\":\"12-fix\",\"agents\":[\"aaaa1111-0000\"]},{\"id\":\"scratch-id\",\"name\":\"Scratch\",\"root\":\"/scratch/today\",\"machine\":\"local\",\"scratch\":true,\"selected\":false,\"agents\":[\"bbbb2222-0000\",\"cccc3333-0000\"]},{\"id\":\"w2\",\"name\":\"app-on-box\",\"root\":\"/src/app\",\"machine\":\"ssh:box\",\"scratch\":false,\"selected\":true,\"branch\":\"12-fix\",\"agents\":[]}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "agent-new-default",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-new"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-new"
+    },
+    "machine": "ssh:box"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-new"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-new"
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Agent new-agent (claude) is starting in /src/app.",
+    "data": "{\"agentId\":\"new-agent\",\"workspaceId\":\"w1\",\"profile\":\"claude\"}",
+    "calls": [
+     "create w1 claude -"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "agent new needs --workspace <w> here: this devhub is not running in a DevHub terminal or agent, so there is no workspace to default to.",
+    "calls": [
+     "create w1 claude -"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "agent new needs --workspace <w> here: this devhub is not running in a DevHub terminal or agent, so there is no workspace to default to.",
+    "calls": [
+     "create w1 claude -"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Agent new-agent (claude) is starting in /scratch/today.",
+    "data": "{\"agentId\":\"new-agent\",\"workspaceId\":\"scratch-id\",\"profile\":\"claude\"}",
+    "calls": [
+     "create w1 claude -",
+     "create scratch-id claude -"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "workspace-open",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "workspace-open",
+     "path": "/src/app",
+     "worktree": "12-fix"
+    },
+    "origin": "ssh:box\tw1\tnone"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "workspace-open",
+     "path": "/elsewhere"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Workspace w1 is open at /src/app.",
+    "data": "{\"workspaceId\":\"w1\",\"root\":\"/src/app\"}",
+    "calls": [
+     "open /src/app ssh:box 12-fix"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Workspace w1 is open at /src/app.",
+    "data": "{\"workspaceId\":\"w1\",\"root\":\"/src/app\"}",
+    "calls": [
+     "open /src/app ssh:box 12-fix",
+     "open /elsewhere local -"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "agent-new",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-new",
+     "workspace": "/src/app/",
+     "profile": "codex",
+     "name": "API",
+     "prompt": "fix the API",
+     "presentation": "gui"
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-new",
+     "workspace": "w1"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-new",
+     "workspace": "w1",
+     "profile": "gpt"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Agent new-agent (codex) is starting in /src/app; it is told the prompt once it is ready.",
+    "data": "{\"agentId\":\"new-agent\",\"workspaceId\":\"w1\",\"profile\":\"codex\"}",
+    "calls": [
+     "create w1 codex gui",
+     "rename new-agent API"
+    ],
+    "queued": [
+     "new-agent <- fix the API"
+    ],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Agent new-agent (claude) is starting in /src/app.",
+    "data": "{\"agentId\":\"new-agent\",\"workspaceId\":\"w1\",\"profile\":\"claude\"}",
+    "calls": [
+     "create w1 codex gui",
+     "rename new-agent API",
+     "create w1 claude -"
+    ],
+    "queued": [
+     "new-agent <- fix the API"
+    ],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "there is no agent profile called 'gpt'. Configured profiles: claude, codex.",
+    "calls": [
+     "create w1 codex gui",
+     "rename new-agent API",
+     "create w1 claude -"
+    ],
+    "queued": [
+     "new-agent <- fix the API"
+    ],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "issue",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "issue-assign",
+     "url": "https://github.com/o/r/issues/123",
+     "branch": "123-fix-login-timeout",
+     "place": "worktree",
+     "editorOnly": false,
+     "prompt": "only the backend"
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "issue-assign",
+     "url": "https://github.com/o/r/issues/9",
+     "place": "root",
+     "editorOnly": true,
+     "repo": "/src/r",
+     "prompt": "ignored"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "issue-assign",
+     "url": "u",
+     "place": "worktree",
+     "editorOnly": false,
+     "profile": "nope"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Agent issue-agent is taking https://github.com/o/r/issues/123 in /src/app.",
+    "data": "{\"workspaceId\":\"w1\",\"agentId\":\"issue-agent\",\"root\":\"/src/app\"}",
+    "calls": [
+     "assign {\"url\":\"https://github.com/o/r/issues/123\",\"branch\":\"123-fix-login-timeout\",\"place\":\"worktree\",\"profile\":\"claude\",\"editorOnly\":false}"
+    ],
+    "queued": [
+     "issue-agent <- only the backend"
+    ],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Opened /src/app for https://github.com/o/r/issues/9.",
+    "data": "{\"workspaceId\":\"w1\",\"root\":\"/src/app\"}",
+    "calls": [
+     "assign {\"url\":\"https://github.com/o/r/issues/123\",\"branch\":\"123-fix-login-timeout\",\"place\":\"worktree\",\"profile\":\"claude\",\"editorOnly\":false}",
+     "assign {\"url\":\"https://github.com/o/r/issues/9\",\"repo\":\"/src/r\",\"place\":\"root\",\"editorOnly\":true}"
+    ],
+    "queued": [
+     "issue-agent <- only the backend"
+    ],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "there is no agent profile called 'nope'. Configured profiles: claude, codex.",
+    "calls": [
+     "assign {\"url\":\"https://github.com/o/r/issues/123\",\"branch\":\"123-fix-login-timeout\",\"place\":\"worktree\",\"profile\":\"claude\",\"editorOnly\":false}",
+     "assign {\"url\":\"https://github.com/o/r/issues/9\",\"repo\":\"/src/r\",\"place\":\"root\",\"editorOnly\":true}"
+    ],
+    "queued": [
+     "issue-agent <- only the backend"
+    ],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "send",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-send",
+     "agent": "aaaa",
+     "text": "hi"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-send",
+     "agent": "Claude 1",
+     "text": "again"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-send",
+     "agent": "zzzz",
+     "text": "x"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-send",
+     "agent": "Shell",
+     "text": "ls"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-read",
+     "agent": "Shell"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-send",
+     "agent": "aaa",
+     "text": "short"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Sent to Claude 1 (held until its turn ends).",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"queued\":true}",
+    "calls": [],
+    "queued": [],
+    "submitted": [
+     "hi"
+    ],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Sent to Claude 1 (held until its turn ends).",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"queued\":true}",
+    "calls": [],
+    "queued": [],
+    "submitted": [
+     "hi",
+     "again"
+    ],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "no agent is called \"zzzz\". Run 'devhub --tell agents' to see them.",
+    "calls": [],
+    "queued": [],
+    "submitted": [
+     "hi",
+     "again"
+    ],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Queued for Shell; it is typed once the agent is idle.",
+    "data": "{\"agentId\":\"cccc3333-0000\",\"queued\":true}",
+    "calls": [],
+    "queued": [
+     "cccc3333-0000 <- ls"
+    ],
+    "submitted": [
+     "hi",
+     "again"
+    ],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "Shell is a terminal agent, and only a GUI agent's conversation can be read or answered from here. 'agent send' and 'agent wait' work for both.",
+    "calls": [],
+    "queued": [
+     "cccc3333-0000 <- ls"
+    ],
+    "submitted": [
+     "hi",
+     "again"
+    ],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "no agent is called \"aaa\". Run 'devhub --tell agents' to see them.",
+    "calls": [],
+    "queued": [
+     "cccc3333-0000 <- ls"
+    ],
+    "submitted": [
+     "hi",
+     "again"
+    ],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "read",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-read",
+     "agent": "aaaa1111-0000",
+     "last": 2
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "tool",
+     "id": "e4",
+     "parent": null,
+     "tool": "Bash",
+     "title": "npm test",
+     "input": {},
+     "status": "succeeded"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-read",
+     "agent": "aaaa1111-0000",
+     "since": "e3"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-read",
+     "agent": "aaaa1111-0000"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-read",
+     "agent": "aaaa1111-0000",
+     "since": "gone"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-read",
+     "agent": "aaaa1111-0000",
+     "since": "e1",
+     "last": 1
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "answer",
+     "id": "e5",
+     "parent": null,
+     "answers": [
+      {
+       "header": "H",
+       "question": "Which?",
+       "chosen": [
+        "A",
+        "B"
+       ],
+       "written": "C",
+       "secret": false
+      }
+     ]
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "command",
+     "id": "e6",
+     "parent": null,
+     "line": "/model sonnet",
+     "output": "  set  ",
+     "failed": false
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "command",
+     "id": "e7",
+     "parent": null,
+     "failed": false
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "notice",
+     "id": "e8",
+     "text": "Heads up"
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "compaction",
+     "id": "e9"
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "assistant",
+     "id": "e10",
+     "parent": null,
+     "blocks": [
+      {
+       "kind": "thinking",
+       "text": "x"
+      },
+      {
+       "kind": "text",
+       "markdown": "  "
+      }
+     ],
+     "streaming": false
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "turn-end",
+     "id": "e11",
+     "outcome": "failed",
+     "detail": "boom"
+    }
+   },
+   {
+    "op": "appendLog",
+    "entry": {
+     "kind": "user",
+     "id": "e12",
+     "parent": null,
+     "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "images": [],
+     "origin": "person",
+     "rewindable": true
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-read",
+     "agent": "aaaa1111-0000",
+     "since": "e4"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "On it.\n-- turn completed --\n-- Claude 1: working, turn running, 2 open request(s); cursor e3",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"turn\":\"running\",\"requests\":2,\"cursor\":\"e3\",\"entries\":[{\"id\":\"e2\",\"kind\":\"assistant\",\"text\":\"On it.\"},{\"id\":\"e3\",\"kind\":\"turn-end\",\"text\":\"-- turn completed --\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "[Bash] npm test (succeeded)\n-- Claude 1: working, turn running, 2 open request(s); cursor e4",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"turn\":\"running\",\"requests\":2,\"cursor\":\"e4\",\"entries\":[{\"id\":\"e4\",\"kind\":\"tool\",\"text\":\"[Bash] npm test (succeeded)\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "> do it\nOn it.\n-- turn completed --\n[Bash] npm test (succeeded)\n-- Claude 1: working, turn running, 2 open request(s); cursor e4",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"turn\":\"running\",\"requests\":2,\"cursor\":\"e4\",\"entries\":[{\"id\":\"e1\",\"kind\":\"user\",\"text\":\"> do it\"},{\"id\":\"e2\",\"kind\":\"assistant\",\"text\":\"On it.\"},{\"id\":\"e3\",\"kind\":\"turn-end\",\"text\":\"-- turn completed --\"},{\"id\":\"e4\",\"kind\":\"tool\",\"text\":\"[Bash] npm test (succeeded)\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "> do it\nOn it.\n-- turn completed --\n[Bash] npm test (succeeded)\n-- Claude 1: working, turn running, 2 open request(s); cursor e4",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"turn\":\"running\",\"requests\":2,\"cursor\":\"e4\",\"entries\":[{\"id\":\"e1\",\"kind\":\"user\",\"text\":\"> do it\"},{\"id\":\"e2\",\"kind\":\"assistant\",\"text\":\"On it.\"},{\"id\":\"e3\",\"kind\":\"turn-end\",\"text\":\"-- turn completed --\"},{\"id\":\"e4\",\"kind\":\"tool\",\"text\":\"[Bash] npm test (succeeded)\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "[Bash] npm test (succeeded)\n-- Claude 1: working, turn running, 2 open request(s); cursor e4",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"turn\":\"running\",\"requests\":2,\"cursor\":\"e4\",\"entries\":[{\"id\":\"e4\",\"kind\":\"tool\",\"text\":\"[Bash] npm test (succeeded)\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "> (answered) Which? → A, B, C\n$ /model sonnet\nset\n$ \n! Heads up\n-- compacted --\n-- turn failed: boom --\n> xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\n-- Claude 1: working, turn running, 2 open request(s); cursor e12",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"turn\":\"running\",\"requests\":2,\"cursor\":\"e12\",\"entries\":[{\"id\":\"e5\",\"kind\":\"answer\",\"text\":\"> (answered) Which? → A, B, C\"},{\"id\":\"e6\",\"kind\":\"command\",\"text\":\"$ /model sonnet\\nset\"},{\"id\":\"e7\",\"kind\":\"command\",\"text\":\"$ \"},{\"id\":\"e8\",\"kind\":\"notice\",\"text\":\"! Heads up\"},{\"id\":\"e9\",\"kind\":\"compaction\",\"text\":\"-- compacted --\"},{\"id\":\"e10\",\"kind\":\"assistant\"},{\"id\":\"e11\",\"kind\":\"turn-end\",\"text\":\"-- turn failed: boom --\"},{\"id\":\"e12\",\"kind\":\"user\",\"text\":\"> xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "interrupt",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-interrupt",
+     "agent": "aaaa"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-interrupt",
+     "agent": "Shell"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Interrupted Claude 1.",
+    "data": "{\"agentId\":\"aaaa1111-0000\"}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 1,
+    "now": 0
+   },
+   {
+    "error": "Shell is a terminal agent, and only a GUI agent's conversation can be read or answered from here. 'agent send' and 'agent wait' work for both.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 1,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "requests",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-requests",
+     "agent": "aaaa"
+    }
+   },
+   {
+    "op": "pending",
+    "requests": []
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-requests",
+     "agent": "aaaa"
+    }
+   },
+   {
+    "op": "pending",
+    "requests": [
+     {
+      "id": "r3",
+      "subject": {
+       "kind": "command",
+       "command": "rm -rf /",
+       "cwd": "/"
+      }
+     },
+     {
+      "id": "r4",
+      "subject": {
+       "kind": "file-change",
+       "files": [
+        {
+         "path": "a.ts"
+        },
+        {
+         "path": "b.ts"
+        }
+       ]
+      }
+     },
+     {
+      "id": "r5",
+      "subject": {
+       "kind": "elicitation",
+       "server": "github",
+       "message": "Sign in?",
+       "fields": []
+      }
+     },
+     {
+      "id": "r6",
+      "subject": {
+       "kind": "question",
+       "questions": [
+        {
+         "id": "q1",
+         "header": "Lang",
+         "text": "Which?",
+         "options": [
+          {
+           "label": "Go",
+           "description": ""
+          },
+          {
+           "label": "Rust",
+           "description": "fast"
+          }
+         ],
+         "multiSelect": true,
+         "allowsOther": false
+        },
+        {
+         "id": "q2",
+         "header": "DB",
+         "text": "Store?",
+         "options": [
+          {
+           "label": "PG",
+           "description": ""
+          }
+         ],
+         "multiSelect": false,
+         "allowsOther": true
+        }
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-requests",
+     "agent": "aaaa"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "r6",
+     "options": [
+      1,
+      2,
+      3
+     ]
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "r6",
+     "options": [
+      1
+     ],
+     "text": "Zig"
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "r6",
+     "options": [
+      1
+     ]
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "r5",
+     "options": [
+      1
+     ]
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "r3",
+     "options": [
+      1
+     ]
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-wait",
+     "agent": "aaaa",
+     "until": "waiting",
+     "timeoutSeconds": 5
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "req-1  question\n  Database: Which database?\n    1. Postgres\n    2. SQLite — small\n    (or --text <your own answer>)\n\nreq-2  a permission prompt: Bash: rm -rf build\n  (answer in DevHub)",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"requests\":[{\"id\":\"req-1\",\"kind\":\"question\",\"answerable\":true,\"questions\":[{\"header\":\"Database\",\"text\":\"Which database?\",\"multiSelect\":false,\"allowsOther\":true,\"options\":[{\"n\":1,\"label\":\"Postgres\",\"description\":\"\"},{\"n\":2,\"label\":\"SQLite\",\"description\":\"small\"}]}],\"text\":\"req-1  question\\n  Database: Which database?\\n    1. Postgres\\n    2. SQLite — small\\n    (or --text <your own answer>)\"},{\"id\":\"req-2\",\"kind\":\"tool\",\"answerable\":false,\"text\":\"req-2  a permission prompt: Bash: rm -rf build\\n  (answer in DevHub)\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Claude 1 is not waiting on anything.",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"requests\":[]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "r3  a permission prompt: run rm -rf /\n  (answer in DevHub)\n\nr4  a permission prompt: change a.ts, b.ts\n  (answer in DevHub)\n\nr5  an MCP server's request (github): Sign in?\n  (answer in DevHub)\n\nr6  question\n  [1] Lang: Which? (several)\n    1. Go\n    2. Rust — fast\n  [2] DB: Store?\n    1. PG\n    (or --text <your own answer>)",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"requests\":[{\"id\":\"r3\",\"kind\":\"command\",\"answerable\":false,\"text\":\"r3  a permission prompt: run rm -rf /\\n  (answer in DevHub)\"},{\"id\":\"r4\",\"kind\":\"file-change\",\"answerable\":false,\"text\":\"r4  a permission prompt: change a.ts, b.ts\\n  (answer in DevHub)\"},{\"id\":\"r5\",\"kind\":\"elicitation\",\"answerable\":false,\"text\":\"r5  an MCP server's request (github): Sign in?\\n  (answer in DevHub)\"},{\"id\":\"r6\",\"kind\":\"question\",\"answerable\":true,\"questions\":[{\"header\":\"Lang\",\"text\":\"Which?\",\"multiSelect\":true,\"allowsOther\":false,\"options\":[{\"n\":1,\"label\":\"Go\",\"description\":\"\"},{\"n\":2,\"label\":\"Rust\",\"description\":\"fast\"}]},{\"header\":\"DB\",\"text\":\"Store?\",\"multiSelect\":false,\"allowsOther\":true,\"options\":[{\"n\":1,\"label\":\"PG\",\"description\":\"\"}]}],\"text\":\"r6  question\\n  [1] Lang: Which? (several)\\n    1. Go\\n    2. Rust — fast\\n  [2] DB: Store?\\n    1. PG\\n    (or --text <your own answer>)\"}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Answered Claude 1's question.",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"request\":\"r6\",\"answer\":{\"kind\":\"answers\",\"values\":{\"q1\":[\"Go\",\"Rust\"],\"q2\":\"PG\"},\"notes\":{\"q1\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\",\"q2\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"r6\",\"answer\":{\"kind\":\"answers\",\"values\":{\"q1\":[\"Go\",\"Rust\"],\"q2\":\"PG\"},\"notes\":{\"q1\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\",\"q2\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "\"DB\" has no answer; choose with --option <n>.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"r6\",\"answer\":{\"kind\":\"answers\",\"values\":{\"q1\":[\"Go\",\"Rust\"],\"q2\":\"PG\"},\"notes\":{\"q1\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\",\"q2\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "\"DB\" has no answer; choose with --option <n>.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"r6\",\"answer\":{\"kind\":\"answers\",\"values\":{\"q1\":[\"Go\",\"Rust\"],\"q2\":\"PG\"},\"notes\":{\"q1\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\",\"q2\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "request r5 is an MCP server's request (github), and only questions can be answered from the command line. The person answers it in DevHub.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"r6\",\"answer\":{\"kind\":\"answers\",\"values\":{\"q1\":[\"Go\",\"Rust\"],\"q2\":\"PG\"},\"notes\":{\"q1\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\",\"q2\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "request r3 is a permission prompt, and only questions can be answered from the command line. The person answers it in DevHub.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"r6\",\"answer\":{\"kind\":\"answers\",\"values\":{\"q1\":[\"Go\",\"Rust\"],\"q2\":\"PG\"},\"notes\":{\"q1\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\",\"q2\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Claude 1 is working with 4 open request(s).",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"requests\":4,\"reached\":true}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"r6\",\"answer\":{\"kind\":\"answers\",\"values\":{\"q1\":[\"Go\",\"Rust\"],\"q2\":\"PG\"},\"notes\":{\"q1\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\",\"q2\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "answer",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "req-1",
+     "options": [
+      2
+     ]
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "req-2",
+     "options": [
+      1
+     ]
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "req-1",
+     "options": [
+      1
+     ]
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "gone",
+     "options": [
+      1
+     ]
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "req-1",
+     "options": [],
+     "text": "MySQL"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "req-1",
+     "options": [
+      3
+     ]
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "req-1",
+     "options": [
+      1,
+      2
+     ]
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "aaaa",
+     "request": "req-1",
+     "options": [
+      1
+     ]
+    },
+    "origin": "local\tw1\tdddd-unknown"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-answer",
+     "agent": "Shell",
+     "request": "req-1",
+     "options": [
+      1
+     ]
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Answered Claude 1's question.",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "request req-2 is a permission prompt, and only questions can be answered from the command line. The person answers it in DevHub.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "an agent cannot answer its own question.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "Claude 1 has no open request gone. Run 'devhub --tell agent requests aaaa1111-0000'.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Answered Claude 1's question.",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"MySQL\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by a terminal outside any agent\"}}}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}",
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"MySQL\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by a terminal outside any agent\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "there are 2 options to choose from.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}",
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"MySQL\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by a terminal outside any agent\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "\"Database\" takes one answer.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}",
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"MySQL\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by a terminal outside any agent\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Answered Claude 1's question.",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"Postgres\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by dddd-unknown\"}}}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}",
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"MySQL\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by a terminal outside any agent\"}}}",
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"Postgres\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by dddd-unknown\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "Shell is a terminal agent, and only a GUI agent's conversation can be read or answered from here. 'agent send' and 'agent wait' work for both.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"SQLite\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by Coordinator (bbbb2222-0000)\"}}}",
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"MySQL\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by a terminal outside any agent\"}}}",
+     "{\"request\":\"req-1\",\"answer\":{\"kind\":\"answers\",\"values\":{\"Which database?\":\"Postgres\"},\"notes\":{\"Which database?\":\"answered via devhub CLI by dddd-unknown\"}}}"
+    ],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "wait",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-wait",
+     "agent": "aaaa",
+     "until": "waiting",
+     "timeoutSeconds": 5
+    }
+   },
+   {
+    "op": "pending",
+    "requests": []
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-wait",
+     "agent": "aaaa",
+     "until": "idle",
+     "timeoutSeconds": 2
+    }
+   },
+   {
+    "op": "idleAfter",
+    "polls": 3
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-wait",
+     "agent": "aaaa",
+     "until": "any",
+     "timeoutSeconds": 60
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-wait",
+     "agent": "Shell",
+     "until": "waiting",
+     "timeoutSeconds": 1
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "agent-wait",
+     "agent": "Shell",
+     "until": "idle",
+     "timeoutSeconds": 1
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Claude 1 is working with 2 open request(s).",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"requests\":2,\"reached\":true}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Claude 1 is working (still, after 2s).",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"working\",\"requests\":0,\"reached\":false}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 2000
+   },
+   {
+    "message": "Claude 1 is idle.",
+    "data": "{\"agentId\":\"aaaa1111-0000\",\"status\":\"idle\",\"requests\":0,\"reached\":true}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 2500
+   },
+   {
+    "message": "Shell is idle (still, after 1s).",
+    "data": "{\"agentId\":\"cccc3333-0000\",\"status\":\"idle\",\"requests\":0,\"reached\":false}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 3500
+   },
+   {
+    "message": "Shell is idle.",
+    "data": "{\"agentId\":\"cccc3333-0000\",\"status\":\"idle\",\"requests\":0,\"reached\":true}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 3500
+   }
+  ]
+ },
+ {
+  "name": "commands",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "commands"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "run",
+     "command": "next_agent"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "run",
+     "command": "close_selection"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "run",
+     "command": "format_disk"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "  next_agent  Navigate: Next agent\n- close_selection  Agent: Close",
+    "data": "{\"commands\":[{\"id\":\"next_agent\",\"label\":\"Next agent\",\"category\":\"Navigate\",\"available\":true},{\"id\":\"close_selection\",\"label\":\"Close\",\"category\":\"Agent\",\"available\":false}]}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Ran Navigate: Next agent.",
+    "data": "{\"command\":\"next_agent\",\"ran\":true}",
+    "calls": [
+     "run next_agent"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Agent: Close has nothing to do right now.",
+    "data": "{\"command\":\"close_selection\",\"ran\":false}",
+    "calls": [
+     "run next_agent",
+     "run close_selection"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "there is no command \"format_disk\". Run 'devhub --tell commands'.",
+    "calls": [
+     "run next_agent",
+     "run close_selection"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "focus",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "focus",
+     "target": "Coordinator"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "focus",
+     "target": "scratch"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "focus",
+     "target": "w1"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "focus",
+     "target": "nothing"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "notify",
+     "text": "done"
+    }
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Selected Coordinator.",
+    "data": "{\"agentId\":\"bbbb2222-0000\"}",
+    "calls": [
+     "focus-agent bbbb2222-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Selected Scratch.",
+    "data": "{\"workspaceId\":\"scratch-id\"}",
+    "calls": [
+     "focus-agent bbbb2222-0000",
+     "focus-workspace scratch-id"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Selected app.",
+    "data": "{\"workspaceId\":\"w1\"}",
+    "calls": [
+     "focus-agent bbbb2222-0000",
+     "focus-workspace scratch-id",
+     "focus-workspace w1"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "no open workspace is called \"nothing\". Run 'devhub --tell workspaces' to see them.",
+    "calls": [
+     "focus-agent bbbb2222-0000",
+     "focus-workspace scratch-id",
+     "focus-workspace w1"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Shown in DevHub.",
+    "data": "{\"ok\":true}",
+    "calls": [
+     "focus-agent bbbb2222-0000",
+     "focus-workspace scratch-id",
+     "focus-workspace w1",
+     "notify done"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "terminal-open",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-open",
+     "focus": false,
+     "command": "npm test"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-open",
+     "focus": true,
+     "command": "npm test"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-open",
+     "focus": false
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Opened your terminal: tm-aaaa1111-0000  on screen, with your pane (right of it, or under it beside the editor)  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub … -t %7  cwd /src/app  running zsh.\nsend:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %7 -l -- 'make test' && /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %7 Enter\nread:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub capture-pane -p -J -t %7 -S -200\npanes: /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub list-panes -s -t tm-aaaa1111-0000 -F '#{pane_id} #{window_index} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_current_command}'\nclose: devhub --tell terminal close",
+    "data": "{\"terminal\":{\"agentId\":\"aaaa1111-0000\",\"workspaceId\":\"w1\",\"exists\":true,\"id\":\"aaaa1111-0000\",\"session\":\"tm-aaaa1111-0000\",\"open\":true,\"visible\":true,\"focused\":false,\"tmux\":{\"tmux\":\"/opt/homebrew/bin/tmux\",\"socket\":\"/private/tmp/tmux-501/devhub\",\"session\":\"tm-aaaa1111-0000\",\"window\":\"@1\",\"windowIndex\":0,\"pane\":\"%7\",\"paneIndex\":7,\"target\":\"%7\",\"fullTarget\":\"tm-aaaa1111-0000:0.7\",\"prefix\":[\"/opt/homebrew/bin/tmux\",\"-S\",\"/private/tmp/tmux-501/devhub\"],\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\"},\"panes\":[{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%7\",\"paneIndex\":7,\"active\":true,\"left\":0,\"top\":0,\"width\":160,\"height\":48,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"whole\",\"target\":\"%7\",\"fullTarget\":\"tm-aaaa1111-0000:0.7\"}]},\"created\":true}",
+    "calls": [
+     "open-terminal aaaa1111-0000 {\"command\":\"npm test\",\"focus\":false}"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Showing your terminal: tm-aaaa1111-0000  on screen, with your pane (right of it, or under it beside the editor)  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub … -t %7  cwd /src/app  running zsh.\nIt was already running, so --command was not typed into it: send it with send-keys (below) if you still want it.\nsend:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %7 -l -- 'make test' && /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %7 Enter\nread:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub capture-pane -p -J -t %7 -S -200\npanes: /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub list-panes -s -t tm-aaaa1111-0000 -F '#{pane_id} #{window_index} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_current_command}'\nclose: devhub --tell terminal close",
+    "data": "{\"terminal\":{\"agentId\":\"aaaa1111-0000\",\"workspaceId\":\"w1\",\"exists\":true,\"id\":\"aaaa1111-0000\",\"session\":\"tm-aaaa1111-0000\",\"open\":true,\"visible\":true,\"focused\":false,\"tmux\":{\"tmux\":\"/opt/homebrew/bin/tmux\",\"socket\":\"/private/tmp/tmux-501/devhub\",\"session\":\"tm-aaaa1111-0000\",\"window\":\"@1\",\"windowIndex\":0,\"pane\":\"%7\",\"paneIndex\":7,\"target\":\"%7\",\"fullTarget\":\"tm-aaaa1111-0000:0.7\",\"prefix\":[\"/opt/homebrew/bin/tmux\",\"-S\",\"/private/tmp/tmux-501/devhub\"],\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\"},\"panes\":[{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%7\",\"paneIndex\":7,\"active\":true,\"left\":0,\"top\":0,\"width\":160,\"height\":48,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"whole\",\"target\":\"%7\",\"fullTarget\":\"tm-aaaa1111-0000:0.7\"}]},\"created\":false}",
+    "calls": [
+     "open-terminal aaaa1111-0000 {\"command\":\"npm test\",\"focus\":false}",
+     "open-terminal aaaa1111-0000 {\"command\":\"npm test\",\"focus\":true}"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Showing your terminal: tm-aaaa1111-0000  on screen, with your pane (right of it, or under it beside the editor)  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub … -t %7  cwd /src/app  running zsh.\nsend:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %7 -l -- 'make test' && /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %7 Enter\nread:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub capture-pane -p -J -t %7 -S -200\npanes: /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub list-panes -s -t tm-aaaa1111-0000 -F '#{pane_id} #{window_index} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_current_command}'\nclose: devhub --tell terminal close",
+    "data": "{\"terminal\":{\"agentId\":\"aaaa1111-0000\",\"workspaceId\":\"w1\",\"exists\":true,\"id\":\"aaaa1111-0000\",\"session\":\"tm-aaaa1111-0000\",\"open\":true,\"visible\":true,\"focused\":false,\"tmux\":{\"tmux\":\"/opt/homebrew/bin/tmux\",\"socket\":\"/private/tmp/tmux-501/devhub\",\"session\":\"tm-aaaa1111-0000\",\"window\":\"@1\",\"windowIndex\":0,\"pane\":\"%7\",\"paneIndex\":7,\"target\":\"%7\",\"fullTarget\":\"tm-aaaa1111-0000:0.7\",\"prefix\":[\"/opt/homebrew/bin/tmux\",\"-S\",\"/private/tmp/tmux-501/devhub\"],\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\"},\"panes\":[{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%7\",\"paneIndex\":7,\"active\":true,\"left\":0,\"top\":0,\"width\":160,\"height\":48,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"whole\",\"target\":\"%7\",\"fullTarget\":\"tm-aaaa1111-0000:0.7\"}]},\"created\":false}",
+    "calls": [
+     "open-terminal aaaa1111-0000 {\"command\":\"npm test\",\"focus\":false}",
+     "open-terminal aaaa1111-0000 {\"command\":\"npm test\",\"focus\":true}",
+     "open-terminal aaaa1111-0000 {\"focus\":false}"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "terminal-status",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-status"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "terminals",
+    "agent": "aaaa1111-0000",
+    "panes": [
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%1",
+      "paneIndex": 1,
+      "active": false,
+      "left": 0,
+      "top": 0,
+      "width": 80,
+      "height": 48,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false
+     },
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%2",
+      "paneIndex": 2,
+      "active": false,
+      "left": 81,
+      "top": 0,
+      "width": 79,
+      "height": 24,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false
+     },
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%3",
+      "paneIndex": 3,
+      "active": true,
+      "left": 81,
+      "top": 25,
+      "width": 79,
+      "height": 23,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false
+     }
+    ]
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-status"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "terminals",
+    "agent": "aaaa1111-0000",
+    "panes": [
+     {
+      "window": "@2",
+      "windowIndex": 1,
+      "windowName": "my shell's",
+      "windowActive": false,
+      "pane": "%1",
+      "paneIndex": 1,
+      "active": false,
+      "left": 0,
+      "top": 0,
+      "width": 80,
+      "height": 48,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false
+     },
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%4",
+      "paneIndex": 4,
+      "active": false,
+      "left": 0,
+      "top": 0,
+      "width": 80,
+      "height": 48,
+      "cwd": "/src/app",
+      "command": "vim",
+      "title": "host",
+      "dead": false
+     }
+    ]
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-status"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   }
+  ],
+  "outputs": [
+   {
+    "message": "You have no terminal open. 'devhub --tell terminal open' opens one, beside your pane.",
+    "data": "{\"terminal\":{\"agentId\":\"aaaa1111-0000\",\"workspaceId\":\"w1\",\"exists\":false,\"open\":false,\"visible\":false,\"focused\":false,\"panes\":[]}}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "tm-aaaa1111-0000  on screen, with your pane (right of it, or under it beside the editor)  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub … -t %3  cwd /src/app  running zsh  3 tmux panes\npanes:\n  %1  window 0 (zsh)  left  80x48 at 0,0  running zsh\n  %2  window 0 (zsh)  top-right  79x24 at 81,0  running zsh\n  %3  window 0 (zsh)  bottom-right  79x23 at 81,25  running zsh  active\nsend:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %3 -l -- 'make test' && /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %3 Enter\nread:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub capture-pane -p -J -t %3 -S -200\npanes: /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub list-panes -s -t tm-aaaa1111-0000 -F '#{pane_id} #{window_index} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_current_command}'\nclose: devhub --tell terminal close",
+    "data": "{\"terminal\":{\"agentId\":\"aaaa1111-0000\",\"workspaceId\":\"w1\",\"exists\":true,\"id\":\"aaaa1111-0000\",\"session\":\"tm-aaaa1111-0000\",\"open\":true,\"visible\":true,\"focused\":false,\"tmux\":{\"tmux\":\"/opt/homebrew/bin/tmux\",\"socket\":\"/private/tmp/tmux-501/devhub\",\"session\":\"tm-aaaa1111-0000\",\"window\":\"@1\",\"windowIndex\":0,\"pane\":\"%3\",\"paneIndex\":3,\"target\":\"%3\",\"fullTarget\":\"tm-aaaa1111-0000:0.3\",\"prefix\":[\"/opt/homebrew/bin/tmux\",\"-S\",\"/private/tmp/tmux-501/devhub\"],\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\"},\"panes\":[{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%1\",\"paneIndex\":1,\"active\":false,\"left\":0,\"top\":0,\"width\":80,\"height\":48,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"left\",\"target\":\"%1\",\"fullTarget\":\"tm-aaaa1111-0000:0.1\"},{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%2\",\"paneIndex\":2,\"active\":false,\"left\":81,\"top\":0,\"width\":79,\"height\":24,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"top-right\",\"target\":\"%2\",\"fullTarget\":\"tm-aaaa1111-0000:0.2\"},{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%3\",\"paneIndex\":3,\"active\":true,\"left\":81,\"top\":25,\"width\":79,\"height\":23,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"bottom-right\",\"target\":\"%3\",\"fullTarget\":\"tm-aaaa1111-0000:0.3\"}]}}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "tm-aaaa1111-0000  on screen, with your pane (right of it, or under it beside the editor)  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub … -t %4  cwd /src/app  running vim  2 tmux panes\npanes:\n  %1  window 1 (my shell's)  whole  80x48 at 0,0  running zsh\n  %4  window 0 (zsh)  whole  80x48 at 0,0  running vim\nsend:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %4 -l -- 'make test' && /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %4 Enter\nread:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub capture-pane -p -J -t %4 -S -200\npanes: /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub list-panes -s -t tm-aaaa1111-0000 -F '#{pane_id} #{window_index} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_current_command}'\nclose: devhub --tell terminal close",
+    "data": "{\"terminal\":{\"agentId\":\"aaaa1111-0000\",\"workspaceId\":\"w1\",\"exists\":true,\"id\":\"aaaa1111-0000\",\"session\":\"tm-aaaa1111-0000\",\"open\":true,\"visible\":true,\"focused\":false,\"tmux\":{\"tmux\":\"/opt/homebrew/bin/tmux\",\"socket\":\"/private/tmp/tmux-501/devhub\",\"session\":\"tm-aaaa1111-0000\",\"window\":\"@1\",\"windowIndex\":0,\"pane\":\"%4\",\"paneIndex\":4,\"target\":\"%4\",\"fullTarget\":\"tm-aaaa1111-0000:0.4\",\"prefix\":[\"/opt/homebrew/bin/tmux\",\"-S\",\"/private/tmp/tmux-501/devhub\"],\"cwd\":\"/src/app\",\"command\":\"vim\",\"title\":\"host\"},\"panes\":[{\"window\":\"@2\",\"windowIndex\":1,\"windowName\":\"my shell's\",\"windowActive\":false,\"pane\":\"%1\",\"paneIndex\":1,\"active\":false,\"left\":0,\"top\":0,\"width\":80,\"height\":48,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"whole\",\"target\":\"%1\",\"fullTarget\":\"tm-aaaa1111-0000:1.1\"},{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%4\",\"paneIndex\":4,\"active\":false,\"left\":0,\"top\":0,\"width\":80,\"height\":48,\"cwd\":\"/src/app\",\"command\":\"vim\",\"title\":\"host\",\"dead\":false,\"where\":\"whole\",\"target\":\"%4\",\"fullTarget\":\"tm-aaaa1111-0000:0.4\"}]}}",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "terminal-close",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "terminals",
+    "agent": "aaaa1111-0000",
+    "panes": [
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%7",
+      "paneIndex": 7,
+      "active": true,
+      "left": 0,
+      "top": 0,
+      "width": 160,
+      "height": 48,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false
+     }
+    ]
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-close"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-close"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Closed your terminal (tm-aaaa1111-0000).",
+    "data": "{\"closed\":true,\"session\":\"tm-aaaa1111-0000\"}",
+    "calls": [
+     "close-terminal aaaa1111-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "You had no terminal open.",
+    "data": "{\"closed\":false}",
+    "calls": [
+     "close-terminal aaaa1111-0000",
+     "close-terminal aaaa1111-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "terminal-who",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-status"
+    }
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-open",
+     "focus": false
+    },
+    "origin": "local\tw1\tnone"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-close"
+    },
+    "origin": "local\tscratch\tbbbb2222-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-status"
+    },
+    "machine": "ssh:box"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-status"
+    },
+    "origin": "local\tw1\tgone-agent"
+   }
+  ],
+  "outputs": [
+   {
+    "error": "terminal commands work only from inside a DevHub agent: they are about the asking agent's own terminal, and this devhub is not running in one.",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "terminal commands are an agent's: run them from the agent's own pane. (This is a terminal, not an agent.)",
+    "calls": [],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "You had no terminal open.",
+    "data": "{\"closed\":false}",
+    "calls": [
+     "close-terminal bbbb2222-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "terminal commands work only from inside a DevHub agent: they are about the asking agent's own terminal, and this devhub is not running in one.",
+    "calls": [
+     "close-terminal bbbb2222-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "the agent asking (gone-agent) is not one DevHub has open any more.",
+    "calls": [
+     "close-terminal bbbb2222-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "panes",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-panes"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "editor",
+    "panes": [
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%2",
+      "paneIndex": 2,
+      "active": true,
+      "left": 0,
+      "top": 0,
+      "width": 80,
+      "height": 24,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false,
+      "session": "ws-0123456789abcdef0123",
+      "argv": "ssh prod"
+     },
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%3",
+      "paneIndex": 3,
+      "active": false,
+      "left": 0,
+      "top": 0,
+      "width": 80,
+      "height": 24,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "",
+      "dead": true,
+      "session": "ws-0123456789abcdef0123"
+     }
+    ]
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-panes"
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Your workspace's editor has no DevHub terminal open.",
+    "data": "{\"panes\":[]}",
+    "calls": [
+     "editor-panes aaaa1111-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Your workspace's editor terminals ('devhub --tell terminal bring <pane>' moves one into your terminal):\n  %2  ws-0123456789abcdef0123:0.2  window 0 (zsh)  running ssh prod  cwd /src/app  title \"host\"  active\n  %3  ws-0123456789abcdef0123:0.3  window 0 (zsh)  running zsh  cwd /src/app  dead",
+    "data": "{\"panes\":[{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%2\",\"paneIndex\":2,\"active\":true,\"left\":0,\"top\":0,\"width\":80,\"height\":24,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"session\":\"ws-0123456789abcdef0123\",\"argv\":\"ssh prod\"},{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%3\",\"paneIndex\":3,\"active\":false,\"left\":0,\"top\":0,\"width\":80,\"height\":24,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"\",\"dead\":true,\"session\":\"ws-0123456789abcdef0123\"}]}",
+    "calls": [
+     "editor-panes aaaa1111-0000",
+     "editor-panes aaaa1111-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ },
+ {
+  "name": "bring",
+  "world": {
+   "workspaces": [
+    {
+     "id": "w1",
+     "name": "app",
+     "root": "/src/app",
+     "machine": "local",
+     "scratch": false,
+     "selected": true,
+     "branch": "12-fix",
+     "agents": [
+      {
+       "id": "aaaa1111-0000",
+       "name": "Claude 1",
+       "workspaceId": "w1",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      }
+     ]
+    },
+    {
+     "id": "scratch-id",
+     "name": "Scratch",
+     "root": "/scratch/today",
+     "machine": "local",
+     "scratch": true,
+     "selected": false,
+     "agents": [
+      {
+       "id": "bbbb2222-0000",
+       "name": "Coordinator",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "claude",
+       "presentation": "gui",
+       "status": "working"
+      },
+      {
+       "id": "cccc3333-0000",
+       "name": "Shell",
+       "workspaceId": "scratch-id",
+       "profileId": "claude",
+       "kind": "shell",
+       "presentation": "tui",
+       "status": "idle"
+      }
+     ]
+    }
+   ],
+   "conversations": {
+    "aaaa1111-0000": {
+     "pending": [
+      {
+       "id": "req-1",
+       "subject": {
+        "kind": "question",
+        "questions": [
+         {
+          "id": "Which database?",
+          "header": "Database",
+          "text": "Which database?",
+          "options": [
+           {
+            "label": "Postgres",
+            "description": ""
+           },
+           {
+            "label": "SQLite",
+            "description": "small"
+           }
+          ],
+          "multiSelect": false,
+          "allowsOther": true
+         }
+        ]
+       },
+       "choices": []
+      },
+      {
+       "id": "req-2",
+       "subject": {
+        "kind": "tool",
+        "tool": "Bash",
+        "title": "rm -rf build",
+        "input": {}
+       },
+       "choices": []
+      }
+     ],
+     "turn": "running",
+     "log": [
+      {
+       "kind": "user",
+       "id": "e1",
+       "parent": null,
+       "text": "do it",
+       "images": [],
+       "origin": "person",
+       "rewindable": true
+      },
+      {
+       "kind": "assistant",
+       "id": "e2",
+       "parent": null,
+       "blocks": [
+        {
+         "kind": "text",
+         "markdown": "On it."
+        }
+       ],
+       "streaming": false
+      },
+      {
+       "kind": "turn-end",
+       "id": "e3",
+       "outcome": "completed"
+      }
+     ]
+    }
+   }
+  },
+  "steps": [
+   {
+    "op": "editor",
+    "panes": [
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%2",
+      "paneIndex": 2,
+      "active": true,
+      "left": 0,
+      "top": 0,
+      "width": 80,
+      "height": 24,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false,
+      "session": "ws-0123456789abcdef0123",
+      "argv": "ssh prod"
+     },
+     {
+      "window": "@1",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%3",
+      "paneIndex": 3,
+      "active": true,
+      "left": 0,
+      "top": 0,
+      "width": 80,
+      "height": 24,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false,
+      "session": "ws-0123456789abcdef0123"
+     },
+     {
+      "window": "@2",
+      "windowIndex": 0,
+      "windowName": "zsh",
+      "windowActive": true,
+      "pane": "%4",
+      "paneIndex": 4,
+      "active": true,
+      "left": 0,
+      "top": 0,
+      "width": 80,
+      "height": 24,
+      "cwd": "/src/app",
+      "command": "zsh",
+      "title": "host",
+      "dead": false,
+      "session": "ws-0123456789abcdef0123"
+     }
+    ]
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-bring",
+     "pane": "%2",
+     "focus": false
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-bring",
+     "pane": "%4",
+     "focus": true
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-bring",
+     "pane": "%9",
+     "focus": false
+    },
+    "origin": "local\tw1\taaaa1111-0000"
+   },
+   {
+    "op": "run",
+    "command": {
+     "verb": "terminal-bring",
+     "pane": "%3",
+     "focus": false
+    },
+    "origin": "local\tw1\tnone"
+   }
+  ],
+  "outputs": [
+   {
+    "message": "Brought %2 (ssh prod) into your new terminal: tm-aaaa1111-0000  on screen, with your pane (right of it, or under it beside the editor)  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub … -t %2  cwd /src/app  running zsh.\nsend:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %2 -l -- 'make test' && /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %2 Enter\nread:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub capture-pane -p -J -t %2 -S -200\npanes: /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub list-panes -s -t tm-aaaa1111-0000 -F '#{pane_id} #{window_index} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_current_command}'\nclose: devhub --tell terminal close",
+    "data": "{\"terminal\":{\"agentId\":\"aaaa1111-0000\",\"workspaceId\":\"w1\",\"exists\":true,\"id\":\"aaaa1111-0000\",\"session\":\"tm-aaaa1111-0000\",\"open\":true,\"visible\":true,\"focused\":false,\"tmux\":{\"tmux\":\"/opt/homebrew/bin/tmux\",\"socket\":\"/private/tmp/tmux-501/devhub\",\"session\":\"tm-aaaa1111-0000\",\"window\":\"@1\",\"windowIndex\":0,\"pane\":\"%2\",\"paneIndex\":2,\"target\":\"%2\",\"fullTarget\":\"tm-aaaa1111-0000:0.2\",\"prefix\":[\"/opt/homebrew/bin/tmux\",\"-S\",\"/private/tmp/tmux-501/devhub\"],\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\"},\"panes\":[{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%2\",\"paneIndex\":2,\"active\":true,\"left\":0,\"top\":0,\"width\":80,\"height\":24,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"whole\",\"target\":\"%2\",\"fullTarget\":\"tm-aaaa1111-0000:0.2\"}]},\"created\":true,\"pane\":\"%2\"}",
+    "calls": [
+     "editor-panes aaaa1111-0000",
+     "bring aaaa1111-0000 %2 false"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "message": "Brought %4 (zsh) into your terminal, as a split: tm-aaaa1111-0000  on screen, with your pane (right of it, or under it beside the editor)  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub … -t %2  cwd /src/app  running zsh  2 tmux panes.\nIt was the only pane of its editor terminal window, so that window closed (and the editor's tab with it, if it was the last).\npanes:\n  %2  window 0 (zsh)  whole  80x24 at 0,0  running zsh  active\n  %4  window 0 (zsh)  whole  80x24 at 0,0  running zsh  active\nsend:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %2 -l -- 'make test' && /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub send-keys -t %2 Enter\nread:  /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub capture-pane -p -J -t %2 -S -200\npanes: /opt/homebrew/bin/tmux -S /private/tmp/tmux-501/devhub list-panes -s -t tm-aaaa1111-0000 -F '#{pane_id} #{window_index} #{pane_left},#{pane_top} #{pane_width}x#{pane_height} #{pane_current_command}'\nclose: devhub --tell terminal close",
+    "data": "{\"terminal\":{\"agentId\":\"aaaa1111-0000\",\"workspaceId\":\"w1\",\"exists\":true,\"id\":\"aaaa1111-0000\",\"session\":\"tm-aaaa1111-0000\",\"open\":true,\"visible\":true,\"focused\":false,\"tmux\":{\"tmux\":\"/opt/homebrew/bin/tmux\",\"socket\":\"/private/tmp/tmux-501/devhub\",\"session\":\"tm-aaaa1111-0000\",\"window\":\"@1\",\"windowIndex\":0,\"pane\":\"%2\",\"paneIndex\":2,\"target\":\"%2\",\"fullTarget\":\"tm-aaaa1111-0000:0.2\",\"prefix\":[\"/opt/homebrew/bin/tmux\",\"-S\",\"/private/tmp/tmux-501/devhub\"],\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\"},\"panes\":[{\"window\":\"@1\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%2\",\"paneIndex\":2,\"active\":true,\"left\":0,\"top\":0,\"width\":80,\"height\":24,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"whole\",\"target\":\"%2\",\"fullTarget\":\"tm-aaaa1111-0000:0.2\"},{\"window\":\"@2\",\"windowIndex\":0,\"windowName\":\"zsh\",\"windowActive\":true,\"pane\":\"%4\",\"paneIndex\":4,\"active\":true,\"left\":0,\"top\":0,\"width\":80,\"height\":24,\"cwd\":\"/src/app\",\"command\":\"zsh\",\"title\":\"host\",\"dead\":false,\"where\":\"whole\",\"target\":\"%4\",\"fullTarget\":\"tm-aaaa1111-0000:0.4\"}]},\"created\":false,\"pane\":\"%4\"}",
+    "calls": [
+     "editor-panes aaaa1111-0000",
+     "bring aaaa1111-0000 %2 false",
+     "editor-panes aaaa1111-0000",
+     "bring aaaa1111-0000 %4 true"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "%9 is not a pane of your workspace's editor terminals (see 'devhub --tell terminal panes'). Agents' own panes and terminals are never moved.",
+    "calls": [
+     "editor-panes aaaa1111-0000",
+     "bring aaaa1111-0000 %2 false",
+     "editor-panes aaaa1111-0000",
+     "bring aaaa1111-0000 %4 true",
+     "editor-panes aaaa1111-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   },
+   {
+    "error": "terminal commands are an agent's: run them from the agent's own pane. (This is a terminal, not an agent.)",
+    "calls": [
+     "editor-panes aaaa1111-0000",
+     "bring aaaa1111-0000 %2 false",
+     "editor-panes aaaa1111-0000",
+     "bring aaaa1111-0000 %4 true",
+     "editor-panes aaaa1111-0000"
+    ],
+    "queued": [],
+    "submitted": [],
+    "answered": [],
+    "interrupted": 0,
+    "now": 0
+   }
+  ]
+ }
+]

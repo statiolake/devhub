@@ -1,0 +1,81 @@
+devhub --tell — ask the running DevHub to do what its window does.
+
+usage: devhub --tell [--json] <subcommand> [arguments]
+
+  --json  print the answer as JSON (for scripts and agents) instead of text
+
+workspaces
+  workspaces                       list open workspaces: id, name, path,
+                                   machine, branch, worktree, Issue
+  workspace open <path> [--worktree <branch>]
+                                   open a folder as a workspace (Cmd+Q f);
+                                   with --worktree, open (making it if needed)
+                                   the worktree of <branch> in the clone at
+                                   <path>; the branch must name an Issue
+                                   number, like 123-fix-login
+
+agents
+  agents [--workspace <w>]         list agents: id, name, kind, status,
+                                   unread, open requests, activity
+  agent new [--workspace <w>] [--profile <p>] [--name <n>] [--gui|--tui]
+            [--prompt <text>|-]    start an agent (Cmd+Q c) and, with
+                                   --prompt, tell it something once it is up;
+                                   without --workspace, in the workspace of
+                                   the terminal or agent asking
+  agent read <a> [--last <n>] [--since <cursor>]
+                                   the transcript of a GUI agent, as text;
+                                   prints a cursor to pass as --since
+  agent send <a> <text>|-          say something to an agent; queued while
+                                   it is busy, like the composer does
+  agent interrupt <a>              stop the agent's current turn
+  agent requests <a>               the questions it is waiting on, with ids
+                                   (permission prompts are listed, but are
+                                   answered in DevHub only)
+  agent answer <a> <request> [--option <n>]... [--text <t>]
+                                   answer an AskUserQuestion-style question
+  agent wait <a> [--until idle|waiting|any] [--timeout <seconds>]
+                                   return when the agent is idle, waiting on
+                                   somebody, or either (default: any)
+
+issues
+  issue assign <url> [--repo <path>] [--branch <name>] [--root]
+               [--profile <p>] [--action <id>] [--prompt <text>|-]
+               [--editor-only] [--gui|--tui]
+                                   hand an Issue or pull request to a new
+                                   agent (Cmd+Q i), in a worktree of
+                                   <branch> (default: the Issue's own
+                                   feature/<n>-wip)
+
+terminal (your own: one per agent, beside your pane; hidden with the editor alone)
+  terminal open [--command <cmd>] [--focus]
+                                   open your terminal, or show it if it is
+                                   already open (the same one every time: a
+                                   tmux session of its own, in your workspace,
+                                   on its machine); prints the tmux handle.
+                                   --command is typed into it only when this
+                                   starts it
+  terminal status                  your terminal: open/visible/focused, and the
+                                   tmux handle with every pane in it (the
+                                   person may have split it), each with where
+                                   it is (top-left, bottom-right, ...)
+  terminal close                   close it, and its session
+  terminal panes                   the panes of your workspace's editor
+                                   terminals: id, window, what runs in front
+                                   (its command line, e.g. ssh host), cwd,
+                                   title
+  terminal bring <pane> [--focus]  move one of them (by id, %N) into your
+                                   terminal, still running: it opens your
+                                   terminal with it, or adds it as a split.
+                                   An editor terminal left with no pane ends
+
+app
+  commands                         list the command palette's commands
+  run <command-id>                 run one of them, exactly as the palette
+                                   does (it asks first wherever the window
+                                   would)
+  focus <agent|workspace>          select it in DevHub
+  notify <text>                    show a notification in DevHub
+
+<w> is a workspace id, its folder, its name, or "scratch". A folder is a
+folder on the machine devhub runs on: on an SSH host, the host's.
+<a> is an agent id (or a unique prefix of one) or its name.

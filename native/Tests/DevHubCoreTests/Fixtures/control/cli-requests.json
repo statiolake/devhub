@@ -1,0 +1,5749 @@
+[
+ {
+  "argv": [],
+  "env": {},
+  "marker": null,
+  "kind": "activate",
+  "invalid": null,
+  "request": "{\"kind\":\"activate\"}"
+ },
+ {
+  "argv": [],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "activate",
+  "invalid": null,
+  "request": "{\"kind\":\"activate\"}"
+ },
+ {
+  "argv": [],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "activate",
+  "invalid": null,
+  "request": "{\"kind\":\"activate\"}"
+ },
+ {
+  "argv": [],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "activate",
+  "invalid": null,
+  "request": "{\"kind\":\"activate\"}"
+ },
+ {
+  "argv": [],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "activate",
+  "invalid": null,
+  "request": "{\"kind\":\"activate\"}"
+ },
+ {
+  "argv": [],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "activate",
+  "invalid": null,
+  "request": "{\"kind\":\"activate\"}"
+ },
+ {
+  "argv": [
+   "src/main.ts"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/main.ts\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "src/main.ts"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/main.ts\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "src/main.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/main.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "src/main.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/main.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "src/main.ts"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/main.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "src/main.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/main.ts\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--",
+   "--help",
+   "-p",
+   "hi"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[\"--help\",\"-p\",\"hi\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--",
+   "--help",
+   "-p",
+   "hi"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[\"--help\",\"-p\",\"hi\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--",
+   "--help",
+   "-p",
+   "hi"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[\"--help\",\"-p\",\"hi\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--",
+   "--help",
+   "-p",
+   "hi"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[\"--help\",\"-p\",\"hi\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--",
+   "--help",
+   "-p",
+   "hi"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[\"--help\",\"-p\",\"hi\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--",
+   "--help",
+   "-p",
+   "hi"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"claude\",\"args\":[\"--help\",\"-p\",\"hi\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "-"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "-"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "-"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "-",
+   "notes.md"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "notes.md"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "--version"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "--version"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-",
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--wait",
+   "notes.md"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "notes.md"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "-w",
+   "notes.md"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "-w",
+   "notes.md"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "-w",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "-w",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "-w",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "-w",
+   "notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "notes.md",
+   "--wait"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "notes.md",
+   "--wait"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "notes.md",
+   "--wait"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "notes.md",
+   "--wait"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "notes.md",
+   "--wait"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "notes.md",
+   "--wait"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "-g",
+   "a.ts:9:2"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "-g",
+   "a.ts:9:2"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":9,\"column\":2},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "-g",
+   "a.ts:9:2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "-g",
+   "a.ts:9:2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "-g",
+   "a.ts:9:2"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "-g",
+   "a.ts:9:2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "--wait",
+   "-"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "--wait",
+   "-"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "--wait",
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "--wait",
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "--wait",
+   "-"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "--wait",
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open-stdin",
+  "invalid": null,
+  "request": {
+   "throws": "devhub -: stdin must be spooled to a file before the app is asked to open it"
+  }
+ },
+ {
+  "argv": [
+   "--wait"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--wait waits for a file to be closed, so it needs a file to open.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--wait"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "--wait waits for a file to be closed, so it needs a file to open.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--wait"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--wait waits for a file to be closed, so it needs a file to open.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--wait"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--wait waits for a file to be closed, so it needs a file to open.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--wait"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--wait waits for a file to be closed, so it needs a file to open.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--wait"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--wait waits for a file to be closed, so it needs a file to open.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--help"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "--help"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "-h"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "-h"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "-h"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "-h"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "-h"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "-h"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "usage",
+  "invalid": null,
+  "request": null
+ },
+ {
+  "argv": [
+   "--force"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub was not asked to do anything.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--force"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub was not asked to do anything.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--force"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub was not asked to do anything.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--force"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub was not asked to do anything.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--force"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub was not asked to do anything.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--force"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub was not asked to do anything.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "--help"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "--help"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--agent needs the name of an agent profile.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--help"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "arguments for the agent go after `--`, as in: devhub --agent claude -- --model opus.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--help"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "arguments for the agent go after `--`, as in: devhub --agent claude -- --model opus.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "arguments for the agent go after `--`, as in: devhub --agent claude -- --model opus.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "arguments for the agent go after `--`, as in: devhub --agent claude -- --model opus.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "arguments for the agent go after `--`, as in: devhub --agent claude -- --model opus.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--agent",
+   "claude",
+   "--help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "arguments for the agent go after `--`, as in: devhub --agent claude -- --model opus.",
+  "request": null
+ },
+ {
+  "argv": [
+   "a.txt",
+   "b.txt"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub opens one path at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "a.txt",
+   "b.txt"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub opens one path at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "a.txt",
+   "b.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub opens one path at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "a.txt",
+   "b.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub opens one path at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "a.txt",
+   "b.txt"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub opens one path at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "a.txt",
+   "b.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub opens one path at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--isntall-extension",
+   "a.b"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--isntall-extension'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--isntall-extension",
+   "a.b"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--isntall-extension'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--isntall-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--isntall-extension'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--isntall-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--isntall-extension'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--isntall-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--isntall-extension'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--isntall-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--isntall-extension'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-x"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '-x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-x"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '-x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '-x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '-x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-x"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '-x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "-x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '-x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--new-window",
+   "/work"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--new-window'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--new-window",
+   "/work"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--new-window'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--new-window",
+   "/work"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--new-window'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--new-window",
+   "/work"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--new-window'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--new-window",
+   "/work"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--new-window'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--new-window",
+   "/work"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--new-window'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts:42:7"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":42,\"column\":7}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts:42:7"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":42,\"column\":7},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts:42:7"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":42,\"column\":7}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts:42:7"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":42,\"column\":7}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts:42:7"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":42,\"column\":7}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts:42:7"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":42,\"column\":7}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "src/a.ts:42"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":42,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "src/a.ts:42"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":42,\"column\":1},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "-g",
+   "src/a.ts:42"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":42,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "src/a.ts:42"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":42,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "src/a.ts:42"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":42,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "src/a.ts:42"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":42,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "src/a.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/src/a.ts\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "/w/a:b/c.ts:3"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/w/a:b/c.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":3,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "/w/a:b/c.ts:3"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/w/a:b/c.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":3,\"column\":1},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "/w/a:b/c.ts:3"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/w/a:b/c.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":3,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "/w/a:b/c.ts:3"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/w/a:b/c.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":3,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "/w/a:b/c.ts:3"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/w/a:b/c.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":3,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "/w/a:b/c.ts:3"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/w/a:b/c.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":3,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--goto needs a file, optionally with :line:column.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "--goto needs a file, optionally with :line:column.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--goto needs a file, optionally with :line:column.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--goto needs a file, optionally with :line:column.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--goto needs a file, optionally with :line:column.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--goto needs a file, optionally with :line:column.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2.5"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2.5"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2.5"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2.5"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2.5"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2.5"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "the format for --goto is FILE:LINE(:COLUMN), for example src/main.ts:42:7.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto=a.ts:5:6"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":5,\"column\":6}}"
+ },
+ {
+  "argv": [
+   "--goto=a.ts:5:6"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":5,\"column\":6},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--goto=a.ts:5:6"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":5,\"column\":6}}"
+ },
+ {
+  "argv": [
+   "--goto=a.ts:5:6"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":5,\"column\":6}}"
+ },
+ {
+  "argv": [
+   "--goto=a.ts:5:6"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":5,\"column\":6}}"
+ },
+ {
+  "argv": [
+   "--goto=a.ts:5:6"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":5,\"column\":6}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0x10"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":16,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0x10"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":16,\"column\":1},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0x10"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":16,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0x10"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":16,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0x10"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":16,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:0x10"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":16,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts: 7 "
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":7,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts: 7 "
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":7,\"column\":1},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts: 7 "
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":7,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts: 7 "
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":7,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts: 7 "
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":7,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts: 7 "
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":7,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:1e2"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":100,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:1e2"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":100,\"column\":1},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:1e2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":100,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:1e2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":100,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:1e2"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":100,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:1e2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts\",\"cwd\":\"/work/a\",\"position\":{\"line\":100,\"column\":1}}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:Infinity"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts:Infinity\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:Infinity"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts:Infinity\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:Infinity"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts:Infinity\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:Infinity"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts:Infinity\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:Infinity"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts:Infinity\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:Infinity"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/a.ts:Infinity\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension",
+   "a.b",
+   "--force",
+   "--install-extension",
+   "./c.vsix"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\",\"./c.vsix\"],\"force\":true,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension",
+   "a.b",
+   "--force",
+   "--install-extension",
+   "./c.vsix"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\",\"./c.vsix\"],\"force\":true,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension",
+   "a.b",
+   "--force",
+   "--install-extension",
+   "./c.vsix"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\",\"./c.vsix\"],\"force\":true,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension",
+   "a.b",
+   "--force",
+   "--install-extension",
+   "./c.vsix"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\",\"./c.vsix\"],\"force\":true,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension",
+   "a.b",
+   "--force",
+   "--install-extension",
+   "./c.vsix"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\",\"./c.vsix\"],\"force\":true,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension",
+   "a.b",
+   "--force",
+   "--install-extension",
+   "./c.vsix"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\",\"./c.vsix\"],\"force\":true,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension=a.b"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\"],\"force\":false,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension=a.b"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\"],\"force\":false,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension=a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\"],\"force\":false,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension=a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\"],\"force\":false,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension=a.b"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\"],\"force\":false,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension=a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "install-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"install-extensions\",\"targets\":[\"a.b\"],\"force\":false,\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--install-extension"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--install-extension needs an extension id or a path to a .vsix file.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--install-extension"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "--install-extension needs an extension id or a path to a .vsix file.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--install-extension"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--install-extension needs an extension id or a path to a .vsix file.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--install-extension"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--install-extension needs an extension id or a path to a .vsix file.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--install-extension"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--install-extension needs an extension id or a path to a .vsix file.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--install-extension"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--install-extension needs an extension id or a path to a .vsix file.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b",
+   "--uninstall-extension",
+   "c.d"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\",\"c.d\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b",
+   "--uninstall-extension",
+   "c.d"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\",\"c.d\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b",
+   "--uninstall-extension",
+   "c.d"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\",\"c.d\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b",
+   "--uninstall-extension",
+   "c.d"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\",\"c.d\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b",
+   "--uninstall-extension",
+   "c.d"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\",\"c.d\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b",
+   "--uninstall-extension",
+   "c.d"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\",\"c.d\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--list-extensions"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":false}"
+ },
+ {
+  "argv": [
+   "--list-extensions"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":false}"
+ },
+ {
+  "argv": [
+   "--list-extensions"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":false}"
+ },
+ {
+  "argv": [
+   "--list-extensions"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":false}"
+ },
+ {
+  "argv": [
+   "--list-extensions"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":false}"
+ },
+ {
+  "argv": [
+   "--list-extensions"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":false}"
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--show-versions"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":true}"
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--show-versions"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":true}"
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--show-versions"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":true}"
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--show-versions"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":true}"
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--show-versions"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":true}"
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--show-versions"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "list-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"list-extensions\",\"showVersions\":true}"
+ },
+ {
+  "argv": [
+   "--version"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "--version"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "-v"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "-v"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "-v"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "-v"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "-v"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "-v"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "version",
+  "invalid": null,
+  "request": "{\"kind\":\"version\"}"
+ },
+ {
+  "argv": [
+   "--metrics"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "metrics",
+  "invalid": null,
+  "request": "{\"kind\":\"metrics\"}"
+ },
+ {
+  "argv": [
+   "--metrics"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "metrics",
+  "invalid": null,
+  "request": "{\"kind\":\"metrics\"}"
+ },
+ {
+  "argv": [
+   "--metrics"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "metrics",
+  "invalid": null,
+  "request": "{\"kind\":\"metrics\"}"
+ },
+ {
+  "argv": [
+   "--metrics"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "metrics",
+  "invalid": null,
+  "request": "{\"kind\":\"metrics\"}"
+ },
+ {
+  "argv": [
+   "--metrics"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "metrics",
+  "invalid": null,
+  "request": "{\"kind\":\"metrics\"}"
+ },
+ {
+  "argv": [
+   "--metrics"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "metrics",
+  "invalid": null,
+  "request": "{\"kind\":\"metrics\"}"
+ },
+ {
+  "argv": [
+   "--metrics",
+   "--version"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--metrics",
+   "--version"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--metrics",
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--metrics",
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--metrics",
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--metrics",
+   "--version"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--install-extension",
+   "a.b"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--install-extension",
+   "a.b"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--install-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--install-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--install-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--list-extensions",
+   "--install-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--version",
+   "/work"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--version",
+   "/work"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--version",
+   "/work"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--version",
+   "/work"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--version",
+   "/work"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--version",
+   "/work"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2",
+   "b.ts"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2",
+   "b.ts"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2",
+   "b.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2",
+   "b.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2",
+   "b.ts"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--goto",
+   "a.ts:2",
+   "b.ts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does one of these things at a time.",
+  "request": null
+ },
+ {
+  "argv": [
+   "~/notes.md"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d/notes.md\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "~/notes.md"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d/notes.md\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "~/notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "~/notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "~/notes.md"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "~/notes.md"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d/notes.md\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "~"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "~"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "~"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "~"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "~"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "~"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/home/d\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "/etc/hosts"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/etc/hosts\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "/etc/hosts"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/etc/hosts\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "/etc/hosts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/etc/hosts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "/etc/hosts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/etc/hosts\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "/etc/hosts"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/etc/hosts\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "/etc/hosts"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/etc/hosts\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "./~weird"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/./~weird\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "./~weird"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/./~weird\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "./~weird"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/./~weird\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "./~weird"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/./~weird\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "./~weird"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/./~weird\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "./~weird"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/./~weird\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "-g",
+   "notes.md:9:2"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "notes.md:9:2"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"position\":{\"line\":9,\"column\":2},\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "-g",
+   "notes.md:9:2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "notes.md:9:2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "notes.md:9:2"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "-g",
+   "notes.md:9:2"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/notes.md\",\"cwd\":\"/work/a\",\"position\":{\"line\":9,\"column\":2}}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "codex",
+   "--",
+   "-m",
+   "gpt"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"codex\",\"args\":[\"-m\",\"gpt\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "codex",
+   "--",
+   "-m",
+   "gpt"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"codex\",\"args\":[\"-m\",\"gpt\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "codex",
+   "--",
+   "-m",
+   "gpt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"codex\",\"args\":[\"-m\",\"gpt\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "codex",
+   "--",
+   "-m",
+   "gpt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"codex\",\"args\":[\"-m\",\"gpt\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "codex",
+   "--",
+   "-m",
+   "gpt"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"codex\",\"args\":[\"-m\",\"gpt\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--agent",
+   "codex",
+   "--",
+   "-m",
+   "gpt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "add-agent",
+  "invalid": null,
+  "request": "{\"kind\":\"add-agent\",\"profileId\":\"codex\",\"args\":[\"-m\",\"gpt\"],\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--uninstall-extension",
+   "a.b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "uninstall-extensions",
+  "invalid": null,
+  "request": "{\"kind\":\"uninstall-extensions\",\"ids\":[\"a.b\"],\"force\":false}"
+ },
+ {
+  "argv": [
+   "--a=b"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--a'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--a=b"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--a'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--a=b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--a'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--a=b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--a'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--a=b"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--a'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--a=b"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--a'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--=x"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--=x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--=x"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--=x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--=x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--=x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--=x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--=x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--=x"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--=x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--=x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--=x'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "agent",
+   "send",
+   "a1",
+   "--force=yes"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"--force=yes\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "agent",
+   "send",
+   "a1",
+   "--force=yes"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"--force=yes\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "agent",
+   "send",
+   "a1",
+   "--force=yes"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"--force=yes\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "agent",
+   "send",
+   "a1",
+   "--force=yes"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"--force=yes\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "agent",
+   "send",
+   "a1",
+   "--force=yes"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"--force=yes\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "agent",
+   "send",
+   "a1",
+   "--force=yes"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"--force=yes\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "answer",
+   "a",
+   "r",
+   "--allow"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--tell: permission prompts are answered in DevHub, by the person, and never from the command line.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "answer",
+   "a",
+   "r",
+   "--allow"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "--tell: permission prompts are answered in DevHub, by the person, and never from the command line.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "answer",
+   "a",
+   "r",
+   "--allow"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--tell: permission prompts are answered in DevHub, by the person, and never from the command line.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "answer",
+   "a",
+   "r",
+   "--allow"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--tell: permission prompts are answered in DevHub, by the person, and never from the command line.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "answer",
+   "a",
+   "r",
+   "--allow"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--tell: permission prompts are answered in DevHub, by the person, and never from the command line.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "answer",
+   "a",
+   "r",
+   "--allow"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "--tell: permission prompts are answered in DevHub, by the person, and never from the command line.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--tell",
+   "workspace",
+   "open",
+   "~/src/app"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspace-open\",\"path\":\"/home/d/src/app\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "workspace",
+   "open",
+   "~/src/app"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspace-open\",\"path\":\"/home/d/src/app\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "workspace",
+   "open",
+   "~/src/app"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspace-open\",\"path\":\"/home/d/src/app\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "workspace",
+   "open",
+   "~/src/app"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspace-open\",\"path\":\"/home/d/src/app\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "workspace",
+   "open",
+   "~/src/app"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspace-open\",\"path\":\"/home/d/src/app\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "workspace",
+   "open",
+   "~/src/app"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspace-open\",\"path\":\"/home/d/src/app\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "issue",
+   "assign",
+   "u",
+   "--repo",
+   "app"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"worktree\",\"editorOnly\":false,\"repo\":\"/work/a/app\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "issue",
+   "assign",
+   "u",
+   "--repo",
+   "app"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"worktree\",\"editorOnly\":false,\"repo\":\"/work/a/app\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "issue",
+   "assign",
+   "u",
+   "--repo",
+   "app"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"worktree\",\"editorOnly\":false,\"repo\":\"/work/a/app\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "issue",
+   "assign",
+   "u",
+   "--repo",
+   "app"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"worktree\",\"editorOnly\":false,\"repo\":\"/work/a/app\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "issue",
+   "assign",
+   "u",
+   "--repo",
+   "app"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"worktree\",\"editorOnly\":false,\"repo\":\"/work/a/app\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "issue",
+   "assign",
+   "u",
+   "--repo",
+   "app"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"worktree\",\"editorOnly\":false,\"repo\":\"/work/a/app\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "terminal",
+   "open",
+   "--focus"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"terminal-open\",\"focus\":true}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "terminal",
+   "open",
+   "--focus"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"terminal-open\",\"focus\":true}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "terminal",
+   "open",
+   "--focus"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"terminal-open\",\"focus\":true},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "terminal",
+   "open",
+   "--focus"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"terminal-open\",\"focus\":true},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "terminal",
+   "open",
+   "--focus"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"terminal-open\",\"focus\":true},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "terminal",
+   "open",
+   "--focus"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"terminal-open\",\"focus\":true}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "."
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/a\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "."
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/a\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "."
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/a\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "."
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/a\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "."
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/a\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "."
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/a\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "../lib/",
+   "--prompt",
+   "-"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/lib/\",\"prompt\":\"-\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "../lib/",
+   "--prompt",
+   "-"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/lib/\",\"prompt\":\"-\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "../lib/",
+   "--prompt",
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/lib/\",\"prompt\":\"-\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "../lib/",
+   "--prompt",
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/lib/\",\"prompt\":\"-\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "../lib/",
+   "--prompt",
+   "-"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/lib/\",\"prompt\":\"-\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agent",
+   "new",
+   "--workspace",
+   "../lib/",
+   "--prompt",
+   "-"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agent-new\",\"workspace\":\"/work/lib/\",\"prompt\":\"-\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "~"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"/home/d\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "~"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"/home/d\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "~"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"/home/d\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "~"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"/home/d\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "~"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"/home/d\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "~"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"/home/d\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "scratch"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"scratch\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "scratch"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"scratch\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "scratch"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"scratch\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "scratch"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"scratch\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "scratch"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"scratch\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "agents",
+   "--workspace",
+   "scratch"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"agents\",\"workspace\":\"scratch\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "help"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "help"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "help"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "help"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"}}"
+ },
+ {
+  "argv": [
+   "--tell"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"}}"
+ },
+ {
+  "argv": [
+   "--tell"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"}}"
+ },
+ {
+  "argv": [
+   "--tell"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"help\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "workspaces"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspaces\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "workspaces"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspaces\"}}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "workspaces"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspaces\"},\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "workspaces"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspaces\"},\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "workspaces"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspaces\"},\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "--tell",
+   "--json",
+   "workspaces"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "tell",
+  "invalid": null,
+  "request": "{\"kind\":\"tell\",\"command\":{\"verb\":\"workspaces\"}}"
+ },
+ {
+  "argv": [
+   "nested/../file.txt"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/nested/../file.txt\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "nested/../file.txt"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/nested/../file.txt\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "nested/../file.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/nested/../file.txt\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "nested/../file.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/nested/../file.txt\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "nested/../file.txt"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/nested/../file.txt\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "nested/../file.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/nested/../file.txt\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "--",
+   "x"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--",
+   "x"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--",
+   "x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--",
+   "x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--",
+   "x"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "--",
+   "x"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "invalid",
+  "invalid": "devhub does not know the option '--'.",
+  "request": null
+ },
+ {
+  "argv": [
+   "日本語.txt"
+  ],
+  "env": {},
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/日本語.txt\",\"cwd\":\"/work/a\"}"
+ },
+ {
+  "argv": [
+   "日本語.txt"
+  ],
+  "env": {},
+  "marker": "/tmp/devhub-wait-abc/marker",
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/日本語.txt\",\"cwd\":\"/work/a\",\"waitMarkerPath\":\"/tmp/devhub-wait-abc/marker\"}"
+ },
+ {
+  "argv": [
+   "日本語.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "ssh:build-host\t00000000-0000-4000-8000-000000000001\tnone",
+   "DEVHUB_MACHINE": "ssh:build-host"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/日本語.txt\",\"cwd\":\"/work/a\",\"origin\":\"ssh:build-host\\t00000000-0000-4000-8000-000000000001\\tnone\",\"machine\":\"ssh:build-host\"}"
+ },
+ {
+  "argv": [
+   "日本語.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "local\tscratch\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/日本語.txt\",\"cwd\":\"/work/a\",\"origin\":\"local\\tscratch\\tA1\"}"
+ },
+ {
+  "argv": [
+   "日本語.txt"
+  ],
+  "env": {
+   "DEVHUB_MACHINE": "ssh:box",
+   "DEVHUB_ORIGIN": "ssh:box\tw1\tA1"
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/日本語.txt\",\"cwd\":\"/work/a\",\"origin\":\"ssh:box\\tw1\\tA1\",\"machine\":\"ssh:box\"}"
+ },
+ {
+  "argv": [
+   "日本語.txt"
+  ],
+  "env": {
+   "DEVHUB_ORIGIN": "",
+   "DEVHUB_MACHINE": ""
+  },
+  "marker": null,
+  "kind": "open",
+  "invalid": null,
+  "request": "{\"kind\":\"open\",\"path\":\"/work/a/日本語.txt\",\"cwd\":\"/work/a\"}"
+ }
+]

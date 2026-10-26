@@ -1,0 +1,586 @@
+[
+ {
+  "value": {
+   "verb": "help"
+  },
+  "command": "{\"verb\":\"help\"}"
+ },
+ {
+  "value": {
+   "verb": "help"
+  },
+  "command": "{\"verb\":\"help\"}"
+ },
+ {
+  "value": {
+   "verb": "help"
+  },
+  "command": "{\"verb\":\"help\"}"
+ },
+ {
+  "value": {
+   "verb": "help"
+  },
+  "command": "{\"verb\":\"help\"}"
+ },
+ {
+  "value": {
+   "verb": "agents"
+  },
+  "command": "{\"verb\":\"agents\"}"
+ },
+ {
+  "value": {
+   "verb": "agents"
+  },
+  "command": "{\"verb\":\"agents\"}"
+ },
+ {
+  "value": {
+   "verb": "workspaces"
+  },
+  "command": "{\"verb\":\"workspaces\"}"
+ },
+ {
+  "value": {
+   "verb": "workspaces"
+  },
+  "command": "{\"verb\":\"workspaces\"}"
+ },
+ {
+  "value": {
+   "verb": "agents",
+   "workspace": "scratch"
+  },
+  "command": "{\"verb\":\"agents\",\"workspace\":\"scratch\"}"
+ },
+ {
+  "value": {
+   "verb": "agents",
+   "workspace": "~/src/app"
+  },
+  "command": "{\"verb\":\"agents\",\"workspace\":\"~/src/app\"}"
+ },
+ {
+  "value": {
+   "verb": "commands"
+  },
+  "command": "{\"verb\":\"commands\"}"
+ },
+ {
+  "value": {
+   "verb": "workspace-open",
+   "path": "~/src/app"
+  },
+  "error": "a tell command's path must be an absolute path"
+ },
+ {
+  "value": {
+   "verb": "workspace-open",
+   "path": ".",
+   "worktree": "12-fix-login"
+  },
+  "error": "a tell command's path must be an absolute path"
+ },
+ {
+  "value": {
+   "verb": "agent-new",
+   "profile": "claude"
+  },
+  "command": "{\"verb\":\"agent-new\",\"profile\":\"claude\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-new",
+   "workspace": "w1",
+   "profile": "claude",
+   "name": "API fix",
+   "prompt": "fix it",
+   "presentation": "gui"
+  },
+  "command": "{\"verb\":\"agent-new\",\"workspace\":\"w1\",\"profile\":\"claude\",\"name\":\"API fix\",\"prompt\":\"fix it\",\"presentation\":\"gui\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-new",
+   "presentation": "tui"
+  },
+  "command": "{\"verb\":\"agent-new\",\"presentation\":\"tui\"}"
+ },
+ {
+  "value": {
+   "verb": "issue-assign",
+   "url": "https://github.com/o/r/issues/123",
+   "place": "worktree",
+   "editorOnly": false,
+   "branch": "123-fix-login-timeout",
+   "prompt": "keep it small"
+  },
+  "command": "{\"verb\":\"issue-assign\",\"url\":\"https://github.com/o/r/issues/123\",\"place\":\"worktree\",\"editorOnly\":false,\"branch\":\"123-fix-login-timeout\",\"prompt\":\"keep it small\"}"
+ },
+ {
+  "value": {
+   "verb": "issue-assign",
+   "url": "u",
+   "place": "root",
+   "editorOnly": true,
+   "repo": "~/r"
+  },
+  "error": "a tell command's repo must be an absolute path"
+ },
+ {
+  "value": {
+   "verb": "issue-assign",
+   "url": "u",
+   "place": "worktree",
+   "editorOnly": false,
+   "profile": "p",
+   "action": "fix",
+   "prompt": "a",
+   "presentation": "gui"
+  },
+  "command": "{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"worktree\",\"editorOnly\":false,\"profile\":\"p\",\"action\":\"fix\",\"prompt\":\"a\",\"presentation\":\"gui\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-read",
+   "agent": "a1",
+   "last": 5,
+   "since": "e9"
+  },
+  "command": "{\"verb\":\"agent-read\",\"agent\":\"a1\",\"last\":5,\"since\":\"e9\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-read",
+   "agent": "a1"
+  },
+  "command": "{\"verb\":\"agent-read\",\"agent\":\"a1\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-send",
+   "agent": "a1",
+   "text": "please --also this"
+  },
+  "command": "{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"please --also this\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-send",
+   "agent": "a1",
+   "text": "-"
+  },
+  "command": "{\"verb\":\"agent-send\",\"agent\":\"a1\",\"text\":\"-\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-interrupt",
+   "agent": "a1"
+  },
+  "command": "{\"verb\":\"agent-interrupt\",\"agent\":\"a1\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-requests",
+   "agent": "a1"
+  },
+  "command": "{\"verb\":\"agent-requests\",\"agent\":\"a1\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-wait",
+   "agent": "a1",
+   "until": "any",
+   "timeoutSeconds": 300
+  },
+  "command": "{\"verb\":\"agent-wait\",\"agent\":\"a1\",\"until\":\"any\",\"timeoutSeconds\":300}"
+ },
+ {
+  "value": {
+   "verb": "agent-wait",
+   "agent": "a1",
+   "until": "idle",
+   "timeoutSeconds": 30
+  },
+  "command": "{\"verb\":\"agent-wait\",\"agent\":\"a1\",\"until\":\"idle\",\"timeoutSeconds\":30}"
+ },
+ {
+  "value": {
+   "verb": "agent-answer",
+   "agent": "a1",
+   "request": "r1",
+   "options": [
+    2,
+    3
+   ]
+  },
+  "command": "{\"verb\":\"agent-answer\",\"agent\":\"a1\",\"request\":\"r1\",\"options\":[2,3]}"
+ },
+ {
+  "value": {
+   "verb": "agent-answer",
+   "agent": "a1",
+   "request": "r1",
+   "options": [],
+   "text": "Postgres"
+  },
+  "command": "{\"verb\":\"agent-answer\",\"agent\":\"a1\",\"request\":\"r1\",\"options\":[],\"text\":\"Postgres\"}"
+ },
+ {
+  "value": {
+   "verb": "run",
+   "command": "next_agent"
+  },
+  "command": "{\"verb\":\"run\",\"command\":\"next_agent\"}"
+ },
+ {
+  "value": {
+   "verb": "focus",
+   "target": "a1"
+  },
+  "command": "{\"verb\":\"focus\",\"target\":\"a1\"}"
+ },
+ {
+  "value": {
+   "verb": "notify",
+   "text": "all done"
+  },
+  "command": "{\"verb\":\"notify\",\"text\":\"all done\"}"
+ },
+ {
+  "value": {
+   "verb": "terminal-open",
+   "focus": false
+  },
+  "command": "{\"verb\":\"terminal-open\",\"focus\":false}"
+ },
+ {
+  "value": {
+   "verb": "terminal-open",
+   "focus": true,
+   "command": "npm run dev"
+  },
+  "command": "{\"verb\":\"terminal-open\",\"focus\":true,\"command\":\"npm run dev\"}"
+ },
+ {
+  "value": {
+   "verb": "terminal-status"
+  },
+  "command": "{\"verb\":\"terminal-status\"}"
+ },
+ {
+  "value": {
+   "verb": "terminal-status"
+  },
+  "command": "{\"verb\":\"terminal-status\"}"
+ },
+ {
+  "value": {
+   "verb": "terminal-close"
+  },
+  "command": "{\"verb\":\"terminal-close\"}"
+ },
+ {
+  "value": {
+   "verb": "terminal-panes"
+  },
+  "command": "{\"verb\":\"terminal-panes\"}"
+ },
+ {
+  "value": {
+   "verb": "terminal-bring",
+   "pane": "%7",
+   "focus": false
+  },
+  "command": "{\"verb\":\"terminal-bring\",\"pane\":\"%7\",\"focus\":false}"
+ },
+ {
+  "value": {
+   "verb": "terminal-bring",
+   "pane": "%7",
+   "focus": true
+  },
+  "command": "{\"verb\":\"terminal-bring\",\"pane\":\"%7\",\"focus\":true}"
+ },
+ {
+  "value": {
+   "verb": "agents",
+   "workspace": "--"
+  },
+  "command": "{\"verb\":\"agents\",\"workspace\":\"--\"}"
+ },
+ {
+  "value": {
+   "verb": "notify",
+   "text": "--json x"
+  },
+  "command": "{\"verb\":\"notify\",\"text\":\"--json x\"}"
+ },
+ {
+  "value": {
+   "verb": "focus",
+   "target": "--weird"
+  },
+  "command": "{\"verb\":\"focus\",\"target\":\"--weird\"}"
+ },
+ {
+  "value": null,
+  "error": "a tell command must be a JSON object"
+ },
+ {
+  "value": [],
+  "error": "a tell command must be a JSON object"
+ },
+ {
+  "value": "x",
+  "error": "a tell command must be a JSON object"
+ },
+ {
+  "value": {
+   "verb": "shell"
+  },
+  "error": "unknown tell command: shell"
+ },
+ {
+  "value": {
+   "verb": "workspace-open",
+   "path": "relative"
+  },
+  "error": "a tell command's path must be an absolute path"
+ },
+ {
+  "value": {
+   "verb": "agent-wait",
+   "agent": "a",
+   "until": "any",
+   "timeoutSeconds": 100000
+  },
+  "error": "a tell command's timeoutSeconds must be a whole number from 1 to 600"
+ },
+ {
+  "value": {
+   "verb": "agent-answer",
+   "agent": "a",
+   "request": "r",
+   "options": [
+    "1"
+   ]
+  },
+  "error": "a tell command's option must be a whole number from 1 to 100"
+ },
+ {
+  "value": {
+   "verb": "agent-new",
+   "workspace": "w",
+   "presentation": "x"
+  },
+  "error": "a tell command's presentation must be gui or tui"
+ },
+ {
+  "value": {
+   "verb": "terminal-open",
+   "focus": "yes"
+  },
+  "error": "a tell command's focus must be a boolean"
+ },
+ {
+  "value": {
+   "verb": "agent-new"
+  },
+  "command": "{\"verb\":\"agent-new\"}"
+ },
+ {
+  "value": {
+   "verb": "workspace-open",
+   "path": "/src/app",
+   "worktree": "1-x"
+  },
+  "command": "{\"verb\":\"workspace-open\",\"path\":\"/src/app\",\"worktree\":\"1-x\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-new",
+   "workspace": "w",
+   "prompt": "p",
+   "presentation": "tui"
+  },
+  "command": "{\"verb\":\"agent-new\",\"workspace\":\"w\",\"prompt\":\"p\",\"presentation\":\"tui\"}"
+ },
+ {
+  "value": {
+   "verb": "issue-assign",
+   "url": "u",
+   "repo": "/r",
+   "branch": "b",
+   "place": "root",
+   "editorOnly": false
+  },
+  "command": "{\"verb\":\"issue-assign\",\"url\":\"u\",\"place\":\"root\",\"editorOnly\":false,\"repo\":\"/r\",\"branch\":\"b\"}"
+ },
+ {
+  "value": {
+   "verb": "issue-assign",
+   "url": "u",
+   "place": "elsewhere",
+   "editorOnly": false
+  },
+  "error": "a tell command's place must be worktree or root"
+ },
+ {
+  "value": {
+   "verb": "issue-assign",
+   "url": "u",
+   "place": "root",
+   "editorOnly": "no"
+  },
+  "error": "a tell command's editorOnly must be a boolean"
+ },
+ {
+  "value": {
+   "verb": "issue-assign",
+   "url": "u",
+   "place": "root",
+   "editorOnly": false,
+   "repo": "r"
+  },
+  "error": "a tell command's repo must be an absolute path"
+ },
+ {
+  "value": {
+   "verb": "agent-read",
+   "agent": "a",
+   "last": 3,
+   "since": "e"
+  },
+  "command": "{\"verb\":\"agent-read\",\"agent\":\"a\",\"last\":3,\"since\":\"e\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-read",
+   "agent": "a",
+   "last": 3.5
+  },
+  "error": "a tell command's last must be a whole number from 1 to 1000"
+ },
+ {
+  "value": {
+   "verb": "agent-answer",
+   "agent": "a",
+   "request": "r",
+   "options": [
+    1
+   ],
+   "text": "t"
+  },
+  "command": "{\"verb\":\"agent-answer\",\"agent\":\"a\",\"request\":\"r\",\"options\":[1],\"text\":\"t\"}"
+ },
+ {
+  "value": {
+   "verb": "agent-answer",
+   "agent": "a",
+   "request": "r",
+   "options": [
+    1
+   ],
+   "text": 5
+  },
+  "error": "a tell command's text must be a string"
+ },
+ {
+  "value": {
+   "verb": "agent-answer",
+   "agent": "a",
+   "request": "r",
+   "options": "1"
+  },
+  "error": "a tell command's options must be a list"
+ },
+ {
+  "value": {
+   "verb": "agent-wait",
+   "agent": "a",
+   "until": "waiting",
+   "timeoutSeconds": 10
+  },
+  "command": "{\"verb\":\"agent-wait\",\"agent\":\"a\",\"until\":\"waiting\",\"timeoutSeconds\":10}"
+ },
+ {
+  "value": {
+   "verb": "agent-wait",
+   "agent": "a",
+   "until": "later",
+   "timeoutSeconds": 10
+  },
+  "error": "a tell command's until must be idle, waiting or any"
+ },
+ {
+  "value": {
+   "verb": "agent-send",
+   "agent": "",
+   "text": "t"
+  },
+  "error": "a tell command's agent must be a non-empty string"
+ },
+ {
+  "value": {
+   "verb": "agent-send",
+   "agent": "a",
+   "text": null
+  },
+  "error": "a tell command's text must be a non-empty string"
+ },
+ {
+  "value": {
+   "verb": "terminal-bring",
+   "pane": "%3",
+   "focus": true
+  },
+  "command": "{\"verb\":\"terminal-bring\",\"pane\":\"%3\",\"focus\":true}"
+ },
+ {
+  "value": {
+   "verb": "terminal-bring",
+   "pane": "%3"
+  },
+  "error": "a tell command's focus must be a boolean"
+ },
+ {
+  "value": {
+   "verb": "help",
+   "extra": 1
+  },
+  "command": "{\"verb\":\"help\"}"
+ },
+ {
+  "value": {
+   "verb": "notify",
+   "text": "n"
+  },
+  "command": "{\"verb\":\"notify\",\"text\":\"n\"}"
+ },
+ {
+  "value": {
+   "verb": 7
+  },
+  "error": "unknown tell command: 7"
+ },
+ {
+  "value": {},
+  "error": "unknown tell command: undefined"
+ },
+ {
+  "value": {
+   "verb": "workspaces",
+   "workspace": "ignored"
+  },
+  "command": "{\"verb\":\"workspaces\"}"
+ },
+ {
+  "value": {
+   "verb": "agents",
+   "workspace": null
+  },
+  "error": "a tell command's workspace must be a non-empty string"
+ }
+]
