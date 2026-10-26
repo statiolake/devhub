@@ -474,7 +474,35 @@ person opens through DevHub finds it.
   container's managed Neovim (the Workspace's editor moved), as a Workspace
   close does.
 - **Menus:** Reopen in Container / Locally come back in terminal mode, and
-  mean "where the managed Neovim runs"; the editor area does not move.
+  mean "where the managed Neovim runs"; the editor area does not move. In VS
+  Code mode the way *into* a container is the workbench's own Reopen in
+  Container (`reattach-editor` over the control socket); terminal mode has no
+  workbench, so it needs an entrance of its own — a row-menu item over
+  `devContainerConfigsOf` (a submenu when the folder has several
+  definitions) — besides the row's existing retry / way-out items.
+- **Switching** (`attachEditor` in terminal mode): bring the container up
+  (`ensureUp`, building when asked), then close the managed Neovim where the
+  editor was — refused while it has modified buffers, the terminal-mode
+  analogue of VS Code's unsaved-work question — then record the attachment;
+  `releaseContainer` as today. No workbench is waited for.
+- **Orphans:** `docker exec` does not stop the process it started when its
+  client dies (no signal proxy), so killing the pane leaves Neovim running in
+  the container with its socket. Every kill of a container's managed Neovim
+  (Workspace close, switching, a record found with its pane gone) first asks
+  it to quit over RPC (`qa!`), and only then kills the pane.
+- **`devhub --wait` across the boundary:** a marker written on the
+  Workspace's machine cannot be deleted by the Neovim's `os.remove` in the
+  container. For a container, the open call passes DevHub's RPC channel id
+  (`nvim_get_api_info`) and the buffer's autocommands `rpcnotify` it instead;
+  the client grows notifications, and the marker is deleted on the machine it
+  was written on (`waitFiles` beside `files`). Server death keeps deleting
+  outstanding markers, as now.
+- **Environment:** `docker exec` gives the container's `containerEnv`, not
+  `remoteEnv` or a login shell's; the wrapper runs Neovim by absolute path, so
+  only what Neovim itself starts (git for lazy.nvim, mason's downloads) sees
+  the difference. Say it if it matters; do not compose an env argv.
+- **Starting:** a jump to a stopped container starts it (`prepare`, never a
+  build), as opening a window does in VS Code mode.
 
 ### Tests
 
