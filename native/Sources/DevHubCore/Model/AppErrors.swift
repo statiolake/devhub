@@ -329,6 +329,7 @@ public struct NamedFailure: Error, Hashable, Sendable, NamedFailureText, CustomS
 /// `failureText`: any failure as one line — a named failure as its title and
 /// its detail, anything else as its description.
 public func failureText(_ failure: Error) -> String {
+    if let coded = failure as? CodedFailure { return coded.text }
     if let named = failure as? NamedFailure {
         guard let detail = named.wire.detail else { return named.wire.summary }
         return "\(named.wire.summary) \(detail)"
@@ -348,6 +349,15 @@ public func namedFailure(_ failure: Error) -> NamedFailure {
 /// the detail.
 public func errorWire(_ error: Error) -> AppError {
     if let named = error as? NamedFailure { return named.wire }
+    // WP4's git and GitHub failures are the TypeScript app's `NamedFailure`s
+    // under another name: their code is an app error code and their words
+    // are the ones to show.
+    if let coded = error as? CodedFailure {
+        var wire = AppError.at(AppErrorCode(rawValue: coded.code) ?? .nativeUnavailable)
+        wire.summary = coded.summary
+        wire.detail = coded.detail
+        return wire
+    }
     return AppError.at(.nativeUnavailable).withDetail(String(describing: error))
 }
 
