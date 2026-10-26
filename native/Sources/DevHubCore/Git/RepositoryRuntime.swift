@@ -510,13 +510,16 @@ private func statMode(_ path: String) -> (mode_t?, Int32) {
 }
 
 /// What a pipe holds right now, up to its end or until it would block.
+///
+/// `poll` first, so the descriptor is never switched to non-blocking — a
+/// readability handler may still be reading it.
 func drainWithoutBlocking(_ handle: FileHandle) -> Data {
     let descriptor = handle.fileDescriptor
-    let flags = fcntl(descriptor, F_GETFL)
-    _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
     var result = Data()
     var buffer = [UInt8](repeating: 0, count: 65536)
     while true {
+        var probe = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
+        guard poll(&probe, 1, 0) > 0, probe.revents & Int16(POLLIN | POLLHUP) != 0 else { break }
         let count = buffer.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
         if count <= 0 { break }
         result.append(contentsOf: buffer[0..<count])

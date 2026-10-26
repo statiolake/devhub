@@ -103,7 +103,7 @@ final class ManualRepositoryClock: RepositoryClock, @unchecked Sendable {
 
 /// A machine, as the watcher reads one: an id, a cadence, and whether it is
 /// answering.
-struct FakeMachine: RepositoryRuntime {
+struct FakeRepositoryMachine: RepositoryRuntime {
     var id: String
     var cadence: RepositoryCadence
     var isConnected: Bool
@@ -126,7 +126,7 @@ struct FakeMachine: RepositoryRuntime {
 }
 
 /// Answers that may hang until the case is over.
-final class Hangs: @unchecked Sendable {
+final class HangingAnswers: @unchecked Sendable {
     private let lock = NSLock()
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
@@ -242,7 +242,7 @@ final class FakeHeadWatcher: HeadWatching, @unchecked Sendable {
     func stop() {}
 }
 
-final class Published: @unchecked Sendable {
+final class PublishedStatuses: @unchecked Sendable {
     private let lock = NSLock()
     private var items: [RepositoryStatusWire] = []
     func append(_ status: RepositoryStatusWire) { lock.lock(); items.append(status); lock.unlock() }
@@ -251,7 +251,7 @@ final class Published: @unchecked Sendable {
     var last: RepositoryStatusWire? { all.last }
 }
 
-final class Box<Value>: @unchecked Sendable {
+final class TestCell<Value>: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: Value
     init(_ value: Value) { stored = value }
@@ -264,13 +264,13 @@ final class Box<Value>: @unchecked Sendable {
 // MARK: - The cases
 
 final class RepositoryStatusTests: XCTestCase {
-    private let here = FakeMachine("local")
+    private let here = FakeRepositoryMachine("local")
     private let pollMs = Double(RepositoryCadence.local.repositoryPollMs)
     private let focusMinMs = Double(RepositoryCadence.local.repositoryFocusRefreshMinIntervalMs)
     private var git = ScriptedGit()
     private var gitHub = ScriptedGitHubAsking()
-    private var hangs = Hangs()
-    private var headChanged: Box<(@Sendable () -> Void)?> = Box(nil)
+    private var hangs = HangingAnswers()
+    private var headChanged: TestCell<(@Sendable () -> Void)?> = TestCell(nil)
     private var running: [RepositoryStatusWatcher] = []
     private var clocks: [ManualRepositoryClock] = []
 
@@ -279,8 +279,8 @@ final class RepositoryStatusTests: XCTestCase {
     override func setUp() {
         git = ScriptedGit()
         gitHub = ScriptedGitHubAsking()
-        hangs = Hangs()
-        headChanged = Box(nil)
+        hangs = HangingAnswers()
+        headChanged = TestCell(nil)
     }
 
     override func tearDown() async throws {
@@ -292,7 +292,7 @@ final class RepositoryStatusTests: XCTestCase {
     }
 
     private func watcher(
-        _ published: Published,
+        _ published: PublishedStatuses,
         workspaces: @escaping @Sendable () -> [WatchedWorkspace],
         gitCommand: (@Sendable (RepositoryRuntime) async throws -> GitCommand)? = nil,
         clock: RepositoryClock = SystemRepositoryClock()
@@ -332,7 +332,7 @@ final class RepositoryStatusTests: XCTestCase {
 
     /// One round, run and waited for.
     private func round() async -> RepositoryStatusWire {
-        let published = Published()
+        let published = PublishedStatuses()
         let one = workspace
         let running = watcher(published, workspaces: { [one] })
         await running.start()
@@ -404,9 +404,9 @@ final class RepositoryStatusTests: XCTestCase {
 
     func testKeepsWhatItLastKnewRatherThanTheReasonItCouldNotRefreshIt() async {
         git.checkedOut("feature/128-tidy")
-        let published = Published()
+        let published = PublishedStatuses()
         let one = workspace
-        let watched = Box([one])
+        let watched = TestCell([one])
         let running = watcher(published, workspaces: { watched.value })
         await running.start()
         await waitFor { published.count >= 2 }
@@ -428,7 +428,7 @@ final class RepositoryStatusTests: XCTestCase {
     func testShowsABranchItHasJustSwitchedToWithoutWaitingForGitHub() async {
         let clock = manualClock()
         git.checkedOut("feature/128-tidy")
-        let published = Published()
+        let published = PublishedStatuses()
         let one = workspace
         let running = watcher(published, workspaces: { [one] }, clock: clock)
         await running.start()
@@ -450,7 +450,7 @@ final class RepositoryStatusTests: XCTestCase {
     func testRunsNoGitAtAllWhileNothingHasHappened() async {
         let clock = manualClock()
         git.checkedOut("feature/128-tidy")
-        let published = Published()
+        let published = PublishedStatuses()
         let one = workspace
         let running = watcher(published, workspaces: { [one] }, clock: clock)
         await running.start()
@@ -468,7 +468,7 @@ final class RepositoryStatusTests: XCTestCase {
         git.checkedOut("feature/128-tidy")
         let hangs = self.hangs
         gitHub.status = { _ in await hangs.hang(); return BranchStatus() }
-        let published = Published()
+        let published = PublishedStatuses()
         let one = workspace
         let running = watcher(published, workspaces: { [one] })
         await running.start()
@@ -586,7 +586,7 @@ final class RepositoryStatusTests: XCTestCase {
             RepositoryFacts(mainWorktree: "/projects/widget", worktree: root, branch: branches[root], pushBranch: "feature/128-tidy", remote: RemoteIdentity(normalized: "github.com/example/widget"))
         }
         git.branch = { _, root in branches[root] }
-        let published = Published()
+        let published = PublishedStatuses()
         let first = workspace
         let running = watcher(published, workspaces: { [first, second] })
         await running.start()
@@ -626,7 +626,7 @@ final class RepositoryStatusTests: XCTestCase {
         git.checkedOut("master")
         let hangs = self.hangs
         gitHub.status = { _ in await hangs.hang(); return BranchStatus() }
-        let published = Published()
+        let published = PublishedStatuses()
         let one = workspace
         let running = watcher(published, workspaces: { [one] })
         await running.start()
@@ -649,12 +649,12 @@ final class RepositoryStatusTests: XCTestCase {
 
     // MARK: checkouts on more than one machine
 
-    private let there = FakeMachine("ssh:build.example.com")
+    private let there = FakeRepositoryMachine("ssh:build.example.com")
 
     func testReadsEachRowWithTheGitItsOwnMachineResolved() async {
         git.checkedOut("main")
-        let asked = Box<[String]>([])
-        let published = Published()
+        let asked = TestCell<[String]>([])
+        let published = PublishedStatuses()
         let one = workspace
         let remote = WatchedWorkspace(id: "w-2", root: "/srv/api", runtime: there)
         let running = watcher(published, workspaces: { [one, remote] }, gitCommand: { runtime in
@@ -672,7 +672,7 @@ final class RepositoryStatusTests: XCTestCase {
 
     func testGivesTheRemoteRowTheSameBranchIssueAndPullRequest() async {
         git.checkedOut("feature/128-tidy")
-        let published = Published()
+        let published = PublishedStatuses()
         let remote = WatchedWorkspace(id: "w-2", root: "/srv/api", runtime: there)
         let running = watcher(published, workspaces: { [remote] })
         await running.start()
@@ -684,10 +684,10 @@ final class RepositoryStatusTests: XCTestCase {
     func testPollsEachMachineOnItsOwnClock() async {
         let clock = manualClock()
         git.checkedOut("main")
-        let slow = FakeMachine("ssh:slow.example.com", repositoryPollMs: RepositoryCadence.local.repositoryPollMs * 10)
-        let rounds = Box<[String]>([])
+        let slow = FakeRepositoryMachine("ssh:slow.example.com", repositoryPollMs: RepositoryCadence.local.repositoryPollMs * 10)
+        let rounds = TestCell<[String]>([])
         let one = workspace
-        let running = watcher(Published(), workspaces: { [one, WatchedWorkspace(id: "w-3", root: "/srv/slow", runtime: slow)] }, gitCommand: { runtime in
+        let running = watcher(PublishedStatuses(), workspaces: { [one, WatchedWorkspace(id: "w-3", root: "/srv/slow", runtime: slow)] }, gitCommand: { runtime in
             rounds.value.append(runtime.id)
             return GitCommand(runtime: runtime, git: "git", environment: [:])
         }, clock: clock)
@@ -706,9 +706,9 @@ final class RepositoryStatusTests: XCTestCase {
         git.checkedOut("main")
         let one = workspace
         let remote = WatchedWorkspace(id: "w-2", root: "/srv/api", runtime: there)
-        let watched = Box([one, remote])
-        let rounds = Box<[String]>([])
-        let running = watcher(Published(), workspaces: { watched.value }, gitCommand: { runtime in
+        let watched = TestCell([one, remote])
+        let rounds = TestCell<[String]>([])
+        let running = watcher(PublishedStatuses(), workspaces: { watched.value }, gitCommand: { runtime in
             rounds.value.append(runtime.id)
             return GitCommand(runtime: runtime, git: "git", environment: [:])
         }, clock: clock)
@@ -725,9 +725,9 @@ final class RepositoryStatusTests: XCTestCase {
 
     // MARK: coming back to the window
 
-    private func counting(_ workspaces: [WatchedWorkspace], clock: ManualRepositoryClock) -> (Box<[String]>, RepositoryStatusWatcher) {
-        let rounds = Box<[String]>([])
-        let running = watcher(Published(), workspaces: { workspaces }, gitCommand: { runtime in
+    private func counting(_ workspaces: [WatchedWorkspace], clock: ManualRepositoryClock) -> (TestCell<[String]>, RepositoryStatusWatcher) {
+        let rounds = TestCell<[String]>([])
+        let running = watcher(PublishedStatuses(), workspaces: { workspaces }, gitCommand: { runtime in
             rounds.value.append(runtime.id)
             return GitCommand(runtime: runtime, git: "git", environment: [:])
         }, clock: clock)
@@ -794,7 +794,7 @@ final class RepositoryStatusTests: XCTestCase {
     func testLeavesAMachineThatIsNotAnsweringAlone() async {
         let clock = manualClock()
         git.checkedOut("main")
-        let gone = FakeMachine("ssh:gone.example.com", connected: false)
+        let gone = FakeRepositoryMachine("ssh:gone.example.com", connected: false)
         let (rounds, running) = counting([WatchedWorkspace(id: "w-4", root: "/srv/gone", runtime: gone)], clock: clock)
         await running.start()
         await clock.advance(by: 0)
@@ -811,7 +811,7 @@ final class RepositoryStatusTests: XCTestCase {
     func testAsksGitHubAboutTheNewBranchNotOnlyAboutANewOne() async {
         let clock = manualClock()
         git.checkedOut("main")
-        let published = Published()
+        let published = PublishedStatuses()
         let one = workspace
         let running = watcher(published, workspaces: { [one] }, clock: clock)
         await running.start()
@@ -835,7 +835,7 @@ final class RepositoryStatusTests: XCTestCase {
         let clock = manualClock()
         git.checkedOut("main")
         let one = workspace
-        let running = watcher(Published(), workspaces: { [one] }, clock: clock)
+        let running = watcher(PublishedStatuses(), workspaces: { [one] }, clock: clock)
         await running.start()
         await clock.advance(by: 0)
         func last() async -> WorkspaceRepositoryRound.Round? { await running.rounds().first?.lastRepositoryRound }
