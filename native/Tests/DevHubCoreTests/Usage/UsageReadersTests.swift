@@ -650,7 +650,7 @@ final class UsageReadersTests: XCTestCase {
 
 /// usageLimits.test.ts's capture case, Claude half: real captured lines go
 /// through WP5's Claude adapter, and the events it emits feed the readout. (The
-/// Codex half waits for WP6's adapter.)
+/// Codex half is `UsageLimitsCodexCaptureTests`, through WP6's adapter.)
 final class UsageLimitsCaptureTests: XCTestCase {
     func testTakesClaudesLimitFromWhatItsGUIAgentReports() throws {
         let adapter = ClaudeAdapter(bootId: "replay")
