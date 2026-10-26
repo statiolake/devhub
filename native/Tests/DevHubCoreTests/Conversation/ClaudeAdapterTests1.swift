@@ -292,7 +292,7 @@ final class ClaudeUserMessageTests: XCTestCase {
             parsed(lines),
             [
                 [
-                    "type": "user", "message": ["role": "user", "content": "/review 12"], "parent_tool_use_id": nil,
+                    "type": "user", "message": ["role": "user", "content": "/review 12"], "parent_tool_use_id": .null,
                     "session_id": "", "devhub_origin": "injection",
                 ]
             ])

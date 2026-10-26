@@ -112,6 +112,9 @@ public enum JsonValue: Sendable, Hashable {
     }
 }
 
+// ExpressibleByNilLiteral, for literals (`["parent": nil]`). Beware: inside a
+// closure whose result is `JsonValue?`, a bare `nil` can be read as JSON null
+// rather than Optional's none; write `.none` or `.null` there, never `nil`.
 extension JsonValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral,
     ExpressibleByIntegerLiteral, ExpressibleByFloatLiteral, ExpressibleByStringLiteral,
     ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral

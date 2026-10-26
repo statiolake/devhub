@@ -115,7 +115,7 @@ func initLine(_ fields: JsonObject = [:]) -> String {
 
 func echo(_ text: String, _ uuid: String) -> String {
     json([
-        "type": "user", "message": ["role": "user", "content": .string(text)], "parent_tool_use_id": nil,
+        "type": "user", "message": ["role": "user", "content": .string(text)], "parent_tool_use_id": .null,
         "session_id": .string(SESSION), "uuid": .string(uuid),
     ])
 }
@@ -145,7 +145,7 @@ func toolResult(_ toolUseId: String, _ content: String, _ isError: Bool = false)
                 ["type": "tool_result", "tool_use_id": .string(toolUseId), "content": .string(content), "is_error": .bool(isError)]
             ],
         ],
-        "parent_tool_use_id": nil, "session_id": .string(SESSION),
+        "parent_tool_use_id": .null, "session_id": .string(SESSION),
     ])
 }
 
