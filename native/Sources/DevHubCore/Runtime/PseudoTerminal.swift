@@ -206,7 +206,7 @@ public final class ForkedPty: PseudoTerminal, @unchecked Sendable {
         pid = child
         master = masterFd
         _ = fcntl(masterFd, F_SETFD, FD_CLOEXEC)
-        // Non-blocking, and drained to EAGAIN on every event (see `PipeReader`).
+        // Non-blocking, and drained to EAGAIN on every event (see `DescriptorReader`).
         _ = fcntl(masterFd, F_SETFL, fcntl(masterFd, F_GETFL) | O_NONBLOCK)
         let source = DispatchSource.makeReadSource(fileDescriptor: masterFd, queue: queue)
         source.setEventHandler { [weak self] in self?.readAvailable() }

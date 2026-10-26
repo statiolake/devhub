@@ -35,10 +35,29 @@ public enum TmuxCommand {
         return text
     }
 
+    /// A format's answer, with the two separators tmux 3.4 hands back as
+    /// text restored to the bytes DevHub wrote.
+    ///
+    /// tmux 3.4 prints every C0 control character of a `-F`/`-p` expansion as
+    /// a backslash and three octal digits (`\037`) — newlines and tabs alone
+    /// excepted — where the tmux the TS app was written against prints the
+    /// byte. An answer holding neither separator as a byte and either one as
+    /// an escape is that tmux; any other answer is left exactly as it came.
+    /// A marker value that itself spelled `\037` is read as two fields there
+    /// and so as somebody else's session: wrong in the safe direction.
+    static func decodeFormatted(_ output: Data) throws -> String {
+        let text = try decodeUtf8(output)
+        if text.scalarContains("\u{1f}") || text.scalarContains("\u{1e}") { return text }
+        if !text.contains("\\036") && !text.contains("\\037") { return text }
+        return text
+            .replacingOccurrences(of: "\\036", with: recordSeparator)
+            .replacingOccurrences(of: "\\037", with: fieldSeparator)
+    }
+
     /// Split provider output into lines. A NUL byte, an over-long line or too
     /// many lines is malformed provider output, not a partial answer.
     public static func parseLines(_ output: Data) throws -> [String] {
-        let text = try decodeUtf8(output)
+        let text = try decodeFormatted(output)
         if text.scalarContains("\0") { throw shapeFailure("a NUL byte") }
         var lines: [String] = []
         for raw in text.scalarSplit("\n") {
@@ -62,7 +81,7 @@ public enum TmuxCommand {
     /// DevHub said it ends and tmux's newline is only the byte that follows it.
     public static func splitRecords(_ output: Data) throws -> [String] {
         if output.count > maxOutputBytes { throw shapeFailure("too much of it") }
-        let text = try decodeUtf8(output)
+        let text = try decodeFormatted(output)
         if text.scalarContains("\0") { throw shapeFailure("a NUL byte") }
         if text.isEmpty { return [] }
         var chunks = text.scalarSplit("\u{1e}")
@@ -107,6 +126,12 @@ public enum TmuxCommand {
     public static func parseCapture(_ output: Data) throws -> String {
         if output.count > maxOutputBytes { throw shapeFailure("too much of it") }
         return try decodeUtf8(output)
+    }
+
+    /// One `display-message -p` answer, separators restored as for a listing.
+    public static func parseDisplay(_ output: Data) throws -> String {
+        if output.count > maxOutputBytes { throw shapeFailure("too much of it") }
+        return try decodeFormatted(output)
     }
 
     // MARK: - serverReach

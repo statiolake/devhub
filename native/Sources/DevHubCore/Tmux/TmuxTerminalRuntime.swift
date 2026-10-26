@@ -890,7 +890,7 @@ public final class TmuxTerminalRuntime: @unchecked Sendable {
                 deadline: deadline
             )
             if !answer.success { throw answer.refusal() }
-            let line = try TmuxCommand.parseCapture(answer.stdout).scalarSplit("\n")[0]
+            let line = try TmuxCommand.parseDisplay(answer.stdout).scalarSplit("\n")[0]
             let parts = line.scalarSplit("\u{1f}")
             if parts[0] != agentId { throw portFailure(.conflict) }
             guard parts.count > 1, let first = parts[1].first, first != "0",
@@ -1521,7 +1521,7 @@ public final class TmuxTerminalRuntime: @unchecked Sendable {
                 // `show-options` alone does not create a server. Start it and
                 // read the marker in one client queue: on an existing server
                 // `start-server` is a no-op and the startup config is ignored.
-                args: tmuxArgs + ["-f", bootstrap.path, "-L", socket.rawValue, "start-server", ";", "show-options", "-gqv", TmuxMarkers.protocolOption],
+                args: clientArgs(env) + ["-f", bootstrap.path, "-L", socket.rawValue, "start-server", ";", "show-options", "-gqv", TmuxMarkers.protocolOption],
                 cwd: contextHome,
                 env: env
             ),
@@ -1529,6 +1529,24 @@ public final class TmuxTerminalRuntime: @unchecked Sendable {
             cancel: cancel,
             deadline: deadline
         )
+    }
+
+    /// The arguments every client DevHub reads an answer from starts with.
+    ///
+    /// A tmux client whose environment names no UTF-8 locale is not a UTF-8
+    /// client, and tmux then prints a tab or a newline in a format's answer as
+    /// `_` — so a root holding one reads back as somebody else's, and a
+    /// session's `DEVHUB_ORIGIN` as one field. The TS app always ran with the
+    /// login environment's `LANG`; DevHub launched from Finder may have none.
+    /// `-u` makes that one client UTF-8 without putting a locale into the
+    /// server's environment, where every pane would inherit it.
+    func clientArgs(_ env: [String: String]) -> [String] {
+        if tmuxArgs.contains("-u") { return tmuxArgs }
+        let locale = env["LC_ALL"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? env["LC_CTYPE"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? env["LANG"] ?? ""
+        let upper = locale.uppercased()
+        return upper.contains("UTF-8") || upper.contains("UTF8") ? tmuxArgs : tmuxArgs + ["-u"]
     }
 
     /// The client's environment: this machine's, and what a pane here must get.
@@ -1550,7 +1568,7 @@ public final class TmuxTerminalRuntime: @unchecked Sendable {
         try await runTmuxSpec(
             CommandSpec(
                 file: try executable().path,
-                args: tmuxArgs + ["-L", socket.rawValue] + args,
+                args: clientArgs(tmuxEnvironment()) + ["-L", socket.rawValue] + args,
                 // The client's working directory must stay usable even when a
                 // workspace has been deleted; session creation still receives
                 // its target root through tmux's explicit `-c` argument.

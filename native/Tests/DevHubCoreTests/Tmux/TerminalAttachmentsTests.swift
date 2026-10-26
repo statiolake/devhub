@@ -619,7 +619,7 @@ final class TerminalSurfacesTests: XCTestCase {
         let dir = scratch.make("surfaces")
         let log = Path.join(dir, "calls")
         let path = Path.join(dir, "tmux")
-        try! Data("#!/bin/sh\necho \"$*\" >>'\(log)'\n[ \"$3\" = \"-V\" ] && { echo 'tmux 3.4'; exit 0; }\necho 'no server running on /tmp/x' >&2\nexit 1\n".utf8)
+        try! Data("#!/bin/sh\necho \"$*\" >>'\(log)'\ncase \"$*\" in *-V) echo 'tmux 3.4'; exit 0;; esac\necho 'no server running on /tmp/x' >&2\nexit 1\n".utf8)
             .write(to: URL(fileURLWithPath: path))
         chmod(path, 0o755)
         let runtime = unitRuntime(home: dir, tmux: ResolvedExecutable(path: path, basename: "tmux"), timeoutMs: 5_000)

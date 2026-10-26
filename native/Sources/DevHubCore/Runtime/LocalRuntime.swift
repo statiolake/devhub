@@ -366,14 +366,13 @@ public let streamStderrBytes = 16 * 1024
 final class LocalByteStream: ByteStream, @unchecked Sendable {
     let stdout: AsyncStream<Data>
     private let continuation: AsyncStream<Data>.Continuation
-    private let process = Process()
+    private var child: SpawnedChild?
     private let lock = NSLock()
     private var stderrTail = Data()
     private var end: StreamEnd?
     private var waiters: [CheckedContinuation<StreamEnd, any Error>] = []
     private var launchFailure: (any Error)?
-    private let stdinPipe = Pipe()
-    private var readers: [PipeReader] = []
+    private var readers: [DescriptorReader] = []
 
     init(_ spec: CommandSpec, cancel: CancellationToken) throws {
         var made: AsyncStream<Data>.Continuation!
@@ -384,39 +383,26 @@ final class LocalByteStream: ByteStream, @unchecked Sendable {
             continuation.finish()
             return
         }
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = spec.args
-        process.environment = spec.env
-        if let cwd = spec.cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
-        let out = Pipe(), err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
-        process.standardInput = stdinPipe
+        // Its stdin is a pipe that is never written, as the TS stream's is:
+        // a program that reads it waits rather than seeing an end of input.
+        let child: SpawnedChild
+        do {
+            child = try SpawnedChild.spawn(executable: executable, args: spec.args, env: spec.env, cwd: spec.cwd, pipeStdin: true)
+        } catch {
+            launchFailure = portFailure(.unavailable, detail: "\(spec.file) could not be started: \(String(cString: strerror(Int32((error as NSError).code))))")
+            continuation.finish()
+            return
+        }
+        self.child = child
         let stream = continuation
         let queue = DispatchQueue(label: "devhub.byte-stream")
         readers = [
-            PipeReader(out, queue: queue, onChunk: { stream.yield($0) }, onEnd: { stream.finish() }),
-            PipeReader(err, queue: queue, onChunk: { [weak self] in self?.keep(stderr: $0) }, onEnd: { [weak self] in self?.stderrEnded() }),
+            DescriptorReader(child.stdout, queue: queue, onChunk: { stream.yield($0) }, onEnd: { stream.finish() }),
+            DescriptorReader(child.stderr, queue: queue, onChunk: { [weak self] in self?.keep(stderr: $0) }, onEnd: { [weak self] in self?.stderrEnded() }),
         ]
-        process.terminationHandler = { [weak self] finished in
-            let signalled = finished.terminationReason == .uncaughtSignal
-            self?.ended(StreamEnd(
-                code: signalled ? nil : finished.terminationStatus,
-                signal: signalled ? finished.terminationStatus : nil,
-                stderr: Data()
-            ))
-        }
-        do {
-            try process.run()
-            for reader in readers { reader.start() }
-        } catch {
-            for reader in readers {
-                reader.start()
-                reader.stop()
-            }
-            launchFailure = portFailure(.unavailable, detail: "\(spec.file) could not be started: \(error.localizedDescription)")
-            continuation.finish()
-            return
+        for reader in readers { reader.start() }
+        child.whenExited { [weak self] code, signal in
+            self?.ended(StreamEnd(code: code, signal: signal, stderr: Data()))
         }
         cancel.onCancelled { [weak self] in self?.kill() }
     }
@@ -470,14 +456,26 @@ final class LocalByteStream: ByteStream, @unchecked Sendable {
         }
     }
 
+    /// The group, and even when the leader has exited: the program may have
+    /// started children of its own (a `tail` beside a watchdog), and they hold
+    /// the pipe too. Not once its pipes are closed, when its group id may
+    /// already belong to another.
     func kill() {
-        guard launchFailure == nil, process.isRunning else { return }
-        try? stdinPipe.fileHandleForWriting.close()
-        #if canImport(Glibc)
-        _ = Glibc.kill(process.processIdentifier, SIGKILL)
-        #else
-        _ = Darwin.kill(process.processIdentifier, SIGKILL)
-        #endif
+        let (child, closed): (SpawnedChild?, Bool) = lock.withLock {
+            let child = self.child
+            let stdin = self.stdinOpen
+            self.stdinOpen = false
+            if stdin, let child { close(child.stdin) }
+            return (child, end != nil)
+        }
+        guard launchFailure == nil, let child, !closed else { return }
+        child.signalGroup(SIGTERM)
+    }
+
+    private var stdinOpen = true
+
+    deinit {
+        if stdinOpen, let child { close(child.stdin) }
     }
 }
 

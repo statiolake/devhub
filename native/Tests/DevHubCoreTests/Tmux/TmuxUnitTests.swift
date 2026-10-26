@@ -542,7 +542,7 @@ final class TmuxRefusalTests: XCTestCase {
             ("couldn't create directory /tmp/locked/tmux-501 (Permission denied)", .socketUnusable),
         ] {
             let runner = unitRuntime(
-                tmux: fakeTmux("[ \"$3\" = \"-V\" ] && { echo \"tmux 3.4\"; exit 0; }\necho \"\(said)\" >&2\nexit 1"),
+                tmux: fakeTmux("case \"$*\" in *-V) echo \"tmux 3.4\"; exit 0;; esac\necho \"\(said)\" >&2\nexit 1"),
                 timeoutMs: 5_000
             )
             _ = await assertThrowsPortAsync(code) { _ = try await runner.agentRound([]) }
@@ -552,7 +552,7 @@ final class TmuxRefusalTests: XCTestCase {
 
     func testStillReadsAServerThatRefusedTheMarkerProbeAsAConflict() async throws {
         let runner = unitRuntime(
-            tmux: fakeTmux("[ \"$3\" = \"-V\" ] && { echo \"tmux 3.4\"; exit 0; }\necho \"unknown command: display-message\" >&2\nexit 1"),
+            tmux: fakeTmux("case \"$*\" in *-V) echo \"tmux 3.4\"; exit 0;; esac\necho \"unknown command: display-message\" >&2\nexit 1"),
             timeoutMs: 5_000
         )
         let round = try await runner.agentRound([])
@@ -586,5 +586,30 @@ final class TmuxRefusalTests: XCTestCase {
         }
         let good = unitRuntime(tmux: fakeTmux("echo \"tmux 3.4\""), timeoutMs: 5_000)
         try await good.ensureVersion(try SocketName("devhub"), cancel: CancellationToken(), deadline: .within(5_000))
+    }
+}
+
+/// tmux 3.4 prints a format's C0 control characters as `\ooo`, and a client
+/// with no UTF-8 locale prints tabs and newlines as `_`. Neither is in the TS
+/// suite, whose tmux printed the bytes and whose app always had `LANG`.
+final class TmuxClientQuirkTests: XCTestCase {
+    func testReadsTheSeparatorsTmux34PrintsAsOctalEscapes() throws {
+        let escaped = Data("a\\037b\\036\nc\\037d\\036\n".utf8)
+        XCTAssertEqual(try TmuxCommand.parseRecords(escaped, fieldCount: 2), [["a", "b"], ["c", "d"]])
+    }
+
+    func testLeavesAnAnswerThatCarriesTheBytesThemselvesAlone() throws {
+        let raw = Data("a\\037b\u{1f}c\u{1e}\n".utf8)
+        XCTAssertEqual(try TmuxCommand.parseRecords(raw, fieldCount: 2), [["a\\037b", "c"]])
+    }
+
+    func testMakesAClientWithNoUtf8LocaleAUtf8One() {
+        let bare = unitRuntime(environment: ["PATH": "/usr/bin:/bin"])
+        XCTAssertEqual(bare.clientArgs(["PATH": "/usr/bin:/bin"]), ["-u"])
+        XCTAssertEqual(bare.clientArgs(["LANG": "en_US.UTF-8"]), [])
+        XCTAssertEqual(bare.clientArgs(["LC_ALL": "C", "LANG": "en_US.UTF-8"]), ["-u"])
+        XCTAssertEqual(bare.clientArgs(["LC_CTYPE": "C.utf8"]), [])
+        let configured = unitRuntime(tmuxArgs: ["-u"])
+        XCTAssertEqual(configured.clientArgs([:]), ["-u"])
     }
 }

@@ -11,10 +11,9 @@
 // What is preserved exactly is the budget — the deadline covers the drain, not
 // only the exit — and which failure wins when several apply.
 //
-// Deviation: the TS child is its own process group and the whole group is
-// SIGKILLed on a failure. Foundation's `Process` does not offer a process
-// group, so only the child itself is killed; the pipes are let go of, so a
-// descendant that keeps one open cannot hold the operation.
+// The child is its own process group (`SpawnedChild`), so a provider that
+// forks (tmux does) is terminated as a whole on a failure rather than leaving
+// a descendant holding a pipe.
 
 import Foundation
 #if canImport(Glibc)
@@ -144,10 +143,9 @@ private final class BoundedRun: @unchecked Sendable {
     private var exit: (code: Int32?, signal: Int32?)?
     private var settled = false
     private var continuation: CheckedContinuation<ExecResult, any Error>?
-    private var process: Process?
+    private var child: SpawnedChild?
     private var watchdog: Task<Void, Never>?
-    private var pipes: [Pipe] = []
-    private var sources: [DispatchSourceRead] = []
+    private var readers: [DescriptorReader] = []
     private let queue = DispatchQueue(label: "devhub.bounded-command")
 
     init(limits: MachineExecLimits, onOutput: (@Sendable (Data) -> Void)?) {
@@ -163,100 +161,45 @@ private final class BoundedRun: @unchecked Sendable {
         cancel: CancellationToken
     ) async throws -> ExecResult {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<ExecResult, any Error>) in
-            lock.lock()
-            self.continuation = continuation
-            lock.unlock()
+            lock.withLock { self.continuation = continuation }
 
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = spec.args
-            process.environment = spec.env
-            if let cwd = spec.cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
-            let outPipe = Pipe(), errPipe = Pipe()
-            process.standardOutput = outPipe
-            process.standardError = errPipe
-            var inPipe: Pipe?
-            if stdin != nil {
-                let pipe = Pipe()
-                process.standardInput = pipe
-                inPipe = pipe
-            } else {
-                process.standardInput = FileHandle.nullDevice
-            }
-            pipes = [outPipe, errPipe] + (inPipe.map { [$0] } ?? [])
-            for (pipe, isError) in [(outPipe, false), (errPipe, true)] {
-                let fd = pipe.fileHandleForReading.fileDescriptor
-                // Non-blocking, and drained to EAGAIN on every event: one event
-                // may carry the last bytes and the end of the stream together.
-                _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-                let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-                source.setEventHandler { [weak self] in
-                    var buffer = [UInt8](repeating: 0, count: 65_536)
-                    while true {
-                        let count = buffer.withUnsafeMutableBytes { raw in
-                            #if canImport(Glibc)
-                            Glibc.read(fd, raw.baseAddress, raw.count)
-                            #else
-                            Darwin.read(fd, raw.baseAddress, raw.count)
-                            #endif
-                        }
-                        if count > 0 {
-                            self?.accept(Data(buffer[0..<count]), stderr: isError, deadline: deadline)
-                            continue
-                        }
-                        if count < 0 && errno == EINTR { continue }
-                        if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) { return }
-                        source.cancel()
-                        self?.accept(Data(), stderr: isError, deadline: deadline)
-                        return
-                    }
-                }
-                // The descriptor is closed by the pipe, and the pipe is kept
-                // until the source has let go of it: a descriptor closed under a
-                // live source is a number the next pipe may be handed.
-                source.setCancelHandler { withExtendedLifetime(pipe) {} }
-                sources.append(source)
-            }
-            process.terminationHandler = { [weak self] finished in
-                let signalled = finished.terminationReason == .uncaughtSignal
-                self?.exited(
-                    code: signalled ? nil : finished.terminationStatus,
-                    signal: signalled ? finished.terminationStatus : nil,
-                    deadline: deadline
-                )
-            }
-            self.process = process
+            let child: SpawnedChild
             do {
-                try process.run()
-                for source in sources { source.resume() }
+                child = try SpawnedChild.spawn(executable: executable, args: spec.args, env: spec.env, cwd: spec.cwd, pipeStdin: stdin != nil)
             } catch {
-                // A suspended source must not be released: resume it to cancel it.
-                for source in sources { source.resume() }
                 let code = (error as NSError).code
                 let unavailable = code == Int(ENOENT) || code == Int(EACCES)
-                    || (error as NSError).domain == NSCocoaErrorDomain
-                finish(failure: portFailure(unavailable ? .unavailable : .failed, detail: "\(spec.file) could not be started: \(error.localizedDescription)"))
+                finish(failure: portFailure(unavailable ? .unavailable : .failed, detail: "\(spec.file) could not be started: \(String(cString: strerror(Int32(code))))"))
                 return
             }
-            if let stdin, let inPipe {
+            let readers = [
+                DescriptorReader(child.stdout, queue: queue, onChunk: { [weak self] in self?.accept($0, stderr: false, deadline: deadline) }, onEnd: { [weak self] in self?.accept(Data(), stderr: false, deadline: deadline) }),
+                DescriptorReader(child.stderr, queue: queue, onChunk: { [weak self] in self?.accept($0, stderr: true, deadline: deadline) }, onEnd: { [weak self] in self?.accept(Data(), stderr: true, deadline: deadline) }),
+            ]
+            lock.withLock {
+                self.child = child
+                self.readers = readers
+            }
+            for reader in readers { reader.start() }
+            child.whenExited { [weak self] code, signal in
+                self?.exited(code: code, signal: signal, deadline: deadline)
+            }
+            if let stdin {
                 // A program that stops reading before its input is all written
                 // has not been given what the caller handed it.
-                let writer = inPipe.fileHandleForWriting
-                do {
-                    try writer.write(contentsOf: stdin)
-                    try writer.close()
-                } catch {
-                    finish(failure: portFailure(.failed, detail: "\(spec.file) stopped reading its input before all of it was written (\(error.localizedDescription))"))
+                if !writeAllAndClose(child.stdin, stdin) {
+                    finish(failure: portFailure(.failed, detail: "\(spec.file) stopped reading its input before all of it was written (EPIPE)"))
                     return
                 }
             }
             cancel.onCancelled { [weak self] in self?.finish(failure: portFailure(.cancelled)) }
             let wait = max(0, deadline.remaining)
-            watchdog = Task { [weak self] in
+            let watchdog = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000))
                 if Task.isCancelled { return }
                 self?.finish(failure: portFailure(.timedOut))
             }
+            lock.withLock { self.watchdog = watchdog }
         }
     }
 
@@ -322,64 +265,21 @@ private final class BoundedRun: @unchecked Sendable {
         settled = true
         let continuation = self.continuation
         self.continuation = nil
-        let process = self.process
+        let child = self.child
         let watchdog = self.watchdog
-        let sources = self.sources
+        let readers = self.readers
         lock.unlock()
         watchdog?.cancel()
         if failure != nil {
-            for source in sources where !source.isCancelled { source.cancel() }
-            if let process, process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
+            // The whole group: a provider that forked must not leave a
+            // descendant holding a pipe.
+            for reader in readers { reader.stop() }
+            child?.signalGroup(SIGKILL)
         }
         if let failure {
             continuation?.resume(throwing: failure)
         } else if let result {
             continuation?.resume(returning: result)
         }
-    }
-}
-
-/// Read one pipe to its end on a dispatch source: non-blocking, drained to
-/// EAGAIN on every event, the pipe kept until the source has let go of it.
-/// Used where `FileHandle.readabilityHandler` would do on Darwin and does not
-/// reliably report the end of a stream on Linux.
-final class PipeReader: @unchecked Sendable {
-    private let source: DispatchSourceRead
-
-    init(_ pipe: Pipe, queue: DispatchQueue, onChunk: @escaping @Sendable (Data) -> Void, onEnd: @escaping @Sendable () -> Void) {
-        let fd = pipe.fileHandleForReading.fileDescriptor
-        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        source.setEventHandler {
-            var buffer = [UInt8](repeating: 0, count: 65_536)
-            while true {
-                let count = buffer.withUnsafeMutableBytes { raw in
-                    #if canImport(Glibc)
-                    Glibc.read(fd, raw.baseAddress, raw.count)
-                    #else
-                    Darwin.read(fd, raw.baseAddress, raw.count)
-                    #endif
-                }
-                if count > 0 {
-                    onChunk(Data(buffer[0..<count]))
-                    continue
-                }
-                if count < 0 && errno == EINTR { continue }
-                if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) { return }
-                source.cancel()
-                onEnd()
-                return
-            }
-        }
-        source.setCancelHandler { withExtendedLifetime(pipe) {} }
-        self.source = source
-    }
-
-    func start() { source.resume() }
-
-    func stop() {
-        if !source.isCancelled { source.cancel() }
     }
 }
