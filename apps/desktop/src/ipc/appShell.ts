@@ -461,8 +461,8 @@ export type AppErrorCodeWire =
 	 *
 	 * Its own code because, like the input source, the consequence is a
 	 * missing reading and not a failed action: the Sidebar goes on with what
-	 * GUI Agents report. Said once; DevHub does not ask again until it is
-	 * started again.
+	 * GUI Agents report. Said once per run of failures; the next reading
+	 * asks again.
 	 */
 	| "usage_unreadable"
 	/**
@@ -554,7 +554,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	input_source_unavailable:
 		"Chords cannot switch the keyboard out of an input method: DevHub could not change the input source.",
 	usage_unreadable:
-		"DevHub could not read a CLI's usage limits, and will not try again until it is restarted.",
+		"DevHub could not read a CLI's usage limits. It tries again at the next reading.",
 	terminal_needs_agent:
 		"There is no Agent here to open a terminal for: a terminal belongs to an Agent. Start one with Cmd+Q C, then Cmd+Q V.",
 	terminal_needs_agent_view:
