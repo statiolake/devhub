@@ -125,8 +125,8 @@ final class PathLinksTests: XCTestCase {
         root = scratchDirectory("path-links", self)
         let files = FileManager.default
         try files.createDirectory(atPath: "\(root)/src", withIntermediateDirectories: true)
-        files.createFile(atPath: "\(root)/src/a.ts", contents: Data())
-        files.createFile(atPath: "\(root)/notes with space.md", contents: Data())
+        _ = files.createFile(atPath: "\(root)/src/a.ts", contents: Data())
+        _ = files.createFile(atPath: "\(root)/notes with space.md", contents: Data())
         try files.createSymbolicLink(atPath: "\(root)/link.ts", withDestinationPath: "\(root)/src/a.ts")
     }
 
