@@ -647,3 +647,28 @@ final class UsageReadersTests: XCTestCase {
         }
     }
 }
+
+/// usageLimits.test.ts's capture case, Claude half: real captured lines go
+/// through WP5's Claude adapter, and the events it emits feed the readout. (The
+/// Codex half waits for WP6's adapter.)
+final class UsageLimitsCaptureTests: XCTestCase {
+    func testTakesClaudesLimitFromWhatItsGUIAgentReports() throws {
+        let adapter = ClaudeAdapter(bootId: "replay")
+        let limits = UsageLimits()
+        var published: [UsageLimitsWire] = []
+        for line in fixture("claude-session.capture.ndjson") {
+            let step = line.side == .sent ? try adapter.sent(line.line) : try adapter.received(line.line)
+            for event in step.events {
+                guard case .usage(let usage) = event else { continue }
+                try UsageLimitsFeed.agentReported(limits, kind: .claude, rateLimits: usage.rateLimits) { published.append($0) }
+            }
+        }
+        // The capture's last `rate_limit_event`: 98% of the five-hour window
+        // and 80% of the seven-day one, resets in epoch seconds on the wire.
+        XCTAssertEqual(limits.wire().clis[0].windows, [
+            .init(window: "5-hour", durationMinutes: 300, usedPercent: 98, resetsAt: 1_790_280_600_000),
+            .init(window: "7-day", durationMinutes: 10_080, usedPercent: 80, resetsAt: 1_790_517_600_000),
+        ])
+        XCTAssertEqual(published.last, limits.wire())
+    }
+}
