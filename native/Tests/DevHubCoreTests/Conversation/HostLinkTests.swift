@@ -91,8 +91,11 @@ class HostTestCase: XCTestCase {
         return host
     }
 
+    /// The machine the suite runs on; a subclass runs the same suite on another.
+    func machine() -> HostMachine { LocalMachine() }
+
     func link(_ directory: String, writeTimeout: Double = HOST_WRITE_TIMEOUT_SECONDS) -> HostLink {
-        HostLink(machine: LocalMachine(), stateDirectory: directory, writeTimeout: writeTimeout)
+        HostLink(machine: machine(), stateDirectory: directory, writeTimeout: writeTimeout)
     }
 }
 
@@ -130,7 +133,7 @@ func failureOf(_ work: () async throws -> Void, file: StaticString = #filePath, 
     }
 }
 
-final class HostLinkTests: HostTestCase {
+class HostLinkTests: HostTestCase {
     func testDeliversTheAgentsLinesAsTheyAreWrittenAndTakesALineToIt() async throws {
         let directory = try stateDirectory()
         try startHost(directory)
@@ -467,6 +470,19 @@ final class HostLinkTests: HostTestCase {
             XCTFail("took a newline")
         } catch { XCTAssertTrue("\(error)".contains("must not contain a newline")) }
     }
+}
+
+/// The same suite through WP3's `LocalRuntime`, the way the coordinator
+/// reaches a Workspace's machine (`describeHostLink` in the TS app runs it
+/// per machine too).
+final class HostLinkOverRuntimeTests: HostLinkTests {
+    override func machine() -> HostMachine { RuntimeHostMachine(LocalRuntime()) }
+
+    // Declared again so that test discovery on Linux, which reads each
+    // class's own methods, runs them here too.
+    override func testDeliversTheAgentsLinesAsTheyAreWrittenAndTakesALineToIt() async throws { try await super.testDeliversTheAgentsLinesAsTheyAreWrittenAndTakesALineToIt() }
+    override func testStartsTheCLIAgainAsTheWholeArgvItIsGivenTheMarkBetween() async throws { try await super.testStartsTheCLIAgainAsTheWholeArgvItIsGivenTheMarkBetween() }
+    override func testTellsAHostThatWasKilledFromOneThatEndedAndRefusesToWriteToIt() async throws { try await super.testTellsAHostThatWasKilledFromOneThatEndedAndRefusesToWriteToIt() }
 }
 
 final class HostCommandTests: XCTestCase {

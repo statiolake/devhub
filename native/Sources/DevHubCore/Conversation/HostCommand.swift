@@ -74,7 +74,7 @@ public func agentStateDirectory(home: String, profileTag: String, agentId: Strin
 }
 
 /// Every GUI Agent host directory on a machine, by Agent id, and the removal of one.
-public struct AgentHostFiles: Sendable {
+public struct HostDirectories: AgentHostFiles {
     let machine: HostMachine
     let home: String
     let root: String
@@ -95,9 +95,9 @@ public struct AgentHostFiles: Sendable {
     }
 }
 
-public func agentHostFiles(_ machine: HostMachine, profileTag: String) async throws -> AgentHostFiles {
+public func agentHostFiles(_ machine: HostMachine, profileTag: String) async throws -> HostDirectories {
     let home = try await machine.home()
-    return AgentHostFiles(machine: machine, home: home, root: try agentsDirectory(home, profileTag), profileTag: profileTag)
+    return HostDirectories(machine: machine, home: home, root: try agentsDirectory(home, profileTag), profileTag: profileTag)
 }
 
 /// Put `lines` at the head of a new Agent's journal, before its host starts:
