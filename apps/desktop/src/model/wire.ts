@@ -129,15 +129,13 @@ function paletteWire(palette: TerminalPaletteWire): TerminalPaletteWire {
 }
 
 /**
- * The palettes an Agent pane wears, from the setting and what the VS Code
- * theme said last.
+ * The palettes an Agent pane wears, from the setting and the colour theme.
  *
  * Following the theme, the theme's terminal colours are the pane's colours
- * whichever scheme the page is in — they are the colours of the one theme the
- * workbench is wearing, and that theme is what decides the scheme. Before any
- * theme has been read (the first launch of a profile, until Scratch's
- * workbench has come up once), the built-in palettes stand in. Palettes the
- * person named win outright.
+ * whichever scheme the page is in — they are the colours of the one theme
+ * DevHub is wearing, and that theme is what decides the scheme. Without a
+ * theme to read (a controller built in a test) the built-in palettes stand
+ * in. Palettes the person named win outright.
  */
 export function terminalThemeWire(
   theme: TerminalThemeConfig,
@@ -771,7 +769,6 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "sessions_unreadable":
     case "usage_unreadable":
       return "agent";
-    case "terminal_colors_unreadable":
     case "terminal_launcher_unavailable":
     case "terminal_needs_agent":
     case "terminal_needs_agent_view":
@@ -807,7 +804,7 @@ export function errorWireAt(
   const actions: AppErrorActionWire[] =
     // Something that already happened, or that trying again cannot change:
     // there is nothing to try again.
-    code === "terminal_colors_unreadable" ||
+    code === "color_theme_unavailable" ||
     code === "state_migrated" ||
     code === "input_source_unavailable" ||
     code === "usage_unreadable" ||

@@ -185,6 +185,8 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		},
 		appearance: {
 			mode: config.appearance.mode,
+			themeDark: config.appearance.themeDark,
+			themeLight: config.appearance.themeLight,
 			sidebarDensity: config.appearance.sidebarDensity,
 			titleBar: config.appearance.titleBar,
 			terminalFontFamily: config.appearance.terminalFontFamily,
@@ -326,6 +328,8 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		},
 		appearance: {
 			mode: wire.appearance.mode,
+			themeDark: wire.appearance.themeDark,
+			themeLight: wire.appearance.themeLight,
 			sidebarDensity: wire.appearance.sidebarDensity,
 			titleBar: wire.appearance.titleBar,
 			terminalFontFamily: wire.appearance.terminalFontFamily,

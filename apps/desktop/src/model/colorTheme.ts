@@ -1,0 +1,529 @@
+/**
+ * A VS Code colour theme, resolved the way VS Code resolves it — by DevHub.
+ *
+ * DevHub's chrome and its terminal panes are painted from the colour theme
+ * DevHub's own settings name (`[appearance] theme_dark` / `theme_light`). The
+ * theme file is read by `main/shell/colorThemeCatalog.ts`; this module is the
+ * other half, and has no filesystem in it: given the colours a theme sets and
+ * its type, what colour VS Code would give each id.
+ *
+ * A colour the theme sets is that colour. One it leaves unset is the colour
+ * registry's default for the theme's type — a literal, another colour, or a
+ * transform of one — read from `colorDefaults.generated.ts`, which is
+ * generated from the pinned VS Code source by
+ * `scripts/generate-color-defaults.mjs`. The colour arithmetic below is VS
+ * Code's own (`vs/base/common/color.ts`, `colorUtils.ts#executeTransform`),
+ * ported rather than imported because the model has to run without a VS Code
+ * build, and it formats exactly as `Color.toString()` does: `#rrggbb` when
+ * opaque, `rgba(r, g, b, a)` otherwise.
+ */
+
+import type { ShellPalette } from "../ipc/palette.js";
+import type { TerminalPaletteWire } from "../ipc/appShell.js";
+import { COLOR_DEFAULTS } from "./colorDefaults.generated.js";
+import { COLOR_IDS } from "./colorIds.js";
+
+export { COLOR_IDS } from "./colorIds.js";
+
+/** VS Code's `ColorScheme`, as the colour registry keys its defaults. */
+export type ColorThemeType = "light" | "dark" | "hcDark" | "hcLight";
+
+/** A colour value as the generated table writes it. */
+export type ColorValueData =
+  | null
+  | string
+  | { readonly rgba: readonly [number, number, number, number] }
+  | {
+      readonly op: "darken" | "lighten" | "transparent";
+      readonly value: ColorValueData;
+      readonly factor: number;
+    }
+  | {
+      readonly op: "opaque";
+      readonly value: ColorValueData;
+      readonly background: ColorValueData;
+    }
+  | { readonly op: "oneOf"; readonly values: readonly ColorValueData[] }
+  | {
+      readonly op: "lessProminent";
+      readonly value: ColorValueData;
+      readonly background: ColorValueData;
+      readonly factor: number;
+      readonly transparency: number;
+    }
+  | {
+      readonly op: "ifDefinedThenElse";
+      readonly if: string;
+      readonly then: ColorValueData;
+      readonly else: ColorValueData;
+    }
+  | {
+      readonly op: "mix";
+      readonly color: ColorValueData;
+      readonly with: ColorValueData;
+      readonly ratio?: number;
+    };
+
+export type ColorDefaultsTable = Readonly<
+  Record<string, Readonly<Record<ColorThemeType, ColorValueData>>>
+>;
+
+/**
+ * A theme as its file says it: its type (from the contribution's `uiTheme`)
+ * and the colours its `colors` set, `include`s already folded in.
+ */
+export interface ColorThemeDefinition {
+  /** What VS Code calls it in `workbench.colorTheme`: the `id`, else the label. */
+  readonly settingsId: string;
+  readonly label: string;
+  readonly type: ColorThemeType;
+  /** Each colour id the theme sets, to the value it gives it. */
+  readonly colors: Readonly<Record<string, string>>;
+}
+
+/** The theme type of a contribution's `uiTheme`; VS Code's default is dark. */
+export function themeTypeOfUiTheme(uiTheme: unknown): ColorThemeType {
+  switch (uiTheme) {
+    case "vs":
+      return "light";
+    case "hc-black":
+      return "hcDark";
+    case "hc-light":
+      return "hcLight";
+    default:
+      return "dark";
+  }
+}
+
+// ----- colour arithmetic, after vs/base/common/color.ts
+
+function roundFloat(value: number, decimals: number): number {
+  const scale = Math.pow(10, decimals);
+  return Math.round(value * scale) / scale;
+}
+
+interface Rgba {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+  readonly a: number;
+}
+
+interface Hsla {
+  readonly h: number;
+  readonly s: number;
+  readonly l: number;
+  readonly a: number;
+}
+
+function rgba(r: number, g: number, b: number, a = 1): Rgba {
+  return {
+    r: Math.min(255, Math.max(0, r)) | 0,
+    g: Math.min(255, Math.max(0, g)) | 0,
+    b: Math.min(255, Math.max(0, b)) | 0,
+    a: roundFloat(Math.max(Math.min(1, a), 0), 3),
+  };
+}
+
+function hsla(h: number, s: number, l: number, a: number): Hsla {
+  return {
+    h: Math.max(Math.min(360, h), 0) | 0,
+    s: roundFloat(Math.max(Math.min(1, s), 0), 3),
+    l: roundFloat(Math.max(Math.min(1, l), 0), 3),
+    a: roundFloat(Math.max(Math.min(1, a), 0), 3),
+  };
+}
+
+function hslaOf({ r: r255, g: g255, b: b255, a }: Rgba): Hsla {
+  const r = r255 / 255;
+  const g = g255 / 255;
+  const b = b255 / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (min + max) / 2;
+  const chroma = max - min;
+  if (chroma > 0) {
+    s = Math.min(l <= 0.5 ? chroma / (2 * l) : chroma / (2 - 2 * l), 1);
+    switch (max) {
+      case r:
+        h = (g - b) / chroma + (g < b ? 6 : 0);
+        break;
+      case g:
+        h = (b - r) / chroma + 2;
+        break;
+      case b:
+        h = (r - g) / chroma + 4;
+        break;
+    }
+    h *= 60;
+    h = Math.round(h);
+  }
+  return hsla(h, s, l, a);
+}
+
+function hueToRgb(p: number, q: number, t: number): number {
+  if (t < 0) t += 1;
+  if (t > 1) t -= 1;
+  if (t < 1 / 6) return p + (q - p) * 6 * t;
+  if (t < 1 / 2) return q;
+  if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+  return p;
+}
+
+function rgbaOfHsla({ h: degrees, s, l, a }: Hsla): Rgba {
+  const h = degrees / 360;
+  let r: number;
+  let g: number;
+  let b: number;
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hueToRgb(p, q, h + 1 / 3);
+    g = hueToRgb(p, q, h);
+    b = hueToRgb(p, q, h - 1 / 3);
+  }
+  return rgba(Math.round(r * 255), Math.round(g * 255), Math.round(b * 255), a);
+}
+
+/**
+ * A colour: its RGBA, and its HSLA when it was made from one (VS Code keeps
+ * both and lightens from the HSLA it has, so a chain of transforms rounds the
+ * same way here as there).
+ */
+export class ThemeColor {
+  readonly rgba: Rgba;
+  readonly hsla: Hsla;
+
+  private constructor(value: Rgba, hslaValue?: Hsla) {
+    this.rgba = value;
+    this.hsla = hslaValue ?? hslaOf(value);
+  }
+
+  static of(r: number, g: number, b: number, a = 1): ThemeColor {
+    return new ThemeColor(rgba(r, g, b, a));
+  }
+
+  private static ofHsla(value: Hsla): ThemeColor {
+    return new ThemeColor(rgbaOfHsla(value), value);
+  }
+
+  /** `Color.fromHex`: an unparsable value is red, as it is in VS Code. */
+  static fromHex(hex: string): ThemeColor {
+    return parseHex(hex) ?? ThemeColor.of(255, 0, 0, 1);
+  }
+
+  private static luminanceOf(component: number): number {
+    const c = component / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+
+  relativeLuminance(): number {
+    const { r, g, b } = this.rgba;
+    return roundFloat(
+      0.2126 * ThemeColor.luminanceOf(r) +
+        0.7152 * ThemeColor.luminanceOf(g) +
+        0.0722 * ThemeColor.luminanceOf(b),
+      4,
+    );
+  }
+
+  isLighterThan(other: ThemeColor): boolean {
+    return this.relativeLuminance() > other.relativeLuminance();
+  }
+
+  isDarkerThan(other: ThemeColor): boolean {
+    return this.relativeLuminance() < other.relativeLuminance();
+  }
+
+  lighten(factor: number): ThemeColor {
+    const { h, s, l, a } = this.hsla;
+    return ThemeColor.ofHsla(hsla(h, s, l + l * factor, a));
+  }
+
+  darken(factor: number): ThemeColor {
+    const { h, s, l, a } = this.hsla;
+    return ThemeColor.ofHsla(hsla(h, s, l - l * factor, a));
+  }
+
+  transparent(factor: number): ThemeColor {
+    const { r, g, b, a } = this.rgba;
+    return ThemeColor.of(r, g, b, a * factor);
+  }
+
+  isOpaque(): boolean {
+    return this.rgba.a === 1;
+  }
+
+  mix(other: ThemeColor, factor = 0.5): ThemeColor {
+    const ratio = Math.min(Math.max(factor, 0), 1);
+    const from = this.rgba;
+    const to = other.rgba;
+    return ThemeColor.of(
+      from.r + (to.r - from.r) * ratio,
+      from.g + (to.g - from.g) * ratio,
+      from.b + (to.b - from.b) * ratio,
+      from.a + (to.a - from.a) * ratio,
+    );
+  }
+
+  makeOpaque(background: ThemeColor): ThemeColor {
+    if (this.isOpaque() || background.rgba.a !== 1) return this;
+    const { r, g, b, a } = this.rgba;
+    const under = background.rgba;
+    return ThemeColor.of(
+      under.r - a * (under.r - r),
+      under.g - a * (under.g - g),
+      under.b - a * (under.b - b),
+      1,
+    );
+  }
+
+  static lighterColor(
+    of: ThemeColor,
+    relative: ThemeColor,
+    factor?: number,
+  ): ThemeColor {
+    if (of.isLighterThan(relative)) return of;
+    const base = factor ? factor : 0.5;
+    const lum1 = of.relativeLuminance();
+    const lum2 = relative.relativeLuminance();
+    return of.lighten((base * (lum2 - lum1)) / lum2);
+  }
+
+  static darkerColor(
+    of: ThemeColor,
+    relative: ThemeColor,
+    factor?: number,
+  ): ThemeColor {
+    if (of.isDarkerThan(relative)) return of;
+    const base = factor ? factor : 0.5;
+    const lum1 = of.relativeLuminance();
+    const lum2 = relative.relativeLuminance();
+    return of.darken((base * (lum1 - lum2)) / lum1);
+  }
+
+  /** `Color.toString()`: hex when opaque, `rgba()` otherwise. */
+  toString(): string {
+    const { r, g, b, a } = this.rgba;
+    if (a === 1) return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+    return `rgba(${String(r)}, ${String(g)}, ${String(b)}, ${String(+a.toFixed(2))})`;
+  }
+}
+
+function hex2(value: number): string {
+  const text = value.toString(16);
+  return text.length !== 2 ? `0${text}` : text;
+}
+
+function hexDigit(char: string): number {
+  const value = parseInt(char, 16);
+  return Number.isNaN(value) ? 0 : value;
+}
+
+function parseHex(hex: string): ThemeColor | undefined {
+  if (hex[0] !== "#") return undefined;
+  const d = (index: number): number => hexDigit(hex.charAt(index));
+  switch (hex.length) {
+    case 7:
+      return ThemeColor.of(
+        16 * d(1) + d(2),
+        16 * d(3) + d(4),
+        16 * d(5) + d(6),
+        1,
+      );
+    case 9:
+      return ThemeColor.of(
+        16 * d(1) + d(2),
+        16 * d(3) + d(4),
+        16 * d(5) + d(6),
+        (16 * d(7) + d(8)) / 255,
+      );
+    case 4:
+      return ThemeColor.of(17 * d(1), 17 * d(2), 17 * d(3));
+    case 5:
+      return ThemeColor.of(17 * d(1), 17 * d(2), 17 * d(3), (17 * d(4)) / 255);
+    default:
+      return undefined;
+  }
+}
+
+// ----- resolution, after colorThemeData.ts#getColor and colorUtils.ts
+
+/**
+ * A theme to ask colours of: `getColor` and `defines` as VS Code's
+ * `ColorThemeData` answers them, over a defaults table.
+ */
+export class ResolvedColorTheme {
+  private readonly cache = new Map<string, ThemeColor | undefined>();
+
+  constructor(
+    readonly definition: ColorThemeDefinition,
+    private readonly defaults: ColorDefaultsTable = COLOR_DEFAULTS,
+  ) {}
+
+  get type(): ColorThemeType {
+    return this.definition.type;
+  }
+
+  /** Whether the theme itself sets this colour. */
+  defines(id: string): boolean {
+    return Object.prototype.hasOwnProperty.call(this.definition.colors, id);
+  }
+
+  /** The colour VS Code would give `id` under this theme, if any. */
+  getColor(id: string): ThemeColor | undefined {
+    if (this.cache.has(id)) return this.cache.get(id);
+    // Marked before resolving, so a default that refers back to itself
+    // ends as "no colour" rather than as a stack overflow.
+    this.cache.set(id, undefined);
+    const own = this.definition.colors[id];
+    const color =
+      own !== undefined
+        ? ThemeColor.fromHex(own)
+        : this.resolve(this.defaults[id]?.[this.type] ?? null);
+    this.cache.set(id, color);
+    return color;
+  }
+
+  /** The colour as `Color.toString()` writes it. */
+  css(id: string): string | undefined {
+    return this.getColor(id)?.toString();
+  }
+
+  private resolve(value: ColorValueData): ThemeColor | undefined {
+    if (value === null) return undefined;
+    if (typeof value === "string") {
+      return value.startsWith("#")
+        ? ThemeColor.fromHex(value)
+        : this.getColor(value);
+    }
+    if ("rgba" in value) return ThemeColor.of(...value.rgba);
+    switch (value.op) {
+      case "darken":
+        return this.resolve(value.value)?.darken(value.factor);
+      case "lighten":
+        return this.resolve(value.value)?.lighten(value.factor);
+      case "transparent":
+        return this.resolve(value.value)?.transparent(value.factor);
+      case "mix": {
+        const transparent = ThemeColor.of(0, 0, 0, 0);
+        const primary = this.resolve(value.color) ?? transparent;
+        const other = this.resolve(value.with) ?? transparent;
+        return primary.mix(other, value.ratio);
+      }
+      case "opaque": {
+        const background = this.resolve(value.background);
+        const color = this.resolve(value.value);
+        return background ? color?.makeOpaque(background) : color;
+      }
+      case "oneOf":
+        for (const candidate of value.values) {
+          const color = this.resolve(candidate);
+          if (color) return color;
+        }
+        return undefined;
+      case "ifDefinedThenElse":
+        return this.resolve(this.defines(value.if) ? value.then : value.else);
+      case "lessProminent": {
+        const from = this.resolve(value.value);
+        if (!from) return undefined;
+        const background = this.resolve(value.background);
+        if (!background) {
+          return from.transparent(value.factor * value.transparency);
+        }
+        return from.isDarkerThan(background)
+          ? ThemeColor.lighterColor(from, background, value.factor).transparent(
+              value.transparency,
+            )
+          : ThemeColor.darkerColor(from, background, value.factor).transparent(
+              value.transparency,
+            );
+      }
+    }
+  }
+}
+
+/** `WORKBENCH_BACKGROUND` in `vs/workbench/common/theme.ts`. */
+function workbenchBackground(type: ColorThemeType): ThemeColor {
+  switch (type) {
+    case "light":
+      return ThemeColor.fromHex("#F3F3F3");
+    case "hcLight":
+      return ThemeColor.fromHex("#FFFFFF");
+    case "hcDark":
+      return ThemeColor.fromHex("#000000");
+    case "dark":
+      return ThemeColor.fromHex("#252526");
+  }
+}
+
+/**
+ * The shell's four anchors, as the workbench's window splash computes them
+ * (`partsSplash.ts`): what DevHub's chrome used to read off a workbench and
+ * now reads off the theme directly.
+ */
+export function shellPaletteOfTheme(theme: ResolvedColorTheme): ShellPalette {
+  const base =
+    theme.type === "light" || theme.type === "hcLight" ? "light" : "dark";
+  const background = workbenchBackground(theme.type);
+  const editor = theme.css(COLOR_IDS.editorBackground);
+  const fallback = (
+    theme.getColor(COLOR_IDS.editorBackground) ?? background
+  ).toString();
+  const sideBar = theme.css(COLOR_IDS.sideBarBackground);
+  const titleBar = theme
+    .getColor(COLOR_IDS.titleBarBackground)
+    ?.makeOpaque(background)
+    .toString();
+  return {
+    base,
+    surface: editor ?? fallback,
+    chrome: sideBar ?? titleBar ?? fallback,
+    canvas: titleBar ?? sideBar ?? fallback,
+    ink:
+      theme.css(COLOR_IDS.foreground) ??
+      (base === "dark" ? "#cccccc" : "#3b3b3b"),
+  };
+}
+
+/**
+ * An Agent pane's palette, as VS Code's own terminal resolves the same theme
+ * (`XtermTerminal.getXtermTheme`, `TerminalInstanceColorProvider`). Four
+ * colours have no registry default and VS Code falls back for them in code,
+ * so the same fallbacks are made here:
+ *
+ * - `terminal.background` is the background of wherever the terminal sits.
+ *   An Agent pane sits where an editor does, so it is the editor's — the rule
+ *   VS Code has for a terminal in the editor area.
+ * - `terminalCursor.foreground` is the terminal's foreground.
+ * - `terminalCursor.background`, the character under a block cursor, is the
+ *   terminal's background.
+ * - `terminal.selectionForeground` stays unset: a selected cell keeps its own
+ *   colour.
+ */
+export function terminalPaletteOfTheme(
+  theme: ResolvedColorTheme,
+): TerminalPaletteWire {
+  const background =
+    theme.css(COLOR_IDS.terminalBackground) ??
+    theme.css(COLOR_IDS.editorBackground) ??
+    workbenchBackground(theme.type).toString();
+  const foreground =
+    theme.css(COLOR_IDS.terminalForeground) ??
+    theme.css(COLOR_IDS.foreground) ??
+    "#cccccc";
+  return {
+    background,
+    foreground,
+    cursor: theme.css(COLOR_IDS.cursor) ?? foreground,
+    cursorText: theme.css(COLOR_IDS.cursorText) ?? background,
+    selectionBackground:
+      theme.css(COLOR_IDS.selectionBackground) ?? "rgba(128, 128, 128, 0.4)",
+    selectionForeground: theme.css(COLOR_IDS.selectionForeground),
+    ansi: COLOR_IDS.ansi.map((id) => theme.css(id) ?? foreground),
+  };
+}

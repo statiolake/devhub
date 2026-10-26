@@ -1,124 +1,135 @@
-import { describe, expect, it, vi } from "vitest";
-import type { IPartsSplash } from "code-oss-dev/out/vs/platform/theme/common/themeService.js";
-import { paletteOf, ShellTheme } from "./shellTheme.js";
+import { describe, expect, it } from "vitest";
+import type { ColorThemeDefinition } from "../../model/colorTheme.js";
+import { ColorThemeUnreadable } from "./colorThemeCatalog.js";
+import { ShellTheme, type ColorThemeLoader } from "./shellTheme.js";
 
-function splash(
-	overrides: Partial<IPartsSplash["colorInfo"]> & { baseTheme?: string } = {},
-): IPartsSplash {
-	const { baseTheme = "vs-dark", ...colors } = overrides;
+const THEMES: Record<string, ColorThemeDefinition> = {
+	"Dark 2026": {
+		settingsId: "Dark 2026",
+		label: "Dark 2026",
+		type: "dark",
+		colors: { "editor.background": "#121314", "sideBar.background": "#191a1b" },
+	},
+	"Light 2026": {
+		settingsId: "Light 2026",
+		label: "Light 2026",
+		type: "light",
+		colors: { "editor.background": "#ffffff" },
+	},
+	Monokai: {
+		settingsId: "Monokai",
+		label: "Monokai",
+		type: "dark",
+		colors: { "editor.background": "#272822", "terminal.ansiRed": "#c4265e" },
+	},
+};
+
+function harness(
+	options: {
+		readonly themes?: Record<string, ColorThemeDefinition>;
+		readonly broken?: string;
+	} = {},
+) {
+	let dark = true;
+	let listings = 0;
+	const themes = options.themes ?? THEMES;
+	const loader = (): ColorThemeLoader => {
+		listings += 1;
+		return (name) => {
+			if (name === options.broken) {
+				throw new ColorThemeUnreadable(`${name}.json is not a JSON theme.`);
+			}
+			return themes[name];
+		};
+	};
+	const theme = new ShellTheme(loader, () => dark);
+	let changes = 0;
+	theme.onDidChange(() => {
+		changes += 1;
+	});
 	return {
-		zoomLevel: undefined,
-		baseTheme,
-		colorInfo: {
-			background: "#1f1f1f",
-			foreground: "#cccccc",
-			editorBackground: "#1f1f1f",
-			titleBarBackground: "#181818",
-			titleBarBorder: undefined,
-			activityBarBackground: "#181818",
-			activityBarBorder: undefined,
-			sideBarBackground: "#181818",
-			sideBarBorder: undefined,
-			statusBarBackground: "#181818",
-			statusBarBorder: undefined,
-			statusBarNoFolderBackground: "#1f1f1f",
-			windowBorder: undefined,
-			...colors,
+		theme,
+		setDark(next: boolean) {
+			dark = next;
+			theme.appearanceChanged();
 		},
-		layoutInfo: undefined,
-	} as IPartsSplash;
+		changes: () => changes,
+		listings: () => listings,
+	};
 }
 
-describe("paletteOf", () => {
-	it("takes the surface from the editor and the chrome from the side bar", () => {
-		expect(paletteOf(splash())).toEqual({
-			base: "dark",
-			surface: "#1f1f1f",
-			chrome: "#181818",
-			canvas: "#181818",
-			ink: "#cccccc",
+describe("the theme DevHub wears", () => {
+	it("is VS Code's default for the appearance the process is in", () => {
+		const h = harness();
+		expect(h.theme.palette().surface).toBe("#121314");
+		expect(h.theme.palette().base).toBe("dark");
+		expect(h.theme.workbenchThemes()).toEqual({
+			dark: "Dark 2026",
+			light: "Light 2026",
+			current: "Dark 2026",
 		});
+		h.setDark(false);
+		expect(h.theme.palette().surface).toBe("#ffffff");
+		expect(h.theme.palette().base).toBe("light");
+		expect(h.theme.workbenchThemes().current).toBe("Light 2026");
+		expect(h.changes()).toBe(1);
 	});
 
-	it("reads the base theme as which half of light-dark() applies", () => {
-		expect(paletteOf(splash({ baseTheme: "vs" }))?.base).toBe("light");
-		expect(paletteOf(splash({ baseTheme: "hc-light" }))?.base).toBe("light");
-		expect(paletteOf(splash({ baseTheme: "hc-black" }))?.base).toBe("dark");
+	it("is the one the settings name, terminal colours included", () => {
+		const h = harness();
+		h.theme.configure({ dark: "Monokai", light: "Light 2026" });
+		expect(h.changes()).toBe(1);
+		expect(h.theme.palette().surface).toBe("#272822");
+		expect(h.theme.terminalPalette().ansi[1]).toBe("#c4265e");
+		expect(h.theme.terminalPalette().background).toBe("#272822");
+		expect(h.theme.workbenchThemes()).toEqual({
+			dark: "Monokai",
+			light: "Light 2026",
+			current: "Monokai",
+		});
+		// The same names again change nothing, and say nothing.
+		h.theme.configure({ dark: "Monokai", light: "Light 2026" });
+		expect(h.changes()).toBe(1);
 	});
 
-	it("falls back to the splash background when a part has no colour", () => {
-		const palette = paletteOf(
-			splash({ editorBackground: undefined, sideBarBackground: undefined }),
-		);
-		expect(palette?.surface).toBe("#1f1f1f");
-		expect(palette?.chrome).toBe("#181818");
+	it("reads the installed themes once per reading of the names", () => {
+		const h = harness();
+		const before = h.listings();
+		h.theme.configure({ dark: "Monokai", light: "Light 2026" });
+		expect(h.listings()).toBe(before + 1);
 	});
 
-	it("refuses a splash whose colours are not colours", () => {
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-		expect(paletteOf(splash({ foreground: "red; --x: url(evil)" }))).toBe(
-			undefined,
-		);
-		expect(warn).toHaveBeenCalled();
-		warn.mockRestore();
-	});
-});
-
-describe("ShellTheme", () => {
-	it("starts in the palette the last session stored", () => {
-		const theme = new ShellTheme();
-		expect(theme.restore(splash(), () => undefined)?.chrome).toBe("#181818");
+	it("falls back to VS Code's default for a name nothing has, and says so once", () => {
+		const h = harness();
+		h.theme.takeProblems();
+		h.theme.configure({ dark: "Nope", light: "Light 2026" });
+		expect(h.theme.workbenchThemes().dark).toBe("Dark 2026");
+		expect(h.theme.takeProblems()).toEqual([
+			"No installed colour theme is called 'Nope' (appearance.theme_dark).",
+		]);
+		h.theme.configure({ dark: "Nope", light: "Light 2026" });
+		expect(h.theme.takeProblems()).toEqual([]);
 	});
 
-	it("has no palette at all on a profile that never ran a workbench", () => {
-		const theme = new ShellTheme();
-		expect(theme.restore(undefined, () => undefined)).toBe(undefined);
-		expect(theme.palette()).toBe(undefined);
+	it("says why a theme that is there could not be read", () => {
+		const h = harness({ broken: "Monokai" });
+		h.theme.configure({ dark: "Monokai", light: "Light 2026" });
+		expect(h.theme.takeProblems()).toEqual([
+			"Monokai.json is not a JSON theme.",
+		]);
+		expect(h.theme.workbenchThemes().dark).toBe("Dark 2026");
 	});
 
-	it("wears the selected workbench's theme when two disagree", () => {
-		const theme = new ShellTheme();
-		let selected: number | undefined = 1;
-		theme.restore(undefined, () => selected);
-
-		theme.reportSplash(1, splash({ sideBarBackground: "#111111" }));
-		theme.reportSplash(2, splash({ sideBarBackground: "#222222" }));
-		expect(theme.palette()?.chrome).toBe("#111111");
-
-		selected = 2;
-		expect(theme.palette()?.chrome).toBe("#222222");
-	});
-
-	it("keeps the stored palette until the selected workbench reports", () => {
-		const theme = new ShellTheme();
-		theme.restore(splash({ sideBarBackground: "#999999" }), () => 7);
-		expect(theme.palette()?.chrome).toBe("#999999");
-		theme.reportSplash(7, splash({ sideBarBackground: "#111111" }));
-		expect(theme.palette()?.chrome).toBe("#111111");
-	});
-
-	it("announces a changed answer once, and an unchanged one never", () => {
-		const theme = new ShellTheme();
-		const changed = vi.fn();
-		theme.restore(splash(), () => 1);
-		theme.onDidChange(changed);
-
-		theme.reportSplash(1, splash());
-		expect(changed).not.toHaveBeenCalled();
-
-		theme.reportSplash(1, splash({ sideBarBackground: "#111111" }));
-		expect(changed).toHaveBeenCalledTimes(1);
-		expect(changed.mock.calls[0][0].chrome).toBe("#111111");
-	});
-
-	it("forgets a workbench that went away", () => {
-		const theme = new ShellTheme();
-		theme.restore(undefined, () => 1);
-		theme.reportSplash(1, splash({ sideBarBackground: "#111111" }));
-		theme.reportSplash(2, splash({ sideBarBackground: "#222222" }));
-		theme.forgetWindow(1);
-		// The stored palette is the most recent report from any workbench, which
-		// is what a window with nothing selected shows.
-		expect(theme.palette()?.chrome).toBe("#222222");
+	it("is still VS Code's colours with no theme installed at all", () => {
+		const h = harness({ themes: {} });
+		const palette = h.theme.palette();
+		// The registry's dark defaults: editor and side bar.
+		expect(palette.surface).toBe("#1e1e1e");
+		expect(palette.chrome).toBe("#252526");
+		expect(h.theme.workbenchThemes().dark).toBe("Dark 2026");
+		expect(h.theme.takeProblems()).toEqual([
+			"No installed colour theme is called 'Dark 2026' (appearance.theme_dark).",
+			"No installed colour theme is called 'Light 2026' (appearance.theme_light).",
+		]);
 	});
 });

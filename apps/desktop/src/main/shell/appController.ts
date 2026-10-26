@@ -468,7 +468,7 @@ import { AutomaticActions } from "../../model/automaticActions.js";
 import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
 import { SettingsRefusal } from "./settingsRefusal.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
-import { terminalColors } from "./terminalColors.js";
+import { shellThemeIfInstalled } from "./shellTheme.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { popupContextMenu } from "./contextMenu.js";
 import { installMenu, refreshMenu } from "./menu.js";
@@ -966,6 +966,10 @@ export class AppController {
 			// The same call `adoptConfig` makes, for the config this run started
 			// with. Without it DevHub would run in `auto` until the first save.
 			appearanceMode().apply(config.appearance.mode);
+			// The theme names were read from the file's text before the window
+			// was made (`colorThemesIn`); this is the same answer, from the
+			// config, and changes nothing unless the two disagree.
+			shellThemeIfInstalled()?.configure(colorThemeNamesOf(config));
 		}
 		// Where a Workspace's close lands is the row after it as the Sidebar
 		// draws it, and the Sidebar's order is read with the repository status
@@ -3060,16 +3064,11 @@ export class AppController {
 				),
 			},
 			this.appearanceSequence,
-			terminalColors().palette(),
+			// The colour theme's terminal colours, with
+			// `terminal_theme = "vscode"`. A controller built without a
+			// theme (in a test) has the built-in palettes.
+			shellThemeIfInstalled()?.terminalPalette(),
 		);
-	}
-
-	/**
-	 * The VS Code theme's terminal colours moved: every pane learns them the
-	 * way it learns an edited setting.
-	 */
-	terminalColorsChanged(): void {
-		this.publishAppearance();
 	}
 
 	agentProfiles(): AgentProfiles {
@@ -3386,7 +3385,11 @@ export class AppController {
 	 */
 	private readonly launchingTerminals = new Set<string>();
 
-	private publishAppearance(): void {
+	/**
+	 * Every page learns the appearance again: a setting changed, or the
+	 * colour theme's terminal colours did.
+	 */
+	publishAppearance(): void {
 		if (!this.config) return;
 		this.send(CHANNELS.appearanceChanged, this.appearance());
 		// The title bar and the sidebar's density are two of the numbers the
@@ -7763,6 +7766,17 @@ export class AppController {
 		// it changes what the OS appearance is for the whole process, and every
 		// workbench and the shell's own chrome follow from that.
 		appearanceMode().apply(config.appearance.mode);
+		// The theme the settings name now. A change recolours the window, the
+		// pages, the panes and every workbench (`bootstrapShell` listens).
+		const theme = shellThemeIfInstalled();
+		theme?.configure(colorThemeNamesOf(config));
+		for (const problem of theme?.takeProblems() ?? []) {
+			this.noteFailure(
+				new NamedFailure(
+					withDetail(errorWireAt("color_theme_unavailable"), problem),
+				),
+			);
+		}
 		this.publishAppearance();
 		this.publishNoticeSettings();
 		this.publishProfiles();
@@ -8998,5 +9012,16 @@ function tellTerminalPane(pane: MarkedPane) {
 		command: pane.command,
 		title: pane.title,
 		dead: pane.dead,
+	};
+}
+
+/** The two theme names a config gives. */
+function colorThemeNamesOf(config: Config): {
+	readonly dark: string;
+	readonly light: string;
+} {
+	return {
+		dark: config.appearance.themeDark,
+		light: config.appearance.themeLight,
 	};
 }

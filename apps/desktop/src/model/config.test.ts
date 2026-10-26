@@ -17,6 +17,10 @@ import {
   parseConfigText,
   retiredKeysIn,
   titleBarModeIn,
+  colorThemesIn,
+  appearanceModeIn,
+  DEFAULT_THEME_DARK,
+  DEFAULT_THEME_LIGHT,
   type ValidationCode,
   profilePresentation,
 } from "./config.js";
@@ -1996,6 +2000,63 @@ describe("where new projects go, as [projects] directory says", () => {
     });
     expect(unset).not.toContain("directory");
     expect(parseConfig(unset).projects).toEqual({ directory: undefined });
+  });
+});
+
+describe("the colour theme, as [appearance] theme_dark / theme_light say", () => {
+  const version = `version = ${String(CONFIG_SCHEMA_VERSION)}`;
+
+  it("is VS Code's own defaults when the file says nothing", () => {
+    expect(DEFAULT_THEME_DARK).toBe("Dark 2026");
+    expect(DEFAULT_THEME_LIGHT).toBe("Light 2026");
+    const config = parseConfig(`${version}\n`);
+    expect(config.appearance.themeDark).toBe("Dark 2026");
+    expect(config.appearance.themeLight).toBe("Light 2026");
+    expect(defaultConfig().appearance.themeDark).toBe("Dark 2026");
+  });
+
+  it("reads and writes back the names the file gives", () => {
+    const source = `${version}\n[appearance]\ntheme_dark = "Monokai"\ntheme_light = " Solarized Light "\n`;
+    const config = parseConfig(source);
+    expect(config.appearance.themeDark).toBe("Monokai");
+    expect(config.appearance.themeLight).toBe("Solarized Light");
+    const saved = configToToml(config);
+    expect(saved).toContain('theme_dark = "Monokai"');
+    expect(saved).toContain('theme_light = "Solarized Light"');
+  });
+
+  it("refuses a name that is not a string, or is empty", () => {
+    expect(
+      pathOf(() => parseConfig(`${version}\n[appearance]\ntheme_dark = 1\n`)),
+    ).toBe("appearance.theme_dark");
+    expect(
+      codeOf(() => parseConfig(`${version}\n[appearance]\ntheme_light = ""\n`)),
+    ).toBe("invalid_appearance");
+  });
+
+  it("is readable on its own, before the rest of the settings are", () => {
+    expect(colorThemesIn(undefined)).toEqual({
+      dark: "Dark 2026",
+      light: "Light 2026",
+    });
+    expect(
+      colorThemesIn(`${version}\n[appearance]\ntheme_dark = "Monokai"\n`),
+    ).toEqual({ dark: "Monokai", light: "Light 2026" });
+    // A file the load will refuse is the defaults here, as for the title bar.
+    expect(colorThemesIn("not toml = = =")).toEqual({
+      dark: "Dark 2026",
+      light: "Light 2026",
+    });
+    expect(colorThemesIn("[appearance]\ntheme_dark = 7\n").dark).toBe(
+      "Dark 2026",
+    );
+  });
+
+  it("has its appearance readable on its own too, which picks the theme the window starts in", () => {
+    expect(appearanceModeIn(undefined)).toBe("auto");
+    expect(appearanceModeIn('[appearance]\nmode = "dark"\n')).toBe("dark");
+    expect(appearanceModeIn('[appearance]\nmode = "dusk"\n')).toBe("auto");
+    expect(appearanceModeIn("not toml = = =")).toBe("auto");
   });
 });
 

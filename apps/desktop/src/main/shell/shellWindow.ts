@@ -43,7 +43,7 @@ import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
 import { ToastsView } from "./toastsView.js";
 import { TooltipView } from "./tooltipView.js";
-import { shellTheme } from "./shellTheme.js";
+import { shellThemeIfInstalled } from "./shellTheme.js";
 import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import type { Landing } from "./chords.js";
@@ -571,7 +571,6 @@ export class ShellWindow {
 		// unbound by whoever decided to let it go, which is the whole of what
 		// deciding to let it go means.
 		allowListenersFor(this.views.length);
-		shellTheme().forgetWindow(view.id);
 		// Every view goes when the window goes, and by then there is no window
 		// left to take them out of: Electron answers a child-view call on a
 		// destroyed window with "Object has been destroyed", which is how
@@ -1296,7 +1295,7 @@ export class ShellWindow {
 	private scrim(): string {
 		const theme = electron.nativeTheme;
 		const base =
-			shellTheme().palette()?.base ??
+			shellThemeIfInstalled()?.palette().base ??
 			(theme.shouldUseDarkColors ? "dark" : "light");
 		return scrimColor(base, theme.prefersReducedTransparency);
 	}
@@ -1481,14 +1480,13 @@ export class ShellWindow {
 		}
 
 		// A different workbench on screen is a different file in the window's
-		// name and a different colour theme for the shell. Said here, once,
-		// because this is the one place that decides it — it used to be said by
-		// `reveal`, which was one of several ways it could change.
+		// name. Said here, once, because this is the one place that decides it
+		// — it used to be said by `reveal`, which was one of several ways it
+		// could change.
 		const onScreen = onScreenEditor(this.layoutInput());
 		if (onScreen !== this.onScreen) {
 			this.onScreen = onScreen;
 			this.titleChanged();
-			shellTheme().selectionChanged();
 		}
 
 		// A workbench that has just come back on screen hears how long it was

@@ -9,13 +9,11 @@
  * writes and hands the one remaining way through to this class.
  *
  * So this is not a palette and it paints nothing directly. It sets what the
- * appearance *is*, each workbench chooses its theme from that, and DevHub's
- * chrome follows the workbench's theme through the window splash exactly as it
- * did before (`shellTheme.ts`). The chain has one link at each step, which is
- * why choosing Dark here recolours the whole application rather than only its
- * window frames — and why, in a workbench that has turned
- * `window.autoDetectColorScheme` off, it correctly recolours the native
- * surfaces and leaves that workbench's chosen theme alone.
+ * appearance *is*, and both halves of the application pick their theme from
+ * that: DevHub wears `theme_dark` or `theme_light` (`shellTheme.ts`, on
+ * `nativeTheme`'s `updated`), and each workbench, told the same two themes with
+ * `window.autoDetectColorScheme` on (`workbenchManagedSettings.ts`), picks the
+ * same one. Choosing Dark here recolours the whole application at once.
  */
 
 /** What DevHub tells Electron, for each appearance it can be asked for. */

@@ -307,16 +307,62 @@ recoloured correctly, and one on its own page would not have. `chromeAudience`
 states the rule instead of it being a coincidence, and the test on it is that
 every page with `onTheme` is in it.
 
-An Agent pane's colours are not the palette. The splash that recolours the
-chrome carries nothing about a terminal, so with `[appearance] terminal_theme =
-"vscode"` — the default — main reads the theme's terminal colours out of a
-workbench (its `--vscode-terminal-*` custom properties, which already hold the
-registry's defaults) each time it reports a splash: the one on screen, or any
-when none is (the chrome's rule), keeps the last answer in
-`terminal-colors.json` beside `state.json` — so panes keep their colours while
-every workbench is asleep, and from a cold start — and sends it on the
-appearance projection like an edited setting (`main/shell/terminalColors.ts`).
-Palettes named under `[appearance.terminal_theme.light]` / `.dark` win outright.
+The palette is DevHub's own answer, not a workbench's. `[appearance] theme_dark`
+/ `theme_light` name a VS Code colour theme each (VS Code's defaults, `Dark 2026`
+/ `Light 2026`, unless the person says otherwise), and the appearance the
+process is in — `appearance.mode`, the OS under `auto` — picks one
+(`main/shell/shellTheme.ts`). DevHub finds the theme the way VS Code does, in
+`contributes.themes` of the built-in extensions and of the ones installed into
+DevHub's extensions directory (`colorThemeCatalog.ts`: by `id`, or by the label
+the picker shows; `include` chains folded in, JSON with comments), and fills in
+every colour the theme leaves unset from VS Code's registered defaults for the
+theme's type (`model/colorTheme.ts`). Those defaults are not copied by hand:
+`scripts/generate-color-defaults.mjs` bundles the pinned submodule's colour
+registry with esbuild, runs it, and writes the colours DevHub reads
+(`model/colorIds.ts`) and everything their defaults refer to into
+`model/colorDefaults.generated.ts`, which is checked in; with the submodule
+checked out, `colorDefaults.test.ts` fails until a bump that moved a default
+has been regenerated. The colour arithmetic is VS Code's (`Color`,
+`executeTransform`), ported, and formats as `Color.toString()` does.
+
+So the shell's four anchors (the editor background, the side bar, the title bar
+made opaque, the foreground — what the window splash used to carry) and an Agent
+pane's colours with `[appearance] terminal_theme = "vscode"` — the default —
+come from the same theme, before any workbench exists, while every one is
+asleep, and from a cold start. A pane's terminal colours are those VS Code's
+own terminal would have under the theme: `terminal.*` and the sixteen
+`terminal.ansi*`, the editor's background where the theme sets no
+`terminal.background`. They go out on the appearance projection like an edited
+setting. Palettes named under `[appearance.terminal_theme.light]` / `.dark` win
+outright. A name no installed theme has, or a theme file that will not read, is
+said once (`color_theme_unavailable`) and VS Code's default for that half is
+worn instead.
+
+**Every workbench wears the same theme.** It is told, not asked: as it starts,
+the overlay's `devhubManagedSettings.contribution.ts` asks main
+(`vscode:devhubManagedSettingsRequest`) and is answered — and told again
+whenever the theme changes — with `workbench.colorTheme`,
+`workbench.preferredDarkColorTheme`, `workbench.preferredLightColorTheme` and
+`window.autoDetectColorScheme = true` (`workbenchManagedSettings.ts`). It holds
+them in VS Code's _memory_ configuration, the layer above the person's
+`settings.json` and a folder's `.vscode/settings.json` that nothing writes to
+disk. The person's files stay theirs, and still cannot make the editor disagree
+with the window around it; a theme chosen in an editor's own picker does not
+stick, because the theme is chosen in DevHub's Settings. The answer is one IPC
+round trip and the theme service reads its configured theme only once the
+extensions are registered, so a workbench comes up in DevHub's theme. (OS high
+contrast is still the workbench's own `window.autoDetectHighContrast`; DevHub
+does not follow it.)
+
+This replaced following the workbenches. The shell used to wear the window
+splash each workbench reported (`DevHubThemeMainService`, now upstream's
+`ThemeMainService` again), the panes read `--vscode-terminal-*` out of a
+workbench's page and kept the answer in `terminal-colors.json` for when none
+was awake, and a folder's own `workbench.colorTheme` could recolour the window
+whenever that workbench was in front. All of it is gone; nothing is cached,
+because the theme is read from its files in a few milliseconds at startup and
+again on every save of the settings (so a theme installed since is found by
+saving the setting that names it).
 
 Three scopes survive underneath this, and they are about _subject_ rather than
 about routing: an Agent's own failure is drawn over that Agent's pane, a

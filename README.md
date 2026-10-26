@@ -321,6 +321,17 @@ workbench_awake_max = 2     # at most this many such editors open; past it, the
                             # switch. Cmd+Q N/P passing through never wakes one.
                             # 0: no cap.
 
+[appearance]
+theme_dark = "Dark 2026"    # the VS Code colour theme DevHub wears in the dark
+theme_light = "Light 2026"  # and the light appearance (`mode` picks; auto is the
+                            # OS's): its window, its Agent panes (with
+                            # terminal_theme = "vscode") and every editor, which is
+                            # told to wear the same one — an editor's own theme
+                            # picker or `workbench.colorTheme` does not override it.
+                            # A built-in theme or one from an installed extension,
+                            # by the name the picker shows or its id. Unset: VS
+                            # Code's defaults. Settings > General > Appearance.
+
 [scratch]
 daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens
 

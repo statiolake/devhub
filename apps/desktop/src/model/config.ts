@@ -492,11 +492,23 @@ export interface AppearanceConfig {
    *
    * Not a palette. This is the answer DevHub gives the OS — it decides what
    * Electron reports the system appearance to be, for every native surface in
-   * the process and for `window.autoDetectColorScheme` in each workbench. The
-   * colours themselves still come from the workbench's own theme, which is why
-   * `appearance.color_scheme` stayed retired. See `shell/appearanceMode.ts`.
+   * the process and for `window.autoDetectColorScheme` in each workbench — and
+   * so which of `theme_dark` and `theme_light` DevHub and every workbench
+   * wear. See `shell/appearanceMode.ts`.
    */
   readonly mode: string;
+  /**
+   * The VS Code colour theme DevHub wears in the dark and the light
+   * appearance: `theme_dark` / `theme_light`, named as VS Code names it in
+   * `workbench.colorTheme` (or by the label its picker shows). DevHub reads the
+   * theme itself (`main/shell/shellTheme.ts`), so its chrome and its Agent
+   * panes are in it whether any workbench is awake or not, and every workbench
+   * is told to wear the same one. Which of the two applies is the appearance
+   * `mode` gives the process. The defaults are VS Code's own
+   * (`DEFAULT_THEME_DARK`, `DEFAULT_THEME_LIGHT`).
+   */
+  readonly themeDark: string;
+  readonly themeLight: string;
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
   /**
@@ -619,9 +631,70 @@ export function withProfileRuntimes(
   };
 }
 
+/**
+ * VS Code's default colour themes (`ThemeSettingDefaults.COLOR_THEME_DARK` /
+ * `COLOR_THEME_LIGHT` in the pinned VS Code), and so DevHub's.
+ */
+export const DEFAULT_THEME_DARK = "Dark 2026";
+export const DEFAULT_THEME_LIGHT = "Light 2026";
+
+/**
+ * The two theme names, read from the settings file before the settings are
+ * loaded — for the same reason and with the same forgiveness as
+ * `titleBarModeIn`: the window is created in the theme's colours.
+ */
+export function colorThemesIn(text: string | undefined): {
+  readonly dark: string;
+  readonly light: string;
+} {
+  const defaults = { dark: DEFAULT_THEME_DARK, light: DEFAULT_THEME_LIGHT };
+  if (text === undefined) return defaults;
+  let table: Record<string, unknown>;
+  try {
+    table = parseConfigText(text);
+  } catch {
+    return defaults;
+  }
+  const appearance = table["appearance"];
+  if (typeof appearance !== "object" || appearance === null) return defaults;
+  const named = (key: string, fallback: string): string => {
+    const value = (appearance as Record<string, unknown>)[key];
+    return typeof value === "string" && value.trim() !== ""
+      ? value.trim()
+      : fallback;
+  };
+  return {
+    dark: named("theme_dark", defaults.dark),
+    light: named("theme_light", defaults.light),
+  };
+}
+
+/**
+ * `appearance.mode` as read from the settings file, before the settings are
+ * loaded: the theme the window is created in is the one for this appearance,
+ * so it is applied first. Forgiving, like `titleBarModeIn`.
+ */
+export function appearanceModeIn(text: string | undefined): string {
+  if (text === undefined) return "auto";
+  let table: Record<string, unknown>;
+  try {
+    table = parseConfigText(text);
+  } catch {
+    return "auto";
+  }
+  const appearance = table["appearance"];
+  if (typeof appearance !== "object" || appearance === null) return "auto";
+  const value = (appearance as Record<string, unknown>)["mode"];
+  return typeof value === "string" && APPEARANCE_MODES.includes(value)
+    ? value
+    : "auto";
+}
+
 export function defaultAppearance(): AppearanceConfig {
   return {
     mode: "auto",
+    themeDark: DEFAULT_THEME_DARK,
+    themeLight: DEFAULT_THEME_LIGHT,
     titleBar: DEFAULT_TITLE_BAR,
     terminalFontFamily: DEFAULT_FONT_FAMILY,
     terminalFontSize: 13,
@@ -914,7 +987,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.color_scheme":
-    "the shell follows the active VS Code theme, so DevHub has no colour scheme of its own; to choose light or dark for DevHub itself, use `appearance.mode`",
+    "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
   "runtimes.herdr":
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
@@ -1198,6 +1271,8 @@ function validateAppearance(appearance: AppearanceConfig): void {
     appearance.terminalScrollSensitivity > 20 ||
     !APPEARANCE_MODES.includes(appearance.mode) ||
     !TITLE_BAR_MODES.includes(appearance.titleBar) ||
+    appearance.themeDark.trim() === "" ||
+    appearance.themeLight.trim() === "" ||
     (appearance.sidebarDensity !== "compact" &&
       appearance.sidebarDensity !== "comfortable") ||
     appearance.terminalMargin > MAX_TERMINAL_MARGIN ||
@@ -2016,6 +2091,8 @@ export function interpretConfig(document: unknown): Config {
     appearanceTable,
     [
       "mode",
+      "theme_dark",
+      "theme_light",
       "title_bar",
       "terminal_font_family",
       "terminal_font_size",
@@ -2139,6 +2216,18 @@ export function interpretConfig(document: unknown): Config {
         3,
       ),
       mode: optionalString(appearanceTable, "mode", "appearance", "auto"),
+      themeDark: optionalString(
+        appearanceTable,
+        "theme_dark",
+        "appearance",
+        DEFAULT_THEME_DARK,
+      ).trim(),
+      themeLight: optionalString(
+        appearanceTable,
+        "theme_light",
+        "appearance",
+        DEFAULT_THEME_LIGHT,
+      ).trim(),
       titleBar: optionalString(
         appearanceTable,
         "title_bar",
@@ -2304,6 +2393,8 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     },
     appearance: {
       mode: config.appearance.mode,
+      theme_dark: config.appearance.themeDark,
+      theme_light: config.appearance.themeLight,
       title_bar: config.appearance.titleBar,
       terminal_font_family: config.appearance.terminalFontFamily,
       terminal_font_size: config.appearance.terminalFontSize,

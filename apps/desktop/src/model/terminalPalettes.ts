@@ -24,9 +24,10 @@ export interface TerminalPalettes {
 
 /**
  * Where an Agent pane's colours come from: `vscode`, the default, is the
- * terminal colours of the theme the Scratch workbench is wearing (see
- * `main/shell/terminalColors.ts`); palettes are the person's own, one for each
- * scheme, and win whenever the file names them.
+ * terminal colours of the VS Code colour theme DevHub wears
+ * (`[appearance] theme_dark` / `theme_light`, see `main/shell/shellTheme.ts`);
+ * palettes are the person's own, one for each scheme, and win whenever the
+ * file names them.
  *
  * One value rather than a switch beside two palettes, because the palettes
  * mean nothing when the theme is followed: a file that says both would be a

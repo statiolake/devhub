@@ -266,8 +266,46 @@ export function GeneralSection({
 
       <Group
         heading="Appearance"
-        note="Light and Dark tell the system DevHub is in that appearance, rather than painting it: an editor follows with the theme it has chosen for light or dark, and DevHub's own chrome follows that editor. An editor that has turned off `window.autoDetectColorScheme` keeps the theme it was told to use, and only the window frames and dialogs change."
+        note="DevHub wears the VS Code colour theme named here — its window, its Agent panes and every editor alike: each editor is told to wear the same theme, so a theme chosen in an editor's own picker does not stick. Mode decides which of the two applies; Light and Dark tell the system DevHub is in that appearance."
       >
+        <Row
+          label="Dark theme"
+          help="A VS Code colour theme, by the name VS Code's theme picker shows or its id (what `workbench.colorTheme` says) — a built-in one or one from an installed extension. A name DevHub cannot find falls back to VS Code's default, and DevHub says so."
+        >
+          <TextField
+            label="Dark colour theme"
+            value={config.appearance.themeDark}
+            placeholder="Dark 2026"
+            validate={(next) =>
+              next.trim() === "" ? "Name a colour theme." : undefined
+            }
+            onCommit={(themeDark) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, themeDark },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Light theme"
+          help="The theme for the light appearance, named the same way."
+        >
+          <TextField
+            label="Light colour theme"
+            value={config.appearance.themeLight}
+            placeholder="Light 2026"
+            validate={(next) =>
+              next.trim() === "" ? "Name a colour theme." : undefined
+            }
+            onCommit={(themeLight) => {
+              update({
+                ...config,
+                appearance: { ...config.appearance, themeLight },
+              });
+            }}
+          />
+        </Row>
         <Row label="Mode" help="Auto follows the system appearance.">
           <Popup
             label="Appearance mode"
@@ -546,7 +584,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Colours"
-          help="Following the VS Code theme, a pane takes the theme's terminal colours — those of VS Code's own terminal — and changes with it. Palettes are the light and dark tables under [appearance.terminal_theme] in settings.toml, starting from DevHub's own."
+          help="Following the colour theme, a pane takes the theme's terminal colours — those VS Code's own terminal would have under it — and changes with it. Palettes are the light and dark tables under [appearance.terminal_theme] in settings.toml, starting from DevHub's own."
         >
           <Popup
             label="Agent pane colours"
@@ -556,7 +594,7 @@ export function GeneralSection({
                 : "palettes"
             }
             options={[
-              ["vscode", "Follow the VS Code theme"],
+              ["vscode", "Follow the colour theme"],
               ["palettes", "Palettes in settings.toml"],
             ]}
             onChange={(choice) => {

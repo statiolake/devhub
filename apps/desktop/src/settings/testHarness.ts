@@ -67,6 +67,8 @@ export function testConfig(
     },
     appearance: {
       mode: "auto",
+      themeDark: "Dark 2026",
+      themeLight: "Light 2026",
       titleBar: "shown",
       sidebarDensity: "compact",
       terminalFontFamily: "SF Mono",

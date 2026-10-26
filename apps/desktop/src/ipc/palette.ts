@@ -2,10 +2,11 @@
  * The shell's palette: the active VS Code colour theme, expressed as tokens.
  *
  * DevHub's chrome is not a second application beside the Workbench, it is the
- * frame around it, so it takes its colours from whatever theme the Workbench is
- * wearing. The colours come from VS Code's own record of that theme — the
- * window splash it writes to main-process state (`IPartsSplash`) — and never
- * from reading CSS out of a view.
+ * frame around it, so it is in the same colour theme: the one DevHub's
+ * settings name, which every workbench is told to wear too. Main reads the
+ * theme's files itself (`main/shell/shellTheme.ts`) and computes the four
+ * anchors the way the workbench's window splash does — never by reading CSS
+ * out of a view.
  *
  * Only four colours cross the wire. Everything else DevHub draws is derived
  * from them here, in one place, so that main (which writes the palette into the

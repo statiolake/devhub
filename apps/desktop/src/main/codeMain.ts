@@ -13,12 +13,12 @@
  *       which registers DevHub's windows and dialog services.
  *    3. `bootstrapShell(...)` runs before `startup()`, so the App Shell window
  *       exists before the first workbench asks Electron for a window, and it
- *       is handed `IThemeMainService` so the window can be created in the
- *       colour theme the last session quit in. Nothing else in `startup()`
- *       changed.
- *    4. `IThemeMainService` is `DevHubThemeMainService`
- *       (./services/devhubThemeMainService.ts), which is upstream's service
- *       plus an announcement when a workbench saves its window splash.
+ *       is handed where the built-in and installed extensions are, so the
+ *       window can be created in the colour theme DevHub's settings name
+ *       (`shell/shellTheme.ts`). Nothing else in `startup()` changed.
+ *    4. (Retired: `IThemeMainService` was a DevHub subclass that announced
+ *       each window splash, when the shell followed the workbenches' theme.
+ *       It is upstream's own again.)
  *    5. `ILifecycleMainService` is `DevHubLifecycleMainService`
  *       (./services/devhubLifecycleMainService.ts), which translates a
  *       workbench's "restart" into DevHub's terms instead of taking the whole
@@ -114,6 +114,7 @@ import { SignService } from 'code-oss-dev/out/vs/platform/sign/node/signService.
 import { IStateReadService, IStateService } from 'code-oss-dev/out/vs/platform/state/node/state.js';
 import { NullTelemetryService } from 'code-oss-dev/out/vs/platform/telemetry/common/telemetryUtils.js';
 import { IThemeMainService } from 'code-oss-dev/out/vs/platform/theme/electron-main/themeMainService.js';
+import { ThemeMainService } from 'code-oss-dev/out/vs/platform/theme/electron-main/themeMainServiceImpl.js';
 import { IUserDataProfilesMainService, UserDataProfilesMainService } from 'code-oss-dev/out/vs/platform/userDataProfile/electron-main/userDataProfile.js';
 import { isInnoSetupInstall } from 'code-oss-dev/out/vs/platform/update/electron-main/win32UpdateType.js';
 import { IPolicyService, NullPolicyService } from 'code-oss-dev/out/vs/platform/policy/common/policy.js';
@@ -132,7 +133,6 @@ import { massageMessageBoxOptions } from 'code-oss-dev/out/vs/platform/dialogs/e
 import { SaveStrategy, StateService } from 'code-oss-dev/out/vs/platform/state/node/stateService.js';
 import { FileUserDataProvider } from 'code-oss-dev/out/vs/platform/userData/common/fileUserDataProvider.js';
 import { addUNCHostToAllowlist, getUNCHost } from 'code-oss-dev/out/vs/base/node/unc.js';
-import { DevHubThemeMainService } from './services/devhubThemeMainService.js';
 import { DevHubLifecycleMainService } from './services/devhubLifecycleMainService.js';
 import { LINUX_SYSTEM_POLICY_FILE_PATH } from 'code-oss-dev/out/vs/base/common/policy.js';
 
@@ -219,7 +219,7 @@ class CodeMain {
 				// inside it.
 				// A fresh accessor: `accessor` above is only valid for the synchronous
 				// part of its own invocation, and this point is several awaits later.
-				await bootstrapShell(environmentMainService.userDataPath, environmentMainService.args, instantiationService.invokeFunction(a => a.get(IThemeMainService)));
+				await bootstrapShell(environmentMainService.userDataPath, environmentMainService.args, { builtin: environmentMainService.builtinExtensionsPath, user: environmentMainService.extensionsPath });
 
 				const application = instantiationService.createInstance(DevHubApplication, mainProcessNodeIpcServer, instanceEnvironment);
 				await application.startup();
@@ -356,7 +356,7 @@ class CodeMain {
 		services.set(IRequestService, new SyncDescriptor(RequestService, undefined, true));
 
 		// Themes
-		services.set(IThemeMainService, new SyncDescriptor(DevHubThemeMainService));
+		services.set(IThemeMainService, new SyncDescriptor(ThemeMainService));
 
 		// Signing
 		services.set(ISignService, new SyncDescriptor(SignService, undefined, false /* proxied to other processes */));

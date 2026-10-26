@@ -11,18 +11,20 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
-import type { IThemeMainService } from "code-oss-dev/out/vs/platform/theme/electron-main/themeMainService.js";
 import { createAppController } from "./appController.js";
 import { installMainFailureRoot } from "./mainFailureRoot.js";
-import { shellTheme } from "./shellTheme.js";
+import { appearanceMode } from "./appearanceMode.js";
+import { installShellTheme, ShellTheme, shellTheme } from "./shellTheme.js";
 import {
-	installTerminalColors,
-	loadTerminalColors,
-	readThemeVariables,
-	saveTerminalColors,
-	TerminalColors,
-	terminalColors,
-} from "./terminalColors.js";
+	findColorTheme,
+	listColorThemes,
+	loadColorTheme,
+	type ExtensionRoots,
+} from "./colorThemeCatalog.js";
+import {
+	managedSettingsOf,
+	WorkbenchManagedSettings,
+} from "./workbenchManagedSettings.js";
 import {
 	registerShellPageProtocol,
 	SHELL_ORIGIN,
@@ -48,7 +50,12 @@ import {
 	type SettingsProblem,
 } from "../workbenchDefaults.js";
 import { activeProfile } from "../../model/profile.js";
-import { defaultConfigPaths, titleBarModeIn } from "../../model/config.js";
+import {
+	appearanceModeIn,
+	colorThemesIn,
+	defaultConfigPaths,
+	titleBarModeIn,
+} from "../../model/config.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
@@ -135,7 +142,7 @@ function readSettingsText(): string | undefined {
 export async function bootstrapShell(
 	userDataPath: string,
 	cliArgs: NativeParsedArgs,
-	themeMainService: IThemeMainService,
+	extensionRoots: ExtensionRoots,
 ): Promise<void> {
 	// The terminal launcher for this machine, written before any window exists
 	// because the local `Runtime` does not install one — it hands back the path
@@ -174,32 +181,46 @@ export async function bootstrapShell(
 	// window has to exist before the controller that loads the config does.
 	// Everything else in the file is read once, by the controller, and a file
 	// that will not parse is reported from there. See `titleBarModeIn`.
-	const titleBar = titleBarModeIn(readSettingsText());
+	const settingsText = readSettingsText();
+	const titleBar = titleBarModeIn(settingsText);
 
 	// The colour theme comes first, before the page is servable and before the
-	// window exists, because both are created wearing it. VS Code stores the
-	// last workbench's window splash for exactly this purpose — it paints its
-	// own windows from it while they load — so the shell around them starts in
-	// the same colours and never changes colour as the first workbench comes up.
-	const palette = shellTheme().restore(
-		themeMainService.getWindowSplash(undefined),
-		() => shellWindowIfCreated()?.revealedView()?.id,
+	// window exists, because both are created wearing it. It is the theme
+	// DevHub's own settings name, read here from the extensions VS Code would
+	// find it in — so the window, the pages and the Agent panes start in it
+	// whether or not any workbench ever comes up. The settings are read for
+	// it the way they are for the title bar: forgivingly, because the real
+	// load moments later is what reports a file that will not parse.
+	//
+	// Which of the two is the appearance's answer, so the appearance the
+	// settings ask for is applied first; the controller applies the same
+	// value again once it has loaded them.
+	appearanceMode().apply(appearanceModeIn(settingsText));
+	installShellTheme(
+		new ShellTheme(
+			() => {
+				const themes = listColorThemes(extensionRoots);
+				return (name) => {
+					const entry = findColorTheme(themes, name);
+					return entry && loadColorTheme(entry);
+				};
+			},
+			() => electron.nativeTheme.shouldUseDarkColors,
+			colorThemesIn(settingsText),
+		),
 	);
-
-	// The Agent panes' colours, for the same reason and from the same moment:
-	// the theme's terminal colours as they were at the last quit, so a pane
-	// that comes up before any workbench does is already in them.
-	const terminalColorsPath = join(
-		userDataPath,
-		"devhub",
-		"terminal-colors.json",
+	const palette = shellTheme().palette();
+	// Light or dark changing — the OS, or `appearance.mode` — is the other
+	// half of which theme is worn.
+	electron.nativeTheme.on("updated", () => {
+		shellTheme().appearanceChanged();
+	});
+	// Every workbench wears the same theme: it asks as it starts and is told
+	// again when the theme changes. See `workbenchManagedSettings.ts`.
+	const managedSettings = new WorkbenchManagedSettings(() =>
+		managedSettingsOf(shellTheme().workbenchThemes()),
 	);
-	const keptTerminalColors = loadTerminalColors(terminalColorsPath);
-	installTerminalColors(
-		new TerminalColors(keptTerminalColors.palette, (next) => {
-			saveTerminalColors(terminalColorsPath, next);
-		}),
-	);
+	managedSettings.listen(electron.ipcMain);
 
 	// One preload per page, in one directory, named after the page. Which
 	// preload a page is loaded with is what decides what that page can spell:
@@ -236,34 +257,20 @@ export async function bootstrapShell(
 			unreadableSettingsError(userDataPath, settingsProblem),
 		);
 	}
-	shellTheme().onDidChange((next) => {
+	shellTheme().onDidChange(() => {
+		const next = shellTheme().palette();
 		shellWindowIfCreated()?.applyPalette(next);
 		controller.publishTheme(next);
+		// The Agent panes' colours are part of the appearance, so every pane
+		// learns them the way it learns an edited setting.
+		controller.publishAppearance();
+		managedSettings.changed();
 	});
-	if (keptTerminalColors.refused !== undefined) {
+	for (const problem of shellTheme().takeProblems()) {
 		controller.noteStartupFailure(
-			withDetail(
-				errorWireAt("persistence_degraded"),
-				keptTerminalColors.refused,
-			),
+			withDetail(errorWireAt("color_theme_unavailable"), problem),
 		);
 	}
-	// Bound before any workbench exists: the controller opens them, and the
-	// first splash one reports is the first read. Followed as the shell's
-	// palette is: the workbench on screen, or any when none is.
-	terminalColors().bind({
-		followed: () => shellWindowIfCreated()?.revealedView()?.id,
-		read: (windowId) =>
-			readThemeVariables(
-				shellWindowIfCreated()?.getViewById(windowId)?.webContents,
-			),
-		changed: () => {
-			controller.terminalColorsChanged();
-		},
-		failed: (failure) => {
-			controller.noteFailure(failure);
-		},
-	});
 	await controller.startRuntimes(userDataPath);
 	// After the runtimes, and this order is load-bearing.
 	//
