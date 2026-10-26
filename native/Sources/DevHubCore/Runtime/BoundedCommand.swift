@@ -109,7 +109,7 @@ public enum BoundedCommand {
         _ spec: CommandSpec,
         deadline: OperationDeadline,
         cancel: CancellationToken,
-        limits: ExecLimits,
+        limits: MachineExecLimits,
         stdin: Data? = nil,
         onOutput: (@Sendable (Data) -> Void)? = nil
     ) async throws -> ExecResult {
@@ -133,7 +133,7 @@ public enum BoundedCommand {
 /// One child, its two capped streams, and the one answer it gives.
 private final class BoundedRun: @unchecked Sendable {
     private let lock = NSLock()
-    private let limits: ExecLimits
+    private let limits: MachineExecLimits
     private let onOutput: (@Sendable (Data) -> Void)?
     private var stdout = Data()
     private var stderr = Data()
@@ -150,7 +150,7 @@ private final class BoundedRun: @unchecked Sendable {
     private var sources: [DispatchSourceRead] = []
     private let queue = DispatchQueue(label: "devhub.bounded-command")
 
-    init(limits: ExecLimits, onOutput: (@Sendable (Data) -> Void)?) {
+    init(limits: MachineExecLimits, onOutput: (@Sendable (Data) -> Void)?) {
         self.limits = limits
         self.onOutput = onOutput
     }

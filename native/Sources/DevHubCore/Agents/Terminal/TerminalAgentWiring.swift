@@ -12,14 +12,6 @@
 
 import Foundation
 
-/// How an Agent is drawn (`AgentPresentation`).
-public enum AgentPresentation: String, Sendable, Equatable {
-    /// A terminal Agent: its CLI's own TUI in the pane.
-    case tui
-    /// A GUI Agent: DevHub's conversation view over the CLI's structured mode.
-    case gui
-}
-
 /// One Agent of the model, as a round needs to see it.
 public struct TerminalAgentRecord: Sendable, Equatable {
     public var id: String

@@ -30,7 +30,7 @@ public enum ExecOverflow: Sendable {
 }
 
 /// How much of an answer DevHub will read, and what happens past it.
-public struct ExecLimits: Sendable {
+public struct MachineExecLimits: Sendable {
     public var stdoutBytes: Int
     public var stderrBytes: Int
     public var overflow: ExecOverflow
@@ -52,7 +52,7 @@ public struct ExecRequest: Sendable {
     public var stdin: Data?
     public var deadline: OperationDeadline
     public var cancel: CancellationToken
-    public var limits: ExecLimits
+    public var limits: MachineExecLimits
     /// Told every chunk of stdout and stderr as it arrives.
     public var onOutput: (@Sendable (Data) -> Void)?
 
@@ -63,7 +63,7 @@ public struct ExecRequest: Sendable {
         stdin: Data? = nil,
         deadline: OperationDeadline,
         cancel: CancellationToken,
-        limits: ExecLimits,
+        limits: MachineExecLimits,
         onOutput: (@Sendable (Data) -> Void)? = nil
     ) {
         self.argv = argv
@@ -126,22 +126,9 @@ public enum FileKind: String, Sendable, Equatable {
     case directory, file, absent
 }
 
-/// A path DevHub could not find out about.
-///
-/// Not-there is an answer (`.absent`); could-not-look is this. The errno
-/// travels with it and the caller quotes it.
-public struct RuntimeFileError: Error, Sendable, Equatable, CustomStringConvertible {
-    public let path: String
-    public let code: String?
-    public init(path: String, code: String?) {
-        self.path = path
-        self.code = code
-    }
-    /// `file_unreadable`'s summary, then the path and errno.
-    public var description: String {
-        "DevHub could not read a file or folder it needs. \(path) could not be read (\(code ?? "unknown"))"
-    }
-}
+// A path DevHub could not find out about is a `RuntimeFileError` (declared
+// with WP4's `RepositoryRuntime`): not-there is an answer (`.absent`),
+// could-not-look is that error, with the errno that said why.
 
 /// One entry of a directory listing.
 public struct DirEntry: Sendable, Equatable {

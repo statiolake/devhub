@@ -137,7 +137,7 @@ public struct TmuxTerminalRuntimeOptions: Sendable {
 
 /// The limits every tmux answer is read under: an over-long answer is a
 /// failure, not a truncation, because what tmux answers is identity.
-let tmuxLimits = ExecLimits(
+let tmuxLimits = MachineExecLimits(
     stdoutBytes: TmuxCommand.maxOutputBytes,
     stderrBytes: TmuxCommand.maxStderrBytes,
     overflow: .fail({ TmuxCommand.shapeFailure("more output than DevHub will read") })

@@ -170,3 +170,10 @@ public final class TerminalRuntimes: @unchecked Sendable {
         configured.split(separator: "/", omittingEmptySubsequences: false).last.map(String.init) ?? configured
     }
 }
+
+extension TmuxRuntimeSettings {
+    /// The settings the config's `[runtimes]` table states.
+    public init(_ runtimes: RuntimeConfig) {
+        self.init(tmux: runtimes.tmux, shell: runtimes.shell, tmuxArgs: runtimes.tmuxArgs)
+    }
+}

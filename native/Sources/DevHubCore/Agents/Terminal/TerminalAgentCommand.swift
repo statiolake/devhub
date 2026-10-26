@@ -5,11 +5,6 @@
 
 import Foundation
 
-/// The kinds of Agent profile (`AgentProfile["kind"]`).
-public enum AgentProfileKind: String, Sendable, Equatable, CaseIterable {
-    case codex, claude, cursor, custom
-}
-
 /// A launch's profile, as much of it as a terminal Agent's command needs.
 public struct TerminalAgentProfile: Sendable, Equatable {
     public var kind: AgentProfileKind

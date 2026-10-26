@@ -183,7 +183,7 @@ done
                 env: try await runtime.environment(),
                 deadline: OperationDeadline.within(15_000),
                 cancel: CancellationToken(),
-                limits: ExecLimits(
+                limits: MachineExecLimits(
                     stdoutBytes: 16 * 1024 * 1024,
                     stderrBytes: 16 * 1024,
                     overflow: .fail({ portFailure(.failed, detail: "the processes of pane \(panePid) held more than DevHub will read") })

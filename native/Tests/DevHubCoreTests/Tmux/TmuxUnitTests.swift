@@ -233,7 +233,7 @@ final class TmuxInspectionTests: XCTestCase {
 }
 
 final class BoundedRunnerTests: XCTestCase {
-    let limits = ExecLimits(
+    let limits = MachineExecLimits(
         stdoutBytes: TmuxCommand.maxOutputBytes,
         stderrBytes: TmuxCommand.maxStderrBytes,
         overflow: .fail({ portFailure(.failed, detail: "too much") })
