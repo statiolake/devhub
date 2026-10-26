@@ -109,8 +109,8 @@ public struct RowFact: Equatable, Sendable {
     }
 }
 
-/// Where a Workspace's editor is (`EditorAttachmentWire`).
-public enum EditorAttachment: Equatable, Sendable {
+/// Where a Workspace's editor is (`EditorAttachmentWire`, ipc/appShell.ts).
+public enum EditorAttachmentWire: Equatable, Sendable {
     case host
     case devContainer(label: String?)
 }
@@ -132,9 +132,9 @@ public struct WorkspaceRowInput: Equatable, Sendable {
     public var terminals: WorkspaceTerminalsFact?
     /// The host, for a Workspace on another machine.
     public var sshHost: String?
-    public var editor: EditorAttachment
+    public var editor: EditorAttachmentWire
 
-    public init(label: String, displayRoot: String, closeFailure: String? = nil, terminals: WorkspaceTerminalsFact? = nil, sshHost: String? = nil, editor: EditorAttachment = .host) {
+    public init(label: String, displayRoot: String, closeFailure: String? = nil, terminals: WorkspaceTerminalsFact? = nil, sshHost: String? = nil, editor: EditorAttachmentWire = .host) {
         self.label = label
         self.displayRoot = displayRoot
         self.closeFailure = closeFailure
@@ -199,7 +199,7 @@ public enum RowDescription {
 
     /// The quiet line that says a row's editor is in a dev container, or
     /// nothing when it is on the Workspace's own machine.
-    public static func editorAttachmentFact(_ editor: EditorAttachment) -> (text: String, spoken: String)? {
+    public static func editorAttachmentFact(_ editor: EditorAttachmentWire) -> (text: String, spoken: String)? {
         switch editor {
         case .host: return nil
         case .devContainer(let label?):
