@@ -9,8 +9,8 @@ name: Native
 # The Linux job is the same check the agents run locally in Docker: it keeps
 # DevHubCore free of AppKit/CryptoKit. The macOS job is the real one: it
 # builds the App target too, runs the tests, bundles DevHub.app, runs its
-# self-test (a window on screen, the terminal surface linked) and uploads the
-# bundle.
+# self-test (the window from a fixture on a loopback transport, then the real
+# runtime on a private tmux server) and uploads the bundle.
 on:
   push:
     branches: [native-macos, "native-macos-*"]
@@ -95,6 +95,14 @@ jobs:
 
       - name: Bundle DevHub.app (release)
         run: Scripts/bundle-app.sh --output "$RUNNER_TEMP/native"
+
+      # The self-test's live phase attaches to a private tmux server.
+      - name: Install tmux
+        timeout-minutes: 5
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew list tmux >/dev/null 2>&1 || brew install tmux
 
       - name: Self-test the bundle
         timeout-minutes: 3

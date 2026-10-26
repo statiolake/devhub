@@ -45,6 +45,7 @@ final class SelfTest {
     func start() {
         Task { @MainActor in
             await run()
+            await live()
             if failures.isEmpty {
                 print("self-test ok: \(DevHubVersion.description)")
                 exit(0)
@@ -212,5 +213,119 @@ final class SelfTest {
         check(transport.live(editorKey) != nil, "the hidden editor's attachment was let go of")
 
         window.disposeAll()
+        window.window?.orderOut(nil)
+    }
+
+    // MARK: The live phase: a private tmux server
+
+    private let box = ShellBox()
+    private var liveShell: ShellController?
+
+    /// tmux, where Homebrew and the system put it.
+    private static func findTmux() -> String? {
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let candidates = path.split(separator: ":").map { "\($0)/tmux" } + ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    @discardableResult
+    private static func tmux(_ tmux: String, _ arguments: [String]) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tmux)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The real runtime on a profile of its own (its own tmux server, state,
+    /// settings and socket under a scratch home): Scratch's editor terminal
+    /// attaches to its `ws-` session, and a new window size reaches tmux.
+    private func live() async {
+        guard let tmux = Self.findTmux() else {
+            print("self-test: no tmux on this machine; the live phase is skipped")
+            return
+        }
+        let home = "/tmp/dh-st-\(getpid())"
+        let locations = ProfileLocations(profile: "selftest", home: home, environment: [:])
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: locations.configDirectory, withIntermediateDirectories: true)
+        try? fm.createDirectory(atPath: home + "/scratch", withIntermediateDirectories: true)
+        let settings = """
+            [general]
+            import_login_environment = false
+            workbench = "terminal"
+
+            [scratch]
+            daily = "\(home)/scratch/YYYYMMDD"
+
+            [appearance]
+            title_bar = "hidden"
+            """
+        try? settings.write(toFile: locations.settingsFilePath, atomically: true, encoding: .utf8)
+        defer {
+            Self.tmux(tmux, ["-L", locations.tmuxSocketName, "kill-server"])
+            try? fm.removeItem(atPath: home)
+        }
+
+        let transport = LateTransport()
+        let roots = ExtensionRoots(builtin: ColorThemeCatalog.builtinRoot, user: [String]())
+        let shell = ShellController(titleBar: .hidden, appearance: AppearanceController(roots: roots), transport: transport)
+        liveShell = shell
+        box.shell = shell
+        shell.window.showWindow(nil)
+        shell.window.window?.setContentSize(NSSize(width: 1100, height: 720))
+        let box = self.box
+        let environment = RuntimeEnvironment(
+            locations: locations, appExecutable: Bundle.main.executablePath ?? CommandLine.arguments[0],
+            cliExecutable: AppDelegate.cliExecutable(), titleBar: .hidden)
+        let runtime: DevHubRuntime
+        do {
+            runtime = try await DevHubRuntime.start(
+                environment, app: WindowShell(box: box),
+                hooks: RuntimeHooks(config: { config in Task { @MainActor in box.shell?.configAccepted(config) } }))
+        } catch {
+            return check(false, "live: the runtime did not start: \(failureText(error))")
+        }
+        transport.target = runtime.transport
+        shell.adopt(runtime)
+        await runtime.controller.shellReady()
+
+        let scratchKey = await until(20) {
+            guard let snapshot = shell.snapshot, snapshot.readiness == .ready else { return false }
+            return shell.window.editorTerminals.values.contains { $0.surfaceKey == TerminalSurfaceKeys.workspace(snapshot.scratchWorkspaceId) }
+        }
+        check(scratchKey, "live: Scratch's editor area has no terminal view")
+        let pane = shell.snapshot.flatMap { snapshot in
+            shell.window.editorTerminals.values.first { $0.surfaceKey == TerminalSurfaceKeys.workspace(snapshot.scratchWorkspaceId) }
+        }
+        if let pane {
+            let attached = await until(20) { pane.isAttached }
+            check(attached, "live: Scratch's editor terminal did not attach to tmux (\(pane.connection))")
+            layoutApplied(shell.window, "live")
+            let sessions = Self.tmux(tmux, ["-L", locations.tmuxSocketName, "list-sessions", "-F", "#{session_name}"])
+            check(sessions.split(separator: "\n").contains { $0.hasPrefix("ws-") }, "live: there is no ws- session (\(sessions))")
+            func clientSize() -> String {
+                Self.tmux(tmux, ["-L", locations.tmuxSocketName, "list-clients", "-F", "#{client_width}x#{client_height}"])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let before = clientSize()
+            shell.window.window?.setContentSize(NSSize(width: 900, height: 600))
+            let resized = await until(10) {
+                let now = clientSize()
+                let grid = pane.terminal.getTerminal()
+                return !now.isEmpty && now != before && now.split(separator: "\n").contains("\(grid.cols)x\(grid.rows)")
+            }
+            check(resized, "live: tmux's client is \(clientSize()) after a resize (was \(before))")
+            pane.type("echo devhub-live\r")
+            let echoed = await until(10) { pane.screenText().contains("devhub-live") }
+            check(echoed, "live: what was typed in the editor terminal did not come back")
+        }
+        shell.window.disposeAll()
+        await runtime.shutdown()
     }
 }
