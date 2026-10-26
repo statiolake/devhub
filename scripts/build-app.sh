@@ -60,6 +60,11 @@
 #     ~/.cache/devhub/whisper. Without cmake it stops, naming it.
 #     `--without-whisper` packages without it: the composer then shows its
 #     microphone as unavailable.
+#   * the Linux Neovims terminal mode copies to SSH hosts, in dist/nvim —
+#     package-nightly.py runs scripts/build_nvim.py when they are missing or
+#     stale: two pinned, sha256-verified release tarballs (~11 MB each),
+#     downloaded once and cached under ~/.cache/devhub/nvim. `--without-nvim`
+#     packages without them: terminal mode then uses each host's own nvim.
 #
 # Node's own version is deliberately *not* checked: the only Node this build is
 # picky about is the one VS Code's build requires, and provisioning fetches
