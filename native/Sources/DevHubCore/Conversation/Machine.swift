@@ -87,12 +87,17 @@ public protocol MachineStream: AnyObject, Sendable {
     func kill()
 }
 
-public protocol HostMachine: Sendable {
+/// As much of a machine as asking it short questions needs: where it is, its
+/// home, and a program run to its end (`PathMachine` in pathLinks.ts).
+public protocol PathLinkMachine: Sendable {
     /// Appended to a sentence about this machine: `""` here, ` on host` for another.
     var whereSuffix: String { get }
     func home() async throws -> String
     /// Run `argv` to its end, `stdin` written to it and closed, within `timeout` seconds.
     func exec(_ argv: [String], stdin: Data?, timeout: Double, limits: MachineLimits) async throws -> MachineResult
+}
+
+public protocol HostMachine: PathLinkMachine {
     /// Start `argv` and read its stdout as it comes.
     func spawnStream(_ argv: [String]) throws -> MachineStream
     func stat(_ path: String) async throws -> MachineFileKind

@@ -514,7 +514,7 @@ final class HostCommandTests: XCTestCase {
         for name in [AGENT, "not-an-agent", "550E8400-E29B-41D4-A716-4466554400D1"] {
             try FileManager.default.createDirectory(atPath: "\(root)/\(name)", withIntermediateDirectories: true)
         }
-        FileManager.default.createFile(atPath: "\(root)/550e8400-e29b-41d4-a716-4466554400d2", contents: Data())
+        _ = FileManager.default.createFile(atPath: "\(root)/550e8400-e29b-41d4-a716-4466554400d2", contents: Data())
         let listed = try await files.list()
         XCTAssertEqual(listed, [AGENT])
         try await files.remove(AGENT)

@@ -499,3 +499,41 @@ extension JsonObject {
     /// `JSON.stringify` of the object.
     public var jsonText: String { JsonValue.object(self).jsonText }
 }
+
+extension JsonValue {
+    /// `JSON.stringify(value, null, indent)`: one member a line, nested `indent` spaces deeper.
+    public func jsonText(indent: Int) -> String {
+        var out = ""
+        writePretty(into: &out, indent: String(repeating: " ", count: indent), depth: 0)
+        return out
+    }
+
+    private func writePretty(into out: inout String, indent: String, depth: Int) {
+        let inner = String(repeating: indent, count: depth + 1)
+        let outer = String(repeating: indent, count: depth)
+        switch self {
+        case .array(let items) where !items.isEmpty && !indent.isEmpty:
+            out += "[\n"
+            for (offset, item) in items.enumerated() {
+                if offset > 0 { out += ",\n" }
+                out += inner
+                item.writePretty(into: &out, indent: indent, depth: depth + 1)
+            }
+            out += "\n\(outer)]"
+        case .object(let object) where object.count > 0 && !indent.isEmpty:
+            out += "{\n"
+            var first = true
+            for (key, value) in object {
+                if !first { out += ",\n" }
+                first = false
+                out += inner
+                JsonValue.quote(key, into: &out)
+                out += ": "
+                value.writePretty(into: &out, indent: indent, depth: depth + 1)
+            }
+            out += "\n\(outer)}"
+        default:
+            write(into: &out)
+        }
+    }
+}

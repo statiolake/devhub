@@ -162,10 +162,11 @@ public final class AgentRecords<T: Equatable & Sendable>: AgentRecordStore, @unc
             ]
             let temporary = "\(path).tmp"
             try Data("\(file.jsonText)\n".utf8).write(to: URL(fileURLWithPath: temporary))
-            if FileManager.default.fileExists(atPath: path) {
-                _ = try FileManager.default.replaceItemAt(URL(fileURLWithPath: path), withItemAt: URL(fileURLWithPath: temporary))
-            } else {
-                try FileManager.default.moveItem(atPath: temporary, toPath: path)
+            // rename(2) puts the new file in the old one's place in one step.
+            if rename(temporary, path) != 0 {
+                let code = errno
+                try? FileManager.default.removeItem(atPath: temporary)
+                throw RecordRefused("renaming \(temporary) over it failed: \(String(cString: strerror(code)))")
             }
         } catch {
             FileHandle.standardError.write(Data("[devhub] could not save \(path): \(error)\n".utf8))

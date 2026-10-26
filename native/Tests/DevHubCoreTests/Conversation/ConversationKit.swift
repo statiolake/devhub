@@ -395,6 +395,9 @@ final class TurnedClock: ConversationClock, @unchecked Sendable {
         return { [self] in lock.withLock { timer.off = true } }
     }
 
+    /// Set the time to `now` without calling any timer (`vi.setSystemTime`).
+    func jump(to now: Double) { lock.withLock { current = now } }
+
     /// The timers set and not called off.
     var pending: Int { lock.withLock { timers.filter { !$0.off }.count } }
 
