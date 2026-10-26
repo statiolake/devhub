@@ -738,6 +738,14 @@
   font-family: inherit;
 }
 
+/* A sheet and the containers inside it are focused to receive keys (or by a
+   click on a scroller), never to be stood on: no ring around the whole panel.
+   Controls inside keep theirs. */
+.mac-sheet:focus-visible,
+.mac-sheet :is(div, section, aside, ul, ol):focus-visible {
+  outline: none;
+}
+
 .picker-input:focus {
   outline: none;
 }

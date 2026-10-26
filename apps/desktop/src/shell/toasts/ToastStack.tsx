@@ -79,13 +79,10 @@ function Toast({
       // pointer is a notice a keyboard cannot answer. Escape closes the one
       // that has the focus; `Cmd+Q D` closes the newest without going there.
       tabIndex={0}
-      // A press on the words takes the focus, so that a selection made there
-      // is answered by Cmd+C here and not by whatever had the keys before.
-      onMouseDown={(event) => {
-        if (event.currentTarget !== document.activeElement) {
-          event.currentTarget.focus({ preventScroll: true });
-        }
-      }}
+      // A press on the words focuses the notice natively (it is the nearest
+      // focusable ancestor), so Cmd+C here answers the selection made there.
+      // Not focused from script: that matches :focus-visible and draws the
+      // keyboard ring around the notice on every mouse click.
       onKeyDown={(event) => {
         if (isImeComposing(event.nativeEvent)) return;
         // Cmd+C copies the selected words, or the whole notice when nothing

@@ -581,8 +581,8 @@ describe("copying a notice", () => {
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
-    fireEvent.mouseDown(summary);
-    expect(toast).toHaveFocus();
+    // The press focuses the notice natively; jsdom does not, so do it here.
+    toast.focus();
     fireEvent.keyDown(toast, { key: "c", metaKey: true });
     expect(page.writeClipboard).toHaveBeenCalledTimes(1);
     expect(page.writeClipboard.mock.calls[0]?.[0]).toBe(
