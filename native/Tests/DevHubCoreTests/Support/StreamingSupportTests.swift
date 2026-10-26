@@ -64,6 +64,13 @@ final class AsyncLineReaderTests: XCTestCase {
 }
 
 final class UnixSocketTests: ScratchDirectoryTestCase {
+    /// macOS's temporary directory is too deep for `sun_path`, so the sockets
+    /// go in a short directory of their own.
+    override func setUpWithError() throws {
+        directory = "/tmp/dh-\(UUID().uuidString.prefix(8))"
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    }
+
     func testOneLineRequestAndOneLineAnswer() async throws {
         let path = Path.join(directory, "control.sock")
         let listener = try UnixSocket.listen(path)
