@@ -118,6 +118,70 @@ public enum TerminalLauncher {
         Path.join(home, remoteDevhubDirectory, "\(remoteCliDirectoryPrefix)-\(remoteProfileTag(controlSocketPath: controlSocketPath))")
     }
 
+    /// Write the launcher and return its path. Nothing is caught: a DevHub that
+    /// cannot write its own launcher has no terminals.
+    @discardableResult
+    public static func install(at launcherPath: String, execPath: String, entryScript: String, socketPath: String, machine: String) throws -> String {
+        let directory = (launcherPath as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        try Data(script(execPath: execPath, entryScript: entryScript, socketPath: socketPath, machine: machine).utf8)
+            .write(to: URL(fileURLWithPath: launcherPath))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcherPath)
+        return launcherPath
+    }
+
+    /// Every path DevHub writes on a machine it is not running on.
+    public struct RemotePaths: Sendable, Equatable {
+        /// `~/.devhub/terminal` — the one directory DevHub owns there.
+        public var directory: String
+        /// The launcher script a workbench's terminal profile names.
+        public var launcher: String
+        /// The root of the asking program's files.
+        public var entryRoot: String
+        /// The one of them to run.
+        public var entry: String
+        /// Where DevHub's control socket is forwarded to.
+        public var socket: String
+        /// The directory the `devhub` shim is in, and the one added to the pane PATH.
+        public var cliBinDirectory: String
+        /// The shim itself.
+        public var cli: String
+        /// The CLI's bundle, beside the asking program's.
+        public var cliEntry: String
+        /// The REH's bundled `node`, which is the Node that is certainly there.
+        public var node: String
+        /// The `/devhub` skill's root for Agents on that machine.
+        public var skillRoot: String
+        /// The SKILL.md itself.
+        public var skillFile: String
+    }
+
+    /// Where all of it goes on the far machine, from its `$HOME` and two facts
+    /// (`remoteTerminalPaths`).
+    public static func remotePaths(
+        home: String, serverDataFolderName: String, serverInstallKey: String,
+        controlSocketPath: String, entryName: String, cliEntryName: String
+    ) -> RemotePaths {
+        let directory = Path.join(home, remoteDevhubDirectory)
+        let entryRoot = Path.join(directory, remoteEntryDirectory)
+        let tag = remoteProfileTag(controlSocketPath: controlSocketPath)
+        let skillRoot = Path.join(directory, "skill-\(tag)")
+        let bin = remoteCliBinDirectory(home: home, controlSocketPath: controlSocketPath)
+        return RemotePaths(
+            directory: directory,
+            launcher: Path.join(directory, "\(launcherName)-\(tag)"),
+            entryRoot: entryRoot,
+            entry: Path.join(entryRoot, entryName),
+            socket: Path.join(directory, "control-\(tag).sock"),
+            cliBinDirectory: bin,
+            cli: Path.join(bin, remoteCliName),
+            cliEntry: Path.join(entryRoot, cliEntryName),
+            node: Path.join(home, serverDataFolderName, "bin", serverInstallKey, "node"),
+            skillRoot: skillRoot,
+            skillFile: Path.join(skillRoot, ".claude", "skills", "devhub", "SKILL.md")
+        )
+    }
+
     /// The directory a terminal belongs to, from what the launcher was started
     /// in. A cwd is always absolute; anything that is not is nil — the anchor's
     /// context — rather than a guess.

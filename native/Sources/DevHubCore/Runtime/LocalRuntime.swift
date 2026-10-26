@@ -396,7 +396,7 @@ final class LocalByteStream: ByteStream, @unchecked Sendable {
         let queue = DispatchQueue(label: "devhub.byte-stream")
         readers = [
             PipeReader(out, queue: queue, onChunk: { stream.yield($0) }, onEnd: { stream.finish() }),
-            PipeReader(err, queue: queue, onChunk: { [weak self] in self?.keep(stderr: $0) }, onEnd: {}),
+            PipeReader(err, queue: queue, onChunk: { [weak self] in self?.keep(stderr: $0) }, onEnd: { [weak self] in self?.stderrEnded() }),
         ]
         process.terminationHandler = { [weak self] finished in
             let signalled = finished.terminationReason == .uncaughtSignal
@@ -428,14 +428,31 @@ final class LocalByteStream: ByteStream, @unchecked Sendable {
         lock.unlock()
     }
 
+    private var exitValue: StreamEnd?
+    private var stderrDone = false
+
+    private func stderrEnded() {
+        lock.withLock { stderrDone = true }
+        settleIfDone()
+    }
+
+    /// The exit, once the end of stderr is in hand too: the reason a program
+    /// gives is the last thing it writes.
     private func ended(_ value: StreamEnd) {
-        lock.lock()
-        var finished = value
-        finished.stderr = stderrTail
-        end = finished
-        let pending = waiters
-        waiters = []
-        lock.unlock()
+        lock.withLock { exitValue = value }
+        settleIfDone()
+    }
+
+    private func settleIfDone() {
+        let (finished, pending): (StreamEnd?, [CheckedContinuation<StreamEnd, any Error>]) = lock.withLock {
+            guard end == nil, var value = exitValue, stderrDone else { return (nil, []) }
+            value.stderr = stderrTail
+            end = value
+            let pending = waiters
+            waiters = []
+            return (value, pending)
+        }
+        guard let finished else { return }
         for waiter in pending { waiter.resume(returning: finished) }
     }
 
