@@ -11,6 +11,7 @@ import DevHubCore
 @MainActor
 final class AgentsView: NSView {
     /// One pooled pane.
+    @MainActor
     enum Pane {
         case terminal(TerminalPaneView)
         case conversation(HostedConversation)

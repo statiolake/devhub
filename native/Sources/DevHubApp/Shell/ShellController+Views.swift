@@ -13,7 +13,7 @@ extension ShellController: SidebarHost {
         // it has been applied. A keyboard one stays in the Sidebar.
         if byPointer { keyboardInSidebarCleared() }
         Task { @MainActor [weak self] in
-            await controller.dispatchFromWindow(.selectContext(context, split: split))
+            await controller.dispatchFromWindow(AppIntentWire.selectContext(context, split: split))
             if byPointer { self?.placeKeyboardOnSurface() }
         }
     }
@@ -64,7 +64,7 @@ extension ShellController: SidebarHost {
     func sidebarCommitWidth(_ width: Double) {
         guard let controller else { return sidebarPreviewWidth(nil) }
         Task { @MainActor [weak self] in
-            await controller.dispatchFromWindow(.resizeSidebar(width: width))
+            await controller.dispatchFromWindow(AppIntentWire.resizeSidebar(width: width))
             self?.sidebarPreviewWidth(nil)
         }
     }
@@ -102,7 +102,7 @@ extension ShellController: BackdropHost {
     func backdropCommitSplit(_ ratio: Double) {
         guard let controller else { return }
         Task { @MainActor [weak self] in
-            await controller.dispatchFromWindow(.resizeSplit(ratio: ratio))
+            await controller.dispatchFromWindow(AppIntentWire.resizeSplit(ratio: ratio))
             guard let self else { return }
             var next = self.preview
             next.splitRatio = nil
@@ -115,7 +115,7 @@ extension ShellController: BackdropHost {
               let agent = snapshot?.workspaces.lazy.flatMap(\.agents).first(where: { $0.terminal?.id == terminalId }) else { return }
         let agentId = agent.id
         Task { @MainActor [weak self] in
-            await controller.dispatchFromWindow(.resizeAgentTerminal(agentId: agentId, share: share, stacked: stacked))
+            await controller.dispatchFromWindow(AppIntentWire.resizeAgentTerminal(agentId: agentId, share: share, stacked: stacked))
             guard let self else { return }
             var next = self.preview
             next.terminalShare = nil

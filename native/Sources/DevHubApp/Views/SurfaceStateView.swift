@@ -52,10 +52,10 @@ final class DevHubButton: NSControl {
     override var acceptsFirstResponder: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 
-    private var font: NSFont { ShellStyle.font(13, isDefault ? .medium : .regular) }
+    private var labelFont: NSFont { ShellStyle.font(13, isDefault ? .medium : .regular) }
 
     override var intrinsicContentSize: NSSize {
-        let text = (title as NSString).size(withAttributes: [.font: font])
+        let text = (title as NSString).size(withAttributes: [.font: labelFont])
         return NSSize(width: ceil(text.width) + 26 + 2, height: max(22, ceil(text.height) + 4 + 2))
     }
 
@@ -121,7 +121,7 @@ final class DevHubButton: NSControl {
             ring.stroke()
         }
         let ink = isDefault ? tokens.accentInk.nsColor : tokens.primary.nsColor
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
+        let attributes: [NSAttributedString.Key: Any] = [.font: labelFont, .foregroundColor: ink]
         let size = (title as NSString).size(withAttributes: attributes)
         (title as NSString).draw(
             at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2), withAttributes: attributes)
@@ -191,7 +191,7 @@ final class SurfaceStateView: NSView {
     private let message = NSTextField(wrappingLabelWithString: "")
     private let actions = NSStackView()
     /// Paint the surface colour under the content (a pane's cover).
-    var opaque = true { didSet { needsDisplay = true } }
+    var paintsSurface = true { didSet { needsDisplay = true } }
 
     init(style: ShellStyle) {
         self.style = style
@@ -231,7 +231,7 @@ final class SurfaceStateView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard opaque else { return }
+        guard paintsSurface else { return }
         style.tokens.surface.nsColor.setFill()
         bounds.fill()
     }
