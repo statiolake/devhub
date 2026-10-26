@@ -301,73 +301,56 @@ public enum BoundedExec {
             throw ExecFailure.unavailable("spawn \(file) ENOENT")
         }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = Array(argv.dropFirst())
-        process.environment = environment
-        if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
-        let outPipe = Pipe(), errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-        process.standardInput = FileHandle(forReadingAtPath: "/dev/null")
-
-        let collector = CappedCollector(limits: limits)
-        outPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            if !chunk.isEmpty { collector.append(out: chunk) }
-        }
-        errPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            if !chunk.isEmpty { collector.append(err: chunk) }
-        }
-        let exit = ExitLatch()
-        process.terminationHandler = { finished in
-            exit.fire(status: finished.terminationStatus, signalled: finished.terminationReason == .uncaughtSignal)
-        }
         if let cwd, (try? LocalFiles.stat(cwd)) != .directory {
-            outPipe.fileHandleForReading.readabilityHandler = nil
-            errPipe.fileHandleForReading.readabilityHandler = nil
             throw ExecFailure.unavailable("spawn \(file) ENOENT (no such directory: \(cwd))")
         }
+        // `SpawnedChild`, not Foundation's `Process`: the end is reported once
+        // the child has been reaped and both pipes have reached end-of-file,
+        // and its own session lets a timeout or cancellation take the whole
+        // group down.
+        let spawned: SpawnedChild
         do {
-            try process.run()
+            spawned = try SpawnedChild.spawn(executable: executable, args: Array(argv.dropFirst()), env: environment, cwd: cwd, pipeStdin: false)
         } catch {
-            outPipe.fileHandleForReading.readabilityHandler = nil
-            errPipe.fileHandleForReading.readabilityHandler = nil
             throw ExecFailure.unavailable("spawn \(file) \(LocalFiles.code(of: error))")
         }
 
-        let child = ChildBox(process)
+        let collector = CappedCollector(limits: limits)
+        let exit = ExitLatch()
+        let queue = DispatchQueue(label: "devhub.bounded-exec")
+        let drained = DrainState()
+        let readers = [
+            DescriptorReader(spawned.stdout, queue: queue, onChunk: { collector.append(out: $0) }, onEnd: { drained.closed { exit.fire(status: $0, signalled: $1) } }),
+            DescriptorReader(spawned.stderr, queue: queue, onChunk: { collector.append(err: $0) }, onEnd: { drained.closed { exit.fire(status: $0, signalled: $1) } }),
+        ]
+        for reader in readers { reader.start() }
+        spawned.whenExited { code, signal in
+            drained.exited(status: signal ?? code ?? 0, signalled: signal != nil) { exit.fire(status: $0, signalled: $1) }
+            // A grandchild (`sh -c "sleep 30"`'s sleep) may hold a pipe open
+            // long after the child itself has gone: not waited for.
+            queue.asyncAfter(deadline: .now() + 1) { drained.giveUp { exit.fire(status: $0, signalled: $1) } }
+        }
+
         let stop = StopReason()
         let watchdog = Task.detached {
             try await Task.sleep(nanoseconds: UInt64(max(0, timeoutMs)) * 1_000_000)
             stop.set(.timedOut)
-            child.terminate()
+            spawned.signalGroup(SIGKILL)
             exit.abandon()
         }
         let (status, signalled) = await withTaskCancellationHandler {
             await exit.wait()
         } onCancel: {
             stop.set(.cancelled)
-            child.terminate()
-            // Not waited for: on Linux, Foundation learns of an exit only once
-            // every inherited copy of its watch descriptor is closed, and a
-            // grandchild may hold one for as long as it likes.
+            spawned.signalGroup(SIGKILL)
             exit.abandon()
         }
         watchdog.cancel()
 
-        outPipe.fileHandleForReading.readabilityHandler = nil
-        errPipe.fileHandleForReading.readabilityHandler = nil
-        // Whatever arrived between the last handler call and the exit — read
-        // without blocking, because a grandchild (`sh -c "sleep 30"`'s sleep)
-        // may hold the pipe open long after the child itself has gone.
-        if stop.value == nil {
-            collector.append(out: drainWithoutBlocking(outPipe.fileHandleForReading))
-            collector.append(err: drainWithoutBlocking(errPipe.fileHandleForReading))
-        }
-        try? outPipe.fileHandleForReading.close()
-        try? errPipe.fileHandleForReading.close()
+        for reader in readers { reader.stop() }
+        // Whatever a reader was in the middle of delivering is in the
+        // collector once this returns.
+        queue.sync {}
 
         switch stop.value {
         case .cancelled: throw CancellationError()
@@ -467,21 +450,33 @@ final class ExitLatch: @unchecked Sendable {
     }
 }
 
-/// The child, killable from any thread: SIGTERM, then SIGKILL after a second
-/// (a child spawned from a concurrency thread on Linux may have SIGTERM
-/// blocked; SIGKILL cannot be).
-final class ChildBox: @unchecked Sendable {
-    private let process: Process
-    init(_ process: Process) { self.process = process }
+/// When a bounded command is done: it has been reaped and both of its pipes
+/// have ended — or, once it has been reaped, a descendant has held a pipe open
+/// for longer than anyone should wait.
+final class DrainState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var exit: (status: Int32, signalled: Bool)?
+    private var open = 2
 
-    func terminate() {
-        guard process.isRunning else { return }
-        process.terminate()
-        let pid = process.processIdentifier
-        let process = self.process
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
-            if process.isRunning { kill(pid, SIGKILL) }
+    func exited(status: Int32, signalled: Bool, _ fire: (Int32, Bool) -> Void) {
+        let ready: Bool = lock.withLock {
+            exit = (status, signalled)
+            return open == 0
         }
+        if ready { fire(status, signalled) }
+    }
+
+    func closed(_ fire: (Int32, Bool) -> Void) {
+        let done: (status: Int32, signalled: Bool)? = lock.withLock {
+            open -= 1
+            return open == 0 ? exit : nil
+        }
+        if let done { fire(done.status, done.signalled) }
+    }
+
+    func giveUp(_ fire: (Int32, Bool) -> Void) {
+        let done = lock.withLock { exit }
+        if let done { fire(done.status, done.signalled) }
     }
 }
 
@@ -507,22 +502,4 @@ private func statMode(_ path: String) -> (mode_t?, Int32) {
     var info = stat()
     if stat(path, &info) == 0 { return (info.st_mode & S_IFMT, 0) }
     return (nil, errno)
-}
-
-/// What a pipe holds right now, up to its end or until it would block.
-///
-/// `poll` first, so the descriptor is never switched to non-blocking — a
-/// readability handler may still be reading it.
-func drainWithoutBlocking(_ handle: FileHandle) -> Data {
-    let descriptor = handle.fileDescriptor
-    var result = Data()
-    var buffer = [UInt8](repeating: 0, count: 65536)
-    while true {
-        var probe = pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0)
-        guard poll(&probe, 1, 0) > 0, probe.revents & Int16(POLLIN | POLLHUP) != 0 else { break }
-        let count = buffer.withUnsafeMutableBytes { read(descriptor, $0.baseAddress, $0.count) }
-        if count <= 0 { break }
-        result.append(contentsOf: buffer[0..<count])
-    }
-    return result
 }

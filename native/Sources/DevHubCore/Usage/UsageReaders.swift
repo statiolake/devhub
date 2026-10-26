@@ -122,59 +122,60 @@ public struct UsageCommand: Equatable, Sendable {
 }
 
 /// `spawnLineProcess`: the program, on pipes, on this machine.
+///
+/// Started with `SpawnedChild` (not Foundation's `Process`, whose termination
+/// handler races the reads of what the program said last, and which leaks its
+/// watch descriptor into descendants). The end is reported once the program
+/// has been reaped *and* both of its pipes have reached end-of-file, so its
+/// last lines and the tail of its complaint are never missed.
 public final class ChildLineProcess: LineProcess, @unchecked Sendable {
     /// How much of stderr a failure quotes: the end is where a reason is.
     static let stderrTail = 2048
+    /// How long a descendant that still holds a pipe open after the program
+    /// itself has gone is waited for before the end is reported anyway.
+    static let drainGrace: Double = 1
 
     public let ended = EndSignal()
     private let lock = NSLock()
-    private let process = Process()
-    private let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
+    private let queue = DispatchQueue(label: "devhub.child-line-process")
+    private var child: SpawnedChild?
+    private var readers: [DescriptorReader] = []
     private var listeners: [@Sendable (String) -> Void] = []
     private var buffered = Data()
     private var stderr = Data()
     private var killed = false
+    private var stdinOpen = false
+    private var outClosed = false
+    private var errClosed = false
+    private var exitHow: String?
     private let file: String
 
     public init(command: UsageCommand, cwd: String) {
         file = command.file
-        // A program that has stopped reading must not take DevHub with it.
-        signal(SIGPIPE, SIG_IGN)
-        process.executableURL = URL(fileURLWithPath: command.file)
-        process.arguments = command.args
-        process.environment = command.env
-        process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.standardInput = inPipe
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-        outPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            if chunk.isEmpty { handle.readabilityHandler = nil; return }
-            self?.received(chunk)
-        }
-        errPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            if chunk.isEmpty { handle.readabilityHandler = nil; return }
-            self?.complained(chunk)
-        }
-        let file = command.file
-        process.terminationHandler = { [weak self] finished in
-            guard let self else { return }
-            let how = finished.terminationReason == .uncaughtSignal
-                ? BoundedExec.signalName(finished.terminationStatus)
-                : "exit code \(finished.terminationStatus)"
-            // What it said last, before saying it has gone: its last lines and
-            // the end of its complaint arrive on their own schedule.
-            let out = drainWithoutBlocking(self.outPipe.fileHandleForReading)
-            if !out.isEmpty { self.received(out) }
-            let err = drainWithoutBlocking(self.errPipe.fileHandleForReading)
-            if !err.isEmpty { self.complained(err) }
-            self.end("\(file) stopped (\(how))")
-        }
+        let child: SpawnedChild
         do {
-            try process.run()
+            child = try SpawnedChild.spawn(executable: command.file, args: command.args, env: command.env, cwd: cwd, pipeStdin: true)
         } catch {
-            end("\(file) could not be started: \(LocalFiles.code(of: error))")
+            end("\(command.file) could not be started: \(LocalFiles.code(of: error))")
+            return
+        }
+        let readers = [
+            DescriptorReader(child.stdout, queue: queue, onChunk: { [weak self] in self?.received($0) }, onEnd: { [weak self] in self?.closed(stderr: false) }),
+            DescriptorReader(child.stderr, queue: queue, onChunk: { [weak self] in self?.complained($0) }, onEnd: { [weak self] in self?.closed(stderr: true) }),
+        ]
+        lock.withLock {
+            self.child = child
+            self.readers = readers
+            stdinOpen = true
+        }
+        for reader in readers { reader.start() }
+        child.whenExited { [weak self] code, signal in
+            guard let self else { return }
+            let how = signal.map { BoundedExec.signalName($0) } ?? "exit code \(code ?? 0)"
+            self.lock.withLock { self.exitHow = how }
+            self.endIfDrained()
+            // A descendant holding a pipe must not hold the end back for ever.
+            self.queue.asyncAfter(deadline: .now() + Self.drainGrace) { [weak self] in self?.endNow() }
         }
     }
 
@@ -200,6 +201,21 @@ public final class ChildLineProcess: LineProcess, @unchecked Sendable {
         lock.unlock()
     }
 
+    private func closed(stderr isError: Bool) {
+        lock.withLock { if isError { errClosed = true } else { outClosed = true } }
+        endIfDrained()
+    }
+
+    private func endIfDrained() {
+        let done = lock.withLock { exitHow != nil && outClosed && errClosed }
+        if done { endNow() }
+    }
+
+    private func endNow() {
+        guard let how = lock.withLock({ exitHow }) else { return }
+        end("\(file) stopped (\(how))")
+    }
+
     private func end(_ why: String) {
         lock.lock()
         let said = String(decoding: stderr, as: UTF8.self).jsTrimmed
@@ -209,8 +225,9 @@ public final class ChildLineProcess: LineProcess, @unchecked Sendable {
 
     public func send(_ line: String) {
         guard !ended.isEnded else { return }
+        let descriptor: Int32? = lock.withLock { stdinOpen ? child?.stdin : nil }
+        guard let descriptor else { return }
         let bytes = Array((line + "\n").utf8)
-        let descriptor = inPipe.fileHandleForWriting.fileDescriptor
         var offset = 0
         while offset < bytes.count {
             let written = bytes[offset...].withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
@@ -227,13 +244,27 @@ public final class ChildLineProcess: LineProcess, @unchecked Sendable {
         lock.lock(); listeners.append(listener); lock.unlock()
     }
 
+    /// The whole group: the program may have started children of its own.
     public func kill() {
-        lock.lock()
-        guard !killed else { lock.unlock(); return }
-        killed = true
-        lock.unlock()
-        try? inPipe.fileHandleForWriting.close()
-        ChildBox(process).terminate()
+        let (child, closeStdin): (SpawnedChild?, Bool) = lock.withLock {
+            guard !killed else { return (nil, false) }
+            killed = true
+            let wasOpen = stdinOpen
+            stdinOpen = false
+            return (self.child, wasOpen)
+        }
+        guard let child else { return }
+        if closeStdin { close(child.stdin) }
+        child.signalGroup(SIGTERM)
+        // A child spawned from a concurrency thread may have SIGTERM blocked;
+        // SIGKILL cannot be.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+            if child.isRunning { child.signalGroup(SIGKILL) }
+        }
+    }
+
+    deinit {
+        if stdinOpen, let child { close(child.stdin) }
     }
 }
 
