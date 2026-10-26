@@ -23,6 +23,14 @@ public enum TerminalAgentSessionLookupError: Error, Equatable, CustomStringConve
         case .notResumable(let detail), .unreadable(let detail): return detail
         }
     }
+
+    /// The app error code each is drawn under (`failures.ts`).
+    public var code: String {
+        switch self {
+        case .notResumable: return "conversation_not_resumable"
+        case .unreadable: return "sessions_unreadable"
+        }
+    }
 }
 
 /// One record `paneProcessesScript` printed.

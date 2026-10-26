@@ -25,10 +25,12 @@
 // an error or an exit, so nothing a child printed appears after the news that
 // it is gone.
 //
-// Deviation from the TS: there is no IPC hop, so the frame sequence numbers,
-// the cumulative-ack window (`FlowControl`) and the input sequence that
-// protected the Electron renderer's channel are not ported. The view writes to
-// the attachment directly and the sink is called on the PTY's own queue.
+// The frame contract is the TS one, kept whole although there is no IPC hop:
+// output frames carry a contiguous sequence, never exceed
+// `maxOutputFrameBytes`, and are metered by a cumulative-ack window — a view
+// that falls behind (SwiftTerm feeding on the main thread) pauses the PTY
+// instead of this process buffering for it. Input is a strict gap-free
+// sequence. The sink is called on whichever queue delivered the PTY's bytes.
 
 import Foundation
 
@@ -84,15 +86,23 @@ public enum TerminalErrorCode: String, Sendable, Equatable, CaseIterable {
 public struct TerminalFailure: Error, Sendable, Equatable, CustomStringConvertible {
     public let code: TerminalErrorCode
     public let summary: String
+    /// Why, on this side: the cause stays here, where the log can read it,
+    /// and never reaches the wire. Not part of what makes two equal.
+    public let cause: String?
+
+    public static func == (left: TerminalFailure, right: TerminalFailure) -> Bool {
+        left.code == right.code && left.summary == right.summary
+    }
 
     /// How long a summary may be (`MAX_ERROR_SUMMARY_BYTES`).
     public static let maxSummaryBytes = 256
 
     /// - Parameter summary: a sentence that replaces the code's stock summary,
     ///   for a failure whose stock words leave out the whole diagnostic.
-    public init(_ code: TerminalErrorCode, summary: String? = nil) {
+    public init(_ code: TerminalErrorCode, summary: String? = nil, cause: (any Error)? = nil) {
         self.code = code
         self.summary = TerminalFailure.bounded(summary ?? code.summary)
+        self.cause = cause.map { String(describing: $0) }
     }
 
     /// Fit a summary inside the bound, on whole code points.
@@ -117,7 +127,7 @@ public struct TerminalFailure: Error, Sendable, Equatable, CustomStringConvertib
     /// (`terminalFailureFromPort`).
     public static func from(_ failure: any Error) -> TerminalFailure {
         if let terminal = failure as? TerminalFailure { return terminal }
-        guard let port = failure as? PortFailure else { return TerminalFailure(.internal) }
+        guard let port = failure as? PortFailure else { return TerminalFailure(.internal, cause: failure) }
         // The port's detail, where it has one, is the sentence.
         let summary = port.detail
         switch port.code {
@@ -141,22 +151,44 @@ public enum TerminalExitReason: String, Sendable, Equatable {
     case eof, detached, childExited
 }
 
-/// What an attachment tells its view, in order.
+/// What an attachment tells its view, in order. Every frame names its
+/// attachment and carries a contiguous sequence: `started` is 0, every frame
+/// after it one more.
 public enum TerminalFrame: Sendable, Equatable {
     case started(attachmentId: String, surfaceKey: String, targetGeneration: Int, cols: Int, rows: Int)
-    case output(Data)
-    case error(TerminalFailure)
-    case exited(TerminalExitReason)
+    case output(attachmentId: String, sequence: Int, bytes: Data)
+    case error(attachmentId: String, sequence: Int, error: TerminalFailure)
+    case exited(attachmentId: String, sequence: Int, reason: TerminalExitReason)
+
+    public var sequence: Int {
+        switch self {
+        case .started: return 0
+        case .output(_, let sequence, _), .error(_, let sequence, _), .exited(_, let sequence, _): return sequence
+        }
+    }
+
+    /// `started`, `output`, `error` or `exited`, as the wire names them.
+    public var type: String {
+        switch self {
+        case .started: return "started"
+        case .output: return "output"
+        case .error: return "error"
+        case .exited: return "exited"
+        }
+    }
 }
 
-/// The view's end of one attachment. It answers whether the frame was
-/// delivered: a view that has gone away is the one condition under which this
-/// side stops the PTY on its own.
+/// The view's end of one attachment.
+///
+/// It answers whether the frame was delivered rather than throwing, because a
+/// view that has gone away is not an error to report — it is the one
+/// condition under which this side stops the PTY on its own.
 public typealias TerminalFrameSink = @Sendable (TerminalFrame) -> Bool
 
 /// The identity every non-attach request must present: the surface key and
 /// the window label name the owner, and the attachment id and generation name
-/// the exact client it was handed. All four must match.
+/// the exact client it was handed. All four must match: a stale handle is
+/// refused, never resolved to whatever is current.
 public struct TerminalRequestIdentity: Sendable, Equatable {
     public var surfaceKey: String
     public var attachmentId: String
@@ -207,10 +239,13 @@ public final class AttachPermit: @unchecked Sendable {
 /// Everything an attach needs once its session has been verified.
 public struct AttachContext: Sendable {
     public var surfaceKey: String
+    /// The window this surface is mounted in: one window holds several.
     public var viewLabel: String
+    /// The semantic terminal this attachment is a client of.
     public var target: TerminalTarget
     /// Where the tmux client is opened: on the machine its session is on.
     public var spawn: PtyFactory
+    /// The tmux client to run, resolved against an exact marked session.
     public var file: String
     public var args: [String]
     /// The client's working directory: the launch home, never a workspace.
@@ -219,38 +254,148 @@ public struct AttachContext: Sendable {
     public var environment: [String: String]
     public var size: TerminalSize
     public var sink: TerminalFrameSink
+
+    public init(
+        surfaceKey: String, viewLabel: String, target: TerminalTarget, spawn: @escaping PtyFactory,
+        file: String, args: [String], cwd: String, environment: [String: String],
+        size: TerminalSize, sink: @escaping TerminalFrameSink
+    ) {
+        self.surfaceKey = surfaceKey
+        self.viewLabel = viewLabel
+        self.target = target
+        self.spawn = spawn
+        self.file = file
+        self.args = args
+        self.cwd = cwd
+        self.environment = environment
+        self.size = size
+        self.sink = sink
+    }
 }
 
 /// Who owns an attachment: one terminal surface inside one window.
 public func surfaceOwnerKey(viewLabel: String, surfaceKey: String) -> String { "\(viewLabel)\u{0}\(surfaceKey)" }
 
-/// How long the reads of one redraw are gathered before they become a frame.
-public let outputCoalesceMs = 5.0
-/// Latest-wins resize, at most this often.
-public let resizeIntervalMs = 16.0
-/// The largest one output frame may be.
-public let maxOutputFrameBytes = 32 * 1024
+/// The terminal transport's bounds (`ipc/terminal.ts` and `attachments.ts`).
+public enum TerminalTransport {
+    public static let maxOutputFrameBytes = 32 * 1024
+    public static let maxOutputBufferBytes = 256 * 1024
+    public static let maxInputSequence = 9_007_199_254_740_991
+    public static let maxTargetGeneration = maxInputSequence
+    /// Latest-wins resize, at most this often.
+    public static let resizeIntervalMs = 16.0
+    public static let maxInFlightFrames = 8
+    public static let maxInFlightBytes = maxOutputBufferBytes
+    public static let flowControlTimeoutMs = 2_000.0
+    /// Output already read from the PTY but not yet sendable, bounded like
+    /// the window.
+    public static let maxQueuedOutputBytes = maxOutputBufferBytes
+    /// How long the reads of one redraw are gathered before they become a
+    /// frame: VS Code's pty host's `TerminalDataBufferer` number, under a frame
+    /// at 120 Hz.
+    public static let outputCoalesceMs = 5.0
+}
 
+/// A timer the attachments set, injected so a test owns the clock.
+public protocol AttachmentTimer: Sendable {
+    func cancel()
+}
+
+public protocol AttachmentScheduler: Sendable {
+    func after(_ milliseconds: Double, _ work: @escaping @Sendable () -> Void) -> any AttachmentTimer
+}
+
+/// Real time, on a dispatch queue.
+public struct DispatchAttachmentScheduler: AttachmentScheduler {
+    let queue: DispatchQueue
+    public init(queue: DispatchQueue = DispatchQueue(label: "devhub.attachments")) { self.queue = queue }
+
+    final class Item: AttachmentTimer, @unchecked Sendable {
+        let work: DispatchWorkItem
+        init(_ work: DispatchWorkItem) { self.work = work }
+        func cancel() { work.cancel() }
+    }
+
+    public func after(_ milliseconds: Double, _ work: @escaping @Sendable () -> Void) -> any AttachmentTimer {
+        let item = DispatchWorkItem(block: work)
+        queue.asyncAfter(deadline: .now() + .microseconds(Int(milliseconds * 1000)), execute: item)
+        return Item(item)
+    }
+}
+
+/// The cumulative-ack window that keeps output from running ahead of the view.
+public final class FlowControl: @unchecked Sendable {
+    private var pending: [(sequence: Int, bytes: Int)] = []
+    private var sent = 0
+    private var closed = false
+
+    public init() {}
+
+    public var lastSent: Int { sent }
+    public var inFlightBytes: Int { pending.reduce(0) { $0 + $1.bytes } }
+    public var inFlightFrames: Int { pending.count }
+
+    /// Claim window credit for one output frame. `false` means the view has
+    /// not consumed enough yet — never that the frame was dropped.
+    public func reserve(_ sequence: Int, bytes: Int) throws -> Bool {
+        if sequence < 1 || sequence > TerminalTransport.maxInputSequence { throw TerminalFailure(.invalidRequest) }
+        if bytes > TerminalTransport.maxOutputFrameBytes { throw TerminalFailure(.backpressure) }
+        if closed { throw TerminalFailure(.channelClosed) }
+        if pending.count >= TerminalTransport.maxInFlightFrames || inFlightBytes + bytes > TerminalTransport.maxInFlightBytes {
+            return false
+        }
+        pending.append((sequence, bytes))
+        sent = sequence
+        return true
+    }
+
+    /// Cumulative: everything up to and including `sequence` leaves the window.
+    @discardableResult
+    public func acknowledge(_ sequence: Int) throws -> Bool {
+        if sequence < 1 || sequence > TerminalTransport.maxInputSequence { throw TerminalFailure(.invalidRequest) }
+        if sequence > sent { throw TerminalFailure(.invalidRequest) }
+        let completed = pending.filter { $0.sequence <= sequence }.reduce(0) { $0 + $1.bytes }
+        pending.removeAll { $0.sequence <= sequence }
+        return completed > 0
+    }
+
+    public func close() {
+        closed = true
+        pending = []
+    }
+}
+
+/// One surface's live binding to a PTY. Every method runs under the
+/// manager's lock, which is the TS app's single thread.
 final class TerminalAttachment: @unchecked Sendable {
     let id: String
     let surfaceKey: String
     let viewLabel: String
     let target: TerminalTarget
     let targetGeneration: Int
+    let flow = FlowControl()
     private let pty: any PseudoTerminal
     private let sink: TerminalFrameSink
+    private let scheduler: any AttachmentScheduler
+    private let lock: NSRecursiveLock
     private let onFinished: (TerminalAttachment) -> Void
-    private let lock = NSLock()
-    private var stopped = false
-    private var pending = Data()
-    private var flushScheduled = false
-    private var pendingResize: TerminalSize?
-    private var resizeScheduled = false
-    private let queue: DispatchQueue
+    private var sequence = 0
+    private var lastInputSequence = 0
+    private(set) var stopped = false
+    private var queue: [Data] = []
+    private var queuedBytes = 0
+    private var pending: [Data] = []
+    private var pendingBytes = 0
+    private var coalesceTimer: (any AttachmentTimer)?
+    private var backpressureTimer: (any AttachmentTimer)?
+    private var resizePending: TerminalSize?
+    private var resizeTimer: (any AttachmentTimer)?
+    private var paused = false
 
     init(
         id: String, surfaceKey: String, viewLabel: String, target: TerminalTarget, targetGeneration: Int,
-        pty: any PseudoTerminal, sink: @escaping TerminalFrameSink, onFinished: @escaping (TerminalAttachment) -> Void
+        pty: any PseudoTerminal, sink: @escaping TerminalFrameSink, scheduler: any AttachmentScheduler,
+        lock: NSRecursiveLock, onFinished: @escaping (TerminalAttachment) -> Void
     ) {
         self.id = id
         self.surfaceKey = surfaceKey
@@ -259,14 +404,22 @@ final class TerminalAttachment: @unchecked Sendable {
         self.targetGeneration = targetGeneration
         self.pty = pty
         self.sink = sink
+        self.scheduler = scheduler
+        self.lock = lock
         self.onFinished = onFinished
-        queue = DispatchQueue(label: "devhub.attachment.\(id.prefix(8))")
     }
 
-    var isStopped: Bool { lock.withLock { stopped } }
-    var queuedResize: TerminalSize? { lock.withLock { pendingResize } }
+    var pendingResize: TerminalSize? { lock.withLock { resizePending } }
 
-    /// Hand the view a frame. A view that is gone ends the attachment.
+    private func locked<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+
+    /// Hand the view a frame. A view that is gone ends the attachment; there
+    /// is no state in which output keeps being produced for nobody.
+    @discardableResult
     private func emit(_ frame: TerminalFrame) -> Bool {
         if sink(frame) { return true }
         stop(.detached)
@@ -274,107 +427,204 @@ final class TerminalAttachment: @unchecked Sendable {
     }
 
     func sendStarted(_ size: TerminalSize) throws {
-        if !emit(.started(attachmentId: id, surfaceKey: surfaceKey, targetGeneration: targetGeneration, cols: size.cols, rows: size.rows)) {
-            throw TerminalFailure(.channelClosed)
+        try locked {
+            if !emit(.started(attachmentId: id, surfaceKey: surfaceKey, targetGeneration: targetGeneration, cols: size.cols, rows: size.rows)) {
+                throw TerminalFailure(.channelClosed)
+            }
         }
     }
 
     /// PTY output, gathered for `outputCoalesceMs` before it becomes a frame.
-    /// A read that already fills a frame has nothing to wait for.
+    /// A read that already fills a frame has nothing to wait for, so the bound
+    /// is also a flush: what is pending goes out at once, tail included.
     func acceptOutput(_ bytes: Data) {
-        if bytes.isEmpty { return }
-        let flushNow: Bool = lock.withLock {
-            if stopped { return false }
+        locked {
+            if stopped || bytes.isEmpty { return }
             pending.append(bytes)
-            if pending.count >= maxOutputFrameBytes { return true }
-            if !flushScheduled {
-                flushScheduled = true
-                queue.asyncAfter(deadline: .now() + .milliseconds(Int(outputCoalesceMs))) { [weak self] in self?.flushPending() }
-            }
-            return false
-        }
-        if flushNow { flushPending() }
-    }
-
-    /// Turn everything pending into frames, now. Pending bytes are taken before
-    /// any of them is sent, so a failure raised while sending finds nothing
-    /// left to flush.
-    private func flushPending() {
-        let bytes: Data = lock.withLock {
-            flushScheduled = false
-            let taken = pending
-            pending = Data()
-            return taken
-        }
-        var offset = 0
-        while offset < bytes.count {
-            let end = min(bytes.count, offset + maxOutputFrameBytes)
-            if !sink(.output(bytes.subdata(in: offset..<end))) {
-                stop(.detached)
+            pendingBytes += bytes.count
+            if pendingBytes >= TerminalTransport.maxOutputFrameBytes {
+                flushPending()
                 return
             }
-            offset = end
-        }
-    }
-
-    func acceptInput(_ bytes: Data) throws {
-        if isStopped { throw TerminalFailure(.wrongAttachment) }
-        pty.write(bytes)
-    }
-
-    func requestResize(_ size: TerminalSize) throws {
-        if isStopped { throw TerminalFailure(.wrongAttachment) }
-        if !size.isValid { throw TerminalFailure(.invalidResize) }
-        let schedule: Bool = lock.withLock {
-            pendingResize = size
-            if resizeScheduled { return false }
-            resizeScheduled = true
-            return true
-        }
-        if schedule {
-            queue.asyncAfter(deadline: .now() + .milliseconds(Int(resizeIntervalMs))) { [weak self] in
-                guard let self else { return }
-                let next: TerminalSize? = self.lock.withLock {
-                    self.resizeScheduled = false
-                    let size = self.pendingResize
-                    self.pendingResize = nil
-                    return self.stopped ? nil : size
+            if coalesceTimer == nil {
+                coalesceTimer = scheduler.after(TerminalTransport.outputCoalesceMs) { [weak self] in
+                    guard let self else { return }
+                    self.locked { self.flushPending() }
                 }
-                if let next { self.pty.resize(next) }
             }
         }
+    }
+
+    /// Turn everything pending into frames, now. Pending bytes are taken
+    /// before any of them is sent, so a failure raised while sending finds
+    /// nothing left to flush and cannot recurse.
+    private func flushPending() {
+        coalesceTimer?.cancel()
+        coalesceTimer = nil
+        if pending.isEmpty { return }
+        var bytes = Data(capacity: pendingBytes)
+        for chunk in pending { bytes.append(chunk) }
+        pending = []
+        pendingBytes = 0
+        sendOutput(bytes)
+    }
+
+    /// Coalesced output, split at the frame bound and metered by the window.
+    private func sendOutput(_ bytes: Data) {
+        var offset = 0
+        while offset < bytes.count {
+            let end = min(bytes.count, offset + TerminalTransport.maxOutputFrameBytes)
+            let chunk = bytes.subdata(in: offset..<end)
+            offset = end
+            if !queue.isEmpty {
+                enqueue(chunk)
+                continue
+            }
+            if !trySend(chunk) { enqueue(chunk) }
+        }
+        updatePause()
+    }
+
+    private func trySend(_ chunk: Data) -> Bool {
+        let next = sequence + 1
+        let reserved: Bool
+        do {
+            reserved = try flow.reserve(next, bytes: chunk.count)
+        } catch {
+            // The window itself refused the frame (oversized, or closed).
+            failWith(error)
+            return true
+        }
+        if !reserved { return false }
+        sequence = next
+        emit(.output(attachmentId: id, sequence: next, bytes: chunk))
+        return true
+    }
+
+    private func enqueue(_ chunk: Data) {
+        if queuedBytes + chunk.count > TerminalTransport.maxQueuedOutputBytes {
+            failWith(TerminalFailure(.backpressure))
+            return
+        }
+        queue.append(chunk)
+        queuedBytes += chunk.count
+        if backpressureTimer == nil {
+            // A view that stops acknowledging is not throttled forever: it is
+            // disconnected.
+            backpressureTimer = scheduler.after(TerminalTransport.flowControlTimeoutMs) { [weak self] in
+                guard let self else { return }
+                self.locked {
+                    self.backpressureTimer = nil
+                    self.failWith(TerminalFailure(.backpressure))
+                }
+            }
+        }
+    }
+
+    private func drain() {
+        while let chunk = queue.first {
+            if !trySend(chunk) { return }
+            if stopped { return }
+            queue.removeFirst()
+            queuedBytes -= chunk.count
+        }
+        backpressureTimer?.cancel()
+        backpressureTimer = nil
+    }
+
+    /// The PTY is paused while output is queued, so the child blocks on a full
+    /// buffer instead of this process growing one.
+    private func updatePause() {
+        if stopped { return }
+        let shouldPause = !queue.isEmpty
+        if shouldPause == paused { return }
+        paused = shouldPause
+        if shouldPause { pty.pause() } else { pty.resume() }
+    }
+
+    func acknowledge(_ sequence: Int) throws {
+        try locked {
+            if stopped { throw TerminalFailure(.wrongAttachment) }
+            try flow.acknowledge(sequence)
+            drain()
+            updatePause()
+        }
+    }
+
+    /// Input is a strict, gap-free sequence: a replayed or reordered request
+    /// is impossible to mistake for the next keystroke.
+    func acceptInput(_ sequence: Int, _ bytes: Data) throws {
+        try locked {
+            if stopped { throw TerminalFailure(.wrongAttachment) }
+            if sequence != lastInputSequence + 1 { throw TerminalFailure(.invalidRequest) }
+            lastInputSequence = sequence
+            pty.write(bytes)
+        }
+    }
+
+    /// Latest-wins resize with a floor on how often the PTY is resized.
+    func requestResize(_ size: TerminalSize) throws {
+        try locked {
+            if stopped { throw TerminalFailure(.wrongAttachment) }
+            if !size.isValid { throw TerminalFailure(.invalidResize) }
+            resizePending = size
+            if resizeTimer != nil { return }
+            resizeTimer = scheduler.after(TerminalTransport.resizeIntervalMs) { [weak self] in
+                guard let self else { return }
+                self.locked {
+                    self.resizeTimer = nil
+                    let next = self.resizePending
+                    self.resizePending = nil
+                    if let next, !self.stopped { self.pty.resize(next) }
+                }
+            }
+        }
+    }
+
+    private func failWith(_ failure: any Error) {
+        if stopped { return }
+        // Whatever the child printed before the failure precedes the news of it.
+        flushPending()
+        if stopped { return }
+        let code = (failure as? TerminalFailure)?.code ?? .internal
+        sequence += 1
+        _ = sink(.error(attachmentId: id, sequence: sequence, error: TerminalFailure(code)))
+        stop(.detached)
     }
 
     /// The PTY ended on its own.
     func handleExit() {
-        if isStopped { return }
-        finish(.eof)
+        locked {
+            if stopped { return }
+            finish(.eof)
+        }
     }
 
     /// DevHub ended it: a detach, a replacement, a closed window, or quit.
     func stop(_ reason: TerminalExitReason = .detached) {
-        if isStopped { return }
-        finish(reason)
+        locked {
+            if stopped { return }
+            finish(reason)
+        }
     }
 
     private func finish(_ reason: TerminalExitReason) {
-        // Stopped first, so the flush below cannot re-enter this; then the
-        // flush, so the last of the output is out before the frame that says
-        // there will be no more.
-        let first: Bool = lock.withLock {
-            if stopped { return false }
-            stopped = true
-            pendingResize = nil
-            return true
-        }
-        if !first { return }
-        let tail: Data = lock.withLock {
-            let taken = pending
-            pending = Data()
-            return taken
-        }
-        if !tail.isEmpty { _ = sink(.output(tail)) }
-        _ = sink(.exited(reason))
+        // Stopped first, so the flush below cannot re-enter this through a
+        // failure; then the flush, so the last of the output is out before the
+        // frame that says there will be no more. What the window has no room
+        // for is dropped here exactly as the queue is.
+        stopped = true
+        flushPending()
+        resizeTimer?.cancel()
+        resizeTimer = nil
+        resizePending = nil
+        backpressureTimer?.cancel()
+        backpressureTimer = nil
+        queue = []
+        queuedBytes = 0
+        flow.close()
+        sequence += 1
+        _ = sink(.exited(attachmentId: id, sequence: sequence, reason: reason))
         pty.kill()
         onFinished(self)
     }
@@ -388,43 +638,58 @@ public final class AttachmentManager: @unchecked Sendable {
         let cancel: CancellationToken
     }
 
-    private let lock = NSLock()
+    /// The one lock every attachment's state is changed under: the TS app's
+    /// single thread, recursive because a sink may answer synchronously.
+    private let lock = NSRecursiveLock()
     private var attachments: [String: TerminalAttachment] = [:]
+    private var order: [String] = []
     private var inFlight: [Int: InFlight] = [:]
     private var nextAttachKey = 1
     private var generation: Int
     private let spawn: PtyFactory?
     private let randomBytes: @Sendable (Int) -> [UInt8]
-
-    /// Generations wrap here (`MAX_TARGET_GENERATION`, `Number.MAX_SAFE_INTEGER`).
-    public static let maxTargetGeneration = 9_007_199_254_740_991
+    private let scheduler: any AttachmentScheduler
 
     /// - Parameter spawn: overridden only by tests; production opens the
     ///   target machine's PTY through the attach context.
-    public init(spawn: PtyFactory? = nil, randomBytes: (@Sendable (Int) -> [UInt8])? = nil) {
+    public init(
+        spawn: PtyFactory? = nil,
+        randomBytes: (@Sendable (Int) -> [UInt8])? = nil,
+        scheduler: (any AttachmentScheduler)? = nil
+    ) {
         self.spawn = spawn
         let random = randomBytes ?? { count in
             var generator = SystemRandomNumberGenerator()
             return (0..<count).map { _ in UInt8.random(in: 0...255, using: &generator) }
         }
         self.randomBytes = random
+        self.scheduler = scheduler ?? DispatchAttachmentScheduler()
         // The ledger starts somewhere unguessable, so a generation from one run
-        // of the app is not a usable capability in the next.
+        // of the app is not a usable capability in the next. Six bytes:
+        // unguessable, and still an exact integer.
         var value = 0
         for byte in random(6) { value = value * 256 + Int(byte) }
-        generation = (value % AttachmentManager.maxTargetGeneration) + 1
+        generation = (value % TerminalTransport.maxTargetGeneration) + 1
     }
 
-    public var count: Int { lock.withLock { attachments.count } }
+    private func locked<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
 
-    /// Claim the in-flight ledger for one attach. An older attach by the same
+    public var count: Int { locked { attachments.count } }
+
+    /// Claim the in-flight ledger for one attach. An owner — one surface of
+    /// one window — has one attach at a time, so an older attach by the same
     /// owner, or for the same terminal, is superseded here, before either can
-    /// publish.
+    /// publish. The superseded entry stays in the ledger until its permit is
+    /// released, which is what gives its publisher a definitive stale answer.
     public func beginAttach(target: TerminalTarget, surfaceKey: String, viewLabel: String, cancel: CancellationToken) throws -> AttachPermit {
         try cancel.check()
         let ownerKey = surfaceOwnerKey(viewLabel: viewLabel, surfaceKey: surfaceKey)
         let operation = cancel.child()
-        let (key, superseded): (Int, [CancellationToken]) = lock.withLock {
+        let (key, superseded): (Int, [CancellationToken]) = locked {
             let key = nextAttachKey
             nextAttachKey += 1
             let superseded = inFlight.values.filter { $0.ownerKey == ownerKey || $0.target.same(as: target) }.map(\.cancel)
@@ -434,120 +699,139 @@ public final class AttachmentManager: @unchecked Sendable {
         for token in superseded { token.cancel() }
         return AttachPermit(cancel: operation) { [weak self] in
             guard let self else { return }
-            self.lock.withLock { _ = self.inFlight.removeValue(forKey: key) }
+            self.locked { _ = self.inFlight.removeValue(forKey: key) }
         }
     }
 
     private func isCurrent(_ permit: AttachPermit) -> Bool {
         if permit.cancel.isCancelled { return false }
-        return lock.withLock { inFlight.values.contains { $0.cancel === permit.cancel } }
+        return inFlight.values.contains { $0.cancel === permit.cancel }
     }
 
     /// Publish one resolved client as this surface's attachment.
+    ///
+    /// Everything from here to the receipt happens under the lock: the child
+    /// is spawned, registered and given its Started frame without another
+    /// attach interleaving with it.
     public func attach(_ permit: AttachPermit, _ context: AttachContext) throws -> TerminalAttachReceipt {
-        if !isCurrent(permit) { throw TerminalFailure(.staleTarget) }
-        // One attachment per surface: a surface that remounts replaces its own
-        // client and nobody else's, reaped before the new PTY exists.
-        let replaced = lock.withLock { attachments.values.filter { $0.surfaceKey == context.surfaceKey } }
-        for existing in replaced { existing.stop(.detached) }
-        let id = randomBytes(16).map { String(format: "%02x", $0) }.joined()
-        let targetGeneration: Int = lock.withLock {
-            let value = generation
-            generation = value >= AttachmentManager.maxTargetGeneration ? 1 : value + 1
-            return value
-        }
-        let pty: any PseudoTerminal
-        do {
-            pty = try (spawn ?? context.spawn)(PtyLaunch(
-                file: context.file, args: context.args, cwd: context.cwd,
-                cols: context.size.cols, rows: context.size.rows,
-                pixelWidth: context.size.pixelWidth, pixelHeight: context.size.pixelHeight,
-                env: context.environment
-            ))
-        } catch {
-            // The view asked for a terminal and there is none: say so in the
-            // same shape a later failure would take, then refuse the request.
-            _ = context.sink(.error(TerminalFailure(.ptyUnavailable)))
-            _ = context.sink(.exited(.childExited))
-            throw (error as? TerminalFailure) ?? TerminalFailure(.ptyUnavailable)
-        }
-        // Nothing may reach the view before its Started frame: the PTY is held
-        // paused until that is out.
-        pty.pause()
-        let attachment = TerminalAttachment(
-            id: id, surfaceKey: context.surfaceKey, viewLabel: context.viewLabel,
-            target: context.target, targetGeneration: targetGeneration,
-            pty: pty, sink: context.sink
-        ) { [weak self] finished in
-            guard let self else { return }
-            self.lock.withLock {
-                if self.attachments[finished.id] === finished { self.attachments[finished.id] = nil }
+        try locked {
+            if !isCurrent(permit) { throw TerminalFailure(.staleTarget) }
+            // One attachment per surface: a surface that remounts replaces its
+            // own client and nobody else's, reaped before the new PTY exists.
+            for id in order {
+                if let existing = attachments[id], existing.surfaceKey == context.surfaceKey { existing.stop(.detached) }
             }
+            let id = randomBytes(16).map { String(format: "%02x", $0) }.joined()
+            let targetGeneration = generation
+            generation = generation >= TerminalTransport.maxTargetGeneration ? 1 : generation + 1
+            let pty: any PseudoTerminal
+            do {
+                pty = try (spawn ?? context.spawn)(PtyLaunch(
+                    file: context.file, args: context.args, cwd: context.cwd,
+                    cols: context.size.cols, rows: context.size.rows,
+                    pixelWidth: context.size.pixelWidth, pixelHeight: context.size.pixelHeight,
+                    env: context.environment
+                ))
+            } catch {
+                // The view asked for a terminal and there is none. Tell it in
+                // the same shape a later failure would take, then refuse.
+                _ = context.sink(.error(attachmentId: id, sequence: 0, error: TerminalFailure(.ptyUnavailable)))
+                _ = context.sink(.exited(attachmentId: id, sequence: 1, reason: .childExited))
+                throw (error as? TerminalFailure) ?? TerminalFailure(.ptyUnavailable, cause: error)
+            }
+            // Nothing may reach the view before its receipt's Started frame:
+            // the PTY is held paused until Started is out.
+            pty.pause()
+            let attachment = TerminalAttachment(
+                id: id, surfaceKey: context.surfaceKey, viewLabel: context.viewLabel,
+                target: context.target, targetGeneration: targetGeneration,
+                pty: pty, sink: context.sink, scheduler: scheduler, lock: lock
+            ) { [weak self] finished in
+                guard let self else { return }
+                if self.attachments[finished.id] === finished {
+                    self.attachments[finished.id] = nil
+                    self.order.removeAll { $0 == finished.id }
+                }
+            }
+            pty.onData { [weak attachment] bytes in attachment?.acceptOutput(bytes) }
+            pty.onExit { [weak attachment] _ in attachment?.handleExit() }
+            attachments[id] = attachment
+            order.append(id)
+            try attachment.sendStarted(context.size)
+            pty.resume()
+            return TerminalAttachReceipt(attachmentId: id, surfaceKey: context.surfaceKey, targetGeneration: targetGeneration)
         }
-        pty.onData { [weak attachment] bytes in attachment?.acceptOutput(bytes) }
-        pty.onExit { [weak attachment] _ in attachment?.handleExit() }
-        lock.withLock { attachments[id] = attachment }
-        try attachment.sendStarted(context.size)
-        pty.resume()
-        return TerminalAttachReceipt(attachmentId: id, surfaceKey: context.surfaceKey, targetGeneration: targetGeneration)
     }
 
-    public func input(_ identity: TerminalRequestIdentity, _ bytes: Data) throws {
-        try owned(identity).acceptInput(bytes)
+    public func input(_ identity: TerminalRequestIdentity, sequence: Int, _ bytes: Data) throws {
+        try owned(identity).acceptInput(sequence, bytes)
     }
 
     public func resize(_ identity: TerminalRequestIdentity, _ size: TerminalSize) throws {
         try owned(identity).requestResize(size)
     }
 
+    public func acknowledge(_ identity: TerminalRequestIdentity, sequence: Int) throws {
+        try owned(identity).acknowledge(sequence)
+    }
+
     /// Idempotent for the exact handle; a different handle is never inferred.
     public func detach(_ identity: TerminalRequestIdentity) throws {
-        guard let existing = lock.withLock({ attachments[identity.attachmentId] }) else { return }
-        if existing.surfaceKey != identity.surfaceKey || existing.viewLabel != identity.viewLabel
-            || existing.targetGeneration != identity.targetGeneration {
-            throw TerminalFailure(.wrongAttachment)
+        try locked {
+            guard let existing = attachments[identity.attachmentId] else { return }
+            if existing.surfaceKey != identity.surfaceKey || existing.viewLabel != identity.viewLabel
+                || existing.targetGeneration != identity.targetGeneration {
+                throw TerminalFailure(.wrongAttachment)
+            }
+            existing.stop(.detached)
         }
-        existing.stop(.detached)
     }
 
     /// Every client a window holds goes, and every attach it has in flight is
     /// cancelled: a window closing.
     public func detachView(_ viewLabel: String) {
-        let (tokens, clients) = lock.withLock {
-            (inFlight.values.filter { $0.viewLabel == viewLabel }.map(\.cancel),
-             attachments.values.filter { $0.viewLabel == viewLabel })
-        }
+        let tokens: [CancellationToken] = locked { inFlight.values.filter { $0.viewLabel == viewLabel }.map(\.cancel) }
         for token in tokens { token.cancel() }
-        for client in clients { client.stop(.detached) }
+        locked {
+            for id in order {
+                if let attachment = attachments[id], attachment.viewLabel == viewLabel { attachment.stop(.detached) }
+            }
+        }
     }
 
-    /// Every client of one terminal goes, before its session is closed.
+    /// Every client of one terminal goes, before its session is closed. The
+    /// session itself is the runtime's to kill, never this module's.
     public func detachTarget(_ target: TerminalTarget) {
-        let (tokens, clients) = lock.withLock {
-            (inFlight.values.filter { $0.target.same(as: target) }.map(\.cancel),
-             attachments.values.filter { $0.target.same(as: target) })
-        }
+        let tokens: [CancellationToken] = locked { inFlight.values.filter { $0.target.same(as: target) }.map(\.cancel) }
         for token in tokens { token.cancel() }
-        for client in clients { client.stop(.detached) }
+        locked {
+            for id in order {
+                if let attachment = attachments[id], attachment.target.same(as: target) { attachment.stop(.detached) }
+            }
+        }
     }
 
     public func detachAll() {
-        let (tokens, clients) = lock.withLock { (inFlight.values.map(\.cancel), Array(attachments.values)) }
+        let tokens: [CancellationToken] = locked { inFlight.values.map(\.cancel) }
         for token in tokens { token.cancel() }
-        for client in clients { client.stop(.detached) }
+        locked {
+            for id in order { attachments[id]?.stop(.detached) }
+        }
     }
 
     private func owned(_ identity: TerminalRequestIdentity) throws -> TerminalAttachment {
-        guard let attachment = lock.withLock({ attachments[identity.attachmentId] }),
-              attachment.surfaceKey == identity.surfaceKey, attachment.viewLabel == identity.viewLabel,
-              attachment.targetGeneration == identity.targetGeneration
-        else { throw TerminalFailure(.wrongAttachment) }
-        return attachment
+        try locked {
+            guard let attachment = attachments[identity.attachmentId],
+                  attachment.surfaceKey == identity.surfaceKey, attachment.viewLabel == identity.viewLabel,
+                  attachment.targetGeneration == identity.targetGeneration
+            else { throw TerminalFailure(.wrongAttachment) }
+            return attachment
+        }
     }
 
     /// For tests: the resize waiting to be applied to one attachment.
     func queuedResize(_ attachmentId: String) -> TerminalSize? {
-        lock.withLock { attachments[attachmentId] }?.queuedResize
+        locked { attachments[attachmentId] }?.pendingResize
     }
 }
 
@@ -650,8 +934,12 @@ public final class TerminalSurfaces: @unchecked Sendable {
         }
     }
 
-    public func input(_ identity: TerminalRequestIdentity, _ bytes: Data) throws {
-        try attachments.input(identity, bytes)
+    public func input(_ identity: TerminalRequestIdentity, sequence: Int, _ bytes: Data) throws {
+        try attachments.input(identity, sequence: sequence, bytes)
+    }
+
+    public func acknowledge(_ identity: TerminalRequestIdentity, sequence: Int) throws {
+        try attachments.acknowledge(identity, sequence: sequence)
     }
 
     /// Resize the client PTY, and only the client PTY: under `window-size
