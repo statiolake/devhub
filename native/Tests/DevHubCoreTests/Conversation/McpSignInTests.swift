@@ -204,7 +204,13 @@ final class McpSignInTests: XCTestCase {
         XCTAssertEqual(launched.cwd, Self.folder)
         XCTAssertEqual(launched.env["PROFILE_VAR"], "from-profile")
         XCTAssertEqual(launched.env["TERM"], "dumb")
-        XCTAssertTrue(ended.output.contains("args=mcp login linear cwd=\(Self.folder) term=dumb profile=from-profile"), ended.output)
+        // The shell says the folder it is in with links resolved (macOS's
+        // temporary folder is under /private).
+        let physical = realpath(Self.folder, nil).map { pointer -> String in
+            defer { free(pointer) }
+            return String(cString: pointer)
+        } ?? Self.folder
+        XCTAssertTrue(ended.output.contains("args=mcp login linear cwd=\(physical) term=dumb profile=from-profile"), ended.output)
         XCTAssertTrue(ended.output.contains("Open this URL: \(AUTHORIZE)"))
         XCTAssertFalse(ended.output.contains("\u{1B}"))
         XCTAssertTrue(ended.output.contains("got http://localhost:43117/callback?code=c0de&state=xyz"))

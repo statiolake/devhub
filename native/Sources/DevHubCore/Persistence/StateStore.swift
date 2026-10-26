@@ -163,6 +163,11 @@ public actor JsonStateStore {
         do {
             try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         } catch {
+            // Foundation wraps the errno (macOS: a Cocoa error over a POSIX
+            // one); name it the way the write itself would.
+            let ns = error as NSError
+            let posix = ns.domain == NSPOSIXErrorDomain ? ns : ns.userInfo[NSUnderlyingErrorKey] as? NSError
+            if let posix, posix.domain == NSPOSIXErrorDomain { throw Self.ioError(Int32(posix.code), path) }
             throw StateError(.io, path: path, cause: String(describing: error))
         }
         let text = state.fileText

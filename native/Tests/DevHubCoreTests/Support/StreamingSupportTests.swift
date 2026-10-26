@@ -148,8 +148,12 @@ final class FileWatcherTests: ScratchDirectoryTestCase {
         XCTAssertGreaterThan(again, before)
         try FileSystem.unlink(path)
         try await waitFor(again + 1)
+        let deleted = await count.value
+        XCTAssertGreaterThan(deleted, again)
+        // A deletion can be heard on more than one tick (macOS reports the
+        // unlink and then the missing file); let it settle before counting.
+        try await Task.sleep(nanoseconds: 300_000_000)
         let settled = await count.value
-        XCTAssertGreaterThan(settled, again)
         // Nothing moved: nothing heard.
         try await Task.sleep(nanoseconds: 300_000_000)
         let final = await count.value
