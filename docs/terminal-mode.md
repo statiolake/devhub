@@ -64,12 +64,19 @@ A click into it is the editor half taking the keyboard (`ContentFocus`
 `editor`), so the split's selected half follows the click as it does for a
 workbench.
 
-**SSH and dev container Workspaces** are not supported in terminal mode yet.
-Their editor area draws "Terminal mode does not support … yet" (the window's
-own page, in the rectangle a view would be laid into) and no view is made; a
-file jump to one is refused with the same sentence. Their Agents and the
-Agents' own terminals work as before — those are tmux sessions on the host that
-do not depend on a workbench. Phases 2 and 3 below are what lifts this.
+**An SSH Workspace** works the same way: its editor area is the host's own
+`ws-` session — the DevHub tmux on the host that its Agents' terminals already
+use — attached through the same remote PTY (`ssh -tt` on the host's master)
+an Agent terminal on that host uses. The surface key resolves to the
+Workspace's machine, so nothing in the view or the attach knows it is remote.
+The first time it is shown in a run, DevHub terraforms the host (below).
+
+**A Workspace whose editor is attached to a dev container** is not supported
+in terminal mode yet. Its editor area draws "Terminal mode does not support
+Workspaces whose editor is in a dev container yet." (the window's own page, in
+the rectangle a view would be laid into) and no view is made; a file jump to
+one is refused with the same sentence. Its Agents and their terminals work as
+before. Phase 3 below is what lifts this.
 
 ## No workbench is created
 
@@ -182,10 +189,16 @@ next jump.
 
 ### The `nvim` binary
 
-The person's `nvim`, looked up on the login PATH DevHub already imported (the
-same lookup `runtimes.*` gets, `main/shell/runtimes.ts`), resolved at the first
-jump. Missing is a notice that names `nvim` and the directories searched, and
-the jump is refused — not a pane that flashes and closes.
+On this Mac: the person's `nvim`, looked up on the login PATH DevHub already
+imported (the same lookup `runtimes.*` gets, `main/shell/runtimes.ts`),
+resolved at the first jump. Missing is a notice that names `nvim` and the
+directories searched, and the jump is refused — not a pane that flashes and
+closes.
+
+On an SSH host: the Neovim DevHub carries, installed there by terraforming,
+started through the wrapper that gives it the person's configuration — or the
+host's own `nvim` when DevHub's cannot run there, said as a notice. See "SSH
+Workspaces" below.
 
 ## File-open routing
 
@@ -201,8 +214,10 @@ The rule that picks *which Workspace* is unchanged (`routeOpen`,
 | `devhub <folder>`                              | Workspace selected, workbench shown            | Workspace selected, editor terminal shown                       |
 | Conversation file link                         | split beside the Agent, workbench in front     | split beside the Agent, editor terminal in front, Neovim        |
 | Finder Open With / Dock drop / `open -a`       | via `openFromCli`                              | via `openFromCli`, as above                                     |
-| `devhub` on an SSH host, or in a dev container | that Workspace's remote workbench              | refused: not supported in terminal mode yet                     |
-| A Workspace on a host or in a container        | its workbench                                  | refused, same sentence                                          |
+| `devhub` on an SSH host                        | that Workspace's remote workbench              | that Workspace's managed Neovim, on the host                    |
+| Conversation link of an Agent on an SSH host   | the Workspace's remote workbench               | the Workspace's managed Neovim, on the host                     |
+| `devhub` in a dev container                    | the window attached to that container          | refused: not supported in terminal mode yet                     |
+| A Workspace whose editor is in a container     | its workbench                                  | refused, same sentence                                          |
 | VS Code's own open (`openInBrowserWindow`)     | DevHub's Workspace / Scratch rule              | Workspace selected; no workbench is opened                      |
 
 ## What is hidden or inert in terminal mode
@@ -237,83 +252,257 @@ terminal mode uses it unchanged: the editor area's terminal is an Agent pane's
 surface and wears the same `terminal_theme` (the theme's terminal colours by
 default, or the configured palettes).
 
-## Later phases: SSH and dev containers by terraforming
-
-Design only; phase 1 implements local Workspaces.
+## SSH Workspaces: terraforming (phase 2)
 
 The idea is the one the remote extension host already follows, taken further:
 DevHub brings everything the editor area needs onto the machine — tmux,
-Neovim, the person's Neovim config — so the host or container needs nothing
-installed and nothing configured.
+Neovim, the person's Neovim config — so the host needs nothing installed and
+nothing configured. It is done the first time an SSH Workspace's editor area
+is shown in a run (`NeovimMachines.warm`), and again, cheaply, before every
+new managed Neovim there.
 
-### Phase 2: SSH
+### What goes where
 
-1. **Binaries.** DevHub ships per-arch Linux bundles for x86_64 and aarch64,
-   published like tmux's (`scripts/build_tmux.py`, a release keyed on the
-   version):
-   - tmux: the existing static musl build, already installed at
-     `~/.devhub-server/tmux/<version>/`.
-   - Neovim: the official release tarball (`nvim-linux-x86_64.tar.gz` /
-     `nvim-linux-arm64.tar.gz`) — a plain directory tree, no AppImage, so no
-     FUSE dependency. It links glibc dynamically (2.31+ for current releases);
-     for hosts older than that, or musl (Alpine) containers, a static musl
-     build in the tmux script's style is the fallback — see the open
-     questions.
-   Installed at `~/.devhub-server/nvim/<version>/` with the same
-   marker-then-rename install the server uses, copied with `scp` over the
-   connection DevHub already holds.
-2. **Config.** At terraform time DevHub packs the local `~/.config/nvim`
-   (following symlinks, which is how a dotfiles checkout presents it; without
-   `.git`) into a tarball, content-hashed, and unpacks it to
-   `~/.devhub-server/xdg/config/nvim` only when the hash changed. The managed
-   Neovim and the editor area's panes run with `XDG_CONFIG_HOME`,
-   `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` under
-   `~/.devhub-server/xdg/`, so nothing of the host's own `~/.config` or
-   `~/.local` is read or written, and the person's own login on that host
-   is untouched.
-3. **Plugins and LSP.** The plugin manager bootstraps itself on the host
-   from the config (lazy.nvim clones on first start; needs `git` and network).
-   Language servers come from mason, on the host, into the XDG data dir. No
-   treesitter parser or native plugin prebuilding: the person avoids them,
-   and a bundle of native code per arch is exactly the maintenance this design
-   avoids.
-4. **Editor area.** The editor terminal attaches the host's `ws-` session,
-   which already exists for SSH Workspaces (Agents and Agent terminals use the
-   host's DevHub tmux today); the surface key resolves to a target on that
-   machine and the attachment is the existing remote PTY channel.
-5. **Managed Neovim.** Runs on the host, socket under
-   `~/.devhub-server/run/nvim/<digest>.sock`. RPC travels over the remote shell
-   channel DevHub already has, through a relay: `~/.devhub-server/nvim/<v>/bin/nvim
-   --clean --headless -l ~/.devhub-server/share/devhub/nvim-relay.lua <socket>`,
-   a few lines of Lua using `vim.uv` to splice the process's stdio to the
-   socket. Neovim as its own relay means no `socat` and no OpenSSH
-   stream-local forwarding (which some servers disable); the same client code
-   speaks msgpack over the relay's stdio instead of a local socket. The
-   lifecycle is unchanged: connection closed = server gone; `$TMUX_PANE`
-   adoption; panes checked against the host's marked panes.
+```
+~/.devhub-server/                     serverDataFolderName, beside the REH
+  tmux/<version>/                     DevHub's static tmux (already there)
+  nvim/<version>-<sha12>/             the Neovim DevHub carries, for this
+    bin/nvim  share/nvim/runtime/…    host's architecture
+  nvim/devhub-relay-<sha12>.lua       the RPC relay, named by its content
+  xdg/config/nvim/                    a copy of ~/.config/nvim from the Mac
+  xdg/config/nvim.devhub-digest       which copy it is
+  xdg/data/ xdg/state/ xdg/cache/     plugins (lazy), servers (mason), shada,
+                                      undo, logs — the host's own, kept
+  run/nvim/<digest>.sock              one managed Neovim per Workspace (0700)
+~/.devhub/devhub-bin-<tag>/nvim       a wrapper, first on every DevHub pane's
+                                      PATH there (beside the `devhub` shim)
+```
 
-### Phase 3: dev containers
+Everything travels over the connection DevHub already holds, as bytes on the
+stdin of a `sh` on the host (`RemoteShellRuntime.exec`), unpacked by the
+host's `tar` into a staging directory and renamed into place — the tmux
+install's shape. Nothing on the host reaches the network for DevHub.
 
-The same bundle and config, copied with `docker cp` into the container's
-`~/.devhub-server/` (the container's own user's home), and run with `docker
-exec`. tmux runs inside the container — the Workspace's `ws-` session lives
-there, because that is where the folder and its tools are. The relay is the
-same Lua, spawned by `docker exec -i`. A container rebuilt from its definition
-loses the copy, and the next attach terraforms it again (the hash makes it a
-copy, not a download).
+- **The Neovim** (`scripts/build_nvim.py`, `editor/neovimDelivery.ts`): the
+  owner's builds from https://github.com/statiolake/neovim-binaries — upstream
+  tags built with upstream's own cpack recipe on Debian stretch, so they need
+  glibc **2.14** (x86_64) / **2.17** (aarch64) instead of the official
+  tarball's 2.31. Pinned in the build script by tag (`v0.12.6`) and the
+  sha256 of each asset, and the glibc floor is pinned too and checked against
+  the binary's own symbol versions. Fetched at build time into `dist/nvim/`,
+  packaged into `Contents/Resources/nvim/` with a statement (`nvim.json`);
+  never fetched while DevHub runs. The version directory is named by the
+  tarball's hash, so "installed" is a directory that answers `--version`,
+  and an unchanged one is never sent again.
+- **The configuration** (`editor/neovimConfig.ts`): `$XDG_CONFIG_HOME/nvim`
+  on this Mac, else `~/.config/nvim` — symlinks followed (the dotfiles link,
+  and any link inside; a loop walked once; a dangling link skipped), without
+  `.git`, `.DS_Store`, `node_modules`, `.cache`, `__pycache__`, `.venv`, and
+  without any single file over 8 MB (said as a notice); over 64 MB in all is
+  refused. Hashed over what it means (paths, kinds, exec bits, bytes), packed
+  as a deterministic ustar (+ pax for long names) and gzipped, and sent only
+  when the host's digest differs. No configuration here removes the copy
+  there. The copy is replaced whole: it is DevHub's mirror, not a place to
+  edit (a `lazy-lock.json` lazy.nvim rewrites there is overwritten by the
+  next sync from the Mac).
+- **The wrapper** sets `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`
+  and `XDG_CACHE_HOME` to `xdg/*` and `exec`s the chosen Neovim. It lives in
+  the directory DevHub already puts first on the PATH of every pane it
+  creates on the host (`remoteCliBinDirectory`), so `nvim` typed in the
+  editor area — or in an Agent's terminal there — is the same Neovim with the
+  same configuration the managed one has. The host's own `~/.config` and
+  `~/.local` are not read or written, and a login outside DevHub is
+  untouched.
+- **Plugins and language servers** are the configuration's business, on the
+  host: lazy.nvim bootstraps with `git` on first start and keeps its plugins
+  in `xdg/data`, mason downloads with `curl`/`wget` and unpacks with `unzip`.
+  No treesitter parser or native plugin is prebuilt.
+
+### Detection, notices and fallbacks
+
+One probe (`probeScript`) answers everything at once: home, `uname -s/-m`,
+uid, the C library (`LIBC_PROBE`, the REH's), the glibc version (`getconf
+GNU_LIBC_VERSION`, else `ldd --version`), which of `git`, `curl`, `wget`,
+`unzip` are on the login PATH, the host's own `nvim` and its version, which
+bundle directories already answer, and the configuration copy's digest.
+
+| Host                                              | Neovim used                            | Said                                             |
+| ------------------------------------------------- | -------------------------------------- | ------------------------------------------------ |
+| Linux x86_64 / aarch64, glibc ≥ the floor         | DevHub's                               | nothing                                          |
+| musl (Alpine), glibc below the floor, other arch, not Linux, no bundle in this DevHub | the host's `nvim` (≥ 0.9) | a notice: why, and that the host's is used, with the person's configuration |
+| DevHub's unpacked but does not start (`libnsl.so.1` missing, …) | the host's, and DevHub's is removed | a notice with the loader's own line   |
+| none of the above, and no usable host `nvim`      | none: a jump there is refused          | the refusal, with every reason                   |
+| no `git` / no `curl` and `wget` / no `unzip` (with a configuration) | unchanged             | a notice naming what lazy.nvim / mason cannot do |
+| the `devhub` command's Node (the REH) cannot be installed | unchanged                     | a notice: panes and Agents there cannot open files in DevHub |
+
+The notices are one standing condition per host (`neovim:<machine>`), taken
+down when a later terraform has nothing to say. None of them blocks the
+editor area: it is tmux, and tmux is the one thing that has to work.
+
+The host's own Neovim must be 0.9 or newer, because the relay is `nvim -l`.
+
+### The editor area
+
+The editor terminal attaches the host's `ws-` session through the existing
+remote PTY, exactly as an Agent terminal on that host does — nothing new.
+
+### The `devhub` command on the host
+
+It is run by the remote extension host's Node, which a workbench installs in
+VS Code mode. In terminal mode there is no workbench, so terraforming
+installs the server's files on the host (`RemoteServerHost.installServerFiles`
+— the install alone, nothing started), in the background: a pane or an Agent
+there can then `devhub <file>`, and the file opens in that Workspace's managed
+Neovim on the host. A conversation link of an Agent on the host goes the same
+way.
+
+### The managed Neovim on a host
+
+The lifecycle is phase 1's, unchanged (`ManagedNeovims`, one instance per
+machine, built in `shell/neovimMachines.ts`): a new window of the host's `ws-`
+session running `<wrapper> --listen ~/.devhub-server/run/nvim/<digest>.sock`
+(falling back to `/tmp/devhub-nvim-<uid>/` when the path will not fit a
+socket address); reused while alive; started anew after it exits; adopted
+after a DevHub restart by asking it for `$TMUX_PANE`; killed when the
+Workspace closes (and, on an unreachable host, left to go with the session —
+a close is never held up by a host it cannot reach). Waiting for the socket
+is a round trip per poll, so it polls every 250 ms for up to 15 s.
+
+### RPC through a relay
+
+The client is phase 1's msgpack-rpc client over a `NeovimWire` instead of a
+socket. The wire is the stdio of `ssh -T` on the host's master running
+
+    <neovim> --clean --headless -n -i NONE -l ~/.devhub-server/nvim/devhub-relay-<sha>.lua <socket>
+
+— a few lines of `vim.uv` that splice stdio to the socket
+(`editor/neovimRelay.ts`). It says `devhub-relay connected` or `devhub-relay
+refused <ERRNO>` on stderr before any RPC byte, so stdout stays pure msgpack
+and a refusal carries the errno the lifecycle already reads (`ENOENT`,
+`ECONNREFUSED` = stale socket). Chosen over:
+
+- **OpenSSH stream-local forwarding** (`-L` / `-O forward` of a unix
+  socket): needs `AllowStreamLocalForwarding`, which hardened hosts disable;
+  leaves a socket file on the Mac to manage; and is not a death detector —
+  the forward stays up after the Neovim behind it exits.
+- **`socat` / `nc -U`**: not on a bare host.
+
+The relay keeps phase 1's property that one long-lived connection per server
+is the death detector: Neovim exits → the socket closes → the relay exits →
+ssh exits → the wire closes. It holds one session of the host's ssh master
+(`MuxSessions`) while it lives.
+
+### Routing
+
+`devhub` on the host, a conversation link of an Agent there, and a jump to an
+SSH Workspace from this Mac all land in that Workspace's managed Neovim on its
+host. A path on one machine is never opened by a Neovim on another: a host
+path that routes to Scratch (no Workspace on that host contains it) is refused
+with a sentence that names both machines.
+
+## Phase 3: dev containers (specified, not implemented)
+
+A Workspace's editor attached to a dev container keeps being refused in
+terminal mode until this lands. Everything below is what it takes.
+
+### The decision to make first
+
+`docs/remote-containers.md` makes a rule of where things run: a Workspace's
+terminals, its tmux server and its Agents run **where its folder is** (this
+Mac or the SSH host), never in the container, and `ContainerHost` refuses a
+pty, a stream and tmux as the bug they would be. The editor's DevHub terminal
+of a workbench attached to a container is the Workspace's own `ws-` session
+on its machine.
+
+The earlier sketch of this phase put tmux, and the Workspace's `ws-` session,
+inside the container. That breaks the rule: the editor area's session would
+be in one place and the Agents' terminals in another, the session sweep,
+activity loop and close confirmation (which walk each `Runtime`'s tmux)
+would not see it, and a rebuilt container would take the person's shells
+with it. So the specification below keeps the rule:
+
+- **The editor area** stays the Workspace's `ws-` session on its machine —
+  exactly what VS Code mode's editor terminal is for a container Workspace,
+  and what phases 1 and 2 already draw. The person reaches the container
+  from it the way they already do (`devcontainer exec`, `docker exec`).
+- **The managed Neovim** runs **in the container**, where the toolchain and
+  the language servers are.
+
+If the editor area must instead be a session inside the container, the
+rule in `remote-containers.md` changes first, with `ContainerHost` growing
+`spawnPty`/`spawnStream`/`tmuxProgram`, the container becoming a machine the
+terminal service, the sweep and the activity loop know — a separate,
+larger piece of work, and the person's call.
+
+### Terraforming a container
+
+`NeovimTerraform` is machine-neutral: it needs a `TerraformShell`, and
+`ContainerHost`'s `exec` is `docker exec -i [-u remoteUser] <id> /bin/sh -c`
+with stdin — the same channel the REH install into a container already uses.
+So a container is terraformed by the same code with the same layout under the
+container user's `$HOME/.devhub-server/` (`docker cp` is not needed: a
+stream on stdin is what both SSH and the container already carry). The
+probe's libc detection matters more here: Alpine-based images are common, and
+fall back to the image's own `nvim` with the notice. The `devhub` command in
+the container already exists (its relay is `ContainerHost`'s), so no server
+install is added. A container rebuilt from its definition loses all of it;
+the next jump terraforms again, and the hash makes that a copy, not a
+download. The wrapper goes where the container's `devhub` shim is
+(`startServerScript`'s bin directory), so `nvim` in `docker exec` shells the
+person opens through DevHub finds it.
+
+### The managed Neovim in a container
+
+- **Pane:** a new window of the Workspace's `ws-` session on its machine,
+  running `docker exec -it -e TMUX_PANE [-u remoteUser] -w <container folder>
+  <container id> <wrapper> --listen <socket in the container>`. `-e TMUX_PANE`
+  with no value forwards the pane's own, so adoption by `$TMUX_PANE` works
+  unchanged. `docker` is the one `ContainerMachine` names on that machine
+  (`localContainerMachine` / `hostContainerMachine`).
+- **Relay:** `docker exec -i [-u remoteUser] <id> <neovim> --clean --headless
+  -l <relay> <socket>`, launched through `ContainerMachine.dockerLaunch` —
+  over the host's master for a container on an SSH host.
+- **Paths:** a jump carries a path on the Workspace's machine (Agents run
+  there); the Neovim needs the container's. `ContainerHost.workspacePath()`
+  (the CLI's own `workspaceFolder`) and the Workspace's root give the prefix
+  map, applied both ways (`devhub` inside the container sends container
+  paths, which `openFromContainer` already resolves there). A path outside
+  the mounted folder is refused by name.
+- **Lifecycle:** unchanged. A rebuild changes the container id; the old
+  `docker exec` ends, the relay ends, the record is dropped, and the next
+  jump starts one in the new container. Reopen Folder Locally kills the
+  container's managed Neovim (the Workspace's editor moved), as a Workspace
+  close does.
+- **Menus:** Reopen in Container / Locally come back in terminal mode, and
+  mean "where the managed Neovim runs"; the editor area does not move.
+
+### Tests
+
+The same shapes as phase 2: `NeovimTerraform` against a fake
+`TerraformShell` whose probe says musl/Alpine; the path map as a pure
+function; and a docker test (gated like `rehInstall.docker.test.ts`) that
+terraforms a `debian` and an `alpine` container and opens a file through the
+relay.
 
 ### Order
 
-1. Local (this phase): the mode, the editor area, the managed Neovim, routing.
-2. SSH: Neovim bundle + config terraforming + relay; the not-supported state
-   becomes the editor terminal for SSH Workspaces.
-3. Dev containers: `docker cp` / `docker exec` for the same pieces.
+1. Local (phase 1): the mode, the editor area, the managed Neovim, routing.
+2. SSH (phase 2): Neovim bundle + config terraforming + relay; the SSH
+   editor area; `devhub` on the host.
+3. Dev containers (phase 3): as specified above.
 
 ## Open questions
 
-- **Old glibc / musl hosts.** Is the official Neovim tarball enough (glibc
-  2.31+), or does DevHub build a static musl Neovim like its tmux? The
-  Synology case that motivated static tmux says the latter, eventually.
+- **musl hosts.** The bundle is glibc (2.14/2.17 floor, which covers the
+  Synology and CentOS 7 cases); a musl host falls back to its own `nvim`.
+  Should DevHub also carry a static musl Neovim, in `build_tmux.py`'s style,
+  for an Alpine host with no `nvim` of its own?
+- **XDG reaches Neovim's children.** The wrapper's `XDG_CONFIG_HOME` is
+  inherited by what Neovim starts (`:terminal`, `:!git`, a lazygit), so a
+  `git` run from inside it reads `~/.devhub-server/xdg/config/git/config`
+  rather than `~/.config/git/config` (`~/.gitconfig` is read either way).
+  Should the wrapper restore the originals for children (`vim.env` in a
+  `--cmd`), at the price of a second mechanism?
 - **Plugins offline.** Bootstrapping lazy.nvim on a host with no route to
   GitHub fails. Should terraforming also copy the local plugin tree
   (`~/.local/share/nvim/lazy`), which is pure Lua for this person's setup?
