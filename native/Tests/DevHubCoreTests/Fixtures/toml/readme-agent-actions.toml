@@ -1,0 +1,11 @@
+[agent_actions.ci_failing.fix_ci]   # a built-in: only what you change
+button = false                      # not drawn as a Smart Button (default true);
+                                    # still in the Agent actions sheet
+confirm_before_send = true          # review the wording first (default false for
+                                    # Smart Buttons, true for issue and your own)
+
+[agent_actions.unresolved_review_comments.answer_reviewers]
+display_name = "Answer the reviewers"
+template = "{{PR_URL}} のレビューコメント {{UNRESOLVED}} 件に対応して。"
+enabled = true                      # false hides a built-in without deleting it
+order = 0                           # its place among the trigger's actions

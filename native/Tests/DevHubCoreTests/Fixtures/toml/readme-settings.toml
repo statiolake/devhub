@@ -1,0 +1,69 @@
+version = 3
+
+[general]
+notice_seconds = 8          # DevHub's own notices (a failure, `gh` missing) hide
+                            # after this long into Notifications (Cmd+Q m); not
+                            # while the pointer or keyboard is on one or its words
+                            # are selected. 0: they stay. Settings > General.
+terminal_idle_seconds = 5   # a Workspace row wears the Agents' working mark while a
+                            # command (not the shell) in one of its tmux panes is
+                            # printing, and their unread mark once it exits or prints
+                            # nothing for this long while you are elsewhere — until
+                            # you look at that pane. 0: only exiting counts. No ✓.
+                            # Settings > General. See src/main/terminal/paneActivity.ts.
+workbench_hibernate_minutes = 10  # close a Workspace's editor (renderer, extension
+                            # host, language servers) after this long off screen;
+                            # it reopens where it was when shown, unsaved editors
+                            # included (hot exit). Agents and tmux stay. Not with a
+                            # busy terminal or a debug session; never SSH or dev
+                            # container editors. 0: off.
+workbench_awake_max = 2     # at most this many such editors open; past it, the
+                            # ones shown least recently close at once, on the
+                            # switch. Cmd+Q N/P passing through never wakes one.
+                            # 0: no cap.
+
+[appearance]
+theme_dark = "Dark 2026"    # the VS Code colour theme DevHub wears in the dark
+theme_light = "Light 2026"  # and the light appearance (`mode` picks; auto is the
+                            # OS's): its window, its Agent panes (with
+                            # terminal_theme = "vscode") and every editor, which is
+                            # told to wear the same one — an editor's own theme
+                            # picker or `workbench.colorTheme` does not override it.
+                            # A built-in theme or one from an installed extension,
+                            # by the name the picker shows or its id. Unset: VS
+                            # Code's defaults. Settings > General > Appearance.
+
+[scratch]
+daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens
+
+[projects]
+directory = "~/dev/new"     # where New Project starts and the first folder Clone offers;
+                            # absolute or ~/, no date tokens. Unset, it is the first
+                            # folder source's path (or ~), and Clone offers the parents
+                            # of what the sources find
+
+[agents]
+default_presentation = "tui" # how an Agent is shown when its profile does not say:
+                            # "tui", the CLI in a terminal, or "gui", DevHub's
+                            # conversation view. A kind without a GUI (cursor, custom)
+                            # is a terminal either way. Settings > General.
+
+[[agent_profiles]]
+id = "claude"
+display_name = "Claude"
+kind = "claude"             # codex | claude | cursor | custom
+presentation = "gui"        # optional override of [agents] default_presentation
+                            # (gui for claude and codex only). Unset, the default.
+                            # ⌘Return in New Agent, or in Assign Issue, opens one the
+                            # other way. Both list "New Claude Session" first, then
+                            # the earlier Claude and Codex sessions that ran in the
+                            # folder, to go on with (--resume / thread resume).
+                            # Assign Issue creates the Issue's worktree (or takes the
+                            # existing folder) first, asks with New Agent's list for
+                            # that folder, and opens it as a Workspace only with the
+                            # agent; cancelling there leaves the worktree on disk. Its list also has
+                            # "Just open the editor": the Workspace and editor, no agent.
+                            # A GUI Agent runs its CLI in structured mode (`claude -p`
+                            # stream-json, `codex app-server`) under a small host in its
+                            # tmux session, so it outlives a DevHub restart like a TUI one.
+                            # See docs/agent-gui.md.

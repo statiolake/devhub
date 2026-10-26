@@ -1,0 +1,156 @@
+version = 4
+workspace_sources = []
+
+[general]
+import_login_environment = true
+notify_on_idle = true
+notify_sound = true
+notice_seconds = 8
+terminal_idle_seconds = 5
+workbench_hibernate_minutes = 10
+workbench_awake_max = 2
+workbench = "vscode"
+
+[runtimes]
+shell = "/bin/zsh"
+git = "git"
+tmux = "tmux"
+tmux_socket_name = "devhub"
+tmux_args = []
+
+[appearance]
+mode = "auto"
+theme_dark = "Dark 2026"
+theme_light = "Light 2026"
+title_bar = "shown"
+terminal_font_family = "ui-monospace"
+terminal_font_size = 13
+terminal_line_height = 1
+terminal_scroll_sensitivity = 3
+sidebar_density = "compact"
+terminal_margin = 4
+terminal_theme = "vscode"
+
+[keybindings]
+prefix = "Cmd+q"
+
+[keybindings.chords]
+
+[scratch]
+daily = "~/junk/YYYYMMDD"
+
+[agents]
+default_presentation = "tui"
+resume_after_limit = true
+resume_after_limit_message = "続けて"
+auto_compact_before_cache_expiry = true
+auto_compact_lead_seconds = 60
+auto_compact_min_tokens = 100000
+
+[agent_actions]
+
+[agent_actions.issue]
+
+[agent_actions.issue.issue_assignment]
+display_name = "Work on the Issue"
+template = "このIssueを読み、実装をしてください。\n{{ISSUE_URL}}\nブランチ名は feature/{{ISSUE_NO}}-<short-name> としてデフォルトブランチから切ってください。\nfeature/{{ISSUE_NO}}-wip となっている場合は、適切な名前に変えてください。\n"
+confirm_before_send = true
+enabled = true
+order = 0
+
+[agent_actions.commit]
+
+[agent_actions.commit.commit_changes]
+display_name = "Commit the changes"
+template = "ここまでの変更をコミットしてください。\n関連する変更ごとに、意味のある単位に分けてください。\n"
+confirm_before_send = false
+button = true
+enabled = true
+order = 0
+
+[agent_actions.push]
+
+[agent_actions.push.push_commits]
+display_name = "Push the commits"
+template = "コミット済みの変更を {{BRANCH}} にプッシュしてください。\n"
+confirm_before_send = false
+button = true
+enabled = true
+order = 0
+
+[agent_actions.pull_request]
+
+[agent_actions.pull_request.open_pull_request]
+display_name = "Open a pull request"
+template = "{{BRANCH}} からプルリクエストを作成してください。\nまだプッシュしていない場合は、先にプッシュしてください。\nタイトルと説明は、このブランチでの変更内容から書いてください。\n"
+confirm_before_send = false
+button = true
+enabled = true
+order = 0
+
+[agent_actions.draft_pull_request]
+
+[agent_actions.draft_pull_request.ready_draft_pull_request]
+display_name = "Get the draft PR ready"
+template = "ドラフトのプルリクエスト #{{PR_NO}} を仕上げてください。\n{{PR_URL}}\n{{BRANCH}} に残っている作業を終わらせてプッシュし、レビューできる状態になったら Ready for review にしてください。\n"
+confirm_before_send = false
+button = true
+enabled = true
+order = 0
+
+[agent_actions.unresolved_review_comments]
+
+[agent_actions.unresolved_review_comments.address_review_comments]
+display_name = "Address review comments"
+template = "プルリクエスト #{{PR_NO}} のレビューコメントに対応してください。\n{{PR_URL}}\n未解決のコメントが {{UNRESOLVED}} 件あります。対応した変更は {{BRANCH}} にコミットしてプッシュしてください。\n"
+confirm_before_send = false
+button = true
+enabled = true
+order = 0
+
+[agent_actions.ci_failing]
+
+[agent_actions.ci_failing.fix_ci]
+display_name = "Fix CI"
+template = "プルリクエスト #{{PR_NO}} の CI が失敗しています。原因を調べて直してください。\n{{PR_URL}}\n失敗しているチェックは {{FAILING}} 件です。修正は {{BRANCH}} にコミットしてプッシュしてください。\n"
+confirm_before_send = false
+button = true
+enabled = true
+order = 0
+
+[agent_actions.always]
+
+[agent_actions.always.send_ok]
+display_name = "OK"
+template = "OK"
+confirm_before_send = false
+button = true
+enabled = true
+order = 0
+
+[[agent_profiles]]
+id = "codex"
+display_name = "Codex"
+kind = "codex"
+command = "codex"
+args = []
+
+[agent_profiles.env]
+
+[[agent_profiles]]
+id = "claude"
+display_name = "Claude"
+kind = "claude"
+command = "claude"
+args = []
+
+[agent_profiles.env]
+
+[[agent_profiles]]
+id = "cursor"
+display_name = "Cursor"
+kind = "cursor"
+command = "cursor-agent"
+args = []
+
+[agent_profiles.env]
