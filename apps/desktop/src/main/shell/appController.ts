@@ -5358,8 +5358,14 @@ export class AppController {
 			// loading before this promise resolved, and a `once` on an event
 			// that already happened never fires — which would leave it opening,
 			// and its slot saying so, for ever about a workbench that is right
-			// there.
-			if (!view.webContents.isLoading()) this.workbenchLoaded(editorKey);
+			// there. The main frame's load, not `isLoading`: that one is also
+			// true while any iframe loads, and a workbench restoring its
+			// editors starts webviews the moment its page has loaded — which is
+			// how a wake was left "起動中…" for good. Whatever still slips
+			// through is settled by the plan (`loading`).
+			if (!view.webContents.isLoadingMainFrame()) {
+				this.workbenchLoaded(editorKey);
+			}
 		}
 		return view;
 	}
@@ -5609,8 +5615,10 @@ export class AppController {
 			} while (this.reconcileAgain);
 		} finally {
 			this.reconciling = false;
+			// Even after a throw: a hold or a backoff with no timer behind it is
+			// a wake that waits for the minute check.
+			this.scheduleWorkbenchDeadline();
 		}
-		this.scheduleWorkbenchDeadline();
 	}
 
 	private planWorkbenches(
@@ -5653,6 +5661,19 @@ export class AppController {
 					? undefined
 					: this.editorKeyForSurfaceKey(selectedKey),
 			views: shell.editorBindings().map(([folder]) => folder),
+			// What an opening folder is still waiting for: its open, or its
+			// page. One waiting for neither is settled by the plan.
+			loading: [
+				...this.workbenchOpens.keys(),
+				...shell.editorBindings().flatMap(([folder, viewId]) => {
+					const view = shell.getViewById(viewId);
+					return view &&
+						isLiveWorkbench(view) &&
+						view.webContents.isLoadingMainFrame()
+						? [folder]
+						: [];
+				}),
+			],
 			awakeMax: general?.workbench_awake_max ?? DEFAULT_WORKBENCH_AWAKE_MAX,
 			hibernateAfterMs: minutes > 0 ? minutes * 60_000 : 0,
 			tick,
@@ -5662,33 +5683,55 @@ export class AppController {
 	private carryOut(effects: readonly LifecycleEffect[]): void {
 		let placeholders = false;
 		for (const effect of effects) {
-			switch (effect.kind) {
-				case "placeholder":
-					this.sendEditorPlaceholder(effect.surfaceKey, effect.placeholder);
-					placeholders = true;
-					break;
-				case "dispose": {
-					const shell = shellWindow();
-					const viewId = this.editorViewId(effect.folder);
-					shell.unbindEditorKey(effect.folder);
-					if (viewId !== undefined) shell.getViewById(viewId)?.destroy();
-					break;
+			// The plan has already moved every phase these effects carry out, so
+			// one that throws must not take the rest with it: an `open` skipped
+			// is a folder left opening with nothing coming.
+			try {
+				this.carryOutOne(effect);
+			} catch (error: unknown) {
+				console.error(
+					`[devhub] workbench '${effect.folder}' ${effect.kind} failed:`,
+					error instanceof Error ? error.stack : error,
+				);
+				if (effect.kind === "open") {
+					this.workbenches.failed(
+						effect.folder,
+						describeFailure(error),
+						Date.now(),
+					);
+					this.reconcileAgain = true;
 				}
-				case "report-gave-up":
-					this.reportEditorGaveUp(effect.folder, effect.reason, effect.attempt);
-					break;
-				case "open":
-					this.openWorkbench(effect.folder);
-					break;
-				case "hibernate":
-					void this.hibernateWorkbench(effect.folder);
-					break;
 			}
+			if (effect.kind === "placeholder") placeholders = true;
 		}
 		// A slot that is standing in for its workbench is not one the
 		// workbench is drawn in, and the one that is back is; both move the
 		// arrangement.
 		if (placeholders) this.publishLayoutState();
+	}
+
+	private carryOutOne(effect: LifecycleEffect): void {
+		switch (effect.kind) {
+			case "placeholder":
+				this.sendEditorPlaceholder(effect.surfaceKey, effect.placeholder);
+				break;
+			case "dispose": {
+				const shell = shellWindow();
+				const viewId = this.editorViewId(effect.folder);
+				shell.unbindEditorKey(effect.folder);
+				if (viewId !== undefined) shell.getViewById(viewId)?.destroy();
+				break;
+			}
+			case "report-gave-up":
+				this.reportEditorGaveUp(effect.folder, effect.reason, effect.attempt);
+				break;
+			case "open":
+				this.openWorkbench(effect.folder);
+				break;
+			case "hibernate":
+				void this.hibernateWorkbench(effect.folder);
+				break;
+		}
 	}
 
 	/** One timer, at the lifecycle's next deadline, for one more plan. */

@@ -6,6 +6,7 @@ import {
 } from "./editorSupervisor.js";
 import {
 	HIBERNATE_CHECK_MS,
+	OPEN_SETTLE_MS,
 	WAKE_DELAY_MS,
 	WorkbenchLifecycle,
 	placeholderOf,
@@ -35,6 +36,12 @@ function harness(
 	});
 	const workspaces = new Map<string, Workspace>();
 	const views = new Set<string>();
+	/** Opens in flight, as the executor's `workbenchOpens` holds them. */
+	const loading = new Set<string>();
+	/** What each surface was last told, by surface key. */
+	const surfaces = new Map<string, EditorPlaceholder>();
+	/** A relocated Workspace keeps its slot: folder → surface key. */
+	const surfaceOf = new Map<string, string>();
 	const leftAt = new Map<string, number>();
 	const placeholders = new Map<string, EditorPlaceholder>();
 	const told: { surfaceKey: string; placeholder?: EditorPlaceholder }[] = [];
@@ -53,7 +60,7 @@ function harness(
 				.filter(([, one]) => one.wanted)
 				.map(([folder, one]) => ({
 					folder,
-					surfaceKey: `surface:${folder}`,
+					surfaceKey: surfaceOf.get(folder) ?? `surface:${folder}`,
 					sleepable: one.sleepable,
 					closing: one.closing,
 					awayMs:
@@ -63,13 +70,18 @@ function harness(
 				})),
 			selected,
 			views: [...views],
+			loading: [...loading],
 			awakeMax,
 			hibernateAfterMs: options.hibernateAfterMs ?? 10 * 60_000,
 			tick,
 		});
 		for (const effect of done) {
 			if (effect.kind === "dispose") views.delete(effect.folder);
+			if (effect.kind === "open") loading.add(effect.folder);
 			if (effect.kind === "placeholder") {
+				if (effect.placeholder) {
+					surfaces.set(effect.surfaceKey, effect.placeholder);
+				} else surfaces.delete(effect.surfaceKey);
 				const folder = effect.surfaceKey.slice("surface:".length);
 				told.push({
 					surfaceKey: effect.surfaceKey,
@@ -88,6 +100,7 @@ function harness(
 		logs,
 		views,
 		placeholders,
+		surfaces,
 		told,
 		effects,
 		plan,
@@ -98,6 +111,12 @@ function harness(
 		},
 		get now() {
 			return now;
+		},
+		get selected() {
+			return selected;
+		},
+		isWanted(folder: string) {
+			return workspaces.get(folder)?.wanted === true;
 		},
 		/** Workspaces, all sleepable but `ssh…` ones (SSH, dev containers). */
 		add(...folders: string[]) {
@@ -117,6 +136,16 @@ function harness(
 		},
 		remove(folder: string) {
 			workspaces.delete(folder);
+			return plan();
+		},
+		/** The same Workspace, its folder moved (Locate…): the same slot. */
+		relocate(from: string, to: string) {
+			const one = workspaces.get(from);
+			if (!one) return plan();
+			surfaceOf.set(to, surfaceOf.get(from) ?? `surface:${from}`);
+			workspaces.delete(from);
+			workspaces.set(to, one);
+			if (selected === from) selected = to;
 			return plan();
 		},
 		select(folder: string | undefined, passing = false) {
@@ -144,6 +173,7 @@ function harness(
 		},
 		/** The open finished and its view loaded. */
 		load(folder: string) {
+			loading.delete(folder);
 			views.add(folder);
 			life.loaded(folder, now);
 			return plan();
@@ -154,7 +184,27 @@ function harness(
 				if (life.phase(folder).kind === "opening") app.load(folder);
 			}
 		},
+		/**
+		 * The open finished with its view, and the page had loaded before
+		 * anyone listened: no loaded event, ever.
+		 */
+		arriveUnheard(folder: string) {
+			loading.delete(folder);
+			views.add(folder);
+			return plan();
+		},
+		/** The open finished with its view, whose page is still loading. */
+		arriveLoading(folder: string) {
+			views.add(folder);
+			return plan();
+		},
+		/** The open's effect never ran (the executor threw before it). */
+		lose(folder: string) {
+			loading.delete(folder);
+			return plan();
+		},
 		fail(folder: string, reason = "The workbench process ended.") {
+			loading.delete(folder);
 			views.delete(folder);
 			life.failed(folder, reason, now);
 			return plan();
@@ -593,7 +643,7 @@ describe("overlaps", () => {
 		// a shown; b and c go, d (least recently shown of all) does not.
 		expect(hibernations(harnessCap(app, 1))).toEqual(["c cap", "b cap"]);
 		app.sleepAll();
-		app.advance(30 * 60_000);
+		app.advance(RESTART_BACKOFF_MS);
 		expect(app.kind("d")).toBe("opening");
 		// Opening, it may not go either.
 		expect(hibernations(app.tick())).toEqual([]);
@@ -786,6 +836,214 @@ describe("the placeholder is the phase", () => {
 			"parked",
 			"restart-waiting",
 		]);
+	});
+});
+
+describe("a selected one always comes up", () => {
+	/** a, b, c, d awake, cap 3: d asleep, a shown. */
+	function dAsleep() {
+		const app = fourAwake();
+		harnessCap(app, 3);
+		app.sleep("d");
+		expect(app.kind("d")).toBe("asleep");
+		return app;
+	}
+
+	it("is up when its page finished loading before anyone listened (no loaded event)", () => {
+		const app = dAsleep();
+		expect(opens(app.select("d"))).toEqual(["d wake"]);
+		app.arriveUnheard("d");
+		expect(app.kind("d")).toBe("awake");
+		expect(app.placeholders.get("d")).toBeUndefined();
+		expect(app.logs).toContain(
+			"[devhub] workbench 'd' opening -> awake: adopted: its load was not heard",
+		);
+	});
+
+	it("is opened again when its open's effect never ran, rather than left opening", () => {
+		const app = dAsleep();
+		app.select("d");
+		app.lose("d");
+		expect(app.kind("d")).toBe("restart-waiting");
+		app.advance(RESTART_BACKOFF_MS);
+		expect(app.kind("d")).toBe("opening");
+		app.load("d");
+		expect(app.kind("d")).toBe("awake");
+	});
+
+	it("is settled when its load is never heard at all, within OPEN_SETTLE_MS", () => {
+		const app = dAsleep();
+		app.select("d");
+		app.arriveLoading("d");
+		expect(app.kind("d")).toBe("opening");
+		expect(app.life.nextDeadline()).toBeDefined();
+		app.advance(OPEN_SETTLE_MS);
+		expect(app.kind("d")).toBe("awake");
+	});
+
+	it("an opening one with nothing coming does not hold a place under the cap", () => {
+		const app = harness({ awakeMax: 2 });
+		app.add("a", "b");
+		app.select("a");
+		app.arriveUnheard("a");
+		app.arriveUnheard("b");
+		app.add("c");
+		// Both settled: c is past the cap, not two phantom opens.
+		expect(app.kinds()).toEqual({ a: "awake", b: "awake", c: "asleep" });
+	});
+
+	it("closing an asleep Workspace leaves the count as it was", () => {
+		const app = harness({ awakeMax: 2 });
+		app.add("a", "b", "c", "d");
+		app.loadAll();
+		for (const folder of ["a", "b", "c", "d"]) {
+			app.advance(1_000);
+			app.select(folder);
+			app.loadAll();
+			app.sleepAll();
+		}
+		expect(app.kind("a")).toBe("asleep");
+		// Close a, asleep: its close runs, takes its (absent) view, and it goes.
+		app.set("a", { closing: true });
+		app.life.disposed("a");
+		app.remove("a");
+		for (const folder of ["b", "c", "d", "b", "d", "c"]) {
+			app.advance(1_000);
+			app.select(folder);
+			expect(["opening", "awake"]).toContain(app.kind(folder));
+			app.loadAll();
+			app.sleepAll();
+			const up = ["b", "c", "d"].filter((one) =>
+				["awake", "opening", "hibernating"].includes(app.kind(one)),
+			);
+			expect(up.length).toBeLessThanOrEqual(2);
+			expect(app.kind(folder)).toBe("awake");
+		}
+	});
+
+	it("a relocated Workspace that starts asleep keeps its slot's placeholder", () => {
+		const app = harness({ awakeMax: 2 });
+		app.add("a", "b", "c");
+		app.loadAll();
+		app.select("a");
+		app.select("b");
+		app.sleepAll();
+		expect(app.kind("c")).toBe("asleep");
+		expect(app.surfaces.get("surface:c")?.kind).toBe("asleep");
+		// Locate…: the same Workspace at c2, still past the cap.
+		app.relocate("c", "c2");
+		expect(app.kind("c2")).toBe("asleep");
+		expect(app.surfaces.get("surface:c")?.kind).toBe("asleep");
+		app.select("c2");
+		expect(app.surfaces.get("surface:c")?.kind).toBe("waking");
+		app.load("c2");
+		expect(app.surfaces.get("surface:c")).toBeUndefined();
+	});
+
+	it("says why a selected one is not up yet", () => {
+		const app = dAsleep();
+		app.select("d", true);
+		expect(app.logs).toEqual(
+			expect.arrayContaining([
+				expect.stringMatching(
+					/^\[devhub\] workbench 'd' selected, not up: wake held until \d+: passing through$/,
+				),
+			]),
+		);
+	});
+
+	it("whatever happens, a selected one is never left asleep, and an open always has a deadline", () => {
+		for (const start of [3, 11, 29, 41, 97]) {
+			let seed = start;
+			const random = (n: number) => {
+				seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
+				return seed % n;
+			};
+			const folders = ["a", "b", "c", "d", "ssh-e"];
+			const app = harness({ awakeMax: 2, hibernateAfterMs: 120_000 });
+			app.add(...folders);
+			let moved = 0;
+			for (let step = 0; step < 1_500; step += 1) {
+				const pick = folders[random(folders.length)] ?? "a";
+				const folder = moved > 0 && random(3) === 0 ? `${pick}-moved` : pick;
+				switch (random(16)) {
+					case 0:
+						app.select(folder, random(2) === 0);
+						break;
+					case 1:
+						if (app.kind(folder) === "opening") app.load(folder);
+						break;
+					case 2:
+						if (app.kind(folder) === "opening") app.arriveUnheard(folder);
+						break;
+					case 3:
+						if (app.kind(folder) === "opening") app.lose(folder);
+						break;
+					case 4:
+						app.fail(folder);
+						break;
+					case 5:
+						if (app.kind(folder) === "hibernating") app.sleep(folder);
+						break;
+					case 6:
+						if (app.kind(folder) === "hibernating") app.refuse(folder);
+						break;
+					case 7:
+						app.advance(random(2_000));
+						break;
+					case 8:
+						app.tick();
+						break;
+					case 9:
+						if (app.life.typed(app.now)) app.plan();
+						break;
+					case 10:
+						// Unavailable, and back.
+						app.set(folder, { wanted: random(4) !== 0 });
+						break;
+					case 11:
+						// A close: running, its view taken down, then gone.
+						app.set(folder, { closing: true });
+						app.life.disposed(folder);
+						app.views.delete(folder);
+						if (random(3) !== 0) app.remove(folder);
+						else app.set(folder, { closing: false });
+						break;
+					case 12:
+						// Added back (or for the first time).
+						app.add(folder);
+						break;
+					case 13:
+						app.relocate(pick, `${pick}-moved`);
+						moved += 1;
+						break;
+					case 14:
+						app.planWith({ awakeMax: random(4) });
+						break;
+					case 15:
+						app.life.needed(folder, app.now);
+						app.plan();
+						break;
+				}
+				for (const one of [...folders, ...folders.map((f) => `${f}-moved`)]) {
+					const kind = app.kind(one);
+					if (
+						kind === "opening" ||
+						kind === "held" ||
+						kind === "restart-waiting"
+					) {
+						expect(app.life.nextDeadline()).toBeDefined();
+					}
+				}
+				// After the hold's delay and nothing else, the shown one is up or
+				// on its way: never still asleep or held.
+				app.advance(WAKE_DELAY_MS);
+				const shown = app.selected;
+				if (shown !== undefined && app.isWanted(shown)) {
+					expect(["asleep", "held"]).not.toContain(app.kind(shown));
+				}
+			}
+		}
 	});
 });
 

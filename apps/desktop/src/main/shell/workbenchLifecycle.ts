@@ -24,6 +24,7 @@
  * ```text
  * absent          ─ wanted ─────────────▶ opening(start), or asleep past the cap
  * opening         ─ loaded ─────────────▶ awake
+ *                 ─ nothing coming ─────▶ awake if its view is there, else failed
  * opening, awake  ─ failed ─────────────▶ restart-waiting, or gave-up
  * awake           ─ away / over the cap ▶ hibernating
  * hibernating     ─ unloaded, or died ──▶ asleep
@@ -79,6 +80,14 @@ export const HIBERNATE_CHECK_MS = 60_000;
 
 /** `Cmd+Q N/P` landing on an asleep editor wakes it after this, if still there. */
 export const WAKE_DELAY_MS = 1_000;
+
+/**
+ * An open whose load has not been heard by then is settled anyway: up if its
+ * view is there (shown as it is), failed if not. Three times the open's own
+ * deadline (`EDITOR_OPEN_TIMEOUT_MS`), so it only ever catches a load nobody
+ * reported, and longer than the minute check, which it must not race.
+ */
+export const OPEN_SETTLE_MS = 90_000;
 
 /** Why a workbench is being opened, which is what its slot says meanwhile. */
 export type OpenCause = "start" | "restart" | "wake";
@@ -165,6 +174,14 @@ export interface LifecycleInput {
 	readonly selected: string | undefined;
 	/** Folders with a live view now. */
 	readonly views: readonly string[];
+	/**
+	 * Folders whose open is still in flight, or whose view's page is still
+	 * loading. An opening folder in neither is settled by this plan — up if
+	 * its view is there (its load was not heard), failed if not (its open
+	 * ended without one) — so `opening` cannot outlive what it waits for.
+	 * Absent, every opening folder is taken to be loading.
+	 */
+	readonly loading?: readonly string[];
 	/** `general.workbench_awake_max`; 0 for no cap. */
 	readonly awakeMax: number;
 	/** `general.workbench_hibernate_minutes`, in ms; 0 for never. */
@@ -206,6 +223,8 @@ interface WorkbenchRecord {
 	excusedUntil: number;
 	/** Its gave-up verdict has been handed to the executor. */
 	reported: boolean;
+	/** When it last went `opening`. */
+	openingSince: number;
 }
 
 const ORDER: Record<LifecycleEffect["kind"], number> = {
@@ -228,6 +247,8 @@ export class WorkbenchLifecycle {
 	private selected: string | undefined;
 	/** The last thing said about the cap, so it is said once. */
 	private capNote = "";
+	/** The last thing said about a selected one not woken, so it is said once. */
+	private selectedNote = "";
 
 	constructor(
 		private readonly supervisor = new EditorSupervisor(),
@@ -253,10 +274,13 @@ export class WorkbenchLifecycle {
 
 	/** When `plan` must run again even if nothing else happens. */
 	nextDeadline(): number | undefined {
-		const deadlines = [...this.records.values()].flatMap(({ phase }) =>
-			phase.kind === "held" || phase.kind === "restart-waiting"
-				? [phase.until]
-				: [],
+		const deadlines = [...this.records.values()].flatMap(
+			({ phase, openingSince }) =>
+				phase.kind === "held" || phase.kind === "restart-waiting"
+					? [phase.until]
+					: phase.kind === "opening"
+						? [openingSince + OPEN_SETTLE_MS]
+						: [],
 		);
 		return deadlines.length === 0 ? undefined : Math.min(...deadlines);
 	}
@@ -395,6 +419,8 @@ export class WorkbenchLifecycle {
 		if (this.hold && this.hold.folder !== selected) this.dropHold("left");
 		this.selected = selected;
 
+		const loading =
+			input.loading === undefined ? undefined : new Set(input.loading);
 		// Not wanted: a closed Workspace, or one whose folder is gone. A verdict
 		// is kept (parked); everything else is forgotten.
 		for (const [folder, record] of this.records) {
@@ -432,8 +458,9 @@ export class WorkbenchLifecycle {
 			(a, b) => Number(b.folder === selected) - Number(a.folder === selected),
 		);
 		for (const one of order) {
-			this.step(one, one.folder === selected, views, input, effects);
+			this.step(one, one.folder === selected, views, loading, input, effects);
 		}
+		this.noteSelected(selected, input.now);
 
 		this.hibernateAway(input, effects);
 		this.cap(input, effects);
@@ -458,6 +485,7 @@ export class WorkbenchLifecycle {
 		one: WantedWorkbench,
 		isSelected: boolean,
 		views: ReadonlySet<string>,
+		loading: ReadonlySet<string> | undefined,
 		input: LifecycleInput,
 		effects: LifecycleEffect[],
 	): void {
@@ -466,6 +494,7 @@ export class WorkbenchLifecycle {
 		let record = this.records.get(folder);
 		if (record) record.surfaceKey = one.surfaceKey;
 		const open = (target: WorkbenchRecord, cause: OpenCause, frame = "") => {
+			target.openingSince = now;
 			this.move(folder, target, { kind: "opening", cause, frame });
 			effects.push({ kind: "open", folder, cause });
 		};
@@ -482,6 +511,7 @@ export class WorkbenchLifecycle {
 				surfaceKey: one.surfaceKey,
 				excusedUntil: 0,
 				reported: false,
+				openingSince: 0,
 			};
 			this.records.set(folder, record);
 		}
@@ -552,11 +582,69 @@ export class WorkbenchLifecycle {
 				open(record, "wake", phase.frame);
 				return;
 			}
-			case "opening":
+			case "opening": {
+				// Nothing more is coming for it: the loaded event was missed (a
+				// page that finished before anyone listened), or the open's
+				// effect never ran. Left alone it would say "起動中…" for ever and
+				// count against the cap without ever being one it could put to
+				// sleep.
+				const waiting =
+					loading === undefined || loading.has(folder)
+						? now - record.openingSince < OPEN_SETTLE_MS
+						: false;
+				if (waiting) return;
+				if (views.has(folder)) {
+					this.move(
+						folder,
+						record,
+						{ kind: "awake" },
+						loading?.has(folder) === false
+							? "adopted: its load was not heard"
+							: `adopted: still loading after ${String(OPEN_SETTLE_MS)} ms`,
+					);
+					this.supervisor.loaded(folder, now);
+				} else {
+					this.failed(
+						folder,
+						loading?.has(folder) === false
+							? "Its open ended without a workbench."
+							: `The workbench did not open within ${String(OPEN_SETTLE_MS / 1_000)} seconds.`,
+						now,
+					);
+				}
+				return;
+			}
 			case "gave-up":
 			case "parked":
 				return;
 		}
+	}
+
+	/**
+	 * The selected editor is asleep, held or still opening at the end of a
+	 * plan: one line saying why it is not up yet, said when that changes.
+	 */
+	private noteSelected(selected: string | undefined, now: number): void {
+		const phase = selected === undefined ? undefined : this.phase(selected);
+		let note = "";
+		if (selected !== undefined && phase !== undefined) {
+			const record = this.records.get(selected);
+			if (phase.kind === "held") {
+				note = `wake held until ${String(phase.until)}: passing through`;
+			} else if (phase.kind === "asleep") {
+				note = "asleep, no open planned";
+			} else if (
+				phase.kind === "opening" &&
+				record !== undefined &&
+				now - record.openingSince >= WAKE_DELAY_MS * 10
+			) {
+				note = `still opening (${phase.cause}) since ${String(record.openingSince)}`;
+			}
+			if (note !== "")
+				note = `[devhub] workbench '${selected}' selected, not up: ${note}`;
+		}
+		if (note !== "" && note !== this.selectedNote) this.log(note);
+		this.selectedNote = note;
 	}
 
 	/** The sleepable workbenches up or on their way up. */
@@ -664,6 +752,19 @@ export class WorkbenchLifecycle {
 		wanted: ReadonlyMap<string, WantedWorkbench>,
 	): LifecycleEffect[] {
 		const effects: LifecycleEffect[] = [];
+		// A folder forgotten with a placeholder up: take it down — first, since
+		// its surface may be the one a relocated Workspace's new folder is
+		// about to be told about (the same Workspace, so the same slot).
+		for (const [folder, told] of this.told) {
+			if (this.records.has(folder)) continue;
+			effects.push({
+				kind: "placeholder",
+				folder,
+				surfaceKey: told.surfaceKey,
+				placeholder: undefined,
+			});
+			this.told.delete(folder);
+		}
 		for (const [folder, record] of this.records) {
 			const placeholder = wanted.has(folder)
 				? placeholderOf(record.phase)
@@ -690,17 +791,6 @@ export class WorkbenchLifecycle {
 			});
 			if (placeholder === undefined) this.told.delete(folder);
 			else this.told.set(folder, { surfaceKey: record.surfaceKey, text });
-		}
-		// A folder forgotten with a placeholder up: take it down.
-		for (const [folder, told] of this.told) {
-			if (this.records.has(folder)) continue;
-			effects.push({
-				kind: "placeholder",
-				folder,
-				surfaceKey: told.surfaceKey,
-				placeholder: undefined,
-			});
-			this.told.delete(folder);
 		}
 		return effects;
 	}
