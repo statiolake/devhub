@@ -40,6 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             var failures: [String] = []
             if controller.window?.isVisible != true { failures.append("the main window is not visible") }
             if !TerminalSurfaceProbe.links() { failures.append("the terminal surface did not link") }
+            // WP8: the vendored built-in colour themes are in the bundle.
+            let themes = ColorThemeCatalog.list(ExtensionRoots(builtin: ColorThemeCatalog.builtinRoot, user: [String]()))
+            if ColorThemeCatalog.find(themes, "Dark 2026") == nil || ColorThemeCatalog.find(themes, "Light 2026") == nil {
+                failures.append("the built-in colour themes are missing")
+            }
             if failures.isEmpty {
                 print("self-test ok: \(DevHubVersion.description)")
                 exit(0)

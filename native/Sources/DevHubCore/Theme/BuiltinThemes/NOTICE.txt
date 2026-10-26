@@ -1,0 +1,19 @@
+VS Code's built-in colour theme extensions, vendored for the native DevHub.
+
+The native app has no VS Code bundle, so the theme extensions VS Code ships
+(and the TS DevHub finds in its VS Code's built-in extensions directory) are
+copied here unchanged: each directory's package.json, package.nls.json,
+cgmanifest.json and themes/*.json, from microsoft/vscode at the commit the
+DevHub repository pins as its `vscode` submodule:
+
+    2a59476c9bfcb90b3ddc372c36762471b7dfad1c
+
+They are Copyright (c) Microsoft Corporation and licensed under the MIT
+License, reproduced in LICENSE.txt beside this file. Several themes are
+themselves derived from third-party themes; each extension's cgmanifest.json
+names its upstream and licence, as it does in VS Code.
+
+To refresh after a submodule bump, copy the same files again from
+vscode/extensions/theme-*/ (theme-defaults' fileicons are not needed), then
+regenerate the expected palettes in
+native/Tests/DevHubCoreTests/Fixtures/theme/ (see BuiltinThemeFixtureTests).

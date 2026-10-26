@@ -26,7 +26,9 @@ var dependencies: [Package.Dependency] = []
 var targets: [Target] = [
     .target(
         name: "DevHubCore",
-        path: "Sources/DevHubCore"
+        path: "Sources/DevHubCore",
+        // VS Code's built-in colour themes (MIT), vendored: WP8, Theme/.
+        resources: [.copy("Theme/BuiltinThemes")]
     ),
     .executableTarget(
         name: "DevHubCLI",
@@ -36,7 +38,9 @@ var targets: [Target] = [
     .testTarget(
         name: "DevHubCoreTests",
         dependencies: ["DevHubCore"],
-        path: "Tests/DevHubCoreTests"
+        path: "Tests/DevHubCoreTests",
+        // Fixtures captured from the TS app, read by path (#filePath).
+        exclude: ["Fixtures"]
     ),
 ]
 
