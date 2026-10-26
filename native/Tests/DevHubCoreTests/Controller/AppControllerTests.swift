@@ -82,10 +82,14 @@ final class FakeAgents: AgentPort, @unchecked Sendable {
         closed.add(workspaceId)
         if let closeFailure { throw closeFailure }
     }
+    let reviews = Recorder<Bool>()
     func queueInjection(_ agentId: AgentId, text: String, review: Bool) throws -> String {
         injections.add((agentId, text))
+        reviews.add(review)
         return "injection"
     }
+    func confirmInjection(_ agentId: AgentId, injectionId: String, text: String) throws -> Bool { true }
+    func cancelInjection(_ agentId: AgentId, injectionId: String) -> Bool { true }
     func conversation(_ agentId: AgentId) async throws -> (any TellConversation)? { nil }
 }
 
@@ -141,6 +145,8 @@ final class RecordingShell: AppShell, @unchecked Sendable {
     func placeKeyboardOnSurface() async {}
     func notify(_ text: String) async throws {}
     func runCommand(_ id: CommandId) async -> Bool { true }
+    let modals = Recorder<ModalRequest>()
+    func openModal(_ request: ModalRequest) async { modals.add(request) }
     func quit() async {}
 }
 
@@ -158,7 +164,7 @@ final class ControllerRig {
     init(
         directories: Set<String> = ["/work/api", "/work/web", "/scratch-test/junk/20260923"],
         files: Set<String> = ["/work/api/README.md"], missing: Set<String> = [], operationTimeoutMs: Int = 5_000,
-        withAgents: Bool = true
+        withAgents: Bool = true, issueAssigner: (any IssueAssigner)? = nil
     ) {
         directory = NSTemporaryDirectory() + "devhub-controller-\(UUID().uuidString)"
         try! FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -167,7 +173,7 @@ final class ControllerRig {
         controller = AppController(model: scratchModel(), options: AppControllerOptions(
             stateStore: store, state: .fresh(), config: Config.defaults, agents: withAgents ? agents : nil,
             terminals: terminals, machines: FakeMachines(paths: FakePaths(directories: directories, files: files), missing: missing),
-            shell: shell, operationTimeoutMs: operationTimeoutMs, crash: { crashes.add(String(describing: $0)) },
+            shell: shell, issueAssigner: issueAssigner, operationTimeoutMs: operationTimeoutMs, crash: { crashes.add(String(describing: $0)) },
             log: { _ in }
         ))
     }
@@ -506,6 +512,71 @@ final class AppControllerTests: XCTestCase {
         let model = await rig.controller.model
         XCTAssertEqual(model.selection.context, .workspace(workspace))
         XCTAssertEqual(model.selection.presentation, .beside)
+    }
+
+    // MARK: agent actions
+
+    func testSaysASmartButtonsActionToTheAgentFilledFromTheRepository() async throws {
+        let rig = ControllerRig()
+        let workspace = try await rig.open("/work/api")
+        let agent = try await rig.createAgent(workspace, profile: "claude")
+        await rig.controller.repositoryStatusChanged([WorkspaceRepositoryWire(
+            workspaceId: workspace.rawValue, branch: "feature/7-x", dirty: true, ahead: 0, defaultBranch: "main")])
+        _ = try await rig.controller.runAgentAction(agentId: agent.rawValue, actionId: "commit_changes")
+        let said = rig.agents.injections.all.filter { $0.0 == agent }
+        XCTAssertFalse(said.isEmpty)
+        XCTAssertEqual(rig.agents.reviews.all.last, false)
+        await rig.settled()
+        XCTAssertTrue(rig.shell.modals.all.isEmpty)
+    }
+
+    func testRefusesAnActionTheConfigurationDoesNotHaveInItsOwnWords() async throws {
+        let rig = ControllerRig()
+        let workspace = try await rig.open("/work/api")
+        let agent = try await rig.createAgent(workspace)
+        let error = await refusal { _ = try await rig.controller.runAgentAction(agentId: agent.rawValue, actionId: "nope") }
+        XCTAssertEqual(error?.summary, "There is no agent action called `nope` in the configuration.")
+        let gone = await refusal { _ = try await rig.controller.runAgentAction(agentId: "nobody", actionId: "commit_changes") }
+        XCTAssertEqual(gone?.summary, "That agent is not running.")
+    }
+
+    func testFiresATickedAutomaticActionWhenItsConditionArrives() async throws {
+        let rig = ControllerRig()
+        let workspace = try await rig.open("/work/api")
+        let agent = try await rig.createAgent(workspace)
+        rig.agents.reconciliation = { _, _ in
+            AgentReconciliation(observations: [AgentObservation(agentId: agent, status: .idle, runtimeHealth: .healthy)])
+        }
+        _ = try await rig.controller.dispatch(.reconcileAgents(machine: "local"))
+        _ = try await rig.controller.dispatch(.setAutomaticAction(agent, actionId: "commit_changes", automatic: true))
+        XCTAssertTrue(rig.agents.injections.all.isEmpty)
+        await rig.controller.repositoryStatusChanged([WorkspaceRepositoryWire(
+            workspaceId: workspace.rawValue, branch: "feature/7-x", dirty: true, ahead: 0, defaultBranch: "main")])
+        XCTAssertEqual(rig.agents.injections.all.count, 1)
+        // Once: the condition holding on is not news.
+        await rig.controller.repositoryStatusChanged([WorkspaceRepositoryWire(
+            workspaceId: workspace.rawValue, branch: "feature/7-x", dirty: true, ahead: 0, defaultBranch: "main")])
+        XCTAssertEqual(rig.agents.injections.all.count, 1)
+    }
+
+    func testAssignsAnIssueFromTheCommandLineAndTellsTheAgentWhatItIsFor() async throws {
+        struct Folder: IssueAssigner {
+            func prepare(_ request: IssueAssignRequest) async throws -> RequestedWorkspaceLocation { .local(path: "/work/web") }
+        }
+        let rig = ControllerRig(issueAssigner: Folder())
+        let assigned = try await rig.controller.assignIssue(IssueAssignRequest(
+            url: "https://github.com/example/widget/issues/128", repo: nil, branch: nil, place: .worktree, profile: "claude",
+            action: nil, editorOnly: false, presentation: nil))
+        let model = await rig.controller.model
+        XCTAssertEqual(model.workspace(WorkspaceId(unchecked: assigned.workspaceId))?.root, "/work/web")
+        let agent = try XCTUnwrap(assigned.agentId)
+        let said = try XCTUnwrap(rig.agents.injections.all.first { $0.0.rawValue == agent }?.1)
+        XCTAssertTrue(said.contains("https://github.com/example/widget/issues/128"), said)
+        // The Issue flow's first message is looked at before it goes.
+        await rig.settled()
+        guard case let .injectionReview(agentId, _, _, text)? = rig.shell.modals.all.last else { return XCTFail() }
+        XCTAssertEqual(agentId, agent)
+        XCTAssertEqual(text, said)
     }
 
     // MARK: startup

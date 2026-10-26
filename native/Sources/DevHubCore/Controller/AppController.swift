@@ -108,6 +108,7 @@ enum ShellMessage: Sendable {
     case condition(source: String, summary: String?, reason: String)
     case bringToFront
     case placeKeyboard
+    case modal(ModalRequest)
     case quit
 }
 
@@ -137,6 +138,8 @@ public actor AppController {
     /// The model as WP3's rounds read it (`TerminalAgentModel`).
     public nonisolated let mirror = ControllerModelMirror()
     let machineConditions: MachineConditions
+    /// Which automatic actions have fired, and for what.
+    var automaticActions = AutomaticActions()
     /// Each machine's home, learned as it answers; this Mac's is known.
     var homes: [String: String] = ["local": NSHomeDirectory()]
     /// Agent terminals being started, which a tmux reading must not judge.
@@ -193,6 +196,7 @@ public actor AppController {
                     await shell.publishCondition(source: source, summary: summary, reason: reason)
                 case .bringToFront: await shell.bringToFront()
                 case .placeKeyboard: await shell.placeKeyboardOnSurface()
+                case let .modal(request): await shell.openModal(request)
                 case .quit: await shell.quit()
                 }
             }
@@ -340,6 +344,7 @@ public actor AppController {
 
     func publishSnapshot() {
         mirror.update(coordinator.snapshot())
+        runAutomaticActions()
         do {
             outbox.yield(.snapshot(try snapshotWire()))
         } catch {
@@ -352,6 +357,8 @@ public actor AppController {
     func bringToFrontNow() { outbox.yield(.bringToFront) }
 
     func placeKeyboardOnSurface() { outbox.yield(.placeKeyboard) }
+
+    func openModal(_ request: ModalRequest) { outbox.yield(.modal(request)) }
 
     // MARK: - Dispatch
 

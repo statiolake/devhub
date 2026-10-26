@@ -128,6 +128,14 @@ public struct TerminalAgentPort: AgentPort {
         try wiring.queueInjection(agentId.rawValue, text: text, review: review)
     }
 
+    public func confirmInjection(_ agentId: AgentId, injectionId: String, text: String) throws -> Bool {
+        try wiring.confirmInjection(agentId.rawValue, injectionId: injectionId, text: text)
+    }
+
+    public func cancelInjection(_ agentId: AgentId, injectionId: String) -> Bool {
+        wiring.cancelInjection(agentId.rawValue, injectionId: injectionId)
+    }
+
     public func conversation(_ agentId: AgentId) async throws -> (any TellConversation)? {
         try await gui?.conversation(agentId)
     }

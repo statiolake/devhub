@@ -31,6 +31,10 @@ public protocol AgentPort: Sendable {
     func closeWorkspaceAgents(_ workspaceId: WorkspaceId) async throws
     /// Queue words for an Agent, sent once it is idle. Answers the injection's id.
     func queueInjection(_ agentId: AgentId, text: String, review: Bool) throws -> String
+    /// The review sheet's Send: the wording as the person left it.
+    func confirmInjection(_ agentId: AgentId, injectionId: String, text: String) throws -> Bool
+    /// The review sheet's Cancel.
+    func cancelInjection(_ agentId: AgentId, injectionId: String) -> Bool
     /// A GUI Agent's conversation as `devhub --tell` reaches into it.
     func conversation(_ agentId: AgentId) async throws -> (any TellConversation)?
 }
@@ -132,6 +136,8 @@ public protocol AppShell: Sendable {
     func notify(_ text: String) async throws
     /// Run a palette command the way the palette does.
     func runCommand(_ id: CommandId) async -> Bool
+    /// Put a sheet in front of the window (the picker layer).
+    func openModal(_ request: ModalRequest) async
     /// The app is to quit (`detach`).
     func quit() async
 }
@@ -147,6 +153,7 @@ public struct HeadlessShell: AppShell {
     public func placeKeyboardOnSurface() async {}
     public func notify(_ text: String) async throws {}
     public func runCommand(_ id: CommandId) async -> Bool { false }
+    public func openModal(_ request: ModalRequest) async {}
     public func quit() async {}
 }
 

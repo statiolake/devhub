@@ -461,25 +461,36 @@ extension AppController: TellPorts {
         _ = try agents.queueInjection(AgentId(unchecked: agentId), text: text, review: false)
     }
 
+    /// `assignIssueFromCli`: the Assign Issue sheet's steps, with the
+    /// person's choices given as arguments — the folder made ready for the
+    /// branch, then the Agent and the first thing it is told.
     public func assignIssue(_ request: IssueAssignRequest) async throws -> (workspaceId: String, agentId: String?) {
+        guard let item = GitHubItem.parse(url: request.url) else {
+            throw ControlRefusal("That is not a GitHub Issue or pull request URL.")
+        }
         guard let issues = issueAssigner else {
             throw ControlRefusal("DevHub cannot assign Issues from the command line in this build.")
         }
-        let before = modelAgentIds()
         let folder = try await issues.prepare(request)
-        guard !request.editorOnly else {
+        if request.editorOnly {
             _ = try await openFolder(folder)
             return (try openedWorkspaceId(folder.path).rawValue, nil)
         }
-        let configured = config?.agentProfiles ?? []
-        guard let profile = configured.first(where: { $0.id == request.profile }) else {
+        guard let config else { throw NamedFailure.at(.settingsRefused) }
+        guard let profile = config.agentProfiles.first(where: { $0.id == request.profile }) else {
             throw ControlRefusal("there is no agent profile called '\(request.profile ?? "undefined")'.")
         }
-        let presentation: AgentPresentation = request.presentation.map { $0 == .gui ? .gui : .tui } ?? profile.presentation ?? .tui
-        _ = try await openFolder(folder, withAgent: (profile.id, presentation))
-        if let agent = newAgent(before), let text = try await issues.firstMessage(request, profile: profile) {
-            _ = try agents?.queueInjection(agent, text: text, review: false)
+        let actions = config.agentActions.filter { $0.enabled && $0.trigger == .issue }
+        let action = request.action.map { wanted in actions.first { $0.id == wanted } } ?? actions.first
+        if let wanted = request.action, action == nil {
+            let configured = actions.map(\.id).joined(separator: ", ")
+            throw ControlRefusal("there is no Issue action called '\(wanted)'. Configured: \(configured.isEmpty ? "none" : configured).")
         }
+        let before = modelAgentIds()
+        let presentation: AgentPresentation = request.presentation.map { $0 == .gui ? .gui : .tui }
+            ?? profile.presentation ?? .tui
+        _ = try await openFolder(folder, withAgent: (profile.id, presentation))
+        queueIssuePrompt(before: before, issueUrl: request.url, number: item.number, actionId: action?.id)
         let agent = newAgent(before)
         let workspace = try agent.flatMap { coordinator.model.workspaceForAgent($0)?.id } ?? openedWorkspaceId(folder.path)
         return (workspace.rawValue, agent?.rawValue)
@@ -641,13 +652,10 @@ extension AppController: EditorOpenHost {
     }
 }
 
-/// The Issue flow's two halves the command line needs (the Assign Issue
-/// sheet's steps, `assignIssueFromCli`): the folder made ready for the
-/// branch, and the first message the chosen Issue action sends.
+/// The Issue flow's git half the command line needs (`findClones`,
+/// `assignmentBranch`, `prepareIssueFolder`): the clone found (or the one
+/// given), the branch chosen, the folder made — where the Workspace opens.
+/// WP4 has the pieces; the Assign Issue sheet (WP10) is its other caller.
 public protocol IssueAssigner: Sendable {
-    /// The clone found (or the one given), the branch chosen, the folder
-    /// made: where the Workspace opens.
     func prepare(_ request: IssueAssignRequest) async throws -> RequestedWorkspaceLocation
-    /// The configured Issue action's message for the new Agent, if any.
-    func firstMessage(_ request: IssueAssignRequest, profile: ConfiguredAgentProfile) async throws -> String?
 }
