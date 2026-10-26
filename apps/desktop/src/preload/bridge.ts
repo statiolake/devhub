@@ -273,6 +273,10 @@ export function reopenEditorInContainer(workspaceId: string): Promise<void> {
 	) as Promise<void>;
 }
 
+export function continueAgent(agentId: string): Promise<void> {
+	return ipcRenderer.invoke(CHANNELS.continueAgent, agentId) as Promise<void>;
+}
+
 export function openExternalUrl(url: string): Promise<void> {
 	return ipcRenderer.invoke(CHANNELS.openExternalUrl, url) as Promise<void>;
 }

@@ -632,6 +632,8 @@ export interface SidebarAreaWire {
 export interface ContextMenuItemWire {
 	readonly id: string;
 	readonly label: string;
+	/** Draw a separator above this item (the destructive ones stand apart). */
+	readonly separatorBefore?: true;
 }
 
 /**
@@ -1195,6 +1197,12 @@ export interface SidebarBridge
 	 * back in when that editor could not open.
 	 */
 	reopenEditorInContainer(workspaceId: string): Promise<void>;
+	/**
+	 * Carry an Agent on in its other presentation, resuming its session: a GUI
+	 * Agent in a terminal, a terminal Claude or Codex Agent in the GUI. The
+	 * row menu's Continue in Terminal / Continue in GUI.
+	 */
+	continueAgent(agentId: string): Promise<void>;
 	openExternalUrl(url: string): Promise<void>;
 	/** The sidebar's width under the pointer while a drag lasts; `null` ends it. */
 	previewLayout(preview: LayoutPreviewWire): Promise<void>;
@@ -1653,6 +1661,7 @@ export const CHANNELS = {
 	openSshWorkspace: "devhub:open-ssh-workspace",
 	reopenEditorLocally: "devhub:reopen-editor-locally",
 	reopenEditorInContainer: "devhub:reopen-editor-in-container",
+	continueAgent: "devhub:continue-agent",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
 	assignmentBranch: "devhub:assignment-branch",

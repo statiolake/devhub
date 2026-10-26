@@ -25,10 +25,6 @@ vi.mock("../../terminal/TerminalSurface", () => ({
 vi.mock("../../agents/SmartButtons", () => ({
   SmartButtons: () => null,
 }));
-vi.mock("../../agents/ContinueElsewhere", () => ({
-  ContinueElsewhere: () => null,
-  continuesElsewhere: () => false,
-}));
 vi.mock("../../agents/ConversationPane", () => ({
   ConversationPane: () => <div data-testid="conversation" />,
 }));

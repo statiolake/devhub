@@ -18,13 +18,15 @@ import type {
   AppIntent,
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
-import { agentRestart } from "../../../model/domain";
+import { agentContinuation, agentRestart } from "../../../model/domain";
 import { devhub } from "../../sidebar/client";
 
 export interface RowMenuItem {
   readonly id: string;
   readonly label: string;
   readonly run: () => void;
+  /** Stand apart from what is above: the destructive items, last. */
+  readonly separated?: true;
 }
 
 /**
@@ -37,7 +39,11 @@ export function openRowMenu(
 ): void {
   void devhub()
     .showContextMenu({
-      items: items.map(({ id, label }) => ({ id, label })),
+      items: items.map(({ id, label, separated }) => ({
+        id,
+        label,
+        ...(separated === true ? { separatorBefore: true as const } : {}),
+      })),
       at: { x: at.x, y: at.y },
     })
     .then((chosen) => {
@@ -46,49 +52,76 @@ export function openRowMenu(
 }
 
 /**
- * What a right-click on a Workspace in a dev container offers — the only
- * Workspace row with a menu at all.
+ * What a right-click on a Workspace offers: the two ways to reopen its editor
+ * when it is in a dev container, and — on every Workspace but Scratch, which
+ * is today's folder and is never closed — the close the row's own button is,
+ * last and apart. Empty for Scratch outside a dev container.
  */
 export function workspaceMenuItems(
   workspace: WorkspaceSnapshot,
-  reopenInContainer: (workspaceId: string) => void,
-  reopenLocally: (workspaceId: string) => void,
+  actions: {
+    readonly reopenInContainer: (workspaceId: string) => void;
+    readonly reopenLocally: (workspaceId: string) => void;
+    /** The row's close (`onCloseWorkspace`): one path, whatever the state. */
+    readonly close: (workspace: WorkspaceSnapshot) => void;
+    /** Closing deletes the folder (`closingDeletesWorktree`), and says so. */
+    readonly deletesWorktree: boolean;
+    readonly fixed: boolean;
+  },
 ): RowMenuItem[] {
-  return [
-    {
-      // The way back in when the editor could not open because its
-      // container was never built, or was removed: build it, then open the
-      // editor in it — what Retry, which only starts a container, cannot do.
-      id: "reopen-in-container",
-      label: "Reopen Editor in Container",
-      run: () => {
-        reopenInContainer(workspace.id);
+  const items: RowMenuItem[] = [];
+  if (workspace.editor.kind === "devContainer") {
+    items.push(
+      {
+        // The way back in when the editor could not open because its
+        // container was never built, or was removed: build it, then open the
+        // editor in it — what Retry, which only starts a container, cannot do.
+        id: "reopen-in-container",
+        label: "Reopen Editor in Container",
+        run: () => {
+          actions.reopenInContainer(workspace.id);
+        },
       },
-    },
-    {
-      // The way out when an editor in a dev container cannot open — a
-      // container never built, a Docker that is not running — and the same
-      // act as the editor's own Reopen Folder Locally.
-      id: "reopen-locally",
-      label: "Reopen Editor Locally",
-      run: () => {
-        reopenLocally(workspace.id);
+      {
+        // The way out when an editor in a dev container cannot open — a
+        // container never built, a Docker that is not running — and the same
+        // act as the editor's own Reopen Folder Locally.
+        id: "reopen-locally",
+        label: "Reopen Editor Locally",
+        run: () => {
+          actions.reopenLocally(workspace.id);
+        },
       },
-    },
-  ];
+    );
+  }
+  if (!actions.fixed) {
+    items.push({
+      // The ellipsis is the row button's promise: a question may follow.
+      id: "close-workspace",
+      separated: true,
+      label: actions.deletesWorktree ? "Close Worktree…" : "Close Workspace…",
+      run: () => {
+        actions.close(workspace);
+      },
+    });
+  }
+  return items;
 }
 
 /**
  * What a right-click on an Agent offers.
  *
- * Mark as Unread is the only one that is not already a control on the row, and
- * it is here because it is the counterpart to opening one: reading is
- * automatic, and un-reading has to be something you can say.
+ * Mark as Unread is here because it is the counterpart to opening one:
+ * reading is automatic, and un-reading has to be something you can say.
+ * Continue in Terminal / Continue in GUI are here and nowhere else on a
+ * healthy Agent (`agentContinuation` says when); Stop Agent is the row's own
+ * button and what `Cmd+Q X` does to an Agent, the last item and apart.
  */
 export function agentMenuItems(
   agent: AgentSnapshot,
   dispatch: (intent: AppIntent) => void,
   onRename: (agent: AgentSnapshot) => void,
+  onContinue: (agent: AgentSnapshot) => void,
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [
     {
@@ -125,9 +158,23 @@ export function agentMenuItems(
       },
     });
   }
+  const continuation = agentContinuation(agent);
+  if (continuation !== undefined) {
+    items.push({
+      id: "continue",
+      label:
+        continuation === "terminal"
+          ? "Continue in Terminal"
+          : "Continue in GUI",
+      run: () => {
+        onContinue(agent);
+      },
+    });
+  }
   if (agent.controlState.kind !== "stopping") {
     items.push({
       id: "stop",
+      separated: true,
       label:
         agent.controlState.kind === "stop-failed" ? "Retry Stop" : "Stop Agent",
       run: () => {

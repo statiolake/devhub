@@ -33,13 +33,19 @@ export function contextMenuTemplate(
 	items: readonly ContextMenuItemWire[],
 	choose: (id: string) => void,
 ): Electron.MenuItemConstructorOptions[] {
-	return items.map((item) => ({
-		id: item.id,
-		label: item.label,
-		click: () => {
-			choose(item.id);
+	return items.flatMap((item, index): Electron.MenuItemConstructorOptions[] => [
+		// Never at the top: a separator with nothing above it is a stray line.
+		...(item.separatorBefore === true && index > 0
+			? [{ type: "separator" as const }]
+			: []),
+		{
+			id: item.id,
+			label: item.label,
+			click: () => {
+				choose(item.id);
+			},
 		},
-	}));
+	]);
 }
 
 /**

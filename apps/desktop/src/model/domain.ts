@@ -1050,6 +1050,32 @@ export function cliStoppedItself(
 }
 
 /**
+ * Which way an Agent can be carried on in its other presentation, if it can:
+ * `"terminal"` for a GUI Agent, `"gui"` for a terminal Claude or Codex Agent.
+ *
+ * **The one place that decides it**, for the Sidebar's row menu. Only a
+ * running Agent whose CLI has both presentations (Claude and Codex) has a way
+ * across; a failed Agent's recovery is the failure's own (the Agent pane's
+ * Continue in terminal). Whether the Agent is idle is not asked: main asks
+ * first when it is not (`Coordinator.askAbout`).
+ */
+export function agentContinuation(agent: {
+  readonly presentation: AgentPresentation;
+  readonly profileKind: AgentProfileKind;
+  readonly controlState: { readonly kind: string };
+  readonly failure?: unknown;
+}): "terminal" | "gui" | undefined {
+  if (
+    agent.failure !== undefined ||
+    agent.controlState.kind !== "running" ||
+    (agent.profileKind !== "claude" && agent.profileKind !== "codex")
+  ) {
+    return undefined;
+  }
+  return agent.presentation === "gui" ? "terminal" : "gui";
+}
+
+/**
  * What Restart Session is for this Agent: available, or refused with why.
  *
  * **The one place that decides it.** The coordinator refuses `restart_agent`

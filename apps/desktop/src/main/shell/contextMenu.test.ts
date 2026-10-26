@@ -57,6 +57,25 @@ describe("the template", () => {
 	});
 });
 
+describe("a separator", () => {
+	it("stands above the item that asks for one, never at the top", () => {
+		const template = contextMenuTemplate(
+			[
+				{ id: "a", label: "A", separatorBefore: true },
+				{ id: "b", label: "B" },
+				{ id: "c", label: "C", separatorBefore: true },
+			],
+			() => undefined,
+		);
+		expect(template.map((entry) => entry.type ?? entry.id)).toEqual([
+			"a",
+			"b",
+			"separator",
+			"c",
+		]);
+	});
+});
+
 describe("where it goes", () => {
 	it("is the page's point plus where main laid the page, in whole points", () => {
 		expect(contextMenuPoint({ x: 10.6, y: 4.2 }, SIDEBAR)).toEqual({

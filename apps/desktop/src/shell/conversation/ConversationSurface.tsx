@@ -439,12 +439,7 @@ export function ConversationSurface({
                         hidden={hidden}
                       >
                         <div className="conversation-views">
-                          {/* The Agent's own column, whose top right corner the
-                        Continue button sits in (`ContinueElsewhere`). */}
-                          <div
-                            className="conversation-main"
-                            data-agent-column=""
-                          >
+                          <div className="conversation-main">
                             {finding ? (
                               <FindBar
                                 ref={findBar}

@@ -1219,21 +1219,8 @@ export class AppController {
 			// A continue of an Agent that is not idle is a question first
 			// (`Coordinator.askAbout`), and the button that asked cannot draw
 			// it: it goes to the one sheet a stop's question goes to.
-			continueIn: async (agentId, presentation, session) =>
-				this.raiseCloseConfirmation(
-					outcomeWire(
-						await this.dispatchSettled({
-							type: "continue_agent",
-							agentId,
-							presentation,
-							session,
-						}),
-						this.coordinator.readiness,
-						this.repositoryOf,
-						this.homeOf,
-					),
-					agentId,
-				),
+			continueIn: (agentId, presentation, session) =>
+				this.continueAgentIn(agentId, presentation, session),
 			// `/restart`: the question, when there is one, goes to the same
 			// sheet as the Sidebar's Restart Session and the chord's.
 			restart: (agentId) => this.requestRestartAgent(agentId),
@@ -6719,6 +6706,59 @@ export class AppController {
 		};
 	}
 
+	/**
+	 * Carry an Agent on in the other presentation, resuming `session`. A
+	 * continue of an Agent that is not idle is a question first
+	 * (`Coordinator.askAbout`), and whatever asked cannot draw it: it goes to
+	 * the one sheet a stop's question goes to.
+	 */
+	private async continueAgentIn(
+		agentId: AgentId,
+		presentation: AgentPresentation,
+		session: string | undefined,
+	): Promise<void> {
+		this.raiseCloseConfirmation(
+			outcomeWire(
+				await this.dispatchSettled({
+					type: "continue_agent",
+					agentId,
+					presentation,
+					session,
+				}),
+				this.coordinator.readiness,
+				this.repositoryOf,
+				this.homeOf,
+			),
+			agentId,
+		);
+	}
+
+	/**
+	 * The Sidebar row menu's Continue in Terminal / Continue in GUI: the same
+	 * act as the Agent pane's corner control used to be, in whichever direction
+	 * leaves the Agent's own presentation (the session is found the way
+	 * `conversationIpc` finds it).
+	 */
+	async continueAgentElsewhere(agentId: AgentId): Promise<void> {
+		const wiring = this.agentWiring;
+		const agent = this.coordinator.model.agent(agentId);
+		if (wiring === undefined || agent === undefined)
+			throw new Error(`no Agent ${agentId} is open`);
+		if (agent.presentation === "gui") {
+			await this.continueAgentIn(
+				agentId,
+				"tui",
+				await wiring.conversations.session(agentId),
+			);
+		} else {
+			await this.continueAgentIn(
+				agentId,
+				"gui",
+				await wiring.terminalSession(agentId),
+			);
+		}
+	}
+
 	/** The machine an Agent runs on, which is its Workspace's. */
 	private agentMachine(agentId: AgentId): RuntimeId {
 		const machine = this.machineOfAgent(agentId);
@@ -8171,6 +8211,13 @@ export class AppController {
 				}
 			},
 		);
+		handle(CHANNELS.continueAgent, async (_event, agentId: string) => {
+			try {
+				await this.continueAgentElsewhere(parseAgentId(agentId));
+			} catch (error: unknown) {
+				throw namedFailure(error);
+			}
+		});
 		handle(CHANNELS.projectDefaultDirectory, () =>
 			defaultProjectDirectory(this.config),
 		);

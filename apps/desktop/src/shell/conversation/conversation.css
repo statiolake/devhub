@@ -76,9 +76,7 @@
 
 /* ------------------------------------------------------ Find (Cmd+F) */
 
-/* At the top right of the conversation, under the Continue button that
-   holds the very corner (`continueElsewhere.css`), like VS Code's find
-   widget. */
+/* At the top right of the conversation, like VS Code's find widget. */
 .conversation-find {
   position: absolute;
   z-index: 3;

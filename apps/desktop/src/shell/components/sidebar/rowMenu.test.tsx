@@ -97,13 +97,16 @@ function mount(collapsed: boolean) {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   const reopenEditorLocally = vi.fn();
   const reopenEditorInContainer = vi.fn();
+  const continueAgent = vi.fn();
+  const closeWorkspace = vi.fn();
   const value = {
     dispatch,
     reopenEditorLocally,
     reopenEditorInContainer,
+    continueAgent,
     openExternalUrl: vi.fn(),
     answerWorktreeClose: vi.fn(() => Promise.resolve({})),
-    closeWorkspace: vi.fn(),
+    closeWorkspace,
     reportFailure: vi.fn(),
     dismissIntentError: vi.fn(),
     agentProfiles: { sequence: 1, availability: "available", profiles: [] },
@@ -131,7 +134,13 @@ function mount(collapsed: boolean) {
       <Sidebar snapshot={snapshot} />
     </SidebarContext.Provider>,
   );
-  return { dispatch, reopenEditorLocally, reopenEditorInContainer };
+  return {
+    dispatch,
+    reopenEditorLocally,
+    reopenEditorInContainer,
+    continueAgent,
+    closeWorkspace,
+  };
 }
 
 const labels = (items: readonly { readonly label: string }[]) =>
@@ -140,18 +149,54 @@ const labels = (items: readonly { readonly label: string }[]) =>
 describe("what a right-click on an Agent offers", () => {
   const none = () => undefined;
 
-  it("offers Rename, Mark as Unread, Restart and Stop on a running GUI Agent", () => {
-    expect(labels(agentMenuItems(agent(), none, none))).toEqual([
+  it("offers Rename, Mark as Unread, Restart, Continue in Terminal and Stop on a running GUI Agent", () => {
+    expect(labels(agentMenuItems(agent(), none, none, none))).toEqual([
       "Rename…",
       "Mark as Unread",
       "Restart Session",
+      "Continue in Terminal",
       "Stop Agent",
     ]);
   });
 
+  it("offers a terminal Claude or Codex Agent Continue in GUI, and runs it for that Agent", () => {
+    const continued: string[] = [];
+    const items = agentMenuItems(
+      agent({ presentation: "tui" }),
+      none,
+      none,
+      (each) => continued.push(each.id),
+    );
+    expect(labels(items)).toContain("Continue in GUI");
+    expect(labels(items)).not.toContain("Continue in Terminal");
+    items.find((item) => item.id === "continue")?.run();
+    expect(continued).toEqual(["a-1"]);
+  });
+
+  it("offers no Continue where the pane control did not: other CLIs, a failed Agent, one not running", () => {
+    for (const overrides of [
+      { profileKind: "cursor" },
+      { failure: { code: "conversation_failed" } },
+      { controlState: { kind: "stopping" } },
+      { controlState: { kind: "stop-failed" } },
+    ]) {
+      expect(
+        labels(agentMenuItems(agent(overrides as never), none, none, none)),
+      ).not.toContain("Continue in Terminal");
+    }
+  });
+
+  it("puts Stop Agent last and apart", () => {
+    const items = agentMenuItems(agent(), none, none, none);
+    expect(items.at(-1)).toMatchObject({ id: "stop", separated: true });
+    expect(items.slice(0, -1).some((item) => item.separated)).toBe(false);
+  });
+
   it("leaves out Mark as Unread on an Agent that is already unread", () => {
     expect(
-      labels(agentMenuItems(agent({ unread: "idle" } as never), none, none)),
+      labels(
+        agentMenuItems(agent({ unread: "idle" } as never), none, none, none),
+      ),
     ).not.toContain("Mark as Unread");
   });
 
@@ -161,6 +206,7 @@ describe("what a right-click on an Agent offers", () => {
         labels(
           agentMenuItems(
             agent({ presentation: "tui", profileKind }),
+            none,
             none,
             none,
           ),
@@ -176,6 +222,7 @@ describe("what a right-click on an Agent offers", () => {
           agent({ presentation: "tui", profileKind: "custom" }),
           none,
           none,
+          none,
         ),
       ),
     ).not.toContain("Restart Session");
@@ -188,6 +235,7 @@ describe("what a right-click on an Agent offers", () => {
       failed,
       (intent) => dispatched.push(intent),
       none,
+      none,
     );
     expect(labels(items)).toContain("Retry Stop");
     items.find((item) => item.id === "stop")?.run();
@@ -198,24 +246,53 @@ describe("what a right-click on an Agent offers", () => {
           agent({ controlState: { kind: "stopping" } } as never),
           none,
           none,
+          none,
         ),
       ),
     ).not.toContain("Stop Agent");
   });
 });
 
-describe("what a right-click on a dev-container Workspace offers", () => {
-  it("offers the two ways to reopen its editor, for that Workspace", () => {
-    const inContainer = vi.fn();
-    const locally = vi.fn();
-    const items = workspaceMenuItems(workspace(), inContainer, locally);
+describe("what a right-click on a Workspace offers", () => {
+  const actions = (over: Record<string, unknown> = {}) => ({
+    reopenInContainer: vi.fn(),
+    reopenLocally: vi.fn(),
+    close: vi.fn(),
+    deletesWorktree: false,
+    fixed: false,
+    ...over,
+  });
+
+  it("offers the two ways to reopen a dev container's editor, then Close Workspace…", () => {
+    const a = actions();
+    const items = workspaceMenuItems(workspace(), a);
     expect(labels(items)).toEqual([
       "Reopen Editor in Container",
       "Reopen Editor Locally",
+      "Close Workspace…",
     ]);
     for (const item of items) item.run();
-    expect(inContainer).toHaveBeenCalledWith("w-1");
-    expect(locally).toHaveBeenCalledWith("w-1");
+    expect(a.reopenInContainer).toHaveBeenCalledWith("w-1");
+    expect(a.reopenLocally).toHaveBeenCalledWith("w-1");
+    expect(a.close).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "w-1" }),
+    );
+    expect(items.at(-1)?.separated).toBe(true);
+  });
+
+  it("offers only the close on an ordinary Workspace, and says Worktree where closing deletes the folder", () => {
+    const local = workspace({ editor: { kind: "local" } } as never);
+    expect(labels(workspaceMenuItems(local, actions()))).toEqual([
+      "Close Workspace…",
+    ]);
+    expect(
+      labels(workspaceMenuItems(local, actions({ deletesWorktree: true }))),
+    ).toEqual(["Close Worktree…"]);
+  });
+
+  it("offers Scratch no close: nothing outside a dev container", () => {
+    const local = workspace({ editor: { kind: "local" } } as never);
+    expect(workspaceMenuItems(local, actions({ fixed: true }))).toEqual([]);
   });
 });
 
@@ -236,7 +313,8 @@ describe("the menu is main's to draw", () => {
           { id: "rename", label: "Rename…" },
           { id: "unread", label: "Mark as Unread" },
           { id: "restart", label: "Restart Session" },
-          { id: "stop", label: "Stop Agent" },
+          { id: "continue", label: "Continue in Terminal" },
+          { id: "stop", label: "Stop Agent", separatorBefore: true },
         ],
         at: { x: 12, y: 34 },
       });
@@ -286,5 +364,37 @@ describe("the menu is main's to draw", () => {
       expect.objectContaining({ at: { x: 5, y: 6 } }),
     );
     expect(reopenEditorLocally).toHaveBeenCalledWith("w-1");
+  });
+
+  it("continues the Agent in its other presentation through main", async () => {
+    const { continueAgent } = mount(false);
+    answer = "continue";
+    await act(async () => {
+      fireEvent.contextMenu(document.querySelector(".agent-row") as Element);
+      await Promise.resolve();
+    });
+    expect(continueAgent).toHaveBeenCalledWith("a-1");
+  });
+
+  it("closes a Workspace through the row's own close, the one path", async () => {
+    const { closeWorkspace } = mount(false);
+    answer = "close-workspace";
+    const row = document.querySelector(".workspace-row:not(.is-scratch)");
+    await act(async () => {
+      fireEvent.contextMenu(row as Element);
+      await Promise.resolve();
+    });
+    expect(closeWorkspace).toHaveBeenCalledWith("w-1");
+  });
+
+  it("puts up no menu on Scratch, which cannot be closed", async () => {
+    mount(false);
+    await act(async () => {
+      fireEvent.contextMenu(
+        document.querySelector(".workspace-row.is-scratch") as Element,
+      );
+      await Promise.resolve();
+    });
+    expect(showContextMenu).not.toHaveBeenCalled();
   });
 });

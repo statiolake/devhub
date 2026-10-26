@@ -173,13 +173,14 @@ function WorkspaceRow({
     at: { x: number; y: number },
   ) => void;
   /**
-   * A right-click on the row, for the one Workspace action that is not a
-   * control on it: reopening an editor that is in a dev container on the
-   * Workspace's own machine. Only such a row has a menu at all.
+   * A right-click on the row: reopening an editor that is in a dev container
+   * on the Workspace's own machine, and the row's close. Scratch outside a dev
+   * container has nothing to offer and no menu.
    */
   readonly onWorkspaceMenu: (
     workspace: WorkspaceSnapshot,
     at: { x: number; y: number },
+    menu: { readonly deletesWorktree: boolean; readonly fixed: boolean },
   ) => void;
   /** What this row and its Agents need while something is being dragged. */
   readonly reorder: Reorder;
@@ -260,13 +261,15 @@ function WorkspaceRow({
         // doing exactly what it is for. Scratch has always stated it here.
         data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
         onContextMenu={
-          workspace.editor.kind === "devContainer" && !closing
+          (workspace.editor.kind === "devContainer" || !identity.fixed) &&
+          !closing
             ? (event) => {
                 event.preventDefault();
-                onWorkspaceMenu(workspace, {
-                  x: event.clientX,
-                  y: event.clientY,
-                });
+                onWorkspaceMenu(
+                  workspace,
+                  { x: event.clientX, y: event.clientY },
+                  { deletesWorktree, fixed: identity.fixed },
+                );
               }
             : undefined
         }
@@ -1198,7 +1201,8 @@ export function Sidebar({ snapshot }: SidebarProps) {
     void devhub().openModal({ kind: "agent-rename", agentId: agent.id });
   }, []);
 
-  const { reopenEditorLocally, reopenEditorInContainer } = useSidebar();
+  const { reopenEditorLocally, reopenEditorInContainer, continueAgent } =
+    useSidebar();
 
   /**
    * The row's context menu: a native menu over the window (`rowMenu.ts`), so
@@ -1206,22 +1210,32 @@ export function Sidebar({ snapshot }: SidebarProps) {
    */
   const openAgentMenu = useCallback(
     (agent: AgentSnapshot, at: { x: number; y: number }) => {
-      openRowMenu(agentMenuItems(agent, dispatchIntent, openRename), at);
-    },
-    [dispatchIntent, openRename],
-  );
-  const openWorkspaceMenu = useCallback(
-    (workspace: WorkspaceSnapshot, at: { x: number; y: number }) => {
       openRowMenu(
-        workspaceMenuItems(
-          workspace,
-          reopenEditorInContainer,
-          reopenEditorLocally,
-        ),
+        agentMenuItems(agent, dispatchIntent, openRename, (each) => {
+          continueAgent(each.id);
+        }),
         at,
       );
     },
-    [reopenEditorInContainer, reopenEditorLocally],
+    [continueAgent, dispatchIntent, openRename],
+  );
+  const openWorkspaceMenu = useCallback(
+    (
+      workspace: WorkspaceSnapshot,
+      at: { x: number; y: number },
+      menu: { readonly deletesWorktree: boolean; readonly fixed: boolean },
+    ) => {
+      openRowMenu(
+        workspaceMenuItems(workspace, {
+          reopenInContainer: reopenEditorInContainer,
+          reopenLocally: reopenEditorLocally,
+          close: closeWorkspaceRow,
+          ...menu,
+        }),
+        at,
+      );
+    },
+    [closeWorkspaceRow, reopenEditorInContainer, reopenEditorLocally],
   );
 
   const resize = useCallback(
