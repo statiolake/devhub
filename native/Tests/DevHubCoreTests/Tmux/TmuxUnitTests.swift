@@ -267,9 +267,11 @@ final class BoundedRunnerTests: XCTestCase {
 
     func testGivesTheNextCommandAFullBudgetOnceOneHasAnswered() async throws {
         // The budget is a watchdog on silence, not a ration of commands.
-        let deadline = OperationDeadline.within(300)
+        // Six pauses of 200 ms are longer than the 1 s budget together, and
+        // each is well inside it alone.
+        let deadline = OperationDeadline.within(1_000)
         for round in 0..<6 {
-            try await Task.sleep(nanoseconds: 60_000_000)
+            try await Task.sleep(nanoseconds: 200_000_000)
             let output = try await BoundedCommand.run(
                 CommandSpec(file: "/bin/echo", args: [String(round)], cwd: "/", env: ["PATH": "/usr/bin:/bin"]),
                 deadline: deadline, cancel: CancellationToken(), limits: limits
