@@ -150,6 +150,12 @@ final class ConversationSelfTest {
             // A question asked and answered, on its call: the card's layout, the preview beside.
             view.performAction(.toggle(EntryFold.tool("t6")))
             await pause(0.3)
+            // Brought into view, so it is laid out (TextKit lays out what is shown).
+            if let range = text.range(ofSection: "t6") {
+                view.transcriptView.reveal(NSRange(location: NSMaxRange(range) - 1, length: 1))
+                await pause(0.4)
+                snapshot(view, "conversation-question-record-\(dark ? "dark" : "light")")
+            }
             let records: [QuestionRecordView] = text.textStorage.map { storage -> [QuestionRecordView] in
                 var found: [QuestionRecordView] = []
                 storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in

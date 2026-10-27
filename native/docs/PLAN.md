@@ -336,6 +336,190 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 
 Inventory size: **157 items** across 16 areas.
 
+### 2.17 Parity audit (final pass)
+
+Every item above checked against the Swift code and against the TS app on
+`main` as it is now (`git log 4b3d5c6..origin/main -- apps/desktop`: c91dbf9
+the editor area's shell exiting as its close button and b290457 Codex Make
+default — both ported separately; de04dea then dd7f9c4 terminal mode
+local-only — ported here, W-08). SSH and dev containers are not needed in
+the native app. The inventory has 156 rows (the "157" above counted the
+SHA-256 row of §3.2's table).
+
+Result: **155 done, 0 partial, 0 missing, 1 not needed (S-14)**. "This pass"
+marks what the final pass changed to get there; "done*" notes a remaining
+difference of form, not of feature.
+
+Known differences that stay, and why:
+
+- The seams and the Sidebar's resize handle take no Tab focus (the window's
+  key view loop is the terminals'), so their arrow-key step is reached as
+  VoiceOver's increment/decrement only.
+- Math is SwiftMath's typesetting in Latin Modern Math rather than KaTeX's
+  own fonts and HTML; what SwiftMath cannot parse is drawn as its source,
+  as KaTeX draws a formula it cannot parse.
+- A recorded question is a view in the transcript, so its words are copied
+  whole with the selection around it rather than selected word by word.
+
+| ID | Status | Evidence (native/Sources/…) |
+| --- | --- | --- |
+| W-01 | done | `DevHubApp/AppDelegate.swift` (no quit on last window, Dock reopen), `MainWindowController.windowShouldClose` |
+| W-02 | done | `Core/Layout/WindowLayout.swift`, `Tests/Layout/WindowLayoutTests.swift` |
+| W-03 | done | `WindowLayout.swift`, `Shell/ShellController.swift` (toggle_split), split ratio in `Persistence/StateRecords.swift` |
+| W-04 | done | `Model/AgentTerminal.swift`, `WindowLayout.swift` terminal placement |
+| W-05 | done* | `Views/ShellBackdropView.swift` (drag, live preview, commit); *this pass: the seams are VoiceOver splitters with increment/decrement (`Views/AccessibleRegion.swift`); they take no Tab focus, so the TS separators' arrow keys are reached through VoiceOver only |
+| W-06 | done | `ShellBackdropView.swift` title bar (Back/Forward disabled when nowhere to go, Sidebar toggle, tooltips), hidden mode drag strip; this pass: the buttons are VoiceOver buttons |
+| W-07 | done | `WindowLayout.keyboardChild`, `MainWindowController.place/firstResponderChanged` |
+| W-08 | done (this pass) | main's dd7f9c4: `Model/TerminalActivity.swift` `TerminalMode` (local-only, dev container = local folder, `TERMINAL_MODE_NO_SSH` / `_NO_DEV_CONTAINERS`), `ShellBackdropView.surfaceContent`, `Editor/EditorOpening.swift`; container mark dropped in `Shell/SidebarModel.swift` |
+| W-09 | done | `ShellBackdropView.surfaceContent` (Retry / Locate… / Close), `Views/SurfaceStateView.swift` |
+| W-10 | done | `Model/Attention.swift` (+ `AttentionTests`), `Platform/Platform.swift` `AppDock` |
+| W-11 | done | `Model/Attention.swift` idle rule, `Platform.swift` `Notifications` (UNUserNotificationCenter) |
+| W-12 | done | `AppDelegate.relaunch`, `MainMenu.swift` Restart DevHub |
+| S-01 | done | `Shell/SidebarModel.swift`, `Views/SidebarView.swift`, `Model/WorkspaceOrder.swift` |
+| S-02 | done | `SidebarView.swift` rail + resize handle (width persisted via `Projection.clampSidebarWidth`); this pass: the handle is a VoiceOver splitter (±4pt) |
+| S-03 | done | `DevHubTheme.Density`, `SidebarView` row metrics |
+| S-04 | done | `SidebarView` drag reorder (useReorder rules), `WorkspaceOrderTests` |
+| S-05 | done | `SidebarListView` keys, `Shell/KeyRouter.swift` |
+| S-06 | done | `SidebarModel` row menus, `SidebarView` NSMenu (no container items) |
+| S-07 | done | `Views/TooltipView.swift`, `MainWindowController.TooltipController` (grace, enterable, links) |
+| S-08 | done | `GitHub/RowDescription.swift` (+ `RowDescriptionTests`) |
+| S-09 | done | `SidebarView` status marks (ring spin, background arcs, unread), `Model/TerminalActivity.swift`, `Tmux/PaneActivity.swift` |
+| S-10 | done | `SidebarModel` digits while armed, `Keyboard/ChordDispatcher.swift` |
+| S-11 | done | `SidebarView` closing breathe + exiting ghost rows (`Sidebar.closingExitMs`) |
+| S-12 | done | `Views/UsageFooterView.swift`, `Usage/UsageRow.swift`, `Usage/UsageFooter.swift` |
+| S-13 | done | `Usage/PromptCacheFacts.swift` |
+| S-14 | not needed | SSH is out of scope for this app (user decision); main's dd7f9c4 made terminal mode local-only too |
+| WS-01 | done | `Model/Domain.swift`, `DomainTests` |
+| WS-02 | done | `Sheets/WorkspacePickerSearch.swift`, `Config/ConfigModel.swift` sources |
+| WS-03 | done | `Sheets/SheetFlows.swift` workspacePicker, `Sheets/PickerView.swift`, `Model/Fuzzy.swift`; no SSH row (as main in terminal mode) |
+| WS-04 | done | `Git/Projects.swift`, `SheetFlows` New Project / Clone |
+| WS-05 | done | `Git/Worktrees.swift`, `Git/WorktreeFolder.swift`, `Git/Git.swift` |
+| WS-06 | done | `SheetFlows` close confirmation / worktree close, `Model/Domain.swift` `WorkspaceClose` |
+| WS-07 | done | `Controller/AppController.swift` `closeWorkspaceResources` with `CloseDeadline` |
+| WS-08 | done | `Model/AppModel.swift` `repairSelection`, `AppModelTests` |
+| WS-09 | done | `Model/ScratchDay.swift`, `Model/DateTemplate.swift`, `ScratchRolloverTests` |
+| WS-10 | done | `Editor/OpenRouting.swift`, `AppDelegate.application(_:open:)` |
+| WS-11 | done | `Shell/ShellLayout.swift` `EditorTerminalsShown`, `MainWindowController.reconcileTerminals` |
+| T-01 | done | `Tmux/TmuxTerminalRuntime.swift`, `TmuxRealTests` |
+| T-02 | done | `Tmux/TmuxMarkers.swift`, `Tmux/SessionSweep.swift`, `SessionSweepTests` |
+| T-03 | done | `Support/TmuxNames.swift` |
+| T-04 | done | `Views/TerminalPaneView.swift` (SwiftTerm on the attach transport), `Shell/TerminalSurfaceSession.swift`, `Tmux/TerminalAttachments.swift` |
+| T-05 | done | SwiftTerm's NSTextInputClient (marked text overlay at the caret) in the terminal, NSTextView in the composer; `Platform.swift` `TISInputSources` for the chord prefix |
+| T-06 | done | `TerminalPaneView.applyStyle`, `Model/TerminalActivity.swift` `TerminalZoom`, zoom offset in state |
+| T-07 | done | `Theme/TerminalPalettes.swift`, `TerminalPalettesTests` |
+| T-08 | done | `TerminalSurfaceSession.cameOnScreen`, cover with Retry in `TerminalPaneView` |
+| T-09 | done | `TerminalPaneView.requestOpenLink` → `ShellController.openExternal` (OSC 8, as xterm's linkHandler) |
+| T-10 | done | `TerminalPaneView.clipboardCopy` (OSC 52 to the pasteboard, reads refused) |
+| T-11 | done | `Tmux/TerminalActivityLoop.swift`, `PaneActivityTests` |
+| T-12 | done | `Support/LoginEnvironment.swift`, `Support/Runtimes.swift`, `Tmux/TerminalRuntimes.swift` |
+| T-13 | done | `Tmux/TerminalLauncher.swift`, `TerminalLauncherTests` |
+| E-01 | done | `Editor/MessagePack.swift`, `MessagePackTests` |
+| E-02 | done | `Editor/NeovimRPC.swift`, `NeovimRPCTests`, `RealNeovimTests` |
+| E-03 | done | `Editor/ManagedNeovims.swift` |
+| E-04 | done | `ManagedNeovims.swift` socket paths, `ManagedNeovimsTests` |
+| E-05 | done | `ManagedNeovims.swift` (get_mode, exec_lua, clamp, zv/zz) |
+| E-06 | done | `ManagedNeovims.swift` lifecycle, `ManagedNeovimsTests` |
+| E-07 | done | `Editor/OpenRouting.swift`, `Editor/EditorOpening.swift`, `OpenRoutingTests` |
+| E-08 | done | `Control/DevhubWait.swift`, `Editor/WaitSelectionReturns.swift` |
+| E-09 | done | `Controller/ControllerWiring.swift` nvim lookup + notice |
+| E-10 | done | `AppDelegate.application(_:open:)`, `Resources/Info.plist` |
+| C-01 | done | `Control/ControlServer.swift`, `ControlServerTests` |
+| C-02 | done | `Control/ControlProtocol.swift`, `WireJSONTests`; extension/dev container kinds answered by `ControlServer` refusals |
+| C-03 | done | `Control/DevhubArguments.swift`, `DevhubCommandLine.swift`, `DevhubLaunch.swift`, `ArgumentsTests` |
+| C-04 | done | `Control/TellCommand.swift` |
+| C-05 | done | `Control/TellService.swift`, `TellServiceTests` |
+| C-06 | done | `TellService.swift` panes/bring, `Tmux/TmuxTerminalRuntime.swift` |
+| C-07 | done | `Control/DevhubInstall.swift`, `MainMenu` Install ‘devhub’ Command… |
+| C-08 | done | `Control/DevhubSkill.swift`, `DevhubSkillAndCommandLineTests` |
+| A-01 | done | `Config/ConfigModel.swift`, `Conversation/Claude/ClaudeDefaults.swift` |
+| A-02 | done | `SheetFlows` agentPicker, `Sheets/SheetRows.swift`, `Conversation/Resume.swift` |
+| A-03 | done | `Agents/Terminal/AgentSessions.swift`, `TerminalAgentWiring.swift` |
+| A-04 | done | `Agents/Detect/*`, `DetectTests` |
+| A-05 | done | `Model/Domain.swift`, `AppModel.swift` |
+| A-06 | done | `SheetFlows` rename + stop questions, `Agents/Terminal/AgentReconciler.swift` |
+| A-07 | done | `Conversation/SessionArgs.swift`, `Agents/Terminal/TerminalAgentCommand.swift` |
+| A-08 | done | `Controller/AppControllerConversations.swift`, `Sheets/SheetRows.swift` |
+| A-09 | done (this pass: look) | `Conversation/ConversationViews.swift` `FailureView`: now DevHub's sheet (`PaneSheetChrome.swift`, heading band, code spans, DevHub buttons, keys on the sheet) and the TS banner along the pane's top |
+| A-10 | done | `Agents/Terminal/AgentInjectionQueue.swift`, review sheet in `Sheets/SheetViews.swift`, `InjectionStatusView` |
+| A-11 | done | `Model/AgentActions.swift`, `SheetFlows` agentActions |
+| A-12 | done (this pass: motion) | `Model/SmartButtons.swift`, `Model/AutomaticActions.swift`, `Conversation/SmartButtonsView.swift`: now the drawn bolt with its count, the switches panel (frozen, stays open), lines entering/leaving, snap glide |
+| A-13 | done | `Model/AgentTerminal.swift`, `AgentTerminalTests` |
+| A-14 | done | `SheetFlows` stop-with-terminal (Move terminal to editor), `TmuxTerminalRuntime.swift` |
+| G-01 | done | `Conversation/HostScript.swift`, `HostCommand.swift`, `HostScriptTests` |
+| G-02 | done | `Conversation/HostLink.swift`, `Reading.swift`, `HostLinkTests` |
+| G-03 | done | `Conversation/ConversationModel.swift`, `ConversationFold.swift`, `ConversationFoldTests` |
+| G-04 | done | `Conversation/Claude/*`, `ClaudeAdapterTests1–12` |
+| G-05 | done | `Conversation/Codex/*`, `CodexAdapterTests1–4` |
+| G-06 | done | `Conversation/Registry.swift`, `Controller/GuiAgents.swift` |
+| G-07 | done | `Conversation/AgentConversation.swift` pending + drafts, `ComposerView` pending list |
+| G-08 | done | `Conversation/Resume.swift`, rewind in the adapters |
+| G-09 | done | `Conversation/Resume.swift`, `ResumeListingTests`, `/resume` sheet |
+| G-10 | done | `Conversation/CacheKeeper.swift` |
+| G-11 | done | `Conversation/LimitResume.swift`, `AgentConversationLimitTests` |
+| G-12 | done | `Conversation/Elicitation.swift`, `ElicitationForm.swift`, `McpSignIn.swift` |
+| G-13 | done | `Conversation/Failures.swift` |
+| G-14 | done | `Conversation/PathLinks.swift`, `ConversationUI/TextLinks.swift`, `TextLinksTests` |
+| G-15 | done | `Conversation/ToolTitle.swift` |
+| G-16 | done | adapters' stop_task / turn/interrupt, `ComposerFooterView` with confirmation |
+| G-17 | done | `ConversationUI/TranscriptStructure.swift`, `Conversation/FindAndSubagents.swift` |
+| G-18 | done | `Conversation/AgentRecords.swift` |
+| U-01 | done (this pass: rise) | `Conversation/TranscriptTextView.swift` (one TextKit 2 text), `TranscriptScroller.swift` (follow, Latest / New output); arrivals now rise from `--motion-rise` as they fade (snapshot under a cover), not only fade |
+| U-02 | done (this pass: math) | `Markdown/*` GFM parser, `ConversationUI/MarkdownDocumentBuilder.swift`; math now typeset: SwiftMath vendored (`native/Vendor/SwiftMath`, Latin Modern Math), inline on the baseline, display centred and scrolled; source on a parse failure as KaTeX |
+| U-03 | done | `Markdown/Highlight/*` (TextMate grammars, Light+/Dark+), `TranscriptBlocks.swift` CodeBlockView with Copy |
+| U-04 | done | `ConversationUI/EntryDocumentBuilder.swift`, `TranscriptEmbeds.swift`, Clip with Show all |
+| U-05 | done | `EntryDocumentBuilder` diffs, `TranscriptTextView` bands |
+| U-06 | done (this pass: record) | `Conversation/RequestCardView.swift`; the answered QuestionRecord is now drawn as the card drew it with the preview beside the options (`QuestionRecordView`, `.questionRecord` embed) |
+| U-07 | done | `Conversation/ComposerView.swift`, `ComposerTextView.swift`; this pass: pending items and the command list rise in |
+| U-08 | done | `ConversationUI/CommandCompletion.swift`, `CompletionListView` |
+| U-09 | done (this pass: list) | `Conversation/SettingMenuView.swift`: DevHub's list over the face with Default / Make default (hover or highlight, click, ⌥↩), replacing the system menu with ⌥ alternates |
+| U-10 | done | `ComposerFooterView` (context, background tasks + stop confirmation) |
+| U-11 | done | `FindAndSubagents.swift` FindBarView, `ConversationUI/TranscriptSearch.swift`; this pass: the TS tooltips/labels |
+| U-12 | done (this pass: look) | `Conversation/ConversationSheets.swift` `McpPanelView`: now a picker's sheet (rows with status dots, aside, footer note, DevHub buttons) on `PaneSheetChrome.swift`; Escape there no longer stops the turn |
+| U-13 | done (this pass: activity) | rewind confirm in `TranscriptEmbeds` ConfirmEmbedView; activity line now fades out after the turn and fades a new phase in |
+| U-14 | done | `ConversationUI/PathLinkStore.swift`, `TranscriptTextView` links → `ConversationPane.follow` |
+| U-15 | done | `SmartButtonsView` (see A-12) |
+| U-16 | done | `Voice/DictationController.swift`, `Core/Voice/*` |
+| K-01 | done | `Model/Commands.swift`, `Model/ChordKeys.swift`, `ChordKeysAndCommandsTests` |
+| K-02 | done | `Keyboard/ChordDispatcher.swift`, `Shell/KeyRouter.swift` |
+| K-03 | done | `Config/ConfigParsing.swift` keybindings diagnostics |
+| K-04 | done | `Model/Coordinator.swift`, `Shell/ShellController.swift` perform, `ChordsTests` |
+| K-05 | done | `Model/CommandPalette.swift`, `SheetFlows` palette |
+| K-06 | done | `SheetViews.swift` ChordHelpView |
+| K-07 | done | `SheetFlows` tab picker |
+| K-08 | done | `Model/NavigationHistory.swift`, `ChordDispatcher` (brackets, side buttons, swipe), title-bar arrows |
+| K-09 | done | `Shell/KeyRouter.swift` `ShellKeys.editingGroups`, `MainMenu.editMenu` |
+| Q-01 | done | `Sheets/PickerView.swift`, `Core/Sheets/PickerList.swift`, `Wizard.swift` |
+| Q-02 | done | `Sheets/SheetLayer.swift`, `SheetChrome.swift` |
+| Q-03 | done | `Sheets/SheetFlows.swift`, `SheetViews.swift` |
+| Q-04 | done | `Core/Sheets/IssueFlow.swift`, `Controller/IssueAssignment.swift` |
+| N-01 | done | `Notices/NoticeLayer.swift`, `Model/NoticeBoard.swift` |
+| N-02 | done | `NoticeLayer.swift` center, `Model/Notices.swift`, `NoticeBoardTests` |
+| N-03 | done | `Model/NoticeBoard.swift` audiences |
+| N-04 | done | `Model/Commands.swift` dismiss_alert |
+| P-01 | done | `Config/ConfigStore.swift`, `SettingsMigration.swift`, `ConfigStoreTests` |
+| P-02 | done | `Config/TomlParser.swift`, `ConfigDiagnostics.swift` |
+| P-03 | done | `Config/TomlDocument.swift`, `TomlDocumentTests` |
+| P-04 | done | `Config/SettingsRefusal.swift`, `ConfigStore` reload |
+| P-05 | done | `Settings/*` (seven screens, collections with Move up/down, recorder) |
+| P-06 | done | `Config/ConfigModel.swift`, `ConfigParsing.swift`, `ConfigWireTests` |
+| H-01 | done | `Theme/AppearanceController.swift`, `Core/Theme/AppearanceMode.swift` |
+| H-02 | done | `Theme/ColorThemeCatalog.swift`, vendored `BuiltinThemes` |
+| H-03 | done | `Theme/ColorTheme.swift`, `ColorDefaults.generated.swift`, `ColorThemeTests` |
+| H-04 | done | `Theme/DevHubTheme.swift`, `ShellStyle.swift` |
+| H-05 | done | `Theme/FontFamily.swift`, `ThemeAppKit.swift` |
+| R-01 | done | `Git/Git.swift`, `HeadWatcher.swift`, `GitDirectory.swift` |
+| R-02 | done | `GitHub/GitHubClient.swift`, `Git/RepositoryStatus.swift` |
+| R-03 | done | `Runtime/Cadence.swift`, refresh_repositories |
+| R-04 | done | `GitHub/ProjectStatus.swift` |
+| R-05 | done | `Usage/UsageReaders.swift`, `UsageLimits.swift`, `UsageReadersTests` |
+| X-01 | done | `Persistence/*`, `PersistenceTests` |
+| X-02 | done | `Support/MainLog.swift`, `ShellController.openLog` |
+| X-03 | done | `Control/Diagnostics.swift`, `DiagnosticsTests` |
+| X-04 | done | `Support/ProfileLocations.swift` |
+| X-05 | done | `ShellController.openExternal` |
+| X-06 | done | `Voice/DictationController.swift`, `Core/Voice/*` (mic button + language switch: separate work) |
+| X-07 | done | `AppDelegate.launch` (control socket claim, second launch hands over) |
+
 ---
 
 ## 3. Architecture
@@ -394,7 +578,7 @@ files; adding a dependency or a target is a coordinated change (see §5).
 | JSON | Foundation `JSONSerialization` + Codable; a `JSONValue` enum for open shapes | — | Core | Protocol decoders need lossless unknown-field handling |
 | Markdown | **own GFM parser** in Core/Markdown (port `markdownBlocks.ts`, add inline) | — | Core | Swift-only constraint rules out cmark-based libs (swift-markdown, MarkdownUI) |
 | Syntax highlighting | own tokenizer-based highlighter (Core) coloured by theme `tokenColors`; optional later TextMate-grammar engine on `NSRegularExpression` with vendored grammars | — | Core/App | shiki is JS; Splash is Swift-only syntax |
-| Math | **SwiftMath** `mgriebling/SwiftMath` (MIT, pure Swift, CoreText) — to be added by WP10 after a CI fetch check; fallback: monospace source | MIT | App | KaTeX is JS |
+| Math | **SwiftMath** `mgriebling/SwiftMath` 1.7.3 (MIT, pure Swift, CoreText), **vendored** under `native/Vendor/SwiftMath` with Latin Modern Math (GUST licence) so its fonts are found in `Contents/Resources`; fallback: monospace source | MIT | App | KaTeX is JS |
 | CLI argument parsing | own (port `devhubCli.ts`) | — | Core | Exact messages/exit codes |
 | Voice | the same whisper.cpp server binary `scripts/build_whisper.py` builds, run as a child process; client in Swift | MIT (whisper.cpp) | App bundle | Same recogniser and model as TS; Apple `SFSpeechRecognizer` (on-device) as an optional fallback |
 
