@@ -211,6 +211,18 @@ final class ControllerRig {
     }
 
     func savedText() -> String { (try? String(contentsOfFile: directory + "/state.json", encoding: .utf8)) ?? "" }
+
+    /// The saved state once it says `what`, or as it stands after a few
+    /// seconds: a save runs after the operation that queued it, on its own
+    /// time, so a fixed wait is a guess a loaded machine can lose.
+    func savedText(once what: String) async -> String {
+        for _ in 0..<500 {
+            let text = savedText()
+            if text.contains(what) { return text }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return savedText()
+    }
 }
 
 private func refusal(_ body: () async throws -> Void) async -> AppError? {
@@ -622,8 +634,9 @@ final class AppControllerTests: XCTestCase {
     func testWritesDownEveryMachineAWorkspaceIsOpenOn() async throws {
         let rig = ControllerRig()
         _ = try await rig.open("/work/api")
-        await rig.settled()
-        XCTAssertEqual(rig.savedText().contains("\"session_machines\": [\n    \"local\"\n  ]"), true, rig.savedText())
+        let machines = "\"session_machines\": [\n    \"local\"\n  ]"
+        let saved = await rig.savedText(once: machines)
+        XCTAssertTrue(saved.contains(machines), saved)
     }
 
     func testReportsTheMachinesWithAgentsAndWithWorkspaces() async throws {
