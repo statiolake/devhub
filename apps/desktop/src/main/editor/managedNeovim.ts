@@ -100,13 +100,8 @@ export interface ManagedNeovimOptions {
 	readonly panes: EditorPanes;
 	/** The `nvim` to start, resolved; rejects with the sentence to show. */
 	readonly nvim: () => Promise<string>;
-	/**
-	 * Where the sockets go: DevHub's own, `0700`. See `socketDirectoryFor`.
-	 * A function for a machine whose answer needs asking first — a host's
-	 * home directory (`neovimTerraform.ts`); it may reject with the sentence
-	 * to show, like `nvim`.
-	 */
-	readonly socketDirectory: string | (() => Promise<string>);
+	/** Where the sockets go: DevHub's own, `0700`. See `socketDirectoryFor`. */
+	readonly socketDirectory: string;
 	readonly connect?: (socketPath: string) => Promise<NeovimRpc>;
 	readonly files?: NeovimFiles;
 	/** How long a new Neovim has to open its socket. */
@@ -220,13 +215,8 @@ export class ManagedNeovims {
 		this.pollMs = options.pollMs ?? 50;
 	}
 
-	async socketPath(workspaceId: string): Promise<string> {
-		return join(await this.socketDirectory(), neovimSocketName(workspaceId));
-	}
-
-	private async socketDirectory(): Promise<string> {
-		const directory = this.options.socketDirectory;
-		return typeof directory === "string" ? directory : directory();
+	socketPath(workspaceId: string): string {
+		return join(this.options.socketDirectory, neovimSocketName(workspaceId));
 	}
 
 	/** The pane a Workspace's managed Neovim is in, while one is known. */
@@ -281,7 +271,7 @@ export class ManagedNeovims {
 				await this.panes.kill(target, record.paneId).catch(() => undefined);
 			}
 			await this.forget(target.workspaceId, record);
-			await this.files.remove(await this.socketPath(target.workspaceId));
+			await this.files.remove(this.socketPath(target.workspaceId));
 		});
 	}
 
@@ -346,7 +336,7 @@ export class ManagedNeovims {
 	private async adopt(
 		target: WorkspaceTerminalTarget,
 	): Promise<ServerRecord | undefined> {
-		const socketPath = await this.socketPath(target.workspaceId);
+		const socketPath = this.socketPath(target.workspaceId);
 		if (!(await this.files.exists(socketPath))) return undefined;
 		let client: NeovimRpc;
 		try {
@@ -384,8 +374,8 @@ export class ManagedNeovims {
 	}
 
 	private async start(target: WorkspaceTerminalTarget): Promise<ServerRecord> {
-		const socketPath = await this.socketPath(target.workspaceId);
-		await this.files.ensurePrivateDirectory(await this.socketDirectory());
+		const socketPath = this.socketPath(target.workspaceId);
+		await this.files.ensurePrivateDirectory(this.options.socketDirectory);
 		await this.files.remove(socketPath);
 		const nvim = await this.options.nvim();
 		const paneId = await this.panes.open(target, [

@@ -13,7 +13,7 @@
  * names one that is not on the PATH.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -25,15 +25,6 @@ import {
   ManagedNeovims,
   type EditorPanes,
 } from "../../src/main/editor/managedNeovim";
-import {
-  connectThroughRelay,
-  NEOVIM_RELAY_LUA,
-  relayArgv,
-  relayFileName,
-  spawnRelayProcess,
-} from "../../src/main/editor/neovimRelay";
-import type { TerraformShell } from "../../src/main/editor/neovimTerraform";
-import { remoteNeovimFiles } from "../../src/main/shell/neovimMachines";
 import { makeScratchDir, makeSocketDir } from "../../src/model/testScratch";
 import { TMUX, killTmuxServer } from "../tmuxSockets";
 
@@ -261,112 +252,10 @@ describe.skipIf(TMUX === undefined || NVIM === undefined)(
         );
         await again.close(target);
         expect(panes(tmux)).toHaveLength(1);
-        expect(existsSync(await again.socketPath(target.workspaceId))).toBe(
-          false,
-        );
+        expect(existsSync(again.socketPath(target.workspaceId))).toBe(false);
       } finally {
         neovims.dispose();
       }
     }, 30_000);
-  },
-);
-
-/**
- * `NeovimFiles` and the relay of a host, with the host played by this
- * machine: the ports `NeovimMachines` builds for an SSH host — the disk
- * through a shell, RPC through `nvim -l relay.lua` — around the same
- * lifecycle, so the death detector and the adoption are the relay's.
- */
-describe.skipIf(TMUX === undefined || NVIM === undefined)(
-  "the managed Neovim on a host, through the relay",
-  () => {
-    function hostShell(): TerraformShell {
-      return {
-        name: "this machine",
-        sh: (script) => {
-          const result = spawnSync("/bin/sh", ["-c", script]);
-          return Promise.resolve({
-            code: result.status,
-            stdout: result.stdout,
-            stderr: result.stderr,
-          });
-        },
-      };
-    }
-
-    it("starts, is reused, is noticed gone, is adopted again, and is closed", async () => {
-      const { tmux, session } = server();
-      const root = makeScratchDir("relayed-nvim");
-      const socketDirectory = makeSocketDir("relayed-nvim");
-      directories.push(root, socketDirectory);
-      writeFileSync(join(root, "a.txt"), "one\ntwo\n");
-      const relayPath = join(socketDirectory, relayFileName());
-      writeFileSync(relayPath, NEOVIM_RELAY_LUA);
-      const relayed = (): ManagedNeovims =>
-        new ManagedNeovims({
-          panes: barePanes(tmux, session),
-          nvim: () => Promise.resolve(NVIM as string),
-          socketDirectory: () => Promise.resolve(socketDirectory),
-          files: remoteNeovimFiles(hostShell()),
-          connect: (socketPath) => {
-            const [file, ...args] = relayArgv(
-              NVIM as string,
-              relayPath,
-              socketPath,
-            );
-            return connectThroughRelay(
-              spawnRelayProcess({
-                file: file as string,
-                args,
-                cwd: undefined,
-                env: process.env,
-              }),
-              socketPath,
-            );
-          },
-          startTimeoutMs: 10_000,
-        });
-      const neovims = relayed();
-      const target = {
-        machine: "ssh:build-box" as const,
-        workspaceId: "6f1c2d3e-4a5b-4c6d-8e7f-001122334466",
-        root,
-      };
-      try {
-        expect(
-          await neovims.open(target, { path: join(root, "a.txt"), line: 2 }),
-        ).toEqual({ started: true });
-        const first = neovims.paneOf(target.workspaceId);
-        expect(
-          await neovims.open(target, { path: join(root, "a.txt") }),
-        ).toEqual({ started: false });
-
-        tmux(["kill-pane", "-t", first as string]);
-        for (
-          let wait = 0;
-          wait < 200 && neovims.paneOf(target.workspaceId);
-          wait += 1
-        ) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        expect(neovims.paneOf(target.workspaceId)).toBeUndefined();
-        expect(
-          await neovims.open(target, { path: join(root, "a.txt") }),
-        ).toEqual({ started: true });
-
-        neovims.dispose();
-        const again = relayed();
-        expect(await again.open(target, { path: join(root, "a.txt") })).toEqual(
-          { started: false },
-        );
-        await again.close(target);
-        expect(panes(tmux)).toHaveLength(1);
-        expect(existsSync(await again.socketPath(target.workspaceId))).toBe(
-          false,
-        );
-      } finally {
-        neovims.dispose();
-      }
-    }, 40_000);
   },
 );

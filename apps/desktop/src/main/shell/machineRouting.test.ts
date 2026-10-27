@@ -93,9 +93,6 @@ class FakeMachine implements Runtime {
 			binDirectory: `${this.homeDirectory}/.devhub/terminal/bin-tag`,
 		});
 	}
-	commandLaunch(): Promise<never> {
-		return Promise.reject(new Error("not in this test"));
-	}
 	commandFromHere(command: {
 		file: string;
 		args: readonly string[];

@@ -35,7 +35,7 @@ import { RollingTally } from "../diagnostics/rollingTally.js";
 import { runBounded } from "../terminal/command.js";
 import { openPty, type Pty } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
-import { openByteStream, type StreamLaunch } from "./byteStream.js";
+import { openByteStream } from "./byteStream.js";
 import { resolveExecutable } from "../shell/runtimes.js";
 import { launchEnvironment } from "../shell/loginEnvironment.js";
 import {
@@ -461,20 +461,6 @@ export class LocalRuntime implements Runtime {
 	/** Already here. See `Runtime.commandFromHere`. */
 	commandFromHere(command: MachineCommand): Promise<MachineCommand> {
 		return Promise.resolve(command);
-	}
-
-	/** The command itself, in DevHub's own environment. See `Runtime.commandLaunch`. */
-	commandLaunch(argv: readonly string[]): Promise<StreamLaunch> {
-		const file = argv[0];
-		if (file === undefined) {
-			return Promise.reject(new Error("a command needs a program to run"));
-		}
-		return Promise.resolve({
-			file,
-			args: argv.slice(1),
-			cwd: undefined,
-			env: process.env,
-		});
 	}
 
 	/** Nothing is multiplexed to this Mac from this Mac. */

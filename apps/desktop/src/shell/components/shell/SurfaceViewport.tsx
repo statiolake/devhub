@@ -40,8 +40,8 @@ import {
   clampTerminalShare,
 } from "../../../model/agentTerminal";
 import {
+  TERMINAL_MODE_NO_SSH,
   terminalModeSupports,
-  terminalModeUnsupported,
 } from "../../../model/terminalMode";
 import type {
   TerminalSeamWire,
@@ -463,14 +463,14 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     !terminalModeSupports(workspace)
   ) {
     // Terminal mode draws the editor area from the Workspace's own tmux
-    // session, and this one's is on a host or in a container that phase 1
-    // does not reach (`docs/terminal-mode.md`). No view is laid here, so
-    // this page says so in the rectangle one would have had.
+    // session on this Mac, and this Workspace is on an SSH host, which
+    // terminal mode does not offer (`docs/terminal-mode.md`). No view is laid
+    // here, so this page says so in the rectangle one would have had.
     surfaceState = "editor-unsupported";
     editorKey = layout.editorKey;
     body = (
       <Failure
-        summary={terminalModeUnsupported(workspace)}
+        summary={TERMINAL_MODE_NO_SSH}
         detail="Its Agents and their terminals work as usual. Set Settings ▸ General ▸ Editor area to VS Code to edit it in this DevHub."
       />
     );

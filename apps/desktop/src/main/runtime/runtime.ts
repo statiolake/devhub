@@ -28,7 +28,6 @@ import { createHash } from "node:crypto";
 import type { OperationDeadline } from "../terminal/command.js";
 import type { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
-import type { StreamLaunch } from "./byteStream.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import type { ContainerHostId, RuntimeId } from "../../model/domain.js";
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
@@ -611,19 +610,6 @@ export interface Runtime {
 	 * on the host.
 	 */
 	commandFromHere(command: MachineCommand): Promise<MachineCommand>;
-
-	/**
-	 * A long-lived command on this machine as a process on this Mac whose
-	 * stdin and stdout are the command's, both DevHub's to use: the launch,
-	 * not the process, for a caller that spawns and owns it — the relay that
-	 * carries RPC to a managed Neovim on a host (`editor/neovimRelay.ts`).
-	 *
-	 * `spawnStream`'s cousin, and not the same thing: a stream's stdin is held
-	 * and never written, and this one's is the other half of a conversation.
-	 * No tty, so the bytes arrive as written. Under the machine's login
-	 * environment, like everything DevHub runs there.
-	 */
-	commandLaunch(argv: readonly string[]): Promise<StreamLaunch>;
 
 	/**
 	 * Make `localhost:<port>` on this Mac reach `localhost:<port>` on this

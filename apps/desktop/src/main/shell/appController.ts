@@ -258,7 +258,7 @@ import {
 	agentTerminalSessionName,
 	clampTerminalShare,
 } from "../../model/agentTerminal.js";
-import type { MarkedPane, TmuxTerminalRuntime } from "../terminal/tmux.js";
+import type { MarkedPane } from "../terminal/tmux.js";
 import {
 	chromeAudience,
 	displayAudience,
@@ -363,8 +363,6 @@ import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
 	containerHostFor,
 	disposeContainerHost,
-	editorHostMachine,
-	remoteServerFor,
 	disposeRuntime,
 	liveContainerHosts,
 	liveRuntimes,
@@ -515,15 +513,14 @@ import {
 } from "./inputSourceHelper.js";
 import type { Landing } from "./chords.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
-import { BundledNeovimDelivery } from "../editor/neovimDelivery.js";
-import { NeovimMachines, adapterPanes } from "./neovimMachines.js";
 import { resolveExecutable } from "./runtimes.js";
 import {
 	isTerminalMode,
 	workbenchMode,
 	workspacesWantingWorkbenches,
 	terminalModeSupports,
-	terminalModeUnsupported,
+	TERMINAL_MODE_NO_DEV_CONTAINERS,
+	TERMINAL_MODE_NO_SSH,
 } from "./workbenchMode.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
@@ -562,17 +559,6 @@ function rehBundleDirectory(): string {
 	return vscodeProduct.commit !== undefined
 		? join(APP_ROOT, "..", "reh")
 		: join(APP_ROOT, "..", "..", "dist", "reh");
-}
-
-/**
- * Where the Linux Neovims terminal mode copies to hosts are: beside the
- * servers, by the same switch — `Contents/Resources/nvim` packaged, the
- * checkout's `dist/nvim` (scripts/build_nvim.py) in a source run.
- */
-function nvimBundleDirectory(): string {
-	return vscodeProduct.commit !== undefined
-		? join(APP_ROOT, "..", "nvim")
-		: join(APP_ROOT, "..", "..", "dist", "nvim");
 }
 
 /**
@@ -814,11 +800,11 @@ export class AppController {
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
 	/**
-	 * Terminal mode's file jumps: one Neovim per Workspace, DevHub's own, on
-	 * the Workspace's machine. Built with the terminal runtime it runs on;
-	 * see `editor/managedNeovim.ts` and `neovimMachines.ts`.
+	 * Terminal mode's file jumps: one Neovim per Workspace, DevHub's own.
+	 * Built with the terminal runtime it runs on; see
+	 * `editor/managedNeovim.ts`.
 	 */
-	private neovims: NeovimMachines | undefined;
+	private managedNeovims: ManagedNeovims | undefined;
 	/** This profile's user-data directory, from `startRuntimes`. */
 	private userDataPath: string | undefined;
 	/** The launcher installation, asked for once per machine. */
@@ -1196,7 +1182,7 @@ export class AppController {
 			model: () => this.coordinator.model,
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
-		this.neovims = this.createNeovimMachines(userDataPath);
+		this.managedNeovims = this.createManagedNeovims(userDataPath);
 		const skill = this.writeAgentSkill(userDataPath);
 		this.agentWiring = wireAgents({
 			// This Mac's skill is written at startup; another machine's is
@@ -1361,57 +1347,22 @@ export class AppController {
 	}
 
 	/**
-	 * The managed Neovims of terminal mode: this Mac's on its own tmux, and
-	 * a host's on the host's, terraformed there first. Built in either mode —
-	 * it costs nothing until a jump asks — and only ever asked in terminal
-	 * mode.
+	 * The managed Neovims of terminal mode, on this Mac's tmux. Built in
+	 * either mode — it costs nothing until a jump asks — and only ever asked
+	 * in terminal mode.
 	 */
-	private createNeovimMachines(userDataPath: string): NeovimMachines {
-		const adapter = async (machine: RuntimeId) => {
+	private createManagedNeovims(userDataPath: string): ManagedNeovims {
+		const local = async () => {
 			const wiring = this.terminalsWiring;
 			if (!wiring) throw new Error("the terminal runtime is not running");
-			const runtime = await wiring.runtimes.for(runtimeById(machine));
+			const runtime = await wiring.local();
 			if (!runtime.adapterAvailable) {
 				throw new Error(
-					runtime.unavailableReason ?? `there is no tmux on ${machine}`,
+					runtime.unavailableReason ?? "there is no tmux on this Mac",
 				);
 			}
 			return runtime;
 		};
-		return new NeovimMachines({
-			local: this.createManagedNeovims(userDataPath, () => adapter("local")),
-			runtime: (machine) => runtimeById(machine),
-			adapter,
-			delivery: new BundledNeovimDelivery({
-				directory: nvimBundleDirectory(),
-				packaged: vscodeProduct.commit !== undefined,
-			}),
-			serverDataFolderName:
-				vscodeProduct.serverDataFolderName ?? ".vscode-server",
-			controlSocketPath: controlSocketPath(userDataPath),
-			localEnvironment: () => this.launchEnvironment,
-			localHome: homedir(),
-			condition: (machine, summary) => {
-				this.publishCondition(`neovim:${machine}`, summary);
-			},
-			installServerFiles: async (machine) => {
-				const { host, delivery } = remoteServerFor(editorHostMachine(machine));
-				await host.installServerFiles(delivery);
-			},
-			log: (line) => {
-				console.log(line);
-			},
-		});
-	}
-
-	/**
-	 * The managed Neovims of terminal mode on this Mac's tmux: the person's
-	 * own `nvim`, on a socket in DevHub's own directory.
-	 */
-	private createManagedNeovims(
-		userDataPath: string,
-		local: () => Promise<TmuxTerminalRuntime>,
-	): ManagedNeovims {
 		// DevHub's own directory first; a path too long for a socket address
 		// (a long home on macOS) falls back to the temporary one. Neither
 		// fitting is said at the first jump, not thrown at startup.
@@ -1427,7 +1378,18 @@ export class AppController {
 			socketProblem = failureText(error);
 		}
 		return new ManagedNeovims({
-			panes: adapterPanes(local),
+			panes: {
+				open: async (target, argv) =>
+					(await local()).openEditorWindow(target, argv),
+				state: async (target, paneId) =>
+					(await local()).editorPaneState(target, paneId),
+				activate: async (target, paneId) => {
+					await (await local()).activateEditorPane(target, paneId);
+				},
+				kill: async (target, paneId) => {
+					await (await local()).killEditorPane(target, paneId);
+				},
+			},
 			// The person's own `nvim`, on the login PATH DevHub imported: the
 			// same lookup `runtimes.*` gets, so DevHub and a shell inside it
 			// cannot disagree about which Neovim there is.
@@ -3078,7 +3040,7 @@ export class AppController {
 		this.terminalsWiring?.service.dispose();
 		// The managed Neovims too: they run on in tmux, and the next DevHub
 		// adopts them by their sockets.
-		this.neovims?.dispose();
+		this.managedNeovims?.dispose();
 	}
 
 	//#endregion
@@ -3506,19 +3468,11 @@ export class AppController {
 	private editorTerminalViews(
 		onScreen: string | undefined,
 	): readonly { readonly editorKey: string; readonly workspaceId: string }[] {
-		const first =
-			onScreen !== undefined && !this.editorTerminalsShown.has(onScreen);
 		if (onScreen !== undefined) this.editorTerminalsShown.add(onScreen);
 		const entries: { editorKey: string; workspaceId: string }[] = [];
 		for (const workspace of this.coordinator.model.workspaces) {
 			if (!this.editorTerminalsShown.has(workspace.key)) continue;
 			if (!terminalModeSupports(workspace)) continue;
-			// A host's editor area, shown for the first time this run: the host
-			// is terraformed now, so `nvim` in its panes is DevHub's and what is
-			// missing there is said before a jump needs it.
-			if (first && workspace.key === onScreen) {
-				this.neovims?.warm(runtimeIdFor(workspace.location));
-			}
 			entries.push({ editorKey: workspace.key, workspaceId: workspace.id });
 		}
 		const kept = new Set(entries.map((entry) => entry.editorKey));
@@ -6126,28 +6080,15 @@ export class AppController {
 		});
 	}
 
-	/** A closing Workspace's managed Neovim, if it has one, on its machine. */
+	/** A closing Workspace's managed Neovim, if it has one on this Mac. */
 	private async closeManagedNeovim(
 		workspace: Workspace | undefined,
 	): Promise<void> {
 		if (workspace === undefined || !terminalModeSupports(workspace)) return;
-		const machine = runtimeIdFor(workspace.location);
-		const closing = this.neovims?.on(machine).close({
-			machine,
+		await this.managedNeovims?.close({
+			machine: "local",
 			workspaceId: workspace.id,
 			root: workspace.root,
-		});
-		if (machine === "local") {
-			await closing;
-			return;
-		}
-		// A host that cannot be reached cannot have its Neovim killed, and that
-		// is no reason to keep the Workspace open: its session goes with the
-		// close's terminal step, and the Neovim in it with the session.
-		await closing?.catch((error: unknown) => {
-			console.error(
-				`[devhub] the managed Neovim of ${workspace.root} on ${machine} could not be closed: ${failureText(error)}`,
-			);
 		});
 	}
 
@@ -6218,6 +6159,10 @@ export class AppController {
 		// Opening a folder is going there, keyboard and all: the selection it
 		// makes is where the keys land, the Sidebar it may have been asked
 		// from included. See `arrive`.
+		// Terminal mode is local-only; every way of opening one meets here.
+		if (isTerminalMode() && location.kind === "ssh") {
+			throw workspaceFailure(TERMINAL_MODE_NO_SSH);
+		}
 		this.keyboardInSidebar = false;
 		const opened = await this.dispatchAwaiting({
 			type: "open_folder",
@@ -6286,14 +6231,7 @@ export class AppController {
 		target: ContainerTarget,
 	): Promise<string> {
 		const { path, position, waitMarkerPath } = request;
-		if (isTerminalMode()) {
-			throw new Error(
-				terminalModeUnsupported({
-					location: { kind: "local" },
-					editor: { kind: "devContainer" },
-				}),
-			);
-		}
+		if (isTerminalMode()) throw new Error(TERMINAL_MODE_NO_DEV_CONTAINERS);
 		const id = containerHostId(target);
 		const workspace = this.coordinator.model.workspaces.find((candidate) => {
 			const attached = containerTargetOf(candidate.location, candidate.editor);
@@ -6356,15 +6294,10 @@ export class AppController {
 				`no workspace ${workspaceId} is open to attach an editor to`,
 			);
 		}
-		// There is no VS Code editor to move in terminal mode, and the
-		// Workspace's terminal does not follow a dev container yet.
+		// There is no VS Code editor to move in terminal mode: a dev container
+		// is only ever where a workbench runs, and terminal mode has none.
 		if (isTerminalMode()) {
-			throw workspaceFailure(
-				terminalModeUnsupported({
-					location: { kind: "local" },
-					editor: { kind: "devContainer" },
-				}),
-			);
+			throw workspaceFailure(TERMINAL_MODE_NO_DEV_CONTAINERS);
 		}
 		const bringUp = (target: ContainerTarget) =>
 			containerHostFor(target).ensureUp(
@@ -7165,8 +7098,8 @@ export class AppController {
 		waitMarkerPath: string | undefined,
 		before: NavigationSelection,
 	): Promise<string> {
-		const machines = this.neovims;
-		if (!machines) throw new Error("the terminal runtime is not running");
+		const neovims = this.managedNeovims;
+		if (!neovims) throw new Error("the terminal runtime is not running");
 		const workspace =
 			destination.kind === "scratch"
 				? this.scratchWorkspace()
@@ -7174,19 +7107,9 @@ export class AppController {
 						destination.workspace.root,
 						runtimeMachine(destination.workspace.machine),
 					);
-		if (!terminalModeSupports(workspace)) {
-			throw new Error(terminalModeUnsupported(workspace));
+		if (!terminalModeSupports(workspace) || machine !== "local") {
+			throw new Error(TERMINAL_MODE_NO_SSH);
 		}
-		// The path was resolved on the machine the request came from, and the
-		// Neovim that opens it runs on the Workspace's. Routing only ever pairs
-		// a path with a Workspace on its own machine; this says so if not.
-		const workspaceMachine = runtimeIdFor(workspace.location);
-		if (machine !== workspaceMachine) {
-			throw new Error(
-				`${target.path} is a path on ${machine}, and the workspace at ${workspace.root} is on ${workspaceMachine}.`,
-			);
-		}
-		const neovims = machines.on(workspaceMachine);
 		const besideAgent =
 			destination.kind !== "scratch" && destination.reason === "origin-agent"
 				? this.runningAgent(destination.agentId)
@@ -7216,11 +7139,7 @@ export class AppController {
 		// Laid out first, so the editor area is attached while Neovim starts.
 		this.placeKeyboardOnSurface();
 		const { started } = await neovims.open(
-			{
-				machine: workspaceMachine,
-				workspaceId: workspace.id,
-				root: workspace.root,
-			},
+			{ machine: "local", workspaceId: workspace.id, root: workspace.root },
 			{
 				path: target.path,
 				...(position === undefined

@@ -818,8 +818,13 @@ function WorkspaceMarks({
   readonly repository: WorkspaceRepositoryWire | undefined;
   readonly editor: EditorAttachmentWire;
 }) {
-  const editorFact = editorAttachmentFact(editor);
-  const { openExternalUrl } = useSidebar();
+  const { openExternalUrl, appearance } = useSidebar();
+  // Terminal mode has no workbench to put in a container: the folder is the
+  // local folder it is, and the row says nothing about a container.
+  const editorFact =
+    appearance?.workbench === "terminal"
+      ? undefined
+      : editorAttachmentFact(editor);
   const pullRequest = repository?.pullRequest;
   const ciBadge = pullRequest ? checksBadge(pullRequest) : undefined;
   return (

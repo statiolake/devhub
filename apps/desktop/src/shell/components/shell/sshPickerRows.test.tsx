@@ -34,7 +34,10 @@ const HOSTS = [
   { alias: "staging", hostName: "staging.example.com" },
 ];
 
-function mount(hosts: readonly (typeof HOSTS)[number][] = HOSTS) {
+function mount(
+  hosts: readonly (typeof HOSTS)[number][] = HOSTS,
+  sshOffered = true,
+) {
   const openSshWorkspace = vi.fn().mockResolvedValue(undefined);
   const selectWorkspacePicker = vi.fn().mockResolvedValue(undefined);
   const value = {
@@ -47,6 +50,7 @@ function mount(hosts: readonly (typeof HOSTS)[number][] = HOSTS) {
     chooseWorkspaceFolder: vi.fn(),
     listSshHosts: vi.fn().mockResolvedValue(hosts),
     openSshWorkspace,
+    sshOffered,
     reportFailure: vi.fn(),
   } as unknown as PickerValue;
   render(
@@ -58,6 +62,13 @@ function mount(hosts: readonly (typeof HOSTS)[number][] = HOSTS) {
 }
 
 describe("the SSH rows in the workspace picker", () => {
+  it("are not offered in terminal mode, which is local-only", async () => {
+    mount(HOSTS, false);
+    expect(await screen.findByText("Other…")).toBeInTheDocument();
+    expect(screen.queryByText("SSH: build")).not.toBeInTheDocument();
+    expect(screen.queryByText("SSH: Connect…")).not.toBeInTheDocument();
+  });
+
   it("offers every machine the SSH config names, and one way to type one", async () => {
     mount();
     expect(await screen.findByText("SSH: build")).toBeInTheDocument();

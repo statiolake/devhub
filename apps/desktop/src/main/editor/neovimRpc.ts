@@ -31,43 +31,6 @@ export interface NeovimRpc {
 	close(): void;
 }
 
-/**
- * The bytes between DevHub and one Neovim server, however they travel.
- *
- * A unix socket on this Mac, or the stdio of a relay process that reaches a
- * socket on another machine (`neovimRelay.ts`). The client neither knows nor
- * needs to know which: both are a stream of msgpack each way that ends once,
- * and its ending is the server having gone.
- */
-export interface NeovimWire {
-	write(bytes: Uint8Array): void;
-	onData(listener: (chunk: Uint8Array) => void): void;
-	/** Once, however it ended. */
-	onClose(listener: () => void): void;
-	destroy(): void;
-}
-
-/** A connected socket as a wire. */
-export function socketWire(socket: Socket): NeovimWire {
-	socket.on("error", () => {
-		// `close` follows every `error`, and that is where it is handled.
-	});
-	return {
-		write: (bytes) => {
-			socket.write(bytes);
-		},
-		onData: (listener) => {
-			socket.on("data", listener);
-		},
-		onClose: (listener) => {
-			socket.on("close", listener);
-		},
-		destroy: () => {
-			socket.destroy();
-		},
-	};
-}
-
 /** Neovim answered a request with an error (`[type, message]`). */
 export class NeovimRpcError extends Error {
 	constructor(
@@ -103,26 +66,18 @@ export class NeovimClient implements NeovimRpc {
 	private ended = false;
 
 	private constructor(
-		private readonly socket: NeovimWire,
+		private readonly socket: Socket,
 		private readonly timeoutMs: number,
 	) {
-		socket.onData((chunk) => {
+		socket.on("data", (chunk: Buffer) => {
 			this.receive(chunk);
 		});
-		socket.onClose(() => {
+		socket.on("error", () => {
+			// `close` follows every `error`, and that is where it is handled.
+		});
+		socket.on("close", () => {
 			this.end(new Error("the connection to Neovim closed"));
 		});
-	}
-
-	/** A client over a wire that is already connected. */
-	static over(
-		wire: NeovimWire,
-		options: { readonly timeoutMs?: number } = {},
-	): NeovimClient {
-		return new NeovimClient(
-			wire,
-			options.timeoutMs ?? NEOVIM_REQUEST_TIMEOUT_MS,
-		);
 	}
 
 	/**
@@ -144,7 +99,7 @@ export class NeovimClient implements NeovimRpc {
 			socket.once("connect", () => {
 				clearTimeout(timer);
 				socket.removeAllListeners("error");
-				resolve(new NeovimClient(socketWire(socket), timeoutMs));
+				resolve(new NeovimClient(socket, timeoutMs));
 			});
 			socket.once("error", (error) => {
 				clearTimeout(timer);

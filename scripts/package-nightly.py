@@ -52,11 +52,6 @@ The layout inside the bundle, and why:
                                     its model, built and fetched at build
                                     time by scripts/build_whisper.py, never
                                     at runtime; copied in by bundle_whisper
-      Resources/nvim/               the Linux Neovims terminal mode copies to
-                                    an SSH host, one tarball per architecture
-                                    and their statement — fetched and verified
-                                    at build time by scripts/build_nvim.py;
-                                    copied in by bundle_nvim
       Resources/app/                what Electron loads
         package.json                "main" -> devhub-main.js
         devhub-main.js              generated entry: the environment and the
@@ -126,7 +121,6 @@ Usage:
                                [--zip-level 0-9|ditto]
                                [--reh-dir DIR | --without-reh]
                                [--whisper-dir DIR | --without-whisper]
-                               [--nvim-dir DIR | --without-nvim]
 
 Requires an already-built tree; every missing input names the command that
 produces it. The result is unsigned beyond an ad-hoc signature, which is the
@@ -174,11 +168,6 @@ from build_whisper import (  # noqa: E402
 	chosen_model as chosen_whisper_model,
 	ensure as ensure_whisper,
 	install_problems as whisper_install_problems,
-)
-from build_nvim import (  # noqa: E402
-	DEFAULT_OUT_DIR as NVIM_BUILD_DIR,
-	ensure as ensure_nvim,
-	install_problems as nvim_install_problems,
 )
 from build_reh import DEFAULT_OUT_DIR as REH_BUILD_DIR, TARGETS as REH_TARGETS, bundle_problems  # noqa: E402
 from product_metadata import (  # noqa: E402
@@ -1023,28 +1012,6 @@ def bundle_whisper(app: Path, whisper_dir: Path) -> None:
 	print(f"    {directory_size(target) / 1e6:.0f} MB")
 
 
-def bundle_nvim(app: Path, nvim_dir: Path) -> None:
-	"""Put the Linux Neovims in the app, or refuse to package.
-
-	Re-hashed against their pins (`install_problems`), because a truncated
-	tarball is not an error anyone sees here: it is an SSH host whose editor
-	area falls back to that host's own Neovim, with a notice, the first time
-	someone jumps to a file there.
-	"""
-	problems = nvim_install_problems(nvim_dir)
-	if problems:
-		fail(
-			"the Linux Neovims are not ready to bundle:\n  "
-			+ "\n  ".join(problems)
-			+ "\nFetch them with scripts/build_nvim.py, or pass --without-nvim "
-			"for a bundle whose terminal mode uses each SSH host's own nvim."
-		)
-	target = app / "Contents" / "Resources" / "nvim"
-	shutil.rmtree(target, ignore_errors=True)
-	copy_tree(nvim_dir, target, ignore=lambda d, names: {n for n in names if n.endswith(".part")})
-	print(f"    {directory_size(target) / 1e6:.0f} MB")
-
-
 # --- entry point -----------------------------------------------------------
 
 
@@ -1084,16 +1051,6 @@ def main() -> int:
 		action="store_true",
 		help="package without it — a composer with no voice input; CI's check build only",
 	)
-	parser.add_argument(
-		"--nvim-dir",
-		default=str(NVIM_BUILD_DIR),
-		help="where scripts/build_nvim.py left the Linux Neovims (fetched there if missing)",
-	)
-	parser.add_argument(
-		"--without-nvim",
-		action="store_true",
-		help="package without them — terminal mode then uses each SSH host's own nvim; CI's check build only",
-	)
 	args = parser.parse_args()
 
 	if sys.platform != "darwin":
@@ -1113,12 +1070,6 @@ def main() -> int:
 		# cached under ~/.cache/devhub/whisper afterwards.
 		step("speech recogniser")
 		if ensure_whisper(Path(args.whisper_dir).resolve()) != 0:
-			return 1
-
-	if not args.without_nvim:
-		# A download of two ~11 MB tarballs, cached under ~/.cache/devhub/nvim.
-		step("Linux Neovims")
-		if ensure_nvim(Path(args.nvim_dir).resolve()) != 0:
 			return 1
 
 	step("inputs")
@@ -1162,12 +1113,6 @@ def main() -> int:
 		print("    none: --without-whisper (this bundle's composer takes no dictation)")
 	else:
 		bundle_whisper(app, Path(args.whisper_dir).resolve())
-
-	step("Linux Neovims")
-	if args.without_nvim:
-		print("    none: --without-nvim (terminal mode uses each SSH host's own nvim)")
-	else:
-		bundle_nvim(app, Path(args.nvim_dir).resolve())
 
 	step("ad-hoc signature")
 	# An Apple Silicon Mac refuses to run a modified bundle with no signature at

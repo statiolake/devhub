@@ -53,6 +53,7 @@ export function workspacesWantingWorkbenches<
 
 export {
 	terminalModeSupports,
-	terminalModeUnsupported,
+	TERMINAL_MODE_NO_DEV_CONTAINERS,
+	TERMINAL_MODE_NO_SSH,
 	type TerminalModePlace,
 } from "../../model/terminalMode.js";

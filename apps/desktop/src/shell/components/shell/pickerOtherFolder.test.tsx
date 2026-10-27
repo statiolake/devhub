@@ -41,6 +41,7 @@ function mount(chosenFolder: string | null = "/elsewhere/thing") {
     chooseWorkspaceFolder,
     listSshHosts: vi.fn().mockResolvedValue([]),
     openSshWorkspace: vi.fn(),
+    sshOffered: true,
     reportFailure: vi.fn(),
   } as unknown as PickerValue;
   render(

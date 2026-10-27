@@ -76,9 +76,6 @@ class RecordingRuntime implements Runtime {
 			binDirectory: undefined,
 		});
 	}
-	commandLaunch(): Promise<never> {
-		return Promise.reject(new Error("not in this test"));
-	}
 	commandFromHere(command: {
 		file: string;
 		args: readonly string[];

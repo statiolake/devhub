@@ -996,8 +996,8 @@ describe("terminal mode's editor area", () => {
 	});
 
 	it("draws nothing for a Workspace that has no terminal view, which the page speaks for", () => {
-		// An SSH or dev container Workspace in phase 1: no view is made, and
-		// the window's own page draws "not supported yet" in the rectangle.
+		// An SSH Workspace: no view is made, and the window's own page draws
+		// "not available in terminal mode" in the rectangle.
 		const children = windowLayout(
 			terminalMode({
 				state: state({ surface: { kind: "editor", editorKey: "/ssh" } }),

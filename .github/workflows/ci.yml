@@ -123,10 +123,10 @@ jobs:
         run: python3 -m unittest darwin_bundle_test
 
   # A test build of the app: only what the app-level tests need. No remote
-  # extension hosts, no speech recogniser, no Linux Neovims, no zip, and the fast VS Code bundle
+  # extension hosts, no speech recogniser, no zip, and the fast VS Code bundle
   # (DEVHUB_FAST_VSCODE_BUNDLE=1, the one a developer's `pnpm build` makes)
   # instead of the nightly's full `core-ci`. scripts/build_reh_test.py,
-  # build_whisper_test.py, build_nvim_test.py and package_nightly_test.py, in the Linux job, keep
+  # build_whisper_test.py and package_nightly_test.py, in the Linux job, keep
   # the parts it leaves out honest; the nightly builds and tests them for real.
   build-app:
     name: "Build: DevHub.app test build (macOS)"
@@ -157,7 +157,7 @@ jobs:
           # The built-in extension set pulls binaries from GitHub releases;
           # the token is only there for the rate limit.
           GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/build-app.sh --without-reh --without-whisper --without-nvim --no-zip
+        run: scripts/build-app.sh --without-reh --without-whisper --no-zip
 
       # One tar rather than the bundle's 20,000 files: the artifact service
       # uploads file by file and drops symlinks and modes, which a signed app
