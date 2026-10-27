@@ -74,7 +74,13 @@ jobs:
         env:
           DEVHUB_TEST_REQUIRE_TMUX: "1"
           DEVHUB_TEST_REQUIRE_NVIM: "1"
-        run: swift test
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/test.log" || {
+            echo "---- failures ----"
+            grep -E "error: |failed \(" "$RUNNER_TEMP/test.log" | head -60
+            exit 1
+          }
 
       - name: CLI answers --version
         run: .build/debug/devhub --version
@@ -140,7 +146,13 @@ jobs:
         env:
           DEVHUB_TEST_REQUIRE_TMUX: "1"
           DEVHUB_TEST_REQUIRE_NVIM: "1"
-        run: swift test
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee "$RUNNER_TEMP/test.log" || {
+            echo "---- failures ----"
+            grep -E "error: |failed \(" "$RUNNER_TEMP/test.log" | head -60
+            exit 1
+          }
 
       - name: Bundle DevHub.app (release)
         run: Scripts/bundle-app.sh --output "$RUNNER_TEMP/native"

@@ -106,10 +106,14 @@ final class RealNeovimTests: XCTestCase {
         try XCTSkipIf(nvim == nil, "no nvim (set DEVHUB_TEST_NVIM)")
     }
 
+    // The files are named canonically (`realpath`), as DevHub names every
+    // path it hands Neovim: Neovim resolves the symlinks in a buffer's name,
+    // so a file under macOS's `/tmp` is `/private/tmp/…` to it.
+
     func testOpensAFileAtALineAndAColumnWhateverItsPathHolds() async throws {
         let server = try HeadlessNeovim()
         let client = try await server.connect()
-        let scratch = try wp7SocketDirectory("nvim-open")
+        let scratch = SelfTestWorld.canonical(try wp7SocketDirectory("nvim-open"))
         defer { wp7RemoveDirectory(scratch) }
         let file = scratch + "/a file with 'quotes' | and spaces.ts"
         try "first\nsecond line\n日本語のテキスト\nlast\n".write(toFile: file, atomically: true, encoding: .utf8)
@@ -133,7 +137,7 @@ final class RealNeovimTests: XCTestCase {
     func testOpensAFileThatIsNotThereYetAsANewBufferForIt() async throws {
         let server = try HeadlessNeovim()
         let client = try await server.connect()
-        let scratch = try wp7SocketDirectory("nvim-new")
+        let scratch = SelfTestWorld.canonical(try wp7SocketDirectory("nvim-new"))
         defer { wp7RemoveDirectory(scratch) }
         let file = scratch + "/new.md"
         _ = try await client.request("nvim_exec_lua", [.string(openFileLua), [.string(file), nil, nil, nil]])
@@ -145,7 +149,7 @@ final class RealNeovimTests: XCTestCase {
     func testDeletesAWaitMarkerWhenThatBufferIsClosed() async throws {
         let server = try HeadlessNeovim()
         let client = try await server.connect()
-        let scratch = try wp7SocketDirectory("nvim-wait")
+        let scratch = SelfTestWorld.canonical(try wp7SocketDirectory("nvim-wait"))
         defer { wp7RemoveDirectory(scratch) }
         let file = scratch + "/COMMIT_EDITMSG"
         let marker = scratch + "/wait-marker"
@@ -217,7 +221,7 @@ final class RealNeovimTests: XCTestCase {
         }
         guard let tmux else { throw XCTSkip("no tmux (set DEVHUB_TEST_TMUX)") }
         let nvim = nvim!
-        let scratch = try wp7SocketDirectory("managed")
+        let scratch = SelfTestWorld.canonical(try wp7SocketDirectory("managed"))
         defer { wp7RemoveDirectory(scratch) }
         let socketName = "dh-test-\(DevhubWait.randomHex())"
         let panes = PrivateTmuxPanes(tmux: tmux, socketName: socketName, session: "ws-test")
