@@ -139,6 +139,20 @@ final class ScratchDayTests: XCTestCase {
         XCTAssertTrue(refused.failure!.hasPrefix("Today's Scratch folder \(home)/file/"))
     }
 
+    /// realpath(3), as every Workspace root: a folder reached through a
+    /// symlink (`/tmp` → `/private/tmp` on macOS) is named by where it is,
+    /// or tmux refuses its ws- session as a root that canonicalises elsewhere.
+    func testNamesTodaysFolderByItsRealPathThroughASymlink() throws {
+        let home = try localRealpath(NSTemporaryDirectory()) + "/devhub-scratch-link-\(UUID().uuidString)"
+        defer { try? FileManager.default.removeItem(atPath: home) }
+        try FileManager.default.createDirectory(atPath: home + "/real", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: home + "/link", withDestinationPath: home + "/real")
+        let made = try ScratchFolder.make(daily: "~/link/YYYYMMDD", now: Date(), home: home)
+        XCTAssertNil(made.failure)
+        XCTAssertEqual(made.path, "\(home)/real/\(DateTemplate.expand("YYYYMMDD", now: Date()))")
+        XCTAssertEqual(made.path, try localRealpath(made.path))
+    }
+
     func testTheFollowerAdoptsANewDailyAtOnce() async throws {
         let home = NSTemporaryDirectory() + "devhub-wp1-follow-\(UUID().uuidString)"
         defer { try? FileManager.default.removeItem(atPath: home) }

@@ -289,10 +289,10 @@ final class SelfTest {
         let locations = ProfileLocations(profile: "selftest", home: home, environment: [:])
         let fm = FileManager.default
         try? fm.createDirectory(atPath: locations.configDirectory, withIntermediateDirectories: true)
-        // Scratch under the real home, not under `/tmp`: a root that is
-        // reached through a symlink (`/tmp` → `/private/tmp`) does not get its
-        // `ws-` session on macOS (see the report on WP3).
-        let scratchRoot = (NSHomeDirectory() as NSString).appendingPathComponent(".devhub-self-test-\(getpid())")
+        // Scratch named through the `/tmp` → `/private/tmp` symlink on
+        // purpose: its root must come out canonical (realpath) and still get
+        // its `ws-` session.
+        let scratchRoot = "/tmp/dh-st-\(getpid())-scratch"
         try? fm.createDirectory(atPath: scratchRoot, withIntermediateDirectories: true)
         let settings = """
             version = \(Int(ConfigConstants.schemaVersion))

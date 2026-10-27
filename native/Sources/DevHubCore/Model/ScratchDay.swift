@@ -102,7 +102,12 @@ public struct ScratchFolder: Equatable, Sendable {
         let fm = FileManager.default
         do {
             try fm.createDirectory(atPath: path, withIntermediateDirectories: true)
-            let canonical = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+            // realpath(3), as every other Workspace root is made (fs.realpath
+            // in scratchDay.ts). Not `resolvingSymlinksInPath`: on macOS it
+            // strips `/private`, so a folder under `/tmp` or `/var` came out
+            // as `/tmp/…`, which tmux's `createSession` then refused as a
+            // root that canonicalises elsewhere (`session_unavailable`).
+            let canonical = try localRealpath(path)
             var isDirectory: ObjCBool = false
             guard fm.fileExists(atPath: canonical, isDirectory: &isDirectory), isDirectory.boolValue else {
                 throw ScratchFolderError(message: "\(canonical) is not a folder")
