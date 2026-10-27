@@ -5,7 +5,7 @@
 
 // DevHub: a tidy editor after being away. When this workbench comes back on
 // screen in DevHub after `devhub.workbench.tidyAfterAwayMinutes` (another
-// Workspace or an Agent was shown instead), its panel and side bars are
+// Workspace or an Agent was shown instead), its panel and side bar are
 // hidden and the keyboard goes to the active editor group, so it opens as a
 // big, clean editor. "Away" is measured by DevHub's main process from its own
 // layout (apps/desktop/src/main/shell/workbenchAbsence.ts) and arrives here as
@@ -30,13 +30,14 @@ export const TIDY_PARTS_SETTING = 'devhub.workbench.tidyParts';
 export const WORKBENCH_RETURNED_COMMAND = '_devhub.workbench.returned';
 export const TIDY_LAYOUT_COMMAND = 'devhub.workbench.tidyLayout';
 
-type TidyPart = 'panel' | 'sideBar' | 'auxiliaryBar';
+// There is no secondary side bar in DevHub (devhubNoAuxiliaryBar), so it is not
+// a part to tidy; an `"auxiliaryBar"` left in the setting is ignored.
+type TidyPart = 'panel' | 'sideBar';
 const PARTS: Record<TidyPart, SINGLE_WINDOW_PARTS> = {
-	auxiliaryBar: Parts.AUXILIARYBAR_PART,
 	panel: Parts.PANEL_PART,
 	sideBar: Parts.SIDEBAR_PART,
 };
-const DEFAULT_PARTS: TidyPart[] = ['panel', 'sideBar', 'auxiliaryBar'];
+const DEFAULT_PARTS: TidyPart[] = ['panel', 'sideBar'];
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerConfiguration({
 	...workbenchConfigurationNodeBase,
@@ -50,7 +51,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 		},
 		[TIDY_PARTS_SETTING]: {
 			type: 'array',
-			items: { type: 'string', enum: DEFAULT_PARTS, enumDescriptions: [localize('devhub.workbench.tidyParts.panel', "The panel: the terminal, Problems, Output and so on."), localize('devhub.workbench.tidyParts.sideBar', "The primary side bar."), localize('devhub.workbench.tidyParts.auxiliaryBar', "The secondary side bar.")] },
+			items: { type: 'string', enum: DEFAULT_PARTS, enumDescriptions: [localize('devhub.workbench.tidyParts.panel', "The panel: the terminal, Problems, Output and so on."), localize('devhub.workbench.tidyParts.sideBar', "The primary side bar.")] },
 			uniqueItems: true,
 			default: DEFAULT_PARTS,
 			scope: ConfigurationScope.APPLICATION,

@@ -642,7 +642,7 @@ diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workb
 index 74be4cac..a7cc22aa 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts
 +++ b/src/vs/workbench/workbench.desktop.main.ts
-@@ -219,6 +219,21 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
+@@ -219,6 +219,24 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
  // System-wide (OS global) Keybindings
  import './contrib/keybindings/electron-browser/systemWideKeybindings.contribution.js';
  
@@ -660,6 +660,9 @@ index 74be4cac..a7cc22aa 100644
 +
 +// DevHub: the settings DevHub decides, held in memory — the colour theme (overlay only, docs/window-and-pages.md)
 +import './contrib/devhubManagedSettings/electron-browser/devhubManagedSettings.contribution.js';
++
++// DevHub: no secondary side bar, its views in the primary one (patches/vscode/0012-no-secondary-side-bar.patch, docs/window-and-pages.md)
++import './contrib/devhubNoAuxiliaryBar/browser/devhubNoAuxiliaryBar.contribution.js';
 +
  //#endregion
  

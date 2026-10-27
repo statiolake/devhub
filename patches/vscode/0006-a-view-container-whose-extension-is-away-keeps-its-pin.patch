@@ -2,6 +2,15 @@ diff --git a/src/vs/workbench/browser/parts/paneCompositeBar.ts b/src/vs/workben
 index 048de8a0..df744f20 100644
 --- a/src/vs/workbench/browser/parts/paneCompositeBar.ts
 +++ b/src/vs/workbench/browser/parts/paneCompositeBar.ts
+@@ -163,7 +163,7 @@ export class PaneCompositeBar extends Disposable {
+ 
+ 		// Move View Container
+ 		const moveActions = [];
+-		for (const location of [ViewContainerLocation.Sidebar, ViewContainerLocation.AuxiliaryBar, ViewContainerLocation.Panel]) {
++		for (const location of [ViewContainerLocation.Sidebar, ViewContainerLocation.Panel]) { // DevHub: not to the secondary side bar, there is none (devhubNoAuxiliaryBar)
+ 			if (currentLocation !== location) {
+ 				moveActions.push(this.createMoveAction(viewContainer, location, defaultLocation));
+ 			}
 @@ -337,11 +337,15 @@ export class PaneCompositeBar extends Disposable {
  
  	private onDidRegisterViewContainers(viewContainers: readonly ViewContainer[]): void {

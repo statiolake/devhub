@@ -472,11 +472,36 @@ step from its `Cmd+J` partner (`pairedAgentId`) instead, which skipped the
 Workspace's own first Agents whenever the partner was further down; before
 that it stepped from nowhere, which is Scratch's first Agent.
 
+**A workbench has no secondary side bar.** DevHub already docks its own
+panes beside the editor, and a second VS Code side bar there competed with
+them — one more thing that came and went at the side, Chat opening in it by
+default and maximizing it when VS Code thought it should. So in DevHub that part is never shown, and
+everything it would hold is in the primary side bar: Chat, an extension's
+`secondarySidebar` view containers, and anything a person had moved there
+before.
+
+It is decided in the workbench, in two halves. The patch
+(`patches/vscode/0012-no-secondary-side-bar.patch`) makes the layout never
+show or maximize the part (a layout saved with it open, or maximized, comes
+back without it), gives a view container registered for it the primary side
+bar as its default location — so it lands there, and "Reset Location" puts it
+back there — and takes out what would show it or move something into it: its
+toggles in the title bar's layout control, the Appearance menu and Customize
+Layout, `Cmd+Alt+B`, its Command Palette entries (focus, maximize,
+next/previous view, the panel's move to it), "Move To ▸ Secondary Side Bar" on
+an activity bar icon and "New Secondary Side Bar Entry" in Move Focused View.
+The overlay's `devhubNoAuxiliaryBar.contribution.ts` moves to the primary side
+bar any view container that is in the secondary one anyway — a saved custom
+location, a command or extension moving a view there — saved the way a
+person's move is, and makes `workbench.action.toggleAuxiliaryBar` and
+`workbench.action.focusAuxiliaryBar`, which a keybinding or an extension may
+still run, toggle and focus the primary side bar.
+
 **A workbench back from being away opens tidy.** When a workbench comes back
 on screen after `devhub.workbench.tidyAfterAwayMinutes` (default 10; `0` is
 off) — another Workspace or an Agent was shown in its place — it hides its
-panel (the terminal with it), primary side bar and secondary side bar
-(`devhub.workbench.tidyParts`, all three by default) and puts the keyboard in
+panel (the terminal with it) and side bar (`devhub.workbench.tidyParts`,
+both by default) and puts the keyboard in
 its active editor group, so it opens as a big, clean editor; with no editor
 open the parts are hidden all the same. **DevHub: Tidy Editor Layout** in the
 command palette is the same tidy at any time.

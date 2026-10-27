@@ -1,0 +1,359 @@
+diff --git a/src/vs/workbench/browser/actions/layoutActions.ts b/src/vs/workbench/browser/actions/layoutActions.ts
+index f7b82f298..13aaca66f 100644
+--- a/src/vs/workbench/browser/actions/layoutActions.ts
++++ b/src/vs/workbench/browser/actions/layoutActions.ts
+@@ -19,10 +19,9 @@ import { IViewsService } from '../../services/views/common/viewsService.js';
+ import { QuickPickItem, IQuickInputService, IQuickPickItem, IQuickPickSeparator, IQuickPick } from '../../../platform/quickinput/common/quickInput.js';
+ import { IDialogService } from '../../../platform/dialogs/common/dialogs.js';
+ import { IPaneCompositePartService } from '../../services/panecomposite/browser/panecomposite.js';
+-import { ToggleAuxiliaryBarAction } from '../parts/auxiliarybar/auxiliaryBarActions.js';
+ import { TogglePanelAction } from '../parts/panel/panelActions.js';
+ import { ICommandService } from '../../../platform/commands/common/commands.js';
+-import { AuxiliaryBarVisibleContext, PanelAlignmentContext, PanelVisibleContext, SideBarVisibleContext, FocusedViewContext, InEditorZenModeContext, IsMainEditorCenteredLayoutContext, MainEditorAreaVisibleContext, IsMainWindowFullscreenContext, PanelPositionContext, IsAuxiliaryWindowFocusedContext, IsSessionsWindowContext, TitleBarStyleContext, IsAuxiliaryWindowContext, CustomMenuBarVisibleContext } from '../../common/contextkeys.js';
++import { PanelAlignmentContext, PanelVisibleContext, SideBarVisibleContext, FocusedViewContext, InEditorZenModeContext, IsMainEditorCenteredLayoutContext, MainEditorAreaVisibleContext, IsMainWindowFullscreenContext, PanelPositionContext, IsAuxiliaryWindowFocusedContext, IsSessionsWindowContext, TitleBarStyleContext, IsAuxiliaryWindowContext, CustomMenuBarVisibleContext } from '../../common/contextkeys.js';
+ import { Codicon } from '../../../base/common/codicons.js';
+ import { ThemeIcon } from '../../../base/common/themables.js';
+ import { DisposableStore } from '../../../base/common/lifecycle.js';
+@@ -995,12 +994,7 @@ class MoveFocusedViewAction extends Action2 {
+ 			});
+ 		}
+ 
+-		if (!(isViewSolo && currentLocation === ViewContainerLocation.AuxiliaryBar)) {
+-			items.push({
+-				id: '_.auxiliarybar.newcontainer',
+-				label: localize('moveFocusedView.newContainerInSidePanel', "New Secondary Side Bar Entry")
+-			});
+-		}
++		// DevHub: no secondary side bar to move a view to (devhubNoAuxiliaryBar)
+ 
+ 		items.push({
+ 			type: 'separator',
+@@ -1044,27 +1038,6 @@ class MoveFocusedViewAction extends Action2 {
+ 				};
+ 			}));
+ 
+-		items.push({
+-			type: 'separator',
+-			label: localize('secondarySideBar', "Secondary Side Bar")
+-		});
+-
+-		const pinnedAuxPanels = paneCompositePartService.getPinnedPaneCompositeIds(ViewContainerLocation.AuxiliaryBar);
+-		items.push(...pinnedAuxPanels
+-			.filter(panel => {
+-				if (panel === viewDescriptorService.getViewContainerByViewId(focusedViewId)!.id) {
+-					return false;
+-				}
+-
+-				return !viewDescriptorService.getViewContainerById(panel)!.rejectAddedViews;
+-			})
+-			.map(panel => {
+-				return {
+-					id: panel,
+-					label: viewDescriptorService.getViewContainerModel(viewDescriptorService.getViewContainerById(panel)!).title
+-				};
+-			}));
+-
+ 		quickPick.items = items;
+ 
+ 		disposables.add(quickPick.onDidAccept(() => {
+@@ -1076,9 +1049,6 @@ class MoveFocusedViewAction extends Action2 {
+ 			} else if (destination.id === '_.sidebar.newcontainer') {
+ 				viewDescriptorService.moveViewToLocation(viewDescriptor, ViewContainerLocation.Sidebar, this.desc.id);
+ 				viewsService.openView(focusedViewId, true);
+-			} else if (destination.id === '_.auxiliarybar.newcontainer') {
+-				viewDescriptorService.moveViewToLocation(viewDescriptor, ViewContainerLocation.AuxiliaryBar, this.desc.id);
+-				viewsService.openView(focusedViewId, true);
+ 			} else if (destination.id) {
+ 				viewDescriptorService.moveViewsToContainer([viewDescriptor], viewDescriptorService.getViewContainerById(destination.id)!, undefined, this.desc.id);
+ 				viewsService.openView(focusedViewId, true);
+@@ -1366,7 +1336,7 @@ if (!isMacintosh || !isNative) {
+ ToggleVisibilityActions.push(...[
+ 	CreateToggleLayoutItem(ToggleActivityBarVisibilityActionId, ContextKeyExpr.notEquals('config.workbench.activityBar.location', 'hidden'), localize('activityBar', "Activity Bar"), { whenA: ContextKeyExpr.equals('config.workbench.sideBar.location', 'left'), iconA: activityBarLeftIcon, iconB: activityBarRightIcon }),
+ 	CreateToggleLayoutItem(ToggleSidebarVisibilityAction.ID, SideBarVisibleContext, localize('sideBar', "Primary Side Bar"), { whenA: ContextKeyExpr.equals('config.workbench.sideBar.location', 'left'), iconA: panelLeftIcon, iconB: panelRightIcon }),
+-	CreateToggleLayoutItem(ToggleAuxiliaryBarAction.ID, AuxiliaryBarVisibleContext, localize('secondarySideBar', "Secondary Side Bar"), { whenA: ContextKeyExpr.equals('config.workbench.sideBar.location', 'left'), iconA: panelRightIcon, iconB: panelLeftIcon }),
++	// DevHub: no Secondary Side Bar toggle here (devhubNoAuxiliaryBar)
+ 	CreateToggleLayoutItem(TogglePanelAction.ID, PanelVisibleContext, localize('panel', "Panel"), panelIcon),
+ 	CreateToggleLayoutItem(ToggleStatusbarVisibilityAction.ID, ContextKeyExpr.equals('config.workbench.statusBar.visible', true), localize('statusBar', "Status Bar"), statusBarIcon),
+ ]);
+diff --git a/src/vs/workbench/browser/layout.ts b/src/vs/workbench/browser/layout.ts
+index 75f9238fd..68d789f1e 100644
+--- a/src/vs/workbench/browser/layout.ts
++++ b/src/vs/workbench/browser/layout.ts
+@@ -2177,6 +2177,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
+ 	}
+ 
+ 	setAuxiliaryBarMaximized(maximized: boolean): boolean {
++		if (maximized) {
++			return false; // DevHub: there is no secondary side bar to maximize (devhubNoAuxiliaryBar)
++		}
++
+ 		if (
+ 			this.inMaximizedAuxiliaryBarTransition ||		// prevent re-entrance
+ 			(maximized === this.isAuxiliaryBarMaximized())	// return early if state is already present
+@@ -2288,6 +2292,10 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
+ 	}
+ 
+ 	private setAuxiliaryBarHidden(hidden: boolean, skipLayout?: boolean): void {
++		if (!hidden) {
++			return; // DevHub: the secondary side bar is never shown; its views are in the primary side bar (devhubNoAuxiliaryBar)
++		}
++
+ 		if (hidden && this.setAuxiliaryBarMaximized(false) && !this.isVisible(Parts.AUXILIARYBAR_PART)) {
+ 			return; // return: leaving maximised auxiliary bar made this part hidden
+ 		}
+@@ -3097,19 +3105,18 @@ class LayoutStateModel extends Disposable {
+ 
+ 	private applyOverrides(configuration: ILayoutStateLoadConfiguration): void {
+ 
+-		// Auxiliary bar: Maximized settings
+-		if (this.isNew[StorageScope.WORKSPACE]) {
+-			const defaultAuxiliaryBarVisibility = this.configurationService.getValue(WorkbenchLayoutSettings.AUXILIARYBAR_DEFAULT_VISIBILITY);
+-			const startupEditor = this.configurationService.getValue<'none' | 'welcomePage' | 'readme' | 'newUntitledFile' | 'welcomePageInEmptyWorkbench' | 'terminal' | 'agentSessionsWelcomePage'>('workbench.startupEditor');
+-			if (startupEditor === 'agentSessionsWelcomePage') {
+-				this.applyAuxiliaryBarHiddenOverride(true);
+-			} else if (
+-				defaultAuxiliaryBarVisibility === 'maximized' ||
+-				(defaultAuxiliaryBarVisibility === 'maximizedInWorkspace' && this.contextService.getWorkbenchState() !== WorkbenchState.EMPTY)
+-			) {
+-				this.applyAuxiliaryBarMaximizedOverride();
+-			}
++		// DevHub: there is no secondary side bar (devhubNoAuxiliaryBar). A layout
++		// saved with it open comes back without it, one saved with it maximized
++		// comes back with the parts maximizing hid, and the defaults that open
++		// or maximize it for a new workspace do not apply.
++		if (this.getRuntimeValue(LayoutStateKeys.AUXILIARYBAR_WAS_LAST_MAXIMIZED)) {
++			const beforeMaximized = this.getRuntimeValue(LayoutStateKeys.AUXILIARYBAR_LAST_NON_MAXIMIZED_VISIBILITY);
++			this.setRuntimeValue(LayoutStateKeys.SIDEBAR_HIDDEN, !beforeMaximized.sideBarVisible);
++			this.setRuntimeValue(LayoutStateKeys.PANEL_HIDDEN, !beforeMaximized.panelVisible);
++			this.setRuntimeValue(LayoutStateKeys.EDITOR_HIDDEN, !beforeMaximized.editorVisible);
++			this.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_WAS_LAST_MAXIMIZED, false);
+ 		}
++		this.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN, true);
+ 
+ 		// Both editor and panel should not be hidden on startup unless auxiliary bar is maximized
+ 		if (
+@@ -3127,27 +3134,6 @@ class LayoutStateModel extends Disposable {
+ 		}
+ 	}
+ 
+-	private applyAuxiliaryBarMaximizedOverride(): void {
+-		this.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_LAST_NON_MAXIMIZED_VISIBILITY, {
+-			sideBarVisible: !this.getRuntimeValue(LayoutStateKeys.SIDEBAR_HIDDEN),
+-			panelVisible: !this.getRuntimeValue(LayoutStateKeys.PANEL_HIDDEN),
+-			editorVisible: !this.getRuntimeValue(LayoutStateKeys.EDITOR_HIDDEN),
+-			auxiliaryBarVisible: !this.getRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN)
+-		});
+-
+-		this.setRuntimeValue(LayoutStateKeys.SIDEBAR_HIDDEN, true);
+-		this.setRuntimeValue(LayoutStateKeys.PANEL_HIDDEN, true);
+-		this.setRuntimeValue(LayoutStateKeys.EDITOR_HIDDEN, true);
+-		this.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN, false);
+-
+-		this.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_LAST_NON_MAXIMIZED_SIZE, this.getInitializationValue(LayoutStateKeys.AUXILIARYBAR_SIZE));
+-		this.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_WAS_LAST_MAXIMIZED, true);
+-	}
+-
+-	private applyAuxiliaryBarHiddenOverride(value: boolean): void {
+-		this.setRuntimeValue(LayoutStateKeys.AUXILIARYBAR_HIDDEN, value);
+-	}
+-
+ 	save(workspace: boolean, global: boolean): void {
+ 		let key: keyof typeof LayoutStateKeys;
+ 
+diff --git a/src/vs/workbench/browser/parts/auxiliarybar/auxiliaryBarActions.ts b/src/vs/workbench/browser/parts/auxiliarybar/auxiliaryBarActions.ts
+index 1ffa48712..7b295e368 100644
+--- a/src/vs/workbench/browser/parts/auxiliarybar/auxiliaryBarActions.ts
++++ b/src/vs/workbench/browser/parts/auxiliarybar/auxiliaryBarActions.ts
+@@ -9,7 +9,7 @@ import { Action2, MenuId, MenuRegistry, registerAction2 } from '../../../../plat
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+ import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
+ import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+-import { AuxiliaryBarMaximizedContext, AuxiliaryBarVisibleContext, IsAuxiliaryWindowContext, SecondarySideBarVisibleContext } from '../../../common/contextkeys.js';
++import { AuxiliaryBarMaximizedContext, AuxiliaryBarVisibleContext, SecondarySideBarVisibleContext } from '../../../common/contextkeys.js';
+ import { ViewContainerLocation, ViewContainerLocationToString } from '../../../common/views.js';
+ import { ActivityBarPosition, IWorkbenchLayoutService, LayoutSettings, Parts } from '../../../services/layout/browser/layoutService.js';
+ import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
+@@ -21,11 +21,6 @@ import { SwitchCompositeViewAction } from '../compositeBarActions.js';
+ const maximizeIcon = registerIcon('auxiliarybar-maximize', Codicon.screenFull, localize('maximizeIcon', 'Icon to maximize the secondary side bar.'));
+ const closeIcon = registerIcon('auxiliarybar-close', Codicon.close, localize('closeIcon', 'Icon to close the secondary side bar.'));
+ 
+-const auxiliaryBarRightIcon = registerIcon('auxiliarybar-right-layout-icon', Codicon.layoutSidebarRight, localize('toggleAuxiliaryIconRight', 'Icon to toggle the secondary side bar off in its right position.'));
+-const auxiliaryBarRightOffIcon = registerIcon('auxiliarybar-right-off-layout-icon', Codicon.layoutSidebarRightOff, localize('toggleAuxiliaryIconRightOn', 'Icon to toggle the secondary side bar on in its right position.'));
+-const auxiliaryBarLeftIcon = registerIcon('auxiliarybar-left-layout-icon', Codicon.layoutSidebarLeft, localize('toggleAuxiliaryIconLeft', 'Icon to toggle the secondary side bar in its left position.'));
+-const auxiliaryBarLeftOffIcon = registerIcon('auxiliarybar-left-off-layout-icon', Codicon.layoutSidebarLeftOff, localize('toggleAuxiliaryIconLeftOn', 'Icon to toggle the secondary side bar on in its left position.'));
+-
+ export class ToggleAuxiliaryBarAction extends Action2 {
+ 
+ 	static readonly ID = 'workbench.action.toggleAuxiliaryBar';
+@@ -46,23 +41,9 @@ export class ToggleAuxiliaryBarAction extends Action2 {
+ 			metadata: {
+ 				description: localize('openAndCloseAuxiliaryBar', 'Open/Show and Close/Hide Secondary Side Bar'),
+ 			},
+-			f1: true,
+-			keybinding: {
+-				weight: KeybindingWeight.WorkbenchContrib,
+-				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyB
+-			},
+-			menu: [
+-				{
+-					id: MenuId.LayoutControlMenuSubmenu,
+-					group: '0_workbench_layout',
+-					order: 1
+-				},
+-				{
+-					id: MenuId.MenubarAppearanceMenu,
+-					group: '2_workbench_layout',
+-					order: 2
+-				}
+-			]
++			// DevHub: no secondary side bar (devhubNoAuxiliaryBar) — not in the
++			// Command Palette, the layout menus or on ⌥⌘B; the command toggles the
++			// primary side bar instead (devhubNoAuxiliaryBar.contribution.ts)
+ 		});
+ 	}
+ 
+@@ -109,7 +90,9 @@ registerAction2(class FocusAuxiliaryBarAction extends Action2 {
+ 			id: FocusAuxiliaryBarAction.ID,
+ 			title: FocusAuxiliaryBarAction.LABEL,
+ 			category: Categories.View,
+-			f1: true,
++			// DevHub: no secondary side bar (devhubNoAuxiliaryBar) — not in the
++			// Command Palette; the command focuses the primary side bar instead
++			// (devhubNoAuxiliaryBar.contribution.ts)
+ 		});
+ 	}
+ 
+@@ -128,46 +111,9 @@ registerAction2(class FocusAuxiliaryBarAction extends Action2 {
+ 	}
+ });
+ 
++// DevHub: no secondary side bar toggles in the title bar's layout control (devhubNoAuxiliaryBar)
+ MenuRegistry.appendMenuItems([
+ 	{
+-		id: MenuId.LayoutControlMenu,
+-		item: {
+-			group: 'navigation',
+-			command: {
+-				id: ToggleAuxiliaryBarAction.ID,
+-				title: localize('toggleSecondarySideBar', "Toggle Secondary Side Bar"),
+-				toggled: { condition: AuxiliaryBarVisibleContext, icon: auxiliaryBarLeftIcon },
+-				icon: auxiliaryBarLeftOffIcon,
+-			},
+-			when: ContextKeyExpr.and(
+-				IsAuxiliaryWindowContext.negate(),
+-				ContextKeyExpr.or(
+-					ContextKeyExpr.equals('config.workbench.layoutControl.type', 'toggles'),
+-					ContextKeyExpr.equals('config.workbench.layoutControl.type', 'both')),
+-				ContextKeyExpr.equals('config.workbench.sideBar.location', 'right')
+-			),
+-			order: 0
+-		}
+-	}, {
+-		id: MenuId.LayoutControlMenu,
+-		item: {
+-			group: 'navigation',
+-			command: {
+-				id: ToggleAuxiliaryBarAction.ID,
+-				title: localize('toggleSecondarySideBar', "Toggle Secondary Side Bar"),
+-				toggled: { condition: AuxiliaryBarVisibleContext, icon: auxiliaryBarRightIcon },
+-				icon: auxiliaryBarRightOffIcon,
+-			},
+-			when: ContextKeyExpr.and(
+-				IsAuxiliaryWindowContext.negate(),
+-				ContextKeyExpr.or(
+-					ContextKeyExpr.equals('config.workbench.layoutControl.type', 'toggles'),
+-					ContextKeyExpr.equals('config.workbench.layoutControl.type', 'both')),
+-				ContextKeyExpr.equals('config.workbench.sideBar.location', 'left')
+-			),
+-			order: 2
+-		}
+-	}, {
+ 		id: MenuId.ViewContainerTitleContext,
+ 		item: {
+ 			group: '3_workbench_layout_move',
+@@ -187,7 +133,7 @@ registerAction2(class extends SwitchCompositeViewAction {
+ 			id: 'workbench.action.previousAuxiliaryBarView',
+ 			title: localize2('previousAuxiliaryBarView', 'Previous Secondary Side Bar View'),
+ 			category: Categories.View,
+-			f1: true
++			f1: false // DevHub: no secondary side bar (devhubNoAuxiliaryBar)
+ 		}, ViewContainerLocation.AuxiliaryBar, -1);
+ 	}
+ });
+@@ -198,7 +144,7 @@ registerAction2(class extends SwitchCompositeViewAction {
+ 			id: 'workbench.action.nextAuxiliaryBarView',
+ 			title: localize2('nextAuxiliaryBarView', 'Next Secondary Side Bar View'),
+ 			category: Categories.View,
+-			f1: true
++			f1: false // DevHub: no secondary side bar (devhubNoAuxiliaryBar)
+ 		}, ViewContainerLocation.AuxiliaryBar, 1);
+ 	}
+ });
+@@ -215,7 +161,7 @@ class MaximizeAuxiliaryBar extends Action2 {
+ 			title: localize2('maximizeAuxiliaryBar', 'Maximize Secondary Side Bar'),
+ 			tooltip: localize('maximizeAuxiliaryBarTooltip', "Maximize Secondary Side Bar"),
+ 			category: Categories.View,
+-			f1: true,
++			f1: false, // DevHub: no secondary side bar (devhubNoAuxiliaryBar)
+ 			precondition: AuxiliaryBarMaximizedContext.negate(),
+ 		});
+ 	}
+@@ -238,7 +184,7 @@ class RestoreAuxiliaryBar extends Action2 {
+ 			title: localize2('restoreAuxiliaryBar', 'Restore Secondary Side Bar'),
+ 			tooltip: localize('restoreAuxiliaryBar', 'Restore Secondary Side Bar'),
+ 			category: Categories.View,
+-			f1: true,
++			f1: false, // DevHub: no secondary side bar (devhubNoAuxiliaryBar)
+ 			precondition: AuxiliaryBarMaximizedContext,
+ 			keybinding: {
+ 				weight: KeybindingWeight.WorkbenchContrib,
+@@ -265,7 +211,7 @@ class ToggleMaximizedAuxiliaryBar extends Action2 {
+ 			id: ToggleMaximizedAuxiliaryBar.ID,
+ 			title: localize2('toggleMaximizedAuxiliaryBar', 'Toggle Maximized Secondary Side Bar'),
+ 			tooltip: localize('maximizeAuxiliaryBarTooltip2', "Maximize Secondary Side Bar"),
+-			f1: true,
++			f1: false, // DevHub: no secondary side bar (devhubNoAuxiliaryBar)
+ 			category: Categories.View,
+ 			icon: maximizeIcon,
+ 			toggled: {
+diff --git a/src/vs/workbench/browser/parts/panel/panelActions.ts b/src/vs/workbench/browser/parts/panel/panelActions.ts
+index 012422854..678378a91 100644
+--- a/src/vs/workbench/browser/parts/panel/panelActions.ts
++++ b/src/vs/workbench/browser/parts/panel/panelActions.ts
+@@ -388,7 +388,7 @@ export class MovePanelToSecondarySideBarAction extends MoveViewsBetweenPanelsAct
+ 			id: MovePanelToSecondarySideBarAction.ID,
+ 			title: localize2('movePanelToSecondarySideBar', "Move Panel Views To Secondary Side Bar"),
+ 			category: Categories.View,
+-			f1: true
++			f1: false // DevHub: no secondary side bar (devhubNoAuxiliaryBar)
+ 		});
+ 	}
+ }
+@@ -419,7 +419,7 @@ export class MoveSecondarySideBarToPanelAction extends MoveViewsBetweenPanelsAct
+ 			id: MoveSecondarySideBarToPanelAction.ID,
+ 			title: localize2('moveSidePanelToPanel', "Move Secondary Side Bar Views To Panel"),
+ 			category: Categories.View,
+-			f1: true
++			f1: false // DevHub: no secondary side bar (devhubNoAuxiliaryBar)
+ 		});
+ 	}
+ }
+diff --git a/src/vs/workbench/services/views/browser/viewDescriptorService.ts b/src/vs/workbench/services/views/browser/viewDescriptorService.ts
+index 4ea78aecb..97a4078fa 100644
+--- a/src/vs/workbench/services/views/browser/viewDescriptorService.ts
++++ b/src/vs/workbench/services/views/browser/viewDescriptorService.ts
+@@ -308,7 +308,13 @@ export class ViewDescriptorService extends Disposable implements IViewDescriptor
+ 	}
+ 
+ 	getDefaultViewContainerLocation(viewContainer: ViewContainer): ViewContainerLocation {
+-		return this.viewContainersRegistry.getViewContainerLocation(viewContainer);
++		// DevHub: there is no secondary side bar (devhubNoAuxiliaryBar). A view
++		// container registered for it — Chat, an extension's `secondarySidebar`
++		// contribution — has the primary side bar as its default, so it lands
++		// there, "Reset Location" puts it back there, and it is not a custom
++		// location to store.
++		const location = this.viewContainersRegistry.getViewContainerLocation(viewContainer);
++		return location === ViewContainerLocation.AuxiliaryBar ? ViewContainerLocation.Sidebar : location;
+ 	}
+ 
+ 	getDefaultContainerById(viewId: string): ViewContainer | null {
