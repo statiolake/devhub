@@ -92,7 +92,15 @@ final class RuntimeEndToEndTests: XCTestCase {
         }
     }
 
-    private func start() async throws -> Running {
+    /// The `devhub` command `swift build` made, beside this package's tests.
+    private static var builtCLI: String? {
+        let native = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let path = native.appendingPathComponent(".build/debug/devhub").path
+        return FileManager.default.isExecutableFile(atPath: path) ? path : nil
+    }
+
+    private func start(cli: String = "/bin/false") async throws -> Running {
         guard let tmux = Self.tool("tmux"), let git = Self.tool("git"), let python = SelfTestWorld.findPython() else {
             throw XCTSkip("needs tmux, git and python3")
         }
@@ -104,9 +112,11 @@ final class RuntimeEndToEndTests: XCTestCase {
         let shell = EndToEndShell()
         let runtime = try await DevHubRuntime.start(
             RuntimeEnvironment(
-                locations: world.locations, appExecutable: "/bin/false", cliExecutable: "/bin/false", processEnvironment: environment),
+                locations: world.locations, appExecutable: "/bin/false", cliExecutable: cli, processEnvironment: environment),
             app: shell)
         await runtime.controller.shellReady()
+        // What a launch opens after the runtime, for the `devhub` command.
+        if cli != "/bin/false" { try await runtime.openControlSocket() }
         let settled = await until(20) { shell.latest?.readiness == .ready }
         XCTAssertTrue(settled, "the runtime did not become ready")
         return Running(world: world, runtime: runtime, shell: shell, tmux: tmux)
@@ -362,6 +372,98 @@ final class RuntimeEndToEndTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 800_000_000)
         XCTAssertEqual(ended, before, "DevHub's own detach was taken for an exit")
         exits.dispose()
+        await running.cleanup()
+    }
+
+    /// Terminal mode's file jumps, on the runtime's own managed Neovim: an
+    /// open asked of the control service starts it in a new window of the
+    /// Workspace's ws- session, the next one reuses it, `:qa!` is heard and
+    /// the next jump starts another, and the Workspace's close stops it.
+    @MainActor
+    func testFileJumpsLandInTheWorkspacesManagedNeovim() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["DEVHUB_TEST_REQUIRE_NVIM"] == "1" {
+            XCTAssertNotNil(Self.tool("nvim"), "DEVHUB_TEST_REQUIRE_NVIM is set and there is no nvim")
+        }
+        guard Self.tool("nvim") != nil else { throw XCTSkip("needs nvim") }
+        let cli = Self.builtCLI
+        let running = try await start(cli: cli ?? "/bin/false")
+        let world = running.world
+        let controller = running.controller
+        let neovims = running.runtime.neovims
+        guard let alpha = try await open(running, world.alpha) else { return await running.cleanup() }
+        let session = TmuxNames.workspaceSession(root: alpha.root)
+        let file = Path.join(world.alpha, "notes.txt")
+        try (1...30).map { "line \($0)" }.joined(separator: "\n").write(toFile: file, atomically: true, encoding: .utf8)
+        func nvimPanes() -> [String] {
+            running.tmuxSays(["list-panes", "-s", "-t", "=\(session)", "-F", "#{pane_id} #{pane_current_command}"])
+                .split(separator: "\n").filter { $0.hasSuffix(" nvim") }.map { String($0.split(separator: " ")[0]) }
+        }
+        func shows() async throws -> [MsgpackValue] {
+            let probe = try await NeovimClient.connect(await neovims.socketPath(alpha.id))
+            defer { Task { await probe.close() } }
+            return [try await probe.request("nvim_buf_get_name", [0]), try await probe.request("nvim_win_get_cursor", [0])]
+        }
+        func jump(_ line: Int, _ column: Int) async throws -> String {
+            let request = ControlOpenRequest(
+                path: file, cwd: world.alpha, origin: TmuxMarkers.originValue(machine: .local, context: TmuxMarkers.workspaceContext, workspaceId: alpha.id, agentId: "none"),
+                position: ControlPosition(line: line, column: column))
+            return try await controller.open(request)
+        }
+
+        // The first from the `devhub` command typed in alpha's own terminal,
+        // when `swift build` has made one: the launcher DevHub writes.
+        if cli != nil {
+            let terminal = EditorClient(running.runtime.transport, TerminalSurfaceKeys.workspace(alpha.id))
+            try await terminal.attach()
+            let prompt = await until(10) { !terminal.text.isEmpty }
+            XCTAssertTrue(prompt, "alpha's terminal drew nothing")
+            let launcher = DevhubSkill(userDataPath: world.locations.userDataDirectory).cli
+            try terminal.type("\(DevhubInstall.shellQuote(launcher)) -g notes.txt:7\r")
+            let opened = await until(20) { await neovims.paneOf(alpha.id) != nil }
+            XCTAssertTrue(opened, "devhub -g started no Neovim; the terminal says \(terminal.text.suffix(1500).debugDescription)")
+            try? terminal.detach()
+        } else {
+            let first = try await jump(7, 1)
+            XCTAssertTrue(first.contains("a new Neovim"), first)
+        }
+        let pane = await neovims.paneOf(alpha.id)
+        let started = await until(10) { nvimPanes() == [pane ?? "?"] }
+        XCTAssertTrue(started, "the Neovim panes of \(session) are \(nvimPanes()), not \(pane ?? "none")")
+        let firstShows = try await shows()
+        XCTAssertEqual(firstShows, [.string(file), [7, 0]])
+
+        let second = try await jump(4, 3)
+        XCTAssertTrue(second.contains("its Neovim"), second)
+        let reused = await neovims.paneOf(alpha.id)
+        XCTAssertEqual(reused, pane)
+        let secondShows = try await shows()
+        XCTAssertEqual(secondShows, [.string(file), [4, 2]])
+
+        if let pane { _ = running.tmuxSays(["send-keys", "-t", pane, "Escape", ":qa!", "Enter"]) }
+        let quit = await until(10) { nvimPanes().isEmpty }
+        XCTAssertTrue(quit, "nvim did not quit: \(nvimPanes())")
+        let forgotten = await until(10) { await neovims.paneOf(alpha.id) == nil }
+        XCTAssertTrue(forgotten, "DevHub did not hear its Neovim end")
+        let third = try await jump(12, 7)
+        XCTAssertTrue(third.contains("a new Neovim"), third)
+        let restarted = await neovims.paneOf(alpha.id)
+        XCTAssertNotNil(restarted)
+        XCTAssertNotEqual(restarted, pane)
+        let thirdShows = try await shows()
+        XCTAssertEqual(thirdShows, [.string(file), [12, 6]])
+
+        let socket = await neovims.socketPath(alpha.id)
+        // The Neovim is a pane running something other than the shell: the
+        // close asks, and is confirmed.
+        let outcome = try await controller.dispatch(.requestCloseWorkspace(try WorkspaceId(alpha.id), worktree: .keep))
+        if case let .confirmationRequired(confirmation, _, _) = outcome {
+            _ = try await controller.dispatch(.confirmCloseWorkspace(confirmation))
+        }
+        let closed = await until(20) { running.shell.latest?.workspace(alpha.id) == nil }
+        XCTAssertTrue(closed, "alpha did not close")
+        let gone = await until(10) { nvimPanes().isEmpty && !FileManager.default.fileExists(atPath: socket) }
+        XCTAssertTrue(gone, "alpha's Neovim outlived its close: \(nvimPanes())")
         await running.cleanup()
     }
 }

@@ -123,6 +123,13 @@ final class LiveSelfTest {
         } catch {
             return ["live: the runtime did not start: \(failureText(error))"]
         }
+        // As a launch does after the runtime (`AppDelegate.launch`): the
+        // `devhub` command typed in a terminal reaches this DevHub through it.
+        do {
+            try await runtime.openControlSocket()
+        } catch {
+            return ["live: the control socket could not be opened: \(failureText(error))"]
+        }
         // Every client that ends by itself is counted, then handed on.
         let handed = runtime.surfaces.attachments.onEndedByItself
         runtime.surfaces.attachments.onEndedByItself = { [weak self] key, target in

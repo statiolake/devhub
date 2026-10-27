@@ -739,8 +739,12 @@ library:
   --wait` through the managed Neovim (its real test, `RealNeovimTests`, covers
   the wait and a relaunched DevHub's adoption). `RuntimeEndToEndTests` runs the same world without a
   window (GUI Agents on the stand-ins, `/resume`'s listing, Make default for
-  both CLIs, `EditorTerminalExits` on real tmux) wherever tmux, git and
-  python3 are (the macOS job; locally in Docker with them installed).
+  both CLIs, `EditorTerminalExits` on real tmux, and file jumps into the
+  managed Neovim — the first through the built `devhub` command typed in the
+  ws- terminal, then reuse, `:qa!` and a restart, the close) wherever tmux,
+  git and python3 are (both CI jobs; locally in Docker with them installed).
+  Both open the control socket after the runtime, as `AppDelegate.launch`
+  does, or a `devhub` typed in a terminal finds no DevHub.
 
 ---
 
