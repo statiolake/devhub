@@ -98,19 +98,20 @@ jobs:
             exit 1
           }
 
-      - name: Test
-        run: swift test
-
-      - name: Bundle DevHub.app (release)
-        run: Scripts/bundle-app.sh --output "$RUNNER_TEMP/native"
-
-      # The self-test's live phase attaches to a private tmux server.
+      # The self-test's live phase, and Core's end-to-end tests of the
+      # runtime (`RuntimeEndToEndTests`), run on a private tmux server.
       - name: Install tmux
         timeout-minutes: 5
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: brew list tmux >/dev/null 2>&1 || brew install tmux
+
+      - name: Test
+        run: swift test
+
+      - name: Bundle DevHub.app (release)
+        run: Scripts/bundle-app.sh --output "$RUNNER_TEMP/native"
 
       # The self-test's dictation listens with whisper.cpp (pinned, built for
       # the CPU, its model verified; see the script), kept between runs.

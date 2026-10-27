@@ -40,6 +40,8 @@ final class LiveSelfTest {
     var live: LiveApp!
     var runtime: DevHubRuntime!
     var tmux = ""
+    /// The last keys and what became of them (`ChordDispatcher.trace`).
+    var keyTrace: [String] = []
     /// Every editor-area client that ended by itself, by Workspace id.
     var endedByItself: [String] = []
 
@@ -130,7 +132,13 @@ final class LiveSelfTest {
         let active = await SelfTestDriver(prefix: "live").until(5) { NSApp.isActive && self.window?.isKeyWindow == true }
         SelfTestLaunch.say("self-test live: active \(NSApp.isActive), key window \(window?.isKeyWindow == true) (\(active))")
 
-        ChordDispatcher.trace = { SelfTestLaunch.say("self-test trace \($0)") }
+        // What became of every key, said only when something failed.
+        ChordDispatcher.trace = { [weak self] line in
+            MainActor.assumeIsolated {
+                self?.keyTrace.append(line)
+                if (self?.keyTrace.count ?? 0) > 400 { self?.keyTrace.removeFirst(100) }
+            }
+        }
         defer { ChordDispatcher.trace = nil }
         await phase("scratch") { await scratch($0) }
         await phase("sheets") { await sheetsPhase($0) }
@@ -152,6 +160,8 @@ final class LiveSelfTest {
             SelfTestLaunch.say("self-test live: ---- \(name), last \(lines.count) lines ----")
             for line in lines { SelfTestLaunch.say("  \(line.prefix(400))") }
         }
+        SelfTestLaunch.say("self-test live: ---- the last \(keyTrace.count) keys ----")
+        for line in keyTrace { SelfTestLaunch.say("  \(line.prefix(200))") }
     }
 
     // MARK: Helpers the phases share
