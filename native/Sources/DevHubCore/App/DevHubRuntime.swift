@@ -256,7 +256,26 @@ public final class DevHubRuntime: @unchecked Sendable {
     var scratch: ScratchFollower?
     var control: ControlServer?
     private var configWatch: UUID?
+    /// The GUI Agents' conversations (WP10's view reads them through the
+    /// controller's `conversationTransport()`).
+    public internal(set) var guiAgents: GuiAgentWiring?
+    /// What the questions layer asks DevHub for.
+    public internal(set) var sheets: ControllerSheetServices?
+    /// The Settings window's half of the file.
+    public internal(set) var settings: SettingsService?
+    /// The environment every child is launched in.
+    public internal(set) var launchEnvironment: [String: String] = [:]
+    /// What became of the login-shell environment import, in a sentence.
+    public internal(set) var loginSummary = ""
+    /// How the run before this one ended: `clean`, `unclean` or `unknown`.
+    public internal(set) var previousExit = "unknown"
+    var configBox: ConfigBox?
+    var usageFeedStop: (@Sendable () -> Void)?
     private let lock = NSLock()
+    /// The repository rounds as of the last projection, for `--metrics`.
+    private var lastRounds: [WorkspaceRepositoryRound] = []
+
+    func roundsNow() -> [WorkspaceRepositoryRound] { lock.withLock { lastRounds } }
     private var lastRepositories = RepositoryStatusWire()
     private var stopped = false
 
@@ -306,6 +325,7 @@ public final class DevHubRuntime: @unchecked Sendable {
         -> DevHubRuntime
     {
         let locations = environment.locations
+        let startedAt = Date().timeIntervalSince1970 * 1000
         let log: @Sendable (String) -> Void = { MainLog.shared.log($0) }
         MainLog.shared.install(path: locations.mainLogPath)
         log("[devhub] \(DevHubVersion.description) starting (profile \(locations.profile))")
@@ -331,7 +351,15 @@ public final class DevHubRuntime: @unchecked Sendable {
         // to share no tmux server.
         let stateStore = JsonStateStore(path: locations.stateFilePath)
         let fresh = !FileManager.default.fileExists(atPath: locations.stateFilePath)
-        let recorded = (try? await stateStore.loadState())?.state.tmux.effectiveSocketName ?? StateSchema.defaultTmuxSocketName
+        let persisted = (try? await stateStore.loadState())?.state
+        let recorded = persisted?.tmux.effectiveSocketName ?? StateSchema.defaultTmuxSocketName
+        // How the last run ended, for Settings' "Last quit" (read before this
+        // run marks itself as starting).
+        let previousExit = persisted.map { $0.shutdown.launchGeneration == 0 ? "unknown" : $0.shutdown.clean ? "clean" : "unclean" }
+            ?? "unknown"
+        // The Agents the state file names, for the GUI Agents' records until
+        // the model exists.
+        let persistedAgents = Set((persisted?.workspaces ?? []).flatMap { $0.agents.map(\.agentId) })
         let socketName = fresh || !locations.isDefault ? config.runtimes.tmuxSocketName : recorded
 
         // The environment, resolved once, before anything is looked up in it.
@@ -371,26 +399,82 @@ public final class DevHubRuntime: @unchecked Sendable {
             log("[devhub] could not write the /devhub agent skill: \(failureText(error))")
         }
         let model = LateModel()
-        let wiring = TerminalAgentWiring(
+        let profileTag = TerminalLauncher.remoteProfileTag(controlSocketPath: locations.controlSocketPath)
+        let accounting = Accounting()
+        let shell = RuntimeShell(app: app)
+        // The GUI Agents' records beside the state file: until the model
+        // exists, the Agents are the ones the state file names.
+        let mirrorBox = MirrorBox()
+        var records: GuiAgentRecords?
+        do {
+            let loaded = try GuiAgentRecords.load(beside: locations.stateFilePath) {
+                mirrorBox.mirror?.agentIds() ?? persistedAgents
+            }
+            records = loaded.records
+            for refused in loaded.refused {
+                startupFailures.append(AppError.at(.persistenceDegraded).withDetail(refused))
+            }
+        } catch {
+            log("[devhub] the GUI Agents' records could not be read: \(failureText(error))")
+        }
+        let configBox = ConfigBox(config)
+        let agentWiring = GuiAgentWiring.wire(
             runtimeFor: runtimeFor, model: model,
             skilled: { machine, profile, args in
                 DevhubSkill.arguments(kind: profile.kind.rawValue, args: args, skill: machine.isLocal ? skillWritten : nil)
             },
             log: log
-        )
+        ) { sessions in
+            GuiAgentWiringOptions(
+                sessions: sessions, model: model,
+                report: { text in Task { await shell.publishError(AppError.at(.agentExited).withDetail(text)) } },
+                clientVersion: environment.version, profileTag: profileTag,
+                resumeAfterLimit: {
+                    let agents = configBox.config.agents
+                    return LimitResumeSettings(enabled: agents.resumeAfterLimit, message: agents.resumeAfterLimitMessage)
+                },
+                limitResumes: records?.limitResumes ?? MemoryRecordStore<LimitResumeRecord>(),
+                cacheKeeping: {
+                    let agents = configBox.config.agents
+                    return CacheKeepSettings(
+                        enabled: agents.autoCompactBeforeCacheExpiry, leadSeconds: agents.autoCompactLeadSeconds,
+                        minTokens: agents.autoCompactMinTokens)
+                },
+                devhubSkill: { machine in machine.isLocal ? skillWritten : nil },
+                log: log)
+        }
+        let wiring = agentWiring.terminal
+        let gui = agentWiring.gui
         let neovims = ControllerNeovims.make(
             userDataPath: locations.userDataDirectory, launchPath: { launchPath }, loginFailure: { loginFailure },
             local: { try await runtimeFor(.local) }, log: log
         )
         let base = TmuxTerminalPort(surfaces: surfaces, runtimeFor: runtimeFor, forget: { terminalRuntimes.forget($0) })
         let terminals = WiredTerminalPort(base: base, runtimeFor: runtimeFor)
-        let shell = RuntimeShell(app: app)
-        let accounting = Accounting()
         let gitPath = config.runtimes.git
         let extrasBox = ExtrasBox()
+        let gitFor: @Sendable (WorkspacePlace) async throws -> GitCommand = { place in
+            guard case .local = place else {
+                throw ControlRefusal("DevHub (native) works with folders on this Mac only.")
+            }
+            return try await ControllerGit.local(configured: configBox.config.runtimes.git, launchEnvironment: launch, loginFailure: loginFailure)
+        }
 
         let controller = try await AppController.start(stateStore: stateStore, config: config) { options in
-            options.agents = TerminalAgentPort(wiring: wiring)
+            options.agents = agentWiring.port
+            options.guiAgents = gui
+            options.agentRecords = records
+            options.issueAssigner = GitIssueAssigner(
+                gitFor: gitFor,
+                searchSources: { query in
+                    let collected = Guarded<[String]>([])
+                    await WorkspacePickerSearch.run(configBox.config, query: query, environment: launch) { event in
+                        if case let .candidate(candidate) = event { collected.with { $0.append(candidate.path) } }
+                    }
+                    return collected.with { $0 }
+                },
+                openPlaces: { mirrorBox.mirror?.workspacePlaces() ?? [] },
+                environment: { launch })
             options.terminals = terminals
             options.repositories = GitRepositoryPort(gitCommand: { _ in
                 GitCommand(runtime: LocalRepositoryRuntime(), git: gitPath, environment: launch)
@@ -405,18 +489,21 @@ public final class DevHubRuntime: @unchecked Sendable {
                 MainLog.shared.error("[devhub] a broken invariant stopped DevHub: \(error)")
                 preconditionFailure(String(describing: error))
             }
-            options.controlExtras = ControlExtras(
-                installCli: {
-                    try DevhubInstall.installLauncher(InstallRequest(
-                        executable: environment.cliExecutable, socketPath: locations.controlSocketPath,
-                        commandName: locations.cliCommandName, profile: locations.profile,
-                        launchCommand: DevhubLaunch.launchCommand(forAppExecutable: environment.appExecutable),
-                        home: NSHomeDirectory(), pathValue: launchPath)).message
+            options.controlExtras = ControlExtras.native(
+                install: {
+                    InstallRequest.forApp(
+                        appExecutable: environment.appExecutable, cliExecutable: environment.cliExecutable,
+                        socketPath: locations.controlSocketPath, commandName: locations.cliCommandName,
+                        profile: locations.profile, pathValue: launchPath)
                 },
-                metrics: { try await extrasBox.runtime?.metrics() ?? "{}" }
-            )
+                metrics: MetricsSources(
+                    startedAt: startedAt, titleBar: { environment.titleBar.rawValue },
+                    localTmux: { try? await runtimeFor(.local) },
+                    pendingSweeps: { extrasBox.runtime?.sweeper?.pending.map(\.rawValue) ?? [] },
+                    repositoryRounds: { extrasBox.runtime?.roundsNow() ?? [] }))
         }
         model.set(controller.mirror)
+        mirrorBox.mirror = controller.mirror
         for failure in startupFailures { await controller.noteStartupFailure(failure) }
         if case let .failed(shell, reason) = login {
             log("[devhub] the login environment could not be imported from \(shell): \(reason)")
@@ -431,6 +518,15 @@ public final class DevHubRuntime: @unchecked Sendable {
             terminalRuntimes: terminalRuntimes, surfaces: surfaces, transport: transport, agentWiring: wiring,
             neovims: neovims, hooks: hooks, shell: shell, accounting: accounting, refusal: refusal
         )
+        runtime.guiAgents = gui
+        runtime.configBox = configBox
+        runtime.launchEnvironment = launch
+        runtime.loginSummary = login.summary
+        runtime.previousExit = previousExit
+        runtime.sheets = ControllerSheetServices(controller: controller, environment: { launch }, gitFor: gitFor)
+        runtime.settings = SettingsService(
+            store: configStore, host: RuntimeSettingsHost(runtime: runtime),
+            logDirectory: (locations.mainLogPath as NSString).deletingLastPathComponent)
         extrasBox.runtime = runtime
         shell.runtime = runtime
         hooks.config(config)
@@ -493,6 +589,15 @@ public final class DevHubRuntime: @unchecked Sendable {
             note: { cli, note in UsageLimitsFeed.note(usageLimits, cli, note) { hooks.usageLimits($0) } },
             report: { failure in Task { await controller.noteStartupFailure(errorWire(failure)) } }
         ))
+        if let gui = guiAgents {
+            let mirror = controller.mirror
+            usageFeedStop = await gui.feedUsageLimits(
+                usageLimits,
+                kind: { agentId in
+                    mirror.snapshotNow()?.workspaces.lazy.flatMap(\.agents).first { $0.id.rawValue == agentId }?.profile.kind
+                },
+                publish: { hooks.usageLimits($0) })
+        }
 
         let home = NSHomeDirectory()
         let follower = ScratchFollower(daily: config.scratch.daily, home: home) { folder in
@@ -518,6 +623,7 @@ public final class DevHubRuntime: @unchecked Sendable {
     /// the Settings window — and this run is on them from now on.
     public func adoptConfig(_ accepted: Config) async {
         let config = accepted.withProfileRuntimes(environment.locations).config
+        configBox?.set(config)
         refusal.accepted()
         await controller.adoptConfig(config)
         await scratch?.settingsAccepted(daily: config.scratch.daily)
@@ -537,6 +643,8 @@ public final class DevHubRuntime: @unchecked Sendable {
         await controller.releaseIdleMachines()
         accounting.update(await controller.snapshot(), sessionMachines: await controller.state.sessionMachines)
         await repositoryWatcher?.observe()
+        let rounds = await repositoryWatcher?.rounds() ?? []
+        lock.withLock { lastRounds = rounds }
     }
 
     static func host(_ machine: String) -> (any ReconcileHost)? {
@@ -610,6 +718,7 @@ public final class DevHubRuntime: @unchecked Sendable {
         await scratch?.stop()
         await repositoryWatcher?.stop()
         usageReaders?.stop()
+        usageFeedStop?()
         surfaces.detachAll()
         await neovims.dispose()
         MainLog.shared.log("[devhub] quit: shutdown finished")
@@ -620,6 +729,118 @@ public final class DevHubRuntime: @unchecked Sendable {
 /// runtime exists.
 private final class ExtrasBox: @unchecked Sendable {
     weak var runtime: DevHubRuntime?
+}
+
+/// Records kept for this run only, when the file beside the state could not be read.
+final class MemoryRecordStore<Record: Sendable>: AgentRecordStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [String: Record] = [:]
+    func get(_ agentId: String) -> Record? { lock.withLock { records[agentId] } }
+    func set(_ agentId: String, _ record: Record?) { lock.withLock { records[agentId] = record } }
+}
+
+/// The controller's mirror, once there is a controller.
+final class MirrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: ControllerModelMirror?
+    var mirror: ControllerModelMirror? {
+        get { lock.withLock { value } }
+        set { lock.withLock { value = newValue } }
+    }
+}
+
+/// The settings in force, for the closures that read them as they are now.
+final class ConfigBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Config
+    init(_ config: Config) { value = config }
+    var config: Config { lock.withLock { value } }
+    func set(_ config: Config) { lock.withLock { value = config } }
+}
+
+/// The Settings window's host, on the running app (`installSettingsWindow`).
+final class RuntimeSettingsHost: SettingsHost, @unchecked Sendable {
+    weak var runtime: DevHubRuntime?
+
+    init(runtime: DevHubRuntime) { self.runtime = runtime }
+
+    func adopt(_ config: Config) async { await runtime?.adoptConfig(config) }
+
+    func preflightSocket(_ name: String) async throws -> TerminalPreflight {
+        guard let runtime else { throw ControlRefusal("the terminal runtime is not running") }
+        return try await runtime.preflightTerminalSocket(name)
+    }
+
+    func changeSocket(_ name: String) async throws {
+        guard let runtime else { throw ControlRefusal("the terminal runtime is not running") }
+        try await runtime.changeTerminalSocket(name)
+    }
+
+    func launchPath() -> String { runtime?.launchEnvironment["PATH"] ?? "" }
+    func loginEnvironmentSummary() -> String { runtime?.loginSummary ?? "" }
+    func previousExit() -> String { runtime?.previousExit ?? "unknown" }
+}
+
+extension DevHubRuntime {
+    /// `preflightTerminalSocket`: what the socket a person wants looks like.
+    public func preflightTerminalSocket(_ name: String) async throws -> TerminalPreflight {
+        let socket = try SocketName(name)
+        return try await terminalRuntimes.adapter(for: MachineRuntimes.local).preflight(socket)
+    }
+
+    /// `changeTerminalSocket`: move DevHub's terminal sessions onto another
+    /// socket. Every attached client is detached first; one transition permit
+    /// is held across the whole migration on each machine, so nothing can
+    /// create a session on the socket being left behind. Nothing is caught: a
+    /// migration that fails part-way surfaces with the effective socket unchanged.
+    public func changeTerminalSocket(_ name: String) async throws {
+        let next = try SocketName(name)
+        let previous = await controller.state.tmux.effectiveSocketName
+        if name == previous { return }
+        let old = try SocketName(previous)
+        surfaces.detachAll()
+        let cancel = CancellationToken()
+        for (machine, targets) in await controller.socketTargets() {
+            let runtime = try await terminalRuntimes.adapter(for: try MachineRuntimes.runtime(for: machine))
+            let permit = try await runtime.beginTransition(cancel)
+            defer { permit.release() }
+            let owned = try await runtime.transitionInspectOwnedSessions(old, cancel: cancel)
+            for record in owned.sessions {
+                try await runtime.transitionCloseOwnedSession(old, record, cancel: cancel)
+            }
+            for target in targets {
+                try await runtime.transitionEnsureOnSocket(next, target, cancel: cancel)
+            }
+        }
+        await terminalRuntimes.setEffectiveSocket(next)
+        try await controller.adoptEffectiveSocket(name)
+    }
+}
+
+extension AppController {
+    /// Per machine, what has to be on the new socket: the server's anchor on
+    /// this Mac, and every Workspace's session.
+    func socketTargets() -> [(RuntimeId, [TerminalTarget])] {
+        var machines: [String: [TerminalTarget]] = [:]
+        var order: [String] = []
+        for machine in workspaceMachines() {
+            order.append(machine)
+            machines[machine] = machine == "local" ? [.scratch(machine: .local)] : []
+        }
+        for workspace in coordinator.model.workspaces {
+            let machine = workspace.location.runtimeId
+            guard let id = try? RuntimeId.parse(machine) else { continue }
+            machines[machine, default: []].append(.workspace(WorkspaceTerminalTarget(
+                machine: id, workspaceId: workspace.id.rawValue, root: workspace.root)))
+        }
+        return order.compactMap { machine in (try? RuntimeId.parse(machine)).map { ($0, machines[machine] ?? []) } }
+    }
+
+    /// The sessions moved: the state says so.
+    func adoptEffectiveSocket(_ name: String) async throws {
+        state.tmux.effectiveSocketName = name
+        try await saveState()
+    }
 }
 
 extension AppController {
