@@ -73,6 +73,45 @@ final class ShellBackdropView: NSView {
             self.host?.backdropCommitTerminal(
                 terminalId: seam.terminalId, share: AgentTerminals.clampShare(seam.share + 0.02 * Double(direction)), stacked: seam.stacked)
         }
+        // `tabIndex={0}` and `onKeyDown`: the seams are keyboard stops, and
+        // their arrow keys are the step (SplitDivider: ←/→ ∓2%; TerminalSeam:
+        // ← or ↑ when stacked grows the terminal 2%, → or ↓ shrinks it).
+        splitRegion.focusable = true
+        splitRegion.onKey = { [weak self] key in
+            switch key {
+            case "ArrowLeft": self?.splitRegion.onStep?(-1)
+            case "ArrowRight": self?.splitRegion.onStep?(1)
+            default: return false
+            }
+            return true
+        }
+        terminalRegion.focusable = true
+        terminalRegion.onKey = { [weak self] key in
+            let stacked = self?.seams?.terminal?.stacked ?? false
+            switch key {
+            case stacked ? "ArrowUp" : "ArrowLeft": self?.terminalRegion.onStep?(1)
+            case stacked ? "ArrowDown" : "ArrowRight": self?.terminalRegion.onStep?(-1)
+            default: return false
+            }
+            return true
+        }
+        for region in [splitRegion, terminalRegion] {
+            region.onFocusChange = { [weak self] _ in self?.needsDisplay = true }
+        }
+    }
+
+    /// The page's keyboard stops in document order (`SurfaceViewport`: the
+    /// surface state's buttons, the split's divider, the terminal's seam).
+    private var keyStops: [NSView] {
+        var stops: [NSView] = []
+        if !stateView.isHidden { stops += stateView.buttons }
+        stops += [splitRegion, terminalRegion]
+        return stops
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if KeyViewLoop.step(event, in: window, stops: keyStops) { return }
+        super.keyDown(with: event)
     }
 
     /// The regions over the drawn controls, where the controls are now.
@@ -104,6 +143,11 @@ final class ShellBackdropView: NSView {
             terminalRegion.setAccessibilityMaxValue(Int(AgentTerminals.maxShare * 100))
         } else {
             terminalRegion.isHidden = true
+        }
+        KeyViewLoop.link(keyStops)
+        // A seam that went away hands the keys back to the page.
+        if let window, let focused = [splitRegion, terminalRegion].first(where: { $0.hasKeyboard }), focused.isHidden {
+            window.makeFirstResponder(keyTarget)
         }
     }
 
@@ -247,7 +291,9 @@ final class ShellBackdropView: NSView {
             guard let rect = seamRect(kind) else { continue }
             tokens.chrome.nsColor.setFill()
             rect.fill()
-            let lit = seamHovered == kind || dragging?.kind == kind
+            let region = kind == .split ? splitRegion : terminalRegion
+            // `:hover`, `.is-dragging` and `:focus-visible` light it alike.
+            let lit = seamHovered == kind || dragging?.kind == kind || region.hasKeyboard
             (lit ? tokens.accent : tokens.lineStrong).nsColor.setFill()
             let stacked = kind == .terminal && (seams?.terminal?.stacked ?? false)
             if stacked {

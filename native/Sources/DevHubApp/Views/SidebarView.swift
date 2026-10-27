@@ -48,11 +48,13 @@ final class SidebarView: NSView {
     private var handleHovered = false
     private var tracking: NSTrackingArea?
     weak var host: SidebarHost? { didSet { list.host = host } }
-    /// The resize handle as VoiceOver reads it (`role="separator"`, its arrow keys' 4pt step).
-    private let handleRegion = AccessibleRegion(role: .splitter, label: "Resize sidebar")
+    /// The resize handle as VoiceOver and the keyboard reach it
+    /// (`role="separator"`, `tabIndex={0}`, its arrow keys' 4pt step).
+    private let handleRegion = SidebarHandleRegion(role: .splitter, label: "Resize sidebar")
 
-    /// `.sidebar-resize-handle`: 10pt straddling the edge; the half inside is ours.
-    static let handleWidth: CGFloat = 5
+    /// `.sidebar-page .sidebar-resize-handle`: 10pt inside the column, against
+    /// its trailing edge (sidebarPage.css — the column is its own view).
+    static let handleWidth: CGFloat = 10
 
     init(style: ShellStyle) {
         self.style = style
@@ -78,6 +80,7 @@ final class SidebarView: NSView {
             self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Workspace navigation")
+        handleRegion.ringColor = style.tokens.focusRing.nsColor
         addSubview(handleRegion)
         handleRegion.setAccessibilityOrientation(.vertical)
         handleRegion.setAccessibilityMinValue(200)
@@ -86,6 +89,30 @@ final class SidebarView: NSView {
             guard let self, !self.collapsed else { return }
             self.host?.sidebarCommitWidth(Projection.clampSidebarWidth(self.width + 4 * Double(direction)))
         }
+        // `SidebarResizeHandle`'s keys: ←/→ 4pt, Home the narrowest, End the widest.
+        handleRegion.focusable = true
+        handleRegion.onKey = { [weak self] key in
+            guard let self, !self.collapsed else { return false }
+            switch key {
+            case "ArrowLeft": self.handleRegion.onStep?(-1)
+            case "ArrowRight": self.handleRegion.onStep?(1)
+            case "Home": self.host?.sidebarCommitWidth(Projection.clampSidebarWidth(200))
+            case "End": self.host?.sidebarCommitWidth(Projection.clampSidebarWidth(400))
+            default: return false
+            }
+            return true
+        }
+        handleRegion.onFocusChange = { [weak self] _ in
+            self?.needsDisplay = true
+            self?.handleRegion.needsDisplay = true
+        }
+        KeyViewLoop.link([list, handleRegion])
+    }
+
+    /// The column's keyboard stops in document order: the tree, the handle.
+    override func keyDown(with event: NSEvent) {
+        if KeyViewLoop.step(event, in: window, stops: [list, handleRegion]) { return }
+        super.keyDown(with: event)
     }
 
     @available(*, unavailable)
@@ -106,6 +133,8 @@ final class SidebarView: NSView {
 
     func restyle(_ style: ShellStyle) {
         self.style = style
+        handleRegion.ringColor = style.tokens.focusRing.nsColor
+        handleRegion.needsDisplay = true
         list.restyle(style)
         usage.restyle(style)
         needsDisplay = true
@@ -128,9 +157,12 @@ final class SidebarView: NSView {
         usage.frame = CGRect(x: 0, y: bounds.height - foot, width: bounds.width, height: foot)
         list.frame.size.width = scroll.contentSize.width
         list.relayout()
-        handleRegion.frame = handleRect
+        // The region reaches past the handle by its ring (`outline: 2px` at
+        // `outline-offset: 2px`), which it draws while it has the keys.
+        handleRegion.frame = handleRect.insetBy(dx: -SidebarHandleRegion.ringReach, dy: 0)
         handleRegion.isHidden = collapsed
         handleRegion.setAccessibilityValue(Int(width.rounded()))
+        if collapsed, handleRegion.hasKeyboard { window?.makeFirstResponder(list) }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -140,7 +172,7 @@ final class SidebarView: NSView {
         // `border-right: var(--sidebar-edge) solid var(--line-strong)`.
         tokens.lineStrong.nsColor.setFill()
         NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
-        if !collapsed, handleHovered || resizeOrigin != nil {
+        if !collapsed, handleHovered || resizeOrigin != nil || handleRegion.hasKeyboard {
             tokens.accent.nsColor.setFill()
             NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
         }
@@ -1323,6 +1355,26 @@ final class SidebarListView: NSView {
             element.setAccessibilitySelected(selected)
             return element
         }
+    }
+}
+
+/// The handle's region, which also draws its focus ring: `:focus-visible`'s
+/// `outline: 2px solid var(--focus-ring)` at `outline-offset: 2px` round the
+/// handle. The column clips it, as the Sidebar's own view clips the outline in
+/// the TS app, so what shows is its leading side, the full height of the column.
+@MainActor
+private final class SidebarHandleRegion: AccessibleRegion {
+    /// How far the ring reaches past the handle: the offset and its width.
+    static let ringReach: CGFloat = 4
+    var ringColor: NSColor = .keyboardFocusIndicatorColor
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard hasKeyboard else { return }
+        ringColor.setStroke()
+        let handle = bounds.insetBy(dx: Self.ringReach, dy: 0)
+        let ring = NSBezierPath(rect: handle.insetBy(dx: -3, dy: -3))
+        ring.lineWidth = 2
+        ring.stroke()
     }
 }
 

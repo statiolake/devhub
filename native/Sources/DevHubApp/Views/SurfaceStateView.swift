@@ -194,6 +194,8 @@ final class SurfaceStateView: NSView {
     private let title = NSTextField(wrappingLabelWithString: "")
     private let message = NSTextField(wrappingLabelWithString: "")
     private let actions = NSStackView()
+    /// Its buttons, in order: keyboard stops of the page it is on.
+    var buttons: [NSView] { actions.arrangedSubviews.filter { $0 is DevHubButton } }
     /// Paint the surface colour under the content (a pane's cover).
     var paintsSurface = true { didSet { needsDisplay = true } }
 

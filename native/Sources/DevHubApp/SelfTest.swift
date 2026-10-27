@@ -209,6 +209,19 @@ final class SelfTest {
             check(false, "the arrangement is not a split")
         }
 
+        // The seams are keyboard stops (`tabIndex={0}`): Tab from the window's
+        // page reaches the split's, then the terminal's, and comes round.
+        if let nsWindow = window.window, let tab = key(nsWindow, "\t", code: 48, command: false) {
+            nsWindow.makeFirstResponder(window.backdrop)
+            var reached: [String] = []
+            for _ in 0..<3 {
+                (nsWindow.firstResponder as? NSView)?.keyDown(with: tab)
+                reached.append((nsWindow.firstResponder as? AccessibleRegion)?.accessibilityLabel() ?? String(describing: nsWindow.firstResponder))
+            }
+            check(reached == ["Resize the agent pane", "Resize the terminal", "Resize the agent pane"], "Tab over the seams reached \(reached)")
+            editor?.focus()
+        }
+
         // 4. The Agent alone keeps the editor attached and hidden.
         shell.apply(WindowFixtures.selfTest(root: root, presentation: .full, terminal: false, revision: 3))
         await pause(0.3)
