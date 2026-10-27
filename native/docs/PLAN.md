@@ -690,13 +690,18 @@ library:
 - **macOS CI** (`macos-15`): `swift build` (incl. App), `swift test`, bundle,
   `DevHub --self-test` (window on screen, terminal surface links). Packages
   extend `--self-test` with smoke checks of their own (e.g. tmux attach in a
-  temporary `-L` server, Neovim RPC if `nvim` is installed via Homebrew in
-  the job).
+  temporary `-L` server, the managed Neovim with `nvim` installed via
+  Homebrew in the job).
 - **Ported tests**: each package ports the TS unit tests of the files it
   ports (vitest → XCTest), keeping fixture files.
 - **Integration tests needing tmux/git/nvim** are marked and skipped when the
-  binary is missing (`XCTSkip`); the Docker image has git; the macOS job may
-  `brew install tmux neovim`.
+  binary is missing (`XCTSkip`); the Docker image has git. CI installs tmux
+  and Neovim in both jobs (macOS: `brew install tmux neovim`; Linux: apt's
+  tmux and the official Neovim v0.12.6 tarball, its sha256 pinned in the
+  workflow) and sets `DEVHUB_TEST_REQUIRE_TMUX=1` / `DEVHUB_TEST_REQUIRE_NVIM=1`,
+  under which `TmuxReal*` and `RealNeovimTests` fail instead of skipping, so
+  they never pass by not running. Locally: `DEVHUB_TEST_NVIM=<path>` names a
+  Neovim off the PATH (a release tarball mounted into the Docker image).
 - UI: snapshot or XCUITest optional; prefer testable view models in Core.
 - **End to end** (`DevHub --self-test`'s live phase, `LiveSelfTest`): the
   real app, assembled as a launch assembles it (`LiveApp`), on a profile of
@@ -724,13 +729,15 @@ library:
   | issue | Assign Issue (Cmd+Q I): the URL typed, the clone found by name and origin, the branch question says GitHub could not be asked (`gh auth token` declined); Escape back out opens nothing |
   | notices | a failure and a notice toast, hide after `notice_seconds` into the center, unread; Cmd+Q M opens it with the keys in it; Cmd+C copies the notice; a click in a detail + ⌘A ⌘C copies the selection |
   | settings | Cmd+Q < opens it key; one control per screen (General switch, Workspaces switch, Agents name field, Actions switch, Keyboard recorder, Terminal checkbox on/off, Advanced git field) is written to settings.toml only after the save's pause and taken up by the app; Reset asks, Down + Return resets; Escape closes it |
+  | neovim | terminal mode's managed Neovim (skipped without `nvim`; CI sets `DEVHUB_SELF_TEST_REQUIRE_NVIM=1`): `devhub -g src/widget.ts:7` typed in widget's ws- terminal starts it in one new tmux window of the ws- session, which the session shows, its socket there, and over msgpack-rpc it has that buffer at [7, 0]; the stand-in's reply links `src/widget.ts:4:3`, and a click on the link reuses the same pane at [4, 2] (the editor shown beside the Agent); `:qa!` typed in it is heard (record, pane and socket gone, the shell in front), and the next `devhub -g …:12:7` starts a new pane at [12, 6]; in beta, `devhub -g README.md:1` starts beta's, then Cmd+Q W (confirmed) closes beta and its Neovim (a second RPC client hears it end; socket and session gone); `devhub <beta>` opens beta again; no nvim is left running |
   | exits | `exit` in beta's ws- terminal closes beta without a question; with `sleep` running in the Agent's terminal (Cmd+Q V) Cmd+Q W asks and Escape keeps; `exit` in widget's terminal asks, Keep starts it over on a fresh ws- session that answers; `tmux detach-client` is seen and attached again; Scratch's `exit` starts it over; DevHub's own close (confirmed) and quit end no client by itself and leave the sessions running |
 
   Not exercised end to end: a real `claude`/`codex` (stand-ins speak the
   documented protocol, pinned by the fixture tests), the microphone itself
   (the file source feeds the same feeder and stream), GitHub with a token
-  (the Issue flow stops at the signed-out answer), SSH Workspaces, the
-  managed Neovim. `RuntimeEndToEndTests` runs the same world without a
+  (the Issue flow stops at the signed-out answer), SSH Workspaces, `devhub
+  --wait` through the managed Neovim (its real test, `RealNeovimTests`, covers
+  the wait and a relaunched DevHub's adoption). `RuntimeEndToEndTests` runs the same world without a
   window (GUI Agents on the stand-ins, `/resume`'s listing, Make default for
   both CLIs, `EditorTerminalExits` on real tmux) wherever tmux, git and
   python3 are (the macOS job; locally in Docker with them installed).

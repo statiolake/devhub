@@ -21,6 +21,12 @@
 //                microphone, into the composer (when a recogniser is there)
 //   codex        a Codex Agent and Make default (Codex's config.toml); a stop
 //                and a Workspace close asked and answered
+//   neovim       terminal mode's managed Neovim: `devhub -g` typed in alpha's
+//                ws- terminal starts it in a new tmux window at the line, a
+//                conversation's file link clicked reuses it, `:qa!` then a
+//                jump starts a new one, and beta's close stops beta's (asked
+//                over msgpack-rpc what each shows); beta opened again with
+//                `devhub <folder>` (when there is an nvim)
 //   issue        Assign Issue against the clone, with `gh` signed out
 //   notices      toasts hiding into the notice center, the center opened from
 //                the keyboard, its words selected and copied
@@ -145,6 +151,7 @@ final class LiveSelfTest {
         await phase("conversation") { await conversation($0) }
         await phase("dictation") { await dictation($0) }
         await phase("codex") { await codex($0) }
+        await phase("neovim") { await neovim($0) }
         await phase("issue") { await issue($0) }
         await phase("notices") { await notices($0) }
         await phase("settings") { await settings($0) }

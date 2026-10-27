@@ -14,7 +14,8 @@
 //   reply in Markdown — a table, a TypeScript code block, inline and display
 //   math. A message that says "permission" is answered with a Bash call that
 //   asks for permission first (`can_use_tool`), and the reply after it says
-//   which answer it got.
+//   which answer it got. A message that says "jump" is answered with a file
+//   link, `src/widget.ts:4:3` (`jumpPath`), for the managed Neovim to open.
 // - `codex` is an `app-server`: the handshake, `model/list` with two models,
 //   and a turn that says one thing.
 // - `gh` is signed out: `gh auth token` declines.
@@ -53,6 +54,10 @@ public struct SelfTestWorld: Sendable {
     /// What a reply of the stand-in Claude says first, to look for.
     public static let replyMarker = "Fake reply"
     public static let issueURL = "https://github.com/acme/widget/issues/7"
+    /// The file the stand-in Claude's "jump" reply links, relative to its cwd
+    /// (alpha), at line 4, column 3. It is not made with the world: the phase
+    /// that clicks it writes it.
+    public static let jumpPath = "src/widget.ts"
 
     /// `python3`, where it is.
     public static func findPython(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
@@ -292,6 +297,8 @@ REPLY = ("Fake reply: here is **Markdown** from the stand-in.\n\n"
          "$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n\n"
          "The end of the fake reply.")
 
+JUMP_REPLY = "The widget is made in `src/widget.ts:4:3`, and nowhere else."
+
 COMMANDS = [{"name": "model", "description": "Set the AI model for Claude Code", "argumentHint": "[model]"},
             {"name": "effort", "description": "Set the effort level", "argumentHint": "[level]"},
             {"name": "compact", "description": "Compact the conversation", "argumentHint": "[instructions]"},
@@ -344,6 +351,11 @@ def user(message):
         pending[request] = (tool, command)
         out({"type": "control_request", "request_id": request, "request": {"subtype": "can_use_tool", "tool_name": "Bash",
              "input": command, "tool_use_id": tool, "permission_suggestions": []}})
+        return
+    if "jump" in text.lower():
+        text_block(msg_id, 0, JUMP_REPLY, 2)
+        message_end("end_turn")
+        result(JUMP_REPLY)
         return
     text_block(msg_id, 0, REPLY)
     message_end("end_turn")

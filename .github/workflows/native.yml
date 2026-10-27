@@ -158,7 +158,8 @@ jobs:
         run: Scripts/self-test-whisper.sh "$HOME/.cache/devhub-self-test/whisper"
 
       # The fixture window, then the real app end to end (`LiveSelfTest`):
-      # its own tmux server, stand-in CLIs, keys and clicks. Started with
+      # its own tmux server, stand-in CLIs, keys and clicks, and the managed
+      # Neovim (the Homebrew one installed above, required). Started with
       # `open`, as Finder starts an app, so that macOS lets it come to the
       # front and take the keyboard; what the shell would hand it goes in
       # files (`SelfTestLaunch`).
@@ -175,7 +176,8 @@ jobs:
             "DEVHUB_SELF_TEST_SNAPSHOTS=$RUNNER_TEMP/snapshots" \
             "DEVHUB_SELF_TEST_PRINT_SNAPSHOTS=1" \
             "DEVHUB_WHISPER_DIR=$HOME/.cache/devhub-self-test/whisper" \
-            "DEVHUB_SELF_TEST_REQUIRE_WHISPER=1" >"$env_file"
+            "DEVHUB_SELF_TEST_REQUIRE_WHISPER=1" \
+            "DEVHUB_SELF_TEST_REQUIRE_NVIM=1" >"$env_file"
           : >"$log"
           rm -f "$result"
           tail -n +1 -f "$log" &
