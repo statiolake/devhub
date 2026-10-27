@@ -471,7 +471,7 @@ final class TranscriptTextView: NSTextView {
             if let rule = info.rule { drawRule(rule, lines: lines, range: range, info: info) }
             if let trailing = info.trailing {
                 let size = trailing.size()
-                trailing.draw(at: NSPoint(x: right + info.trailingWidth - size.width, y: first.midY - size.height / 2))
+                trailing.draw(at: NSPoint(x: right - size.width, y: first.midY - size.height / 2))
             }
         }
 

@@ -17,6 +17,7 @@ final class TranscriptScroller: NSView {
     private var unseen = false
     private var fresh = FreshEntries()
     private var adjusting = false
+    private var viewportPending = false
     /// The column's measure: the text is centred in it, gutters either side.
     var measured = true { didSet { needsLayout = true } }
     /// Drawn, or kept hidden in the pool: what arrives while hidden is not news.
@@ -77,8 +78,18 @@ final class TranscriptScroller: NSView {
     }
 
     @objc private func scrolled() {
-        // What comes into view is laid out and drawn now, whoever moved it.
-        text.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        // What comes into view is laid out and drawn, whoever moved it: once
+        // this scroll is done, not inside it (a layout scrolls too).
+        if !viewportPending {
+            viewportPending = true
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.viewportPending = false
+                    self.text.textLayoutManager?.textViewportLayoutController.layoutViewport()
+                }
+            }
+        }
         if adjusting { return }
         let now = atBottom
         if now != following {

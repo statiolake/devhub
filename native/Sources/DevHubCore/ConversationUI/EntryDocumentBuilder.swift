@@ -851,9 +851,14 @@ public struct EntryDocumentBuilder {
             runs.append(DocRun("  "))
             runs.append(DocRun(model, Self.style { $0.chip = .model; $0.mono = true; $0.size = 0.78; $0.ink = .secondary }))
         }
-        var summary = Self.paragraph(key + "/summary", runs)
+        // `.conversation-subagent-summary`: padded inside the card.
+        var summary = Self.paragraph(key + "/summary", runs, before: Self.space(2), after: Self.space(2))
+        summary.indent = Self.space(3)
         summary.action = .toggle(fold)
-        summary.trailing = [DocRun("", Self.style { $0.ink = .tertiary }, inline: .chevron(open: open, quietUntilHover: false))]
+        summary.trailing = [
+            DocRun("", Self.style { $0.ink = .tertiary }, inline: .chevron(open: open, quietUntilHover: false)),
+            DocRun("\u{2002}\u{2002}", Self.style { $0.control = true }),
+        ]
         var children: [DocBlock] = [.paragraph(summary)]
         if open {
             let place = state.layout.place(of: entry.id)

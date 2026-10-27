@@ -31,7 +31,7 @@ final class FindBarView: NSView, NSTextFieldDelegate {
     var onClose: (() -> Void)?
     private(set) var caseSensitive = false
     var query: String { field.stringValue }
-    var count = "" { didSet { countLabel.stringValue = count } }
+    var count = "" { didSet { countLabel.stringValue = count; superview?.needsLayout = true } }
     var none = false { didSet { countLabel.textColor = none ? style.ink(.danger) : style.ink(.secondary) } }
     var scope = "" { didSet { scopeLabel.stringValue = scope } }
 
@@ -122,7 +122,9 @@ final class FindBarView: NSView, NSTextFieldDelegate {
         }
     }
 
-    override var fittingSize: NSSize { NSSize(width: style.em(0.85) * 16 + 230, height: 52) }
+    private var countWidth: CGFloat { max(style.em(0.85) * 5.5, ceil(countLabel.intrinsicContentSize.width) + 4) }
+
+    override var fittingSize: NSSize { NSSize(width: style.em(0.85) * 16 + countWidth + 150, height: 52) }
 
     override func layout() {
         super.layout()
@@ -132,8 +134,8 @@ final class FindBarView: NSView, NSTextFieldDelegate {
         let fieldWidth = size * 16
         field.frame = NSRect(x: x, y: 4, width: fieldWidth, height: rowHeight)
         x += fieldWidth + 4
-        countLabel.frame = NSRect(x: x, y: 4 + (rowHeight - countLabel.intrinsicContentSize.height) / 2, width: size * 6, height: countLabel.intrinsicContentSize.height)
-        x += size * 6 + 2
+        countLabel.frame = NSRect(x: x, y: 4 + (rowHeight - countLabel.intrinsicContentSize.height) / 2, width: countWidth, height: countLabel.intrinsicContentSize.height)
+        x += countWidth + 2
         for button in [caseButton!, previous!, next!, close!] {
             let side = rowHeight
             let width = button === caseButton ? max(side, button.intrinsicContentSize.width) : side
