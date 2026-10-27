@@ -430,10 +430,10 @@ final class SessionPickerPanel: PaneSheet, NSTableViewDataSource, NSTableViewDel
         tableScroll.documentView = table
         tableScroll.hasVerticalScroller = true
         sheet.addSubview(tableScroll)
-        preview.isEditable = false
-        preview.drawsBackground = false
-        preview.textContainerInset = NSSize(width: 8, height: 8)
-        previewScroll.documentView = preview
+        self.preview.isEditable = false
+        self.preview.drawsBackground = false
+        self.preview.textContainerInset = NSSize(width: 8, height: 8)
+        previewScroll.documentView = self.preview
         previewScroll.hasVerticalScroller = true
         previewScroll.borderType = .bezelBorder
         sheet.addSubview(previewScroll)

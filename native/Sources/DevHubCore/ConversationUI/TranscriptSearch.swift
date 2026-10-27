@@ -79,6 +79,12 @@ public struct SearchMatch: Equatable, Sendable {
     public var section: String
     public var offset: Int
     public var length: Int
+
+    public init(section: String, offset: Int, length: Int) {
+        self.section = section
+        self.offset = offset
+        self.length = length
+    }
 }
 
 @MainActor

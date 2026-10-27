@@ -48,7 +48,7 @@ final class ConversationViews: ConversationViewProviding, AgentOverlayProviding 
     func continueInTerminal(_ agentId: String) {
         guard let transport = link.transport else { return }
         Task { [weak self] in
-            do { try await transport.continueInTerminal(agentId) } catch { self?.link.report?(failureText(error)) }
+            do { try await transport.continueInTerminal(agentId) } catch { self?.link.report?(errorWire(error)) }
         }
     }
 }
@@ -159,7 +159,7 @@ final class AgentOverlayView: NSView {
             }))
         }
         view.update(
-            title: AgentRules.agentFailureTitle(found.code), summary: AgentRules.agentFailureSummary(found.code), detail: found.detail,
+            title: SurfaceLabels.agentFailureTitle(found.code), summary: SurfaceLabels.agentFailureSummary(found.code), detail: found.detail,
             banner: dismissed, actions: actions, style: style)
         view.onDismiss = { [weak self] in
             self?.dismissed = true
