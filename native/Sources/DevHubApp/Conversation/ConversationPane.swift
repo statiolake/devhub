@@ -285,7 +285,7 @@ final class ConversationPaneView: NSView, HostedConversation {
         state.layout.update(transcript, wide: wide)
         self.state.layout = state.layout
         let cwd = transcript.session.cwd
-        let paths = pathLinks
+        let paths: PathLinks = pathLinks
         state.links = LinkContext(cwd: cwd, issues: IssueRepository(link.repository?(workspaceId)), file: { cwd, path in
             MainActor.assumeIsolated { paths.file(cwd, path) }
         })
