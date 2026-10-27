@@ -31,13 +31,20 @@
  * (`main/shell/usageLimits.ts`); a CLI nothing has read is unknown, and says
  * so, rather than zero.
  *
+ * The tooltip also says, per CLI, when DevHub's reader last read the account
+ * (*Updated 14:02 · 3 min ago*) and, when its latest attempt gave nothing, why
+ * (*Not refreshed since: …*, the failure or the CLI's own "could not fetch"). A
+ * row whose reader has not managed to read for `OUTDATED_MS` is faded a
+ * little, as the reset one is, so a number that has stopped moving does not
+ * pass for a current one.
+ *
  * Nothing at all is drawn while neither CLI has anything to say: a readout
  * that only ever says "unknown" is noise in a column that is about Workspaces.
  */
 
 import { useEffect, useState, type CSSProperties } from "react";
 import type { TooltipLineWire, UsageLimitsWire } from "../../../ipc/contract";
-import { resetTime } from "../../resetTime";
+import { clockTime, resetTime } from "../../resetTime";
 import { usageRow, type UsageRow } from "./usageRow";
 
 const CLI_NAMES = { claude: "Claude", codex: "Codex" } as const;
@@ -51,6 +58,37 @@ const NOTES = {
   cli_not_found: (cli: string) =>
     `Not read: the first ${cli} profile's command is not on this Mac`,
 } as const;
+
+/**
+ * How long the reader may go without a reading, while its attempts give
+ * nothing, before the row says its number is old: a few of its attempts, so
+ * one that failed once does not flicker the row.
+ */
+export const OUTDATED_MS = 10 * 60_000;
+
+/** The longest reason the tooltip quotes; a CLI's stderr can run on. */
+const PROBLEM_CHARS = 300;
+
+type CliLimits = UsageLimitsWire["clis"][number];
+
+/** Whether a CLI's reader has not read for a while and its latest attempt gave nothing. */
+function outdated(one: CliLimits, now: number): boolean {
+  const reader = one.reader;
+  if (reader?.problem === undefined) return false;
+  return reader.readAt === undefined || now - reader.readAt >= OUTDATED_MS;
+}
+
+/** How long ago, in the largest two units: `3 min ago`, `2 h 5 min ago`. */
+function ago(epochMs: number, now: number): string {
+  const minutes = Math.floor((now - epochMs) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${String(minutes)} min ago`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0
+    ? `${String(hours)} h ago`
+    : `${String(hours)} h ${String(rest)} min ago`;
+}
 
 /** The clock, a minute at a time: a reading turns into history on its own. */
 function useMinuteClock(): number {
@@ -76,7 +114,15 @@ export function UsageLimits({
     const shown = usageRow(one.windows ?? [], at);
     return shown === undefined
       ? []
-      : [{ cli: one.cli, ...shown, until: until(shown, at) }];
+      : [
+          {
+            cli: one.cli,
+            ...shown,
+            until: until(shown, at),
+            outdated: outdated(one, at),
+            readAt: one.reader?.readAt,
+          },
+        ];
   });
   // Windows are the reading when there are any; the note is what is left.
   const planless = limits.clis.filter(
@@ -89,7 +135,13 @@ export function UsageLimits({
       (row) =>
         `${CLI_NAMES[row.cli]} ${percent(row.usedPercent)}${
           row.until === undefined ? "" : ` ${row.until}`
-        }${row.caption === undefined ? "" : `, ${row.caption.toLowerCase()}`}`,
+        }${row.caption === undefined ? "" : `, ${row.caption.toLowerCase()}`}${
+          row.outdated
+            ? row.readAt === undefined
+              ? ", not refreshed"
+              : `, not refreshed since ${clockTime(row.readAt, at)}`
+            : ""
+        }`,
     ),
     ...planless.map((one) => `${CLI_NAMES[one.cli]} ${NO_PLAN_LIMITS}`),
   ].join(", ");
@@ -98,7 +150,7 @@ export function UsageLimits({
       className="sidebar-usage"
       role="status"
       aria-label={`Usage limits: ${spoken}`}
-      data-tooltip-lines={JSON.stringify(tooltipLines(limits))}
+      data-tooltip-lines={JSON.stringify(tooltipLines(limits, at))}
     >
       {rows.map((row) => (
         <div
@@ -106,6 +158,7 @@ export function UsageLimits({
           className="sidebar-usage-cli"
           data-level={row.level}
           data-stale={row.stale || undefined}
+          data-outdated={row.outdated || undefined}
         >
           <span className="sidebar-usage-name">{CLI_NAMES[row.cli]}</span>
           <span className="sidebar-usage-track" aria-hidden="true">
@@ -155,7 +208,10 @@ function percent(used: number | undefined): string {
  * The hover: per CLI, its name and a bar per window. The words about time are
  * the tooltip page's, worked out as it draws (`TooltipMeterLineWire`).
  */
-function tooltipLines(limits: UsageLimitsWire): readonly TooltipLineWire[] {
+function tooltipLines(
+  limits: UsageLimitsWire,
+  now: number,
+): readonly TooltipLineWire[] {
   return limits.clis.flatMap((one): TooltipLineWire[] => {
     const name: TooltipLineWire = { text: CLI_NAMES[one.cli], style: "name" };
     const windows = one.windows ?? [];
@@ -168,6 +224,7 @@ function tooltipLines(limits: UsageLimitsWire): readonly TooltipLineWire[] {
     return [
       name,
       ...note,
+      ...readerLines(one, now),
       ...windows.map(
         (window): TooltipLineWire => ({
           kind: "meter",
@@ -182,4 +239,33 @@ function tooltipLines(limits: UsageLimitsWire): readonly TooltipLineWire[] {
       ),
     ];
   });
+}
+
+/**
+ * When the reader last read a CLI's account, and why its latest attempt gave
+ * nothing, when it did.
+ */
+function readerLines(one: CliLimits, now: number): TooltipLineWire[] {
+  const reader = one.reader;
+  if (reader === undefined) return [];
+  const lines: TooltipLineWire[] = [];
+  if (reader.readAt !== undefined) {
+    lines.push({
+      text: `Updated ${clockTime(reader.readAt, now)} · ${ago(reader.readAt, now)}`,
+      style: "muted",
+    });
+  }
+  if (reader.problem !== undefined) {
+    const text =
+      reader.problem.text.length > PROBLEM_CHARS
+        ? `${reader.problem.text.slice(0, PROBLEM_CHARS - 1)}…`
+        : reader.problem.text;
+    lines.push({
+      text: `${
+        reader.readAt === undefined ? "Could not read" : "Not refreshed since"
+      } (tried ${clockTime(reader.problem.at, now)}): ${text}`,
+      style: "note",
+    });
+  }
+  return lines;
 }

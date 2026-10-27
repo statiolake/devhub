@@ -32,27 +32,49 @@
  * experimental, so it stays at 60 s until a window reaches 90%). The first
  * reading is at start.
  *
- * # Failures
+ * # When there is no reading
  *
- * A process that will not start or stops, a request the CLI refuses, a
- * response in a shape DevHub does not read, a reading not done within 30 s
- * (`READ_TIMEOUT_MS`): that reading's process is killed and the next one is at
- * the next tick, at the same cadence — no backoff, no giving up. Readings are
- * one at a time per CLI, so a slow one never overlaps or holds up the next.
+ * Two kinds of attempt give nothing:
  *
- * The failure is said once as `usage_unreadable` at the root — on the first
- * failure of a streak, not on each retry; a successful reading ends the streak
- * (the root surface has no way to take a notice back, so a recovery says
- * nothing). Readings already taken stay in the readout meanwhile, which goes on
- * with what GUI Agents report.
+ * - **A failure**: a process that will not start or stops, a request the CLI
+ *   refuses, a response in a shape DevHub does not read, or a whole attempt —
+ *   finding the command, the environment, the start, the handshake and the
+ *   read — not done within 30 s (`READ_TIMEOUT_MS`). That attempt's process is
+ *   killed (and a process that will not go is killed hard).
+ * - **No reading**: Claude answering that the plan has limits but it could
+ *   not fetch them just now (`rate_limits: null`: its usage endpoint answered
+ *   429, or could not be reached). Each reading is a fresh process, so nothing
+ *   the CLI remembers of a 429 carries over to the next one — asking again
+ *   every minute only keeps the endpoint saying no.
  *
- * Not a failure: Claude answering that the plan has limits but it could not
- * fetch them just now (`rate_limits: null`, e.g. its usage endpoint answered
- * 429). Nothing is delivered and the usual cadence goes on.
+ * Either way the next attempt backs off: after the first, at the usual
+ * cadence; then 2, 5 and 10 minutes (`BACKOFF_MS`), staying at 10 until an
+ * attempt reads. A reading ends the streak. Readings already taken stay in the
+ * readout meanwhile, which goes on with what GUI Agents report, and the
+ * reader's status (`deps.status`: when it last read, why its latest attempt
+ * gave nothing) goes on the wire, so the readout fades and its tooltip says
+ * when it last read and why it could not since. Readings are one at a time per
+ * CLI, so a slow one never overlaps or holds up the next. A failure to start
+ * also looks the command up again at the next attempt, in case it moved.
+ *
+ * A failure is also said once as `usage_unreadable` at the root — on the first
+ * failure of a streak, not on each retry (the root surface has no way to take
+ * a notice back, so a recovery says nothing). No reading is not said there.
  *
  * Not retried: a command that is not on this Mac (the readout says so; a
  * settings change is picked up at the next start of DevHub). A sign-in with no
  * plan limits is an answer, asked again at the usual cadence.
+ *
+ * # The log
+ *
+ * Every attempt's outcome goes to main's log (`devhub-main.log`), as
+ * `[devhub] usage reader <cli>: …` — `read in 1.2 s: 5-hour 34% resets …`,
+ * `no reading in 0.9 s: …`, `failed after 30.0 s: …`, with the next attempt's
+ * delay — but only when it is not the same kind of outcome as the line before
+ * (or a failure with other words), and otherwise once every 15 minutes with how
+ * many attempts went unsaid, so a reader that reads every minute adds four
+ * lines an hour. (`usageLimits.ts` logs, as `[devhub] usage <cli>: kept …`, a
+ * window the readout kept over the reader's reading of it.)
  */
 
 import { spawn } from "node:child_process";
@@ -81,7 +103,13 @@ import {
 import type { GetAccountParams } from "../agent/conversation/codex/protocol/v2/GetAccountParams.js";
 import type { InitializeParams } from "../agent/conversation/codex/protocol/InitializeParams.js";
 import type { MachineCommand, Runtime } from "../runtime/runtime.js";
-import { LIMITED_CLIS, type LimitedCli } from "./usageLimits.js";
+import {
+	describeWindow,
+	LIMITED_CLIS,
+	LOG_AGAIN_MS,
+	type LimitedCli,
+	type UsageReaderStatus,
+} from "./usageLimits.js";
 
 const CLI_NAMES: Readonly<Record<LimitedCli, string>> = {
 	claude: "Claude",
@@ -108,6 +136,9 @@ export interface LineProcess {
 
 /** How much of stderr a failure quotes: the end is where a reason is. */
 const STDERR_TAIL = 2048;
+
+/** How long a killed process has to go before it is killed hard. */
+const KILL_GRACE_MS = 5_000;
 
 export function spawnLineProcess(
 	command: MachineCommand,
@@ -152,6 +183,15 @@ export function spawnLineProcess(
 		kill() {
 			child.stdin.end();
 			child.kill();
+			// A CLI that does not go on SIGTERM is not left behind.
+			if (child.exitCode === null && child.signalCode === null) {
+				const timer = setTimeout(() => {
+					if (child.exitCode === null && child.signalCode === null) {
+						child.kill("SIGKILL");
+					}
+				}, KILL_GRACE_MS);
+				(timer as unknown as { unref?: () => void }).unref?.();
+			}
 		},
 	};
 }
@@ -463,27 +503,54 @@ function waitFor(ms: number, signal: AbortSignal): Promise<void> {
 	});
 }
 
-/** How long one whole read (handshake and request) may take before it is killed. */
+/**
+ * How long one whole attempt (finding the command, the environment, the start,
+ * the handshake and the read) may take before it is abandoned and killed.
+ */
 export const READ_TIMEOUT_MS = 30_000;
 
-/** `promise`, failing if it is not settled within `ms`. */
-function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+/**
+ * The waits after the second, third and later attempts in a row with no
+ * reading (the first waits the usual cadence), the last repeated.
+ */
+export const BACKOFF_MS: readonly number[] = [
+	2 * 60_000,
+	5 * 60_000,
+	10 * 60_000,
+];
+
+/**
+ * `work`, failing if it is not settled within `ms`; its signal is aborted
+ * then, so that what it has not started yet is never started.
+ */
+function within<T>(
+	work: (signal: AbortSignal) => Promise<T>,
+	ms: number,
+	what: string,
+): Promise<T> {
+	const abandoned = new AbortController();
 	return new Promise<T>((resolve, reject) => {
 		const timer = setTimeout(() => {
-			reject(
-				new Error(`${what} was not answered within ${String(ms / 1000)} s`),
+			const failure = new Error(
+				`${what} was not answered within ${String(ms / 1000)} s`,
 			);
+			abandoned.abort(failure);
+			reject(failure);
 		}, ms);
-		promise.then(
-			(value) => {
-				clearTimeout(timer);
-				resolve(value);
-			},
-			(failure: unknown) => {
-				clearTimeout(timer);
-				reject(failure as Error);
-			},
-		);
+		// Started inside the promise, so a throw before its first await is a
+		// rejection too.
+		Promise.resolve()
+			.then(() => work(abandoned.signal))
+			.then(
+				(value) => {
+					clearTimeout(timer);
+					resolve(value);
+				},
+				(failure: unknown) => {
+					clearTimeout(timer);
+					reject(failure as Error);
+				},
+			);
 	});
 }
 
@@ -501,6 +568,20 @@ function usageUnreadable(
 	);
 }
 
+/** What one attempt came to. */
+type Outcome =
+	| { readonly kind: "read"; readonly reading: UsageReading }
+	| { readonly kind: "none"; readonly why: string }
+	| { readonly kind: "failed"; readonly failure: unknown }
+	| { readonly kind: "not_found" };
+
+/** Why an attempt that the CLI answered had no reading. */
+const NO_READING: Readonly<Record<LimitedCli, string>> = {
+	claude:
+		"no reading: Claude could not fetch its limits just now (its usage endpoint rate-limited it or could not be reached)",
+	codex: "no reading: Codex had no limits to say just now",
+};
+
 export interface UsageReadersDeps {
 	/** Settings' profiles, in its order. */
 	readonly profiles: readonly ConfiguredAgentProfile[];
@@ -513,9 +594,15 @@ export interface UsageReadersDeps {
 	readonly spawn: (command: MachineCommand, cwd: string) => LineProcess;
 	readonly deliver: (cli: LimitedCli, reading: UsageReading) => void;
 	readonly note: (cli: LimitedCli, note: UsageNoteWire) => void;
+	/** The reader's status after each attempt: when it last read, why it could not since. */
+	readonly status: (cli: LimitedCli, status: UsageReaderStatus) => void;
 	/** The root surface: a reader's failure, once per streak. */
 	readonly report: (failure: NamedFailure) => void;
 	readonly wait?: (ms: number, signal: AbortSignal) => Promise<void>;
+	/** Main's log; `console.log` by default. */
+	readonly log?: (line: string) => void;
+	/** The clock; `Date.now` by default. */
+	readonly now?: () => number;
 }
 
 /** The command a reader of `cli` runs: the profile's program, never its arguments. */
@@ -531,6 +618,14 @@ function usageCommand(
 	};
 }
 
+function seconds(ms: number): string {
+	return `${(ms / 1000).toFixed(1)} s`;
+}
+
+function delay(ms: number): string {
+	return ms >= 60_000 ? `${String(Math.round(ms / 60_000))} min` : seconds(ms);
+}
+
 /**
  * Start a reader loop for each CLI with plan limits that has a profile; stop
  * them all with the answer. Everything a reader does — finding its command,
@@ -541,79 +636,157 @@ export function startUsageReaders(deps: UsageReadersDeps): { stop(): void } {
 	/** The processes alive now, at most one per CLI. */
 	const live = new Set<UsageSource>();
 	const wait = deps.wait ?? waitFor;
+	const log =
+		deps.log ??
+		((line: string) => {
+			console.log(line);
+		});
+	const now = deps.now ?? Date.now;
 	for (const cli of LIMITED_CLIS) {
 		const profile = deps.profiles.find((one) => one.kind === cli);
 		if (profile === undefined) continue;
-		let program: string | undefined;
-		// A command not on this Mac is a note, and nothing is read until DevHub
-		// starts again.
-		const resolve = async (): Promise<string | undefined> => {
-			const resolved = await deps.runtime.resolveProgram(
-				profile.command,
-				deps.searchPath,
-			);
-			if (resolved.kind === "unavailable") {
-				deps.note(cli, "cli_not_found");
-				return undefined;
-			}
-			return resolved.value;
+		const say = (line: string) => {
+			log(`[devhub] usage reader ${cli}: ${line}`);
 		};
-		// One process for one reading, killed whatever comes of it.
-		const readOnce = async (): Promise<UsageReading | undefined> => {
-			program ??= await resolve();
-			if (program === undefined) return undefined;
+		let program: string | undefined;
+		// One process for one reading, killed whatever comes of it; every
+		// step of it under the one timeout.
+		const attempt = async (signal: AbortSignal): Promise<Outcome> => {
+			if (program === undefined) {
+				const resolved = await deps.runtime.resolveProgram(
+					profile.command,
+					deps.searchPath,
+				);
+				if (resolved.kind === "unavailable") return { kind: "not_found" };
+				program = resolved.value;
+			}
 			const env = { ...(await deps.runtime.environment()), ...profile.env };
 			const home = await deps.runtime.home();
-			if (stopped.signal.aborted) return undefined;
+			if (signal.aborted) throw signal.reason;
+			if (stopped.signal.aborted) return { kind: "none", why: "stopped" };
 			const child = deps.spawn(usageCommand(cli, program, env), home);
 			const source =
 				cli === "claude"
 					? new ClaudeUsageSource(child)
 					: new CodexUsageSource(child, deps.clientVersion);
 			live.add(source);
+			const abandon = () => {
+				source.close();
+			};
+			signal.addEventListener("abort", abandon, { once: true });
 			try {
-				return await within(
-					(async () => {
-						await source.open();
-						return await source.read();
-					})(),
-					READ_TIMEOUT_MS,
-					"the usage read",
-				);
+				await source.open();
+				const reading = await source.read();
+				return reading === undefined
+					? { kind: "none", why: NO_READING[cli] }
+					: { kind: "read", reading };
 			} finally {
+				signal.removeEventListener("abort", abandon);
 				live.delete(source);
 				source.close();
 			}
 		};
 		const loop = async (): Promise<void> => {
 			let last: UsageReading | undefined;
-			// Whether this streak of failures was said.
+			let readAt: number | undefined;
+			// Attempts in a row with no reading; whether this streak's failure was said.
+			let streak = 0;
 			let said = false;
+			// What the log said last, and how many attempts it has not said since.
+			let logged: { key: string; at: number } | undefined;
+			let unsaid = 0;
 			while (!stopped.signal.aborted) {
+				const started = now();
+				let outcome: Outcome;
 				try {
-					const reading = await readOnce();
-					if (stopped.signal.aborted || program === undefined) return;
-					// No reading this time (limits not fetched): nothing delivered.
-					if (reading !== undefined) {
-						last = reading;
-						said = false;
-						deps.deliver(cli, reading);
-					}
+					outcome = await within(attempt, READ_TIMEOUT_MS, "the usage read");
 				} catch (failure) {
-					if (stopped.signal.aborted) return;
-					if (!said) {
-						said = true;
-						deps.report(usageUnreadable(cli, profile.display_name, failure));
-					}
+					outcome = { kind: "failed", failure };
 				}
-				// A failure is asked again at the same cadence, not later.
-				await wait(
-					last === undefined ? USUAL_INTERVAL_MS : pollInterval(cli, last),
-					stopped.signal,
-				);
+				if (stopped.signal.aborted) return;
+				const took = now() - started;
+				if (outcome.kind === "not_found") {
+					say(`the command ${profile.command} is not on this Mac; not read`);
+					deps.note(cli, "cli_not_found");
+					return;
+				}
+				const cadence =
+					last === undefined ? USUAL_INTERVAL_MS : pollInterval(cli, last);
+				let next: number;
+				let line: string;
+				let key: string;
+				if (outcome.kind === "read") {
+					last = outcome.reading;
+					readAt = now();
+					streak = 0;
+					said = false;
+					next = pollInterval(cli, last);
+					deps.deliver(cli, outcome.reading);
+					deps.status(cli, { readAt });
+					key = "read";
+					line = `read in ${seconds(took)}: ${
+						outcome.reading.kind === "no_plan_limits"
+							? "no plan limits"
+							: outcome.reading.windows.length === 0
+								? "no windows"
+								: outcome.reading.windows.map(describeWindow).join(", ")
+					}`;
+				} else {
+					streak += 1;
+					next =
+						streak === 1
+							? cadence
+							: BACKOFF_MS[Math.min(streak - 1, BACKOFF_MS.length) - 1]!;
+					const text =
+						outcome.kind === "none"
+							? outcome.why
+							: failureText(outcome.failure);
+					deps.status(cli, {
+						...(readAt === undefined ? {} : { readAt }),
+						problem: { at: now(), text },
+					});
+					if (outcome.kind === "failed") {
+						// Looked up again next time: a command that would not
+						// start may have moved.
+						program = undefined;
+						if (!said) {
+							said = true;
+							deps.report(
+								usageUnreadable(cli, profile.display_name, outcome.failure),
+							);
+						}
+						key = `failed: ${text}`;
+						line = `failed after ${seconds(took)}: ${text}`;
+					} else {
+						key = "none";
+						line = `${text} (in ${seconds(took)})`;
+					}
+					line += ` (${String(streak)} in a row; next in ${delay(next)})`;
+				}
+				const at = now();
+				if (
+					logged === undefined ||
+					logged.key !== key ||
+					at - logged.at >= LOG_AGAIN_MS
+				) {
+					say(
+						unsaid === 0
+							? line
+							: `${line} [${String(unsaid)} attempts not logged since the last line]`,
+					);
+					logged = { key, at };
+					unsaid = 0;
+				} else {
+					unsaid += 1;
+				}
+				await wait(next, stopped.signal);
 			}
 		};
-		void loop();
+		void loop().catch((failure: unknown) => {
+			// Nothing above throws; if it ever does, the log says the reader
+			// ended rather than it going quiet.
+			say(`stopped reading: ${failureText(failure)}`);
+		});
 	}
 	return {
 		stop() {

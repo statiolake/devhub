@@ -3,7 +3,8 @@
  * (control requests and account reads only — never anything that starts a
  * turn), how its answers are decoded, how often it asks, how its readings
  * merge with a GUI Agent's, that each reading is its own process, killed
- * after, and that a failure is said once per streak and retried at the next tick.
+ * after, that a failure is said once per streak and retried with a backoff,
+ * that the reader's status reaches the wire, and what the log says.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -16,8 +17,13 @@ import { decodeUsage } from "../agent/conversation/claude/decode.js";
 import { rateLimits, Reader } from "../agent/conversation/codex/decode.js";
 import { ProtocolMismatch } from "../agent/conversation/protocolAdapter.js";
 import type { MachineCommand } from "../runtime/runtime.js";
-import { UsageLimits, usageReadingListener } from "./usageLimits.js";
 import {
+	UsageLimits,
+	type UsageReaderStatus,
+	usageReadingListener,
+} from "./usageLimits.js";
+import {
+	BACKOFF_MS,
 	type LineProcess,
 	pollInterval,
 	READ_TIMEOUT_MS,
@@ -201,6 +207,9 @@ function harness(options: {
 	readonly profiles: readonly ConfiguredAgentProfile[];
 	readonly answers: Partial<Record<"claude" | "codex", Answer>>;
 	readonly missing?: readonly string[];
+	readonly environment?: () => Promise<Record<string, string>>;
+	readonly spawnThrows?: () => boolean;
+	readonly now?: () => number;
 }) {
 	const limits = new UsageLimits();
 	const published: UsageLimitsWire[] = [];
@@ -210,14 +219,18 @@ function harness(options: {
 	const reports: NamedFailure[] = [];
 	const readings: UsageReading[] = [];
 	const notes: UsageNoteWire[] = [];
+	const statuses: UsageReaderStatus[] = [];
+	const logs: string[] = [];
+	const resolved: string[] = [];
 	const ticks: (() => void)[] = [];
 	/** How many processes were alive when each one was started. */
 	const aliveAtSpawn: number[] = [];
 	const readers = startUsageReaders({
 		profiles: options.profiles,
 		runtime: {
-			resolveProgram: (configured) =>
-				Promise.resolve<SettingsResolvedRuntimeWire>(
+			resolveProgram: (configured) => {
+				resolved.push(configured);
+				return Promise.resolve<SettingsResolvedRuntimeWire>(
 					options.missing?.includes(configured)
 						? {
 								kind: "unavailable",
@@ -225,14 +238,19 @@ function harness(options: {
 								lookup: { kind: "path", directories: [] },
 							}
 						: { kind: "absolute_path", value: `/opt/bin/${configured}` },
-				),
-			environment: () =>
-				Promise.resolve({ PATH: "/usr/bin", HOME: "/home/testuser" }),
+				);
+			},
+			environment:
+				options.environment ??
+				(() => Promise.resolve({ PATH: "/usr/bin", HOME: "/home/testuser" })),
 			home: () => Promise.resolve("/home/testuser"),
 		},
 		searchPath: "/usr/bin",
 		clientVersion: "0.1.0",
 		spawn: (command) => {
+			if (options.spawnThrows?.() === true) {
+				throw new Error(`spawn ${command.file} ENOENT`);
+			}
 			const name = command.file.split("/").at(-1) as "claude" | "codex";
 			const answer = options.answers[name];
 			if (answer === undefined) throw new Error(`no script for ${name}`);
@@ -249,7 +267,13 @@ function harness(options: {
 			notes.push(note);
 			listener.note(cli, note);
 		},
+		status: (cli, status) => {
+			statuses.push(status);
+			listener.status(cli, status);
+		},
 		report: (failure) => reports.push(failure),
+		log: (line) => logs.push(line),
+		...(options.now === undefined ? {} : { now: options.now }),
 		// The test's clock: every reader's next read waits for `next()`.
 		wait: (ms, signal) => {
 			intervals.push(ms);
@@ -268,6 +292,9 @@ function harness(options: {
 		reports,
 		readings,
 		notes,
+		statuses,
+		logs,
+		resolved,
 		readers,
 		next: () => {
 			for (const tick of ticks.splice(0)) tick();
@@ -535,6 +562,7 @@ describe("the background usage readers", () => {
 		expect(h.intervals).toEqual([30_000, 30_000]);
 		expect(h.limits.wire().clis[1]).toEqual({
 			cli: "codex",
+			reader: { readAt: expect.any(Number) as number },
 			windows: [
 				{
 					window: "5-hour",
@@ -594,6 +622,7 @@ describe("the background usage readers", () => {
 		h.readers.stop();
 		expect(h.limits.wire().clis[0]).toEqual({
 			cli: "claude",
+			reader: { readAt: expect.any(Number) as number },
 			windows: [
 				{
 					window: "5-hour",
@@ -628,8 +657,16 @@ describe("the background usage readers", () => {
 		await vi.waitFor(() => expect(h.intervals).toHaveLength(2));
 		expect(h.limits.wire()).toEqual({
 			clis: [
-				{ cli: "claude", note: "no_plan_limits" },
-				{ cli: "codex", note: "no_plan_limits" },
+				{
+					cli: "claude",
+					note: "no_plan_limits",
+					reader: { readAt: expect.any(Number) as number },
+				},
+				{
+					cli: "codex",
+					note: "no_plan_limits",
+					reader: { readAt: expect.any(Number) as number },
+				},
 			],
 		});
 		// An API-key Codex is not asked for limits it cannot have.
@@ -698,7 +735,7 @@ describe("the background usage readers", () => {
 		h.readers.stop();
 	});
 
-	it("retry a failure at every tick at the cadence of the latest reading, never backing off, saying it once per streak", async () => {
+	it("retry a failure at the cadence of the latest reading, then back off to 2, 5 and 10 minutes, saying it once per streak", async () => {
 		let healthy = true;
 		const h = harness({
 			profiles: [profile("codex")],
@@ -707,22 +744,65 @@ describe("the background usage readers", () => {
 		await vi.waitFor(() => expect(h.readings).toHaveLength(1));
 		await vi.waitFor(() => expect(h.intervals).toHaveLength(1));
 		healthy = false;
-		for (let n = 2; n <= 12; n += 1) {
+		for (let n = 2; n <= 7; n += 1) {
 			h.next();
 			await vi.waitFor(() => expect(h.intervals).toHaveLength(n));
 		}
-		// 76% of the five-hour window: 30 s, after the reading and every failure.
-		expect(h.intervals).toEqual(Array<number>(12).fill(30_000));
-		expect(h.processes).toHaveLength(12);
+		// 76% of the five-hour window: 30 s after the reading and the first
+		// failure, then the backoff, which stays at its last step.
+		expect(h.intervals).toEqual([
+			30_000,
+			30_000,
+			...BACKOFF_MS,
+			BACKOFF_MS.at(-1)!,
+			BACKOFF_MS.at(-1)!,
+		]);
+		expect(h.processes).toHaveLength(7);
 		expect(h.reports).toHaveLength(1);
-		// It comes back: a reading ends the streak, so the next failure is news.
+		// It comes back: a reading ends the streak, so the next failure is news
+		// and the cadence is the reading's again.
 		healthy = true;
 		h.next();
 		await vi.waitFor(() => expect(h.readings).toHaveLength(2));
-		await vi.waitFor(() => expect(h.intervals).toHaveLength(13));
+		await vi.waitFor(() => expect(h.intervals).toHaveLength(8));
+		expect(h.intervals.at(-1)).toBe(30_000);
 		healthy = false;
 		h.next();
 		await vi.waitFor(() => expect(h.reports).toHaveLength(2));
+		h.readers.stop();
+	});
+
+	it("back off the same way while Claude cannot fetch its limits, keeping the last reading shown", async () => {
+		let fetched = true;
+		const h = harness({
+			profiles: [profile("claude")],
+			answers: {
+				claude: claude(() =>
+					fetched
+						? {
+								...CLAUDE_USAGE,
+								rate_limits: {
+									...CLAUDE_USAGE.rate_limits,
+									five_hour: {
+										utilization: 40,
+										resets_at: "2026-09-28T14:59:59.559705+00:00",
+									},
+								},
+							}
+						: { rate_limits_available: true, rate_limits: null },
+				),
+			},
+		});
+		await vi.waitFor(() => expect(h.intervals).toEqual([60_000]));
+		const shown = h.limits.wire().clis[0]!.windows;
+		fetched = false;
+		for (let n = 2; n <= 5; n += 1) {
+			h.next();
+			await vi.waitFor(() => expect(h.intervals).toHaveLength(n));
+		}
+		expect(h.intervals).toEqual([60_000, 60_000, ...BACKOFF_MS]);
+		expect(h.limits.wire().clis[0]!.windows).toEqual(shown);
+		expect(h.reports).toEqual([]);
 		h.readers.stop();
 	});
 
@@ -869,5 +949,171 @@ describe("the background usage readers", () => {
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(h.processes[0]!.killed).toBe(true);
 		expect(h.reports).toEqual([]);
+	});
+	it("keep following the reader when Claude's resets differ by a fraction of a second from one reading to the next (the frozen readout)", async () => {
+		// What Claude's usage endpoint answers: the same window's reset with
+		// a fraction that changes on every request, and usage that grows.
+		const answers = [
+			{ used: 40, reset: "2026-09-28T14:59:59.912345+00:00" },
+			{ used: 45, reset: "2026-09-28T14:59:59.103456+00:00" },
+			{ used: 52, reset: "2026-09-28T14:59:59.559705+00:00" },
+		];
+		let n = 0;
+		const h = harness({
+			profiles: [profile("claude")],
+			answers: {
+				claude: claude(() => {
+					const one = answers[Math.min(n, answers.length - 1)]!;
+					return {
+						rate_limits_available: true,
+						rate_limits: {
+							five_hour: { utilization: one.used, resets_at: one.reset },
+							seven_day: null,
+						},
+					};
+				}),
+			},
+		});
+		const shown = () => h.limits.wire().clis[0]!.windows?.[0]?.usedPercent;
+		await vi.waitFor(() => expect(shown()).toBe(40));
+		n = 1;
+		h.next();
+		await vi.waitFor(() => expect(h.readings).toHaveLength(2));
+		// Compared exactly, 14:59:59.103 is "older" than 14:59:59.912, and the
+		// readout stayed at 40% until the window reset.
+		expect(shown()).toBe(45);
+		// A GUI Agent's rate_limit_event says the same reset in whole
+		// seconds, 15:00:00: it no longer holds the window against the reader.
+		h.limits.observe("claude", {
+			window: "5-hour",
+			durationMinutes: 300,
+			usedPercent: 47,
+			resetsAt: Date.parse("2026-09-28T15:00:00Z"),
+		});
+		expect(shown()).toBe(47);
+		n = 2;
+		h.next();
+		await vi.waitFor(() => expect(h.readings).toHaveLength(3));
+		expect(shown()).toBe(52);
+		h.readers.stop();
+	});
+
+	it("put the reader's status on the wire: when it last read, and why its latest attempt gave nothing", async () => {
+		let clock = 1_000_000;
+		let fetched = true;
+		const h = harness({
+			profiles: [profile("claude")],
+			now: () => clock,
+			answers: {
+				claude: claude(() =>
+					fetched
+						? CLAUDE_USAGE
+						: { rate_limits_available: true, rate_limits: null },
+				),
+			},
+		});
+		await vi.waitFor(() => expect(h.readings).toHaveLength(1));
+		expect(h.limits.wire().clis[0]!.reader).toEqual({ readAt: 1_000_000 });
+		fetched = false;
+		clock = 1_060_000;
+		h.next();
+		await vi.waitFor(() => expect(h.statuses).toHaveLength(2));
+		expect(h.limits.wire().clis[0]!.reader).toEqual({
+			readAt: 1_000_000,
+			problem: {
+				at: 1_060_000,
+				text: expect.stringMatching(
+					/^no reading: Claude could not fetch its limits/u,
+				),
+			},
+		});
+		expect(h.published.at(-1)).toEqual(h.limits.wire());
+		fetched = true;
+		clock = 1_120_000;
+		h.next();
+		await vi.waitFor(() => expect(h.readings).toHaveLength(2));
+		expect(h.limits.wire().clis[0]!.reader).toEqual({ readAt: 1_120_000 });
+		h.readers.stop();
+	});
+
+	it("log each kind of outcome when it changes, and the same outcome again only every 15 minutes", async () => {
+		let clock = 0;
+		let healthy = true;
+		const h = harness({
+			profiles: [profile("claude")],
+			now: () => clock,
+			answers: {
+				claude: (m) => (healthy ? claude(() => CLAUDE_USAGE)(m) : "end"),
+			},
+		});
+		const step = async (ms: number) => {
+			clock += ms;
+			const before = h.intervals.length;
+			h.next();
+			await vi.waitFor(() => expect(h.intervals).toHaveLength(before + 1));
+		};
+		await vi.waitFor(() => expect(h.intervals).toHaveLength(1));
+		await step(60_000);
+		await step(60_000);
+		healthy = false;
+		await step(60_000);
+		await step(60_000);
+		await step(16 * 60_000);
+		h.readers.stop();
+		expect(h.logs).toEqual([
+			"[devhub] usage reader claude: read in 0.0 s: 5-hour 91% resets 2026-09-28T14:59:59.559Z, 7-day 34% resets 2026-10-04T13:59:59.559Z",
+			"[devhub] usage reader claude: failed after 0.0 s: exit code 1 (1 in a row; next in 15.0 s) [2 attempts not logged since the last line]",
+			"[devhub] usage reader claude: failed after 0.0 s: exit code 1 (3 in a row; next in 5 min) [1 attempts not logged since the last line]",
+		]);
+	});
+
+	it("put finding the environment under the timeout too, and go on reading after it hangs", async () => {
+		vi.useFakeTimers();
+		try {
+			let hang = true;
+			const h = harness({
+				profiles: [profile("claude")],
+				answers: { claude: claude(() => CLAUDE_USAGE) },
+				environment: () =>
+					hang
+						? new Promise<Record<string, string>>(() => undefined)
+						: Promise.resolve({ PATH: "/usr/bin" }),
+			});
+			await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS);
+			expect(h.reports).toHaveLength(1);
+			expect(h.reports[0]!.wire.detail).toContain("not answered within 30 s");
+			expect(h.statuses).toHaveLength(1);
+			expect(h.intervals).toEqual([60_000]);
+			// The hung attempt never starts a process afterwards.
+			expect(h.processes).toHaveLength(0);
+			hang = false;
+			h.next();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(h.readings).toHaveLength(1);
+			expect(h.processes).toHaveLength(1);
+			h.readers.stop();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("take a start that throws as a failure, and look the command up again after it", async () => {
+		let throws = true;
+		const h = harness({
+			profiles: [profile("claude")],
+			answers: { claude: claude(() => CLAUDE_USAGE) },
+			spawnThrows: () => throws,
+		});
+		await vi.waitFor(() => expect(h.reports).toHaveLength(1));
+		expect(h.reports[0]!.wire.detail).toContain("ENOENT");
+		throws = false;
+		h.next();
+		await vi.waitFor(() => expect(h.readings).toHaveLength(1));
+		expect(h.resolved).toEqual(["claude", "claude"]);
+		// A reading keeps the command it found.
+		h.next();
+		await vi.waitFor(() => expect(h.readings).toHaveLength(2));
+		expect(h.resolved).toHaveLength(2);
+		h.readers.stop();
 	});
 });

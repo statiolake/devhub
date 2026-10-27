@@ -118,6 +118,96 @@ describe("the usage-limits readout", () => {
     ]);
   });
 
+  it("says on hover when each reader last read and why it could not since, and fades a row whose reader has not read for a while", () => {
+    const MINUTE = 60_000;
+    const window = {
+      window: "5-hour",
+      durationMinutes: 300,
+      usedPercent: 40,
+      resetsAt: NOW + HOUR,
+    };
+    render(
+      <UsageLimits
+        limits={{
+          clis: [
+            {
+              cli: "claude",
+              windows: [window],
+              reader: {
+                readAt: NOW - 25 * MINUTE,
+                problem: {
+                  at: NOW - 2 * MINUTE,
+                  text: "no reading: Claude could not fetch its limits just now (its usage endpoint rate-limited it or could not be reached)",
+                },
+              },
+            },
+            {
+              cli: "codex",
+              windows: [window],
+              // One failed attempt just after a reading: not old yet.
+              reader: {
+                readAt: NOW - 3 * MINUTE,
+                problem: {
+                  at: NOW - MINUTE,
+                  text: "codex stopped (exit code 1)",
+                },
+              },
+            },
+          ],
+        }}
+        now={NOW}
+      />,
+    );
+    const readout = screen.getByRole("status");
+    const [claude, codex] = readout.querySelectorAll(".sidebar-usage-cli");
+    expect(claude).toHaveAttribute("data-outdated", "true");
+    expect(codex).not.toHaveAttribute("data-outdated");
+    expect(readout).toHaveAccessibleName(
+      "Usage limits: Claude 40% until 19:00, not refreshed since 17:35, Codex 40% until 19:00",
+    );
+    expect(tooltipOf(readout)).toEqual([
+      { text: "Claude", style: "name" },
+      { text: "Updated 17:35 · 25 min ago", style: "muted" },
+      {
+        text: "Not refreshed since (tried 17:58): no reading: Claude could not fetch its limits just now (its usage endpoint rate-limited it or could not be reached)",
+        style: "note",
+      },
+      { kind: "meter", label: "5-hour", usedPercent: 40, resetsAt: NOW + HOUR },
+      { text: "Codex", style: "name" },
+      { text: "Updated 17:57 · 3 min ago", style: "muted" },
+      {
+        text: "Not refreshed since (tried 17:59): codex stopped (exit code 1)",
+        style: "note",
+      },
+      { kind: "meter", label: "5-hour", usedPercent: 40, resetsAt: NOW + HOUR },
+    ]);
+  });
+
+  it("says only when it was updated while the reader reads", () => {
+    render(
+      <UsageLimits
+        limits={{
+          clis: [
+            {
+              cli: "claude",
+              windows: [{ window: "5-hour", usedPercent: 1 }],
+              reader: { readAt: NOW - 30_000 },
+            },
+          ],
+        }}
+        now={NOW}
+      />,
+    );
+    const readout = screen.getByRole("status");
+    expect(readout.querySelector(".sidebar-usage-cli")).not.toHaveAttribute(
+      "data-outdated",
+    );
+    expect(tooltipOf(readout)).toContainEqual({
+      text: "Updated 17:59 · just now",
+      style: "muted",
+    });
+  });
+
   it("says quietly that a sign-in has no plan limits, and why a CLI was not read", () => {
     render(
       <UsageLimits

@@ -2038,6 +2038,12 @@ body.is-resizing-rows {
   background: currentcolor;
 }
 
+/* Its reader has not managed to read for a while: the number may be old.
+   Before the reset one, which fades further and wins when both are. */
+.sidebar-usage-cli[data-outdated] {
+  opacity: 0.65;
+}
+
 .sidebar-usage-cli[data-stale] {
   opacity: 0.5;
 }

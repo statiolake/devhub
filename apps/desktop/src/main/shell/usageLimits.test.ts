@@ -124,11 +124,13 @@ describe("the usage-limits readout", () => {
 			usedPercent,
 			resetsAt,
 		});
-		expect(limits.observe("claude", w(40, 2_000))).toBe(true);
-		expect(limits.observe("claude", w(90, 1_000))).toBe(false);
-		expect(limits.observe("claude", w(30, 2_000))).toBe(false);
-		expect(limits.observe("claude", w(55, 2_000))).toBe(true);
-		expect(limits.observe("claude", w(5, 3_000))).toBe(true);
+		// Windows of one limit are a window apart.
+		const W = 5 * 60 * 60_000;
+		expect(limits.observe("claude", w(40, 2 * W))).toBe(true);
+		expect(limits.observe("claude", w(90, 1 * W))).toBe(false);
+		expect(limits.observe("claude", w(30, 2 * W))).toBe(false);
+		expect(limits.observe("claude", w(55, 2 * W))).toBe(true);
+		expect(limits.observe("claude", w(5, 3 * W))).toBe(true);
 		// Another window is its own reading, and does not displace this one.
 		expect(
 			limits.observe("claude", {
@@ -145,7 +147,7 @@ describe("the usage-limits readout", () => {
 					window: "5-hour",
 					durationMinutes: 300,
 					usedPercent: 5,
-					resetsAt: 3_000,
+					resetsAt: 3 * 5 * 60 * 60_000,
 				},
 				{
 					window: "7-day",
@@ -155,6 +157,28 @@ describe("the usage-limits readout", () => {
 				},
 			],
 		});
+	});
+
+	it("takes resets a moment apart as one window, so a reset said with another fraction or in whole seconds never holds it", () => {
+		const limits = new UsageLimits();
+		const reset = Date.parse("2026-09-28T15:00:00Z");
+		const w = (usedPercent: number, resetsAt: number) => ({
+			window: "5-hour",
+			durationMinutes: 300,
+			usedPercent,
+			resetsAt,
+		});
+		// The stream's whole second, then the endpoint's fractions: more used
+		// is newer whichever says the reset later.
+		expect(limits.observe("claude", w(40, reset))).toBe(true);
+		expect(limits.observe("claude", w(45, reset - 441))).toBe(true);
+		expect(limits.observe("claude", w(50, reset - 897))).toBe(true);
+		expect(limits.observe("claude", w(48, reset))).toBe(false);
+		// The same reading again with another fraction changes nothing.
+		expect(limits.observe("claude", w(50, reset - 12))).toBe(false);
+		expect(limits.wire().clis[0]!.windows).toEqual([w(50, reset - 897)]);
+		// The next window is hours later, and newer whatever it has used.
+		expect(limits.observe("claude", w(1, reset + 5 * 60 * 60_000))).toBe(true);
 	});
 
 	it("refuses a rate limit from an Agent that cannot have a GUI", () => {

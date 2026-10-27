@@ -481,6 +481,21 @@ export interface UsageLimitsWire {
 		 * command is not on this Mac, so it cannot be asked.
 		 */
 		readonly note?: UsageNoteWire;
+		/**
+		 * How DevHub's own reader of this CLI's account is doing: when it last
+		 * read the limits, and why its latest attempt gave nothing, when it did
+		 * — so a readout can say that what it shows is old, and why. Absent
+		 * until the reader has tried once.
+		 */
+		readonly reader?: {
+			/** When the reader last read the account (epoch ms); absent: never yet. */
+			readonly readAt?: number;
+			/**
+			 * Its latest attempt, when that gave no reading: when it was
+			 * (epoch ms), and why, in words. Absent once a reading succeeds.
+			 */
+			readonly problem?: { readonly at: number; readonly text: string };
+		};
 	}[];
 }
 
