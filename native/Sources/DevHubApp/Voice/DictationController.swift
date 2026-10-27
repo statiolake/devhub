@@ -36,6 +36,14 @@ final class DictationController {
     private var session = 0
     private var delivered = 0
     private var engine: AVAudioEngine?
+    /// A recording played in place of the microphone (the self-test's), and
+    /// the task playing it.
+    var audioFile: URL?
+    private var player: Task<Void, Never>?
+    /// The audio's way into the stream, for the dictation running.
+    private var feeder: AudioFeeder?
+    /// The recording has been played to its end (the self-test waits for it).
+    private(set) var audioFileDone = false
     private var monitor: Any?
     private let hud = DictationPanel()
     private var transcriber: (any Transcriber)?
@@ -125,6 +133,12 @@ final class DictationController {
         }
     }
 
+    /// The keys are no longer this controller's (its window has gone).
+    func removeKeys() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
     private func handle(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         // `KeyM` by its key code, so a layout or an input method cannot move it.
@@ -175,6 +189,8 @@ final class DictationController {
     }
 
     private func fail(_ title: String, _ detail: String, microphone: Bool) {
+        feeder?.stop()
+        feeder = nil
         phase = .idle
         tentative = ""
         hud.hide()
@@ -191,7 +207,7 @@ final class DictationController {
         warm()
         // `requestMicrophone`: asked once; refused is said with the way to allow it.
         let allowed: Bool
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        switch audioFile == nil ? AVCaptureDevice.authorizationStatus(for: .audio) : .authorized {
         case .authorized: allowed = true
         case .notDetermined: allowed = await AVCaptureDevice.requestAccess(for: .audio)
         default: allowed = false
@@ -211,6 +227,7 @@ final class DictationController {
             Task { @MainActor in self?.updated(update, session: mine) }
         }
         self.stream = stream
+        if let audioFile { return play(audioFile, into: stream, session: mine) }
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -226,6 +243,7 @@ final class DictationController {
                 if full { self.finish() }
             }
         }
+        self.feeder = feeder
         // Called on the audio thread: nothing of the main actor's in it.
         input.installTap(onBus: 0, bufferSize: 2048, format: format) { @Sendable buffer, _ in
             feeder.feed(buffer)
@@ -248,7 +266,46 @@ final class DictationController {
         hud.show(level: 0, tentative: "", language: language, phase: phase, below: target)
     }
 
+    /// A recording instead of the microphone: its buffers into the same
+    /// feeder, four times as fast as it was spoken, and then silence until
+    /// the dictation is stopped as a person stops it.
+    private func play(_ url: URL, into stream: DictationStream, session mine: Int) {
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: url)
+        } catch {
+            self.stream = nil
+            return fail(DictationText.voiceFailedTitle, "The recording could not be read: \(error.localizedDescription)", microphone: false)
+        }
+        let format = file.processingFormat
+        let feeder = AudioFeeder(stream: stream, sampleRate: format.sampleRate) { [weak self] level, full in
+            Task { @MainActor in
+                guard let self, self.session == mine else { return }
+                self.level = level
+                if full { self.finish() }
+            }
+        }
+        self.feeder = feeder
+        audioFileDone = false
+        phase = .recording
+        hud.show(level: 0, tentative: "", language: language, phase: phase, below: target)
+        let chunk = AVAudioFrameCount(max(1, format.sampleRate / 10))
+        player = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { break }
+                do { try file.read(into: buffer, frameCount: chunk) } catch { break }
+                if buffer.frameLength == 0 { break }
+                feeder.feed(buffer)
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+            guard let self, self.session == mine else { return }
+            self.audioFileDone = true
+        }
+    }
+
     private func release() {
+        player?.cancel()
+        player = nil
         guard let engine else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -263,8 +320,13 @@ final class DictationController {
         phase = .transcribing
         hud.show(level: 0, tentative: tentative, language: language, phase: phase, below: target)
         let mine = session
+        let feeder = self.feeder
+        self.feeder = nil
         Task { @MainActor [weak self] in
             do {
+                // Every sample heard is in the stream before it is finished:
+                // the last quarter second too.
+                await feeder?.drain()
                 let committed = try await stream.finish()
                 guard let self, self.session == mine else { return }
                 self.deliver(committed)
@@ -281,6 +343,8 @@ final class DictationController {
     func cancel() {
         guard phase == .recording || phase == .starting else { return }
         release()
+        feeder?.stop()
+        feeder = nil
         let stream = self.stream
         Task { await stream?.cancel() }
         session += 1
@@ -332,21 +396,29 @@ final class DictationController {
     }
 }
 
-/// The audio thread's side: downsample, convert, send every quarter second.
+/// The audio thread's side: downsample, convert, send every quarter second —
+/// in the order it was heard (one pump into the stream, never a task per
+/// chunk, which could overtake one another), and what is left when the
+/// dictation stops (`drain`).
 final class AudioFeeder: @unchecked Sendable {
     private let lock = NSLock()
     private var downsampler: StreamingDownsampler
     private var pending: [Float] = []
     private var sent = 0
-    private let stream: DictationStream
     private let report: @Sendable (Double, Bool) -> Void
+    private let chunks: AsyncStream<[UInt8]>.Continuation
+    private let pump: Task<Void, Never>
     private static let sendEvery = VoiceAudio.sampleRate / 4
     private static let limit = VoiceAudio.maxSeconds * VoiceAudio.sampleRate
 
     init(stream: DictationStream, sampleRate: Double, report: @escaping @Sendable (Double, Bool) -> Void) {
-        self.stream = stream
         downsampler = StreamingDownsampler(from: sampleRate)
         self.report = report
+        let (queue, continuation) = AsyncStream<[UInt8]>.makeStream()
+        chunks = continuation
+        pump = Task {
+            for await chunk in queue { await stream.push(chunk) }
+        }
     }
 
     func feed(_ buffer: AVAudioPCMBuffer) {
@@ -364,11 +436,29 @@ final class AudioFeeder: @unchecked Sendable {
             }
             full = sent + pending.count >= Self.limit
         }
-        if let out {
-            let stream = self.stream
-            Task { await stream.push(out) }
-        }
+        if let out { chunks.yield(out) }
         report(level, full)
+    }
+
+    /// The samples not sent yet go too, and every chunk is in the stream
+    /// when this returns.
+    func drain() async {
+        let rest: [UInt8]? = lock.withLock {
+            guard !pending.isEmpty else { return nil }
+            let out = VoiceAudio.pcm16(pending)
+            sent += pending.count
+            pending = []
+            return out
+        }
+        if let rest { chunks.yield(rest) }
+        chunks.finish()
+        await pump.value
+    }
+
+    /// Thrown away: nothing more goes in.
+    func stop() {
+        chunks.finish()
+        pump.cancel()
     }
 }
 
