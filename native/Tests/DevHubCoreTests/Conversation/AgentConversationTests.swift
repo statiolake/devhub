@@ -20,12 +20,22 @@ final class Recording: @unchecked Sendable {
     var publish: ConversationPublish { { [self] revision, event in lock.withLock { _events.append((revision, event)) } } }
 }
 
+/// A conversation on `host`. The adapter tells the time by the cache
+/// keeper's clock, as the TS tests' fake timers fake `Date.now` too: when the
+/// prompt cache expires (the last response's time plus its TTL) is then on
+/// the clock the keeper waits on. On the wall clock instead, the cache of a
+/// response read after `TurnedClock.advance` expired at the wall clock's
+/// time, not the turned one's, so the next compaction was already due — and
+/// one more `/compact` was written whenever its round trip beat `advance`'s
+/// own loop (`testKeepsTheCliUpWhileAnMcpSignInRuns`, about 1 run in 15).
 func conversationOn(
     _ host: any ConversationHost, boot: String = "boot-a", publish: @escaping ConversationPublish = { _, _ in },
     limits: LimitResumeOptions = resumeOff(), cacheKeeping: CacheKeeping = .off
 ) -> AgentConversation {
-    AgentConversation(
-        host: host, adapter: ClaudeAdapter(bootId: boot), publish: publish, limits: limits, cacheKeeping: cacheKeeping)
+    let clock = cacheKeeping.clock
+    return AgentConversation(
+        host: host, adapter: ClaudeAdapter(bootId: boot, now: { clock.now() }), publish: publish, limits: limits,
+        cacheKeeping: cacheKeeping)
 }
 
 func entryIds(_ conversation: AgentConversation) async -> [String] {

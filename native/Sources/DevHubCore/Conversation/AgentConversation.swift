@@ -856,7 +856,14 @@ public actor AgentConversation {
                 defer { activity.with { $0 -= 1 } }
                 let line = journal.line
                 let at = journal.offset
-                let replies = try await serial { me -> [String] in
+                // The replies a line demands are queued in the turnstile in
+                // the same step as the line is taken, with nothing awaited in
+                // between, as the TS app's single thread writes them: what the
+                // line itself set going (a held message written once it made
+                // the conversation idle) goes first, and nothing from outside —
+                // a message the person sent the moment the line made the
+                // conversation ready — gets in before them (`untilGreeted`).
+                let written = try await serial { me -> Task<Void, Error>? in
                     // The sleep mark is DevHub's, not the CLI's: the adapter never sees it.
                     let asleep = line == SLEEP_MARK
                     if asleep || me.sleep == .asleep { me.sleep = asleep ? .asleep : nil }
@@ -864,16 +871,18 @@ public actor AgentConversation {
                     try me.take(step)
                     me.offset = at
                     try me.feedSentUpTo(at)
+                    // A line an earlier DevHub read had its replies written then;
+                    // they are in `in.log`, and fed back above as sent.
+                    let replies = at <= me.answeredUpTo ? [] : step.replies
+                    let written = replies.isEmpty ? nil : me.serial { me in try await me.write(replies) }
                     if asleep {
                         me.fell?.resolve()
                         // A message held while it fell asleep.
                         if !me.transcript.pending.isEmpty { _ = try await me.wakeNow() }
                     }
-                    // A line an earlier DevHub read had its replies written then;
-                    // they are in `in.log`, and fed back above as sent.
-                    return at <= me.answeredUpTo ? [] : step.replies
+                    return written
                 }.value
-                if !replies.isEmpty { try await serial { me in try await me.write(replies) }.value }
+                try await written?.value
                 // After the replies, which the sleeper would leave in its pipe.
                 sleepIfRestful()
             }
