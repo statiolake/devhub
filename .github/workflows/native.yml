@@ -98,20 +98,24 @@ jobs:
             exit 1
           }
 
-      - name: Test
-        run: swift test
-
-      - name: Bundle DevHub.app (release)
-        run: Scripts/bundle-app.sh --output "$RUNNER_TEMP/native"
-
-      # The self-test's live phase runs on a private tmux server. (After the
-      # tests: Core's real-tmux tests are not yet green on macOS.)
+      # Before the tests: Core's real-tmux tests (TmuxReal*) skip on a machine
+      # without tmux, and the self-test's live phase runs on a private server.
       - name: Install tmux
         timeout-minutes: 5
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        run: brew list tmux >/dev/null 2>&1 || brew install tmux
+        run: |
+          brew list tmux >/dev/null 2>&1 || brew install tmux
+          tmux -V
+
+      - name: Test
+        env:
+          DEVHUB_TEST_REQUIRE_TMUX: "1"
+        run: swift test
+
+      - name: Bundle DevHub.app (release)
+        run: Scripts/bundle-app.sh --output "$RUNNER_TEMP/native"
 
       # The self-test's dictation listens with whisper.cpp (pinned, built for
       # the CPU, its model verified; see the script), kept between runs.

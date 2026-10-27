@@ -83,11 +83,19 @@ final class CapturedIO: DevhubIO, @unchecked Sendable {
 }
 
 /// Handlers that answer each request with what it asked, and delete a
-/// `--wait` marker shortly after an open names one (the editor closing).
+/// `--wait` marker shortly after an open names one (the editor closing),
+/// unless told the editor never closes it.
 final class EchoHandlers: ControlHandlers, @unchecked Sendable {
     private let lock = NSLock()
     private var _requests: [String] = []
+    private var _closesWaitedFiles = true
     var requests: [String] { lock.withLock { _requests } }
+    /// false: the file stays open for as long as this DevHub runs, as when
+    /// DevHub quits with the file still open.
+    var closesWaitedFiles: Bool {
+        get { lock.withLock { _closesWaitedFiles } }
+        set { lock.withLock { _closesWaitedFiles = newValue } }
+    }
     func record(_ request: ControlRequest) { lock.withLock { _requests.append(request.json.compact) } }
 
     func personStarted() async {}
@@ -97,7 +105,7 @@ final class EchoHandlers: ControlHandlers, @unchecked Sendable {
     }
     func open(_ request: ControlOpenRequest) async throws -> String {
         record(.open(request))
-        if let marker = request.waitMarkerPath {
+        if let marker = request.waitMarkerPath, closesWaitedFiles {
             Task {
                 try? await Task.sleep(for: .milliseconds(300))
                 unlink(marker)
@@ -295,18 +303,21 @@ final class DevhubCommandLineTests: XCTestCase {
     }
 
     func testAWaitThatOutlivesDevHubFails() async throws {
+        // DevHub quits with the file still open: nothing ever deletes the
+        // marker, so however slowly the wait's polls come round, the one
+        // thing that can end it is DevHub no longer answering. (Racing a
+        // timed deletion against the quit failed on a loaded machine whose
+        // second poll came after the deletion.)
+        handlers.closesWaitedFiles = false
         try await startServer()
         let captured = io()
         let running = server
         let recorded = handlers
         let quitting = Task {
-            // Gone once the open has reached it, and before the fake deletes
-            // the marker (300 ms after): a slow machine must not close it first.
-            for _ in 0..<200 where recorded.requests.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
-            try await Task.sleep(for: .milliseconds(50))
+            // Gone once the open has reached it.
+            for _ in 0..<500 where recorded.requests.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
             running?.close()
         }
-        // The fake deletes the marker after 300 ms; the server is gone before.
         let status = await DevhubCommandLine.run(["--wait", "f.txt"], io: captured)
         _ = await quitting.result
         XCTAssertEqual(status, 1)

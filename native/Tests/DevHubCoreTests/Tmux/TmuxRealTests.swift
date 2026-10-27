@@ -75,8 +75,12 @@ private func nextSequence() -> Int {
     }
 }
 
+/// realpath(3), as `LocalRuntime.realpath` and so `createSession` resolve a
+/// root. Not `resolvingSymlinksInPath`: on macOS it strips `/private`, so a
+/// home under `/var/folders` or a socket root under `/tmp` came out as a path
+/// that canonicalises elsewhere, and every session was refused as a conflict.
 private func realpathOf(_ path: String) -> String {
-    URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    try! localRealpath(path)
 }
 
 /// One case's world: its home, its runtime, its socket and the directory tmux
@@ -261,6 +265,10 @@ class RealTmuxCase: XCTestCase {
     var homes: [String] = []
 
     override func setUpWithError() throws {
+        // CI states that tmux is there, so that these never pass by skipping.
+        if ProcessInfo.processInfo.environment["DEVHUB_TEST_REQUIRE_TMUX"] == "1" {
+            XCTAssertNotNil(realTmux, "DEVHUB_TEST_REQUIRE_TMUX is set and there is no tmux")
+        }
         try XCTSkipIf(realTmux == nil, "no tmux on this machine")
     }
 
