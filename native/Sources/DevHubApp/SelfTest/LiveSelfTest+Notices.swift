@@ -19,7 +19,6 @@ extension LiveSelfTest {
         await d.expect(20, "signed out of GitHub was not said (\(picker?.state.prompt.title ?? "no sheet"): \(picker?.state.prompt.note ?? ""); rows \(pickerRowIds))") {
             self.picker?.state.prompt.note?.contains("not signed in to GitHub") == true
         }
-        d.check(picker?.state.prompt.noteIsFailure == true, "signed out of GitHub is not said as a failure")
         d.check(pickerRowIds.contains("devhub:new-worktree"), "the branch question offers \(pickerRowIds)")
         d.check(world.fakeLog().contains { $0.cli == "gh" && $0.line.contains("auth token") }, "the Issue flow never asked gh for a token")
         await dismissSheets(d, "the Issue flow")

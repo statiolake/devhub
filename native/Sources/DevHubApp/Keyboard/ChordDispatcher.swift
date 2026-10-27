@@ -75,17 +75,32 @@ final class ChordDispatcher: ArmingListener {
     func install() {
         guard monitors.isEmpty else { return }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown], handler: { [weak self] event in
-            Self.hop(event) { [weak self] event in self?.handleKey(event) ?? event }
+            Self.hop(event) { [weak self] event in
+                // Not `self?.handleKey(event) ?? event`: that turns the nil
+                // that swallows a key back into the key.
+                guard let self else { return event }
+                return self.handleKey(event)
+            }
         }) {
             monitors.append(monitor)
         }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown], handler: { [weak self] event in
-            Self.hop(event) { [weak self] event in self?.handleButton(event) ?? event }
+            Self.hop(event) { [weak self] event in
+                // Not `self?.handleButton(event) ?? event`: that turns the nil
+                // that swallows a key back into the key.
+                guard let self else { return event }
+                return self.handleButton(event)
+            }
         }) {
             monitors.append(monitor)
         }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.swipe], handler: { [weak self] event in
-            Self.hop(event) { [weak self] event in self?.handleSwipe(event) ?? event }
+            Self.hop(event) { [weak self] event in
+                // Not `self?.handleSwipe(event) ?? event`: that turns the nil
+                // that swallows a key back into the key.
+                guard let self else { return event }
+                return self.handleSwipe(event)
+            }
         }) {
             monitors.append(monitor)
         }
