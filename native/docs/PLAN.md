@@ -349,18 +349,40 @@ SHA-256 row of §3.2's table).
 
 Result: **155 done, 0 partial, 0 missing, 1 not needed (S-14)**. "This pass"
 marks what the final pass changed to get there; "done*" notes a remaining
-difference of form, not of feature.
+difference of form, not of feature. A gap pass after it made the seams and
+the Sidebar's handle keyboard stops (W-05, S-02), the recorded question the
+transcript's text (U-06), and math KaTeX's command set (U-02).
 
 Known differences that stay, and why:
 
-- The seams and the Sidebar's resize handle take no Tab focus (the window's
-  key view loop is the terminals'), so their arrow-key step is reached as
-  VoiceOver's increment/decrement only.
-- Math is SwiftMath's typesetting in Latin Modern Math rather than KaTeX's
-  own fonts and HTML; what SwiftMath cannot parse is drawn as its source,
-  as KaTeX draws a formula it cannot parse.
-- A recorded question is a view in the transcript, so its words are copied
-  whole with the selection around it rather than selected word by word.
+- Math is SwiftMath's typesetting, not KaTeX's HTML. The font is Latin
+  Modern Math: KaTeX's fonts (KaTeX_Main, _Math, _AMS, _Size1–4…) are split
+  TeX fonts with no OpenType MATH table, which SwiftMath needs for every
+  placement (it reads the table's constants and variants), and Latin Modern
+  is the same Computer Modern design with that table — CMR10's em, x-height
+  (0.431em) and math axis (0.25em), and the same script scales (70%, 50%).
+  The size is KaTeX's (the text's 1.05em, `.conversation-markdown .katex`),
+  inline on the line's baseline, display centred with `\tag` at the right.
+  What parses is KaTeX's set (DevHubKaTeX.swift in the vendored SwiftMath,
+  checked against a corpus of ~280 expressions on Linux): `\dfrac`/`\tfrac`,
+  `\operatorname(*)`, `\mathop`…`\mathpunct`, `\big`…`\Bigg` (l/r/m) at
+  KaTeX's heights, `\lvert`/`\lVert`, `\implies`/`\iff` with their spaces,
+  `\not`, `\bmod`/`\pmod`/`\mod`, `\hspace`/`\kern`/`\mkern`, `\phantom`s,
+  `\boxed`/`\fbox`/`\cancel`s, `\overset`/`\underset`/`\stackrel`,
+  `\overbrace`/`\underbrace`, `\xrightarrow[…]{…}` drawn as long as its
+  labels, `\rlap`/`\clap`, `\tag`, align/gather/equation(*) (display only,
+  as KaTeX), multi-column aligned, array{lcr}, smallmatrix, dcases/rcases,
+  colour names, ~150 more symbols; refused as KaTeX refuses: a missing
+  argument (`\frac{a}`), a double script, a display-only environment
+  inline, an unknown command. What does not parse is its source in the
+  text's face and ink where it stood (rehype-katex's error span), not a
+  monospace picture. Left: glyph shapes from the one font where KaTeX
+  switches fonts (`\mathscr` is drawn as `\mathcal`, `\checkmark` and a few
+  AMS symbols fall back to the system font), `\widehat`/`\widetilde` and the
+  braces stop at the font's widest variant, the double x-arrows do not
+  stretch, and `\middle`, `\href`/`\url`, `\char`, `\underrightarrow` are not
+  had (drawn as source; KaTeX draws the link commands as source too, its
+  `trust` being off).
 
 | ID | Status | Evidence (native/Sources/…) |
 | --- | --- | --- |
@@ -368,7 +390,7 @@ Known differences that stay, and why:
 | W-02 | done | `Core/Layout/WindowLayout.swift`, `Tests/Layout/WindowLayoutTests.swift` |
 | W-03 | done | `WindowLayout.swift`, `Shell/ShellController.swift` (toggle_split), split ratio in `Persistence/StateRecords.swift` |
 | W-04 | done | `Model/AgentTerminal.swift`, `WindowLayout.swift` terminal placement |
-| W-05 | done* | `Views/ShellBackdropView.swift` (drag, live preview, commit); *this pass: the seams are VoiceOver splitters with increment/decrement (`Views/AccessibleRegion.swift`); they take no Tab focus, so the TS separators' arrow keys are reached through VoiceOver only |
+| W-05 | done | `Views/ShellBackdropView.swift` (drag, live preview, commit); the seams are keyboard stops of the page's key view loop (Tab / Shift-Tab, `Views/AccessibleRegion.swift` `KeyViewLoop`) with the TS keys (divider ←/→ 2%, terminal seam ←/→ or ↑/↓ stacked 2%), lit in the accent while focused (`:focus-visible`), and VoiceOver splitters; the pointer leaves the keys where they were |
 | W-06 | done | `ShellBackdropView.swift` title bar (Back/Forward disabled when nowhere to go, Sidebar toggle, tooltips), hidden mode drag strip; this pass: the buttons are VoiceOver buttons |
 | W-07 | done | `WindowLayout.keyboardChild`, `MainWindowController.place/firstResponderChanged` |
 | W-08 | done (this pass) | main's dd7f9c4: `Model/TerminalActivity.swift` `TerminalMode` (local-only, dev container = local folder, `TERMINAL_MODE_NO_SSH` / `_NO_DEV_CONTAINERS`), `ShellBackdropView.surfaceContent`, `Editor/EditorOpening.swift`; container mark dropped in `Shell/SidebarModel.swift` |
@@ -377,7 +399,7 @@ Known differences that stay, and why:
 | W-11 | done | `Model/Attention.swift` idle rule, `Platform.swift` `Notifications` (UNUserNotificationCenter) |
 | W-12 | done | `AppDelegate.relaunch`, `MainMenu.swift` Restart DevHub |
 | S-01 | done | `Shell/SidebarModel.swift`, `Views/SidebarView.swift`, `Model/WorkspaceOrder.swift` |
-| S-02 | done | `SidebarView.swift` rail + resize handle (width persisted via `Projection.clampSidebarWidth`); this pass: the handle is a VoiceOver splitter (±4pt) |
+| S-02 | done | `SidebarView.swift` rail + resize handle (width persisted via `Projection.clampSidebarWidth`), 10pt inside the column (sidebarPage.css); a keyboard stop after the tree (←/→ 4pt, Home 200, End 400) with the accent hairline and the 2px focus ring, and a VoiceOver splitter |
 | S-03 | done | `DevHubTheme.Density`, `SidebarView` row metrics |
 | S-04 | done | `SidebarView` drag reorder (useReorder rules), `WorkspaceOrderTests` |
 | S-05 | done | `SidebarListView` keys, `Shell/KeyRouter.swift` |
@@ -465,11 +487,11 @@ Known differences that stay, and why:
 | G-17 | done | `ConversationUI/TranscriptStructure.swift`, `Conversation/FindAndSubagents.swift` |
 | G-18 | done | `Conversation/AgentRecords.swift` |
 | U-01 | done (this pass: rise) | `Conversation/TranscriptTextView.swift` (one TextKit 2 text), `TranscriptScroller.swift` (follow, Latest / New output); arrivals now rise from `--motion-rise` as they fade (snapshot under a cover), not only fade |
-| U-02 | done (this pass: math) | `Markdown/*` GFM parser, `ConversationUI/MarkdownDocumentBuilder.swift`; math now typeset: SwiftMath vendored (`native/Vendor/SwiftMath`, Latin Modern Math), inline on the baseline, display centred and scrolled; source on a parse failure as KaTeX |
+| U-02 | done* | `Markdown/*` GFM parser, `ConversationUI/MarkdownDocumentBuilder.swift`; math typeset: SwiftMath vendored (`native/Vendor/SwiftMath`, Latin Modern Math), inline on the baseline, display centred and scrolled, `\tag` at the right; KaTeX's command set (`Vendor/SwiftMath/…/DevHubKaTeX.swift`, `DevHubKaTeXDisplay.swift`), and its source in the text's face where KaTeX refuses one (`TranscriptRenderer`); *the font, see above |
 | U-03 | done | `Markdown/Highlight/*` (TextMate grammars, Light+/Dark+), `TranscriptBlocks.swift` CodeBlockView with Copy |
 | U-04 | done | `ConversationUI/EntryDocumentBuilder.swift`, `TranscriptEmbeds.swift`, Clip with Show all |
 | U-05 | done | `EntryDocumentBuilder` diffs, `TranscriptTextView` bands |
-| U-06 | done (this pass: record) | `Conversation/RequestCardView.swift`; the answered QuestionRecord is now drawn as the card drew it with the preview beside the options (`QuestionRecordView`, `.questionRecord` embed) |
+| U-06 | done | `Conversation/RequestCardView.swift`; the answered QuestionRecord is the transcript's own text (`EntryDocumentBuilder.questionRecord`: header chip, words, OptionRow boxes `.option`/`.optionPicked`/`.optionShown` with the mark, the note), selected word by word and on across entries; a previewed question's preview is drawn beside the rows (`DocBeside`, `TranscriptTextView.placeBesides`), following the pointer |
 | U-07 | done | `Conversation/ComposerView.swift`, `ComposerTextView.swift`; this pass: pending items and the command list rise in |
 | U-08 | done | `ConversationUI/CommandCompletion.swift`, `CompletionListView` |
 | U-09 | done (this pass: list) | `Conversation/SettingMenuView.swift`: DevHub's list over the face with Default / Make default (hover or highlight, click, ⌥↩), replacing the system menu with ⌥ alternates; Codex's defaults too (c1f642b) |
@@ -579,7 +601,7 @@ files; adding a dependency or a target is a coordinated change (see §5).
 | JSON | Foundation `JSONSerialization` + Codable; a `JSONValue` enum for open shapes | — | Core | Protocol decoders need lossless unknown-field handling |
 | Markdown | **own GFM parser** in Core/Markdown (port `markdownBlocks.ts`, add inline) | — | Core | Swift-only constraint rules out cmark-based libs (swift-markdown, MarkdownUI) |
 | Syntax highlighting | own tokenizer-based highlighter (Core) coloured by theme `tokenColors`; optional later TextMate-grammar engine on `NSRegularExpression` with vendored grammars | — | Core/App | shiki is JS; Splash is Swift-only syntax |
-| Math | **SwiftMath** `mgriebling/SwiftMath` 1.7.3 (MIT, pure Swift, CoreText), **vendored** under `native/Vendor/SwiftMath` with Latin Modern Math (GUST licence) so its fonts are found in `Contents/Resources`; fallback: monospace source | MIT | App | KaTeX is JS |
+| Math | **SwiftMath** `mgriebling/SwiftMath` 1.7.3 (MIT, pure Swift, CoreText), **vendored** under `native/Vendor/SwiftMath` with Latin Modern Math (GUST licence) so its fonts are found in `Contents/Resources`; KaTeX's commands added in `DevHubKaTeX.swift`; fallback: the source as text, as rehype-katex | MIT | App | KaTeX is JS |
 | CLI argument parsing | own (port `devhubCli.ts`) | — | Core | Exact messages/exit codes |
 | Voice | the same whisper.cpp server binary `scripts/build_whisper.py` builds, run as a child process; client in Swift | MIT (whisper.cpp) | App bundle | Same recogniser and model as TS; Apple `SFSpeechRecognizer` (on-device) as an optional fallback |
 

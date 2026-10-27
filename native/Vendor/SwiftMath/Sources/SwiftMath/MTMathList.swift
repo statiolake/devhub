@@ -193,6 +193,20 @@ public class MTMathAtom: NSObject {
     /// This is used in the finalizing and preprocessing steps.
     var fusedAtoms = [MTMathAtom]()
     
+    // DevHub (DevHubKaTeX.swift): what KaTeX's commands set on an atom.
+    /// The class it is spaced as (an inner or an operator standing for a relation, an opening…).
+    var devhubClass: MTMathAtomType?
+    /// An inner's delimiter at a fixed height, in em (`\big` and friends).
+    var devhubDelimiterSize: CGFloat?
+    /// An operator whose limits go over and under it in every style (`\overset`, `\xrightarrow`).
+    var devhubAlwaysLimits = false
+    /// An operator whose nucleus is this list (`\overset{a}{b}`'s `b`).
+    var devhubBase: MTMathList?
+    /// An inner drawn framed, struck out or not at all (`\boxed`, `\cancel`, `\phantom`).
+    var devhubFrame: DevHubFrame?
+    /// An operator whose nucleus is drawn stretched to it (`\overbrace`, `\xrightarrow`).
+    var devhubStretch: DevHubStretch?
+    
     init(_ atom:MTMathAtom?) {
         guard let atom = atom else { return }
         self.type = atom.type
@@ -202,6 +216,12 @@ public class MTMathAtom: NSObject {
         self.indexRange = atom.indexRange
         self.fontStyle = atom.fontStyle
         self.fusedAtoms = atom.fusedAtoms
+        self.devhubClass = atom.devhubClass
+        self.devhubDelimiterSize = atom.devhubDelimiterSize
+        self.devhubAlwaysLimits = atom.devhubAlwaysLimits
+        self.devhubBase = MTMathList(atom.devhubBase)
+        self.devhubFrame = atom.devhubFrame
+        self.devhubStretch = atom.devhubStretch
     }
     
     override init() { }

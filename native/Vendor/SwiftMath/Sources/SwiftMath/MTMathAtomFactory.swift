@@ -59,7 +59,20 @@ public class MTMathAtomFactory {
         "lceil" : "\u{2308}",
         "rceil" : "\u{2309}",
         "lfloor" : "\u{230A}",
-        "rfloor" : "\u{230B}"
+        "rfloor" : "\u{230B}",
+        // DevHub: KaTeX's other names for these.
+        "lvert" : "|",
+        "rvert" : "|",
+        "lVert" : "\u{2016}",
+        "rVert" : "\u{2016}",
+        "lbrack" : "[",
+        "rbrack" : "]",
+        "lparen" : "(",
+        "rparen" : ")",
+        "ulcorner" : "\u{231C}",
+        "urcorner" : "\u{231D}",
+        "llcorner" : "\u{231E}",
+        "lrcorner" : "\u{231F}"
     ]
     
     private static let delimValueLock = NSLock()
@@ -101,7 +114,14 @@ public class MTMathAtomFactory {
         "check" :  "\u{030C}",
         "vec" :  "\u{20D7}",
         "widehat" :  "\u{0302}",
-        "widetilde" :  "\u{0303}"
+        "widetilde" :  "\u{0303}",
+        // DevHub: KaTeX's accents that are one combining mark here too.
+        "mathring" : "\u{030A}",
+        "widecheck" : "\u{030C}",
+        "dddot" : "\u{20DB}",
+        "overrightarrow" : "\u{20D7}",
+        "overleftarrow" : "\u{20D6}",
+        "overleftrightarrow" : "\u{20E1}"
     ]
     
     private static let accentValueLock = NSLock()
@@ -158,7 +178,7 @@ public class MTMathAtomFactory {
         "omicron" : MTMathAtom(type: .variable, value: "\u{03BF}"),
         "pi" : MTMathAtom(type: .variable, value: "\u{03C0}"),
         "rho" : MTMathAtom(type: .variable, value: "\u{03C1}"),
-        "varsigma" : MTMathAtom(type: .variable, value: "\u{03C1}"),
+        "varsigma" : MTMathAtom(type: .variable, value: "\u{03C2}"),
         "sigma" : MTMathAtom(type: .variable, value: "\u{03C3}"),
         "tau" : MTMathAtom(type: .variable, value: "\u{03C4}"),
         "upsilon" : MTMathAtom(type: .variable, value: "\u{03C5}"),
@@ -519,6 +539,15 @@ public class MTMathAtomFactory {
         "mathbfit": .boldItalic,
         "bm": .boldItalic,
         "text": .roman,
+        // DevHub: KaTeX's other names for these (\mathscr: no script face here).
+        "boldsymbol": .boldItalic,
+        "mathscr": .caligraphic,
+        "emph": .italic,
+        "textup": .roman,
+        "textnormal": .roman,
+        "textmd": .roman,
+        "mbox": .roman,
+        "hbox": .roman,
     ]
     
     public static func fontStyleWithName(_ fontName:String) -> MTFontStyle? {
@@ -677,7 +706,8 @@ public class MTMathAtomFactory {
         if let atom = supportedLatexSymbols[name] {
             return atom.copy()
         }
-        return nil
+        // DevHub: KaTeX's symbols this table does not have (DevHubKaTeX.swift).
+        return DevHubKaTeX.symbol(name)
     }
     
     /** Finds the name of the LaTeX symbol name for the given atom. This function is a reverse
@@ -797,6 +827,12 @@ public class MTMathAtomFactory {
      matrix environments are have builtin delimiters added to the table and hence are returned as inner atoms.
      */
     public static func table(withEnvironment env: String?, rows: [[MTMathList]], error:inout NSError?) -> MTMathAtom? {
+        // DevHub: a last row left empty by a trailing `\\` is not drawn (as KaTeX),
+        // and KaTeX's environments SwiftMath does not have (DevHubKaTeX.swift).
+        let rows = DevHubKaTeX.trimmed(rows)
+        if let env, let made = DevHubKaTeX.table(env, rows: rows, error: &error) {
+            return made
+        }
         let table = MTMathTable(environment: env)
         
         for i in 0..<rows.count {

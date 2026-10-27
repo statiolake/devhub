@@ -75,6 +75,9 @@ public struct MTMathListBuilder {
     
     /** Contains any error that occurred during parsing. */
     var error:NSError?
+    /// DevHub: the formula is set in display mode (KaTeX's `displayMode`), for
+    /// what KaTeX allows only there and for `\pmod`'s space (DevHubKaTeX.swift).
+    var devhubDisplay = false
     
     // MARK: - Character-handling routines
     
@@ -181,6 +184,8 @@ public struct MTMathListBuilder {
         let list = MTMathList()
         assert(!(oneCharOnly && stop != nil), "Cannot set both oneCharOnly and stopChar.")
         var prevAtom: MTMathAtom? = nil
+        // DevHub: the previous atom ends a `{…}` group (whose scripts KaTeX gives the group).
+        var prevEndsGroup = false
         while self.hasCharacters {
             if error != nil { return nil } // If there is an error thus far then bail out.
             
@@ -192,6 +197,8 @@ public struct MTMathListBuilder {
                     // this is not the character we are looking for.
                     // They are meant for the caller to look at.
                     self.unlookCharacter()
+                    // DevHub: an argument that is not there is KaTeX's error ("Expected group").
+                    self.setError(.characterNotFound, message: "Expected group")
                     return list
                 }
             }
@@ -202,6 +209,11 @@ public struct MTMathListBuilder {
             
             if char == "^" {
                 assert(!oneCharOnly, "This should have been handled before")
+                // DevHub: a second superscript on the same atom is KaTeX's error ("Double superscript").
+                if prevAtom?.superScript != nil, !prevEndsGroup {
+                    self.setError(.characterNotFound, message: "Double superscript")
+                    return nil
+                }
                 if (prevAtom == nil || prevAtom!.superScript != nil || !prevAtom!.isScriptAllowed()) {
                     // If there is no previous atom, or if it already has a superscript
                     // or if scripts are not allowed for it, then add an empty node.
@@ -214,6 +226,11 @@ public struct MTMathListBuilder {
                 continue
             } else if char == "_" {
                 assert(!oneCharOnly, "This should have been handled before")
+                // DevHub: a second subscript on the same atom is KaTeX's error ("Double subscript").
+                if prevAtom?.subScript != nil, !prevEndsGroup {
+                    self.setError(.characterNotFound, message: "Double subscript")
+                    return nil
+                }
                 if (prevAtom == nil || prevAtom!.subScript != nil || !prevAtom!.isScriptAllowed()) {
                     // If there is no previous atom, or if it already has a subcript
                     // or if scripts are not allowed for it, then add an empty node.
@@ -228,6 +245,7 @@ public struct MTMathListBuilder {
                 // this puts us in a recursive routine, and sets oneCharOnly to false and no stop character
                 if let subList = self.buildInternal(false, stopChar: "}") {
                     prevAtom = subList.atoms.last
+                    prevEndsGroup = true
                     list.append(subList)
                     if oneCharOnly {
                         return list
@@ -257,7 +275,7 @@ public struct MTMathListBuilder {
                 if let fontStyle = MTMathAtomFactory.fontStyleWithName(command) {
                     let oldSpacesAllowed = spacesAllowed
                     // Text has special consideration where it allows spaces without escaping.
-                    spacesAllowed = command == "text"
+                    spacesAllowed = DevHubKaTeX.textCommands.contains(command)
                     let oldFontStyle = currentFontStyle
                     currentFontStyle = fontStyle
                     if let sublist = self.buildInternal(true) {
@@ -266,6 +284,7 @@ public struct MTMathListBuilder {
                         spacesAllowed = oldSpacesAllowed
                         
                         prevAtom = sublist.atoms.last
+                        prevEndsGroup = true
                         list.append(sublist)
                         if oneCharOnly {
                             return list
@@ -310,10 +329,15 @@ public struct MTMathListBuilder {
             atom?.fontStyle = currentFontStyle
             list.add(atom)
             prevAtom = atom
+            prevEndsGroup = false
             
             if oneCharOnly {
                 return list
             }
+        }
+        // DevHub: the formula ended where an argument was wanted (`\frac{a}`), KaTeX's error.
+        if oneCharOnly {
+            self.setError(.characterNotFound, message: "Expected group")
         }
         if stop != nil {
             if stop == "}" {
@@ -516,6 +540,10 @@ public struct MTMathListBuilder {
     }
     
     mutating func atomForCommand(_ command:String) -> MTMathAtom? {
+        // DevHub: KaTeX's commands SwiftMath does not have (DevHubKaTeX.swift).
+        if DevHubKaTeX.commands.contains(command) {
+            return self.devhubAtom(forCommand: command)
+        }
         if let atom = MTMathAtomFactory.atom(forLatexSymbol: command) {
             return atom
         }
@@ -584,8 +612,7 @@ public struct MTMathListBuilder {
             under.innerList = self.buildInternal(true)
             return under
         } else if command == "begin" {
-            let env = self.readEnvironment()
-            if env == nil {
+            guard let env = self.devhubEnvironment(self.readEnvironment()) else {
                 return nil;
             }
             let table = self.buildTable(env: env, firstList:nil, isRow:false)
@@ -655,7 +682,8 @@ public struct MTMathListBuilder {
             self.setError(.characterNotFound, message:"Missing }")
             return nil;
         }
-        return mutable;
+        // DevHub: KaTeX's colour names and hex without `#`.
+        return DevHubKaTeX.hexColor(mutable);
     }
 
     mutating func skipSpaces() {
@@ -713,7 +741,7 @@ public struct MTMathListBuilder {
             let fracList = MTMathList()
             fracList.add(frac)
             return fracList
-        } else if command == "\\" || command == "cr" {
+        } else if command == "\\" || command == "cr" || command == "newline" {
             if currentEnv != nil {
                 // Stop the current list and increment the row count
                 currentEnv!.numRows+=1
@@ -734,7 +762,8 @@ public struct MTMathListBuilder {
             if env == nil {
                 return nil
             }
-            if env! != currentEnv!.envName {
+            // DevHub: `{array}` carries its column spec as `array:lcr`.
+            if env! != currentEnv!.envName?.split(separator: ":").first.map(String.init) {
                 let errorMessage = "Begin environment name \(currentEnv!.envName ?? "(none)") does not match end name: \(env!)"
                 self.setError(.invalidEnv, message:errorMessage)
                 return nil
@@ -865,7 +894,11 @@ public struct MTMathListBuilder {
         }
         
         self.skipSpaces()
-        let env = self.readString()
+        var env = self.readString()
+        // DevHub: a starred environment (`align*`).
+        if self.hasCharacters {
+            if self.getNextCharacter() == "*" { env += "*" } else { self.unlookCharacter() }
+        }
         
         if !self.expectCharacter("}") {
             // We didn"t find an closing brace, so invalid format.
@@ -965,7 +998,7 @@ public struct MTMathListBuilder {
     }
     
     mutating func readCommand() -> String {
-        let singleChars = "{}$#%_| ,>;!\\"
+        let singleChars = "{}$#%_| ,>;!\\:&"
         if self.hasCharacters {
             let char = self.getNextCharacter()
             if let _ = singleChars.firstIndex(of: char)  {

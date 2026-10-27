@@ -599,17 +599,22 @@ class MTTypesetter {
                     if currentLine.length > 0 {
                         self.addDisplayLine()
                     }
-                    self.addInterElementSpace(prevNode, currentType:atom.type)
+                    // DevHub: spaced as the class a KaTeX command gave it (`\overset{a}{=}` a relation).
+                    let opClass = atom.devhubClass ?? atom.type
+                    self.addInterElementSpace(prevNode, currentType:opClass)
                     let op = atom as! MTLargeOperator?
                     let display = self.makeLargeOp(op)
                     displayAtoms.append(display!)
+                    atom.type = opClass
                     
                 case .inner:
                     // stash the existing layout
                     if currentLine.length > 0 {
                         self.addDisplayLine()
                     }
-                    self.addInterElementSpace(prevNode, currentType:atom.type)
+                    // DevHub: spaced as the class a KaTeX command gave it (`\bigl(` an opening).
+                    let innerClass = atom.devhubClass ?? atom.type
+                    self.addInterElementSpace(prevNode, currentType:innerClass)
                     let inner =  atom as! MTInner?
                     var display : MTDisplay? = nil
                     if inner!.leftBoundary != nil || inner!.rightBoundary != nil {
@@ -617,6 +622,11 @@ class MTTypesetter {
                     } else {
                         display = MTTypesetter.createLineForMathList(inner!.innerList, font:font, style:style, cramped:cramped)
                     }
+                    // DevHub: `\boxed`, `\cancel`, `\phantom` (DevHubKaTeXDisplay.swift).
+                    if let frame = atom.devhubFrame, let made = display {
+                        display = self.devhubFramed(made, frame)
+                    }
+                    atom.type = innerClass
                     display!.position = currentPosition
                     currentPosition.x += display!.width
                     displayAtoms.append(display!)
@@ -1277,8 +1287,18 @@ class MTTypesetter {
     // MARK: - Large Operators
     
     func makeLargeOp(_ op:MTLargeOperator!) -> MTDisplay?  {
-        let limits = op.limits && style == .display
+        let limits = op.limits && (style == .display || op.devhubAlwaysLimits)
         var delta = CGFloat(0)
+        // DevHub: an operator whose nucleus is a list (`\overset{a}{b}`): the list as it is set.
+        if op.devhubBase != nil || op.devhubStretch != nil {
+            var display: MTDisplay = op.devhubBase.flatMap { MTTypesetter.createLineForMathList($0, font:font, style:style, cramped:cramped) }
+                ?? MTMathListDisplay(withDisplays: [], range: op.indexRange)
+            if let stretch = op.devhubStretch {
+                display = self.devhubStretched(display, stretch, op)
+            }
+            display.position = currentPosition
+            return self.addLimitsToDisplay(display, forOperator:op, delta:0)
+        }
         if op.nucleus.count == 1 {
             var glyph = self.findGlyphForCharacterAtIndex(op.nucleus.startIndex, inString:op.nucleus)
             if style == .display && glyph != 0 {
@@ -1322,7 +1342,7 @@ class MTTypesetter {
             currentPosition.x += display!.width
             return display;
         }
-        if op.limits && style == .display {
+        if op.limits && (style == .display || op.devhubAlwaysLimits) {
             // make limits
             var superScript:MTMathListDisplay? = nil, subScript:MTMathListDisplay? = nil
             if op.superScript != nil {
@@ -1369,7 +1389,8 @@ class MTTypesetter {
         let d2 = 2 * delta - MTTypesetter.kDelimiterShortfallPoints;  // This represents a shortfall of 5pt
         // The size of the delimiter glyph should cover at least 90% of the formula or
         // be at most 5pt short.
-        let glyphHeight = max(d1, d2);
+        // DevHub: or `\big`'s fixed height.
+        let glyphHeight = inner!.devhubDelimiterSize.map { $0 * styleFont.fontSize } ?? max(d1, d2);
         
         var innerElements = [MTDisplay]()
         var position = CGPoint.zero

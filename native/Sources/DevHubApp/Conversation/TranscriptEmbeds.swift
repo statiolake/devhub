@@ -388,8 +388,9 @@ enum InlineMarks {
             if let formula = MTTypeset.formula(tex, fontSize: size * 1.05, color: color, display: false) {
                 return (formula.image, -formula.descent)
             }
-            let font = style.mono(size * 0.92, italic: true)
-            return (text(tex, size: size * 0.92, ink: color, box: nil, style: style, font: font), style.body.descender * size / style.fontSize)
+            // (The renderer writes a formula that does not parse as its words; this is one that parses and cannot be set.)
+            let font = style.sans(size)
+            return (text(tex, size: size, ink: color, box: nil, style: style, font: font), font.descender)
         case .background:
             let image = drawn(NSSize(width: size, height: size)) { rect in
                 GlyphPainter.draw(ConversationIcons.drawing(.clock), in: rect, color: color, stroke: ConversationIcons.stroke)
@@ -552,6 +553,8 @@ final class MathEmbedView: NSView, EmbedContent {
     private var tex = ""
     private let scroll = NSScrollView()
     private let picture = FlippedImageView()
+    /// `\tag{…}`: at the right edge, on the formula's baseline (KaTeX's `.tag`).
+    private let tagPicture = FlippedImageView()
     private var formula: MTTypesetFormula?
     private var drawnFor: (tex: String, size: CGFloat, ink: NSColor)?
     /// Whether the formula is drawn typeset (not as its source).
@@ -569,6 +572,7 @@ final class MathEmbedView: NSView, EmbedContent {
         scroll.verticalScrollElasticity = .none
         scroll.documentView = picture
         addSubview(scroll)
+        addSubview(tagPicture)
     }
 
     @available(*, unavailable)
@@ -576,13 +580,12 @@ final class MathEmbedView: NSView, EmbedContent {
 
     override var isFlipped: Bool { true }
 
-    /// The source, when it does not typeset.
+    /// The source, when it does not typeset: rehype-katex's error span, in
+    /// the text's own face and ink, where the block was (the renderer draws a
+    /// formula that does not parse as a paragraph; this is for one that parses
+    /// and still cannot be set).
     private var source: NSAttributedString {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        return NSAttributedString(string: tex, attributes: [
-            .font: style.mono(style.em(0.95), italic: true), .foregroundColor: style.ink(.primary), .paragraphStyle: paragraph,
-        ])
+        NSAttributedString(string: tex, attributes: [.font: style.sans(style.fontSize), .foregroundColor: style.ink(.primary)])
     }
 
     private func typeset() {
@@ -592,6 +595,8 @@ final class MathEmbedView: NSView, EmbedContent {
         drawnFor = (tex, size, ink)
         formula = MTTypeset.formula(tex, fontSize: size, color: ink, display: true)
         picture.image = formula?.image
+        tagPicture.image = formula?.tag?.image
+        tagPicture.isHidden = formula?.tag == nil
         scroll.isHidden = formula == nil
         needsLayout = true
         needsDisplay = true
@@ -625,6 +630,11 @@ final class MathEmbedView: NSView, EmbedContent {
         let width = max(size.width, scroll.contentSize.width)
         picture.frame = NSRect(x: 0, y: 0, width: width, height: bounds.height)
         picture.imageFrame = NSRect(x: max(0, (width - size.width) / 2), y: 2, width: size.width, height: size.height)
+        if let tag = formula.tag {
+            let tagSize = tag.image.size
+            tagPicture.frame = NSRect(x: bounds.width - tagSize.width, y: 2 + formula.ascent - tag.ascent, width: tagSize.width, height: tagSize.height)
+            tagPicture.imageFrame = tagPicture.bounds
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {

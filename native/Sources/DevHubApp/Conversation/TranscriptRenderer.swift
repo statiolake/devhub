@@ -9,6 +9,7 @@
 
 import AppKit
 import DevHubCore
+import SwiftMath
 
 extension NSAttributedString.Key {
     /// A run that is not the conversation's words (a control, a line number): copied and searched never.
@@ -457,6 +458,11 @@ struct TranscriptRenderer {
         out.lastParagraph = NSRange(location: start, length: text.length)
     }
 
+    /// White space as HTML draws it in the error span: each run of it one space.
+    static func collapsed(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    }
+
     /// One run, in its face and ink, with its link and chip.
     func runText(_ run: DocRun, inherited paragraph: DocParagraph?) -> NSAttributedString {
         let doc = run.style
@@ -465,6 +471,14 @@ struct TranscriptRenderer {
         var colour = style.ink(doc.ink)
         if let code = style.code(light: doc.codeLight, dark: doc.codeDark) { colour = code }
         if doc.fade < 1 { colour = colour.withAlphaComponent(colour.alphaComponent * CGFloat(doc.fade)) }
+        // `$…$` KaTeX does not parse is drawn as its source, in the text's face
+        // and ink (rehype-katex's `.katex-error`, `errorColor: inherit`).
+        if case .math(let tex)? = run.inline, !MTTypeset.parses(tex, display: false) {
+            var plain = run
+            plain.inline = nil
+            plain.text = Self.collapsed(tex)
+            return runText(plain, inherited: paragraph)
+        }
         if let inline = run.inline {
             var quiet = false
             if case let .chevron(open, quietUntilHover) = inline, quietUntilHover, !open { quiet = true }
@@ -514,6 +528,12 @@ struct TranscriptRenderer {
     // MARK: Embeds
 
     private func embed(_ embed: DocEmbed, _ frame: Frame, _ out: Output) {
+        // `$$…$$` KaTeX does not parse: its source where the block was, a
+        // paragraph of the text (the error span takes `.katex-display`'s place, and its margins).
+        if case .math(let tex) = embed.kind, !MTTypeset.parses(tex, display: true) {
+            paragraph(DocParagraph(key: embed.key, runs: [DocRun(Self.collapsed(tex).trimmingCharacters(in: .whitespaces))]), frame, out)
+            return
+        }
         let attachment = embeds.attachment(for: embed, style: style)
         (attachment as? EmbedAttachment)?.insets = (frame.left, frame.rightInset)
         let text = NSMutableAttributedString(attachment: attachment)

@@ -90,6 +90,17 @@ final class ConversationSelfTest {
         let formula = MTTypeset.formula("\\frac{a}{b} + \\sqrt{x^2}", fontSize: 15, color: .labelColor, display: false)
         check((formula?.width ?? 0) > 10 && (formula?.descent ?? 0) > 0, "inline math is not typeset")
         check(MTTypeset.formula("\\frac{", fontSize: 15, color: .labelColor, display: true) == nil, "half a formula was typeset")
+        // KaTeX's commands SwiftMath lacks are typeset; what KaTeX refuses is refused.
+        for tex in [
+            "\\dfrac{a}{b}", "\\operatorname{rank}(A)", "\\lVert x \\rVert", "\\bigl( x \\bigr)", "a \\implies b",
+            "\\boxed{x}", "\\overbrace{a+b}^{n}", "\\xrightarrow{f}", "\\overset{!}{=}", "x \\pmod{n}", "\\cancel{x}",
+        ] {
+            check(MTTypeset.formula(tex, fontSize: 15, color: .labelColor, display: false) != nil, "\(tex) is not typeset")
+        }
+        for (tex, display) in [("\\frac{a}", true), ("x^2^3", false), ("\\begin{align} a \\end{align}", false), ("\\tag{1} x", false)] {
+            check(!MTTypeset.parses(tex, display: display), "\(tex) parses where KaTeX refuses it")
+        }
+        check(MTTypeset.formula("x \\tag{1}", fontSize: 15, color: .labelColor, display: true)?.tag != nil, "a display formula's \\tag is not drawn")
 
         for dark in [false, true] {
             let everything = TranscriptFixtures.everything()
