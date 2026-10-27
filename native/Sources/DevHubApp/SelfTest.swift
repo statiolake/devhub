@@ -257,7 +257,11 @@ final class SelfTest {
         let locations = ProfileLocations(profile: "selftest", home: home, environment: [:])
         let fm = FileManager.default
         try? fm.createDirectory(atPath: locations.configDirectory, withIntermediateDirectories: true)
-        try? fm.createDirectory(atPath: home + "/scratch", withIntermediateDirectories: true)
+        // Scratch under the real home, not under `/tmp`: a root that is
+        // reached through a symlink (`/tmp` → `/private/tmp`) does not get its
+        // `ws-` session on macOS (see the report on WP3).
+        let scratchRoot = (NSHomeDirectory() as NSString).appendingPathComponent(".devhub-self-test-\(getpid())")
+        try? fm.createDirectory(atPath: scratchRoot, withIntermediateDirectories: true)
         let settings = """
             version = \(Int(ConfigConstants.schemaVersion))
 
@@ -265,7 +269,7 @@ final class SelfTest {
             workbench = "terminal"
 
             [scratch]
-            daily = "\(home)/scratch/YYYYMMDD"
+            daily = "\(scratchRoot)/YYYYMMDD"
 
             [appearance]
             title_bar = "hidden"
@@ -274,6 +278,7 @@ final class SelfTest {
         defer {
             Self.tmux(tmux, ["-L", locations.tmuxSocketName, "kill-server"])
             try? fm.removeItem(atPath: home)
+            try? fm.removeItem(atPath: scratchRoot)
         }
 
         let transport = LateTransport()
