@@ -119,6 +119,11 @@ final class TranscriptEmbeds: EmbedStore {
     private var attachments: [String: EmbedAttachment] = [:]
     private var used: Set<String> = []
     private var marks: [String: NSTextAttachment] = [:]
+    /// The previews beside questions' options, by key, and which are in use.
+    private var besides: [String: DocumentView] = [:]
+    private var usedBesides: Set<String> = []
+    /// The option pointed at, by the key of the preview beside it.
+    private var pointed: [String: String] = [:]
 
     func attachment(for embed: DocEmbed, style: ConversationStyle) -> NSTextAttachment {
         used.insert(embed.key)
@@ -137,8 +142,7 @@ final class TranscriptEmbeds: EmbedStore {
     static func sameView(_ old: DocEmbedKind, _ new: DocEmbedKind) -> Bool {
         switch (old, new) {
         case (.code, .code), (.table, .table), (.math, .math), (.images, .images), (.remoteImage, .remoteImage), (.activity, .activity),
-             (.rule, .rule), (.actions, .actions), (.confirm, .confirm), (.subagentActions, .subagentActions),
-             (.questionRecord, .questionRecord):
+             (.rule, .rule), (.actions, .actions), (.confirm, .confirm), (.subagentActions, .subagentActions):
             return true
         case let (.request(a), .request(b)): return a.id == b.id
         case let (.subagentMessage(a, _), .subagentMessage(b, _)): return a == b
@@ -151,15 +155,55 @@ final class TranscriptEmbeds: EmbedStore {
     func markUsed(_ key: String) -> Bool { used.insert(key).inserted }
 
     /// The renders of a whole transcript are in: what they did not use goes.
-    func beginRender() { used = [] }
+    func beginRender() {
+        used = []
+        usedBesides = []
+    }
     func endRender() {
         for key in attachments.keys where !used.contains(key) { attachments[key] = nil }
+        for (key, view) in besides where !usedBesides.contains(key) {
+            view.removeFromSuperview()
+            besides[key] = nil
+            pointed[key] = nil
+        }
     }
+
+    func besideView(_ key: String, style: ConversationStyle) -> DocumentView {
+        usedBesides.insert(key)
+        if let kept = besides[key] { return kept }
+        let made = DocumentView(style: style, host: host)
+        besides[key] = made
+        return made
+    }
+
+    /// A preview of a section kept as it was is still in use.
+    func markBesideUsed(_ key: String) { usedBesides.insert(key) }
+
+    /// The preview drawn for `key`, if it is drawn.
+    func beside(_ key: String) -> DocumentView? { besides[key] }
+
+    func pointedOption(_ key: String) -> String? { pointed[key] }
+
+    /// Point at `label` among the options `key` is beside (nil: at none). True: it changed.
+    func point(_ key: String, at label: String?) -> Bool {
+        guard pointed[key] != label else { return false }
+        pointed[key] = label
+        return true
+    }
+
+    /// Every preview's key that has an option pointed at.
+    var pointedKeys: [String] { Array(pointed.keys) }
 
     /// Restyle every view kept (a change of appearance or size).
     func restyle(_ style: ConversationStyle) {
         marks = [:]
         for attachment in attachments.values { attachment.content.update(attachment.kind, style: style) }
+        // A preview is shown again by the render that follows; its colours change now.
+        for view in besides.values {
+            view.text.applyStyle(style)
+            view.text.drawsBackground = false
+            view.text.rerender()
+        }
     }
 
     func view(for key: String) -> EmbedContent? { attachments[key]?.content }
@@ -184,7 +228,6 @@ final class TranscriptEmbeds: EmbedStore {
         case .actions: return ActionsEmbedView(style: style, host: host)
         case .confirm: return ConfirmEmbedView(style: style, host: host, resized: resized)
         case .subagentActions: return SubagentActionsView(style: style, host: host)
-        case .questionRecord: return QuestionRecordView(style: style, resized: resized)
         }
     }
 
@@ -298,8 +341,35 @@ enum InlineMarks {
                 }
             }
             return (image, centred(side))
-        case let .optionMark(_, picked):
-            return (text(picked ? "✓" : "", size: size, ink: style.tokens.accent.nsColor, box: size * 1.1, style: style), centred(size))
+        case let .optionMark(multiple, picked):
+            // `.conversation-question-mark`: 14px, a 1.5px ring (a box with
+            // 3px corners for any of many) in the tertiary ink, filled with the
+            // accent and its 9px bold check when chosen; 0.2em below the top
+            // of the first line, whose half-leading is the line's 1.6.
+            let side: CGFloat = 14
+            let image = drawn(NSSize(width: side, height: side)) { rect in
+                let box = rect.insetBy(dx: 0.75, dy: 0.75)
+                let path = multiple ? NSBezierPath(roundedRect: box, xRadius: 2.25, yRadius: 2.25) : NSBezierPath(ovalIn: box)
+                path.lineWidth = 1.5
+                if picked {
+                    style.tokens.accent.nsColor.setFill()
+                    path.fill()
+                    style.tokens.accent.nsColor.setStroke()
+                    path.stroke()
+                    let check = NSAttributedString(string: "✓", attributes: [
+                        .font: NSFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: style.tokens.accentInk.nsColor,
+                    ])
+                    let natural = check.size()
+                    check.draw(at: NSPoint(x: (rect.width - natural.width) / 2, y: (rect.height - natural.height) / 2))
+                } else {
+                    style.ink(.tertiary).setStroke()
+                    path.stroke()
+                }
+            }
+            let font = style.sans(size)
+            let lineHeight = size * 1.6
+            let baselineFromTop = (lineHeight - (font.ascender - font.descender)) / 2 + font.ascender
+            return (image, baselineFromTop - 0.2 * size - side)
         case .icon(let icon):
             let image = drawn(NSSize(width: size, height: size)) { rect in
                 GlyphPainter.draw(ConversationIcons.drawing(icon), in: rect, color: color, stroke: ConversationIcons.stroke)

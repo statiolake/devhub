@@ -553,38 +553,71 @@ public struct EntryDocumentBuilder {
 
     /// What a call asked the person, kept for reference once answered
     /// (`QuestionRecord`): each question as the card drew it — its header,
-    /// its words, its options with the chosen ones marked, what was written
-    /// instead, the note — and, for a single-select question whose options
-    /// carry previews, the preview beside the options, following the pointer.
-    /// Drawn by a view of the App's; searched and copied as `recordText`.
+    /// its words, its options as rows with the chosen ones marked, what was
+    /// written instead, the note — in the transcript's own text, so its words
+    /// are selected and copied as every other entry's. A single-select
+    /// question whose options carry previews has the preview of the option
+    /// pointed at (else of the one chosen) beside the options (`beside`).
     func questionRecord(_ key: String, _ asked: [AskedQuestion]) -> [DocBlock] {
         var out: [DocBlock] = []
         for (index, item) in asked.enumerated() {
-            let text = Self.recordText(item)
-            var embed = DocEmbed(key: "\(key)/\(index)", kind: .questionRecord(item), searchText: text, copyText: text)
-            embed.before = index == 0 ? Self.space(1) : Self.space(3)
-            out.append(.embed(embed))
+            let question = item.question, answer = item.answer
+            let at = "\(key)/\(index)"
+            let chosen = answer.secret ? [] : answer.chosen
+            let previewed = !question.multiSelect && question.options.contains { $0.preview != nil }
+            var children: [DocBlock] = []
+            if !question.header.isEmpty {
+                // `.conversation-question-header`: 0.78em, 600, line-height 1.5, 1px of padding over and under.
+                children.append(.paragraph(Self.paragraph(at + "/header", [
+                    DocRun(question.header, Self.style { $0.size = 0.78; $0.bold = true; $0.chip = .questionHeader; $0.ink = .accent }),
+                ], after: Self.space(1), lineHeight: 1.5 + 2 / (0.78 * SurfaceMetrics.fontPx))))
+            }
+            children.append(.paragraph(Self.paragraph(at + "/words", [DocRun(question.text, Self.style { $0.medium = true })], after: Self.space(2))))
+            var rows: [DocBlock] = []
+            // `OptionRow`: the mark (14px, then --space-2), the label over its description (1px apart).
+            func row(_ id: String, _ label: String, _ description: String, picked: Bool, point: String?) {
+                var line = Self.paragraph(id, [DocRun(label)])
+                line.marker = DocRun("", inline: .optionMark(multiple: question.multiSelect, picked: picked))
+                line.indent = SurfaceMetrics.em(14 + 8)
+                line.markerGap = SurfaceMetrics.em(8)
+                var parts: [DocBlock] = [.paragraph(line)]
+                if !description.isEmpty {
+                    var detail = Self.paragraph(id + "/d", [
+                        DocRun(description, Self.style { $0.size = 0.85; $0.ink = .secondary }, tooltip: description),
+                    ], before: SurfaceMetrics.em(1))
+                    detail.indent = SurfaceMetrics.em(14 + 8)
+                    parts.append(.paragraph(detail))
+                }
+                var box = Self.box(id + "/row", picked ? .optionPicked : .option, parts, before: rows.isEmpty ? 0 : Self.space(1))
+                box.point = point
+                rows.append(.box(box))
+            }
+            for (number, option) in question.options.enumerated() {
+                row("\(at)/o\(number)", option.label, option.description, picked: chosen.contains(option.label), point: previewed ? option.label : nil)
+            }
+            if let written = answer.written, !answer.secret {
+                row(at + "/written", written, "Written instead", picked: true, point: nil)
+            }
+            // `.conversation-question-note`, after the options' --space-1 gap.
+            let quiet = Self.style { $0.size = 0.85; $0.ink = .secondary }
+            if answer.secret {
+                rows.append(.paragraph(Self.paragraph(at + "/note", [DocRun("Answer hidden", quiet)], before: Self.space(2))))
+            } else if let notes = answer.notes {
+                rows.append(.paragraph(Self.paragraph(at + "/note", [DocRun("Note: \(notes)", quiet)], before: Self.space(2))))
+            }
+            var body = Self.box(at + "/body", .plain, rows)
+            if previewed {
+                body.beside = DocBeside(key: at + "/preview", resting: chosen.first, previews: question.options.enumerated().map { number, option in
+                    DocBeside.Preview(label: option.label, block: optionPreview("\(at)/preview/\(number)", option))
+                })
+            } else {
+                // `.conversation-question-body:not([data-previewed])`: rows as wide as a picker's.
+                body.maxWidth = 36
+            }
+            children.append(.box(body))
+            out.append(.box(Self.box(at, .plain, children, before: index == 0 ? Self.space(1) : Self.space(3))))
         }
         return [.box(Self.box(key, .plain, out, before: Self.space(1), after: Self.space(2), indent: SurfaceMetrics.em(12)))]
-    }
-
-    /// What the find bar reads in a recorded question, and what a copy takes:
-    /// its header, its words, its options, what was written and the note.
-    public static func recordText(_ item: AskedQuestion) -> String {
-        let question = item.question, answer = item.answer
-        var lines: [String] = []
-        if !question.header.isEmpty { lines.append(question.header) }
-        lines.append(question.text)
-        for option in question.options {
-            lines.append(option.description.isEmpty ? option.label : "\(option.label) — \(option.description)")
-        }
-        if let written = answer.written, !answer.secret { lines.append("\(written) — Written instead") }
-        if answer.secret {
-            lines.append("Answer hidden")
-        } else if let notes = answer.notes {
-            lines.append("Note: \(notes)")
-        }
-        return lines.joined(separator: "\n")
     }
 
     /// An option's preview, in its monospace box.

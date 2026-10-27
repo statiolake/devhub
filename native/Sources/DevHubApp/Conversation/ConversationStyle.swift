@@ -135,7 +135,8 @@ struct ConversationStyle {
         case .model: return Chip(fill: wash, border: nil, radius: 999, padX: 0.5 * size, padY: 0)
         case .sandbox:
             return Chip(fill: nil, border: faded(tokens.waiting, 0.35), radius: CGFloat(DevHubTheme.Radius.control), padX: 0.4 * size, padY: 0)
-        case .questionHeader: return Chip(fill: faded(tokens.accent, 0.12), border: nil, radius: 999, padX: 0.6 * size, padY: 0.05 * size)
+        // `.conversation-question-header`: the accent at 14%, `padding: 1px var(--space-2)`, a pill.
+        case .questionHeader: return Chip(fill: faded(tokens.accent, 0.14), border: nil, radius: 999, padX: px(8), padY: 1)
         case .key: return Chip(fill: nil, border: nil, radius: 0, padX: 0, padY: 0)
         }
     }
@@ -205,6 +206,15 @@ struct ConversationStyle {
             return Box(padTop: s2, padBottom: s2, padLeft: s3, padRight: s3, fill: sunken, border: lineSoft, radii: all(control))
         case .footnotes:
             return Box(padTop: 0, topRule: lineSoft)
+        case .option, .optionPicked, .optionShown:
+            // `.conversation-question-option`: `padding: var(--space-1) var(--space-2)` inside a 1px border.
+            let fill: NSColor, border: NSColor
+            switch style {
+            case .optionPicked: fill = mix(tokens.accent, 0.1, tokens.surface); border = tokens.accent.nsColor
+            case .optionShown: fill = wash; border = line
+            default: fill = surface; border = lineSoft
+            }
+            return Box(padTop: px(4) + 1, padBottom: px(4) + 1, padLeft: s2 + 1, padRight: s2 + 1, fill: fill, border: border, radii: all(control))
         case .plain:
             return Box()
         }

@@ -182,6 +182,8 @@ public struct DocParagraph: Hashable, Sendable {
     public var indent: Double = 0
     /// A list item's marker, drawn hanging in the indent.
     public var marker: DocRun?
+    /// The space between the marker and the words, in em (nil: a list's 0.4em).
+    public var markerGap: Double?
     /// Long lines wrap (default), or the row is one line, cut with an ellipsis.
     public var oneLine = false
     /// Runs drawn at the line's trailing end (`margin-left: auto`): a call's note.
@@ -258,6 +260,12 @@ public enum DocBoxStyle: String, Hashable, Sendable {
     case sunkenPanel
     /// `.conversation-question-preview`.
     case preview
+    /// `.conversation-question-option`: an option of a recorded question, as
+    /// a row with a hairline; `[data-picked]` (the accent's border over its
+    /// tint) and `[data-shown]` (its preview is the one beside the options).
+    case option
+    case optionPicked
+    case optionShown
     /// Footnotes under an answer.
     case footnotes
     /// A plain group (an item's blocks, a cell).
@@ -282,6 +290,13 @@ public struct DocBox: Hashable, Sendable {
     public var flat = false
     /// A tooltip over the whole box (a message on its way: "Sending…").
     public var tooltip: String?
+    /// At most this wide, in em (`max-width`), against the leading edge.
+    public var maxWidth: Double?
+    /// Its children are a question's options with the preview of one of them
+    /// beside them (or under them, when the column is narrow).
+    public var beside: DocBeside?
+    /// An option of such a box: pointing at it shows its preview (its label).
+    public var point: String?
 
     public init(key: String, style: DocBoxStyle, children: [DocBlock]) {
         self.key = key
@@ -300,6 +315,39 @@ public struct DocClip: Hashable, Sendable {
     }
     /// `max-height` while closed, in em.
     public static let height: Double = 18
+}
+
+/// The preview beside a question's options (`QuestionLayout`'s
+/// `data-previewed` body): the options are the box's children, in the text;
+/// the preview of the option pointed at — else `resting`, else the first — is
+/// drawn beside them in the column's right three fifths (`2fr 3fr`), or under
+/// them when the column is under 34em.
+public struct DocBeside: Hashable, Sendable {
+    public struct Preview: Hashable, Sendable {
+        public var label: String
+        public var block: DocBlock
+
+        public init(label: String, block: DocBlock) {
+            self.label = label
+            self.block = block
+        }
+    }
+
+    public var key: String
+    public var resting: String?
+    public var previews: [Preview]
+
+    public init(key: String, resting: String?, previews: [Preview]) {
+        self.key = key
+        self.resting = resting
+        self.previews = previews
+    }
+
+    /// The preview shown while `pointed` is pointed at (nil: none is).
+    public func shown(pointed: String?) -> Preview? {
+        let label = pointed ?? resting ?? previews.first?.label
+        return previews.first { $0.label == label } ?? previews.first
+    }
 }
 
 /// A view drawn in the text: what a paragraph cannot be.
@@ -328,11 +376,6 @@ public enum DocEmbedKind: Hashable, Sendable {
     case confirm(note: String, go: DocActionButton, cancel: DocActionButton)
     /// A subagent card's actions (Beside, Maximize).
     case subagentActions(entry: EntryId, label: String, canBeside: Bool, beside: Bool, canMaximize: Bool)
-    /// A question asked and answered whose options carry previews
-    /// (`QuestionRecord`): its options on the left and the preview of the one
-    /// pointed at, or else of the one chosen, on the right — or under them
-    /// when the column is narrow.
-    case questionRecord(AskedQuestion)
 }
 
 public struct DocActionButton: Hashable, Sendable {

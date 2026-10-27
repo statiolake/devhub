@@ -307,13 +307,36 @@ final class EntryDocumentTests: XCTestCase {
             answer: QuestionAnswer(header: "Layout", question: "Which layout?", chosen: ["Rows"], written: "Neither", notes: "narrow", secret: false))
         let transcript = F.transcript([F.put(F.tool("t", "AskUserQuestion", name: "AskUserQuestion", asked: [asked]))])
         let open = section(build(transcript) { $0.chosenFolds[EntryFold.tool("t")] = true }, "t")!
-        let records = embeds(open.blocks).filter { if case .questionRecord = $0.kind { return true }; return false }
-        XCTAssertEqual(records.count, 1)
-        guard case .questionRecord(let drawn)? = records.first?.kind else { return XCTFail("no record") }
-        XCTAssertEqual(drawn, asked)
-        XCTAssertEqual(records.first?.searchText, "Layout\nWhich layout?\nColumns — Side by side\nRows\nNeither — Written instead\nNote: narrow")
+        // In the transcript's text: no view of its own, every word a paragraph's.
+        XCTAssertTrue(embeds(open.blocks).filter { $0.key.contains("/asked") }.isEmpty)
+        let words = paragraphs(open.blocks).map(\.text)
+        for line in ["Layout", "Which layout?", "Columns", "Side by side", "Rows", "Neither", "Written instead", "Note: narrow"] {
+            XCTAssertTrue(words.contains(line), "no paragraph says \(line)")
+        }
+        let all = boxes(open.blocks)
+        let rows = all.filter { [.option, .optionPicked].contains($0.style) }
+        XCTAssertEqual(rows.map(\.style), [.option, .optionPicked, .optionPicked])
+        XCTAssertEqual(rows.map(\.point), ["Columns", "Rows", nil])
+        let marks = paragraphs(rows.map { .box($0) }).compactMap(\.marker?.inline)
+        XCTAssertEqual(marks, [.optionMark(multiple: false, picked: false), .optionMark(multiple: false, picked: true), .optionMark(multiple: false, picked: true)])
+        // The preview beside the options: the chosen one's while nothing is pointed at.
+        let body = all.first { $0.beside != nil }
+        XCTAssertEqual(body?.beside?.previews.map(\.label), ["Columns", "Rows"])
+        XCTAssertEqual(body?.beside?.shown(pointed: nil)?.label, "Rows")
+        XCTAssertEqual(body?.beside?.shown(pointed: "Columns")?.label, "Columns")
         let hidden = AskedQuestion(question: asked.question, answer: QuestionAnswer(header: "Layout", question: "Which layout?", chosen: ["Rows"], written: "x", notes: "n", secret: true))
-        XCTAssertTrue(EntryDocumentBuilder.recordText(hidden).hasSuffix("Rows\nAnswer hidden"))
+        let secret = F.transcript([F.put(F.tool("t", "AskUserQuestion", name: "AskUserQuestion", asked: [hidden]))])
+        let drawn = section(build(secret) { $0.chosenFolds[EntryFold.tool("t")] = true }, "t")!
+        let said = paragraphs(drawn.blocks).map(\.text)
+        XCTAssertTrue(said.contains("Answer hidden"))
+        XCTAssertFalse(said.contains("x") || said.contains("Note: n"))
+        XCTAssertEqual(boxes(drawn.blocks).filter { $0.style == .optionPicked }.count, 0)
+        // Without previews the rows are a picker's width.
+        let plain = AskedQuestion(question: Question(id: "p", header: "", text: "Which?", options: [QuestionOption(label: "A", description: "", preview: nil)], multiSelect: true, allowsOther: false),
+                                  answer: QuestionAnswer(header: "", question: "Which?", chosen: ["A"], written: nil, notes: nil, secret: false))
+        let many = section(build(F.transcript([F.put(F.tool("t", "AskUserQuestion", name: "AskUserQuestion", asked: [plain]))])) { $0.chosenFolds[EntryFold.tool("t")] = true }, "t")!
+        XCTAssertEqual(boxes(many.blocks).first { $0.key.hasSuffix("/asked/0/body") }?.maxWidth, 36)
+        XCTAssertEqual(paragraphs(many.blocks).compactMap(\.marker?.inline), [.optionMark(multiple: true, picked: true)])
     }
 
     func testEverythingAndTheLongTranscriptBuildAndSearch() {

@@ -106,6 +106,24 @@ struct RenderedBox {
     var padBottom: CGFloat
     var tooltip: String?
     var clip: DocClip?
+    /// An option of a question with a preview beside it: its label, and the key of that preview.
+    var point: (label: String, beside: String)?
+    /// The preview beside this box's options, where it is drawn.
+    var beside: BesideLayout?
+}
+
+/// Where the preview beside a question's options is drawn (`DocBeside`),
+/// against the box's first line, in the text container's coordinates.
+struct BesideLayout {
+    var key: String
+    /// Its left edge from the container's, and its size.
+    var left: CGFloat
+    var width: CGFloat
+    var height: CGFloat
+    /// From the box's first line up to the top of its first row.
+    var topPad: CGFloat
+    /// Under the options (a narrow column) rather than beside them: how far down.
+    var below: CGFloat?
 }
 
 /// One section, rendered.
@@ -127,6 +145,10 @@ struct RenderedSection {
 protocol EmbedStore: AnyObject {
     func attachment(for embed: DocEmbed, style: ConversationStyle) -> NSTextAttachment
     func inline(_ inline: DocInline, size: CGFloat, color: NSColor, style: ConversationStyle) -> NSTextAttachment
+    /// The view that draws the preview beside a question's options, kept by its key.
+    func besideView(_ key: String, style: ConversationStyle) -> DocumentView
+    /// The option pointed at among those a preview is beside (nil: none).
+    func pointedOption(_ key: String) -> String?
 }
 
 @MainActor
@@ -147,6 +169,8 @@ struct TranscriptRenderer {
         var pending: CGFloat = 0
         var dimmed = false
         var tooltip: String?
+        /// Inside a box with a preview beside its options: its key, and the option shown.
+        var beside: (key: String, shown: String?)?
     }
 
     private struct Frame {
@@ -196,10 +220,38 @@ struct TranscriptRenderer {
     }
 
     private func box(_ box: DocBox, _ frame: Frame, _ out: Output) {
-        let metrics = style.box(box.style, flat: box.flat)
+        var metrics = style.box(box.style, flat: box.flat)
+        // `[data-shown]`: the option whose preview is the one beside the options.
+        if box.style == .option, let point = box.point, let beside = out.beside, beside.shown == point {
+            metrics = style.box(.optionShown)
+        }
         out.pending += style.em(box.before)
         var left = frame.left + style.em(box.indent)
         var rightInset = frame.rightInset
+        if let maxWidth = box.maxWidth {
+            let column = width - left - rightInset
+            rightInset += max(0, column - style.em(maxWidth))
+            out.widthDependent = true
+        }
+        // A question's options with a preview beside them (`data-previewed`):
+        // `grid-template-columns: 2fr 3fr` with --space-3 between, one column
+        // under 34em, where the preview goes under the options.
+        var beside: (layout: BesideLayout, shown: DocBeside.Preview)?
+        let outerBeside = out.beside
+        if let doc = box.beside, let shown = doc.shown(pointed: embeds.pointedOption(doc.key)) {
+            let column = max(0, width - left - rightInset)
+            let gap = style.px(12)
+            let narrow = column < style.em(34)
+            let options = narrow ? column : floor((column - gap) * 2 / 5)
+            let layout = BesideLayout(
+                key: doc.key, left: narrow ? left : left + options + gap, width: narrow ? column : column - options - gap, height: 0, topPad: 0,
+                below: narrow ? gap : nil)
+            beside = (layout, shown)
+            rightInset += column - options
+            out.beside = (doc.key, shown.label)
+            out.widthDependent = true
+        }
+        defer { out.beside = outerBeside }
         if let share = metrics.maxShare {
             // At most min(85%, 60ch) of the column; the bubble as wide as its words, against the trailing edge.
             let column = width - left - rightInset
@@ -225,15 +277,79 @@ struct TranscriptRenderer {
         let end = out.text.length
         if end > start {
             addAfter(metrics.padBottom, out)
-            if metrics.fill != nil || metrics.border != nil || metrics.rail != nil || metrics.topRule != nil || box.clip != nil || box.tooltip != nil {
-                out.boxes.append(RenderedBox(
+            var placed: BesideLayout?
+            if let pair = beside {
+                var layout = pair.layout
+                let shown = pair.shown
+                // The preview is drawn over the text, beside the options (or
+                // under them), and the box is made as tall as both: the space
+                // the preview needs past the options goes after the last of them.
+                let view = embeds.besideView(layout.key, style: style)
+                view.show([shown.block], key: layout.key, style: style)
+                layout.height = min(ceil(view.height(forWidth: layout.width)), style.em(22))
+                let rows = height(of: NSRange(location: start, length: end - start), out)
+                layout.topPad = rows.topPad
+                if let gap = layout.below {
+                    layout.below = rows.height + gap
+                    addAfter(gap + layout.height, out)
+                } else {
+                    addAfter(max(0, layout.height - rows.height), out)
+                }
+                placed = layout
+            }
+            if metrics.fill != nil || metrics.border != nil || metrics.rail != nil || metrics.topRule != nil || box.clip != nil || box.tooltip != nil
+                || placed != nil || box.point != nil
+            {
+                var rendered = RenderedBox(
                     key: box.key, range: NSRange(location: start, length: end - start), metrics: metrics, left: left, rightInset: rightInset,
-                    padTop: metrics.padTop, padBottom: metrics.padBottom, tooltip: box.tooltip, clip: box.clip))
+                    padTop: metrics.padTop, padBottom: metrics.padBottom, tooltip: box.tooltip, clip: box.clip)
+                rendered.beside = placed
+                if let point = box.point, let key = outerBeside?.key { rendered.point = (point, key) }
+                out.boxes.append(rendered)
             }
         } else {
             out.pending -= metrics.padTop
         }
         addAfter(style.em(box.after), out)
+    }
+
+    /// How tall the paragraphs of `range` are laid out (each line its fixed
+    /// height, each paragraph's spacing), from the top of the space before the
+    /// first — `topPad`, from there to its first line.
+    private func height(of range: NSRange, _ out: Output) -> (height: CGFloat, topPad: CGFloat) {
+        let text = out.text
+        let string = text.string as NSString
+        var total: CGFloat = 0
+        var topPad: CGFloat = 0
+        var location = range.location
+        var first = true
+        while location < NSMaxRange(range) {
+            let paragraph = string.paragraphRange(for: NSRange(location: location, length: 0))
+            let shape = text.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle ?? NSParagraphStyle()
+            if first { topPad = shape.paragraphSpacingBefore }
+            total += shape.paragraphSpacingBefore + shape.paragraphSpacing
+            let piece = text.attributedSubstring(from: paragraph)
+            let lines = Self.lineCount(piece, width: width)
+            let lineHeight = shape.maximumLineHeight > 0 ? shape.maximumLineHeight : ceil(piece.size().height)
+            total += CGFloat(lines) * lineHeight
+            first = false
+            location = max(NSMaxRange(paragraph), location + 1)
+        }
+        return (total, topPad)
+    }
+
+    /// The lines a paragraph breaks into at the container's width (its indents its own).
+    static func lineCount(_ paragraph: NSAttributedString, width: CGFloat) -> Int {
+        let storage = NSTextStorage(attributedString: paragraph)
+        let manager = NSLayoutManager()
+        storage.addLayoutManager(manager)
+        let container = NSTextContainer(size: NSSize(width: max(1, width), height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        manager.addTextContainer(container)
+        manager.ensureLayout(for: container)
+        var count = 0
+        manager.enumerateLineFragments(forGlyphRange: manager.glyphRange(for: container)) { _, _, _, _, _ in count += 1 }
+        return max(1, count)
     }
 
     /// The width a bubble's words take, laid out no wider than `most`.
@@ -287,7 +403,7 @@ struct TranscriptRenderer {
         var firstLeft = left
         if let marker = paragraph.marker {
             let mark = runText(marker, inherited: paragraph)
-            let gap = style.em(0.4)
+            let gap = style.em(paragraph.markerGap ?? 0.4)
             let width = ceil(mark.size().width)
             firstLeft = max(0, left - width - gap)
             let control = NSMutableAttributedString(attributedString: mark)

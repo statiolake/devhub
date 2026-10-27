@@ -156,17 +156,16 @@ final class ConversationSelfTest {
                 await pause(0.4)
                 snapshot(view, "conversation-question-record-\(dark ? "dark" : "light")")
             }
-            let records: [QuestionRecordView] = text.textStorage.map { storage -> [QuestionRecordView] in
-                var found: [QuestionRecordView] = []
-                storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
-                    if let embed = value as? EmbedAttachment, let record = embed.content as? QuestionRecordView { found.append(record) }
-                }
-                return found
-            } ?? []
-            check(records.count == 1, "the call t6 drew \(records.count) question records, not 1")
-            if let record = records.first {
-                check(record.previewBeside, "the recorded question's preview is not beside its options")
+            // Its words are the transcript's text, selected and copied with the rest.
+            check(text.string.contains("Which layout?") && text.string.contains("One above the other"), "the recorded question's words are not in the transcript's text")
+            if let words = text.string.range(of: "Which layout?") {
+                text.setSelectedRange(NSRange(words, in: text.string))
+                check(text.selectedWords() == "Which layout?", "a selection of the recorded question copies \(text.selectedWords().debugDescription)")
+                text.setSelectedRange(NSRange(location: 0, length: 0))
             }
+            let previews = text.previewsBeside
+            check(previews.count == 1, "the call t6 drew \(previews.count) previews, not 1")
+            check(previews.beside, "the recorded question's preview is not beside its options")
         }
         await arrivals()
         await settingList()

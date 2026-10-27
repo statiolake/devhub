@@ -38,6 +38,9 @@ final class TranscriptTextView: NSTextView {
     private var hovered: (range: NSRange, info: ParagraphInfo)?
     private var pointedSection: String?
     private var renderWidth: CGFloat = 0
+    /// Sections to render again on the next `show` though their source is the same (an option pointed at).
+    private var stale: Set<String> = []
+    private var besidesScheduled = false
     /// Below the last line: the transcript's bottom padding.
     var bottomPadding: CGFloat = 32
 
@@ -145,10 +148,11 @@ final class TranscriptTextView: NSTextView {
         var previousKind: String?
         for section in sections {
             if let old = kept[section.id], old.source == section, !(widthChanged && old.widthDependent),
-               old.previousKind == previousKind
+               old.previousKind == previousKind, !stale.contains(section.id)
             {
                 // Its embeds are still in use.
                 for embed in old.embeds { _ = embeds.markUsed(embed.key) }
+                for box in old.boxes { if let beside = box.beside { embeds.markBesideUsed(beside.key) } }
                 next.append(old)
             } else {
                 var made = renderer.render(section, previousKind: previousKind)
@@ -157,8 +161,17 @@ final class TranscriptTextView: NSTextView {
             }
             previousKind = section.kind
         }
+        stale = []
         embeds.endRender()
         replace(with: next)
+        placeBesides()
+    }
+
+    /// One section rendered again, as it is (what it draws by changed: an option pointed at).
+    @MainActor
+    func rerender(section id: String) {
+        stale.insert(id)
+        show(rendered.map(\.source))
     }
 
     /// The same sections again, at the width the column has now: those laid out by it are rendered again.
@@ -386,6 +399,72 @@ final class TranscriptTextView: NSTextView {
                 pointedSection = section
                 owner?.transcript(self, pointingAt: section)
             }
+            pointOption(at: point)
+        }
+    }
+
+    // MARK: The preview beside a question's options
+
+    /// The drawn frame of a box, from its laid-out lines (nil: none laid out).
+    @MainActor
+    private func frame(of range: NSRange, _ box: RenderedBox) -> CGRect? {
+        let lines = lineRects(range)
+        guard let first = lines.first else { return nil }
+        let union = lines.dropFirst().reduce(first) { $0.union($1) }
+        let x = textContainerOrigin.x + box.left
+        return CGRect(x: x, y: union.minY - box.padTop, width: max(0, containerWidth - box.left - box.rightInset), height: union.height + box.padTop + box.padBottom)
+    }
+
+    /// `onMouseEnter` / `onMouseLeave` of an option: the preview beside it is its own while it is pointed at.
+    @MainActor
+    private func pointOption(at point: NSPoint?) {
+        var now: [String: String] = [:]
+        if let point {
+            let visible = visibleCharacters
+            for (range, box) in boxes {
+                guard let option = box.point, NSIntersectionRange(range, visible).length > 0,
+                      let frame = frame(of: range, box), frame.contains(point) else { continue }
+                now[option.beside] = option.label
+            }
+        }
+        var changed: Set<String> = []
+        for key in Set(embeds.pointedKeys).union(now.keys) where embeds.point(key, at: now[key]) {
+            if let at = boxes.first(where: { $0.box.beside?.key == key }), let id = section(at: at.range.location) { changed.insert(id) }
+        }
+        guard !changed.isEmpty else { return }
+        stale.formUnion(changed)
+        show(rendered.map(\.source))
+    }
+
+    /// Whether every preview drawn is beside its options, right of their column (the self-test asks).
+    @MainActor
+    var previewsBeside: (count: Int, beside: Bool) {
+        var count = 0, beside = true
+        for (_, box) in boxes {
+            guard let layout = box.beside, let view = embeds.beside(layout.key), view.superview === self, !view.isHidden else { continue }
+            count += 1
+            let options = textContainerOrigin.x + containerWidth - box.rightInset
+            if layout.below != nil || view.frame.minX < options || view.frame.width <= 0 { beside = false }
+        }
+        return (count, beside)
+    }
+
+    /// Each preview over the text, beside its options' first row (or under the last).
+    @MainActor
+    func placeBesides() {
+        let visible = visibleCharacters
+        let origin = textContainerOrigin
+        for (range, box) in boxes {
+            guard let layout = box.beside, let view = embeds.beside(layout.key) else { continue }
+            guard NSIntersectionRange(range, visible).length > 0, let first = lineRects(NSRange(location: range.location, length: 1)).first else {
+                if !view.isHidden { view.isHidden = true }
+                continue
+            }
+            let top = first.minY - layout.topPad + (layout.below ?? 0)
+            let frame = CGRect(x: origin.x + layout.left, y: top, width: layout.width, height: layout.height).integral
+            if view.superview !== self { addSubview(view) }
+            if view.frame != frame { view.frame = frame }
+            if view.isHidden { view.isHidden = false }
         }
     }
 
@@ -400,6 +479,7 @@ final class TranscriptTextView: NSTextView {
                 pointedSection = nil
                 owner?.transcript(self, pointingAt: nil)
             }
+            pointOption(at: nil)
         }
     }
 
@@ -505,6 +585,17 @@ final class TranscriptTextView: NSTextView {
         if let current = findCurrent {
             style.findCurrent.withAlphaComponent(0.55).setFill()
             for line in lineRects(current) { NSBezierPath(roundedRect: line, xRadius: 2, yRadius: 2).fill() }
+        }
+        // Laid out again (the text above changed, the viewport moved): the
+        // previews follow their options, once this drawing is done.
+        if !boxes.allSatisfy({ $0.box.beside == nil }), !besidesScheduled {
+            besidesScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.besidesScheduled = false
+                    self?.placeBesides()
+                }
+            }
         }
     }
 
