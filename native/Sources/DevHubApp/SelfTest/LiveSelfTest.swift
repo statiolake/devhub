@@ -130,6 +130,8 @@ final class LiveSelfTest {
         let active = await SelfTestDriver(prefix: "live").until(5) { NSApp.isActive && self.window?.isKeyWindow == true }
         SelfTestLaunch.say("self-test live: active \(NSApp.isActive), key window \(window?.isKeyWindow == true) (\(active))")
 
+        ChordDispatcher.trace = { SelfTestLaunch.say("self-test trace \($0)") }
+        defer { ChordDispatcher.trace = nil }
         await phase("scratch") { await scratch($0) }
         await phase("sheets") { await sheetsPhase($0) }
         await phase("conversation") { await conversation($0) }
@@ -178,6 +180,14 @@ final class LiveSelfTest {
             await d.pause(0.25)
         }
         d.check(!shell.modals.isPresenting, "\(what): Escape did not take the sheets away (\(sheets?.topTitle ?? "?"))")
+    }
+
+    /// The sheets up, and where the keys are: for a failure's words.
+    var sheetsNow: String {
+        let titles = sheets?.view.cards.map { card -> String in
+            (card.content as? PickerView)?.state.prompt.title ?? card.content.accessibilityLabel() ?? "\(type(of: card.content))"
+        } ?? []
+        return "sheets \(titles), keys in \(window?.firstResponder.map { "\(type(of: $0))" } ?? "nothing")"
     }
 
     /// The rows of the top picker, by id.

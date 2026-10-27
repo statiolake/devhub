@@ -13,18 +13,14 @@ extension LiveSelfTest {
         }
         await d.type(SelfTestWorld.issueURL, in: window)
         await d.press(.returnKey, in: window)
-        // Which clone: alpha, found by its origin among the workspace sources.
-        await d.expect(20, "the Issue flow did not offer alpha as acme/widget's clone (\(pickerRowIds), \(picker?.state.prompt.note ?? ""))") {
-            self.pickerRowIds.contains { $0.hasSuffix("/widget") }
-        }
-        if let alphaRow = pickerRowIds.first(where: { $0.hasSuffix("/widget") }) {
-            d.check(await pointAt(d, alphaRow), "the Issue flow's clone question could not be moved to alpha")
-        }
-        await d.press(.returnKey, in: window)
-        // `gh` is signed out: said under the field, the flow still up.
-        await d.expect(20, "signed out of GitHub was not said (\(picker?.state.prompt.title ?? "no sheet"): \(picker?.state.prompt.note ?? ""))") {
+        // The one clone of acme/widget there is (projects/widget, found by
+        // its name and its origin) is taken without asking; the branch
+        // question then says GitHub could not be asked, `gh` being signed out.
+        await d.expect(20, "signed out of GitHub was not said (\(picker?.state.prompt.title ?? "no sheet"): \(picker?.state.prompt.note ?? ""); rows \(pickerRowIds))") {
             self.picker?.state.prompt.note?.contains("not signed in to GitHub") == true
         }
+        d.check(picker?.state.prompt.noteIsFailure == true, "signed out of GitHub is not said as a failure")
+        d.check(pickerRowIds.contains("devhub:new-worktree"), "the branch question offers \(pickerRowIds)")
         d.check(world.fakeLog().contains { $0.cli == "gh" && $0.line.contains("auth token") }, "the Issue flow never asked gh for a token")
         await dismissSheets(d, "the Issue flow")
         d.check((snapshot?.workspaces.count ?? 0) == before, "the cancelled Issue flow opened something")

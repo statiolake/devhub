@@ -292,7 +292,9 @@ REPLY = ("Fake reply: here is **Markdown** from the stand-in.\n\n"
          "$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n\n"
          "The end of the fake reply.")
 
-COMMANDS = [{"name": "compact", "description": "Compact the conversation", "argumentHint": "[instructions]"},
+COMMANDS = [{"name": "model", "description": "Set the AI model for Claude Code", "argumentHint": "[model]"},
+            {"name": "effort", "description": "Set the effort level", "argumentHint": "[level]"},
+            {"name": "compact", "description": "Compact the conversation", "argumentHint": "[instructions]"},
             {"name": "review", "description": "Review a pull request", "argumentHint": "<pr>"}]
 MODELS = [{"value": "default", "displayName": "Default", "description": "Recommended", "supportedEffortLevels": ["low", "medium", "high"]},
           {"value": "sonnet", "displayName": "Sonnet", "description": "Everyday tasks", "resolvedModel": "claude-sonnet-5", "supportedEffortLevels": ["low", "medium", "high"]},

@@ -37,6 +37,13 @@ extension LiveSelfTest {
         d.check(window?.firstResponder === pane.terminal, "a click did not put the keys in Scratch's terminal (\(String(describing: window?.firstResponder)))")
         await d.type("echo devhub-live\r", in: window)
         await d.expect(10, "what was typed in Scratch's terminal did not come back") { pane.screenText().contains("devhub-live") }
+        // A chord typed in the terminal is DevHub's, not the shell's: none of its keys reach the session.
+        for _ in 0..<2 { await d.chord("b", in: window) }
+        await d.expect(5, "Cmd+Q B twice did not leave the sidebar as it was") { self.snapshot?.sidebar.collapsed == false }
+        await d.type("echo chord-clean\r", in: window)
+        await d.expect(10, "Scratch's terminal does not answer after the chords") { pane.screenText().contains("chord-clean") }
+        let line = pane.screenText().split(separator: "\n").first { $0.contains("echo chord-clean") }.map(String.init) ?? ""
+        d.check(!line.contains("becho") && !line.contains("\u{1b}"), "a chord's keys reached the shell: “\(line.suffix(60))”")
     }
 
     func sheetsPhase(_ d: SelfTestDriver) async {
@@ -65,7 +72,7 @@ extension LiveSelfTest {
         await d.chord("f", in: window)
         await d.expect(5, "Cmd+Q F did not open the workspace picker") { self.picker != nil }
         await d.press(.escape, in: window)
-        await d.expect(3, "Escape did not cancel the workspace picker") { !sheets.isPresenting }
+        await d.expect(3, "Escape did not cancel the workspace picker (\(sheetsNow))") { !sheets.isPresenting }
         let count = snapshot?.workspaces.count ?? 0
         d.check(count == 1, "cancelling the picker opened something (\(snapshot?.workspaces.map(\.root) ?? []))")
         for folder in [world.beta, world.alpha] {
@@ -83,7 +90,7 @@ extension LiveSelfTest {
                 guard let opened = self.workspace(root: folder), let snapshot = self.snapshot else { return false }
                 return snapshot.selection.context == .workspace(opened.id)
             }
-            d.check(!sheets.isPresenting, "the workspace picker stayed up after \(name) opened")
+            await d.expect(3, "the workspace picker stayed up after \(name) opened (\(sheetsNow))") { !sheets.isPresenting }
         }
 
         // Go to (Cmd+Q G): back to beta by its name, then to alpha.
@@ -108,7 +115,7 @@ extension LiveSelfTest {
         d.check(picker?.state.activeRow?.id == "new:\(SelfTestWorld.claudeProfile)", "New Agent's first row is \(picker?.state.activeRow?.id ?? "nothing")")
         await d.press(.returnKey, in: window)
         await d.expect(20, "Return in New Agent started no Agent in alpha") { self.workspace(root: self.world.alpha)?.agents.isEmpty == false }
-        d.check(!sheets.isPresenting, "New Agent stayed up")
+        await d.expect(3, "New Agent stayed up (\(sheetsNow))") { !sheets.isPresenting }
         if let made = workspace(root: world.alpha)?.agents.first {
             d.check(made.profileId == SelfTestWorld.claudeProfile && made.presentation == .gui, "New Agent started \(made.profileId) as \(made.presentation)")
             await d.expect(10, "the new Agent is not the selection") { self.snapshot?.selection.context == .agent(made.id) }

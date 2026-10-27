@@ -123,6 +123,9 @@ final class ChordDispatcher: ArmingListener {
             isAutoRepeat: event.isARepeat)
     }
 
+    /// Where the self-test hears what became of each key.
+    nonisolated(unsafe) static var trace: ((String) -> Void)?
+
     /// `handleInput`: nil swallows the key.
     func handleKey(_ event: NSEvent) -> NSEvent? {
         guard let host else { return event }
@@ -131,6 +134,7 @@ final class ChordDispatcher: ArmingListener {
         if surface == .other { return event }
         let stroke = Self.stroke(event)
         let decision = router.route(stroke)
+        Self.trace?("chord: \(stroke.key ?? "?") on \(surface.rawValue): \(decision)")
         switch decision {
         case .forward:
             // `forward_prefix`: the real Command-Q, which is the Mac's Quit.
