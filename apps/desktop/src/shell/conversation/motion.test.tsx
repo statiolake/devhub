@@ -122,22 +122,62 @@ describe("coming back to a parked pane", () => {
 });
 
 describe("under Reduce Motion", () => {
-  it("turns off every entry and disclosure animation", () => {
-    const css = readFileSync("src/shell/conversation/conversation.css", "utf8");
-    const reduced = [
+  const reducedIn = (css: string) =>
+    [
       ...css.matchAll(
         /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/g,
       ),
     ]
       .map(([, body]) => body)
       .join("\n");
+  const tokens = readFileSync("src/shell/styles/tokens.css", "utf8");
+  const css = readFileSync("src/shell/conversation/conversation.css", "utf8");
+
+  it("takes every distance and scale the arrivals are drawn with to nothing, so they only fade", () => {
+    const reduced = reducedIn(tokens);
+    for (const token of [
+      "--motion-rise: 0px",
+      "--motion-scale-in: 1",
+      "--motion-scale-popover: 1",
+      "--motion-scale-pop: 1",
+    ]) {
+      expect(reduced, token).toContain(token);
+    }
+    // Every arrival moves by those tokens and nothing else.
+    for (const name of [
+      "conversation-rise-in",
+      "conversation-popover-in",
+      "conversation-pop-in",
+    ]) {
+      const frames = new RegExp(
+        `@keyframes ${name} \\{([\\s\\S]*?)\\n\\}`,
+      ).exec(css)?.[1];
+      expect(frames, name).toBeDefined();
+      for (const [, transform] of frames!.matchAll(/transform:([^;]*);/g)) {
+        expect(
+          transform!.replace(
+            /var\(--motion-[a-z-]+\)|[\s\d./*()-]|calc|translateY|scale/g,
+            "",
+          ),
+          name,
+        ).toBe("");
+        expect(transform, name).toMatch(/var\(--motion-/);
+      }
+    }
+  });
+
+  it("leaves the conversation's fades to it, and turns off what loops and a disclosure's height", () => {
+    // The page-wide cut to an instant spares the conversation, whose own
+    // arrivals become fades.
+    expect(reducedIn(tokens)).toContain(".conversation-surface *");
+    const reduced = reducedIn(css);
     for (const selector of [
-      ".conversation-entry[data-fresh]",
-      ".conversation-activity-label",
+      ".conversation-activity-dots span",
+      ".conversation-request-eyebrow::before",
+      ".conversation-waiting-mark",
+      '.conversation-tool-mark[data-status="running"]::before',
       "details::details-content",
-      ".conversation-completions",
-      ".conversation-pending-item",
-      ".conversation-dictation-tentative",
+      ".conversation-dictation",
     ]) {
       expect(reduced, selector).toContain(selector);
     }

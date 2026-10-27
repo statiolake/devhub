@@ -1036,7 +1036,7 @@ describe("copy", () => {
   const ANSWER =
     "Run this:\n\n```ts\nconst answer = 42;\n```\n\nThen **commit**.";
 
-  it("copies an answer's Markdown source, and says Copied for a moment once it has", async () => {
+  it("copies an answer's Markdown source, and says Copied for a moment once it has, as an icon and nothing else", async () => {
     // The clock moves only when told to, and the write lands inside `act`,
     // so "Copied" and the timer that takes it back are both in place before
     // the clock moves — whatever the scheduler of a busy machine does.
@@ -1048,7 +1048,11 @@ describe("copy", () => {
       await Promise.resolve();
     });
     expect(actions.writeClipboard).toHaveBeenCalledWith(ANSWER);
+    // "Copied" is said to assistive technology and in the tooltip; on screen
+    // the icon is a check.
     expect(button).toHaveTextContent("Copied");
+    expect(button).toHaveAttribute("title", "Copied");
+    expect(button).toHaveAttribute("data-copied");
     act(() => {
       vi.advanceTimersByTime(COPIED_MS - 1);
     });
@@ -1056,7 +1060,10 @@ describe("copy", () => {
     act(() => {
       vi.advanceTimersByTime(1);
     });
-    expect(button).toHaveTextContent("Copy");
+    expect(button).toHaveTextContent("");
+    expect(button).not.toHaveAttribute("data-copied");
+    expect(button).toHaveAttribute("title", "Copy answer");
+    expect(button).toHaveAccessibleName("Copy answer");
   });
 
   it("copies an answer of several text blocks as one document", () => {
@@ -1092,7 +1099,8 @@ describe("copy", () => {
     await waitFor(() =>
       expect(actions.reportFailure).toHaveBeenCalledWith(denied),
     );
-    expect(button).toHaveTextContent("Copy");
+    expect(button).not.toHaveTextContent("Copied");
+    expect(button).not.toHaveAttribute("data-copied");
   });
 });
 

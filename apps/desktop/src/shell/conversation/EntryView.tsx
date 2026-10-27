@@ -290,7 +290,6 @@ function PersonMessageView({
             onClick={() => setConfirming(true)}
           >
             <RewindIcon />
-            <span className="conversation-copy-text">Rewind</span>
           </button>
         ) : null}
       </div>

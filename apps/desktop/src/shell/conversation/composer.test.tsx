@@ -43,6 +43,7 @@ import {
 import {
   COMPOSER_PLACEHOLDER,
   DRAFT_PAUSE_MS,
+  PENDING_TOOLTIP,
   REWIND_NOTE,
   composerPlaceholder,
 } from "./Composer";
@@ -1049,9 +1050,10 @@ describe("messages waiting to be sent", () => {
 
   it("lists each one with what it waits for, or why it was not sent", () => {
     draw(withSession([RUNNING, HELD]));
-    expect(item("look at the tests")).toHaveTextContent(
-      "Waiting: sent when the Agent is ready for it",
-    );
+    // What "queued" means is said once, under the pointer.
+    expect(
+      item("look at the tests").querySelector(".conversation-pending-label"),
+    ).toHaveAttribute("title", PENDING_TOOLTIP);
     expect(item("and the docs")).toHaveTextContent(
       "Not sent: the host is gone",
     );
@@ -1079,7 +1081,9 @@ describe("messages waiting to be sent", () => {
   it("draws each as a user bubble with a queued label and its place", () => {
     draw(withSession([RUNNING, HELD]));
     const first = item("look at the tests");
-    expect(first).toHaveTextContent("Queued 1 of 2 · sends after this turn");
+    expect(
+      first.querySelector(".conversation-pending-label"),
+    ).toHaveTextContent(/^Queued · 1 of 2$/);
     expect(first.querySelector(".conversation-user")).not.toBeNull();
     expect(first.querySelector(".conversation-user-text")).toHaveTextContent(
       "look at the tests",

@@ -104,7 +104,14 @@ import {
   saveLanguage,
   savedLanguage,
 } from "./dictation";
-import { ClockIcon, EditIcon, MicIcon, SendIcon, StopIcon } from "./icons";
+import {
+  ClockIcon,
+  CloseIcon,
+  EditIcon,
+  MicIcon,
+  SendIcon,
+  StopIcon,
+} from "./icons";
 import { useDictation, type Dictation } from "./useDictation";
 import type { VoiceLanguage } from "../../ipc/voice";
 import { SEND_KEY, useMessageKeys } from "./messageKeys";
@@ -149,13 +156,26 @@ const BROKEN_REFUSALS = {
 export const REWIND_NOTE =
   "Rewind to before this message? It and everything after it leave the conversation, and its words come back to the composer. Files the Agent changed are not changed back.";
 
-/** What a held message says about itself. */
-export function pendingStatus(message: PendingMessage): string {
+/**
+ * What a held message says about itself, in the one quiet line over its
+ * bubble: that it is queued and where, that it is being changed, or why it
+ * was not sent. The longer account of what "queued" means is the line's
+ * tooltip (`PENDING_TOOLTIP`), not a second line under every message.
+ */
+export function pendingStatus(
+  message: PendingMessage,
+  position: number,
+  total: number,
+  editing: boolean,
+): string {
   if (message.failure !== undefined) return `Not sent: ${message.failure}`;
-  return message.editing
-    ? "Being changed: not sent until you save or cancel"
-    : "Waiting: sent when the Agent is ready for it";
+  if (editing || message.editing) return "Editing · not sent until saved";
+  return total > 1 ? `Queued · ${position} of ${total}` : "Queued";
 }
+
+/** What "queued" means, said once, under the pointer. */
+export const PENDING_TOOLTIP =
+  "Sent when the Agent is ready for it, after the turn that is running";
 
 /**
  * The images among `files`, read into their own bytes. A file of another
@@ -310,100 +330,100 @@ function PendingItem({
       data-failed={message.failure !== undefined || undefined}
       data-editing={draft !== undefined || undefined}
     >
-      <div className="conversation-pending-label">
+      <div
+        className="conversation-pending-label"
+        title={message.failure === undefined ? PENDING_TOOLTIP : undefined}
+      >
         <ClockIcon />
-        <span>
-          {message.failure !== undefined
-            ? "Not sent"
-            : total > 1
-              ? `Queued ${position} of ${total} · sends after this turn`
-              : "Queued · sends after this turn"}
-        </span>
-      </div>
-      <div className="conversation-user" data-origin="person">
-        {message.images.length > 0 ? (
-          <div className="conversation-images">
-            {message.images.map((image, index) => (
-              <ImageView key={index} image={image} />
-            ))}
-          </div>
-        ) : null}
-        {draft === undefined ? (
-          <PersonBubble origin="person">
-            {message.text !== "" ? <SkillText text={message.text} /> : null}
-          </PersonBubble>
-        ) : (
-          <textarea
-            className="conversation-pending-input"
-            aria-label="Waiting message"
-            rows={3}
-            value={draft}
-            autoFocus
-            onFocus={(event) => {
-              const end = event.currentTarget.value.length;
-              event.currentTarget.setSelectionRange(end, end);
-            }}
-            onChange={(event) => setDraft(event.target.value)}
-            {...keys}
-          />
-        )}
-      </div>
-      <div className="conversation-pending-footer">
         <span className="conversation-pending-status">
-          {pendingStatus(message)}
+          {pendingStatus(message, position, total, draft !== undefined)}
         </span>
+      </div>
+      <div className="conversation-pending-row">
         {draft === undefined ? (
-          <>
+          <div className="conversation-pending-actions">
             <button
               type="button"
               className="conversation-pending-now"
-              title="Send it now: a running turn takes it in as it goes"
+              aria-label="Send now"
+              title="Send now — a running turn takes it in as it goes"
               disabled={!canSendNow}
               onClick={() => {
                 void sendPendingNow(message.id).catch(reportFailure);
               }}
             >
               <SendIcon />
-              Send now
             </button>
             <button
               type="button"
               className="conversation-pending-edit"
+              aria-label="Edit"
+              title="Edit"
               onClick={open}
             >
               <EditIcon />
-              Edit
             </button>
             <button
               type="button"
               className="conversation-pending-remove"
+              aria-label="Remove"
+              title="Remove"
               onClick={() => {
                 void removePending(message.id).catch(reportFailure);
               }}
             >
-              Remove
+              <CloseIcon />
             </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="conversation-pending-save"
-              title={`Save (${SEND_KEY})`}
-              onClick={save}
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              className="conversation-pending-cancel"
-              onClick={cancel}
-            >
-              Cancel
-            </button>
-          </>
-        )}
+          </div>
+        ) : null}
+        <div className="conversation-user" data-origin="person">
+          {message.images.length > 0 ? (
+            <div className="conversation-images">
+              {message.images.map((image, index) => (
+                <ImageView key={index} image={image} />
+              ))}
+            </div>
+          ) : null}
+          {draft === undefined ? (
+            <PersonBubble origin="person">
+              {message.text !== "" ? <SkillText text={message.text} /> : null}
+            </PersonBubble>
+          ) : (
+            <textarea
+              className="conversation-pending-input"
+              aria-label="Waiting message"
+              rows={3}
+              value={draft}
+              autoFocus
+              onFocus={(event) => {
+                const end = event.currentTarget.value.length;
+                event.currentTarget.setSelectionRange(end, end);
+              }}
+              onChange={(event) => setDraft(event.target.value)}
+              {...keys}
+            />
+          )}
+        </div>
       </div>
+      {draft === undefined ? null : (
+        <div className="conversation-pending-footer">
+          <button
+            type="button"
+            className="conversation-pending-cancel"
+            onClick={cancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="conversation-pending-save"
+            title={`Save (${SEND_KEY})`}
+            onClick={save}
+          >
+            Save
+          </button>
+        </div>
+      )}
     </li>
   );
 }

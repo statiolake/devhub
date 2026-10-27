@@ -17,6 +17,19 @@
  * Size is one number, `--conversation-font-size` (a step larger than the
  * terminal's, zoom included: `conversationFontSize`); everything else is in
  * `em` of it.
+ *
+ * Depth and motion follow `tokens.css`. The transcript is the flat page
+ * (elevation 0): tool rows, code and diffs are set apart by hairlines and
+ * recesses, never by shadows — an entry contains its own paint, so nothing
+ * in it could cast one anyway. A request asking for an answer is set off by
+ * a ring in the waiting colour instead. The composer floats over the
+ * transcript's last lines, which fade
+ * out under it (1 at rest, 2 while it has the keyboard), and so does the way
+ * back to the end (2). Pickers, the `/` list and the find bar are popovers
+ * (3). Everything new arrives with `conversation-rise-in` (entries, cards,
+ * queued messages), `conversation-popover-in` (popovers) or
+ * `conversation-pop-in` (small controls), on the enter curve; nothing loops
+ * but what says work is going on, and that stops under Reduce Motion.
  */
 
 .conversation-surface {
@@ -67,6 +80,9 @@
 
 /* The conversation's own column: what is shown in it, and the composer, which talks to the conversation whatever is shown above it. */
 .conversation-main {
+  /* How far the transcript runs on under the composer, fading out. */
+  --dock-overlap: var(--space-6);
+
   position: relative;
   display: flex;
   min-width: 0;
@@ -85,12 +101,14 @@
   display: flex;
   flex-direction: column;
   padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-control);
-  background: var(--raised);
-  box-shadow: var(--shadow-dialog);
+  border-radius: var(--radius-panel);
+  backdrop-filter: var(--material-blur);
+  background: var(--material-float);
+  box-shadow: var(--elevation-3);
   font-size: 0.85em;
   gap: 2px;
+  transform-origin: 100% 0;
+  animation: conversation-popover-in var(--motion-base) var(--ease-enter);
 }
 
 .conversation-find-row {
@@ -206,6 +224,13 @@
   box-sizing: border-box;
   padding: var(--space-5) var(--conversation-gutter) var(--space-8);
   margin: 0 auto;
+}
+
+/* The conversation's own transcript ends under the composer: its last lines
+   are clear of it once followed to the end, and pass under its fade while
+   scrolled. */
+.conversation-body > .conversation-scroll > .conversation-transcript {
+  padding-bottom: calc(var(--space-4) + var(--dock-overlap));
 }
 
 /* The transcript is text to read and quote: it is selectable
@@ -477,9 +502,10 @@
   display: flex;
   min-height: 1.7em;
   align-items: center;
+  margin-top: 2px;
   gap: 2px;
-  opacity: 0.7;
-  transition: opacity 120ms ease;
+  opacity: 0.6;
+  transition: opacity var(--motion-fast) var(--ease-standard);
 }
 
 .conversation-user .conversation-message-actions {
@@ -499,25 +525,47 @@
   visibility: hidden;
 }
 
+/* Icons only: what each does is its tooltip and its accessible name. */
 .conversation-copy,
 .conversation-rewind {
   display: inline-flex;
+  width: 1.75em;
+  height: 1.75em;
   align-items: center;
-  padding: 2px var(--space-2);
+  justify-content: center;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--tertiary);
   font: inherit;
   font-size: 0.8em;
-  gap: 0.4em;
-  line-height: 1.4;
+  line-height: 1;
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-spring);
 }
 
 .conversation-copy:hover,
 .conversation-rewind:hover {
   background: var(--wash);
   color: var(--primary);
+}
+
+.conversation-copy:active,
+.conversation-rewind:active {
+  transform: scale(0.9);
+}
+
+/* Words for assistive technology alone: a button's "Copied". */
+.conversation-hidden-text {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .conversation-copy:focus-visible,
@@ -528,6 +576,11 @@
 
 .conversation-copy[data-copied] {
   color: var(--status-idle);
+}
+
+/* The check springs in where the copy icon was. */
+.conversation-copy[data-copied] svg {
+  animation: conversation-pop-in var(--motion-slower) var(--ease-pop);
 }
 
 /* While an answer grows, a caret at its end. */
@@ -1497,6 +1550,10 @@
   opacity: 0.6;
 }
 
+.conversation-entry[data-sending] .conversation-message-actions {
+  visibility: hidden;
+}
+
 /* A call the CLI's own permission check refused: one quiet line in the
    danger ink, the CLI's whole account folded under it. */
 .conversation-tool-denial {
@@ -1661,19 +1718,62 @@
    controls are the conversation's small ones — options as rows of a list,
    as DevHub's pickers draw them, and the answers as the small buttons of an
    inline confirmation (`.conversation-confirm`), at the trailing end. */
+/* A card whose edge is the waiting colour: the one thing in the transcript
+   that is waiting on the person, faintly tinted with it. It is drawn inside
+   its entry, and an entry contains its own paint (`content-visibility`), so
+   a shadow cast past it would be cut off at the entry's edges: in the
+   transcript a card's ring is drawn inward and nothing is cast. */
 .conversation-request {
-  padding: var(--space-2) var(--space-3) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-panel);
+  --request-edge: color-mix(in srgb, var(--status-waiting) 45%, var(--edge));
+
+  padding: var(--space-3);
+  border-radius: var(--radius-card);
   margin-top: var(--space-2);
-  background: var(--raised);
+  background: color-mix(in srgb, var(--status-waiting) 4%, var(--raised));
+  box-shadow:
+    inset 0 0 0 1px var(--request-edge),
+    inset 0 1px 0 var(--edge-highlight);
+}
+
+@media (prefers-contrast: more) {
+  .conversation-request {
+    --request-edge: var(--status-waiting);
+  }
 }
 
 .conversation-request-eyebrow {
+  display: flex;
+  align-items: center;
   margin-bottom: var(--space-1);
   color: var(--status-waiting);
   font-size: 0.85em;
   font-weight: 600;
+  gap: 0.45em;
+}
+
+/* A dot that breathes while the card waits. */
+.conversation-request-eyebrow::before,
+.conversation-waiting-mark {
+  width: 0.5em;
+  height: 0.5em;
+  flex: none;
+  border-radius: 50%;
+  animation: conversation-breathe 1.6s var(--ease-standard) infinite;
+  background: var(--status-waiting);
+  content: "";
+}
+
+@keyframes conversation-breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
 }
 
 .conversation-request-title {
@@ -1720,13 +1820,21 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  padding: 2px var(--space-2);
-  border: 1px solid var(--line);
+  padding: 3px var(--space-3);
+  border: 0;
   border-radius: var(--radius-control);
   background: var(--raised);
+  box-shadow: 0 0 0 1px var(--line);
   color: var(--primary);
   font: inherit;
   gap: 0.4em;
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-spring);
+}
+
+.conversation-request-choice:active:not(:disabled) {
+  transform: scale(0.96);
 }
 
 .conversation-request-choice:hover:not(:disabled) {
@@ -1734,8 +1842,8 @@
 }
 
 .conversation-request-choice[data-tone="allow"] {
-  border-color: transparent;
   background: var(--accent);
+  box-shadow: 0 1px 2px var(--shadow-mid);
   color: var(--accent-ink);
 }
 
@@ -2115,26 +2223,39 @@ label.conversation-question-option:hover,
    (the person, a find match, a Clip closing): "New output" if some arrived
    since, "Latest" otherwise. */
 
+/* Floating (elevation 2) over the transcript's fade, centred on it; it
+   pops in when the transcript stops following. */
 .conversation-latest {
   position: absolute;
-  bottom: var(--space-4);
-  left: 50%;
-  display: inline-flex;
+  z-index: 2;
+  right: 0;
+  bottom: calc(var(--dock-overlap) + var(--space-2));
+  left: 0;
+  display: flex;
+  width: fit-content;
   align-items: center;
   padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--raised);
-  box-shadow: var(--shadow-dialog);
+  border: 0;
+  border-radius: var(--radius-pill);
+  margin: 0 auto;
+  backdrop-filter: var(--material-blur);
+  background: var(--material-float);
+  box-shadow: var(--elevation-2);
   color: var(--primary);
   font: inherit;
   font-size: 0.85em;
   gap: var(--space-1);
-  transform: translateX(-50%);
+  transform-origin: 50% 100%;
+  animation: conversation-pop-in var(--motion-slower) var(--ease-pop);
+  transition: transform var(--motion-fast) var(--ease-spring);
 }
 
 .conversation-latest:hover {
   background: color-mix(in srgb, var(--primary) 4%, var(--raised));
+}
+
+.conversation-latest:active {
+  transform: scale(0.95);
 }
 
 .conversation-latest:focus-visible {
@@ -2144,20 +2265,67 @@ label.conversation-question-option:hover,
 
 /* ------------------------------------------------------------- Composer */
 
-.conversation-waiting {
-  display: block;
-  width: calc(100% - 2 * var(--conversation-gutter));
-  max-width: var(--conversation-measure);
+/* What stands on the composer: requests waiting, and the composer itself.
+   It floats over the transcript's last `--dock-overlap`, which fades out
+   under it, so the conversation reads as going on beneath the box rather
+   than stopping at a rule. Only its own controls take the pointer. */
+.conversation-dock {
+  position: relative;
   flex: none;
+  pointer-events: none;
+}
+
+.conversation-dock > * {
+  pointer-events: auto;
+}
+
+.conversation-body + .conversation-dock {
+  padding-top: var(--dock-overlap);
+  margin-top: calc(-1 * var(--dock-overlap));
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--surface) 0%, transparent),
+    var(--surface) var(--dock-overlap)
+  );
+}
+
+/* Requests waiting: a small floating chip over the composer, its dot
+   breathing in the waiting colour; it pops in when the first one arrives. */
+.conversation-waiting {
+  display: flex;
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--conversation-gutter));
+  flex: none;
+  align-items: center;
   padding: var(--space-1) var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--status-waiting) 40%, transparent);
-  border-radius: 999px;
+  border: 0;
+  border-radius: var(--radius-pill);
   margin: 0 auto var(--space-2);
-  background: color-mix(in srgb, var(--status-waiting) 8%, var(--surface));
+  backdrop-filter: var(--material-blur);
+  background: var(--material-float);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--status-waiting) 45%, var(--edge)),
+    0 2px 6px var(--shadow-soft),
+    0 8px 24px var(--shadow-mid);
   color: var(--primary);
   font: inherit;
   font-size: 0.85em;
-  text-align: center;
+  gap: var(--space-2);
+  transform-origin: 50% 100%;
+  animation: conversation-pop-in var(--motion-slower) var(--ease-pop);
+  transition: transform var(--motion-fast) var(--ease-spring);
+}
+
+.conversation-waiting:hover {
+  background: color-mix(in srgb, var(--status-waiting) 8%, var(--raised));
+}
+
+.conversation-waiting:active {
+  transform: scale(0.96);
+}
+
+.conversation-waiting svg {
+  color: var(--secondary);
 }
 
 .conversation-waiting:focus-visible {
@@ -2240,36 +2408,130 @@ label.conversation-question-option:hover,
   list-style: none;
 }
 
-/* A queued message: the person's own bubble (`.conversation-user`), dimmed
-   and dashed, with a label saying it waits. Its controls are compact and
-   come up when it is pointed at or has the keyboard. */
+/* A queued message: the person's own bubble, not yet solid — a wash and a
+   dashed edge where a sent one is filled — under one quiet line that says it
+   waits and where. Its controls are icons beside the bubble that come up
+   when it is pointed at or has the keyboard. It rises in from the composer
+   it was sent from. */
 .conversation-pending-item {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  transform-origin: 100% 100%;
 }
 
 .conversation-pending-label {
   display: inline-flex;
+  max-width: 100%;
   align-items: center;
-  margin-bottom: var(--space-1);
+  margin-bottom: 2px;
   color: var(--tertiary);
-  font-size: 0.8em;
+  font-size: 0.75em;
   gap: 0.4em;
 }
 
-.conversation-pending-item .conversation-user {
+.conversation-pending-label svg {
+  flex: none;
+}
+
+.conversation-pending-status {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-pending-item[data-failed] .conversation-pending-label {
+  color: var(--status-error);
+}
+
+.conversation-pending-row {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.conversation-pending-item[data-editing] .conversation-pending-row {
+  width: 100%;
+}
+
+.conversation-pending-row > .conversation-user {
+  min-width: 0;
+  max-width: min(85%, 60ch);
+}
+
+.conversation-pending-item[data-editing]
+  .conversation-pending-row
+  > .conversation-user {
+  max-width: 100%;
+  flex: 1;
+}
+
+.conversation-pending-row .conversation-user-text {
   max-width: 100%;
 }
 
 .conversation-pending-item:not([data-editing]) .conversation-user-text {
-  border: 1px dashed var(--line);
-  background: transparent;
-  opacity: 0.75;
+  border: 1px dashed var(--line-strong);
+  background: color-mix(in srgb, var(--primary) 3%, transparent);
+  color: var(--secondary);
 }
 
 .conversation-pending-item[data-failed] .conversation-user-text {
-  border-color: var(--status-error);
+  border-color: color-mix(in srgb, var(--status-error) 60%, transparent);
+}
+
+.conversation-pending-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-standard);
+}
+
+.conversation-pending-item:hover .conversation-pending-actions,
+.conversation-pending-actions:focus-within,
+.conversation-pending-item[data-failed] .conversation-pending-actions {
+  opacity: 1;
+}
+
+.conversation-pending-actions button {
+  display: inline-flex;
+  width: 1.9em;
+  height: 1.9em;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--tertiary);
+  font: inherit;
+  font-size: 0.85em;
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-spring);
+}
+
+.conversation-pending-actions button:hover:not(:disabled) {
+  background: var(--wash-strong);
+  color: var(--primary);
+}
+
+.conversation-pending-actions button:active:not(:disabled) {
+  transform: scale(0.88);
+}
+
+.conversation-pending-actions button:disabled {
+  opacity: 0.4;
+}
+
+.conversation-pending-actions button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* Room to change a message in place: it grows with its text as the
@@ -2280,14 +2542,18 @@ label.conversation-question-option:hover,
   min-height: calc(3lh + 2 * var(--space-2));
   max-height: 40vh;
   box-sizing: border-box;
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   resize: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
+  border: 0;
+  border-radius: 1.1em 1.1em 0.35em 1.1em;
   background: var(--raised);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--focus-ring) 55%, var(--edge)),
+    0 0 0 4px color-mix(in srgb, var(--focus-ring) 14%, transparent);
   color: var(--primary);
   font: inherit;
   line-height: 1.55;
+  outline: none;
 }
 
 .conversation-pending-footer {
@@ -2295,29 +2561,19 @@ label.conversation-question-option:hover,
   flex-wrap: wrap;
   align-items: baseline;
   justify-content: flex-end;
-  opacity: 0.75;
-  transition: opacity 120ms ease;
-  margin-top: var(--space-1);
+  margin-top: var(--space-2);
   font-size: 0.85em;
   gap: var(--space-2);
 }
 
-.conversation-pending-item:hover .conversation-pending-footer,
-.conversation-pending-footer:focus-within,
-.conversation-pending-item[data-editing] .conversation-pending-footer,
-.conversation-pending-item[data-failed] .conversation-pending-footer {
-  opacity: 1;
+.conversation-pending-footer .conversation-pending-save {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
-.conversation-pending-status {
-  flex: 1 1 12em;
-  text-align: right;
-  min-width: 0;
-  color: var(--secondary);
-}
-
-.conversation-pending-item[data-failed] .conversation-pending-status {
-  color: var(--status-error);
+.conversation-pending-footer .conversation-pending-save:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, var(--primary));
 }
 
 /* Under a subagent's work: words for it alone. */
@@ -2375,7 +2631,8 @@ label.conversation-question-option:hover,
   opacity: 0.5;
 }
 
-/* Docked under the transcript, in the same column. */
+/* Docked under the transcript, in the same column, floating over its last
+   lines (`.conversation-dock`). */
 .conversation-composer {
   position: relative;
   width: 100%;
@@ -2386,21 +2643,28 @@ label.conversation-question-option:hover,
   margin: 0 auto;
 }
 
+/* The box is a resting card (elevation 1) with no border of its own: its
+   edge is the elevation's ring. With the keyboard it floats (elevation 2)
+   and its ring takes the focus colour with a soft halo, so focus reads as
+   the box lifting towards the person rather than as a second outline. */
 .conversation-composer-box {
+  position: relative;
   display: flex;
   flex-direction: column;
   padding: var(--space-2) var(--space-2) var(--space-1) var(--space-3);
-  border: 1px solid var(--line);
   border-radius: 1.1em;
   background: var(--raised);
-  box-shadow: var(--shadow-raised);
+  box-shadow: var(--elevation-1);
   cursor: text;
-  transition: border-color 120ms ease;
-  position: relative;
+  transition: box-shadow var(--motion-base) var(--ease-standard);
 }
 
 /* The transcript's last line while a turn runs, as the CLI draws it: after
-   the newest entry, in the history's own flow, quiet and small. */
+   the newest entry, in the history's own flow, quiet and small. Three dots
+   ripple while the Agent works; asking for permission they stand still in
+   the waiting colour, because the Agent is not working then, the person is
+   being waited on. A new phase's words fade in; at the end of the turn the
+   line lets go quickly. */
 .conversation-activity {
   display: flex;
   align-items: center;
@@ -2411,19 +2675,23 @@ label.conversation-question-option:hover,
   line-height: 1.6;
   user-select: none;
   white-space: nowrap;
-  transition: opacity var(--motion-base) var(--motion-ease);
+  transition:
+    opacity var(--motion-exit) var(--ease-exit),
+    transform var(--motion-exit) var(--ease-exit);
 }
 
 .conversation-transcript[data-settled] > .conversation-activity {
-  animation: conversation-rise-in var(--motion-base) var(--motion-ease);
+  animation: conversation-rise-in var(--motion-slow) var(--ease-enter);
 }
 
 .conversation-activity[data-leaving] {
   opacity: 0;
+  transform: translateY(calc(var(--motion-rise) / 2));
 }
 
 .conversation-activity-meta {
   overflow: hidden;
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
 }
 
@@ -2436,56 +2704,80 @@ label.conversation-question-option:hover,
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: currentColor;
-  animation: conversation-activity-pulse 1.2s ease-in-out infinite;
+  background: var(--secondary);
+  animation: conversation-activity-ripple 1.2s var(--ease-standard) infinite;
 }
 
 .conversation-activity-dots span:nth-child(2) {
-  animation-delay: 0.2s;
+  animation-delay: 0.15s;
 }
 
 .conversation-activity-dots span:nth-child(3) {
-  animation-delay: 0.4s;
+  animation-delay: 0.3s;
 }
 
 .conversation-activity[data-phase="permission"]
   .conversation-activity-dots
   span {
   animation: none;
+  background: var(--status-waiting);
 }
 
 .conversation-activity-label {
   color: var(--secondary);
-  animation: conversation-fade-in var(--motion-fast) var(--motion-ease);
+  animation: conversation-fade-in var(--motion-base) var(--ease-enter);
 }
 
-@keyframes conversation-activity-pulse {
+@keyframes conversation-activity-ripple {
   0%,
+  60%,
   100% {
-    opacity: 0.25;
+    opacity: 0.3;
+    transform: none;
   }
-  50% {
+
+  30% {
     opacity: 1;
+    transform: translateY(calc(var(--motion-rise) / -2));
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .conversation-activity-dots span {
-    animation: none;
-    opacity: 0.6;
-  }
-}
+/* Motion: how state changes in the conversation are shown, in the terms of
+   `tokens.css`. Each is short and moves only opacity and transform, or a
+   disclosure's own height — never anything while it streams.
 
-/* Motion: how state changes in the conversation are shown. Each is short
-   (`--motion-*` in tokens.css) and moves only opacity, a few pixels of
-   translate, or a disclosure's own height — never anything while it streams.
+   Three arrivals, by what arrives:
+   - `conversation-rise-in`: content — an entry, a card, a queued message.
+     It rises `--motion-rise`, grows from `--motion-scale-in` and fades in.
+   - `conversation-popover-in`: a popover, grown from the edge it opens from.
+   - `conversation-pop-in`: a small control that pops into being (the way
+     back to the end, Stop, the requests chip, a copy's check), on a spring.
 
    New entries rise in, but only those `useFreshEntries` marks: output that
    arrived, not a transcript being loaded or redrawn. */
 @keyframes conversation-rise-in {
   from {
     opacity: 0;
-    transform: translateY(var(--motion-rise));
+    transform: translateY(var(--motion-rise)) scale(var(--motion-scale-in));
+  }
+}
+
+@keyframes conversation-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--motion-rise) / 2))
+      scale(var(--motion-scale-popover));
+  }
+}
+
+@keyframes conversation-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--motion-scale-pop));
+  }
+
+  40% {
+    opacity: 1;
   }
 }
 
@@ -2495,8 +2787,16 @@ label.conversation-question-option:hover,
   }
 }
 
+/* An entry grows from the side it stands on: the person's from the right,
+   everything else from the left. */
 .conversation-entry[data-fresh] {
-  animation: conversation-rise-in var(--motion-slow) var(--motion-ease);
+  transform-origin: 0 100%;
+  animation: conversation-rise-in var(--motion-slow) var(--ease-enter);
+}
+
+.conversation-entry[data-fresh]:is([data-kind="user"], [data-kind="answer"]),
+.conversation-entry[data-fresh][data-sending] {
+  transform-origin: 100% 100%;
 }
 
 /* What appears inside an entry once the transcript is drawn: a request for
@@ -2504,17 +2804,27 @@ label.conversation-question-option:hover,
    new elements only, so nothing already there replays it. */
 .conversation-transcript[data-settled]
   :is(.conversation-request, .conversation-notice) {
+  transform-origin: 50% 0;
   transition:
-    opacity var(--motion-base) var(--motion-ease),
-    transform var(--motion-base) var(--motion-ease);
+    opacity var(--motion-slow) var(--ease-enter),
+    transform var(--motion-slow) var(--ease-enter);
 }
 
 @starting-style {
   .conversation-transcript[data-settled]
     :is(.conversation-request, .conversation-notice) {
     opacity: 0;
-    transform: translateY(var(--motion-rise));
+    transform: translateY(var(--motion-rise)) scale(var(--motion-scale-in));
   }
+}
+
+/* A call that finishes while it is new says so with its mark: the tick or
+   cross springs in where the spinner was. Only on fresh entries, so a
+   transcript being loaded does not set off a thousand of them. */
+.conversation-transcript[data-settled]
+  .conversation-entry[data-fresh]
+  .conversation-tool-mark:not([data-status="running"])::before {
+  animation: conversation-pop-in var(--motion-slower) var(--ease-pop);
 }
 
 /* Disclosures open and close to their height rather than snapping: the
@@ -2530,9 +2840,9 @@ label.conversation-question-option:hover,
   overflow-y: clip;
   opacity: 0;
   transition:
-    block-size var(--motion-base) var(--motion-ease),
-    opacity var(--motion-fast) var(--motion-ease),
-    content-visibility var(--motion-base) allow-discrete;
+    block-size var(--motion-slow) var(--ease-standard),
+    opacity var(--motion-base) var(--ease-standard),
+    content-visibility var(--motion-slow) allow-discrete;
 }
 
 .conversation-transcript details[open]::details-content {
@@ -2540,16 +2850,20 @@ label.conversation-question-option:hover,
   opacity: 1;
 }
 
+/* Under Reduce Motion the tokens take every distance and scale to nothing,
+   so what arrives only fades. What is left to turn off here is what loops,
+   and a disclosure's height, which is movement too. */
 @media (prefers-reduced-motion: reduce) {
-  .conversation-entry[data-fresh],
-  .conversation-transcript[data-settled] > .conversation-activity,
-  .conversation-activity-label {
+  .conversation-activity-dots span,
+  .conversation-request-eyebrow::before,
+  .conversation-waiting-mark {
     animation: none;
   }
 
-  .conversation-activity,
-  .conversation-transcript[data-settled]
-    :is(.conversation-request, .conversation-notice),
+  .conversation-activity-dots span {
+    opacity: 0.6;
+  }
+
   .conversation-transcript details::details-content {
     transition: none;
   }
@@ -2779,12 +3093,17 @@ button.conversation-background-line:hover {
 }
 
 .conversation-composer-box:focus-within {
-  border-color: color-mix(in srgb, var(--focus-ring) 70%, var(--line));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--focus-ring) 55%, var(--edge)),
+    0 0 0 4px color-mix(in srgb, var(--focus-ring) 14%, transparent),
+    inset 0 1px 0 var(--edge-highlight),
+    0 2px 6px var(--shadow-soft),
+    0 10px 28px var(--shadow-mid);
 }
 
 .conversation-composer-box[data-disabled] {
   background: var(--wash);
-  box-shadow: none;
+  box-shadow: 0 0 0 1px var(--line-soft);
 }
 
 /* The field is as tall as what is in it, from one line up to 40% of the
@@ -2880,21 +3199,32 @@ button.conversation-background-line:hover {
   border: 0;
   border-radius: 50%;
   font: inherit;
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-spring);
 }
 
 .conversation-send {
   background: var(--accent);
+  box-shadow: 0 1px 2px var(--shadow-mid);
   color: var(--accent-ink);
 }
 
 .conversation-send:disabled {
   background: var(--wash-strong);
+  box-shadow: none;
   color: var(--tertiary);
 }
 
 .conversation-stop {
   background: var(--primary);
   color: var(--surface);
+  animation: conversation-pop-in var(--motion-slower) var(--ease-pop);
+}
+
+:is(.conversation-send, .conversation-stop):active:not(:disabled) {
+  transform: scale(0.9);
 }
 
 :is(.conversation-send, .conversation-stop):focus-visible {
@@ -3019,6 +3349,7 @@ button.conversation-background-line:hover {
   font: inherit;
   gap: 0.3em;
   line-height: 1.55;
+  transition: background-color var(--motion-fast) var(--ease-standard);
 }
 
 .conversation-setting-value {
@@ -3040,6 +3371,11 @@ button.conversation-background-line:hover {
 .conversation-setting-chevron {
   display: inline-flex;
   font-size: 0.75em;
+  transition: transform var(--motion-base) var(--ease-standard);
+}
+
+[aria-expanded="true"] > .conversation-setting-chevron {
+  transform: rotate(180deg);
 }
 
 button.conversation-setting-face:not(:disabled):is(
@@ -3069,7 +3405,7 @@ button.conversation-setting-face:focus-visible {
 .conversation-setting-menu {
   position: absolute;
   z-index: 2;
-  bottom: calc(100% + var(--space-1));
+  bottom: calc(100% + var(--space-2));
   left: 0;
   display: flex;
   width: max-content;
@@ -3136,13 +3472,23 @@ button.conversation-setting-face:focus-visible {
 }
 
 /* The composer's popups — the `/` command list and an open setting picker —
-   are one panel. */
+   are one panel: a popover (elevation 3) of the floating material, grown
+   from the edge it opens from. */
 .conversation-completions,
 .conversation-setting-menu {
-  border: 1px solid var(--line);
   border-radius: var(--radius-panel);
-  background: var(--raised);
-  box-shadow: var(--shadow-dialog);
+  backdrop-filter: var(--material-blur);
+  background: var(--material-float);
+  box-shadow: var(--elevation-3);
+  animation: conversation-popover-in var(--motion-base) var(--ease-enter);
+}
+
+.conversation-setting-menu {
+  transform-origin: 0 100%;
+}
+
+.conversation-completions {
+  transform-origin: 50% 100%;
 }
 
 .conversation-completion-list {
@@ -3206,25 +3552,19 @@ button.conversation-setting-face:focus-visible {
   margin: 0.6em 0;
 }
 
-/* The composer's own arrivals: the completion list over the field, a
-   message queued to be sent, the words dictation has not committed yet. Each
-   mounts only when it appears, so a plain entry animation is enough. */
-.conversation-completions {
-  animation: conversation-rise-in var(--motion-fast) var(--motion-ease);
+/* The composer's own arrivals: a message queued to be sent, the list of
+   background tasks opened, the words dictation has not committed yet (the
+   popovers have theirs above). Each mounts only when it appears, so a plain
+   entry animation is enough. */
+.conversation-pending-item {
+  animation: conversation-rise-in var(--motion-slow) var(--ease-enter);
 }
 
-.conversation-pending-item {
-  animation: conversation-rise-in var(--motion-base) var(--motion-ease);
+.conversation-background-list {
+  transform-origin: 0 0;
+  animation: conversation-rise-in var(--motion-base) var(--ease-enter);
 }
 
 .conversation-dictation-tentative {
-  animation: conversation-fade-in var(--motion-fast) var(--motion-ease);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .conversation-completions,
-  .conversation-pending-item,
-  .conversation-dictation-tentative {
-    animation: none;
-  }
+  animation: conversation-fade-in var(--motion-fast) var(--ease-enter);
 }

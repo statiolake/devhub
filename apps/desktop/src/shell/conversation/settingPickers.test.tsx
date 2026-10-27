@@ -333,13 +333,13 @@ describe("how a picker is drawn", () => {
         expect(rule.body, rule.selector).not.toMatch(/font-size/);
       }
     }
-    // One panel for the composer's popups.
+    // One panel for the composer's popups, lifted as a popover.
     const panel = css.find(
       (rule) =>
         rule.selector.includes(".conversation-completions") &&
         rule.selector.includes(".conversation-setting-menu"),
     );
-    expect(panel?.body).toMatch(/box-shadow:\s*var\(--shadow-dialog\)/);
+    expect(panel?.body).toMatch(/box-shadow:\s*var\(--elevation-3\)/);
   });
 });
 

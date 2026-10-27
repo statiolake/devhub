@@ -70,7 +70,7 @@ import { ActivityLine } from "./ActivityLine";
 import { useFreshEntries, useNoReplayOnShow } from "./freshEntries";
 import { IssueRepositoryProvider, type IssueRepository } from "./issueLinks";
 import { PathLinks, PathLinksProvider } from "./pathLinks";
-import { ArrowDownIcon } from "./icons";
+import { ArrowDownIcon, ArrowUpIcon } from "./icons";
 import { SEND_KEY } from "./messageKeys";
 import { RequestCard } from "./RequestCard";
 import type { SettingPickerHandle } from "./SettingPickers";
@@ -521,24 +521,33 @@ export function ConversationSurface({
                                 tree={tree}
                               />
                             ) : null}
-                            {transcript.requests.length > 0 ? (
-                              <button
-                                type="button"
-                                className="conversation-waiting"
-                                onClick={showFirstRequest}
-                              >
-                                {waitingSentence(transcript.requests.length)} ↑
-                              </button>
-                            ) : null}
-                            <Composer
-                              transcript={transcript}
-                              openTask={openTask}
-                              inputRef={composer}
-                              pickers={pickers}
-                              openSetting={openSetting}
-                              restored={restored}
-                              savedDraft={savedDraft}
-                            />
+                            {/* The composer and what stands on it, floating
+                                over the transcript's last lines. */}
+                            <div className="conversation-dock">
+                              {transcript.requests.length > 0 ? (
+                                <button
+                                  type="button"
+                                  className="conversation-waiting"
+                                  onClick={showFirstRequest}
+                                >
+                                  <span
+                                    className="conversation-waiting-mark"
+                                    aria-hidden="true"
+                                  />
+                                  {waitingSentence(transcript.requests.length)}
+                                  <ArrowUpIcon />
+                                </button>
+                              ) : null}
+                              <Composer
+                                transcript={transcript}
+                                openTask={openTask}
+                                inputRef={composer}
+                                pickers={pickers}
+                                openSetting={openSetting}
+                                restored={restored}
+                                savedDraft={savedDraft}
+                              />
+                            </div>
                           </div>
                           <SubagentColumn tree={tree} />
                         </div>
