@@ -250,7 +250,10 @@ final class SelfTest {
             print("self-test: no tmux on this machine; the live phase is skipped")
             return
         }
-        let home = "/tmp/dh-st-\(getpid())"
+        // `/private/tmp`, not `/tmp`: a short path for the control socket, and
+        // one with no symlink in it, so every root DevHub derives from it is
+        // already canonical.
+        let home = "/private/tmp/dh-st-\(getpid())"
         let locations = ProfileLocations(profile: "selftest", home: home, environment: [:])
         let fm = FileManager.default
         try? fm.createDirectory(atPath: locations.configDirectory, withIntermediateDirectories: true)
@@ -310,6 +313,11 @@ final class SelfTest {
         if let pane {
             let attached = await until(20) { pane.isAttached }
             check(attached, "live: Scratch's editor terminal did not attach to tmux (\(pane.connection))")
+            if !attached, let snapshot = shell.snapshot, let scratch = snapshot.workspace(snapshot.scratchWorkspaceId) {
+                let exists = FileManager.default.fileExists(atPath: scratch.root)
+                let all = Self.tmux(tmux, ["-L", locations.tmuxSocketName, "list-sessions"])
+                print("self-test live: Scratch is \(scratch.root) (exists: \(exists), state: \(scratch.state)); tmux has: \(all)")
+            }
             layoutApplied(shell.window, "live")
             let sessions = Self.tmux(tmux, ["-L", locations.tmuxSocketName, "list-sessions", "-F", "#{session_name}"])
             check(sessions.split(separator: "\n").contains { $0.hasPrefix("ws-") }, "live: there is no ws- session (\(sessions))")
@@ -328,7 +336,7 @@ final class SelfTest {
             pane.type("echo devhub-live\r")
             let echoed = await until(10) { pane.screenText().contains("devhub-live") }
             check(echoed, "live: what was typed in the editor terminal did not come back")
-            print("self-test live: \(pane.surfaceKey) attached on tmux -L \(locations.tmuxSocketName), client \(clientSize())")
+            if attached { print("self-test live: \(pane.surfaceKey) attached on tmux -L \(locations.tmuxSocketName), client \(clientSize())") }
         }
         shell.window.disposeAll()
         await runtime.shutdown()
