@@ -273,6 +273,8 @@ export class ShellWindow {
 	 * `syncEditorTerminalViews`; empty in VS Code mode.
 	 */
 	private readonly editorTerminalViews = new Map<string, ChromeView>();
+	/** Each editor terminal view's Workspace, by the same editor key. */
+	private readonly editorTerminalWorkspaces = new Map<string, string>();
 	/** Where the pages are served from, for the terminal panes made later. */
 	private readonly pageBase: string;
 	private readonly panePreload: string;
@@ -669,6 +671,7 @@ export class ShellWindow {
 		for (const [key, view] of [...this.editorTerminalViews]) {
 			if (wanted.has(key)) continue;
 			this.editorTerminalViews.delete(key);
+			this.editorTerminalWorkspaces.delete(key);
 			view.dispose(this.window);
 			changed = true;
 		}
@@ -685,10 +688,24 @@ export class ShellWindow {
 				this.contentFocused({ kind: "editor" });
 			});
 			this.editorTerminalViews.set(key, view);
+			this.editorTerminalWorkspaces.set(key, workspaceId);
 			if (this.pageOpened) view.openPage();
 			changed = true;
 		}
 		if (changed) this.layout();
+	}
+
+	/**
+	 * Start a Workspace's editor-area terminal over, in place (terminal
+	 * mode): its page runs again, and attaching makes a fresh `ws-` session.
+	 * Whatever its old client was is already gone, or is stopped by the new
+	 * attach as a replacement. Nothing is done for a Workspace with no view.
+	 */
+	restartEditorTerminal(workspaceId: string): void {
+		if (!this.pageOpened) return;
+		for (const [key, id] of this.editorTerminalWorkspaces) {
+			if (id === workspaceId) this.editorTerminalViews.get(key)?.reloadPage();
+		}
 	}
 
 	/** Every terminal pane's page, for the audiences that tell pages things. */

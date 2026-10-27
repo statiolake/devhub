@@ -118,10 +118,15 @@ interface Harness {
   };
 }
 
-function harness(): Harness {
+function harness(
+  onEndedByItself?: ConstructorParameters<
+    typeof AttachmentManager
+  >[0]["onEndedByItself"],
+): Harness {
   const ptys: FakePty[] = [];
   let counter = 0;
   const manager = new AttachmentManager({
+    onEndedByItself,
     randomBytes: (count) =>
       Uint8Array.from({ length: count }, () => (counter += 7) & 0xff),
     spawn: (launch) => {
@@ -587,6 +592,33 @@ describe("output", () => {
     pty.end();
     expect(frames.at(-1)).toMatchObject({ type: "exited", reason: "eof" });
     expect(test.manager.count).toBe(0);
+  });
+
+  it("says a client ended on its own, and nothing DevHub ended itself", () => {
+    const ended = vi.fn();
+    const test = harness(ended);
+    const own = test.attach({ surfaceKey: WORKSPACE_SURFACE });
+    own.pty.end();
+    expect(ended).toHaveBeenCalledTimes(1);
+    expect(ended).toHaveBeenCalledWith({
+      surfaceKey: WORKSPACE_SURFACE,
+      target: targetFor(WORKSPACE_SURFACE),
+    });
+    // A detach, a closed view, a close of the target, and quit stop the
+    // client first: none of those is a session that ended.
+    const detached = test.attach({ surfaceKey: WORKSPACE_SURFACE });
+    test.manager.detachTarget(targetFor(WORKSPACE_SURFACE));
+    detached.pty.end();
+    const view = test.attach({
+      surfaceKey: OTHER_WORKSPACE_SURFACE,
+      viewLabel: "pane:2",
+    });
+    test.manager.detachView("pane:2");
+    view.pty.end();
+    const quit = test.attach({ surfaceKey: WORKSPACE_SURFACE });
+    test.manager.detachAll();
+    quit.pty.end();
+    expect(ended).toHaveBeenCalledTimes(1);
   });
 
   it("stops producing for a view that has gone away", () => {

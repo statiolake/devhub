@@ -228,6 +228,36 @@ export class TerminalSurfaces {
 		}
 	}
 
+	/**
+	 * Whether `target`'s session is there now, without making it: the
+	 * session of that exact marker triple, on the effective socket. A client
+	 * that ended on its own (`onEndedByItself`) asks this to tell a session
+	 * that ended from a person detaching from one that is still running.
+	 */
+	async sessionExists(
+		target: TerminalTarget,
+		cancel = new CancellationToken(),
+	): Promise<boolean> {
+		const runtime = await this.runtimeFor(target.machine);
+		const release = await runtime.acquireOperation(cancel);
+		try {
+			const sessions = await runtime.listSessionsUnlocked(
+				cancel,
+				OperationDeadline.in(runtime.timeoutMs),
+			);
+			const identity = runtime.targetIdentity(target, sessions);
+			return sessions.some(
+				(session) =>
+					session.name === identity.sessionName &&
+					sessionMatches(session, identity),
+			);
+		} catch (failure: unknown) {
+			throw terminalFailureFromPort(failure);
+		} finally {
+			release();
+		}
+	}
+
 	input(identity: RequestIdentity, sequence: number, bytes: Uint8Array): void {
 		this.attachments.input(identity, sequence, bytes);
 	}

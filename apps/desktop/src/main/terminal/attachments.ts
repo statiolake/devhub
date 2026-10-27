@@ -301,7 +301,10 @@ class Attachment {
 		readonly targetGeneration: number,
 		private readonly pty: Pty,
 		private readonly sink: FrameSink,
-		private readonly onFinished: (attachment: Attachment) => void,
+		private readonly onFinished: (
+			attachment: Attachment,
+			reason: ExitReason,
+		) => void,
 	) {
 		this.resizer = new ResizeCoalescer((size) => this.pty.resize(size));
 	}
@@ -551,7 +554,7 @@ class Attachment {
 			reason,
 		});
 		this.pty.kill();
-		this.onFinished(this);
+		this.onFinished(this, reason);
 	}
 }
 
@@ -559,6 +562,18 @@ export interface AttachmentManagerOptions {
 	/** Overridden only by tests; production opens the target machine's PTY. */
 	readonly spawn?: PtyFactory;
 	readonly randomBytes: (count: number) => Uint8Array;
+	/**
+	 * A client ended on its own (`eof`): its PTY closed without DevHub
+	 * stopping it — the session it showed ended (its last shell exited, it
+	 * was killed), or the person detached from it with tmux's own keys.
+	 * Everything DevHub ends itself — a detach, a replacement, a closed view,
+	 * a close, a socket move, quit — stops the client first, as `detached`,
+	 * and is not told here.
+	 */
+	readonly onEndedByItself?: (ended: {
+		readonly surfaceKey: string;
+		readonly target: TerminalTarget;
+	}) => void;
 }
 
 interface InFlightAttach {
@@ -574,6 +589,7 @@ export class AttachmentManager {
 	private nextAttachKey = 1;
 	private readonly spawn: PtyFactory | undefined;
 	private readonly randomBytes: (count: number) => Uint8Array;
+	private readonly onEndedByItself: AttachmentManagerOptions["onEndedByItself"];
 	private generation: number;
 
 	constructor(options: AttachmentManagerOptions) {
@@ -582,6 +598,7 @@ export class AttachmentManager {
 		// stands in for every machine at once — which is what a test wants.
 		this.spawn = options.spawn;
 		this.randomBytes = options.randomBytes;
+		this.onEndedByItself = options.onEndedByItself;
 		// The ledger starts somewhere unguessable, so a generation from one run
 		// of the app is not a usable capability in the next.
 		// Six bytes: unguessable, and still an exact integer.
@@ -710,10 +727,15 @@ export class AttachmentManager {
 			targetGeneration,
 			pty,
 			context.sink,
-			(finished) => {
+			(finished, reason) => {
 				if (this.attachments.get(finished.id) === finished) {
 					this.attachments.delete(finished.id);
 				}
+				if (reason === "eof")
+					this.onEndedByItself?.({
+						surfaceKey: finished.surfaceKey,
+						target: finished.target,
+					});
 			},
 		);
 		pty.onData((bytes) => attachment.acceptOutput(bytes));

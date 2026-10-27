@@ -526,6 +526,8 @@ import {
 	TERMINAL_MODE_NO_DEV_CONTAINERS,
 	TERMINAL_MODE_NO_SSH,
 } from "./workbenchMode.js";
+import { EditorTerminalExits } from "./editorTerminalExits.js";
+import { WORKSPACE_TERMINAL_SURFACE_PREFIX } from "../../ipc/terminal.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
 	COMMANDS,
@@ -803,6 +805,57 @@ export class AppController {
 	/** Page requests still waiting on a deferred chain, by operation identity. */
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
+	/**
+	 * Terminal mode: what the editor area's shell exiting does — the
+	 * Workspace's close button, else its terminal started over
+	 * (`editorTerminalExits.ts`).
+	 */
+	private readonly editorTerminalExits = new EditorTerminalExits({
+		standing: (id) => {
+			const workspace = this.workspaceByRawId(id);
+			if (workspace === undefined) return "gone";
+			return this.coordinator.closeUnderway(workspace.id) ? "closing" : "open";
+		},
+		closable: (id) => {
+			const workspace = this.workspaceByRawId(id);
+			return (
+				workspace !== undefined &&
+				workspace.id !== this.coordinator.model.scratchWorkspaceId
+			);
+		},
+		asking: () =>
+			shellWindow()
+				.picker.openModals()
+				.some(
+					(modal) =>
+						modal.request.kind === "close-confirmation" ||
+						modal.request.kind === "worktree-close",
+				),
+		sessionAlive: async (id) => {
+			const workspace = this.workspaceByRawId(id);
+			const wiring = this.terminalsWiring;
+			if (workspace === undefined || wiring === undefined) return false;
+			return wiring.service.surfaces.sessionExists(
+				workspaceTarget(
+					runtimeIdFor(workspace.location),
+					workspace.id,
+					workspace.root,
+				),
+			);
+		},
+		close: (id) => this.closeWorkspaceOrWorktree(id),
+		restart: (id) => shellWindow().restartEditorTerminal(id),
+		log: (line) => console.warn(line),
+	});
+
+	/** The Workspace `id` names, if it is a Workspace id and one is open. */
+	private workspaceByRawId(id: string): Workspace | undefined {
+		try {
+			return this.coordinator.model.workspace(parseWorkspaceId(id));
+		} catch {
+			return undefined;
+		}
+	}
 	/**
 	 * Terminal mode's file jumps: one Neovim per Workspace, DevHub's own.
 	 * Built with the terminal runtime it runs on; see
@@ -1184,6 +1237,15 @@ export class AppController {
 			// apart. See `remoteCliBinDirectory`.
 			controlSocketPath: controlSocketPath(userDataPath),
 			model: () => this.coordinator.model,
+			// Terminal mode: the editor area's session ending under the
+			// person is the Workspace's close button (`editorTerminalExits.ts`).
+			onSurfaceEnded: (surfaceKey) => {
+				if (!isTerminalMode()) return;
+				if (!surfaceKey.startsWith(WORKSPACE_TERMINAL_SURFACE_PREFIX)) return;
+				void this.editorTerminalExits.ended(
+					surfaceKey.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length),
+				);
+			},
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
 		this.managedNeovims = this.createManagedNeovims(userDataPath);
@@ -3044,6 +3106,8 @@ export class AppController {
 	 * than killing the work. Agents get a bounded chance to shut down.
 	 */
 	async shutdown(): Promise<void> {
+		// From here a terminal ending is DevHub going, not a person's exit.
+		this.editorTerminalExits.dispose();
 		this.stopWatchingConfig?.();
 		this.stopHearingReconnections?.();
 		// The flag is written first, and on purpose: it records that the person

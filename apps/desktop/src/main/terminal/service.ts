@@ -32,7 +32,11 @@ import {
 	type TerminalAttachReceipt,
 	type TerminalResult,
 } from "../../ipc/terminal.js";
-import { AttachmentManager, type RequestIdentity } from "./attachments.js";
+import {
+	AttachmentManager,
+	type AttachmentManagerOptions,
+	type RequestIdentity,
+} from "./attachments.js";
 import { type PtyFactory } from "./pty.js";
 import type { TerminalTarget } from "./ports.js";
 import { TerminalSurfaces, terminalFailureFromPort } from "./surfaces.js";
@@ -55,6 +59,8 @@ export interface TerminalServiceOptions {
 	readonly resolveSurface: SurfaceResolver;
 	/** Overridden only by tests; production always opens a real PTY. */
 	readonly spawn?: PtyFactory;
+	/** A client ended on its own (`AttachmentManagerOptions.onEndedByItself`). */
+	readonly onEndedByItself?: AttachmentManagerOptions["onEndedByItself"];
 }
 
 export interface TerminalService {
@@ -84,6 +90,7 @@ export function registerTerminalService(
 ): TerminalService {
 	const attachments = new AttachmentManager({
 		spawn: options.spawn,
+		onEndedByItself: options.onEndedByItself,
 		randomBytes: (count) => new Uint8Array(randomBytes(count)),
 	});
 	const surfaces = new TerminalSurfaces({

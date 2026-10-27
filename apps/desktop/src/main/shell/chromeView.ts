@@ -51,6 +51,15 @@ export class ChromeView {
 	}
 
 	/**
+	 * Run the page again from the start. Not `openPage`: loading the URL it
+	 * already shows only moves to its fragment, and starts nothing over.
+	 */
+	reloadPage(): void {
+		if (this.view.webContents.isDestroyed()) return;
+		this.view.webContents.reload();
+	}
+
+	/**
 	 * Put the view where the owner says, and draw it or do not.
 	 *
 	 * Bounds before visibility, and re-added on every pass: re-adding an

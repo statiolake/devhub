@@ -64,6 +64,27 @@ A click into it is the editor half taking the keyboard (`ContentFocus`
 `editor`), so the split's selected half follows the click as it does for a
 workbench.
 
+### The shell exiting is the close button
+
+When the editor area's session ends under the person — `exit` in its last
+shell, or the session killed — it is the Workspace's close button being
+pressed (`main/shell/editorTerminalExits.ts`), through the one close path
+(`closeWorkspaceOrWorktree`): a Workspace with nothing to lose closes, and one
+with something to ask about (busy Agents, running programs, a dirty worktree)
+raises the same sheet the button does. If the Workspace stays — the question
+is cancelled, the close fails — or cannot be closed (Scratch never is), the
+view is started over in place, which makes a fresh `ws-` session. A client
+that ended while its session still runs (detached with tmux's own keys) is
+attached again.
+
+Only a tmux client that ended on its own counts
+(`AttachmentManagerOptions.onEndedByItself`): everything DevHub ends itself —
+closing the Workspace, quitting, moving the socket, a view going or reloaded —
+stops the client first, as a detach. Nothing is acted on once DevHub is
+shutting down, and a terminal that keeps ending as soon as it starts is
+started over at most three times in thirty seconds, then left with the
+surface's own Retry.
+
 ## Local only
 
 Terminal mode serves folders on this Mac and nothing else: an Agent that needs

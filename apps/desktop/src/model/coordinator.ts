@@ -2455,6 +2455,25 @@ export class AppCoordinator {
   }
 
   /**
+   * Whether a close of `workspaceId` is under way: being inspected, its
+   * question being made, or its steps running. A question already on screen
+   * is not this — it waits for the person, and is the picker's to know.
+   */
+  closeUnderway(workspaceId: WorkspaceId): boolean {
+    if (this.model.workspace(workspaceId)?.close.kind === "running")
+      return true;
+    for (const request of this.closeRequests.values())
+      if (request.workspaceId === workspaceId) return true;
+    for (const request of this.confirmationRequests.values())
+      if (
+        request.kind === "workspace_close" &&
+        request.workspaceId === workspaceId
+      )
+        return true;
+    return false;
+  }
+
+  /**
    * The Agents a launch is under way for: from the launch effect until the
    * completion puts the Agent in the model, the one window in which its
    * session and host files exist and no row accounts for them. A sweep counts

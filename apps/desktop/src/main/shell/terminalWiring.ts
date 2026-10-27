@@ -161,6 +161,11 @@ export interface TerminalWiringOptions {
 	readonly controlSocketPath: string;
 	/** The live model, for turning a workspace id into its canonical root. */
 	readonly model: () => AppModel;
+	/**
+	 * A terminal surface's client ended on its own: its session ended, or the
+	 * person detached from it (`AttachmentManagerOptions.onEndedByItself`).
+	 */
+	readonly onSurfaceEnded?: (surfaceKey: string) => void;
 }
 
 export interface TerminalWiring {
@@ -196,6 +201,7 @@ export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 	const service = registerTerminalService({
 		runtimeFor: runtimeFromId,
 		resolveSurface,
+		onEndedByItself: ({ surfaceKey }) => options.onSurfaceEnded?.(surfaceKey),
 	});
 
 	// What a close confirmation says about this workspace's terminals, and what

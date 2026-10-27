@@ -674,6 +674,35 @@ describe("closing a workspace", () => {
     });
   }
 
+  it("says a close is under way from the request until it is decided or done", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    expect(driver.coordinator.closeUnderway(WS_A)).toBe(false);
+    driver.dispatch(closeIntent());
+    // Being inspected.
+    expect(driver.coordinator.closeUnderway(WS_A)).toBe(true);
+    const inspect = driver.drainEffects()[0];
+    if (inspect.kind !== "inspect_workspace") throw new Error("unexpected");
+    driver.accept({
+      type: "workspace_inspection_completed",
+      token: inspect.token,
+      workspaceId: WS_A,
+      inspection: { ...CLEAN_INSPECTION, agents: busy(1) },
+    });
+    // Its question being made.
+    expect(driver.coordinator.closeUnderway(WS_A)).toBe(true);
+    driver.answer(driver.drainEffects()[0]);
+    // The question is the person's now: nothing is under way until they answer.
+    expect(driver.coordinator.closeUnderway(WS_A)).toBe(false);
+    driver.dispatch({
+      type: "confirm_close_workspace",
+      confirmationId: CONFIRM,
+    });
+    expect(driver.coordinator.closeUnderway(WS_A)).toBe(true);
+    driver.settle();
+    expect(driver.coordinator.closeUnderway(WS_A)).toBe(false);
+  });
+
   it("changes nothing when the question is left unanswered", () => {
     const driver = new Driver();
     driver.openFolder("/dev/project");
