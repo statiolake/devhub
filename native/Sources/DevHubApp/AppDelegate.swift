@@ -12,18 +12,15 @@ import DevHubCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let selfTest: Bool
-    private(set) var shell: ShellController?
-    private(set) var runtime: DevHubRuntime?
+    private var live: LiveApp?
+    var shell: ShellController? { live?.shell }
+    var runtime: DevHubRuntime? { live?.runtime }
     private let menu = MainMenu()
-    private let box = ShellBox()
-    private let transport = LateTransport()
     /// Paths Finder handed over before the runtime could take them.
     private var pendingOpens: [String] = []
     private var quitting = false
     private var wakeObserver: NSObjectProtocol?
     private var selfTestRun: SelfTest?
-    /// WP10: the GUI Agents' conversations, and what is drawn over the active Agent.
-    private let conversations = ConversationViews()
 
     init(selfTest: Bool) {
         self.selfTest = selfTest
@@ -73,64 +70,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             exit(0)
         }
 
-        // The window is made in the settings' chrome and colours, read before
-        // the settings can be loaded.
-        let text = try? String(contentsOfFile: locations.settingsFilePath, encoding: .utf8)
-        let titleBar = ConfigParsing.titleBarMode(in: text)
-        let themes = ConfigParsing.colorThemes(in: text)
-        let names = ColorThemeNames(dark: themes.dark, light: themes.light)
-        let appearance = AppearanceController(names: names, roots: ExtensionRoots.standard(profile: locations, home: NSHomeDirectory()))
-        appearance.configure(mode: ConfigParsing.appearanceMode(in: text), names: names)
-        let shell = ShellController(titleBar: titleBar, appearance: appearance, transport: transport, conversations: conversations)
-        self.shell = shell
-        let conversations = self.conversations
-        shell.window.agents.overlays = conversations
-        conversations.dispatch = { [weak shell] intent in shell?.dispatch(intent) }
-        conversations.repository = { [weak shell] workspaceId in
-            shell?.repositories.workspaces.first { $0.workspaceId == workspaceId }
-        }
-        conversations.agentActions = { [weak shell] in shell?.config?.agentActions ?? [] }
-        conversations.link.report = { [weak shell] failure in shell?.notices.error(failure) }
-        conversations.link.dictation = shell.dictation
-        conversations.link.pickSession = { [weak shell] request, chosen in
-            guard let shell else { return chosen(nil) }
-            shell.pickSession(request, chosen: chosen)
-        }
-        box.shell = shell
-        shell.openSettings = { [weak shell] in shell?.toggleSettings() }
-        shell.window.showWindow(nil)
-        NSApp.activate()
-        shell.installKeyboard()
-
+        // The window first, then the runtime into it (`LiveApp`).
+        let live = LiveApp(locations: locations)
+        self.live = live
         let environment = RuntimeEnvironment(
             locations: locations, appExecutable: Bundle.main.executablePath ?? CommandLine.arguments[0],
-            cliExecutable: Self.cliExecutable(), titleBar: titleBar)
-        let box = self.box
-        let hooks = RuntimeHooks(
-            repositories: { status in Task { @MainActor in box.shell?.repositoriesChanged(status) } },
-            usageLimits: { limits in Task { @MainActor in box.shell?.usageLimitsChanged(limits) } },
-            config: { config in Task { @MainActor in box.shell?.configAccepted(config) } })
+            cliExecutable: Self.cliExecutable(), titleBar: live.titleBar)
         let runtime: DevHubRuntime
         do {
-            runtime = try await DevHubRuntime.start(environment, app: WindowShell(box: box), hooks: hooks)
+            runtime = try await live.start(environment)
         } catch {
             fail("DevHub could not start", failureText(error))
         }
-        self.runtime = runtime
-        transport.target = runtime.transport
-        shell.adopt(runtime)
-        let controller = runtime.controller
-        conversations.runAgentAction = { [weak shell] agentId, actionId in
-            Task {
-                do { _ = try await controller.runAgentAction(agentId: agentId, actionId: actionId) } catch {
-                    shell?.notices.error(errorWire(error))
-                }
-            }
-        }
-        if let conversationTransport = await controller.conversationTransport() {
-            conversations.link.adopt(conversationTransport)
-        }
-        await runtime.controller.shellReady()
         do {
             try await runtime.openControlSocket()
         } catch {
@@ -200,8 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quitting = true
         MainLog.shared.log("[devhub] quit: shutting down")
         // From here a terminal ending is DevHub going, not a person's exit.
-        shell?.editorTerminalExits.dispose()
-        shell?.window.disposeAll()
+        live?.letGo()
         let deadline = Double(DevHubRuntime.shutdownDeadlineMs) / 1000
         Task.detached {
             await withTaskGroup(of: Bool.self) { group in

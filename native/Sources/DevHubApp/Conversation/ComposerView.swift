@@ -55,8 +55,8 @@ final class ComposerView: NSView {
     private var send: ConversationButton!
     /// The microphone beside Send, and the language it listens for
     /// (`DictationControls` in Composer.tsx): ⌘⇧M's controls on screen.
-    private var mic: ConversationButton!
-    private var languageButton: ConversationButton!
+    private(set) var mic: ConversationButton!
+    private(set) var languageButton: ConversationButton!
     private var dictationObserver: NSObjectProtocol?
     /// Speech into the field (WP11's `DictationController`); nil: no controls.
     weak var dictation: DictationController? {
