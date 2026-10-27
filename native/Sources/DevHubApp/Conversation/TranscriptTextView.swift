@@ -690,6 +690,28 @@ final class TranscriptTextView: NSTextView {
 
     // MARK: Size
 
+    /// Never shorter than the text laid out in it. With TextKit 2 the view
+    /// sizes itself by its layout's *estimate* of the document's height, which
+    /// can come out short of where the last lines were actually laid out; they
+    /// were still drawn (views do not clip), but a click on them went past the
+    /// view to the clip view behind it — the last reply's links did nothing.
+    override func setFrameSize(_ newSize: NSSize) {
+        let bottom = MainActor.assumeIsolated { laidOutBottom() }
+        super.setFrameSize(NSSize(width: newSize.width, height: max(newSize.height, bottom)))
+    }
+
+    /// Where the last laid-out line ends, in this view, with the inset below it.
+    @MainActor
+    func laidOutBottom() -> CGFloat {
+        guard let layout = textLayoutManager else { return 0 }
+        var bottom: CGFloat = 0
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.endLocation, options: [.reverse]) { fragment in
+            bottom = fragment.layoutFragmentFrame.maxY
+            return false
+        }
+        return bottom > 0 ? ceil(bottom + textContainerOrigin.y + textContainerInset.height) : 0
+    }
+
     /// The text's laid-out height (everything laid out: a short document's).
     @MainActor
     func documentHeight() -> CGFloat {

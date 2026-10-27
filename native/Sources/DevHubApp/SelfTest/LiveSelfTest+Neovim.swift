@@ -193,13 +193,14 @@ extension LiveSelfTest {
                 let index = text.characterIndexForInsertion(at: point)
                 let under = index < (text.textStorage?.length ?? 0) ? text.textStorage?.attribute(.link, at: index, effectiveRange: nil) : nil
                 let before = text.selectedRange()
+                d.check(text.bounds.contains(point), "the link at \(point) is outside its text view's \(text.bounds.size) (laid out to \(text.laidOutBottom())): a click on it would miss the view")
                 await d.click(text, at: point)
                 let opened = await eventually(5) {
                     if case let .success(shows) = await askNeovim(alphaSocket) { return shows.line == 4 }
                     return false
                 }
                 if !opened {
-                    d.note("the link's click: range \(range), at \(point) in a text view of \(text.bounds.size), visible \(text.visibleRect), hits \(hit.map { "\(type(of: $0))" } ?? "nothing"), the index there \(index) holds \(under.map { "\($0)" } ?? "no link"), selection \(before) → \(text.selectedRange()), keys in \(window?.firstResponder.map { "\(type(of: $0))" } ?? "nothing")")
+                    d.note("the link's click: range \(range), at \(point) in a text view of \(text.bounds.size) (laid out to \(text.laidOutBottom())), visible \(text.visibleRect), hits \(hit.map { "\(type(of: $0))" } ?? "nothing"), the index there \(index) holds \(under.map { "\($0)" } ?? "no link"), selection \(before) → \(text.selectedRange()), keys in \(window?.firstResponder.map { "\(type(of: $0))" } ?? "nothing")")
                 }
             } else {
                 d.check(false, "the link to \(SelfTestWorld.jumpPath) has no place on the screen")
