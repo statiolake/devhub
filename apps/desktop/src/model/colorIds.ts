@@ -11,6 +11,8 @@ export const COLOR_IDS = {
   editorBackground: "editor.background",
   sideBarBackground: "sideBar.background",
   titleBarBackground: "titleBar.activeBackground",
+  textLinkForeground: "textLink.foreground",
+  buttonForeground: "button.foreground",
   terminalBackground: "terminal.background",
   terminalForeground: "terminal.foreground",
   cursor: "terminalCursor.foreground",

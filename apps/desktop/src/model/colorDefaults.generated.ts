@@ -4,6 +4,12 @@
 import type { ColorDefaultsTable } from "./colorTheme.js";
 
 export const COLOR_DEFAULTS: ColorDefaultsTable = {
+  "button.foreground": {
+    light: { rgba: [255, 255, 255, 1] },
+    dark: { rgba: [255, 255, 255, 1] },
+    hcDark: { rgba: [255, 255, 255, 1] },
+    hcLight: { rgba: [255, 255, 255, 1] },
+  },
   "editor.background": {
     light: "#ffffff",
     dark: "#1E1E1E",
@@ -159,6 +165,12 @@ export const COLOR_DEFAULTS: ColorDefaultsTable = {
     dark: null,
     hcDark: null,
     hcLight: null,
+  },
+  "textLink.foreground": {
+    light: "#006AB1",
+    dark: "#3794FF",
+    hcDark: "#21A6FF",
+    hcLight: "#0F4A85",
   },
   "titleBar.activeBackground": {
     light: "#DDDDDD",

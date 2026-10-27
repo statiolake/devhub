@@ -11,15 +11,15 @@
  * around a Solarized editor is two applications in one window. xterm keeps its
  * own theme.
  *
- * A theme replaces exactly four values — `--canvas`, `--chrome`, `--surface`,
- * `--primary` — and resolves `color-scheme`. Everything else below is written
- * as a relation to one of those (a lift off the surface, an ink at a strength)
+ * A theme replaces exactly six values — `--canvas`, `--chrome`, `--surface`,
+ * `--primary`, `--accent` and `--accent-ink` — and resolves `color-scheme`.
+ * Everything else below is written as a relation to one of those (a lift off the surface, an ink at a strength)
  * rather than as a literal, which is what lets a theme reach every token, and
  * what lets Increase Contrast keep working on top of one: it moves the
  * strengths, and the strengths are named. No component knows any of it
  * happened.
  *
- * The four arrive from `src/ipc/palette.ts` by two routes that write the same
+ * The six arrive from `src/ipc/palette.ts` by two routes that write the same
  * thing: main puts them in the page's `<head>` as it serves it, so the first
  * frame is already right, and the page sets them inline when a workbench
  * changes theme afterwards.
@@ -91,11 +91,14 @@
 
   /* Accent and state.
    *
-   * The accent is the user's system accent colour, not a brand colour: on a
-   * Mac, selection and emphasis are expected to match whatever the person set
-   * in System Settings. The literals below are the fallback for engines that
-   * do not resolve the system keyword, and they stay in the product palette.
-   */
+   * The accent is the colour theme's, like the materials: the theme's link
+   * colour, with the ink that reads on it (`shellPaletteOfTheme`), so focus
+   * rings, selected marks and primary buttons are the same blue the editor
+   * beside them uses. Not the system accent colour — `AccentColor` is the
+   * saturated macOS control blue, which next to a theme's calmer palette read
+   * as fluorescent. The literals below are the fallback for a profile that
+   * has never resolved a theme: a muted blue, with a dark ink in Dark because
+   * the light accent would not carry white. */
   --accent: light-dark(#286486, #82aeca);
   --accent-ink: light-dark(#ffffff, #12222c);
   /* A source list selection is a neutral fill, not a tinted one: the accent
@@ -495,13 +498,6 @@
    * and the two questions the Sidebar answers at a glance are still answered.
    */
   --sidebar-rail-collapsed-width: var(--traffic-light-span);
-}
-
-@supports (color: AccentColor) {
-  :root {
-    --accent: AccentColor;
-    --accent-ink: AccentColorText;
-  }
 }
 
 /* Increase Contrast asks for firmer edges and darker secondary ink.

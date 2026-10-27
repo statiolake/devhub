@@ -326,7 +326,10 @@ has been regenerated. The colour arithmetic is VS Code's (`Color`,
 `executeTransform`), ported, and formats as `Color.toString()` does.
 
 So the shell's four anchors (the editor background, the side bar, the title bar
-made opaque, the foreground — what the window splash used to carry) and an Agent
+made opaque, the foreground — what the window splash used to carry), its accent
+(`textLink.foreground` made opaque over the editor background, with
+`button.foreground` drawn on it, or the editor background where that reads
+better — never the system `AccentColor`), and an Agent
 pane's colours with `[appearance] terminal_theme = "vscode"` — the default —
 come from the same theme, before any workbench exists, while every one is
 asleep, and from a cold start. A pane's terminal colours are those VS Code's

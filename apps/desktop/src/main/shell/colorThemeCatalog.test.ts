@@ -206,6 +206,20 @@ const BUILTIN = join(
 describe.skipIf(!existsSync(join(BUILTIN, "theme-defaults")))(
 	"VS Code's built-in themes",
 	() => {
+		it("gives the 2026 themes their link blue as the accent, not a system blue", () => {
+			const themes = listColorThemes({ builtin: BUILTIN, user: undefined });
+			const accentOf = (name: string) => {
+				const entry = findColorTheme(themes, name);
+				if (!entry) throw new Error(`no ${name}`);
+				const palette = shellPaletteOfTheme(
+					new ResolvedColorTheme(loadColorTheme(entry)),
+				);
+				return [palette.accent, palette.accentInk];
+			};
+			expect(accentOf("Dark 2026")).toEqual(["#48a0c7", "#121314"]);
+			expect(accentOf("Light 2026")).toEqual(["#0069cc", "#ffffff"]);
+		});
+
 		it("all read, and every one is a whole palette", () => {
 			const themes = listColorThemes({ builtin: BUILTIN, user: undefined });
 			expect(findColorTheme(themes, "Dark 2026")).toBeDefined();
@@ -214,9 +228,14 @@ describe.skipIf(!existsSync(join(BUILTIN, "theme-defaults")))(
 				const resolved = new ResolvedColorTheme(loadColorTheme(entry));
 				const palette = shellPaletteOfTheme(resolved);
 				expect(
-					[palette.surface, palette.chrome, palette.canvas, palette.ink].every(
-						isPaletteColor,
-					),
+					[
+						palette.surface,
+						palette.chrome,
+						palette.canvas,
+						palette.ink,
+						palette.accent,
+						palette.accentInk,
+					].every(isPaletteColor),
 					entry.settingsId,
 				).toBe(true);
 				expect(

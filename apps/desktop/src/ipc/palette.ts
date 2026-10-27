@@ -5,11 +5,13 @@
  * frame around it, so it is in the same colour theme: the one DevHub's
  * settings name, which every workbench is told to wear too. Main reads the
  * theme's files itself (`main/shell/shellTheme.ts`) and computes the four
- * anchors the way the workbench's window splash does — never by reading CSS
- * out of a view.
+ * material and ink anchors the way the workbench's window splash does, and
+ * the accent from the theme's link and button colours
+ * (`model/colorTheme.ts#shellPaletteOfTheme`) — never by reading CSS out of a
+ * view.
  *
- * Only four colours cross the wire. Everything else DevHub draws is derived
- * from them here, in one place, so that main (which writes the palette into the
+ * Only six colours cross the wire. Everything else DevHub draws is derived
+ * from them in `tokens.css`, and they are mapped to it here, in one place, so that main (which writes the palette into the
  * page's HTML before the first paint) and the page (which updates it when the
  * theme changes) can never disagree about what a palette means.
  */
@@ -27,6 +29,13 @@ export interface ShellPalette {
 	readonly canvas: string;
 	/** The Workbench's foreground: every ink and hairline is derived from it. */
 	readonly ink: string;
+	/**
+	 * The theme's link colour, opaque over the surface: focus rings, the
+	 * selected mark, links, and the fill of a primary button.
+	 */
+	readonly accent: string;
+	/** What is drawn on the accent: the button's ink, or the surface. */
+	readonly accentInk: string;
 }
 
 /**
@@ -46,17 +55,18 @@ export function isPaletteColor(value: string): boolean {
 /**
  * The custom properties one palette sets, as CSS declarations.
  *
- * Five, and no more. `tokens.css` already derives every hairline, wash and
- * secondary ink from `--primary`, and `--raised`/`--sunken` from `--surface`,
- * because those relationships are the same on any material — so a theme only
- * has to say where the four anchors are and the derivation is untouched. That
- * is also what keeps Increase Contrast working: it adjusts the strengths, in
- * the one place they are written, and a palette never overrides it.
+ * Seven, and no more. `tokens.css` already derives every hairline, wash and
+ * secondary ink from `--primary`, `--raised`/`--sunken` from `--surface`, and
+ * `--focus-ring` and every accent tint from `--accent`, because those
+ * relationships are the same on any material — so a theme only has to say
+ * where the anchors are and the derivation is untouched. That is also what
+ * keeps Increase Contrast working: it adjusts the strengths, in the one place
+ * they are written, and a palette never overrides it.
  *
- * `color-scheme` is the fifth and the most load-bearing: it decides which half
- * of every remaining `light-dark()` token applies — the accent, the status
- * colours, the shadows, the ink strengths — so a theme that only flips light to
- * dark is already right after this line alone.
+ * `color-scheme` is the most load-bearing: it decides which half of every
+ * remaining `light-dark()` token applies — the status colours, the shadows,
+ * the ink strengths — so a theme that only flips light to dark is already
+ * right after this line alone.
  */
 export function paletteVariables(
 	palette: ShellPalette,
@@ -67,6 +77,8 @@ export function paletteVariables(
 		["--chrome", palette.chrome],
 		["--surface", palette.surface],
 		["--primary", palette.ink],
+		["--accent", palette.accent],
+		["--accent-ink", palette.accentInk],
 	];
 }
 

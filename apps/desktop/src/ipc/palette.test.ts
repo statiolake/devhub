@@ -12,6 +12,8 @@ const solarized: ShellPalette = {
 	chrome: "#eee8d5",
 	canvas: "#eee8d5",
 	ink: "#586e75",
+	accent: "#268bd2",
+	accentInk: "#fdf6e3",
 };
 
 describe("paletteVariables", () => {
@@ -23,6 +25,8 @@ describe("paletteVariables", () => {
 			"--chrome",
 			"--surface",
 			"--primary",
+			"--accent",
+			"--accent-ink",
 		]);
 	});
 

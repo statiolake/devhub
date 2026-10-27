@@ -461,10 +461,33 @@ function workbenchBackground(type: ColorThemeType): ThemeColor {
   }
 }
 
+/** WCAG's contrast ratio between two opaque colours, 1 to 21. */
+function contrast(a: ThemeColor, b: ThemeColor): number {
+  const la = a.relativeLuminance();
+  const lb = b.relativeLuminance();
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
 /**
- * The shell's four anchors, as the workbench's window splash computes them
- * (`partsSplash.ts`): what DevHub's chrome used to read off a workbench and
- * now reads off the theme directly.
+ * The shell's palette: the four material and ink anchors as the workbench's
+ * window splash computes them (`partsSplash.ts`) — what DevHub's chrome used
+ * to read off a workbench and now reads off the theme directly — and the
+ * accent with the ink drawn on it.
+ *
+ * The accent is the theme's `textLink.foreground`. DevHub's accent is read as
+ * ink far more often than as a fill — links, the selected row's glyph, a
+ * focus ring, a chosen option's label, all on the surface — and the link
+ * colour is the one a theme author has already made legible on the editor's
+ * ground in both halves. (`focusBorder` is often translucent and pale, and
+ * `button.background` is tuned to carry white text, so it is too dark to read
+ * as ink on a dark ground.) It is made opaque over the surface, since every
+ * use of it is drawn there.
+ *
+ * The ink on it is `button.foreground` where that holds on the accent (WCAG's
+ * 4.5:1 for text), and otherwise whichever of it and the editor's background
+ * holds better: a dark theme's link colour is
+ * light, and white on it would not read, so the ink becomes the dark ground
+ * the link was made to read on — the same pair, the other way round.
  */
 export function shellPaletteOfTheme(theme: ResolvedColorTheme): ShellPalette {
   const base =
@@ -479,6 +502,20 @@ export function shellPaletteOfTheme(theme: ResolvedColorTheme): ShellPalette {
     .getColor(COLOR_IDS.titleBarBackground)
     ?.makeOpaque(background)
     .toString();
+  const surface = (
+    theme.getColor(COLOR_IDS.editorBackground) ?? background
+  ).makeOpaque(background);
+  const accent =
+    theme.getColor(COLOR_IDS.textLinkForeground)?.makeOpaque(surface) ??
+    ThemeColor.fromHex(base === "dark" ? "#82aeca" : "#286486");
+  const buttonInk = (
+    theme.getColor(COLOR_IDS.buttonForeground) ?? ThemeColor.of(255, 255, 255)
+  ).makeOpaque(accent);
+  const accentInk =
+    contrast(buttonInk, accent) >= 4.5 ||
+    contrast(buttonInk, accent) >= contrast(surface, accent)
+      ? buttonInk
+      : surface;
   return {
     base,
     surface: editor ?? fallback,
@@ -487,6 +524,8 @@ export function shellPaletteOfTheme(theme: ResolvedColorTheme): ShellPalette {
     ink:
       theme.css(COLOR_IDS.foreground) ??
       (base === "dark" ? "#cccccc" : "#3b3b3b"),
+    accent: accent.toString(),
+    accentInk: accentInk.toString(),
   };
 }
 

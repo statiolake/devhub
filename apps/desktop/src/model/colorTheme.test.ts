@@ -132,7 +132,7 @@ describe("a theme's colours", () => {
 });
 
 describe("what DevHub paints from a theme", () => {
-  it("is the four anchors the window splash carries", () => {
+  it("is the four anchors the window splash carries, and the accent", () => {
     const palette = shellPaletteOfTheme(
       new ResolvedColorTheme(
         theme("dark", {
@@ -140,6 +140,8 @@ describe("what DevHub paints from a theme", () => {
           "sideBar.background": "#181818",
           "titleBar.activeBackground": "#18181880",
           foreground: "#cccccc",
+          "textLink.foreground": "#4daafc",
+          "button.foreground": "#ffffff",
         }),
       ),
     );
@@ -150,7 +152,52 @@ describe("what DevHub paints from a theme", () => {
       // Made opaque over the workbench background, as the splash does.
       canvas: "#1e1e1e",
       ink: "#cccccc",
+      accent: "#4daafc",
+      // White does not read on a light link colour; the ground it was made
+      // to read on does.
+      accentInk: "#1f1f1f",
     });
+  });
+
+  it("takes the accent from the link colour, not the button or the focus border", () => {
+    const palette = shellPaletteOfTheme(
+      new ResolvedColorTheme(
+        theme("light", {
+          "editor.background": "#ffffff",
+          "textLink.foreground": "#0069cc",
+          "button.background": "#ff0000",
+          "button.foreground": "#fefefe",
+          focusBorder: "#00ff00",
+        }),
+      ),
+    );
+    expect(palette.accent).toBe("#0069cc");
+    // The button's own ink, where it holds on the accent.
+    expect(palette.accentInk).toBe("#fefefe");
+  });
+
+  it("makes a translucent link colour opaque over the surface", () => {
+    const palette = shellPaletteOfTheme(
+      new ResolvedColorTheme(
+        theme("dark", {
+          "editor.background": "#000000",
+          "textLink.foreground": "#ffffff80",
+        }),
+      ),
+    );
+    expect(palette.accent).toBe("#808080");
+  });
+
+  it("keeps the accent ink legible on the accent for every theme type", () => {
+    for (const type of ["light", "dark", "hcDark", "hcLight"] as const) {
+      const palette = shellPaletteOfTheme(new ResolvedColorTheme(theme(type)));
+      const accent = ThemeColor.fromHex(palette.accent);
+      const ink = ThemeColor.fromHex(palette.accentInk);
+      const [hi, lo] = [accent, ink]
+        .map((color) => color.relativeLuminance())
+        .sort((x, y) => y - x);
+      expect((hi + 0.05) / (lo + 0.05), type).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it("is a whole palette even for a theme that sets nothing", () => {
@@ -165,6 +212,8 @@ describe("what DevHub paints from a theme", () => {
         palette.chrome,
         palette.canvas,
         palette.ink,
+        palette.accent,
+        palette.accentInk,
       ]) {
         expect(isPaletteColor(color)).toBe(true);
       }
