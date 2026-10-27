@@ -133,6 +133,12 @@ final class DictationController {
         }
     }
 
+    /// The keys are no longer this controller's (its window has gone).
+    func removeKeys() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+
     private func handle(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         // `KeyM` by its key code, so a layout or an input method cannot move it.

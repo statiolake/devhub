@@ -249,5 +249,6 @@ final class SelfTest {
 
         window.disposeAll()
         window.window?.orderOut(nil)
+        shell.uninstallKeyboard()
     }
 }

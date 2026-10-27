@@ -161,6 +161,13 @@ final class RuntimeEndToEndTests: XCTestCase {
             XCTAssertTrue(following.transcript.requests.isEmpty)
         }
 
+        // /resume's listing: the earlier session, where Claude keeps it.
+        let past = try await transport.listSessions(agentId, scope: .here)
+        XCTAssertEqual(past.map(\.id), [SelfTestWorld.pastSession], "the sessions are \(past)")
+        XCTAssertEqual(past.first?.title, "The earlier widget session")
+        let offered = try await running.runtime.sheets?.listAgentSessions(place: .local(path: world.alpha), profileId: SelfTestWorld.claudeProfile)
+        XCTAssertEqual(offered?.map(\.id), [SelfTestWorld.pastSession])
+
         // Make default: Claude's user settings.
         let claudeDefaults = try await transport.cliDefaults(agentId, model: nil)
         XCTAssertNotNil(claudeDefaults, "Claude has no defaults to offer")
@@ -180,6 +187,9 @@ final class RuntimeEndToEndTests: XCTestCase {
         XCTAssertTrue(codexReady, "Codex did not become idle: \(codex.transcript.state); log \(world.fakeLog().filter { $0.cli == "codex" }.map(\.line))")
         let listed = await until(10) { codex.transcript.session.model.choices.map(\.id) == ["gpt-5.5-codex", "gpt-5.5-mini"] }
         XCTAssertTrue(listed, "Codex's models are \(codex.transcript.session.model); log \(world.fakeLog().filter { $0.cli == "codex" }.map(\.line))")
+        try await transport.command(codexId, .send(text: "Hello Codex", images: []))
+        let codexReplied = await until(20) { codex.words.contains("Fake Codex reply.") && codex.transcript.state == .ready(turn: .none) }
+        XCTAssertTrue(codexReplied, "Codex did not reply: \(codex.words.suffix(400)) \(codex.transcript.state); log \(world.fakeLog().filter { $0.cli == "codex" }.map(\.line).suffix(3))")
         try await transport.setCliDefault(codexId, .model, value: "gpt-5.5-mini", model: nil)
         let toml = (try? String(contentsOfFile: Path.join(world.codexHome, "config.toml"), encoding: .utf8)) ?? ""
         XCTAssertTrue(toml.contains("model = \"gpt-5.5-mini\""), "config.toml is \(toml)")
@@ -252,9 +262,21 @@ final class RuntimeEndToEndTests: XCTestCase {
         guard let alpha = try await open(running, world.alpha), let beta = try await open(running, world.beta),
               let scratchId = shell.latest?.scratchWorkspaceId
         else { return await running.cleanup() }
-        _ = try await controller.createAgent(workspaceId: alpha.id, profileId: SelfTestWorld.claudeProfile, presentation: .gui)
-        let agentUp = await until(20) { shell.latest?.workspace(alpha.id)?.agents.isEmpty == false }
-        XCTAssertTrue(agentUp, "the Agent did not start")
+        let agentId = try await controller.createAgent(workspaceId: alpha.id, profileId: SelfTestWorld.claudeProfile, presentation: .gui)
+        let agentIdle = await until(20) { shell.latest?.workspace(alpha.id)?.agents.first?.status.isIdle == true }
+        XCTAssertTrue(agentIdle, "the Agent did not settle: \(String(describing: shell.latest?.workspace(alpha.id)?.agents.first?.status))")
+        // What alpha has to lose: a command running in its Agent's terminal.
+        try await controller.toggleAgentTerminal(try AgentId(agentId))
+        let opened = await until(20) { shell.latest?.workspace(alpha.id)?.agents.first?.terminal != nil }
+        XCTAssertTrue(opened, "the Agent's terminal did not open")
+        guard let terminal = shell.latest?.workspace(alpha.id)?.agents.first?.terminal else { return await running.cleanup() }
+        let shellUp = await until(10) { running.tmuxSays(["list-sessions", "-F", "#{session_name}"]).contains(terminal.session) }
+        XCTAssertTrue(shellUp, "no session \(terminal.session)")
+        _ = running.tmuxSays(["send-keys", "-t", terminal.session, "sleep 600", "Enter"])
+        let sleeping = await until(10) {
+            running.tmuxSays(["list-panes", "-t", terminal.session, "-F", "#{pane_current_command}"]).contains("sleep")
+        }
+        XCTAssertTrue(sleeping, "sleep is not running in \(terminal.session)")
 
         var questions: [ModalRequest] = []
         var asking = false
@@ -300,7 +322,7 @@ final class RuntimeEndToEndTests: XCTestCase {
         XCTAssertTrue(questions.isEmpty, "closing beta asked \(questions)")
         XCTAssertTrue(restarted.isEmpty, "closing beta started \(restarted) over")
 
-        // alpha: its Agent is something to lose, so it asks; kept, it starts over.
+        // alpha: the sleep is something to lose, so it asks; kept, it starts over.
         let alphaTerminal = try await client(alpha.id)
         try alphaTerminal.type("exit\r")
         let asked = await until(15) { !questions.isEmpty }

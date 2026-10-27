@@ -198,7 +198,7 @@ extension LiveSelfTest {
     }
 
     func codex(_ d: SelfTestDriver) async {
-        guard let alpha = workspace(root: world.alpha) else { return d.check(false, "alpha is not open") }
+        guard workspace(root: world.alpha) != nil else { return d.check(false, "alpha is not open") }
         // New Agent: the second profile, the stand-in Codex.
         await d.chord("c", in: window)
         await d.expect(10, "New Agent does not list Fake Codex") { self.pickerRowIds.contains("new:\(SelfTestWorld.codexProfile)") }
@@ -232,18 +232,5 @@ extension LiveSelfTest {
         }
         await d.expect(20, "Cmd+Q X did not stop the Codex Agent") { self.agent(codex.id) == nil }
 
-        // Close this workspace (Cmd+Q W) on alpha, whose Claude Agent runs:
-        // asked, and kept with Escape.
-        await d.chord("g", in: window)
-        await d.type("alpha", in: window)
-        await d.press(.returnKey, in: window)
-        await d.expect(5, "Go to did not select alpha") { self.snapshot?.selection.context == .workspace(alpha.id) }
-        await d.chord("W", in: window)
-        await d.expect(10, "Cmd+Q W on alpha, with its Agent running, asked nothing") { self.picker != nil }
-        d.check(picker?.state.activeRow?.id == PickerState.cancelRowId, "the close question's first row is \(picker?.state.activeRow?.id ?? "nothing"), not Keep")
-        await d.press(.escape, in: window)
-        await d.expect(3, "Escape did not close the close question") { !self.shell.modals.isPresenting }
-        await d.pause(0.5)
-        d.check(workspace(root: world.alpha) != nil && claudeAgent != nil, "alpha or its Agent went though the close was cancelled")
     }
 }

@@ -49,8 +49,44 @@ extension LiveSelfTest {
             d.check(!shell.modals.isPresenting, "closing beta asked \(sheets?.topTitle ?? "something")")
         }
 
-        // alpha's Agent is something to lose: `exit` asks, and kept, a fresh ws- session.
+        // Something to lose in alpha: a command running in its Agent's
+        // terminal (Cmd+Q V), which a close would end.
+        if let claude = claudeAgent {
+            await d.chord("g", in: window)
+            await d.expect(5, "Cmd+Q G did not open Go to") { self.picker != nil }
+            await d.type(claude.displayName, in: window)
+            await d.press(.returnKey, in: window)
+            await d.expect(5, "Go to did not select \(claude.displayName)") { self.snapshot?.selection.context == .agent(claude.id) }
+            await d.chord("v", in: window)
+            await d.expect(15, "Cmd+Q V did not open the Agent's terminal") { self.agent(claude.id)?.terminal != nil }
+            if let terminalId = agent(claude.id)?.terminal?.id {
+                await d.expect(20, "the Agent's terminal did not attach") {
+                    self.shell.window.agentTerminals[terminalId].map { $0.isAttached && !$0.isHidden } == true
+                }
+                if let terminal = shell.window.agentTerminals[terminalId] {
+                    await d.click(terminal.terminal)
+                    await d.type("sleep 600\r", in: window)
+                    await d.expect(10, "sleep is not running in the Agent's terminal") {
+                        self.tmuxSays(["list-panes", "-a", "-F", "#{session_name} #{pane_current_command}"])
+                            .split(separator: "\n").contains { $0.hasPrefix("tm-") && $0.hasSuffix(" sleep") }
+                    }
+                }
+            }
+        } else {
+            d.check(false, "there is no Claude Agent in alpha")
+        }
+
+        // Close this workspace (Cmd+Q W) asks about it, and Escape keeps alpha.
         await goTo(d, "alpha", alpha.id)
+        await d.chord("W", in: window)
+        await d.expect(10, "Cmd+Q W on alpha, with a command running in it, asked nothing") { self.picker != nil }
+        d.check(picker?.state.activeRow?.id == PickerState.cancelRowId, "the close question's first row is \(picker?.state.activeRow?.id ?? "nothing"), not Keep")
+        await d.press(.escape, in: window)
+        await d.expect(3, "Escape did not close the close question") { !self.shell.modals.isPresenting }
+        await d.pause(0.5)
+        d.check(workspace(root: world.alpha) != nil, "alpha closed though its close was cancelled")
+
+        // So `exit` in alpha's terminal asks too, and kept, a fresh ws- session.
         if let pane = await editorTerminal(d, alpha.id, "alpha") {
             let born = created(alphaSession)
             d.check(born != nil, "alpha has no session \(alphaSession) (\(sessions()))")
