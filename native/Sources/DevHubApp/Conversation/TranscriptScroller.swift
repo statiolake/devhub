@@ -77,6 +77,8 @@ final class TranscriptScroller: NSView {
     }
 
     @objc private func scrolled() {
+        // What comes into view is laid out and drawn now, whoever moved it.
+        text.textLayoutManager?.textViewportLayoutController.layoutViewport()
         if adjusting { return }
         let now = atBottom
         if now != following {
@@ -107,8 +109,10 @@ final class TranscriptScroller: NSView {
         if let range = text.textRange(tail) { layout.ensureLayout(for: range) }
         text.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
         let height = max(text.frame.height, layout.usageBoundsForTextContainer.maxY + text.textContainerInset.height * 2)
+        if text.frame.height < height { text.setFrameSize(NSSize(width: text.frame.width, height: height)) }
         scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, height - scroll.contentView.bounds.height)))
         scroll.reflectScrolledClipView(scroll.contentView)
+        layout.textViewportLayoutController.layoutViewport()
         adjusting = false
     }
 
@@ -235,4 +239,17 @@ final class TranscriptScroller: NSView {
 /// A section's veil while it rises in: lifted away, it takes no pointer.
 final class FreshVeil: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+extension TranscriptScroller {
+    /// For the self-test's log: the scroll, the text's size, and what is laid out.
+    var diagnosis: String {
+        let clip = scroll.contentView.bounds
+        let layout = text.textLayoutManager
+        let viewport = layout?.textViewportLayoutController.viewportRange
+        let start = viewport.map { text.offset($0.location) } ?? -1
+        let end = viewport.map { text.offset($0.endLocation) } ?? -1
+        let usage = layout?.usageBoundsForTextContainer ?? .zero
+        return "clip \(Int(clip.minY))..\(Int(clip.maxY)) text \(Int(text.frame.height)) usage \(Int(usage.maxY)) viewport \(start)..\(end) of \(text.textStorage?.length ?? 0) following \(following)"
+    }
 }

@@ -56,6 +56,8 @@ final class ConversationSelfTest {
     }
 
     private func snapshot(_ view: NSView, _ name: String) {
+        if let pane = view as? ConversationPaneView { print("SNAPSHOT-STATE \(name) \(pane.transcriptView.diagnosis)") }
+        view.displayIfNeeded()
         guard let directory = Self.snapshots else { return }
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         view.layoutSubtreeIfNeeded()
