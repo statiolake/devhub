@@ -589,7 +589,7 @@ index 0d95d0bf..5ac0b265 100644
  		const result: IKeybindingItem[] = [];
  		let keybindingsLen = 0;
 diff --git a/src/vs/workbench/browser/parts/editor/editorPart.ts b/src/vs/workbench/browser/parts/editor/editorPart.ts
-index afa694239..29646028d 100644
+index afa69423..29646028 100644
 --- a/src/vs/workbench/browser/parts/editor/editorPart.ts
 +++ b/src/vs/workbench/browser/parts/editor/editorPart.ts
 @@ -1427,6 +1427,7 @@ export class EditorPart extends Part<IEditorPartMemento> implements IEditorPart,
@@ -638,8 +638,30 @@ index afa694239..29646028d 100644
  	}
  
  	private doLayout(dimension: Dimension, top = this.top, left = this.left): void {
+diff --git a/src/vs/workbench/electron-browser/desktop.contribution.ts b/src/vs/workbench/electron-browser/desktop.contribution.ts
+index 41250d7b..4bc50a1e 100644
+--- a/src/vs/workbench/electron-browser/desktop.contribution.ts
++++ b/src/vs/workbench/electron-browser/desktop.contribution.ts
+@@ -54,10 +54,16 @@ import product from '../../platform/product/common/product.js';
+ 		// but can run without a document opened and allow to close
+ 		// the window when the last document is closed
+ 		// (https://github.com/microsoft/vscode/issues/126042)
++		// DevHub: not while DevHub Vim is on. There a tab page with no editor
++		// is ordinary (its editors closed) and Cmd-W is often bound to CTRL-W's
++		// nav prefix (devhubVim.nav.enter); this rule would still close the
++		// whole window from a webview, whose Cmd-W reaches the workbench twice
++		// (the copy WebviewElement dispatches, and the accelerator this rule
++		// gives the Close Window menu item).
+ 		KeybindingsRegistry.registerKeybindingRule({
+ 			id: CloseWindowAction.ID,
+ 			weight: KeybindingWeight.WorkbenchContrib,
+-			when: ContextKeyExpr.and(EditorsVisibleContext.toNegated(), SingleEditorGroupsContext),
++			when: ContextKeyExpr.and(EditorsVisibleContext.toNegated(), SingleEditorGroupsContext, ContextKeyExpr.not('config.devhub.vim.enabled')),
+ 			primary: KeyMod.CtrlCmd | KeyCode.KeyW
+ 		});
+ 	}
 diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
-index 74be4cac..a7cc22aa 100644
+index 74be4cac..35486667 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts
 +++ b/src/vs/workbench/workbench.desktop.main.ts
 @@ -219,6 +219,24 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut

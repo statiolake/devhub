@@ -901,9 +901,9 @@ suite('DevHub Vim keymap is keybindings', () => {
 		const ids = new Set(['devhubVim.motion', 'devhubVim.operator', 'devhubVim.textObjectPrefix', 'devhubVim.textObject', 'devhubVim.forceMotion', 'devhubVim.count', 'devhubVim.register', 'devhubVim.awaitChar', 'devhubVim.mode', 'devhubVim.action', 'devhubVim.mark', 'devhubVim.scroll', 'devhubVim.insert', 'devhubVim.run', 'devhubVim.repeat', 'devhubVim.cmdline', 'devhubVim.ex', 'devhubVim.escape']);
 		const plainInInsert = new Set(['hideSuggestWidget', 'editor.action.inlineSuggest.hide', 'deleteLeft', 'editor.action.triggerParameterHints', 'editor.action.triggerSuggest', 'selectNextSuggestion', 'selectPrevSuggestion']);
 		for (const b of DEFAULT_KEYBINDINGS) {
-			if (b.when === VIM_WHEN.emptyGroup) {
-				// where no Vim editor is (an empty editor group): tab page commands only
-				assert.ok(b.command.startsWith('devhubVim.tabpage.'), b.command);
+			if (b.when === VIM_WHEN.elsewhere) {
+				// where no Vim buffer has the focus (a list, the side bar): `:`, tab pages, the jump list
+				assert.ok(b.command.startsWith('devhubVim.tabpage.') || b.command === 'devhubVim.cmdline' || b.command.startsWith('workbench.action.navigate'), b.command);
 				continue;
 			}
 			if (b.when === VIM_WHEN.comment) {
@@ -3585,28 +3585,43 @@ suite('DevHub Vim: tab pages are keys and ex commands (browser/vimTabPages.ts do
 		assert.deepStrictEqual(keys, ['g shift+t', 'g t']);
 	});
 
-	test('in an empty editor group (no Vim editor): gt gT, {N}gt {N}gT for N 1-9 as three-key chords; not in a Vim editor, nav or an input', () => {
-		// a focused empty group: the editor part's editorAreaFocus, activeEditorGroupEmpty, no text input, no Vim editor
-		const empty = { editorAreaFocus: true, activeEditorGroupEmpty: true, 'devhubVim.mode': '' };
+	test('an empty editor group\'s empty buffer takes the normal-mode keys; elsewhere (a list, the side bar) only `:` gt gT {N}gt CTRL-O CTRL-I', () => {
 		const at = (key: string, ctx: Record<string, unknown>) => DEFAULT_KEYBINDINGS.filter(b => b.key === key && evaluateWhen(b.when, ctx)).map(b => b.args === undefined ? [b.command] : [b.command, b.args]);
-		assert.deepStrictEqual(at('g t', empty), [['devhubVim.tabpage.next']]);
-		assert.deepStrictEqual(at('g shift+t', empty), [['devhubVim.tabpage.previous']]);
-		assert.deepStrictEqual(at('3 g t', empty), [['devhubVim.tabpage.next', { count: 3 }]]);
-		assert.deepStrictEqual(at('9 g shift+t', empty), [['devhubVim.tabpage.previous', { count: 9 }]]);
-		assert.deepStrictEqual(at('0 g t', empty), []);
-		// each key resolves to one binding: the empty group's never apply where a Vim editor has the focus, and the editor's never here
-		const normal = { textInputFocus: true, 'devhubVim.active': true, 'devhubVim.acceptsMotion': true, 'devhubVim.mode': 'normal', editorAreaFocus: true };
-		assert.deepStrictEqual(at('g t', normal), [['devhubVim.run', { command: 'devhubVim.tabpage.next', args: { count: '${rawCount}' } }]]);
-		assert.deepStrictEqual(at('3 g t', normal), []);
+		// the empty buffer of a focused empty group is a Vim buffer (DevhubVim.update): no text input, devhubVim.active
+		const emptyGroup = { 'devhubVim.active': true, 'devhubVim.acceptsMotion': true, 'devhubVim.mode': 'normal' };
+		const editor = { ...emptyGroup, textInputFocus: true };
+		for (const key of ['g t', '[Quote]', 'ctrl+o', 'j', 'd', 'u', '3']) {
+			assert.deepStrictEqual(at(key, emptyGroup), at(key, editor), key);
+			assert.strictEqual(at(key, emptyGroup).length, 1, key);
+		}
+		assert.deepStrictEqual(at('g t', emptyGroup), [['devhubVim.run', { command: 'devhubVim.tabpage.next', args: { count: '${rawCount}' } }]]);
+		assert.deepStrictEqual(at('[Quote]', emptyGroup), [['devhubVim.cmdline', { kind: ':' }]]);
+		// elsewhere: normal mode (nothing that takes typing has the focus), no Vim buffer
+		const list = { 'devhubVim.active': false, 'devhubVim.acceptsMotion': true, 'devhubVim.mode': 'normal', listFocus: true };
+		assert.deepStrictEqual(at('[Quote]', list), [['devhubVim.cmdline', { kind: ':' }]]);
+		assert.deepStrictEqual(at('g t', list), [['devhubVim.tabpage.next']]);
+		assert.deepStrictEqual(at('g shift+t', list), [['devhubVim.tabpage.previous']]);
+		assert.deepStrictEqual(at('3 g t', list), [['devhubVim.tabpage.next', { count: 3 }]]);
+		assert.deepStrictEqual(at('9 g shift+t', list), [['devhubVim.tabpage.previous', { count: 9 }]]);
+		assert.deepStrictEqual(at('0 g t', list), []);
+		assert.deepStrictEqual(at('ctrl+o', list), [['workbench.action.navigateBack']]);
+		assert.deepStrictEqual(at('ctrl+i', list), [['workbench.action.navigateForward']]);
+		// a list keeps its other keys (Enter, Space, arrows, letters, Tab): no Vim buffer takes them
+		for (const key of ['enter', 'space', 'down', 'j', 'tab', 'escape', 'u']) {
+			assert.deepStrictEqual(at(key, list), [], key);
+		}
+		assert.deepStrictEqual(at('3 g t', { ...list, ...emptyGroup }), []);
 		for (const ctx of [
-			{ ...empty, 'devhubVim.mode': 'nav' }, // after CTRL-W, g is that prefix's key
-			{ ...empty, inputFocus: true }, // an input in the editor area
-			{ ...empty, editorAreaFocus: false }, // the side bar, the panel
-			{ ...empty, activeEditorGroupEmpty: false }, // a group with an editor that is no text editor (settings, an image)
+			{ ...list, 'devhubVim.mode': 'nav' }, // after CTRL-W, g is that prefix's key
+			{ ...list, 'devhubVim.mode': 'insert' }, // an input, a plain editor, the terminal
+			{ ...list, 'devhubVim.mode': '' }, // a webview: its page has the keys
+			{ ...list, 'devhubVim.mode': 'cmdline' },
 		]) {
 			assert.deepStrictEqual(at('g t', ctx), [], JSON.stringify(ctx));
+			assert.deepStrictEqual(at('[Quote]', ctx), [], JSON.stringify(ctx));
 		}
-		assert.deepStrictEqual(VIM_WHEN.emptyGroup, `editorAreaFocus && activeEditorGroupEmpty && !textInputFocus && !inputFocus && devhubVim.mode != 'nav'`);
+		assert.deepStrictEqual(VIM_WHEN.elsewhere, `devhubVim.mode == 'normal' && !devhubVim.active`);
+		assert.deepStrictEqual(VIM_WHEN.normal, `devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'`);
 	});
 
 	test(':tab* commands and their counts and arguments', async () => {

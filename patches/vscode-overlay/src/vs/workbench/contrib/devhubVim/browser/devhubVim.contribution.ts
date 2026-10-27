@@ -322,8 +322,8 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	},
 });
 
-const VIM_MODE = new RawContextKey<string>('devhubVim.mode', '', localize('devhubVim.mode', "The Vim mode of the focused editor or input: normal, insert, replace, visual, visualLine, visualBlock, operatorPending, cmdline, nav (Ctrl-W waits for its key), or empty."));
-const VIM_ACTIVE = new RawContextKey<boolean>('devhubVim.active', false, localize('devhubVim.active', "Whether the focused text editor is driven by DevHub Vim."));
+const VIM_MODE = new RawContextKey<string>('devhubVim.mode', '', localize('devhubVim.mode', "The Vim mode wherever the focus is: normal, insert, replace, visual, visualLine, visualBlock, operatorPending, cmdline, nav (Ctrl-W waits for its key); normal also where the focus is in nothing that takes typing (an empty editor group, a list, the side bar), insert in an input; empty in a webview."));
+const VIM_ACTIVE = new RawContextKey<boolean>('devhubVim.active', false, localize('devhubVim.active', "Whether the focus is in a Vim buffer: a text editor driven by DevHub Vim, or an empty editor group (its empty buffer)."));
 /** The PoC's name for `devhubVim.active`, kept for existing `when` clauses. */
 const VIM_ATTACHED = new RawContextKey<boolean>('devhubVim.attached', false, localize('devhubVim.attached', "Same as devhubVim.active."));
 const VIM_ACCEPTS_MOTION = new RawContextKey<boolean>('devhubVim.acceptsMotion', false, localize('devhubVim.acceptsMotion', "A Vim motion, operator, count or action may come next (normal, visual or operator-pending mode, and no key is being captured)."));
@@ -708,7 +708,9 @@ class VimEditor extends Disposable implements IVimHost {
 	cmdlineOrigin(): IVimCmdlineOrigin {
 		const t = this.engine.cmdlineTarget();
 		return {
-			editor: this.editor,
+			element: this.editor.getContainerDomNode(),
+			uri: this.editor.getModel()?.uri,
+			focus: () => this.editor.focus(),
 			target: {
 				history: kind => t.history(kind),
 				changed: text => this.guard(() => t.changed(text)),
@@ -1260,6 +1262,115 @@ class VimEditor extends Disposable implements IVimHost {
 	}
 }
 
+/**
+ * The empty buffer: Vim's buffer where the focus is in normal mode with no Vim
+ * editor (an empty editor group, a list, the side bar, the panel), one for all
+ * of them. Neovim's empty, 'nomodifiable' buffer: one empty line, motions
+ * and operators that need text do nothing, insert mode is refused, and
+ * everything that needs no text works as in a Vim editor: `:` and every ex
+ * command (`:e` `:q` `:tabnew` `:vs` `:ls` ...), counts, registers, `@:`,
+ * `gt`, CTRL-O. In an empty editor group it takes every key a Vim editor
+ * takes (`devhubVim.active`); elsewhere only the few bound there
+ * (vimKeymap.ts VIM_WHEN.elsewhere), and CTRL-W `:` from anywhere.
+ */
+class VimEmptyBuffer implements IVimHost {
+
+	readonly engine: VimEngine;
+
+	constructor(private readonly owner: DevhubVim, shared: VimSharedState) {
+		this.engine = new VimEngine(this, shared);
+	}
+
+	context(): VimContext {
+		return this.engine.context();
+	}
+
+	execute(command: string, args: unknown): void {
+		try {
+			if (!this.engine.execute(command, args)) {
+				void this.executeCommand(command, args);
+			}
+			if (this.engine.mode === 'insert' || this.engine.mode === 'replace') {
+				// E21: Cannot make changes, 'modifiable' is off
+				this.engine.reset();
+			}
+		} catch (err) {
+			this.engine.recover(err);
+			onUnexpectedError(err);
+		} finally {
+			this.owner.update();
+		}
+	}
+
+	/** The prompt goes back to what had the focus when it opened: the empty group, the list, the terminal, the webview. */
+	cmdlineOrigin(): IVimCmdlineOrigin {
+		const active = getActiveElement();
+		const element = isHTMLElement(active) ? active : mainWindow.document.body;
+		return {
+			element,
+			uri: undefined,
+			focus: () => {
+				if (element.isConnected) {
+					element.focus();
+				}
+			},
+			target: this.engine.cmdlineTarget(),
+			sources: this.engine.cmdlineSources(),
+		};
+	}
+
+	lineCount(): number { return 1; }
+	lineText(): string { return ''; }
+	getCursor(): VimPos { return { line: 0, col: 0 }; }
+	setCursor(): void { }
+	getSelection(): { anchor: VimPos; active: VimPos } { return { anchor: this.getCursor(), active: this.getCursor() }; }
+	setSelection(): void { }
+	setSelections(): void { }
+	applyEdits(): void { }
+	beginChange(): void { }
+	endChange(): void { }
+	undo(): void { }
+	redo(): void { }
+	indentUnit(): string { return '\t'; }
+	tabSize(): number { return 4; }
+	indentOptions(): VimIndentOptions { return { tabSize: 4, indentSize: 'tabSize', insertSpaces: false }; }
+	setIndentOptions(): void { }
+	defaultIndentOptions(): VimIndentOptions { return this.indentOptions(); }
+	visibleLines(): { top: number; bottom: number } { return { top: 0, bottom: 0 }; }
+	scrollToLine(_line: number, _at: 'top' | 'center' | 'bottom', moveCursor?: () => void): void { moveCursor?.(); }
+	isLineHidden(): boolean { return false; }
+	displayLineMove(): VimPos | undefined { return undefined; }
+	setClipboard(text: string): void {
+		this.owner.clipboardCache = text;
+		void this.owner.clipboardService.writeText(text);
+	}
+	getClipboard(): string { return this.owner.clipboardCache; }
+	prefetchClipboard(): void { this.owner.prefetchClipboard(); }
+	findMatches(): VimMatch[] { return []; }
+	findNextMatch(): VimMatch | undefined { return undefined; }
+	replaceString(replacement: string, match: VimMatch): string { return parseReplaceString(replacement).buildReplaceString(match.groups as string[]); }
+	highlightSearch(query: VimSearchQuery | undefined): void { this.owner.setSearchHighlight(query); }
+	syncFindState(): void { }
+	closeFindWidgets(): void { this.owner.closeFindWidgets(); }
+	showIncSearch(): void { }
+	previewSubstitute(): void { }
+	lineComment(): string | undefined { return undefined; }
+	hasRangeFormatter(): boolean { return false; }
+	fileName(): string { return ''; }
+	executeCommand(command: string, args: unknown): Promise<unknown> {
+		return this.owner.commandService.executeCommand(command, ...(args === undefined ? [] : [args]));
+	}
+	refresh(): void { this.owner.update(); }
+}
+
+/** Where the keys go: a Vim editor, or the empty buffer. */
+type VimBuffer = VimEditor | VimEmptyBuffer;
+
+/** The focused element is an empty editor group (EditorGroupView: `.editor-group-container.empty`, focusable while it has no editor). */
+function isEmptyGroup(element: Element | null): boolean {
+	return !!element?.classList.contains('editor-group-container') && element.classList.contains('empty');
+}
+
 export class DevhubVim extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.devhubVim';
@@ -1280,6 +1391,10 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	searchHighlight: VimSearchQuery | undefined;
 	/** The prompt line, made when the first prompt opens. */
 	private cmdline: VimCmdline | undefined;
+	/** The buffer whose prompt the line shows. */
+	private promptBuffer: VimBuffer | undefined;
+	/** The empty buffer, while Vim is on. */
+	private emptyBuffer: VimEmptyBuffer | undefined;
 	readonly nav = new VimNavPrefix();
 	/** The window the focus was in before this one (`<C-w>p`, vimWindows.ts). */
 	private readonly windows = new VimWindowHistory();
@@ -1361,6 +1476,8 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		this.enabled = enabled;
 		this.cmdline?.dispose();
 		this.cmdline = undefined;
+		this.promptBuffer = undefined;
+		this.emptyBuffer = undefined;
 		this.attached.clear();
 		this.editors.clear();
 		this.nav.cancel();
@@ -1377,6 +1494,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			return;
 		}
 		const store = this.attached;
+		this.emptyBuffer = new VimEmptyBuffer(this, this.shared);
 		for (const editor of this.codeEditorService.listCodeEditors()) {
 			this.attach(editor);
 		}
@@ -1423,7 +1541,11 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	}
 
 	private detach(editor: ICodeEditor): void {
-		this.editors.get(editor)?.dispose();
+		const v = this.editors.get(editor);
+		if (v && v === this.promptBuffer) {
+			this.promptBuffer = undefined;
+		}
+		v?.dispose();
 		this.editors.delete(editor);
 	}
 
@@ -1449,18 +1571,32 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		}
 	}
 
-	private focused(): VimEditor | undefined {
+	/**
+	 * The buffer that takes the keys: the Vim editor with the text focus, or the
+	 * empty buffer wherever the focus is in nothing that takes typing (an empty
+	 * editor group, a list, the side bar, the panel, nothing at all). None in an
+	 * input, a plain editor, the terminal or the prompt line (they type), nor in
+	 * a webview (its page has the keys, and whether one of its inputs has the
+	 * focus is the page's to know).
+	 */
+	private focused(): VimBuffer | undefined {
 		for (const v of this.editors.values()) {
 			if (v.editor.hasTextFocus()) {
 				return v;
 			}
 		}
-		return undefined;
+		const active = getActiveElement();
+		return active && (isEditableElement(active) || active.tagName === 'IFRAME') ? undefined : this.emptyBuffer;
 	}
 
-	/** A `devhubVim.*` engine command (from a keybinding, the command palette, an ex command): for the focused Vim editor. */
+	/** A `devhubVim.*` engine command (from a keybinding, the command palette, an ex command): for the buffer that has the focus. */
 	execute(command: string, args: unknown): void {
 		this.focused()?.execute(command, args);
+	}
+
+	/** CTRL-W `:` (Vim's `CTRL-W_:`): the `:` prompt from anywhere, the terminal, an input and a webview too (there for the empty buffer). */
+	openExPrompt(): void {
+		(this.focused() ?? this.emptyBuffer)?.execute('devhubVim.cmdline', { kind: ':' });
 	}
 
 	prefetchClipboard(): void {
@@ -1502,14 +1638,16 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	 * editor went away) is hidden. Returns whether the line was just shown
 	 * (the focus moved into it).
 	 */
-	private syncCmdline(v: VimEditor | undefined): boolean {
+	private syncCmdline(): boolean {
 		const line = this.cmdline;
 		if (line?.openId !== undefined) {
-			const origin = line.originEditor && this.editors.get(line.originEditor);
+			const origin = this.promptBuffer;
 			if (!origin || origin.engine.cmdlineState?.id !== line.openId) {
 				line.close();
 			}
 		}
+		// the focused buffer's prompt, or the empty buffer's (CTRL-W : where no buffer has the focus)
+		const v = [this.focused(), this.emptyBuffer].find(b => b?.engine.cmdlineState);
 		const state = v?.engine.cmdlineState;
 		if (!v || !state || state.id === (this.cmdline?.lastShown ?? 0)) {
 			return false;
@@ -1517,6 +1655,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		if (!this.cmdline) {
 			this.cmdline = this.instantiationService.createInstance(VimCmdline);
 		}
+		this.promptBuffer = v;
 		this.cmdline.open(v.cmdlineOrigin(), state.kind, state.text, state.id);
 		return true;
 	}
@@ -1534,7 +1673,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			}
 		}
 		try {
-			if (this.syncCmdline(this.focused())) {
+			if (this.syncCmdline()) {
 				// the focus is in the prompt line now: the state below is the line's
 				this.update();
 				return;
@@ -1542,7 +1681,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		} catch (err) {
 			onUnexpectedError(err);
 		}
-		const prompt = this.cmdline?.hasFocus && this.cmdline.originEditor ? this.editors.get(this.cmdline.originEditor) : undefined;
+		const prompt = this.cmdline?.hasFocus ? this.promptBuffer : undefined;
 		const v = this.focused();
 		const ctx = v?.context();
 		this.syncOvertype(v?.engine.mode === 'replace');
@@ -1553,7 +1692,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 					: active && isEditableElement(active) ? 'insert' : '';
 		this.modeKey.set(mode);
 		for (const k of this.activeKeys) {
-			k.set(!!v);
+			k.set(v instanceof VimEditor || !!v && isEmptyGroup(active));
 		}
 		const keys = this.engineKeys;
 		keys.acceptsMotion?.set(!this.nav.active && !!ctx?.acceptsMotion);
@@ -1584,7 +1723,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		}
 	}
 
-	private navFocus(v: VimEditor | undefined): VimNavFocus {
+	private navFocus(v: VimBuffer | undefined): VimNavFocus {
 		if (v) {
 			return v.engine.mode === 'insert' || v.engine.mode === 'replace' ? 'insert' : v.engine.pending ? 'pending' : 'normal';
 		}
@@ -1648,7 +1787,11 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	 * (VimNavPrefix.key decides whether it is eaten or let through). The prefix
 	 * is over before the command runs. The editor's Backspace / Tab / Delete do
 	 * not apply in nav mode (EditorContextKeys.devhubVimAllowsTyping), so
-	 * Ctrl-W Backspace edits nothing without any filter here.
+	 * Ctrl-W Backspace edits nothing without any filter here. A webview's key
+	 * is a copy dispatched on the window itself (WebviewElement
+	 * handleKeyEvent): this listener captures there too, and stopping the copy
+	 * keeps the keybinding service's own (bubbling) window listener from
+	 * resolving it a second time.
 	 */
 	private onWindowKeyDown(e: KeyboardEvent): void {
 		if (!this.nav.active) {
@@ -1844,6 +1987,16 @@ const NAV_COMMANDS: readonly [string, string, boolean, readonly string[], NavWin
 	['definitionSplit', ']', true, ['editor.action.revealDefinitionAside']],
 	['definitionPreview', 'shift+]', false, ['editor.action.peekDefinition']],
 ];
+// Vim's CTRL-W `:` (`:help CTRL-W_:`): the `:` prompt, also where `:` itself is
+// typed text or the page's (the terminal, an input, a webview)
+CommandsRegistry.registerCommand('devhubVim.nav.cmdline', () => {
+	const vim = DevhubVim.instance;
+	vim?.runNav([]);
+	vim?.openExPrompt();
+});
+for (const k of jisKeys('shift+;')) {
+	KeybindingsRegistry.registerKeybinding({ id: 'devhubVim.nav.cmdline', keybinding: KeybindingParser.parseKeybinding(k)!, when: NAV, weight: KeybindingWeight.WorkbenchContrib + 50 });
+}
 for (const [name, key, withCtrl, commands, how] of NAV_COMMANDS) {
 	const id = `devhubVim.nav.${name}`;
 	CommandsRegistry.registerCommand(id, () => DevhubVim.instance?.runNav(commands, how));

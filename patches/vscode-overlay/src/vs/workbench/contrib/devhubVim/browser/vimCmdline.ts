@@ -7,8 +7,10 @@
 //
 // One line at the bottom of the window, as Vim's command line: full width,
 // just above the status bar (at the bottom edge when the status bar is
-// hidden), in the window of the editor it was opened from, whatever the
-// editor groups and panels are. It is shown only while a prompt is open and
+// hidden), in the window it was opened from (a Vim editor's, or the window of
+// the empty group, list, terminal ... the empty buffer's prompt came from:
+// devhubVim.contribution.ts VimEmptyBuffer), whatever the editor groups and
+// panels are. It is shown only while a prompt is open and
 // lies over the bottom of whatever part is there (as a quick input lies over
 // the top), so the layout of the parts never changes.
 //
@@ -115,9 +117,14 @@ const REGISTER_PENDING = ModelDecorationOptions.register({
 /** Vertical padding of the line, in pixels (and the 1px border above it). */
 const PADDING = 2;
 
-/** The Vim editor a prompt was opened from: where focus goes back, what runs the line. */
+/** The buffer a prompt was opened from (a Vim editor, or the empty buffer): where focus goes back, what runs the line. */
 export interface IVimCmdlineOrigin {
-	readonly editor: ICodeEditor;
+	/** What had the focus: the line shows in its window. */
+	readonly element: HTMLElement;
+	/** The buffer's file (`:e` completes from its directory); none for the empty buffer. */
+	readonly uri: URI | undefined;
+	/** Give the focus back to it. */
+	focus(): void;
 	readonly target: IVimCmdlineTarget;
 	/** The engine's candidates (ex commands, options); open editors are added here. */
 	readonly sources: IVimCmdlineCompletionSources;
@@ -392,11 +399,6 @@ export class VimCmdline extends Disposable {
 		return this.shownId;
 	}
 
-	/** The editor the open prompt came from. */
-	get originEditor(): ICodeEditor | undefined {
-		return this.session?.origin.editor;
-	}
-
 	/** The open prompt's number. */
 	get openId(): number | undefined {
 		return this.session?.id;
@@ -416,7 +418,7 @@ export class VimCmdline extends Disposable {
 	open(origin: IVimCmdlineOrigin, kind: VimCmdlineKind, text: string, id: number): void {
 		this.close();
 		this.shownId = id;
-		const view = this.view(getWindow(origin.editor.getContainerDomNode()));
+		const view = this.view(getWindow(origin.element));
 		const engine = origin.target;
 		const target: IVimCmdlineTarget = {
 			history: k => engine.history(k),
@@ -517,7 +519,7 @@ export class VimCmdline extends Disposable {
 		s.view.awaitingKey.set(false);
 		s.view.container.classList.add('hidden');
 		if (refocus) {
-			s.origin.editor.focus();
+			s.origin.focus();
 		}
 	}
 
@@ -742,7 +744,7 @@ export class VimCmdline extends Disposable {
 		const { dir, base: name } = splitFileArg(typed);
 		let dirUri: URI;
 		try {
-			const base = await resolveFileBase(this.workspaceService, this.pathService, origin.editor.getModel()?.uri);
+			const base = await resolveFileBase(this.workspaceService, this.pathService, origin.uri);
 			const r = resolveExFileArg(dir || '.', base.ctx);
 			if (!r || !('path' in r)) {
 				return []; // a pattern, or Vim's error: nothing to list

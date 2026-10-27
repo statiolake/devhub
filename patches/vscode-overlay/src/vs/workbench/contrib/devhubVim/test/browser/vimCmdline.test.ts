@@ -510,20 +510,117 @@ suite('DevHub Vim: the prompt line', () => {
 		assert.ok(nav.length > 0 && nav.every(k => k.when?.serialize().includes('!devhubVim.cmdlineFocus')));
 	});
 
-	test('where there is no text editor (an empty editor group, the side bar): CTRL-W enters nav, its keys run, and gt / gT are registered for the empty group', () => {
+	test('where there is no Vim editor (an empty group, the side bar, a webview): CTRL-W enters nav and its keys run, CTRL-W : included; `:` gt gT apply where the focus is in normal mode', () => {
 		const defaults = KeybindingsRegistry.getDefaultKeybindings();
 		const applies = (command: string, ctx: Record<string, unknown>) => defaults.filter(k => k.command === command).some(k => !k.when || k.when.evaluate({ getValue: <T>(key: string) => ctx[key] as T }));
 		const on = { 'config.devhub.vim.enabled': true };
-		const emptyGroup = { ...on, editorAreaFocus: true, activeEditorGroupEmpty: true, 'devhubVim.mode': '' };
-		const sideBar = { ...on, sideBarFocus: true, 'devhubVim.mode': '' };
-		for (const ctx of [emptyGroup, sideBar]) {
+		// DevhubVim.update: the empty buffer of an empty group is a Vim buffer; the side bar is normal mode without one; a webview has no mode
+		const emptyGroup = { ...on, 'devhubVim.active': true, 'devhubVim.acceptsMotion': true, 'devhubVim.mode': 'normal' };
+		const sideBar = { ...on, sideBarFocus: true, 'devhubVim.acceptsMotion': true, 'devhubVim.mode': 'normal' };
+		const webview = { ...on, activeWebviewPanelId: 'x', 'devhubVim.mode': '' };
+		for (const ctx of [emptyGroup, sideBar, webview]) {
 			assert.ok(applies('devhubVim.nav.enter', ctx), JSON.stringify(ctx));
-			for (const id of ['devhubVim.nav.left', 'devhubVim.nav.close', 'devhubVim.nav.quit', 'devhubVim.nav.moveToNewTabPage']) {
+			for (const id of ['devhubVim.nav.left', 'devhubVim.nav.close', 'devhubVim.nav.quit', 'devhubVim.nav.moveToNewTabPage', 'devhubVim.nav.cmdline']) {
 				assert.ok(applies(id, { ...ctx, 'devhubVim.mode': 'nav' }), id);
 			}
 		}
 		assert.ok(!applies('devhubVim.nav.enter', { ...on, terminalFocus: true }));
-		assert.ok(applies('devhubVim.tabpage.next', emptyGroup) && applies('devhubVim.tabpage.previous', emptyGroup));
-		assert.ok(!applies('devhubVim.tabpage.next', sideBar));
+		for (const ctx of [emptyGroup, sideBar]) {
+			assert.ok(applies('devhubVim.cmdline', ctx), JSON.stringify(ctx));
+		}
+		assert.ok(applies('devhubVim.run', emptyGroup) && applies('devhubVim.tabpage.next', sideBar) && applies('devhubVim.tabpage.previous', sideBar));
+		assert.ok(!applies('devhubVim.cmdline', webview) && !applies('devhubVim.tabpage.next', webview) && !applies('devhubVim.run', webview));
 	});
+
+	test('a webview\'s key while CTRL-W waits (a copy dispatched on the window, WebviewElement) ends the prefix and is resolved once, not again by the window\'s other listeners', () => withPrompt(({ vim, root }) => {
+		const iframe = root.appendChild(mainWindow.document.createElement('iframe'));
+		let reached = 0;
+		const listener = () => reached++;
+		mainWindow.addEventListener('keydown', listener);
+		try {
+			vim.enterNav();
+			assert.strictEqual(vim.nav.active, true);
+			const copy = new KeyboardEvent('keydown', { key: 'x', code: 'KeyX', keyCode: 88 });
+			Object.defineProperty(copy, 'target', { get: () => iframe });
+			mainWindow.dispatchEvent(copy);
+			assert.strictEqual(vim.nav.active, false);
+			assert.strictEqual(reached, 0);
+		} finally {
+			mainWindow.removeEventListener('keydown', listener);
+		}
+	}));
+
+	/** The workbench's own context keys (DevhubVim binds them there). */
+	function globalKey(instantiation: IInstantiationService, key: string): unknown {
+		return instantiation.invokeFunction(a => a.get(IContextKeyService)).getContextKeyValue(key);
+	}
+
+	/** An element of the window with the focus, as the workbench has them: an empty group (EditorGroupView), a list row, an input, a webview's iframe. */
+	function focusOn(root: HTMLElement, tag: string, className?: string): HTMLElement {
+		const element = root.appendChild(mainWindow.document.createElement(tag));
+		if (className) {
+			element.className = className;
+		}
+		element.tabIndex = 0;
+		element.focus();
+		return element;
+	}
+
+	test('an empty editor group is normal mode with an empty buffer: `:` opens the prompt, ex commands run, the focus comes back; insert mode is refused', () => withPrompt(async ({ vim, origin, instantiation, root, run, type, visible, configuration }) => {
+		await configuration.setUserConfiguration(VIM_CMDLINE_AUTOCOMPLETE_SETTING, false);
+		const seen: [string, unknown][] = [];
+		const service = vim.commandService;
+		const execute = service.executeCommand;
+		service.executeCommand = async (id: string, ...args: unknown[]) => { seen.push([id, args[0]]); return undefined as never; };
+		try {
+			origin.setHasTextFocus(false);
+			const group = focusOn(root, 'div', 'editor-group-container empty');
+			vim.update();
+			assert.strictEqual(globalKey(instantiation, 'devhubVim.active'), true);
+			assert.strictEqual(globalKey(instantiation, 'devhubVim.mode'), 'normal');
+			assert.strictEqual(globalKey(instantiation, 'devhubVim.acceptsMotion'), true);
+			// `i` (Neovim: E21, the empty buffer is not modifiable): still normal mode
+			vim.execute('devhubVim.mode', { to: 'insert' });
+			assert.strictEqual(globalKey(instantiation, 'devhubVim.mode'), 'normal');
+			// a motion that needs text does nothing, and nothing breaks
+			vim.execute('devhubVim.motion', { motion: 'down' });
+			vim.execute('devhubVim.operator', { operator: 'delete' });
+			vim.execute('devhubVim.operator', { operator: 'delete' });
+			assert.strictEqual(globalKey(instantiation, 'devhubVim.mode'), 'normal');
+			vim.execute('devhubVim.cmdline', { kind: ':' });
+			assert.strictEqual(visible(), true);
+			type('tabnew');
+			run('devhubVim.cmdline.submit');
+			await timeout(0);
+			assert.strictEqual(visible(), false);
+			assert.strictEqual(mainWindow.document.activeElement, group);
+			assert.deepStrictEqual(seen, [['devhubVim.tabpage.new', { file: '' }], ['devhubVim.open', { file: '' }]]);
+			// counts and `@:` are the engine's there too
+			seen.length = 0;
+			vim.execute('devhubVim.count', { digit: 2 });
+			vim.execute('devhubVim.run', { command: 'devhubVim.tabpage.next', args: { count: '${rawCount}' } });
+			vim.execute('devhubVim.action', { action: 'playMacro', char: ':' });
+			await timeout(0);
+			assert.deepStrictEqual(seen, [['devhubVim.tabpage.next', { count: 2 }], ['devhubVim.tabpage.new', { file: '' }], ['devhubVim.open', { file: '' }]]);
+		} finally {
+			service.executeCommand = execute;
+		}
+	}));
+
+	test('the mode wherever the focus is: normal in a list (no Vim buffer), insert in an input, none in a webview; CTRL-W : opens the prompt from each and gives the focus back', () => withPrompt(async ({ vim, origin, instantiation, root, run, visible }) => {
+		origin.setHasTextFocus(false);
+		const cases: [string, string | undefined, string][] = [['div', 'monaco-list-row', 'normal'], ['input', undefined, 'insert'], ['iframe', undefined, '']];
+		for (const [tag, className, mode] of cases) {
+			const element = focusOn(root, tag, className);
+			vim.update();
+			assert.strictEqual(globalKey(instantiation, 'devhubVim.mode'), mode, tag);
+			assert.strictEqual(globalKey(instantiation, 'devhubVim.active'), false, tag);
+			vim.openExPrompt();
+			assert.strictEqual(visible(), true, tag);
+			run('devhubVim.cmdline.cancel');
+			assert.strictEqual(visible(), false, tag);
+			assert.strictEqual(mainWindow.document.activeElement, element, tag);
+			element.remove();
+		}
+	}));
 });

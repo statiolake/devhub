@@ -50,13 +50,11 @@ export interface VimKeybinding {
 }
 
 /**
- * A Vim editor has the keyboard focus. `textInputFocus`, not `editorTextFocus`:
- * VS Code sets `editorTextFocus` for full editors only, never for a simple
- * widget (the SCM commit message, the debug console input, chat and comment
- * inputs), which are Vim editors too; `devhubVim.active` already says the
- * focused editor is one (DevhubVim.focused).
+ * A Vim buffer has the keyboard focus (DevhubVim.focused): a Vim editor, or
+ * the empty buffer of an empty editor group, which takes every key a Vim
+ * editor does and has no text for the ones that need some.
  */
-const BASE = 'textInputFocus && devhubVim.active';
+const BASE = 'devhubVim.active';
 const MOTION = `${BASE} && devhubVim.acceptsMotion`;
 
 /** The when clauses the defaults use; copy them for your own bindings. */
@@ -92,24 +90,20 @@ export const VIM_WHEN = {
 	 */
 	notTyping: `${BASE} && !devhubVim.insert && devhubVim.mode != 'nav'`,
 	/**
-	 * the keyboard focus is in an editor group with no editor (a tab page
-	 * whose editors were all closed, one restored without any): no Vim editor
-	 * is there to take keys, so the few Vim commands that make sense without a
-	 * buffer (`gt` `gT`) are bound here. `editorAreaFocus` is the editor
-	 * part's scoped key, true while the focus is anywhere in the editor area;
-	 * an empty group's element is focusable (EditorGroupView: tabIndex 0) and
-	 * gets the focus when its last editor closes and when a working set is
-	 * applied (applyWorkingSet focuses the active group). `activeEditorGroupEmpty`
-	 * says the active (= focused) group has no editor; `!textInputFocus` /
-	 * `!inputFocus`: not a widget's input in the editor area.
-	 */
-	/**
 	 * the keyboard focus is in a comment thread's widget (VS Code's
 	 * `commentEditorFocused`: its reply or edit input; `commentFocused`: anything
 	 * else in it), whether or not a Vim editor has it, and not in insert mode
 	 */
 	comment: '(commentEditorFocused || commentFocused) && !devhubVim.insert',
-	emptyGroup: `editorAreaFocus && activeEditorGroupEmpty && !textInputFocus && !inputFocus && devhubVim.mode != 'nav'`,
+	/**
+	 * normal mode where no Vim buffer has the focus: a list, a tree, the side
+	 * bar, the panel, a Settings or Keyboard Shortcuts editor outside its
+	 * inputs (DevhubVim.update: `devhubVim.mode` is `normal` wherever the focus
+	 * is in nothing that takes typing, and not in a webview, whose page has the
+	 * keys). The few Vim commands that need no buffer (`:` `gt` `gT` CTRL-O
+	 * CTRL-I) are bound here.
+	 */
+	elsewhere: `devhubVim.mode == 'normal' && !devhubVim.active`,
 } as const;
 
 const W = VIM_WHEN;
@@ -400,14 +394,19 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	// gt {count}gt gT {count}gT: tab pages (browser/vimTabPages.ts)
 	{ key: 'g t', command: 'devhubVim.run', args: { command: 'devhubVim.tabpage.next', args: { count: '${rawCount}' } }, when: W.normal },
 	{ key: 'g shift+t', command: 'devhubVim.run', args: { command: 'devhubVim.tabpage.previous', args: { count: '${count}' } }, when: W.normal },
-	// ... and in an empty editor group, where there is no Vim editor (and so no count
-	// state): `gt` `gT`, and `{N}gt` / `{N}gT` for a one-digit N as chords of three keys
-	{ key: 'g t', command: 'devhubVim.tabpage.next', when: W.emptyGroup },
-	{ key: 'g shift+t', command: 'devhubVim.tabpage.previous', when: W.emptyGroup },
+	// ... and where no Vim buffer has the focus (a list, the side bar, the panel: an empty
+	// editor group has its empty buffer, which takes the keys above): `:`, `gt` `gT`,
+	// `{N}gt` / `{N}gT` for a one-digit N as chords of three keys (no count is typed
+	// there), CTRL-O / CTRL-I
+	{ key: 'shift+;', command: 'devhubVim.cmdline', args: { kind: ':' }, when: W.elsewhere },
+	{ key: 'g t', command: 'devhubVim.tabpage.next', when: W.elsewhere },
+	{ key: 'g shift+t', command: 'devhubVim.tabpage.previous', when: W.elsewhere },
 	...['1', '2', '3', '4', '5', '6', '7', '8', '9'].flatMap((d): VimKeybinding[] => [
-		{ key: `${d} g t`, command: 'devhubVim.tabpage.next', args: { count: Number(d) }, when: W.emptyGroup },
-		{ key: `${d} g shift+t`, command: 'devhubVim.tabpage.previous', args: { count: Number(d) }, when: W.emptyGroup },
+		{ key: `${d} g t`, command: 'devhubVim.tabpage.next', args: { count: Number(d) }, when: W.elsewhere },
+		{ key: `${d} g shift+t`, command: 'devhubVim.tabpage.previous', args: { count: Number(d) }, when: W.elsewhere },
 	]),
+	{ key: 'ctrl+o', command: 'workbench.action.navigateBack', when: W.elsewhere, weight: OVERRIDE },
+	{ key: 'ctrl+i', command: 'workbench.action.navigateForward', when: W.elsewhere, weight: OVERRIDE },
 	// CTRL-^: the alternate file
 	run('ctrl+6', 'workbench.action.openPreviousRecentlyUsedEditorInGroup', W.normal, { count: 'ignore' }),
 

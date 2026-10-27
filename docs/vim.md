@@ -233,7 +233,9 @@ group), `q` (close the editor), `o` (only this group), `=` (equal sizes), `_ |`
 (maximise), `+ - < >` (resize), `H J K L` (move the group), `T` (move the
 editor to a new [tab page](#tab-pages)), `d` (the
 diagnostic at the cursor, Neovim `CTRL-W_d-default`), `]` / `}` (definition in
-a split / peek). In insert mode `CTRL-W` deletes a word, as in Vim. Any
+a split / peek), `:` (the `:` prompt, Vim's `CTRL-W :`: also from where `:`
+itself is typed text, the terminal, an input, a webview). In insert mode
+`CTRL-W` deletes a word, as in Vim. Any
 other command can follow `CTRL-W` too: whatever the key is bound to while
 `devhubVim.mode == 'nav'` runs once and the prefix ends, as with the defaults
 (see [Customising keys](#customising-keys)); a key bound to nothing only ends
@@ -245,12 +247,25 @@ edit nothing (see [Typing keys are insert-mode keys](#typing-keys-are-insert-mod
 && (!devhubVim.active || !devhubVim.insert) && !terminalFocus && !inQuickInput`:
 it enters nav wherever the focus is but a Vim editor's insert mode (or with Vim
 keys pending), the terminal, the prompt line and quick input: a Vim editor, an
-[empty editor group](#tab-pages), the side bar, the panel, a list, an input.
-The keys after it are `devhubVim.nav.*` with `when` `config.devhub.vim.enabled
+[empty editor group](#tab-pages), the side bar, the panel, a list, an input, a
+webview (extension details, Markdown preview, a webview editor or view). The
+keys after it are `devhubVim.nav.*` with `when` `config.devhub.vim.enabled
 && devhubVim.mode == 'nav'`, wherever the focus is. To make another key the
 prefix too, bind it to the same command with the same `when` (`cmd+w`, say);
 with `{ "terminal": true }` it also enters nav from the terminal (then leave
 `!terminalFocus` out of its `when`), for a key the shell does not take.
+
+A webview's page gets its keys first and has the workbench resolve a copy of
+each (VS Code's `WebviewElement` dispatches it on the window, with the
+webview as its target), so the prefix and the key after it work there as
+anywhere else; the page has seen the key too (typed into a field of its own,
+if one has the focus). While Vim is on, `Cmd+W` never closes the window:
+VS Code's macOS rule for it (`workbench.action.closeWindow` when no editor is
+open) has `!config.devhub.vim.enabled` in its `when`
+(`patches/vscode/0008-devhub-vim.patch`), so a tab page with no editor, or a
+`Cmd+W` that reached the workbench twice from a webview (the copy, and the
+Close Window menu item's accelerator that rule made `Cmd+W`), closes nothing.
+Close Window is `Shift+Cmd+W`.
 
 ### Windows
 
@@ -331,24 +346,42 @@ again, empty (with `files.hotExit` off it is not kept, and the page comes back
 with no editor). Once it has text it is a modified editor like any other
 (below).
 
-**A tab page with no editor** (all its editors closed with `Cmd+W`, or restored
-without one): there is no Vim editor to take keys, but the focus is in the
-empty editor group (VS Code focuses it when its last editor closes and when a
-layout is applied), and these keys are bound there too, with `when`
-`editorAreaFocus && activeEditorGroupEmpty && !textInputFocus && !inputFocus
-&& devhubVim.mode != 'nav'` (`VIM_WHEN.emptyGroup`):
+**A tab page with no editor** (all its editors closed, or restored without
+one): the focus is in the empty editor group (VS Code focuses it when its last
+editor closes and when a layout is applied), and that is a window with an
+empty buffer, as in Neovim: normal mode, with every key of a Vim editor
+(`devhubVim.active` holds, see [Context keys](#context-keys)). `:` opens the
+prompt and every ex command works (`:e {file}`, `:q`, `:tabnew`, `:tabn`,
+`:vs`, `:sp`, `:only`, `:bd`, `:ls`, `@:` …), as do `gt` `{N}gt` `gT`, CTRL-O
+/ CTRL-I, CTRL-W and your own normal-mode bindings that need no text
+(`devhubVim.active && devhubVim.mode == 'normal'`). The buffer is empty and
+not modifiable (Neovim's `'nomodifiable'`): motions, operators and other
+commands that need text do nothing, and `i` `a` `o` … do not enter insert
+mode. It is one buffer, DevHub's `VimEmptyBuffer`: it has no file (`%` is
+empty, `:w` has no name), and its registers, history and macros are the
+editors' own. CTRL-W `c` / `q` there close the tab page (its last window). If
+the group is not focused (after a click in the side bar, say), click into it
+or use `CTRL-W h j k l`.
+
+**Where no Vim buffer has the focus** but nothing takes typing either (a list
+or tree, the side bar, the panel, a Settings or Keyboard Shortcuts editor
+outside its inputs), `devhubVim.mode` is `normal` and the same empty buffer
+takes the few Vim keys bound there, with `when` `devhubVim.mode == 'normal' &&
+!devhubVim.active` (`VIM_WHEN.elsewhere`), so a list keeps Enter, Space, the
+arrows and its other keys:
 
 | Keys | Command |
 |---|---|
+| `:` | `devhubVim.cmdline { "kind": ":" }`: [the prompt](#the-prompt), for the empty buffer; the focus goes back to the list afterwards |
 | `gt` / `gT` | `devhubVim.tabpage.next` / `.previous` |
-| `{N}gt` / `{N}gT` (N 1-9) | the same with `{ "count": N }`: three-key chords (`3 g t`), as there is no Vim count there; `{N}` of two digits is not available, use `:tabn {N}` in a Vim editor, or `:tabs` |
+| `{N}gt` / `{N}gT` (N 1-9) | the same with `{ "count": N }`: three-key chords (`3 g t`), as no count is typed there; for more, `:tabn {N}` or `:tabs` |
+| CTRL-O / CTRL-I | `workbench.action.navigateBack` / `navigateForward` |
 
-`CTRL-W` is workbench-wide anyway (see Windows above): in an empty group
-`CTRL-W c` / `CTRL-W q` close the tab page (its last window), `CTRL-W h j k l`
-move, `CTRL-W s v` split. If the group is not focused (after a click in the
-side bar, say), click into it or use `CTRL-W h j k l`. `:` does not open the
-prompt there (it needs a Vim editor): use the Command Palette (`Vim: New Tab
-Page` …).
+These take `g` and `:` from a list's type-to-navigate. In a webview
+`devhubVim.mode` is empty and none of them is bound: its page has the keys,
+and DevHub cannot tell whether one of its fields has the focus (`gt` typed in
+a comment box would switch tab pages). There, and in the terminal and an
+input, `CTRL-W :` opens the prompt.
 
 **The tab line**: with two tab pages or more (Vim's `'showtabline'` 1) a thin
 bar above the editor groups lists them: the number and the active window's
@@ -645,7 +678,8 @@ These are the names keybindings use; they and their arguments are stable.
 | `devhubVim.insertText` | `{ "text": t }` | (macro replay) |
 | `devhubVim.substituteConfirm` | `{ "char": "y" \| "n" \| "a" \| "q" \| "l" }` | (the `:s///c` question) |
 | `devhubVim.escape` | `{ "interrupt"?: bool }` | `<Esc> CTRL-[ CTRL-C` |
-| `devhubVim.nav.enter` | — | `CTRL-W` |
+| `devhubVim.nav.enter` | `{ "terminal"?: bool }` | `CTRL-W` |
+| `devhubVim.nav.cmdline` | — | `CTRL-W :` (the `:` prompt; the empty buffer's where no Vim buffer has the focus) |
 | `devhubVim.nav.<name>` | — | after `CTRL-W`: `left down up right` (`h j k l`, also with CTRL), `leftArrow downArrow upArrow rightArrow`, `next` (`w`), `previous` (`W`), `lastAccessed` (`p`), `top` (`t`), `bottom` (`b`), `split` / `splitShift` (`s S`), `vsplit` (`v`), `new` (`n`), `close` (`c`), `quit` (`q`), `only` (`o`), `equalize` (`=`), `maximizeHeight` (`_`), `maximizeWidth` (`\|`), `increaseHeight` (`+`), `decreaseHeight` (`-`), `decreaseWidth` (`<`), `increaseWidth` (`>`), `moveFarLeft/Down/Up/Right` (`H J K L`), `moveToNewTabPage` (`T`), `diagnostic` (`d`), `definitionSplit` (`]`), `definitionPreview` (`}`), `escape` |
 
 ### Counts, `devhubVim.run` and `devhubVim.repeat`
@@ -692,7 +726,7 @@ plain `devhubVim.run`. Examples:
 // {count}gb: go to editor {count} of the group
 { "key": "g b", "command": "devhubVim.run",
   "args": { "command": "workbench.action.openEditorAtIndex", "args": "${count}" },
-  "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
+  "when": "devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode == 'normal'" },
 // 3<C-n>: the third next problem
 { "key": "ctrl+n", "command": "devhubVim.repeat",
   "args": { "command": "editor.action.marker.next", "count": "${count}" },
@@ -700,11 +734,11 @@ plain `devhubVim.run`. Examples:
 // always three lines down, whatever the count
 { "key": "g j", "command": "devhubVim.repeat",
   "args": { "command": "devhubVim.motion", "args": { "motion": "down" }, "count": 3 },
-  "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion" },
+  "when": "devhubVim.active && devhubVim.acceptsMotion" },
 // repeat of run: fold {count} times, on the visual selection too, leaving visual mode once
 { "key": "z c", "command": "devhubVim.repeat",
   "args": { "command": "devhubVim.run", "args": { "command": "editor.fold" }, "count": "${count}" },
-  "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'" }
+  "when": "devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'" }
 ```
 
 Motions: `left right charBackward charForward up down displayUp displayDown
@@ -750,8 +784,8 @@ indent outdent copyFromAbove copyFromBelow insertLastInserted oneCommand`.
 
 | Key | Values |
 | --- | --- |
-| `devhubVim.active` | the focused text editor is driven by Vim (`devhubVim.attached` is the old name) |
-| `devhubVim.mode` | `normal`, `insert`, `replace`, `visual`, `visualLine`, `visualBlock`, `operatorPending`, `cmdline` (the prompt line has the focus), `nav` (after `CTRL-W`), or `''` |
+| `devhubVim.active` | the focus is in a Vim buffer: a text editor driven by Vim, or an [empty editor group](#tab-pages) (its empty buffer) (`devhubVim.attached` is the old name) |
+| `devhubVim.mode` | the mode wherever the focus is: `normal`, `insert`, `replace`, `visual`, `visualLine`, `visualBlock`, `operatorPending` in a Vim buffer; `cmdline` (the prompt line has the focus); `nav` (after `CTRL-W`); `normal` also where the focus is in nothing that takes typing (a list, the side bar, the panel, a Settings editor outside its inputs, nothing at all); `insert` in an input, a plain editor and the terminal; `''` in a webview |
 | `devhubVim.visual` | any visual mode |
 | `devhubVim.insert` | insert or replace mode |
 | `devhubVim.acceptsMotion` | a motion, operator, count or action may come next: normal, visual or operator-pending mode, and no key is being captured |
@@ -768,21 +802,33 @@ indent outdent copyFromAbove copyFromBelow insertLastInserted oneCommand`.
 | `devhubVim.shellRunning` | a filter (`:{range}!{cmd}`, `:r !{cmd}`) is running: `CTRL-C` (`devhubVim.cancelShell`) cancels it |
 
 The defaults use these `when` clauses (`common/vimKeymap.ts` `VIM_WHEN`); copy
-them for your own bindings. They start with `textInputFocus`, not
-`editorTextFocus`: VS Code never sets `editorTextFocus` in an input that is an
-editor (the SCM commit message, the debug console, chat), so a binding on it
-does not apply there although the input is a Vim editor (`devhubVim.active`):
+them for your own bindings. They start with `devhubVim.active`, so they hold
+in an empty editor group too; add `textInputFocus` for a binding that needs
+the text (an LSP key, a git hunk), which then holds in Vim editors only. Not
+`editorTextFocus`: VS Code never sets it in an input that is an editor (the
+SCM commit message, the debug console, chat), which is a Vim editor all the
+same:
 
 | Name | When |
 | --- | --- |
-| motion | `textInputFocus && devhubVim.active && devhubVim.acceptsMotion` |
+| motion | `devhubVim.active && devhubVim.acceptsMotion` |
 | normal | motion `&& devhubVim.mode == 'normal'` |
 | normal or visual | motion `&& devhubVim.mode != 'operatorPending'` |
 | not visual | motion `&& !devhubVim.visual` |
 | visual | motion `&& devhubVim.visual` |
 | operator pending | motion `&& devhubVim.mode == 'operatorPending'` |
-| text object (after `i`/`a`) | `textInputFocus && devhubVim.active && devhubVim.textObjectPending` |
-| insert | `textInputFocus && devhubVim.active && devhubVim.insert && !devhubVim.awaitingChar` |
+| text object (after `i`/`a`) | `devhubVim.active && devhubVim.textObjectPending` |
+| insert | `devhubVim.active && devhubVim.insert && !devhubVim.awaitingChar` |
+| elsewhere: normal mode with no Vim buffer (a list, the side bar) | `devhubVim.mode == 'normal' && !devhubVim.active` |
+
+**Normal mode wherever the focus is** is `devhubVim.mode == 'normal'`: a Vim
+editor or an empty group in normal mode, and any place that takes no typing.
+Use it for a key that needs no buffer at all (Quick Open, a view, the
+Problems panel), so it works in the side bar and the panel too; with
+`devhubVim.active &&` in front it is Vim editors and empty groups only (for a
+plain key, which a list would otherwise lose: `<Space>` chords, letters).
+With `devhubVim.acceptsMotion &&` it also waits for a half-built command to be
+finished or cancelled.
 
 A key that is the second half of a doubled operator has its own entry, e.g.
 `u` → `devhubVim.operator lowercase` when `devhubVim.pendingOperator ==
@@ -1125,7 +1171,7 @@ line or two in `wordCharacterClassifier.ts`, `wordHelper.ts` and
 [
   // Colemak-style: move "down" to n, keep it composable (dn, 3n, vn all work)
   { "key": "n", "command": "devhubVim.motion", "args": { "motion": "down" },
-    "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion" },
+    "when": "devhubVim.active && devhubVim.acceptsMotion" },
   { "key": "j", "command": "-devhubVim.motion" },
 
   // VS Code's go to definition on gd (Neovim's gd is "go to local declaration")
@@ -1134,17 +1180,17 @@ line or two in `wordCharacterClassifier.ts`, `wordHelper.ts` and
 
   // Space as a leader key (Space alone then no longer moves right)
   { "key": "space f", "command": "workbench.action.quickOpen",
-    "when": "textInputFocus && devhubVim.active && devhubVim.mode == 'normal'" },
+    "when": "devhubVim.active && devhubVim.mode == 'normal'" },
 
   // A sneak-like "s<char>" that composes: ds, also works
   { "key": "s", "command": "devhubVim.awaitChar",
     "args": { "then": { "command": "devhubVim.motion", "args": { "motion": "tillForward" } } },
-    "when": "textInputFocus && devhubVim.active && devhubVim.acceptsMotion" },
+    "when": "devhubVim.active && devhubVim.acceptsMotion" },
   { "key": "s", "command": "-devhubVim.action" },
 
   // "q" as an extra text object for quotes: diq, vaq
   { "key": "q", "command": "devhubVim.textObject", "args": { "object": "doubleQuote" },
-    "when": "textInputFocus && devhubVim.active && devhubVim.textObjectPending" },
+    "when": "devhubVim.active && devhubVim.textObjectPending" },
 
   // <C-w>n: next editor in the group instead of "split with a new file".
   // After CTRL-W the binding for devhubVim.mode == 'nav' runs once and the
@@ -1639,7 +1685,7 @@ On another layout, rebind the symbol keys by scan code in `keybindings.json`
 ```jsonc
 { "key": "[Equal]", "command": "-devhubVim.motion" },
 { "key": "shift+[Digit6]", "command": "devhubVim.motion", "args": { "motion": "firstNonBlank" },
-  "when": "config.devhub.vim.enabled && textInputFocus && devhubVim.active && devhubVim.acceptsMotion" }
+  "when": "config.devhub.vim.enabled && devhubVim.active && devhubVim.acceptsMotion" }
 ```
 
 `keyboard.dispatch: keyCode` makes VS Code ignore scan codes; keep the default

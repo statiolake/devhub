@@ -259,8 +259,9 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 	 * and disposes it; the page's working set keeps it as VS Code keeps any
 	 * untitled editor (UntitledTextEditorInputSerializer), so coming back, and
 	 * a reload or hibernation, opens it again, empty. When hot exit is off it
-	 * is not kept, and the page comes back with no editor (an empty group:
-	 * `gt` `gT` `CTRL-W` still work there, vimKeymap.ts VIM_WHEN.emptyGroup).
+	 * is not kept, and the page comes back with no editor (an empty group,
+	 * whose empty buffer takes the normal-mode keys: devhubVim.contribution.ts
+	 * VimEmptyBuffer).
 	 * It is `Untitled-N` with an N no other page's layout names
 	 * (freeUntitledNumber): VS Code would hand out the number of an untitled
 	 * editor that is only closed (in another page's working set) again.
