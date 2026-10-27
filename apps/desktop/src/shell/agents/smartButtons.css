@@ -10,7 +10,13 @@
    focus, or being dragged, it is at full strength. On the box and not per
    button, because reaching for one is a decision about the group — a stack in
    which one button is bright and the others ghosts reads as the others
-   being disabled. */
+   being disabled.
+
+   Motion is the shared tokens' (`tokens.css`), with the playful end of them:
+   a line pops into being on the pop spring, scaled up from small, and lines
+   arriving together pop one after another; a button lifts a pixel under the
+   pointer and gives under the press, springing back; a line that leaves
+   shrinks away quickly and the stack closes up behind it. */
 .smart-buttons {
   position: absolute;
   z-index: 2;
@@ -20,39 +26,46 @@
   align-items: end;
   gap: 2px;
   opacity: 0.4;
-  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: opacity var(--motion-fast) var(--ease-standard);
 }
 
 /* Position glides only just after a snap, dock or undock (set by the
    component for a moment), never on mount, page switch or resize. */
 .smart-buttons[data-settling]:not([data-dragging]) {
   transition:
-    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
-    right 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    bottom 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity var(--motion-fast) var(--ease-standard),
+    right var(--motion-slow) var(--ease-spring),
+    bottom var(--motion-slow) var(--ease-spring);
 }
 
 /* Under the pointer the box follows it exactly. */
 .smart-buttons[data-dragging] {
-  transition: opacity 120ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: opacity var(--motion-fast) var(--ease-standard);
 }
 
 /* Mid-drag, entering or leaving a snap zone glides for a moment (set by the
    component on that change only); otherwise the box tracks the pointer. */
 .smart-buttons[data-dragging][data-snapping] {
   transition:
-    opacity 120ms cubic-bezier(0.23, 1, 0.32, 1),
-    right 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    bottom 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    opacity var(--motion-fast) var(--ease-standard),
+    right var(--motion-base) var(--ease-spring),
+    bottom var(--motion-base) var(--ease-spring);
 }
 
-/* A line coming and going: fades and takes its height with it, so the stack
-   closes up rather than jumping. An exiting line stays mounted until done. */
+/* A line coming and going. It comes in on the pop spring: up from small,
+   overshooting a little and settling, while the stack makes room for it;
+   lines arriving together follow one another (`--smart-order`, set by the
+   component). It goes quickly, shrinking and fading as the stack closes up.
+   An exiting line stays mounted until done. */
 @keyframes smart-button-enter {
   from {
     max-height: 0;
     opacity: 0;
-    transform: translateY(6px);
+    transform: scale(var(--motion-scale-pop));
+  }
+
+  30% {
+    opacity: 1;
   }
 
   to {
@@ -73,30 +86,60 @@
     max-height: 0;
     margin-bottom: -2px;
     opacity: 0;
-    transform: translateY(6px);
+    transform: scale(0.8);
   }
 }
 
+@keyframes smart-button-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.smart-button-line {
+  transform-origin: 100% 100%;
+}
+
 .smart-button-line[data-entering] {
-  animation: smart-button-enter 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: smart-button-enter var(--motion-slower) var(--ease-pop) both;
+  animation-delay: calc(var(--smart-order, 0) * 50ms);
 }
 
 .smart-button-line[data-exiting] {
-  animation: smart-button-exit 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: smart-button-exit var(--motion-exit) var(--ease-exit) both;
   pointer-events: none;
 }
 
+/* Reduce Motion: the box and its lines fade, and nothing moves or grows. */
 @media (prefers-reduced-motion: reduce) {
   .smart-buttons,
   .smart-buttons[data-settling]:not([data-dragging]),
   .smart-buttons[data-dragging],
   .smart-buttons[data-dragging][data-snapping] {
-    transition: opacity 120ms linear;
+    transition: opacity var(--motion-fast) linear;
   }
 
-  .smart-button-line[data-entering],
+  .smart-button-line[data-entering] {
+    animation: smart-button-fade var(--motion-base) linear both;
+  }
+
   .smart-button-line[data-exiting] {
     animation: none;
+  }
+
+  .smart-button,
+  .smart-buttons-auto,
+  .smart-buttons-switch::after {
+    transition: none;
+  }
+
+  .smart-button:is(:hover, :active),
+  .smart-buttons-auto:is(:hover, :active) {
+    transform: none;
+  }
+
+  .smart-buttons-menu {
+    animation: smart-button-fade var(--motion-base) linear;
   }
 }
 
@@ -162,41 +205,60 @@
   align-items: stretch;
 }
 
-.smart-button {
-  border: 1px solid var(--line-strong);
-  background: var(--chrome);
-  color: var(--primary);
-  font-size: 11px;
-  font-weight: 510;
-  line-height: 16px;
-}
-
+/* A button is a small resting card (elevation 1) of the floating material,
+   round-ended: over a terminal or a transcript of any colour it carries its
+   own ground and its own edge. */
 .smart-button {
   overflow: hidden;
   min-width: 0;
   flex: 1 1 auto;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-row);
+  padding: 3px 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  backdrop-filter: var(--material-blur);
+  background: var(--material-float);
+  box-shadow: var(--elevation-1);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 510;
+  line-height: 16px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard),
+    transform var(--motion-base) var(--ease-spring);
 }
 
+/* Under the pointer it lifts a pixel towards the hand (elevation 2); pressed
+   it gives, quickly, and springs back on release. */
 .smart-button:hover,
 .smart-buttons-auto:hover {
-  background: var(--wash-strong);
+  background: color-mix(in srgb, var(--primary) 6%, var(--raised));
 }
 
-.smart-button:active,
+.smart-button:hover:not([data-waiting]) {
+  box-shadow: var(--elevation-2);
+  transform: translateY(-1px);
+}
+
+.smart-button:active:not([data-waiting]),
 .smart-buttons-auto:active {
-  background: var(--selection);
+  background: color-mix(in srgb, var(--primary) 12%, var(--raised));
+  box-shadow: var(--elevation-1);
+  transform: scale(0.94);
+  transition-duration: 80ms;
 }
 
 /* Automatic: the line edged in the accent, so an Agent that will act on its
    own is never a surprise. One whose condition does not hold is drawn but
    cannot be pressed: it fires by itself when the condition arises. */
 .smart-button-line[data-automatic] .smart-button {
-  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 1px 2px var(--shadow-soft),
+    0 2px 8px var(--shadow-soft);
 }
 
 .smart-button[data-waiting] {
@@ -205,7 +267,7 @@
 
 .smart-button[data-waiting]:hover,
 .smart-button[data-waiting]:active {
-  background: var(--chrome);
+  background: var(--material-float);
 }
 
 /* With no button offered and nothing switched on, the box is only its
@@ -225,18 +287,21 @@
   align-items: center;
   gap: 2px;
   padding: 2px 5px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-row);
+  border: 0;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--secondary);
   font-size: 11px;
   font-weight: 510;
   line-height: 16px;
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-base) var(--ease-spring);
 }
 
 .smart-buttons-auto[data-armed] {
-  border-color: var(--accent);
-  background: var(--chrome);
+  background: var(--material-float);
+  box-shadow: 0 0 0 1px var(--accent);
   color: var(--accent);
 }
 
@@ -249,15 +314,26 @@
   width: 260px;
   flex-direction: column;
   padding: var(--space-1);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-row);
-  background: var(--chrome);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
+  border-radius: var(--radius-panel);
+  backdrop-filter: var(--material-blur);
+  background: var(--material-float);
+  box-shadow: var(--elevation-3);
+  transform-origin: 100% 100%;
+  animation: smart-buttons-menu-in var(--motion-base) var(--ease-enter);
+}
+
+@keyframes smart-buttons-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(var(--motion-rise) / 2))
+      scale(var(--motion-scale-popover));
+  }
 }
 
 .smart-buttons[data-presentation="gui"] .smart-buttons-menu {
   right: auto;
   left: 0;
+  transform-origin: 0 100%;
 }
 
 .smart-buttons-menu-intro {
@@ -304,7 +380,7 @@
   margin-top: 2px;
   border-radius: 6px;
   background: var(--line-strong);
-  transition: background-color 120ms ease;
+  transition: background-color var(--motion-fast) var(--ease-standard);
 }
 
 .smart-buttons-switch::after {
@@ -316,7 +392,7 @@
   border-radius: 50%;
   background: var(--chrome);
   content: "";
-  transition: transform 120ms ease;
+  transition: transform var(--motion-base) var(--ease-spring);
 }
 
 .smart-buttons-menu-item[aria-checked="true"] .smart-buttons-switch {

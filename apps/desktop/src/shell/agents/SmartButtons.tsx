@@ -51,7 +51,13 @@
  * pointed at.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import type { AgentWire } from "../../ipc/appShell";
 import type {
   AgentActionTriggerWire,
@@ -372,6 +378,7 @@ export function SmartButtons({
       automatic: on,
     });
 
+  let arriving = 0;
   return (
     <div
       ref={own}
@@ -485,12 +492,19 @@ export function SmartButtons({
       {present.map(({ line: { action, active }, exiting, entering }) => {
         const on = ticked.includes(action.id);
         const when = FIRES_WHEN[action.trigger];
+        // Lines arriving together pop in one after another, top first.
+        const order = entering ? arriving++ : 0;
         return (
           <div
             key={action.id}
             className="smart-button-line"
             {...(on ? { "data-automatic": "" } : {})}
-            {...(entering ? { "data-entering": "" } : {})}
+            {...(entering
+              ? {
+                  "data-entering": "",
+                  style: { "--smart-order": order } as CSSProperties,
+                }
+              : {})}
             {...(exiting ? { "data-exiting": "", "aria-hidden": true } : {})}
             {...(exiting ? { inert: true } : {})}
           >

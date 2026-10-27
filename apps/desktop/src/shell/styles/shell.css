@@ -1427,21 +1427,35 @@ body.is-resizing-sidebar {
 
 /*
  * The same failure once the sheet is dismissed: one line along the top of
- * the pane, with the same actions, for as long as the failure holds.
+ * the pane, with the same actions, for as long as the failure holds. It
+ * floats (elevation 2) a step in from the pane's edges rather than being a
+ * bar across it, so the content under it reads as still there, and it drops
+ * in from above as it appears.
  */
 .agent-failure-banner {
   position: absolute;
   z-index: 5;
-  top: 0;
-  right: 0;
-  left: 0;
+  top: var(--space-2);
+  right: var(--space-3);
+  left: var(--space-3);
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  background: var(--chrome);
-  border-bottom: 1px solid var(--line-soft);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-card);
+  backdrop-filter: var(--material-blur);
+  background: var(--material-float);
+  box-shadow: var(--elevation-2);
   color: var(--secondary);
+  animation: agent-failure-banner-in var(--motion-slow) var(--ease-enter);
+}
+
+@keyframes agent-failure-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-1 * var(--motion-rise)))
+      scale(var(--motion-scale-in));
+  }
 }
 
 .agent-failure-banner-text {
