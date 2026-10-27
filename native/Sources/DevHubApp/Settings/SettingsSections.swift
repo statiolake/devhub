@@ -653,9 +653,9 @@ enum SettingsSections {
                 c.update(next, rebuild: true)
             },
             onMove: { direction in
-                guard let selected, let (next, index) = SettingsEdits.moveAction(c.draft, selected: selected, by: direction) else { return }
-                c.select(.actions, index)
-                c.update(next, rebuild: true)
+                guard let selected, let moved = SettingsEdits.moveAction(c.draft, selected: selected, by: direction) else { return }
+                c.select(.actions, moved.selected)
+                c.update(moved.config, rebuild: true)
             },
             reset: resetLink(kit, what: SettingsSection.actions.resetName) { c.reset(.actions) },
             empty: ("No agent actions", "An action is what DevHub says to an agent — when it starts one on an Issue, and when you press one of its Smart Buttons."),

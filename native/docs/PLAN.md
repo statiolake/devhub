@@ -130,7 +130,7 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | S-09 | Status marks: unknown, idle, working (ring), waiting, background (four still arcs, quieter yellow), error; unread mark; Workspace activity mark from tmux pane activity (`terminal_idle_seconds`) | `StatusMark.tsx`, `status.ts`, `model/terminalActivity.ts`, `main/terminal/paneActivity.ts` | Marks animate like TS; Workspace row shows working while a non-shell program prints |
 | S-10 | Chord digits on rows while the prefix is armed (`Cmd+Q 0…9`) | `chordDigits.test.tsx` | Digits appear after `Cmd+Q`, disappear after the second stroke |
 | S-11 | Closing rows: "closing" state with step, close failure surface | `closingExit.ts`, `closingRow.test.tsx` | Row shows progress; failure shows reason + retry |
-| S-12 | Usage limits at the foot: one row per CLI (bar of shortest window, %, reset time, strictest-window colour, caption), rail shows bars only, tooltip with every window, "No plan limits" | `UsageLimits.tsx`, `usageRow.ts`, `shell/resetTime.ts`, `shell/usageLevel.ts` | Matches `UsageLimits.tsx` header comment |
+| S-12 | Usage limits at the foot: one row per CLI (bar of shortest window, %, reset time, strictest-window colour, caption), rail shows bars only, tooltip with every window, "No plan limits" | `UsageLimits.tsx`, `usageRow.ts`, `shell/resetTime.ts`, `shell/usageLevel.ts` | Matches `UsageLimits.tsx` header comment (done in WP11 (UI)) |
 | S-13 | Prompt-cache facts on GUI Agent rows (cache keeper state) | `promptCacheFacts.ts` | Same facts |
 | S-14 | Remote (SSH) Workspace row: host glyph, health | `remoteWorkspaceRow.test.tsx` | Row draws; health from runtime (WP12) |
 
@@ -140,10 +140,10 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | --- | --- | --- | --- |
 | WS-01 | Workspace = folder root; repository identity from `origin`; clone and each worktree are separate Workspaces | `model/domain.ts` (2350) `Workspace`, `Repository` | Domain types ported with invariants |
 | WS-02 | Workspace sources (`[[workspace_sources]]`): filesystem (depth-bounded walk, kinds, hidden, excludes), command (timeout), date (template) | `model/config.ts`, `main/shell/workspacePicker.ts` (462) | Same candidates as TS for the same config |
-| WS-03 | Workspace picker `Cmd+Q F`: streamed candidates, pool only grows, local fuzzy filter, "Other…" (NSOpenPanel), Return opens, Cmd+Return opens with an Agent (asks profile), fixed rows New Project / Clone | `shell/components/shell/WorkspacePicker.tsx`, `Picker.tsx`, `model/fuzzy.ts` | Typing never blanks the list; cancelled sources are killed |
-| WS-04 | New Project sheet (path under `projects.directory`) and Clone sheet (repo + destination), failures under the field | `ProjectSheets.tsx`, `main/shell/projects.ts`, `model/projects.ts`, `cloneDestination.ts` | Folder created / cloned and opened; "already exists" keeps sheet |
+| WS-03 | Workspace picker `Cmd+Q F`: streamed candidates, pool only grows, local fuzzy filter, "Other…" (NSOpenPanel), Return opens, Cmd+Return opens with an Agent (asks profile), fixed rows New Project / Clone | `shell/components/shell/WorkspacePicker.tsx`, `Picker.tsx`, `model/fuzzy.ts` | Typing never blanks the list; cancelled sources are killed (done in WP11) |
+| WS-04 | New Project sheet (path under `projects.directory`) and Clone sheet (repo + destination), failures under the field | `ProjectSheets.tsx`, `main/shell/projects.ts`, `model/projects.ts`, `cloneDestination.ts` | Folder created / cloned and opened; "already exists" keeps sheet (done in WP11) |
 | WS-05 | Worktrees: create worktree for a branch (`{repo}_{branch}` folders), list, remove | `model/worktrees.ts`, `main/shell/worktreeFolder.ts`, `main/shell/git.ts` | `git worktree add/remove` invoked as TS does |
-| WS-06 | Close Workspace: one confirmation listing busy Agents, running terminal processes (non-shell panes incl. managed Neovim), Agent terminals; dirty worktree → three-way sheet (keep folder / delete anyway / cancel, Cancel default); clean worktree removed without asking | `shell/picker/CloseConfirmationSheet.tsx`, `WorktreeCloseSheet.tsx`, `domain.ts` `WorkspaceClose`, `CLOSE_STEPS` | Matches `docs/window-and-pages.md` §"A close asks once, then acts" |
+| WS-06 | Close Workspace: one confirmation listing busy Agents, running terminal processes (non-shell panes incl. managed Neovim), Agent terminals; dirty worktree → three-way sheet (keep folder / delete anyway / cancel, Cancel default); clean worktree removed without asking | `shell/picker/CloseConfirmationSheet.tsx`, `WorktreeCloseSheet.tsx`, `domain.ts` `WorkspaceClose`, `CLOSE_STEPS` | Matches `docs/window-and-pages.md` §"A close asks once, then acts" (done in WP11 (UI)) |
 | WS-07 | Close steps with deadlines (agents, terminals, editor = kill managed Neovim pane + unlink socket, worktree), failures down the one failure path | `appController.ts` close flow, `cleanupDeadline.ts` | A hung step fails with a notice, never hangs the row |
 | WS-08 | Selection repair after removal (`repairSelection`): next row of what held it, else previous | `model/appModel.ts` | Port TS cases as tests |
 | WS-09 | Scratch: `[scratch] daily` date template (`YYYY YY MM DD MMDD`, `[text]`), validation (`invalid_scratch_daily`), midnight rollover (timer re-aimed on wake), yesterday's stays as ordinary row, cannot close today's, folder created on demand, unavailable row with Retry/Locate… | `model/scratchDay.ts`, `model/dateTemplate.ts`, `main/shell/scratchDay.ts`, `README.md` §Scratch | All README rules covered by tests |
@@ -201,16 +201,16 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | ID | Feature | TS source | AC |
 | --- | --- | --- | --- |
 | A-01 | Agent profiles `[[agent_profiles]]` (codex/claude/cursor/custom, command, args, env, presentation), defaults | `model/config.ts`, `domain.ts` `AgentProfile`, `model/claudeDefaults.ts` | Same validation diagnostics |
-| A-02 | New Agent sheet `Cmd+Q C`: rows New <Profile> Session + earlier Claude/Codex sessions in the folder (titles, branch, preview), GUI/TUI tag, ⌘ flips, ⌥ opens beside editor, typing filters, sessions read async | `shell/picker/AgentPickerSheet.tsx`, `SessionPicker.tsx`, `sessionRows.tsx`, `main/agent/conversation/resume.ts` | Matches `docs/agent-gui.md` §Resuming |
+| A-02 | New Agent sheet `Cmd+Q C`: rows New <Profile> Session + earlier Claude/Codex sessions in the folder (titles, branch, preview), GUI/TUI tag, ⌘ flips, ⌥ opens beside editor, typing filters, sessions read async | `shell/picker/AgentPickerSheet.tsx`, `SessionPicker.tsx`, `sessionRows.tsx`, `main/agent/conversation/resume.ts` | Matches `docs/agent-gui.md` §Resuming (done in WP11 (UI)) |
 | A-03 | Terminal Agent = tmux session `ag-<id>` running the CLI, attached by the same surface | `main/agent/sessions.ts`, `main/shell/agentWiring.ts` (1027) | TS-started Agents adopted after switching apps |
 | A-04 | Screen detection of status for terminal Agents (Claude, Codex, Cursor manifests + rules, screen freshness) | `main/agent/detect/*` (1063), `screenFreshness.ts`, `activity.ts` | Port screen fixtures tests (`claudeScreens`, `codexScreens`, `cursorScreens`) |
 | A-05 | Unread: raised on leaving working, cleared when looked at; `Cmd+Q U` marks unread | `domain.ts`, `appModel.ts` | Rule tests |
-| A-06 | Rename `Cmd+Q ,` (sheet), Stop / close `Cmd+Q X` (asks when not idle; always asks when its terminal is open: Move terminal to editor / Stop and close) | `AgentRenameSheet.tsx`, `domain.ts`, `agentReconciler.ts` | §"Stopping an Agent with its terminal open" |
+| A-06 | Rename `Cmd+Q ,` (sheet), Stop / close `Cmd+Q X` (asks when not idle; always asks when its terminal is open: Move terminal to editor / Stop and close) | `AgentRenameSheet.tsx`, `domain.ts`, `agentReconciler.ts` | §"Stopping an Agent with its terminal open" (done in WP11 (rename sheet)) |
 | A-07 | Restart Session `Cmd+Q Shift+R` with resume (Claude `--resume`, Codex `resume <id>`), `withSession` argv composition | `domain.ts` `agentRestart`, `resume.ts` `withSession`, `agentProfileCommand.ts` | Argv equal to TS for each case |
 | A-08 | Continue in GUI (terminal Claude/Codex → GUI Agent on same session) and Continue in terminal (mirror) | `docs/agent-gui.md` §Continue, `agentContinuation` | Session continues; old Agent stopped after confirmation if busy |
 | A-09 | Agent failure surface (exit code, end of `err`, Retry) | `main/shell/agentFailure.ts`, `shell/agents/AgentFailure.tsx` | Same notice text |
-| A-10 | Injection queue: wording sent when the CLI is at a prompt, review sheet (confirm_before_send), cancelled recorded | `main/agent/injection.ts` (318), `InjectionReviewSheet.tsx`, `InjectionStatus.tsx` | Port injection tests |
-| A-11 | Agent actions `[agent_actions.<trigger>.<id>]`, `Cmd+Q A` sheet, templates with variables | `model/agentActions.ts` (463), `AgentActionsSheet.tsx` | Same built-ins, same template expansion |
+| A-10 | Injection queue: wording sent when the CLI is at a prompt, review sheet (confirm_before_send), cancelled recorded | `main/agent/injection.ts` (318), `InjectionReviewSheet.tsx`, `InjectionStatus.tsx` | Port injection tests (done in WP11 (review sheet)) |
+| A-11 | Agent actions `[agent_actions.<trigger>.<id>]`, `Cmd+Q A` sheet, templates with variables | `model/agentActions.ts` (463), `AgentActionsSheet.tsx` | Same built-ins, same template expansion (done in WP11 (sheet)) |
 | A-12 | Smart Buttons (commit, push, pull_request, draft_pull_request, unresolved_review_comments, ci_failing, always): shown while idle and condition holds; draggable stack with snap (16px) and remembered position; automatic actions bolt (commit, push, review, CI), once per event | `model/smartButtons.ts` (322), `model/automaticActions.ts`, `shell/agents/SmartButtons.tsx` | README §"Agent actions and Smart Buttons" |
 | A-13 | Agent terminal `Cmd+Q V` (`tm-<id>` session in the Workspace folder): start/hide/show, `terminal_needs_agent` / `_view` notices, ends with its session, closed with its Agent, persisted (`terminal`, `terminal_share`, `terminal_stacked_share`), legacy `pane_layout` read | `model/agentTerminal.ts`, `docs/window-and-pages.md` | All rules of that section |
 | A-14 | Move Agent terminal to the editor (`move-window` into `ws-` session) | `confirm_stop_agent` `moveTerminal` | Processes keep running in the editor terminal |
@@ -257,7 +257,7 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | U-13 | Rewind UI (confirm under the message), Continue in terminal button, activity line, status mark | `ActivityLine.tsx`, `StatusMark.tsx` | §Rewinding |
 | U-14 | Links in transcript: paths → managed Neovim (E-07), issues/PRs → browser, hover title | `LinkedText.tsx`, `pathLinks.tsx`, `issueLinks.tsx` | Click opens the right target |
 | U-15 | Smart Buttons overlay on composer / terminal Agent corner | `SmartButtons.tsx` | See A-12 |
-| U-16 | Voice dictation `⌘⇧M` in any send field | `useDictation.ts`, `dictation.ts`, `main/voice/*` | See X-06 |
+| U-16 | Voice dictation `⌘⇧M` in any send field | `useDictation.ts`, `dictation.ts`, `main/voice/*` | See X-06 (done in WP11) |
 
 ### 2.10 Chords, palette, help, navigation
 
@@ -267,9 +267,9 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | K-02 | Chord dispatcher in front of every surface (NSEvent local monitor), prefix armed state, `Cmd+Q Cmd+Q` quits (`forward_prefix`), unbound strokes pass to the surface, declined while a question is up | `main/shell/chords.ts` (696), `keyRouter.ts`, `keyboard.ts` | Works over terminal, composer, Sidebar |
 | K-03 | `[keybindings]` rebinding with diagnostics (unknown id, duplicate key) | `model/config.ts` KeybindingsSpec | Same diagnostics |
 | K-04 | Each command's behaviour: workspace/agent/unread/tab cycles, `Cmd+Q 0…9`, `toggle_workspace_agent`, `toggle_split`, `toggle_scratch` (remembers where you were), `swap_split_focus` (walks editor→Agent→terminal), `toggle_terminal`, `focus_editor`, `focus_sidebar`, `toggle_sidebar`, `add_workspace`, `add_agent`, `open_issue_picker`, `send_agent_action`, `rename_agent`, `close_selection`, `restart_agent`, `close_workspace`, `refresh_repositories`, `mark_agent_unread`, `dismiss_alert`, `show_notifications`, `open_settings`, `open_log`, `show_chord_help`, `open_command_palette`, `navigate_back/forward`, `move_entry_up/down`, `open_tab_picker` | `model/commands.ts` docs, `model/coordinator.ts` | Port `resolveChord` tests |
-| K-05 | Command palette `Cmd+Q :`: `Category: Label` with effective chords, only commands `resolveChord` would act on, recent 8 first, fuzzy on title+id | `model/commandPalette.ts`, `CommandPaletteSheet.tsx` | §"Every command, by name" |
-| K-06 | Chord help overlay `Cmd+Q ?` rendered from the registry | `ChordHelpSheet.tsx` | Reflects rebinding |
-| K-07 | Tab picker `Cmd+Q G` (Return activates, Cmd+Return mounts Agent beside) | `TabPickerSheet.tsx` | — |
+| K-05 | Command palette `Cmd+Q :`: `Category: Label` with effective chords, only commands `resolveChord` would act on, recent 8 first, fuzzy on title+id | `model/commandPalette.ts`, `CommandPaletteSheet.tsx` | §"Every command, by name" (done in WP11 (UI)) |
+| K-06 | Chord help overlay `Cmd+Q ?` rendered from the registry | `ChordHelpSheet.tsx` | Reflects rebinding (done in WP11 (UI)) |
+| K-07 | Tab picker `Cmd+Q G` (Return activates, Cmd+Return mounts Agent beside) | `TabPickerSheet.tsx` | — (done in WP11 (UI)) |
 | K-08 | Back/Forward history: entry = selection, browser rules, skip closed, 100 max; inputs `Cmd+[`/`Cmd+]` over DevHub's own views, mouse 4/5, swipe, title-bar arrows, `Cmd+Q H/L` | `model/navigationHistory.ts`, `main/shell/historyKeys.ts`, `shell/historyButtons.ts` | Port tests; table in §Back and Forward (terminal surfaces count as DevHub's own except brackets go to the terminal) |
 | K-09 | Editing keys on DevHub's own chrome (cut/copy/paste/select all in fields) | `main/shell/editingCommands.ts` | Standard responder chain |
 
@@ -277,19 +277,19 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 
 | ID | Feature | TS source | AC |
 | --- | --- | --- | --- |
-| Q-01 | One picker control for every choice (heading band, field, rows, footer, Escape = cancel/back, Ctrl-N/P, arrows, Return, Cmd+Return variants), wizard runner (Escape goes back a step) | `shell/components/shell/{Picker,Wizard,wizardFlow}.tsx`, `shell/picker/*` | All sheets share one SwiftUI/AppKit component |
-| Q-02 | Modal layer over everything; takes tooltip down; keyboard held | `main/shell/pickerView.ts` (403), `layerView.ts` | — |
-| Q-03 | Sheets: workspace picker, agent picker, tab picker, rename, agent actions, injection review, chord help, command palette, close confirmation, worktree close, issue assignment, new project, clone | `shell/picker/*.tsx`, `ProjectSheets.tsx` | Each reachable and keyboard-complete |
-| Q-04 | Issue assignment `Cmd+Q I`: Issue URL → action → clone (search like picker; `--repo`) → branch (worktree `feature/<n>-wip` or root) → agent (New Agent list for that folder, "Just open the editor"); errors under the field | `IssueAssignmentSheet.tsx`, `main/shell/issues.ts`, `main/shell/github.ts` | §Assign Issue in README |
+| Q-01 | One picker control for every choice (heading band, field, rows, footer, Escape = cancel/back, Ctrl-N/P, arrows, Return, Cmd+Return variants), wizard runner (Escape goes back a step) | `shell/components/shell/{Picker,Wizard,wizardFlow}.tsx`, `shell/picker/*` | All sheets share one SwiftUI/AppKit component (done in WP11) |
+| Q-02 | Modal layer over everything; takes tooltip down; keyboard held | `main/shell/pickerView.ts` (403), `layerView.ts` | — (done in WP11) |
+| Q-03 | Sheets: workspace picker, agent picker, tab picker, rename, agent actions, injection review, chord help, command palette, close confirmation, worktree close, issue assignment, new project, clone | `shell/picker/*.tsx`, `ProjectSheets.tsx` | Each reachable and keyboard-complete (done in WP11) |
+| Q-04 | Issue assignment `Cmd+Q I`: Issue URL → action → clone (search like picker; `--repo`) → branch (worktree `feature/<n>-wip` or root) → agent (New Agent list for that folder, "Just open the editor"); errors under the field | `IssueAssignmentSheet.tsx`, `main/shell/issues.ts`, `main/shell/github.ts` | §Assign Issue in README (done in WP11) |
 
 ### 2.12 Notices
 
 | ID | Feature | TS source | AC |
 | --- | --- | --- | --- |
-| N-01 | Toast stack over everything: failures and standing conditions (gh missing, machine not answering), actions, auto-hide after `notice_seconds` (paused on hover/keyboard/selection, ≥2 s left), lifetime rule (no immediate repeat) | `shell/toasts/*`, `shell/notices.ts`, `shell/alertLifetime.ts`, `main/shell/toastsView.ts`, `appConditions.ts`, `machineConditions.ts` | §"The notices hide themselves" |
-| N-02 | Notice center `Cmd+Q M`: last 100, newest first, time, kind (Error / Ongoing / Resolved), selectable text, actions while in force, unread until seen, delete / Clear All, arrows, Escape returns keys | `model/noticeCenter.ts`, `model/noticeEpisodes.ts`, `NoticeCenter.tsx` | Same rules |
-| N-03 | Failure routing: page that began it raises once; one audience draws; Settings window draws its own; per-subject scopes (Agent pane, Workspace surface) | `main/shell/publishAudience.ts`, `main/diagnostics/notices.ts`, `shell/failure.ts`, `mainFailureRoot.ts` | One path; no duplicate toasts |
-| N-04 | `dismiss_alert` `Cmd+Q D` | `commands.ts` | — |
+| N-01 | Toast stack over everything: failures and standing conditions (gh missing, machine not answering), actions, auto-hide after `notice_seconds` (paused on hover/keyboard/selection, ≥2 s left), lifetime rule (no immediate repeat) | `shell/toasts/*`, `shell/notices.ts`, `shell/alertLifetime.ts`, `main/shell/toastsView.ts`, `appConditions.ts`, `machineConditions.ts` | §"The notices hide themselves" (done in WP11) |
+| N-02 | Notice center `Cmd+Q M`: last 100, newest first, time, kind (Error / Ongoing / Resolved), selectable text, actions while in force, unread until seen, delete / Clear All, arrows, Escape returns keys | `model/noticeCenter.ts`, `model/noticeEpisodes.ts`, `NoticeCenter.tsx` | Same rules (done in WP11) |
+| N-03 | Failure routing: page that began it raises once; one audience draws; Settings window draws its own; per-subject scopes (Agent pane, Workspace surface) | `main/shell/publishAudience.ts`, `main/diagnostics/notices.ts`, `shell/failure.ts`, `mainFailureRoot.ts` | One path; no duplicate toasts (done in WP11) |
+| N-04 | `dismiss_alert` `Cmd+Q D` | `commands.ts` | — (done in WP11) |
 
 ### 2.13 Settings and configuration
 
@@ -299,7 +299,7 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | P-02 | TOML 1.0 parser with source locations; validation codes + paths + locations (`ValidationCode`) | `model/config.ts`, `model/tomlDocument.ts` (856) | Same diagnostics for TS's test inputs |
 | P-03 | Format-preserving edits (comments, grouping, order kept), revision check (expected vs actual) | `model/tomlDocument.ts` | Edit → diff touches only the key's line |
 | P-04 | File watch + reload; refused reload keeps last accepted config; launch refusal → defaults + notice | `main/shell/settingsRefusal.ts`, `ReloadOutcome` | Saving a broken file shows a notice and changes nothing |
-| P-05 | Settings window (own NSWindow), sections: **General** (Environment, Notifications, Terminals, Editors incl. "Editor area" note, Appearance, Agents, Scratch, Projects, Sidebar, Agent panes), **Workspaces** (sources collection editor), **Agents** (profiles collection: Profile, Arguments, Environment), **Terminal** (tmux, …), **Actions** (agent actions: Action, Message), **Keyboard** (Prefix, Problems, Commands), **Advanced** (Programs, Diagnostics) | `settings/sections.tsx` (2200+), `Collection.tsx`, `controls.tsx`, `rules.ts`, `main/shell/settingsWindow.ts` (599), `ipc/settings.ts` (542) | Every field of the TS window present; edits write the TOML in place |
+| P-05 | Settings window (own NSWindow), sections: **General** (Environment, Notifications, Terminals, Editors incl. "Editor area" note, Appearance, Agents, Scratch, Projects, Sidebar, Agent panes), **Workspaces** (sources collection editor), **Agents** (profiles collection: Profile, Arguments, Environment), **Terminal** (tmux, …), **Actions** (agent actions: Action, Message), **Keyboard** (Prefix, Problems, Commands), **Advanced** (Programs, Diagnostics) | `settings/sections.tsx` (2200+), `Collection.tsx`, `controls.tsx`, `rules.ts`, `main/shell/settingsWindow.ts` (599), `ipc/settings.ts` (542) | Every field of the TS window present; edits write the TOML in place (done in WP11) |
 | P-06 | Config keys (all parsed, validated, preserved): `[general]` import_login_environment, notify_on_idle, notify_sound, notice_seconds, terminal_idle_seconds, workbench*, `[runtimes]` shell, git, tmux, tmux_socket_name, tmux_args, `[appearance]` title_bar, mode, theme_dark, theme_light, terminal_font_family, terminal_font_size, terminal_line_height, terminal_scroll_sensitivity, sidebar_density, terminal_margin, terminal_theme(.light/.dark), `[keybindings]`, `[[workspace_sources]]`, `[scratch] daily`, `[projects] directory`, `[agents]` default_presentation, resume_after_limit(_message), auto_compact_*, `[[agent_profiles]]`, `[agent_actions.*.*]` | `model/config.ts` | Round-trip of TS's sample config unchanged |
 
 ### 2.14 Theme and appearance
@@ -331,7 +331,7 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | X-03 | Diagnostics/metrics (`devhub` `metrics` request), counters | `main/diagnostics/*` | `metrics` answers with the same shape |
 | X-04 | Profiles (`DEVHUB_PROFILE`) | `model/profile.ts` | Done in WP0 (`ProfileLocations`) |
 | X-05 | External links open in the default browser | `main/shell/externalLinks.ts` | — |
-| X-06 | Voice dictation: `⌘⇧M`, local whisper.cpp server (model bundled), streaming partials, microphone permission, spoken text normalisation | `main/voice/*` (1445), `model/spokenText.ts`, `scripts/build_whisper.py`, `docs/agent-gui.md` §Voice input | Nothing leaves the Mac; same UX |
+| X-06 | Voice dictation: `⌘⇧M`, local whisper.cpp server (model bundled), streaming partials, microphone permission, spoken text normalisation | `main/voice/*` (1445), `model/spokenText.ts`, `scripts/build_whisper.py`, `docs/agent-gui.md` §Voice input | Nothing leaves the Mac; same UX (done in WP11) |
 | X-07 | Single instance (control socket claim) | `controlServer.ts` | Second launch activates the first |
 
 Inventory size: **157 items** across 16 areas.
@@ -639,7 +639,7 @@ probe + `--self-test`, `Scripts/bundle-app.sh`, `.github/workflows/native.yml`.
   renders (snapshot images archived as CI artifacts); find over a synthetic
   1M-match transcript stays responsive; composer keys per §Keys.
 
-### WP11 — Sheets, palette, notices, Settings window, voice (App) ~9k UI
+### WP11 — Sheets, palette, notices, Settings window, voice (App) ~9k UI (done)
 
 - Scope: Q-01…Q-04, K-05…K-07 (UI), N-01…N-04, P-05, WS-03, WS-04, WS-06 (UI),
   A-02 (UI), A-06 rename, A-10 review, A-11 sheet, X-06, U-16.
@@ -653,6 +653,17 @@ probe + `--self-test`, `Scripts/bundle-app.sh`, `.github/workflows/native.yml`.
   the TOML in place (diff test); notices auto-hide/center rules unit-tested in
   Core (`NoticeCenter`, lifetime); dictation records and inserts text on CI
   with a WAV file fed to the client (no microphone).
+- Status: Core holds the rules and words (`Sheets/`, `Model/NoticeBoard.swift`,
+  `Settings/`, `Voice/`, `Usage/UsageFooter.swift`, with their tests, the
+  Settings save checked as an in-place TOML diff); the App draws them
+  (`DevHubApp/Sheets`, `Notices`, `Settings`, `Voice`, `Views/UsageFooterView`)
+  as the real `ModalPresenting` / `NoticePresenting`, and the runtime
+  assembles `GuiAgentWiring.wire`, `GitIssueAssigner` and
+  `ControlExtras.native`. The self-test opens the palette, raises and puts
+  away a notice, and draws every Settings screen on the live runtime.
+  Dictation's stream is tested in Core with a scripted recogniser; feeding a
+  WAV file to the App's capture on CI is not done (the CI runner has no
+  `dist/whisper`).
 
 ### WP12 — SSH Workspaces in terminal-mode scope (Core + App) ~8k
 
