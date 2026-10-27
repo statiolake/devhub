@@ -122,6 +122,7 @@ final class ConversationPaneView: NSView, HostedConversation {
         addSubview(composer)
         addSubview(composer.completions)
         composer.completions.isHidden = true
+        addSubview(composer.settingMenu)
         addSubview(column)
         column.pane = self
         composer.host = self
@@ -406,6 +407,13 @@ final class ConversationPaneView: NSView, HostedConversation {
             let height = composer.completions.height(forWidth: listWidth, most: bounds.height * 0.4)
             composer.completions.frame = NSRect(x: composer.frame.minX + gutter, y: anchor.minY + style.px(4) - height, width: listWidth, height: height)
         }
+        // A setting's list, over its face.
+        if composer.settingMenu.isOpen, let face = composer.settingMenu.face, face.window != nil {
+            let anchor = convert(face.bounds, from: face)
+            let size = composer.settingMenu.preferredSize(minWidth: anchor.width, maxWidth: style.em(24), most: bounds.height * 0.4)
+            let x = min(max(0, anchor.minX), max(0, bounds.width - size.width))
+            composer.settingMenu.frame = NSRect(x: x, y: max(0, anchor.minY - style.px(4) - size.height), width: size.width, height: size.height)
+        }
         resume?.frame = bounds
         mcp?.frame = bounds
     }
@@ -450,6 +458,10 @@ final class ConversationPaneView: NSView, HostedConversation {
             return true
         }
         guard transcript.state.turn == .running else { return false }
+        // The MCP sheet over the pane keeps its keys: Escape puts it away.
+        if let sheet = mcp, let view = responder as? NSView, view === sheet || view.isDescendant(of: sheet) {
+            return false
+        }
         let escape = event.keyCode == 53 && flags.isDisjoint(with: [.command, .control, .option])
         let ctrlC = chars == "c" && flags.contains(.control) && !flags.contains(.command) && !flags.contains(.option)
         guard escape || ctrlC else { return false }
@@ -459,6 +471,8 @@ final class ConversationPaneView: NSView, HostedConversation {
             if let field = responder as? ComposerTextView, field !== composer.field { return false }
             if findBar != nil, responder === findBar?.field.currentEditor() { return false }
             if responder is RequestCardView { return false }
+            // The list closes; the turn is not interrupted by the same key.
+            if let face = responder as? SettingFace, composer.settingMenu.isOpen(for: face) { return false }
         }
         composer.run(.interrupt)
         return true

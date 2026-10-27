@@ -49,8 +49,9 @@ final class DevHubButton: NSControl {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool { isEnabled }
     override var mouseDownCanMoveWindow: Bool { false }
+    override var isEnabled: Bool { didSet { needsDisplay = true } }
 
     private var labelFont: NSFont { ShellStyle.font(13, isDefault ? .medium : .regular) }
 
@@ -71,6 +72,7 @@ final class DevHubButton: NSControl {
     override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
 
     override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
         pressing = true
         needsDisplay = true
         guard let window else { return }
@@ -90,7 +92,7 @@ final class DevHubButton: NSControl {
     }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 0x24 || event.keyCode == 0x31 || event.keyCode == 0x4C {
+        if isEnabled, event.keyCode == 0x24 || event.keyCode == 0x31 || event.keyCode == 0x4C {
             onPress?()
             return
         }
@@ -99,6 +101,8 @@ final class DevHubButton: NSControl {
 
     override func draw(_ dirtyRect: NSRect) {
         let tokens = style.tokens
+        // Disabled: the whole button at half strength.
+        if !isEnabled { NSGraphicsContext.current?.cgContext.setAlpha(0.5) }
         let box = bounds.insetBy(dx: 0.5, dy: 0.5)
         let shape = NSBezierPath(roundedRect: box, xRadius: 5, yRadius: 5)
         if isDefault {

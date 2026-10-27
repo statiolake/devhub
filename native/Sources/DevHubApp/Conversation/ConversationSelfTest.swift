@@ -113,7 +113,7 @@ final class ConversationSelfTest {
                 } ?? false
             }
             check(codeColoured, "everything drew no code block")
-            let displayMath = text.textStorage.map { storage in
+            let displayMath: Bool = text.textStorage.map { storage -> Bool in
                 var typeset = false
                 storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, stop in
                     if let embed = value as? EmbedAttachment, let math = embed.content as? MathEmbedView, math.isTypeset { typeset = true; stop.pointee = true }
@@ -150,7 +150,7 @@ final class ConversationSelfTest {
             // A question asked and answered, on its call: the card's layout, the preview beside.
             view.performAction(.toggle(EntryFold.tool("t6")))
             await pause(0.3)
-            let records = text.textStorage.map { storage in
+            let records: [QuestionRecordView] = text.textStorage.map { storage -> [QuestionRecordView] in
                 var found: [QuestionRecordView] = []
                 storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
                     if let embed = value as? EmbedAttachment, let record = embed.content as? QuestionRecordView { found.append(record) }
@@ -163,6 +163,7 @@ final class ConversationSelfTest {
             }
         }
         await arrivals()
+        await settingList()
 
         await composerKeys()
         await longTranscript()
@@ -184,6 +185,35 @@ final class ConversationSelfTest {
         check(rising || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, "an entry that arrived did not rise in")
         let settled = await until(2) { !text.subviews.contains { $0 is FreshVeil } }
         check(settled, "an entry's rise did not end")
+    }
+
+    /// `/model`'s list: over its face, the current choice ticked, the keys on the face; Escape closes it.
+    private func settingList() async {
+        let view = pane(TranscriptFixtures.everything(), dark: false, size: NSSize(width: 900, height: 700))
+        await pause(0.4)
+        let composer = view.composerView
+        check(composer.openSetting(.model), "the Model picker did not open")
+        await pause(0.2)
+        let menu = composer.settingMenu
+        check(menu.isOpen, "the Model list is not drawn")
+        check(menu.rows.map(\.choice.label) == ["Opus", "Sonnet"], "the Model list has \(menu.rows.map(\.choice.label))")
+        check(menu.rows.first?.current == true, "the current model is not ticked")
+        if let face = menu.face {
+            check(view.window?.firstResponder === face, "the keyboard is not on the Model face")
+            let anchor = view.convert(face.bounds, from: face)
+            check(menu.frame.maxY <= anchor.minY + 0.5 && menu.frame.height > 0, "the Model list is not over its face")
+            snapshot(view, "conversation-setting-list")
+            if let window = view.window, let down = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}",
+                isARepeat: false, keyCode: 53)
+            {
+                face.keyDown(with: down)
+            }
+            check(!menu.isOpen, "Escape did not close the Model list")
+        } else {
+            check(false, "the Model list has no face")
+        }
     }
 
     /// ⌘Return sends; Return is a new line; nothing is sent while an input method is composing.

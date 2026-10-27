@@ -57,6 +57,8 @@ final class ComposerView: NSView {
     private let footer = ComposerFooterView()
     /// The `/` command list, laid over the transcript above the box by the pane.
     let completions = CompletionListView()
+    /// A setting's list of choices, laid over the transcript above its face by the pane.
+    let settingMenu = SettingMenuView()
 
     // What the field is doing.
     private var recalled: Int?
@@ -110,6 +112,8 @@ final class ComposerView: NSView {
         completions.onChoose = { [weak self] command in self?.choose(command) }
         pending.host = self
         pickers.composer = self
+        pickers.menu = settingMenu
+        settingMenu.onChange = { [weak self] in self?.host?.composerResized() }
         footer.composer = self
         applyStyle(style)
     }
@@ -131,6 +135,7 @@ final class ComposerView: NSView {
         pickers.style = style
         footer.style = style
         completions.style = style
+        settingMenu.style = style
         refreshTints()
         renderAttachments()
         needsLayout = true
@@ -958,6 +963,8 @@ final class PendingItemView: NSView {
 final class SettingPickersView: NSView {
     var style: ConversationStyle! { didSet { for face in faces.values { face.style = style } } }
     weak var composer: ComposerView?
+    /// The one list of choices, shared by every face.
+    weak var menu: SettingMenuView?
     private var session = EMPTY_SESSION
     private var disabled = false
     private var faces: [SettingName: SettingFace] = [:]
@@ -1006,6 +1013,7 @@ final class SettingPickersView: NSView {
         for name in SettingPickerModel.names where SettingPickerModel.shown(name, session) {
             let face = faces[name] ?? SettingFace(name: name, style: style)
             face.picker = self
+            face.menu = menu
             faces[name] = face
             face.update(SettingPickerModel.setting(name, session), known: SettingPickerModel.known(name, defaults), disabled: disabled)
             items.append(face)
@@ -1053,10 +1061,11 @@ final class SettingPickersView: NSView {
 
 /// One setting: its label and value, a chevron when it can be changed; its menu of the session's choices.
 @MainActor
-final class SettingFace: NSView, NSMenuDelegate {
+final class SettingFace: NSView {
     let name: SettingName
     var style: ConversationStyle { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     weak var picker: SettingPickersView?
+    weak var menu: SettingMenuView?
     private var setting = Setting.none
     private var known: CliDefault?
     private var disabled = false
@@ -1092,6 +1101,8 @@ final class SettingFace: NSView, NSMenuDelegate {
         }
         invalidateIntrinsicContentSize()
         needsDisplay = true
+        if menu?.isOpen(for: self) == true { menu?.refresh(menuRows()) }
+        if disabled || !choosable, menu?.isOpen(for: self) == true { menu?.close() }
     }
 
     private var parts: (label: NSAttributedString, value: NSAttributedString, note: NSAttributedString?) {
@@ -1160,72 +1171,77 @@ final class SettingFace: NSView, NSMenuDelegate {
 
     override func mouseDown(with event: NSEvent) {
         guard choosable, !disabled else { return }
-        openMenu()
+        window?.makeFirstResponder(self)
+        if menu?.isOpen(for: self) == true { menu?.close() } else { openMenu() }
     }
 
     override var acceptsFirstResponder: Bool { choosable && !disabled }
 
+    override func resignFirstResponder() -> Bool {
+        // The list goes with the keyboard (`onBlur={close}`).
+        if menu?.isOpen(for: self) == true { menu?.close() }
+        return super.resignFirstResponder()
+    }
+
     override func keyDown(with event: NSEvent) {
-        if [" ", "\r"].contains(event.charactersIgnoringModifiers ?? "") || event.keyCode == 125 || event.keyCode == 126 {
-            openMenu()
-        } else {
-            super.keyDown(with: event)
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let returnKey = event.keyCode == 36 || event.keyCode == 76
+        guard let menu, menu.isOpen(for: self) else {
+            if flags.isDisjoint(with: [.command, .control, .option, .shift]),
+               returnKey || event.charactersIgnoringModifiers == " " || event.keyCode == 125 || event.keyCode == 126
+            {
+                openMenu()
+            } else {
+                super.keyDown(with: event)
+            }
+            return
+        }
+        // Option-Return: the highlighted row becomes the CLI's default.
+        if returnKey, flags == .option {
+            menu.makeHighlightedDefault()
+            return
+        }
+        guard flags.isDisjoint(with: [.command, .control, .option, .shift]) else { return super.keyDown(with: event) }
+        switch event.keyCode {
+        case 125: menu.move(1)
+        case 126: menu.move(-1)
+        case 115: menu.moveToEnd(false)
+        case 119: menu.moveToEnd(true)
+        case 53: menu.close()
+        case 36, 76, 49: menu.takeHighlighted()
+        default: super.keyDown(with: event)
         }
     }
 
-    func openMenu() {
-        guard choosable else { return }
-        let menu = NSMenu(title: SettingPickerModel.label(name))
-        menu.autoenablesItems = false
-        menu.delegate = self
+    /// The rows the list draws for this setting now.
+    private func menuRows() -> [SettingMenuView.Row] {
         let rows = SettingPickerModel.rows(setting)
         let byDefault = known.flatMap { SettingPickerModel.defaultRow(rows, $0) }
-        let font = style.sans(style.fontSize)
-        var current: NSMenuItem?
-        for row in rows {
-            let item = NSMenuItem(title: row.label, action: #selector(chose(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = row.id
-            item.state = row.id == setting.current ? .on : .off
-            item.toolTip = row.detail
-            if let known, row == byDefault {
-                let title = NSMutableAttributedString(string: row.label, attributes: [.font: font])
-                title.append(NSAttributedString(string: "    Default", attributes: [.font: style.sans(style.em(0.85)), .foregroundColor: NSColor.secondaryLabelColor]))
-                item.attributedTitle = title
-                item.toolTip = SettingPickerModel.defaultTip(known)
-            }
-            menu.addItem(item)
-            if item.state == .on { current = item }
-            if let known, SettingPickerModel.hasDefault(name), row != byDefault {
-                // Option shows each row's Make default (⌥↩).
-                let alternate = NSMenuItem(title: "Make \(row.label) the Default", action: #selector(madeDefault(_:)), keyEquivalent: "")
-                alternate.target = self
-                alternate.representedObject = row.id
-                alternate.isAlternate = true
-                alternate.keyEquivalentModifierMask = [.option]
-                let refusal = SettingPickerModel.notSavable(name, row)
-                alternate.isEnabled = refusal == nil
-                alternate.toolTip = SettingPickerModel.makeDefaultTip(name, row, known)
-                menu.addItem(alternate)
-            }
+        return rows.map { row in
+            let offers = known != nil && SettingPickerModel.hasDefault(name)
+            return SettingMenuView.Row(
+                choice: row, current: row.id == setting.current, isDefault: offers && row == byDefault,
+                defaultTip: known.map(SettingPickerModel.defaultTip),
+                offersDefault: offers,
+                refusal: SettingPickerModel.notSavable(name, row),
+                makeDefaultTip: known.map { SettingPickerModel.makeDefaultTip(name, row, $0) })
         }
+    }
+
+    /// Opened by a click, a key or a command (`/model`): the keyboard comes to the face, the list over it.
+    func openMenu() {
+        guard choosable, let menu else { return }
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         opened = true
-        let anchor = NSPoint(x: 0, y: 0)
-        menu.popUp(positioning: current, at: anchor, in: self)
-        opened = false
+        menu.open(from: self, rows: menuRows(), label: SettingPickerModel.label(name))
     }
 
-    func menuDidClose(_ menu: NSMenu) { opened = false }
+    /// The list closed.
+    func menuClosed() { opened = false }
 
-    @objc private func chose(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? String else { return }
-        picker?.choose(name, id)
-    }
+    func chose(_ id: String) { picker?.choose(name, id) }
 
-    @objc private func madeDefault(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? String else { return }
-        picker?.makeDefault(name, id)
-    }
+    func madeDefault(_ id: String) { picker?.makeDefault(name, id) }
 }
 
 // MARK: - Under the box

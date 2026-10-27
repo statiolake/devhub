@@ -27,8 +27,14 @@ final class SmartButtonsView: NSView {
     private var automatic: [ConfiguredAgentAction] = []
     private let box = NSView()
     private let handle = SmartHandle()
-    private let bolt = ConversationButton(label: "", look: .quiet, size: 11, style: ConversationStyle(ShellStyle.initial(dark: false, titleBar: .shown)))
+    private let bolt = AutomaticToggle()
     private var buttons: [SmartButton] = []
+    /// The lines drawn last, by action id: what is new is what arrived.
+    private var drawnIds: [String] = []
+    private var rendered = false
+    /// The automatic actions' panel, while it is open.
+    private var panel: AutomaticPanel?
+    private var panelMonitor: Any?
     private var drag: (pointer: NSPoint, from: SmartButtonsOffset, to: SmartButtonsSpot?)?
     private var hovering = false { didSet { refreshAlpha() } }
     /// The pane under it is pointed at: a quiet box shows.
@@ -47,7 +53,7 @@ final class SmartButtonsView: NSView {
         handle.onEnd = { [weak self] in self?.endDrag() }
         handle.onReset = { [weak self] in self?.place(nil) }
         handle.onStep = { [weak self] dx, dy in self?.step(dx, dy) }
-        bolt.onPress = { [weak self] in self?.openAutomatic() }
+        bolt.onPress = { [weak self] in self?.toggleAutomatic() }
         box.setAccessibilityElement(true)
         box.setAccessibilityRole(.toolbar)
         box.setAccessibilityLabel("Smart Buttons")
@@ -59,7 +65,9 @@ final class SmartButtonsView: NSView {
     override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard !isHidden, box.frame.contains(point) else { return nil }
+        guard !isHidden else { return nil }
+        if let panel, panel.frame.contains(point) { return super.hitTest(point) }
+        guard box.frame.contains(point) else { return nil }
         return super.hitTest(point)
     }
 
@@ -91,12 +99,24 @@ final class SmartButtonsView: NSView {
 
     private func render() {
         guard let style, let agent else { return }
-        let conversation = ConversationStyle(style)
         let ticked = agent.automaticActions
-        for button in buttons { button.removeFromSuperview() }
-        buttons = lines.map { line in
+        let ids = lines.map(\.action.id)
+        var kept: [String: SmartButton] = [:]
+        for button in buttons { kept[button.actionId] = button }
+        var next: [SmartButton] = []
+        var arrived: [SmartButton] = []
+        for line in lines {
             let on = ticked.contains(line.action.id)
-            let button = SmartButton(title: line.action.displayName, active: line.active, automatic: on, style: style)
+            let button: SmartButton
+            let old = kept.removeValue(forKey: line.action.id)
+            if let old, old.title == line.action.displayName, old.active == line.active, old.automatic == on, old.style.tokens == style.tokens {
+                button = old
+            } else {
+                old?.removeFromSuperview()
+                button = SmartButton(actionId: line.action.id, title: line.action.displayName, active: line.active, automatic: on, style: style)
+                box.addSubview(button)
+                if rendered, !drawnIds.contains(line.action.id) { arrived.append(button) }
+            }
             let when = Self.firesWhen(line.action.trigger)
             button.toolTip = line.active
                 ? "\(line.action.displayName) — sent to \(agent.displayName)\(on ? " (automatic: also sent on its own)" : "")"
@@ -106,23 +126,80 @@ final class SmartButtonsView: NSView {
                     guard let self else { return }
                     self.views?.runAgentAction?(self.agentId, line.action.id)
                 }
+            } else {
+                button.onPress = nil
             }
-            box.addSubview(button)
-            return button
+            next.append(button)
         }
-        bolt.style = conversation
-        bolt.isHidden = automatic.isEmpty
+        // A line that went: it leaves where it was, as it closes up (`smart-button-exit`).
+        for (_, gone) in kept { leave(gone) }
+        buttons = next
         let count = automatic.filter { ticked.contains($0.id) }.count
-        bolt.label = count > 0 ? "⚡\(count)" : "⚡"
-        bolt.ink = count > 0 ? style.tokens.accent.nsColor : style.tokens.secondary.nsColor
+        bolt.isHidden = automatic.isEmpty
+        bolt.style = style
+        bolt.count = count
         bolt.toolTip = count > 0
             ? "\(count) sent to \(agent.displayName) on its own — choose which"
             : "Choose actions to send to \(agent.displayName) on their own"
         bolt.setAccessibilityLabel("Automatic actions")
         handle.style = style
         handle.anchored = false
+        panel?.update(agent: agent, choices: automatic, ticked: ticked, style: style)
+        if automatic.isEmpty { closeAutomatic() }
         refreshAlpha()
-        needsLayout = true
+        let changed = rendered && ids != drawnIds
+        drawnIds = ids
+        rendered = true
+        if changed, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // The stack closes up, or opens, rather than jumping.
+            layoutSubtreeIfNeeded()
+            needsLayout = true
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+                context.allowsImplicitAnimation = true
+                self.layoutSubtreeIfNeeded()
+            }
+            for button in arrived { enter(button) }
+        } else {
+            needsLayout = true
+        }
+    }
+
+    /// `smart-button-enter`: up from 6px below, from transparent.
+    private func enter(_ button: SmartButton) {
+        button.wantsLayer = true
+        guard let layer = button.layer else { return }
+        let move = CABasicAnimation(keyPath: "transform.translation.y")
+        move.fromValue = box.isFlipped ? 6 : -6
+        move.toValue = 0
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        let group = CAAnimationGroup()
+        group.animations = [move, fade]
+        group.duration = 0.2
+        group.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+        layer.add(group, forKey: "smart-button-enter")
+    }
+
+    /// `smart-button-exit`: a line that went fades down and out where it stood.
+    private func leave(_ button: SmartButton) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, button.superview != nil, button.frame.height > 0 else {
+            button.removeFromSuperview()
+            return
+        }
+        button.onPress = nil
+        button.isLeaving = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+            context.allowsImplicitAnimation = true
+            button.animator().alphaValue = 0
+            button.animator().frame.origin.y += 6
+        }, completionHandler: {
+            MainActor.assumeIsolated { button.removeFromSuperview() }
+        })
     }
 
     static func firesWhen(_ trigger: AgentActionTrigger) -> String? {
@@ -141,7 +218,8 @@ final class SmartButtonsView: NSView {
     }
 
     private func refreshAlpha() {
-        let strong = hovering || drag != nil || window?.firstResponder.map { ($0 as? NSView)?.isDescendant(of: box) ?? false } == true
+        let strong = hovering || drag != nil || panel != nil
+            || window?.firstResponder.map { ($0 as? NSView)?.isDescendant(of: box) ?? false } == true
         box.alphaValue = quiet && !paneHovered && !strong ? 0 : (strong ? 1 : 0.4)
     }
 
@@ -236,8 +314,21 @@ final class SmartButtonsView: NSView {
             current.from, movedX: Double(dx), movedY: Double(dy),
             pane: LayoutSize(width: Double(bounds.width), height: Double(bounds.height)),
             box: LayoutSize(width: Double(size.width), height: Double(size.height)))
-        drag = (current.pointer, current.from, snapped(moved))
-        needsLayout = true
+        let to = snapped(moved)
+        let was = current.to?.isAnchored
+        drag = (current.pointer, current.from, to)
+        if let was, was != to.isAnchored, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // Entering or leaving a snap glides for a moment; otherwise the box tracks the pointer.
+            needsLayout = true
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+                context.allowsImplicitAnimation = true
+                self.layoutSubtreeIfNeeded()
+            }
+        } else {
+            needsLayout = true
+        }
     }
 
     private func endDrag() {
@@ -273,33 +364,313 @@ final class SmartButtonsView: NSView {
 
     // MARK: Automatic
 
-    private func openAutomatic() {
-        guard let agent else { return }
-        let menu = NSMenu(title: "Automatic actions for \(agent.displayName)")
-        menu.autoenablesItems = false
-        let intro = NSMenuItem(title: "Sent to \(agent.displayName) on its own, the moment its button would appear", action: nil, keyEquivalent: "")
-        intro.isEnabled = false
-        menu.addItem(intro)
-        menu.addItem(.separator())
-        for choice in automatic {
-            let item = NSMenuItem(title: choice.displayName, action: #selector(toggleAutomatic(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = choice.id
-            item.state = agent.automaticActions.contains(choice.id) ? .on : .off
-            item.toolTip = Self.firesWhen(choice.trigger)
-            if let when = Self.firesWhen(choice.trigger) {
-                let title = NSMutableAttributedString(string: choice.displayName + "\n", attributes: [.font: ShellStyle.font(12)])
-                title.append(NSAttributedString(string: when, attributes: [.font: ShellStyle.font(10.5), .foregroundColor: NSColor.secondaryLabelColor]))
-                item.attributedTitle = title
-            }
-            menu.addItem(item)
-        }
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bolt.bounds.height + 2), in: bolt)
+    private func toggleAutomatic() {
+        if panel != nil { closeAutomatic() } else { openAutomatic() }
     }
 
-    @objc private func toggleAutomatic(_ item: NSMenuItem) {
-        guard let id = item.representedObject as? String, let agent else { return }
-        views?.dispatch?(.setAutomaticAction(agentId: agent.id, actionId: id, automatic: item.state != .on))
+    /// The bolt's panel: a switch for every action that may be automatic, each with what makes it
+    /// fire. It stays where it opened while switches are flipped, until a click elsewhere or Escape.
+    private func openAutomatic() {
+        guard let agent, let style, panel == nil else { return }
+        let made = AutomaticPanel()
+        made.onToggle = { [weak self] id, on in
+            guard let self, let agent = self.agent else { return }
+            self.views?.dispatch?(.setAutomaticAction(agentId: agent.id, actionId: id, automatic: on))
+        }
+        made.update(agent: agent, choices: automatic, ticked: agent.automaticActions, style: style)
+        addSubview(made)
+        panel = made
+        bolt.open = true
+        // Frozen where it opened, over the box: left-aligned on a conversation, right on a terminal.
+        let size = made.fittingSize
+        let boxFrame = box.frame
+        var x = presentation == .gui ? boxFrame.minX : boxFrame.maxX - size.width
+        x = min(max(4, x), max(4, bounds.width - size.width - 4))
+        let y = max(4, boxFrame.minY - 4 - size.height)
+        made.frame = NSRect(x: x, y: y, width: size.width, height: size.height)
+        Arrival.riseIn(made, duration: DevHubTheme.Motion.fast)
+        panelMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+            nonisolated(unsafe) let incoming = event
+            let consumed = MainActor.assumeIsolated { self?.panelEvent(incoming) ?? false }
+            return consumed ? nil : event
+        }
+        refreshAlpha()
+    }
+
+    private func panelEvent(_ event: NSEvent) -> Bool {
+        guard let panel, event.window === window else { return false }
+        if event.type == .keyDown {
+            if event.keyCode == 53 {
+                closeAutomatic()
+                return true
+            }
+            return false
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        let onBolt = bolt.convert(bolt.bounds, to: self).contains(point)
+        if !panel.frame.contains(point), !onBolt { closeAutomatic() }
+        return false
+    }
+
+    private func closeAutomatic() {
+        if let panelMonitor { NSEvent.removeMonitor(panelMonitor) }
+        panelMonitor = nil
+        panel?.removeFromSuperview()
+        panel = nil
+        bolt.open = false
+        refreshAlpha()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { closeAutomatic() }
+    }
+}
+
+/// The header's bolt (`.smart-buttons-auto`): the automatic actions' switch,
+/// with how many are on; edged in the accent while any is.
+@MainActor
+final class AutomaticToggle: NSView {
+    var style: ShellStyle? { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    var count = 0 { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    var open = false { didSet { needsDisplay = true } }
+    var onPress: (() -> Void)?
+    private var hovering = false { didSet { needsDisplay = true } }
+    private var pressing = false { didSet { needsDisplay = true } }
+    private var tracking: NSTrackingArea?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.menuButton)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    private var countText: NSAttributedString? {
+        guard count > 0, let style else { return nil }
+        return NSAttributedString(string: "\(count)", attributes: [.font: ShellStyle.font(11, ShellStyle.medium), .foregroundColor: style.tokens.accent.nsColor])
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let text = countText.map { ceil($0.size().width) + 2 } ?? 0
+        return NSSize(width: 5 + 10 + text + 5 + 2, height: 20)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseDown(with event: NSEvent) { pressing = true }
+    override func mouseUp(with event: NSEvent) {
+        pressing = false
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onPress?() }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 49 || event.keyCode == 36 { onPress?() } else { super.keyDown(with: event) }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let style else { return }
+        let t = style.tokens
+        let armed = count > 0
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let shape = NSBezierPath(roundedRect: rect, xRadius: CGFloat(DevHubTheme.Radius.row), yRadius: CGFloat(DevHubTheme.Radius.row))
+        if pressing {
+            t.selection.nsColor.setFill()
+            shape.fill()
+        } else if hovering || open {
+            t.washStrong.nsColor.setFill()
+            shape.fill()
+        } else if armed {
+            t.chrome.nsColor.setFill()
+            shape.fill()
+        }
+        if armed {
+            t.accent.nsColor.setStroke()
+            shape.lineWidth = 1
+            shape.stroke()
+        }
+        // `BoltIcon`: viewBox 0 0 10 12, "M6 0 0 7h4l-1 5 6-7H5z", filled.
+        let ink = armed ? t.accent.nsColor : t.secondary.nsColor
+        let origin = NSPoint(x: 5, y: (bounds.height - 12) / 2)
+        let bolt = NSBezierPath()
+        func at(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: origin.x + x, y: origin.y + y) }
+        bolt.move(to: at(6, 0))
+        bolt.line(to: at(0, 7))
+        bolt.line(to: at(4, 7))
+        bolt.line(to: at(3, 12))
+        bolt.line(to: at(9, 5))
+        bolt.line(to: at(5, 5))
+        bolt.close()
+        ink.setFill()
+        bolt.fill()
+        if let text = countText {
+            let size = text.size()
+            text.draw(at: NSPoint(x: origin.x + 10 + 2, y: (bounds.height - size.height) / 2))
+        }
+    }
+}
+
+/// The bolt's panel (`.smart-buttons-menu`): what it is for, then a switch per
+/// action that may be automatic, its name and what makes it fire.
+@MainActor
+final class AutomaticPanel: NSView {
+    private var style: ShellStyle?
+    private var choices: [ConfiguredAgentAction] = []
+    private var ticked: [String] = []
+    private var intro = ""
+    private var hovered: Int?
+    private var tracking: NSTrackingArea?
+    var onToggle: ((String, Bool) -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        setAccessibilityElement(true)
+        setAccessibilityRole(.menu)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func update(agent: AgentWire, choices: [ConfiguredAgentAction], ticked: [String], style: ShellStyle) {
+        self.choices = choices
+        self.ticked = ticked
+        self.style = style
+        intro = "Sent to \(agent.displayName) on its own, the moment its button would appear"
+        setAccessibilityLabel("Automatic actions for \(agent.displayName)")
+        layer?.cornerRadius = CGFloat(DevHubTheme.Radius.row)
+        layer?.borderWidth = 1
+        layer?.borderColor = style.tokens.lineStrong.nsColor.cgColor
+        layer?.backgroundColor = style.tokens.chrome.nsColor.cgColor
+        shadow = {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
+            shadow.shadowBlurRadius = 8
+            shadow.shadowOffset = NSSize(width: 0, height: -4)
+            return shadow
+        }()
+        needsDisplay = true
+        needsLayout = true
+    }
+
+    private static let width: CGFloat = 260
+    private var pad: CGFloat { 4 }
+    private var inner: CGFloat { Self.width - 2 * pad - 2 * 8 }
+
+    private var introText: NSAttributedString {
+        NSAttributedString(string: intro, attributes: [.font: ShellStyle.font(11), .foregroundColor: style?.tokens.secondary.nsColor ?? .secondaryLabelColor])
+    }
+
+    private func nameText(_ choice: ConfiguredAgentAction) -> NSAttributedString {
+        NSAttributedString(string: choice.displayName, attributes: [.font: ShellStyle.font(12), .foregroundColor: style?.tokens.primary.nsColor ?? .labelColor])
+    }
+
+    private func whenText(_ choice: ConfiguredAgentAction) -> NSAttributedString? {
+        SmartButtonsView.firesWhen(choice.trigger).map {
+            NSAttributedString(string: $0, attributes: [.font: ShellStyle.font(11), .foregroundColor: style?.tokens.secondary.nsColor ?? .secondaryLabelColor])
+        }
+    }
+
+    private func height(_ text: NSAttributedString, _ width: CGFloat) -> CGFloat {
+        ceil(text.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height)
+    }
+
+    private var textWidth: CGFloat { inner - 22 - 8 }
+
+    /// Each item's rect, under the intro.
+    private var itemRects: [NSRect] {
+        var y = pad + 2 + height(introText, inner) + pad
+        return choices.map { choice in
+            var h = 4 + height(nameText(choice), textWidth) + 4
+            if let when = whenText(choice) { h += height(when, textWidth) }
+            defer { y += h }
+            return NSRect(x: pad, y: y, width: Self.width - 2 * pad, height: h)
+        }
+    }
+
+    override var fittingSize: NSSize {
+        NSSize(width: Self.width, height: (itemRects.last?.maxY ?? (pad + 2 + height(introText, inner) + pad)) + pad)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let index = itemRects.firstIndex { $0.contains(point) }
+        if index != hovered {
+            hovered = index
+            needsDisplay = true
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = nil
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let index = itemRects.firstIndex(where: { $0.contains(point) }), index < choices.count else { return }
+        let id = choices[index].id
+        onToggle?(id, !ticked.contains(id))
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func layout() {
+        super.layout()
+        removeAllToolTips()
+        for (rect, choice) in zip(itemRects, choices) {
+            if let when = SmartButtonsView.firesWhen(choice.trigger) { addToolTip(rect, owner: when as NSString, userData: nil) }
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let style else { return }
+        let t = style.tokens
+        introText.draw(with: NSRect(x: pad + 8, y: pad + 2, width: inner, height: height(introText, inner)), options: [.usesLineFragmentOrigin])
+        for (index, (rect, choice)) in zip(itemRects, choices).enumerated() {
+            if hovered == index {
+                t.washStrong.nsColor.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: CGFloat(DevHubTheme.Radius.row), yRadius: CGFloat(DevHubTheme.Radius.row)).fill()
+            }
+            let on = ticked.contains(choice.id)
+            // A switch, not a tick: on is the accent, the knob to the right.
+            let track = NSRect(x: rect.minX + 8, y: rect.minY + 4 + 2, width: 22, height: 12)
+            (on ? t.accent : t.lineStrong).nsColor.setFill()
+            NSBezierPath(roundedRect: track, xRadius: 6, yRadius: 6).fill()
+            t.chrome.nsColor.setFill()
+            NSBezierPath(ovalIn: NSRect(x: track.minX + 2 + (on ? 10 : 0), y: track.minY + 2, width: 8, height: 8)).fill()
+            let x = track.maxX + 8
+            let name = nameText(choice)
+            let nameHeight = height(name, textWidth)
+            name.draw(with: NSRect(x: x, y: rect.minY + 4, width: textWidth, height: nameHeight), options: [.usesLineFragmentOrigin])
+            if let when = whenText(choice) {
+                when.draw(with: NSRect(x: x, y: rect.minY + 4 + nameHeight, width: textWidth, height: height(when, textWidth)), options: [.usesLineFragmentOrigin])
+            }
+        }
     }
 }
 
@@ -375,16 +746,20 @@ final class SmartHandle: NSView {
 /// One Smart Button: its own ground, so it reads over a surface of any colour.
 @MainActor
 final class SmartButton: NSView {
+    let actionId: String
     let title: String
     let active: Bool
     let automatic: Bool
     let style: ShellStyle
+    /// On its way out: laid out no more, pressed no more.
+    var isLeaving = false
     var onPress: (() -> Void)?
     private var hovering = false { didSet { needsDisplay = true } }
     private var pressing = false { didSet { needsDisplay = true } }
     private var tracking: NSTrackingArea?
 
-    init(title: String, active: Bool, automatic: Bool, style: ShellStyle) {
+    init(actionId: String, title: String, active: Bool, automatic: Bool, style: ShellStyle) {
+        self.actionId = actionId
         self.title = title
         self.active = active
         self.automatic = automatic

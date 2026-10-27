@@ -191,30 +191,20 @@ final class AgentOverlayView: NSView {
     }
 }
 
-/// A failure over the Agent's pane: a sheet over the pane dimmed, then a banner once dismissed.
+/// A failure over the Agent's pane (AgentFailure.tsx): a sheet over the pane
+/// dimmed — DevHub's sheet, its title, the summary under it, the detail with
+/// its `code` spans, the ways out at the footer's end — then, once dismissed,
+/// one line along the pane's top with the same actions for as long as the
+/// failure holds (`.agent-failure-banner`).
 @MainActor
 final class FailureView: NSView {
-    private let card = NSView()
-    private let title = NSTextField(labelWithString: "")
-    private let summary = NSTextField(wrappingLabelWithString: "")
-    private let detail = NSTextField(wrappingLabelWithString: "")
-    private var buttons: [NSButton] = []
-    private var handlers: [() -> Void] = []
+    private var sheet: FailureSheet?
+    private var bannerView: FailureBanner?
     private var banner = false
-    private var style: ShellStyle?
     var onDismiss: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        wantsLayer = true
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 12
-        card.layer?.borderWidth = 1
-        addSubview(card)
-        for label in [title, summary, detail] {
-            label.isSelectable = true
-            card.addSubview(label)
-        }
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
     }
@@ -225,93 +215,155 @@ final class FailureView: NSView {
     override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        let hit = super.hitTest(point)
         // The banner leaves the pane under it usable; the sheet covers it.
-        if banner, hit === self { return nil }
-        return hit
-    }
-
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53, !banner { onDismiss?() } else { super.keyDown(with: event) }
+        if banner {
+            guard let bannerView, bannerView.frame.contains(point) else { return nil }
+        }
+        return super.hitTest(point)
     }
 
     func update(title words: String, summary: String, detail: String?, banner: Bool, actions: [(String, Bool, () -> Void)], style: ShellStyle) {
         self.banner = banner
-        self.style = style
-        let tokens = style.tokens
-        layer?.backgroundColor = banner ? NSColor.clear.cgColor : NSColor.black.withAlphaComponent(style.dark ? 0.45 : 0.25).cgColor
-        card.layer?.backgroundColor = tokens.raised.nsColor.cgColor
-        card.layer?.borderColor = (banner ? tokens.danger.faded(0.5) : tokens.line.nsColor).cgColor
-        title.stringValue = words
-        title.font = ShellStyle.font(banner ? 12 : 15, ShellStyle.semibold)
-        title.textColor = tokens.primary.nsColor
-        self.summary.stringValue = summary
-        self.summary.font = ShellStyle.font(12)
-        self.summary.textColor = tokens.secondary.nsColor
-        let text = NSMutableAttributedString()
-        // A detail's `code` spans — the commands it names — drawn as code.
-        for (index, part) in (detail ?? "").components(separatedBy: "`").enumerated() {
-            text.append(NSAttributedString(string: part, attributes: [
-                .font: index % 2 == 1 ? NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular) : ShellStyle.font(12),
-                .foregroundColor: tokens.primary.nsColor,
-            ]))
-        }
-        self.detail.attributedStringValue = text
-        self.detail.isHidden = banner || (detail ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        for button in buttons { button.removeFromSuperview() }
-        handlers = actions.map { $0.2 }
-        buttons = actions.enumerated().map { index, action in
-            let button = NSButton(title: action.0, target: self, action: #selector(pressed(_:)))
-            button.bezelStyle = .rounded
-            button.controlSize = banner ? .small : .regular
-            button.tag = index
-            if action.1 { button.keyEquivalent = "\r" }
-            card.addSubview(button)
-            return button
-        }
         setAccessibilityLabel(words)
+        if banner {
+            sheet?.removeFromSuperview()
+            sheet = nil
+            let view = bannerView ?? FailureBanner()
+            if bannerView == nil {
+                addSubview(view)
+                bannerView = view
+            }
+            view.update(title: words, summary: summary, actions: actions, style: style)
+        } else {
+            bannerView?.removeFromSuperview()
+            bannerView = nil
+            let made = sheet == nil
+            let view = sheet ?? FailureSheet(style: style)
+            if made {
+                addSubview(view)
+                sheet = view
+            }
+            view.onCancel = { [weak self] in self?.onDismiss?() }
+            view.update(title: words, summary: summary, detail: detail, actions: actions, style: style)
+            if made {
+                // The sheet takes the keyboard as it appears, so Escape is its own.
+                DispatchQueue.main.async { [weak view] in
+                    guard let view, let window = view.window else { return }
+                    window.makeFirstResponder(view)
+                }
+            }
+        }
         needsLayout = true
-    }
-
-    @objc private func pressed(_ sender: NSButton) {
-        guard sender.tag < handlers.count else { return }
-        handlers[sender.tag]()
     }
 
     override func layout() {
         super.layout()
-        for button in buttons { button.sizeToFit() }
-        let buttonsWidth = buttons.reduce(0) { $0 + $1.frame.width + 8 }
-        if banner {
-            let width = bounds.width - 24
-            card.frame = NSRect(x: 12, y: 12, width: width, height: 40)
-            title.sizeToFit()
-            title.frame.origin = NSPoint(x: 12, y: 12)
-            summary.frame = NSRect(x: title.frame.maxX + 6, y: 12, width: max(0, width - title.frame.maxX - 18 - buttonsWidth), height: 18)
-            summary.maximumNumberOfLines = 1
-            var x = width - 8
-            for button in buttons.reversed() {
-                x -= button.frame.width
-                button.frame.origin = NSPoint(x: x, y: (40 - button.frame.height) / 2)
-                x -= 8
-            }
-            return
+        sheet?.frame = bounds
+        if let bannerView {
+            bannerView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bannerView.height)
         }
-        let width = min(480, bounds.width - 40)
-        let inner = width - 40
-        let summaryHeight = ceil(summary.attributedStringValue.boundingRect(with: NSSize(width: inner, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height)
-        let detailHeight = detail.isHidden ? 0 : ceil(detail.attributedStringValue.boundingRect(with: NSSize(width: inner, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height) + 12
-        let height = 20 + 22 + 6 + summaryHeight + detailHeight + 20 + 32 + 16
-        card.frame = NSRect(x: (bounds.width - width) / 2, y: max(20, (bounds.height - height) / 2.6), width: width, height: height)
-        title.frame = NSRect(x: 20, y: 20, width: inner, height: 22)
-        summary.frame = NSRect(x: 20, y: 48, width: inner, height: summaryHeight + 2)
-        detail.frame = NSRect(x: 20, y: 48 + summaryHeight + 12, width: inner, height: detailHeight)
-        var x = width - 20
+    }
+}
+
+/// The failure as a sheet (`.agent-failure-sheet`): 520pt at most, centred, every corner rounded.
+@MainActor
+final class FailureSheet: PaneSheetFrame {
+    private let detail = WrappingLabel(selectable: true)
+
+    init(style: ShellStyle) {
+        super.init(style: style, placement: .centred, width: 520)
+        titleWraps = true
+        body.addSubview(detail)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    func update(title: String, summary: String, detail words: String?, actions: [(String, Bool, () -> Void)], style: ShellStyle) {
+        restyleFrame(style)
+        setHeading(title: title, question: summary)
+        let tokens = style.tokens
+        let text = NSMutableAttributedString()
+        // A detail's `code` spans — the commands it names — drawn as code.
+        for (index, part) in (words ?? "").components(separatedBy: "`").enumerated() {
+            text.append(NSAttributedString(string: part, attributes: [
+                .font: index % 2 == 1 ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) : ShellStyle.font(13),
+                .foregroundColor: tokens.primary.nsColor,
+            ]))
+        }
+        detail.attributedStringValue = text
+        detail.isHidden = (words ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        setButtons(actions.map { (title: $0.0, isDefault: $0.1, enabled: true, run: $0.2) })
+    }
+
+    override func bodyHeight(forWidth width: CGFloat) -> CGFloat {
+        detail.isHidden ? 0 : Space.s3 + detail.fittingHeight(width: width - 2 * Space.s4) + Space.s3
+    }
+
+    override func layoutBody() {
+        guard !detail.isHidden else { return }
+        let width = body.bounds.width - 2 * Space.s4
+        detail.frame = NSRect(x: Space.s4, y: Space.s3, width: width, height: detail.fittingHeight(width: width))
+    }
+}
+
+/// The failure once its sheet is dismissed: one line along the pane's top,
+/// the title in the danger ink, the summary after it, the same actions.
+@MainActor
+final class FailureBanner: BandView {
+    private let words = NSTextField(labelWithString: "")
+    private var buttons: [DevHubButton] = []
+    private var style: ShellStyle?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        words.lineBreakMode = .byTruncatingTail
+        words.isSelectable = true
+        addSubview(words)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    var height: CGFloat { Space.s2 + 22 + Space.s2 + 1 }
+
+    func update(title: String, summary: String, actions: [(String, Bool, () -> Void)], style: ShellStyle) {
+        self.style = style
+        let tokens = style.tokens
+        fill = tokens.chrome.nsColor
+        let text = NSMutableAttributedString(string: title, attributes: [.font: ShellStyle.font(13, ShellStyle.semibold), .foregroundColor: tokens.danger.nsColor])
+        text.append(NSAttributedString(string: " " + summary, attributes: [.font: ShellStyle.font(13), .foregroundColor: tokens.secondary.nsColor]))
+        words.attributedStringValue = text
+        setAccessibilityLabel("\(title) \(summary)")
+        for button in buttons { button.removeFromSuperview() }
+        buttons = actions.map { action in
+            let button = DevHubButton(title: action.0, isDefault: action.1, style: style, onPress: action.2)
+            addSubview(button)
+            return button
+        }
+        needsLayout = true
+        needsDisplay = true
+    }
+
+    override func layout() {
+        super.layout()
+        var x = bounds.width - Space.s3
         for button in buttons.reversed() {
-            x -= button.frame.width
-            button.frame.origin = NSPoint(x: x, y: height - 16 - button.frame.height)
-            x -= 8
+            let size = button.intrinsicContentSize
+            x -= size.width
+            button.frame = NSRect(x: x, y: Space.s2, width: size.width, height: 22)
+            x -= Space.s2
         }
+        let height = ceil(words.attributedStringValue.size().height)
+        words.frame = NSRect(x: Space.s3, y: (bounds.height - 1 - height) / 2, width: max(0, x - Space.s3 - Space.s3 + Space.s2), height: height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        style?.tokens.lineSoft.nsColor.setFill()
+        NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 }
 

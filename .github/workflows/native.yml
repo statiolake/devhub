@@ -87,8 +87,16 @@ jobs:
           swift package resolve
           cat Package.resolved
 
+      # The compiler's errors, once each, at the end of the log: a failing
+      # build repeats every error for every file compiled with it.
       - name: Build (debug)
-        run: swift build
+        run: |
+          set -o pipefail
+          swift build 2>&1 | tee "$RUNNER_TEMP/build.log" || {
+            echo "---- errors ----"
+            grep -E "^/.*: error:" "$RUNNER_TEMP/build.log" | sort -u | head -40
+            exit 1
+          }
 
       - name: Test
         run: swift test
