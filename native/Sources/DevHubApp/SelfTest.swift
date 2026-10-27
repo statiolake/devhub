@@ -12,6 +12,9 @@
 //   - after a split (`Cmd+Q Z`) with the terminal open (`Cmd+Q V`), the
 //     editor, the Agent and its terminal are all attached and shown
 //   - the built-in colour themes are in the bundle
+//   - a GUI Agent's pane draws the fixture transcripts, finds through a long
+//     one, and sends on ⌘Return but not mid-composition (WP10,
+//     `ConversationSelfTest`)
 //
 // Exit 0 with "self-test ok", else 1 with every failure.
 
@@ -45,6 +48,8 @@ final class SelfTest {
     func start() {
         Task { @MainActor in
             await run()
+            // WP10: a GUI Agent's pane from Core's fixture transcripts.
+            failures += await ConversationSelfTest().run()
             await live()
             if failures.isEmpty {
                 print("self-test ok: \(DevHubVersion.description)")

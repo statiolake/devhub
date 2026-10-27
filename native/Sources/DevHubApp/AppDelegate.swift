@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quitting = false
     private var wakeObserver: NSObjectProtocol?
     private var selfTestRun: SelfTest?
+    /// WP10: the GUI Agents' conversations, and what is drawn over the active Agent.
+    private let conversations = ConversationViews()
 
     init(selfTest: Bool) {
         self.selfTest = selfTest
@@ -79,8 +81,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let names = ColorThemeNames(dark: themes.dark, light: themes.light)
         let appearance = AppearanceController(names: names, roots: ExtensionRoots.standard(profile: locations, home: NSHomeDirectory()))
         appearance.configure(mode: ConfigParsing.appearanceMode(in: text), names: names)
-        let shell = ShellController(titleBar: titleBar, appearance: appearance, transport: transport)
+        let shell = ShellController(titleBar: titleBar, appearance: appearance, transport: transport, conversations: conversations)
         self.shell = shell
+        let conversations = self.conversations
+        shell.window.agents.overlays = conversations
+        conversations.dispatch = { [weak shell] intent in shell?.dispatch(intent) }
+        conversations.repository = { [weak shell] workspaceId in
+            shell?.repositories.workspaces.first { $0.workspaceId == workspaceId }
+        }
+        conversations.agentActions = { [weak shell] in shell?.config?.agentActions ?? [] }
+        conversations.link.report = { [weak shell] failure in shell?.notices.error(failure) }
         box.shell = shell
         shell.openSettings = { MainLog.shared.log("[devhub] the Settings window is not drawn in this build yet") }
         shell.window.showWindow(nil)
@@ -104,6 +114,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.runtime = runtime
         transport.target = runtime.transport
         shell.adopt(runtime)
+        let controller = runtime.controller
+        conversations.runAgentAction = { [weak shell] agentId, actionId in
+            Task {
+                do { _ = try await controller.runAgentAction(agentId: agentId, actionId: actionId) } catch {
+                    shell?.notices.error(errorWire(error))
+                }
+            }
+        }
+        if let conversationTransport = await controller.conversationTransport() {
+            conversations.link.adopt(conversationTransport)
+        }
         await runtime.controller.shellReady()
         do {
             try await runtime.openControlSocket()

@@ -171,12 +171,12 @@ public struct DocParagraph: Hashable, Sendable {
     /// Stable within its section: what a search match or a fold is found by.
     public var key: String
     public var runs: [DocRun]
-    /// Space before and after, in em of the paragraph's own size.
+    /// Space before and after, in em of the conversation's size.
     public var before: Double = 0
     public var after: Double = 0
     public var lineHeight: Double = 1.6
     public var align: DocAlign = .leading
-    /// Extra indent of the text from the box's content edge, in em.
+    /// Extra indent of the text from the box's content edge, in em of the conversation's size.
     public var indent: Double = 0
     /// A list item's marker, drawn hanging in the indent.
     public var marker: DocRun?

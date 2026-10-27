@@ -105,7 +105,9 @@ jobs:
         run: brew list tmux >/dev/null 2>&1 || brew install tmux
 
       - name: Self-test the bundle
-        timeout-minutes: 3
+        timeout-minutes: 6
+        env:
+          DEVHUB_SELF_TEST_SNAPSHOTS: ${{ runner.temp }}/snapshots
         run: |
           app="$RUNNER_TEMP/native/DevHub.app"
           "$app/Contents/Resources/bin/devhub" --version
@@ -123,3 +125,13 @@ jobs:
           path: ${{ runner.temp }}/native/DevHub-native.zip
           retention-days: 14
           if-no-files-found: error
+
+      # The conversation's fixture transcripts as the self-test drew them (WP10).
+      - name: Upload the self-test's snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevHub-native-snapshots-${{ github.sha }}
+          path: ${{ runner.temp }}/snapshots
+          retention-days: 14
+          if-no-files-found: ignore

@@ -84,6 +84,14 @@ public struct EntryDocumentBuilder {
         for entry in tree.topLevel {
             if let section = section(entry, depth: 0) { out.append(section) }
         }
+        return out + trailingSections(activity: activity)
+    }
+
+    /// What the transcript draws after its entries: the messages on their way,
+    /// the compaction under way, the limit's line, the requests about no
+    /// call, and the activity line.
+    public func trailingSections(activity: Bool = true) -> [DocSection] {
+        var out: [DocSection] = []
         for message in transcript.sending { out.append(sending(message)) }
         if transcript.compacting { out.append(compacting()) }
         if let resume = transcript.limitResume { out.append(limitResume(resume)) }
@@ -120,6 +128,26 @@ public struct EntryDocumentBuilder {
         var section = DocSection(id: entry.id.raw, kind: Self.kind(entry), blocks: made.blocks)
         section.candidates = made.candidates
         return section
+    }
+
+    /// What a top-level entry's section is drawn from besides the surface's
+    /// state: the entry, everything under it, the requests about any of it,
+    /// and where its subagents are. Two equal fingerprints (under one state)
+    /// draw the same section, so the view keeps the one it has.
+    public func fingerprint(_ entry: TranscriptEntry) -> Int {
+        var hasher = Hasher()
+        hasher.combine(state.layout.wide)
+        func walk(_ entry: TranscriptEntry) {
+            hasher.combine(entry)
+            if let requests = tree.requests[entry.id] { hasher.combine(requests) }
+            if case .tool(let tool) = entry {
+                hasher.combine(tree.latestPlan == tool.id)
+                if tool.spawns != nil { hasher.combine(state.layout.place(of: tool.id).rawValue) }
+            }
+            for child in tree.children(of: entry.id) { walk(child) }
+        }
+        walk(entry)
+        return hasher.finalize()
     }
 
     /// The kind the gaps between entries are read by.
@@ -191,7 +219,7 @@ public struct EntryDocumentBuilder {
     func personBubble(_ key: String, origin note: String?, _ children: [DocBlock], dashed: Bool) -> [DocBlock] {
         var out: [DocBlock] = []
         if let note {
-            var line = Self.paragraph(key + "/origin", [DocRun(note, Self.style { $0.size = 0.8; $0.ink = .tertiary })], after: Self.space(1) / 0.8)
+            var line = Self.paragraph(key + "/origin", [DocRun(note, Self.style { $0.size = 0.8; $0.ink = .tertiary })], after: Self.space(1))
             line.align = .trailing
             out.append(.paragraph(line))
         }
@@ -261,7 +289,7 @@ public struct EntryDocumentBuilder {
         let long = lines.count > EntryWords.notFromYouLines
         let unfolded = state.allOpen || state.unfoldedOther.contains(entry.id)
         var children: [DocBlock] = [
-            .paragraph(Self.paragraph(key + "/label", [DocRun(EntryWords.notFromYouLabel, Self.style { $0.size = 0.8; $0.ink = .tertiary })], after: Self.space(1) / 0.8)),
+            .paragraph(Self.paragraph(key + "/label", [DocRun(EntryWords.notFromYouLabel, Self.style { $0.size = 0.8; $0.ink = .tertiary })], after: Self.space(1))),
         ]
         if !entry.text.isEmpty {
             let head = lines.prefix(EntryWords.notFromYouLines).joined(separator: "\n")
@@ -430,7 +458,7 @@ public struct EntryDocumentBuilder {
 
     static func section(_ key: String, _ words: String, first: Bool) -> DocBlock {
         var row = paragraph(key, [DocRun(words, style { $0.size = 0.75; $0.bold = true; $0.ink = .tertiary; $0.uppercase = true; $0.tracking = 0.04 })],
-                            before: space(2) / 0.75, after: space(1) / 0.75)
+                            before: space(2), after: space(1))
         row.rule = first ? nil : DocRule(ink: .lineSoft, dashed: false, place: .top)
         return .paragraph(row)
     }
@@ -461,6 +489,12 @@ public struct EntryDocumentBuilder {
                     children.append(Self.section("\(key)/o\(index)/h", words, first: false))
                 }, candidates: &candidates)
             }
+        }
+        // Each block under a section is padded below (`.conversation-json`, `.conversation-output-note`).
+        children = children.map { block in
+            guard case .paragraph(var paragraph) = block, paragraph.rule == nil, paragraph.after == 0 else { return block }
+            paragraph.after = Self.space(2)
+            return .paragraph(paragraph)
         }
         return .box(Self.box(key, .toolBody, children, before: Self.space(1), after: Self.space(2), indent: 1.45))
     }
@@ -506,7 +540,7 @@ public struct EntryDocumentBuilder {
                 runs += made.runs
                 candidates += made.candidates
             }
-            var out: [DocBlock] = [.paragraph(Self.paragraph(key + "/note", runs, before: Self.space(2) / 0.85))]
+            var out: [DocBlock] = [.paragraph(Self.paragraph(key + "/note", runs, before: Self.space(2)))]
             if !preview.isEmpty { out.append(.paragraph(Self.pre(key + "/preview", preview, linked: links, candidates: &candidates))) }
             return out
         }
@@ -537,7 +571,7 @@ public struct EntryDocumentBuilder {
                 children.append(.paragraph(row))
                 if !description.isEmpty {
                     var line = Self.paragraph(id + "/d", [DocRun(description, Self.style { $0.size = 0.85; $0.ink = .tertiary })], after: Self.space(1))
-                    line.indent = 1.6 / 0.85
+                    line.indent = 1.6
                     line.oneLine = true
                     children.append(.paragraph(line))
                 }
@@ -600,7 +634,8 @@ public struct EntryDocumentBuilder {
                                  link: .file(path: resolved, range: range),
                                  tooltip: "Open \(resolved)\(TextLinks.rangeSuffix(range)) in the editor")
             }
-            var path = Self.paragraph(at + "/path", [pathRun], lineHeight: 1.6)
+            var path = Self.paragraph(at + "/path", [pathRun], before: Self.space(1), after: Self.space(1), lineHeight: 1.6)
+            path.indent = Self.space(3)
             path.rule = DocRule(ink: .lineSoft, dashed: false, place: .bottom)
             children.append(.paragraph(path))
             let width = max(3, rows.reduce(0) { max($0, String($1.old ?? 0).count, String($1.new ?? 0).count) })
@@ -625,7 +660,7 @@ public struct EntryDocumentBuilder {
                 paragraph.indent = 0
                 lines.append(.paragraph(paragraph))
             }
-            children.append(.box(Self.box(at + "/lines", .plain, lines, before: Self.space(1) / 0.88, after: Self.space(1) / 0.88)))
+            children.append(.box(Self.box(at + "/lines", .plain, lines, before: Self.space(1), after: Self.space(1))))
         }
         return .box(Self.box(key, .diff, children))
     }
@@ -662,7 +697,7 @@ public struct EntryDocumentBuilder {
         if let summary = entry.background?.summary, !summary.isEmpty {
             var line = Self.paragraph(key + "/background", [DocRun(summary, Self.style { $0.size = 0.8; $0.ink = .tertiary })])
             line.oneLine = true
-            line.indent = Self.space(3) / 0.8
+            line.indent = Self.space(3)
             out.append(.paragraph(line))
         }
         out += denialLine(entry)
@@ -688,8 +723,8 @@ public struct EntryDocumentBuilder {
         let key = entry.id.raw + "/denial"
         let style = Self.style { $0.size = 0.8; $0.ink = .danger }
         guard let detail = denial.detail else {
-            var line = Self.paragraph(key, [DocRun(denial.summary, style)], before: 2 / 0.8 / SurfaceMetrics.fontPx)
-            line.indent = Self.space(3) / 0.8
+            var line = Self.paragraph(key, [DocRun(denial.summary, style)], before: SurfaceMetrics.em(2))
+            line.indent = Self.space(3)
             return [.paragraph(line)]
         }
         let fold = EntryFold.denial(entry.id)
@@ -701,7 +736,7 @@ public struct EntryDocumentBuilder {
         summary.action = .toggle(fold)
         var children: [DocBlock] = [.paragraph(summary)]
         if open {
-            children.append(.paragraph(Self.paragraph(key + "/detail", [DocRun(detail, Self.style { $0.size = 0.8; $0.ink = .secondary })], before: Self.space(1) / 0.8)))
+            children.append(.paragraph(Self.paragraph(key + "/detail", [DocRun(detail, Self.style { $0.size = 0.8; $0.ink = .secondary })], before: Self.space(1))))
         }
         var box = Self.box(key, .plain, children, before: SurfaceMetrics.em(2), indent: Self.space(3))
         box.fold = fold
@@ -727,7 +762,7 @@ public struct EntryDocumentBuilder {
             if place == .inline {
                 var inner: [DocBlock] = []
                 if !spawns.prompt.isEmpty {
-                    inner.append(.paragraph(Self.paragraph(key + "/prompt", [DocRun(spawns.prompt, Self.style { $0.ink = .secondary; $0.size = 0.92 })], after: Self.space(2) / 0.92)))
+                    inner.append(.paragraph(Self.paragraph(key + "/prompt", [DocRun(spawns.prompt, Self.style { $0.ink = .secondary; $0.size = 0.92 })], after: Self.space(2))))
                 }
                 var previous: String?
                 for child in tree.children(of: entry.id) {
@@ -765,6 +800,51 @@ public struct EntryDocumentBuilder {
         var embed = DocEmbed(key: key, kind: .request(request), searchText: Self.requestText(request), copyText: Self.requestText(request))
         embed.before = Self.space(2)
         return .embed(embed)
+    }
+
+    /// What a request's card says it is about, over its form and answers (`Subject`).
+    public func requestSubject(_ request: PendingRequest) -> [DocBlock] {
+        let key = "request:\(request.id.raw)/subject"
+        var unused: [String] = []
+        let reasonStyle = Self.style { $0.size = 0.9; $0.ink = .secondary }
+        func title(_ words: String) -> DocBlock {
+            .paragraph(Self.paragraph(key + "/title", [DocRun(words, Self.style { $0.mono = true; $0.size = 0.92; $0.bold = true })]))
+        }
+        func reason(_ words: String?) -> [DocBlock] {
+            guard let words, !words.isEmpty else { return [] }
+            return [.paragraph(Self.paragraph(key + "/reason", [DocRun(words, reasonStyle)], before: Self.space(1), after: Self.space(1)))]
+        }
+        func panel(_ text: String, _ name: String) -> DocBlock {
+            .box(Self.box(key + "/" + name, .sunkenPanel, [.paragraph(Self.pre(key + "/" + name + "/text", text, candidates: &unused))], before: Self.space(2)))
+        }
+        switch request.subject {
+        case let .tool(_, words, input, why):
+            return [title(words), panel(Self.jsonText(input), "input")] + reason(why)
+        case let .command(command, cwd, why):
+            return [panel(command, "command"),
+                    .paragraph(Self.paragraph(key + "/cwd", [DocRun("in \(cwd)", reasonStyle)], before: Self.space(1), after: Self.space(1)))]
+                + reason(why)
+        case .fileChange(let files):
+            var diff = diffView(key + "/diff", files, candidates: &unused)
+            if case .box(var box) = diff {
+                box.before = Self.space(2)
+                diff = .box(box)
+            }
+            return [diff]
+        case .question:
+            return []
+        case let .elicitation(server, message, url, _):
+            var out = [title(server)] + reason(message)
+            if let url {
+                out.append(.paragraph(Self.paragraph(key + "/url", [DocRun(url, Self.style { $0.size = 0.9; $0.ink = .accent; $0.underline = true }, link: .url(url))], before: Self.space(1), after: Self.space(1))))
+            }
+            return out
+        }
+    }
+
+    /// An option's preview as a question shows it beside its options: Markdown in the monospace box.
+    public func optionPreview(_ key: String, _ option: QuestionOption) -> DocBlock {
+        .box(preview(key, option))
     }
 
     /// The words of a request's card a find reaches.

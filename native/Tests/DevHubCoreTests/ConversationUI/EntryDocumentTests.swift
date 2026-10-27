@@ -380,3 +380,13 @@ final class MarkdownDocumentTests: XCTestCase {
         XCTAssertEqual(paragraphs(made.blocks).last?.runs.last?.inline, .streamingDot)
     }
 }
+
+final class ConversationIconTests: XCTestCase {
+    func testEveryIconsOutlineParses() throws {
+        for icon in [DocIcon.send, .clock, .edit, .rewind, .mic, .stop, .copy, .check, .arrowDown, .arrowUp, .close, .arrowLeft, .chevronDown, .chevronRight, .maximize, .column] {
+            for shape in ConversationIcons.drawing(icon).shapes {
+                if case .path(let data, _) = shape { XCTAssertFalse(try PathData.parse(data).isEmpty, icon.rawValue) }
+            }
+        }
+    }
+}
