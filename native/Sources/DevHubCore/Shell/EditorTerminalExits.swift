@@ -64,8 +64,8 @@ public struct EditorTerminalExitsOptions {
         sessionAlive: @escaping @MainActor (String) async throws -> Bool,
         close: @escaping @MainActor (String) -> Void,
         restart: @escaping @MainActor (String) -> Void,
-        log: @escaping @MainActor (String) -> Void = { _ in },
-        now: @escaping @MainActor () -> Double = { Date().timeIntervalSince1970 * 1000 },
+        log: (@MainActor (String) -> Void)? = nil,
+        now: (@MainActor () -> Double)? = nil,
         setTimer: (@MainActor (_ ms: Double, _ work: @escaping @MainActor () async -> Void) -> (@MainActor () -> Void))? = nil
     ) {
         self.standing = standing
@@ -74,8 +74,8 @@ public struct EditorTerminalExitsOptions {
         self.sessionAlive = sessionAlive
         self.close = close
         self.restart = restart
-        self.log = log
-        self.now = now
+        self.log = log ?? { _ in }
+        self.now = now ?? { Date().timeIntervalSince1970 * 1000 }
         self.setTimer = setTimer ?? { ms, work in
             let task = Task { @MainActor in
                 try? await Task.sleep(nanoseconds: UInt64(ms * 1_000_000))

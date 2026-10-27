@@ -57,11 +57,18 @@ final class ShellController {
     /// Workspace's close button, else its terminal started over
     /// (`editorTerminalExits.ts`).
     private(set) lazy var editorTerminalExits = EditorTerminalExits(EditorTerminalExitsOptions(
-        standing: { [weak self] id in await self?.controller?.closeStanding(id) ?? .gone },
-        closable: { [weak self] id in await self?.controller?.closable(id) ?? false },
+        standing: { [weak self] id in
+            guard let controller = self?.controller else { return .gone }
+            return await controller.closeStanding(id)
+        },
+        closable: { [weak self] id in
+            guard let controller = self?.controller else { return false }
+            return await controller.closable(id)
+        },
         asking: { [weak self] in (self?.closeQuestions ?? 0) > 0 },
         sessionAlive: { [weak self] id in
-            guard let runtime = self?.runtime, let target = await runtime.controller.editorTerminalTarget(id) else {
+            guard let runtime = self?.runtime else { throw TerminalFailure(.staleTarget) }
+            guard let target = await runtime.controller.editorTerminalTarget(id) else {
                 throw TerminalFailure(.staleTarget)
             }
             return try await runtime.surfaces.sessionExists(target)
