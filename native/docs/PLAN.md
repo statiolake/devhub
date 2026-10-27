@@ -698,6 +698,42 @@ library:
   binary is missing (`XCTSkip`); the Docker image has git; the macOS job may
   `brew install tmux neovim`.
 - UI: snapshot or XCUITest optional; prefer testable view models in Core.
+- **End to end** (`DevHub --self-test`'s live phase, `LiveSelfTest`): the
+  real app, assembled as a launch assembles it (`LiveApp`), on a profile of
+  its own (private tmux server, state, settings, socket under
+  `/private/tmp/dh-st-<pid>`) in `SelfTestWorld` — two project folders (one a
+  git clone of `acme/widget`, in `projects/widget`), a Claude session to
+  resume, and stand-ins for the CLIs (Python: `claude` in stream-json, `codex`
+  as an app-server, `gh` signed out; every line they read is logged). It is
+  driven like a person: keys and clicks posted into the app's event queue
+  (`SelfTestDriver`), so they pass the local monitors, the menu's key
+  equivalents and the key window; outcomes are read back from the window,
+  the projection, tmux and the files DevHub writes. CI starts the bundle with
+  `open` (so macOS lets it come to the front; `SelfTestLaunch` takes its
+  environment, log and exit status from files) and builds whisper.cpp for it
+  (`Scripts/self-test-whisper.sh`: v1.9.4 pinned by commit, `ggml-base.en`
+  by the SHA-1 whisper.cpp's README lists, CPU only, cached). Coverage:
+
+  | Phase | What is driven, and checked |
+  | --- | --- |
+  | scratch | Scratch's editor terminal attaches to its ws- session; a resize reaches tmux's client; typed keys come back; a chord typed in it (Cmd+Q B twice) reaches the shell with none of its keys |
+  | sheets | palette (Cmd+Q :) by words + Return runs the command; keyboard shortcuts (Cmd+Q ?) + Escape; Open Workspace cancelled with Escape, then two folders found by name and opened with Return (selected); Go to (Cmd+Q G); New Agent (Cmd+Q C) lists both profiles and the earlier session, Return starts a GUI Claude Agent |
+  | conversation | a message typed in the composer and sent with ⌘Return reaches the stand-in; its streamed reply draws a table, a highlighted code block and typeset `$$…$$`; a permission request draws a card, the waiting line's click puts the keys on it, `1` allows (the stand-in reads `allow`); ⌘F counts matches, Return steps, Escape closes; `/resume` opens the questions layer's session picker listing the earlier session; `/model` + Option-Return makes Opus Claude's default (`$CLAUDE_CONFIG_DIR/settings.json`); Rename (Cmd+Q ,) |
+  | dictation | `say` → `afconvert` 16 kHz WAV played in place of the microphone (`DictationController.audioFile`); the language switch clicked to English; ⌘⇧M twice; the words whisper.cpp heard are in the composer |
+  | codex | a Codex Agent from New Agent; `/model` + Option-Return writes `model = "gpt-5.5-mini"` to `$CODEX_HOME/config.toml`; a turn's reply; Cmd+Q X stops it |
+  | issue | Assign Issue (Cmd+Q I): the URL typed, the clone found by name and origin, the branch question says GitHub could not be asked (`gh auth token` declined); Escape back out opens nothing |
+  | notices | a failure and a notice toast, hide after `notice_seconds` into the center, unread; Cmd+Q M opens it with the keys in it; Cmd+C copies the notice; a click in a detail + ⌘A ⌘C copies the selection |
+  | settings | Cmd+Q < opens it key; one control per screen (General switch, Workspaces switch, Agents name field, Actions switch, Keyboard recorder, Terminal checkbox on/off, Advanced git field) is written to settings.toml only after the save's pause and taken up by the app; Reset asks, Down + Return resets; Escape closes it |
+  | exits | `exit` in beta's ws- terminal closes beta without a question; with `sleep` running in the Agent's terminal (Cmd+Q V) Cmd+Q W asks and Escape keeps; `exit` in widget's terminal asks, Keep starts it over on a fresh ws- session that answers; `tmux detach-client` is seen and attached again; Scratch's `exit` starts it over; DevHub's own close (confirmed) and quit end no client by itself and leave the sessions running |
+
+  Not exercised end to end: a real `claude`/`codex` (stand-ins speak the
+  documented protocol, pinned by the fixture tests), the microphone itself
+  (the file source feeds the same feeder and stream), GitHub with a token
+  (the Issue flow stops at the signed-out answer), SSH Workspaces, the
+  managed Neovim. `RuntimeEndToEndTests` runs the same world without a
+  window (GUI Agents on the stand-ins, `/resume`'s listing, Make default for
+  both CLIs, `EditorTerminalExits` on real tmux) wherever tmux, git and
+  python3 are (the macOS job; locally in Docker with them installed).
 
 ---
 
@@ -873,9 +909,9 @@ probe + `--self-test`, `Scripts/bundle-app.sh`, `.github/workflows/native.yml`.
   assembles `GuiAgentWiring.wire`, `GitIssueAssigner` and
   `ControlExtras.native`. The self-test opens the palette, raises and puts
   away a notice, and draws every Settings screen on the live runtime.
-  Dictation's stream is tested in Core with a scripted recogniser; feeding a
-  WAV file to the App's capture on CI is not done (the CI runner has no
-  `dist/whisper`).
+  Dictation's stream is tested in Core with a scripted recogniser, and end
+  to end on CI: whisper.cpp built for the self-test hears a WAV file played
+  through the App's capture into a composer (§3.5, End to end).
 
 ### WP12 — SSH Workspaces in terminal-mode scope (Core + App) ~8k
 

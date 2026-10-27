@@ -879,6 +879,9 @@ final class ConversationPaneView: NSView, HostedConversation {
     var transcriptView: TranscriptScroller { main }
     var composerView: ComposerView { composer }
     var findStatus: SearchStatus? { search?.status }
+    /// The line saying requests are waiting (the self-test clicks it).
+    var waitingLine: NSView { waiting }
+    var isFindOpen: Bool { findBar != nil }
 
     func findForTest(_ query: String) {
         openFind()

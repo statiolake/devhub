@@ -257,7 +257,10 @@ final class TerminalPaneView: NSView, TerminalViewDelegate {
 
     nonisolated func send(source: TerminalView, data: ArraySlice<UInt8>) {
         let bytes = Data(data)
-        MainActor.assumeIsolated { session.input(bytes) }
+        MainActor.assumeIsolated {
+            ChordDispatcher.trace?("terminal \(surfaceKey): sends \(bytes.map { String(format: "%02x", $0) }.joined())")
+            session.input(bytes)
+        }
     }
 
     nonisolated func scrolled(source: TerminalView, position: Double) {}

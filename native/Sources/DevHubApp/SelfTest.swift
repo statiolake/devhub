@@ -15,6 +15,8 @@
 //   - a GUI Agent's pane draws the fixture transcripts, finds through a long
 //     one, and sends on ⌘Return but not mid-composition (WP10,
 //     `ConversationSelfTest`)
+//   - then the real app, end to end, on a private tmux server with stand-in
+//     CLIs, driven with keys and clicks (`LiveSelfTest`)
 //
 // Exit 0 with "self-test ok", else 1 with every failure.
 
@@ -50,13 +52,14 @@ final class SelfTest {
             await run()
             // WP10: a GUI Agent's pane from Core's fixture transcripts.
             failures += await ConversationSelfTest().run()
-            await live()
+            // The real app on a profile of its own, driven end to end.
+            failures += await LiveSelfTest().run()
             if failures.isEmpty {
-                print("self-test ok: \(DevHubVersion.description)")
-                exit(0)
+                SelfTestLaunch.say("self-test ok: \(DevHubVersion.description)")
+                SelfTestLaunch.exit(0)
             }
             FileHandle.standardError.write(Data("self-test failed: \(failures.joined(separator: "; "))\n".utf8))
-            exit(1)
+            SelfTestLaunch.exit(1)
         }
     }
 
@@ -259,157 +262,6 @@ final class SelfTest {
 
         window.disposeAll()
         window.window?.orderOut(nil)
-    }
-
-    // MARK: The live phase: a private tmux server
-
-    private let box = ShellBox()
-    private var liveShell: ShellController?
-
-    /// tmux, where Homebrew and the system put it.
-    private static func findTmux() -> String? {
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        let candidates = path.split(separator: ":").map { "\($0)/tmux" } + ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-
-    @discardableResult
-    private static func tmux(_ tmux: String, _ arguments: [String]) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tmux)
-        process.arguments = arguments
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return "" }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    /// The real runtime on a profile of its own (its own tmux server, state,
-    /// settings and socket under a scratch home): Scratch's editor terminal
-    /// attaches to its `ws-` session, and a new window size reaches tmux.
-    private func live() async {
-        guard let tmux = Self.findTmux() else {
-            print("self-test: no tmux on this machine; the live phase is skipped")
-            return
-        }
-        // `/private/tmp`, not `/tmp`: a short path for the control socket, and
-        // one with no symlink in it, so every root DevHub derives from it is
-        // already canonical.
-        let home = "/private/tmp/dh-st-\(getpid())"
-        let locations = ProfileLocations(profile: "selftest", home: home, environment: [:])
-        let fm = FileManager.default
-        try? fm.createDirectory(atPath: locations.configDirectory, withIntermediateDirectories: true)
-        // Scratch named through the `/tmp` → `/private/tmp` symlink on
-        // purpose: its root must come out canonical (realpath) and still get
-        // its `ws-` session.
-        let scratchRoot = "/tmp/dh-st-\(getpid())-scratch"
-        try? fm.createDirectory(atPath: scratchRoot, withIntermediateDirectories: true)
-        let settings = """
-            version = \(Int(ConfigConstants.schemaVersion))
-
-            [general]
-            workbench = "terminal"
-
-            [scratch]
-            daily = "\(scratchRoot)/YYYYMMDD"
-
-            [appearance]
-            title_bar = "hidden"
-            """
-        try? settings.write(toFile: locations.settingsFilePath, atomically: true, encoding: .utf8)
-        defer {
-            Self.tmux(tmux, ["-L", locations.tmuxSocketName, "kill-server"])
-            try? fm.removeItem(atPath: home)
-            try? fm.removeItem(atPath: scratchRoot)
-        }
-
-        let transport = LateTransport()
-        let roots = ExtensionRoots(builtin: ColorThemeCatalog.builtinRoot, user: [String]())
-        let shell = ShellController(titleBar: .hidden, appearance: AppearanceController(roots: roots), transport: transport)
-        liveShell = shell
-        box.shell = shell
-        shell.window.showWindow(nil)
-        shell.window.window?.setContentSize(NSSize(width: 1100, height: 720))
-        let box = self.box
-        let environment = RuntimeEnvironment(
-            locations: locations, appExecutable: Bundle.main.executablePath ?? CommandLine.arguments[0],
-            cliExecutable: AppDelegate.cliExecutable(), titleBar: .hidden)
-        let runtime: DevHubRuntime
-        do {
-            runtime = try await DevHubRuntime.start(
-                environment, app: WindowShell(box: box),
-                hooks: RuntimeHooks(config: { config in Task { @MainActor in box.shell?.configAccepted(config) } }))
-        } catch {
-            return check(false, "live: the runtime did not start: \(failureText(error))")
-        }
-        transport.target = runtime.transport
-        shell.adopt(runtime)
-        await runtime.controller.shellReady()
-
-        let scratchKey = await until(20) {
-            guard let snapshot = shell.snapshot, snapshot.readiness == .ready else { return false }
-            return shell.window.editorTerminals.values.contains { $0.surfaceKey == TerminalSurfaceKeys.workspace(snapshot.scratchWorkspaceId) }
-        }
-        check(scratchKey, "live: Scratch's editor area has no terminal view")
-        let accepted = await until(5) { shell.config?.general.workbench == "terminal" }
-        check(accepted, "live: the self-test's settings were not accepted")
-        let pane = shell.snapshot.flatMap { snapshot in
-            shell.window.editorTerminals.values.first { $0.surfaceKey == TerminalSurfaceKeys.workspace(snapshot.scratchWorkspaceId) }
-        }
-        if let pane {
-            let attached = await until(20) { pane.isAttached }
-            check(attached, "live: Scratch's editor terminal did not attach to tmux (\(pane.connection))")
-            if !attached, let snapshot = shell.snapshot, let scratch = snapshot.workspace(snapshot.scratchWorkspaceId) {
-                let exists = FileManager.default.fileExists(atPath: scratch.root)
-                let all = Self.tmux(tmux, ["-L", locations.tmuxSocketName, "list-sessions"])
-                print("self-test live: Scratch is \(scratch.root) (exists: \(exists), state: \(scratch.state)); tmux has: \(all)")
-            }
-            layoutApplied(shell.window, "live")
-            let sessions = Self.tmux(tmux, ["-L", locations.tmuxSocketName, "list-sessions", "-F", "#{session_name}"])
-            check(sessions.split(separator: "\n").contains { $0.hasPrefix("ws-") }, "live: there is no ws- session (\(sessions))")
-            func clientSize() -> String {
-                Self.tmux(tmux, ["-L", locations.tmuxSocketName, "list-clients", "-F", "#{client_width}x#{client_height}"])
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            let before = clientSize()
-            shell.window.window?.setContentSize(NSSize(width: 900, height: 600))
-            let resized = await until(10) {
-                let now = clientSize()
-                let grid = pane.terminal.getTerminal()
-                return !now.isEmpty && now != before && now.split(separator: "\n").contains("\(grid.cols)x\(grid.rows)")
-            }
-            check(resized, "live: tmux's client is \(clientSize()) after a resize (was \(before))")
-            pane.type("echo devhub-live\r")
-            let echoed = await until(10) { pane.screenText().contains("devhub-live") }
-            check(echoed, "live: what was typed in the editor terminal did not come back")
-            if attached { print("self-test live: \(pane.surfaceKey) attached on tmux -L \(locations.tmuxSocketName), client \(clientSize())") }
-        }
-        // WP11: Settings opens on the real config, draws every screen, and
-        // opening it again while it is in front closes it.
-        shell.toggleSettings()
-        let settingsUp = await until(10) { shell.settingsWindow?.isLoaded == true && shell.settingsWindow?.window?.isVisible == true }
-        check(settingsUp, "live: the Settings window did not open on the config")
-        if let settings = shell.settingsWindow {
-            for section in SettingsSection.allCases {
-                settings.show(section)
-                await pause(0.1)
-                check(settings.currentSection == section, "live: Settings did not show \(section.rawValue)")
-            }
-            settings.window?.makeKeyAndOrderFront(nil)
-            await pause(0.2)
-            if settings.window?.isKeyWindow == true {
-                shell.toggleSettings()
-                let closed = await until(3) { settings.window?.isVisible == false }
-                check(closed, "live: opening Settings while it was in front did not close it")
-            } else {
-                settings.window?.performClose(nil)
-            }
-        }
-
-        shell.window.disposeAll()
-        await runtime.shutdown()
+        shell.uninstallKeyboard()
     }
 }

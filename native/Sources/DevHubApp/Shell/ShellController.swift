@@ -158,6 +158,14 @@ final class ShellController {
         notifications.install()
     }
 
+    /// The window is going for good (the self-test's fixture window): its
+    /// key handlers go with it, so they do not answer for the next one.
+    func uninstallKeyboard() {
+        chords?.uninstall()
+        chords = nil
+        dictation.removeKeys()
+    }
+
     // MARK: What the model says (AppShell)
 
     func apply(_ snapshot: AppSnapshotWire) {

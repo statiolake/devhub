@@ -58,7 +58,7 @@ jobs:
   macos:
     name: "Native: build, test and bundle DevHub.app (macOS)"
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: native
@@ -104,7 +104,8 @@ jobs:
       - name: Bundle DevHub.app (release)
         run: Scripts/bundle-app.sh --output "$RUNNER_TEMP/native"
 
-      # The self-test's live phase attaches to a private tmux server.
+      # The self-test's live phase runs on a private tmux server. (After the
+      # tests: Core's real-tmux tests are not yet green on macOS.)
       - name: Install tmux
         timeout-minutes: 5
         env:
@@ -112,15 +113,47 @@ jobs:
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: brew list tmux >/dev/null 2>&1 || brew install tmux
 
+      # The self-test's dictation listens with whisper.cpp (pinned, built for
+      # the CPU, its model verified; see the script), kept between runs.
+      - name: Cache the self-test's speech recogniser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/devhub-self-test/whisper
+          key: self-test-whisper-v1.9.4-927cfce-base.en-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Scripts/self-test-whisper.sh') }}
+
+      - name: Build the self-test's speech recogniser
+        timeout-minutes: 15
+        run: Scripts/self-test-whisper.sh "$HOME/.cache/devhub-self-test/whisper"
+
+      # The fixture window, then the real app end to end (`LiveSelfTest`):
+      # its own tmux server, stand-in CLIs, keys and clicks. Started with
+      # `open`, as Finder starts an app, so that macOS lets it come to the
+      # front and take the keyboard; what the shell would hand it goes in
+      # files (`SelfTestLaunch`).
       - name: Self-test the bundle
-        timeout-minutes: 6
-        env:
-          DEVHUB_SELF_TEST_SNAPSHOTS: ${{ runner.temp }}/snapshots
-          DEVHUB_SELF_TEST_PRINT_SNAPSHOTS: "1"
+        timeout-minutes: 15
         run: |
           app="$RUNNER_TEMP/native/DevHub.app"
           "$app/Contents/Resources/bin/devhub" --version
-          "$app/Contents/MacOS/DevHub" --self-test
+          env_file="$RUNNER_TEMP/self-test.env"
+          log="$RUNNER_TEMP/self-test.log"
+          result="$RUNNER_TEMP/self-test.result"
+          printf '%s\n' \
+            "PATH=$PATH" \
+            "DEVHUB_SELF_TEST_SNAPSHOTS=$RUNNER_TEMP/snapshots" \
+            "DEVHUB_SELF_TEST_PRINT_SNAPSHOTS=1" \
+            "DEVHUB_WHISPER_DIR=$HOME/.cache/devhub-self-test/whisper" \
+            "DEVHUB_SELF_TEST_REQUIRE_WHISPER=1" >"$env_file"
+          : >"$log"
+          rm -f "$result"
+          tail -n +1 -f "$log" &
+          tailing=$!
+          open -n -W "$app" --args --self-test \
+            --self-test-env "$env_file" --self-test-log "$log" --self-test-result "$result" || true
+          sleep 1
+          kill "$tailing" 2>/dev/null || true
+          echo "self-test exit status: $(cat "$result" 2>/dev/null || echo none)"
+          test "$(cat "$result" 2>/dev/null)" = 0
 
       - name: Zip
         run: |
