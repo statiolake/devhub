@@ -11,6 +11,8 @@
 #                                           command" action links to this)
 #   DevHub.app/Contents/Resources/*.bundle  SwiftPM resource bundles, where
 #                                           Bundle.module looks for them
+#   DevHub.app/Contents/Resources/whisper   the speech recogniser, when
+#                                           ../dist/whisper exists
 #
 # and signs it ad hoc (codesign -s -), which is enough to run it locally and
 # from a CI artifact after `xattr -dr com.apple.quarantine`.
@@ -54,6 +56,11 @@ for resources in "$bin"/*.bundle "$bin"/*.resources; do
 	[ -e "$resources" ] || continue
 	cp -R "$resources" "$app/Contents/Resources/"
 done
+# The speech recogniser (`scripts/build_whisper.py` puts it in dist/whisper),
+# when this checkout has one: dictation says so when it does not.
+if [ -d "$here/../dist/whisper" ]; then
+	cp -R "$here/../dist/whisper" "$app/Contents/Resources/whisper"
+fi
 sed -e "s/@VERSION@/$version/" -e "s/@BUILD@/$build/" -e "s/@BUNDLE_IDENTIFIER@/$bundle_id/" \
 	Resources/Info.plist >"$app/Contents/Info.plist"
 printf 'APPL????' >"$app/Contents/PkgInfo"

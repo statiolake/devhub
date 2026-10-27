@@ -42,6 +42,12 @@ final class ShellController {
     private let dock = AppDock()
     private lazy var attention = WindowAttention(dock: dock)
     let notifications = Notifications()
+    /// ⌘⇧M: speech into the text the keyboard is in.
+    private(set) lazy var dictation: DictationController = {
+        let controller = DictationController(style: style)
+        controller.onFailure = { [weak self] error in self?.publishError(error) }
+        return controller
+    }()
     private var notifier: AgentNotifier?
     private var notifierBridge: NotifierBridge?
 
@@ -105,6 +111,7 @@ final class ShellController {
         let dispatcher = ChordDispatcher(host: self, layout: config.map { ChordLayout.of($0.keybindings) } ?? .defaults(), inputSources: TISInputSources())
         dispatcher.install()
         chords = dispatcher
+        dictation.installKeys()
         notifications.install()
     }
 
@@ -228,6 +235,7 @@ final class ShellController {
         style.update(tokens: tokens, terminal: terminal, dark: NSApp.effectiveAppearance.isDarkAppearance, terminalFontSize: zoomed)
         window.restyle(style)
         settingsWindow?.restyle(style)
+        dictation.restyle(style)
         render()
     }
 
