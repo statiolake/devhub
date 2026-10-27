@@ -651,6 +651,13 @@ export interface Setting {
      * for, and what decides the model's own default effort.
      */
     readonly resolved?: string;
+    /**
+     * The choice the CLI itself starts a new session on when its settings
+     * name none: the model Codex's `model/list` marks as its default, and
+     * that model's default effort. Claude lists its own as the choice
+     * `default` instead.
+     */
+    readonly builtInDefault?: true;
   }[];
   /**
    * Why the setting can't be changed here, when the Agent listed nothing to

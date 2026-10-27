@@ -400,6 +400,10 @@ import {
 	readClaudeDefaults,
 	writeClaudeDefault,
 } from "../agent/conversation/claude/defaults.js";
+import {
+	readCodexDefaults,
+	writeCodexDefault,
+} from "../agent/conversation/codex/defaults.js";
 import { completionRefusal, refusalOf } from "./completionRefusal.js";
 import {
 	executableMissingMessage,
@@ -1257,24 +1261,44 @@ export class AppController {
 			openFile: (agentId, path, selection) =>
 				this.openFromConversation(agentId, path, selection),
 			cliDefaults: async (agentId, model) => {
-				const place = this.claudeAgentPlace(agentId);
-				return place === undefined
-					? undefined
-					: readClaudeDefaults(place.runtime, place.profile, place.root, model);
+				const place = this.cliAgentPlace(agentId);
+				switch (place.profile.kind) {
+					case "claude":
+						return readClaudeDefaults(
+							place.runtime,
+							place.profile,
+							place.root,
+							model,
+						);
+					case "codex":
+						return readCodexDefaults(place.runtime, place.profile);
+					default:
+						return undefined;
+				}
 			},
 			setCliDefault: async (agentId, which, value, model) => {
-				const place = this.claudeAgentPlace(agentId);
-				if (place === undefined)
-					throw new Error(
-						"Only a Claude Code Agent's defaults can be set from DevHub",
-					);
-				await writeClaudeDefault(
-					place.runtime,
-					place.profile,
-					which,
-					value,
-					model,
-				);
+				const place = this.cliAgentPlace(agentId);
+				switch (place.profile.kind) {
+					case "claude":
+						return writeClaudeDefault(
+							place.runtime,
+							place.profile,
+							which,
+							value,
+							model,
+						);
+					case "codex":
+						return writeCodexDefault(
+							place.runtime,
+							place.profile,
+							which,
+							value,
+						);
+					default:
+						throw new Error(
+							"Only a Claude Code or Codex Agent's defaults can be set from DevHub",
+						);
+				}
 			},
 			fail: (error) => namedFailure(error),
 		});
@@ -6911,21 +6935,18 @@ export class AppController {
 	}
 
 	/**
-	 * Where a Claude Code Agent's CLI reads its settings: its machine, its
-	 * profile and its Workspace's root. Undefined for an Agent of another CLI.
+	 * Where an Agent's CLI reads its settings: its machine, its profile and
+	 * its Workspace's root.
 	 */
-	private claudeAgentPlace(agentId: AgentId):
-		| {
-				readonly runtime: Runtime;
-				readonly profile: AgentProfile;
-				readonly root: string;
-		  }
-		| undefined {
+	private cliAgentPlace(agentId: AgentId): {
+		readonly runtime: Runtime;
+		readonly profile: AgentProfile;
+		readonly root: string;
+	} {
 		const agent = this.coordinator.model.agent(agentId);
 		const workspace = this.coordinator.model.workspaceForAgent(agentId);
 		if (agent === undefined || workspace === undefined)
 			throw new Error(`no Agent ${agentId} is open`);
-		if (agent.profile.kind !== "claude") return undefined;
 		return {
 			runtime: runtimeById(this.agentMachine(agentId)),
 			profile: agent.profile,

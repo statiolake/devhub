@@ -10,9 +10,15 @@
 
 import "@testing-library/jest-dom/vitest";
 import { readFileSync } from "node:fs";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { CliDefaults } from "../../model/claudeDefaults";
+import type { CliDefaults } from "../../model/cliDefaults";
 import { EMPTY_SESSION, type SessionFacts } from "../../model/conversation";
 import { UNKNOWN_VALUE } from "./SettingPickers";
 import {
@@ -337,6 +343,8 @@ describe("how a picker is drawn", () => {
   });
 });
 
+const CLAUDE = { cli: "claude", savedIn: "~/.claude/settings.json" } as const;
+
 describe("the CLI's defaults for new sessions", () => {
   const SESSION = {
     ...EMPTY_SESSION,
@@ -356,6 +364,7 @@ describe("the CLI's defaults for new sessions", () => {
 
   function drawn(
     defaults: CliDefaults = {
+      ...CLAUDE,
       model: { source: "built-in" },
       effort: { value: "medium", source: "built-in" },
     },
@@ -386,6 +395,7 @@ describe("the CLI's defaults for new sessions", () => {
   it("names the default model before the first turn, and asks the effort for it", async () => {
     const cliDefaults = vi.fn((model?: string) =>
       Promise.resolve<CliDefaults>({
+        ...CLAUDE,
         model: { source: "built-in" },
         effort: {
           ...(model === undefined ? {} : { value: "medium" }),
@@ -431,6 +441,7 @@ describe("the CLI's defaults for new sessions", () => {
       fakeActions({
         cliDefaults: vi.fn(() =>
           Promise.resolve<CliDefaults>({
+            ...CLAUDE,
             model: { value: "haiku", source: "user" },
             effort: { value: "high", source: "built-in" },
           }),
@@ -478,6 +489,7 @@ describe("the CLI's defaults for new sessions", () => {
 
   it("says when something above the user settings decides the default", async () => {
     drawn({
+      ...CLAUDE,
       model: { value: "haiku", source: "project" },
       effort: { value: "medium", source: "built-in" },
     });
@@ -490,5 +502,98 @@ describe("the CLI's defaults for new sessions", () => {
     expect(
       rows[0]!.querySelector("[data-make-default]")!.getAttribute("title"),
     ).toMatch(/sets the default now/);
+  });
+});
+
+describe("a Codex Agent's defaults for new threads", () => {
+  const SESSION: SessionFacts = {
+    ...EMPTY_SESSION,
+    model: {
+      current: "gpt-b",
+      choices: [
+        { id: "gpt-a", label: "gpt-a", builtInDefault: true },
+        { id: "gpt-b", label: "gpt-b" },
+      ],
+    },
+    effort: {
+      current: "high",
+      choices: [
+        { id: "low", label: "low" },
+        { id: "medium", label: "medium", builtInDefault: true },
+        { id: "high", label: "high" },
+        { id: "xhigh", label: "xhigh" },
+      ],
+    },
+  };
+  const CODEX = { cli: "codex", savedIn: "~/.codex/config.toml" } as const;
+
+  /** Drawn, with the defaults read: the pickers offer them from here on. */
+  async function drawn(defaults: CliDefaults) {
+    const cliDefaults = vi.fn(() => Promise.resolve(defaults));
+    const setCliDefault = vi.fn(() => Promise.resolve());
+    draw(withSession(SESSION), fakeActions({ cliDefaults, setCliDefault }));
+    await waitFor(() => expect(cliDefaults).toHaveBeenCalled());
+    await act(async () => {});
+    return { cliDefaults, setCliDefault };
+  }
+
+  const marks = (rows: readonly HTMLElement[]) =>
+    rows.map(
+      (row) =>
+        row.querySelector(".conversation-setting-default")?.textContent ?? "",
+    );
+
+  it("marks Codex's own default model and effort when config.toml names none", async () => {
+    await drawn({
+      ...CODEX,
+      model: { source: "built-in" },
+      effort: { source: "built-in" },
+    });
+    expect(marks(openSetting("Model"))).toEqual(["Default", "Make default"]);
+    expect(marks(openSetting("Effort"))).toEqual([
+      "Make default",
+      "Default",
+      "Make default",
+      "Make default",
+    ]);
+  });
+
+  it("makes a model and an effort the default, in config.toml, and offers every effort", async () => {
+    const { setCliDefault } = await drawn({
+      ...CODEX,
+      model: { value: "gpt-a", source: "user" },
+      effort: { value: "low", source: "user" },
+    });
+    const models = openSetting("Model");
+    expect(marks(models)).toEqual(["Default", "Make default"]);
+    const make = models[1]!.querySelector("[data-make-default]")!;
+    expect(make.getAttribute("title")).toMatch(/in ~\/\.codex\/config\.toml/);
+    fireEvent.click(make);
+    expect(setCliDefault).toHaveBeenCalledWith("model", "gpt-b", undefined);
+    const efforts = openSetting("Effort");
+    expect(marks(efforts)).toEqual([
+      "Default",
+      "Make default",
+      "Make default",
+      "Make default",
+    ]);
+    // Codex keeps any level its model list offers, xhigh too.
+    const xhigh = efforts[3]!.querySelector("[data-make-default]")!;
+    expect(xhigh).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(xhigh);
+    expect(setCliDefault).toHaveBeenCalledWith("effort", "xhigh", "gpt-b");
+  });
+
+  it("says when a -c override among the profile's arguments decides the default", async () => {
+    await drawn({
+      ...CODEX,
+      model: { value: "gpt-b", source: "argument" },
+      effort: { source: "built-in" },
+    });
+    const rows = openSetting("Model");
+    expect(marks(rows)).toEqual(["Make default", "Default"]);
+    expect(
+      rows[0]!.querySelector("[data-make-default]")!.getAttribute("title"),
+    ).toMatch(/arguments \(-c\) sets the default now/);
   });
 });

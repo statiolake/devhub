@@ -8,50 +8,29 @@
  * for it on macOS and on Linux. A file that is not there, or that does not
  * parse, sets nothing — the CLI would not take a value from it either.
  *
- * A change is written to the user settings only, and atomically: the new
- * text goes to a file beside it under a name nobody else holds, which is then
- * renamed over it, so the CLI never reads half a file and a failed write
- * leaves the old one whole.
+ * A change is written to the user settings only (`cliSettingsFile.ts`).
  */
 
-import { randomUUID } from "node:crypto";
 import {
 	CLAUDE_SETTINGS_LAYERS,
 	claudeDefaults,
 	withUserDefault,
 	type ClaudeSettingsLayer,
-	type CliDefaults,
 } from "../../../../model/claudeDefaults.js";
-import { OperationDeadline } from "../../../terminal/command.js";
-import { CancellationToken } from "../../../terminal/ports.js";
-import { RuntimeFileError, type Runtime } from "../../../runtime/runtime.js";
+import type { CliDefaults } from "../../../../model/cliDefaults.js";
+import type { Runtime } from "../../../runtime/runtime.js";
+import {
+	homeRelative,
+	replaceSettingsFile,
+	settingsText,
+} from "../cliSettingsFile.js";
 import { claudeConfigDirectory, type SessionProfile } from "../resume.js";
-
-/** Larger than any settings file a person writes by hand. */
-const MAX_SETTINGS_BYTES = 4 * 1024 * 1024;
 
 /** Where Claude Code looks for managed settings: macOS's place, then Linux's. */
 const MANAGED_SETTINGS = [
 	"/Library/Application Support/ClaudeCode/managed-settings.json",
 	"/etc/claude-code/managed-settings.json",
 ];
-
-/** A file's text, or undefined when it is not there. */
-async function textOf(
-	runtime: Runtime,
-	path: string,
-): Promise<string | undefined> {
-	try {
-		return await runtime.readTextFile(path, MAX_SETTINGS_BYTES);
-	} catch (failure: unknown) {
-		if (
-			failure instanceof RuntimeFileError &&
-			(failure.code === "ENOENT" || failure.code === "ENOTDIR")
-		)
-			return undefined;
-		throw failure;
-	}
-}
 
 function parsed(text: string | undefined): unknown {
 	if (text === undefined) return undefined;
@@ -79,16 +58,17 @@ export async function readClaudeDefaults(
 	root: string,
 	model: string | undefined,
 ): Promise<CliDefaults> {
+	const user = await userSettingsPath(runtime, profile);
 	const paths: Readonly<Record<ClaudeSettingsLayer, readonly string[]>> = {
 		managed: MANAGED_SETTINGS,
 		local: [`${root}/.claude/settings.local.json`],
 		project: [`${root}/.claude/settings.json`],
-		user: [await userSettingsPath(runtime, profile)],
+		user: [user],
 	};
 	const settings: Partial<Record<ClaudeSettingsLayer, unknown>> = {};
 	for (const layer of CLAUDE_SETTINGS_LAYERS) {
 		for (const path of paths[layer]) {
-			const value = parsed(await textOf(runtime, path));
+			const value = parsed(await settingsText(runtime, path));
 			if (value !== undefined) {
 				settings[layer] = value;
 				break;
@@ -99,7 +79,11 @@ export async function readClaudeDefaults(
 		...(await runtime.environment()),
 		...Object.fromEntries(profile.env),
 	};
-	return claudeDefaults({ settings, env, args: profile.args }, model);
+	return {
+		cli: "claude",
+		savedIn: await homeRelative(runtime, user),
+		...claudeDefaults({ settings, env, args: profile.args }, model),
+	};
 }
 
 /**
@@ -114,31 +98,17 @@ export async function writeClaudeDefault(
 	model: string | undefined,
 ): Promise<void> {
 	const directory = await claudeConfigDirectory(runtime, profile);
-	const path = `${directory}/settings.json`;
 	const text = withUserDefault(
-		await textOf(runtime, path),
+		await settingsText(runtime, `${directory}/settings.json`),
 		which,
 		value,
 		model,
 	);
-	await runtime.makeDirectory(directory);
-	const temporary = `${path}.devhub-${randomUUID()}`;
-	if (!(await runtime.writeNewTextFile(temporary, text, 0o600)))
-		throw new Error(`${temporary} is taken${runtime.where}`);
-	const moved = await runtime.exec({
-		argv: ["mv", "-f", temporary, path],
-		deadline: OperationDeadline.in(10_000),
-		cancel: new CancellationToken(),
-		limits: {
-			stdoutBytes: 16 * 1024,
-			stderrBytes: 16 * 1024,
-			overflow: { kind: "truncate" },
-		},
-	});
-	if (moved.code !== 0) {
-		await runtime.removeTree(temporary).catch(() => undefined);
-		throw new Error(
-			`DevHub could not save Claude Code's settings ${path}${runtime.where}: ${moved.stderr.toString("utf8").trim() || `exit ${String(moved.code ?? moved.signal)}`}`,
-		);
-	}
+	await replaceSettingsFile(
+		runtime,
+		directory,
+		"settings.json",
+		text,
+		"Claude Code's settings",
+	);
 }

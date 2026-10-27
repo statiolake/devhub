@@ -255,10 +255,12 @@ describe("the handshake", () => {
 		expect(session.model).toEqual({
 			current: "gpt-5.5-codex",
 			choices: [
+				// Codex's own default, which the Make default picker marks.
 				{
 					id: "gpt-5.5-codex",
 					label: "gpt-5.5-codex",
 					detail: "GPT-5.5 Codex",
+					builtInDefault: true,
 				},
 				{ id: "gpt-5.5-mini", label: "gpt-5.5-mini", detail: "GPT-5.5 mini" },
 			],
@@ -268,6 +270,8 @@ describe("the handshake", () => {
 			choices: ["low", "medium", "high"].map((effort) => ({
 				id: effort,
 				label: effort,
+				// The model's own default effort.
+				...(effort === "medium" ? { builtInDefault: true } : {}),
 			})),
 		});
 		// on-request + workspaceWrite is the TUI's "Auto" preset.
@@ -797,7 +801,7 @@ describe("a turn", () => {
 		// A model chosen here runs at its own default effort until one is.
 		expect(harness.transcript.session.effort).toEqual({
 			current: "low",
-			choices: [{ id: "low", label: "low" }],
+			choices: [{ id: "low", label: "low", builtInDefault: true }],
 		});
 		harness.configure("effort", "low");
 		harness.configure("mode", "read-only");
@@ -3306,7 +3310,7 @@ describe("the thread's model, against the models model/list names", () => {
 		expect(session.effort).toEqual({
 			current: "medium",
 			choices: [
-				{ id: "medium", label: "medium" },
+				{ id: "medium", label: "medium", builtInDefault: true },
 				{ id: "xhigh", label: "xhigh" },
 			],
 		});

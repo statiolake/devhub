@@ -22,14 +22,15 @@
  *
  * Choosing a row changes this session only. Beside the rows of the model
  * and the effort, the picker also says which one the CLI's *new* sessions
- * start on (`model/claudeDefaults.ts`), with a mark at the row's right end,
- * and every other row has a button that makes it that default: Claude Code's
- * user settings are changed, as its own `/model` and `/effort` save them in
- * a terminal, and this session is left where it is. Option-Return does the
- * same for the highlighted row. When something above the user settings
- * decides the default (the profile's arguments, the environment, managed,
- * local or project settings), the mark and the button say so: a default
- * saved then does not take effect until that is gone.
+ * start on (`model/cliDefaults.ts`), with a mark at the row's right end,
+ * and every other row has a button that makes it that default: the CLI's
+ * own user settings are changed — Claude Code's `settings.json`, as its own
+ * `/model` and `/effort` save them in a terminal; Codex's `config.toml`, as
+ * its own model picker saves them — and this session is left where it is.
+ * Option-Return does the same for the highlighted row. When something above
+ * the user settings decides the default (the profile's arguments, the
+ * environment, managed, local or project settings), the mark and the button
+ * say so: a default saved then does not take effect until that is gone.
  *
  * An effort nothing named is the CLI's own, resolved when its process
  * started (Claude does not report it); it reads as the level that resolves
@@ -46,12 +47,13 @@ import {
   type RefObject,
 } from "react";
 import {
-  SAVABLE_EFFORTS,
-  SOURCE_WORDS,
+  CLI_WORDS,
+  sourceWords,
+  unsavableEffort,
   userSettingsDecide,
   type CliDefault,
   type CliDefaults,
-} from "../../model/claudeDefaults";
+} from "../../model/cliDefaults";
 import type { Setting, SessionFacts } from "../../model/conversation";
 import {
   useConversationActions,
@@ -97,14 +99,19 @@ function hasDefault(name: SettingName): name is DefaultName {
 
 /**
  * The row that is the CLI's default: the one of that value, else the one
- * that resolves to it; a model nothing set is the account's own default,
- * which Claude lists as the choice `default`.
+ * that resolves to it; a value nothing set is the CLI's own default, which
+ * Claude lists as the choice `default` and Codex marks (`builtInDefault`).
  */
 function defaultRow(
   rows: readonly SettingChoice[],
   known: CliDefault,
 ): SettingChoice | undefined {
-  const value = known.value ?? (known.source === "built-in" ? "default" : "");
+  if (known.value === undefined && known.source === "built-in")
+    return (
+      rows.find((row) => row.id === "default") ??
+      rows.find((row) => row.builtInDefault === true)
+    );
+  const value = known.value ?? "";
   return (
     rows.find((row) => row.id === value) ??
     rows.find((row) => row.resolved !== undefined && row.resolved === value)
@@ -154,20 +161,20 @@ function defaultModelWords(
 }
 
 /** Where a default comes from, in the words a hint says it. */
-function sourceSentence(known: CliDefault): string {
-  return known.source === "built-in"
-    ? "Claude Code's own default"
-    : `set by ${SOURCE_WORDS[known.source]}`;
+function sourceSentence(offer: DefaultOffer): string {
+  return offer.known.source === "built-in"
+    ? `${CLI_WORDS[offer.defaults.cli]}'s own default`
+    : `set by ${sourceWords(offer.defaults, offer.known.source)}`;
 }
 
 /**
  * Why making a row the default would not take effect now — something above
  * the user settings decides it — or undefined when it would.
  */
-function shadowedBy(known: CliDefault): string | undefined {
-  return userSettingsDecide(known.source)
+function shadowedBy(offer: DefaultOffer): string | undefined {
+  return userSettingsDecide(offer.known.source)
     ? undefined
-    : `${SOURCE_WORDS[known.source]} sets the default now, so new sessions keep that until it is gone`;
+    : `${sourceWords(offer.defaults, offer.known.source)} sets the default now, so new sessions keep that until it is gone`;
 }
 
 /** What a session's effort reads as while nothing named it: the level the CLI resolves. */
@@ -189,6 +196,9 @@ function modelName(session: SessionFacts): string | undefined {
 
 /** What a picker of a setting with a CLI's default is given of it. */
 interface DefaultOffer {
+  /** Both defaults, and which CLI's they are. */
+  readonly defaults: CliDefaults;
+  /** This setting's. */
   readonly known: CliDefault;
   /** Make the row `id` the default. */
   readonly set: (id: string) => void;
@@ -197,17 +207,18 @@ interface DefaultOffer {
 /** The hint of a value nothing named: the CLI's default, and where it is from, when known. */
 function unknownHint(
   name: SettingName,
-  known: CliDefault | undefined,
+  offer: DefaultOffer | undefined,
   setting: Setting,
 ): string {
-  if (name === "model" && known !== undefined) {
+  const known = offer?.known;
+  if (name === "model" && offer !== undefined && known !== undefined) {
     const model = defaultModelName(setting, known);
     if (model !== undefined)
-      return `No turn has started, so the Agent has not named its model yet: new sessions start on ${model} (${known.source === "built-in" ? "the account's default, as Claude Code's handshake lists it" : sourceSentence(known)})`;
+      return `No turn has started, so the Agent has not named its model yet: new sessions start on ${model} (${known.source === "built-in" ? `the account's default, as ${CLI_WORDS[offer.defaults.cli]}'s handshake lists it` : sourceSentence(offer)})`;
   }
-  if (name !== "effort" || known?.value === undefined)
+  if (name !== "effort" || offer === undefined || known?.value === undefined)
     return UNKNOWN_HINT[name];
-  return `No effort was chosen here, so the Agent runs at the CLI's own, which resolves to ${known.value} (${sourceSentence(known)}). Claude does not report it, so this is what it started with.`;
+  return `No effort was chosen here, so the Agent runs at the CLI's own, which resolves to ${known.value} (${sourceSentence(offer)}). ${CLI_WORDS[offer.defaults.cli]} does not report it, so this is what it started with.`;
 }
 
 /** What the composer holds a picker by: a command that changes a setting opens it. */
@@ -303,7 +314,7 @@ function SettingPicker({
       >
         <span
           className="conversation-setting-face"
-          title={unknown ? unknownHint(name, offer?.known, setting) : undefined}
+          title={unknown ? unknownHint(name, offer, setting) : undefined}
         >
           <SettingWords name={name} setting={setting} known={offer?.known} />
           {setting.unchangeable === undefined ? null : (
@@ -357,8 +368,8 @@ function ChoosableSetting({
     offer === undefined ? undefined : defaultRow(rows, offer.known);
   /** Why a row cannot be made the default, or undefined when it can. */
   const notSavable = (row: SettingChoice): string | undefined =>
-    name === "effort" && !SAVABLE_EFFORTS.includes(row.id)
-      ? `Claude Code's settings do not keep ${row.id} as a default: it is for one session only`
+    name === "effort" && offer !== undefined
+      ? unsavableEffort(offer.defaults.cli, row.id)
       : undefined;
   const makeDefault = (row: SettingChoice) => {
     if (offer === undefined || row === byDefault || notSavable(row)) return;
@@ -467,7 +478,7 @@ function ChoosableSetting({
           open
             ? undefined
             : unknown
-              ? unknownHint(name, offer?.known, setting)
+              ? unknownHint(name, offer, setting)
               : current?.detail
         }
         onClick={() => {
@@ -521,7 +532,7 @@ function ChoosableSetting({
                   <span
                     className="mac-caption conversation-setting-default"
                     data-default="true"
-                    title={`New sessions start on this: ${sourceSentence(offer.known)}`}
+                    title={`New sessions start on this: ${sourceSentence(offer)}`}
                   >
                     Default
                   </span>
@@ -535,8 +546,8 @@ function ChoosableSetting({
                     title={
                       notSavable(row) ??
                       [
-                        "Make this the default for new sessions, in ~/.claude/settings.json. This session is not changed. (⌥↩)",
-                        shadowedBy(offer.known),
+                        `Make this the default for new sessions, in ${offer.defaults.savedIn}. This session is not changed. (⌥↩)`,
+                        shadowedBy(offer),
                       ]
                         .filter((each) => each !== undefined)
                         .join(" — ")
@@ -596,6 +607,7 @@ export function SettingPickers({
   const offer = (name: SettingName): DefaultOffer | undefined => {
     if (!hasDefault(name) || defaults === undefined) return undefined;
     return {
+      defaults,
       known: defaults[name],
       set: (id) => {
         setCliDefault(name, id, name === "effort" ? model : undefined).then(

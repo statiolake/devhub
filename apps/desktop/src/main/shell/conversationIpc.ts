@@ -20,7 +20,7 @@ import {
 	type PendingId,
 	type RewindOutcome,
 } from "../../model/conversation.js";
-import type { CliDefaults } from "../../model/claudeDefaults.js";
+import type { CliDefaults } from "../../model/cliDefaults.js";
 import type { AgentId, AgentPresentation } from "../../model/domain.js";
 import { sessionScope } from "../agent/conversation/resume.js";
 import type {

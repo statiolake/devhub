@@ -11,7 +11,7 @@
  * back), so the page hands a rejection to its root and has nothing to decide.
  */
 
-import type { CliDefaults } from "../model/claudeDefaults.js";
+import type { CliDefaults } from "../model/cliDefaults.js";
 import type {
 	ConversationEvent,
 	EntryId,
@@ -261,9 +261,10 @@ export interface ConversationApi {
 	): Promise<void>;
 	/**
 	 * The model and effort a new session of the Agent's CLI starts on, and
-	 * where each comes from (`model/claudeDefaults.ts`); the effort for
-	 * `model`, a full model name, when it is known. `undefined` for a CLI
-	 * whose defaults DevHub does not read (Codex).
+	 * where each comes from (`model/cliDefaults.ts`); the effort for
+	 * `model`, a full model name, when it is known (Claude Code saves an
+	 * effort per model; Codex has one). `undefined` for a CLI whose defaults
+	 * DevHub does not read.
 	 */
 	cliDefaults(
 		agentId: string,
@@ -271,7 +272,8 @@ export interface ConversationApi {
 	): Promise<CliDefaults | undefined>;
 	/**
 	 * Make `value` the default `which` of the Agent's CLI's new sessions, in
-	 * its user settings: an effort is saved for `model` when it is named.
+	 * its user settings (`~/.claude/settings.json`, `~/.codex/config.toml`):
+	 * a Claude Code effort is saved for `model` when it is named.
 	 * The session that asked is not changed.
 	 */
 	setCliDefault(

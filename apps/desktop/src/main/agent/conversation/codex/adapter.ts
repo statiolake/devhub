@@ -1521,6 +1521,9 @@ export class CodexAdapter implements ProtocolAdapter {
 							id: candidate.model,
 							label: candidate.model,
 							detail: candidate.displayName,
+							// What a thread starts on when config.toml names no
+							// model: the Make default picker's built-in mark.
+							...(candidate.isDefault ? { builtInDefault: true as const } : {}),
 						})),
 				],
 				...(listing.state === "failed" ? { unchangeable } : {}),
@@ -1536,7 +1539,15 @@ export class CodexAdapter implements ProtocolAdapter {
 						? this.defaults?.effort
 						: undefined) ??
 					listed?.defaultEffort,
-				choices: efforts.map((effort) => ({ id: effort, label: effort })),
+				choices: efforts.map((effort) => ({
+					id: effort,
+					label: effort,
+					// What a thread on this model runs at when config.toml names
+					// no effort.
+					...(effort === listed?.defaultEffort
+						? { builtInDefault: true as const }
+						: {}),
+				})),
 				...(unchangeable === undefined ? {} : { unchangeable }),
 			},
 			mode: {

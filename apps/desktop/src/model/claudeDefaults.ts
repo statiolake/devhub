@@ -47,6 +47,8 @@
  * from, so the page can say a change would not take effect.
  */
 
+import type { CliDefault, CliDefaults } from "./cliDefaults.js";
+
 /** A settings file Claude Code reads, highest first. */
 export const CLAUDE_SETTINGS_LAYERS = [
   "managed",
@@ -67,29 +69,8 @@ export interface ClaudeDefaultInputs {
   readonly args: readonly string[];
 }
 
-/** Where a default comes from. */
-export type CliDefaultSource =
-  | "argument"
-  | "environment"
-  | ClaudeSettingsLayer
-  | "built-in";
-
-/** A setting's default for new sessions. */
-export interface CliDefault {
-  /**
-   * The value: a model alias or name, an effort level. Absent for a model
-   * nothing set (the account's default, the choice `default`) and for an
-   * effort whose model is not known.
-   */
-  readonly value?: string;
-  readonly source: CliDefaultSource;
-}
-
-/** Both defaults, as main hands them to the page. */
-export interface CliDefaults {
-  readonly model: CliDefault;
-  readonly effort: CliDefault;
-}
+/** Both defaults, as `claudeDefaults` decides them. */
+export type ClaudeDefaults = Pick<CliDefaults, "model" | "effort">;
 
 /** The effort levels a settings file takes (`max` is a session's only). */
 export const SAVABLE_EFFORTS: readonly string[] = [
@@ -200,31 +181,12 @@ export function claudeEffortDefault(
 export function claudeDefaults(
   inputs: ClaudeDefaultInputs,
   model: string | undefined,
-): CliDefaults {
+): ClaudeDefaults {
   return {
     model: claudeModelDefault(inputs),
     effort: claudeEffortDefault(inputs, model),
   };
 }
-
-/**
- * Whether a default from `source` is what a change to the user settings
- * decides: it is the user settings' own, or nothing above them set one.
- */
-export function userSettingsDecide(source: CliDefaultSource): boolean {
-  return source === "user" || source === "built-in";
-}
-
-/** How a default's source reads, after "set by". */
-export const SOURCE_WORDS: Readonly<Record<CliDefaultSource, string>> = {
-  argument: "the Agent profile's arguments",
-  environment: "the environment",
-  managed: "managed settings",
-  local: "this project's .claude/settings.local.json",
-  project: "this project's .claude/settings.json",
-  user: "~/.claude/settings.json",
-  "built-in": "Claude Code itself",
-};
 
 /**
  * The user settings file's text with `which`'s default made `value`, every

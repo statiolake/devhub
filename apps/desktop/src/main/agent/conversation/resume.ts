@@ -360,7 +360,7 @@ function shortened(line: PreviewLine): PreviewLine {
 }
 
 /** Where Codex keeps its state: `CODEX_HOME`, the profile's before the machine's. */
-async function codexHome(
+export async function codexHome(
 	runtime: Runtime,
 	profile: SessionProfile,
 ): Promise<string> {

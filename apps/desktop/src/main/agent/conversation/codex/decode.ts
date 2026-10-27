@@ -389,7 +389,10 @@ export function threadListResponse(
  * A model `model/list` names, by `model`: the name a thread opens with and a
  * turn is given (`ThreadStartResponse.model`, `TurnStartParams.model`).
  */
-export type ModelChoice = Pick<Model, "model" | "displayName" | "hidden"> & {
+export type ModelChoice = Pick<
+	Model,
+	"model" | "displayName" | "hidden" | "isDefault"
+> & {
 	readonly efforts: readonly string[];
 	/** The effort a turn on this model runs at when none is given. */
 	readonly defaultEffort: string;
@@ -407,6 +410,7 @@ export function modelListResponse(
 			model: r.string(m, "model", path),
 			displayName: r.string(m, "displayName", path),
 			hidden: r.boolean(m, "hidden", path),
+			isDefault: r.boolean(m, "isDefault", path),
 			efforts: r.array(m, "supportedReasoningEfforts", path, (option, at) =>
 				r.string(r.fields(option, at), "reasoningEffort", at),
 			),

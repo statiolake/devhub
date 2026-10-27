@@ -16,7 +16,7 @@
  * did not happen is reported the way every other failure on the page is.
  */
 
-import type { CliDefaults } from "../../model/claudeDefaults";
+import type { CliDefaults } from "../../model/cliDefaults";
 import { createContext, useContext } from "react";
 import type { FileRange } from "../../ipc/conversation";
 import type { VoiceApi } from "../../ipc/voice";
