@@ -28,7 +28,8 @@ var targets: [Target] = [
         name: "DevHubCore",
         path: "Sources/DevHubCore",
         // VS Code's built-in colour themes (MIT), vendored: WP8, Theme/.
-        resources: [.copy("Theme/BuiltinThemes")]
+        // Shiki's TextMate grammars and Light+/Dark+ (MIT), vendored: WP10, Markdown/.
+        resources: [.copy("Theme/BuiltinThemes"), .copy("Markdown/Grammars")]
     ),
     .executableTarget(
         name: "DevHubCLI",
