@@ -146,7 +146,8 @@ final class McpPanelView: PaneSheetFrame {
             ("Status", McpWords.statusText(server) + (working ? " — working…" : ""), tokens.primary.nsColor),
             ("Source", server.source ?? "Not reported", tokens.primary.nsColor),
         ] + (server.error.map { [("Reason", $0, tokens.danger.nsColor)] } ?? [])
-        let nameWidth = facts.map { Ink.width(Ink.text($0.0, size: 12, color: tokens.secondary.nsColor)) }.max() ?? 0
+        // A label's cell pads its text: the column is that much wider than the words.
+        let nameWidth = (facts.map { Ink.width(Ink.text($0.0, size: 12, color: tokens.secondary.nsColor)) }.max() ?? 0) + 6
         for (name, value, ink) in facts {
             text(Ink.text(name, size: 12, color: tokens.secondary.nsColor), width: nameWidth)
             let height = text(Ink.text(value, size: 12, color: ink), at: Space.s4 + nameWidth + Space.s2, width: max(40, width - nameWidth - Space.s2))

@@ -342,7 +342,7 @@ Inventory size: **157 items** across 16 areas.
 Every item above checked against the Swift code and against the TS app on
 `main` as it is now (`git log 4b3d5c6..origin/main -- apps/desktop`: c91dbf9
 the editor area's shell exiting as its close button and b290457 Codex Make
-default — both ported separately; de04dea then dd7f9c4 terminal mode
+default — ported alongside this pass (feebe01, c1f642b); de04dea then dd7f9c4 terminal mode
 local-only — ported here, W-08). SSH and dev containers are not needed in
 the native app. The inventory has 156 rows (the "157" above counted the
 SHA-256 row of §3.2's table).
@@ -472,7 +472,7 @@ Known differences that stay, and why:
 | U-06 | done (this pass: record) | `Conversation/RequestCardView.swift`; the answered QuestionRecord is now drawn as the card drew it with the preview beside the options (`QuestionRecordView`, `.questionRecord` embed) |
 | U-07 | done | `Conversation/ComposerView.swift`, `ComposerTextView.swift`; this pass: pending items and the command list rise in |
 | U-08 | done | `ConversationUI/CommandCompletion.swift`, `CompletionListView` |
-| U-09 | done (this pass: list) | `Conversation/SettingMenuView.swift`: DevHub's list over the face with Default / Make default (hover or highlight, click, ⌥↩), replacing the system menu with ⌥ alternates |
+| U-09 | done (this pass: list) | `Conversation/SettingMenuView.swift`: DevHub's list over the face with Default / Make default (hover or highlight, click, ⌥↩), replacing the system menu with ⌥ alternates; Codex's defaults too (c1f642b) |
 | U-10 | done | `ComposerFooterView` (context, background tasks + stop confirmation) |
 | U-11 | done | `FindAndSubagents.swift` FindBarView, `ConversationUI/TranscriptSearch.swift`; this pass: the TS tooltips/labels |
 | U-12 | done (this pass: look) | `Conversation/ConversationSheets.swift` `McpPanelView`: now a picker's sheet (rows with status dots, aside, footer note, DevHub buttons) on `PaneSheetChrome.swift`; Escape there no longer stops the turn |
@@ -518,7 +518,7 @@ Known differences that stay, and why:
 | X-03 | done | `Control/Diagnostics.swift`, `DiagnosticsTests` |
 | X-04 | done | `Support/ProfileLocations.swift` |
 | X-05 | done | `ShellController.openExternal` |
-| X-06 | done | `Voice/DictationController.swift`, `Core/Voice/*` (mic button + language switch: separate work) |
+| X-06 | done | `Voice/DictationController.swift`, `Core/Voice/*`; the composer's microphone and language switch (feebe01) |
 | X-07 | done | `AppDelegate.launch` (control socket claim, second launch hands over) |
 
 ---
