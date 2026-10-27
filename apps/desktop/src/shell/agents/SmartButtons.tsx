@@ -19,25 +19,26 @@
  * Every action under a trigger that holds is offered, unless its `button` is
  * off in Settings; the Agent actions sheet lists every action regardless.
  *
- * **Shape.** A compact stack, one button per line under a header that holds
- * the drag handle and the automatic actions' switch — never a row that grows
- * as wide as its wording. A terminal's lines are as wide as their words and
- * flush right in its corner; a conversation's are all one width, so the stack
- * reads as one block standing on the composer.
+ * **Shape.** One box holding a compact stack, one button per line under the
+ * automatic actions' switch — never a row that grows as wide as its wording.
+ * A terminal's lines are as wide as their words and flush right in its
+ * corner; a conversation's are all one width, so the stack reads as one block
+ * standing on the composer.
  *
  * **Where.** A GUI Agent's stand on its composer's top edge, touching it; a
  * terminal's in the pane's bottom right corner above the queued-message
- * status. The box can be dragged anywhere in the pane by its handle (or moved
- * with the arrow keys while the handle has focus). Within `SMART_BUTTONS_SNAP`
+ * status. The box can be dragged anywhere in the pane by any part of it, a
+ * button included: a press that moves past `SMART_BUTTONS_DRAG_THRESHOLD` is
+ * a drag and presses nothing, one that does not is a click. From the
+ * keyboard, ⌥ and an arrow move it while anything in it has focus. Within `SMART_BUTTONS_SNAP`
  * pixels of the composer's (status's, corner's) top or right edge it snaps to
  * it and stays anchored there as that grows and moves; anywhere else it is
  * free. Main remembers where per presentation (`model/smartButtons.ts`); a
- * double-click on the handle, or Home, puts it back. What is drawn is always
+ * double-click on the box's own ground, or ⌥Home, puts it back. What is drawn is always
  * clamped to the pane as it is now, so a smaller window never hides it.
  *
- * **How it looks.** Translucent at rest — it sits over the work — and at full
- * strength while pointed at, holding focus, or being dragged
- * (`smartButtons.css`).
+ * **How it looks.** A ghost at rest — it sits over the work — and made solid
+ * while pointed at, holding focus, or being dragged (`smartButtons.css`).
  *
  * **Automatic.** The bolt in the header opens a switch for every action that
  * may be automatic (`AUTOMATIC_TRIGGERS`), each with what makes it fire: switched
@@ -299,6 +300,9 @@ export function SmartButtons({
     undefined,
   );
   useEffect(() => () => clearTimeout(settleTimer.current), []);
+  // Whether the press under way has moved far enough to be a drag: the click
+  // it ends in is then swallowed.
+  const dragged = useRef(false);
   const [drag, setDrag] = useState<{
     readonly pointer: { readonly x: number; readonly y: number };
     readonly from: SmartButtonsOffset;
@@ -416,96 +420,111 @@ export function SmartButtons({
       data-presentation={agent.presentation}
       data-placed={stored === undefined ? "default" : "moved"}
       {...(anchored === undefined ? {} : { "data-anchored": anchored })}
-      {...(drag === undefined ? {} : { "data-dragging": "" })}
+      {...(drag?.to === undefined ? {} : { "data-dragging": "" })}
       {...(settling ? { "data-settling": "" } : {})}
       {...(snapping && drag !== undefined ? { "data-snapping": "" } : {})}
       {...(offered.length === 0 && ticked.length === 0 && !menuOpen
         ? { "data-quiet": "" }
         : {})}
       {...(waiting ? { "data-waiting": "", "aria-hidden": true } : {})}
+      aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Alt+ArrowLeft Alt+ArrowRight Alt+Home"
+      title="Drag to move; near the input box it snaps to it and stays there. Double-click its edge to put it back."
       style={{
         right: `${String(drawn.right)}px`,
         bottom: `${String(drawn.bottom)}px`,
         ...(waiting ? { visibility: "hidden" as const } : {}),
       }}
+      onPointerDown={(event) => {
+        if (event.button !== 0 || event.isPrimary === false) return;
+        // The Auto panel's switches are its own; nothing in it moves the box.
+        if ((event.target as Element).closest(".smart-buttons-menu")) return;
+        dragged.current = false;
+        setDrag({
+          pointer: { x: event.clientX, y: event.clientY },
+          from: resting,
+          to: undefined,
+        });
+      }}
+      onPointerMove={(event) => {
+        if (drag === undefined || metrics === undefined) return;
+        const moved = {
+          x: event.clientX - drag.pointer.x,
+          y: event.clientY - drag.pointer.y,
+        };
+        // Under the threshold the press is a click, of whatever it is on: a
+        // double-click is two of those, and neither is a place to remember.
+        if (
+          drag.to === undefined &&
+          Math.hypot(moved.x, moved.y) < SMART_BUTTONS_DRAG_THRESHOLD
+        ) {
+          return;
+        }
+        if (drag.to === undefined) {
+          // Now a drag. The pointer is the box's until it lets go — taken
+          // only now, so a click is never taken from the button it is on.
+          dragged.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }
+        setDrag({
+          ...drag,
+          to: snapped(
+            draggedOffset(drag.from, moved, metrics.pane, metrics.box),
+          ),
+        });
+      }}
+      onPointerUp={(event) => {
+        if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        const to = drag?.to;
+        if (to === undefined) {
+          setDrag(undefined);
+          return;
+        }
+        // Held where it was dropped until main's snapshot says so, then
+        // drawn from the snapshot; a refusal goes to the page's root and
+        // the box goes back to where main still has it.
+        void place(to).finally(() => setDrag(undefined));
+      }}
+      onPointerCancel={() => {
+        dragged.current = false;
+        setDrag(undefined);
+      }}
+      // The click that ends a drag presses nothing, whatever it lands on.
+      onClickCapture={(event) => {
+        if (!dragged.current) return;
+        dragged.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onDoubleClick={(event) => {
+        // On the box's own ground: a double-click on a button is two clicks.
+        if ((event.target as Element).closest("button, .smart-buttons-menu"))
+          return;
+        void place(undefined);
+      }}
+      onKeyDown={(event) => {
+        if (!event.altKey || event.metaKey || event.ctrlKey) return;
+        if (event.key === "Home") {
+          event.preventDefault();
+          void place(undefined);
+          return;
+        }
+        const step = {
+          ArrowLeft: { x: -KEY_STEP, y: 0 },
+          ArrowRight: { x: KEY_STEP, y: 0 },
+          ArrowUp: { x: 0, y: -KEY_STEP },
+          ArrowDown: { x: 0, y: KEY_STEP },
+        }[event.key];
+        if (step === undefined || metrics === undefined) return;
+        event.preventDefault();
+        void place(
+          snapped(draggedOffset(resting, step, metrics.pane, metrics.box)),
+        );
+      }}
     >
-      <div className="smart-buttons-header">
-        <span
-          className="smart-buttons-handle"
-          role="button"
-          tabIndex={0}
-          aria-label="Move the Smart Buttons"
-          aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Home"
-          title="Drag to move; near the input box it snaps to it and stays there. Double-click to put it back."
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setDrag({
-              pointer: { x: event.clientX, y: event.clientY },
-              from: resting,
-              to: undefined,
-            });
-          }}
-          onPointerMove={(event) => {
-            if (drag === undefined || metrics === undefined) return;
-            const moved = {
-              x: event.clientX - drag.pointer.x,
-              y: event.clientY - drag.pointer.y,
-            };
-            // Under the threshold the handle was pressed, not moved: a
-            // double-click is two of those, and neither is a place to
-            // remember.
-            if (
-              drag.to === undefined &&
-              Math.hypot(moved.x, moved.y) < SMART_BUTTONS_DRAG_THRESHOLD
-            ) {
-              return;
-            }
-            setDrag({
-              ...drag,
-              to: snapped(
-                draggedOffset(drag.from, moved, metrics.pane, metrics.box),
-              ),
-            });
-          }}
-          onPointerUp={(event) => {
-            event.currentTarget.releasePointerCapture(event.pointerId);
-            const to = drag?.to;
-            if (to === undefined) {
-              setDrag(undefined);
-              return;
-            }
-            // Held where it was dropped until main's snapshot says so, then
-            // drawn from the snapshot; a refusal goes to the page's root and
-            // the box goes back to where main still has it.
-            void place(to).finally(() => setDrag(undefined));
-          }}
-          onPointerCancel={() => setDrag(undefined)}
-          onDoubleClick={() => {
-            void place(undefined);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Home") {
-              event.preventDefault();
-              void place(undefined);
-              return;
-            }
-            const step = {
-              ArrowLeft: { x: -KEY_STEP, y: 0 },
-              ArrowRight: { x: KEY_STEP, y: 0 },
-              ArrowUp: { x: 0, y: -KEY_STEP },
-              ArrowDown: { x: 0, y: KEY_STEP },
-            }[event.key];
-            if (step === undefined || metrics === undefined) return;
-            event.preventDefault();
-            void place(
-              snapped(draggedOffset(resting, step, metrics.pane, metrics.box)),
-            );
-          }}
-        >
-          <GripIcon />
-        </span>
-        {automatic.length > 0 ? (
+      {automatic.length > 0 ? (
+        <div className="smart-buttons-header">
           <AutomaticMenu
             agent={agent}
             choices={automatic}
@@ -514,8 +533,8 @@ export function SmartButtons({
             setOpen={setMenuOpen}
             set={setAutomatic}
           />
-        ) : null}
-      </div>
+        </div>
+      ) : null}
       {present.map(({ line: { action, active }, exiting, entering }) => {
         const on = ticked.includes(action.id);
         const when = FIRES_WHEN[action.trigger];
@@ -763,18 +782,6 @@ function useMetrics(
     // had a frame to say so.
   }, [own, agent, count, arrived]);
   return metrics;
-}
-
-function GripIcon() {
-  return (
-    <svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">
-      {[1, 5, 9].map((x) =>
-        [1, 5].map((y) => (
-          <circle key={`${String(x)}-${String(y)}`} cx={x} cy={y} r="1" />
-        )),
-      )}
-    </svg>
-  );
 }
 
 function BoltIcon() {

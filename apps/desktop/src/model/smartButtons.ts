@@ -176,10 +176,13 @@ export function draggedOffset(
 
 /**
  * How far from where it went down a pointer has to move before the press is a
- * drag. Under it the handle was pressed, not moved — a double-click to reset
- * is two of those — and nothing is remembered.
+ * drag. The whole box is what is dragged, buttons included, so under it a
+ * press is a click — of the button under it, or on the box's own ground —
+ * and nothing is remembered. Past it the press is a drag, and the button it
+ * started on is not pressed. Four pixels is more than the drift of a click
+ * on a trackpad, tap-to-click included, and less than any move meant as one.
  */
-export const SMART_BUTTONS_DRAG_THRESHOLD = 3;
+export const SMART_BUTTONS_DRAG_THRESHOLD = 4;
 
 /** The gap between a terminal pane's corner and the box, as `--space-3`. */
 export const SMART_BUTTONS_MARGIN = 12;

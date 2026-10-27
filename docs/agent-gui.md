@@ -1109,9 +1109,10 @@ is its own column), the same distance in, and the same size whichever it
 says. It starts a GUI Agent from the same profile resuming the
 terminal's session, selects it, and stops the terminal Agent once the GUI one
 is running and written down; a launch that fails leaves the terminal running.
-**Smart Buttons.** While a GUI Agent is idle, a compact stack of small
-buttons — one per line, under a header with the drag handle and the automatic
-actions' bolt — stands on its composer's top right edge, touching it: what
+**Smart Buttons.** While a GUI Agent is idle, one box holding a compact stack
+of small buttons — one per line, under the automatic actions' bolt — stands
+on its composer's top right edge (on the topmost waiting message, when there
+are any): what
 the Workspace's repository says could be done next — commit, push, open a
 pull request, get a draft ready, address review comments, fix CI
 (`smartButtonTriggers` in `model/agentActions.ts`, read from the repository status the Sidebar already
@@ -1122,9 +1123,13 @@ Agent actions sheet does, so the corner's rules for what became of it are
 unchanged. They go when the Agent starts working or the condition stops
 holding. A conversation's lines share one width, so the stack reads as one
 tab on the composer; a terminal's keep their own widths, flush right. The box
-rests translucent and comes up to full when pointed at, focused or dragged.
-Its handle drags it anywhere in the pane (or, focused, the arrow keys move it
-8px at a time). Within 16px (`SMART_BUTTONS_SNAP`) of the composer's top edge
+rests as a ghost — faint and see-through — and materialises (full strength,
+an opaque floating ground, a shadow) when pointed at, focused or dragged.
+Any part of it drags it anywhere in the pane, a button included: a press
+that moves more than 4px (`SMART_BUTTONS_DRAG_THRESHOLD`) is a drag and
+presses nothing; one that does not, a trackpad tap included, is a click of
+the button under it. With anything in it focused, ⌥ and the arrow keys move
+it 8px at a time. Within 16px (`SMART_BUTTONS_SNAP`) of the composer's top edge
 — or its right edge, when there is room beside it — the box snaps to that edge
 and is dropped _anchored_: remembered as an edge and a distance along it, and
 measured from the composer every time it is drawn, so it rides up as the
@@ -1135,7 +1140,7 @@ before anchoring, so older `state.json` entries read as the free places they
 were. Main remembers the spot per presentation (`state.json` `smart_buttons`:
 `{"anchored": "top" | "side", "along": px}` or `{"right": px, "bottom": px}`;
 absent is the default, anchored on the top edge), and a double-click on the
-handle — or Home — puts it back; a drop on the default spot is the default and
+box's edge (not on a button) — or ⌥Home — puts it back; a drop on the default spot is the default and
 is forgotten.
 
 **Automatic actions.** An action whose trigger may be automatic

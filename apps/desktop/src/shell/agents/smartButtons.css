@@ -3,14 +3,18 @@
    Placed by the component, which writes `right` and `bottom`: on a GUI
    Agent's composer, in a terminal's bottom right corner, anchored to either,
    or wherever the person dragged it. Over a surface that may be any colour,
-   so each button carries its own ground.
+   so the box carries its own ground: one box round the whole cluster — the
+   automatic actions' switch and every button — and the box is what moves.
 
-   One rule for its strength, and it is the only opacity anything in the box
-   has: at rest the whole box is a suggestion at 40%; pointed at, holding
-   focus, or being dragged, it is at full strength. On the box and not per
-   button, because reaching for one is a decision about the group — a stack in
-   which one button is bright and the others ghosts reads as the others
-   being disabled.
+   A ghost at rest, solid when reached for. At rest the box is a faint wash of
+   the floating material with a hairline edge, and the whole of it is a
+   suggestion at 40%; pointed at, holding focus, or being dragged it
+   materialises — full strength, the floating material with its blur, and
+   elevation 2 (3 while it is carried). One rule for its strength, and it is
+   the only opacity anything in the box has: on the box and not per button,
+   because reaching for one is a decision about the group — a stack in which
+   one button is bright and the others ghosts reads as the others being
+   disabled.
 
    Motion is the shared tokens' (`tokens.css`), with the playful end of them:
    a line pops into being on the pop spring, scaled up from small, and lines
@@ -18,36 +22,82 @@
    pointer and gives under the press, springing back; a line that leaves
    shrinks away quickly and the stack closes up behind it. */
 .smart-buttons {
+  /* How the box materialises and fades back, in every state below. */
+  --smart-materialize:
+    opacity var(--motion-base) var(--ease-standard),
+    background-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard),
+    backdrop-filter var(--motion-base) var(--ease-standard);
+
   position: absolute;
   z-index: 2;
   display: flex;
   max-width: min(260px, calc(100% - var(--space-6)));
   flex-direction: column;
   align-items: end;
+  padding: 3px;
+  border-radius: var(--radius-card);
+  background: color-mix(in srgb, var(--material-float) 30%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--edge) 60%, transparent);
+  cursor: grab;
   gap: 2px;
   opacity: 0.4;
-  transition: opacity var(--motion-fast) var(--ease-standard);
+  touch-action: none;
+  transition: var(--smart-materialize);
+}
+
+/* Reached for: made solid. */
+.smart-buttons:is(:hover, :focus-within, [data-dragging]) {
+  backdrop-filter: var(--material-blur);
+  background: var(--material-float);
+  box-shadow: var(--elevation-2);
+}
+
+/* Carried: lifted a level, and the pointer holds it. */
+.smart-buttons[data-dragging] {
+  box-shadow: var(--elevation-3);
+}
+
+.smart-buttons[data-dragging],
+.smart-buttons[data-dragging] * {
+  cursor: grabbing;
+}
+
+/* Snapped to the input box mid-drag: the edge says so before the drop. */
+.smart-buttons[data-dragging][data-anchored] {
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 4px 12px var(--shadow-mid),
+    0 18px 48px var(--shadow-deep);
+}
+
+/* Increase Contrast: no ghost — an opaque ground and a firm edge at rest. */
+@media (prefers-contrast: more) {
+  .smart-buttons {
+    background: var(--raised);
+    box-shadow: 0 0 0 1px var(--edge);
+  }
 }
 
 /* Position glides only just after a snap, dock or undock (set by the
    component for a moment), never on mount, page switch or resize. */
 .smart-buttons[data-settling]:not([data-dragging]) {
   transition:
-    opacity var(--motion-fast) var(--ease-standard),
+    var(--smart-materialize),
     right var(--motion-slow) var(--ease-spring),
     bottom var(--motion-slow) var(--ease-spring);
 }
 
 /* Under the pointer the box follows it exactly. */
 .smart-buttons[data-dragging] {
-  transition: opacity var(--motion-fast) var(--ease-standard);
+  transition: var(--smart-materialize);
 }
 
 /* Mid-drag, entering or leaving a snap zone glides for a moment (set by the
    component on that change only); otherwise the box tracks the pointer. */
 .smart-buttons[data-dragging][data-snapping] {
   transition:
-    opacity var(--motion-fast) var(--ease-standard),
+    var(--smart-materialize),
     right var(--motion-base) var(--ease-spring),
     bottom var(--motion-base) var(--ease-spring);
 }
@@ -116,7 +166,8 @@
   .smart-buttons[data-settling]:not([data-dragging]),
   .smart-buttons[data-dragging],
   .smart-buttons[data-dragging][data-snapping] {
-    transition: opacity var(--motion-fast) linear;
+    /* It still materialises and fades back; only the glide goes. */
+    transition: var(--smart-materialize);
   }
 
   .smart-button-line[data-entering] {
@@ -156,44 +207,14 @@
   align-items: stretch;
 }
 
+/* The automatic actions' switch, at the box's top end. */
 .smart-buttons-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: end;
   gap: var(--space-1);
 }
 
-.smart-buttons[data-presentation="tui"] .smart-buttons-header {
-  justify-content: end;
-}
-
-.smart-buttons-handle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px 4px;
-  border-radius: var(--radius-row);
-  color: var(--secondary);
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-}
-
-.smart-buttons-handle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.smart-buttons[data-dragging] .smart-buttons-handle {
-  cursor: grabbing;
-}
-
-/* Snapped to the input box mid-drag: the handle says so before the drop. */
-.smart-buttons[data-dragging][data-anchored] .smart-buttons-handle {
-  color: var(--accent);
-}
-
-.smart-buttons-handle svg,
 .smart-buttons-auto svg {
   fill: currentcolor;
 }
@@ -205,19 +226,19 @@
   align-items: stretch;
 }
 
-/* A button is a small resting card (elevation 1) of the floating material,
-   round-ended: over a terminal or a transcript of any colour it carries its
-   own ground and its own edge. */
+/* A button is a row of the box: a faint wash on the box's ground, its
+   corners following the box's. Under the pointer it lifts a pixel towards
+   the hand; pressed it gives, quickly, and springs back on release. The
+   pointer over it stays the arrow — it is a button first — and becomes the
+   closed hand once a press has turned into a drag. */
 .smart-button {
   overflow: hidden;
   min-width: 0;
   flex: 1 1 auto;
   padding: 3px 10px;
   border: 0;
-  border-radius: var(--radius-pill);
-  backdrop-filter: var(--material-blur);
-  background: var(--material-float);
-  box-shadow: var(--elevation-1);
+  border-radius: calc(var(--radius-card) - 3px);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
   color: var(--primary);
   font-size: 11px;
   font-weight: 510;
@@ -231,34 +252,41 @@
     transform var(--motion-base) var(--ease-spring);
 }
 
-/* Under the pointer it lifts a pixel towards the hand (elevation 2); pressed
-   it gives, quickly, and springs back on release. */
 .smart-button:hover,
 .smart-buttons-auto:hover {
-  background: color-mix(in srgb, var(--primary) 6%, var(--raised));
+  background: color-mix(in srgb, var(--primary) 11%, transparent);
 }
 
 .smart-button:hover:not([data-waiting]) {
-  box-shadow: var(--elevation-2);
+  box-shadow: 0 1px 3px var(--shadow-soft);
   transform: translateY(-1px);
 }
 
 .smart-button:active:not([data-waiting]),
 .smart-buttons-auto:active {
-  background: color-mix(in srgb, var(--primary) 12%, var(--raised));
-  box-shadow: var(--elevation-1);
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  box-shadow: none;
   transform: scale(0.94);
   transition-duration: 80ms;
+}
+
+/* Carried, nothing in the box answers the pointer: it is all one thing. */
+.smart-buttons[data-dragging] :is(.smart-button, .smart-buttons-auto) {
+  box-shadow: none;
+  transform: none;
+}
+
+.smart-button:focus-visible,
+.smart-buttons-auto:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 /* Automatic: the line edged in the accent, so an Agent that will act on its
    own is never a surprise. One whose condition does not hold is drawn but
    cannot be pressed: it fires by itself when the condition arises. */
 .smart-button-line[data-automatic] .smart-button {
-  box-shadow:
-    0 0 0 1px var(--accent),
-    0 1px 2px var(--shadow-soft),
-    0 2px 8px var(--shadow-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .smart-button[data-waiting] {
@@ -267,7 +295,7 @@
 
 .smart-button[data-waiting]:hover,
 .smart-button[data-waiting]:active {
-  background: var(--material-float);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
 }
 
 /* With no button offered and nothing switched on, the box is only its

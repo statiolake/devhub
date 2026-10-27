@@ -455,8 +455,44 @@ describe("where the box stands", () => {
 });
 
 describe("dragging the box", () => {
+  // There is no handle: the box is dragged by any part of it, the button
+  // under the pointer included.
   const handle = () =>
-    box().querySelector(".smart-buttons-handle") as HTMLElement;
+    (box().querySelector(".smart-button") as HTMLElement | null) ?? box();
+
+  it("has no handle of its own", () => {
+    mount();
+    expect(box().querySelector(".smart-buttons-handle")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Move the Smart Buttons" }),
+    ).toBeNull();
+  });
+
+  it("is a click of the button under it when the press does not move past the threshold", () => {
+    const { dispatch, runAgentAction } = mount();
+    const button = screen.getByRole("button", { name: "Commit the changes" });
+    fireEvent.pointerDown(button, {
+      button: 0,
+      clientX: 900,
+      clientY: 580,
+      pointerId: 1,
+      isPrimary: true,
+    });
+    // A trackpad click drifts a pixel or three.
+    fireEvent.pointerMove(button, { clientX: 902, clientY: 582, pointerId: 1 });
+    expect(box()).not.toHaveAttribute("data-dragging");
+    fireEvent.pointerUp(button, { pointerId: 1 });
+    fireEvent.click(button);
+    expect(runAgentAction).toHaveBeenCalledWith("a-1", "commit_changes");
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("presses from the keyboard as ever", () => {
+    const { runAgentAction } = mount();
+    // Enter and Space on a button are its click.
+    fireEvent.click(screen.getByRole("button", { name: "Commit the changes" }));
+    expect(runAgentAction).toHaveBeenCalledTimes(1);
+  });
 
   it("remembers where it was dropped, and presses no button", () => {
     const { dispatch, runAgentAction } = mount();
@@ -475,6 +511,9 @@ describe("dragging the box", () => {
     expect(box().style.right).toBe("212px");
     expect(box().style.bottom).toBe("112px");
     fireEvent.pointerUp(handle(), { clientX: 700, clientY: 480, pointerId: 1 });
+    // The click the drag ends in lands on the button it started on, and is
+    // swallowed.
+    fireEvent.click(handle());
     expect(dispatch).toHaveBeenCalledWith({
       type: "place_smart_buttons",
       presentation: "tui",
@@ -521,12 +560,14 @@ describe("dragging the box", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("goes back to its default spot on a double-click of the handle", () => {
+  it("goes back to its default spot on a double-click of its own ground, not of a button", () => {
     const { dispatch } = mount({
       over: { presentation: "gui" },
       stored: { right: 300, bottom: 200 },
     });
     fireEvent.doubleClick(handle());
+    expect(dispatch).not.toHaveBeenCalled();
+    fireEvent.doubleClick(box());
     expect(dispatch).toHaveBeenCalledWith({
       type: "place_smart_buttons",
       presentation: "gui",
@@ -608,16 +649,19 @@ describe("dragging the box", () => {
     });
   });
 
-  it("moves with the arrow keys, and Home puts it back", () => {
+  it("moves with ⌥ and the arrow keys from anything in it, and ⌥Home puts it back", () => {
     const { dispatch } = mount({ stored: { right: 300, bottom: 200 } });
-    const grip = screen.getByRole("button", { name: "Move the Smart Buttons" });
+    const grip = screen.getByRole("button", { name: "Commit the changes" });
+    // A plain arrow is the toolbar's, not a move.
     fireEvent.keyDown(grip, { key: "ArrowUp" });
+    expect(dispatch).not.toHaveBeenCalled();
+    fireEvent.keyDown(grip, { key: "ArrowUp", altKey: true });
     expect(dispatch).toHaveBeenLastCalledWith({
       type: "place_smart_buttons",
       presentation: "tui",
       spot: { right: 300, bottom: 208 },
     });
-    fireEvent.keyDown(grip, { key: "Home" });
+    fireEvent.keyDown(grip, { key: "Home", altKey: true });
     expect(dispatch).toHaveBeenLastCalledWith({
       type: "place_smart_buttons",
       presentation: "tui",
@@ -712,9 +756,7 @@ describe("the box in an Agent's pane", () => {
     expect(drawn()).toEqual(["Commit the changes"]);
 
     for (const step of [1, 2, 3]) {
-      const handle = box().querySelector(
-        ".smart-buttons-handle",
-      ) as HTMLElement;
+      const handle = box().querySelector(".smart-button") as HTMLElement;
       fireEvent.pointerDown(handle, {
         button: 0,
         clientX: 900,
@@ -911,7 +953,10 @@ describe("motion", () => {
     render(tree({}));
     const box = screen.getByRole("toolbar", { name: "Smart Buttons" });
     expect(box).not.toHaveAttribute("data-settling");
-    fireEvent.keyDown(screen.getByTitle(/Drag to move/), { key: "Home" });
+    fireEvent.keyDown(screen.getByTitle(/Drag to move/), {
+      key: "Home",
+      altKey: true,
+    });
     expect(box).toHaveAttribute("data-settling");
     act(() => {
       vi.advanceTimersByTime(SMART_BUTTONS_SETTLE_MS + 10);
