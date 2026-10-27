@@ -337,6 +337,8 @@ final class NullEmbeds: EmbedStore {
     func inline(_ inline: DocInline, size: CGFloat, color: NSColor, style: ConversationStyle) -> NSTextAttachment {
         inner.inline(inline, size: size, color: color, style: style)
     }
+    func besideView(_ key: String, style: ConversationStyle) -> DocumentView { inner.besideView(key, style: style) }
+    func pointedOption(_ key: String) -> String? { nil }
 }
 
 // MARK: - Images
