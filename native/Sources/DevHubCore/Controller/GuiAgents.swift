@@ -274,28 +274,40 @@ public final class GuiAgentWiring: GuiAgentControl, GuiAgentRounds, @unchecked S
         return try await resolvePathCandidates(RuntimeHostMachine(place.runtime), cwd: cwd, paths)
     }
 
-    /// Where a Claude Code Agent's CLI reads its settings: its machine, its
-    /// profile and its Workspace's root. nil for an Agent of another CLI
-    /// (`claudeAgentPlace`).
-    private func claudePlace(_ agentId: String) throws -> (runtime: any MachineRuntime, profile: ClaudeProfileFacts, root: String)? {
-        let place = try placeOf(agentId)
-        if place.agent.profile.kind != .claude { return nil }
-        return (place.runtime, ClaudeProfileFacts(env: place.agent.profile.env, args: place.agent.profile.args), place.workspace.root)
-    }
-
-    /// The defaults of the Agent's CLI's new sessions; nil for a CLI DevHub
-    /// cannot read them for.
+    /// The defaults of the Agent's CLI's new sessions (`cliDefaults` in
+    /// appController.ts): Claude Code's settings, Codex's `config.toml`; nil
+    /// for a CLI DevHub cannot read them for.
     public func cliDefaults(_ agentId: String, model: String?) async throws -> CliDefaults? {
-        guard let place = try claudePlace(agentId) else { return nil }
-        return try await readClaudeDefaults(place.runtime, profile: place.profile, root: place.root, model: model)
+        let place = try placeOf(agentId)
+        let profile = place.agent.profile
+        switch profile.kind {
+        case .claude:
+            return try await readClaudeDefaults(
+                place.runtime, profile: ClaudeProfileFacts(env: profile.env, args: profile.args),
+                root: place.workspace.root, model: model)
+        case .codex:
+            return try await readCodexDefaults(place.runtime, profile: try Self.sessionProfile(profile))
+        default:
+            return nil
+        }
     }
 
-    /// Change one in the CLI's user settings.
+    /// Change one in the CLI's user settings (`~/.claude/settings.json`,
+    /// `~/.codex/config.toml`): a Claude Code effort is saved for `model`
+    /// when it is named.
     public func setCliDefault(_ agentId: String, _ which: ClaudeDefaultName, value: String, model: String?) async throws {
-        guard let place = try claudePlace(agentId) else {
-            throw GuiAgentMissing("Only a Claude Code Agent's defaults can be set from DevHub")
+        let place = try placeOf(agentId)
+        let profile = place.agent.profile
+        switch profile.kind {
+        case .claude:
+            try await writeClaudeDefault(
+                place.runtime, profile: ClaudeProfileFacts(env: profile.env, args: profile.args), which, value,
+                model: model)
+        case .codex:
+            try await writeCodexDefault(place.runtime, profile: try Self.sessionProfile(profile), which, value)
+        default:
+            throw GuiAgentMissing("Only a Claude Code or Codex Agent's defaults can be set from DevHub")
         }
-        try await writeClaudeDefault(place.runtime, profile: place.profile, which, value, model: model)
     }
 
     // MARK: - MCP sign-in

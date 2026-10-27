@@ -104,12 +104,33 @@ public struct CliDefault: Hashable, Sendable {
     }
 }
 
-/// Both defaults, as Core hands them to the view.
+/// The CLIs whose defaults DevHub reads and changes (`CliName` in
+/// model/cliDefaults.ts).
+public enum CliName: String, Hashable, Sendable {
+    case claude, codex
+
+    /// How the CLI is called in a sentence (`CLI_WORDS`).
+    public var words: String {
+        switch self {
+        case .claude: return "Claude Code"
+        case .codex: return "Codex"
+        }
+    }
+}
+
+/// Both defaults, as Core hands them to the view, and which CLI's they are
+/// (`CliDefaults` in model/cliDefaults.ts).
 public struct CliDefaults: Hashable, Sendable {
+    public var cli: CliName
+    /// Where a change is saved, as a person reads it — "~/.claude/settings.json",
+    /// "~/.codex/config.toml", or the profile table of it that Codex reads.
+    public var savedIn: String
     public var model: CliDefault
     public var effort: CliDefault
 
-    public init(model: CliDefault, effort: CliDefault) {
+    public init(cli: CliName = .claude, savedIn: String = "~/.claude/settings.json", model: CliDefault, effort: CliDefault) {
+        self.cli = cli
+        self.savedIn = savedIn
         self.model = model
         self.effort = effort
     }
@@ -218,17 +239,30 @@ public func userSettingsDecide(_ source: CliDefaultSource) -> Bool {
     source == .layer(.user) || source == .builtIn
 }
 
-/// How a default's source reads, after "set by".
-public func sourceWords(_ source: CliDefaultSource) -> String {
-    switch source {
-    case .argument: return "the Agent profile's arguments"
-    case .environment: return "the environment"
-    case .layer(.managed): return "managed settings"
-    case .layer(.local): return "this project's .claude/settings.local.json"
-    case .layer(.project): return "this project's .claude/settings.json"
-    case .layer(.user): return "~/.claude/settings.json"
-    case .builtIn: return "Claude Code itself"
+/// How `source` reads, after "set by", for `defaults`' CLI: the user's own
+/// is the file a change goes to (`sourceWords` in model/cliDefaults.ts).
+public func sourceWords(_ defaults: CliDefaults, _ source: CliDefaultSource) -> String {
+    switch (defaults.cli, source) {
+    case (_, .layer(.user)): return defaults.savedIn
+    case (_, .builtIn): return defaults.cli.words
+    case (.claude, .argument): return "the Agent profile's arguments"
+    case (.codex, .argument): return "the Agent profile's arguments (-c)"
+    case (.claude, .environment): return "the environment"
+    case (.claude, .layer(.managed)): return "managed settings"
+    case (.claude, .layer(.local)): return "this project's .claude/settings.local.json"
+    case (.claude, .layer(.project)): return "this project's .claude/settings.json"
+    default: return source.wire
     }
+}
+
+/// Why `effort` cannot be saved as `cli`'s default, or nil when it can:
+/// Claude Code's settings keep the levels `SAVABLE_EFFORTS` names (`max` is a
+/// session's only); Codex keeps any level its model list offers.
+public func unsavableEffort(_ cli: CliName, _ effort: String) -> String? {
+    if cli == .claude && !SAVABLE_EFFORTS.contains(effort) {
+        return "Claude Code's settings do not keep \(effort) as a default: it is for one session only"
+    }
+    return nil
 }
 
 public enum ClaudeDefaultName: String, Hashable, Sendable {

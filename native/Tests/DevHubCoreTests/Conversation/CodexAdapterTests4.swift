@@ -483,7 +483,12 @@ final class CodexModelListTests: XCTestCase {
                 ]))
         XCTAssertEqual(
             session.effort,
-            Setting(current: "medium", choices: [SettingChoice(id: "medium", label: "medium"), SettingChoice(id: "xhigh", label: "xhigh")]))
+            Setting(
+                current: "medium",
+                choices: [
+                    SettingChoice(id: "medium", label: "medium", builtInDefault: true),
+                    SettingChoice(id: "xhigh", label: "xhigh"),
+                ]))
     }
 
     func testOffersNoHiddenModelTheThreadIsNotOn() throws {

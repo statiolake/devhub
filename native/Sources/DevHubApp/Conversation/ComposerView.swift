@@ -1072,7 +1072,7 @@ final class SettingFace: NSView {
     weak var picker: SettingPickersView?
     weak var choiceList: SettingMenuView?
     private var setting = Setting.none
-    private var known: CliDefault?
+    private var known: DefaultOffer?
     private var disabled = false
     private var hovering = false { didSet { needsDisplay = true } }
     private var opened = false { didSet { needsDisplay = true } }
@@ -1093,7 +1093,7 @@ final class SettingFace: NSView {
 
     private var choosable: Bool { !setting.choices.isEmpty }
 
-    func update(_ setting: Setting, known: CliDefault?, disabled: Bool) {
+    func update(_ setting: Setting, known: DefaultOffer?, disabled: Bool) {
         self.setting = setting
         self.known = known
         self.disabled = disabled
@@ -1221,14 +1221,14 @@ final class SettingFace: NSView {
     /// The rows the list draws for this setting now.
     private func menuRows() -> [SettingMenuView.Row] {
         let rows = SettingPickerModel.rows(setting)
-        let byDefault = known.flatMap { SettingPickerModel.defaultRow(rows, $0) }
+        let byDefault = known.flatMap { SettingPickerModel.defaultRow(rows, $0.known) }
         return rows.map { row in
             let offers = known != nil && SettingPickerModel.hasDefault(name)
             return SettingMenuView.Row(
                 choice: row, current: row.id == setting.current, isDefault: offers && row == byDefault,
                 defaultTip: known.map(SettingPickerModel.defaultTip),
                 offersDefault: offers,
-                refusal: SettingPickerModel.notSavable(name, row),
+                refusal: known.flatMap { SettingPickerModel.notSavable(name, row, $0) },
                 makeDefaultTip: known.map { SettingPickerModel.makeDefaultTip(name, row, $0) })
         }
     }

@@ -1126,7 +1126,12 @@ public final class CodexAdapter: ProtocolAdapter {
         for (index, candidate) in models.enumerated() where !candidate.hidden || index == listedIndex {
             // Read by the name the thread reports, in the list and as the
             // current value alike; Codex's display name goes beside it.
-            choices.append(SettingChoice(id: candidate.model, label: candidate.model, detail: candidate.displayName))
+            // What a thread starts on when config.toml names no model: the
+            // Make default picker's built-in mark.
+            choices.append(
+                SettingChoice(
+                    id: candidate.model, label: candidate.model, detail: candidate.displayName,
+                    builtInDefault: candidate.isDefault))
         }
         var commands: [SlashCommand] = [
             SlashCommand(trigger: .slash, name: "model", description: "Choose the model", argumentHint: nil, route: .model),
@@ -1161,7 +1166,10 @@ public final class CodexAdapter: ProtocolAdapter {
             // effort runs at it).
             effort: Setting(
                 current: chosen.effort ?? (chosen.model == nil ? defaults?.effort : nil) ?? found?.defaultEffort,
-                choices: efforts.map { SettingChoice(id: $0, label: $0) }, unchangeable: unchangeable),
+                // What a thread on this model runs at when config.toml names
+                // no effort.
+                choices: efforts.map { SettingChoice(id: $0, label: $0, builtInDefault: $0 == found?.defaultEffort) },
+                unchangeable: unchangeable),
             mode: Setting(
                 current: chosen.mode ?? defaults?.mode, choices: MODES.map { SettingChoice(id: $0.id, label: $0.label) }),
             commands: commands,

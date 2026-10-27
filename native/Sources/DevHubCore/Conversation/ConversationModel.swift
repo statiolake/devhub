@@ -783,12 +783,20 @@ public struct SettingChoice: Hashable, Sendable {
     public var detail: String?
     /// A model choice's full model name, as a session reports its model.
     public var resolved: String?
+    /// The choice the CLI itself starts a new session on when its settings
+    /// name none: the model Codex's `model/list` marks as its default, and
+    /// that model's default effort. Claude lists its own as the choice
+    /// `default` instead.
+    public var builtInDefault: Bool
 
-    public init(id: String, label: String, detail: String? = nil, resolved: String? = nil) {
+    public init(
+        id: String, label: String, detail: String? = nil, resolved: String? = nil, builtInDefault: Bool = false
+    ) {
         self.id = id
         self.label = label
         self.detail = detail
         self.resolved = resolved
+        self.builtInDefault = builtInDefault
     }
 }
 

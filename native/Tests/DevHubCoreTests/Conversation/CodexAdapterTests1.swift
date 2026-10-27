@@ -58,12 +58,17 @@ final class CodexArgvAndHandshakeTests: XCTestCase {
             Setting(
                 current: "gpt-5.5-codex",
                 choices: [
-                    SettingChoice(id: "gpt-5.5-codex", label: "gpt-5.5-codex", detail: "GPT-5.5 Codex"),
+                    // Codex's own default, which the Make default picker marks.
+                    SettingChoice(
+                        id: "gpt-5.5-codex", label: "gpt-5.5-codex", detail: "GPT-5.5 Codex", builtInDefault: true),
                     SettingChoice(id: "gpt-5.5-mini", label: "gpt-5.5-mini", detail: "GPT-5.5 mini"),
                 ]))
         XCTAssertEqual(
             session.effort,
-            Setting(current: "medium", choices: ["low", "medium", "high"].map { SettingChoice(id: $0, label: $0) }))
+            Setting(
+                current: "medium",
+                // The model's own default effort is marked.
+                choices: ["low", "medium", "high"].map { SettingChoice(id: $0, label: $0, builtInDefault: $0 == "medium") }))
         // on-request + workspaceWrite is the TUI's "Auto" preset.
         XCTAssertEqual(session.mode.current, "auto")
         XCTAssertEqual(session.mode.choices.map(\.id), ["read-only", "auto", "full-access"])
@@ -361,7 +366,7 @@ final class CodexTurnTests: XCTestCase {
         XCTAssertEqual(harness.written.count, before)
         XCTAssertEqual(harness.transcript.session.model.current, "gpt-5.5-mini")
         // A model chosen here runs at its own default effort until one is.
-        XCTAssertEqual(harness.transcript.session.effort, Setting(current: "low", choices: [SettingChoice(id: "low", label: "low")]))
+        XCTAssertEqual(harness.transcript.session.effort, Setting(current: "low", choices: [SettingChoice(id: "low", label: "low", builtInDefault: true)]))
         try harness.configure(.effort, "low")
         try harness.configure(.mode, "read-only")
         assertThrowsMatching("not a effort") { try harness.configure(.effort, "extreme") }

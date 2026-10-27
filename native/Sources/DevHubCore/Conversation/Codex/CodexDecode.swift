@@ -304,6 +304,8 @@ public struct CodexModelChoice: Equatable, Sendable {
     public var model: String
     public var displayName: String
     public var hidden: Bool
+    /// Whether Codex starts a thread on this model when config.toml names none.
+    public var isDefault: Bool
     public var efforts: [String]
     /// The effort a turn on this model runs at when none is given.
     public var defaultEffort: String
@@ -320,6 +322,7 @@ public func codexModelListResponse(_ r: CodexReader, _ value: JsonValue?) throws
             model: try r.string(m, "model", path),
             displayName: try r.string(m, "displayName", path),
             hidden: try r.boolean(m, "hidden", path),
+            isDefault: try r.boolean(m, "isDefault", path),
             efforts: try r.array(m, "supportedReasoningEfforts", path) { option, at in
                 try r.string(try r.fields(option, at), "reasoningEffort", at)
             },

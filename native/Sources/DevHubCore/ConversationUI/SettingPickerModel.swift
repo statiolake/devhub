@@ -10,13 +10,30 @@
 // choose from says why it can't be changed (`unchangeable`).
 //
 // Beside the rows of the model and the effort, the picker also says which one
-// the CLI's *new* sessions start on (`claudeDefaults`), with a mark at the
-// row's right end, and every other row can be made that default: Claude
-// Code's user settings are changed, as its own `/model` and `/effort` save
-// them, and this session is left where it is. When something above the user
-// settings decides the default, the mark and the button say so.
+// the CLI's *new* sessions start on (`CliDefaults`), with a mark at the
+// row's right end, and every other row can be made that default: the CLI's
+// own user settings are changed — Claude Code's `settings.json`, as its own
+// `/model` and `/effort` save them in a terminal; Codex's `config.toml`, as
+// its own model picker saves them — and this session is left where it is.
+// When something above the user settings decides the default (the profile's
+// arguments, the environment, managed, local or project settings), the mark
+// and the button say so: a default saved then does not take effect until
+// that is gone.
 
 import Foundation
+
+/// What a picker of a setting with a CLI's default is given of it.
+public struct DefaultOffer: Hashable, Sendable {
+    /// Both defaults, and which CLI's they are.
+    public var defaults: CliDefaults
+    /// This setting's.
+    public var known: CliDefault
+
+    public init(defaults: CliDefaults, known: CliDefault) {
+        self.defaults = defaults
+        self.known = known
+    }
+}
 
 public enum SettingPickerModel {
     public static let names: [SettingName] = [.model, .effort, .mode]
@@ -58,17 +75,24 @@ public enum SettingPickerModel {
         }
     }
 
-    public static func known(_ name: SettingName, _ defaults: CliDefaults?) -> CliDefault? {
+    public static func known(_ name: SettingName, _ defaults: CliDefaults?) -> DefaultOffer? {
+        guard let defaults else { return nil }
         switch name {
-        case .model: return defaults?.model
-        case .effort: return defaults?.effort
+        case .model: return DefaultOffer(defaults: defaults, known: defaults.model)
+        case .effort: return DefaultOffer(defaults: defaults, known: defaults.effort)
         case .mode: return nil
         }
     }
 
-    /// The row that is the CLI's default: the one of that value, else the one that resolves to it.
+    /// The row that is the CLI's default: the one of that value, else the one
+    /// that resolves to it; a value nothing set is the CLI's own default,
+    /// which Claude lists as the choice `default` and Codex marks
+    /// (`builtInDefault`).
     public static func defaultRow(_ rows: [SettingChoice], _ known: CliDefault) -> SettingChoice? {
-        let value = known.value ?? (known.source == .builtIn ? "default" : "")
+        if known.value == nil && known.source == .builtIn {
+            return rows.first { $0.id == "default" } ?? rows.first { $0.builtInDefault }
+        }
+        let value = known.value ?? ""
         return rows.first { $0.id == value } ?? rows.first { $0.resolved != nil && $0.resolved == value }
     }
 
@@ -97,14 +121,18 @@ public enum SettingPickerModel {
         defaultModelName(setting, known).map { "Default (\(shortModelName($0)))" }
     }
 
-    public static func sourceSentence(_ known: CliDefault) -> String {
-        known.source == .builtIn ? "Claude Code's own default" : "set by \(sourceWords(known.source))"
+    /// Where a default comes from, in the words a hint says it.
+    public static func sourceSentence(_ offer: DefaultOffer) -> String {
+        offer.known.source == .builtIn
+            ? "\(offer.defaults.cli.words)'s own default" : "set by \(sourceWords(offer.defaults, offer.known.source))"
     }
 
-    /// Why making a row the default would not take effect now, or nil when it would.
-    public static func shadowedBy(_ known: CliDefault) -> String? {
-        userSettingsDecide(known.source)
-            ? nil : "\(sourceWords(known.source)) sets the default now, so new sessions keep that until it is gone"
+    /// Why making a row the default would not take effect now — something
+    /// above the user settings decides it — or nil when it would.
+    public static func shadowedBy(_ offer: DefaultOffer) -> String? {
+        userSettingsDecide(offer.known.source)
+            ? nil
+            : "\(sourceWords(offer.defaults, offer.known.source)) sets the default now, so new sessions keep that until it is gone"
     }
 
     public static func unknownEffort(_ known: CliDefault?) -> String {
@@ -119,14 +147,14 @@ public enum SettingPickerModel {
     }
 
     /// The hint of a value nothing named.
-    public static func unknownHint(_ name: SettingName, _ known: CliDefault?, _ setting: Setting) -> String {
-        if name == .model, let known, let model = defaultModelName(setting, known) {
-            let from = known.source == .builtIn
-                ? "the account's default, as Claude Code's handshake lists it" : sourceSentence(known)
+    public static func unknownHint(_ name: SettingName, _ offer: DefaultOffer?, _ setting: Setting) -> String {
+        if name == .model, let offer, let model = defaultModelName(setting, offer.known) {
+            let from = offer.known.source == .builtIn
+                ? "the account's default, as \(offer.defaults.cli.words)'s handshake lists it" : sourceSentence(offer)
             return "No turn has started, so the Agent has not named its model yet: new sessions start on \(model) (\(from))"
         }
-        guard name == .effort, let known, let value = known.value else { return unknownHint(name) }
-        return "No effort was chosen here, so the Agent runs at the CLI's own, which resolves to \(value) (\(sourceSentence(known))). Claude does not report it, so this is what it started with."
+        guard name == .effort, let offer, let value = offer.known.value else { return unknownHint(name) }
+        return "No effort was chosen here, so the Agent runs at the CLI's own, which resolves to \(value) (\(sourceSentence(offer))). \(offer.defaults.cli.words) does not report it, so this is what it started with."
     }
 
     /// Whether a setting has anything to show: an effort the model is known not to take does not.
@@ -153,30 +181,31 @@ public enum SettingPickerModel {
     }
 
     /// The value the face of a picker reads.
-    public static func value(_ name: SettingName, _ setting: Setting, _ known: CliDefault?) -> String {
+    public static func value(_ name: SettingName, _ setting: Setting, _ offer: DefaultOffer?) -> String {
         if let row = rows(setting).first(where: { $0.id == setting.current }) { return row.label }
         switch name {
-        case .effort: return unknownEffort(known)
-        case .model: return defaultModelWords(setting, known) ?? unknownValue(.model)
+        case .effort: return unknownEffort(offer?.known)
+        case .model: return defaultModelWords(setting, offer?.known) ?? unknownValue(.model)
         case .mode: return unknownValue(.mode)
         }
     }
 
     /// Why a row cannot be made the default, or nil when it can.
-    public static func notSavable(_ name: SettingName, _ row: SettingChoice) -> String? {
-        name == .effort && !SAVABLE_EFFORTS.contains(row.id)
-            ? "Claude Code's settings do not keep \(row.id) as a default: it is for one session only" : nil
+    public static func notSavable(_ name: SettingName, _ row: SettingChoice, _ offer: DefaultOffer) -> String? {
+        name == .effort ? unsavableEffort(offer.defaults.cli, row.id) : nil
     }
 
-    public static let makeDefaultTitle =
-        "Make this the default for new sessions, in ~/.claude/settings.json. This session is not changed. (⌥↩)"
+    public static func makeDefaultTitle(_ offer: DefaultOffer) -> String {
+        "Make this the default for new sessions, in \(offer.defaults.savedIn). This session is not changed. (⌥↩)"
+    }
 
     /// The tooltip of a row's "Make default".
-    public static func makeDefaultTip(_ name: SettingName, _ row: SettingChoice, _ known: CliDefault) -> String {
-        notSavable(name, row) ?? [makeDefaultTitle, shadowedBy(known)].compactMap { $0 }.joined(separator: " — ")
+    public static func makeDefaultTip(_ name: SettingName, _ row: SettingChoice, _ offer: DefaultOffer) -> String {
+        notSavable(name, row, offer)
+            ?? [makeDefaultTitle(offer), shadowedBy(offer)].compactMap { $0 }.joined(separator: " — ")
     }
 
-    public static func defaultTip(_ known: CliDefault) -> String { "New sessions start on this: \(sourceSentence(known))" }
+    public static func defaultTip(_ offer: DefaultOffer) -> String { "New sessions start on this: \(sourceSentence(offer))" }
 
     /// What opening a picker that cannot take a change says.
     public static func refusedOpen(_ name: SettingName) -> String {

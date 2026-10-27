@@ -9,15 +9,9 @@
 // for it on macOS and on Linux. A file that is not there, or that does not
 // parse, sets nothing — the CLI would not take a value from it either.
 //
-// A change is written to the user settings only, and atomically: the new
-// text goes to a file beside it under a name nobody else holds, which is then
-// renamed over it, so the CLI never reads half a file and a failed write
-// leaves the old one whole.
+// A change is written to the user settings only (CliSettingsFile.swift).
 
 import Foundation
-
-/// Larger than any settings file a person writes by hand.
-private let MAX_SETTINGS_BYTES = 4 * 1024 * 1024
 
 /// Where Claude Code looks for managed settings: macOS's place, then Linux's.
 private let MANAGED_SETTINGS = [
@@ -44,15 +38,6 @@ public func claudeConfigDirectory(_ runtime: any MachineRuntime, profileEnv: [St
     return "\(try await runtime.home())/.claude"
 }
 
-/// A file's text, or nil when it is not there.
-private func textOf(_ runtime: any MachineRuntime, _ path: String) async throws -> String? {
-    do {
-        return try await runtime.readTextFile(path, maxBytes: MAX_SETTINGS_BYTES)
-    } catch let failure as RuntimeFileError where failure.code == "ENOENT" || failure.code == "ENOTDIR" {
-        return nil
-    }
-}
-
 private func parsed(_ text: String?) -> JsonValue? {
     guard let text else { return nil }
     return try? JsonValue.parse(text)
@@ -63,23 +48,26 @@ private func parsed(_ text: String?) -> JsonValue? {
 public func readClaudeDefaults(
     _ runtime: any MachineRuntime, profile: ClaudeProfileFacts, root: String, model: String?
 ) async throws -> CliDefaults {
+    let user = "\(try await claudeConfigDirectory(runtime, profileEnv: profile.env))/settings.json"
     let paths: [ClaudeSettingsLayer: [String]] = [
         .managed: MANAGED_SETTINGS,
         .local: ["\(root)/.claude/settings.local.json"],
         .project: ["\(root)/.claude/settings.json"],
-        .user: ["\(try await claudeConfigDirectory(runtime, profileEnv: profile.env))/settings.json"],
+        .user: [user],
     ]
     var settings: [ClaudeSettingsLayer: JsonValue] = [:]
     for layer in CLAUDE_SETTINGS_LAYERS {
         for path in paths[layer] ?? [] {
-            if let value = parsed(try await textOf(runtime, path)) {
+            if let value = parsed(try await settingsText(runtime, path)) {
                 settings[layer] = value
                 break
             }
         }
     }
     let env = try await runtime.environment().merging(profile.env) { _, profile in profile }
-    return claudeDefaults(ClaudeDefaultInputs(settings: settings, env: env, args: profile.args), model)
+    var defaults = claudeDefaults(ClaudeDefaultInputs(settings: settings, env: env, args: profile.args), model)
+    defaults.savedIn = try await homeRelative(runtime, user)
+    return defaults
 }
 
 /// Make `value` the default `which` of new sessions of `profile`'s CLI, in
@@ -89,22 +77,8 @@ public func writeClaudeDefault(
     model: String?
 ) async throws {
     let directory = try await claudeConfigDirectory(runtime, profileEnv: profile.env)
-    let path = "\(directory)/settings.json"
-    let text = try withUserDefault(try await textOf(runtime, path), which, value, model: model)
-    try await runtime.makeDirectory(directory)
-    let temporary = "\(path).devhub-\(UUID().uuidString.lowercased())"
-    if !(try await runtime.writeNewTextFile(temporary, text: text, mode: 0o600)) {
-        throw ClaudeDefaultRefused("\(temporary) is taken\(runtime.where)")
-    }
-    let moved = try await runtime.exec(
-        ExecRequest(
-            argv: ["mv", "-f", temporary, path], deadline: .within(10_000), cancel: CancellationToken(),
-            limits: MachineExecLimits(stdoutBytes: 16 * 1024, stderrBytes: 16 * 1024, overflow: .truncate)))
-    if moved.code != 0 {
-        try? await runtime.removeTree(temporary)
-        let said = jsTrim(String(decoding: moved.stderr, as: UTF8.self))
-        let status = moved.code.map { String($0) } ?? moved.signal.map { String($0) } ?? "null"
-        throw ClaudeDefaultRefused(
-            "DevHub could not save Claude Code's settings \(path)\(runtime.where): \(said.isEmpty ? "exit \(status)" : said)")
-    }
+    let text = try withUserDefault(
+        try await settingsText(runtime, "\(directory)/settings.json"), which, value, model: model)
+    try await replaceSettingsFile(
+        runtime, directory: directory, name: "settings.json", text: text, what: "Claude Code's settings")
 }

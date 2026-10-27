@@ -352,7 +352,9 @@ final class ClaudeDefaultsFilesTests: XCTestCase {
         XCTAssertEqual(defaults.effort, CliDefault(value: "high", source: .layer(.user)))
         XCTAssertFalse(userSettingsDecide(defaults.model.source))
         XCTAssertTrue(userSettingsDecide(defaults.effort.source))
-        XCTAssertEqual(sourceWords(defaults.model.source), "this project's .claude/settings.json")
+        XCTAssertEqual(sourceWords(defaults, defaults.model.source), "this project's .claude/settings.json")
+        XCTAssertEqual(defaults.cli, .claude)
+        XCTAssertEqual(defaults.savedIn, "\(config)/settings.json")
     }
 }
 
