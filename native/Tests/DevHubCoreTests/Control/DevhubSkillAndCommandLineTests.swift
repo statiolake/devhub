@@ -298,11 +298,15 @@ final class DevhubCommandLineTests: XCTestCase {
         try await startServer()
         let captured = io()
         let running = server
+        let recorded = handlers
         let quitting = Task {
-            try await Task.sleep(for: .milliseconds(150))
+            // Gone once the open has reached it, and before the fake deletes
+            // the marker (300 ms after): a slow machine must not close it first.
+            for _ in 0..<200 where recorded.requests.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+            try await Task.sleep(for: .milliseconds(50))
             running?.close()
         }
-        // The fake deletes the marker after 300 ms; the server is gone at 150.
+        // The fake deletes the marker after 300 ms; the server is gone before.
         let status = await DevhubCommandLine.run(["--wait", "f.txt"], io: captured)
         _ = await quitting.result
         XCTAssertEqual(status, 1)
