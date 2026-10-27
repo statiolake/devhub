@@ -126,6 +126,14 @@ final class TerminalPaneView: NSView, TerminalViewDelegate {
         session.attach(size: currentSize() ?? DevHubCore.TerminalSize(cols: 80, rows: 24))
     }
 
+    /// Start over on a fresh attach: the screen cleared, as a new view's
+    /// would be (`reloadPage`), and attaching makes the session again when
+    /// it has gone.
+    func startOver() {
+        terminal.feed(text: "\u{1b}c")
+        session.retry()
+    }
+
     /// The view is going away: let go of exactly the handle it holds.
     func dispose() {
         session.dispose()

@@ -102,6 +102,21 @@ final class SheetLayer: ModalPresenting {
         }
     }
 
+    /// A GUI Agent's `/resume`: the session picker, on the same layer as
+    /// every other question.
+    func presentSessionPicker(
+        _ request: SessionPickerRequest, in window: NSWindow, style: ShellStyle,
+        chosen: @escaping (PastSession?) -> Void
+    ) {
+        if style !== self.style { applyStyle(style) }
+        let picked = SheetFlows.SessionPickState()
+        presentFlow(in: window, { flow in
+            let session = await SheetFlows.sessionPicker(
+                flow, title: request.title, question: request.question, cli: request.cli, source: request.source)
+            picked.sessions = session.map { [$0] } ?? []
+        }, done: { chosen(picked.sessions.first) })
+    }
+
     /// A question asked by something other than a `ModalRequest` (a GUI
     /// Agent's `/resume`), on the same layer.
     func presentFlow(in window: NSWindow, _ body: @escaping @MainActor (SheetFlow) async -> Void, done: @escaping () -> Void) {

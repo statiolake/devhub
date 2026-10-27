@@ -23,8 +23,12 @@ final class DictationController {
         case idle, starting, recording, transcribing
     }
 
-    private(set) var phase: Phase = .idle
-    private(set) var level: Double = 0
+    /// Posted whenever the phase, the level or the language changes: the
+    /// composers' microphone and language buttons redraw from it.
+    static let changed = Notification.Name("DevHubDictationChanged")
+
+    private(set) var phase: Phase = .idle { didSet { if phase != oldValue { announce() } } }
+    private(set) var level: Double = 0 { didSet { if level != oldValue { announce() } } }
     private(set) var tentative = ""
     private(set) weak var target: NSTextView?
     private var anchor: DictationText.Anchor?
@@ -44,7 +48,37 @@ final class DictationController {
 
     var language: VoiceLanguage {
         get { VoiceLanguage.saved(UserDefaults.standard.string(forKey: Self.languageKey)) }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.languageKey) }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: Self.languageKey)
+            announce()
+        }
+    }
+
+    private func announce() { NotificationCenter.default.post(name: Self.changed, object: self) }
+
+    /// Why there is no dictation in this build (`phase === "unavailable"`),
+    /// or nil when there is a recogniser.
+    private(set) lazy var unavailableReason: String? = Self.install() == nil ? Self.noRecogniser : nil
+
+    /// The language button: the next language, kept on this Mac.
+    func cycleLanguage() {
+        guard phase == .idle else { return }
+        language = language.next
+    }
+
+    /// The microphone button of a composer: dictate into `view`, or stop.
+    func toggle(into view: NSTextView) {
+        if phase == .idle {
+            guard view.isEditable else {
+                NSSound.beep()
+                return
+            }
+            view.window?.makeFirstResponder(view)
+            target = view
+            Task { await start() }
+        } else {
+            toggle(in: view.window)
+        }
     }
 
     init(style: ShellStyle) {

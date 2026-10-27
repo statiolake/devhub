@@ -374,6 +374,25 @@ final class CoordinatorTests: XCTestCase {
         }
     }
 
+    func testSaysACloseIsUnderWayFromTheRequestUntilItIsDecidedOrDone() throws {
+        let driver = Driver()
+        try driver.openFolder("/dev/project")
+        XCTAssertFalse(driver.coordinator.closeUnderway(WS_A))
+        try driver.dispatch(closeIntent())
+        // Being inspected.
+        XCTAssertTrue(driver.coordinator.closeUnderway(WS_A))
+        try driver.accept(.workspaceInspectionCompleted(inspectToken(driver), WS_A, CloseInspectionInputs(agents: try .busyCount(1))))
+        // Its question being made.
+        XCTAssertTrue(driver.coordinator.closeUnderway(WS_A))
+        try driver.answer(driver.drainEffects()[0])
+        // The question is the person's now: nothing is under way until they answer.
+        XCTAssertFalse(driver.coordinator.closeUnderway(WS_A))
+        try driver.dispatch(.confirmCloseWorkspace(CONFIRM))
+        XCTAssertTrue(driver.coordinator.closeUnderway(WS_A))
+        try driver.settle()
+        XCTAssertFalse(driver.coordinator.closeUnderway(WS_A))
+    }
+
     func testChangesNothingWhenTheQuestionIsLeftUnanswered() throws {
         let driver = Driver()
         try driver.openFolder("/dev/project")

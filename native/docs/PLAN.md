@@ -149,6 +149,7 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | WS-09 | Scratch: `[scratch] daily` date template (`YYYY YY MM DD MMDD`, `[text]`), validation (`invalid_scratch_daily`), midnight rollover (timer re-aimed on wake), yesterday's stays as ordinary row, cannot close today's, folder created on demand, unavailable row with Retry/Locate… | `model/scratchDay.ts`, `model/dateTemplate.ts`, `main/shell/scratchDay.ts`, `README.md` §Scratch | All README rules covered by tests |
 | WS-10 | `devhub <folder>` / Finder / Dock drop opens a Workspace and shows its editor terminal | `main/cli/route.ts`, `main/shell/openFromFinder.ts` | See E-07 |
 | WS-11 | Editor terminal per Workspace: the `ws-<digest20>` session attached on surface key `workspace-terminal:<id>`, view made on first show and kept hidden+attached until the Workspace goes | `docs/terminal-mode.md` §"What changes in the window", `ShellWindow.syncEditorTerminalViews` | Switching back is instant (no reattach/reflow) |
+| WS-12 | The editor area's shell exiting is the close button: a `ws-` client that ended by itself (`AttachmentManager.onEndedByItself`, never DevHub's own detach) runs the one close flow (its sheet when something blocks); cancelled, failed or Scratch → the terminal starts over in place; a plain detach reattaches; at most 3 restarts in 30 s, then Retry | `main/shell/editorTerminalExits.ts`, `docs/terminal-mode.md` §"The shell exiting is the close button" | `EditorTerminalExitsTests` (done: `Shell/EditorTerminalExits.swift`, `TerminalSurfaces.sessionExists`, `Coordinator.closeUnderway`, `ShellController`) |
 
 ### 2.4 Terminal surfaces and tmux runtime
 
@@ -227,7 +228,7 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | G-06 | Status from conversation (connecting→unknown, broken/failed→error, request→waiting, turn→working, held message→waiting, background, idle) | `docs/agent-gui.md` table, `registry.ts` | Table-driven test |
 | G-07 | Queued messages: held while busy, edit/remove/send-now (Codex `turn/steer`, Claude `priority: "next"`); unsent draft persisted | `drafts.ts`, §"Messages that wait" | Drafts survive restart |
 | G-08 | Rewind to before any user message (Codex `thread/revert`; Claude restart with `--resume-session-at` via `again`) | `resume.ts`, `rewind.test.ts` | Port rewind tests |
-| G-09 | Resume an earlier session: listing (Codex `thread/list` on a short-lived app-server; Claude JSONL under `~/.claude/projects`), `/resume` inside a GUI Agent | `resume.ts` (1417) | Port resume tests |
+| G-09 | Resume an earlier session: listing (Codex `thread/list` on a short-lived app-server; Claude JSONL under `~/.claude/projects`), `/resume` inside a GUI Agent | `resume.ts` (1417) | Port resume tests; `/resume` asks on the questions layer's one session picker (`ModalPresenting.presentSessionPicker` → `SheetFlows.sessionPicker`) |
 | G-10 | Restart Session; Asleep after compaction before cache expiry; cache keeper (auto compact `auto_compact_before_cache_expiry`, lead seconds, min tokens) and idle CLI stop | `restartSession`, `cacheKeeper.ts`, `docs/agent-gui.md` §Restarting | Port cacheKeeper tests |
 | G-11 | Usage-limit resume (`resume_after_limit`, message), Claude `rate_limit`, Codex `usageLimitExceeded` | `limitResume.ts` | Port limitResume tests |
 | G-12 | Elicitation forms (MCP), MCP panel data (status, actions, `mcp login` sign-in with browser redirect) | `elicitation.ts`, `mcpSignIn.ts`, `model/elicitationForm.ts` | Port tests |
@@ -250,14 +251,14 @@ criterion. Where the TS docs specify the behaviour in detail, the AC is
 | U-06 | Permission request cards (allow/deny/always as the CLI offers) and question cards (AskUserQuestion / requestUserInput with options, previews, free text), answered state | `RequestCard.tsx`, `elicitationForm.ts` | Keyboard-operable; answered cards read back |
 | U-07 | Composer: multi-line, Return sends / Shift+Return newline (keys per §Keys), queued messages list with edit/remove/send now, unsent draft, interrupt (Esc), images by paste/drop with thumbnails | `Composer.tsx`, `messageKeys.ts` | §"Messages that wait", §Images |
 | U-08 | Slash command completion and skill tokens | `commandCompletion.ts`, `skillTokens.tsx` | Completion list from CLI's commands |
-| U-09 | Model / Effort / Permissions pickers under the composer | `SettingPickers.tsx` | Changes sent as control requests |
+| U-09 | Model / Effort / Permissions pickers under the composer; Make default (Default mark, ⌥↩) for Claude Code (`~/.claude/settings.json`) and Codex (`$CODEX_HOME/config.toml`, `model` / `model_reasoning_effort`, in `[profiles.<name>]` when a profile is selected, edited in place), with the shadow notice when an argument or a higher layer decides | `SettingPickers.tsx`, `model/{cliDefaults,claudeDefaults,codexDefaults}.ts` | Changes sent as control requests; `CodexDefaultsTests` (done: `SettingPickerModel`, `CodexDefaults.swift`, `CliSettingsFile.swift`) |
 | U-10 | Context usage line, background tasks line + list with stop confirmation | `ContextUsage.tsx`, `BackgroundTasks.tsx` | §Context, §Background tasks |
 | U-11 | Find in transcript `Cmd+F`: bar with count, Aa, ↑↓, F3/Shift+F3, starts at last match, incremental sliced search, opens folds | `FindBar.tsx`, `findInTranscript.ts`, `transcriptSearch.ts`, `findHighlights.ts` | §Find; million-match query stays responsive |
 | U-12 | MCP panel (`/mcp`) | `McpPanel.tsx` | §MCP servers |
 | U-13 | Rewind UI (confirm under the message), Continue in terminal button, activity line, status mark | `ActivityLine.tsx`, `StatusMark.tsx` | §Rewinding |
 | U-14 | Links in transcript: paths → managed Neovim (E-07), issues/PRs → browser, hover title | `LinkedText.tsx`, `pathLinks.tsx`, `issueLinks.tsx` | Click opens the right target |
 | U-15 | Smart Buttons overlay on composer / terminal Agent corner | `SmartButtons.tsx` | See A-12 |
-| U-16 | Voice dictation `⌘⇧M` in any send field | `useDictation.ts`, `dictation.ts`, `main/voice/*` | See X-06 (done in WP11) |
+| U-16 | Voice dictation `⌘⇧M` in any send field; the composer's microphone beside Send and the language switch (日本語 / English / Auto) | `useDictation.ts`, `dictation.ts`, `Composer.tsx` `DictationControls`, `main/voice/*` | See X-06 (done in WP11; the composer's buttons drive the same `DictationController`) |
 
 ### 2.10 Chords, palette, help, navigation
 
@@ -649,6 +650,11 @@ library:
   blocked signals, so `SIGTERM` does not arrive; `ProcessRunner` falls back to
   `SIGKILL` after 1 s. Long-lived child types must do the same.
 - `sun_path` is 104 bytes on macOS (E-04).
+- Workspace roots are `realpath(3)`, never `URL.resolvingSymlinksInPath`:
+  on macOS the latter strips `/private`, so a root under `/tmp` or `/var`
+  came out as `/tmp/…`, and tmux's `createSession` refused it as a root that
+  canonicalises elsewhere (`session_unavailable`). The self-test's Scratch is
+  named through `/tmp` on purpose.
 - SwiftPM resource bundles must be copied to `Contents/Resources` (the bundle
   script does), where `Bundle.module` looks in an `.app`.
 - `Cmd+Q` is DevHub's chord prefix: the app menu's Quit has no key

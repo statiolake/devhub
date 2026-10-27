@@ -73,6 +73,25 @@ extension AppController {
             workspaceId: workspaceId, label: label, root: workspace.root, branch: repository?.branch, dirty: repository?.dirty)
     }
 
+    /// Where `workspaceId` stands as far as a close is concerned
+    /// (`EditorTerminalExits`' `standing`): gone, a close under way, or open.
+    public func closeStanding(_ workspaceId: String) -> WorkspaceCloseStanding {
+        guard let id = try? WorkspaceId(workspaceId), coordinator.model.workspace(id) != nil else { return .gone }
+        return coordinator.closeUnderway(id) ? .closing : .open
+    }
+
+    /// Whether a close can be asked for at all: Scratch never is.
+    public func closable(_ workspaceId: String) -> Bool {
+        guard let id = try? WorkspaceId(workspaceId), coordinator.model.workspace(id) != nil else { return false }
+        return id != coordinator.model.scratchWorkspaceId
+    }
+
+    /// The editor area's session target of `workspaceId`, for asking whether
+    /// it is still there (`TerminalSurfaces.sessionExists`).
+    public func editorTerminalTarget(_ workspaceId: String) -> TerminalTarget? {
+        try? ShellLayout.target(forSurfaceKey: TerminalSurfaceKeys.workspace(workspaceId), model: coordinator.model)
+    }
+
     /// `answerWorktreeClose`: the three-way sheet's answer. Neither removes
     /// anything now: the answer travels with the close as its `worktree` step.
     public func answerWorktreeClose(_ workspaceId: String, deleteFolder: Bool) async -> ModalRequest? {

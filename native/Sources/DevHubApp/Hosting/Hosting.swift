@@ -97,10 +97,25 @@ enum ModalAnswer: Equatable {
     case renamed(agentId: String, displayName: String)
 }
 
+/// A GUI Agent's `/resume`: which earlier session of its CLI to go on with
+/// (SessionPicker.tsx), and where its sessions are read.
+struct SessionPickerRequest {
+    var title: String
+    var question: String
+    /// "Claude" or "Codex", as the rows and refusals name it.
+    var cli: String
+    var source: SheetFlows.SessionSource
+}
+
 /// The questions layer: puts `ModalRequest`s in front of the window and says
 /// how they were answered. WP11 provides the real sheets.
 @MainActor
 protocol ModalPresenting: AnyObject {
+    /// The session picker of a GUI Agent's `/resume`; `chosen` is called
+    /// once, with the session picked or nil for none.
+    func presentSessionPicker(
+        _ request: SessionPickerRequest, in window: NSWindow, style: ShellStyle,
+        chosen: @escaping (PastSession?) -> Void)
     /// Whether a question is up now (keys go to it; chords are declined).
     var isPresenting: Bool { get }
     /// Whether the layer covers the window or one editor (`PickerScope`).
@@ -125,6 +140,14 @@ final class AlertModalPresenter: ModalPresenting {
     var onUnsupported: ((ModalRequest) -> Void)?
     /// An Agent's name, for the question about it.
     var nameOfAgent: ((String) -> String?)?
+
+    /// The stand-in draws no session picker.
+    func presentSessionPicker(
+        _ request: SessionPickerRequest, in window: NSWindow, style: ShellStyle,
+        chosen: @escaping (PastSession?) -> Void
+    ) {
+        chosen(nil)
+    }
 
     func present(_ request: ModalRequest, in window: NSWindow, style: ShellStyle, answer: @escaping (ModalAnswer) -> Void) {
         let alert = NSAlert()

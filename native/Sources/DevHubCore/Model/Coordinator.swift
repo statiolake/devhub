@@ -238,6 +238,19 @@ public struct AppCoordinator: Sendable {
         emit(.snapshot(model.snapshot()))
     }
 
+    /// Whether a close of `workspaceId` is under way: being inspected, its
+    /// question being made, or its steps running. A question already on
+    /// screen is not this — it waits for the person, and is the picker's to
+    /// know (`closeUnderway`).
+    public func closeUnderway(_ workspaceId: WorkspaceId) -> Bool {
+        if model.workspace(workspaceId)?.close.isRunning == true { return true }
+        if closeRequests.values.contains(where: { $0.workspaceId == workspaceId }) { return true }
+        return confirmationRequests.values.contains {
+            if case let .workspaceClose(id, _, _) = $0 { return id == workspaceId }
+            return false
+        }
+    }
+
     private func drawn() -> [WorkspaceId] { drawnOrder(model.snapshot()) }
 
     public func snapshot() -> AppSnapshot { model.snapshot() }

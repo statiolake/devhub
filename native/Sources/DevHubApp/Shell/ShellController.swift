@@ -50,6 +50,25 @@ final class ShellController {
     }()
     private var notifier: AgentNotifier?
     private var notifierBridge: NotifierBridge?
+    /// Close questions on screen (a close confirmation, the worktree's
+    /// three-way sheet): `EditorTerminalExits` waits for their answers.
+    private var closeQuestions = 0
+    /// Terminal mode: what the editor area's shell exiting does — the
+    /// Workspace's close button, else its terminal started over
+    /// (`editorTerminalExits.ts`).
+    private(set) lazy var editorTerminalExits = EditorTerminalExits(EditorTerminalExitsOptions(
+        standing: { [weak self] id in await self?.controller?.closeStanding(id) ?? .gone },
+        closable: { [weak self] id in await self?.controller?.closable(id) ?? false },
+        asking: { [weak self] in (self?.closeQuestions ?? 0) > 0 },
+        sessionAlive: { [weak self] id in
+            guard let runtime = self?.runtime, let target = await runtime.controller.editorTerminalTarget(id) else {
+                throw TerminalFailure(.staleTarget)
+            }
+            return try await runtime.surfaces.sessionExists(target)
+        },
+        close: { [weak self] id in self?.requestCloseWorkspace(id) },
+        restart: { [weak self] id in self?.window.restartEditorTerminal(id) },
+        log: { line in MainLog.shared.warn(line) }))
 
     init(
         titleBar: TitleBarMode, appearance: AppearanceController, transport: TerminalAttachTransport,
@@ -105,6 +124,13 @@ final class ShellController {
     func adopt(_ runtime: DevHubRuntime) {
         self.runtime = runtime
         repositories = runtime.repositories
+        // Terminal mode: the editor area's session ending under the person is
+        // the Workspace's close button (`EditorTerminalExits`).
+        runtime.surfaces.attachments.onEndedByItself = { [weak self] surfaceKey, _ in
+            guard surfaceKey.hasPrefix(TerminalSurfaceKeys.workspacePrefix) else { return }
+            let workspaceId = String(surfaceKey.dropFirst(TerminalSurfaceKeys.workspacePrefix.count))
+            Task { @MainActor [weak self] in await self?.editorTerminalExits.ended(workspaceId) }
+        }
     }
 
     func installKeyboard() {
@@ -198,7 +224,28 @@ final class ShellController {
         guard let nsWindow = window.window else { return }
         notices.personStartedAction()
         window.tooltip.hideNow()
-        modals.present(request, in: nsWindow, style: style) { [weak self] answer in self?.answered(answer) }
+        let closeQuestion: Bool
+        switch request {
+        case .worktreeClose, .closeConfirmation(_, .workspaceClose): closeQuestion = true
+        default: closeQuestion = false
+        }
+        if closeQuestion { closeQuestions += 1 }
+        modals.present(request, in: nsWindow, style: style) { [weak self] answer in
+            if closeQuestion { self?.closeQuestions -= 1 }
+            self?.answered(answer)
+        }
+        window.applyLayout()
+    }
+
+    /// A GUI Agent's `/resume`, on the questions layer.
+    func pickSession(_ request: SessionPickerRequest, chosen: @escaping (PastSession?) -> Void) {
+        guard let nsWindow = window.window else { return chosen(nil) }
+        notices.personStartedAction()
+        window.tooltip.hideNow()
+        modals.presentSessionPicker(request, in: nsWindow, style: style) { [weak self] session in
+            self?.window.applyLayout()
+            chosen(session)
+        }
         window.applyLayout()
     }
 

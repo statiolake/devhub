@@ -53,6 +53,25 @@ final class ComposerView: NSView {
     private let pickers = SettingPickersView()
     private var stop: ConversationButton!
     private var send: ConversationButton!
+    /// The microphone beside Send, and the language it listens for
+    /// (`DictationControls` in Composer.tsx): ⌘⇧M's controls on screen.
+    private var mic: ConversationButton!
+    private var languageButton: ConversationButton!
+    private var dictationObserver: NSObjectProtocol?
+    /// Speech into the field (WP11's `DictationController`); nil: no controls.
+    weak var dictation: DictationController? {
+        didSet {
+            if let dictationObserver { NotificationCenter.default.removeObserver(dictationObserver) }
+            dictationObserver = nil
+            if let dictation {
+                dictationObserver = NotificationCenter.default.addObserver(
+                    forName: DictationController.changed, object: dictation, queue: .main
+                ) { [weak self] _ in MainActor.assumeIsolated { self?.refreshDictation() } }
+            }
+            refreshDictation()
+            needsLayout = true
+        }
+    }
     private let pending = PendingListView()
     private let footer = ComposerFooterView()
     /// The `/` command list, laid over the transcript above the box by the pane.
@@ -93,6 +112,16 @@ final class ComposerView: NSView {
         }
         send.setAccessibilityLabel("Send")
         send.toolTip = "Send (\(ComposerWords.sendKey))"
+        mic = ConversationButton(label: "", icon: .mic, look: .icon, size: style.fontSize * 0.95, style: style) { [weak self] in
+            guard let self, let dictation = self.dictation else { return }
+            dictation.toggle(into: self.field)
+        }
+        languageButton = ConversationButton(label: "", look: .quiet, size: style.fontSize * 0.8, style: style) { [weak self] in
+            self?.dictation?.cycleLanguage()
+        }
+        languageButton.toolTip = "The language dictation listens for — click to change"
+        box.addSubview(mic)
+        box.addSubview(languageButton)
         box.addSubview(stop)
         box.addSubview(send)
         box.onClick = { [weak self] in
@@ -108,13 +137,18 @@ final class ComposerView: NSView {
             self?.flushDraft()
             self?.box.focused = false
         }
-        field.onFocus = { [weak self] in self?.box.focused = true }
+        field.onFocus = { [weak self] in
+            self?.box.focused = true
+            // Warm the recogniser before the first words (`dictation.warm`).
+            self?.dictation?.warm()
+        }
         completions.onChoose = { [weak self] command in self?.choose(command) }
         pending.host = self
         pickers.composer = self
         pickers.choiceList = settingMenu
         settingMenu.onChange = { [weak self] in self?.host?.composerResized() }
         footer.composer = self
+        refreshDictation()
         applyStyle(style)
     }
 
@@ -131,6 +165,10 @@ final class ComposerView: NSView {
         stop.size = style.fontSize * 0.9
         send.style = style
         send.size = style.fontSize * 0.9
+        mic.style = style
+        mic.size = style.fontSize * 0.95
+        languageButton.style = style
+        languageButton.size = style.fontSize * 0.8
         pending.style = style
         pickers.style = style
         footer.style = style
@@ -153,6 +191,7 @@ final class ComposerView: NSView {
         let running = transcript.state.turn == .running
         stop.isHidden = !running
         updateSend()
+        refreshDictation()
         if before.pending != transcript.pending || before.state != transcript.state { pending.update(transcript.pending, canSendNow: ComposerWords.canSendNow(transcript.state), style: style) }
         if before.session != transcript.session || before.state != transcript.state {
             pickers.update(transcript.session, disabled: !ComposerWords.canSendNow(transcript.state))
@@ -170,6 +209,42 @@ final class ComposerView: NSView {
     private func updateSend() {
         let refusal = ComposerWords.inputRefusal(transcript.state)
         send.isEnabled = refusal == nil && !(field.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty)
+    }
+
+    // MARK: Dictation
+
+    private static let dictationTitles: [DictationController.Phase: String] = [
+        .idle: "Dictate (⌘⇧M)",
+        .starting: "Opening the microphone…",
+        .recording: "Stop dictating (⌘⇧M) — Esc discards what is not in yet",
+        .transcribing: "Finishing the last words on this Mac…",
+    ]
+
+    /// The button is the state: on while it records, waiting while it
+    /// transcribes, and unavailable — with the reason as its title — in a
+    /// build with no recogniser. Dictating into this composer or another,
+    /// the controls show the one dictation there is.
+    private func refreshDictation() {
+        guard let mic, let languageButton else { return }
+        guard let dictation else {
+            mic.isHidden = true
+            languageButton.isHidden = true
+            return
+        }
+        let phase = dictation.phase
+        let unavailable = dictation.unavailableReason
+        let recording = phase == .recording && dictation.target === field
+        mic.isHidden = false
+        mic.isOn = recording
+        mic.setAccessibilityLabel(recording ? "Stop dictating" : "Dictate")
+        mic.toolTip = unavailable ?? Self.dictationTitles[phase]
+        let refusal = ComposerWords.inputRefusal(transcript.state)
+        mic.isEnabled = unavailable == nil && refusal == nil && (phase == .idle || recording)
+        languageButton.isHidden = unavailable != nil
+        languageButton.label = dictation.language.label
+        languageButton.setAccessibilityLabel("Dictation language: \(dictation.language.label)")
+        languageButton.isEnabled = phase == .idle
+        needsLayout = true
     }
 
     // MARK: Typing
@@ -469,13 +544,27 @@ final class ComposerView: NSView {
         if apply { fieldScroll.frame = NSRect(x: pad.left, y: boxY, width: boxInner, height: fieldH) }
         boxY += fieldH + style.px(4)
         let button = style.fontSize * 2
-        let actionsWidth = button * 2 + style.px(4)
+        let dictating = dictation != nil && !mic.isHidden
+        let languageWidth = dictating && !languageButton.isHidden ? languageButton.intrinsicContentSize.width : 0
+        let micWidth = dictating ? button : 0
+        let dictationWidth = micWidth + languageWidth + (micWidth > 0 ? style.px(4) : 0) + (languageWidth > 0 ? style.px(2) : 0)
+        let actionsWidth = button * 2 + style.px(4) + dictationWidth
         let pickersHeight = pickers.height(forWidth: boxInner - actionsWidth - style.px(8))
         let toolbar = max(button, pickersHeight)
         if apply {
             pickers.frame = NSRect(x: pad.left - style.px(8), y: boxY + (toolbar - pickersHeight) / 2, width: boxInner - actionsWidth, height: pickersHeight)
             send.frame = NSRect(x: pad.left + boxInner - button, y: boxY + (toolbar - button) / 2, width: button, height: button)
             stop.frame = NSRect(x: send.frame.minX - style.px(4) - button, y: send.frame.minY, width: button, height: button)
+            // Stop shows only while a turn runs; the microphone sits beside
+            // whichever of the two is leftmost.
+            let leftmost = stop.isHidden ? send.frame.minX : stop.frame.minX
+            if dictating {
+                mic.frame = NSRect(x: leftmost - style.px(4) - button, y: send.frame.minY, width: button, height: button)
+                let size = languageButton.intrinsicContentSize
+                languageButton.frame = NSRect(
+                    x: mic.frame.minX - style.px(2) - size.width, y: boxY + (toolbar - size.height) / 2,
+                    width: size.width, height: size.height)
+            }
         }
         boxY += toolbar + pad.bottom
         if apply { box.frame = NSRect(x: gutter, y: y, width: inner, height: boxY) }

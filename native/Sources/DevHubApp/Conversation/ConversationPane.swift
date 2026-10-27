@@ -26,6 +26,11 @@ final class ConversationLink {
     private var listening: Task<Void, Never>?
     /// A failure to tell the person (the notices layer).
     var report: ((AppError) -> Void)?
+    /// `/resume`: the questions layer's session picker (`ModalPresenting`);
+    /// `chosen` is told the session picked, nil when cancelled.
+    var pickSession: ((SessionPickerRequest, _ chosen: @escaping (PastSession?) -> Void) -> Void)?
+    /// ⌘⇧M's dictation, whose microphone and language buttons each composer shows.
+    weak var dictation: DictationController?
     /// The Agent's Workspace's repository, for its issue links.
     var repository: ((String) -> WorkspaceRepositoryWire?)?
 
@@ -102,7 +107,6 @@ final class ConversationPaneView: NSView, HostedConversation {
     private var focusBeforeFind: NSResponder?
     private var column = SubagentColumnView()
     private var maximized: SubagentPaneView?
-    private var resume: SessionPickerPanel?
     private var mcp: McpPanelView?
     private var shown = false
     private var keyMonitor: Any?
@@ -131,6 +135,7 @@ final class ConversationPaneView: NSView, HostedConversation {
         addSubview(column)
         column.pane = self
         composer.host = self
+        composer.dictation = link.dictation
         waiting.isHidden = true
         waiting.onPress = { [weak self] in self?.showFirstRequest() }
         setAccessibilityElement(true)
@@ -451,7 +456,6 @@ final class ConversationPaneView: NSView, HostedConversation {
             let x = min(max(0, anchor.minX), max(0, bounds.width - size.width))
             composer.settingMenu.frame = NSRect(x: x, y: max(0, anchor.minY - style.px(4) - size.height), width: size.width, height: size.height)
         }
-        resume?.frame = bounds
         mcp?.frame = bounds
     }
 
@@ -810,33 +814,33 @@ final class ConversationPaneView: NSView, HostedConversation {
 
     // MARK: Panels
 
+    /// `/resume`: which earlier session to go on with, on the questions
+    /// layer's session picker — the one picker DevHub has for it.
     func openResume() {
         guard let transport = link.transport else { return }
+        guard let pickSession = link.pickSession else {
+            report("The session picker is not available yet")
+            return
+        }
         let cli = agent.map { $0.profileKind == .codex ? "Codex" : "Claude" } ?? "Claude"
-        let panel = SessionPickerPanel(
+        let request = SessionPickerRequest(
             title: "Resume a Session",
             question: "Which earlier session should \(label) go on with? The one it is in now is left as it is.",
-            cli: cli, style: style,
-            list: { [agentId] scope in try await transport.listSessions(agentId, scope: scope) },
-            preview: { [agentId] session, cwd in try await transport.previewSession(agentId, session: session, cwd: cwd) })
-        panel.onChoose = { [weak self] session in
+            cli: cli,
+            source: SheetFlows.SessionSource(
+                list: { [agentId] scope in try await transport.listSessions(agentId, scope: scope) },
+                preview: { [agentId] session, cwd in try await transport.previewSession(agentId, session: session, cwd: cwd) }))
+        pickSession(request) { [weak self] chosen in
             guard let self else { return }
+            guard let chosen else {
+                self.focus()
+                return
+            }
             Task {
-                do { try await transport.resumeSession(self.agentId, session: session) } catch { self.reportError(error) }
-                self.closeResume()
+                do { try await transport.resumeSession(self.agentId, session: chosen.id) } catch { self.reportError(error) }
+                self.focus()
             }
         }
-        panel.onCancel = { [weak self] in self?.closeResume() }
-        addSubview(panel)
-        resume = panel
-        needsLayout = true
-        panel.start()
-    }
-
-    private func closeResume() {
-        resume?.removeFromSuperview()
-        resume = nil
-        focus()
     }
 
     func openMcp() {

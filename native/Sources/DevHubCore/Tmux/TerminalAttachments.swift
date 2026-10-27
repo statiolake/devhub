@@ -378,7 +378,7 @@ final class TerminalAttachment: @unchecked Sendable {
     private let sink: TerminalFrameSink
     private let scheduler: any AttachmentScheduler
     private let lock: NSRecursiveLock
-    private let onFinished: (TerminalAttachment) -> Void
+    private let onFinished: (TerminalAttachment, TerminalExitReason) -> Void
     private var sequence = 0
     private var lastInputSequence = 0
     private(set) var stopped = false
@@ -395,7 +395,7 @@ final class TerminalAttachment: @unchecked Sendable {
     init(
         id: String, surfaceKey: String, viewLabel: String, target: TerminalTarget, targetGeneration: Int,
         pty: any PseudoTerminal, sink: @escaping TerminalFrameSink, scheduler: any AttachmentScheduler,
-        lock: NSRecursiveLock, onFinished: @escaping (TerminalAttachment) -> Void
+        lock: NSRecursiveLock, onFinished: @escaping (TerminalAttachment, TerminalExitReason) -> Void
     ) {
         self.id = id
         self.surfaceKey = surfaceKey
@@ -626,7 +626,7 @@ final class TerminalAttachment: @unchecked Sendable {
         sequence += 1
         _ = sink(.exited(attachmentId: id, sequence: sequence, reason: reason))
         pty.kill()
-        onFinished(self)
+        onFinished(self, reason)
     }
 }
 
@@ -649,6 +649,19 @@ public final class AttachmentManager: @unchecked Sendable {
     private let spawn: PtyFactory?
     private let randomBytes: @Sendable (Int) -> [UInt8]
     private let scheduler: any AttachmentScheduler
+    private var endedByItself: (@Sendable (String, TerminalTarget) -> Void)?
+
+    /// A client ended on its own (`eof`): its PTY closed without DevHub
+    /// stopping it — the session it showed ended (its last shell exited, it
+    /// was killed), or the person detached from it with tmux's own keys.
+    /// Everything DevHub ends itself — a detach, a replacement, a closed view,
+    /// a close, a socket move, quit — stops the client first, as `detached`,
+    /// and is not told here. Called under the attachments' lock with the
+    /// surface key and the target: hop off it before doing anything.
+    public var onEndedByItself: (@Sendable (_ surfaceKey: String, _ target: TerminalTarget) -> Void)? {
+        get { locked { endedByItself } }
+        set { locked { endedByItself = newValue } }
+    }
 
     /// - Parameter spawn: overridden only by tests; production opens the
     ///   target machine's PTY through the attach context.
@@ -746,11 +759,14 @@ public final class AttachmentManager: @unchecked Sendable {
                 id: id, surfaceKey: context.surfaceKey, viewLabel: context.viewLabel,
                 target: context.target, targetGeneration: targetGeneration,
                 pty: pty, sink: context.sink, scheduler: scheduler, lock: lock
-            ) { [weak self] finished in
+            ) { [weak self] finished, reason in
                 guard let self else { return }
                 if self.attachments[finished.id] === finished {
                     self.attachments[finished.id] = nil
                     self.order.removeAll { $0 == finished.id }
+                }
+                if reason == .eof, let ended = self.endedByItself {
+                    ended(finished.surfaceKey, finished.target)
                 }
             }
             pty.onData { [weak attachment] bytes in attachment?.acceptOutput(bytes) }
@@ -929,6 +945,24 @@ public final class TerminalSurfaces: @unchecked Sendable {
                 throw TerminalFailure(.sessionUnavailable)
             }
             return TerminalProfileAnswer(file: try runtime.tmuxPath(), args: try runtime.attachArgv(exact.name), env: runtime.tmuxRequires())
+        } catch {
+            throw TerminalFailure.from(error)
+        }
+    }
+
+    /// Whether `target`'s session is there now, without making it: the
+    /// session of that exact marker tuple, on the effective socket. A client
+    /// that ended on its own (`AttachmentManager.onEndedByItself`) asks this
+    /// to tell a session that ended from a person detaching from one that is
+    /// still running.
+    public func sessionExists(_ target: TerminalTarget, cancel: CancellationToken = CancellationToken()) async throws -> Bool {
+        do {
+            let runtime = try await runtimeFor(target.machine)
+            let release = try await runtime.acquireOperation(cancel)
+            defer { release.release() }
+            let sessions = try await runtime.listSessionsUnlocked(cancel: cancel, deadline: .within(runtime.timeoutMs))
+            let identity = try runtime.targetIdentity(target, sessions: sessions)
+            return sessions.contains { $0.name == identity.sessionName && TmuxMarkers.sessionMatches($0.marking, identity) }
         } catch {
             throw TerminalFailure.from(error)
         }

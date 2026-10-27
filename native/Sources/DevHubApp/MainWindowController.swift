@@ -162,6 +162,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Start a Workspace's editor-area terminal over, in place (terminal
+    /// mode, `restartEditorTerminal`): the pane attaches again, which makes a
+    /// fresh `ws-` session. Nothing is done for a Workspace with no pane.
+    func restartEditorTerminal(_ workspaceId: String) {
+        for pane in editorTerminals.values where pane.role == .editor(workspaceId: workspaceId) { pane.startOver() }
+    }
+
     // MARK: Rendering
 
     func render(snapshot: AppSnapshotWire, arrangement: ShellArrangement, sidebar model: SidebarModel?) {

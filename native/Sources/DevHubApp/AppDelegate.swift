@@ -91,6 +91,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         conversations.agentActions = { [weak shell] in shell?.config?.agentActions ?? [] }
         conversations.link.report = { [weak shell] failure in shell?.notices.error(failure) }
+        conversations.link.dictation = shell.dictation
+        conversations.link.pickSession = { [weak shell] request, chosen in
+            guard let shell else { return chosen(nil) }
+            shell.pickSession(request, chosen: chosen)
+        }
         box.shell = shell
         shell.openSettings = { [weak shell] in shell?.toggleSettings() }
         shell.window.showWindow(nil)
@@ -194,6 +199,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if quitting { return .terminateLater }
         quitting = true
         MainLog.shared.log("[devhub] quit: shutting down")
+        // From here a terminal ending is DevHub going, not a person's exit.
+        shell?.editorTerminalExits.dispose()
         shell?.window.disposeAll()
         let deadline = Double(DevHubRuntime.shutdownDeadlineMs) / 1000
         Task.detached {
