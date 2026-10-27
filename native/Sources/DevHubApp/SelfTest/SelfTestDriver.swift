@@ -50,7 +50,7 @@ final class SelfTestDriver {
     // MARK: The keyboard
 
     /// A US keyboard's key codes, for the characters the self-test types.
-    static let codes: [Character: UInt16] = {
+    nonisolated static let codes: [Character: UInt16] = {
         var table: [Character: UInt16] = [:]
         let rows: [(String, [UInt16])] = [
             ("asdfhgzxcv", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
@@ -67,7 +67,7 @@ final class SelfTestDriver {
     }()
 
     /// The shifted characters, by the key they are on.
-    static let shifted: [Character: Character] = [
+    nonisolated static let shifted: [Character: Character] = [
         "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
         "_": "-", "+": "=", "{": "[", "}": "]", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "|": "\\", "~": "`",
     ]
@@ -173,7 +173,7 @@ final class SelfTestDriver {
 
     /// ⌘ and a key: through the menu's key equivalents when one is there.
     func command(_ character: Character, _ more: NSEvent.ModifierFlags = [], in window: NSWindow?) async {
-        await press(.character(character), [.command].union(more), in: window)
+        await press(.character(character), NSEvent.ModifierFlags.command.union(more), in: window)
         await pause(0.1)
     }
 
