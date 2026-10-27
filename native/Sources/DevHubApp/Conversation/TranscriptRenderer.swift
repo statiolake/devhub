@@ -344,6 +344,7 @@ struct TranscriptRenderer {
         let font = style.font(doc)
         var colour = style.ink(doc.ink)
         if let code = style.code(light: doc.codeLight, dark: doc.codeDark) { colour = code }
+        if doc.fade < 1 { colour = colour.withAlphaComponent(colour.alphaComponent * CGFloat(doc.fade)) }
         if let inline = run.inline {
             var quiet = false
             if case let .chevron(open, quietUntilHover) = inline, quietUntilHover, !open { quiet = true }

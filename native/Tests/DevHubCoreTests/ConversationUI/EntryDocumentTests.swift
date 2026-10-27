@@ -390,3 +390,35 @@ final class ConversationIconTests: XCTestCase {
         }
     }
 }
+
+final class ClipTests: XCTestCase {
+    func testALongReadableViewIsCutWithShowAllAndOpenedWhole() {
+        let lines = (1...60).map { "+line \($0)" }.joined(separator: "\n")
+        let diff = FileDiff(path: "/p/a.ts", unifiedDiff: "@@ -1,0 +1,60 @@\n" + lines)
+        let transcript = TranscriptFixtures.transcript([TranscriptFixtures.put(TranscriptFixtures.tool("e", "Edit: a.ts", change: [diff]))])
+        func texts(_ state: EntryDocumentState) -> [String] {
+            let section = EntryDocumentBuilder(transcript: transcript, state: state).section(transcript.entries[0], depth: 0)!
+            func walk(_ blocks: [DocBlock]) -> [String] {
+                blocks.flatMap { block -> [String] in
+                    switch block {
+                    case .paragraph(let p): return [p.text]
+                    case .box(let b): return walk(b.children)
+                    case .embed: return []
+                    }
+                }
+            }
+            return walk(section.blocks)
+        }
+        let cut = texts(EntryDocumentState())
+        XCTAssertEqual(cut.last, "Show all")
+        XCTAssertFalse(cut.joined().contains("line 60"))
+        var open = EntryDocumentState()
+        open.openClips = [EntryFold.readable("e")]
+        let whole = texts(open)
+        XCTAssertEqual(whole.last, "Show less")
+        XCTAssertTrue(whole.joined().contains("line 60"))
+        let short = TranscriptFixtures.transcript([TranscriptFixtures.put(TranscriptFixtures.tool("e", "Edit: a.ts", change: [FileDiff(path: "/p/a.ts", unifiedDiff: "@@ -1 +1 @@\n-a\n+b")]))])
+        let section = EntryDocumentBuilder(transcript: short, state: EntryDocumentState()).section(short.entries[0], depth: 0)!
+        XCTAssertFalse(section.blocks.contains { if case .paragraph(let p) = $0 { return p.text == "Show all" }; return false })
+    }
+}

@@ -56,6 +56,8 @@ public struct DocStyle: Hashable, Sendable {
     public var uppercase = false
     /// `letter-spacing` in em.
     public var tracking: Double = 0
+    /// Drawn at this share of its ink (a cut view's last lines fading).
+    public var fade: Double = 1
 
     public init() {}
 

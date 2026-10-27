@@ -675,10 +675,108 @@ public struct EntryDocumentBuilder {
         if let change = entry.change { children.append(diffView(key + "/diff", change, candidates: &candidates)) }
         if let plan { children.append(checklist(key + "/plan", plan, bordered: true)) }
         children += imageStrip(key + "/images", images)
-        var box = Self.box(key, .plain, MarkdownDocumentBuilder.collapse(children), before: Self.space(1), after: Self.space(2))
         let id = EntryFold.readable(entry.id)
-        box.clip = DocClip(id: id, open: state.allOpen || state.openClips.contains(id))
-        return [.box(box)]
+        let open = state.allOpen || state.openClips.contains(id)
+        let whole = MarkdownDocumentBuilder.collapse(children)
+        // Long, it is cut to `DocClip.height`, its last lines fading, with
+        // Show all under it; opened, Show less (Clip.tsx).
+        let long = Self.height(whole) > DocClip.height
+        var budget = DocClip.height
+        var box = Self.box(key, .plain, long && !open ? Self.cut(whole, &budget) : whole, before: Self.space(1), after: long ? 0 : Self.space(2))
+        box.clip = DocClip(id: id, open: open)
+        var out: [DocBlock] = [.box(box)]
+        if long {
+            var toggle = Self.paragraph(key + "/toggle", [
+                DocRun(open ? "Show less" : "Show all", Self.style { $0.size = 0.8; $0.ink = .tertiary; $0.control = true }, action: .clip(id)),
+            ], before: 2 / SurfaceMetrics.fontPx, after: Self.space(2))
+            toggle.control = true
+            toggle.action = .clip(id)
+            out.append(.paragraph(toggle))
+        }
+        return out
+    }
+
+    /// How tall blocks are drawn, in em, as near as the text alone says: each line its line height.
+    static func height(_ blocks: [DocBlock]) -> Double {
+        blocks.reduce(0) { total, block in
+            switch block {
+            case .paragraph(let p):
+                let size = p.runs.first?.style.size ?? 1
+                let lines = Double(max(1, p.text.components(separatedBy: "\n").count))
+                return total + p.before + p.after + lines * p.lineHeight * size
+            case .box(let b):
+                return total + b.before + b.after + height(b.children) + 0.8
+            case .embed(let e):
+                if case .images = e.kind { return total + e.before + e.after + 8 }
+                return total + e.before + e.after + 2
+            }
+        }
+    }
+
+    /// The blocks that fit in `budget` em, the last of them fading.
+    static func cut(_ blocks: [DocBlock], _ budget: inout Double) -> [DocBlock] {
+        var out: [DocBlock] = []
+        for block in blocks {
+            if budget <= 0 { break }
+            let tall = height([block])
+            if tall <= budget {
+                out.append(block)
+                budget -= tall
+                continue
+            }
+            if case .box(var b) = block {
+                budget -= b.before + 0.8
+                b.children = cut(b.children, &budget)
+                b.after = 0
+                out.append(.box(b))
+            } else if case .paragraph(var p) = block, budget > 1 {
+                // A paragraph's lines past the cut are left out.
+                let size = p.runs.first?.style.size ?? 1
+                let fit = max(1, Int(budget / (p.lineHeight * size)))
+                var allowed = fit - 1
+                p.runs = p.runs.compactMap { run in
+                    guard allowed >= 0 else { return nil }
+                    var run = run
+                    let lines = run.text.components(separatedBy: "\n")
+                    if lines.count - 1 > allowed {
+                        run.text = lines.prefix(allowed + 1).joined(separator: "\n")
+                        allowed = -1
+                    } else {
+                        allowed -= lines.count - 1
+                    }
+                    return run
+                }
+                out.append(.paragraph(p))
+            }
+            budget = 0
+        }
+        return fade(out)
+    }
+
+    /// The last few lines of a cut view, quieter: it goes on below.
+    static func fade(_ blocks: [DocBlock]) -> [DocBlock] {
+        var out = blocks
+        var left = 3
+        func dim(_ block: DocBlock) -> DocBlock {
+            switch block {
+            case .paragraph(var p):
+                guard left > 0 else { return block }
+                left -= 1
+                let alpha = [0.3, 0.55, 0.8][min(2, 2 - left)]
+                p.runs = p.runs.map { run in
+                    var run = run
+                    run.style.fade = alpha
+                    return run
+                }
+                return .paragraph(p)
+            case .box(var b):
+                b.children = Array(b.children.reversed().map(dim).reversed())
+                return .box(b)
+            case .embed: return block
+            }
+        }
+        out = Array(out.reversed().map(dim).reversed())
+        return out
     }
 
     func toolView(_ entry: ToolEntry, depth: Int) -> (blocks: [DocBlock], candidates: [String]) {

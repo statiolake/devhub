@@ -108,6 +108,7 @@ jobs:
         timeout-minutes: 6
         env:
           DEVHUB_SELF_TEST_SNAPSHOTS: ${{ runner.temp }}/snapshots
+          DEVHUB_SELF_TEST_PRINT_SNAPSHOTS: "1"
         run: |
           app="$RUNNER_TEMP/native/DevHub.app"
           "$app/Contents/Resources/bin/devhub" --version

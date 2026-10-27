@@ -67,6 +67,12 @@ final class ConversationSelfTest {
         guard let png = rep.representation(using: .png, properties: [:]) else { return }
         let path = (directory as NSString).appendingPathComponent("\(name).png")
         check(FileManager.default.createFile(atPath: path, contents: png), "\(name) could not be saved to \(path)")
+        // For a reader of the log alone: the picture, small, as one line.
+        if ProcessInfo.processInfo.environment["DEVHUB_SELF_TEST_PRINT_SNAPSHOTS"] == "1",
+           let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.55])
+        {
+            print("SNAPSHOT \(name) \(jpeg.base64EncodedString())")
+        }
     }
 
     func run() async -> [String] {
