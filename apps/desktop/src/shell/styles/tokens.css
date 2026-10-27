@@ -23,6 +23,29 @@
  * thing: main puts them in the page's `<head>` as it serves it, so the first
  * frame is already right, and the page sets them inline when a workbench
  * changes theme afterwards.
+ *
+ * One philosophy for every surface drawn on these:
+ *
+ * - **Content is flat; what floats is lifted.** Prose, tool rows and code sit
+ *   in the flow on the surface and are set apart by a hairline or a recess.
+ *   Only what stands over the content — a card asking something, the
+ *   composer, a popover, a banner — is raised, and it is raised by a level
+ *   of elevation (a shadow ring and a soft shadow), never by a heavier
+ *   border. See "Elevation" below.
+ * - **Lines come from the ink.** Every edge is `--primary` at a named
+ *   strength, so it follows the theme and Increase Contrast; no grey is
+ *   written as a literal.
+ * - **Quiet until reached.** A control that is not the point of the moment is
+ *   drawn in the faint ink, as an icon where its meaning is plain (with its
+ *   name in a tooltip and its accessible label), and comes to full strength
+ *   under the pointer or the keyboard.
+ * - **Things arrive, they don't appear.** What is new rises a few pixels and
+ *   grows a little as it fades in, on a decelerating curve; what leaves is
+ *   quicker, on an accelerating one; what answers a hand springs. Short,
+ *   transform and opacity only, and under Reduce Motion a plain fade. See
+ *   "Motion" below.
+ * - **One spacing scale** (`--space-*`, 4px steps) and a few radii named by
+ *   what the shape is (`--radius-*`).
  */
 
 :root {
@@ -254,14 +277,120 @@
    * family would move it. */
   --sidebar-glyph-optical-shift: 1px;
 
-  /* Motion: one easing (quick out, soft settle) and three short durations.
-   * State changes are shown, never performed — nothing here runs long enough
-   * to wait on. Under Reduce Motion each component turns its own off. */
-  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Elevation: how far a surface stands off the one under it.
+   *
+   * Four levels, and every surface in a pane is on exactly one of them:
+   *
+   *   0  in the flow    the transcript, a tool's body, a code block. No
+   *                     shadow; a hairline (`--line-soft`) or a recess
+   *                     (`--sunken`) says where it ends.
+   *   1  resting        a card that sits on the page and asks for nothing
+   *                     until it is reached: the composer at rest, a Smart
+   *                     Button. (Inside a GUI Agent's transcript an entry
+   *                     contains its own paint, so a card there — a request —
+   *                     keeps the ring, drawn inward, and casts nothing.)
+   *   2  floating       above the content and moving with the person's
+   *                     attention: the composer while it has the keyboard,
+   *                     the way back to the end, the failure banner.
+   *   3  popover        lifted out of the page for a moment: a picker, the
+   *                     `/` list, the find bar, a menu.
+   *
+   * A raised surface's edge is a shadow ring, not a border: one pixel of
+   * `--edge` drawn by `box-shadow`, so a level can change without anything
+   * moving, and two stacked edges never double up into a two-pixel line. The
+   * ring is the ink at a strength like every other line here, so a theme and
+   * Increase Contrast reach it; the soft shadows under it are black at a
+   * strength per appearance, because a shadow is the absence of light on any
+   * theme. In dark, where a shadow on a near-black ground cannot be seen, a
+   * raised surface also catches a hairline of light along its top edge.
+   *
+   * What floats over moving content (levels 2 and 3) may be translucent and
+   * blur what passes under it: `--material-float` with `--material-blur`.
+   * Under Increase Contrast or Reduce Transparency both become opaque. */
+  --ink-edge: 12%;
+  --edge: color-mix(in srgb, var(--primary) var(--ink-edge), transparent);
+  --edge-highlight: light-dark(
+    rgba(255, 255, 255, 0),
+    rgba(255, 255, 255, 0.06)
+  );
+  --shadow-soft: light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.32));
+  --shadow-mid: light-dark(rgba(0, 0, 0, 0.09), rgba(0, 0, 0, 0.45));
+  --shadow-deep: light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.6));
+  --elevation-0: none;
+  --elevation-1:
+    0 0 0 1px var(--edge), inset 0 1px 0 var(--edge-highlight),
+    0 1px 2px var(--shadow-soft), 0 2px 8px var(--shadow-soft);
+  --elevation-2:
+    0 0 0 1px var(--edge), inset 0 1px 0 var(--edge-highlight),
+    0 2px 6px var(--shadow-soft), 0 10px 28px var(--shadow-mid);
+  --elevation-3:
+    0 0 0 1px var(--edge), inset 0 1px 0 var(--edge-highlight),
+    0 4px 12px var(--shadow-mid), 0 18px 48px var(--shadow-deep);
+  --material-float: color-mix(in srgb, var(--raised) 90%, transparent);
+  --material-blur: blur(20px) saturate(1.6);
+
+  /* Radii, by what the shape is. A row and a control are a small rounding;
+     a card and a popover the panel's; a message bubble and the composer are
+     the conversation's own, in `em` of its type (`conversation.css`); a chip
+     or a pill is round-ended. */
+  --radius-card: 12px;
+  --radius-pill: 999px;
+
+  /* Motion: state changes are shown, never performed — nothing here runs
+   * long enough to wait on.
+   *
+   * Durations, by how far the eye has to travel:
+   *   fast     120ms  colour, hover, press — a reply to a hand
+   *   base     180ms  a popover opening, a small thing arriving
+   *   slow     240ms  an entry or a card arriving, a height settling
+   *   slower   320ms  a spring that overshoots and settles
+   *   exit     140ms  anything leaving: leaving is always quicker
+   *
+   * Easings, by what the motion is:
+   *   enter       decelerates: arrives fast and settles (ease-out)
+   *   exit        accelerates: lets go and is gone (ease-in)
+   *   standard    for a thing that moves from one place to another
+   *   emphasized  a longer settle, for something that should be noticed
+   *   spring      a small overshoot, for what answers a hand (press, hover)
+   *   pop         a real spring, for a control that pops into being
+   *
+   * What arrives rises `--motion-rise` and grows from `--motion-scale-in`
+   * (a popover from `--motion-scale-popover`, a pop from
+   * `--motion-scale-pop`) while it fades in. Only transform and opacity are
+   * ever animated, plus a disclosure's own height. Under Reduce Motion the
+   * distances and scales below go to nothing, so the same animations are a
+   * plain fade and nothing moves (see the end of this file). */
   --motion-fast: 120ms;
   --motion-base: 180ms;
-  --motion-slow: 220ms;
-  --motion-rise: 4px;
+  --motion-slow: 240ms;
+  --motion-slower: 320ms;
+  --motion-exit: 140ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.55, 0, 0.75, 0.2);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-pop: linear(
+    0,
+    0.03 2%,
+    0.13 5%,
+    0.48 11%,
+    0.86 18%,
+    1.06 24%,
+    1.12 28%,
+    1.11 33%,
+    1.04 42%,
+    0.99 52%,
+    0.985 60%,
+    1.003 76%,
+    1
+  );
+  /* The one easing every older rule here was written with. */
+  --motion-ease: var(--ease-emphasized);
+  --motion-rise: 6px;
+  --motion-scale-in: 0.985;
+  --motion-scale-popover: 0.96;
+  --motion-scale-pop: 0.6;
 }
 
 /*
@@ -518,6 +647,17 @@
     --ink-selection-inactive: 17%;
     --ink-scrollbar: 45%;
     --ink-scrollbar-hover: 65%;
+    /* A raised surface's edge as firm as a line, on an opaque ground. */
+    --ink-edge: 45%;
+    --material-float: var(--raised);
+    --material-blur: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --material-float: var(--raised);
+    --material-blur: none;
   }
 }
 
@@ -717,10 +857,44 @@ a {
   );
 }
 
+/* Reduce Motion: nothing moves.
+ *
+ * Written on the motion tokens, the distances and scales go to nothing, so
+ * whatever is drawn with them (a GUI Agent's conversation, the Smart Buttons,
+ * the failure banner) still fades — the change of state stays visible — and
+ * no longer travels; each of those turns its own looping animations off. Every
+ * other page is still cut to an instant here, as it always was. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :root {
+    --motion-rise: 0px;
+    --motion-scale-in: 1;
+    --motion-scale-popover: 1;
+    --motion-scale-pop: 1;
+    --ease-spring: var(--ease-standard);
+    --ease-pop: var(--ease-standard);
+  }
+
+  :not(
+    .conversation-surface,
+    .conversation-surface *,
+    .smart-buttons,
+    .smart-buttons *,
+    .agent-failure-banner
+  ),
+  :not(
+    .conversation-surface,
+    .conversation-surface *,
+    .smart-buttons,
+    .smart-buttons *,
+    .agent-failure-banner
+  )::before,
+  :not(
+    .conversation-surface,
+    .conversation-surface *,
+    .smart-buttons,
+    .smart-buttons *,
+    .agent-failure-banner
+  )::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
