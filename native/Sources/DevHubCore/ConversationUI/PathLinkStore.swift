@@ -43,11 +43,16 @@ public final class PathLinks {
     private var scheduled = false
     private var listeners: [UUID: @MainActor () -> Void] = [:]
 
+    /// Batches asked about on the main queue's next turn.
+    public convenience init(resolve: @escaping Resolve, reportFailure: @escaping @MainActor (Error) -> Void) {
+        self.init(resolve: resolve, reportFailure: reportFailure, schedule: { work in
+            DispatchQueue.main.async { MainActor.assumeIsolated { work() } }
+        })
+    }
+
     public init(
         resolve: @escaping Resolve, reportFailure: @escaping @MainActor (Error) -> Void,
-        schedule: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void = { work in
-            DispatchQueue.main.async { MainActor.assumeIsolated { work() } }
-        }
+        schedule: @escaping @MainActor (@escaping @MainActor () -> Void) -> Void
     ) {
         self.resolve = resolve
         self.reportFailure = reportFailure

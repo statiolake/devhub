@@ -132,10 +132,20 @@ public final class TranscriptSearch {
     private let schedule: Schedule
     private let now: () -> Double
 
+    /// A search sliced on the main queue, timed by the clock.
+    public convenience init(sections: [SearchSection], onChange: @escaping @MainActor () -> Void) {
+        self.init(sections: sections, onChange: onChange, schedule: { TranscriptSearch.mainQueue($0) }, now: { Date().timeIntervalSince1970 * 1000 })
+    }
+
+    /// A search sliced by `schedule`, timed by the clock.
+    public convenience init(sections: [SearchSection], onChange: @escaping @MainActor () -> Void, schedule: @escaping Schedule) {
+        self.init(sections: sections, onChange: onChange, schedule: schedule, now: { Date().timeIntervalSince1970 * 1000 })
+    }
+
     public init(
         sections: [SearchSection], onChange: @escaping @MainActor () -> Void,
-        schedule: @escaping Schedule = TranscriptSearch.mainQueue,
-        now: @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 }
+        schedule: @escaping Schedule,
+        now: @escaping () -> Double
     ) {
         self.sections = sections.map(Section.init)
         self.onChange = onChange
