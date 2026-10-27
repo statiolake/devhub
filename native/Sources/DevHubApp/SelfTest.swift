@@ -262,7 +262,6 @@ final class SelfTest {
             version = \(Int(ConfigConstants.schemaVersion))
 
             [general]
-            import_login_environment = false
             workbench = "terminal"
 
             [scratch]
@@ -305,7 +304,7 @@ final class SelfTest {
             return shell.window.editorTerminals.values.contains { $0.surfaceKey == TerminalSurfaceKeys.workspace(snapshot.scratchWorkspaceId) }
         }
         check(scratchKey, "live: Scratch's editor area has no terminal view")
-        let accepted = await until(5) { shell.config?.general.importLoginEnvironment == false }
+        let accepted = await until(5) { shell.config?.general.workbench == "terminal" }
         check(accepted, "live: the self-test's settings were not accepted")
         let pane = shell.snapshot.flatMap { snapshot in
             shell.window.editorTerminals.values.first { $0.surfaceKey == TerminalSurfaceKeys.workspace(snapshot.scratchWorkspaceId) }

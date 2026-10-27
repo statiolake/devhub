@@ -162,7 +162,9 @@ final class TerminalSurfaceSessionTests: XCTestCase {
         for _ in 0..<50 {
             await Task.yield()
             mailbox.drain()
-            if transport.receipts.count >= wanted && mailbox.queued.isEmpty { break }
+            // The attach has answered once the session holds the newest receipt.
+            if transport.receipts.count >= wanted && mailbox.queued.isEmpty
+                && session.attachmentId == transport.receipts.last?.attachmentId { break }
             try? await Task.sleep(nanoseconds: 1_000_000)
         }
         mailbox.drain()
