@@ -2,8 +2,10 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { FILE_LINK_INSTRUCTIONS } from "./conversation/linkInstructions.js";
 import {
 	codexDevhubInstructions,
+	codexGuiInstructions,
 	devhubSkillPaths,
 	devhubSkillText,
 	withDevhubSkill,
@@ -86,6 +88,13 @@ describe("the /devhub skill", () => {
 	it("points Codex at the same file", () => {
 		expect(codexDevhubInstructions(skill)).toContain(skill.skillFile);
 		expect(codexDevhubInstructions(skill)).toContain("/devhub");
+	});
+
+	it("tells a Codex GUI Agent how to link files, with the skill's pointer or without it", () => {
+		expect(codexGuiInstructions(skill)).toBe(
+			`${codexDevhubInstructions(skill)}\n\n${FILE_LINK_INSTRUCTIONS}`,
+		);
+		expect(codexGuiInstructions(undefined)).toBe(FILE_LINK_INSTRUCTIONS);
 	});
 
 	it("writes the skill and an executable launcher", () => {

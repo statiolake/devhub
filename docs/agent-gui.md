@@ -815,6 +815,31 @@ clicked, and a target that names no file says so. A link with a scheme
 (`https:`, `mailto:`) still opens in the browser, and an anchor (`#usage`)
 opens nothing.
 
+**Agents are asked to link files.** A bare `a.ts` is ambiguous when the
+Workspace has several, and a GitHub link opens the browser, not the file the
+Agent edited. So every GUI Agent is told, each time its CLI starts or its
+session is resumed, to write the files it mentions as Markdown links to the
+local path (`FILE_LINK_INSTRUCTIONS` in
+`main/agent/conversation/linkInstructions.ts`):
+
+> File links: this conversation is shown in DevHub, which opens Markdown links
+> to local files in the editor. Whenever you mention a file, write it as a
+> Markdown link whose target is its local path relative to your working
+> directory (absolute only for files outside it), with the line as #L42 or a
+> range as #L42-L50, e.g. [src/app.ts:42](src/app.ts#L42) or
+> [README.md](README.md). Put a target that contains spaces in angle
+> brackets: [my file.ts](<docs/my file.ts#L3>). Never link a GitHub or other
+> remote URL for a file that is on this machine.
+
+Claude gets it as `--append-system-prompt`, after the profile's own: Claude
+keeps only the last `--append-system-prompt`, so one in the profile's
+arguments is folded into DevHub's, its text first
+(`--append-system-prompt-file` adds to either and is left alone). Codex gets
+it in the thread's `developerInstructions`, after the `/devhub` skill's
+pointer. Terminal Agents are not told: a terminal draws no Markdown. The
+position is asked for as `#L` because the transcript's Markdown reads a target
+whose first `:` comes before any `/` (`a.ts:12`) as a URL scheme and drops it.
+
 **Only files that are there.** A word that could be a path is a link only
 once DevHub has checked that it is a file on the Agent's machine — this Mac,
 or the host an SSH Workspace's Agent runs on — so _and/or_ or _e.g._ stays

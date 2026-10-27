@@ -21,6 +21,7 @@ import {
 	type AgentProfileKind,
 } from "../../model/domain.js";
 import { CLAUDE_STRUCTURED_FLAGS } from "../agent/conversation/claude/argv.js";
+import { FILE_LINK_INSTRUCTIONS } from "../agent/conversation/linkInstructions.js";
 import { HOST_NAME, HOST_SCRIPT } from "../agent/conversation/hostScript.js";
 import type { Runtime } from "../runtime/runtime.js";
 import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
@@ -128,6 +129,8 @@ describe("launching a GUI Claude Agent", () => {
 					"--model",
 					"opus",
 					...CLAUDE_STRUCTURED_FLAGS,
+					"--append-system-prompt",
+					FILE_LINK_INSTRUCTIONS,
 				],
 				env: { EXAMPLE: "1" },
 			},

@@ -21,6 +21,12 @@
  *   `$devhub` mean "read and follow this SKILL.md". Codex has no flag that
  *   adds a skills directory, and its own skill roots are the person's.
  *
+ * GUI Agents are also told to write the files they mention as Markdown links
+ * to the local path (`FILE_LINK_INSTRUCTIONS`, `conversation/linkInstructions.ts`):
+ * Claude by `--append-system-prompt` (`conversation/claude/argv.ts`), Codex in
+ * the same `developerInstructions` (`codexGuiInstructions`). Terminal Agents
+ * are not: their screen draws no Markdown.
+ *
  * Agents on another machine (an SSH host) get the same text, written there
  * under `~/.devhub/terminal/skill-<tag>/` by `RemoteShellRuntime.terminalLauncher`
  * beside the `devhub` shim DevHub installs on that machine, whose full path
@@ -32,6 +38,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProfile } from "../../model/domain.js";
+import { FILE_LINK_INSTRUCTIONS } from "./conversation/linkInstructions.js";
 
 export interface DevhubSkill {
 	/** The directory handed to Claude's `--add-dir`. */
@@ -84,6 +91,18 @@ export function codexDevhubInstructions(skill: DevhubSkill): string {
 		'or asks you to prepare, open, use or close your terminal ("open a terminal", "the terminal on the right", "右のターミナル"),',
 		`read ${skill.skillFile} and follow it. It explains the \`${skill.cli} --tell\` command.`,
 	].join(" ");
+}
+
+/**
+ * Everything a Codex GUI Agent's thread is told: the `/devhub` skill's
+ * pointer once the skill is written on the Agent's machine, and always how to
+ * link files.
+ */
+export function codexGuiInstructions(skill: DevhubSkill | undefined): string {
+	return [
+		...(skill === undefined ? [] : [codexDevhubInstructions(skill)]),
+		FILE_LINK_INSTRUCTIONS,
+	].join("\n\n");
 }
 
 export function devhubSkillText(cli: string): string {

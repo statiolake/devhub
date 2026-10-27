@@ -6,9 +6,16 @@
  * keep — and the flags that make the conversation readable follow them.
  * `--bare` is never added: it reads an API key only, and a GUI Agent runs on
  * the owner's own sign-in exactly as the TUI does.
+ *
+ * Last comes DevHub's `--append-system-prompt` (`FILE_LINK_INSTRUCTIONS`).
+ * Claude keeps only the last `--append-system-prompt` it is given, so one the
+ * profile already passes is taken out and its text put first in DevHub's: the
+ * person's words are kept, and DevHub's follow them. An
+ * `--append-system-prompt-file` adds to either and is left alone.
  */
 
 import type { AgentSessionCommand } from "../../../terminal/ports.js";
+import { FILE_LINK_INSTRUCTIONS } from "../linkInstructions.js";
 
 export const CLAUDE_STRUCTURED_FLAGS: readonly string[] = [
 	"-p",
@@ -27,7 +34,45 @@ export const CLAUDE_STRUCTURED_FLAGS: readonly string[] = [
 export function claudeStructuredCommand(
 	cli: AgentSessionCommand,
 ): AgentSessionCommand {
-	return { ...cli, args: [...cli.args, ...CLAUDE_STRUCTURED_FLAGS] };
+	const { args, appended } = withoutAppendedPrompt(cli.args);
+	return {
+		...cli,
+		args: [
+			...args,
+			...CLAUDE_STRUCTURED_FLAGS,
+			APPEND_SYSTEM_PROMPT,
+			[...appended, FILE_LINK_INSTRUCTIONS].join("\n\n"),
+		],
+	};
+}
+
+const APPEND_SYSTEM_PROMPT = "--append-system-prompt";
+
+/**
+ * `args` without its `--append-system-prompt`s, and what they said. Only the
+ * last counts to Claude, so only the last is kept.
+ */
+function withoutAppendedPrompt(args: readonly string[]): {
+	readonly args: readonly string[];
+	readonly appended: readonly string[];
+} {
+	const kept: string[] = [];
+	let appended: string | undefined;
+	for (let at = 0; at < args.length; at++) {
+		const arg = args[at] ?? "";
+		if (arg === APPEND_SYSTEM_PROMPT && at + 1 < args.length) {
+			appended = args[at + 1];
+			at++;
+		} else if (arg.startsWith(`${APPEND_SYSTEM_PROMPT}=`)) {
+			appended = arg.slice(APPEND_SYSTEM_PROMPT.length + 1);
+		} else {
+			kept.push(arg);
+		}
+	}
+	return {
+		args: kept,
+		appended: appended === undefined || appended === "" ? [] : [appended],
+	};
 }
 
 /**

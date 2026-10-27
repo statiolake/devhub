@@ -50,7 +50,7 @@ import {
 import { observeConversation } from "../agent/conversation/reading.js";
 import { ConversationRegistry } from "../agent/conversation/registry.js";
 import {
-	codexDevhubInstructions,
+	codexGuiInstructions,
 	withDevhubSkill,
 	type DevhubSkill,
 } from "../agent/devhubSkill.js";
@@ -253,10 +253,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 							bootId,
 							cwd: root,
 							clientVersion: options.clientVersion,
-							developerInstructions: () =>
-								skill === undefined
-									? undefined
-									: codexDevhubInstructions(skill),
+							developerInstructions: () => codexGuiInstructions(skill),
 						}),
 						publish,
 						{
