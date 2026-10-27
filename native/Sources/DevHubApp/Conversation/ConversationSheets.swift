@@ -20,7 +20,8 @@ import DevHubCore
 @MainActor
 final class McpPanelView: PaneSheetFrame {
     private let agentId: String
-    private let transport: ConversationTransport
+    /// Nil only in the self-test, which draws the panel with nothing behind it.
+    private let transport: ConversationTransport?
     private let conversation: ConversationStyle
     var onClose: (() -> Void)?
     var report: ((String) -> Void)?
@@ -37,7 +38,7 @@ final class McpPanelView: PaneSheetFrame {
     /// The aside's width its contents were laid out for.
     private var renderedAsideWidth: CGFloat = 0
 
-    init(label: String, style: ConversationStyle, agentId: String, transport: ConversationTransport) {
+    init(label: String, style: ConversationStyle, agentId: String, transport: ConversationTransport?) {
         self.agentId = agentId
         self.transport = transport
         conversation = style
@@ -79,7 +80,8 @@ final class McpPanelView: PaneSheetFrame {
     }
 
     private func run(_ work: @escaping @MainActor (ConversationTransport, String) async throws -> Void) {
-        let transport = self.transport, agentId = self.agentId
+        guard let transport = self.transport else { return }
+        let agentId = self.agentId
         Task { [weak self] in
             do { try await work(transport, agentId) } catch { self?.report?(failureText(error)) }
         }

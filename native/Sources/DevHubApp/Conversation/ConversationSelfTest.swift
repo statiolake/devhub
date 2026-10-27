@@ -171,6 +171,7 @@ final class ConversationSelfTest {
         await arrivals()
         await settingList()
         await failureSheet()
+        await mcpPanel()
 
         await composerKeys()
         await longTranscript()
@@ -229,6 +230,26 @@ final class ConversationSelfTest {
         await pause(0.2)
         snapshot(view, "conversation-failure-banner")
         check(view.hitTest(NSPoint(x: 400, y: 400)) == nil, "the failure banner takes the pointer below it")
+    }
+
+    /// `/mcp`: a picker's sheet over the pane, the servers as rows, the one chosen in the aside.
+    private func mcpPanel() async {
+        let view = pane(TranscriptFixtures.everything(), dark: true, size: NSSize(width: 1000, height: 640))
+        await pause(0.3)
+        let panel = McpPanelView(label: "Self-test Agent", style: ConversationStyle(ShellStyle.initial(dark: true, titleBar: .shown)), agentId: "self-test", transport: nil)
+        panel.frame = view.bounds
+        view.addSubview(panel)
+        let servers = [
+            McpServer(name: "github", status: .connected, said: "connected", error: nil, source: "user", actions: [.reconnect, .disable]),
+            McpServer(name: "linear", status: .needsSignIn, said: "needs-auth", error: "Sign in to use it", source: "project", actions: [.signIn]),
+        ]
+        panel.update(McpState(servers: servers, pluginErrors: [], working: [], failure: "The CLI refused: reconnect failed"), signIn: nil)
+        panel.layoutSubtreeIfNeeded()
+        await pause(0.3)
+        snapshot(panel, "conversation-mcp-panel")
+        check(panel.card.frame.height > 200 && panel.card.frame.minY == 0, "the MCP sheet is \(panel.card.frame)")
+        check(panel.buttons.map(\.title) == ["Close"], "the MCP sheet's footer has \(panel.buttons.map(\.title))")
+        panel.removeFromSuperview()
     }
 
     /// `/model`'s list: over its face, the current choice ticked, the keys on the face; Escape closes it.
