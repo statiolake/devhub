@@ -142,7 +142,7 @@ public final class ChildProcess: @unchecked Sendable {
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
 
-        var flags: Int32 = Int32(POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)
+        var flags: Int32 = Int32(POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF) | SpawnHygiene.spawnFlags
         if newSession { flags |= ChildProcess.spawnSetSID }
         posix_spawnattr_setflags(&attributes, Int16(truncatingIfNeeded: flags))
         // A clean signal state: nothing blocked (see the header), every signal
@@ -194,6 +194,10 @@ public final class ChildProcess: @unchecked Sendable {
         // close-on-exec below.
         for fd in opened { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
         for fd in [parentStdin, parentStdout, parentStderr] where fd >= 0 { _ = fcntl(fd, F_SETFD, FD_CLOEXEC) }
+
+        // Its three streams and nothing else: it lives on, and whatever it
+        // inherited stays open as long as it does.
+        SpawnHygiene.closeInherited(&actions)
 
         if let currentDirectory {
             posix_spawn_file_actions_addchdir_np(&actions, currentDirectory)

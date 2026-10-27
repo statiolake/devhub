@@ -45,20 +45,9 @@ final class SpawnedChild: @unchecked Sendable {
 
     #if canImport(Darwin)
     private static let sessionFlag = Int32(POSIX_SPAWN_SETSID)
-    /// Every descriptor not named by a file action is closed in the child.
-    private static let cloexecDefault = Int32(POSIX_SPAWN_CLOEXEC_DEFAULT)
     #else
-    /// glibc declares both only under `_GNU_SOURCE`.
+    /// glibc declares it only under `_GNU_SOURCE`.
     private static let sessionFlag: Int32 = 0x80
-    private static let cloexecDefault: Int32 = 0
-    private typealias CloseFrom = @convention(c) (UnsafeMutablePointer<posix_spawn_file_actions_t>, Int32) -> Int32
-    /// `posix_spawn_file_actions_addclosefrom_np` (glibc 2.34): every
-    /// descriptor from 3 up is closed in the child.
-    private static let closeFrom: CloseFrom? = {
-        guard let handle = dlopen(nil, RTLD_NOW),
-              let symbol = dlsym(handle, "posix_spawn_file_actions_addclosefrom_np") else { return nil }
-        return unsafeBitCast(symbol, to: CloseFrom.self)
-    }()
     #endif
 
     /// Start `executable` (an absolute path).
@@ -81,7 +70,7 @@ final class SpawnedChild: @unchecked Sendable {
         posix_spawnattr_init(&attributes)
         defer { posix_spawnattr_destroy(&attributes) }
 
-        let flags = Int32(POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF) | sessionFlag | cloexecDefault
+        let flags = Int32(POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF) | sessionFlag | SpawnHygiene.spawnFlags
         posix_spawnattr_setflags(&attributes, Int16(truncatingIfNeeded: flags))
         // A clean signal state: nothing blocked, every signal at its default —
         // what a process started from a shell would have.
@@ -120,9 +109,7 @@ final class SpawnedChild: @unchecked Sendable {
         posix_spawn_file_actions_adddup2(&actions, output.write, 1)
         let errors = try pipePair()
         posix_spawn_file_actions_adddup2(&actions, errors.write, 2)
-        #if !canImport(Darwin)
-        if let closeFrom { _ = closeFrom(&actions, 3) }
-        #endif
+        SpawnHygiene.closeInherited(&actions)
         if let cwd { posix_spawn_file_actions_addchdir_np(&actions, cwd) }
 
         let argv = ([executable] + args).map { strdup($0) }

@@ -128,6 +128,9 @@ final class SpawnedProcess: @unchecked Sendable {
         posix_spawn_file_actions_adddup2(&actions, input[0], 0)
         posix_spawn_file_actions_adddup2(&actions, output[1], 1)
         posix_spawn_file_actions_adddup2(&actions, errors[1], 2)
+        // Its three streams and nothing else: a host or a follower lives on,
+        // and whatever it inherited stays open as long as it does.
+        SpawnHygiene.closeInherited(&actions)
         var empty = sigset_t()
         sigemptyset(&empty)
         posix_spawnattr_setsigmask(&attributes, &empty)
@@ -137,7 +140,8 @@ final class SpawnedProcess: @unchecked Sendable {
         posix_spawnattr_setsigdefault(&attributes, &defaults)
         posix_spawnattr_setpgroup(&attributes, 0)
         posix_spawnattr_setflags(
-            &attributes, Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
+            &attributes,
+            Int16(truncatingIfNeeded: Int32(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF) | SpawnHygiene.spawnFlags))
 
         let environment = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
         let cArgv = argv.map { strdup($0) } + [nil]

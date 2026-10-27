@@ -182,6 +182,7 @@ public final class ForkedPty: PseudoTerminal, @unchecked Sendable {
         var empty = sigset_t()
         sigemptyset(&empty)
         var masterFd: Int32 = -1
+        let afterFork = SpawnHygiene.prepareForFork()
         #if os(Linux)
         guard let forkpty = linuxForkpty else { throw PtyError.unsupported }
         let child = forkpty(&masterFd, nil, nil, &size)
@@ -199,6 +200,9 @@ public final class ForkedPty: PseudoTerminal, @unchecked Sendable {
             _ = signal(SIGQUIT, SIG_DFL)
             _ = signal(SIGTERM, SIG_DFL)
             _ = signal(SIGCHLD, SIG_DFL)
+            // Its terminal and nothing else: what it inherited of DevHub's
+            // stays open for as long as it lives (SpawnHygiene.swift).
+            SpawnHygiene.closeInheritedAfterFork(afterFork)
             _ = chdir(cwd)
             _ = execve(file, argv, envp)
             _exit(127)
@@ -210,13 +214,23 @@ public final class ForkedPty: PseudoTerminal, @unchecked Sendable {
         _ = fcntl(masterFd, F_SETFL, fcntl(masterFd, F_GETFL) | O_NONBLOCK)
         let source = DispatchSource.makeReadSource(fileDescriptor: masterFd, queue: queue)
         source.setEventHandler { [weak self] in self?.readAvailable() }
+        // Closed once the source has let go of it, never before: a descriptor
+        // closed under a live source is a number the next pipe may be handed,
+        // and libdispatch's epoll registration for it is then the wrong one.
+        let fd = masterFd
+        source.setCancelHandler { _ = close(fd) }
         self.source = source
         // Held paused until the owner has said where the bytes go: nothing may
         // reach a view before it is ready for them.
     }
 
     deinit {
-        if !ended { close(master) }
+        // A source is cancelled only once it runs: one still held paused is
+        // let go first, and its cancel handler closes the master.
+        if !ended {
+            if paused { source?.resume() }
+            source?.cancel()
+        }
     }
 
     public func onData(_ listener: @escaping @Sendable (Data) -> Void) {
@@ -235,6 +249,9 @@ public final class ForkedPty: PseudoTerminal, @unchecked Sendable {
     }
 
     public func write(_ bytes: Data) {
+        // Once it has ended the master is on its way to being closed, and its
+        // number may soon be another descriptor's.
+        if lock.withLock({ ended }) { return }
         bytes.withUnsafeBytes { raw in
             guard var pointer = raw.baseAddress else { return }
             var left = raw.count
@@ -257,6 +274,7 @@ public final class ForkedPty: PseudoTerminal, @unchecked Sendable {
             ws_row: UInt16(clamping: size.rows), ws_col: UInt16(clamping: size.cols),
             ws_xpixel: UInt16(clamping: size.pixelWidth), ws_ypixel: UInt16(clamping: size.pixelHeight)
         )
+        if lock.withLock({ ended }) { return }
         _ = ioctl(master, UInt(TIOCSWINSZ), &ws)
     }
 
@@ -316,7 +334,6 @@ public final class ForkedPty: PseudoTerminal, @unchecked Sendable {
         lock.unlock()
         if wasPaused { source?.resume() }
         source?.cancel()
-        close(master)
         let pid = self.pid
         Thread.detachNewThread { [weak self] in
             var status: Int32 = 0

@@ -101,7 +101,13 @@ final class GuiRig {
             link: { _, _ in link }, log: { _ in }))
     }
 
-    deinit { try? FileManager.default.removeItem(atPath: home) }
+    deinit {
+        // The conversation stops following its fake host with the rig: no
+        // test leaves one running into the next.
+        let registry = wiring.registry
+        Task { await registry.close(GUI_AGENT) }
+        try? FileManager.default.removeItem(atPath: home)
+    }
 
     var directory: String { "\(home)/.devhub/agents-0123456789ab/\(GUI_AGENT)" }
 

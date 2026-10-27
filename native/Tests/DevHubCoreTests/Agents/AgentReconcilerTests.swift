@@ -116,7 +116,9 @@ final class AgentReconcilersTests: XCTestCase {
         let rounds = Counter()
         let loops = AgentReconcilers(reconcile: { about in _ = rounds.bump(about.id.rawValue) }, onFailure: { _ in })
         loops.follow([host(.local), host(.ssh("far"), 60_000)])
-        await until { rounds.value("local") >= 5 }
+        // Both loops start at once, but nothing says the slow one's first
+        // round is under way before the fast one's fifth: wait for both.
+        await until { rounds.value("local") >= 5 && rounds.value("ssh:far") >= 1 }
         XCTAssertEqual(rounds.value("ssh:far"), 1)
         loops.stop()
     }

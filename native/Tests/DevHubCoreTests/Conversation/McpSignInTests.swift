@@ -30,62 +30,72 @@ private let FAKE_CLI = """
     """
 
 /// A terminal that is a child process over pipes: enough for a script that reads a line.
+///
+/// Core's own `SpawnedChild` and `DescriptorReader` rather than Foundation's
+/// `Process` and `FileHandle.readabilityHandler`: on Linux those close a
+/// descriptor while its dispatch source may still hold it, and a pipe handed
+/// the same number next can then never hear its end.
 private final class PipePty: PseudoTerminal, @unchecked Sendable {
-    let process = Process()
-    let input = Pipe()
-    let output = Pipe()
+    private let launch: PtyLaunch
     private let lock = NSLock()
     private var data: [@Sendable (Data) -> Void] = []
     private var exit: [@Sendable (Int32?) -> Void] = []
-    var pid: Int32 { process.processIdentifier }
+    private var child: SpawnedChild?
+    private var readers: [DescriptorReader] = []
+    private var stdinOpen = true
+    private let queue = DispatchQueue(label: "devhub.test.pipe-pty")
+    var pid: Int32 { lock.withLock { child?.pid ?? 0 } }
 
-    init(_ launch: PtyLaunch) throws {
-        process.executableURL = URL(fileURLWithPath: launch.file)
-        process.arguments = launch.args
-        process.currentDirectoryURL = URL(fileURLWithPath: launch.cwd)
-        process.environment = launch.env
-        process.standardInput = input
-        process.standardOutput = output
-        process.standardError = output
-    }
+    init(_ launch: PtyLaunch) throws { self.launch = launch }
 
     func onData(_ listener: @escaping @Sendable (Data) -> Void) { lock.withLock { data.append(listener) } }
     func onExit(_ listener: @escaping @Sendable (Int32?) -> Void) { lock.withLock { exit.append(listener) } }
     // A terminal turns the Return it is sent into the newline `read` waits for.
     func write(_ bytes: Data) {
         let text = String(decoding: bytes, as: UTF8.self).replacingOccurrences(of: "\r", with: "\n")
-        input.fileHandleForWriting.write(Data(text.utf8))
+        lock.withLock {
+            guard let fd = child?.stdin, stdinOpen else { return }
+            FileHandle(fileDescriptor: fd, closeOnDealloc: false).write(Data(text.utf8))
+        }
     }
     func resize(_ size: TerminalSize) {}
-    // SIGKILL: a child Foundation starts from a test's thread may have
-    // SIGTERM blocked on Linux (PLAN.md §3.4); a real PTY's child does not.
-    func kill() { killHard(process.processIdentifier) }
+    // SIGKILL: a child started from a test's thread may have SIGTERM blocked
+    // on Linux (PLAN.md §3.4); a real PTY's child does not.
+    func kill() { if let pid = lock.withLock({ child?.pid }) { killHard(pid) } }
     func pause() {}
     func resume() {
         let listeners = lock.withLock { (data, exit) }
-        let ended = DispatchGroup()
-        ended.enter()
-        output.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            if chunk.isEmpty {
-                handle.readabilityHandler = nil
-                ended.leave()
-                return
-            }
-            for listener in listeners.0 { listener(chunk) }
-        }
-        let process = self.process
-        process.terminationHandler = { _ in
-            // Once its output is all read: a terminal says it ended after what it printed.
-            ended.notify(queue: .global()) {
-                let code = process.terminationReason == .exit ? process.terminationStatus : nil
-                for listener in listeners.1 { listener(code) }
-            }
-        }
+        let child: SpawnedChild
         do {
-            try process.run()
+            child = try SpawnedChild.spawn(
+                executable: launch.file, args: launch.args, env: launch.env, cwd: launch.cwd, pipeStdin: true)
         } catch {
             for listener in listeners.1 { listener(nil) }
+            return
+        }
+        // Its stderr is its stdout, as on a terminal: both are read, in turn.
+        let ended = DispatchGroup()
+        var readers: [DescriptorReader] = []
+        for fd in [child.stdout, child.stderr] {
+            ended.enter()
+            readers.append(DescriptorReader(
+                fd, queue: queue, onChunk: { chunk in for listener in listeners.0 { listener(chunk) } },
+                onEnd: { ended.leave() }))
+        }
+        lock.withLock {
+            self.child = child
+            self.readers = readers
+        }
+        for reader in readers { reader.start() }
+        child.whenExited { [self] code, _ in
+            lock.withLock {
+                stdinOpen = false
+                close(child.stdin)
+            }
+            // Once its output is all read: a terminal says it ended after what it printed.
+            ended.notify(queue: .global()) {
+                for listener in listeners.1 { listener(code) }
+            }
         }
     }
 }
