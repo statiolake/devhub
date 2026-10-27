@@ -188,13 +188,14 @@ enum SheetFlows {
             }
             search.stop()
             let step = launch == nil ? 2 : 3
+            let chosenLaunch = launch
             switch row {
             case let .open(path, create):
-                await open(flow) { try await services.openPicked(path, create: create, withAgent: launch) }
+                await open(flow) { try await services.openPicked(path, create: create, withAgent: chosenLaunch) }
             case let .new(typed):
-                await newProject(flow, services: services, typed: typed, step: step, launch: launch)
+                await newProject(flow, services: services, typed: typed, step: step, launch: chosenLaunch)
             case let .clone(typed):
-                await cloneProject(flow, services: services, typed: typed, step: step, launch: launch)
+                await cloneProject(flow, services: services, typed: typed, step: step, launch: chosenLaunch)
             }
             return
         }

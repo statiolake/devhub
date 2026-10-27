@@ -182,7 +182,7 @@ final class QuietButton: NSControl {
     var onPress: (() -> Void)?
     /// The close mark (`toast-close`) instead of a word.
     var isCloseMark = false
-    var enabled = true { didSet { needsDisplay = true } }
+    var available = true { didSet { needsDisplay = true } }
     private var hovering = false
     private var pressing = false
     private var tracking: NSTrackingArea?
@@ -201,7 +201,7 @@ final class QuietButton: NSControl {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { enabled }
+    override var acceptsFirstResponder: Bool { available }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -225,7 +225,7 @@ final class QuietButton: NSControl {
     override func mouseExited(with event: NSEvent) { hovering = false; needsDisplay = true }
 
     override func mouseDown(with event: NSEvent) {
-        guard enabled, let window else { return }
+        guard available, let window else { return }
         pressing = true
         needsDisplay = true
         while let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
@@ -244,7 +244,7 @@ final class QuietButton: NSControl {
     }
 
     override func keyDown(with event: NSEvent) {
-        if enabled, event.keyCode == 0x24 || event.keyCode == 0x31 || event.keyCode == 0x4C {
+        if available, event.keyCode == 0x24 || event.keyCode == 0x31 || event.keyCode == 0x4C {
             onPress?()
             return
         }
@@ -258,7 +258,7 @@ final class QuietButton: NSControl {
         let tokens = style.tokens
         let box = bounds.insetBy(dx: 0.5, dy: 0.5)
         let shape = NSBezierPath(roundedRect: box, xRadius: 6, yRadius: 6)
-        if enabled {
+        if available {
             if pressing { tokens.washStrong.nsColor.setFill(); shape.fill() } else if hovering { tokens.wash.nsColor.setFill(); shape.fill() }
         }
         if !isCloseMark {
@@ -272,7 +272,7 @@ final class QuietButton: NSControl {
             ring.lineWidth = 2
             ring.stroke()
         }
-        let alpha: CGFloat = enabled ? 1 : 0.4
+        let alpha: CGFloat = available ? 1 : 0.4
         if isCloseMark {
             let ink = (hovering ? tokens.primary.nsColor : tokens.tertiary.nsColor).withAlphaComponent(alpha)
             let mark = NSBezierPath()

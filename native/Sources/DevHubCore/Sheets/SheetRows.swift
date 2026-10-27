@@ -137,6 +137,13 @@ public enum SheetRows {
         public var sessionCount: Int
         /// A listing that failed, per profile, in profile order.
         public var refusals: [String]
+
+        public init(items: [PickerItem], targets: [String: AgentTarget], sessionCount: Int, refusals: [String]) {
+            self.items = items
+            self.targets = targets
+            self.sessionCount = sessionCount
+            self.refusals = refusals
+        }
     }
 
     /// The kinds whose CLI keeps sessions DevHub can list and resume.

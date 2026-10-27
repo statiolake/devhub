@@ -621,7 +621,7 @@ final class NoticeCenterView: NSView {
         let tokens = style.tokens
         let count = center.filter { unread.contains($0.key) }.count
         countLabel.attributedStringValue = Ink.text(count > 0 ? "\(count) new" : "", size: 11, color: tokens.secondary.nsColor)
-        clearButton.enabled = !center.isEmpty
+        clearButton.available = !center.isEmpty
         for entry in entries { entry.removeFromSuperview() }
         entries = center.map { entry in
             NoticeEntryView(entry: entry, unread: unread.contains(entry.key), style: style, owner: owner)

@@ -630,8 +630,8 @@ final class PickerView: NSView, NSTextFieldDelegate, DisposableSheetContent, Res
             return
         }
         let query = state.query
-        let timer = Timer(timeInterval: queryDelay, repeats: false) { _ in
-            MainActor.assumeIsolated { onQueryChange(query) }
+        let timer = Timer(timeInterval: queryDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.onQueryChange?(query) }
         }
         RunLoop.main.add(timer, forMode: .common)
         queryTimer = timer

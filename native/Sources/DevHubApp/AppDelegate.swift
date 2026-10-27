@@ -92,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         conversations.agentActions = { [weak shell] in shell?.config?.agentActions ?? [] }
         conversations.link.report = { [weak shell] failure in shell?.notices.error(failure) }
         box.shell = shell
-        shell.openSettings = { MainLog.shared.log("[devhub] the Settings window is not drawn in this build yet") }
+        shell.openSettings = { [weak shell] in shell?.toggleSettings() }
         shell.window.showWindow(nil)
         NSApp.activate()
         shell.installKeyboard()

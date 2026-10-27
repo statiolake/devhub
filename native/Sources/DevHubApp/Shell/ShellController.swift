@@ -159,6 +159,7 @@ final class ShellController {
         appearance.configure(mode: config.appearance.mode, names: ColorThemeNames(dark: config.appearance.themeDark, light: config.appearance.themeLight))
         chords?.setLayout(ChordLayout.of(config.keybindings))
         (notices as? NoticeLayer)?.configure(noticeSeconds: config.general.noticeSeconds)
+        if let settingsWindow { Task { await settingsWindow.refresh() } }
         restyle()
     }
 
@@ -226,6 +227,7 @@ final class ShellController {
             theme: terminalPalettes(for: settings.terminalTheme, fromVSCode: appearance.theme.terminalPalette()))
         style.update(tokens: tokens, terminal: terminal, dark: NSApp.effectiveAppearance.isDarkAppearance, terminalFontSize: zoomed)
         window.restyle(style)
+        settingsWindow?.restyle(style)
         render()
     }
 
@@ -496,8 +498,16 @@ final class ShellController {
         }
     }
 
-    /// WP11's Settings window.
+    /// The Settings window (`Cmd+Q ,`, the menu, a notice's Open Settings).
     var openSettings: (() -> Void)?
+    private(set) var settingsWindow: SettingsWindowController?
+
+    /// Open Settings, or close it when it is the front window already.
+    func toggleSettings() {
+        guard let service = runtime?.settings else { return }
+        if settingsWindow == nil { settingsWindow = SettingsWindowController(service: service, style: style) }
+        settingsWindow?.toggle()
+    }
 
     private func openLog() {
         guard let runtime else { return }
