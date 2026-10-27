@@ -169,7 +169,9 @@ final class TranscriptScroller: NSView {
     func show(_ sections: [DocSection]) {
         let present = sections.map { (id: $0.id, kind: $0.kind) }
         var arrived: Set<String> = []
+        let settled = fresh.settled
         if shown { arrived = fresh.drawn(present) } else { fresh.settle(present.map(\.id)) }
+        text.embeds.arrivalsAnimate = shown && settled
         let before = text.rendered.map(\.identity)
         let held = following ? nil : anchor()
         text.show(sections)

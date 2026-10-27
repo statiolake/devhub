@@ -113,6 +113,9 @@ final class EmbedViewProvider: NSTextAttachmentViewProvider {
 @MainActor
 final class TranscriptEmbeds: EmbedStore {
     weak var host: EmbedHost?
+    /// The transcript was drawn before this render: a request card made now
+    /// eases in (the `@starting-style` of a settled transcript).
+    var arrivalsAnimate = false
     private var attachments: [String: EmbedAttachment] = [:]
     private var used: Set<String> = []
     private var marks: [String: NSTextAttachment] = [:]
@@ -169,7 +172,10 @@ final class TranscriptEmbeds: EmbedStore {
         case .code: return CodeBlockView(style: style, host: host, resized: resized)
         case .table: return TableEmbedView(style: style, host: host)
         case .math: return MathEmbedView(style: style)
-        case .request(let request): return RequestCardView(request: request, style: style, host: host, resized: resized)
+        case .request(let request):
+            let card = RequestCardView(request: request, style: style, host: host, resized: resized)
+            card.risesIn = arrivalsAnimate
+            return card
         case .images: return ImageStripView(style: style, resized: resized)
         case .remoteImage: return RemoteImageView(style: style, resized: resized)
         case .activity: return ActivityLineView(style: style, host: host)
@@ -774,6 +780,9 @@ final class ActivityLineView: NSView, EmbedContent {
     private weak var host: EmbedHost?
     private var timer: Timer?
     private var tick: CGFloat = 0
+    /// The label's words, and when they changed: a new phase fades in (`--motion-fast`).
+    private var label = ""
+    private var labelSince = Date.distantPast
 
     init(style: ConversationStyle, host: EmbedHost?) {
         self.style = style
@@ -824,7 +833,13 @@ final class ActivityLineView: NSView, EmbedContent {
             x += dot + size * 0.2
         }
         x += style.px(8) - size * 0.2
-        let label = NSAttributedString(string: words.label, attributes: [.font: style.sans(size), .foregroundColor: style.ink(.secondary)])
+        if words.label != self.label {
+            // The first words are the line's own arrival; a change of them fades in.
+            if !self.label.isEmpty { labelSince = Date() }
+            self.label = words.label
+        }
+        let fading = reduce ? 1 : CGFloat(min(1, Date().timeIntervalSince(labelSince) / DevHubTheme.Motion.fast))
+        let label = NSAttributedString(string: words.label, attributes: [.font: style.sans(size), .foregroundColor: style.ink(.secondary).withAlphaComponent(fading)])
         let labelSize = label.size()
         label.draw(at: NSPoint(x: x, y: mid - labelSize.height / 2))
         x += labelSize.width + style.px(8)

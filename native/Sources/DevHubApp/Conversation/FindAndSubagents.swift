@@ -64,13 +64,17 @@ final class FindBarView: NSView, NSTextFieldDelegate {
             self.caseButton.ink = self.caseSensitive ? self.style.ink(.primary) : nil
             self.onQuery?(self.query, self.caseSensitive)
         }
-        caseButton.toolTip = "Match Case"
+        caseButton.toolTip = "Match case"
+        caseButton.setAccessibilityLabel("Match case")
         previous = ConversationButton(label: "", icon: .arrowUp, look: .icon, size: 13, style: style) { [weak self] in self?.onStep?(-1) }
-        previous.toolTip = "Previous Match (Shift+F3)"
+        previous.toolTip = "Previous match (Shift+Return, Shift+F3)"
+        previous.setAccessibilityLabel("Previous match")
         next = ConversationButton(label: "", icon: .arrowDown, look: .icon, size: 13, style: style) { [weak self] in self?.onStep?(1) }
-        next.toolTip = "Next Match (F3)"
+        next.toolTip = "Next match (Return, F3)"
+        next.setAccessibilityLabel("Next match")
         close = ConversationButton(label: "", icon: .close, look: .icon, size: 13, style: style) { [weak self] in self?.onClose?() }
         close.toolTip = "Close (Esc)"
+        close.setAccessibilityLabel("Close")
         for button in [caseButton!, previous!, next!, close!] { addSubview(button) }
         setAccessibilityElement(true)
         setAccessibilityRole(.group)

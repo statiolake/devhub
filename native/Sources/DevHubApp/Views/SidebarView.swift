@@ -48,6 +48,8 @@ final class SidebarView: NSView {
     private var handleHovered = false
     private var tracking: NSTrackingArea?
     weak var host: SidebarHost? { didSet { list.host = host } }
+    /// The resize handle as VoiceOver reads it (`role="separator"`, its arrow keys' 4pt step).
+    private let handleRegion = AccessibleRegion(role: .splitter, label: "Resize sidebar")
 
     /// `.sidebar-resize-handle`: 10pt straddling the edge; the half inside is ours.
     static let handleWidth: CGFloat = 5
@@ -76,6 +78,14 @@ final class SidebarView: NSView {
             self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Workspace navigation")
+        addSubview(handleRegion)
+        handleRegion.setAccessibilityOrientation(.vertical)
+        handleRegion.setAccessibilityMinValue(200)
+        handleRegion.setAccessibilityMaxValue(400)
+        handleRegion.onStep = { [weak self] direction in
+            guard let self, !self.collapsed else { return }
+            self.host?.sidebarCommitWidth(Projection.clampSidebarWidth(self.width + 4 * Double(direction)))
+        }
     }
 
     @available(*, unavailable)
@@ -118,6 +128,9 @@ final class SidebarView: NSView {
         usage.frame = CGRect(x: 0, y: bounds.height - foot, width: bounds.width, height: foot)
         list.frame.size.width = scroll.contentSize.width
         list.relayout()
+        handleRegion.frame = handleRect
+        handleRegion.isHidden = collapsed
+        handleRegion.setAccessibilityValue(Int(width.rounded()))
     }
 
     override func draw(_ dirtyRect: NSRect) {

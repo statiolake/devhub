@@ -112,7 +112,7 @@ final class ComposerView: NSView {
         completions.onChoose = { [weak self] command in self?.choose(command) }
         pending.host = self
         pickers.composer = self
-        pickers.menu = settingMenu
+        pickers.choiceList = settingMenu
         settingMenu.onChange = { [weak self] in self?.host?.composerResized() }
         footer.composer = self
         applyStyle(style)
@@ -226,6 +226,8 @@ final class ComposerView: NSView {
         completions.show(list, selected: selected)
         if completions.isHidden {
             completions.isHidden = false
+            // The list rises in over the field (`.conversation-completions`).
+            Arrival.riseIn(completions, duration: DevHubTheme.Motion.fast)
         }
         host?.composerResized()
     }
@@ -700,9 +702,12 @@ final class PendingListView: NSView {
         for item in items { kept[item.message.id] = item }
         var next: [PendingItemView] = []
         for (index, message) in messages.enumerated() {
-            let item = kept.removeValue(forKey: message.id) ?? PendingItemView(message: message, style: style, list: self)
+            let old = kept.removeValue(forKey: message.id)
+            let item = old ?? PendingItemView(message: message, style: style, list: self)
             item.update(message, position: index + 1, total: messages.count, canSendNow: canSendNow, style: style)
             if item.superview !== self { addSubview(item) }
+            // A message newly held rises in over the box (`.conversation-pending-item`).
+            if old == nil { Arrival.riseIn(item) }
             next.append(item)
         }
         for gone in kept.values {
@@ -964,7 +969,7 @@ final class SettingPickersView: NSView {
     var style: ConversationStyle! { didSet { for face in faces.values { face.style = style } } }
     weak var composer: ComposerView?
     /// The one list of choices, shared by every face.
-    weak var menu: SettingMenuView?
+    weak var choiceList: SettingMenuView?
     private var session = EMPTY_SESSION
     private var disabled = false
     private var faces: [SettingName: SettingFace] = [:]
@@ -1013,7 +1018,7 @@ final class SettingPickersView: NSView {
         for name in SettingPickerModel.names where SettingPickerModel.shown(name, session) {
             let face = faces[name] ?? SettingFace(name: name, style: style)
             face.picker = self
-            face.menu = menu
+            face.choiceList = choiceList
             faces[name] = face
             face.update(SettingPickerModel.setting(name, session), known: SettingPickerModel.known(name, defaults), disabled: disabled)
             items.append(face)
@@ -1065,7 +1070,7 @@ final class SettingFace: NSView {
     let name: SettingName
     var style: ConversationStyle { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     weak var picker: SettingPickersView?
-    weak var menu: SettingMenuView?
+    weak var choiceList: SettingMenuView?
     private var setting = Setting.none
     private var known: CliDefault?
     private var disabled = false
@@ -1101,8 +1106,8 @@ final class SettingFace: NSView {
         }
         invalidateIntrinsicContentSize()
         needsDisplay = true
-        if menu?.isOpen(for: self) == true { menu?.refresh(menuRows()) }
-        if disabled || !choosable, menu?.isOpen(for: self) == true { menu?.close() }
+        if choiceList?.isOpen(for: self) == true { choiceList?.refresh(menuRows()) }
+        if disabled || !choosable, choiceList?.isOpen(for: self) == true { choiceList?.close() }
     }
 
     private var parts: (label: NSAttributedString, value: NSAttributedString, note: NSAttributedString?) {
@@ -1172,21 +1177,21 @@ final class SettingFace: NSView {
     override func mouseDown(with event: NSEvent) {
         guard choosable, !disabled else { return }
         window?.makeFirstResponder(self)
-        if menu?.isOpen(for: self) == true { menu?.close() } else { openMenu() }
+        if choiceList?.isOpen(for: self) == true { choiceList?.close() } else { openMenu() }
     }
 
     override var acceptsFirstResponder: Bool { choosable && !disabled }
 
     override func resignFirstResponder() -> Bool {
         // The list goes with the keyboard (`onBlur={close}`).
-        if menu?.isOpen(for: self) == true { menu?.close() }
+        if choiceList?.isOpen(for: self) == true { choiceList?.close() }
         return super.resignFirstResponder()
     }
 
     override func keyDown(with event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let returnKey = event.keyCode == 36 || event.keyCode == 76
-        guard let menu, menu.isOpen(for: self) else {
+        guard let choiceList, choiceList.isOpen(for: self) else {
             if flags.isDisjoint(with: [.command, .control, .option, .shift]),
                returnKey || event.charactersIgnoringModifiers == " " || event.keyCode == 125 || event.keyCode == 126
             {
@@ -1198,17 +1203,17 @@ final class SettingFace: NSView {
         }
         // Option-Return: the highlighted row becomes the CLI's default.
         if returnKey, flags == .option {
-            menu.makeHighlightedDefault()
+            choiceList.makeHighlightedDefault()
             return
         }
         guard flags.isDisjoint(with: [.command, .control, .option, .shift]) else { return super.keyDown(with: event) }
         switch event.keyCode {
-        case 125: menu.move(1)
-        case 126: menu.move(-1)
-        case 115: menu.moveToEnd(false)
-        case 119: menu.moveToEnd(true)
-        case 53: menu.close()
-        case 36, 76, 49: menu.takeHighlighted()
+        case 125: choiceList.move(1)
+        case 126: choiceList.move(-1)
+        case 115: choiceList.moveToEnd(false)
+        case 119: choiceList.moveToEnd(true)
+        case 53: choiceList.close()
+        case 36, 76, 49: choiceList.takeHighlighted()
         default: super.keyDown(with: event)
         }
     }
@@ -1230,10 +1235,10 @@ final class SettingFace: NSView {
 
     /// Opened by a click, a key or a command (`/model`): the keyboard comes to the face, the list over it.
     func openMenu() {
-        guard choosable, let menu else { return }
+        guard choosable, let choiceList else { return }
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         opened = true
-        menu.open(from: self, rows: menuRows(), label: SettingPickerModel.label(name))
+        choiceList.open(from: self, rows: menuRows(), label: SettingPickerModel.label(name))
     }
 
     /// The list closed.

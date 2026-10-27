@@ -44,6 +44,13 @@ final class ShellBackdropView: NSView {
     private enum TitleControl: CaseIterable { case sidebar, back, forward }
     private enum SeamKind: Equatable { case split, terminal }
 
+    /// What VoiceOver reads of the drawn controls (TitleBar.tsx's buttons, the seams' separators).
+    private let sidebarRegion = AccessibleRegion(role: .button, label: "Toggle Sidebar")
+    private let backRegion = AccessibleRegion(role: .button, label: "Back")
+    private let forwardRegion = AccessibleRegion(role: .button, label: "Forward")
+    private let splitRegion = AccessibleRegion(role: .splitter, label: "Resize the agent pane")
+    private let terminalRegion = AccessibleRegion(role: .splitter, label: "Resize the terminal")
+
     init(style: ShellStyle, titleBar: TitleBarMode) {
         self.style = style
         self.titleBar = titleBar
@@ -51,6 +58,53 @@ final class ShellBackdropView: NSView {
         super.init(frame: .zero)
         stateView.isHidden = true
         addSubview(stateView)
+        for region in [sidebarRegion, backRegion, forwardRegion, splitRegion, terminalRegion] { addSubview(region) }
+        sidebarRegion.onPress = { [weak self] in self?.host?.backdropDispatch(.toggleSidebar) }
+        backRegion.onPress = { [weak self] in self?.host?.backdropDispatch(.navigateHistory(.back)) }
+        forwardRegion.onPress = { [weak self] in self?.host?.backdropDispatch(.navigateHistory(.forward)) }
+        // The arrow keys' step on a separator: 2% of the share.
+        splitRegion.onStep = { [weak self] direction in
+            guard let self, let ratio = self.snapshot?.splitRatio else { return }
+            self.host?.backdropCommitSplit(Projection.clampSplitRatio(ratio + 0.02 * Double(direction)))
+        }
+        terminalRegion.onStep = { [weak self] direction in
+            guard let self, let seam = self.seams?.terminal else { return }
+            // Up (stacked) or left grows the terminal, the way the divider moves.
+            self.host?.backdropCommitTerminal(
+                terminalId: seam.terminalId, share: AgentTerminals.clampShare(seam.share + 0.02 * Double(direction)), stacked: seam.stacked)
+        }
+    }
+
+    /// The regions over the drawn controls, where the controls are now.
+    private func placeRegions() {
+        let shown = titleBar == .shown
+        for (region, control) in [(sidebarRegion, TitleControl.sidebar), (backRegion, .back), (forwardRegion, .forward)] {
+            region.isHidden = !shown
+            region.frame = controlRect(control)
+            region.setAccessibilityEnabled(enabled(control))
+        }
+        sidebarRegion.setAccessibilityValue((snapshot?.sidebar.collapsed ?? false) ? "0" : "1")
+        sidebarRegion.toolTip = nil
+        if let rect = seamRect(.split) {
+            splitRegion.isHidden = false
+            splitRegion.frame = rect
+            splitRegion.setAccessibilityOrientation(.vertical)
+            splitRegion.setAccessibilityValue(Int(((snapshot?.splitRatio ?? 0.55) * 100).rounded()))
+            splitRegion.setAccessibilityMinValue(25)
+            splitRegion.setAccessibilityMaxValue(85)
+        } else {
+            splitRegion.isHidden = true
+        }
+        if let rect = seamRect(.terminal), let seam = seams?.terminal {
+            terminalRegion.isHidden = false
+            terminalRegion.frame = rect
+            terminalRegion.setAccessibilityOrientation(seam.stacked ? .horizontal : .vertical)
+            terminalRegion.setAccessibilityValue(Int((seam.share * 100).rounded()))
+            terminalRegion.setAccessibilityMinValue(Int(AgentTerminals.minShare * 100))
+            terminalRegion.setAccessibilityMaxValue(Int(AgentTerminals.maxShare * 100))
+        } else {
+            terminalRegion.isHidden = true
+        }
     }
 
     @available(*, unavailable)
@@ -87,6 +141,7 @@ final class ShellBackdropView: NSView {
             stateView.isHidden = true
             showsState = false
         }
+        placeRegions()
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
     }

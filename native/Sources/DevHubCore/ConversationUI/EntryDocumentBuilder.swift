@@ -89,8 +89,9 @@ public struct EntryDocumentBuilder {
 
     /// What the transcript draws after its entries: the messages on their way,
     /// the compaction under way, the limit's line, the requests about no
-    /// call, and the activity line.
-    public func trailingSections(activity: Bool = true) -> [DocSection] {
+    /// call, and the activity line — kept, `leaving`, for the moment it takes
+    /// to fade out once the turn has ended (`ACTIVITY_EXIT_MS`).
+    public func trailingSections(activity: Bool = true, leaving: Bool = false) -> [DocSection] {
         var out: [DocSection] = []
         for message in transcript.sending { out.append(sending(message)) }
         if transcript.compacting { out.append(compacting()) }
@@ -98,7 +99,7 @@ public struct EntryDocumentBuilder {
         for request in tree.unattached {
             out.append(DocSection(id: "request:\(request.id.raw)", kind: "request", blocks: [requestEmbed(request, key: "request:\(request.id.raw)")]))
         }
-        if activity, ConversationActivity.of(transcript) != nil {
+        if activity, leaving || ConversationActivity.of(transcript) != nil {
             out.append(DocSection(id: "activity", kind: "activity", blocks: [
                 .embed(DocEmbed(key: "activity", kind: .activity, searchText: "", copyText: "")),
             ]))

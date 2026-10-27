@@ -75,6 +75,8 @@ final class RequestCardView: NSView, EmbedContent {
     private let writingField = ComposerTextView.make()
     private let writingScroll = NSScrollView()
     private var busy = false { didSet { renderChoices() } }
+    /// It appeared in a transcript already drawn: it eases in once it is on screen.
+    var risesIn = false
 
     init(request: PendingRequest, style: ConversationStyle, host: EmbedHost?, resized: @escaping () -> Void) {
         self.request = request
@@ -117,6 +119,14 @@ final class RequestCardView: NSView, EmbedContent {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if risesIn, window != nil {
+            risesIn = false
+            Arrival.riseIn(self)
+        }
+    }
 
     func update(_ kind: DocEmbedKind, style: ConversationStyle) {
         self.style = style

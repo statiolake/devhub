@@ -83,6 +83,11 @@ final class ConversationPaneView: NSView, HostedConversation {
     private var pathRevision = 0
     /// When the running turn began, for the activity line's clock.
     private var activityStarted: Date?
+    /// The activity line's last words, kept while it fades out after the turn.
+    private var lastActivity: (label: String, meta: String, phase: String)?
+    /// The turn has ended and the activity line is fading out (`ACTIVITY_EXIT_MS`).
+    private var activityLeaving = false
+    private var activityLeavingTimer: Timer?
     private var unsubscribePaths: (() -> Void)?
     private var restored: EntryId?
 
@@ -259,8 +264,40 @@ final class ConversationPaneView: NSView, HostedConversation {
             // A word that named no file is asked about again once a turn has ended: it may have made it.
             pathLinks.forgetAbsent()
         }
+        let had = ConversationActivity.of(transcript) != nil
         transcript = next
-        if ConversationActivity.of(next) == nil { activityStarted = nil }
+        let has = ConversationActivity.of(next) != nil
+        if has {
+            activityLeavingTimer?.invalidate()
+            activityLeavingTimer = nil
+            activityLeaving = false
+            main.text.embeds.view(for: "activity")?.alphaValue = 1
+        } else if had, shown, lastActivity != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // The line stays, still saying how long the turn took, while it fades.
+            activityLeaving = true
+            if let line = main.text.embeds.view(for: "activity") {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = Self.activityExit
+                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+                    line.animator().alphaValue = 0
+                }
+            }
+            activityLeavingTimer?.invalidate()
+            activityLeavingTimer = Timer.scheduledTimer(withTimeInterval: Self.activityExit, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.activityLeaving = false
+                    self.activityLeavingTimer = nil
+                    self.lastActivity = nil
+                    self.activityStarted = nil
+                    self.redraw()
+                }
+            }
+        }
+        if !has, !activityLeaving {
+            activityStarted = nil
+            lastActivity = nil
+        }
         rewindTargets = DevHubCore.rewindTargets(next)
         redraw()
     }
@@ -368,7 +405,7 @@ final class ConversationPaneView: NSView, HostedConversation {
         }
         for key in sectionCache.keys where !used.contains(key) { sectionCache[key] = nil }
         // The rest is the transcript's own end: few, and drawn afresh.
-        return out + builder.trailingSections()
+        return out + builder.trailingSections(leaving: activityLeaving)
     }
 
     // MARK: Layout
@@ -885,11 +922,19 @@ extension ConversationPaneView: EmbedHost {
     func focusComposer() { window?.makeFirstResponder(composer.field) }
 
     func activityText() -> (label: String, meta: String, phase: String)? {
-        guard let activity = ConversationActivity.of(transcript) else { return nil }
+        guard let activity = ConversationActivity.of(transcript) else {
+            // Fading out: what it said last, how long the turn took included.
+            return activityLeaving ? lastActivity : nil
+        }
         if activityStarted == nil { activityStarted = Date() }
         let elapsed = Date().timeIntervalSince(activityStarted ?? Date()) * 1000
-        return (activity.label, ConversationActivity.meta(elapsedMs: elapsed, tokens: ConversationActivity.estimateTokens(transcript)), activity.phase)
+        let words = (activity.label, ConversationActivity.meta(elapsedMs: elapsed, tokens: ConversationActivity.estimateTokens(transcript)), activity.phase)
+        lastActivity = words
+        return words
     }
+
+    /// `ACTIVITY_EXIT_MS`: how long the line takes to fade out once the turn ends.
+    static let activityExit: TimeInterval = 0.18
 
     func embedResized(_ key: String) {
         main.holding(nil) { main.text.relayout(embed: key) }
