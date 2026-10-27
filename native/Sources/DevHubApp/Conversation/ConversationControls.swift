@@ -21,7 +21,7 @@ final class ConversationButton: NSView {
         case link
         /// A request's answer, toned.
         case choice(ChoiceTone)
-        /// The composer's round button, in the accent (Send) or danger (Stop).
+        /// The composer's round button: Send in the accent, Stop in the primary ink.
         case round(danger: Bool)
     }
 
@@ -173,10 +173,11 @@ final class ConversationButton: NSView {
             case .deny: ink = style.ink(.danger)
             case .neutral: break
             }
-        case .round(let danger):
-            fill = (danger ? t.danger : t.accent).nsColor
-            if !isEnabled { fill = style.wash }
-            ink = isEnabled ? .white : style.ink(.tertiary)
+        case .round(let stop):
+            fill = (stop ? t.primary : t.accent).nsColor
+            if !isEnabled { fill = style.washStrong }
+            ink = isEnabled ? (stop ? t.surface.nsColor : t.accentInk.nsColor) : style.ink(.tertiary)
+            if !stop, isEnabled, t.accentInk == t.accent { ink = .white }
         }
         if let custom = self.ink { ink = custom }
         if !isEnabled { ink = ink.withAlphaComponent(0.5) }

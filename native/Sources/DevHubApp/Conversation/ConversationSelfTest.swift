@@ -107,6 +107,20 @@ final class ConversationSelfTest {
             check(codeColoured, "everything drew no code block")
             check(!view.composerView.isHidden, "the composer is not drawn")
             snapshot(view, "conversation-everything-\(dark ? "dark" : "light")")
+            // And the rest of it, a screen at a time from the top.
+            let clip = view.transcriptView.scroll.contentView
+            let height = view.transcriptView.text.frame.height
+            var top: CGFloat = 0
+            var page = 0
+            while top < height, page < 6 {
+                clip.scroll(to: NSPoint(x: 0, y: top))
+                view.transcriptView.scroll.reflectScrolledClipView(clip)
+                await pause(0.3)
+                snapshot(view, "conversation-everything-\(dark ? "dark" : "light")-\(page)")
+                top += clip.bounds.height * 0.9
+                page += 1
+            }
+            view.transcriptView.jumpToLatest()
             // A fold opened by a click on its row: the call's body is drawn.
             if let range = text.range(ofKey: "t2/summary", inSection: "t2") {
                 let before = text.string.contains("npm ERR! Test failed")

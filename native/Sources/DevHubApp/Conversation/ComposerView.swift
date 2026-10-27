@@ -81,7 +81,7 @@ final class ComposerView: NSView {
         fieldScroll.borderType = .noBorder
         box.addSubview(fieldScroll)
         box.addSubview(pickers)
-        stop = ConversationButton(label: "", icon: .stop, look: .round(danger: false), size: style.fontSize * 0.9, style: style) { [weak self] in
+        stop = ConversationButton(label: "", icon: .stop, look: .round(danger: true), size: style.fontSize * 0.9, style: style) { [weak self] in
             self?.run(.interrupt)
         }
         stop.setAccessibilityLabel("Stop")

@@ -48,7 +48,14 @@ final class EmbedAttachment: NSTextAttachment {
         self.content = content
         super.init(data: nil, ofType: nil)
         allowsTextAttachmentView = true
+        // Not the placeholder page TextKit draws for an attachment with no image.
+        image = Self.clear
     }
+
+    nonisolated(unsafe) static let clear: NSImage = {
+        let image = NSImage(size: NSSize(width: 1, height: 1))
+        return image
+    }()
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }

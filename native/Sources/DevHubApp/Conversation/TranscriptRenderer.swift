@@ -289,7 +289,7 @@ struct TranscriptRenderer {
             let mark = runText(marker, inherited: paragraph)
             let gap = style.em(0.4)
             let width = ceil(mark.size().width)
-            firstLeft = max(frame.left, left - width - gap)
+            firstLeft = max(0, left - width - gap)
             let control = NSMutableAttributedString(attributedString: mark)
             control.addAttribute(.devhubControl, value: true, range: NSRange(location: 0, length: control.length))
             text.append(control)
@@ -308,7 +308,11 @@ struct TranscriptRenderer {
         let shape = paragraphStyle(
             size, lineHeight: paragraph.lineHeight, left: left, firstLeft: firstLeft,
             rightInset: frame.rightInset + trailingWidth, align: paragraph.align)
-        if paragraph.marker != nil { shape.tabStops = [NSTextTab(textAlignment: .left, location: left)] }
+        if paragraph.marker != nil {
+            // The marker hangs in the indent; the words start at the tab, on the head indent.
+            shape.tabStops = [NSTextTab(textAlignment: .left, location: left)]
+            shape.defaultTabInterval = max(1, style.em(2))
+        }
         if paragraph.oneLine { shape.lineBreakMode = .byTruncatingTail }
         let before = out.pending + style.em(paragraph.before)
         shape.paragraphSpacingBefore = before

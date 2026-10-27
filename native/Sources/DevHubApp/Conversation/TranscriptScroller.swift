@@ -49,6 +49,8 @@ final class TranscriptScroller: NSView {
         addSubview(latest)
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+        text.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(textResized), name: NSView.frameDidChangeNotification, object: text)
     }
 
     @available(*, unavailable)
@@ -98,14 +100,21 @@ final class TranscriptScroller: NSView {
     }
 
     func scrollToEnd() {
-        guard let layout = text.textLayoutManager else { return }
+        guard let layout = text.textLayoutManager, let storage = text.textStorage else { return }
         adjusting = true
-        layout.ensureLayout(for: NSTextRange(location: layout.documentRange.endLocation))
-        text.scrollToEndOfDocument(nil)
-        let height = text.frame.height
+        // The end laid out for real, not estimated: the last stretch of the text.
+        let tail = NSRange(location: max(0, storage.length - 4_000), length: min(4_000, storage.length))
+        if let range = text.textRange(tail) { layout.ensureLayout(for: range) }
+        text.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
+        let height = max(text.frame.height, layout.usageBoundsForTextContainer.maxY + text.textContainerInset.height * 2)
         scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, height - scroll.contentView.bounds.height)))
         scroll.reflectScrolledClipView(scroll.contentView)
         adjusting = false
+    }
+
+    /// The text grew under a following view (an embed laid out, a block coloured): still at its end.
+    @objc private func textResized() {
+        if following, !adjusting { scrollToEnd() }
     }
 
     /// Where the view is in the text: a section, a place in it, and how far down the view its line stands.
