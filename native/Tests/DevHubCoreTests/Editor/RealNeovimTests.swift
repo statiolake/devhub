@@ -7,9 +7,11 @@
 // a new window of a `ws-` session, open at a line, `--wait` ending on `:bd`,
 // adoption by a DevHub that restarted, close — against real tmux and Neovim.
 //
-// Skipped where there is no Neovim. `DEVHUB_TEST_NVIM` names one that is not
-// on the PATH (a release tarball unpacked somewhere); `DEVHUB_TEST_TMUX` a
-// tmux, for the lifecycle half.
+// Skipped where there is no Neovim, except where `DEVHUB_TEST_REQUIRE_NVIM=1`
+// says there is one (CI installs it), so that these never pass by skipping;
+// `DEVHUB_TEST_REQUIRE_TMUX=1` does the same for the lifecycle half's tmux.
+// `DEVHUB_TEST_NVIM` names a Neovim that is not on the PATH (a release
+// tarball unpacked somewhere); `DEVHUB_TEST_TMUX` a tmux.
 
 import Foundation
 import XCTest
@@ -98,6 +100,9 @@ private func spawnAndWait(_ program: String, _ arguments: [String]) async throws
 
 final class RealNeovimTests: XCTestCase {
     override func setUpWithError() throws {
+        if ProcessInfo.processInfo.environment["DEVHUB_TEST_REQUIRE_NVIM"] == "1" {
+            XCTAssertNotNil(nvim, "DEVHUB_TEST_REQUIRE_NVIM is set and there is no nvim")
+        }
         try XCTSkipIf(nvim == nil, "no nvim (set DEVHUB_TEST_NVIM)")
     }
 
@@ -207,6 +212,9 @@ final class RealNeovimTests: XCTestCase {
     }
 
     func testAManagedNeovimInAPrivateTmuxOpensAtALineWaitsForBdAndIsAdoptedAfterARestart() async throws {
+        if ProcessInfo.processInfo.environment["DEVHUB_TEST_REQUIRE_TMUX"] == "1" {
+            XCTAssertNotNil(tmux, "DEVHUB_TEST_REQUIRE_TMUX is set and there is no tmux")
+        }
         guard let tmux else { throw XCTSkip("no tmux (set DEVHUB_TEST_TMUX)") }
         let nvim = nvim!
         let scratch = try wp7SocketDirectory("managed")

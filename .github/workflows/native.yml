@@ -49,7 +49,31 @@ jobs:
       - name: Build
         run: swift build
 
+      # Before the tests: the managed Neovim's real tests (RealNeovimTests)
+      # and Core's real-tmux tests skip on a machine without them, and the
+      # environment below makes them fail instead. Neovim is the official
+      # release tarball, pinned and verified.
+      - name: Install tmux and Neovim
+        timeout-minutes: 5
+        env:
+          NVIM_VERSION: v0.12.6
+          NVIM_SHA256: 474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq tmux curl ca-certificates >/dev/null
+          tmux -V
+          curl -fsSL -o /tmp/nvim.tar.gz \
+            "https://github.com/neovim/neovim/releases/download/$NVIM_VERSION/nvim-linux-x86_64.tar.gz"
+          echo "$NVIM_SHA256  /tmp/nvim.tar.gz" | sha256sum -c -
+          mkdir -p /opt/nvim
+          tar -xzf /tmp/nvim.tar.gz -C /opt/nvim --strip-components=1
+          echo /opt/nvim/bin >>"$GITHUB_PATH"
+          /opt/nvim/bin/nvim --version | head -1
+
       - name: Test
+        env:
+          DEVHUB_TEST_REQUIRE_TMUX: "1"
+          DEVHUB_TEST_REQUIRE_NVIM: "1"
         run: swift test
 
       - name: CLI answers --version
@@ -98,20 +122,24 @@ jobs:
             exit 1
           }
 
-      # Before the tests: Core's real-tmux tests (TmuxReal*) skip on a machine
-      # without tmux, and the self-test's live phase runs on a private server.
-      - name: Install tmux
-        timeout-minutes: 5
+      # Before the tests: Core's real-tmux tests (TmuxReal*) and the managed
+      # Neovim's (RealNeovimTests) skip on a machine without them, and the
+      # self-test's live phase runs on a private server with a managed Neovim.
+      - name: Install tmux and Neovim
+        timeout-minutes: 10
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
           HOMEBREW_NO_INSTALL_CLEANUP: "1"
         run: |
           brew list tmux >/dev/null 2>&1 || brew install tmux
+          brew list neovim >/dev/null 2>&1 || brew install neovim
           tmux -V
+          nvim --version | head -1
 
       - name: Test
         env:
           DEVHUB_TEST_REQUIRE_TMUX: "1"
+          DEVHUB_TEST_REQUIRE_NVIM: "1"
         run: swift test
 
       - name: Bundle DevHub.app (release)
