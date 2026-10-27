@@ -106,10 +106,10 @@ public enum TerminalSurfaceKeys {
 }
 
 extension WorkspaceWire {
-    /// `terminalModeSupports`, on the projection: a folder on this Mac whose
-    /// editor is not in a dev container.
+    /// `terminalModeSupports`, on the projection: a folder on this Mac (one
+    /// whose editor was in a dev container is the local folder it is).
     public var terminalModeSupported: Bool {
-        location == .local && editor == .host
+        location == .local
     }
 }
 

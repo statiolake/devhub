@@ -25,16 +25,16 @@ public struct EditorPlace: Equatable, Sendable {
     public var workspaceId: String
     /// Absolute, canonical.
     public var root: String
-    /// `terminalModeSupports`: a local Workspace whose editor is on the host.
+    /// `terminalModeSupports`: a Workspace on this Mac.
     public var supported: Bool
-    /// `terminalModeUnsupported(workspace)`: what is said when it is not —
+    /// `TERMINAL_MODE_NO_SSH`: what is said when it is not —
     /// given for every Workspace, because a jump from another machine into a
     /// served one is refused with it too.
     public var unsupportedReason: String
 
     public init(
         workspaceId: String, root: String, supported: Bool = true,
-        unsupportedReason: String = EditorPlace.unsupportedSentence(onSSHHost: false)
+        unsupportedReason: String = TerminalMode.noSSH
     ) {
         self.workspaceId = workspaceId
         self.root = root
@@ -42,11 +42,10 @@ public struct EditorPlace: Equatable, Sendable {
         self.unsupportedReason = unsupportedReason
     }
 
-    /// `terminalModeUnsupported` (model/terminalMode.ts).
+    /// What a refused jump says (model/terminalMode.ts): an SSH Workspace's
+    /// `TERMINAL_MODE_NO_SSH`, a dev container's `TERMINAL_MODE_NO_DEV_CONTAINERS`.
     public static func unsupportedSentence(onSSHHost: Bool) -> String {
-        onSSHHost
-            ? "Terminal mode does not support Workspaces on SSH hosts yet."
-            : "Terminal mode does not support Workspaces whose editor is in a dev container yet."
+        onSSHHost ? TerminalMode.noSSH : TerminalMode.noDevContainers
     }
 }
 
@@ -157,8 +156,8 @@ public actor EditorOpening<Host: EditorOpenHost> {
     /// file lands where `routeOpen` says.
     public func openFromCli(_ request: ControlOpenRequest) async throws -> String {
         let machine = request.machine ?? "local"
-        // The `devhub` command inside a dev container: terminal mode does not
-        // serve a Workspace whose editor is in one.
+        // The `devhub` command inside a dev container: terminal mode has no
+        // workbench to put in one.
         if machine.hasPrefix("container:") {
             throw ManagedNeovimError(EditorPlace.unsupportedSentence(onSSHHost: false))
         }

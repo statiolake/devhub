@@ -129,7 +129,13 @@ final class ShellBackdropView: NSView {
         case .agent:
             return nil
         case .workbench, .split:
-            // Terminal mode offers only what it can draw: nothing to say here.
+            // Terminal mode draws the editor area from the Workspace's own
+            // tmux session on this Mac, and an SSH Workspace (one restored from
+            // the state file) has none here (`docs/terminal-mode.md`). No view
+            // is laid, so this says so in the rectangle one would have had.
+            if let workspace, !workspace.terminalModeSupported {
+                return .failure(title: TerminalMode.noSSH, detail: nil, actions: [])
+            }
             return nil
         }
     }

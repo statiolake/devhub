@@ -99,7 +99,7 @@ public struct WorkspaceRowModel: Equatable, Sendable {
     public var issue: RowIssueMark?
     public var pendingIssue: Int?
     public var unavailable: String?
-    /// The editor's dev container, as a quiet mark.
+    /// The editor's dev container, as a quiet mark (never, in terminal mode).
     public var editorFact: (text: String, spoken: String)?
     public var pullRequest: RowPullRequestMark?
     public var canCreateAgent: Bool
@@ -276,7 +276,9 @@ public enum Sidebar {
             issue: issue,
             pendingIssue: repository?.pending?.number,
             unavailable: repository?.unavailable.map(RowDescription.unavailableText),
-            editorFact: RowDescription.editorAttachmentFact(workspace.editor),
+            // Terminal mode has no workbench to put in a container: the folder is
+            // the local folder it is, and the row says nothing about a container.
+            editorFact: nil,
             pullRequest: pullRequest,
             canCreateAgent: workspace.canCreateAgent && !closing,
             createAgentEnabled: !unavailableProfiles,

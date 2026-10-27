@@ -229,13 +229,13 @@ final class EditorOpeningTests: XCTestCase {
         let container = await wp7Caught {
             try await self.opening.openFromCli(ControlOpenRequest(path: "/w/a.ts", cwd: "/w", machine: "container:abc"))
         }
-        XCTAssertEqual("\(container!)", "Terminal mode does not support Workspaces whose editor is in a dev container yet.")
+        XCTAssertEqual("\(container!)", "Dev containers are not available in terminal mode. Use VS Code mode to reopen a folder in its container.")
         // A file of a served Workspace, from a pane whose origin names the host's.
         let ssh = await wp7Caught {
             try await self.opening.openFromCli(
                 ControlOpenRequest(path: self.scratch + "/loose.md", cwd: "/", origin: "ssh:box\tbox\tnone"))
         }
-        XCTAssertEqual("\(ssh!)", "Terminal mode does not support Workspaces on SSH hosts yet.")
+        XCTAssertEqual("\(ssh!)", "SSH Workspaces are not available in terminal mode. Use VS Code mode to open them.")
         let log = await tmux.log
         XCTAssertEqual(log, [])
     }

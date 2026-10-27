@@ -150,19 +150,26 @@ public struct TerminalPanes: Hashable, Sendable {
 /// Which Workspaces terminal mode can serve, said once
 /// (`docs/terminal-mode.md`).
 public enum TerminalMode {
-    /// `terminalModeSupports`: a folder on this Mac whose editor is not
-    /// attached to a dev container.
-    public static func supports(location: WorkspaceLocation, editor: EditorAttachment) -> Bool {
-        location.isLocal && editor == .host
+    /// `terminalModeSupports`: a folder on this Mac. Terminal mode is
+    /// local-only — SSH Workspaces are VS Code mode's. A dev container is only
+    /// where a *workbench* would run (`EditorAttachment`): the Workspace's
+    /// terminals and Agents are on this Mac either way, so terminal mode serves
+    /// that folder as the local folder it is.
+    public static func supports(location: WorkspaceLocation, editor: EditorAttachment = .host) -> Bool {
+        location.isLocal
     }
 
-    /// `terminalModeUnsupported`: the editor area's state and a refused file
-    /// jump use the same sentence.
-    public static func unsupported(location: WorkspaceLocation) -> String {
-        location.isLocal
-            ? "Terminal mode does not support Workspaces whose editor is in a dev container yet."
-            : "Terminal mode does not support Workspaces on SSH hosts yet."
-    }
+    /// `TERMINAL_MODE_NO_SSH`: what terminal mode says about an SSH Workspace —
+    /// the editor area's state and a refused file jump use the same sentence.
+    public static let noSSH = "SSH Workspaces are not available in terminal mode. Use VS Code mode to open them."
+
+    /// `TERMINAL_MODE_NO_DEV_CONTAINERS`: what terminal mode says when it is
+    /// asked for a dev container.
+    public static let noDevContainers =
+        "Dev containers are not available in terminal mode. Use VS Code mode to reopen a folder in its container."
+
+    /// The refusal for a Workspace terminal mode does not serve.
+    public static func unsupported(location: WorkspaceLocation) -> String { noSSH }
 }
 
 // MARK: - terminalZoom.ts

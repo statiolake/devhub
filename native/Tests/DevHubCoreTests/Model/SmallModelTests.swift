@@ -6,16 +6,18 @@ import XCTest
 @testable import DevHubCore
 
 final class TerminalModeTests: XCTestCase {
-    func testServesAFolderOnThisMacWhoseEditorIsNotInAContainer() {
+    func testServesAFolderOnThisMac() {
         XCTAssertTrue(TerminalMode.supports(location: .local(path: "/a"), editor: .host))
     }
 
-    func testSaysPlainlyThatSshAndDevContainerWorkspacesAreNotSupportedYet() {
+    func testServesAFolderWhoseEditorWasInADevContainerAsTheLocalFolder() {
+        XCTAssertTrue(TerminalMode.supports(location: .local(path: "/a"), editor: .devContainer(configPath: ".devcontainer/devcontainer.json")))
+    }
+
+    func testDoesNotServeSshWorkspaces() {
         let ssh = WorkspaceLocation.ssh(host: "box", path: "/a")
         XCTAssertFalse(TerminalMode.supports(location: ssh, editor: .host))
-        XCTAssertFalse(TerminalMode.supports(location: .local(path: "/a"), editor: .devContainer(configPath: ".devcontainer/devcontainer.json")))
-        XCTAssertTrue(TerminalMode.unsupported(location: ssh).contains("SSH hosts yet"))
-        XCTAssertTrue(TerminalMode.unsupported(location: .local(path: "/a")).contains("dev container yet"))
+        XCTAssertEqual(TerminalMode.unsupported(location: ssh), "SSH Workspaces are not available in terminal mode. Use VS Code mode to open them.")
     }
 }
 
