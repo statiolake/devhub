@@ -170,6 +170,7 @@ final class ConversationSelfTest {
         }
         await arrivals()
         await settingList()
+        await failureSheet()
 
         await composerKeys()
         await longTranscript()
@@ -191,6 +192,43 @@ final class ConversationSelfTest {
         check(rising || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, "an entry that arrived did not rise in")
         let settled = await until(2) { !text.subviews.contains { $0 is FreshVeil } }
         check(settled, "an entry's rise did not end")
+    }
+
+    /// An Agent's failure: DevHub's sheet over the pane, then the banner along its top.
+    private func failureSheet() async {
+        let size = NSSize(width: 800, height: 520)
+        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: 60, y: 60), size: size), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        windows.append(window)
+        let host = NSView(frame: NSRect(origin: .zero, size: size))
+        host.wantsLayer = true
+        window.contentView = host
+        let view = FailureView(frame: host.bounds)
+        host.addSubview(view)
+        window.orderFront(nil)
+        let style = ShellStyle.initial(dark: false, titleBar: .shown)
+        var dismissed = false
+        view.onDismiss = { dismissed = true }
+        let actions: [(String, Bool, () -> Void)] = [("Continue in terminal", false, {}), ("Dismiss", false, {}), ("Try again", true, {})]
+        view.update(
+            title: "The conversation could not start", summary: "The Agent's CLI refused to start.",
+            detail: "Run `claude doctor` in a terminal to see why.", banner: false, actions: actions, style: style)
+        view.layoutSubtreeIfNeeded()
+        await pause(0.3)
+        snapshot(view, "conversation-failure-sheet")
+        if let sheet = view.subviews.first as? FailureSheet {
+            check(sheet.card.frame.width > 300 && sheet.card.frame.height > 80, "the failure sheet is \(sheet.card.frame)")
+            check(sheet.buttons.map(\.title) == ["Continue in terminal", "Dismiss", "Try again"], "the failure sheet's buttons are \(sheet.buttons.map(\.title))")
+            sheet.cancelOperation(nil)
+            check(dismissed, "Escape did not dismiss the failure sheet")
+        } else {
+            check(false, "the failure is not drawn as a sheet")
+        }
+        view.update(title: "The conversation could not start", summary: "The Agent's CLI refused to start.", detail: nil, banner: true, actions: Array(actions.prefix(1)), style: style)
+        view.layoutSubtreeIfNeeded()
+        await pause(0.2)
+        snapshot(view, "conversation-failure-banner")
+        check(view.hitTest(NSPoint(x: 400, y: 400)) == nil, "the failure banner takes the pointer below it")
     }
 
     /// `/model`'s list: over its face, the current choice ticked, the keys on the face; Escape closes it.
