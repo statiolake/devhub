@@ -550,54 +550,40 @@ public struct EntryDocumentBuilder {
         value == value.rounded() && abs(value) < 1e15 ? String(Int(value)) : String(value)
     }
 
-    /// What a call asked the person, kept for reference once answered.
+    /// What a call asked the person, kept for reference once answered
+    /// (`QuestionRecord`): each question as the card drew it — its header,
+    /// its words, its options with the chosen ones marked, what was written
+    /// instead, the note — and, for a single-select question whose options
+    /// carry previews, the preview beside the options, following the pointer.
+    /// Drawn by a view of the App's; searched and copied as `recordText`.
     func questionRecord(_ key: String, _ asked: [AskedQuestion]) -> [DocBlock] {
         var out: [DocBlock] = []
         for (index, item) in asked.enumerated() {
-            let question = item.question, answer = item.answer
-            let at = "\(key)/\(index)"
-            let chosen = answer.secret ? [] : answer.chosen
-            var children: [DocBlock] = []
-            if !question.header.isEmpty {
-                children.append(.paragraph(Self.paragraph(at + "/header", [
-                    DocRun(question.header, Self.style { $0.size = 0.75; $0.bold = true; $0.chip = .questionHeader; $0.ink = .accentInk }),
-                ], after: Self.space(1))))
-            }
-            children.append(.paragraph(Self.paragraph(at + "/words", [DocRun(question.text, Self.style { $0.medium = true })], after: Self.space(2))))
-            func option(_ id: String, _ label: String, _ description: String, picked: Bool) {
-                var row = Self.paragraph(id, [DocRun(label)])
-                row.marker = DocRun("", inline: .optionMark(multiple: question.multiSelect, picked: picked))
-                row.indent = 1.6
-                children.append(.paragraph(row))
-                if !description.isEmpty {
-                    var line = Self.paragraph(id + "/d", [DocRun(description, Self.style { $0.size = 0.85; $0.ink = .tertiary })], after: Self.space(1))
-                    line.indent = 1.6
-                    line.oneLine = true
-                    children.append(.paragraph(line))
-                }
-            }
-            for (row, choice) in question.options.enumerated() {
-                option("\(at)/o\(row)", choice.label, choice.description, picked: chosen.contains(choice.label))
-            }
-            if let written = answer.written, !answer.secret {
-                option(at + "/written", written, "Written instead", picked: true)
-            }
-            let quiet = Self.style { $0.size = 0.85; $0.ink = .secondary }
-            if answer.secret {
-                children.append(.paragraph(Self.paragraph(at + "/note", [DocRun("Answer hidden", quiet)], before: Self.space(1))))
-            } else if let notes = answer.notes {
-                children.append(.paragraph(Self.paragraph(at + "/note", [DocRun("Note: \(notes)", quiet)], before: Self.space(1))))
-            }
-            // Beside a single-select question with previews, the resting option's preview.
-            if !question.multiSelect, question.options.contains(where: { $0.preview != nil }) {
-                let shownLabel = chosen.first ?? question.options.first?.label
-                if let shown = question.options.first(where: { $0.label == shownLabel }) {
-                    children.append(.box(preview(at + "/preview", shown)))
-                }
-            }
-            out.append(.box(Self.box(at, .plain, children, before: index == 0 ? 0 : Self.space(3))))
+            let text = Self.recordText(item)
+            var embed = DocEmbed(key: "\(key)/\(index)", kind: .questionRecord(item), searchText: text, copyText: text)
+            embed.before = index == 0 ? Self.space(1) : Self.space(3)
+            out.append(.embed(embed))
         }
         return [.box(Self.box(key, .plain, out, before: Self.space(1), after: Self.space(2), indent: SurfaceMetrics.em(12)))]
+    }
+
+    /// What the find bar reads in a recorded question, and what a copy takes:
+    /// its header, its words, its options, what was written and the note.
+    public static func recordText(_ item: AskedQuestion) -> String {
+        let question = item.question, answer = item.answer
+        var lines: [String] = []
+        if !question.header.isEmpty { lines.append(question.header) }
+        lines.append(question.text)
+        for option in question.options {
+            lines.append(option.description.isEmpty ? option.label : "\(option.label) — \(option.description)")
+        }
+        if let written = answer.written, !answer.secret { lines.append("\(written) — Written instead") }
+        if answer.secret {
+            lines.append("Answer hidden")
+        } else if let notes = answer.notes {
+            lines.append("Note: \(notes)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// An option's preview, in its monospace box.

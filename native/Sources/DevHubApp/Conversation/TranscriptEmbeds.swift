@@ -10,6 +10,7 @@
 
 import AppKit
 import DevHubCore
+import SwiftMath
 
 /// What an embed asks of the surface it is in.
 @MainActor
@@ -133,7 +134,8 @@ final class TranscriptEmbeds: EmbedStore {
     static func sameView(_ old: DocEmbedKind, _ new: DocEmbedKind) -> Bool {
         switch (old, new) {
         case (.code, .code), (.table, .table), (.math, .math), (.images, .images), (.remoteImage, .remoteImage), (.activity, .activity),
-             (.rule, .rule), (.actions, .actions), (.confirm, .confirm), (.subagentActions, .subagentActions):
+             (.rule, .rule), (.actions, .actions), (.confirm, .confirm), (.subagentActions, .subagentActions),
+             (.questionRecord, .questionRecord):
             return true
         case let (.request(a), .request(b)): return a.id == b.id
         case let (.subagentMessage(a, _), .subagentMessage(b, _)): return a == b
@@ -176,6 +178,7 @@ final class TranscriptEmbeds: EmbedStore {
         case .actions: return ActionsEmbedView(style: style, host: host)
         case .confirm: return ConfirmEmbedView(style: style, host: host, resized: resized)
         case .subagentActions: return SubagentActionsView(style: style, host: host)
+        case .questionRecord: return QuestionRecordView(style: style, resized: resized)
         }
     }
 
@@ -303,6 +306,12 @@ enum InlineMarks {
             }
             return (image, centred(side))
         case .math(let tex):
+            // `rehype-katex`, text style, at the text's 1.05em (`.katex`), on
+            // the line's baseline; its source in the monospace face when it
+            // does not typeset.
+            if let formula = MTTypeset.formula(tex, fontSize: size * 1.05, color: color, display: false) {
+                return (formula.image, -formula.descent)
+            }
             let font = style.mono(size * 0.92, italic: true)
             return (text(tex, size: size * 0.92, ink: color, box: nil, style: style, font: font), style.body.descender * size / style.fontSize)
         case .background:
@@ -457,15 +466,33 @@ final class RuleEmbedView: NSView, EmbedContent {
     }
 }
 
-/// `$$…$$`: the TeX, centred, in the monospace face (no typesetter is drawn natively).
+/// `$$…$$`, typeset (`rehype-katex`, display style): centred in the column,
+/// scrolled sideways when it is wider than the column (`.katex-display`'s
+/// `overflow-x: auto`). A formula that does not parse — a streamed half of
+/// one — is drawn as its source, as KaTeX draws it with `throwOnError: false`.
 @MainActor
 final class MathEmbedView: NSView, EmbedContent {
     private var style: ConversationStyle
     private var tex = ""
+    private let scroll = NSScrollView()
+    private let picture = FlippedImageView()
+    private var formula: MTTypesetFormula?
+    private var drawnFor: (tex: String, size: CGFloat, ink: NSColor)?
+    /// Whether the formula is drawn typeset (not as its source).
+    var isTypeset: Bool { formula != nil }
 
     init(style: ConversationStyle) {
         self.style = style
         super.init(frame: .zero)
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasHorizontalScroller = true
+        scroll.hasVerticalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.verticalScrollElasticity = .none
+        scroll.documentView = picture
+        addSubview(scroll)
     }
 
     @available(*, unavailable)
@@ -473,7 +500,8 @@ final class MathEmbedView: NSView, EmbedContent {
 
     override var isFlipped: Bool { true }
 
-    private var attributed: NSAttributedString {
+    /// The source, when it does not typeset.
+    private var source: NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         return NSAttributedString(string: tex, attributes: [
@@ -481,21 +509,63 @@ final class MathEmbedView: NSView, EmbedContent {
         ])
     }
 
+    private func typeset() {
+        let size = style.em(1.05)
+        let ink = style.ink(.primary)
+        if let drawn = drawnFor, drawn.tex == tex, drawn.size == size, drawn.ink == ink { return }
+        drawnFor = (tex, size, ink)
+        formula = MTTypeset.formula(tex, fontSize: size, color: ink, display: true)
+        picture.image = formula?.image
+        scroll.isHidden = formula == nil
+        needsLayout = true
+        needsDisplay = true
+    }
+
     func height(forWidth width: CGFloat) -> CGFloat {
-        ceil(attributed.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height) + 4
+        typeset()
+        if let formula {
+            // A sideways scroller of its own sits over the bottom edge.
+            return ceil(formula.image.size.height) + 4
+        }
+        return ceil(source.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height) + 4
     }
 
     func update(_ kind: DocEmbedKind, style: ConversationStyle) {
         self.style = style
         if case .math(let value) = kind { tex = value }
+        typeset()
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
         setAccessibilityLabel(tex)
         needsDisplay = true
     }
 
+    override func layout() {
+        super.layout()
+        scroll.frame = bounds
+        guard let formula else { return }
+        let size = formula.image.size
+        // Centred while it fits; from the left edge, scrolled, when it does not.
+        let width = max(size.width, scroll.contentSize.width)
+        picture.frame = NSRect(x: 0, y: 0, width: width, height: bounds.height)
+        picture.imageFrame = NSRect(x: max(0, (width - size.width) / 2), y: 2, width: size.width, height: size.height)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        attributed.draw(with: NSRect(x: 0, y: 2, width: bounds.width, height: bounds.height - 2), options: [.usesLineFragmentOrigin])
+        guard formula == nil else { return }
+        source.draw(with: NSRect(x: 0, y: 2, width: bounds.width, height: bounds.height - 2), options: [.usesLineFragmentOrigin])
+    }
+}
+
+/// An image drawn where it is told, in a flipped view (a formula in its scroll).
+@MainActor
+final class FlippedImageView: NSView {
+    var image: NSImage? { didSet { needsDisplay = true } }
+    var imageFrame: NSRect = .zero { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        image?.draw(in: imageFrame, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 }
 

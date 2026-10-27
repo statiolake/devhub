@@ -153,13 +153,19 @@ public enum TranscriptFixtures {
             put(user("u1", "Fix the bug in src/a.ts and run /review #12", images: [ImageRef(mediaType: "image/png", source: .data(base64: pixel), label: "shot.png")])),
             put(assistant("a1", [
                 .thinking(text: "Let me look at the file first."),
-                .text(markdown: "## Plan\n\nI'll change **`a`** in `src/a.ts:2` — see [the docs](https://example.com).\n\n| Step | State |\n|:--|--:|\n| read | ✅ |\n| edit | ⏳ |\n\n- [x] read\n- [ ] edit\n\n> Note: ~~old~~ new.\n\n```ts\nconst a: number = 2; // fixed\n```\n\nMath: $E = mc^2$ and a footnote[^1].\n\n[^1]: The note."),
+                .text(markdown: "## Plan\n\nI'll change **`a`** in `src/a.ts:2` — see [the docs](https://example.com).\n\n| Step | State |\n|:--|--:|\n| read | ✅ |\n| edit | ⏳ |\n\n- [x] read\n- [ ] edit\n\n> Note: ~~old~~ new.\n\n```ts\nconst a: number = 2; // fixed\n```\n\nMath: $E = mc^2$ and a footnote[^1].\n\n$$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$\n\n[^1]: The note."),
             ])),
             put(tool("t1", "Edit: src/a.ts", change: [diff])),
             put(tool("t2", "Bash: npm test", input: ["command": "npm test"], output: [.command(exitCode: 1, output: "FAIL src/a.test.ts\n  ✕ adds", stderr: "npm ERR! Test failed", interrupted: false)], outsideSandbox: true)),
             put(tool("t3", "TodoWrite", plan: [PlanStep(text: "Read", status: .completed), PlanStep(text: "Edit", status: .inProgress), PlanStep(text: "Test", status: .pending)])),
             put(tool("t4", "Task: explore", name: "Task", status: .running, spawns: SubagentInfo(label: "Explore", prompt: "List the modules", model: "haiku", state: .running, takesMessages: true))),
             put(assistant("t4a", "Found `a`, `b`.", parent: "t4")),
+            put(tool("t6", "AskUserQuestion", name: "AskUserQuestion", asked: [AskedQuestion(
+                question: Question(id: "layout", header: "Layout", text: "Which layout?", options: [
+                    QuestionOption(label: "Columns", description: "Side by side", preview: "```\n| a | b |\n```"),
+                    QuestionOption(label: "Rows", description: "One above the other", preview: "```\n| a |\n| b |\n```"),
+                ], multiSelect: false, allowsOther: true),
+                answer: QuestionAnswer(header: "Layout", question: "Which layout?", chosen: ["Rows"], written: nil, notes: "Keep it narrow", secret: false))])),
             put(tool("t5", "Bash: rm -rf build", status: .denied, denial: Denial(summary: "Denied by auto mode: Destructive command", detail: "The command deletes files."))),
             put(notice("n1", "Pushed to origin/main")),
             put(notice("n2", "The CLI is retrying", level: .warning)),

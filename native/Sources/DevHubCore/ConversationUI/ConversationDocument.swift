@@ -328,6 +328,11 @@ public enum DocEmbedKind: Hashable, Sendable {
     case confirm(note: String, go: DocActionButton, cancel: DocActionButton)
     /// A subagent card's actions (Beside, Maximize).
     case subagentActions(entry: EntryId, label: String, canBeside: Bool, beside: Bool, canMaximize: Bool)
+    /// A question asked and answered whose options carry previews
+    /// (`QuestionRecord`): its options on the left and the preview of the one
+    /// pointed at, or else of the one chosen, on the right — or under them
+    /// when the column is narrow.
+    case questionRecord(AskedQuestion)
 }
 
 public struct DocActionButton: Hashable, Sendable {

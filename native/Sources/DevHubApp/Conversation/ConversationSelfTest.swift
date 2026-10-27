@@ -9,6 +9,7 @@
 
 import AppKit
 import DevHubCore
+import SwiftMath
 
 @MainActor
 final class ConversationSelfTest {
@@ -85,6 +86,11 @@ final class ConversationSelfTest {
         let document = MarkdownParser.parse("# Title\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n\n```ts\nlet a = 1\n```")
         check(document.blocks.count == 4, "the Markdown fixture parsed into \(document.blocks.count) blocks, not 4")
 
+        // Math is typeset with the fonts in the bundle (`rehype-katex`).
+        let formula = MTTypeset.formula("\\frac{a}{b} + \\sqrt{x^2}", fontSize: 15, color: .labelColor, display: false)
+        check((formula?.width ?? 0) > 10 && (formula?.descent ?? 0) > 0, "inline math is not typeset")
+        check(MTTypeset.formula("\\frac{", fontSize: 15, color: .labelColor, display: true) == nil, "half a formula was typeset")
+
         for dark in [false, true] {
             let everything = TranscriptFixtures.everything()
             let view = pane(everything, dark: dark)
@@ -107,6 +113,14 @@ final class ConversationSelfTest {
                 } ?? false
             }
             check(codeColoured, "everything drew no code block")
+            let displayMath = text.textStorage.map { storage in
+                var typeset = false
+                storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, stop in
+                    if let embed = value as? EmbedAttachment, let math = embed.content as? MathEmbedView, math.isTypeset { typeset = true; stop.pointee = true }
+                }
+                return typeset
+            } ?? false
+            check(displayMath, "everything's $$…$$ is not typeset")
             check(!view.composerView.isHidden, "the composer is not drawn")
             snapshot(view, "conversation-everything-\(dark ? "dark" : "light")")
             // And the rest of it, a screen at a time from the top.
@@ -133,7 +147,22 @@ final class ConversationSelfTest {
             } else {
                 check(false, "the call t2 has no row")
             }
+            // A question asked and answered, on its call: the card's layout, the preview beside.
+            view.performAction(.toggle(EntryFold.tool("t6")))
+            await pause(0.3)
+            let records = text.textStorage.map { storage in
+                var found: [QuestionRecordView] = []
+                storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+                    if let embed = value as? EmbedAttachment, let record = embed.content as? QuestionRecordView { found.append(record) }
+                }
+                return found
+            } ?? []
+            check(records.count == 1, "the call t6 drew \(records.count) question records, not 1")
+            if let record = records.first {
+                check(record.previewBeside, "the recorded question's preview is not beside its options")
+            }
         }
+        await arrivals()
 
         await composerKeys()
         await longTranscript()
@@ -141,6 +170,20 @@ final class ConversationSelfTest {
         for window in windows { window.close() }
         windows = []
         return failures
+    }
+
+    /// An entry that arrives while the pane is shown rises in; what was there is drawn as it is.
+    private func arrivals() async {
+        let first = [TranscriptFixtures.put(TranscriptFixtures.user("u", "hi")), TranscriptFixtures.put(TranscriptFixtures.assistant("a", "Hello."))]
+        let view = pane(TranscriptFixtures.transcript(first), dark: false, size: NSSize(width: 800, height: 600))
+        await pause(0.4)
+        let text = view.transcriptView.text
+        check(!text.subviews.contains { $0 is FreshVeil }, "a transcript as it loaded rose in")
+        view.showFixture(TranscriptFixtures.transcript(first + [TranscriptFixtures.put(TranscriptFixtures.assistant("b", "**Arrived** just now."))]))
+        let rising = text.subviews.contains { veil in veil is FreshVeil && veil.subviews.contains { $0 is NSImageView } }
+        check(rising || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, "an entry that arrived did not rise in")
+        let settled = await until(2) { !text.subviews.contains { $0 is FreshVeil } }
+        check(settled, "an entry's rise did not end")
     }
 
     /// ⌘Return sends; Return is a new line; nothing is sent while an input method is composing.

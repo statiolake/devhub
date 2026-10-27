@@ -48,6 +48,7 @@ var targets: [Target] = [
 #if os(macOS)
 // The UI's dependencies are pure Swift, MIT/Apache, fetched from GitHub.
 //  - SwiftTerm (MIT): the terminal surface (xterm emulation + AppKit view).
+//  - SwiftMath (MIT), vendored under Vendor/: the conversation's math.
 //    libghostty is a possible later swap behind the same TerminalSurface
 //    protocol (docs/PLAN.md, "Terminal surface").
 dependencies += [
@@ -57,10 +58,22 @@ products += [
     .executable(name: "DevHubApp", targets: ["DevHubApp"]),
 ]
 targets += [
+    // SwiftMath (MIT, github.com/mgriebling/SwiftMath 1.7.3), vendored: the
+    // typesetter that draws a conversation's `$…$` and `$$…$$` as KaTeX does
+    // in the TS app, with Latin Modern Math (GUST Font License). Vendored
+    // rather than fetched so its fonts are found in DevHub.app's Resources
+    // (see MTFont.fontBundle); Swift 5 mode, as upstream builds it.
+    .target(
+        name: "SwiftMath",
+        path: "Vendor/SwiftMath/Sources/SwiftMath",
+        resources: [.copy("mathFonts.bundle")],
+        swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
     .executableTarget(
         name: "DevHubApp",
         dependencies: [
             "DevHubCore",
+            "SwiftMath",
             .product(name: "SwiftTerm", package: "SwiftTerm"),
         ],
         path: "Sources/DevHubApp"

@@ -927,3 +927,183 @@ extension ElicitationFormView: NSTextFieldDelegate {
         return false
     }
 }
+
+// MARK: - The record
+
+/// A question the Agent asked and the person answered, kept on its call
+/// (RequestCard.tsx's `QuestionRecord`): laid out as the card laid it out —
+/// the header chip, the words, the options as rows with the chosen ones
+/// marked, what was written instead, the note — and, for a single-select
+/// question whose options carry previews, the preview of the option pointed
+/// at (else of the one chosen) beside the options, or under them when the
+/// column is narrow. Nothing in it can be pressed.
+@MainActor
+final class QuestionRecordView: NSView, EmbedContent {
+    private var style: ConversationStyle
+    private let resized: () -> Void
+    private var asked: AskedQuestion?
+    private let words = NSTextField(wrappingLabelWithString: "")
+    private let note = NSTextField(wrappingLabelWithString: "")
+    private var rows: [(row: OptionRowView, option: String?)] = []
+    private var preview: DocumentView?
+    private var pointed: String?
+    /// Whether the preview stands beside the options (the self-test asks).
+    var previewBeside: Bool {
+        guard let preview, let first = rows.first?.row else { return false }
+        return preview.frame.minX >= first.frame.maxX && preview.frame.width > 0
+    }
+
+    init(style: ConversationStyle, resized: @escaping () -> Void) {
+        self.style = style
+        self.resized = resized
+        super.init(frame: .zero)
+        words.isSelectable = true
+        note.isSelectable = true
+        addSubview(words)
+        addSubview(note)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override var isFlipped: Bool { true }
+
+    func update(_ kind: DocEmbedKind, style: ConversationStyle) {
+        self.style = style
+        guard case .questionRecord(let item) = kind else { return }
+        if item != asked {
+            asked = item
+            rebuild(item)
+        }
+        restyle()
+    }
+
+    private func rebuild(_ item: AskedQuestion) {
+        for (row, _) in rows { row.removeFromSuperview() }
+        rows = []
+        preview?.removeFromSuperview()
+        preview = nil
+        pointed = nil
+        let question = item.question, answer = item.answer
+        let chosen = answer.secret ? [] : answer.chosen
+        for option in question.options {
+            let row = OptionRowView(label: option.label, detail: option.description, multiple: question.multiSelect, style: style)
+            row.picked = chosen.contains(option.label)
+            row.onPoint = { [weak self] on in self?.point(option.label, on) }
+            addSubview(row)
+            rows.append((row, option.label))
+        }
+        if let written = answer.written, !answer.secret {
+            let row = OptionRowView(label: written, detail: "Written instead", multiple: question.multiSelect, style: style)
+            row.picked = true
+            addSubview(row)
+            rows.append((row, nil))
+        }
+        if !question.multiSelect, question.options.contains(where: { $0.preview != nil }) {
+            let view = DocumentView(style: style, host: nil)
+            addSubview(view)
+            preview = view
+        }
+        setAccessibilityLabel(question.text)
+        showPreview()
+    }
+
+    private func restyle() {
+        guard let asked else { return }
+        words.font = style.sans(style.fontSize, medium: true)
+        words.textColor = style.ink(.primary)
+        words.stringValue = asked.question.text
+        let answer = asked.answer
+        note.font = style.sans(style.em(0.85))
+        note.textColor = style.ink(.secondary)
+        note.stringValue = answer.secret ? "Answer hidden" : answer.notes.map { "Note: \($0)" } ?? ""
+        note.isHidden = note.stringValue.isEmpty
+        for (row, _) in rows { row.style = style }
+        showPreview()
+        needsLayout = true
+        needsDisplay = true
+    }
+
+    private func point(_ label: String, _ on: Bool) {
+        let was = pointed
+        pointed = on ? label : (pointed == label ? nil : pointed)
+        if pointed != was {
+            showPreview()
+            resized()
+        }
+    }
+
+    /// The option whose preview is shown: pointed at, else chosen, else the first.
+    private var shownOption: QuestionOption? {
+        guard let asked else { return nil }
+        let chosen = asked.answer.secret ? [] : asked.answer.chosen
+        let label = pointed ?? chosen.first ?? asked.question.options.first?.label
+        return asked.question.options.first { $0.label == label }
+    }
+
+    private func showPreview() {
+        guard let preview, let asked, let option = shownOption else { return }
+        let builder = EntryDocumentBuilder(transcript: EMPTY_TRANSCRIPT, state: EntryDocumentState())
+        let key = "record:\(asked.question.id)"
+        preview.show([builder.optionPreview(key, option)], key: key, style: style)
+        for (row, label) in rows { row.shown = label == option.label }
+        needsLayout = true
+    }
+
+    private var headerText: NSAttributedString? {
+        guard let header = asked?.question.header, !header.isEmpty else { return nil }
+        return NSAttributedString(string: header, attributes: [.font: style.sans(style.em(0.78), bold: true), .foregroundColor: style.tokens.accent.nsColor])
+    }
+
+    func height(forWidth width: CGFloat) -> CGFloat { arrange(width, apply: false) }
+
+    @discardableResult
+    private func arrange(_ width: CGFloat, apply: Bool) -> CGFloat {
+        var y: CGFloat = style.px(4)
+        if headerText != nil { y += ceil(style.em(0.78) * 1.5) + 2 + style.px(4) }
+        let wordsHeight = ceil(words.attributedStringValue.boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height)
+        if apply { words.frame = NSRect(x: 0, y: y, width: width, height: wordsHeight + 2) }
+        y += wordsHeight + style.px(8)
+        // Options on the left and the preview on the right, or under them when narrow.
+        let narrow = width < style.em(34)
+        let gap = style.px(12)
+        let optionsWidth = preview != nil && !narrow ? floor((width - gap) * 2 / 5) : min(width, style.em(36))
+        var rowsY = y
+        for (row, _) in rows {
+            let height = row.height(forWidth: optionsWidth)
+            if apply { row.frame = NSRect(x: 0, y: rowsY, width: optionsWidth, height: height) }
+            rowsY += height + style.px(4)
+        }
+        if !note.isHidden {
+            let height = ceil(note.attributedStringValue.boundingRect(with: NSSize(width: optionsWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).height)
+            if apply { note.frame = NSRect(x: 0, y: rowsY, width: optionsWidth, height: height + 2) }
+            rowsY += height + 2
+        }
+        var bottom = rowsY
+        if let preview {
+            let previewWidth = narrow ? width : width - optionsWidth - gap
+            let height = min(preview.height(forWidth: previewWidth), style.em(22))
+            let top = narrow ? rowsY + style.px(8) : y
+            if apply { preview.frame = NSRect(x: narrow ? 0 : optionsWidth + gap, y: top, width: previewWidth, height: height) }
+            bottom = max(bottom, top + height)
+        }
+        return bottom + style.px(4)
+    }
+
+    override func layout() {
+        super.layout()
+        arrange(bounds.width, apply: true)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let header = headerText else { return }
+        let size = header.size()
+        let top = style.px(4)
+        let chip = NSRect(x: 0, y: top, width: ceil(size.width) + 2 * style.px(8), height: ceil(size.height) + 2)
+        style.faded(style.tokens.accent, 0.14).setFill()
+        NSBezierPath(roundedRect: chip, xRadius: chip.height / 2, yRadius: chip.height / 2).fill()
+        header.draw(at: NSPoint(x: style.px(8), y: top + 1))
+    }
+}

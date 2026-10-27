@@ -298,6 +298,24 @@ final class EntryDocumentTests: XCTestCase {
         XCTAssertEqual(DocSection.gap(after: "user", before: "assistant"), 12 * em)
     }
 
+    func testAQuestionAskedAndAnsweredIsKeptAsTheCardDrewIt() {
+        let asked = AskedQuestion(
+            question: Question(id: "q", header: "Layout", text: "Which layout?", options: [
+                QuestionOption(label: "Columns", description: "Side by side", preview: "```\nA | B\n```"),
+                QuestionOption(label: "Rows", description: "", preview: nil),
+            ], multiSelect: false, allowsOther: true),
+            answer: QuestionAnswer(header: "Layout", question: "Which layout?", chosen: ["Rows"], written: "Neither", notes: "narrow", secret: false))
+        let transcript = F.transcript([F.put(F.tool("t", "AskUserQuestion", name: "AskUserQuestion", asked: [asked]))])
+        let open = section(build(transcript) { $0.chosenFolds[EntryFold.tool("t")] = true }, "t")!
+        let records = embeds(open.blocks).filter { if case .questionRecord = $0.kind { return true }; return false }
+        XCTAssertEqual(records.count, 1)
+        guard case .questionRecord(let drawn)? = records.first?.kind else { return XCTFail("no record") }
+        XCTAssertEqual(drawn, asked)
+        XCTAssertEqual(records.first?.searchText, "Layout\nWhich layout?\nColumns — Side by side\nRows\nNeither — Written instead\nNote: narrow")
+        let hidden = AskedQuestion(question: asked.question, answer: QuestionAnswer(header: "Layout", question: "Which layout?", chosen: ["Rows"], written: "x", notes: "n", secret: true))
+        XCTAssertTrue(EntryDocumentBuilder.recordText(hidden).hasSuffix("Rows\nAnswer hidden"))
+    }
+
     func testEverythingAndTheLongTranscriptBuildAndSearch() {
         let everything = F.everything()
         let sections = build(everything)

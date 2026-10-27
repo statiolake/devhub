@@ -194,16 +194,54 @@ final class TranscriptScroller: NSView {
         fresh.settle(text.rendered.map(\.id))
     }
 
+    /// `conversation-rise-in`: the entry comes up from `--motion-rise` below
+    /// its place as it fades in. The text cannot move a stretch of itself, so
+    /// what the entry looks like is taken as a picture, the place is covered
+    /// with the surface, and the picture rises into it; then the cover goes
+    /// and the text is the entry again.
     private func riseIn(_ id: String) {
-        guard let range = text.range(ofSection: id), let rect = text.rect(of: range) else { return }
-        let veil = FreshVeil(frame: NSRect(x: 0, y: rect.minY - 2, width: text.bounds.width, height: rect.height + 4))
+        guard let range = text.range(ofSection: id), let found = text.rect(of: range) else { return }
+        let rect = NSRect(x: 0, y: found.minY - 2, width: text.bounds.width, height: found.height + 4).integral
+        // Arrived out of sight: nothing to see rising.
+        guard rect.height > 0, rect.intersects(text.visibleRect) else { return }
+        let veil = FreshVeil(frame: rect)
         veil.wantsLayer = true
         veil.layer?.backgroundColor = style.surface.cgColor
+        veil.layer?.masksToBounds = true
+        let ease = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+        let picture: NSImageView? = {
+            guard let rep = text.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
+            text.cacheDisplay(in: rect, to: rep)
+            let image = NSImage(size: rect.size)
+            image.addRepresentation(rep)
+            let view = NSImageView(frame: NSRect(origin: .zero, size: rect.size))
+            view.image = image
+            view.imageScaling = .scaleNone
+            view.wantsLayer = true
+            return view
+        }()
         text.addSubview(veil)
+        guard let picture else {
+            // No picture: the place fades in, without the rise.
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = DevHubTheme.Motion.slow
+                context.timingFunction = ease
+                veil.animator().alphaValue = 0
+            }, completionHandler: {
+                MainActor.assumeIsolated { veil.removeFromSuperview() }
+            })
+            return
+        }
+        veil.addSubview(picture)
+        let rise = CGFloat(DevHubTheme.Motion.rise)
+        picture.frame.origin.y = rise
+        picture.alphaValue = 0
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = DevHubTheme.Motion.slow
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
-            veil.animator().alphaValue = 0
+            context.timingFunction = ease
+            context.allowsImplicitAnimation = true
+            picture.animator().frame.origin.y = 0
+            picture.animator().alphaValue = 1
         }, completionHandler: {
             MainActor.assumeIsolated { veil.removeFromSuperview() }
         })
@@ -247,8 +285,9 @@ final class TranscriptScroller: NSView {
     }
 }
 
-/// A section's veil while it rises in: lifted away, it takes no pointer.
+/// A section's cover while it rises in (its picture rising inside it): it takes no pointer.
 final class FreshVeil: NSView {
+    override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
