@@ -123,14 +123,16 @@
 //   devhubVim.nav.*, or whatever else the key is bound to while
 //   `devhubVim.mode == 'nav'`). It is one-shot (common/vimKeys.ts
 //   VimNavPrefix). In a Vim editor's insert
-//   mode Ctrl-W is Vim's delete-word-before-the-caret.
+//   mode Ctrl-W is Vim's delete-word-before-the-caret. What a window is
+//   (an editor group, a comment widget, the side bar, the panel) and how
+//   `w W p` and a comment widget's keys use that: vimWindows.ts.
 // * Tab pages (`gt` `:tabnew` `CTRL-W T` ...) are layouts of editor groups
 //   kept as VS Code editor working sets, with a tab line above the groups:
 //   vimTabPages.ts.
 //
 // User documentation: docs/vim.md in the DevHub repository.
 
-import { addDisposableListener, getActiveElement, isEditableElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
+import { addDisposableListener, getActiveElement, isEditableElement, isHTMLElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
 import { IKeyboardEvent, StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
@@ -188,6 +190,7 @@ import { VIM_SHELL_COMMANDS } from './vimShell.js';
 import { VIM_JS_COMMANDS } from './vimJs.js';
 import './vimTabPages.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
+import { COMMENT_WINDOW_CLOSE_STEPS, VimWindowHistory, closeCommentWindow, commentWindowAt, focusedCommentWindow, inEditorGroup, leaveCommentWindow } from './vimWindows.js';
 
 /** The workbench commands an ex command runs that take the file it ran in (`from`). */
 const FROM_COMMANDS = [...VIM_EDIT_COMMANDS, ...VIM_SHELL_COMMANDS, ...VIM_JS_COMMANDS];
@@ -1233,6 +1236,15 @@ class VimEditor extends Disposable implements IVimHost {
 	}
 
 	executeCommand(command: string, args: unknown): Promise<unknown> {
+		const close = COMMENT_WINDOW_CLOSE_STEPS.get(command);
+		const comment = close && commentWindowAt(this.editor.getContainerDomNode(), this.owner.codeEditors());
+		if (close && comment) {
+			// `:q` `:close` `:q!` in a comment input: the comment widget is the window (vimWindows.ts)
+			if (close !== 'skip') {
+				closeCommentWindow(comment, close === 'discard');
+			}
+			return Promise.resolve();
+		}
 		if ((FROM_COMMANDS as readonly string[]).includes(command) && (args === undefined || (typeof args === 'object' && args !== null && !('from' in args)))) {
 			// `:e {file}` `:sp {file}` `:w {file}` `:!cmd` ...: `%` and the current directory are this editor's, even after a split moved the focus
 			const from = this.editor.getModel()?.uri ?? this.lastUri;
@@ -1269,6 +1281,8 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	/** The prompt line, made when the first prompt opens. */
 	private cmdline: VimCmdline | undefined;
 	readonly nav = new VimNavPrefix();
+	/** The window the focus was in before this one (`<C-w>p`, vimWindows.ts). */
+	private readonly windows = new VimWindowHistory();
 	clipboardCache = '';
 
 	constructor(
@@ -1383,7 +1397,10 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			local.add(addDisposableListener(window, 'keydown', e => this.onWindowKeyDown(e), true));
 			local.add(addDisposableListener(window, 'pointerdown', () => this.cancelNav(), true));
 			local.add(addDisposableListener(window, 'blur', () => this.cancelNav()));
-			local.add(addDisposableListener(window, 'focusin', () => this.update(), true));
+			local.add(addDisposableListener(window, 'focusin', e => {
+				this.windowFocused(e.target);
+				this.update();
+			}, true));
 			local.add(addDisposableListener(window, 'focusout', () => queueMicrotask(() => this.update()), true));
 		}, { window: mainWindow, disposables: store }));
 		this.statusEntry = this.statusbarService.addEntry(this.statusProps(''), 'status.devhubVim', StatusbarAlignment.LEFT, -100);
@@ -1408,6 +1425,28 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	private detach(editor: ICodeEditor): void {
 		this.editors.get(editor)?.dispose();
 		this.editors.delete(editor);
+	}
+
+	/** Every code editor (the comment inputs are ones too). */
+	codeEditors(): readonly ICodeEditor[] {
+		return this.codeEditorService.listCodeEditors();
+	}
+
+	/**
+	 * The focus moved (a `focusin`): the window history follows, and entering a
+	 * comment widget ends its editor's visual mode, as entering another window
+	 * does in Vim (vimWindows.ts).
+	 */
+	private windowFocused(target: EventTarget | null): void {
+		if (!isHTMLElement(target)) {
+			return;
+		}
+		this.windows.focused(target);
+		const comment = commentWindowAt(target, this.codeEditors());
+		const parent = comment && this.editors.get(comment.editor);
+		if (parent?.engine.mode.startsWith('visual')) {
+			parent.execute('devhubVim.escape', undefined);
+		}
 	}
 
 	private focused(): VimEditor | undefined {
@@ -1568,9 +1607,31 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		this.update();
 	}
 
-	/** A nav command: the prefix is over, then the commands (if any) run in order. */
-	runNav(commands: readonly string[]): void {
+	/**
+	 * A nav command: the prefix is over, then the commands (if any) run in
+	 * order; `how` says where the focus is a window of its own first
+	 * (vimWindows.ts).
+	 */
+	runNav(commands: readonly string[], how: NavWindows = {}): void {
 		this.cancelNav();
+		const comment = how.comment && focusedCommentWindow(this.codeEditors());
+		if (comment) {
+			if (how.comment === 'close') {
+				closeCommentWindow(comment, false);
+			} else {
+				leaveCommentWindow(comment);
+			}
+			return;
+		}
+		if (how.editorFirst && !inEditorGroup(getActiveElement())) {
+			commands = ['workbench.action.focusActiveEditorGroup'];
+		} else if (how.back) {
+			const back = this.windows.previousFocus();
+			back?.focus();
+			if (back && getActiveElement() === back) {
+				return;
+			}
+		}
 		void (async () => {
 			for (const c of commands) {
 				await this.commandService.executeCommand(c);
@@ -1661,7 +1722,7 @@ for (const id of VIM_ENGINE_COMMANDS) {
 }
 
 const WEIGHTS = VIM_WEIGHTS;
-if (VIM_WEIGHTS.default !== KeybindingWeight.EditorContrib || VIM_WEIGHTS.override !== KeybindingWeight.WorkbenchContrib + 50 || VIM_WEIGHTS.escape !== KeybindingWeight.EditorCore + 50 || VIM_WEIGHTS.insertEscape !== KeybindingWeight.WorkbenchContrib + 60 || VIM_WEIGHTS.cmdline !== KeybindingWeight.WorkbenchContrib + 55) {
+if (VIM_WEIGHTS.default !== KeybindingWeight.EditorContrib || VIM_WEIGHTS.override !== KeybindingWeight.WorkbenchContrib + 50 || VIM_WEIGHTS.escape !== KeybindingWeight.EditorCore + 50 || VIM_WEIGHTS.insertEscape !== KeybindingWeight.WorkbenchContrib + 60 || VIM_WEIGHTS.commentEscape !== KeybindingWeight.EditorContrib + 1 || VIM_WEIGHTS.cmdline !== KeybindingWeight.WorkbenchContrib + 55) {
 	onUnexpectedError(new Error('devhubVim: VIM_WEIGHTS (vimKeymap.ts) no longer match KeybindingWeight'));
 }
 
@@ -1728,19 +1789,33 @@ rule('devhubVim.nav.enter', { primary: ctrlW, mac: { primary: macCtrlW } },
 	KeybindingWeight.WorkbenchContrib + 50, (vim, args) => vim.enterNav(args));
 rule('devhubVim.nav.escape', { primary: KeyCode.Escape }, NAV, KeybindingWeight.EditorCore + 50, vim => vim.runNav([]));
 
-/** `<C-w>{key}`: [command id suffix, key (by character, US notation, as the keymap; registered on the JIS keys), also with Ctrl held, commands it runs]. */
-const NAV_COMMANDS: readonly [string, string, boolean, readonly string[]][] = [
+/**
+ * Where a nav command first treats the focus as a window of its own
+ * (vimWindows.ts). `comment`: in a comment widget it goes back to the
+ * widget's editor (`leave`) or closes the widget (`close`) instead of running
+ * its commands. `editorFirst`: outside the editor groups (side bar, panel,
+ * terminal, ...) it goes back to the active group instead. `back`: to the
+ * window the focus was in before, its commands only when there is none.
+ */
+interface NavWindows {
+	readonly comment?: 'leave' | 'close';
+	readonly editorFirst?: boolean;
+	readonly back?: boolean;
+}
+
+/** `<C-w>{key}`: [command id suffix, key (by character, US notation, as the keymap; registered on the JIS keys), also with Ctrl held, commands it runs, NavWindows]. */
+const NAV_COMMANDS: readonly [string, string, boolean, readonly string[], NavWindows?][] = [
 	['left', 'h', true, ['workbench.action.navigateLeft']],
-	['down', 'j', true, ['workbench.action.navigateDown']],
-	['up', 'k', true, ['workbench.action.navigateUp']],
+	['down', 'j', true, ['workbench.action.navigateDown'], { comment: 'leave' }],
+	['up', 'k', true, ['workbench.action.navigateUp'], { comment: 'leave' }],
 	['right', 'l', true, ['workbench.action.navigateRight']],
 	['leftArrow', 'left', false, ['workbench.action.navigateLeft']],
-	['downArrow', 'down', false, ['workbench.action.navigateDown']],
-	['upArrow', 'up', false, ['workbench.action.navigateUp']],
+	['downArrow', 'down', false, ['workbench.action.navigateDown'], { comment: 'leave' }],
+	['upArrow', 'up', false, ['workbench.action.navigateUp'], { comment: 'leave' }],
 	['rightArrow', 'right', false, ['workbench.action.navigateRight']],
-	['next', 'w', true, ['workbench.action.focusNextGroup']],
-	['previous', 'shift+w', false, ['workbench.action.focusPreviousGroup']],
-	['lastAccessed', 'p', true, ['workbench.action.focusPreviousGroup']],
+	['next', 'w', true, ['workbench.action.focusNextGroup'], { comment: 'leave', editorFirst: true }],
+	['previous', 'shift+w', false, ['workbench.action.focusPreviousGroup'], { comment: 'leave', editorFirst: true }],
+	['lastAccessed', 'p', true, ['workbench.action.focusPreviousGroup'], { comment: 'leave', back: true }],
 	['top', 't', true, ['workbench.action.focusFirstEditorGroup']],
 	['bottom', 'b', true, ['workbench.action.focusLastEditorGroup']],
 	['split', 's', true, ['workbench.action.splitEditorUp']],
@@ -1748,8 +1823,8 @@ const NAV_COMMANDS: readonly [string, string, boolean, readonly string[]][] = [
 	['vsplit', 'v', true, ['workbench.action.splitEditorLeft']],
 	['new', 'n', true, ['workbench.action.splitEditorUp', 'workbench.action.files.newUntitledFile']],
 	// the last window of a tab page closes the tab page (vimTabPages.ts)
-	['close', 'c', false, ['devhubVim.tabpage.closeWindow']],
-	['quit', 'q', true, ['workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty']],
+	['close', 'c', false, ['devhubVim.tabpage.closeWindow'], { comment: 'close' }],
+	['quit', 'q', true, ['workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty'], { comment: 'close' }],
 	['moveToNewTabPage', 'shift+t', false, ['devhubVim.tabpage.moveEditorToNew']],
 	['only', 'o', true, ['workbench.action.closeEditorsInOtherGroups']],
 	['equalize', '=', false, ['workbench.action.evenEditorWidths']],
@@ -1769,9 +1844,9 @@ const NAV_COMMANDS: readonly [string, string, boolean, readonly string[]][] = [
 	['definitionSplit', ']', true, ['editor.action.revealDefinitionAside']],
 	['definitionPreview', 'shift+]', false, ['editor.action.peekDefinition']],
 ];
-for (const [name, key, withCtrl, commands] of NAV_COMMANDS) {
+for (const [name, key, withCtrl, commands, how] of NAV_COMMANDS) {
 	const id = `devhubVim.nav.${name}`;
-	CommandsRegistry.registerCommand(id, () => DevhubVim.instance?.runNav(commands));
+	CommandsRegistry.registerCommand(id, () => DevhubVim.instance?.runNav(commands, how));
 	for (const k of [...jisKeys(key), ...(withCtrl ? jisKeys(`ctrl+${key}`) : [])]) {
 		const keybinding = KeybindingParser.parseKeybinding(k);
 		if (keybinding) {

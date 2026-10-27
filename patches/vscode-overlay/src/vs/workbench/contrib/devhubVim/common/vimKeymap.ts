@@ -41,10 +41,12 @@ export interface VimKeybinding {
 	 * `escape`: Esc's own weight outside insert mode, below every widget's Esc;
 	 * `insertEscape`: Esc in insert / replace mode, above every editor widget's Esc
 	 * (the widgets are closed by the escape itself, INSERT_ESCAPE_DISMISSES);
+	 * `commentEscape`: Esc in a comment widget, above the widget's own Esc (Hide
+	 * Comment) and below every editor widget's;
 	 * `cmdline`: the `:` `/` `?` prompt's keys (vimCmdline.ts), above the
 	 * suggest widget's Tab and every workbench default on the CTRL keys. See VIM_WEIGHTS.
 	 */
-	readonly weight?: 'override' | 'escape' | 'insertEscape' | 'cmdline';
+	readonly weight?: 'override' | 'escape' | 'insertEscape' | 'commentEscape' | 'cmdline';
 }
 
 /**
@@ -101,6 +103,12 @@ export const VIM_WHEN = {
 	 * says the active (= focused) group has no editor; `!textInputFocus` /
 	 * `!inputFocus`: not a widget's input in the editor area.
 	 */
+	/**
+	 * the keyboard focus is in a comment thread's widget (VS Code's
+	 * `commentEditorFocused`: its reply or edit input; `commentFocused`: anything
+	 * else in it), whether or not a Vim editor has it, and not in insert mode
+	 */
+	comment: '(commentEditorFocused || commentFocused) && !devhubVim.insert',
 	emptyGroup: `editorAreaFocus && activeEditorGroupEmpty && !textInputFocus && !inputFocus && devhubVim.mode != 'nav'`,
 } as const;
 
@@ -183,6 +191,12 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	{ key: 'escape', command: 'devhubVim.escape', when: `${W.escape} && devhubVim.insert`, weight: 'insertEscape' },
 	{ key: 'ctrl+[', command: 'devhubVim.escape', when: `${W.escape} && devhubVim.insert`, weight: 'insertEscape' },
 	{ key: 'ctrl+c', command: 'devhubVim.escape', args: { interrupt: true }, when: `${W.escape} && devhubVim.insert`, weight: 'insertEscape' },
+	// In a comment widget (its input is a Vim editor) Esc is Vim's Esc too, never
+	// VS Code's Hide Comment, which folds the thread away (and drops a new one):
+	// pressed any number of times it lands in normal mode and the widget stays.
+	// Not in insert mode, whose Esc above outranks it anyway, and outside the
+	// input (a comment, a button) it does nothing.
+	{ key: 'escape', command: 'devhubVim.escape', when: W.comment, weight: 'commentEscape' },
 
 	// ---- motions (they compose with a count, an operator and visual mode) ----
 	motion('h', 'left'), motion('left', 'left', W.arrow),
@@ -454,6 +468,8 @@ export const VIM_WEIGHTS = {
 	override: 250,
 	escape: 50,
 	insertEscape: 260,
+	/** KeybindingWeight.EditorContrib + 1: above Hide Comment's Esc (EditorContrib), below every editor widget's (EditorContrib + 5 and up). */
+	commentEscape: 101,
 	/** KeybindingWeight.WorkbenchContrib + 55: the prompt's keys, while it has the focus (CMDLINE_KEYBINDINGS). */
 	cmdline: 255,
 } as const;

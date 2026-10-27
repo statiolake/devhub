@@ -226,7 +226,8 @@ jumps: one history, not two.
 every selected line, Neovim `v_@-default`).
 
 **Windows** after `CTRL-W` (one-shot, workbench-wide): `h j k l` and arrows
-(move between parts), `w W p t b` (editor groups), `s v n` (split above /
+(move between parts), `w W p t b` (editor groups; see
+[Windows](#windows) for `w W p` and comment widgets), `s v n` (split above /
 left, as 'nosplitbelow' 'nosplitright'; `n` with a new file), `c` (close the
 group), `q` (close the editor), `o` (only this group), `=` (equal sizes), `_ |`
 (maximise), `+ - < >` (resize), `H J K L` (move the group), `T` (move the
@@ -250,6 +251,42 @@ The keys after it are `devhubVim.nav.*` with `when` `config.devhub.vim.enabled
 prefix too, bind it to the same command with the same `when` (`cmd+w`, say);
 with `{ "terminal": true }` it also enters nav from the terminal (then leave
 `!terminalFocus` out of its `when`), for a key the shell does not take.
+
+### Windows
+
+The windows `CTRL-W` moves between are where the focus stays: the editor
+groups, a comment thread's widget in an editor (the review widget the gutter
+**+**, Add Comment or a thread's reply opens: a window of its own under the
+lines it is on), the side bar, the panel (and the terminal in it) and the
+secondary side bar. Quick input, the [prompt](#the-prompt), menus, dialogs and
+notifications are not windows: going there and back is no window change.
+
+* `CTRL-W w` / `CTRL-W CTRL-W` / `CTRL-W W` first put the focus back in the
+  editor: from outside the editor groups (the side bar, the panel, a
+  terminal, a list, a comment widget) they go to the active group
+  (`workbench.action.focusActiveEditorGroup`), and only from a group do they
+  go on to the next (previous) one, as Vim cycles its windows. So a second
+  `CTRL-W w` is the next group.
+* `CTRL-W p` (`CTRL-W CTRL-P`) goes back to the window the focus was in
+  before this one, and where in it the focus was (the terminal, the list item
+  …), as Vim's previous window; twice is where you started. With no such window
+  (or when it has gone) it is the previous editor group.
+* A comment widget belongs to its editor, a window below the thread's lines.
+  `CTRL-W p k j w W` (and the arrows up / down) go back to the editor, with
+  the cursor on the thread's lines (where it was if it is on one of them, else
+  on the line the widget is under); the widget and what is typed in it stay.
+  `:q` `:close` `CTRL-W c` `CTRL-W q` close the widget and go back to the
+  editor: VS Code drops a new thread with nothing typed in it, and a reply
+  being typed in a thread stays in the closed thread, as when VS Code folds it.
+  A new thread with text typed in it is not dropped: it stays open and only the
+  focus goes back (as Vim keeps a changed buffer whose window closes,
+  'hidden'); `:q!` drops it. Entering the widget ends the editor's visual
+  mode, as entering another window does in Vim (Add Comment on a visual
+  selection takes the selected lines as the thread's first). The comment input
+  is a Vim editor, in normal mode when it opens (`i` / `a` to type; `Ctrl+Enter`
+  submits, as in VS Code), and `<Esc>` there is always Vim's
+  ([Esc](#esc)). `CTRL-W` in its insert mode deletes a word, as in any Vim
+  editor.
 
 ## Tab pages
 
@@ -829,6 +866,7 @@ default would otherwise win:
 | `WorkbenchContrib + 50` | `CTRL-` keys, `<Tab>` | workbench-wide defaults on them (Open Recent on `CTRL-R` on macOS, Quick Open on `CTRL-O`, inline suggestion accept on `<Tab>`, Outdent Lines on `CTRL-[`); the `CTRL-W` prefix and its keys |
 | `EditorCore + 50` | `<Esc>` outside insert mode | below every widget's Esc, so the widget closes first |
 | `WorkbenchContrib + 60` | `<Esc>` `CTRL-[` `CTRL-C` in insert mode | above every widget's Esc ([Esc](#esc)) |
+| `EditorContrib + 1` | `<Esc>` in a comment widget | above the widget's Hide Comment (`EditorContrib`), below every editor widget's Esc ([Esc](#esc)) |
 
 ## Esc
 
@@ -850,6 +888,16 @@ find, the problem widget, a snippet, the completion menu) comes first (Vim's
 Esc has `EditorCore + 50`), and Vim's Esc cancels one pending thing. `CTRL-[`
 there has `WorkbenchContrib + 50`: no widget binds it, but on Windows and
 Linux VS Code's Outdent Lines does.
+
+In a comment widget (`commentEditorFocused || commentFocused`: its input, a
+comment or a button in it) `<Esc>` is Vim's Esc too, never VS Code's Hide
+Comment (`workbench.action.hideComment`), which folds the thread away and drops
+a new one with what was typed: pressed any number of times it lands in normal
+mode in the input (and does nothing elsewhere in the widget), and the widget
+stays. Its weight, `EditorContrib + 1`, is just above Hide Comment's, so an
+editor widget in the input (hover, completion menu) still closes first. Close
+the widget with `:q` or `CTRL-W c` (see [Windows](#windows)); `Shift+Esc` is
+still VS Code's Hide Comment.
 
 To close a widget and stay in insert mode:
 

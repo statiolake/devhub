@@ -906,6 +906,11 @@ suite('DevHub Vim keymap is keybindings', () => {
 				assert.ok(b.command.startsWith('devhubVim.tabpage.'), b.command);
 				continue;
 			}
+			if (b.when === VIM_WHEN.comment) {
+				// anywhere in a comment widget, a Vim editor or not: Esc is Vim's Esc (or nothing)
+				assert.deepStrictEqual([b.key, b.command], ['escape', 'devhubVim.escape']);
+				continue;
+			}
 			assert.ok(ids.has(b.command) || (plainInInsert.has(b.command) && b.when.includes('devhubVim.insert')), b.command);
 			assert.ok(b.when.includes('devhubVim.active'), b.key);
 			assert.ok(b.key.split(' ').length <= 3, b.key);
@@ -1220,6 +1225,8 @@ suite('DevHub Vim: one Esc leaves insert mode, whatever editor widget shows', ()
 		['editor.cancelOperation', 100, 'editorTextFocus && cancellableOperation'],
 		['closeReferenceSearch', 250, 'inPeekEditor && !config.editor.stablePeek'],
 		['closeReferenceSearch', 250, 'referenceSearchVisible && !config.editor.stablePeek && editorTextFocus'],
+		// a comment widget's Hide Comment (comments/browser/commentsEditorContribution.ts)
+		['workbench.action.hideComment', 100, 'commentEditorFocused || commentFocused'],
 	];
 	const WIDGETS = ['suggestWidgetVisible', 'inlineSuggestionVisible', 'inlineEditIsVisible', 'LinkedEditingInputVisible', 'parameterHintsVisible', 'markersNavigationVisible', 'inSnippetMode', 'messageVisible', 'findWidgetVisible', 'cancellableOperation', 'inPeekEditor', 'referenceSearchVisible'];
 
@@ -1265,6 +1272,25 @@ suite('DevHub Vim: one Esc leaves insert mode, whatever editor widget shows', ()
 				assert.notStrictEqual(winner('escape', ctx(mode, widget)), 'devhubVim.escape', `${mode} with ${widget}`);
 			}
 		}
+	});
+
+	test('in a comment widget Esc is Vim\'s, never Hide Comment: any number of them land in normal mode and the widget stays', () => {
+		for (const mode of ['normal', 'visual', 'operatorPending', 'insert', 'replace']) {
+			for (const focus of ['commentEditorFocused', 'commentFocused']) {
+				const c = { ...ctx(mode, undefined), editorTextFocus: false, [focus]: true };
+				assert.strictEqual(winner('escape', c), 'devhubVim.escape', `${mode} in ${focus}`);
+				// an editor widget in the comment input still closes first outside insert mode
+				for (const widget of WIDGETS) {
+					assert.notStrictEqual(winner('escape', { ...c, [widget]: true }), 'workbench.action.hideComment', `${mode} with ${widget}`);
+				}
+			}
+		}
+		// on a comment or a button of the widget (no Vim editor has the focus) too
+		assert.strictEqual(winner('escape', { 'true': true, commentFocused: true }), 'devhubVim.escape');
+		// and in nav mode, whose key the window keydown resolves the same way
+		assert.strictEqual(winner('escape', { ...ctx('normal', undefined), 'devhubVim.mode': 'nav', commentEditorFocused: true }), 'devhubVim.escape');
+		const comment = DEFAULT_KEYBINDINGS.filter(b => b.key === 'escape' && b.weight === 'commentEscape');
+		assert.ok(comment.length === 1 && VIM_WEIGHTS.commentEscape > 100 && VIM_WEIGHTS.commentEscape < 105);
 	});
 
 	test('leaving insert closes the transient widgets, not the find widget, a peek or a snippet session', () => {
