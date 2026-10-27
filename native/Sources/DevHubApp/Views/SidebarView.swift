@@ -37,6 +37,8 @@ protocol SidebarHost: AnyObject {
 @MainActor
 final class SidebarView: NSView {
     let list: SidebarListView
+    /// S-12: the usage limits, at the foot of the column.
+    let usage: UsageFooterView
     private let scroll = NSScrollView()
     private var style: ShellStyle
     private var collapsed = false
@@ -53,6 +55,7 @@ final class SidebarView: NSView {
     init(style: ShellStyle) {
         self.style = style
         list = SidebarListView(style: style)
+        usage = UsageFooterView(style: style)
         super.init(frame: .zero)
         wantsLayer = true
         scroll.drawsBackground = false
@@ -64,6 +67,11 @@ final class SidebarView: NSView {
         scroll.documentView = list
         scroll.contentView.postsBoundsChangedNotifications = true
         addSubview(scroll)
+        usage.isHidden = true
+        addSubview(usage)
+        usage.onHeightChange = { [weak self] in self?.needsLayout = true }
+        usage.onTooltip = { [weak self] lines, anchor in self?.host?.sidebarShowTooltip(lines, anchor: anchor) }
+        usage.onTooltipRelease = { [weak self] in self?.host?.sidebarReleaseTooltip() }
         NotificationCenter.default.addObserver(
             self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         setAccessibilityRole(.group)
@@ -76,6 +84,11 @@ final class SidebarView: NSView {
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 
+    func usageLimitsChanged(_ limits: UsageLimitsWire) {
+        usage.update(limits)
+        needsLayout = true
+    }
+
     @objc private func scrolled() {
         // `window.addEventListener("scroll", hide, true)`.
         host?.sidebarHideTooltip()
@@ -84,12 +97,14 @@ final class SidebarView: NSView {
     func restyle(_ style: ShellStyle) {
         self.style = style
         list.restyle(style)
+        usage.restyle(style)
         needsDisplay = true
         needsLayout = true
     }
 
     func render(_ model: SidebarModel, snapshot: AppSnapshotWire) {
         collapsed = model.collapsed
+        usage.collapsed = model.collapsed
         width = model.width
         list.render(model, snapshot: snapshot)
         needsLayout = true
@@ -98,7 +113,9 @@ final class SidebarView: NSView {
 
     override func layout() {
         super.layout()
-        scroll.frame = bounds
+        let foot = usage.isHidden ? 0 : usage.height
+        scroll.frame = CGRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - foot))
+        usage.frame = CGRect(x: 0, y: bounds.height - foot, width: bounds.width, height: foot)
         list.frame.size.width = scroll.contentSize.width
         list.relayout()
     }

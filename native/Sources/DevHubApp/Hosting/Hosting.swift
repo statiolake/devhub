@@ -112,7 +112,7 @@ protocol ModalPresenting: AnyObject {
     func applyStyle(_ style: ShellStyle)
 }
 
-/// Until WP11: the questions DevHub must be able to ask, asked with `NSAlert`
+/// A stand-in: the questions DevHub must be able to ask, asked with `NSAlert`
 /// (a close or restart confirmation, the worktree's three-way question, a
 /// rename), and the chord help and command palette as plain lists.
 @MainActor
@@ -317,9 +317,15 @@ protocol NoticePresenting: AnyObject {
     var measured: LayoutSize? { get }
     var layerView: NSView? { get }
     func applyStyle(_ style: ShellStyle)
+    /// The person started another action: a failure about the last one is over.
+    func personStartedAction()
 }
 
-/// Until WP11: notices go to the log, and the last failure is kept for the
+extension NoticePresenting {
+    func personStartedAction() {}
+}
+
+/// A stand-in (the self-test's fixture): notices go to the log, and the last failure is kept for the
 /// self-test and the log's reader.
 @MainActor
 final class LogNoticePresenter: NoticePresenting {

@@ -217,6 +217,33 @@ final class SelfTest {
         check(editor?.isAttached ?? false, "the hidden editor let go of its attachment")
         check(transport.live(editorKey) != nil, "the hidden editor's attachment was let go of")
 
+        // 5. WP11: the command palette is a sheet over the window, and
+        // Escape takes it away.
+        shell.openModal(.commandPalette(rows: [
+            CommandPaletteRow(commandId: .toggleSplit, title: "View: Toggle Split", chords: ["Cmd+Q Z"], recent: false),
+        ]))
+        let sheets = shell.modals as? SheetLayer
+        let palette = await until(3) { sheets?.topTitle == "Commands" }
+        check(palette, "the command palette did not come up (\(sheets?.topTitle ?? "no sheet"))")
+        if let picker = sheets?.view.cards.last?.content as? PickerView {
+            check(picker.state.rows.map(\.label) == ["View: Toggle Split"], "the palette lists \(picker.state.rows.map(\.label))")
+            check(picker.window != nil && picker.bounds.height > 100, "the palette's sheet is \(picker.bounds)")
+            picker.cancel()
+        }
+        let paletteGone = await until(3) { !shell.modals.isPresenting }
+        check(paletteGone, "Escape did not take the command palette away")
+
+        // 6. WP11: a failure is a toast in the corner, and Cmd+Q D puts it away.
+        shell.publishError(AppError.at(.fileNotFound).withSummary("Self-test notice"))
+        let toast = await until(2) { shell.notices.measured != nil }
+        check(toast, "a failure drew no toast")
+        if let size = shell.notices.measured, let layer = shell.notices.layerView {
+            check(!layer.isHidden && layer.frame.width == CGFloat(size.width), "the toast is laid out at \(layer.frame), measured \(size)")
+        }
+        shell.notices.dismissAlert()
+        let toastGone = await until(2) { shell.notices.measured == nil }
+        check(toastGone, "Cmd+Q D did not put the toast away")
+
         window.disposeAll()
         window.window?.orderOut(nil)
     }

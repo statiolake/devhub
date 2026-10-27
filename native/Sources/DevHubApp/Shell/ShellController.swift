@@ -60,9 +60,10 @@ final class ShellController {
                 theme: terminalPalettes(for: .vscode, fromVSCode: appearance.theme.terminalPalette())),
             dark: NSApp.effectiveAppearance.isDarkAppearance, terminalFontSize: 13)
         self.style = style
-        let presenter = modals ?? AlertModalPresenter()
+        let presenter = modals ?? SheetLayer(style: style)
         self.modals = presenter
-        self.notices = notices ?? LogNoticePresenter()
+        let noticeLayer = notices ?? NoticeLayer(style: style)
+        self.notices = noticeLayer
         let slot = conversations ?? PlaceholderConversations()
         self.conversations = slot
         window = MainWindowController(titleBar: titleBar, style: style, transport: transport, conversations: slot)
@@ -74,6 +75,13 @@ final class ShellController {
                 self?.snapshot?.workspaces.lazy.flatMap(\.agents).first { $0.id == id }?.displayName
             }
             alerts.onUnsupported = { [weak self] request in self?.unsupported(request) }
+        }
+        if let sheets = presenter as? SheetLayer { sheets.host = self }
+        if let layer = noticeLayer as? NoticeLayer {
+            layer.onMeasuredChange = { [weak self] in self?.window.applyLayout() }
+            layer.onCenterClosed = { [weak self] in self?.placeKeyboardOnSurface() }
+            layer.onOpenSettings = { [weak self] in self?.openSettings?() }
+            layer.onRetry = { [weak self] in self?.retry() }
         }
         appearance.onChange = { [weak self] in self?.restyle() }
         let bridge = NotifierBridge(shell: self)
@@ -123,6 +131,17 @@ final class ShellController {
         attention.observe(snapshot)
         notifierBridge?.observed(snapshot)
         notifier?.observe(snapshot)
+        (modals as? SheetLayer)?.observe(snapshot)
+    }
+
+    /// Try Again on an app-scoped notice (`retry_app`): the projection and
+    /// the repository facts asked for afresh.
+    private func retry() {
+        guard let runtime, let controller else { return }
+        Task { @MainActor [weak self] in
+            if let snapshot = try? await controller.snapshotWire() { self?.apply(snapshot) }
+            await runtime.refreshRepositories()
+        }
     }
 
     func repositoriesChanged(_ status: RepositoryStatusWire) {
@@ -132,12 +151,14 @@ final class ShellController {
 
     func usageLimitsChanged(_ limits: UsageLimitsWire) {
         usageLimits = limits
+        window.sidebar.usageLimitsChanged(limits)
     }
 
     func configAccepted(_ config: Config) {
         self.config = config
         appearance.configure(mode: config.appearance.mode, names: ColorThemeNames(dark: config.appearance.themeDark, light: config.appearance.themeLight))
         chords?.setLayout(ChordLayout.of(config.keybindings))
+        (notices as? NoticeLayer)?.configure(noticeSeconds: config.general.noticeSeconds)
         restyle()
     }
 
@@ -167,6 +188,7 @@ final class ShellController {
 
     func openModal(_ request: ModalRequest) {
         guard let nsWindow = window.window else { return }
+        notices.personStartedAction()
         window.tooltip.hideNow()
         modals.present(request, in: nsWindow, style: style) { [weak self] answer in self?.answered(answer) }
         window.applyLayout()
@@ -211,6 +233,7 @@ final class ShellController {
 
     func dispatch(_ intent: AppIntentWire) {
         guard let controller else { return }
+        notices.personStartedAction()
         Task { await controller.dispatchFromWindow(intent) }
     }
 
@@ -218,6 +241,7 @@ final class ShellController {
     private func arrive(_ intent: UserIntent, landing: Landing? = nil) {
         keyboardInSidebar = false
         guard let controller else { return }
+        notices.personStartedAction()
         Task { @MainActor [weak self] in
             await controller.dispatchFromWindow(intent)
             self?.placeKeyboardOnSurface(landing)
@@ -496,6 +520,14 @@ final class ShellController {
         Task { _ = await controller.terminalZoom(direction) }
         return true
     }
+}
+
+// MARK: - The questions layer's host
+
+extension ShellController: SheetHost {
+    var sheetServices: (any SheetServices)? { runtime?.sheets }
+    var currentSnapshot: AppSnapshotWire? { snapshot }
+    func arriveFromSheet(_ intent: AppIntentWire) { arrive(intent) }
 }
 
 // MARK: - The chord host
