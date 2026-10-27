@@ -67,7 +67,7 @@ final class LiveSelfTest {
     /// The phase's driver; its failures are this run's.
     func phase(_ name: String, _ body: (SelfTestDriver) async -> Void) async {
         let driver = SelfTestDriver(prefix: "live \(name)")
-        print("self-test live: \(name)")
+        SelfTestLaunch.say("self-test live: \(name)")
         await body(driver)
         failures += driver.failures
     }
@@ -77,7 +77,7 @@ final class LiveSelfTest {
 
     func run() async -> [String] {
         guard let tmux = Self.findTmux() else {
-            print("self-test: no tmux on this machine; the live phase is skipped")
+            SelfTestLaunch.say("self-test: no tmux on this machine; the live phase is skipped")
             return []
         }
         guard let python = SelfTestWorld.findPython() else {
@@ -125,9 +125,10 @@ final class LiveSelfTest {
             handed?(key, target)
         }
         NSApp.activate()
+        if !NSApp.isActive { NSRunningApplication.current.activate(options: [.activateAllWindows]) }
         window?.makeKeyAndOrderFront(nil)
         let active = await SelfTestDriver(prefix: "live").until(5) { NSApp.isActive && self.window?.isKeyWindow == true }
-        print("self-test live: active \(NSApp.isActive), key window \(window?.isKeyWindow == true) (\(active))")
+        SelfTestLaunch.say("self-test live: active \(NSApp.isActive), key window \(window?.isKeyWindow == true) (\(active))")
 
         await phase("scratch") { await scratch($0) }
         await phase("sheets") { await sheetsPhase($0) }
@@ -146,8 +147,8 @@ final class LiveSelfTest {
         for (name, path) in [("devhub-main.log", world.locations.mainLogPath), ("stand-ins", world.log)] {
             let text = (try? String(contentsOfFile: path, encoding: .utf8)) ?? "(none)"
             let lines = text.split(separator: "\n", omittingEmptySubsequences: false).suffix(120)
-            print("self-test live: ---- \(name), last \(lines.count) lines ----")
-            for line in lines { print("  \(line.prefix(400))") }
+            SelfTestLaunch.say("self-test live: ---- \(name), last \(lines.count) lines ----")
+            for line in lines { SelfTestLaunch.say("  \(line.prefix(400))") }
         }
     }
 

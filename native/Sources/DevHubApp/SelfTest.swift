@@ -55,11 +55,11 @@ final class SelfTest {
             // The real app on a profile of its own, driven end to end.
             failures += await LiveSelfTest().run()
             if failures.isEmpty {
-                print("self-test ok: \(DevHubVersion.description)")
-                exit(0)
+                SelfTestLaunch.say("self-test ok: \(DevHubVersion.description)")
+                SelfTestLaunch.exit(0)
             }
             FileHandle.standardError.write(Data("self-test failed: \(failures.joined(separator: "; "))\n".utf8))
-            exit(1)
+            SelfTestLaunch.exit(1)
         }
     }
 

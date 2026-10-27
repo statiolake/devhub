@@ -77,7 +77,7 @@ extension LiveSelfTest {
         }
 
         // Close this workspace (Cmd+Q W) asks about it, and Escape keeps alpha.
-        await goTo(d, "alpha", alpha.id)
+        await goTo(d, "widget", alpha.id)
         await d.chord("W", in: window)
         await d.expect(10, "Cmd+Q W on alpha, with a command running in it, asked nothing") { self.picker != nil }
         d.check(picker?.state.activeRow?.id == PickerState.cancelRowId, "the close question's first row is \(picker?.state.activeRow?.id ?? "nothing"), not Keep")
@@ -92,7 +92,7 @@ extension LiveSelfTest {
             d.check(born != nil, "alpha has no session \(alphaSession) (\(sessions()))")
             await d.pause(1.1) // `session_created` is in seconds.
             await d.type("exit\r", in: window)
-            await d.expect(15, "exit in alpha's terminal asked nothing (ended by itself: \(endedByItself.contains(alpha.id)))") {
+            await d.expect(15, "exit in alpha's terminal asked nothing (ended by itself: \(endedByItself.contains(alpha.id)); keys in \(String(describing: window?.firstResponder).prefix(60)); the screen ends “\(pane.screenText().trimmingCharacters(in: .whitespacesAndNewlines).suffix(200))”)") {
                 self.picker.map { $0.state.rows.contains { $0.id == SheetRows.confirmRow } } == true
             }
             d.check(picker?.state.activeRow?.id == PickerState.cancelRowId, "the question's first row is \(picker?.state.activeRow?.id ?? "nothing"), not Keep")
@@ -123,7 +123,7 @@ extension LiveSelfTest {
         if let pane = await editorTerminal(d, scratchId, "Scratch") {
             let ended = endedByItself.count
             await d.type("exit\r", in: window)
-            await d.expect(10, "Scratch's exit was not seen") { self.endedByItself.count > ended }
+            await d.expect(10, "Scratch's exit was not seen (the screen ends “\(pane.screenText().trimmingCharacters(in: .whitespacesAndNewlines).suffix(200))”)") { self.endedByItself.count > ended }
             await d.pause(0.5)
             await d.expect(20, "Scratch's terminal did not start over (\(pane.connection))") { pane.isAttached }
             d.check(!shell.modals.isPresenting, "Scratch's exit asked \(sheets?.topTitle ?? "something")")
@@ -133,7 +133,7 @@ extension LiveSelfTest {
         }
 
         // DevHub's own close lets go of the client first: not an exit.
-        await goTo(d, "alpha", alpha.id)
+        await goTo(d, "widget", alpha.id)
         let beforeClose = endedByItself.count
         await d.chord("W", in: window)
         await d.expect(10, "Cmd+Q W on alpha asked nothing") { self.picker != nil }

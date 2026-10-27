@@ -36,7 +36,8 @@ public struct SelfTestWorld: Sendable {
     public let scratchRoot: String
     public let bin: String
     public let projects: String
-    /// A git clone of `acme/widget`, the folder the Issue flow finds.
+    /// A git clone of `acme/widget` (in `projects/widget`: the Issue flow
+    /// finds clones by the repository's name), the folder the Issue flow finds.
     public let alpha: String
     /// A plain folder.
     public let beta: String
@@ -78,7 +79,7 @@ public struct SelfTestWorld: Sendable {
         let locations = ProfileLocations(profile: profile, home: home, environment: [:])
         let world = SelfTestWorld(
             home: home, locations: locations, scratchRoot: scratchRoot, bin: Path.join(home, "bin"),
-            projects: Path.join(home, "projects"), alpha: Path.join(home, "projects", "alpha"),
+            projects: Path.join(home, "projects"), alpha: Path.join(home, "projects", "widget"),
             beta: Path.join(home, "projects", "beta"), claudeConfig: Path.join(home, "claude-config"),
             codexHome: Path.join(home, "codex-home"), log: Path.join(home, "fake-cli.log"), python: python)
         for directory in [world.bin, world.alpha, world.beta, world.claudeConfig, world.codexHome, locations.configDirectory] {

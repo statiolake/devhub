@@ -88,7 +88,7 @@ extension LiveSelfTest {
 
         // Go to (Cmd+Q G): back to beta by its name, then to alpha.
         guard let beta = workspace(root: world.beta), let alpha = workspace(root: world.alpha) else { return }
-        for (target, words) in [(beta, "beta"), (alpha, "alpha")] {
+        for (target, words) in [(beta, "beta"), (alpha, "widget")] {
             await d.chord("g", in: window)
             await d.expect(5, "Cmd+Q G did not open Go to") { self.picker != nil }
             await d.type(words, in: window)

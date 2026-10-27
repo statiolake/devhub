@@ -15,9 +15,9 @@ extension LiveSelfTest {
         await d.press(.returnKey, in: window)
         // Which clone: alpha, found by its origin among the workspace sources.
         await d.expect(20, "the Issue flow did not offer alpha as acme/widget's clone (\(pickerRowIds), \(picker?.state.prompt.note ?? ""))") {
-            self.pickerRowIds.contains { $0.hasSuffix("/alpha") || $0.contains("/alpha") }
+            self.pickerRowIds.contains { $0.hasSuffix("/widget") }
         }
-        if let alphaRow = pickerRowIds.first(where: { $0.hasSuffix("/alpha") || $0.contains("/alpha") }) {
+        if let alphaRow = pickerRowIds.first(where: { $0.hasSuffix("/widget") }) {
             d.check(await pointAt(d, alphaRow), "the Issue flow's clone question could not be moved to alpha")
         }
         await d.press(.returnKey, in: window)

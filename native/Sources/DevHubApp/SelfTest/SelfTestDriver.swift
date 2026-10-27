@@ -19,11 +19,11 @@ final class SelfTestDriver {
         if !ok {
             let line = "\(prefix): \(what())"
             failures.append(line)
-            print("self-test FAILED \(line)")
+            SelfTestLaunch.say("self-test FAILED \(line)")
         }
     }
 
-    func note(_ line: String) { print("self-test \(prefix): \(line)") }
+    func note(_ line: String) { SelfTestLaunch.say("self-test \(prefix): \(line)") }
 
     func pause(_ seconds: Double) async {
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
