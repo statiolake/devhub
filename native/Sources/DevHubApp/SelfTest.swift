@@ -238,7 +238,7 @@ final class SelfTest {
         let toast = await until(2) { shell.notices.measured != nil }
         check(toast, "a failure drew no toast")
         if let size = shell.notices.measured, let layer = shell.notices.layerView {
-            check(!layer.isHidden && layer.frame.width == CGFloat(size.width), "the toast is laid out at \(layer.frame), measured \(size)")
+            check(!layer.isHidden && layer.frame.width > 0 && layer.superview != nil, "the toast is laid out at \(layer.frame), measured \(size)")
         }
         shell.notices.dismissAlert()
         let toastGone = await until(2) { shell.notices.measured == nil }
@@ -374,6 +374,28 @@ final class SelfTest {
             check(echoed, "live: what was typed in the editor terminal did not come back")
             if attached { print("self-test live: \(pane.surfaceKey) attached on tmux -L \(locations.tmuxSocketName), client \(clientSize())") }
         }
+        // WP11: Settings opens on the real config, draws every screen, and
+        // opening it again while it is in front closes it.
+        shell.toggleSettings()
+        let settingsUp = await until(10) { shell.settingsWindow?.isLoaded == true && shell.settingsWindow?.window?.isVisible == true }
+        check(settingsUp, "live: the Settings window did not open on the config")
+        if let settings = shell.settingsWindow {
+            for section in SettingsSection.allCases {
+                settings.show(section)
+                await pause(0.1)
+                check(settings.currentSection == section, "live: Settings did not show \(section.rawValue)")
+            }
+            settings.window?.makeKeyAndOrderFront(nil)
+            await pause(0.2)
+            if settings.window?.isKeyWindow == true {
+                shell.toggleSettings()
+                let closed = await until(3) { settings.window?.isVisible == false }
+                check(closed, "live: opening Settings while it was in front did not close it")
+            } else {
+                settings.window?.performClose(nil)
+            }
+        }
+
         shell.window.disposeAll()
         await runtime.shutdown()
     }

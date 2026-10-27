@@ -273,7 +273,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTo
     func select(_ section: SettingsSection, _ index: Int) {
         guard selections[section] != index || self.section != section else { return }
         selections[section] = index
-        rebuild()
+        DispatchQueue.main.async { [weak self] in self?.rebuild() }
     }
 
     /// `update`: the draft moves now; the save follows 400ms after the last change.
@@ -281,7 +281,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTo
         guard let snapshot = session.snapshot else { return }
         let count = session.edit(next)
         acted()
-        if redraw { rebuild() } else { shownConfig = next }
+        // After the control that changed has finished telling us: a field
+        // ending its editing must not be taken away from under itself.
+        if redraw { DispatchQueue.main.async { [weak self] in self?.rebuild() } } else { shownConfig = next }
         let revision = snapshot.revision
         let timer = Timer(timeInterval: 0.4, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.save(next, revision: revision, count: count) }
@@ -353,7 +355,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     func editSocket(_ text: String) {
         session.editSocket(text)
-        rebuild()
+        DispatchQueue.main.async { [weak self] in self?.rebuild() }
     }
 
     func changeSocket() {

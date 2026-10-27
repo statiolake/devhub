@@ -134,14 +134,16 @@ final class NoticeLayer: NoticePresenting {
         changed()
     }
 
-    func closeCenter() {
+    /// `returnKeys`: the person closed it (Escape, ×), so the keys go back to
+    /// the surface; a click elsewhere keeps them where it put them.
+    func closeCenter(returnKeys: Bool = true) {
         guard board.isCenterOpen else { return }
         board.closeCenter()
         // Opening it was seeing them; their clocks start again now.
         let now = Self.now()
         for identity in clocks.keys { clocks[identity] = AutoHideClock(seconds: seconds, now: now) }
         changed()
-        onCenterClosed?()
+        if returnKeys { onCenterClosed?() }
     }
 
     func perform(_ action: AppErrorAction) {
@@ -690,7 +692,7 @@ final class NoticeCenterView: NSView {
             let responder = window.firstResponder as? NSView
             if let responder, responder === self || responder.isDescendant(of: self) { return }
             if !window.isKeyWindow { return }
-            self.owner?.closeCenter()
+            self.owner?.closeCenter(returnKeys: false)
         }
         return true
     }
