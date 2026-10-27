@@ -186,7 +186,21 @@ extension LiveSelfTest {
             await d.pause(0.3)
             let text = pane.transcriptView.text
             if let segment = text.lineRects(range).first {
-                await d.click(text, at: NSPoint(x: segment.midX, y: segment.midY))
+                let point = NSPoint(x: segment.midX, y: segment.midY)
+                // What is under the pointer, for a click that opens nothing.
+                let inWindow = text.convert(point, to: nil)
+                let hit = window?.contentView?.hitTest(window?.contentView?.superview?.convert(inWindow, from: nil) ?? inWindow)
+                let index = text.characterIndexForInsertion(at: point)
+                let under = index < (text.textStorage?.length ?? 0) ? text.textStorage?.attribute(.link, at: index, effectiveRange: nil) : nil
+                let before = text.selectedRange()
+                await d.click(text, at: point)
+                let opened = await eventually(5) {
+                    if case let .success(shows) = await askNeovim(alphaSocket) { return shows.line == 4 }
+                    return false
+                }
+                if !opened {
+                    d.note("the link's click: range \(range), at \(point) in a text view of \(text.bounds.size), visible \(text.visibleRect), hits \(hit.map { "\(type(of: $0))" } ?? "nothing"), the index there \(index) holds \(under.map { "\($0)" } ?? "no link"), selection \(before) → \(text.selectedRange()), keys in \(window?.firstResponder.map { "\(type(of: $0))" } ?? "nothing")")
+                }
             } else {
                 d.check(false, "the link to \(SelfTestWorld.jumpPath) has no place on the screen")
             }
