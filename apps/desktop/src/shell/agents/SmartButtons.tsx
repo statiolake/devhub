@@ -330,6 +330,33 @@ export function SmartButtons({
       SMART_BUTTONS_SNAP_MS,
     );
   }, [dragSnap]);
+  // On a GUI Agent's composer the stack stands over the transcript's last
+  // lines, so the transcript keeps that much room at its end
+  // (`--smart-buttons-reserve`, read by `conversation.css`) and nothing it
+  // says is ever under a button. Only lines take room: the header alone
+  // stands in the air the transcript already ends with.
+  const spotNow = drag?.to ?? stored;
+  const onComposer =
+    agent.presentation === "gui" &&
+    (spotNow === undefined ||
+      (isAnchoredSpot(spotNow) && spotNow.anchored === "top"));
+  const reserve =
+    onComposer && present.length > 0 && metrics !== undefined
+      ? Math.ceil(metrics.box.height + SPACING.gui.gap)
+      : 0;
+  useLayoutEffect(() => {
+    const surface = own.current?.parentElement?.querySelector<HTMLElement>(
+      `[data-surface-key="agent:${agent.id}"]`,
+    );
+    if (!surface || reserve === 0) return;
+    surface.style.setProperty(
+      "--smart-buttons-reserve",
+      `${String(reserve)}px`,
+    );
+    return () => {
+      surface.style.removeProperty("--smart-buttons-reserve");
+    };
+  }, [agent.id, reserve]);
   if (lines.length === 0 && automatic.length === 0) return null;
 
   const spacing = SPACING[agent.presentation];
@@ -697,14 +724,28 @@ function useMetrics(
       watcher.observe(pane, { childList: true, subtree: true });
       return () => watcher.disconnect();
     }
+    // A GUI Agent's queued messages stand on its composer's box too: the
+    // stack stands on the topmost of them, so it never covers one.
+    const composer = anchor?.closest<HTMLElement>(".conversation-composer");
     const measure = () => {
       const paneRect = pane.getBoundingClientRect();
       const boxRect = box.getBoundingClientRect();
+      const anchorRect = anchor?.getBoundingClientRect();
+      const queued = composer
+        ?.querySelector<HTMLElement>(":scope > .conversation-pending")
+        ?.getBoundingClientRect();
       setMetrics({
         pane: paneRect,
         anchor: anchorBox(
           paneRect,
-          anchor?.getBoundingClientRect(),
+          anchorRect === undefined
+            ? undefined
+            : {
+                top: Math.min(anchorRect.top, queued?.top ?? anchorRect.top),
+                right: anchorRect.right,
+                bottom: anchorRect.bottom,
+                left: anchorRect.left,
+              },
           SPACING[agent.presentation],
         ),
         box: { width: boxRect.width, height: boxRect.height },
@@ -712,7 +753,7 @@ function useMetrics(
     };
     measure();
     const observer = new ResizeObserver(measure);
-    for (const each of [pane, box, anchor]) {
+    for (const each of [pane, box, anchor, composer]) {
       if (each) observer.observe(each);
     }
     return () => observer.disconnect();

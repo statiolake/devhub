@@ -219,10 +219,9 @@ describe("sending", () => {
     expect(actions.send).toHaveBeenCalledOnce();
   });
 
-  it("says the send key where it says what the keys do", () => {
+  it("says the send key where it says what the keys do, and not in the empty field", () => {
     draw(withSession());
-    expect(COMPOSER_PLACEHOLDER).toMatch(/⌘Return to send/);
-    expect(COMPOSER_PLACEHOLDER).not.toMatch(/Shift\+Enter/);
+    expect(COMPOSER_PLACEHOLDER).toBe("Message the Agent…");
     expect(
       document.querySelector(".conversation-empty-hint"),
     ).toHaveTextContent("⌘Return sends, Return starts a new line");
@@ -326,9 +325,7 @@ describe("when the conversation takes no input", () => {
         "placeholder",
         composerPlaceholder(state),
       );
-      expect(composerPlaceholder(state)).toMatch(
-        /What you send now is sent once/,
-      );
+      expect(composerPlaceholder(state)).toMatch(/… sent once/);
       // The settings are the CLI's: they wait for it.
       expect(screen.getByRole("combobox", { name: "Model" })).toBeDisabled();
       type("later");

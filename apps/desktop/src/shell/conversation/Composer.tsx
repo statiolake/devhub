@@ -133,10 +133,10 @@ export function inputRefusal(state: ConversationState): string | undefined {
 export function composerPlaceholder(state: ConversationState): string {
   switch (state.phase) {
     case "connecting":
-      return "Connecting to the Agent… What you send now is sent once it is ready.";
+      return "Connecting… sent once it is ready";
     case "ready":
       return state.turn === "rewinding"
-        ? "Taking the conversation back… What you send now is sent once that is done."
+        ? "Rewinding… sent once that is done"
         : COMPOSER_PLACEHOLDER;
     case "broken":
       return BROKEN_REFUSALS[state.failure.code];
@@ -499,7 +499,12 @@ function draftWords(
     .join("\n\n");
 }
 
-export const COMPOSER_PLACEHOLDER = `Message the Agent — / for commands, ${SEND_KEY} to send`;
+/**
+ * The empty field's one word. What the keys do is said where it is asked
+ * for — Send's tooltip, the empty transcript, the `/` list itself — and not
+ * in every empty field.
+ */
+export const COMPOSER_PLACEHOLDER = "Message the Agent…";
 
 /**
  * The commands a `/` offers, drawn as DevHub's other lists are (`mac-list`,

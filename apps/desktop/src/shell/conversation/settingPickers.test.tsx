@@ -148,7 +148,7 @@ describe("a session that has not named its settings yet", () => {
       }),
     );
     expect(picked("Model")).toBe("full-opus (opus)");
-    expect(settingPicker("Model")).toHaveAttribute("title", "Opus");
+    expect(settingPicker("Model")).toHaveAttribute("title", "Model: Opus");
     expect(
       openSetting("Model").map((row) => [row.textContent, row.title]),
     ).toEqual([

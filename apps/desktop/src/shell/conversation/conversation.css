@@ -228,9 +228,13 @@
 
 /* The conversation's own transcript ends under the composer: its last lines
    are clear of it once followed to the end, and pass under its fade while
-   scrolled. */
+   scrolled. It also keeps the room the Smart Buttons standing on the
+   composer take (`--smart-buttons-reserve`, set by `SmartButtons.tsx`), so
+   no button is ever over what it says. */
 .conversation-body > .conversation-scroll > .conversation-transcript {
-  padding-bottom: calc(var(--space-4) + var(--dock-overlap));
+  padding-bottom: calc(
+    var(--space-4) + var(--dock-overlap) + var(--smart-buttons-reserve, 0px)
+  );
 }
 
 /* The transcript is text to read and quote: it is selectable
@@ -2547,9 +2551,7 @@ label.conversation-question-option:hover,
   border: 0;
   border-radius: 1.1em 1.1em 0.35em 1.1em;
   background: var(--raised);
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--focus-ring) 55%, var(--edge)),
-    0 0 0 4px color-mix(in srgb, var(--focus-ring) 14%, transparent);
+  box-shadow: var(--focus-halo);
   color: var(--primary);
   font: inherit;
   line-height: 1.55;
@@ -2656,7 +2658,9 @@ label.conversation-question-option:hover,
   background: var(--raised);
   box-shadow: var(--elevation-1);
   cursor: text;
-  transition: box-shadow var(--motion-base) var(--ease-standard);
+  transition:
+    background-color var(--motion-base) var(--ease-standard),
+    box-shadow var(--motion-base) var(--ease-standard);
 }
 
 /* The transcript's last line while a turn runs, as the CLI draws it: after
@@ -3093,12 +3097,8 @@ button.conversation-background-line:hover {
 }
 
 .conversation-composer-box:focus-within {
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--focus-ring) 55%, var(--edge)),
-    0 0 0 4px color-mix(in srgb, var(--focus-ring) 14%, transparent),
-    inset 0 1px 0 var(--edge-highlight),
-    0 2px 6px var(--shadow-soft),
-    0 10px 28px var(--shadow-mid);
+  background: color-mix(in srgb, var(--focus-ring) 3%, var(--raised));
+  box-shadow: var(--focus-halo), var(--elevation-2-shadow);
 }
 
 .conversation-composer-box[data-disabled] {
@@ -3317,7 +3317,8 @@ button.conversation-background-line:hover {
   outline-offset: 2px;
 }
 
-/* The settings, as pickers in the toolbar: a word and a value, with no box
+/* The settings, as pickers in the toolbar: the value alone (the word is the
+   tooltip and the accessible name), with no box
    until hovered. They are read at the size of what is typed above them —
    the value is what the person checks before sending — and kept quiet by
    ink, not by size. */
@@ -3357,6 +3358,19 @@ button.conversation-background-line:hover {
   max-width: 14em;
   color: var(--secondary);
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The face shows the value alone: which setting it is, is the picker's
+   accessible name and its tooltip, and the word stays in the face for
+   both. So is why one cannot be changed. */
+.conversation-setting-label,
+.conversation-setting-note {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 

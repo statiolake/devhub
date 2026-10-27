@@ -261,7 +261,25 @@ function rowsOf(setting: Setting): readonly SettingChoice[] {
   return [{ id: current, label: current }, ...setting.choices];
 }
 
-/** A setting's word and its value, as the closed picker and the fact read alike. */
+/**
+ * A closed picker's tooltip: which setting it is — the face shows only the
+ * value — and whatever more there is to say about the value.
+ */
+function settingTitle(
+  name: SettingName,
+  ...more: readonly (string | undefined)[]
+): string {
+  const said = more.filter((part): part is string => part !== undefined);
+  return said.length === 0
+    ? SETTING_LABELS[name]
+    : `${SETTING_LABELS[name]}: ${said.join(" — ")}`;
+}
+
+/**
+ * A setting's word and its value, as the closed picker and the fact read
+ * alike. Only the value is seen: the word is the picker's accessible name
+ * and its tooltip, kept in the face for both.
+ */
 function SettingWords({
   name,
   setting,
@@ -314,7 +332,11 @@ function SettingPicker({
       >
         <span
           className="conversation-setting-face"
-          title={unknown ? unknownHint(name, offer, setting) : undefined}
+          title={settingTitle(
+            name,
+            unknown ? unknownHint(name, offer, setting) : undefined,
+            setting.unchangeable,
+          )}
         >
           <SettingWords name={name} setting={setting} known={offer?.known} />
           {setting.unchangeable === undefined ? null : (
@@ -477,9 +499,10 @@ function ChoosableSetting({
         title={
           open
             ? undefined
-            : unknown
-              ? unknownHint(name, offer, setting)
-              : current?.detail
+            : settingTitle(
+                name,
+                unknown ? unknownHint(name, offer, setting) : current?.detail,
+              )
         }
         onClick={() => {
           button.current?.focus();
