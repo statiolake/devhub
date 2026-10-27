@@ -84,7 +84,7 @@ final class GuiAgentHostTests: HostTestCase {
         // news, said once the row has gone, and the host's files go with it.
         host.hangUp()
         try await until("the host is gone") { host.hasExited }
-        await wiring.ended(machine: .local, agent: agent)
+        await wiring.ended(machine: .local, agent: agent, byDevHub: false)
         XCTAssertEqual(reports.all.count, 1)
         XCTAssertTrue(reports.all.first?.hasPrefix("The ") == true, "\(reports.all)")
         let directory = "\(home)/.devhub/agents-0123456789ab/\(GUI_AGENT)"

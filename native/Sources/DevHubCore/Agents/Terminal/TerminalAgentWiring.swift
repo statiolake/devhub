@@ -67,10 +67,9 @@ public protocol GuiAgentRounds: Sendable {
     func reading(machine: RuntimeId, agent: TerminalAgentRecord, root: String) async -> TerminalAgentReading
     func send(agentId: String, text: String) async throws
     /// A GUI Agent's session is gone: stop following it, say how it ended
-    /// unless DevHub ended it, and take its host files away.
-    func ended(machine: RuntimeId, agent: TerminalAgentRecord) async
-    /// DevHub is stopping it: what `ended` must not report as news.
-    func stopping(_ agentId: String, _ stopping: Bool)
+    /// unless DevHub ended it (`byDevHub`), and take its host files away.
+    /// Called exactly once per ending.
+    func ended(machine: RuntimeId, agent: TerminalAgentRecord, byDevHub: Bool) async
 }
 
 /// One Agent's reading this round.
@@ -151,6 +150,16 @@ public final class TerminalAgentWiring: @unchecked Sendable {
     /// has been: capturing a session that does not exist yet would cost every
     /// Agent behind it in the batch its screen.
     private var lastMarkers: [String: String?] = [:]
+    /// The GUI Agents DevHub has stopped, or is stopping, whose stop owns
+    /// their ending: `stopAgent` ends each one's conversation itself.
+    ///
+    /// Kept after the stop returns and until the model has no such Agent,
+    /// because the model learns of the stop only after it returns, on the
+    /// controller's actor: a round in between still finds the Agent in the
+    /// model and its session gone, and must not end it a second time — by
+    /// then the stop has taken its host files, and the round would say that
+    /// DevHub "could not read how it ended".
+    private var stoppedGuiAgents: Set<String> = []
 
     /// `sessions`: the one `AgentSessions` the GUI half launches through too,
     /// so a GUI Agent being launched is not taken for one that ended.
@@ -204,10 +213,15 @@ public final class TerminalAgentWiring: @unchecked Sendable {
     private func stopAgent(_ machine: RuntimeId, _ agentId: String) async throws {
         let agent = model.place(of: agentId)?.agent
         let isGui = agent?.presentation == .gui
-        if isGui { gui?.stopping(agentId, true) }
-        defer { if isGui { gui?.stopping(agentId, false) } }
-        try await sessions.terminate(machine, agentId: agentId)
-        if isGui, let agent { await gui?.ended(machine: machine, agent: agent) }
+        if isGui { _ = lock.withLock { stoppedGuiAgents.insert(agentId) } }
+        do {
+            try await sessions.terminate(machine, agentId: agentId)
+        } catch {
+            // Not stopped: its ending, whenever it comes, is the round's again.
+            if isGui { _ = lock.withLock { stoppedGuiAgents.remove(agentId) } }
+            throw error
+        }
+        if isGui, let agent { await gui?.ended(machine: machine, agent: agent, byDevHub: true) }
     }
 
     /// Stop one Agent. An Agent whose Workspace has gone has no machine to be
@@ -249,6 +263,10 @@ public final class TerminalAgentWiring: @unchecked Sendable {
         // judge an Agent launched in between against a list taken before it
         // existed.
         var asked: [(agent: TerminalAgentRecord, workspace: TerminalAgentWorkspace)] = []
+        let known = Set(model.workspaces().flatMap { $0.agents.map(\.id) })
+        // A stopped Agent the model has let go of has no round left to be
+        // mistaken in.
+        lock.withLock { stoppedGuiAgents.formIntersection(known) }
         for workspace in model.workspaces() where model.machine(of: workspace.id) == machine {
             for agent in workspace.agents where agentId == nil || agent.id == agentId {
                 asked.append((agent, workspace))
@@ -284,7 +302,9 @@ public final class TerminalAgentWiring: @unchecked Sendable {
                 for undelivered in injections.forget(agent.id) {
                     log("[devhub] agent \(agent.id) ended with text never delivered (\(undelivered.state.rawValue)): \(String(undelivered.text.prefix(120)))")
                 }
-                if agent.presentation == .gui { await gui?.ended(machine: machine, agent: agent) }
+                if agent.presentation == .gui && !lock.withLock({ stoppedGuiAgents.contains(agent.id) }) {
+                    await gui?.ended(machine: machine, agent: agent, byDevHub: false)
+                }
                 exited.append(agent.id)
                 continue
             }

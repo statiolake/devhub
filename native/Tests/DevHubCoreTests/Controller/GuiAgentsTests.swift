@@ -277,7 +277,7 @@ final class GuiAgentConversationTests: XCTestCase {
         _ = try await rig.idle()
         try FileManager.default.createDirectory(atPath: rig.directory, withIntermediateDirectories: true)
         rig.link.ending = .exited(code: 1, stderrTail: "  Error: not logged in\n")
-        await rig.wiring.ended(machine: .local, agent: rig.agent)
+        await rig.wiring.ended(machine: .local, agent: rig.agent, byDevHub: false)
         XCTAssertEqual(rig.reports.all, ["The claude of “Claude” exited with code 1: Error: not logged in"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: rig.directory))
         let left = await rig.wiring.registry.get(GUI_AGENT)
@@ -288,16 +288,14 @@ final class GuiAgentConversationTests: XCTestCase {
         let rig = GuiRig()
         _ = try await rig.idle()
         rig.link.ending = .vanished(stderrTail: "")
-        rig.wiring.stopping(GUI_AGENT, true)
-        await rig.wiring.ended(machine: .local, agent: rig.agent)
-        rig.wiring.stopping(GUI_AGENT, false)
+        await rig.wiring.ended(machine: .local, agent: rig.agent, byDevHub: true)
         XCTAssertEqual(rig.reports.all, [])
     }
 
     func testAnEndingThatCannotBeReadIsSaidAsSuch() async throws {
         let rig = GuiRig()
         rig.link.endingFailure = HostLinkFailure(.hostGone, "the files are gone")
-        await rig.wiring.ended(machine: .local, agent: rig.agent)
+        await rig.wiring.ended(machine: .local, agent: rig.agent, byDevHub: false)
         XCTAssertEqual(rig.reports.all, ["DevHub could not read how “Claude” ended: the files are gone"])
     }
 

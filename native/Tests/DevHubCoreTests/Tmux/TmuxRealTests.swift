@@ -1476,6 +1476,25 @@ final class WiringModel: TerminalAgentModel, @unchecked Sendable {
     func remove(agent: String) {
         lock.withLock { held = held.map { TerminalAgentWorkspace(id: $0.id, root: $0.root, agents: $0.agents.filter { $0.id != agent }) } }
     }
+    func add(_ agent: TerminalAgentRecord, to workspaceId: String) {
+        lock.withLock {
+            held = held.map { $0.id == workspaceId ? TerminalAgentWorkspace(id: $0.id, root: $0.root, agents: $0.agents + [agent]) : $0 }
+        }
+    }
+}
+
+/// The GUI half of a round, reduced to which endings it was told of and by whom.
+final class EndingsRecorder: GuiAgentRounds, @unchecked Sendable {
+    private let lock = NSLock()
+    private var said: [String] = []
+    var endings: [String] { lock.withLock { said } }
+    func reading(machine: RuntimeId, agent: TerminalAgentRecord, root: String) async -> TerminalAgentReading {
+        TerminalAgentReading(status: .idle, activity: nil)
+    }
+    func send(agentId: String, text: String) async throws {}
+    func ended(machine: RuntimeId, agent: TerminalAgentRecord, byDevHub: Bool) async {
+        lock.withLock { said.append("\(agent.id) \(byDevHub ? "by DevHub" : "by itself")") }
+    }
 }
 
 /// The terminal half of `wireAgents` against a real tmux: launch, the round
@@ -1484,14 +1503,57 @@ final class TmuxRealWiringTests: RealTmuxCase {
     let workspaceId = "00000000-0000-4000-8000-0000000000e1"
     let agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaae1"
 
-    func wiring(_ test: RealFixture, _ model: WiringModel) -> TerminalAgentWiring {
+    func wiring(_ test: RealFixture, _ model: WiringModel, gui: (any GuiAgentRounds)? = nil) -> TerminalAgentWiring {
         let runtime = test.runtime
         return TerminalAgentWiring(
             runtimeFor: { _ in runtime },
             model: model,
             machineRuntime: { _ in LocalRuntime(environment: { [environment = test.environment] in environment }) },
+            gui: gui,
             log: { _ in }
         )
+    }
+
+    /// A GUI Agent DevHub stopped is ended once, by its stop, and never again
+    /// by a round that runs before the model has heard of the stop — the
+    /// window between the stop returning and the controller removing the
+    /// row, in which the round finds the Agent in the model and its session
+    /// gone. Ended there a second time, it read an ending whose files the
+    /// stop had already taken: "there is no host state at …".
+    func testEndsAGuiAgentDevHubStoppedOnceEvenWhenARoundSeesItGoneBeforeTheModelDoes() async throws {
+        let test = try fixture("wiring-guistop")
+        let profile = TerminalAgentProfile(kind: .codex, command: "/bin/sh", args: ["-c", "exec sleep 30"])
+        let model = WiringModel([TerminalAgentWorkspace(id: workspaceId, root: test.home, agents: [
+            TerminalAgentRecord(id: agentId, displayName: "Codex", profile: profile, presentation: .gui),
+        ])])
+        let gui = EndingsRecorder()
+        let wiring = wiring(test, model, gui: gui)
+        _ = try await test.runtime.ensure(.localScratch)
+        try await wiring.sessions.launch(AgentLaunchSpec(
+            target: AgentTerminalTarget(machine: .local, agentId: agentId, workspaceId: workspaceId, root: test.home),
+            command: AgentSessionCommand(file: "/bin/sh", args: ["-c", "exec sleep 30"], env: [:])))
+        let listed = try await wiring.sessions.list(.local).map(\.agentId)
+        XCTAssertEqual(listed, [agentId])
+
+        let stopped = await wiring.stop(agentId)
+        XCTAssertEqual(stopped, .stopped)
+        XCTAssertEqual(gui.endings, ["\(agentId) by DevHub"])
+        // The model has not heard of the stop yet: the round runs in between.
+        let between = try await wiring.reconcile(machine: .local)
+        XCTAssertEqual(between.exited, [agentId])
+        XCTAssertEqual(gui.endings, ["\(agentId) by DevHub"], "a round ended a GUI Agent its stop had already ended")
+
+        // An Agent whose session ends by itself is still the round's to end.
+        model.remove(agent: agentId)
+        _ = try await wiring.reconcile(machine: .local)
+        let other = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaae4"
+        model.add(TerminalAgentRecord(id: other, displayName: "Codex", profile: profile, presentation: .gui), to: workspaceId)
+        try await wiring.sessions.launch(AgentLaunchSpec(
+            target: AgentTerminalTarget(machine: .local, agentId: other, workspaceId: workspaceId, root: test.home),
+            command: AgentSessionCommand(file: "/bin/sh", args: ["-c", "sleep 0.3"], env: [:])))
+        let ended = try await poll(10) { try await wiring.reconcile(machine: .local).exited == [other] }
+        XCTAssertTrue(ended)
+        XCTAssertEqual(gui.endings, ["\(agentId) by DevHub", "\(other) by itself"])
     }
 
     /// A stand-in CLI that draws a captured idle Claude screen, then waits.

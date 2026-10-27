@@ -109,10 +109,6 @@ public final class GuiAgentWiring: GuiAgentControl, GuiAgentRounds, @unchecked S
     public let bootId = String(UUID().uuidString.lowercased().prefix(8))
     private let options: GuiAgentWiringOptions
     private let lock = NSLock()
-    /// The GUI Agents DevHub is stopping. Their sessions vanish on purpose,
-    /// and a round that sees one gone before the stop has returned must not
-    /// report the ending as news.
-    private var stoppingAgents: Set<String> = []
     /// Each GUI Agent's MCP sign-in, running or run last.
     private var signIns: [String: McpSignInRun] = [:]
 
@@ -461,20 +457,18 @@ public final class GuiAgentWiring: GuiAgentControl, GuiAgentRounds, @unchecked S
             .command(.send(text: text, images: [], origin: .injection))
     }
 
-    public func stopping(_ agentId: String, _ stopping: Bool) {
-        lock.withLock {
-            if stopping { stoppingAgents.insert(agentId) } else { stoppingAgents.remove(agentId) }
-        }
-    }
-
     /// A GUI Agent is over: stop following it, say how it ended unless DevHub
-    /// ended it, and take its host files away.
+    /// ended it (`byDevHub`), and take its host files away.
+    ///
+    /// Called once per ending, by whoever owns it: the stop, for an Agent
+    /// DevHub stopped, and the round otherwise (`TerminalAgentWiring`). A
+    /// second call would read an ending whose files the first already took.
     ///
     /// What is said goes app-wide, because the Agent's row is on its way out
     /// and there is nowhere else to say it. A failure to read the ending, or
     /// to remove the files, is said the same way and does not hold the exit
     /// up: the Agent is gone either way.
-    public func ended(machine: RuntimeId, agent: TerminalAgentRecord) async {
+    public func ended(machine: RuntimeId, agent: TerminalAgentRecord, byDevHub: Bool) async {
         await registry.close(agent.id)
         let run = lock.withLock { signIns.removeValue(forKey: agent.id) }
         run?.cancel()
@@ -487,7 +481,7 @@ public final class GuiAgentWiring: GuiAgentControl, GuiAgentRounds, @unchecked S
             options.report("DevHub could not remove the files of “\(agent.displayName)”: \(failureText(error))")
             return
         }
-        if !lock.withLock({ stoppingAgents.contains(agent.id) }) {
+        if !byDevHub {
             do {
                 let ending = try await options.link(runtime, directory).ending()
                 if let sentence = Self.endingSentence(name: agent.displayName, kind: agent.profile.kind.rawValue, ending: ending) {
