@@ -33,6 +33,7 @@ private final class Harness {
                 self.onClose(id)
             },
             restart: { [unowned self] id in self.restarted.append(id) },
+            log: nil,
             now: { [unowned self] in self.now },
             setTimer: { [unowned self] ms, work in
                 XCTAssertEqual(ms, EditorTerminalExits.settlePollMs)

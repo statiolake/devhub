@@ -56,7 +56,16 @@ final class ShellController {
     /// Terminal mode: what the editor area's shell exiting does — the
     /// Workspace's close button, else its terminal started over
     /// (`editorTerminalExits.ts`).
-    private(set) lazy var editorTerminalExits = EditorTerminalExits(EditorTerminalExitsOptions(
+    private var madeEditorTerminalExits: EditorTerminalExits?
+    var editorTerminalExits: EditorTerminalExits {
+        if let made = madeEditorTerminalExits { return made }
+        let made = makeEditorTerminalExits()
+        madeEditorTerminalExits = made
+        return made
+    }
+
+    private func makeEditorTerminalExits() -> EditorTerminalExits {
+        EditorTerminalExits(EditorTerminalExitsOptions(
         standing: { [weak self] id in
             guard let controller = self?.controller else { return .gone }
             return await controller.closeStanding(id)
@@ -75,7 +84,8 @@ final class ShellController {
         },
         close: { [weak self] id in self?.requestCloseWorkspace(id) },
         restart: { [weak self] id in self?.window.restartEditorTerminal(id) },
-        log: { line in MainLog.shared.warn(line) }))
+        log: { line in MainLog.shared.warn(line) }, now: nil, setTimer: nil))
+    }
 
     init(
         titleBar: TitleBarMode, appearance: AppearanceController, transport: TerminalAttachTransport,

@@ -40,6 +40,9 @@ public enum WorkspaceCloseStanding: Equatable, Sendable {
     case open
 }
 
+/// What `EditorTerminalExits` asks and does. `log`, `now` and `setTimer`
+/// are nil for the real ones (no default arguments: a main-actor closure as
+/// one is refused where the caller is isolated).
 public struct EditorTerminalExitsOptions {
     public var standing: @MainActor (String) async -> WorkspaceCloseStanding
     /// Whether a close can be asked for at all (Scratch: never).
@@ -64,9 +67,9 @@ public struct EditorTerminalExitsOptions {
         sessionAlive: @escaping @MainActor (String) async throws -> Bool,
         close: @escaping @MainActor (String) -> Void,
         restart: @escaping @MainActor (String) -> Void,
-        log: (@MainActor (String) -> Void)? = nil,
-        now: (@MainActor () -> Double)? = nil,
-        setTimer: (@MainActor (_ ms: Double, _ work: @escaping @MainActor () async -> Void) -> (@MainActor () -> Void))? = nil
+        log: (@MainActor (String) -> Void)?,
+        now: (@MainActor () -> Double)?,
+        setTimer: (@MainActor (_ ms: Double, _ work: @escaping @MainActor () async -> Void) -> (@MainActor () -> Void))?
     ) {
         self.standing = standing
         self.closable = closable
