@@ -78,12 +78,7 @@ final class ConversationPaneView: NSView, HostedConversation {
     private var state = EntryDocumentState()
     private var rewindTargets: Set<EntryId> = []
     private var turnsEnded = 0
-    private lazy var pathLinks = PathLinks(resolve: { [weak self] cwd, paths in
-        guard let self, let transport = self.link.transport else { return paths.map { _ in nil } }
-        return try await transport.resolvePaths(self.agentId, cwd: cwd, paths)
-    }, reportFailure: { [weak self] error in self?.reportError(error) }, schedule: { work in
-        DispatchQueue.main.async { MainActor.assumeIsolated { work() } }
-    })
+    private var pathLinks: PathLinks!
     /// Counts what the path links learnt, so the sections drawn with the old knowledge are drawn again.
     private var pathRevision = 0
     /// When the running turn began, for the activity line's clock.
@@ -136,6 +131,10 @@ final class ConversationPaneView: NSView, HostedConversation {
         setAccessibilityRole(.group)
         setAccessibilityLabel(label)
         registerForDraggedTypes([.fileURL, .png, .tiff])
+        pathLinks = PathLinks(resolve: { [weak self] cwd, paths in
+            guard let self, let transport = self.link.transport else { return paths.map { _ in nil } }
+            return try await transport.resolvePaths(self.agentId, cwd: cwd, paths)
+        }, reportFailure: { [weak self] error in self?.reportError(error) })
         unsubscribePaths = pathLinks.subscribe { [weak self] in
             self?.pathRevision += 1
             self?.redraw()
