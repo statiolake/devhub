@@ -19,8 +19,9 @@
  */
 
 import { diagramKindOf } from "./diagramSvg";
+import { isPatch } from "./patch";
 
-export type PreviewKindId = "marp" | "markdown" | "mermaid" | "svg";
+export type PreviewKindId = "diff" | "marp" | "markdown" | "mermaid" | "svg";
 
 export interface PreviewKind {
   readonly id: PreviewKindId;
@@ -80,6 +81,14 @@ export const PREVIEW_KINDS: readonly PreviewKind[] = [
     extensions: [".mmd", ".mermaid"],
     accepts: hasText,
     showLabel: "Show diagram",
+    defaultView: "preview",
+  },
+  {
+    id: "diff",
+    languages: ["diff", "patch"],
+    extensions: [".diff", ".patch"],
+    accepts: isPatch,
+    showLabel: "Show changes",
     defaultView: "preview",
   },
   {

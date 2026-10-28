@@ -14,9 +14,16 @@
 import { memo, useState, type ComponentType, type ReactNode } from "react";
 import { CodeBlock } from "./CodeBlock";
 import { Diagram } from "./Diagram";
+import { DiffPreview } from "./DiffPreview";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { MarpPreview } from "./MarpPreview";
-import { CodeIcon, DiagramIcon, DocumentIcon, SlidesIcon } from "./icons";
+import {
+  CodeIcon,
+  DiagramIcon,
+  DiffIcon,
+  DocumentIcon,
+  SlidesIcon,
+} from "./icons";
 import type { PreviewKind, PreviewKindId } from "./previewKinds";
 
 export interface PreviewProps {
@@ -37,6 +44,7 @@ const PREVIEWS: Record<PreviewKindId, ComponentType<PreviewProps>> = {
   mermaid: Diagram,
   markdown: MarkdownPreview,
   marp: MarpPreview,
+  diff: DiffPreview,
 };
 
 const ICONS: Record<PreviewKindId, () => ReactNode> = {
@@ -44,6 +52,7 @@ const ICONS: Record<PreviewKindId, () => ReactNode> = {
   mermaid: DiagramIcon,
   markdown: DocumentIcon,
   marp: SlidesIcon,
+  diff: DiffIcon,
 };
 
 export const FencePreview = memo(function FencePreview({

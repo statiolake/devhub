@@ -946,6 +946,7 @@ the same picture (the same slide).
 | ` ```mermaid ` | a Mermaid diagram |
 | ` ```marp `, or ` ```markdown ` / ` ```md ` with `marp: true` | slides |
 | ` ```markdown `, ` ```md ` | the Markdown, rendered |
+| ` ```diff `, ` ```patch ` | the change, file by file |
 
 ### Markdown
 
@@ -998,6 +999,21 @@ checked to be PNGs by main, and written as the name chosen for one slide or
 `<name>-01.png`, `<name>-02.png`… beside it for several.
 
 **Loading.** Marp Core is its own chunk, loaded by the first deck.
+
+### Diffs
+
+A ` ```diff ` or ` ```patch ` block with a change in it (a hunk, a
+`---`/`+++` pair or a `diff --git` line) is drawn as the change
+(`patch.ts`, `DiffPreview.tsx`), from the same rows as a tool call's diff
+(`diffRows`): each file under a header naming it — _added_, _deleted_, or
+_old → new_ for a rename — its lines numbered as the hunks say, removed on
+red and added on green, in the colours of the file's language where DevHub
+colours it (each side of a file is coloured as one text, the file before and
+after, so a line is coloured in its context). `git diff`, `diff -u` and bare
+hunks are read; words before the first file are left out of the drawing. A
+toggle in the header shows the lines inline or side by side (old left, new
+right, each run of removed lines beside the added run that follows it); the
+copy and the right-click (_Copy Patch_) copy the patch.
 
 ### Diagrams
 

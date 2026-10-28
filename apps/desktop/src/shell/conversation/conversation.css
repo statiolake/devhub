@@ -1549,6 +1549,68 @@
   color: var(--secondary);
 }
 
+/* A ```diff block, drawn: the tool diffs' rows, coloured as the file's
+   language, inline or side by side. */
+.conversation-diff-preview .conversation-diff-file + .conversation-diff-file {
+  border-top: 1px solid var(--line-soft);
+}
+
+.conversation-diff-preview .conversation-diff-path {
+  background: var(--wash);
+}
+
+.conversation-diff-from {
+  color: var(--tertiary);
+}
+
+.conversation-diff-status {
+  margin-left: var(--space-2);
+  padding: 0 0.5em;
+  border-radius: var(--radius-pill);
+  background: var(--sunken);
+  color: var(--secondary);
+  font-size: 0.9em;
+}
+
+.conversation-diff-status[data-status="added"] {
+  color: var(--status-idle);
+}
+
+.conversation-diff-status[data-status="deleted"] {
+  color: var(--danger);
+}
+
+.conversation-diff-binary {
+  padding: var(--space-2) var(--space-3);
+  color: var(--secondary);
+  font-size: 0.85em;
+}
+
+.conversation-diff-text span[style] {
+  color: light-dark(var(--code-light), var(--code-dark));
+}
+
+.conversation-diff-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.conversation-diff-pair > .conversation-diff-line {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.conversation-diff-pair > .conversation-diff-line + .conversation-diff-line {
+  border-left: 1px solid var(--line-soft);
+}
+
+.conversation-diff-lines[data-split] > [data-line="hunk"] {
+  padding-left: var(--space-3);
+}
+
+.conversation-diff-line[data-line="empty"] {
+  background: color-mix(in srgb, var(--sunken) 60%, transparent);
+}
+
 /* A call's readable view, under its row: its diff, plan or images. */
 .conversation-readable {
   margin: var(--space-1) 0 var(--space-2);

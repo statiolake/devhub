@@ -217,3 +217,22 @@ export function DownloadIcon() {
     </Icon>
   );
 }
+
+/** A diff's "Show inline": its lines one under another. */
+export function RowsIcon() {
+  return (
+    <Icon>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M2 8h12" />
+    </Icon>
+  );
+}
+
+/** A diff's source's "Show changes": a line taken out, a line put in. */
+export function DiffIcon() {
+  return (
+    <Icon>
+      <path d="M8 2.5v5M5.5 5h5M5.5 12h5" />
+    </Icon>
+  );
+}
