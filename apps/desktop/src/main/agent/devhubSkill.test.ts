@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { FILE_LINK_INSTRUCTIONS } from "./conversation/linkInstructions.js";
+import { GUI_AGENT_INSTRUCTIONS } from "./conversation/linkInstructions.js";
 import {
 	codexDevhubInstructions,
 	codexGuiInstructions,
@@ -92,9 +92,9 @@ describe("the /devhub skill", () => {
 
 	it("tells a Codex GUI Agent how to link files, with the skill's pointer or without it", () => {
 		expect(codexGuiInstructions(skill)).toBe(
-			`${codexDevhubInstructions(skill)}\n\n${FILE_LINK_INSTRUCTIONS}`,
+			`${codexDevhubInstructions(skill)}\n\n${GUI_AGENT_INSTRUCTIONS}`,
 		);
-		expect(codexGuiInstructions(undefined)).toBe(FILE_LINK_INSTRUCTIONS);
+		expect(codexGuiInstructions(undefined)).toBe(GUI_AGENT_INSTRUCTIONS);
 	});
 
 	it("writes the skill and an executable launcher", () => {

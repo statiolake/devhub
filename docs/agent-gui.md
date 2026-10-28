@@ -562,7 +562,8 @@ nothing. Esc and Ctrl+C stop a running turn from anywhere in the pane.
 **Reading and copying.** The transcript is text: you can drag-select any of
 it — answers, code, tool output, a subagent's work — and copy it with Cmd+C.
 Every message also has a quiet Copy action under it, always shown, and every
-code block has one in its header.
+code block has one in its header (a diagram's copies its picture; see
+"Diagrams").
 
 **Settings in the composer.** Model, Effort and Permissions sit under the
 message box at the same size as what you type. A value the CLI has not named
@@ -831,6 +832,7 @@ local path (`FILE_LINK_INSTRUCTIONS` in
 > brackets: [my file.ts](<docs/my file.ts#L3>). Never link a GitHub or other
 > remote URL for a file that is on this machine.
 
+The diagram instruction (below, "Diagrams") follows it in the same text.
 Claude gets it as `--append-system-prompt`, after the profile's own: Claude
 keeps only the last `--append-system-prompt`, so one in the profile's
 arguments is folded into DevHub's, its text first
@@ -907,6 +909,62 @@ asked about instead.
 only when DevHub already has it — the Workspace's own Issue and pull request,
 from the Sidebar's status — and the URL otherwise. A browser that could not
 be opened is said the way every other failure on the Agents page is.
+
+## Diagrams
+
+A closed ` ```mermaid ` block in an answer is drawn as a diagram, and a
+` ```svg ` block — or a ` ```xml ` block whose whole content is one `<svg>` —
+as the picture it is (`shell/conversation/Diagram.tsx`). A block still being
+written is code like any other fence, and becomes a picture once its fence
+closes; while Mermaid is loading or drawing, the block is its code.
+
+**Safe by construction.** What an Agent writes is not trusted, and neither is
+what Mermaid makes of it. Both are drawn as an `<img>` of a `data:` URL, never
+as markup in the page: an SVG loaded as an image runs no script, fires no
+handler and fetches nothing. The markup is also sanitized first
+(`diagram.ts`), because the same markup is what "Copy SVG" puts on the
+clipboard: an allow-list of SVG elements; no scripts, event handlers,
+animation, embedded documents or `foreignObject` (Mermaid's own labels
+excepted, with text-level HTML only); no `href` but a `#fragment` or an inline
+raster `data:` image; no `url()` or `@import` that leaves the picture.
+Mermaid runs with `securityLevel: "strict"` and SVG text labels.
+
+**Large or invalid.** A Mermaid source over 20,000 characters, an SVG over
+512 KB, or anything that does not parse is drawn as its code with one quiet
+line under it — _Diagram not drawn: Parse error on line 3: …_ — the way an
+unparsable formula is drawn as its source. It never breaks the transcript.
+
+**Colours.** Mermaid draws with its `base` theme in DevHub's tokens
+(`--surface`, `--primary`, `--accent`, the lines and washes;
+`diagramTheme.ts`), which follow the Workbench's colour theme, and every
+diagram is drawn again when the theme or the system appearance changes. An
+SVG's `currentColor` is the theme's ink.
+
+**Source, copy, menu.** The header is a code block's, icon-only with
+tooltips: a toggle between the picture and its source (_Show source_ /
+_Show diagram_), and a copy. On the picture the copy puts it on the
+clipboard as a PNG — rasterised at twice its size (or the screen's pixel
+ratio, if higher) on the theme's background with a margin, and written by
+main (`writeClipboardImage`, `clipboard.writeImage`), since the page's own
+clipboard needs the focus; on the source it copies the code. A right-click
+on the picture opens a native menu (the Sidebar's mechanism,
+`main/shell/contextMenu.ts`): _Copy Image_ (PNG), _Copy SVG_ (the sanitized
+markup, as text) and _Copy Source_. The SVG goes as text only: Electron's
+clipboard cannot write a custom `image/svg+xml` flavour beside text.
+
+**Loading.** Mermaid is not in the page until the first diagram asks for
+it: it and each diagram type are chunks of their own, so the Agents page
+starts as before.
+
+**Agents are told.** With the file-link instruction, every GUI Agent is told
+(`DIAGRAM_INSTRUCTIONS` in `main/agent/conversation/linkInstructions.ts`):
+
+> Diagrams: DevHub draws a ` ```mermaid ` fenced block as a diagram and a ` ```svg `
+> block (one self-contained <svg>, no scripts or external resources;
+> currentColor follows the theme) as an image. Use one when a picture explains
+> better than prose (architecture, data flow, a sequence of calls, a state
+> machine), keep it small and focused, and do not draw one where a sentence or
+> a list will do.
 
 ## Messages that wait, and sending one into a turn
 

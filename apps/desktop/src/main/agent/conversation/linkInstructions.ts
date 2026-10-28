@@ -31,3 +31,26 @@ export const FILE_LINK_INSTRUCTIONS = [
 	"Put a target that contains spaces in angle brackets: [my file.ts](<docs/my file.ts#L3>).",
 	"Never link a GitHub or other remote URL for a file that is on this machine.",
 ].join(" ");
+
+/**
+ * What every GUI Agent is told about diagrams: the transcript draws a closed
+ * ```mermaid block as a diagram and a ```svg block as an image
+ * (`shell/conversation/Diagram.tsx`), each with its source a click away. An
+ * SVG is drawn as an image, so a script or an external reference in it would
+ * do nothing; it is asked to be self-contained so that it draws at all.
+ */
+export const DIAGRAM_INSTRUCTIONS = [
+	"Diagrams: DevHub draws a ```mermaid fenced block as a diagram and a ```svg block (one self-contained <svg>, no scripts or external resources; currentColor follows the theme) as an image.",
+	"Use one when a picture explains better than prose (architecture, data flow, a sequence of calls, a state machine), keep it small and focused, and do not draw one where a sentence or a list will do.",
+].join(" ");
+
+/**
+ * Everything DevHub appends to a GUI Agent's instructions, in this order:
+ * Claude's `--append-system-prompt` and Codex's `developerInstructions`.
+ * One line: it is a command-line argument, and an Agent host is handed its
+ * CLI's arguments one per line (`hostLink.ts`).
+ */
+export const GUI_AGENT_INSTRUCTIONS = [
+	FILE_LINK_INSTRUCTIONS,
+	DIAGRAM_INSTRUCTIONS,
+].join(" ");

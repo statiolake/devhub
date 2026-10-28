@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { claudeStructuredCommand } from "./argv.js";
-import { FILE_LINK_INSTRUCTIONS } from "../linkInstructions.js";
+import { GUI_AGENT_INSTRUCTIONS } from "../linkInstructions.js";
 
 describe("the structured command line", () => {
 	const profile = {
@@ -27,7 +27,7 @@ describe("the structured command line", () => {
 				"--permission-prompt-tool",
 				"stdio",
 				"--append-system-prompt",
-				FILE_LINK_INSTRUCTIONS,
+				GUI_AGENT_INSTRUCTIONS,
 			],
 			env: { EXAMPLE: "1" },
 		});
@@ -56,7 +56,7 @@ describe("the structured command line", () => {
 				out.filter((arg) => arg.startsWith("--append-system-prompt")),
 			).toEqual(["--append-system-prompt"]);
 			expect(out.slice(0, 2)).toEqual(["--model", "opus"]);
-			expect(out.at(-1)).toBe(`Be terse.\n\n${FILE_LINK_INSTRUCTIONS}`);
+			expect(out.at(-1)).toBe(`Be terse.\n\n${GUI_AGENT_INSTRUCTIONS}`);
 		}
 	});
 
@@ -69,6 +69,6 @@ describe("the structured command line", () => {
 			"--append-system-prompt-file",
 			"/notes.md",
 		]);
-		expect(out.at(-1)).toBe(FILE_LINK_INSTRUCTIONS);
+		expect(out.at(-1)).toBe(GUI_AGENT_INSTRUCTIONS);
 	});
 });

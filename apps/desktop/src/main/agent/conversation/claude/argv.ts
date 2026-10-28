@@ -7,7 +7,7 @@
  * `--bare` is never added: it reads an API key only, and a GUI Agent runs on
  * the owner's own sign-in exactly as the TUI does.
  *
- * Last comes DevHub's `--append-system-prompt` (`FILE_LINK_INSTRUCTIONS`).
+ * Last comes DevHub's `--append-system-prompt` (`GUI_AGENT_INSTRUCTIONS`).
  * Claude keeps only the last `--append-system-prompt` it is given, so one the
  * profile already passes is taken out and its text put first in DevHub's: the
  * person's words are kept, and DevHub's follow them. An
@@ -15,7 +15,7 @@
  */
 
 import type { AgentSessionCommand } from "../../../terminal/ports.js";
-import { FILE_LINK_INSTRUCTIONS } from "../linkInstructions.js";
+import { GUI_AGENT_INSTRUCTIONS } from "../linkInstructions.js";
 
 export const CLAUDE_STRUCTURED_FLAGS: readonly string[] = [
 	"-p",
@@ -41,7 +41,7 @@ export function claudeStructuredCommand(
 			...args,
 			...CLAUDE_STRUCTURED_FLAGS,
 			APPEND_SYSTEM_PROMPT,
-			[...appended, FILE_LINK_INSTRUCTIONS].join("\n\n"),
+			[...appended, GUI_AGENT_INSTRUCTIONS].join("\n\n"),
 		],
 	};
 }

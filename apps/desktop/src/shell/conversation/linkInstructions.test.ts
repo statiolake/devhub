@@ -1,7 +1,12 @@
 import { defaultUrlTransform } from "react-markdown";
 import { describe, expect, it } from "vitest";
 import { pathOfHref } from "./textLinks";
-import { FILE_LINK_INSTRUCTIONS } from "../../main/agent/conversation/linkInstructions";
+import {
+  DIAGRAM_INSTRUCTIONS,
+  FILE_LINK_INSTRUCTIONS,
+  GUI_AGENT_INSTRUCTIONS,
+} from "../../main/agent/conversation/linkInstructions";
+import { diagramKindOf } from "./diagram";
 
 /** The `[text](target)` links the instructions give as examples, as Markdown reads their targets. */
 function exampleTargets(text: string): readonly string[] {
@@ -41,5 +46,31 @@ describe("what GUI Agents are told about file links", () => {
     expect(FILE_LINK_INSTRUCTIONS).toContain(
       "relative to your working directory",
     );
+  });
+});
+
+describe("what GUI Agents are told about diagrams", () => {
+  it("names the two fences the transcript draws, and they are drawn", () => {
+    expect(DIAGRAM_INSTRUCTIONS).toContain("```mermaid");
+    expect(DIAGRAM_INSTRUCTIONS).toContain("```svg");
+    expect(diagramKindOf("mermaid", "graph TD")).toBe("mermaid");
+    expect(
+      diagramKindOf("svg", '<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
+    ).toBe("svg");
+  });
+
+  it("asks for small, self-contained pictures, and only where they help", () => {
+    expect(DIAGRAM_INSTRUCTIONS).toMatch(/no scripts or external resources/);
+    expect(DIAGRAM_INSTRUCTIONS).toMatch(/keep it small/);
+    expect(DIAGRAM_INSTRUCTIONS).toMatch(/architecture/);
+    // Concise: it is sent with every start and every resume.
+    expect(DIAGRAM_INSTRUCTIONS.length).toBeLessThan(500);
+  });
+
+  it("is sent after the file links, on one line", () => {
+    expect(GUI_AGENT_INSTRUCTIONS).toBe(
+      `${FILE_LINK_INSTRUCTIONS} ${DIAGRAM_INSTRUCTIONS}`,
+    );
+    expect(GUI_AGENT_INSTRUCTIONS).not.toContain("\n");
   });
 });

@@ -22,7 +22,8 @@
  *   adds a skills directory, and its own skill roots are the person's.
  *
  * GUI Agents are also told to write the files they mention as Markdown links
- * to the local path (`FILE_LINK_INSTRUCTIONS`, `conversation/linkInstructions.ts`):
+ * to the local path, and that ```mermaid and ```svg blocks are drawn
+ * (`GUI_AGENT_INSTRUCTIONS`, `conversation/linkInstructions.ts`):
  * Claude by `--append-system-prompt` (`conversation/claude/argv.ts`), Codex in
  * the same `developerInstructions` (`codexGuiInstructions`). Terminal Agents
  * are not: their screen draws no Markdown.
@@ -38,7 +39,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProfile } from "../../model/domain.js";
-import { FILE_LINK_INSTRUCTIONS } from "./conversation/linkInstructions.js";
+import { GUI_AGENT_INSTRUCTIONS } from "./conversation/linkInstructions.js";
 
 export interface DevhubSkill {
 	/** The directory handed to Claude's `--add-dir`. */
@@ -101,7 +102,7 @@ export function codexDevhubInstructions(skill: DevhubSkill): string {
 export function codexGuiInstructions(skill: DevhubSkill | undefined): string {
 	return [
 		...(skill === undefined ? [] : [codexDevhubInstructions(skill)]),
-		FILE_LINK_INSTRUCTIONS,
+		GUI_AGENT_INSTRUCTIONS,
 	].join("\n\n");
 }
 
