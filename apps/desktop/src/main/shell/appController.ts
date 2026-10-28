@@ -534,6 +534,7 @@ import {
 	TERMINAL_MODE_NO_SSH,
 } from "./workbenchMode.js";
 import { EditorTerminalExits } from "./editorTerminalExits.js";
+import { listenForCloseRequests } from "./workbenchCloseRequests.js";
 import { WORKSPACE_TERMINAL_SURFACE_PREFIX } from "../../ipc/terminal.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
@@ -8861,6 +8862,28 @@ export class AppController {
 			// because what happens next may be a question on the modal layer, and
 			// the projection is what says how it ended.
 			this.closeWorkspaceOrWorktree(workspaceId);
+		});
+		// The editor's Vim quitting (`:q` in its last window, `:qa`): the same
+		// close button, asked for by the workbench itself. See
+		// `workbenchCloseRequests.ts`.
+		listenForCloseRequests<Electron.WebContents>(electron.ipcMain, {
+			workspaceOf: (contents) => {
+				const shell = shellWindow();
+				const view = shell.getViewByContents(contents);
+				const key = view === undefined ? undefined : shell.editorKeyOf(view);
+				const workspace =
+					key === undefined ? undefined : this.workspaceForEditorKey(key);
+				if (workspace === undefined) return undefined;
+				return {
+					id: workspace.id,
+					scratch: workspace.id === this.coordinator.model.scratchWorkspaceId,
+					closing: this.coordinator.closeUnderway(workspace.id),
+				};
+			},
+			close: (workspaceId) => {
+				this.personStartedAction();
+				this.closeWorkspaceOrWorktree(workspaceId);
+			},
 		});
 		// The answer to the three-way worktree question main asked. The page
 		// says which of the two answers it was told; `--force` is main's, and

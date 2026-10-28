@@ -229,7 +229,9 @@ every selected line, Neovim `v_@-default`).
 (move between parts), `w W p t b` (editor groups; see
 [Windows](#windows) for `w W p` and comment widgets), `s v n` (split above /
 left, as 'nosplitbelow' 'nosplitright'; `n` with a new file), `c` (close the
-group), `q` (close the editor), `o` (only this group), `=` (equal sizes), `_ |`
+window: the group, never the last one), `q` (quit the window: the group, and
+with the last one the Workspace; see [Closing a window and
+quitting](#closing-a-window-and-quitting)), `o` (only this group), `=` (equal sizes), `_ |`
 (maximise), `+ - < >` (resize), `H J K L` (move the group), `T` (move the
 editor to a new [tab page](#tab-pages)), `d` (the
 diagnostic at the cursor, Neovim `CTRL-W_d-default`), `]` / `}` (definition in
@@ -288,6 +290,68 @@ notifications are not windows: going there and back is no window change.
   (or when it has gone) it is the previous editor group.
 * A comment widget: see [Comment widgets](#comment-widgets).
 
+#### Closing a window and quitting
+
+`:q` closes the **window** — an editor group — not the buffer (VS Code's
+editor tab): that is `:bd`. As in Vim, quitting the last window is quitting
+Vim, which in DevHub is closing the Workspace.
+
+| Command | Does |
+| --- | --- |
+| `:q[uit]` `CTRL-W q` `CTRL-W CTRL-Q` | close the current window (editor group); its buffers become hidden (below). The last window of a tab page closes the tab page when there are others; the last window of the last tab page closes the Workspace |
+| `:wq` `:x[it]` `:exi[t]` `ZZ` | write (`:x` `ZZ`: when modified), then as `:q` |
+| `:q!` `ZQ` | as `:q`, but the window's current editor drops its changes first, unless another window of the tab page shows it (Vim's `:q!` unloads the current buffer); its other editors keep theirs, hidden |
+| `:clo[se][!]` `CTRL-W c` | as `:q`, but never the last window: in the last one of the last tab page, `E444: Cannot close last window` |
+| `:qa[ll]` `:quita[ll]` | close the Workspace |
+| `:qa!` | drop every unsaved change in the workbench, then close the Workspace |
+| `:wqa[ll]` `:xa[ll]` | write all (Save All), then close the Workspace |
+| `:bd[elete][!]` `:bw[ipeout][!]` | close the buffer: VS Code's Close Editor (`!`: Revert and Close), asking about a modified one as VS Code does |
+| `:tabc[lose]` | close the tab page ([Tab pages](#tab-pages)) |
+
+**Hidden buffers.** Neovim's default `'hidden'` lets a window close over a
+modified buffer: the buffer stays loaded and listed, only no window shows it.
+DevHub does the same with VS Code's editors: closing a window moves every one
+of its editors, inactive, into the window the focus goes to (VS Code's most
+recently active other group, Vim's previous window), and the editor that
+window shows stays the one it showed. Nothing is closed, so nothing asks and
+nothing is lost: a modified editor keeps its changes, and every editor is
+still listed — `:ls`, `:b {name}`, `:bn` and the editor tabs reach it — as a
+hidden buffer is. An editor the other window already has is only taken out
+of the closed one. (Closing the editors instead would drop the unmodified
+ones from the list, which Vim never does, and ask about the modified ones,
+which Vim with `'hidden'` never does; VS Code's own Close Group would make
+the closed group's editor the other window's current one, which would then
+show this window's buffer.) An empty window (an empty editor group, Vim's
+empty buffer) just closes.
+
+**Quitting is closing the Workspace.** `:q` in the last window of the last
+tab page, `:qa`, `:wqa` and `:xa` ask DevHub to press the Workspace's close
+button — the same close path as the button, the menu's Close Workspace and
+terminal mode's shell `exit` in the editor area
+([terminal mode](terminal-mode.md)): a Workspace with nothing to lose closes;
+one with something to lose (unsaved editors — in any tab page, hidden ones
+too —, a busy Agent, a dirty worktree) raises the close's confirmation sheet,
+which is DevHub's answer to Vim's `E37` / `E162`, and cancelling it leaves
+everything as it was. **Scratch** is never closed (terminal mode starts its
+shell over instead): there quitting is Vim's `E444: Cannot close last window:
+Scratch is never closed`, and nothing is discarded, `:qa!` included — the
+workbench asks main first whether the Workspace can close at all, and drops
+changes only once it can. A workbench with no DevHub to ask says `E444`.
+The request is the workbench's `vscode:devhubCloseWorkspace`
+(`devhubVim/electron-browser/vimQuit.contribution.ts`, the command
+`devhubVim.closeWorkspace { discard?: "all" | "active" }`), answered in main by
+`apps/desktop/src/main/shell/workbenchCloseRequests.ts`.
+
+How it differs from Neovim: a hidden buffer is a VS Code editor in another
+group's tabs, not out of sight; `:q!` in the last window of the last tab page
+with another modified buffer does not make that one current (Vim's `E37`
+behaviour) — the close's sheet asks about it; `:qa!` drops the changes before
+the close's sheet, so a close then cancelled over a busy Agent has still
+dropped them (as Vim's `:qa!` would have); `:q` in a comment widget closes the
+widget ([Comment widgets](#comment-widgets)). Your own bindings may still run
+VS Code's Close Editor; `devhubVim.tabpage.closeIfEmpty` after it closes a
+tab page left with no editor.
+
 ### Comment widgets
 
 A comment thread's widget is a Neovim floating window over its editor
@@ -330,7 +394,8 @@ file's, and `:q` closed the file).
 With nothing but blanks typed, `:w` `:wq` `:x` submit nothing and say
 `Empty comment: nothing to submit` (and `:wq` does not close), as a write that
 fails. `:w {file}` writes the comment's lines to the file, as in any buffer;
-`:wa` `:xa` `:qa` are the workbench's (the files), not the comment.
+`:wa` `:xa` `:qa` are the workbench's (the files, and closing the Workspace),
+not the comment.
 
 How it differs from Neovim's floats: `CTRL-W w` from a float goes back to its
 editor (and from any window outside the editor groups to the active group),
@@ -368,11 +433,12 @@ copy).
 | | `:tabm[ove] [N \| +N \| -N \| $]` | move the current tab page after page N (`0`: first; none or `$`: last), or N places right / left |
 | | `:tabs` | the tab pages and their windows, in a quick pick; picking one goes there |
 | `CTRL-W T` | | move the current editor (window) to a new tab page (not when it is the only editor of the page) |
-| `:q` `:close` `ZZ` `ZQ` `CTRL-W q` `CTRL-W c` | | closing the last window of a tab page also closes the tab page (when there is another one) |
+| `CTRL-W q` `ZZ` `ZQ` `CTRL-W c` | `:q` `:wq` `:x` `:q!` `:close` | closing the last window of a tab page also closes the tab page (when there is another one; its modified editors go along into the page you land in); in the last tab page `:q` closes the Workspace and `:close` says `E444` ([Closing a window and quitting](#closing-a-window-and-quitting)) |
 
 The commands are `devhubVim.tabpage.new { file? }` (without a file: with an empty untitled editor) `.next { count, arg }` `.previous
 { count }` `.first` `.last` `.goto { index }` (1 is the first) `.close
-{ count, arg }` `.only` `.move { arg }` `.moveEditorToNew` `.closeIfEmpty`
+{ count, arg }` `.only` `.move { arg }` `.moveEditorToNew` `.quitWindow`
+`.quitWindowDiscard` `.closeWindow` `.closeIfEmpty`
 `.list`; `gt` / `gT` are `devhubVim.run` of `.next` / `.previous` with
 `"count": "${rawCount}"` / `"${count}"`, keybindings like every other key, and
 the ones without arguments are in the Command Palette (`Vim: Next Tab Page`
@@ -400,7 +466,10 @@ not modifiable (Neovim's `'nomodifiable'`): motions, operators and other
 commands that need text do nothing, and `i` `a` `o` … do not enter insert
 mode. It is one buffer, DevHub's `VimEmptyBuffer`: it has no file (`%` is
 empty, `:w` has no name), and its registers, history and macros are the
-editors' own. CTRL-W `c` / `q` there close the tab page (its last window). If
+editors' own. `:q`, CTRL-W `c` / `q` there close the window (the empty
+group); in the last window of a tab page they close the tab page, and in the
+last one of the last tab page `:q` closes the Workspace ([Closing a window
+and quitting](#closing-a-window-and-quitting)). If
 the group is not focused (after a click in the side bar, say), click into it
 or use `CTRL-W h j k l`.
 
@@ -464,9 +533,8 @@ Not like Vim: a modified editor follows you (above) rather than staying hidden;
 `CTRL-W T` on a modified editor leaves it in the old page's layout too (closing
 it there would ask); `:tabnew` and `:tabc` take no `[N]` position (`:0tabnew`,
 `:.tabnew`), `:tab {cmd}`, `:tabdo`, `:tabf[ind]`, `CTRL-W gt` / `gT`,
-`'showtabline'` other than 1 and `'tabline'` do not exist; `:qa` closes the
-editors of the current tab page only; a tab page's working set does not hold
-the panel or the side bars.
+`'showtabline'` other than 1 and `'tabline'` do not exist; a tab page's
+working set does not hold the panel or the side bars.
 
 ## vim-surround
 
@@ -1294,8 +1362,10 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 | `:js {code}` `:js ={expr}` `:[range]jsd[o] {body}` | see [JavaScript](#javascript-js-and-jsdo) |
 
 VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]` (Save)
-`:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]` (in a
-comment input: [Comment widgets](#comment-widgets))
+`:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]` (the
+window, and with the last one the Workspace: [Closing a window and
+quitting](#closing-a-window-and-quitting); in a comment input: [Comment
+widgets](#comment-widgets))
 `:xa[ll]` `:sp[lit] [file]` `:vs[plit] [file]` `:new [file]` `:vne[w] [file]`
 `:e[dit][!] [file]` `:ene[w]` `:tabnew [file]` `:tabe[dit] [file]` (see
 [File names](#file-names)) `:tabn[ext]` `:tabp[revious]`

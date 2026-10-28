@@ -85,6 +85,10 @@ shutting down, and a terminal that keeps ending as soon as it starts is
 started over at most three times in thirty seconds, then left with the
 surface's own Retry.
 
+In VS Code mode the editor's Vim does the same with its last window: `:q`
+there, and `:qa` `:wqa` `:xa`, press the same close button
+(`main/shell/workbenchCloseRequests.ts`; see [Vim](vim.md#closing-a-window-and-quitting)).
+
 ## Local only
 
 Terminal mode serves folders on this Mac and nothing else: an Agent that needs

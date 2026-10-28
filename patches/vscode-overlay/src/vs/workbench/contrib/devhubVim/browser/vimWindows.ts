@@ -46,6 +46,7 @@ import { CommentController } from '../../comments/browser/commentsController.js'
 import { CommentThreadWidget } from '../../comments/browser/commentThreadWidget.js';
 import { CommentWidgetFocus } from '../../comments/browser/commentThreadZoneWidget.js';
 import { SimpleCommentEditor } from '../../comments/browser/simpleCommentEditor.js';
+import { CLOSE_WINDOW_COMMAND, QUIT_WINDOW_COMMAND, QUIT_WINDOW_DISCARD_COMMAND } from '../common/vimEx.js';
 
 /** VS Code's review zone widget: one comment thread in an editor. */
 const COMMENT_WINDOW = '.review-widget';
@@ -447,15 +448,18 @@ export function closeCommentWindow(w: CommentWindow, discard: boolean, services?
 /**
  * What the ex commands' VS Code steps (vimEx.ts) do run from a comment input:
  * `write` (`:w` `:wq`: VS Code's Save), `update` (`:x` `ZZ` `:up`: Save when
- * modified), `close` (`:q` `:close`), `discard` (`:q!`), or nothing (`skip`:
- * the tab page's "close it when empty", whose window was not closed). None of
- * them ever reaches the file: a comment input saves and closes no editor.
+ * modified), `close` (`:q` `:close`, and `:bd`), `discard` (`:q!`, `:bd!`),
+ * or nothing (`skip`: the tab page's "close it when empty", whose window was
+ * not closed). None of them ever reaches the file or the window: a comment
+ * input saves and closes no editor, group or Workspace.
  */
 export const COMMENT_WINDOW_STEPS: ReadonlyMap<string, 'write' | 'update' | 'close' | 'discard' | 'skip'> = new Map([
 	['workbench.action.files.save', 'write'],
 	['devhubVim.update', 'update'],
+	[QUIT_WINDOW_COMMAND, 'close'],
+	[CLOSE_WINDOW_COMMAND, 'close'],
+	[QUIT_WINDOW_DISCARD_COMMAND, 'discard'],
 	['workbench.action.closeActiveEditor', 'close'],
-	['devhubVim.tabpage.closeWindow', 'close'],
 	['workbench.action.revertAndCloseActiveEditor', 'discard'],
 	['devhubVim.tabpage.closeIfEmpty', 'skip'],
 ]);

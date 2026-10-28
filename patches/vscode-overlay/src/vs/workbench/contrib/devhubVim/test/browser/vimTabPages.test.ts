@@ -17,11 +17,11 @@ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/tes
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
 import { InMemoryStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
 import { EditorInput } from '../../../../common/editor/editorInput.js';
-import { IEditorGroup, IEditorGroupsService, IEditorPart, IEditorWorkingSet } from '../../../../services/editor/common/editorGroupsService.js';
+import { GroupsOrder, IEditorGroup, IEditorGroupsService, IEditorPart, IEditorWorkingSet } from '../../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IUntitledTextEditorService } from '../../../../services/untitled/common/untitledTextEditorService.js';
-import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { DevhubFocus } from '../../../devhubFocus/browser/devhubFocus.contribution.js';
 import { TAB_PAGES_STORAGE_KEY, VimTabPages } from '../../browser/vimTabPages.js';
 
@@ -39,6 +39,8 @@ class FakeWorkbench {
 	bar: HTMLElement | undefined;
 	barHeight = 0;
 	opened: string[] = [];
+	reverted: string[] = [];
+	focused: number | undefined;
 	private nextId = 1;
 	/** Where VS Code's EditorParts keeps the working sets ('editor.workingSets'), as JSON. */
 	storage: InMemoryStorageService | undefined;
@@ -94,6 +96,8 @@ class FakeWorkbench {
 		const editor = (e: FakeEditor | undefined) => e && ({
 			getName: () => e.name,
 			isDirty: () => e.dirty,
+			matches: (other: EditorInput) => other.getName() === e.name,
+			revert: async () => { e.dirty = false; wb.reverted.push(e.name); },
 			toUntyped: () => ({ resource: undefined, options: {}, label: e.name }),
 		} as unknown as EditorInput);
 		return new class extends mock<IEditorGroup>() {
@@ -101,6 +105,24 @@ class FakeWorkbench {
 			override get activeEditor() { return editor(g.editors[g.active]) ?? null; }
 			override get count() { return g.editors.length; }
 			override get isEmpty() { return g.editors.length === 0; }
+			override get editors() { return g.editors.map(e => editor(e)!); }
+			override focus() { wb.focused = g.id; }
+			// as EditorGroupView.moveEditors: an editor the target has is only taken out of this group; `inactive` keeps the target's active editor
+			override moveEditors(editors: { editor: EditorInput; options?: { inactive?: boolean } }[], target: IEditorGroup) {
+				const to = wb.layout.groups.find(x => x.id === target.id)!;
+				for (const { editor: input, options } of editors) {
+					const [e] = g.editors.splice(g.editors.findIndex(x => x.name === input.getName()), 1);
+					if (!to.editors.some(x => x.name === e.name)) {
+						to.editors.push(e);
+						if (!options?.inactive) {
+							to.active = to.editors.length - 1;
+						}
+					}
+				}
+				g.active = 0;
+				wb.onChange.fire();
+				return true;
+			}
 			override async closeEditor(input?: EditorInput) {
 				const i = g.editors.findIndex(e => e.name === input?.getName());
 				g.editors.splice(i, 1);
@@ -130,6 +152,16 @@ class FakeWorkbench {
 			override get activeGroup() { return part.activeGroup; }
 			override get groups() { return part.getGroups(); }
 			override get count() { return wb.layout.groups.length; }
+			// MOST_RECENTLY_ACTIVE: the active group first, then the others in grid order
+			override getGroups(order?: GroupsOrder) {
+				const all = part.getGroups();
+				return order === GroupsOrder.MOST_RECENTLY_ACTIVE ? [all[wb.layout.active], ...all.filter((_, i) => i !== wb.layout.active)] : all;
+			}
+			override getGroup(id: number) { return part.getGroups().find(g => g.id === id); }
+			override activateGroup(group: IEditorGroup) {
+				wb.layout.active = wb.layout.groups.findIndex(g => g.id === group.id);
+				return group;
+			}
 			override removeGroup(group: IEditorGroup) {
 				// as EditorPart.removeGroup: the editors go into another group
 				const i = wb.layout.groups.findIndex(g => g.id === group.id);
@@ -199,11 +231,16 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 	let logs: string[];
 	let log: typeof console.log;
 
+	/** The commands the tab pages ran (the Workspace's close). */
+	let ran: [string, unknown][];
 	const create = () => disposables.add(new VimTabPages(wb.groupsService(), wb.editorService(), storage,
 		new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 		new class extends mock<IQuickInputService>() {
 			override async pick<T extends IQuickPickItem>(items: T[]) { return (picked === undefined ? undefined : items[picked]) as never; }
-		}, wb.untitledService()));
+		}, wb.untitledService(),
+		new class extends mock<ICommandService>() {
+			override async executeCommand<T>(id: string, arg?: unknown) { ran.push(arg === undefined ? [id, undefined] : [id, arg]); return undefined as T; }
+		}));
 
 	setup(() => {
 		wb = new FakeWorkbench();
@@ -211,6 +248,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		storage = disposables.add(new InMemoryStorageService());
 		wb.storage = storage;
 		picked = undefined;
+		ran = [];
 		logs = [];
 		log = console.log;
 		console.log = (m: string) => { logs.push(m); };
@@ -343,7 +381,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.deepStrictEqual(wb.shown(), [['a.ts']], 'gone from the old page');
 	});
 
-	test(':q on the last window of a page closes the page, not the last page', async () => {
+	test('closeIfEmpty (after VS Code\'s Close Editor in a binding): a page left with no editor closes, not the last page', async () => {
 		const pages = create();
 		wb.open('a.ts');
 		await pages.newPage(FILE);
@@ -359,7 +397,87 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.strictEqual(pages.state.pages.length, 1);
 	});
 
-	test(':close / CTRL-W c closes the window; the last window of a page closes the page; the last of the last page stays', async () => {
+	test(':q closes the window, not the buffer: its editors become hidden in the other window, which keeps showing its own; nothing closes, a modified one keeps its changes', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		wb.split();
+		wb.open('b.ts', true);
+		wb.open('c.ts');
+		wb.open('a.ts');
+		await pages.quitWindow();
+		assert.deepStrictEqual(wb.shown(), [['a.ts', 'b.ts+', 'c.ts']], 'a.ts is not there twice; b.ts keeps its changes');
+		assert.strictEqual(wb.layout.groups[0].editors[wb.layout.groups[0].active].name, 'a.ts', 'the other window shows what it showed');
+		assert.strictEqual(wb.focused, wb.layout.groups[0].id, 'the focus is in the other window');
+		assert.deepStrictEqual(wb.reverted, []);
+		assert.deepStrictEqual(ran, []);
+		assert.strictEqual(pages.state.pages.length, 1);
+	});
+
+	test(':q! drops the changes of the window\'s current editor, unless another window shows it; the hidden ones keep theirs', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		wb.split();
+		wb.open('b.ts', true);
+		wb.open('c.ts', true);
+		await pages.quitWindow(true);
+		assert.deepStrictEqual(wb.reverted, ['c.ts']);
+		assert.deepStrictEqual(wb.shown(), [['a.ts', 'b.ts+', 'c.ts']]);
+		wb.split();
+		wb.open('a.ts');
+		wb.layout.groups[0].editors[0].dirty = true;
+		await pages.quitWindow(true);
+		assert.deepStrictEqual(wb.reverted, ['c.ts'], 'a.ts is in the other window too');
+		assert.deepStrictEqual(wb.shown(), [['a.ts+', 'b.ts+', 'c.ts']]);
+	});
+
+	test(':q in an empty window closes it', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		wb.split();
+		await pages.quitWindow();
+		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
+		assert.deepStrictEqual(ran, []);
+	});
+
+	test(':q in the last window of a page closes the page (a modified editor goes along); in the last window of the last page it closes the Workspace', async () => {
+		const workspaceClose = CommandsRegistry.registerCommand('devhubVim.closeWorkspace', () => { });
+		try {
+			const pages = create();
+			wb.open('a.ts');
+			await pages.newPage(FILE);
+			wb.open('b.ts', true);
+			await pages.quitWindow();
+			assert.strictEqual(pages.state.pages.length, 1);
+			assert.deepStrictEqual(wb.shown(), [['a.ts', 'b.ts+']]);
+			assert.deepStrictEqual(ran, []);
+			await pages.quitWindow();
+			assert.deepStrictEqual(ran, [['devhubVim.closeWorkspace', undefined]], 'DevHub\'s close flow, which asks about b.ts');
+			assert.deepStrictEqual(wb.shown(), [['a.ts', 'b.ts+']], 'nothing closed here');
+			await pages.quitWindow(true);
+			assert.deepStrictEqual(ran[1], ['devhubVim.closeWorkspace', { discard: 'active' }]);
+		} finally {
+			workspaceClose.dispose();
+		}
+	});
+
+	test(':q! in the last window of a page drops its editor\'s changes and closes the page', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		await pages.newPage(FILE);
+		wb.open('b.ts', true);
+		await pages.quitWindow(true);
+		assert.deepStrictEqual(wb.reverted, ['b.ts']);
+		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
+	});
+
+	test(':q in the last window of the last page with no DevHub to ask (a workbench without its close): E444', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		await assert.rejects(pages.quitWindow(), /E444: Cannot close last window/);
+		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
+	});
+
+	test(':close / CTRL-W c closes the window (its buffers hidden); the last window of a page closes the page; never the last one (E444)', async () => {
 		const pages = create();
 		wb.open('a.ts');
 		await pages.newPage(FILE);
@@ -368,12 +486,14 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		wb.open('c.ts');
 		await pages.closeWindow();
 		assert.deepStrictEqual(wb.shown(), [['b.ts', 'c.ts']]);
+		assert.strictEqual(wb.layout.groups[0].active, 0, 'the other window still shows b.ts');
 		assert.strictEqual(pages.state.pages.length, 2);
 		await pages.closeWindow();
 		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
 		assert.strictEqual(pages.state.pages.length, 1);
-		await pages.closeWindow();
+		await assert.rejects(pages.closeWindow(), /E444: Cannot close last window/);
 		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
+		assert.deepStrictEqual(ran, [], 'not the Workspace');
 	});
 
 	test(':tabnew without a file: the new page has an empty untitled editor (Vim\'s new empty buffer); it is not modified, so switching and closing never ask', async () => {

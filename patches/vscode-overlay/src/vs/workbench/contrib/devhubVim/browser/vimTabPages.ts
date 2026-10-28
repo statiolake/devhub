@@ -49,15 +49,17 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { ILocalizedString } from '../../../../platform/action/common/action.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
-import { GroupsOrder, IEditorGroupsService, IEditorPart } from '../../../services/editor/common/editorGroupsService.js';
+import { GroupsOrder, IEditorGroup, IEditorGroupsService, IEditorPart } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IUntitledTextEditorService } from '../../../services/untitled/common/untitledTextEditorService.js';
 import { afterClosing, freeUntitledNumber, wantsEmptyBuffer, movePage, nextTabPage, previousTabPage, restoreTabPages, serializeTabPages, TAB_PAGE_WORKING_SET_NAME, TabPage, TabPageMeta, TabPagesState, tabMoveTarget, tabPageIndex, tabPageLabel } from '../common/vimTabPages.js';
+import { CLOSE_WINDOW_COMMAND, CLOSE_WORKSPACE_COMMAND, E444, QUIT_WINDOW_COMMAND, QUIT_WINDOW_DISCARD_COMMAND } from '../common/vimEx.js';
 import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 import './media/vimTabline.css';
 
@@ -110,6 +112,7 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IUntitledTextEditorService private readonly untitledService: IUntitledTextEditorService,
+		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		const { state, stale, orphans } = restoreTabPages(storageService.get(TAB_PAGES_STORAGE_KEY, StorageScope.WORKSPACE), groups.getWorkingSets());
@@ -364,9 +367,10 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 	}
 
 	/**
-	 * After `:q` `:wq` `:x` `CTRL-W q`: when that closed the last
-	 * window of the page (no editor left) and there are other pages, the page
-	 * is closed, as in Vim.
+	 * When the last window of the page was closed some other way (every
+	 * editor closed: no editor left) and there are other pages, the page is
+	 * closed, as in Vim. `:q` itself closes the window (quitWindow); this is
+	 * for a binding of the user's after VS Code's Close Editor.
 	 */
 	closeIfEmpty(): Promise<void> {
 		if (this._state.pages.length < 2 || this.groups.groups.some(g => !g.isEmpty)) {
@@ -376,17 +380,97 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 	}
 
 	/**
-	 * `:clo[se]` / `CTRL-W c`: the window (the active group) closes, its
-	 * editors go into the last active group (as VS Code's Close Group); the
-	 * last window of a tab page closes the tab page, as in Vim; the last
-	 * window of the last tab page stays.
+	 * The window (the active group) closes and its buffers become hidden
+	 * (Neovim's default 'hidden'): every editor of the group is moved, inactive,
+	 * into the window the focus goes to (VS Code's most recently active other
+	 * group: Vim's previous window), whose own editor stays the one it shows.
+	 * Nothing is closed, so nothing asks and nothing is lost: a modified
+	 * editor keeps its changes and every editor stays listed (`:ls`, `:b`,
+	 * `:bn` reach it), as a hidden buffer does. An editor the other window
+	 * already has is only taken out of this one. (VS Code's own Close Group,
+	 * removeGroup, would make the closed group's editor the other window's
+	 * active one: the other window would show this window's buffer.)
+	 *
+	 * `discard` (`:q!`): the window's current editor drops its changes first
+	 * when no other window of the page shows it, as Vim's `:q!` unloads the
+	 * current buffer; the others keep theirs, hidden.
+	 */
+	private async hideWindow(discard: boolean): Promise<void> {
+		const editorFocused = this.layoutService.hasFocus(Parts.EDITOR_PART);
+		const group = this.groups.activeGroup;
+		const target = this.groups.getGroups(GroupsOrder.MOST_RECENTLY_ACTIVE).find(g => g.id !== group.id);
+		if (!target) {
+			return;
+		}
+		if (discard) {
+			await this.discardCurrent(group);
+		}
+		const editors = group.editors.map(editor => ({ editor, options: { inactive: true, preserveFocus: true } }));
+		if (editors.length) {
+			group.moveEditors(editors, target);
+		}
+		// gone already when 'workbench.editor.closeEmptyGroups' removed it; an editor that would not move goes along with VS Code's own merge
+		if (this.groups.getGroup(group.id)) {
+			this.groups.removeGroup(group);
+		}
+		this.groups.activateGroup(target);
+		if (editorFocused) {
+			target.focus();
+		}
+	}
+
+	/** `:q!`: the group's current editor drops its changes, unless another window of the page shows it. */
+	private async discardCurrent(group: IEditorGroup): Promise<void> {
+		const editor = group.activeEditor;
+		if (!editor?.isDirty() || this.groups.groups.some(g => g.id !== group.id && g.activeEditor?.matches(editor))) {
+			return;
+		}
+		await editor.revert(group.id);
+	}
+
+	/**
+	 * `:q[!]` `:wq` `:x` `ZZ` `ZQ` `CTRL-W q`: Vim's quit of the current window
+	 * (an editor group). With other windows in the page it closes and its
+	 * buffers become hidden (hideWindow). The last window of a page closes the
+	 * page when there are others (its modified editors go along into the page
+	 * you land in, as with `:tabc`). The last window of the last page is Vim
+	 * quitting: DevHub's close of the Workspace (`devhubVim.closeWorkspace`,
+	 * electron-browser/vimQuit.contribution.ts), the same as its close button,
+	 * which asks on its sheet when something would be lost; where the
+	 * workbench has no DevHub to ask (or the Workspace is Scratch, which never
+	 * closes) it is Vim's E444.
+	 */
+	quitWindow(discard = false): Promise<void> {
+		if (this.groups.count > 1) {
+			return this.hideWindow(discard);
+		}
+		if (this._state.pages.length > 1) {
+			return (discard ? this.discardCurrent(this.groups.activeGroup) : Promise.resolve()).then(() => this.close());
+		}
+		return this.quitWorkspace(discard ? 'active' : undefined);
+	}
+
+	/** The last window of the last tab page: the Workspace closes (DevHub's close flow), or E444. */
+	private async quitWorkspace(discard: 'active' | undefined): Promise<void> {
+		if (!CommandsRegistry.getCommand(CLOSE_WORKSPACE_COMMAND)) {
+			throw new Error(E444);
+		}
+		await this.commandService.executeCommand(CLOSE_WORKSPACE_COMMAND, discard ? { discard } : undefined);
+	}
+
+	/**
+	 * `:clo[se][!]` / `CTRL-W c`: the window closes, its buffers hidden, as
+	 * `:q` (hideWindow); the last window of a tab page closes the tab page, as
+	 * in Vim; the last window of the last tab page is never closed (E444).
 	 */
 	closeWindow(): Promise<void> {
 		if (this.groups.count > 1) {
-			this.groups.removeGroup(this.groups.activeGroup);
-			return Promise.resolve();
+			return this.hideWindow(false);
 		}
-		return this._state.pages.length > 1 ? this.close() : Promise.resolve();
+		if (this._state.pages.length > 1) {
+			return this.close();
+		}
+		return Promise.reject(new Error(E444));
 	}
 
 	/** `:tabs`: the pages and their windows; picking one goes there. */
@@ -491,6 +575,8 @@ tabPageCommand('devhubVim.tabpage.close', localize2('devhubVim.tabpage.close', "
 tabPageCommand('devhubVim.tabpage.only', localize2('devhubVim.tabpage.only', "Close Other Tab Pages"), true, p => p.only());
 tabPageCommand('devhubVim.tabpage.move', localize2('devhubVim.tabpage.move', "Move Tab Page"), false, (p, a) => p.move(a.arg));
 tabPageCommand('devhubVim.tabpage.moveEditorToNew', localize2('devhubVim.tabpage.moveEditorToNew', "Move Editor to New Tab Page"), true, p => p.moveEditorToNewPage());
-tabPageCommand('devhubVim.tabpage.closeWindow', localize2('devhubVim.tabpage.closeWindow', "Close Window (Group), or the Tab Page with Its Last Window"), false, p => p.closeWindow());
+tabPageCommand(CLOSE_WINDOW_COMMAND, localize2('devhubVim.tabpage.closeWindow', "Close Window (Group), or the Tab Page with Its Last Window"), false, p => p.closeWindow());
+tabPageCommand(QUIT_WINDOW_COMMAND, localize2('devhubVim.tabpage.quitWindow', "Quit Window (Group): the Tab Page with Its Last Window, the Workspace with the Last One"), false, p => p.quitWindow());
+tabPageCommand(QUIT_WINDOW_DISCARD_COMMAND, localize2('devhubVim.tabpage.quitWindowDiscard', "Quit Window (Group), Discarding Its Editor's Changes"), false, p => p.quitWindow(true));
 tabPageCommand('devhubVim.tabpage.closeIfEmpty', localize2('devhubVim.tabpage.closeIfEmpty', "Close Tab Page If It Has No Editor"), false, p => p.closeIfEmpty());
 tabPageCommand('devhubVim.tabpage.list', localize2('devhubVim.tabpage.list', "List Tab Pages"), true, p => p.list());

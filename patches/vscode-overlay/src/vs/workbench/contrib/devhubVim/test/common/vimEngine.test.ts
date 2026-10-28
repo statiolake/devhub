@@ -612,10 +612,13 @@ suite('DevHub Vim engine', () => {
 		assert.ok(r.vim.status().includes('Not an editor command'));
 		const wq = run('|a', ':wq<CR>');
 		await flush();
-		// the last window of a tab page closes the tab page (devhubVim.tabpage.closeIfEmpty)
-		assert.deepStrictEqual(wq.host.commands.map(c => c.command), ['workbench.action.files.save', 'workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
-		assert.deepStrictEqual(run('|a', ':q<CR>').host.commands.map(c => c.command), ['workbench.action.closeActiveEditor']);
-		assert.deepStrictEqual(run('|a', ':q!<CR>').host.commands.map(c => c.command), ['workbench.action.revertAndCloseActiveEditor']);
+		// :q is the window's (an editor group), not the buffer's: the last window of a tab page closes the tab page, of the last one the Workspace
+		assert.deepStrictEqual(wq.host.commands.map(c => c.command), ['workbench.action.files.save', 'devhubVim.tabpage.quitWindow']);
+		assert.deepStrictEqual(run('|a', ':q<CR>').host.commands.map(c => c.command), ['devhubVim.tabpage.quitWindow']);
+		assert.deepStrictEqual(run('|a', ':q!<CR>').host.commands.map(c => c.command), ['devhubVim.tabpage.quitWindowDiscard']);
+		// the buffer is :bd's
+		assert.deepStrictEqual(run('|a', ':bd<CR>').host.commands.map(c => c.command), ['workbench.action.closeActiveEditor']);
+		assert.deepStrictEqual(run('|a', ':bw!<CR>').host.commands.map(c => c.command), ['workbench.action.revertAndCloseActiveEditor']);
 		assert.deepStrictEqual(run('|a', ':noh<CR>').host.commands, []);
 	});
 
@@ -2881,8 +2884,8 @@ suite('Neovim scrolling and folds', () => {
 		assert.deepStrictEqual(await cmds(']D'), ['editor.action.marker.prev']);
 		assert.deepStrictEqual(await cmds(']q'), ['editor.action.marker.nextInFiles']);
 		assert.deepStrictEqual(await cmds('[b'), ['workbench.action.previousEditor']);
-		assert.deepStrictEqual(await cmds('ZZ'), ['devhubVim.update', 'workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
-		assert.deepStrictEqual(await cmds('ZQ'), ['workbench.action.revertAndCloseActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
+		assert.deepStrictEqual(await cmds('ZZ'), ['devhubVim.update', 'devhubVim.tabpage.quitWindow']);
+		assert.deepStrictEqual(await cmds('ZQ'), ['devhubVim.tabpage.quitWindowDiscard']);
 		// in visual mode gra acts on the selection, then visual mode ends
 		const v = new Vim('|abc').keys('vlgra');
 		await flush();
@@ -3645,8 +3648,17 @@ suite('DevHub Vim: tab pages are keys and ex commands (browser/vimTabPages.ts do
 		assert.deepStrictEqual(await calls(':tabm 0<CR>'), [['devhubVim.tabpage.move', { arg: '0' }]]);
 		assert.deepStrictEqual(await calls(':tabs<CR>'), [['devhubVim.tabpage.list']]);
 		assert.deepStrictEqual(await calls(':tabnew<CR>'), [['devhubVim.tabpage.new', { file: '' }], ['devhubVim.open', { file: '' }]]);
-		assert.deepStrictEqual(await calls(':q<CR>'), [['workbench.action.closeActiveEditor'], ['devhubVim.tabpage.closeIfEmpty']]);
+		assert.deepStrictEqual(await calls(':q<CR>'), [['devhubVim.tabpage.quitWindow']]);
+		assert.deepStrictEqual(await calls(':quit!<CR>'), [['devhubVim.tabpage.quitWindowDiscard']]);
+		assert.deepStrictEqual(await calls(':wq<CR>'), [['workbench.action.files.save'], ['devhubVim.tabpage.quitWindow']]);
+		assert.deepStrictEqual(await calls(':x<CR>'), [['devhubVim.update'], ['devhubVim.tabpage.quitWindow']]);
 		assert.deepStrictEqual(await calls(':clo<CR>'), [['devhubVim.tabpage.closeWindow']]);
+		// Vim quitting: DevHub's close of the Workspace
+		assert.deepStrictEqual(await calls(':qa<CR>'), [['devhubVim.closeWorkspace']]);
+		assert.deepStrictEqual(await calls(':quitall<CR>'), [['devhubVim.closeWorkspace']]);
+		assert.deepStrictEqual(await calls(':qa!<CR>'), [['devhubVim.closeWorkspace', { discard: 'all' }]]);
+		assert.deepStrictEqual(await calls(':wqa<CR>'), [['workbench.action.files.saveAll'], ['devhubVim.closeWorkspace']]);
+		assert.deepStrictEqual(await calls(':xa<CR>'), [['workbench.action.files.saveAll'], ['devhubVim.closeWorkspace']]);
 		// Vim's errors for what these do not take
 		const v = new Vim('|abc').keys(':tabs 2<CR>');
 		assert.ok(v.vim.status().includes('E488'), v.vim.status());

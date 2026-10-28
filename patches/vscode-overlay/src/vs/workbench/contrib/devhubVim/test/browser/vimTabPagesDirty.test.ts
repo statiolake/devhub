@@ -12,6 +12,7 @@ import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
+import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ConfirmResult } from '../../../../../platform/dialogs/common/dialogs.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
@@ -55,7 +56,8 @@ suite('DevHub Vim tab pages: modified editors on VS Code\'s editor parts', () =>
 				disposables.add(new InMemoryStorageService()),
 				new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 				new class extends mock<IQuickInputService>() { },
-				accessor.untitledTextEditorService));
+				accessor.untitledTextEditorService,
+				new class extends mock<ICommandService>() { }));
 
 			const clean = disposables.add(new TestFileEditorInput(URI.file('/clean.txt'), TEST_INPUT_ID));
 			const dirty = disposables.add(new TestFileEditorInput(URI.file('/dirty.txt'), TEST_INPUT_ID));
@@ -126,7 +128,8 @@ suite('DevHub Vim tab pages: modified editors on VS Code\'s editor parts', () =>
 				disposables.add(new InMemoryStorageService()),
 				new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 				new class extends mock<IQuickInputService>() { },
-				untitled));
+				untitled,
+				new class extends mock<ICommandService>() { }));
 			const file = disposables.add(new TestFileEditorInput(URI.file('/a.txt'), TEST_INPUT_ID));
 			disposables.add(registerTestEditor(TEST_EDITOR_ID, [new SyncDescriptor(TestFileEditorInput)], TEST_INPUT_ID));
 			await parts.activeGroup.openEditor(file, { pinned: true });
@@ -162,6 +165,50 @@ suite('DevHub Vim tab pages: modified editors on VS Code\'s editor parts', () =>
 			assert.strictEqual(pages.state.pages.length, 1);
 		} finally {
 			console.log = log;
+			await workbenchTeardown(instantiationService);
+		}
+	});
+
+	test(':q on VS Code\'s editor parts: the window goes, its editors (a modified one too) are hidden in the other one, inactive; nothing asks, nothing closes', async () => {
+		disposables.add(registerTestEditor(TEST_EDITOR_ID, [new SyncDescriptor(TestFileEditorInput)], TEST_INPUT_ID));
+		const instantiationService = workbenchInstantiationService(undefined, disposables);
+		instantiationService.invokeFunction(accessor => Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).start(accessor));
+		instantiationService.stub(IAuxiliaryWindowService, new class extends mock<IAuxiliaryWindowService>() { override getWindow() { return undefined; } });
+		const parts = await createEditorParts(instantiationService, disposables);
+		instantiationService.stub(IEditorGroupsService, parts);
+		const accessor = instantiationService.createInstance(TestServiceAccessor);
+		let asked = 0;
+		accessor.fileDialogService.showSaveConfirm = async () => { asked++; return ConfirmResult.CANCEL; };
+		try {
+			const pages = disposables.add(new VimTabPages(parts as IEditorGroupsService,
+				new class extends mock<IEditorService>() { override onDidActiveEditorChange = Event.None; override onDidVisibleEditorsChange = Event.None; },
+				disposables.add(new InMemoryStorageService()),
+				new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
+				new class extends mock<IQuickInputService>() { },
+				accessor.untitledTextEditorService,
+				new class extends mock<ICommandService>() { }));
+			const left = disposables.add(new TestFileEditorInput(URI.file('/left.txt'), TEST_INPUT_ID));
+			const dirty = disposables.add(new TestFileEditorInput(URI.file('/dirty.txt'), TEST_INPUT_ID));
+			const clean = disposables.add(new TestFileEditorInput(URI.file('/clean.txt'), TEST_INPUT_ID));
+			const leftGroup = parts.activeGroup;
+			await leftGroup.openEditor(left, { pinned: true });
+			const right = parts.addGroup(leftGroup, GroupDirection.RIGHT);
+			await right.openEditor(dirty, { pinned: true });
+			await right.openEditor(clean, { pinned: true });
+			dirty.dirty = true;
+			parts.activateGroup(right);
+
+			await pages.quitWindow();
+			assert.strictEqual(asked, 0, 'no save confirmation');
+			assert.strictEqual(parts.groups.length, 1, 'the window is gone');
+			assert.strictEqual(parts.activeGroup, leftGroup);
+			assert.strictEqual(leftGroup.activeEditor, left, 'the other window shows what it showed');
+			assert.ok(leftGroup.contains(dirty) && leftGroup.contains(clean), 'its editors are hidden there');
+			assert.strictEqual(dirty.isDisposed(), false);
+			assert.strictEqual(dirty.isDirty(), true, 'with its changes');
+			assert.strictEqual(clean.isDisposed(), false);
+			dirty.dirty = false;
+		} finally {
 			await workbenchTeardown(instantiationService);
 		}
 	});

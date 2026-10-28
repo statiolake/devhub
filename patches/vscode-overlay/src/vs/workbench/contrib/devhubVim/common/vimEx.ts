@@ -160,11 +160,31 @@ const SAVE_ALL = 'workbench.action.files.saveAll';
  */
 const UPDATE = 'devhubVim.update';
 const CLOSE = 'workbench.action.closeActiveEditor';
-const CLOSE_ALL = 'workbench.action.closeAllEditors';
 const REVERT_CLOSE = 'workbench.action.revertAndCloseActiveEditor';
-/** Vim: closing the last window of a tab page closes the tab page (browser/vimTabPages.ts). */
-const CLOSE_EMPTY_TAB = 'devhubVim.tabpage.closeIfEmpty';
 const TAB = 'devhubVim.tabpage.';
+
+/**
+ * Vim's quit of the current window (`:q` `:wq` `:x` `ZZ` `CTRL-W q`): the
+ * window (an editor group) closes, its buffers hidden; the last window of a
+ * tab page closes the tab page, the last one of the last tab page closes the
+ * Workspace. With `!` (`:q!` `ZQ`) its current editor drops its changes
+ * first (browser/vimTabPages.ts quitWindow). Two commands rather than one with an
+ * argument, so that a comment input tells them apart by the command alone
+ * (browser/vimWindows.ts COMMENT_WINDOW_STEPS).
+ */
+export const QUIT_WINDOW_COMMAND = 'devhubVim.tabpage.quitWindow';
+export const QUIT_WINDOW_DISCARD_COMMAND = 'devhubVim.tabpage.quitWindowDiscard';
+/** `:clo[se]` / `CTRL-W c`: the window, never the last one (E444). */
+export const CLOSE_WINDOW_COMMAND = 'devhubVim.tabpage.closeWindow';
+/**
+ * Vim quitting: DevHub's close of the Workspace (`:qa` `:wqa` `:xa`, and `:q`
+ * on the last window of the last tab page), with `{ discard: 'all' }`
+ * (`:qa!`) or `{ discard: 'active' }` (`:q!`) dropping changes first
+ * (electron-browser/vimQuit.contribution.ts).
+ */
+export const CLOSE_WORKSPACE_COMMAND = 'devhubVim.closeWorkspace';
+/** Vim's error for closing the last window. */
+export const E444 = 'E444: Cannot close last window';
 
 type StepsInput = string | ExStep | readonly (string | ExStep)[];
 
@@ -204,11 +224,13 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	write: vim('write', { bang: true, nargs: '?', complete: 'file', defaultRange: '%', shell: true }),
 	wall: vs(SAVE_ALL, { bang: true }),
 	update: vs(UPDATE, { bang: true }),
-	quit: vs([...withBang(CLOSE, REVERT_CLOSE), { command: CLOSE_EMPTY_TAB }], { bang: true }),
-	qall: vs(withBang(CLOSE_ALL, ['workbench.action.files.revert', CLOSE_ALL]), { bang: true }),
-	wq: vs([SAVE, CLOSE, CLOSE_EMPTY_TAB], { bang: true }),
-	xit: vs([UPDATE, CLOSE, CLOSE_EMPTY_TAB], { bang: true }),
-	xall: vs([SAVE_ALL, CLOSE_ALL], { bang: true }),
+	// the window (editor group), not the buffer (editor): `:bd` closes that
+	quit: vs(withBang(QUIT_WINDOW_COMMAND, QUIT_WINDOW_DISCARD_COMMAND), { bang: true }),
+	// Vim quitting: the Workspace closes (`:qa!` dropping every change first)
+	qall: vs(withBang(CLOSE_WORKSPACE_COMMAND, { command: CLOSE_WORKSPACE_COMMAND, args: { discard: 'all' } }), { bang: true }),
+	wq: vs([SAVE, QUIT_WINDOW_COMMAND], { bang: true }),
+	xit: vs([UPDATE, QUIT_WINDOW_COMMAND], { bang: true }),
+	xall: vs([SAVE_ALL, CLOSE_WORKSPACE_COMMAND], { bang: true }),
 	// 'nosplitbelow' / 'nosplitright' (the defaults): the new window is above / left, and gets the focus
 	// `:sp {file}` ...: the split, then the file in the new window (devhubVim.open)
 	split: vs(['workbench.action.splitEditorUp', OPEN({ replace: true })], FILE),
@@ -242,8 +264,8 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	buffer: vs({ command: 'workbench.action.quickOpen', args: 'edt ${args}' }, { bang: true, nargs: '?', complete: 'buffer' }),
 	// `:sav[!] {file}`: written there (E13 when it exists, without !), and the editor is that file's (vimEngine.ts exSaveAs)
 	saveas: vim('saveas', { range: 'none', bang: true, nargs: '1', complete: 'file' }),
-	// the window; the last one of a tab page closes the tab page (browser/vimTabPages.ts)
-	close: vs(TAB + 'closeWindow', { bang: true }),
+	// the window, its buffers hidden; the last one of a tab page closes the tab page, never the last one (E444; browser/vimTabPages.ts)
+	close: vs(CLOSE_WINDOW_COMMAND, { bang: true }),
 	only: vs('workbench.action.closeEditorsInOtherGroups', { bang: true }),
 	cnext: vs('editor.action.marker.nextInFiles', { bang: true }),
 	cprevious: vs('editor.action.marker.prevInFiles', { bang: true }),

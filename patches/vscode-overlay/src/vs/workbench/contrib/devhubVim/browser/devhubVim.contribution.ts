@@ -181,7 +181,7 @@ import { CommonFindController } from '../../../../editor/contrib/find/browser/fi
 import { FindReplaceState, FindReplaceStateChangedEvent } from '../../../../editor/contrib/find/browser/findState.js';
 import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import './media/devhubVim.css';
-import { BUILTIN_EX_SPECS, builtinExNameForms } from '../common/vimEx.js';
+import { BUILTIN_EX_SPECS, builtinExNameForms, CLOSE_WINDOW_COMMAND, QUIT_WINDOW_COMMAND } from '../common/vimEx.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
 import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
 import { IVimCmdlineOrigin, VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
@@ -1850,7 +1850,23 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			for (const c of commands) {
 				await this.commandService.executeCommand(c);
 			}
-		})().catch(onUnexpectedError).finally(() => DevhubFocus.instance?.afterCommand());
+		})().catch(err => this.navFailed(err)).finally(() => DevhubFocus.instance?.afterCommand());
+	}
+
+	/**
+	 * A nav command's Vim error (`CTRL-W c` in the last window: E444) is shown
+	 * as the error of an ex command is, by the buffer that has the focus;
+	 * anything else is an unexpected error.
+	 */
+	private navFailed(err: unknown): void {
+		const message = err instanceof Error ? err.message : String(err);
+		const buffer = /^E\d+:/.test(message) ? this.focused() ?? this.emptyBuffer : undefined;
+		if (!buffer) {
+			onUnexpectedError(err);
+			return;
+		}
+		buffer.engine.say(message);
+		this.update();
 	}
 
 	/**
@@ -2041,9 +2057,10 @@ const NAV_COMMANDS: readonly [string, string, boolean, readonly string[], NavWin
 	['splitShift', 'shift+s', false, ['workbench.action.splitEditorUp']],
 	['vsplit', 'v', true, ['workbench.action.splitEditorLeft']],
 	['new', 'n', true, ['workbench.action.splitEditorUp', 'workbench.action.files.newUntitledFile']],
-	// the last window of a tab page closes the tab page (vimTabPages.ts)
-	['close', 'c', false, ['devhubVim.tabpage.closeWindow'], { comment: 'close' }],
-	['quit', 'q', true, ['workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty'], { comment: 'close' }],
+	// the window (editor group), its buffers hidden; the last window of a tab page closes the tab
+	// page; the last of the last one: `c` E444, `q` the Workspace's close (vimTabPages.ts quitWindow)
+	['close', 'c', false, [CLOSE_WINDOW_COMMAND], { comment: 'close' }],
+	['quit', 'q', true, [QUIT_WINDOW_COMMAND], { comment: 'close' }],
 	['moveToNewTabPage', 'shift+t', false, ['devhubVim.tabpage.moveEditorToNew']],
 	['only', 'o', true, ['workbench.action.closeEditorsInOtherGroups']],
 	['equalize', '=', false, ['workbench.action.evenEditorWidths']],

@@ -1046,6 +1046,11 @@ export class VimEngine {
 		}
 	}
 
+	/** A message from outside the engine (a `CTRL-W` command's error), in the status bar as the engine's own. */
+	say(message: string): void {
+		this.message = message;
+	}
+
 	/**
 	 * Esc: cancel one thing (insert, the prompt, the pending command, visual
 	 * mode), as Vim does. In normal mode with nothing pending it does nothing,
