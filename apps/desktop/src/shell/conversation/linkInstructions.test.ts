@@ -6,7 +6,7 @@ import {
   FILE_LINK_INSTRUCTIONS,
   GUI_AGENT_INSTRUCTIONS,
 } from "../../main/agent/conversation/linkInstructions";
-import { diagramKindOf } from "./diagram";
+import { diagramKindOf } from "./diagramSvg";
 
 /** The `[text](target)` links the instructions give as examples, as Markdown reads their targets. */
 function exampleTargets(text: string): readonly string[] {

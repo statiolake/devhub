@@ -38,7 +38,7 @@ import { normalizeMath } from "./mathDelimiters";
 import { fileNotFoundError } from "../failure";
 import { CodeBlock } from "./CodeBlock";
 import { Diagram } from "./Diagram";
-import { diagramKindOf } from "./diagram";
+import { diagramKindOf } from "./diagramSvg";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
 import { LinkedText } from "./LinkedText";

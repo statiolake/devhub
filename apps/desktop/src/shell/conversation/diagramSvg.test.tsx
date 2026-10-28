@@ -17,7 +17,7 @@ import {
   errorLine,
   sanitizeSvg,
   svgDataUrl,
-} from "./diagram";
+} from "./diagramSvg";
 import { rasterScale } from "./diagramCopy";
 import { mixHex, parseCssColor, resolveDiagramTheme } from "./diagramTheme";
 import { DIAGRAM_MENU } from "./Diagram";

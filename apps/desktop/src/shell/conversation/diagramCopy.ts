@@ -1,7 +1,7 @@
 /**
  * A diagram, as a PNG for the clipboard.
  *
- * The picture is already a sanitized SVG (`diagram.ts`); it is loaded as an
+ * The picture is already a sanitized SVG (`diagramSvg.ts`); it is loaded as an
  * image — where nothing in it runs or fetches — and painted on a canvas
  * filled with the theme's background, at twice its size or the screen's
  * pixel ratio if that is more, so a paste into a document is sharp on a
@@ -12,7 +12,7 @@
  * page's own clipboard is gated on the view having the focus.
  */
 
-import { svgDataUrl, type SvgSize } from "./diagram";
+import { svgDataUrl, type SvgSize } from "./diagramSvg";
 
 export const MAX_CANVAS_SIDE = 8192;
 /** Room around the picture, in CSS pixels, so a paste does not crop it to its ink. */

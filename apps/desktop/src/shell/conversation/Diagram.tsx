@@ -4,7 +4,7 @@
  * Only a closed block is drawn (`settled`, see `markdownBlocks.ts`): one
  * still being written is its code, the way every open fence is, and becomes
  * a picture once its fence closes. A picture is an `<img>` of a sanitized SVG
- * (`diagram.ts`), drawn in DevHub's colours (`diagramTheme.ts`) and drawn
+ * (`diagramSvg.ts`), drawn in DevHub's colours (`diagramTheme.ts`) and drawn
  * again when the theme changes. While Mermaid is still loading or drawing,
  * and whenever the source will not draw, the block is its code — with a line
  * under it saying why, when it failed — so a bad diagram never costs the
@@ -34,7 +34,7 @@ import {
   type DiagramKind,
   type SanitizedSvg,
   type SvgResult,
-} from "./diagram";
+} from "./diagramSvg";
 import { svgToPng } from "./diagramCopy";
 import { useDiagramTheme, type DiagramTheme } from "./diagramTheme";
 import { CodeIcon, DiagramIcon } from "./icons";

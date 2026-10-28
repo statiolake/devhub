@@ -922,7 +922,7 @@ closes; while Mermaid is loading or drawing, the block is its code.
 what Mermaid makes of it. Both are drawn as an `<img>` of a `data:` URL, never
 as markup in the page: an SVG loaded as an image runs no script, fires no
 handler and fetches nothing. The markup is also sanitized first
-(`diagram.ts`), because the same markup is what "Copy SVG" puts on the
+(`diagramSvg.ts`), because the same markup is what "Copy SVG" puts on the
 clipboard: an allow-list of SVG elements; no scripts, event handlers,
 animation, embedded documents or `foreignObject` (Mermaid's own labels
 excepted, with text-level HTML only); no `href` but a `#fragment` or an inline

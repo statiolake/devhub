@@ -10,7 +10,7 @@
  * `securityLevel: "strict"`: Mermaid encodes the text it is given, runs its
  * output through DOMPurify and binds no click handlers. Labels are SVG text
  * (`htmlLabels: false`), so the picture needs no HTML to draw. What comes
- * back is sanitized again and drawn as an image (`diagram.ts`), never put in
+ * back is sanitized again and drawn as an image (`diagramSvg.ts`), never put in
  * the page as markup.
  *
  * Mermaid's configuration is one global, so drawings are made one at a time,
@@ -26,7 +26,7 @@ import {
   errorLine,
   sanitizeSvg,
   type SvgResult,
-} from "./diagram";
+} from "./diagramSvg";
 import { mixHex, type DiagramTheme } from "./diagramTheme";
 
 let library: Promise<Mermaid> | undefined;
