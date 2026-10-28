@@ -14,6 +14,14 @@
  * by the browser's own scroll anchoring (`overflow-anchor`), which is what
  * keeps the entry being read still under a reflow.
  *
+ * Only a scroll up stops following. A scroll event is read after the layout
+ * it follows, so content that grows between the transcript being put at the
+ * end and the event being read — a cut message drawing its Show all, a queued
+ * message's editor opening — leaves a following transcript short of the end
+ * with nobody having scrolled; and scroll anchoring, holding the lines on
+ * screen still while something above them is first laid out, scrolls down.
+ * Neither is the person leaving the end, so either is put back there.
+ *
  * A hidden surface (a parked Agent in the pool) has no box, so nothing it
  * reports means anything: its scrolls and resizes are ignored, and where it
  * was is put back when it is shown again — by entry, not by pixel, because the
@@ -133,8 +141,17 @@ export function useFollowScroll({
     if (!element || !inner) {
       throw new Error("the conversation's scroller was not mounted");
     }
+    let lastTop = element.scrollTop;
     const onScroll = () => {
       if (element.clientHeight === 0) return;
+      const top = element.scrollTop;
+      const up = top < lastTop;
+      lastTop = top;
+      if (followingNow.current && !up && !isAtBottom(element)) {
+        toBottom();
+        lastTop = element.scrollTop;
+        return;
+      }
       const atBottom = isAtBottom(element);
       followingNow.current = atBottom;
       anchor.current = atBottom ? undefined : anchorOf(element, inner);

@@ -28,12 +28,9 @@
  * again.
  *
  * A message sent while the Agent is busy — a turn running, still connecting,
- * the conversation being taken back — is held by DevHub and listed over the
- * box, oldest first (`Transcript.pending`). Each can be changed or removed
- * there, or sent now, which a running turn takes in as it goes; the rest are
- * sent one per turn, as each turn ends. One open to be changed is held by
- * main, unsent, from Edit until Save or Cancel, and let go if the composer
- * goes away with it open; the caret starts at the end of its words.
+ * the conversation being taken back — is held by DevHub and drawn at the end
+ * of the transcript (`QueuedMessages`), where it can be changed, removed or
+ * sent now; the rest are sent one per turn, as each turn ends.
  *
  * Rewinding to before a message puts its words back here, ahead of whatever
  * was being typed, and its images back among the attached.
@@ -92,8 +89,7 @@ import {
   type SettingName,
 } from "./ConversationContext";
 import { ImageView } from "./EntryParts";
-import { SkillBackdrop, SkillText } from "./skillTokens";
-import { PersonBubble } from "./EntryView";
+import { SkillBackdrop } from "./skillTokens";
 import {
   DICTATION_KEY,
   placeDictation,
@@ -104,17 +100,11 @@ import {
   saveLanguage,
   savedLanguage,
 } from "./dictation";
-import {
-  ClockIcon,
-  CloseIcon,
-  EditIcon,
-  MicIcon,
-  SendIcon,
-  StopIcon,
-} from "./icons";
+import { MicIcon, SendIcon, StopIcon } from "./icons";
 import { useDictation, type Dictation } from "./useDictation";
 import type { VoiceLanguage } from "../../ipc/voice";
 import { SEND_KEY, useMessageKeys } from "./messageKeys";
+import { canSendNow as takesHeldMessage } from "./QueuedMessages";
 import { SettingPickers, type SettingPickerHandle } from "./SettingPickers";
 
 /**
@@ -155,27 +145,6 @@ const BROKEN_REFUSALS = {
 /** What Rewind says before it drops anything. */
 export const REWIND_NOTE =
   "Rewind to before this message? It and everything after it leave the conversation, and its words come back to the composer. Files the Agent changed are not changed back.";
-
-/**
- * What a held message says about itself, in the one quiet line over its
- * bubble: that it is queued and where, that it is being changed, or why it
- * was not sent. The longer account of what "queued" means is the line's
- * tooltip (`PENDING_TOOLTIP`), not a second line under every message.
- */
-export function pendingStatus(
-  message: PendingMessage,
-  position: number,
-  total: number,
-  editing: boolean,
-): string {
-  if (message.failure !== undefined) return `Not sent: ${message.failure}`;
-  if (editing || message.editing) return "Editing · not sent until saved";
-  return total > 1 ? `Queued · ${position} of ${total}` : "Queued";
-}
-
-/** What "queued" means, said once, under the pointer. */
-export const PENDING_TOOLTIP =
-  "Sent when the Agent is ready for it, after the turn that is running";
 
 /**
  * The images among `files`, read into their own bytes. A file of another
@@ -243,188 +212,6 @@ function Attachments({
         </li>
       ))}
     </ul>
-  );
-}
-
-/**
- * One message DevHub holds, with what can be done to it: Send now, Edit (in
- * place: ⌘Return saves, Esc gives it up) and Remove.
- */
-function PendingItem({
-  message,
-  position,
-  total,
-  canSendNow,
-  reportEdit,
-}: {
-  readonly message: PendingMessage;
-  /** Its place in the queue, from 1. */
-  readonly position: number;
-  readonly total: number;
-  readonly canSendNow: boolean;
-  /** Its changed words while it is open to be changed, else `undefined`: part of the draft. */
-  readonly reportEdit: (pending: PendingId, words: string | undefined) => void;
-}) {
-  const {
-    startEditingPending,
-    editPending,
-    stopEditingPending,
-    removePending,
-    sendPendingNow,
-    reportFailure,
-  } = useConversationActions();
-  const [draft, setDraft] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    reportEdit(message.id, draft);
-  }, [reportEdit, message.id, draft]);
-  useEffect(
-    () => () => reportEdit(message.id, undefined),
-    [reportEdit, message.id],
-  );
-  // Main holds the message while the editor is open; the composer going
-  // away with it open lets go, so it is not held for an edit nobody finishes.
-  const editing = useRef(false);
-  editing.current = draft !== undefined;
-  const release = useRef<() => void>(() => undefined);
-  release.current = () => {
-    void stopEditingPending(message.id).catch(reportFailure);
-  };
-  useEffect(
-    () => () => {
-      if (editing.current) release.current();
-    },
-    [],
-  );
-  const open = () => {
-    void startEditingPending(message.id).then(
-      () => setDraft(message.text),
-      reportFailure,
-    );
-  };
-  const cancel = () => {
-    setDraft(undefined);
-    release.current();
-  };
-  const save = () => {
-    if (draft === undefined) return;
-    if (draft.trim() === "" && message.images.length === 0) {
-      void removePending(message.id).catch(reportFailure);
-      return;
-    }
-    void editPending(message.id, draft).then(
-      () => setDraft(undefined),
-      reportFailure,
-    );
-  };
-  const keys = useMessageKeys(save, (event) => {
-    if (event.key === "Escape") {
-      // Gives the edit up; the turn is not interrupted by the same key.
-      event.preventDefault();
-      event.stopPropagation();
-      cancel();
-    }
-  });
-  return (
-    <li
-      className="conversation-pending-item"
-      data-failed={message.failure !== undefined || undefined}
-      data-editing={draft !== undefined || undefined}
-    >
-      <div
-        className="conversation-pending-label"
-        title={message.failure === undefined ? PENDING_TOOLTIP : undefined}
-      >
-        <ClockIcon />
-        <span className="conversation-pending-status">
-          {pendingStatus(message, position, total, draft !== undefined)}
-        </span>
-      </div>
-      <div className="conversation-pending-row">
-        {draft === undefined ? (
-          <div className="conversation-pending-actions">
-            <button
-              type="button"
-              className="conversation-pending-now"
-              aria-label="Send now"
-              title="Send now — a running turn takes it in as it goes"
-              disabled={!canSendNow}
-              onClick={() => {
-                void sendPendingNow(message.id).catch(reportFailure);
-              }}
-            >
-              <SendIcon />
-            </button>
-            <button
-              type="button"
-              className="conversation-pending-edit"
-              aria-label="Edit"
-              title="Edit"
-              onClick={open}
-            >
-              <EditIcon />
-            </button>
-            <button
-              type="button"
-              className="conversation-pending-remove"
-              aria-label="Remove"
-              title="Remove"
-              onClick={() => {
-                void removePending(message.id).catch(reportFailure);
-              }}
-            >
-              <CloseIcon />
-            </button>
-          </div>
-        ) : null}
-        <div className="conversation-user" data-origin="person">
-          {message.images.length > 0 ? (
-            <div className="conversation-images">
-              {message.images.map((image, index) => (
-                <ImageView key={index} image={image} />
-              ))}
-            </div>
-          ) : null}
-          {draft === undefined ? (
-            <PersonBubble origin="person">
-              {message.text !== "" ? <SkillText text={message.text} /> : null}
-            </PersonBubble>
-          ) : (
-            <textarea
-              className="conversation-pending-input"
-              aria-label="Waiting message"
-              rows={3}
-              value={draft}
-              autoFocus
-              onFocus={(event) => {
-                const end = event.currentTarget.value.length;
-                event.currentTarget.setSelectionRange(end, end);
-              }}
-              onChange={(event) => setDraft(event.target.value)}
-              {...keys}
-            />
-          )}
-        </div>
-      </div>
-      {draft === undefined ? null : (
-        <div className="conversation-pending-footer">
-          <button
-            type="button"
-            className="conversation-pending-cancel"
-            onClick={cancel}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="conversation-pending-save"
-            title={`Save (${SEND_KEY})`}
-            onClick={save}
-          >
-            Save
-          </button>
-        </div>
-      )}
-    </li>
   );
 }
 
@@ -592,6 +379,8 @@ export function Composer({
   restored,
   savedDraft,
   openTask,
+  edits,
+  draftFlush,
 }: {
   readonly transcript: Transcript;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -606,6 +395,13 @@ export function Composer({
   readonly savedDraft: string | undefined;
   /** Open the call a background task was started by (`ComposerFooter`). */
   readonly openTask: (call: EntryId) => void;
+  /**
+   * The words of each waiting message open to be changed, at the end of the
+   * transcript (`QueuedMessages`): part of the draft.
+   */
+  readonly edits: ReadonlyMap<PendingId, string>;
+  /** Filled with what tells main the draft now, for the queued messages' editors. */
+  readonly draftFlush: RefObject<() => void>;
 }) {
   const {
     send,
@@ -624,25 +420,13 @@ export function Composer({
   const [selected, setSelected] = useState(0);
   /** The text whose completion list Esc closed; typing again reopens it. */
   const [dismissed, setDismissed] = useState<string | undefined>(undefined);
-  /** The words of each waiting message open to be changed. */
-  const [edits, setEdits] = useState<ReadonlyMap<PendingId, string>>(
-    () => new Map(),
-  );
-  const reportEdit = useCallback(
-    (pending: PendingId, words: string | undefined) =>
-      setEdits((current) => {
-        if (current.get(pending) === words) return current;
-        const next = new Map(current);
-        if (words === undefined) next.delete(pending);
-        else next.set(pending, words);
-        return next;
-      }),
-    [],
-  );
   const draft = useDraftReport(
     draftWords(transcript.pending, edits, text),
     savedDraft,
   );
+  useLayoutEffect(() => {
+    draftFlush.current = draft.flush;
+  }, [draftFlush, draft.flush]);
 
   const refusal = inputRefusal(transcript.state);
   const [language, setLanguage] = useState<VoiceLanguage>(() =>
@@ -696,8 +480,7 @@ export function Composer({
     transcript.state.phase === "ready" && transcript.state.turn === "running";
   // The CLI can take a message now (a running turn takes it in), and a
   // setting: it is up, and not being started again.
-  const canSendNow =
-    transcript.state.phase === "ready" && transcript.state.turn !== "rewinding";
+  const canSendNow = takesHeldMessage(transcript.state);
   const history = useMemo(() => inputHistory(transcript), [transcript]);
   const [place, setPlace] = useState({ text, caret: text.length });
   const [composing, setComposing] = useState(false);
@@ -873,20 +656,6 @@ export function Composer({
 
   return (
     <div className="conversation-composer" onBlur={draft.flush}>
-      {transcript.pending.length > 0 ? (
-        <ol className="conversation-pending" aria-label="Waiting to be sent">
-          {transcript.pending.map((message, index) => (
-            <PendingItem
-              key={message.id}
-              message={message}
-              position={index + 1}
-              total={transcript.pending.length}
-              canSendNow={canSendNow}
-              reportEdit={reportEdit}
-            />
-          ))}
-        </ol>
-      ) : null}
       {offered.length > 0 ? (
         <CompletionList
           commands={offered}

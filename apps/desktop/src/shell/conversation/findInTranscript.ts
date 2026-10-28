@@ -11,7 +11,8 @@
  *
  * Only the conversation's own words are read. The page's controls
  * (buttons: Copy, Rewind, Show all) and what is drawn for the eye only
- * (`aria-hidden`: a diff's line numbers) are not, and a match never runs
+ * (`aria-hidden`: a diff's line numbers) are not, nor the page's own words
+ * about a message (`data-find-skip`); and a match never runs
  * from one block into the next — the end of one paragraph and the start of
  * another are not one phrase.
  *
@@ -33,8 +34,12 @@ export const REVEAL_EVENT = "conversation-find-reveal";
  */
 export const BLOCK_BREAK = "\n";
 
-/** Elements whose text is not the conversation's: controls, and what is drawn for the eye only. */
-const SKIPPED = "button, svg, [aria-hidden='true']";
+/**
+ * Elements whose text is not the conversation's: controls, what is drawn for
+ * the eye only, and what the page says about a message rather than what it
+ * says (`data-find-skip`: a queued message's "Queued · 1 of 2").
+ */
+const SKIPPED = "button, svg, [aria-hidden='true'], [data-find-skip]";
 
 /** Elements that flow inside a block: a match may run across them. */
 const INLINE = new Set([

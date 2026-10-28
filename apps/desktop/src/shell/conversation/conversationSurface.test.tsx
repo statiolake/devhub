@@ -1163,10 +1163,13 @@ describe("streaming", () => {
 });
 
 describe("follow-scroll", () => {
-  /** jsdom lays nothing out: the scroller's geometry is set by hand. */
+  /**
+   * jsdom lays nothing out: the scroller's geometry is set by hand. It starts
+   * where a drawn transcript is, at its end, and the surface is told so.
+   */
   function geometry(scroller: HTMLElement) {
     let height = 1_000;
-    let top = 0;
+    let top = height - 200;
     Object.defineProperty(scroller, "clientHeight", { value: 200 });
     Object.defineProperty(scroller, "scrollHeight", { get: () => height });
     Object.defineProperty(scroller, "scrollTop", {
@@ -1175,6 +1178,7 @@ describe("follow-scroll", () => {
         top = Math.max(0, Math.min(value, height - 200));
       },
     });
+    fireEvent.scroll(scroller);
     return {
       grow(by: number) {
         height += by;
@@ -1212,6 +1216,29 @@ describe("follow-scroll", () => {
     redraw(transcriptOf(second));
     expect(box.top).toBe(box.bottom());
     expect(wayDown()).toBeNull();
+  });
+
+  it("stays at the end when what is there grows before its scroll is read: only a scroll up leaves it", () => {
+    draw(transcriptOf(first));
+    const box = geometry(scroller());
+    // Put at the end, then a cut message draws its Show all before the
+    // scroll event is read: short of the end, and nobody scrolled.
+    box.grow(28);
+    fireEvent.scroll(scroller());
+    expect(box.top).toBe(box.bottom());
+    expect(wayDown()).toBeNull();
+    // Scroll anchoring moving the lines down as something above them is laid out.
+    box.grow(300);
+    box.scrollTo(box.top + 300);
+    expect(box.top).toBe(box.bottom());
+    expect(wayDown()).toBeNull();
+    // The person scrolling up is what leaves the end.
+    box.scrollTo(box.top - 40);
+    expect(wayDown()).toHaveAccessibleName("Latest");
+    // Away from the end, a scroll down is theirs too: held where they put it.
+    box.scrollTo(box.top + 10);
+    expect(box.top).toBe(box.bottom() - 30);
+    expect(wayDown()).toHaveAccessibleName("Latest");
   });
 
   it("offers the way down as soon as the person scrolls away, before anything arrives", () => {

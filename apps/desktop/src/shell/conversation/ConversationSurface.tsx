@@ -15,7 +15,8 @@
  *
  * Around the transcript: the header (usage, the way out to a terminal) above
  * it, and below it a line naming the requests still waiting and the composer
- * (with the settings and Stop in its toolbar). Before the first entry, the
+ * (with the settings and Stop in its toolbar). The messages held for a busy
+ * Agent are the transcript's last lines (`QueuedMessages`), in its scroll. Before the first entry, the
  * transcript's place says what the pane is for. Beside the conversation, when
  * the pane is wide, a column of subagents; in its place, a subagent the
  * person maximized (`SubagentPanes`). Esc and Ctrl+C stop a running turn from anywhere in the
@@ -70,6 +71,7 @@ import { ActivityLine } from "./ActivityLine";
 import { useFreshEntries, useNoReplayOnShow } from "./freshEntries";
 import { IssueRepositoryProvider, type IssueRepository } from "./issueLinks";
 import { PathLinks, PathLinksProvider } from "./pathLinks";
+import { QueuedMessages, usePendingEdits } from "./QueuedMessages";
 import { ArrowDownIcon, ArrowUpIcon } from "./icons";
 import { SEND_KEY } from "./messageKeys";
 import { RequestCard } from "./RequestCard";
@@ -199,6 +201,11 @@ export function ConversationSurface({
   const effort = useRef<SettingPickerHandle>(null);
   const mode = useRef<SettingPickerHandle>(null);
   const pickers = useMemo(() => ({ model, effort, mode }), []);
+
+  // The queued messages being changed are part of the composer's draft.
+  const { edits, reportEdit } = usePendingEdits();
+  const draftFlush = useRef<() => void>(() => undefined);
+  const flushDraft = useCallback(() => draftFlush.current(), []);
 
   const focusComposer = useCallback(() => {
     composer.current?.focus();
@@ -500,6 +507,12 @@ export function ConversationSurface({
                                     </div>
                                   ))}
                                   <ActivityLine transcript={transcript} />
+                                  <QueuedMessages
+                                    pending={transcript.pending}
+                                    state={transcript.state}
+                                    reportEdit={reportEdit}
+                                    flushDraft={flushDraft}
+                                  />
                                 </div>
                               </div>
                               {following ? null : (
@@ -546,6 +559,8 @@ export function ConversationSurface({
                                 openSetting={openSetting}
                                 restored={restored}
                                 savedDraft={savedDraft}
+                                edits={edits}
+                                draftFlush={draftFlush}
                               />
                             </div>
                           </div>

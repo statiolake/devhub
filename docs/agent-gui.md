@@ -921,8 +921,11 @@ sending, and the refusal is a notice. Which messages are sending is read from
 what was written (`in.log`), so after a restart a message written and not yet
 taken is sending again. One you send while it is busy (a turn running, a request waiting, the CLI still
 connecting or being started again by a rewind) waits instead. Waiting messages
-are listed over the composer, oldest first. The Agent has not seen them yet,
-so each one can be:
+are the transcript's last lines, oldest first, after the activity line: they
+scroll with the rest of the conversation, follow it to its end as new ones
+arrive, and a long one is cut to six lines with _Show all_ under it (a find
+match in the cut opens it). Find searches their words, not their
+_Queued · 1 of 2_ line. The Agent has not seen them yet, so each one can be:
 
 - **edited** in place (⌘Return saves, Esc gives up), the caret at the end of
   its words, in a field that grows with its text from three lines up to the
@@ -1112,8 +1115,7 @@ is running and written down; a launch that fails leaves the terminal running.
 **Smart Buttons.** While a GUI Agent is idle (or done but for something it left
 running in the background), one box holding a compact stack
 of small buttons — one per line, under the automatic actions' bolt — stands
-on its composer's top right edge (on the topmost waiting message, when there
-are any): what
+on its composer's top right edge: what
 the Workspace's repository says could be done next — commit, push, open a
 pull request, get a draft ready, address review comments, fix CI
 (`smartButtonTriggers` in `model/agentActions.ts`, read from the repository status the Sidebar already

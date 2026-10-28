@@ -2401,12 +2401,13 @@ label.conversation-question-option:hover,
   opacity: 0.5;
 }
 
-/* Over the composer: the person's messages DevHub holds, oldest first. */
+/* The transcript's last lines: the person's messages DevHub holds, oldest
+   first, after the activity line, scrolling with everything above them. */
 .conversation-pending {
   display: flex;
   flex-direction: column;
-  margin: 0;
-  padding: 0 0 var(--space-2);
+  margin: var(--space-4) 0 0;
+  padding: 0;
   gap: var(--space-2);
   list-style: none;
 }
@@ -2414,8 +2415,8 @@ label.conversation-question-option:hover,
 /* A queued message: the person's own bubble, not yet solid — a wash and a
    dashed edge where a sent one is filled — under one quiet line that says it
    waits and where. Its controls are icons beside the bubble that come up
-   when it is pointed at or has the keyboard. It rises in from the composer
-   it was sent from. */
+   when it is pointed at or has the keyboard. It rises in at the end of the
+   transcript, over the composer it was sent from. */
 .conversation-pending-item {
   display: flex;
   flex-direction: column;
@@ -2474,6 +2475,17 @@ label.conversation-question-option:hover,
 
 .conversation-pending-row .conversation-user-text {
   max-width: 100%;
+}
+
+/* One long paste does not fill the pane: a queued message is cut to a few
+   lines (`Clip`), its last fading out, with Show all under them. */
+.conversation-pending-item .conversation-clip-box:not([data-open]) {
+  max-height: 6lh;
+}
+
+.conversation-pending-item .conversation-clip-toggle {
+  display: block;
+  margin: var(--space-1) 0 0 auto;
 }
 
 .conversation-pending-item:not([data-editing]) .conversation-user-text {
@@ -3563,8 +3575,8 @@ button.conversation-setting-face:focus-visible {
   margin: 0.6em 0;
 }
 
-/* The composer's own arrivals: a message queued to be sent, the list of
-   background tasks opened, the words dictation has not committed yet (the
+/* Arrivals that mount when they appear: a message queued to be sent (at the
+   transcript's end), the composer's list of background tasks opened, the words dictation has not committed yet (the
    popovers have theirs above). Each mounts only when it appears, so a plain
    entry animation is enough. */
 .conversation-pending-item {

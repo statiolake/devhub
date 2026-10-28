@@ -792,28 +792,17 @@ function useMetrics(
       watcher.observe(pane, { childList: true, subtree: true });
       return () => watcher.disconnect();
     }
-    // A GUI Agent's queued messages stand on its composer's box too: the
-    // stack stands on the topmost of them, so it never covers one.
-    const composer = anchor?.closest<HTMLElement>(".conversation-composer");
+    // A GUI Agent's queued messages are the transcript's last lines, not
+    // over the composer: the box stands on the composer's own box, and the
+    // transcript keeps the room it takes (`--smart-buttons-reserve`).
     const measure = () => {
       const paneRect = pane.getBoundingClientRect();
       const boxRect = box.getBoundingClientRect();
-      const anchorRect = anchor?.getBoundingClientRect();
-      const queued = composer
-        ?.querySelector<HTMLElement>(":scope > .conversation-pending")
-        ?.getBoundingClientRect();
       setMetrics({
         pane: paneRect,
         anchor: anchorBox(
           paneRect,
-          anchorRect === undefined
-            ? undefined
-            : {
-                top: Math.min(anchorRect.top, queued?.top ?? anchorRect.top),
-                right: anchorRect.right,
-                bottom: anchorRect.bottom,
-                left: anchorRect.left,
-              },
+          anchor?.getBoundingClientRect(),
           SPACING[agent.presentation],
         ),
         box: { width: boxRect.width, height: boxRect.height },
@@ -821,7 +810,7 @@ function useMetrics(
     };
     measure();
     const observer = new ResizeObserver(measure);
-    for (const each of [pane, box, anchor, composer]) {
+    for (const each of [pane, box, anchor]) {
       if (each) observer.observe(each);
     }
     return () => observer.disconnect();

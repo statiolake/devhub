@@ -43,10 +43,11 @@ import {
 import {
   COMPOSER_PLACEHOLDER,
   DRAFT_PAUSE_MS,
-  PENDING_TOOLTIP,
   REWIND_NOTE,
   composerPlaceholder,
 } from "./Composer";
+import { PENDING_TOOLTIP } from "./QueuedMessages";
+import { SectionText } from "./findInTranscript";
 import {
   draw,
   entry,
@@ -1068,6 +1069,56 @@ describe("messages waiting to be sent", () => {
     expect(actions.send).toHaveBeenCalledWith("one more", []);
   });
 
+  it("are the transcript's last lines, after the activity line, in its scroll and not over the composer", () => {
+    draw(withSession([RUNNING, HELD]));
+    const list = waiting();
+    const transcript = list.closest(".conversation-transcript");
+    expect(transcript?.closest(".conversation-scroll")).not.toBeNull();
+    expect(transcript?.lastElementChild).toBe(list);
+    expect(list.previousElementSibling).toHaveClass("conversation-activity");
+    expect(list.closest(".conversation-composer")).toBeNull();
+    expect(list.closest(".conversation-dock")).toBeNull();
+  });
+
+  it("cuts a long one to a few lines, the cut kept for the find bar to open", () => {
+    const long = Array.from({ length: 80 }, (_, n) => `line ${n}`).join("\n");
+    draw(
+      withSession([
+        RUNNING,
+        {
+          type: "pending",
+          pending: [
+            {
+              id: pendingId("held:1"),
+              text: long,
+              images: [],
+              failure: undefined,
+              editing: false,
+            },
+          ],
+        },
+      ]),
+    );
+    const cut = waiting().querySelector(
+      ".conversation-user-text .conversation-clip-box",
+    );
+    expect(cut).toHaveAttribute("data-find-fold");
+    expect(cut).toHaveTextContent("line 79");
+    const css = readFileSync("src/shell/conversation/conversation.css", "utf8");
+    expect(css).toMatch(
+      /\.conversation-pending-item \.conversation-clip-box:not\(\[data-open\]\) \{\s*max-height: 6lh;/,
+    );
+  });
+
+  it("is found by its words, not by what the page says about it", () => {
+    draw(withSession([RUNNING, HELD]));
+    const text = new SectionText(waiting());
+    text.readOn(() => true);
+    expect(text.text).toContain("look at the tests");
+    expect(text.text).not.toContain("Queued");
+    expect(text.text).not.toContain("Not sent");
+  });
+
   it("does nothing on ⌘Return in an empty composer with nothing waiting", () => {
     const { actions } = draw(withSession([RUNNING]));
     fireEvent.keyDown(composer(), { key: "Enter", ...SEND });
@@ -1570,6 +1621,31 @@ describe("the unsent draft", () => {
     });
     act(() => vi.advanceTimersByTime(DRAFT_PAUSE_MS));
     expect(actions.saveDraft).toHaveBeenLastCalledWith("and the docs");
+  });
+
+  it("is reported at once when the keyboard leaves a waiting message being changed", async () => {
+    const HELD: ConversationEvent = {
+      type: "pending",
+      pending: [
+        {
+          id: pendingId("held:1"),
+          text: "look at the tests",
+          images: [],
+          failure: undefined,
+          editing: false,
+        },
+      ],
+    };
+    const { actions } = draw(withSession([RUNNING, HELD]));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await settle();
+    const field = screen.getByLabelText("Waiting message");
+    fireEvent.change(field, { target: { value: "look at the unit tests" } });
+    expect(actions.saveDraft).not.toHaveBeenCalled();
+    fireEvent.blur(field);
+    expect(actions.saveDraft).toHaveBeenLastCalledWith(
+      "look at the unit tests",
+    );
   });
 
   it("hands a report that failed to the page's root", async () => {
