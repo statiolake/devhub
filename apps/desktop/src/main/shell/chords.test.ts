@@ -1282,3 +1282,40 @@ describe("the Agent's terminal", () => {
 		});
 	});
 });
+
+describe("reopening what was closed", () => {
+	it("reopens the newest, or lists them, while there is something to reopen", () => {
+		const snapshot = { ...snapshotOf(), recentlyClosed: 2 };
+		expect(run("reopen_closed", snapshot)).toEqual({ kind: "reopen-closed" });
+		expect(run("open_recently_closed", snapshot)).toEqual({
+			kind: "open-recently-closed",
+		});
+	});
+
+	it("is a no-op with nothing closed", () => {
+		const snapshot = { ...snapshotOf(), recentlyClosed: 0 };
+		expect(run("reopen_closed", snapshot)).toBeUndefined();
+		expect(run("open_recently_closed", snapshot)).toBeUndefined();
+	});
+
+	it("is offered for main to decide when the snapshot does not say", () => {
+		expect(run("reopen_closed", snapshotOf())).toEqual({
+			kind: "reopen-closed",
+		});
+	});
+
+	it("is Cmd+Q Shift+T", () => {
+		const stroke: KeyStroke = {
+			key: strokeKey("T"),
+			code: "KeyT",
+			command: false,
+			control: false,
+			option: false,
+			shift: true,
+			isAutoRepeat: false,
+		};
+		expect(matchChord(defaultChordTable(), stroke)?.commandId).toBe(
+			"reopen_closed",
+		);
+	});
+});

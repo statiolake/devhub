@@ -238,7 +238,10 @@ export class PickerView {
 	 * answers -1.
 	 */
 	async choose(
-		request: Extract<ModalRequest, { kind: "command-palette" }>,
+		request: Extract<
+			ModalRequest,
+			{ kind: "command-palette" | "recently-closed" }
+		>,
 	): Promise<number> {
 		const id = this.openModal(request);
 		return new Promise<number>((resolve) => {

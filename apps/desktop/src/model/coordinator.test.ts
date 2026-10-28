@@ -1118,7 +1118,13 @@ describe("continuing a GUI Agent in a terminal", () => {
     const stop = driver
       .drainEffects()
       .find((effect) => effect.kind === "stop_agent");
-    expect(stop).toMatchObject({ kind: "stop_agent", agentId: AG_A });
+    // Replaced, not closed: its session goes on in the new Agent, so it is
+    // nothing `Cmd+Q Shift+T` should bring back (`model/recentlyClosed.ts`).
+    expect(stop).toMatchObject({
+      kind: "stop_agent",
+      agentId: AG_A,
+      replaced: true,
+    });
     expect(driver.coordinator.model.agent(AG_A)?.controlState.kind).toBe(
       "stopping",
     );
@@ -1767,6 +1773,10 @@ describe("stopping an agent", () => {
     expect(outcome.kind).not.toBe("confirmation_required");
     const effects = driver.drainEffects();
     expect(effects.map((effect) => effect.kind)).toContain("stop_agent");
+    // A person's close, which main remembers so it can be reopened.
+    expect(
+      effects.find((effect) => effect.kind === "stop_agent"),
+    ).not.toHaveProperty("replaced");
     for (const effect of effects) driver.answer(effect);
     driver.settle();
     expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(0);

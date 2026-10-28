@@ -144,6 +144,8 @@ function host(zoomActs = true) {
 		closeAgent: record("closeAgent"),
 		restartAgent: record("restartAgent"),
 		closeWorkspace: record("closeWorkspace"),
+		reopenClosed: record("reopenClosed"),
+		openRecentlyClosed: record("openRecentlyClosed"),
 		reorderEntries: record("reorderEntries"),
 		refreshRepositories: record("refreshRepositories"),
 		openChordHelp: record("openChordHelp"),

@@ -78,6 +78,10 @@ import {
   legacyAgentTerminal,
 } from "./agentTerminal.js";
 import { isSmartButtonsSpot, type SmartButtonsSpot } from "./smartButtons.js";
+import {
+  decodeRecentlyClosed,
+  type ClosedEntryRecord,
+} from "./recentlyClosed.js";
 
 /**
  * Version 4 took the close out of the file entirely; version 3 made a close's
@@ -217,6 +221,13 @@ import { isSmartButtonsSpot, type SmartButtonsSpot } from "./smartButtons.js";
  * The bump is for the other direction: a version-11 DevHub would read `editor`
  * as nothing and open the container Workspace's editor on this Mac without a
  * word.
+ *
+ * `recently_closed` came without a bump, for the reason `sidebar.collapsed`
+ * had none: absent is the empty stack, which is what every file written before
+ * it means, and an older DevHub that drops the key on its next save loses the
+ * history of what was closed, never anything open. It is read leniently — an
+ * entry that does not decode is left out rather than refusing the file. See
+ * `model/recentlyClosed.ts`.
  */
 export const STATE_SCHEMA_VERSION = 12;
 export { SIDEBAR_DEFAULT_WIDTH };
@@ -716,6 +727,12 @@ export interface PersistedAppState {
   window: WindowState;
   tmux: TmuxState;
   shutdown: ShutdownMetadata;
+  /**
+   * What was closed lately, newest first, for `Cmd+Q Shift+T` to reopen.
+   * Main's, like `session_machines`: the model does not hold it. See
+   * `model/recentlyClosed.ts`.
+   */
+  recently_closed: ClosedEntryRecord[];
 }
 
 export function freshState(): PersistedAppState {
@@ -742,6 +759,7 @@ export function freshState(): PersistedAppState {
       transition: { kind: "stable" },
     },
     shutdown: { clean: true, launch_generation: 0 },
+    recently_closed: [],
   };
 }
 
@@ -1211,6 +1229,7 @@ export function validateState(state: PersistedAppState): void {
       agentIds.add(agent.agent_id);
     }
   }
+  decodeArray("recently_closed", state.recently_closed);
   decodeObject("navigation", state.navigation);
   if (state.navigation.context !== undefined) {
     decodeObject("navigation.context", state.navigation.context);
@@ -2774,6 +2793,9 @@ function decodeParsed(parsed: Extract<Parsed, { kind: "document" }>): Decoded {
         "session_machines",
         object["session_machines"] ?? [],
       ),
+      // Absent is the empty stack, and an entry that does not read is left
+      // out rather than refusing the file: it is history, not work.
+      recently_closed: decodeRecentlyClosed(object["recently_closed"]),
       navigation:
         object["navigation"] === undefined
           ? fresh.navigation

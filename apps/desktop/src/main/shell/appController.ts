@@ -392,11 +392,26 @@ import type {
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
 import {
+	claudeSessionPresent,
 	listPastSessions,
 	previewPastSession,
 	resumeArgs,
 	withSession,
 } from "../agent/conversation/resume.js";
+import {
+	agentEntriesOf,
+	closedEntryDetail,
+	closedEntryLabel,
+	placeKey,
+	placeLabel,
+	rememberClosed,
+	restoreEntry,
+	resumableSession,
+	withoutEntry,
+	type ClosedAgentRecord,
+	type ClosedEntryRecord,
+	type ClosedPlaceRecord,
+} from "../../model/recentlyClosed.js";
 import {
 	readClaudeDefaults,
 	writeClaudeDefault,
@@ -611,6 +626,20 @@ function describeFailure(error: unknown): string {
  * take seconds; finite, because silence is not an outcome.
  */
 const EDITOR_OPEN_TIMEOUT_MS = 30_000;
+
+/**
+ * How long a close waits to be told which session an Agent's CLI is in, so it
+ * can be reopened (`model/recentlyClosed.ts`). Short: it is asked only so the
+ * close can be undone, and an Agent whose session was not told in time is
+ * still closed — it is only not resumable.
+ */
+const SESSION_AT_CLOSE_TIMEOUT_MS = 3_000;
+
+/**
+ * A closed Agent or Workspace that cannot come back, and why — said, and the
+ * entry dropped (`model/recentlyClosed.ts`).
+ */
+class ReopenRefused extends Error {}
 
 /**
  * The same promise, with "it never answered" as one of its answers.
@@ -1707,7 +1736,7 @@ export class AppController {
 			this.publishError(errorWire(failure));
 		};
 		const chordHost: ChordHost = {
-			snapshot: () => this.snapshot(),
+			snapshot: () => this.chordSnapshot(),
 			selectContext: (context, presentation, focus, passing) => {
 				if (passing) {
 					const model = this.coordinator.model;
@@ -1860,6 +1889,13 @@ export class AppController {
 			closeWorkspace: (workspaceId) => {
 				this.placeKeyboardOnSurface();
 				this.closeWorkspaceOrWorktree(workspaceId);
+			},
+			reopenClosed: () => {
+				this.placeKeyboardOnSurface();
+				void this.reopenClosed().catch(report);
+			},
+			openRecentlyClosed: () => {
+				void this.openRecentlyClosed().catch(report);
 			},
 			reorderEntries: (order, workspaceId) => {
 				// The same intents the Sidebar's own drag raises, through the same
@@ -2341,7 +2377,7 @@ export class AppController {
 	 * meets an empty modal layer.
 	 */
 	private async openCommandPalette(host: ChordHost): Promise<void> {
-		const snapshot = this.snapshot();
+		const snapshot = this.chordSnapshot();
 		if (!snapshot) return;
 		const spec = this.config?.keybindings ?? defaultKeybindings();
 		const { prefix, bindings } = resolveBindings(spec);
@@ -2916,6 +2952,440 @@ export class AppController {
 		this.state.session_machines = [...remembered];
 		await this.stateStore.saveState(this.state);
 	}
+
+	//#region recently closed
+
+	/**
+	 * Reopens run one at a time, in the order asked: two quick presses bring
+	 * back the newest and then the one before it, rather than racing each
+	 * other for the same entry.
+	 */
+	private reopening: Promise<void> = Promise.resolve();
+
+	/** The page's snapshot with what main alone knows that chords read. */
+	private chordSnapshot(): AppSnapshotWire {
+		return {
+			...this.snapshot(),
+			recentlyClosed: this.state.recently_closed.length,
+		};
+	}
+
+	/** Where a Workspace is, as a closed entry remembers it. */
+	private closedPlaceOf(workspace: Workspace): ClosedPlaceRecord {
+		const location = workspace.location;
+		const editor =
+			workspace.editor.kind === "devContainer"
+				? { dev_container: workspace.editor.configPath as string }
+				: {};
+		return location.kind === "local"
+			? { kind: "local", path: location.path, ...editor }
+			: {
+					kind: "ssh",
+					host: location.host,
+					path: location.path,
+					...editor,
+				};
+	}
+
+	/**
+	 * The session an Agent's CLI is in, asked while it is still running: a
+	 * GUI Agent's conversation knows it, a terminal Agent's is read from its
+	 * processes. Best effort and bounded — a close is never held up for long
+	 * by a question asked only so it can be undone — and nothing when it
+	 * cannot be told, which reopening then says.
+	 */
+	private async sessionAtClose(agentId: AgentId): Promise<string | undefined> {
+		const wiring = this.agentWiring;
+		const agent = this.coordinator.model.agent(agentId);
+		if (wiring === undefined || agent === undefined) return undefined;
+		if (agent.profile.kind !== "claude" && agent.profile.kind !== "codex") {
+			return undefined;
+		}
+		try {
+			const session = await withDeadline(
+				agent.presentation === "gui"
+					? wiring.conversations.session(agentId)
+					: wiring.terminalSession(agentId),
+				SESSION_AT_CLOSE_TIMEOUT_MS,
+				"the session could not be told in time",
+			);
+			return session === undefined ? undefined : sessionId(session);
+		} catch (error: unknown) {
+			console.warn(
+				`[devhub] closing Agent ${agentId}: its session could not be told, so it cannot be reopened: ${failureText(error)}`,
+			);
+			return undefined;
+		}
+	}
+
+	private async closedAgentOf(agentId: AgentId): Promise<ClosedAgentRecord> {
+		const agent = this.coordinator.model.agent(agentId);
+		if (agent === undefined) throw new Error(`no Agent ${agentId} is open`);
+		const session = await this.sessionAtClose(agentId);
+		return {
+			profile_id: agent.profile.id,
+			profile_kind: agent.profile.kind,
+			display_name: agent.displayName,
+			...(agent.named ? { named: true } : {}),
+			presentation: agent.presentation,
+			...(session === undefined ? {} : { session }),
+		};
+	}
+
+	/** What reopening this Agent needs, or nothing when it is not open. */
+	private async closedAgentEntry(
+		agentId: AgentId,
+	): Promise<ClosedEntryRecord | undefined> {
+		const workspace = this.coordinator.model.workspaceForAgent(agentId);
+		if (workspace === undefined) return undefined;
+		return {
+			kind: "agent",
+			closed_at: Date.now(),
+			place: this.closedPlaceOf(workspace),
+			agent: await this.closedAgentOf(agentId),
+		};
+	}
+
+	/** What reopening this Workspace needs, its running Agents included. */
+	private async closedWorkspaceEntry(
+		workspaceId: WorkspaceId,
+	): Promise<ClosedEntryRecord | undefined> {
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		if (
+			workspace === undefined ||
+			workspaceId === this.coordinator.model.scratchWorkspaceId
+		) {
+			return undefined;
+		}
+		return {
+			kind: "workspace",
+			closed_at: Date.now(),
+			place: this.closedPlaceOf(workspace),
+			agents: await Promise.all(
+				workspace.agents.map((agent) => this.closedAgentOf(agent.id)),
+			),
+		};
+	}
+
+	/**
+	 * Put one more closed thing on the stack. Not saved here: every close
+	 * ends in a persist, which writes `this.state` — this list with it.
+	 */
+	private rememberClosedEntry(entry: ClosedEntryRecord): void {
+		this.state.recently_closed = rememberClosed(
+			this.state.recently_closed,
+			entry,
+		);
+	}
+
+	private setRecentlyClosed(stack: ClosedEntryRecord[]): void {
+		this.state.recently_closed = stack;
+		void this.saveState().catch((error: unknown) => {
+			this.publishError(
+				withDetail(
+					errorWireAt("persistence_degraded"),
+					this.persistenceReason(error),
+				),
+			);
+		});
+	}
+
+	/** `Cmd+Q Shift+T`: the newest entry; pressed again, the one before it. */
+	reopenClosed(): Promise<void> {
+		return this.queueReopen(() => this.state.recently_closed[0]);
+	}
+
+	/** `Recently Closed…`: the stack as a list, and the chosen one reopened. */
+	private async openRecentlyClosed(): Promise<void> {
+		const entries = [...this.state.recently_closed];
+		const now = Date.now();
+		const chosen = await shellWindow().picker.choose({
+			kind: "recently-closed",
+			rows: entries.map((entry) => ({
+				title: closedEntryLabel(entry),
+				detail: closedEntryDetail(entry, now),
+			})),
+		});
+		const entry = entries[chosen];
+		if (entry === undefined) return;
+		// By identity: the stack may have moved while the sheet was up.
+		await this.queueReopen(() =>
+			this.state.recently_closed.includes(entry) ? entry : undefined,
+		);
+	}
+
+	private queueReopen(
+		which: () => ClosedEntryRecord | undefined,
+	): Promise<void> {
+		const run = this.reopening.then(async () => {
+			const entry = which();
+			if (entry !== undefined) await this.reopenEntry(entry);
+		});
+		this.reopening = run.catch(() => undefined);
+		return run;
+	}
+
+	/**
+	 * Take one entry off the stack and bring it back.
+	 *
+	 * The rules are `model/recentlyClosed.ts`'s. What cannot come back
+	 * (`ReopenRefused`) is said and the entry dropped, so the next press goes
+	 * further back. A failure before anything was opened — the machine did
+	 * not answer — puts the entry back where it was, so pressing again tries
+	 * again. Once DevHub has started bringing it back, a failure is said and
+	 * the entry is gone: what it could bring back is back.
+	 */
+	private async reopenEntry(entry: ClosedEntryRecord): Promise<void> {
+		const index = this.state.recently_closed.indexOf(entry);
+		if (index < 0) return;
+		this.setRecentlyClosed(withoutEntry(this.state.recently_closed, index));
+		const progress = { opened: false };
+		try {
+			const notes =
+				entry.kind === "workspace"
+					? await this.reopenWorkspace(entry, progress)
+					: await this.reopenAgent(entry, progress);
+			if (notes.length > 0) {
+				this.publishError(
+					withDetail(
+						errorWireAt("closed_not_reopened"),
+						`${closedEntryLabel(entry)} is back, but not all of it: ${notes.join(" ")}`,
+					),
+				);
+			}
+		} catch (error: unknown) {
+			const label = closedEntryLabel(entry);
+			if (error instanceof ReopenRefused) {
+				this.publishError(
+					withDetail(
+						errorWireAt("closed_not_reopened"),
+						`${label} cannot be reopened: ${error.message} It has been taken off Recently Closed.`,
+					),
+				);
+				return;
+			}
+			if (!progress.opened) {
+				this.setRecentlyClosed(
+					restoreEntry(this.state.recently_closed, index, entry),
+				);
+			}
+			this.publishError(
+				withDetail(
+					errorWireAt("closed_not_reopened"),
+					`${label} could not be reopened: ${failureText(error)}${
+						progress.opened
+							? ""
+							: " It is still in Recently Closed; Cmd+Q Shift+T tries it again."
+					}`,
+				),
+			);
+		}
+	}
+
+	/** The open Workspace on this place, if there is one. */
+	private openWorkspaceAt(place: ClosedPlaceRecord): Workspace | undefined {
+		const key = placeKey(place);
+		return this.coordinator.model.workspaces.find(
+			(workspace) => locationKey(workspace.location) === key,
+		);
+	}
+
+	/**
+	 * Open the place again, the way it was open: its folder on its machine,
+	 * its editor in the dev container it was attached to. A folder that is no
+	 * longer there is refused; a machine that does not answer is a failure
+	 * that may pass.
+	 */
+	private async openClosedPlace(
+		place: ClosedPlaceRecord,
+		progress: { opened: boolean },
+	): Promise<{ readonly workspaceId: WorkspaceId; readonly notes: string[] }> {
+		const requested: WorkspacePlaceWire =
+			place.kind === "local"
+				? { kind: "local", path: place.path }
+				: { kind: "ssh", host: place.host, path: place.path };
+		let location: WorkspaceLocation;
+		try {
+			location = workspaceLocation(requested);
+		} catch {
+			throw new ReopenRefused("DevHub no longer reads where it was.");
+		}
+		const kind = await runtimeFor(location).stat(location.path);
+		if (kind !== "directory") {
+			throw new ReopenRefused(
+				`${placeLabel(requested)} is no longer a folder${
+					kind === "absent" ? " there: it has been deleted or moved." : "."
+				}`,
+			);
+		}
+		const opening = requestedLocation(requested);
+		progress.opened = true;
+		await this.openFolder(opening);
+		const workspaceId = this.openedWorkspaceId(opening);
+		const notes: string[] = [];
+		if (place.dev_container !== undefined && !isTerminalMode()) {
+			try {
+				await this.attachEditor(workspaceId, {
+					kind: "devContainer",
+					configPath: devContainerConfigPath(place.dev_container),
+				});
+			} catch (error: unknown) {
+				notes.push(
+					`Its editor could not be opened in its dev container again (${failureText(error)}); it is open on its own machine.`,
+				);
+			}
+		}
+		return { workspaceId, notes };
+	}
+
+	/**
+	 * A Workspace: focused if it is open already — its Agents then put back
+	 * on the stack, to be brought back one press at a time — and otherwise
+	 * opened again with every Agent that can be resumed.
+	 */
+	private async reopenWorkspace(
+		entry: Extract<ClosedEntryRecord, { kind: "workspace" }>,
+		progress: { opened: boolean },
+	): Promise<string[]> {
+		const open = this.openWorkspaceAt(entry.place);
+		if (open !== undefined) {
+			progress.opened = true;
+			await this.dispatchAwaiting({
+				type: "select_context",
+				context: { kind: "workspace", workspaceId: open.id },
+				presentation: "full",
+			});
+			await this.syncEditorView();
+			let stack = this.state.recently_closed;
+			for (const agent of agentEntriesOf(entry).reverse()) {
+				stack = rememberClosed(stack, agent);
+			}
+			this.setRecentlyClosed(stack);
+			return [];
+		}
+		const { workspaceId, notes } = await this.openClosedPlace(
+			entry.place,
+			progress,
+		);
+		let first: AgentId | undefined;
+		for (const agent of entry.agents) {
+			try {
+				const created = await this.resumeClosedAgent(
+					workspaceId,
+					entry.place,
+					agent,
+				);
+				first ??= created;
+			} catch (error: unknown) {
+				notes.push(
+					error instanceof ReopenRefused
+						? error.message
+						: `“${agent.display_name}” could not be started again: ${failureText(error)}`,
+				);
+			}
+		}
+		if (first !== undefined) {
+			await this.dispatchAwaiting({
+				type: "select_context",
+				context: { kind: "agent", agentId: first },
+				presentation: "full",
+			});
+			await this.syncEditorView();
+		}
+		return notes;
+	}
+
+	/** An Agent: in its Workspace, opened again first if it was closed too. */
+	private async reopenAgent(
+		entry: Extract<ClosedEntryRecord, { kind: "agent" }>,
+		progress: { opened: boolean },
+	): Promise<string[]> {
+		// Asked before anything is opened: an Agent that cannot come back
+		// does not reopen its folder on the way to saying so.
+		const resumable = resumableSession(entry.agent);
+		if (resumable.kind === "none") throw new ReopenRefused(resumable.why);
+		const open = this.openWorkspaceAt(entry.place);
+		const { workspaceId, notes } =
+			open === undefined
+				? await this.openClosedPlace(entry.place, progress)
+				: { workspaceId: open.id, notes: [] };
+		progress.opened = true;
+		await this.resumeClosedAgent(workspaceId, entry.place, entry.agent);
+		return notes;
+	}
+
+	/**
+	 * Start a closed Agent again in `workspaceId`, resuming its session, with
+	 * the name a person gave it. Refused — never started afresh — when it has
+	 * no session, its profile is gone, or Claude no longer keeps the session.
+	 */
+	private async resumeClosedAgent(
+		workspaceId: WorkspaceId,
+		place: ClosedPlaceRecord,
+		agent: ClosedAgentRecord,
+	): Promise<AgentId> {
+		const resumable = resumableSession(agent);
+		if (resumable.kind === "none") throw new ReopenRefused(resumable.why);
+		if (
+			!(this.config?.agentProfiles ?? []).some(
+				(profile) => profile.id === agent.profile_id,
+			)
+		) {
+			throw new ReopenRefused(
+				`“${agent.display_name}” was started from the profile “${agent.profile_id}”, which is no longer in DevHub's settings.`,
+			);
+		}
+		const requested: WorkspacePlaceWire =
+			place.kind === "local"
+				? { kind: "local", path: place.path }
+				: { kind: "ssh", host: place.host, path: place.path };
+		if (agent.profile_kind === "claude") {
+			const { runtime, profile } = await this.sessionsProfile(
+				requested,
+				agent.profile_id,
+			);
+			const workspace = this.coordinator.model.workspace(workspaceId);
+			if (
+				workspace !== undefined &&
+				!(await claudeSessionPresent(
+					runtime,
+					profile,
+					workspace.root,
+					resumable.session,
+				))
+			) {
+				throw new ReopenRefused(
+					`Claude no longer keeps the session “${agent.display_name}” was in (${resumable.session}) for ${placeLabel(requested)}.`,
+				);
+			}
+		}
+		const before = this.modelAgentIds();
+		await this.dispatchAwaiting({
+			type: "create_agent",
+			workspaceId,
+			profileId: agentProfileId(agent.profile_id),
+			presentation: "full",
+			agentPresentation: agent.presentation,
+			resume: resumable.session,
+		});
+		const created = this.coordinator.model.workspaces
+			.flatMap((workspace) => workspace.agents)
+			.find((each) => !before.has(each.id));
+		if (created === undefined) {
+			throw new Error("DevHub did not start the Agent.");
+		}
+		if (agent.named === true) {
+			await this.dispatchAwaiting({
+				type: "rename_agent",
+				agentId: created.id,
+				displayName: agent.display_name,
+			});
+		}
+		await this.syncEditorView();
+		return created.id;
+	}
+
+	//#endregion
 
 	/** The machine one Agent runs on: its Workspace's. */
 	private machineOfAgent(
@@ -4174,6 +4644,7 @@ export class AppController {
 					effect.agentId,
 					effect.kind,
 					effect.kind === "stop_agent" && effect.moveTerminal === true,
+					effect.kind === "stop_agent" && effect.replaced !== true,
 				);
 				return;
 			case "restart_agent":
@@ -4763,6 +5234,8 @@ export class AppController {
 		agentId: ReturnType<typeof parseAgentId>,
 		kind: "stop_agent" | "terminate_agent",
 		moveTerminal: boolean,
+		/** A person closing it, to be reopened (`model/recentlyClosed.ts`). */
+		closing: boolean,
 	): Promise<void> {
 		const adapter = agents();
 		if (!adapter) {
@@ -4774,6 +5247,9 @@ export class AppController {
 			});
 			return;
 		}
+		// What reopening it needs, read while its CLI is still there to say
+		// which session it is in.
+		const closed = closing ? await this.closedAgentEntry(agentId) : undefined;
 		if (moveTerminal) {
 			try {
 				await this.moveAgentTerminalToEditor(agentId);
@@ -4796,6 +5272,10 @@ export class AppController {
 			kind === "stop_agent"
 				? await adapter.stop(agentId)
 				: await adapter.terminate(agentId);
+		// Before the completion, whose persist writes it down with the rest.
+		if (closed !== undefined && result.kind === "stopped") {
+			this.rememberClosedEntry(closed);
+		}
 		this.accept(
 			kind === "stop_agent"
 				? { type: "agent_stop_completed", token, agentId, result }
@@ -5003,6 +5483,7 @@ export class AppController {
 		// Where the editor was, read before anything is closed: closing the
 		// Workspace is its editor leaving any container it was in.
 		const closing = this.coordinator.model.workspace(workspaceId);
+		let reopenable: ClosedEntryRecord | undefined;
 		try {
 			let vetoed: CloseDiagnosticWire | undefined;
 			try {
@@ -5030,6 +5511,13 @@ export class AppController {
 				this.failClose(token, workspaceId, step, vetoed);
 				return;
 			}
+			// What reopening it needs, its Agents' sessions included, read
+			// while they are still running. A worktree this close deletes has
+			// no folder to come back to, so it is not remembered.
+			reopenable =
+				worktree === "keep"
+					? await this.closedWorkspaceEntry(workspaceId)
+					: undefined;
 
 			step = "agents";
 			const agentAdapter = agents();
@@ -5104,6 +5592,8 @@ export class AppController {
 				),
 			);
 		}
+		// Before the completion, whose persist writes it down with the rest.
+		if (reopenable !== undefined) this.rememberClosedEntry(reopenable);
 		this.accept({
 			type: "workspace_close_completed",
 			token,

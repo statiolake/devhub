@@ -160,6 +160,12 @@ export type Effect =
       readonly agentId: AgentId;
       /** Hand its terminal to the Workspace's editor terminal first. */
       readonly moveTerminal?: true;
+      /**
+       * The Agent a continue replaced: its session goes on in the new one, so
+       * this is not a close anybody would want to reopen
+       * (`model/recentlyClosed.ts`).
+       */
+      readonly replaced?: true;
     }
   | {
       readonly kind: "terminate_agent";
@@ -1100,7 +1106,7 @@ export class AppCoordinator {
     if (replaced === undefined) return undefined;
     this.stopAfterPersist.delete(id);
     if (!this.model.agent(replaced)) return undefined;
-    return this.startAgentStop(replaced, id, false);
+    return this.startAgentStop(replaced, id, false, true);
   }
 
   /**
@@ -1271,6 +1277,7 @@ export class AppCoordinator {
     agent: AgentId,
     id: OperationId,
     moveTerminal: boolean,
+    replaced = false,
   ): IntentOutcome {
     this.model.requestAgentStop(agent);
     const token = this.startOperation(
@@ -1283,6 +1290,7 @@ export class AppCoordinator {
       token,
       agentId: agent,
       ...(moveTerminal ? { moveTerminal: true } : {}),
+      ...(replaced ? { replaced: true } : {}),
     });
     this.emit({ kind: "snapshot", snapshot: this.snapshot() });
     return { kind: "deferred", operationId: id, snapshot: this.snapshot() };

@@ -117,8 +117,24 @@ describe("the registry itself", () => {
     expect(commandFor(bindings, "s")).toBeUndefined();
     expect(commandFor(bindings, "S")).toBeUndefined();
     expect(commandById("focus_sidebar")?.defaultKeys).toEqual([]);
-    expect([...PALETTE_ONLY_COMMANDS]).toEqual(["focus_sidebar", "open_log"]);
+    expect([...PALETTE_ONLY_COMMANDS]).toEqual([
+      "focus_sidebar",
+      "open_log",
+      "open_recently_closed",
+    ]);
     expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
+  });
+
+  it("reopens what was closed on Shift+T, as a browser does, and leaves T alone", () => {
+    const bindings = defaultBindings();
+    expect(commandFor(bindings, "T")).toBe("reopen_closed");
+    expect(commandFor(bindings, "Shift+t")).toBe("reopen_closed");
+    // `Cmd+Q T` toggled the workbench's terminal once; it stays unbound.
+    expect(commandFor(bindings, "t")).toBeUndefined();
+    expect(commandById("reopen_closed")?.label).toBe(
+      "Reopen Closed Agent or Workspace",
+    );
+    expect(keysForCommand(bindings, "open_recently_closed")).toEqual([]);
   });
 
   it("moves between panes with O, and gives the bare arrows nothing", () => {

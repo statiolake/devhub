@@ -63,6 +63,8 @@
  * | `Cmd+Q X`                   | `close_selection`         |
  * | `Cmd+Q Shift+R`             | `restart_agent`           |
  * | `Cmd+Q Shift+W`             | `close_workspace`         |
+ * | `Cmd+Q Shift+T`             | `reopen_closed`           |
+ * | (palette only)              | `open_recently_closed`    |
  * | `Cmd+Q R`                   | `refresh_repositories`    |
  * | `Cmd+Q U`                   | `mark_agent_unread`       |
  * | `Cmd+Q D`                   | `dismiss_alert`           |
@@ -221,6 +223,20 @@
  * as "close the small thing" and "close the big thing", and `X` is whichever of
  * the two you happen to be standing on.
  *
+ * **`Cmd+Q Shift+T` reopens what was closed last, and again goes further
+ * back.** The browser's Reopen Closed Tab, under the same letter and the same
+ * Shift: the most recently closed Agent or Workspace comes back — a Workspace
+ * opened again on its folder, the same way it was open (its machine, its dev
+ * container), with the Agents that were closed with it; an Agent started
+ * again in its Workspace *resuming the session it was in*, never a fresh one
+ * under its old name. Each press takes one entry off a bounded stack, so
+ * pressing again reaches the one closed before that. With nothing closed it
+ * is a no-op, like every chord with nothing to act on. The rules — what an
+ * entry remembers, what cannot come back and what is said then — are
+ * `model/recentlyClosed.ts`'s. `open_recently_closed` is the same stack as a
+ * picker, for the one that is not on top; palette only, because it is the
+ * rarer of the two and the chord is the habit.
+ *
  * **Closing a worktree deletes it.** A worktree is a folder git made so that
  * work could happen somewhere; closing the workspace and leaving the folder
  * behind is how a machine fills with directories nobody can account for. So
@@ -308,11 +324,12 @@
  * cannot be on a key and missing from the palette. A command may also be
  * *palette only* — no default key — when it already has a gesture somewhere
  * else and a chord for it would take a key some other command wants — or is
- * rare enough not to be worth a key. Two are today, and
+ * rare enough not to be worth a key. Three are today, and
  * `PALETTE_ONLY_COMMANDS` names them so that a command cannot lose its key by
  * accident: `focus_sidebar`, whose `S` was taken for a while and is left
- * unbound now (a click on a row is its other gesture), and `open_log`, which
- * is for the moment something went wrong. (Back and Forward were
+ * unbound now (a click on a row is its other gesture), `open_log`, which
+ * is for the moment something went wrong, and `open_recently_closed`, the
+ * picker over what `Cmd+Q Shift+T` reopens one at a time. (Back and Forward were
  * once palette only too; they are `Cmd+Q H` / `L` now, see below.)
  * `:` is matched as the
  * character, so it is Shift+; on a US layout and the unshifted key beside L on
@@ -393,6 +410,8 @@ export type CommandId =
   | "close_selection"
   | "restart_agent"
   | "close_workspace"
+  | "reopen_closed"
+  | "open_recently_closed"
   | "open_issue_picker"
   | "send_agent_action"
   | "swap_split_focus"
@@ -705,6 +724,24 @@ export const COMMANDS: readonly CommandDefinition[] = [
     category: "Workspace",
     defaultKeys: ["W"],
   },
+  {
+    // The browser's Cmd+Shift+T: the newest entry of what was closed, and the
+    // one before it on the next press. See `model/recentlyClosed.ts`.
+    id: "reopen_closed",
+    label: "Reopen Closed Agent or Workspace",
+    needs: "nothing",
+    category: "Workspace",
+    defaultKeys: ["T"],
+  },
+  {
+    // The same stack as a list to choose from. Palette only: see
+    // `PALETTE_ONLY_COMMANDS`.
+    id: "open_recently_closed",
+    label: "Recently Closed…",
+    needs: "nothing",
+    category: "Workspace",
+    defaultKeys: [],
+  },
 
   {
     id: "refresh_repositories",
@@ -800,6 +837,7 @@ export const COMMANDS: readonly CommandDefinition[] = [
 export const PALETTE_ONLY_COMMANDS: ReadonlySet<CommandId> = new Set([
   "focus_sidebar",
   "open_log",
+  "open_recently_closed",
 ]);
 
 const BY_ID = new Map<string, CommandDefinition>(

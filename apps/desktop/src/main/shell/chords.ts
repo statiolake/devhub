@@ -208,6 +208,10 @@ export type ChordEffect =
 	| { readonly kind: "restart-agent"; readonly agentId: string }
 	/** Close it, and delete the worktree if that is what it is. */
 	| { readonly kind: "close-workspace"; readonly workspaceId: string }
+	/** The newest of what was closed, opened again (`model/recentlyClosed.ts`). */
+	| { readonly kind: "reopen-closed" }
+	/** What was closed lately, as a list to choose from. */
+	| { readonly kind: "open-recently-closed" }
 	/**
 	 * The rows, in the order the person has just put them.
 	 *
@@ -437,6 +441,15 @@ export function resolveChord(
 
 		case "close_workspace":
 			return closeWorkspace(snapshot, workspace);
+
+		case "reopen_closed":
+		case "open_recently_closed":
+			// Main keeps the stack; a snapshot that does not say how long it is
+			// offers the command and main decides, the way history does.
+			if (snapshot.recentlyClosed === 0) return undefined;
+			return commandId === "reopen_closed"
+				? { kind: "reopen-closed" }
+				: { kind: "open-recently-closed" };
 
 		case "refresh_repositories":
 			return { kind: "refresh-repositories" };

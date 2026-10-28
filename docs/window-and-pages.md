@@ -227,6 +227,56 @@ own, from the order folders happened to be opened in, and a Workspace's
 successor was its neighbour in opening order, which could be anywhere on
 screen.
 
+## What was closed comes back: `Cmd+Q Shift+T`
+
+`Cmd+Q Shift+T` (`reopen_closed`, "Reopen Closed Agent or Workspace" in the
+command palette) is the browser's Reopen Closed Tab: it brings back the most
+recently closed Agent or Workspace, and pressed again it goes further back.
+`Recently Closed…` (palette only, `open_recently_closed`) is the same list as
+a picker, for the one that is not on top. The rules are in
+`model/recentlyClosed.ts`; main keeps the stack (`AppController`, region
+"recently closed").
+
+- **The stack** is newest first and holds 20. It is written to `state.json`
+  as `recently_closed` with the rest of the state, so it survives a restart;
+  a file from before it loads as the empty stack, and an entry that does not
+  read is left out rather than refusing the file. A Workspace closed again
+  replaces its older entry; every closed Agent is an entry of its own. With
+  nothing on it the chord is a no-op.
+- **What is remembered.** Only a person's close: an Agent stopped from its
+  row, `Cmd+Q X` or its sheet, and a Workspace closed any way it can be. Not
+  an Agent whose CLI ended by itself, not the Agent a Continue in
+  Terminal/GUI replaced (its session goes on in the new one; the coordinator
+  marks that stop `replaced`), not a worktree its close deleted (there is no
+  folder to come back to), and never Scratch. A Workspace entry is its place —
+  the machine (this Mac or an ssh host) and the canonical folder — and the dev
+  container its editor was attached to, with the Agents running in it. An
+  Agent entry is its Workspace's place, its profile, its name and whether a
+  person gave it (`Agent.named`), GUI or terminal, and the session id its CLI
+  named (Claude's session, Codex's thread). The session is asked for while
+  the CLI is still running — the GUI conversation knows it, a terminal
+  Agent's is read from its processes — for at most 3 s; one that cannot be
+  told is still closed, it is only not resumable.
+- **Reopening an Agent is resuming it.** It is started again in its
+  Workspace — opened again first if it was closed too — from the same
+  profile and presentation, resuming its session through the same
+  `create_agent` … `resume` path the agent picker's past sessions take, and
+  renamed if a person had named it. An Agent with no session, of a CLI DevHub
+  cannot resume, whose profile is no longer configured, or whose Claude
+  session file is gone is **not** started afresh: a notice
+  (`closed_not_reopened`) says why and the entry is dropped, so the next
+  press goes further back.
+- **Reopening a Workspace** opens its folder again on its machine, attaches
+  its editor to its dev container again, and starts again every one of its
+  Agents that can be resumed; the ones that cannot are named in the notice.
+  If the folder is open already it is focused instead, and its Agents are put
+  back on the stack to be brought back one press at a time. A folder that is
+  gone is said, and the entry dropped.
+- **A failure before anything was opened** — the machine did not answer —
+  puts the entry back where it was, and the notice says another press tries
+  again. Once something has been opened, a failure is said and the entry is
+  gone.
+
 ## Failures go one way
 
 A failure is an event, not a description, and a page that is told one and has
@@ -741,7 +791,9 @@ picker. Every command there has an id, a label, a category (`Navigate`, `View`,
 `Workspace`, `Agent`, `DevHub`) and what it `needs`; the palette lists each as
 `Category: Label` with the chords actually in effect at its right end, so a
 rebound key reads as the person's own. A command may be palette only — no
-default key — when it already has a gesture elsewhere; none is today.
+default key — when it already has a gesture elsewhere or is rare:
+`focus_sidebar`, `open_log` and `open_recently_closed` are today
+(`PALETTE_ONLY_COMMANDS`).
 `navigate_back` and `navigate_forward` are `Cmd+Q H` / `Cmd+Q L` (Vim's left and
 right): `Cmd+[` / `Cmd+]` still work unprefixed on DevHub's own pages, but over a
 workbench the brackets belong to VS Code, and as chords they already belong to

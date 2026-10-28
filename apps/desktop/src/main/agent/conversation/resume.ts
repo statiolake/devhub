@@ -1011,6 +1011,28 @@ function oneLine(text: string): string {
 const MAX_HISTORY_BYTES = 32 * 1024 * 1024;
 
 /**
+ * Whether Claude still keeps session `session` for `root`: its file is there.
+ *
+ * What `Cmd+Q Shift+T` asks before it starts a closed Agent again on its
+ * session (`model/recentlyClosed.ts`), so a session that is gone is said
+ * rather than handed to a CLI that would refuse it in a pane. Codex keeps
+ * threads where no cheap question finds them; its launch says so itself.
+ */
+export async function claudeSessionPresent(
+	runtime: Runtime,
+	profile: SessionProfile,
+	root: string,
+	session: string,
+): Promise<boolean> {
+	const directory = await claudeProjectDirectory(
+		runtime,
+		profile,
+		await runtime.realpath(root),
+	);
+	return (await runtime.stat(`${directory}/${session}.jsonl`)) === "file";
+}
+
+/**
  * Claude session `session`'s conversation, as the journal lines its adapter
  * reads as history. Refused, with the reason, when the session is not there
  * or cannot be read whole.

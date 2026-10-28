@@ -58,6 +58,7 @@ import { TabPickerSheet } from "./TabPickerSheet";
 import { AgentActionsSheet } from "./AgentActionsSheet";
 import { ChordHelpSheet } from "./ChordHelpSheet";
 import { CommandPaletteSheet } from "./CommandPaletteSheet";
+import { RecentlyClosedSheet } from "./RecentlyClosedSheet";
 
 /** Take one modal off screen, with the answer if it asked for one. */
 function close(id: string, response?: number): void {
@@ -180,6 +181,15 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
     case "command-palette":
       return (
         <CommandPaletteSheet
+          rows={request.rows}
+          onDismiss={(chosen) => {
+            close(id, chosen);
+          }}
+        />
+      );
+    case "recently-closed":
+      return (
+        <RecentlyClosedSheet
           rows={request.rows}
           onDismiss={(chosen) => {
             close(id, chosen);

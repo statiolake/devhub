@@ -159,6 +159,10 @@ export interface ChordHost {
 	restartAgent(agentId: string): void;
 	/** Close it — and delete the worktree, if that is what it is. */
 	closeWorkspace(workspaceId: string): void;
+	/** Open the newest of what was closed again (`model/recentlyClosed.ts`). */
+	reopenClosed(): void;
+	/** What was closed lately, as a list to choose from. */
+	openRecentlyClosed(): void;
 	/**
 	 * Put the rows in this order — the Sidebar's own drag, under a key.
 	 *
@@ -297,6 +301,12 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "close-workspace":
 			host.closeWorkspace(effect.workspaceId);
+			return;
+		case "reopen-closed":
+			host.reopenClosed();
+			return;
+		case "open-recently-closed":
+			host.openRecentlyClosed();
 			return;
 		case "reorder-entries":
 			host.reorderEntries(effect.order, effect.workspaceId);

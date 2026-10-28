@@ -492,7 +492,13 @@ export type AppErrorCodeWire =
 	 * its Agent, and no Agent is. Said for the same reason; the terminal, if
 	 * there is one, is left exactly as it was.
 	 */
-	| "terminal_needs_agent_view";
+	| "terminal_needs_agent_view"
+	/**
+	 * `Cmd+Q Shift+T` could not bring back what was closed — its folder is
+	 * gone, its session cannot be resumed, its machine did not answer. The
+	 * detail says which and what became of the entry (`model/recentlyClosed.ts`).
+	 */
+	| "closed_not_reopened";
 
 /**
  * The sentence each failure is shown as.
@@ -575,6 +581,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 		"There is no Agent here to open a terminal for: a terminal belongs to an Agent. Start one with Cmd+Q C, then Cmd+Q V.",
 	terminal_needs_agent_view:
 		"The terminal is shown with its Agent. Switch to the Agent (Cmd+Q Cmd+J) or split (Cmd+Q Z), then Cmd+Q V.",
+	closed_not_reopened: "DevHub could not bring back what was closed.",
 };
 export type AppErrorModuleWire =
 	| "app"
@@ -873,6 +880,13 @@ export interface AppSnapshotWire {
 		readonly canGoBack: boolean;
 		readonly canGoForward: boolean;
 	};
+	/**
+	 * How many closed Agents and Workspaces `Cmd+Q Shift+T` could reopen
+	 * (`model/recentlyClosed.ts`). Main's, so only main's own snapshot for the
+	 * chords and the palette says it; absent means not said, and the command
+	 * is offered for main to decide.
+	 */
+	readonly recentlyClosed?: number;
 }
 
 /** A Smart Buttons box's distance from its pane's right and bottom edges. */

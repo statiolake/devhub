@@ -1882,3 +1882,95 @@ describe("what validation checks and hydration may then assume", () => {
     removeScratchDir(directory);
   });
 });
+
+describe("what was closed, across a restart", () => {
+  const closedAgent = {
+    kind: "agent" as const,
+    closed_at: 1_700_000_000_000,
+    place: { kind: "local" as const, path: "/src/app" },
+    agent: {
+      profile_id: "claude",
+      profile_kind: "claude" as const,
+      display_name: "Reviewer",
+      named: true,
+      presentation: "gui" as const,
+      session: "0b6f4c1e-2d3a-4b5c-8d9e-0f1a2b3c4d5e",
+    },
+  };
+
+  it("loads a file written before it existed as nothing closed", async () => {
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const document = JSON.parse(JSON.stringify(freshState())) as Record<
+      string,
+      unknown
+    >;
+    delete document["recently_closed"];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.metadata.origin).toBe("primary");
+    expect(load.state.recently_closed).toEqual([]);
+    removeScratchDir(directory);
+  });
+
+  it("writes the stack and reads it back, and a re-projection keeps it", async () => {
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const store = new JsonStateStore(path);
+    const state = freshState();
+    state.recently_closed = [
+      closedAgent,
+      {
+        kind: "workspace",
+        closed_at: 1_699_999_000_000,
+        place: {
+          kind: "ssh",
+          host: "build.example.com",
+          path: "/srv/api",
+          dev_container: "/srv/api/.devcontainer/devcontainer.json",
+        },
+        agents: [
+          {
+            profile_id: "codex",
+            profile_kind: "codex",
+            display_name: "Codex 1",
+            presentation: "tui",
+          },
+        ],
+      },
+    ];
+    await store.saveState(state);
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.state.recently_closed).toEqual(state.recently_closed);
+    // Main owns it, as it owns `session_machines`: projecting the model over
+    // the state does not drop it.
+    const model = new AppModel(localWorkspace("/scratch", WS_A));
+    expect(applySnapshot(load.state, model.snapshot()).recently_closed).toEqual(
+      state.recently_closed,
+    );
+    removeScratchDir(directory);
+  });
+
+  it("leaves out an entry that does not read rather than refusing the file", async () => {
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const document = JSON.parse(JSON.stringify(freshState())) as Record<
+      string,
+      unknown
+    >;
+    document["recently_closed"] = [
+      { kind: "agent", closed_at: "yesterday", place: closedAgent.place },
+      { kind: "folder", closed_at: 1, place: closedAgent.place },
+      {
+        ...closedAgent,
+        agent: { ...closedAgent.agent, session: "--dangerously" },
+      },
+      closedAgent,
+    ];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.metadata.origin).toBe("primary");
+    expect(load.state.recently_closed).toEqual([closedAgent]);
+    removeScratchDir(directory);
+  });
+});

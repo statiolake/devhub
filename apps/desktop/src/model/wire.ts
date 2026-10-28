@@ -813,6 +813,8 @@ export function errorWireAt(
     code === "usage_unreadable" ||
     code === "terminal_needs_agent" ||
     code === "terminal_needs_agent_view" ||
+    // Pressing the chord again is the retry, and it goes further back.
+    code === "closed_not_reopened" ||
     // Trying again opens the same missing file.
     code === "file_not_found"
       ? []

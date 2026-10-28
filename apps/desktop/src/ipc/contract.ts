@@ -1882,6 +1882,14 @@ export interface CommandPaletteRowWire {
 	readonly recent: boolean;
 }
 
+/** One row of the Recently Closed picker: what it was, and when it closed. */
+export interface RecentlyClosedRowWire {
+	/** `Workspace ~/src/app`, `Agent “Reviewer” in ~/src/app`. */
+	readonly title: string;
+	/** What came with it, and how long ago: `2 Agents · closed 5 min ago`. */
+	readonly detail: string;
+}
+
 export type ModalRequest =
 	| { readonly kind: "workspace-picker" }
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
@@ -1944,6 +1952,15 @@ export type ModalRequest =
 	| {
 			readonly kind: "command-palette";
 			readonly rows: readonly CommandPaletteRowWire[];
+	  }
+	/**
+	 * What `Cmd+Q Shift+T` would reopen, newest first, as a list to choose
+	 * from. Closes with the chosen row's index, as the palette does; main
+	 * reopens that entry (`model/recentlyClosed.ts`).
+	 */
+	| {
+			readonly kind: "recently-closed";
+			readonly rows: readonly RecentlyClosedRowWire[];
 	  }
 	| {
 			/**
