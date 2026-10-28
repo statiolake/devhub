@@ -3182,6 +3182,10 @@ export class CodexAdapter implements ProtocolAdapter {
 		"thread/settings/updated": unused(
 			"DevHub holds the next turn's settings itself",
 		),
+		"thread/prediction/updated": unused(
+			"DevHub offers no predicted next message",
+		),
+		"thread/readState/changed": unused("DevHub keeps no unread marks"),
 		"thread/tokenUsage/updated": (params) => {
 			const usage = tokenUsage(this.reader, params);
 			if (usage.threadId !== this.mainThread) return;

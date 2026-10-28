@@ -5,9 +5,10 @@ Everything in this directory except this README is upstream's, not DevHub's.
 - **Source**: <https://github.com/openai/codex>, directory
   `codex-rs/app-server-protocol/schema/typescript`, the types
   `codex app-server generate-ts` prints, as upstream checks them in.
-- **Version**: tag `rust-v0.158.0` (commit
-  `064c6b8c737f5b41d171fdda80bd9ef10ad06eb3`), the release npm's
-  `@openai/codex` shipped as `latest` when this was vendored (2026-09-28).
+- **Version**: tag `rust-v0.165.0` (commit
+  `360319d8dee62d87e2d59fc0c21805d79519cfed`), the release npm's
+  `@openai/codex` shipped as `latest` when this was vendored (2026-10-28).
+  The one before was `rust-v0.158.0`.
 - **Licence**: Apache License 2.0 — `LICENSE` and `NOTICE` here are upstream's,
   copied unchanged. See also `distribution/THIRD-PARTY-NOTICES.txt`.
 - **What is here**: not the whole directory, only the import closure of the
@@ -28,7 +29,7 @@ Everything in this directory except this README is upstream's, not DevHub's.
 From `apps/desktop`, with an openai/codex checkout at the tag to pin:
 
 ```sh
-git clone --depth 1 --branch rust-v0.158.0 https://github.com/openai/codex.git <checkout>
+git clone --depth 1 --branch rust-v0.165.0 https://github.com/openai/codex.git <checkout>
 node scripts/vendor-codex-protocol.mjs <checkout>
 ```
 

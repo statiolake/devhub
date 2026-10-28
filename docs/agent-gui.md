@@ -1924,7 +1924,7 @@ and changes it for this session.
   - A live pass in DevHub with the real CLI drew and copied that kind of answer,
     nested a subagent, and brought the conversation back unchanged after a
     DevHub restart, sending the CLI nothing again.
-- **Codex** (codex 0.156.1; protocol types vendored at 0.158.0):
+- **Codex** (codex 0.156.1; protocol types vendored at 0.165.0):
   - Only the real `app-server` handshake and the not-signed-in path have been
     checked against the real CLI, from a signed-out capture
     (`codex/fixtures/signed-out.capture.ndjson`).
