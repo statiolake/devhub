@@ -63,6 +63,9 @@ describe("what GUI Agents are told about diagrams", () => {
     expect(DIAGRAM_INSTRUCTIONS).toMatch(/no scripts or external resources/);
     expect(DIAGRAM_INSTRUCTIONS).toMatch(/keep it small/);
     expect(DIAGRAM_INSTRUCTIONS).toMatch(/architecture/);
+    // Asked for one, SVG in the reply rather than a file or ASCII art.
+    expect(DIAGRAM_INSTRUCTIONS).toMatch(/as a ```svg block by default/);
+    expect(DIAGRAM_INSTRUCTIONS).toMatch(/not a file unless one is asked for/);
     // Concise: it is sent with every start and every resume.
     expect(DIAGRAM_INSTRUCTIONS.length).toBeLessThan(500);
   });

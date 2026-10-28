@@ -34,14 +34,18 @@ export const FILE_LINK_INSTRUCTIONS = [
 
 /**
  * What every GUI Agent is told about diagrams: the transcript draws a closed
- * ```mermaid block as a diagram and a ```svg block as an image
- * (`shell/conversation/Diagram.tsx`), each with its source a click away. An
- * SVG is drawn as an image, so a script or an external reference in it would
- * do nothing; it is asked to be self-contained so that it draws at all.
+ * ```svg block as an image and a ```mermaid block as a diagram
+ * (`shell/conversation/Diagram.tsx`), each with its source a click away, so a
+ * picture asked for belongs in the reply — SVG first, Mermaid for a big graph
+ * whose layout is better left to it — rather than in a file nobody asked for
+ * or in ASCII art. An SVG is drawn as an image, so a script or an external
+ * reference in it would do nothing; it is asked to be self-contained so that
+ * it draws at all.
  */
 export const DIAGRAM_INSTRUCTIONS = [
-	"Diagrams: DevHub draws a ```mermaid fenced block as a diagram and a ```svg block (one self-contained <svg>, no scripts or external resources; currentColor follows the theme) as an image.",
-	"Use one when a picture explains better than prose (architecture, data flow, a sequence of calls, a state machine), keep it small and focused, and do not draw one where a sentence or a list will do.",
+	"Diagrams: DevHub draws a ```svg block (one self-contained <svg>, no scripts or external resources; currentColor follows the theme) and a ```mermaid block as pictures.",
+	"Asked for a diagram, chart or figure, draw it in the reply, as a ```svg block by default (```mermaid only for a big graph best laid out for you) — not ASCII art, and not a file unless one is asked for.",
+	"Unasked, draw one only where it explains better than prose (architecture, data flow, a state machine), and keep it small.",
 ].join(" ");
 
 /**

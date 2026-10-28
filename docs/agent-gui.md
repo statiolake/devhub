@@ -961,12 +961,13 @@ starts as before.
 **Agents are told.** With the file-link instruction, every GUI Agent is told
 (`DIAGRAM_INSTRUCTIONS` in `main/agent/conversation/linkInstructions.ts`):
 
-> Diagrams: DevHub draws a ` ```mermaid ` fenced block as a diagram and a ` ```svg `
-> block (one self-contained <svg>, no scripts or external resources;
-> currentColor follows the theme) as an image. Use one when a picture explains
-> better than prose (architecture, data flow, a sequence of calls, a state
-> machine), keep it small and focused, and do not draw one where a sentence or
-> a list will do.
+> Diagrams: DevHub draws a ` ```svg ` block (one self-contained <svg>, no
+> scripts or external resources; currentColor follows the theme) and a
+> ` ```mermaid ` block as pictures. Asked for a diagram, chart or figure, draw
+> it in the reply, as a ` ```svg ` block by default (` ```mermaid ` only for a
+> big graph best laid out for you) — not ASCII art, and not a file unless one
+> is asked for. Unasked, draw one only where it explains better than prose
+> (architecture, data flow, a state machine), and keep it small.
 
 ## Messages that wait, and sending one into a turn
 
