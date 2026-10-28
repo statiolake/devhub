@@ -27,6 +27,12 @@ import type { SmartButtonsSpot } from "../../model/smartButtons";
 import { AgentPane } from "./AgentPane";
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
 import {
+  easeOutCubic,
+  SNAP_IN_MS,
+  springAtRest,
+  springStep,
+} from "./snapGlide";
+import {
   SMART_BUTTONS_EXIT_MS,
   SMART_BUTTONS_SETTLE_MS,
   SmartButtons,
@@ -728,6 +734,122 @@ describe("dragging the box", () => {
     });
   });
 
+  it("glides onto the edge and springs back off it, on its transform alone, and tracks the pointer exactly otherwise", () => {
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance"],
+    });
+    try {
+      mount({ over: { presentation: "gui" } });
+      const move = (x: number, y: number) =>
+        act(() => {
+          fireEvent.pointerMove(handle(), {
+            buttons: 1,
+            clientX: x,
+            clientY: y,
+            pointerId: 1,
+          });
+        });
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        clientX: 800,
+        clientY: 470,
+        pointerId: 1,
+      });
+      move(716, 460);
+      // Picked up already on the edge: nothing jumped, nothing glides.
+      expect(box()).toHaveAttribute("data-anchored", "top");
+      expect(box()).not.toHaveAttribute("data-snapping");
+      expect(box().style.transform).toBe("");
+
+      // Pulled off: its place is under the pointer at once, and it is drawn
+      // back where it was, to spring after it.
+      move(400, 300);
+      expect(box()).not.toHaveAttribute("data-anchored");
+      expect(box()).toHaveAttribute("data-snapping", "out");
+      expect(box().style.right).toBe("516px");
+      expect(box().style.transform).toMatch(/^translate\(/);
+      // Freely carried meanwhile, its place still follows every move.
+      move(390, 300);
+      expect(box().style.right).toBe("526px");
+      expect(box()).toHaveAttribute("data-snapping", "out");
+      act(() => vi.advanceTimersByTime(1_000));
+      expect(box()).not.toHaveAttribute("data-snapping");
+      expect(box().style.transform).toBe("");
+
+      // Brought back within range: on the edge, gliding there.
+      move(716, 460);
+      expect(box()).toHaveAttribute("data-anchored", "top");
+      expect(box()).toHaveAttribute("data-snapping", "in");
+      expect(box().style.transform).toMatch(/^translate\(/);
+      act(() => vi.advanceTimersByTime(SNAP_IN_MS + 50));
+      expect(box()).not.toHaveAttribute("data-snapping");
+      expect(box().style.transform).toBe("");
+      fireEvent.pointerUp(handle(), { pointerId: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not glide under Reduce Motion: the box is where its place says, at once", () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query.includes("reduce"),
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+    try {
+      mount({ over: { presentation: "gui" } });
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        clientX: 800,
+        clientY: 470,
+        pointerId: 1,
+      });
+      for (const [x, y] of [
+        [716, 460],
+        [400, 300],
+        [716, 460],
+      ] as const) {
+        act(() => {
+          fireEvent.pointerMove(handle(), {
+            buttons: 1,
+            clientX: x,
+            clientY: y,
+            pointerId: 1,
+          });
+        });
+        expect(box()).not.toHaveAttribute("data-snapping");
+        expect(box().style.transform).toBe("");
+      }
+      fireEvent.pointerUp(handle(), { pointerId: 1 });
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it("springs off the edge with a little overshoot, and glides onto it without any", () => {
+    let offset = { x: 100, y: 0 };
+    let velocity = { x: 0, y: 0 };
+    let least = Infinity;
+    let steps = 0;
+    while (!springAtRest(offset, velocity) && steps < 200) {
+      ({ offset, velocity } = springStep(offset, velocity, 1 / 60));
+      least = Math.min(least, offset.x);
+      steps += 1;
+    }
+    // Past its place by a little, then at rest within half a second.
+    expect(least).toBeLessThan(-3);
+    expect(least).toBeGreaterThan(-25);
+    expect(steps).toBeLessThan(30);
+    const glide = [0, 0.25, 0.5, 0.75, 1].map(easeOutCubic);
+    expect(glide[0]).toBe(0);
+    expect(glide[4]).toBe(1);
+    // Decelerating, and never past the edge.
+    expect(glide[1]! - glide[0]!).toBeGreaterThan(glide[4]! - glide[3]!);
+    expect(Math.max(...glide)).toBe(1);
+  });
+
   it("glides only when a drag enters or leaves a snap, not while following", () => {
     mount({ over: { presentation: "gui" } });
     const move = (x: number, y: number) =>
@@ -750,7 +872,10 @@ describe("dragging the box", () => {
     expect(box()).not.toHaveAttribute("data-snapping");
     move(400, 300);
     expect(box()).not.toHaveAttribute("data-anchored");
-    expect(box()).toHaveAttribute("data-snapping");
+    expect(box()).toHaveAttribute("data-snapping", "out");
+    // Carried on freely: no new glide, the place follows the pointer.
+    move(380, 300);
+    expect(box().style.right).toBe("536px");
     fireEvent.pointerUp(handle(), { pointerId: 1 });
   });
 

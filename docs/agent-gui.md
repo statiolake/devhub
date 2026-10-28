@@ -1134,7 +1134,9 @@ presses nothing; one that does not, a trackpad tap included, is a click of
 the button under it. With anything in it focused, ⌥ and the arrow keys move
 it 8px at a time. Within 16px (`SMART_BUTTONS_SNAP`) of the composer's top edge
 — or its right edge, when there is room beside it — the box snaps to that edge
-and is dropped _anchored_: remembered as an edge and a distance along it, and
+(gliding onto it in 180ms, and springing back after the pointer, with a little
+overshoot, when it is pulled off; carried freely it is exactly under the
+pointer, and under Reduce Motion it never glides) and is dropped _anchored_: remembered as an edge and a distance along it, and
 measured from the composer every time it is drawn, so it rides up as the
 composer grows with a long prompt. A terminal's anchor is the queued-message
 status, or with none its bottom right corner. Dropped anywhere else it is free:

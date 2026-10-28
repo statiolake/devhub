@@ -93,14 +93,9 @@
   transition: var(--smart-materialize);
 }
 
-/* Mid-drag, entering or leaving a snap zone glides for a moment (set by the
-   component on that change only); otherwise the box tracks the pointer. */
-.smart-buttons[data-dragging][data-snapping] {
-  transition:
-    var(--smart-materialize),
-    right var(--motion-base) var(--ease-spring),
-    bottom var(--motion-base) var(--ease-spring);
-}
+/* Mid-drag, going onto the composer's edge (`data-snapping="in"`) and
+   coming off it (`"out"`) are animated by the component on the box's
+   transform alone (`snapGlide.ts`): its place is never eased. */
 
 /* A line coming and going. It comes in on the pop spring: up from small,
    overshooting a little and settling, while the stack makes room for it;
@@ -164,8 +159,7 @@
 @media (prefers-reduced-motion: reduce) {
   .smart-buttons,
   .smart-buttons[data-settling]:not([data-dragging]),
-  .smart-buttons[data-dragging],
-  .smart-buttons[data-dragging][data-snapping] {
+  .smart-buttons[data-dragging] {
     /* It still materialises and fades back; only the glide goes. */
     transition: var(--smart-materialize);
   }
