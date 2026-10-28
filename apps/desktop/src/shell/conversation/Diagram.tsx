@@ -10,8 +10,9 @@
  * under it saying why, when it failed — so a bad diagram never costs the
  * transcript anything but a picture.
  *
- * The header is the code block's, quiet and icon-only: the language, a
- * toggle between the picture and its source, and a copy — of the picture as
+ * One of the previewable kinds (`previewKinds.ts`), drawn through
+ * `Preview.tsx`, which owns the toggle to its source. The header is the code
+ * block's, quiet and icon-only: the language, that toggle, and a copy — of the picture as
  * a PNG with a transparent ground, or of the source when the source is
  * shown. A right-click on the picture offers the rest, as a native menu
  * (`showContextMenu`): the picture on a transparent or a white ground, and
@@ -23,14 +24,7 @@
  * dark theme would otherwise be light-grey lines that vanish on white.
  */
 
-import {
-  memo,
-  useEffect,
-  useMemo,
-  useState,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import { CodeBlock } from "./CodeBlock";
 import { useConversationActions } from "./ConversationContext";
 import { CopyButton } from "./CopyButton";
@@ -43,8 +37,9 @@ import {
 } from "./diagramSvg";
 import { svgToPng } from "./diagramCopy";
 import { COPY_THEME, useDiagramTheme, type DiagramTheme } from "./diagramTheme";
-import { CodeIcon, DiagramIcon } from "./icons";
 import { drawnMermaid, renderMermaid } from "./mermaid";
+import type { PreviewProps } from "./Preview";
+import { headerLanguage, PreviewFigure } from "./PreviewFigure";
 
 /** The items a right-click on a drawn diagram offers, in order. */
 export const DIAGRAM_MENU = [
@@ -110,17 +105,14 @@ function useDrawing(
 }
 
 export const Diagram = memo(function Diagram({
-  kind,
+  kind: previewKind,
   code,
   info,
-}: {
-  readonly kind: DiagramKind;
-  readonly code: string;
-  readonly info: string | undefined;
-}) {
+  toggle,
+}: PreviewProps) {
+  const kind: DiagramKind = previewKind.id === "mermaid" ? "mermaid" : "svg";
   const theme = useDiagramTheme();
   const drawing = useDrawing(kind, code, theme);
-  const [showSource, setShowSource] = useState(false);
 
   if (drawing.ok === "pending") {
     return <CodeBlock code={code} info={info} settled />;
@@ -134,21 +126,6 @@ export const Diagram = memo(function Diagram({
         </p>
       </div>
     );
-  }
-  const toggle = (
-    <button
-      type="button"
-      className="conversation-copy conversation-diagram-toggle"
-      aria-label={showSource ? "Show diagram" : "Show source"}
-      title={showSource ? "Show diagram" : "Show source"}
-      aria-pressed={showSource}
-      onClick={() => setShowSource((shown) => !shown)}
-    >
-      {showSource ? <DiagramIcon /> : <CodeIcon />}
-    </button>
-  );
-  if (showSource) {
-    return <CodeBlock code={code} info={info} settled actions={toggle} />;
   }
   return (
     <DrawnDiagram
@@ -174,14 +151,8 @@ function DrawnDiagram({
   readonly picture: PreparedSvg;
   readonly toggle: ReactNode;
 }) {
-  const {
-    writeClipboard,
-    writeClipboardImage,
-    showContextMenu,
-    reportFailure,
-  } = useConversationActions();
+  const { writeClipboard, writeClipboardImage } = useConversationActions();
   const url = useMemo(() => svgDataUrl(picture.svg), [picture.svg]);
-  const language = info?.trim().split(/\s+/, 1)[0] || kind;
 
   const copyImage = async (ground: string | undefined) => {
     const printed = await pictureForCopy(kind, code);
@@ -195,34 +166,14 @@ function DrawnDiagram({
     "copy-source": () => writeClipboard(code),
   };
 
-  const onContextMenu = (event: MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    void showContextMenu({
-      items: DIAGRAM_MENU.map(({ id, label }) => ({ id, label })),
-      at: { x: event.clientX, y: event.clientY },
-    })
-      .then((chosen) =>
-        chosen !== undefined && Object.hasOwn(run, chosen)
-          ? run[chosen as MenuId]()
-          : undefined,
-      )
-      .catch(reportFailure);
-  };
-
   return (
-    <figure
-      className="conversation-diagram"
-      data-kind={kind}
-      onContextMenu={onContextMenu}
+    <PreviewFigure
+      kind={kind}
+      language={headerLanguage(info, kind)}
+      actions={toggle}
+      copy={<CopyButton copy={() => copyImage(undefined)} label="Copy image" />}
+      menu={DIAGRAM_MENU.map(({ id, label }) => ({ id, label, run: run[id] }))}
     >
-      <div className="conversation-code-header">
-        <span className="conversation-code-language">{language}</span>
-        <span className="conversation-code-actions">
-          {toggle}
-          <CopyButton copy={() => copyImage(undefined)} label="Copy image" />
-        </span>
-      </div>
       <div className="conversation-diagram-picture">
         <img
           src={url}
@@ -232,6 +183,6 @@ function DrawnDiagram({
           draggable={false}
         />
       </div>
-    </figure>
+    </PreviewFigure>
   );
 }

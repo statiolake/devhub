@@ -179,3 +179,41 @@ export function DiagramIcon() {
     </Icon>
   );
 }
+
+/** A Markdown block's source's "Show preview": a page with lines of text. */
+export function DocumentIcon() {
+  return (
+    <Icon>
+      <path d="M4 1.75h5.5L12.5 4.75v9.5H4z" />
+      <path d="M6.25 7.25h4M6.25 9.5h4M6.25 11.75h2.5" />
+    </Icon>
+  );
+}
+
+/** A Marp deck's source's "Show slides": a slide on its stand. */
+export function SlidesIcon() {
+  return (
+    <Icon>
+      <rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1" />
+      <path d="M8 11v2.5M5.5 13.75h5" />
+    </Icon>
+  );
+}
+
+/** The previous slide. */
+export function ChevronLeftIcon() {
+  return (
+    <Icon>
+      <path d="m10 4-4 4 4 4" />
+    </Icon>
+  );
+}
+
+/** Save to a file: an arrow down into a tray. */
+export function DownloadIcon() {
+  return (
+    <Icon>
+      <path d="M8 2.25v7.5M4.75 6.75 8 10l3.25-3.25M2.5 11.25v2.25h11v-2.25" />
+    </Icon>
+  );
+}

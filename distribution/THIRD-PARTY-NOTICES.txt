@@ -40,6 +40,12 @@ Shipped application components
   names every package and version with its licence text. The App Shell bundle
   carries them as chunks loaded only when a GUI Agent's answer draws a
   ```mermaid diagram.
+* Marp Core 5.0.2 (`@marp-team/marp-core`) — MIT, with the packages it
+  depends on (Marpit, markdown-it, PostCSS, js-yaml, xss and the rest; MIT,
+  MIT-0, ISC, BSD-2-Clause, BSD-3-Clause); see
+  `licenses/Marp-Core-and-dependencies.txt`, which names every package and
+  version with its licence text. The App Shell bundle carries them as chunks
+  loaded only when a GUI Agent's answer draws a Marp deck.
 * The TextMate grammars for C, C#, CSS, diff, Dockerfile, Go, HTML, Java,
   JavaScript, JSON, JSON with Comments, JSX, Kotlin, Lua, Python, Rust, shell
   script, SQL, Swift, TSX, TypeScript and XML, and VS Code's Light+ and Dark+
@@ -107,6 +113,7 @@ Upstream source references
 * https://github.com/remarkjs/remark-gfm
 * https://github.com/shikijs/shiki
 * https://github.com/mermaid-js/mermaid
+* https://github.com/marp-team/marp-core
 * https://github.com/shikijs/textmate-grammars-themes
 * https://github.com/herdrdev/herdr
 * https://github.com/openai/codex

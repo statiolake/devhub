@@ -11,6 +11,9 @@ import {
 	CHANNELS,
 	type AgentsBridge,
 	type ContextMenuRequestWire,
+	type RichClipboardWire,
+	type SlideImagesRequestWire,
+	type SlidesPdfRequestWire,
 } from "../ipc/contract.js";
 import {
 	agentActionsBridge,
@@ -38,6 +41,16 @@ const api: AgentsBridge = {
 	openExternalUrl,
 	writeClipboard,
 	writeClipboardImage,
+	writeClipboardRich: (content: RichClipboardWire) =>
+		ipcRenderer.invoke(CHANNELS.writeClipboardRich, content) as Promise<void>,
+	saveSlidesPdf: (request: SlidesPdfRequestWire) =>
+		ipcRenderer.invoke(CHANNELS.saveSlidesPdf, request) as Promise<
+			string | undefined
+		>,
+	saveSlideImages: (request: SlideImagesRequestWire) =>
+		ipcRenderer.invoke(CHANNELS.saveSlideImages, request) as Promise<
+			readonly string[]
+		>,
 	showContextMenu: (request: ContextMenuRequestWire) =>
 		ipcRenderer.invoke(CHANNELS.showContextMenu, request) as Promise<
 			string | undefined

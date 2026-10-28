@@ -19,41 +19,43 @@ export const MAX_CANVAS_SIDE = 8192;
 export const PNG_MARGIN = 16;
 
 /** The scale a picture of `size` is rasterised at. */
-export function rasterScale(size: SvgSize, pixelRatio: number): number {
+export function rasterScale(
+  size: SvgSize,
+  pixelRatio: number,
+  margin: number = PNG_MARGIN,
+): number {
   const wanted = Math.max(2, pixelRatio || 1);
-  const side = Math.max(size.width, size.height) + 2 * PNG_MARGIN;
+  const side = Math.max(size.width, size.height) + 2 * margin;
   return Math.min(wanted, MAX_CANVAS_SIDE / side);
 }
 
-/** `svg` at `size`, on `background` (none: transparent), as PNG bytes. */
+/**
+ * `svg` at `size`, on `background` (none: transparent), as PNG bytes, with
+ * `margin` CSS pixels around it (none for a slide, which is its own page).
+ */
 export async function svgToPng(
   svg: string,
   size: SvgSize,
   background: string | undefined,
   pixelRatio: number = window.devicePixelRatio,
+  margin: number = PNG_MARGIN,
 ): Promise<Uint8Array> {
   const image = new Image();
   image.decoding = "async";
   image.src = svgDataUrl(svg);
   await image.decode();
-  const scale = rasterScale(size, pixelRatio);
+  const scale = rasterScale(size, pixelRatio, margin);
   const canvas = document.createElement("canvas");
-  const margin = PNG_MARGIN * scale;
-  canvas.width = Math.max(1, Math.round(size.width * scale + 2 * margin));
-  canvas.height = Math.max(1, Math.round(size.height * scale + 2 * margin));
+  const room = margin * scale;
+  canvas.width = Math.max(1, Math.round(size.width * scale + 2 * room));
+  canvas.height = Math.max(1, Math.round(size.height * scale + 2 * room));
   const context = canvas.getContext("2d");
   if (context === null) throw new Error("There is no canvas to draw on.");
   if (background !== undefined) {
     context.fillStyle = background;
     context.fillRect(0, 0, canvas.width, canvas.height);
   }
-  context.drawImage(
-    image,
-    margin,
-    margin,
-    size.width * scale,
-    size.height * scale,
-  );
+  context.drawImage(image, room, room, size.width * scale, size.height * scale);
   const blob = await new Promise<Blob | null>((resolve) =>
     canvas.toBlob(resolve, "image/png"),
   );

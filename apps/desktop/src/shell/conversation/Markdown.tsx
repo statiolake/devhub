@@ -14,8 +14,11 @@
  * settled document is looked through: a path still being written would be
  * asked about one keystroke at a time.
  *
- * A closed ```mermaid or ```svg block is drawn as a picture (`Diagram.tsx`);
- * one still open is code like any other.
+ * A closed block of a previewable kind — ```svg, ```mermaid, ```markdown, a
+ * Marp deck (`previewKinds.ts`) — is drawn as what it says, with its source a
+ * toggle away (`Preview.tsx`); one still open is code like any other. A
+ * Markdown preview is this renderer again, one level deeper, and stops
+ * previewing Markdown at `MAX_PREVIEW_DEPTH`.
  *
  * While the answer streams, its source is drawn as two documents: the settled
  * prefix, memoized so a delta does not parse it again, and the tail, which is
@@ -37,8 +40,8 @@ import "katex/dist/katex.min.css";
 import { normalizeMath } from "./mathDelimiters";
 import { fileNotFoundError } from "../failure";
 import { CodeBlock } from "./CodeBlock";
-import { Diagram } from "./Diagram";
-import { diagramKindOf } from "./diagramSvg";
+import { FencePreview } from "./Preview";
+import { previewKindOfFence } from "./previewKinds";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
 import { LinkedText } from "./LinkedText";
@@ -180,7 +183,10 @@ const KATEX = [
 const REHYPE_PLUGINS = [KATEX, rehypeLinks] as never;
 const REHYPE_PLUGINS_UNSETTLED = [KATEX] as never;
 
-function componentsFor(settled: boolean): Components {
+function componentsFor(settled: boolean, depth: number): Components {
+  const renderMarkdown = (source: string) => (
+    <MarkdownDocument source={source} settled depth={depth + 1} />
+  );
   return {
     // A fenced or indented block: `pre > code`. Inline code stays `code`.
     pre({ node }) {
@@ -191,10 +197,20 @@ function componentsFor(settled: boolean): Components {
       const text = code ? textOf(code.children) : "";
       const source = text.endsWith("\n") ? text.slice(0, -1) : text;
       const info = code ? languageOf(code) : undefined;
-      // A picture only once its fence has closed: until then it is code.
-      const kind = settled ? diagramKindOf(info, source) : undefined;
+      // Drawn only once its fence has closed: until then it is code.
+      const kind = settled
+        ? previewKindOfFence(info, source, depth)
+        : undefined;
       if (kind !== undefined) {
-        return <Diagram kind={kind} code={source} info={info} />;
+        return (
+          <FencePreview
+            kind={kind}
+            code={source}
+            info={info}
+            depth={depth}
+            renderMarkdown={renderMarkdown}
+          />
+        );
       }
       return <CodeBlock code={source} info={info} settled={settled} />;
     },
@@ -223,15 +239,31 @@ function componentsFor(settled: boolean): Components {
   };
 }
 
-const SETTLED_COMPONENTS = componentsFor(true);
-const UNSETTLED_COMPONENTS = componentsFor(false);
+/** The components of each depth, made once: a new object would redraw every block. */
+const COMPONENTS = new Map<string, Components>();
 
-const MarkdownDocument = memo(function MarkdownDocument({
+function componentsAt(settled: boolean, depth: number): Components {
+  const key = `${settled}:${depth}`;
+  let components = COMPONENTS.get(key);
+  if (components === undefined) {
+    components = componentsFor(settled, depth);
+    COMPONENTS.set(key, components);
+  }
+  return components;
+}
+
+/**
+ * One Markdown document, drawn. `depth` is how many Markdown previews it is
+ * inside: 0 for an answer, 1 for a ```markdown block's preview.
+ */
+export const MarkdownDocument = memo(function MarkdownDocument({
   source,
   settled,
+  depth = 0,
 }: {
   readonly source: string;
   readonly settled: boolean;
+  readonly depth?: number;
 }) {
   const text = useMemo(() => normalizeMath(source), [source]);
   return (
@@ -239,7 +271,7 @@ const MarkdownDocument = memo(function MarkdownDocument({
       remarkPlugins={REMARK_PLUGINS}
       rehypePlugins={settled ? REHYPE_PLUGINS : REHYPE_PLUGINS_UNSETTLED}
       skipHtml
-      components={settled ? SETTLED_COMPONENTS : UNSETTLED_COMPONENTS}
+      components={componentsAt(settled, depth)}
     >
       {text}
     </ReactMarkdown>

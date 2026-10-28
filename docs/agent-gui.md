@@ -910,13 +910,88 @@ only when DevHub already has it — the Workspace's own Issue and pull request,
 from the Sidebar's status — and the URL otherwise. A browser that could not
 be opened is said the way every other failure on the Agents page is.
 
-## Diagrams
+## Previews: diagrams, documents and slides
+
+Some blocks of an answer are drawn as what they say rather than as their
+source. Which ones is one registry (`shell/conversation/previewKinds.ts`):
+each kind names the fence words and the file extensions it may be, and a test
+of the contents (` ```xml ` is an SVG only when it is one `<svg>`; a Markdown
+block is a Marp deck only when its front matter says `marp: true`). The kinds
+are tried in order, the particular before the general. Every kind is drawn
+through one mechanism (`Preview.tsx`): the drawing, in the code block's
+quiet icon-only header, with a toggle to its source (_Show source_) and back
+(_Show diagram_, _Show preview_, _Show slides_). A kind's drawing is shown
+first once its fence has closed; a block still being written is its source,
+like any other fence. A drawing that is still loading, or a source that does
+not draw, is its code — with one quiet line under it saying why, when it
+failed. While the source is shown the drawing stays drawn, so going back is
+the same picture (the same slide).
+
+| Fence | Drawn as |
+| --- | --- |
+| ` ```svg `, ` ```xml ` of one `<svg>` | the image it is |
+| ` ```mermaid ` | a Mermaid diagram |
+| ` ```marp `, or ` ```markdown ` / ` ```md ` with `marp: true` | slides |
+| ` ```markdown `, ` ```md ` | the Markdown, rendered |
+
+### Markdown
+
+A ` ```markdown ` block is drawn by the conversation's own renderer, one
+level deeper, in a frame of its own a step smaller than the answer
+(`MarkdownPreview.tsx`) — links, tables, code and math as an answer draws
+them. A Markdown block inside one is drawn too, and one inside that is its
+source: previews stop at `MAX_PREVIEW_DEPTH` (2), so a document that quotes
+itself is not drawn forever. (Write the outer fence with more backticks than
+any fence inside it, as CommonMark asks.)
+
+The copy puts the Markdown on the clipboard as text, with the drawn document
+beside it as HTML (`writeClipboardRich`, main's `clipboard.write`): an
+editor pastes the source, a mail or a document pastes it formatted. The
+conversation's own controls (headers, buttons) are not in the HTML. A
+right-click offers _Copy Source_; a right-click on text selected in the
+preview is left to the page.
+
+### Slides (Marp)
+
+A ` ```marp ` block, or a ` ```markdown ` block whose front matter says
+`marp: true`, is drawn as a deck by Marp Core (`marp.ts`, `MarpPreview.tsx`):
+one slide at a time at the column's width, with a quiet line under it —
+previous, _3 / 12_, next — and ←/→ while the deck has the focus. The header
+holds the toggle, a save button (a native menu: _Save as PDF…_, _Save Slides
+as Images…_, _Save This Slide as Image…_) and a copy of the slide shown as a
+PNG. A right-click offers _Copy Slide Image_, _Copy Source_ and the saves. A
+slide keeps its theme's colours whatever DevHub's theme is: a deck is a
+document with a look of its own, copied and printed as shown.
+
+**Safe by construction.** Marp turns the deck into HTML and CSS, and neither
+is ever markup in the page. Marp runs with `html: false` (raw HTML in a deck
+is its text), no script of its own and emoji as characters (not images from a
+CDN), and its CSS loses its `@import`s. Each slide is wrapped with the deck's
+CSS in a standalone SVG and drawn as an `<img>` of a `data:` URL — the
+diagram's boundary: no script runs and nothing is fetched, so a slide's image
+that points at the network is not drawn. Only Marp's lightweight core is
+loaded: no math, syntax colouring or Mermaid inside slides.
+
+**Saving.** The page asks main (`main/shell/slideExport.ts`), which asks
+where with a save dialog over the window. A PDF is printed by Chromium from
+the deck's own markup (its text stays text), one slide a page at the slide's
+size (16:9, 1280×720 CSS pixels, unless the deck says `size:`), in a hidden
+window made for that print and destroyed after: JavaScript off, sandboxed, no
+preload, an in-memory session of its own, a Content Security Policy that loads
+nothing but data: images as the document's first element, every request but
+its own temporary file cancelled, no navigation and no window. Images are
+rasterised by the page at twice the slide's size (or the screen's ratio),
+checked to be PNGs by main, and written as the name chosen for one slide or
+`<name>-01.png`, `<name>-02.png`… beside it for several.
+
+**Loading.** Marp Core is its own chunk, loaded by the first deck.
+
+### Diagrams
 
 A closed ` ```mermaid ` block in an answer is drawn as a diagram, and a
 ` ```svg ` block — or a ` ```xml ` block whose whole content is one `<svg>` —
-as the picture it is (`shell/conversation/Diagram.tsx`). A block still being
-written is code like any other fence, and becomes a picture once its fence
-closes; while Mermaid is loading or drawing, the block is its code.
+as the picture it is (`shell/conversation/Diagram.tsx`); while Mermaid is
+loading or drawing, the block is its code.
 
 **Safe by construction.** What an Agent writes is not trusted, and neither is
 what Mermaid makes of it. Both are drawn as an `<img>` of a `data:` URL, never

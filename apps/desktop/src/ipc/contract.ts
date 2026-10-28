@@ -1289,6 +1289,30 @@ export interface SidebarBridge
 	releaseTooltip(): void;
 }
 
+/** Text and its HTML rendering, for `writeClipboardRich`. */
+export interface RichClipboardWire {
+	readonly text: string;
+	readonly html: string;
+}
+
+/** A deck to print to PDF (`AgentsBridge.saveSlidesPdf`). */
+export interface SlidesPdfRequestWire {
+	/** A whole HTML document: the slides, one a page, and their CSS. */
+	readonly html: string;
+	/** A slide's size in CSS pixels, which is the page's. */
+	readonly width: number;
+	readonly height: number;
+	/** The file name the dialog suggests, without `.pdf`. */
+	readonly name: string;
+}
+
+/** Slides rasterised by the page (`AgentsBridge.saveSlideImages`). */
+export interface SlideImagesRequestWire {
+	readonly images: readonly Uint8Array[];
+	/** The file name the dialog suggests, without `.png`. */
+	readonly name: string;
+}
+
 /** Every Agent, in one view — `agents.html`. */
 export interface AgentsBridge
 	extends PageBridge,
@@ -1315,6 +1339,26 @@ export interface AgentsBridge
 	 * reason as `writeClipboard`: the page's is gated on focus.
 	 */
 	writeClipboardImage(png: Uint8Array): Promise<void>;
+	/**
+	 * Put text on the clipboard with an HTML rendering of it beside: a
+	 * Markdown preview's copy, which pastes as its source into an editor and
+	 * formatted into a document.
+	 */
+	writeClipboardRich(content: RichClipboardWire): Promise<void>;
+	/**
+	 * Save a Marp deck of a GUI Agent's answer as a PDF: main asks where, with
+	 * a save dialog, and prints `html` — the deck's own markup, one slide a
+	 * page — from a hidden window that runs no script and loads nothing
+	 * (`main/shell/slideExport.ts`). Resolves to the path written, or
+	 * `undefined` when the dialog was cancelled.
+	 */
+	saveSlidesPdf(request: SlidesPdfRequestWire): Promise<string | undefined>;
+	/**
+	 * Save slides as PNGs the page has rasterised: one file for one slide,
+	 * `<name>-01.png`, `<name>-02.png`… beside the name chosen for several.
+	 * Resolves to the paths written, or `[]` when the dialog was cancelled.
+	 */
+	saveSlideImages(request: SlideImagesRequestWire): Promise<readonly string[]>;
 	/**
 	 * Put a context menu up over the window, as a native menu — a right-click
 	 * on a diagram in a GUI Agent's answer. Resolves to the id chosen, or
@@ -1721,6 +1765,9 @@ export const CHANNELS = {
 	openExternalUrl: "devhub:open-external-url",
 	writeClipboard: "devhub:write-clipboard",
 	writeClipboardImage: "devhub:write-clipboard-image",
+	writeClipboardRich: "devhub:write-clipboard-rich",
+	saveSlidesPdf: "devhub:save-slides-pdf",
+	saveSlideImages: "devhub:save-slide-images",
 	previewLayout: "devhub:preview-layout",
 	focusSurface: "devhub:focus-surface",
 

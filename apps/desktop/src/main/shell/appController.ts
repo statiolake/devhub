@@ -15,6 +15,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -475,6 +476,11 @@ import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { writeClipboardImage } from "./clipboardImage.js";
+import {
+	saveSlideImages,
+	saveSlidesPdf,
+	type SlideExportHost,
+} from "./slideExport.js";
 import { popupContextMenu } from "./contextMenu.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import {
@@ -8935,6 +8941,29 @@ export class AppController {
 		handle(CHANNELS.writeClipboardImage, (_event, png: unknown) => {
 			writeClipboardImage(png);
 		});
+		handle(CHANNELS.writeClipboardRich, (_event, content: unknown) => {
+			const wire = content as Partial<Record<string, unknown>> | null;
+			if (
+				typeof wire?.["text"] !== "string" ||
+				typeof wire["html"] !== "string"
+			)
+				throw new Error("The text to copy is not text and HTML.");
+			electron.clipboard.write({ text: wire["text"], html: wire["html"] });
+		});
+		// A deck from a GUI Agent's answer, saved where the person says, the
+		// dialog a sheet over the window (`slideExport.ts`).
+		const slideExport: SlideExportHost = {
+			showSaveDialog: (options) =>
+				electron.dialog.showSaveDialog(shellWindow().window, options),
+			createWindow: (options) => new electron.BrowserWindow(options),
+			writeFile: (path, bytes) => writeFile(path, bytes),
+		};
+		handle(CHANNELS.saveSlidesPdf, (_event, request: unknown) =>
+			saveSlidesPdf(slideExport, request),
+		);
+		handle(CHANNELS.saveSlideImages, (_event, request: unknown) =>
+			saveSlideImages(slideExport, request),
+		);
 		// A drag in progress, which is the one geometric fact the page owns
 		// while it lasts: the pointer is in the page, and the model only learns
 		// where the person stopped. Everything else about the layout is

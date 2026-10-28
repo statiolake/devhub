@@ -25,6 +25,9 @@ export function fakeActions(
   return {
     writeClipboard: vi.fn(() => Promise.resolve()),
     writeClipboardImage: vi.fn(() => Promise.resolve()),
+    writeClipboardRich: vi.fn(() => Promise.resolve()),
+    saveSlidesPdf: vi.fn(() => Promise.resolve(undefined)),
+    saveSlideImages: vi.fn(() => Promise.resolve([])),
     // A menu that is dismissed, unless a test says what is chosen.
     showContextMenu: vi.fn(() => Promise.resolve(undefined)),
     openExternalUrl: vi.fn(() => Promise.resolve()),

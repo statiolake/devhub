@@ -11,7 +11,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppAppearance } from "../../ipc/appShell";
-import type { ContextMenuRequestWire } from "../../ipc/contract";
+import type {
+  ContextMenuRequestWire,
+  RichClipboardWire,
+  SlideImagesRequestWire,
+  SlidesPdfRequestWire,
+} from "../../ipc/contract";
 import type { FileRange } from "../../ipc/conversation";
 import {
   EMPTY_TRANSCRIPT,
@@ -66,6 +71,12 @@ export function ConversationPane({
     return {
       writeClipboard: (text: string) => bridge.writeClipboard(text),
       writeClipboardImage: (png: Uint8Array) => bridge.writeClipboardImage(png),
+      writeClipboardRich: (content: RichClipboardWire) =>
+        bridge.writeClipboardRich(content),
+      saveSlidesPdf: (request: SlidesPdfRequestWire) =>
+        bridge.saveSlidesPdf(request),
+      saveSlideImages: (request: SlideImagesRequestWire) =>
+        bridge.saveSlideImages(request),
       showContextMenu: (request: ContextMenuRequestWire) =>
         bridge.showContextMenu(request),
       openExternalUrl: (url: string) => bridge.openExternalUrl(url),

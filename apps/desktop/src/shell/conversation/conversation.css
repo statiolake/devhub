@@ -985,8 +985,81 @@
   }
 }
 
-.conversation-diagram-toggle[aria-pressed="true"] {
+.conversation-diagram-toggle[aria-pressed="true"],
+.conversation-preview-toggle[aria-pressed="true"] {
   color: var(--secondary);
+}
+
+/* A ```markdown block, drawn: a document quoted in the answer, set in a
+   frame of its own and a step smaller, so it does not read as more of the
+   answer around it. */
+.conversation-markdown-preview-body {
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.95em;
+  overflow-wrap: anywhere;
+  animation: conversation-diagram-in var(--motion-base) var(--ease-enter);
+}
+
+.conversation-markdown-preview-body > :first-child {
+  margin-top: var(--space-2);
+}
+
+.conversation-markdown-preview-body > :last-child {
+  margin-bottom: var(--space-2);
+}
+
+/* A Marp deck: one slide, the width of the column, and a quiet line under
+   it to move through the deck. */
+.conversation-slides-stage {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3) var(--space-3) 0;
+  outline: none;
+}
+
+.conversation-slides-stage:focus-visible img {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.conversation-slides-stage img {
+  display: block;
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  border-radius: var(--radius-control);
+  box-shadow: 0 0 0 1px var(--line-soft);
+  user-select: none;
+  animation: conversation-diagram-in var(--motion-base) var(--ease-enter);
+}
+
+.conversation-slides-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-1) 0 var(--space-2);
+  color: var(--secondary);
+  font-size: 0.8em;
+}
+
+.conversation-slides-counter {
+  min-width: 4.5em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.conversation-slides-bar .conversation-copy:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-markdown-preview-body,
+  .conversation-slides-stage img {
+    animation: none;
+  }
 }
 
 /* The source drawn in place of a diagram that would not draw, and a quiet

@@ -18,7 +18,12 @@
 
 import type { CliDefaults } from "../../model/cliDefaults";
 import { createContext, useContext } from "react";
-import type { ContextMenuRequestWire } from "../../ipc/contract";
+import type {
+  ContextMenuRequestWire,
+  RichClipboardWire,
+  SlideImagesRequestWire,
+  SlidesPdfRequestWire,
+} from "../../ipc/contract";
 import type { FileRange } from "../../ipc/conversation";
 import type { VoiceApi } from "../../ipc/voice";
 import type {
@@ -38,6 +43,16 @@ export interface ConversationActions {
   readonly writeClipboard: (text: string) => Promise<void>;
   /** Put a PNG on the clipboard, through main: a diagram's "Copy image". */
   readonly writeClipboardImage: (png: Uint8Array) => Promise<void>;
+  /** Text with its HTML rendering beside it: a Markdown preview's copy. */
+  readonly writeClipboardRich: (content: RichClipboardWire) => Promise<void>;
+  /** Ask where, and print a Marp deck there as a PDF (`saveSlidesPdf`). */
+  readonly saveSlidesPdf: (
+    request: SlidesPdfRequestWire,
+  ) => Promise<string | undefined>;
+  /** Ask where, and write slides there as PNGs (`saveSlideImages`). */
+  readonly saveSlideImages: (
+    request: SlideImagesRequestWire,
+  ) => Promise<readonly string[]>;
   /**
    * Put a native context menu up at `at` (this page's coordinates) and
    * resolve to the id chosen, or `undefined`: a right-click on a diagram.
