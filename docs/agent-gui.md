@@ -1109,7 +1109,8 @@ is its own column), the same distance in, and the same size whichever it
 says. It starts a GUI Agent from the same profile resuming the
 terminal's session, selects it, and stops the terminal Agent once the GUI one
 is running and written down; a launch that fails leaves the terminal running.
-**Smart Buttons.** While a GUI Agent is idle, one box holding a compact stack
+**Smart Buttons.** While a GUI Agent is idle (or done but for something it left
+running in the background), one box holding a compact stack
 of small buttons — one per line, under the automatic actions' bolt — stands
 on its composer's top right edge (on the topmost waiting message, when there
 are any): what
@@ -1163,8 +1164,10 @@ sends once (and so does an Agent that reappears with the box ticked); un-ticking
 and ticking again sends once more. A reading with no repository status is no news, not the end of an
 episode. Nothing goes to an Agent that is not idle or has something queued,
 and one trigger at a time, in trigger order, so pushing is decided on the
-repository committing left. With no button offered and nothing switched on,
-the box is only its header and shows while the pane is pointed at.
+repository committing left. With no button offered and nothing switched on
+there is no box: only the bare bolt stands where the box would, shown while
+the pane is pointed at — an empty box with a bolt in its corner read as
+buttons that had failed to appear.
 
 **Continuing an Agent that is not idle.** A continue is a stop followed by a
 resume elsewhere, in this order: the new Agent is launched on the session

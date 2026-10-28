@@ -245,8 +245,8 @@ describe("which Smart Buttons are drawn", () => {
     ]);
   });
 
-  it("draws no button while the Agent is not idle, only the quiet Auto menu", () => {
-    for (const status of ["working", "waiting", "background", "unknown"]) {
+  it("draws no button while the Agent is not at its prompt, only the bare Auto bolt", () => {
+    for (const status of ["working", "waiting", "unknown"]) {
       mount({ over: { status } as Partial<AgentWire> });
       expect(labels()).toEqual([]);
       expect(box()).toHaveAttribute("data-quiet");
@@ -553,6 +553,98 @@ describe("dragging the box", () => {
     expect(box()).not.toHaveAttribute("data-dragging");
     expect(dispatch).not.toHaveBeenCalled();
     expect(runAgentAction).not.toHaveBeenCalled();
+  });
+
+  it("never moves for a pointer that only hovers, whatever buttons it reports", () => {
+    const { dispatch } = mount();
+    const before = [box().style.right, box().style.bottom];
+    // No press began on the box: a move is a hover, even one that says a
+    // button is down (a press that began somewhere else).
+    for (const [x, y] of [
+      [880, 570],
+      [800, 520],
+      [700, 480],
+    ]) {
+      fireEvent.pointerMove(handle(), {
+        buttons: 1,
+        clientX: x,
+        clientY: y,
+        pointerId: 1,
+      });
+    }
+    expect(box()).not.toHaveAttribute("data-dragging");
+    expect([box().style.right, box().style.bottom]).toEqual(before);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  for (const [how, end] of [
+    [
+      "released somewhere else in the page",
+      () => fireEvent.pointerUp(document.body, { pointerId: 1 }),
+    ],
+    ["the page losing focus", () => fireEvent.blur(window)],
+    [
+      "a context menu taking the pointer",
+      () => fireEvent.contextMenu(document.body),
+    ],
+    ["its capture lost", () => fireEvent.lostPointerCapture(box())],
+  ] as const) {
+    it(`ends a press on ${how}, so a later hover never carries the box`, () => {
+      const { dispatch, runAgentAction } = mount();
+      const before = [box().style.right, box().style.bottom];
+      fireEvent.pointerDown(handle(), {
+        button: 0,
+        clientX: 900,
+        clientY: 580,
+        pointerId: 1,
+      });
+      act(() => {
+        end();
+      });
+      // Even with the button reported held, as a page that never saw the
+      // release may report it.
+      fireEvent.pointerMove(handle(), {
+        buttons: 1,
+        clientX: 700,
+        clientY: 480,
+        pointerId: 1,
+      });
+      expect(box()).not.toHaveAttribute("data-dragging");
+      expect([box().style.right, box().style.bottom]).toEqual(before);
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(runAgentAction).not.toHaveBeenCalled();
+    });
+  }
+
+  it("stays where it was dropped until main answers, whatever the pointer does meanwhile", () => {
+    const { dispatch } = mount();
+    // Main has not answered yet.
+    dispatch.mockImplementation(() => new Promise(() => undefined));
+    fireEvent.pointerDown(handle(), {
+      button: 0,
+      clientX: 900,
+      clientY: 580,
+      pointerId: 1,
+    });
+    fireEvent.pointerMove(handle(), {
+      buttons: 1,
+      clientX: 700,
+      clientY: 480,
+      pointerId: 1,
+    });
+    fireEvent.pointerUp(handle(), { clientX: 700, clientY: 480, pointerId: 1 });
+    const dropped = [box().style.right, box().style.bottom];
+    expect(dropped).toEqual(["212px", "112px"]);
+    for (const buttons of [0, 1]) {
+      fireEvent.pointerMove(handle(), {
+        buttons,
+        clientX: 500,
+        clientY: 300,
+        pointerId: 1,
+      });
+    }
+    expect([box().style.right, box().style.bottom]).toEqual(dropped);
+    expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
   it("stops the box at the pane's edges", () => {

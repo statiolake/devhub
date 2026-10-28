@@ -107,12 +107,18 @@ export type SmartButtonRepository = Pick<
 /**
  * Which Smart Button triggers hold for an Agent, in `ACTION_TRIGGERS` order.
  *
- * Nothing unless the Agent is idle. A button is a sentence for the Agent's
- * next turn; while it is working, waiting on a question, finishing something
- * in the background, or unreadable, there is no next turn to offer one for —
- * and a message pressed then would queue behind the work and land on a
- * repository that has moved on. Hidden rather than disabled: a row of dead
- * buttons over a working Agent is noise about a moment that has not come.
+ * Nothing unless the Agent is at its prompt: idle, or `background` — its
+ * turn is over and it takes the next message as it would idle, while
+ * something it started (a dev server, a watcher) keeps running, which may be
+ * for the rest of the session. A button is a sentence for the Agent's next
+ * turn; while it is working, waiting on a question, or unreadable, there is
+ * no next turn to offer one for — and a message pressed then would queue
+ * behind the work and land on a repository that has moved on. Hidden rather
+ * than disabled: a row of dead buttons over a working Agent is noise about a
+ * moment that has not come.
+ *
+ * Only the buttons: an automatic action still fires on `idle` alone
+ * (`model/automaticActions.ts`), which asks this with "idle" itself.
  *
  * Then one rule per trigger:
  *
@@ -139,7 +145,7 @@ export function smartButtonTriggers(
   status: AgentStatusWire,
   repository: SmartButtonRepository | undefined,
 ): readonly AgentActionTrigger[] {
-  if (status !== "idle") return [];
+  if (status !== "idle" && status !== "background") return [];
   if (repository === undefined) return ["always"];
   const pullRequest = repository.pullRequest;
   const live =

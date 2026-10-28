@@ -303,6 +303,16 @@ export function SmartButtons({
   // Whether the press under way has moved far enough to be a drag: the click
   // it ends in is then swallowed.
   const dragged = useRef(false);
+  // The press under way: the pointer that went down on the box, from its
+  // down until its release, and nothing else. Only its moves, with its
+  // button still held, move the box. It ends however the press ends — the
+  // release, wherever in the page it lands; the press cancelled or its
+  // capture lost; the page losing focus or going out of sight; a context
+  // menu taking the pointer — so a press whose end this page did not see is
+  // over, and no pointer that is only hovering can carry the box off. And
+  // once dropped, the box stays where it was dropped until main answers,
+  // whatever the pointer does meanwhile.
+  const pressing = useRef<number | undefined>(undefined);
   const [drag, setDrag] = useState<{
     readonly pointer: { readonly x: number; readonly y: number };
     readonly from: SmartButtonsOffset;
@@ -334,6 +344,36 @@ export function SmartButtons({
       SMART_BUTTONS_SNAP_MS,
     );
   }, [dragSnap]);
+  /** The press is over without a drop: the box goes back to where it rests. */
+  const endPress = () => {
+    if (pressing.current === undefined) return;
+    pressing.current = undefined;
+    dragged.current = false;
+    setDrag(undefined);
+  };
+  const endPressRef = useRef(endPress);
+  endPressRef.current = endPress;
+  const pressed = drag !== undefined;
+  useEffect(() => {
+    if (!pressed) return;
+    // Bubbling, so the box's own release — which drops — is heard first.
+    const end = () => endPressRef.current();
+    const hidden = () => {
+      if (document.visibilityState === "hidden") end();
+    };
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("contextmenu", end);
+    window.addEventListener("blur", end);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("contextmenu", end);
+      window.removeEventListener("blur", end);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, [pressed]);
   // On a GUI Agent's composer the stack stands over the transcript's last
   // lines, so the transcript keeps that much room at its end
   // (`--smart-buttons-reserve`, read by `conversation.css`) and nothing it
@@ -439,6 +479,7 @@ export function SmartButtons({
         // The Auto panel's switches are its own; nothing in it moves the box.
         if ((event.target as Element).closest(".smart-buttons-menu")) return;
         dragged.current = false;
+        pressing.current = event.pointerId;
         setDrag({
           pointer: { x: event.clientX, y: event.clientY },
           from: resting,
@@ -446,15 +487,15 @@ export function SmartButtons({
         });
       }}
       onPointerMove={(event) => {
-        if (drag === undefined || metrics === undefined) return;
+        if (pressing.current !== event.pointerId) return;
         // No button held: the press ended where this view did not hear it
         // (another view took the pointer, the window lost focus). Hovering
         // never moves the box.
         if ((event.buttons & 1) === 0) {
-          dragged.current = false;
-          setDrag(undefined);
+          endPress();
           return;
         }
+        if (drag === undefined || metrics === undefined) return;
         const moved = {
           x: event.clientX - drag.pointer.x,
           y: event.clientY - drag.pointer.y,
@@ -481,6 +522,8 @@ export function SmartButtons({
         });
       }}
       onPointerUp={(event) => {
+        if (pressing.current !== event.pointerId) return;
+        pressing.current = undefined;
         if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
@@ -494,10 +537,8 @@ export function SmartButtons({
         // the box goes back to where main still has it.
         void place(to).finally(() => setDrag(undefined));
       }}
-      onPointerCancel={() => {
-        dragged.current = false;
-        setDrag(undefined);
-      }}
+      onPointerCancel={endPress}
+      onLostPointerCapture={endPress}
       // The click that ends a drag presses nothing, whatever it lands on.
       onClickCapture={(event) => {
         if (!dragged.current) return;

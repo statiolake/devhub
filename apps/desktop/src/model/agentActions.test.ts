@@ -255,18 +255,14 @@ describe("when a Smart Button is offered", () => {
     ]);
   });
 
-  it("offers nothing unless the Agent is idle", () => {
+  it("offers nothing unless the Agent is at its prompt: idle, or done but for something in the background", () => {
     const busy = repository({ dirty: true, ahead: 1 });
-    for (const status of [
-      "working",
-      "waiting",
-      "background",
-      "error",
-      "unknown",
-    ] as const) {
+    for (const status of ["working", "waiting", "error", "unknown"] as const) {
       expect(conditional(status, busy)).toEqual([]);
     }
     expect(conditional("idle", busy)).toEqual(["commit", "push"]);
+    // A dev server left running is no reason to hide what comes next.
+    expect(conditional("background", busy)).toEqual(["commit", "push"]);
   });
 
   it("offers nothing for a Workspace whose repository is not known", () => {
@@ -280,12 +276,7 @@ describe("when a Smart Button is offered", () => {
       "commit",
       "always",
     ]);
-    for (const status of [
-      "working",
-      "waiting",
-      "background",
-      "error",
-    ] as const) {
+    for (const status of ["working", "waiting", "error"] as const) {
       expect(smartButtonTriggers(status, undefined)).toEqual([]);
     }
   });
