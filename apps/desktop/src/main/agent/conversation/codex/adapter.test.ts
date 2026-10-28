@@ -23,7 +23,6 @@ import {
 	type TranscriptEntry,
 } from "../../../../model/conversation.js";
 import {
-	ProtocolMismatch,
 	RESTARTED,
 	RESTART_MARK,
 	type AdapterStep,
@@ -787,7 +786,9 @@ describe("a turn", () => {
 			kind: "turn-end",
 			outcome: "interrupted",
 		});
-		expect(conversationStatus(harness.transcript)).toBe("waiting"); // the approval is still open
+		// Codex aborts what the turn asked with the turn: the approval closes.
+		expect(harness.transcript.requests).toEqual([]);
+		expect(conversationStatus(harness.transcript)).toBe("idle");
 	});
 
 	it("carries chosen settings into the next turn/start", () => {
@@ -2196,7 +2197,7 @@ describe("what DevHub does not know", () => {
 	});
 });
 
-describe("a protocol DevHub stopped understanding", () => {
+describe("a protocol DevHub reads past", () => {
 	const cases: [string, object | string, RegExp][] = [
 		[
 			"a known item with a status it does not have",
@@ -2217,17 +2218,18 @@ describe("a protocol DevHub stopped understanding", () => {
 					},
 				},
 			},
-			/^params\.item\.status: expected one of inProgress \| completed \| failed \| declined, got a string \(CLI 0\.156\.1/,
+			// The command is drawn, ended without saying it succeeded.
+			/^notice\(info\): codex 0\.156\.1 sent something DevHub does not know at `params\.item\.status` \(expected one of inProgress \| completed \| failed \| declined, got "teleported"\); DevHub read past it\.$/,
 		],
 		[
 			"a line that is not JSON",
 			"{not json",
-			/^line: expected JSON, got \{not json/,
+			/^notice\(warning\): codex 0\.156\.1 printed a line DevHub cannot read \(line: expected JSON, got \{not json/,
 		],
 		[
 			"a reply to a request DevHub never made",
 			{ id: 99, result: {} },
-			/^message\.id: expected a reply to a request DevHub made, got one to 99/,
+			/^notice\(warning\): codex 0\.156\.1 answered a request DevHub did not make \(99\)/,
 		],
 		[
 			"a delta for a message that never started",
@@ -2235,31 +2237,111 @@ describe("a protocol DevHub stopped understanding", () => {
 				method: "item/agentMessage/delta",
 				params: { threadId: MAIN, turnId: "t", itemId: "ghost", delta: "x" },
 			},
-			/^params\.itemId: expected a delta for a streaming message, got one for ghost \(never started\)/,
+			/^notice\(warning\): codex 0\.156\.1 streamed into ghost, which is not a message that started; DevHub read past it\.$/,
+		],
+		[
+			"a known notification of a shape it does not read",
+			{ method: "turn/plan/updated", params: { threadId: MAIN } },
+			/^notice\(warning\): codex 0\.156\.1 sent `turn\/plan\/updated` in a shape DevHub does not read \(params\.turnId: expected a string/,
+		],
+		[
+			"a known item of a shape it does not read",
+			{
+				method: "item/completed",
+				params: {
+					threadId: MAIN,
+					turnId: "t",
+					item: { type: "commandExecution", id: "c", command: 7 },
+				},
+			},
+			/^notice\(warning\): codex 0\.156\.1 sent a `commandExecution` item DevHub cannot read \(params\.item\.command: expected a string, got a number/,
 		],
 	];
 
-	for (const [name, line, detail] of cases) {
-		it(`throws the shared ProtocolMismatch on ${name}, and is spent after`, () => {
+	for (const [name, line, notice] of cases) {
+		it(`says ${name} and goes on`, () => {
 			const harness = ready();
-			let thrown: unknown;
-			try {
-				harness.receive(line);
-			} catch (error) {
-				thrown = error;
-			}
-			expect(thrown).toBeInstanceOf(ProtocolMismatch);
-			expect((thrown as ProtocolMismatch).message).toMatch(detail);
-			expect((thrown as ProtocolMismatch).agentVersion).toContain("0.156.1");
-			expect(() =>
-				harness.receive({
-					method: "warning",
-					params: { threadId: null, message: "later" },
-				}),
-			).toThrow(/spent/);
-			expect(() => harness.command({ kind: "interrupt" })).toThrow(/spent/);
+			harness.receive(line);
+			expect(outline(harness.transcript)).toContainEqual(
+				expect.stringMatching(notice),
+			);
+			expect(harness.transcript.state).toEqual({
+				phase: "ready",
+				turn: "none",
+			});
+			// Not spent: the next line is read, and a command is taken.
+			harness.receive({
+				method: "warning",
+				params: { threadId: null, message: "later" },
+			});
+			expect(outline(harness.transcript).at(-1)).toBe("notice(warning): later");
+			harness.command({
+				kind: "send",
+				text: "go",
+				images: [],
+				origin: "person",
+			});
+			expect(harness.lastWrite()).toMatchObject({ method: "turn/start" });
 		});
 	}
+
+	it("says each kind once, however often it comes", () => {
+		const harness = ready();
+		harness.receive("{not json");
+		harness.receive("{still not json");
+		harness.receive({ id: 99, result: {} });
+		harness.receive({ id: 99, result: {} });
+		expect(outline(harness.transcript)).toHaveLength(2);
+	});
+
+	it("declines a known request it cannot read, so the turn is not left waiting", () => {
+		const harness = ready();
+		const before = harness.written.length;
+		harness.receive({
+			id: 3,
+			method: "mcpServer/elicitation/request",
+			params: {
+				threadId: MAIN,
+				turnId: "t",
+				serverName: "docs",
+				mode: "openai/form",
+				message: "Pick one",
+			},
+		});
+		expect(harness.writesSince(before)).toEqual([
+			{
+				id: 3,
+				error: {
+					code: -32601,
+					message: "DevHub does not handle mcpServer/elicitation/request",
+				},
+			},
+		]);
+		expect(harness.transcript.requests).toEqual([]);
+		expect(outline(harness.transcript)[0]).toMatch(
+			/asked DevHub for `mcpServer\/elicitation\/request`, which DevHub does not do \(DevHub cannot read it: params\.mode: expected one of form \| url/,
+		);
+	});
+
+	it("breaks, restartably, on a thread/start answer it cannot read at all", () => {
+		const harness = new Harness();
+		harness.start();
+		const [initialize, account] = fixture("handshake.handwritten.ndjson");
+		harness.receive(initialize!);
+		harness.receive(account!);
+		harness.receive({ id: 2, result: { thread: { id: 7 } } });
+		expect(harness.transcript.state).toMatchObject({
+			phase: "broken",
+			failure: {
+				code: "refused",
+				detail: expect.stringMatching(
+					/^thread\/start failed: an answer DevHub cannot read \(result\.thread\.id: expected a string/,
+				),
+			},
+		});
+		// A restart is still taken.
+		expect(harness.adapter.restart().kind).toBe("restart");
+	});
 });
 
 describe("replay", () => {

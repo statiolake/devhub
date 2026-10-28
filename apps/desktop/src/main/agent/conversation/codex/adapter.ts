@@ -25,16 +25,37 @@
  *
  * # Failure
  *
- * A known message of the wrong shape, or one that contradicts what the adapter
- * was told before (a reply to a request DevHub never made, a delta for a
- * message that never started), throws the shared `ProtocolMismatch`, and the
- * adapter is spent. A notification DevHub does not know is an information
- * `notice` (once per method) and the conversation goes on; an item DevHub
- * does not know is a warning, since it is part of the conversation not drawn; a request DevHub does not know is also answered with
- * a JSON-RPC error, because leaving it unanswered would stall the turn with
- * nothing on screen saying why. A signed-out account or a refused handshake
- * is not a mismatch: it is `state: broken` with its own code, and the adapter
- * reads nothing further after it.
+ * Codex is read past, never stopped at. The journal is replayed through the
+ * same code on every restart, so a line the adapter refused would refuse the
+ * conversation for good: it could never be resumed. So:
+ *
+ * - A notification DevHub does not know is an information `notice` (once per
+ *   method). A known one it cannot read is a warning (once per method), with
+ *   the line, and is otherwise ignored.
+ * - An item DevHub does not know, or cannot read, is a warning with the item:
+ *   part of the conversation not drawn.
+ * - A word a newer Codex adds to a set DevHub reads (a status, a kind) reads
+ *   as a stated fallback, said once per place as information (`drift`).
+ * - A request DevHub does not know, or cannot read, is answered with a
+ *   JSON-RPC error, because leaving it unanswered would stall the turn with
+ *   nothing on screen saying why.
+ * - A word that contradicts what the adapter was told before (a delta for a
+ *   message that never started or already ended, output for a command that
+ *   is over, a reply to a request DevHub never made) is said once and
+ *   ignored: Codex finishing an item after its turn ended is a race, not a
+ *   different protocol.
+ * - An answer DevHub cannot read is that request failing, as if Codex had
+ *   answered with an error: for `thread/start` and `thread/resume`, the
+ *   conversation is broken until it is restarted.
+ *
+ * A turn that fails ends where Codex says it failed: an `error` that will not
+ * be retried (a usage limit, a refused request) ends the turn there, with
+ * every call still running interrupted and every request it asked closed;
+ * the `turn/completed` that follows says the same again, with its usage.
+ *
+ * A signed-out account or a refused handshake is not a mismatch: it is
+ * `state: broken` with its own code, and the adapter reads nothing further
+ * after it.
  *
  * A command DevHub's own page should never have sent (answering a request
  * that is not open, sending while broken) throws a plain `Error`: that is
@@ -144,6 +165,7 @@ import {
 	type ReasoningDelta,
 	type ThreadFacts,
 	type ThreadOpened,
+	type TurnErrorNotice,
 	type TurnFacts,
 } from "./decode.js";
 import type { InitializeParams } from "./protocol/InitializeParams.js";
@@ -371,6 +393,8 @@ function mentions(text: string): ReadonlySet<string> {
 /** A request the server made that DevHub is showing, and how each answer is spelled. */
 interface OpenRequest {
 	readonly rpcId: RpcId;
+	/** The thread whose turn asked: the request ends with that turn. */
+	readonly thread: string;
 	readonly respond: (answer: RequestAnswer) => JsonValue;
 	/** For questions: the person's answer, as the reply DevHub wrote says it. */
 	readonly answered: ((result: JsonValue) => AnswerEntry) | undefined;
@@ -800,13 +824,31 @@ export class CodexAdapter implements ProtocolAdapter {
 		return this.writes;
 	}
 
-	/** The reader for one line, knowing the CLI's version for the failure it may raise. */
+	/**
+	 * The reader for one line, knowing the CLI's version for the failure it
+	 * may raise, and saying what it reads past.
+	 */
 	private get reader(): Reader {
-		return new Reader(this.version);
+		return new Reader(this.version, (path, detail) =>
+			this.noticeOnce(
+				`drift/${path.replace(/\[\d+\]/gu, "[]")}`,
+				"info",
+				`${this.codexName} sent something DevHub does not know at \`${path}\` (expected ${detail}); DevHub read past it.`,
+				undefined,
+			),
+		);
 	}
 
-	private mismatch(path: string, expected: string): never {
-		throw new ProtocolMismatch(path, expected, this.version);
+	/**
+	 * Something Codex said that contradicts what it said before, or that
+	 * DevHub cannot read: said once per `key`, as a warning, and read past.
+	 */
+	private readPast(
+		key: string,
+		text: string,
+		raw: JsonValue | undefined,
+	): void {
+		this.noticeOnce(`past/${key}`, "warning", text, raw);
 	}
 
 	/** Every event goes through here, so the adapter's own copy is the fold's. */
@@ -1062,19 +1104,48 @@ export class CodexAdapter implements ProtocolAdapter {
 	// Reading.
 
 	private dispatch(line: string): void {
-		const message = decodeLine(this.reader, line);
+		let message: ReturnType<typeof decodeLine>;
+		try {
+			message = decodeLine(this.reader, line);
+		} catch (error) {
+			if (!(error instanceof ProtocolMismatch)) throw error;
+			return this.readPast(
+				"line",
+				`${this.codexName} printed a line DevHub cannot read (${error.message}); DevHub read past it.`,
+				line.slice(0, 2000),
+			);
+		}
 		switch (message.kind) {
 			case "restart":
 				return this.takeRestart();
-			case "response":
-				return this.onResponse(message.id, message.result);
-			case "error":
+			case "response": {
+				const method = this.replyTo(message.id, line);
+				if (method === undefined) return;
+				try {
+					return this.onResponse(method, message.id, message.result);
+				} catch (error) {
+					if (!(error instanceof ProtocolMismatch)) throw error;
+					// An answer DevHub cannot read is the request failing.
+					return this.onErrorResponse(
+						method,
+						message.id,
+						0,
+						`an answer DevHub cannot read (${error.message})`,
+						null,
+					);
+				}
+			}
+			case "error": {
+				const method = this.replyTo(message.id, line);
+				if (method === undefined) return;
 				return this.onErrorResponse(
+					method,
 					message.id,
 					message.code,
 					message.message,
 					message.data,
 				);
+			}
 			case "notification": {
 				const route = Object.hasOwn(this.notifications, message.method)
 					? this.notifications[message.method as NotificationMethod]
@@ -1090,15 +1161,36 @@ export class CodexAdapter implements ProtocolAdapter {
 						JSON.parse(line) as JsonValue,
 					);
 				}
-				if (typeof route === "function") route(message.params);
+				if (typeof route !== "function") return;
+				try {
+					route(message.params);
+				} catch (error) {
+					if (!(error instanceof ProtocolMismatch)) throw error;
+					this.readPast(
+						`method/${message.method}`,
+						`${this.codexName} sent \`${message.method}\` in a shape DevHub does not read (${error.message}); DevHub read past it.`,
+						JSON.parse(line) as JsonValue,
+					);
+				}
 				return;
 			}
 			case "request": {
 				const route = Object.hasOwn(this.requests, message.method)
 					? this.requests[message.method as RequestMethod]
 					: undefined;
-				if (typeof route === "function")
-					return route(message.id, message.params);
+				if (typeof route === "function") {
+					try {
+						return route(message.id, message.params);
+					} catch (error) {
+						if (!(error instanceof ProtocolMismatch)) throw error;
+						return this.decline(
+							message.id,
+							message.method,
+							unused(`DevHub cannot read it: ${error.message}`),
+							JSON.parse(line) as JsonValue,
+						);
+					}
+				}
 				return this.decline(
 					message.id,
 					message.method,
@@ -1150,19 +1242,23 @@ export class CodexAdapter implements ProtocolAdapter {
 		return `${this.starts}/${rpcKey(rpcId)}`;
 	}
 
-	private methodOf(id: RpcId | null, path: string): ClientMethod {
+	/**
+	 * The request of DevHub's a reply answers. A reply to none DevHub made (an
+	 * error about a line Codex could not read, with no id) is said and read past.
+	 */
+	private replyTo(id: RpcId | null, line: string): ClientMethod | undefined {
 		const method = id === null ? undefined : this.calls.get(rpcKey(id));
 		if (method === undefined) {
-			this.mismatch(
-				path,
-				`a reply to a request DevHub made, got one to ${JSON.stringify(id)}`,
+			this.readPast(
+				`reply/${JSON.stringify(id)}`,
+				`${this.codexName} answered a request DevHub did not make (${JSON.stringify(id)}); DevHub read past it.`,
+				JSON.parse(line) as JsonValue,
 			);
 		}
 		return method;
 	}
 
-	private onResponse(id: RpcId, result: unknown): void {
-		const method = this.methodOf(id, "message.id");
+	private onResponse(method: ClientMethod, id: RpcId, result: unknown): void {
 		switch (method) {
 			case "initialize": {
 				this.version = versionOf(
@@ -1249,12 +1345,12 @@ export class CodexAdapter implements ProtocolAdapter {
 	}
 
 	private onErrorResponse(
+		method: ClientMethod,
 		id: RpcId | null,
 		code: number,
 		message: string,
 		data: JsonValue,
 	): void {
-		const method = this.methodOf(id, "message.id");
 		const raw = { code, message, data };
 		if (method === "thread/resume" && this.switches.delete(rpcKey(id!))) {
 			this.notice(
@@ -1737,7 +1833,12 @@ export class CodexAdapter implements ProtocolAdapter {
 	private onTurnCompleted(params: unknown): void {
 		const { threadId, turn } = turnNotification(this.reader, params);
 		if (turn.status === "inProgress") {
-			this.mismatch("params.turn.status", "a finished turn, got inProgress");
+			// A turn that completed is over, whatever its status says.
+			this.readPast(
+				"turn/completed/inProgress",
+				`${this.codexName} said a turn completed with the status inProgress; DevHub ends it as failed.`,
+				params as JsonValue,
+			);
 		}
 		if (
 			this.waits(threadId, `turn/completed/${turn.id}`, () =>
@@ -1745,6 +1846,33 @@ export class CodexAdapter implements ProtocolAdapter {
 			)
 		)
 			return;
+		this.finishTurn(threadId, turn);
+	}
+
+	/**
+	 * An `error` Codex will not retry ends its turn: a usage limit, a refused
+	 * or failed request. The turn's own `turn/completed` follows and ends it
+	 * again with what it used; until then nothing of it waits on a result
+	 * that is not coming — no call is left running and no request open.
+	 */
+	private onTurnError(error: TurnErrorNotice): void {
+		const running =
+			error.threadId === this.mainThread
+				? this.runningTurn
+				: this.childTurns.get(error.threadId);
+		if (running === undefined || running !== error.turnId) return;
+		this.finishTurn(error.threadId, {
+			id: error.turnId,
+			status: "failed",
+			durationMs: null,
+			items: [],
+			error: error.message,
+			usageLimited: error.usageLimited,
+			unauthorized: error.unauthorized,
+		});
+	}
+
+	private finishTurn(threadId: string, turn: TurnFacts): void {
 		// The plan's usage limit stopped the turn: the window it reset is the
 		// one used up, as the rate limits last reported it — or, when Codex
 		// says so only after the turn, as they report it then.
@@ -1796,6 +1924,13 @@ export class CodexAdapter implements ProtocolAdapter {
 			}
 		}
 		this.unfinished.delete(threadId);
+		// Codex ends what a turn asked with the turn: an answer now would
+		// answer nothing.
+		for (const [id, request] of [...this.open]) {
+			if (request.thread !== threadId) continue;
+			this.open.delete(id);
+			this.emit({ type: "request-closed", request: id });
+		}
 		if (threadId !== this.mainThread) {
 			this.childTurns.delete(threadId);
 			this.setSpawnState(
@@ -1872,14 +2007,22 @@ export class CodexAdapter implements ProtocolAdapter {
 			this.reader,
 			params,
 		);
+		if (item.type === "unreadable" && item.id === null) {
+			return this.notice(
+				"warning",
+				`${this.codexName} sent a \`${item.itemType}\` item DevHub cannot read (${item.why}).`,
+				item.raw,
+				this.parentOf(threadId) ?? null,
+			);
+		}
 		if (
-			this.waits(threadId, `item/${item.id}`, () =>
+			this.waits(threadId, `item/${item.id!}`, () =>
 				this.onItemNotification(params, phase),
 			)
 		)
 			return;
 		if (phase === "started" && startedAtMs !== null)
-			this.itemTimes.set(this.idOf(threadId, item.id), startedAtMs);
+			this.itemTimes.set(this.idOf(threadId, item.id!), startedAtMs);
 		this.onItem(threadId, turnId, item, phase);
 	}
 
@@ -1912,7 +2055,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		item: Item,
 		phase: "started" | "completed",
 	): void {
-		const id = this.idOf(threadId, item.id);
+		const id = this.idOf(threadId, item.id ?? "");
 		const parent = this.parentOf(threadId);
 		if (parent === undefined) {
 			throw new Error(
@@ -2017,7 +2160,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						"commandExecution",
 						item.command,
 						{ command: item.command, cwd: item.cwd },
-						commandStatus(item.status),
+						commandStatus(item.status, streaming),
 						output,
 					),
 					threadId,
@@ -2030,7 +2173,7 @@ export class CodexAdapter implements ProtocolAdapter {
 						id,
 						parent,
 						item.changes,
-						commandStatus(item.status),
+						commandStatus(item.status, streaming),
 					),
 					threadId,
 				);
@@ -2052,7 +2195,7 @@ export class CodexAdapter implements ProtocolAdapter {
 							argumentsOf(item.arguments),
 						),
 						item.arguments,
-						toolCallStatus(item.status),
+						toolCallStatus(item.status, streaming),
 						output,
 					),
 					threadId,
@@ -2068,7 +2211,7 @@ export class CodexAdapter implements ProtocolAdapter {
 							: `${item.namespace}/${item.tool}`,
 						toolTitle(item.tool, argumentsOf(item.arguments)),
 						item.arguments,
-						toolCallStatus(item.status),
+						toolCallStatus(item.status, streaming),
 						item.output.length === 0
 							? undefined
 							: [{ kind: "text", text: item.output.join("\n") }],
@@ -2076,7 +2219,7 @@ export class CodexAdapter implements ProtocolAdapter {
 					threadId,
 				);
 			case "collabAgentToolCall":
-				return this.onCollab(id, parent, threadId, item);
+				return this.onCollab(id, parent, threadId, item, streaming);
 			case "subAgentActivity":
 				return this.onSubagentActivity(id, parent, threadId, item);
 			case "webSearch":
@@ -2085,8 +2228,12 @@ export class CodexAdapter implements ProtocolAdapter {
 						id,
 						parent,
 						"webSearch",
-						`Search: ${item.query}`,
-						{ query: item.query },
+						item.query === "" && item.url !== null
+							? `Open: ${item.url}`
+							: `Search: ${item.query}`,
+						item.url === null
+							? { query: item.query }
+							: { query: item.query, url: item.url },
 						streaming ? "running" : "succeeded",
 						item.results === null
 							? undefined
@@ -2120,6 +2267,34 @@ export class CodexAdapter implements ProtocolAdapter {
 								},
 							},
 						],
+					),
+					threadId,
+				);
+			case "imageGeneration":
+				return this.put(
+					this.tool(
+						id,
+						parent,
+						"imageGeneration",
+						item.revisedPrompt === null
+							? "Generate an image"
+							: `Generate an image: ${firstLine(item.revisedPrompt)}`,
+						{ revisedPrompt: item.revisedPrompt },
+						imageGenerationStatus(item, streaming),
+						imageGenerationOutput(item),
+					),
+					threadId,
+				);
+			case "sleep":
+				return this.put(
+					this.tool(
+						id,
+						parent,
+						"sleep",
+						`Sleep ${Math.round(item.durationMs / 1000)}s`,
+						{ durationMs: item.durationMs },
+						streaming ? "running" : "succeeded",
+						undefined,
 					),
 					threadId,
 				);
@@ -2172,6 +2347,16 @@ export class CodexAdapter implements ProtocolAdapter {
 					item.raw,
 					parent,
 					id,
+				);
+			case "unreadable":
+				// Apart from the item's own entry, which a readable start or
+				// completion of the same item may draw as its kind.
+				return this.notice(
+					"warning",
+					`${this.codexName} sent a \`${item.itemType}\` item DevHub cannot read (${item.why}).`,
+					item.raw,
+					parent,
+					entryId(`${id}#unreadable`),
 				);
 		}
 	}
@@ -2245,8 +2430,8 @@ export class CodexAdapter implements ProtocolAdapter {
 		id: EntryId,
 		parent: EntryId | null,
 		threadId: string,
-
 		item: Extract<Item, { type: "collabAgentToolCall" }>,
+		streaming: boolean,
 	): void {
 		let spawns: SubagentInfo | undefined;
 		if (item.tool === "spawnAgent") {
@@ -2282,7 +2467,7 @@ export class CodexAdapter implements ProtocolAdapter {
 					model: item.model,
 					receiverThreadIds: item.receiverThreadIds,
 				},
-				collabStatus(item.status),
+				collabStatus(item.status, streaming),
 				undefined,
 				spawns,
 			),
@@ -2442,7 +2627,11 @@ export class CodexAdapter implements ProtocolAdapter {
 	// -------------------------------------------------------------------------
 	// Deltas.
 
-	/** The streaming assistant entry a delta is for. */
+	/**
+	 * The streaming assistant entry a delta is for, or — for a message that
+	 * never started, or has ended (its turn ended first) — none: the item's
+	 * completion says it whole, and the delta is read past.
+	 */
 	private streamingEntry(
 		threadId: string,
 		itemId: string,
@@ -2450,10 +2639,12 @@ export class CodexAdapter implements ProtocolAdapter {
 	) {
 		const found = this.entry(entry);
 		if (found?.kind !== "assistant" || !found.streaming) {
-			this.mismatch(
-				"params.itemId",
-				`a delta for a streaming message, got one for ${itemId} (${found === undefined ? "never started" : `a ${found.kind} entry`})`,
+			this.readPast(
+				`delta/${threadId}/${itemId}`,
+				`${this.codexName} streamed into ${itemId}, which is ${found === undefined ? "not a message that started" : found.kind === "assistant" ? "a message that has ended" : `a ${found.kind} entry`}; DevHub read past it.`,
+				undefined,
 			);
+			return undefined;
 		}
 		return found;
 	}
@@ -2463,6 +2654,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		// A thread not yet placed: its item's completion, held, says it whole.
 		if (!this.placed(threadId)) return;
 		const entry = this.streamingEntry(threadId, itemId);
+		if (entry === undefined) return;
 		this.emit({ type: "text-delta", entry: entry.id, block: 0, text: delta });
 	}
 
@@ -2478,9 +2670,11 @@ export class CodexAdapter implements ProtocolAdapter {
 		const id = raw ? entryId(`${base}#raw`) : base;
 		if (raw && this.entry(id) === undefined) {
 			const summary = this.streamingEntry(threadId, itemId);
+			if (summary === undefined) return undefined;
 			this.put({ ...summary, id, blocks: [] }, threadId);
 		}
 		const entry = this.streamingEntry(threadId, itemId, id);
+		if (entry === undefined) return undefined;
 		if (entry.blocks.length <= index) {
 			const blocks: AssistantBlock[] = [...entry.blocks];
 			while (blocks.length <= index)
@@ -2511,12 +2705,16 @@ export class CodexAdapter implements ProtocolAdapter {
 		if (!this.placed(threadId)) return;
 		const id = this.idOf(threadId, itemId);
 		const entry = this.entry(id);
-		if (entry?.kind !== "tool" || entry.status !== "running") {
-			this.mismatch(
-				"params.itemId",
-				`output for a running command, got output for ${itemId}`,
+		if (entry?.kind !== "tool") {
+			return this.readPast(
+				`output/${threadId}/${itemId}`,
+				`${this.codexName} sent output for ${itemId}, which is not a command that started; DevHub read past it.`,
+				undefined,
 			);
 		}
+		// A command's output can outlive its turn (a turn a usage limit
+		// ended while the command ran): it is still the command's, shown
+		// under whatever its status is now.
 		const output = (this.commandOutput.get(id) ?? "") + delta;
 		this.commandOutput.set(id, output);
 		this.emit({
@@ -2534,9 +2732,10 @@ export class CodexAdapter implements ProtocolAdapter {
 		const id = this.idOf(threadId, itemId);
 		const entry = this.entry(id);
 		if (entry?.kind !== "tool") {
-			this.mismatch(
-				"params.itemId",
-				`a patch for a file change, got one for ${itemId}`,
+			return this.readPast(
+				`patch/${threadId}/${itemId}`,
+				`${this.codexName} sent a patch for ${itemId}, which is not a file change that started; DevHub read past it.`,
+				undefined,
 			);
 		}
 		this.fileChanges.set(id, changes);
@@ -2595,6 +2794,7 @@ export class CodexAdapter implements ProtocolAdapter {
 		);
 		this.open.set(id, {
 			rpcId,
+			thread: threadId,
 			respond: (answer) => {
 				if (answer.kind === "answers") {
 					if (answers === undefined)
@@ -3133,6 +3333,7 @@ export class CodexAdapter implements ProtocolAdapter {
 				params as JsonValue,
 				this.parentOf(error.threadId) ?? null,
 			);
+			if (!error.willRetry) this.onTurnError(error);
 		},
 		"thread/started": (params) => {
 			const thread = threadStarted(this.reader, params);
@@ -3314,7 +3515,11 @@ export class CodexAdapter implements ProtocolAdapter {
 		deprecationNotice: (params) => {
 			const note = summaryNotice(this.reader, params);
 			this.notice(
-				"warning",
+				// Addressed to DevHub, which resumes a thread with its whole
+				// history to draw it: nothing for the person to do.
+				note.summary.startsWith("Full-history hydration is deprecated")
+					? "info"
+					: "warning",
 				note.details === null
 					? note.summary
 					: `${note.summary}\n${note.details}`,
@@ -3384,10 +3589,18 @@ export class CodexAdapter implements ProtocolAdapter {
 // ---------------------------------------------------------------------------
 // Status words.
 
+/**
+ * A status as the page draws it. `null` is a status DevHub does not know
+ * (said as drift where it was read): running while the item is, and once it
+ * has ended, ended without saying it succeeded.
+ */
 function commandStatus(
-	status: "inProgress" | "completed" | "failed" | "declined",
+	status: "inProgress" | "completed" | "failed" | "declined" | null,
+	streaming: boolean,
 ): ToolStatus {
 	switch (status) {
+		case null:
+			return streaming ? "running" : "interrupted";
 		case "inProgress":
 			return "running";
 		case "completed":
@@ -3400,19 +3613,28 @@ function commandStatus(
 }
 
 function toolCallStatus(
-	status: "inProgress" | "completed" | "failed",
+	status: "inProgress" | "completed" | "failed" | null,
+	streaming: boolean,
 ): ToolStatus {
-	return commandStatus(status);
+	return commandStatus(status, streaming);
 }
 
 function collabStatus(
-	status: "inProgress" | "completed" | "failed" | "interrupted",
+	status: "inProgress" | "completed" | "failed" | "interrupted" | null,
+	streaming: boolean,
 ): ToolStatus {
-	return status === "interrupted" ? "interrupted" : commandStatus(status);
+	return status === "interrupted"
+		? "interrupted"
+		: commandStatus(status, streaming);
 }
 
-function subagentState(status: CollabAgentStatus): SubagentInfo["state"] {
+/** A subagent's state; `null` is a state DevHub does not know. */
+function subagentState(
+	status: CollabAgentStatus | null,
+): SubagentInfo["state"] {
 	switch (status) {
+		case null:
+			return "unknown";
 		case "pendingInit":
 		case "running":
 			return "running";
@@ -3425,6 +3647,64 @@ function subagentState(status: CollabAgentStatus): SubagentInfo["state"] {
 		case "notFound":
 			return "unknown";
 	}
+}
+
+/**
+ * An image generation's status, as upstream words it (`generating`,
+ * `completed`, `failed`; the set is open): a failure says it failed whatever
+ * the word, and a word DevHub does not know is the item's phase.
+ */
+function imageGenerationStatus(
+	item: Extract<Item, { type: "imageGeneration" }>,
+	streaming: boolean,
+): ToolStatus {
+	if (item.failure !== null || item.status === "failed") return "failed";
+	if (item.status === "completed") return "succeeded";
+	return streaming ? "running" : "succeeded";
+}
+
+/** The image an image generation made: the file Codex saved, or the image it handed over. */
+function imageGenerationOutput(
+	item: Extract<Item, { type: "imageGeneration" }>,
+): ToolOutput | undefined {
+	if (item.failure !== null) {
+		return [
+			{
+				kind: "text",
+				text:
+					item.failure === "usageLimitExceeded"
+						? "Image generation reached its usage limit."
+						: `Image generation failed (${item.failure}).`,
+			},
+		];
+	}
+	if (item.savedPath !== null) {
+		return [
+			{
+				kind: "image",
+				image: {
+					mediaType: "image/*",
+					source: { kind: "file", path: item.savedPath },
+					label: item.savedPath,
+				},
+			},
+		];
+	}
+	if (item.result !== null && item.result !== "") {
+		return [
+			{
+				kind: "image",
+				image: {
+					mediaType: "image/png",
+					source: { kind: "data", base64: item.result },
+					label: "image",
+				},
+			},
+		];
+	}
+	return item.fileId === null
+		? undefined
+		: [{ kind: "text", text: `Image ${item.fileId}` }];
 }
 
 /** An MCP result's text parts, or the result whole when it has none. */

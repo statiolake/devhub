@@ -775,10 +775,26 @@ notification no drawn call started is a notice. Its work is drawn in one place a
 - An event DevHub has never heard of is not dropped. It appears in the
   transcript as a warning notice with the event folded under it, and the
   conversation goes on.
-- A known event whose shape DevHub does not accept stops the conversation as
-  _protocol mismatch_, naming where in the line it went wrong and the CLI's
-  version. The transcript up to that point stays readable. This usually means
-  the CLI was updated past what DevHub knows.
+- A known event whose shape DevHub does not accept stops a Claude
+  conversation as _protocol mismatch_, naming where in the line it went wrong
+  and the CLI's version. The transcript up to that point stays readable. This
+  usually means the CLI was updated past what DevHub knows.
+- A Codex conversation reads past it instead, because the journal is read
+  again on every restart and a line refused once would refuse the
+  conversation for good: it could never be resumed. A status or kind a newer
+  Codex adds reads as a stated fallback, said once as information (_codex …
+  sent something DevHub does not know at `…`_); an item, a notification or a
+  line DevHub cannot read is a warning with what came; a request it cannot
+  read is answered that DevHub cannot handle it, so the turn is not left
+  waiting. Only a `thread/start` or `thread/resume` answer without a thread
+  DevHub can read breaks the conversation, and Restart session tries again.
+- A Codex turn ends where Codex says it failed. An `error` Codex will not
+  retry (the plan's usage limit, a refused request) ends the turn at once:
+  every call still running is interrupted, every approval it asked is
+  closed, and the error is the turn's end. What Codex says of the turn after
+  that (a command's output and result, the turn's own end with its usage) is
+  still drawn. An error Codex retries (a rate limit, a dropped stream) is a
+  warning, and the turn goes on.
 
 ## File paths open in the editor
 
@@ -2214,7 +2230,10 @@ One transcription runs at a time. See `shell/conversation/dictation.ts`,
     does not know_: something the Agent said or did may not be drawn.
   - An event DevHub knows that arrives broken — a line that is not JSON, a
     known event without a field DevHub reads, a system event with no
-    subtype — is not a notice at all: it is a "Protocol mismatch" (above).
+    subtype — is not a notice at all for Claude: it is a "Protocol mismatch"
+    (above). For Codex it is a warning, said once per kind, and the
+    conversation goes on; a word Codex added to a status or kind DevHub reads
+    is information, said once per place.
 - **The Agent ended by itself.** The notice has the exit code and the end of
   `err`. A CLI that is not on the host's `PATH` shows up here as `command not
 found`, exactly as it would for a terminal Agent.

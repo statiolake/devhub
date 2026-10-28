@@ -15,10 +15,18 @@
  *
  * A message that does not have the shape its reader expects throws the shared
  * `ProtocolMismatch`, naming the path that did not fit and the CLI's version
- * (which is why every reader takes the `Reader` that knows it). That is the
- * CLI saying something DevHub believed it would never say, so nothing here
- * recovers from it: the loop that feeds lines in turns it into a broken
- * conversation at its one root.
+ * (which is why every reader takes the `Reader` that knows it). The adapter
+ * reads past it: a notification it could not read is a notice, a request is
+ * declined, and only a handshake answer it cannot read at all breaks the
+ * conversation (a broken conversation would break again on every replay of
+ * the same journal, so it could never be resumed).
+ *
+ * Codex grows. A word a newer CLI adds to a set DevHub reads (a status, a
+ * kind) is read past with `known`, which reports it to the Reader's `drift`
+ * and reads as a stated fallback; an item of a known type that does not have
+ * its shape is an `unreadable` item, shown as it came; a turn of a thread's
+ * history that cannot be read is left out, and said. What a reader reads
+ * past, it reports — never silently.
  */
 
 import {
@@ -63,20 +71,76 @@ import type { TokenUsageBreakdown } from "./protocol/v2/TokenUsageBreakdown.js";
 import type { ToolRequestUserInputParams } from "./protocol/v2/ToolRequestUserInputParams.js";
 import type { ToolRequestUserInputQuestion } from "./protocol/v2/ToolRequestUserInputQuestion.js";
 import type { Turn } from "./protocol/v2/Turn.js";
+import type { SleepItem } from "./protocol/SleepItem.js";
 import type { TurnPlanStep } from "./protocol/v2/TurnPlanStep.js";
 import type { TurnPlanUpdatedNotification } from "./protocol/v2/TurnPlanUpdatedNotification.js";
 import type { WarningNotification } from "./protocol/v2/WarningNotification.js";
 import type { McpServerStatus } from "./protocol/v2/McpServerStatus.js";
+
+/**
+ * Where a reader reports what it read past: the path, and what it expected
+ * there and got instead.
+ */
+export type Drift = (path: string, detail: string) => void;
 
 /** Reads fields of one message, failing with that message's path and the CLI's version. */
 export class Reader {
 	constructor(
 		/** The CLI's version, once the handshake has said it. */
 		readonly version: string | undefined,
+		/** Told of each value a newer Codex may send that a reader read past. */
+		private readonly drifted: Drift = () => undefined,
 	) {}
 
 	fail(path: string, expected: string): never {
 		throw new ProtocolMismatch(path, expected, this.version);
+	}
+
+	/** Reports something read past, at `path`. */
+	drift(path: string, detail: string): void {
+		this.drifted(path, detail);
+	}
+
+	/**
+	 * One of a set of words a newer Codex may add to (a status, a kind): a word
+	 * DevHub does not know, or none, is reported and reads as `fallback`.
+	 */
+	known<const T extends string, F>(
+		o: Fields,
+		key: string,
+		path: string,
+		values: readonly T[],
+		fallback: F,
+	): T | F {
+		const value = o[key];
+		if (
+			typeof value === "string" &&
+			(values as readonly string[]).includes(value)
+		) {
+			return value as T;
+		}
+		this.drift(
+			`${path}.${key}`,
+			`one of ${values.join(" | ")}, got ${typeof value === "string" ? JSON.stringify(value) : describe(value)}`,
+		);
+		return fallback;
+	}
+
+	/**
+	 * `read`, or — when what it reads does not have the shape it expects —
+	 * that mismatch reported and `fallback` made of it.
+	 */
+	tolerant<T, F>(
+		read: () => T,
+		fallback: (mismatch: ProtocolMismatch) => F,
+	): T | F {
+		try {
+			return read();
+		} catch (error) {
+			if (!(error instanceof ProtocolMismatch)) throw error;
+			this.drift(error.path, error.expected);
+			return fallback(error);
+		}
 	}
 
 	private mismatch(path: string, expected: string, value: unknown): never {
@@ -282,9 +346,15 @@ export function decodeLine(r: Reader, line: string): Message {
 
 export type Initialized = Pick<InitializeResponse, "userAgent">;
 
+/** `initialize`'s answer. A user agent DevHub cannot read only leaves the version unsaid. */
 export function initializeResponse(r: Reader, value: unknown): Initialized {
 	const o = r.fields(value, "result");
-	return { userAgent: r.string(o, "userAgent", "result") };
+	return {
+		userAgent: r.tolerant(
+			() => r.string(o, "userAgent", "result"),
+			() => "",
+		),
+	};
 }
 
 export type AccountReading = {
@@ -317,6 +387,9 @@ export type ThreadFacts = Pick<
 	Thread,
 	"id" | "parentThreadId" | "agentNickname" | "historyMode"
 > & {
+	/** The thread's own model and directory: what an answer that leaves them out falls back to. */
+	readonly model: string | null;
+	readonly cwd: string | null;
 	readonly turns: readonly TurnFacts[];
 	/**
 	 * Whether the person may start or steer this thread's turns themselves:
@@ -332,12 +405,28 @@ function thread(r: Reader, value: unknown, path: string): ThreadFacts {
 		id: r.string(o, "id", path),
 		parentThreadId: r.nullableString(o, "parentThreadId", path),
 		agentNickname: r.nullableString(o, "agentNickname", path),
-		historyMode: r.oneOf(o, "historyMode", path, ["legacy", "paginated"]),
+		model: typeof o["model"] === "string" ? o["model"] : null,
+		cwd: typeof o["cwd"] === "string" ? o["cwd"] : null,
+		// A mode DevHub does not know is not one whose turns it can take back.
+		historyMode: r.known(
+			o,
+			"historyMode",
+			path,
+			["legacy", "paginated"],
+			"legacy",
+		),
 		takesDirectInput:
 			r.nullableBoolean(o, "canAcceptDirectInput", path) === true,
-		turns:
-			r.nullableArray(o, "turns", path, (value, at) => turn(r, value, at)) ??
-			[],
+		// A turn of the history DevHub cannot read is left out (and reported),
+		// not the thread: a resume shows the rest of what was said.
+		turns: (
+			r.nullableArray(o, "turns", path, (value, at) =>
+				r.tolerant(
+					() => turn(r, value, at),
+					() => null,
+				),
+			) ?? []
+		).filter((each): each is TurnFacts => each !== null),
 	};
 }
 
@@ -348,13 +437,24 @@ export type ThreadOpened = Pick<ThreadStartResponse, "model" | "cwd"> & {
 	readonly sandbox: JsonValue;
 };
 
-/** `thread/start` and `thread/resume` answer with the same facts. */
+/**
+ * `thread/start` and `thread/resume` answer with the same facts. Only the
+ * thread's id is needed to go on; a model or directory the answer does not
+ * give in the shape DevHub reads is reported, and read from the thread.
+ */
 export function threadOpenedResponse(r: Reader, value: unknown): ThreadOpened {
 	const o = r.fields(value, "result");
+	const opened = thread(r, o["thread"], "result.thread");
 	return {
-		thread: thread(r, o["thread"], "result.thread"),
-		model: r.string(o, "model", "result"),
-		cwd: r.string(o, "cwd", "result"),
+		thread: opened,
+		model: r.tolerant(
+			() => r.string(o, "model", "result"),
+			() => opened.model ?? "",
+		),
+		cwd: r.tolerant(
+			() => r.string(o, "cwd", "result"),
+			() => opened.cwd ?? "",
+		),
 		reasoningEffort: r.nullableString(o, "reasoningEffort", "result"),
 		approvalPolicy: r.json(o, "approvalPolicy"),
 		sandbox: r.json(o, "sandbox"),
@@ -566,42 +666,81 @@ const TURN_STATUSES = [
 	"inProgress",
 ] as const;
 
+/** A `TurnError`, as a turn and an `error` notification carry it. */
+export interface TurnErrorFacts {
+	/** Its message, with its additional details after it. */
+	readonly message: string;
+	/** `codexErrorInfo` as one word: the kind, without an object's details. */
+	readonly kind: string | null;
+	readonly usageLimited: boolean;
+	readonly unauthorized: boolean;
+}
+
+/**
+ * A `TurnError`. `codexErrorInfo` is a kind in a word, or a kind with its
+ * details as an object (`{ "httpConnectionFailed": { … } }`); from 0.165 on
+ * upstream's own type admits any word or object, so only the word, or the
+ * object's one key, is read.
+ */
+export function turnError(
+	r: Reader,
+	value: unknown,
+	path: string,
+): TurnErrorFacts {
+	const e = r.fields(value, path);
+	const details = r.nullableString(e, "additionalDetails", path);
+	const said = r.tolerant(
+		() => r.string(e, "message", path),
+		() => "",
+	);
+	const message =
+		details === null ? said : said === "" ? details : `${said}\n${details}`;
+	const info = e["codexErrorInfo"];
+	const kind =
+		typeof info === "string"
+			? info
+			: typeof info === "object" && info !== null && !Array.isArray(info)
+				? (Object.keys(info)[0] ?? null)
+				: null;
+	return {
+		message: message === "" ? (kind ?? "error") : message,
+		kind,
+		usageLimited: kind === USAGE_LIMIT_EXCEEDED,
+		unauthorized: kind === UNAUTHORIZED,
+	};
+}
+
 function turn(r: Reader, value: unknown, path: string): TurnFacts {
 	const o = r.fields(value, path);
 	const error = o["error"];
-	let message: string | null = null;
-	let usageLimited = false;
-	let unauthorized = false;
-	if (error !== null && error !== undefined) {
-		const e = r.fields(error, `${path}.error`);
-		const details = r.nullableString(e, "additionalDetails", `${path}.error`);
-		message = r.string(e, "message", `${path}.error`);
-		if (details !== null) message = `${message}\n${details}`;
-		// A kind in a word, or a kind with its HTTP status as an object: only
-		// the one word is read.
-		const info = e["codexErrorInfo"];
-		if (
-			info !== undefined &&
-			info !== null &&
-			typeof info !== "string" &&
-			(typeof info !== "object" || Array.isArray(info))
-		) {
-			r.fail(
-				`${path}.error.codexErrorInfo`,
-				`a string, an object or null, got ${describe(info)}`,
-			);
-		}
-		usageLimited = info === USAGE_LIMIT_EXCEEDED;
-		unauthorized = info === UNAUTHORIZED;
-	}
+	const facts =
+		error === null || error === undefined
+			? null
+			: r.tolerant(
+					() => turnError(r, error, `${path}.error`),
+					() => null,
+				);
 	return {
 		id: r.string(o, "id", path),
-		status: r.oneOf(o, "status", path, TURN_STATUSES),
-		durationMs: r.nullableNumber(o, "durationMs", path),
-		items: r.array(o, "items", path, (value, at) => item(r, value, at)),
-		error: message,
-		usageLimited,
-		unauthorized,
+		// A status DevHub does not know is a turn that is over: how it ended
+		// is its error's to say, if it has one.
+		status: r.known(
+			o,
+			"status",
+			path,
+			TURN_STATUSES,
+			facts === null ? "completed" : "failed",
+		),
+		durationMs: r.tolerant(
+			() => r.nullableNumber(o, "durationMs", path),
+			() => null,
+		),
+		items:
+			r.nullableArray(o, "items", path, (value, at) => item(r, value, at)) ??
+			[],
+		error: facts?.message ?? null,
+		usageLimited: facts?.usageLimited ?? false,
+		unauthorized: facts?.unauthorized ?? false,
 	};
 }
 
@@ -678,42 +817,37 @@ export type Item =
 	| Pick<Of<"agentMessage">, "type" | "id" | "text">
 	| Pick<Of<"plan">, "type" | "id" | "text">
 	| Pick<Of<"reasoning">, "type" | "id" | "summary" | "content">
-	| Pick<
+	| (Pick<
 			Of<"commandExecution">,
-			| "type"
-			| "id"
-			| "command"
-			| "cwd"
-			| "status"
-			| "aggregatedOutput"
-			| "exitCode"
-	  >
-	| (Pick<Of<"fileChange">, "type" | "id" | "status"> & {
+			"type" | "id" | "command" | "cwd" | "aggregatedOutput" | "exitCode"
+	  > & {
+			/** Null: a status DevHub does not know (reported as drift). */
+			readonly status: Of<"commandExecution">["status"] | null;
+	  })
+	| (Pick<Of<"fileChange">, "type" | "id"> & {
+			readonly status: Of<"fileChange">["status"] | null;
 			readonly changes: readonly FileChange[];
 	  })
-	| (Pick<Of<"mcpToolCall">, "type" | "id" | "server" | "tool" | "status"> & {
+	| (Pick<Of<"mcpToolCall">, "type" | "id" | "server" | "tool"> & {
+			readonly status: Of<"mcpToolCall">["status"] | null;
 			/** Kept only to show, so as DevHub's JSON rather than upstream's. */
 			readonly arguments: JsonValue;
 			readonly result: JsonValue;
 			readonly error: string | null;
 	  })
-	| (Pick<
-			Of<"dynamicToolCall">,
-			"type" | "id" | "namespace" | "tool" | "status"
-	  > & {
+	| (Pick<Of<"dynamicToolCall">, "type" | "id" | "namespace" | "tool"> & {
+			readonly status: Of<"dynamicToolCall">["status"] | null;
 			readonly arguments: JsonValue;
 			readonly output: readonly string[];
 	  })
 	| (Pick<
 			Of<"collabAgentToolCall">,
-			| "type"
-			| "id"
-			| "tool"
-			| "status"
-			| "receiverThreadIds"
-			| "prompt"
-			| "model"
-	  > & { readonly agentsStates: Readonly<Record<string, CollabAgentStatus>> })
+			"type" | "id" | "tool" | "receiverThreadIds" | "prompt" | "model"
+	  > & {
+			readonly status: Of<"collabAgentToolCall">["status"] | null;
+			/** Null: a state DevHub does not know. */
+			readonly agentsStates: Readonly<Record<string, CollabAgentStatus | null>>;
+	  })
 	| Pick<
 			Of<"subAgentActivity">,
 			"type" | "id" | "kind" | "agentThreadId" | "agentPath"
@@ -722,8 +856,25 @@ export type Item =
 			readonly type: "webSearch";
 			readonly id: string;
 			readonly query: string;
+			/** The page opened or searched in, for a search that is not a query. */
+			readonly url: string | null;
 			readonly results: JsonValue;
 	  }
+	| {
+			readonly type: "imageGeneration";
+			readonly id: string;
+			/** Upstream's word, which it keeps open: `generating`, `completed`, `failed`… */
+			readonly status: string;
+			readonly revisedPrompt: string | null;
+			/** Where Codex saved the image, on the Agent's machine. */
+			readonly savedPath: string | null;
+			/** The image itself, base64, when Codex hands it over. */
+			readonly result: string | null;
+			readonly fileId: string | null;
+			/** Why it failed: the kind (`usageLimitExceeded`), when it did. */
+			readonly failure: string | null;
+	  }
+	| Pick<SleepItem & { readonly type: "sleep" }, "type" | "id" | "durationMs">
 	| Pick<Of<"imageView">, "type" | "id" | "path">
 	| Pick<Of<"enteredReviewMode">, "type" | "id" | "review">
 	| Pick<Of<"exitedReviewMode">, "type" | "id" | "review">
@@ -739,6 +890,18 @@ export type Item =
 			readonly itemType: string;
 			readonly id: string;
 			readonly raw: JsonValue;
+	  }
+	/**
+	 * An item of a type DevHub reads that does not have the shape it reads
+	 * (a newer Codex changed it): shown as it came, with what did not fit.
+	 */
+	| {
+			readonly type: "unreadable";
+			readonly itemType: string;
+			/** Null when the item has no id to read either. */
+			readonly id: string | null;
+			readonly raw: JsonValue;
+			readonly why: string;
 	  };
 
 export type FileChange = Pick<FileUpdateChange, "path" | "diff"> & {
@@ -750,11 +913,14 @@ function fileChange(r: Reader, value: unknown, path: string): FileChange {
 	return {
 		path: r.string(o, "path", path),
 		diff: r.string(o, "diff", path),
-		kind: r.oneOf(r.fields(o["kind"], `${path}.kind`), "type", `${path}.kind`, [
-			"add",
-			"delete",
+		// A kind DevHub does not know still changed the file.
+		kind: r.known(
+			r.fields(o["kind"], `${path}.kind`),
+			"type",
+			`${path}.kind`,
+			["add", "delete", "update"],
 			"update",
-		]),
+		),
 	};
 }
 
@@ -828,8 +994,8 @@ const ITEM_TYPES: { readonly [T in ThreadItem["type"]]: "drawn" | "other" } = {
 	subAgentActivity: "drawn",
 	webSearch: "drawn",
 	imageView: "drawn",
-	sleep: "other",
-	imageGeneration: "other",
+	sleep: "drawn",
+	imageGeneration: "drawn",
 	enteredReviewMode: "drawn",
 	exitedReviewMode: "drawn",
 	contextCompaction: "drawn",
@@ -839,7 +1005,31 @@ function isItemType(type: string): type is ThreadItem["type"] {
 	return Object.hasOwn(ITEM_TYPES, type);
 }
 
+/**
+ * One item. An item of a type DevHub reads that does not have the shape it
+ * reads is `unreadable`, not a mismatch: the rest of the turn, and of a
+ * resumed thread's history, still reads.
+ */
 export function item(r: Reader, value: unknown, path: string): Item {
+	try {
+		return readItem(r, value, path);
+	} catch (error) {
+		if (!(error instanceof ProtocolMismatch)) throw error;
+		const o =
+			typeof value === "object" && value !== null && !Array.isArray(value)
+				? (value as Fields)
+				: {};
+		return {
+			type: "unreadable",
+			itemType: typeof o["type"] === "string" ? o["type"] : "?",
+			id: typeof o["id"] === "string" ? o["id"] : null,
+			raw: (value ?? null) as JsonValue,
+			why: error.message,
+		};
+	}
+}
+
+function readItem(r: Reader, value: unknown, path: string): Item {
 	const o = r.fields(value, path);
 	const type = r.string(o, "type", path);
 	const id = r.string(o, "id", path);
@@ -869,7 +1059,7 @@ export function item(r: Reader, value: unknown, path: string): Item {
 				id,
 				command: r.string(o, "command", path),
 				cwd: r.string(o, "cwd", path),
-				status: r.oneOf(o, "status", path, COMMAND_STATUSES),
+				status: r.known(o, "status", path, COMMAND_STATUSES, null),
 				aggregatedOutput: r.nullableString(o, "aggregatedOutput", path),
 				exitCode: r.nullableNumber(o, "exitCode", path),
 			};
@@ -877,7 +1067,7 @@ export function item(r: Reader, value: unknown, path: string): Item {
 			return {
 				type,
 				id,
-				status: r.oneOf(o, "status", path, COMMAND_STATUSES),
+				status: r.known(o, "status", path, COMMAND_STATUSES, null),
 				changes: r.array(o, "changes", path, (value, at) =>
 					fileChange(r, value, at),
 				),
@@ -889,7 +1079,7 @@ export function item(r: Reader, value: unknown, path: string): Item {
 				id,
 				server: r.string(o, "server", path),
 				tool: r.string(o, "tool", path),
-				status: r.oneOf(o, "status", path, TOOL_CALL_STATUSES),
+				status: r.known(o, "status", path, TOOL_CALL_STATUSES, null),
 				arguments: r.json(o, "arguments"),
 				result: r.json(o, "result"),
 				error:
@@ -908,7 +1098,7 @@ export function item(r: Reader, value: unknown, path: string): Item {
 				id,
 				namespace: r.nullableString(o, "namespace", path),
 				tool: r.string(o, "tool", path),
-				status: r.oneOf(o, "status", path, TOOL_CALL_STATUSES),
+				status: r.known(o, "status", path, TOOL_CALL_STATUSES, null),
 				arguments: r.json(o, "arguments"),
 				output: (
 					r.nullableArray(o, "contentItems", path, (content, at) => {
@@ -920,42 +1110,87 @@ export function item(r: Reader, value: unknown, path: string): Item {
 				).filter((text): text is string => text !== null),
 			};
 		case "collabAgentToolCall": {
-			const states = r.fields(o["agentsStates"], `${path}.agentsStates`);
-			const agentsStates: Record<string, CollabAgentStatus> = {};
+			// A collab tool DevHub does not know is shown as the item it is.
+			const tool = r.known(o, "tool", path, COLLAB_TOOLS, null);
+			if (tool === null)
+				return { type: "other", itemType: type, id, raw: value as JsonValue };
+			const states =
+				o["agentsStates"] === undefined || o["agentsStates"] === null
+					? {}
+					: r.fields(o["agentsStates"], `${path}.agentsStates`);
+			const agentsStates: Record<string, CollabAgentStatus | null> = {};
 			for (const [threadId, state] of Object.entries(states)) {
 				const at = `${path}.agentsStates.${threadId}`;
-				agentsStates[threadId] = r.oneOf(
+				agentsStates[threadId] = r.known(
 					r.fields(state, at),
 					"status",
 					at,
 					COLLAB_AGENT_STATUSES,
+					null,
 				);
 			}
 			return {
 				type,
 				id,
-				tool: r.oneOf(o, "tool", path, COLLAB_TOOLS),
-				status: r.oneOf(o, "status", path, COLLAB_STATUSES),
+				tool,
+				status: r.known(o, "status", path, COLLAB_STATUSES, null),
 				receiverThreadIds: r.array(o, "receiverThreadIds", path, r.stringItem),
 				prompt: r.nullableString(o, "prompt", path),
 				model: r.nullableString(o, "model", path),
 				agentsStates,
 			};
 		}
-		case "subAgentActivity":
+		case "subAgentActivity": {
+			const kind = r.known(o, "kind", path, SUBAGENT_ACTIVITY, null);
+			if (kind === null)
+				return { type: "other", itemType: type, id, raw: value as JsonValue };
 			return {
 				type,
 				id,
-				kind: r.oneOf(o, "kind", path, SUBAGENT_ACTIVITY),
+				kind,
 				agentThreadId: r.string(o, "agentThreadId", path),
 				agentPath: r.string(o, "agentPath", path),
 			};
-		case "webSearch":
+		}
+		case "webSearch": {
+			const action = o["action"];
+			const a =
+				typeof action === "object" && action !== null && !Array.isArray(action)
+					? (action as Fields)
+					: {};
 			return {
 				type,
 				id,
-				query: r.string(o, "query", path),
+				query: r.nullableString(o, "query", path) ?? "",
+				url: typeof a["url"] === "string" ? a["url"] : null,
 				results: r.json(o, "results"),
+			};
+		}
+		case "imageGeneration": {
+			const failure = o["failure"];
+			return {
+				type,
+				id,
+				status: r.nullableString(o, "status", path) ?? "",
+				revisedPrompt: r.nullableString(o, "revisedPrompt", path),
+				savedPath: r.nullableString(o, "savedPath", path),
+				result: r.nullableString(o, "result", path),
+				fileId: r.nullableString(o, "fileId", path),
+				failure:
+					failure === null || failure === undefined
+						? null
+						: (r.nullableString(
+								r.fields(failure, `${path}.failure`),
+								"type",
+								`${path}.failure`,
+							) ?? "failed"),
+			};
+		}
+		case "sleep":
+			return {
+				type,
+				id,
+				durationMs: r.nullableNumber(o, "durationMs", path) ?? 0,
 			};
 		case "imageView":
 			return { type, id, path: r.string(o, "path", path) };
@@ -1088,11 +1323,13 @@ export function planUpdated(r: Reader, params: unknown): PlanUpdated {
 			const s = r.fields(value, path);
 			return {
 				step: r.string(s, "step", path),
-				status: r.oneOf(s, "status", path, [
+				status: r.known(
+					s,
+					"status",
+					path,
+					["pending", "inProgress", "completed"],
 					"pending",
-					"inProgress",
-					"completed",
-				]),
+				),
 			};
 		}),
 	};
@@ -1196,20 +1433,21 @@ export function rateLimits(
 export type TurnErrorNotice = Pick<
 	ErrorNotification,
 	"threadId" | "turnId" | "willRetry"
-> & {
-	readonly message: string;
-};
+> &
+	TurnErrorFacts;
 
+/**
+ * `error`: a turn's error. One that will be retried (`willRetry`, a stream
+ * Codex reconnects) is news; one that will not is the end of the turn, which
+ * `turn/completed` then reports as failed.
+ */
 export function errorNotification(r: Reader, params: unknown): TurnErrorNotice {
 	const o = r.fields(params, "params");
-	const error = r.fields(o["error"], "params.error");
-	const details = r.nullableString(error, "additionalDetails", "params.error");
-	const message = r.string(error, "message", "params.error");
 	return {
 		threadId: r.string(o, "threadId", "params"),
 		turnId: r.string(o, "turnId", "params"),
-		willRetry: r.boolean(o, "willRetry", "params"),
-		message: details === null ? message : `${message}\n${details}`,
+		willRetry: r.nullableBoolean(o, "willRetry", "params") ?? false,
+		...turnError(r, o["error"], "params.error"),
 	};
 }
 
@@ -1315,7 +1553,7 @@ export function commandApproval(r: Reader, params: unknown): CommandApproval {
 			"params",
 			r.stringItem,
 		),
-		networkAmendments:
+		networkAmendments: (
 			r.nullableArray(
 				o,
 				"proposedNetworkPolicyAmendments",
@@ -1324,10 +1562,14 @@ export function commandApproval(r: Reader, params: unknown): CommandApproval {
 					const a = r.fields(value, path);
 					return {
 						host: r.string(a, "host", path),
-						action: r.oneOf(a, "action", path, ["allow", "deny"]),
+						action: r.known(a, "action", path, ["allow", "deny"], null),
 					};
 				},
-			) ?? [],
+			) ?? []
+		).flatMap((each) =>
+			// An amendment DevHub cannot spell back is not offered.
+			each.action === null ? [] : [{ host: each.host, action: each.action }],
+		),
 	};
 }
 
