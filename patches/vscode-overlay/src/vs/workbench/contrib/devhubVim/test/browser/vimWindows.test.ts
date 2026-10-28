@@ -113,7 +113,8 @@ suite('DevHub Vim: windows', () => {
 			setPosition: (p: IPosition) => { position = p; log.push(`cursor ${p.lineNumber}:${p.column}`); },
 			revealLineInCenterIfOutsideViewport: () => { },
 			getModel: () => ({ uri: URI.file('/a.ts'), getLineCount: () => lines, getLineFirstNonWhitespaceColumn: () => 3 }),
-			focus: () => log.push('focus'),
+			// the DOM focus moves too (closeCommentWindow looks where it is afterwards)
+			focus: () => { log.push('focus'); container.tabIndex = -1; container.focus(); },
 		};
 		return { editor: editor as unknown as ICodeEditor, log, setCursor: (lineNumber: number) => position = { lineNumber, column: 1 } };
 	}
@@ -141,11 +142,16 @@ suite('DevHub Vim: windows', () => {
 
 	test(':q / <C-w>c in a comment widget: an empty new thread or a thread with comments closes; a new thread with text typed stays open (unless :q!); the focus is back in the editor, on the thread', () => {
 		const run = (comments: number, typed: boolean, discard: boolean, cursor: number) => {
-			const e = fakeEditor(mainWindow.document.createElement('div'));
-			e.setCursor(cursor);
-			const thread = fakeThread(comments, typed);
-			closeCommentWindow({ editor: e.editor, thread } as unknown as CommentWindow, discard);
-			return [thread.commentThread.collapsibleState === CommentThreadCollapsibleState.Collapsed ? 'closed' : 'open', ...e.log];
+			const container = mainWindow.document.body.appendChild(mainWindow.document.createElement('div'));
+			try {
+				const e = fakeEditor(container);
+				e.setCursor(cursor);
+				const thread = fakeThread(comments, typed);
+				closeCommentWindow({ editor: e.editor, thread } as unknown as CommentWindow, discard);
+				return [thread.commentThread.collapsibleState === CommentThreadCollapsibleState.Collapsed ? 'closed' : 'open', ...e.log];
+			} finally {
+				container.remove();
+			}
 		};
 		assert.deepStrictEqual(run(0, false, false, 5), ['closed', 'focus']);
 		assert.deepStrictEqual(run(2, true, false, 5), ['closed', 'focus']);
@@ -357,16 +363,17 @@ suite('DevHub Vim: windows', () => {
 				closeCommentWindow(f.at('edit'), discard, f.services);
 				return [f.folded() ? 'folded' : 'open', ...f.log];
 			};
-			assert.deepStrictEqual(run('a', false), ['folded', 'test.cancelEditComment', 'cursor 6:3', 'focus']);
+			// the focus is in the editor first, then the widget changes (it never has the focus when it folds)
+			assert.deepStrictEqual(run('a', false), ['folded', 'cursor 6:3', 'focus', 'test.cancelEditComment']);
 			assert.deepStrictEqual(run('a2', false), ['folded', 'cursor 6:3', 'focus']);
-			assert.deepStrictEqual(run('a2', true), ['folded', 'test.cancelEditComment', 'cursor 6:3', 'focus']);
+			assert.deepStrictEqual(run('a2', true), ['folded', 'cursor 6:3', 'focus', 'test.cancelEditComment']);
 			const reply = (discard: boolean) => {
 				const f = float(store, { comments: ['a'], typed: 'draft' });
 				closeCommentWindow(f.at('reply'), discard, f.services);
 				return [f.folded() ? 'folded' : 'open', f.reply.getValue(), ...f.log];
 			};
 			assert.deepStrictEqual(reply(false), ['folded', 'draft', 'cursor 6:3', 'focus']);
-			assert.deepStrictEqual(reply(true), ['folded', '', `typed ''`, 'cursor 6:3', 'focus']);
+			assert.deepStrictEqual(reply(true), ['folded', '', 'cursor 6:3', 'focus', `typed ''`]);
 		} finally {
 			store.dispose();
 		}

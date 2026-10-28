@@ -58,6 +58,7 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IUntitledTextEditorService } from '../../../services/untitled/common/untitledTextEditorService.js';
 import { afterClosing, freeUntitledNumber, wantsEmptyBuffer, movePage, nextTabPage, previousTabPage, restoreTabPages, serializeTabPages, TAB_PAGE_WORKING_SET_NAME, TabPage, TabPageMeta, TabPagesState, tabMoveTarget, tabPageIndex, tabPageLabel } from '../common/vimTabPages.js';
+import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 import './media/vimTabline.css';
 
 /** Workspace storage: the list of tab pages (common/vimTabPages.ts serializeTabPages). */
@@ -469,7 +470,12 @@ function tabPageCommand(id: string, title: ILocalizedString, f1: boolean, run: (
 		async run(_accessor: ServicesAccessor, args?: unknown): Promise<void> {
 			const pages = VimTabPages.instance;
 			if (pages) {
-				await run(pages, typeof args === 'object' && args !== null ? args as TabPageArgs : {});
+				try {
+					await run(pages, typeof args === 'object' && args !== null ? args as TabPageArgs : {});
+				} finally {
+					// a switch whose layout had nothing to take the focus (DevhubFocus, the safety net)
+					DevhubFocus.instance?.afterCommand();
+				}
 			}
 		}
 	});

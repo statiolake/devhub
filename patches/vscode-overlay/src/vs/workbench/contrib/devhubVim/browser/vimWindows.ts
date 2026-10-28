@@ -98,6 +98,8 @@ export interface CommentWindow {
 	 * comment `comment` (an index into the thread's comments).
 	 */
 	readonly input?: { readonly editor: ICodeEditor; readonly comment?: number };
+	/** The widget's element (VS Code's `.review-widget`). */
+	readonly zone?: Element;
 }
 
 /** The edit box's comment `input` is in (an index into the thread's comments, as their nodes are in the widget), if it is one. */
@@ -132,7 +134,7 @@ export function commentWindowAt(element: Element | null | undefined, editors: re
 			editor = e;
 		}
 	}
-	return editor ? { editor, thread, input } : undefined;
+	return editor ? { editor, thread, input, zone } : undefined;
 }
 
 /** The comment widget the keyboard focus is in, if any. */
@@ -371,6 +373,15 @@ export function cancelCommentEdit(w: CommentWindow, services: CommentServices): 
 }
 
 /**
+ * The focus is not where closing the float leaves it: on nothing (`<body>`,
+ * an element no longer in the page) or still in the float's widget `zone`.
+ */
+export function focusLeftInFloat(zone: Element | undefined): boolean {
+	const active = getActiveElement();
+	return !active || active === active.ownerDocument.body || !active.isConnected || !!zone?.contains(active);
+}
+
+/**
  * `:q` `:close` `<C-w>c` `<C-w>q` in a comment widget: the float closes and
  * the focus goes back to its editor; what is typed stays (Neovim's 'hidden'),
  * `discard` (`:q!`) drops it.
@@ -383,6 +394,15 @@ export function cancelCommentEdit(w: CommentWindow, services: CommentServices): 
  *   would be dropped too (VS Code keeps no folded new thread), so it stays
  *   open and only the focus goes back, unless `discard`.
  *
+ * The focus is in the editor, on the thread's lines, before anything in the
+ * widget changes: VS Code then folds or drops a widget that no longer has it,
+ * so neither its hide nor its dispose (which removes the input) can leave the
+ * focus on `<body>` or in a hidden input. Whatever the widget's own code or
+ * the extension does with the focus right after (an edit's Cancel, a reply
+ * input that refocuses itself on a thread update), the focus is put back in
+ * the editor once more after this task when it is not anywhere else
+ * (focusLeftInFloat); a place the user went to meanwhile keeps it.
+ *
  * `written`: the write of the same `:wq` `:x`, which this marks closed; a new
  * thread it submitted is folded by the write once it has its comment.
  */
@@ -392,20 +412,36 @@ export function closeCommentWindow(w: CommentWindow, discard: boolean, services?
 	if (written) {
 		written.closed = true;
 	}
+	// what to do with the widget, read while its input is still the float's buffer
+	let cancel = false;
+	let empty = false;
+	let fold = false;
 	if (widget && !widget.commentThread.isDisposed && !(written?.pending && !widget.commentThread.comments?.length)) {
 		const buffer = input?.editor.getContainerDomNode().isConnected ? commentBuffer(w) : undefined;
 		if (input?.comment !== undefined) {
-			if (buffer && services && (discard || buffer.text === buffer.original)) {
-				cancelCommentEdit(w, services);
-			}
-		} else if (discard && buffer?.text && widget.commentThread.comments?.length) {
-			input?.editor.setValue('');
+			cancel = !!buffer && !!services && (discard || buffer.text === buffer.original);
+		} else {
+			empty = discard && !!buffer?.text && !!widget.commentThread.comments?.length;
 		}
-		if (discard || widget.commentThread.comments?.length || !widget.hasUnsubmittedComments) {
-			widget.commentThread.collapsibleState = CommentThreadCollapsibleState.Collapsed;
-		}
+		fold = discard || !!widget.commentThread.comments?.length || !widget.hasUnsubmittedComments;
 	}
 	leaveCommentWindow(w);
+	if (cancel && services) {
+		cancelCommentEdit(w, services);
+	}
+	if (empty) {
+		input?.editor.setValue('');
+	}
+	if (fold && widget) {
+		widget.commentThread.collapsibleState = CommentThreadCollapsibleState.Collapsed;
+	}
+	const keep = () => {
+		if (focusLeftInFloat(w.zone)) {
+			w.editor.focus();
+		}
+	};
+	keep();
+	setTimeout(keep);
 }
 
 /**

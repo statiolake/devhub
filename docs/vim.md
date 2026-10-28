@@ -312,6 +312,21 @@ editor.
 | `CTRL-W k j w W` (and the arrows up / down) | back to the editor, the cursor on the thread's lines (where it was if on one of them, else the line the widget is under); the float and its buffer stay |
 | `CTRL-W p` | back to the window before the float, where the focus was in it (usually the editor; the editor when there is none) |
 
+Every way out to the editor (`:q` `:close` `:wq` `:x` `ZZ` `:q!` `ZQ`
+`CTRL-W c q k j w W`) leaves the focus in the editor's text, the cursor on
+the thread's lines (as `CTRL-W k` above puts it), in normal mode, as leaving a window does in Vim
+(one mode for every window: an editor left in insert or visual mode when the
+widget opened is back in normal mode). The focus is put in the editor before
+the widget folds or VS Code drops it, so its hide and dispose never take it
+with them, and once more after the command when the widget's code or the
+extension left it on nothing or back in the widget. The keys typed in a
+comment input are the input's, never its editor's: an editor's own record of
+having the text focus learns of a blur only from the event, which a workbench
+without the OS focus never gets, so the editor a comment input is in can still
+say it has the focus; the buffer that takes the keys is the innermost Vim
+editor around the focused element (otherwise `:` `ZZ` `ZQ` there were the
+file's, and `:q` closed the file).
+
 With nothing but blanks typed, `:w` `:wq` `:x` submit nothing and say
 `Empty comment: nothing to submit` (and `:wq` does not close), as a write that
 fails. `:w {file}` writes the comment's lines to the file, as in any buffer;

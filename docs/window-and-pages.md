@@ -496,6 +496,33 @@ an Agent is a terminal already — and one on a workbench that is starting,
 restarting or gone, behind a question, or while DevHub is not in front is
 simply not had: the move still happens.
 
+**Inside a workbench the keyboard is never left on nothing.** Main puts the
+keys in a workbench's contents; where they land in it is whatever element had
+the focus there last, and when that element is gone — a comment widget, a
+prompt line, a peek or an editor closed or hidden while it had the focus, the
+last editor of a group closed while DevHub had the keys elsewhere — they land
+on `<body>`, where no editor and no Vim key takes them. The overlay's
+`devhubFocus.contribution.ts` is the safety net for that, with fixed limits:
+it moves the focus to the active editor group only when the focus is on
+nothing (`<body>`, or an element no longer in the page), only while the
+workbench's document has the OS focus (a workbench DevHub has not given the
+keyboard is left alone), only with the editor area shown, and only at three
+moments — the document has just taken the OS focus (switching back to its
+Workspace, a DevHub sheet, picker or notice closing, DevHub coming back to the
+front, a workbench woken from hibernation); the focused element has just been
+removed or hidden (a blur onto nothing whose element is gone a moment later:
+a click on an empty, unfocusable part of the window also leaves the focus on
+`<body>`, and is left alone); or a DevHub Vim command has just finished (a
+key's or an ex command's VS Code steps, a `CTRL-W` command, a tab page
+command, the prompt line closing). It never takes the focus from an element
+that has it, so the side bar, the panel, the terminal, a webview, an input, a
+quick input, a menu or a dialog keep it, and it is not a rule about where a
+move should land (main's `Landing` above is): only the end of nowhere. Each
+check runs after the current task, so it sees the focus once what moved it
+is done with it. Notices never take the keys (`ToastsView.place`); the notice
+center does only when asked for (Show Notifications), and hands them back
+with `focusSurface` when it closes.
+
 **`]` and `[` step from the tab you are on.** Every tab stands on its own row
 of the tab order — the list `N`/`P` walk and a Workspace's close lands by,
 built by one function (`tabOrder` in `ipc/appShell.ts`, found in by

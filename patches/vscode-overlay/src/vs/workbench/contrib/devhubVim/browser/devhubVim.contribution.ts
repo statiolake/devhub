@@ -189,6 +189,7 @@ import { VIM_EDIT_COMMANDS } from './vimEdit.js';
 import { VIM_SHELL_COMMANDS } from './vimShell.js';
 import { VIM_JS_COMMANDS } from './vimJs.js';
 import './vimTabPages.js';
+import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 import { COMMENT_WINDOW_STEPS, CommentServices, CommentWrite, VimWindowHistory, closeCommentWindow, commentWindowAt, focusedCommentWindow, inEditorGroup, leaveCommentWindow, writeCommentWindow } from './vimWindows.js';
 import { ICommentService } from '../../comments/browser/commentService.js';
@@ -1251,7 +1252,7 @@ class VimEditor extends Disposable implements IVimHost {
 				args = { ...(args as object | undefined), from: from.toString() };
 			}
 		}
-		return this.owner.commandService.executeCommand(command, ...(args === undefined ? [] : [args]));
+		return this.owner.runCommand(command, args);
 	}
 
 	refresh(): void {
@@ -1284,6 +1285,7 @@ class VimEditor extends Disposable implements IVimHost {
 			return;
 		}
 		this.commentWrite = undefined;
+		this.owner.normalIn(comment.editor);
 		closeCommentWindow(comment, step === 'discard', this.owner.commentServices, written);
 	}
 }
@@ -1384,7 +1386,7 @@ class VimEmptyBuffer implements IVimHost {
 	hasRangeFormatter(): boolean { return false; }
 	fileName(): string { return ''; }
 	executeCommand(command: string, args: unknown): Promise<unknown> {
-		return this.owner.commandService.executeCommand(command, ...(args === undefined ? [] : [args]));
+		return this.owner.runCommand(command, args);
 	}
 	refresh(): void { this.owner.update(); }
 }
@@ -1611,13 +1613,51 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	 * focus is the page's to know).
 	 */
 	private focused(): VimBuffer | undefined {
-		for (const v of this.editors.values()) {
-			if (v.editor.hasTextFocus()) {
-				return v;
+		const active = getActiveElement();
+		const editors = [...this.editors.values()];
+		// the DOM focus decides only where it is in a Vim editor (in the prompt line or a list the editors' own focus is all there is)
+		const inEditor = !!active && editors.some(v => v.editor.getContainerDomNode().contains(active));
+		let found: VimEditor | undefined;
+		for (const v of editors) {
+			// An editor's text focus is its focus tracker's, which learns of a blur
+			// only from the event, and a document without the OS focus (a workbench
+			// DevHub has not given the keyboard) gets none: an editor the focus left
+			// can still say it has it. So it is the editor around the focused
+			// element, and of a comment input and the editor it is in (both around
+			// it) the input, never the first one that says so: `:q` `ZZ` in a
+			// comment widget are the widget's, not its file's.
+			const container = v.editor.getContainerDomNode();
+			const holds = !inEditor || container.contains(active);
+			if (v.editor.hasTextFocus() && holds && (!found || found.editor.getContainerDomNode().contains(container))) {
+				found = v;
 			}
 		}
-		const active = getActiveElement();
+		if (found) {
+			return found;
+		}
 		return active && (isEditableElement(active) || active.tagName === 'IFRAME') ? undefined : this.emptyBuffer;
+	}
+
+	/**
+	 * A command a Vim buffer runs (an ex command's step, a key's VS Code
+	 * command): when it is done, a focus it left on nothing goes back to the
+	 * active editor group (DevhubFocus, the safety net).
+	 */
+	runCommand(command: string, args: unknown): Promise<unknown> {
+		const done = () => DevhubFocus.instance?.afterCommand();
+		return this.commandService.executeCommand(command, ...(args === undefined ? [] : [args])).finally(done);
+	}
+
+	/**
+	 * The focus goes back from a comment widget to its editor (`:q`, CTRL-W):
+	 * in normal mode there, as Vim has one mode for every window and leaving one
+	 * by a command is in normal mode. Before the cursor is put on the thread.
+	 */
+	normalIn(editor: ICodeEditor): void {
+		const v = this.editors.get(editor);
+		if (v && v.engine.mode !== 'normal') {
+			v.execute('devhubVim.escape', undefined);
+		}
 	}
 
 	/** A `devhubVim.*` engine command (from a keybinding, the command palette, an ex command): for the buffer that has the focus. */
@@ -1793,6 +1833,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		this.cancelNav();
 		const comment = how.comment && focusedCommentWindow(this.codeEditors());
 		if (comment) {
+			this.normalIn(comment.editor);
 			if (how.comment === 'close') {
 				closeCommentWindow(comment, false, this.commentServices);
 			} else if (!(how.back && this.goBack())) {
@@ -1809,7 +1850,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			for (const c of commands) {
 				await this.commandService.executeCommand(c);
 			}
-		})().catch(onUnexpectedError);
+		})().catch(onUnexpectedError).finally(() => DevhubFocus.instance?.afterCommand());
 	}
 
 	/**

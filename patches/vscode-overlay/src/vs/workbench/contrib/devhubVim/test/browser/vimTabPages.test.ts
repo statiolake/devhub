@@ -21,6 +21,8 @@ import { IEditorGroup, IEditorGroupsService, IEditorPart, IEditorWorkingSet } fr
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IUntitledTextEditorService } from '../../../../services/untitled/common/untitledTextEditorService.js';
+import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
+import { DevhubFocus } from '../../../devhubFocus/browser/devhubFocus.contribution.js';
 import { TAB_PAGES_STORAGE_KEY, VimTabPages } from '../../browser/vimTabPages.js';
 
 interface FakeEditor { name: string; dirty: boolean }
@@ -266,6 +268,27 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.deepStrictEqual(wb.shown(), [['notes.md+', 'c.ts']]);
 		assert.strictEqual(pages.state.pages.length, 1);
 		assert.strictEqual(wb.sets.size, 0);
+	});
+
+	test('a tab page command, when it is done, has the safety net put a focus left on nothing in the active group (DevhubFocus)', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		await pages.newPage(FILE);
+		const before = DevhubFocus.instance;
+		let checked = 0;
+		DevhubFocus.instance = { afterCommand: () => { checked++; } } as unknown as DevhubFocus;
+		try {
+			assert.strictEqual(VimTabPages.instance, pages);
+			await CommandsRegistry.getCommand('devhubVim.tabpage.next')!.handler(undefined!, { count: null });
+			assert.strictEqual(pages.state.current, 0);
+			assert.strictEqual(checked, 1);
+			// also when the command fails (E784)
+			await pages.close();
+			await assert.rejects(Promise.resolve(CommandsRegistry.getCommand('devhubVim.tabpage.close')!.handler(undefined!, {})));
+			assert.strictEqual(checked, 2);
+		} finally {
+			DevhubFocus.instance = before;
+		}
 	});
 
 	test(':tabc closes the current page (to the next one, the previous from the last), :tabc N another; E784 on the last one', async () => {
