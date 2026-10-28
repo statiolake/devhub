@@ -31,6 +31,28 @@ the `.handwritten` part, scrubbed the same way these are written: paths under
   the other's after. The first ends its turn and is reported `completed`; the
   second's turn fails, which upstream reports with no activity item.
 
+- `resume.handwritten.ndjson` — the handshake of a conversation that resumes
+  thread `…0a` (`thread/resume` is request `2`), written from upstream's
+  `rust-v0.165.0` sources (`app-server/src/request_processors/thread_processor.rs`,
+  `thread_lifecycle.rs`, `app-server-protocol/src/protocol/thread_history.rs`):
+  the deprecation notice 0.158+ sends before it hydrates a paginated thread's
+  whole history, a history of a completed turn (with a web page opened, an
+  image generated, a sleep, and a status and a collab tool 0.165 does not
+  name), a turn the usage limit failed, a turn its server never ended
+  (reported `interrupted`, as `set_thread_status_and_interrupt_stale_turns`
+  does), a turn of a status 0.165 does not name and one DevHub cannot read,
+  then `thread/status/changed`, `thread/readState/changed` and
+  `thread/prediction/updated`.
+- `rate-limit.handwritten.ndjson` — one turn started by request `5` that the
+  plan's usage limit ends, written from the same sources
+  (`app-server/src/bespoke_event_handling.rs`): a command that keeps running,
+  a 429 the stream retries (`error`, `willRetry: true`), a second command
+  waiting on an approval (server request `0`, which Codex drops with the
+  turn and never resolves), the rate limits used up, the usage-limit `error`
+  that is not retried, output from the first command after it, the turn's
+  `turn/completed` (`failed`), the command's result after the turn, and a
+  delta for a message that never started.
+
 Two orderings in these files are assumptions stage 0 has to confirm: that a
 command's `item/started` comes before its approval request (upstream's
 `bespoke_event_handling.rs` does it that way at this tag), and that a subagent's

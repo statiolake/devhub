@@ -3787,3 +3787,210 @@ describe("DevHub's own instructions for the thread", () => {
 		});
 	});
 });
+
+describe("a turn a usage limit ends (codex 0.165)", () => {
+	/** `rate-limit.handwritten.ndjson` up to and including line `upTo`, after DevHub sent "go". */
+	function run(upTo = Infinity): Harness {
+		const harness = ready();
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
+		fixture("rate-limit.handwritten.ndjson").forEach((line, index) => {
+			if (index <= upTo) harness.receive(line);
+		});
+		return harness;
+	}
+	const ERROR_LINE = 10;
+
+	it("goes on through an error Codex retries", () => {
+		const harness = run(ERROR_LINE - 1);
+		expect(harness.transcript.state).toEqual({
+			phase: "ready",
+			turn: "running",
+		});
+		expect(outline(harness.transcript)).toContain(
+			"notice(warning): Reconnecting... 1/5\nRate limit reached for requests (retrying)",
+		);
+		expect(harness.transcript.requests).toHaveLength(1);
+	});
+
+	it("ends the turn at the error it will not retry: the turn is over, the calls interrupted, the approval closed", () => {
+		const harness = run(ERROR_LINE);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(harness.transcript.requests).toEqual([]);
+		expect(harness.entry(`${MAIN}/item-test`)).toMatchObject({
+			status: "interrupted",
+		});
+		expect(harness.entry(`${MAIN}/item-push`)).toMatchObject({
+			status: "interrupted",
+		});
+		expect(harness.entry(`${MAIN}/turn/turn-1`)).toMatchObject({
+			kind: "turn-end",
+			outcome: "failed",
+			detail: expect.stringMatching(/^You’ve hit your usage limit\./),
+			limit: { resetsAt: 1_790_003_600_000 },
+		});
+		// And the person can go on at once.
+		harness.command({
+			kind: "send",
+			text: "next",
+			images: [],
+			origin: "person",
+		});
+		expect(harness.lastWrite()).toMatchObject({ method: "turn/start" });
+	});
+
+	it("takes what Codex says after the turn: the command's output and result, the turn's own end", () => {
+		const harness = run();
+		expect(outline(harness.transcript)).toEqual([
+			"user(person): go",
+			'tool commandExecution "npm test" succeeded -> "running 12 tests\\nok 12/12\\n"',
+			"notice(warning): Reconnecting... 1/5\nRate limit reached for requests (retrying)",
+			'tool commandExecution "git push" interrupted',
+			"notice(error): You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at 3:00 PM.",
+			"turn-end failed 9000ms",
+			"notice(warning): codex 0.156.1 streamed into item-late, which is not a message that started; DevHub read past it.",
+		]);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		// Nothing is written for the request Codex dropped with the turn.
+		expect(harness.lastWrite()).toMatchObject({ method: "turn/start" });
+	});
+
+	it("reads back the same from its journals, so it can be resumed", () => {
+		const live = run();
+		const replayed = new Harness();
+		for (const line of live.written) {
+			for (const event of replayed.adapter.sent(line).events) {
+				replayed.transcript = applyEvent(replayed.transcript, event);
+			}
+		}
+		for (const line of live.received) replayed.receive(line);
+		expect(replayed.written).toEqual([]);
+		expect(replayed.transcript).toEqual(live.transcript);
+	});
+
+	it("reads past a delta for a message whose turn already ended", () => {
+		const harness = ready();
+		harness.command({ kind: "send", text: "go", images: [], origin: "person" });
+		const lines = fixture("turn.handwritten.ndjson");
+		for (const line of lines.slice(0, 11)) harness.receive(line);
+		const end = {
+			method: "turn/completed",
+			params: {
+				threadId: MAIN,
+				turn: {
+					id: "turn-1",
+					rootTurnId: "turn-1",
+					items: [],
+					itemsView: "notLoaded",
+					// Said as still running: read past, ended as failed.
+					status: "inProgress",
+					error: null,
+					startedAt: null,
+					completedAt: null,
+					durationMs: null,
+				},
+			},
+		};
+		harness.receive(end);
+		harness.receive({
+			method: "item/agentMessage/delta",
+			params: {
+				threadId: MAIN,
+				turnId: "turn-1",
+				itemId: "item-say",
+				delta: "!",
+			},
+		});
+		expect(outline(harness.transcript).slice(-4)).toEqual([
+			"assistant: I'll run ",
+			"notice(warning): codex 0.156.1 said a turn completed with the status inProgress; DevHub ends it as failed.",
+			"turn-end failed -ms",
+			"notice(warning): codex 0.156.1 streamed into item-say, which is a message that has ended; DevHub read past it.",
+		]);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+	});
+});
+
+describe("resuming a thread with codex 0.165", () => {
+	function resumed(): Harness {
+		const harness = new Harness({ ...OPTIONS, resumeThreadId: MAIN });
+		harness.start();
+		for (const line of fixture("resume.handwritten.ndjson"))
+			harness.receive(line);
+		return harness;
+	}
+
+	it("draws its history, reading past what it does not know, and is ready", () => {
+		const harness = resumed();
+		expect(harness.writesSince(0)).toEqual([
+			expect.objectContaining({ id: 0, method: "initialize" }),
+			{ method: "initialized" },
+			expect.objectContaining({ id: 1, method: "account/read" }),
+			{
+				id: 2,
+				method: "thread/resume",
+				params: { threadId: MAIN, cwd: CWD },
+			},
+			expect.objectContaining({ id: 3, method: "model/list" }),
+			expect.objectContaining({ id: 4, method: "skills/list" }),
+		]);
+		expect(outline(harness.transcript)).toEqual([
+			"notice(info): Full-history hydration is deprecated for paginated threads; use `excludeTurns: true`, then page with `thread/turns/list` and `thread/items/list`.",
+			'notice(info): codex 0.165.0 sent something DevHub does not know at `result.thread.turns[0].items[3].status` (expected one of inProgress | completed | failed | declined, got "skipped"); DevHub read past it.',
+			'notice(info): codex 0.165.0 sent something DevHub does not know at `result.thread.turns[0].items[7].tool` (expected one of spawnAgent | sendInput | resumeAgent | wait | closeAgent | sendMessage | followupTask | interruptAgent | listAgents, got "renameAgent"); DevHub read past it.',
+			'notice(info): codex 0.165.0 sent something DevHub does not know at `result.thread.turns[3].status` (expected one of completed | interrupted | failed | inProgress, got "paused"); DevHub read past it.',
+			"notice(info): codex 0.165.0 sent something DevHub does not know at `result.thread.turns[4].id` (expected a string, got a number); DevHub read past it.",
+			"user(person): Run the tests",
+			"assistant: [thinking] Running the suite",
+			'tool commandExecution "npm test" succeeded -> "ok\\n"',
+			'tool commandExecution "npm run lint" interrupted',
+			'tool webSearch "Open: https://example.com/docs" succeeded',
+			'tool imageGeneration "Generate an image: A diagram of the build" succeeded -> "image"',
+			'tool sleep "Sleep 5s" succeeded',
+			"notice(info): codex 0.165.0 collabAgentToolCall item",
+			"assistant: All green.",
+			"turn-end completed 1200ms",
+			"user(person): Now the e2e suite",
+			'tool imageGeneration "Generate an image" failed -> "Image generation reached its usage limit."',
+			"turn-end failed 300ms",
+			"user(person): Deploy",
+			'tool commandExecution "make deploy" interrupted',
+			"turn-end interrupted -ms",
+			"assistant: Waiting.",
+			"turn-end completed -ms",
+		]);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(harness.entry(`${MAIN}/a-img`)).toMatchObject({
+			output: [
+				{
+					kind: "image",
+					image: {
+						source: {
+							kind: "file",
+							path: "/home/testuser/.codex/generated_images/a-img.png",
+						},
+					},
+				},
+			],
+		});
+		// A failed turn of the history says why, but sets no limit: it is over.
+		expect(harness.entry(`${MAIN}/turn/turn-b`)).toMatchObject({
+			detail: expect.stringMatching(/usage limit/),
+			limit: undefined,
+		});
+	});
+
+	it("goes on with the thread", () => {
+		const harness = resumed();
+		harness.command({
+			kind: "send",
+			text: "go on",
+			images: [],
+			origin: "person",
+		});
+		expect(harness.lastWrite()).toMatchObject({
+			id: 5,
+			method: "turn/start",
+			params: { threadId: MAIN },
+		});
+	});
+});
