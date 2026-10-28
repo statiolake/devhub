@@ -55,6 +55,9 @@ export function fakeActions(
     resolvePaths: vi.fn((_cwd: string | undefined, paths: readonly string[]) =>
       Promise.resolve(paths.map(() => null)),
     ),
+    // No file can be embedded unless a test says so.
+    readEmbedFile: vi.fn(() => Promise.resolve(null)),
+    embedSignature: vi.fn(() => Promise.resolve(null)),
     openFile: vi.fn(() => Promise.resolve()),
     reportFailure: vi.fn(),
     ...overrides,

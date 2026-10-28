@@ -12,6 +12,7 @@
 import { memo, useRef } from "react";
 import { useConversationActions } from "./ConversationContext";
 import { CopyButton } from "./CopyButton";
+import { EmbedSourceContext } from "./embedContext";
 import type { PreviewProps } from "./Preview";
 import { headerLanguage, PreviewFigure } from "./PreviewFigure";
 
@@ -62,7 +63,10 @@ export const MarkdownPreview = memo(function MarkdownPreview({
       className="conversation-markdown-preview"
     >
       <div className="conversation-markdown-preview-body" ref={body}>
-        {renderMarkdown(code)}
+        {/* The blocks inside are the document's, not the file's. */}
+        <EmbedSourceContext.Provider value={undefined}>
+          {renderMarkdown(code)}
+        </EmbedSourceContext.Provider>
       </div>
     </PreviewFigure>
   );

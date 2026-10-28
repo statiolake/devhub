@@ -158,6 +158,18 @@ export const conversationApi: ConversationApi = {
 			cwd,
 			paths,
 		) as ReturnType<ConversationApi["resolvePaths"]>,
+	readEmbedFile: (agentId, path) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.readEmbedFile,
+			agentId,
+			path,
+		) as ReturnType<ConversationApi["readEmbedFile"]>,
+	embedSignature: (agentId, path) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.embedSignature,
+			agentId,
+			path,
+		) as ReturnType<ConversationApi["embedSignature"]>,
 	openFile: (agentId, path, range) =>
 		ipcRenderer.invoke(
 			CONVERSATION_CHANNELS.openFile,

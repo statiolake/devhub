@@ -41,6 +41,7 @@ import { normalizeMath } from "./mathDelimiters";
 import { fileNotFoundError } from "../failure";
 import { CodeBlock } from "./CodeBlock";
 import { FencePreview } from "./Preview";
+import { FileEmbed, isLocalSource } from "./FileEmbed";
 import { previewKindOfFence } from "./previewKinds";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
@@ -224,6 +225,46 @@ function componentsFor(settled: boolean, depth: number): Components {
           </span>
         );
       return <LinkedText text={textOf(node.children)} />;
+    },
+    // A paragraph that is one image of a file on the Agent's machine is that
+    // file, embedded (`FileEmbed.tsx`).
+    p({ node, children }) {
+      const only = node?.children.filter(
+        (child) => !(child.type === "text" && child.value.trim() === ""),
+      );
+      const image = only?.length === 1 ? only[0] : undefined;
+      if (
+        settled &&
+        image?.type === "element" &&
+        image.tagName === "img" &&
+        typeof image.properties.src === "string" &&
+        isLocalSource(image.properties.src)
+      ) {
+        const path = pathOfHref(image.properties.src)?.path;
+        if (path !== undefined) {
+          return (
+            <FileEmbed
+              path={path}
+              alt={
+                typeof image.properties.alt === "string"
+                  ? image.properties.alt
+                  : ""
+              }
+              depth={depth}
+              renderMarkdown={renderMarkdown}
+            />
+          );
+        }
+      }
+      return <p>{children}</p>;
+    },
+    // An image of a file inside a line of text is a link to the file (the
+    // page has no way to load one); any other is drawn as it always was.
+    img({ src, alt }) {
+      if (typeof src === "string" && isLocalSource(src)) {
+        return <ExternalLink href={src}>{alt || src}</ExternalLink>;
+      }
+      return <img src={src} alt={alt} />;
     },
     a({ href, children }) {
       return <ExternalLink href={href}>{children}</ExternalLink>;

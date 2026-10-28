@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { CopyButton } from "./CopyButton";
+import { HeaderName } from "./PreviewFigure";
 import {
   colouringOf,
   grammarFor,
@@ -58,7 +59,7 @@ export const CodeBlock = memo(function CodeBlock({
   return (
     <div className="conversation-code" data-language={language || undefined}>
       <div className="conversation-code-header">
-        <span className="conversation-code-language">{language}</span>
+        <HeaderName language={language} />
         <span className="conversation-code-actions">
           {actions}
           <CopyButton text={code} label="Copy code" />

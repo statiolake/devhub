@@ -18,6 +18,7 @@ import { DiffPreview } from "./DiffPreview";
 import { HtmlPreview } from "./HtmlPreview";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { MarpPreview } from "./MarpPreview";
+import { RasterPreview } from "./RasterPreview";
 import {
   ChartIcon,
   CodeIcon,
@@ -50,6 +51,7 @@ const PREVIEWS: Record<PreviewKindId, ComponentType<PreviewProps>> = {
   diff: DiffPreview,
   html: HtmlPreview,
   "vega-lite": Diagram,
+  image: RasterPreview,
 };
 
 const ICONS: Record<PreviewKindId, () => ReactNode> = {
@@ -60,6 +62,7 @@ const ICONS: Record<PreviewKindId, () => ReactNode> = {
   diff: DiffIcon,
   html: PageIcon,
   "vega-lite": ChartIcon,
+  image: DiagramIcon,
 };
 
 export const FencePreview = memo(function FencePreview({
@@ -76,6 +79,20 @@ export const FencePreview = memo(function FencePreview({
   readonly renderMarkdown: (source: string) => ReactNode;
 }) {
   const [showSource, setShowSource] = useState(kind.defaultView === "source");
+  const Drawn = PREVIEWS[kind.id];
+  // Bytes (a PNG) have no source to show.
+  if (kind.binary === true) {
+    return (
+      <Drawn
+        kind={kind}
+        code={code}
+        info={info}
+        toggle={null}
+        depth={depth}
+        renderMarkdown={renderMarkdown}
+      />
+    );
+  }
   const Icon = ICONS[kind.id];
   const label = showSource ? kind.showLabel : "Show source";
   const toggle = (
@@ -90,7 +107,6 @@ export const FencePreview = memo(function FencePreview({
       {showSource ? <Icon /> : <CodeIcon />}
     </button>
   );
-  const Drawn = PREVIEWS[kind.id];
   // The drawing stays drawn while its source is shown, so going back to it
   // is the same picture (the same slide) rather than a fresh drawing.
   return (

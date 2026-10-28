@@ -950,6 +950,50 @@ the same picture (the same slide).
 | ` ```vega-lite `, ` ```vegalite ` (a JSON spec) | a chart |
 | ` ```html ` | the page, in a sandboxed frame |
 
+Every kind can also be a file the answer embeds (below).
+
+### Embedding a file: `![alt](path)`
+
+So that an Agent need not write a big or often-edited picture, deck or page
+into its reply again and again, a Markdown image alone in its paragraph
+whose target is a file on the Agent's machine embeds that file
+(`FileEmbed.tsx`): `![sales](out/sales.png)`, `![](deck.md)`,
+`![](charts/trend.vl.json)`. The path is found as a link's is — relative to
+the Agent's directory (inside an embedded Markdown file, to that file's
+folder), absolute, or `~/…` (`resolvePaths`) — and drawn as the kind its
+name and contents say, through the same mechanism as a fence of that kind:
+
+| File | Drawn as |
+| --- | --- |
+| `.png` `.jpg` `.jpeg` `.gif` `.webp` `.avif` | the picture (copies as a PNG) |
+| `.svg` | the image |
+| `.md` `.markdown` | the Markdown, or slides when it says `marp: true` |
+| `.mmd` `.mermaid` | a Mermaid diagram |
+| `.diff` `.patch` | the change |
+| `.html` `.htm` | the page, in the sandboxed frame |
+| `.vl.json` `.vega-lite.json` | a Vega-Lite chart |
+
+The header names the file instead of the language, as a button that opens it
+in the editor; the toggle, the copy and the menu are the kind's. An image of
+a file inside a line of text is a link to it.
+
+**Live.** While an embed is on screen, every two seconds it asks main for the
+file's signature — its size, modification time and (under 2 MB) checksum —
+and when that has changed reads the file again and draws it in place, so an
+Agent editing a chart file over and over is seen doing it. An embed off
+screen, or in a page that is hidden, asks nothing.
+
+**What main reads** (`main/agent/conversation/embedFiles.ts`). The bytes come
+from the Agent's machine — this Mac, or the host over its ssh master — in one
+`/bin/sh` per question: only a regular file, named by an absolute path, of
+one of the types above, and at most 20 MB (a larger one is refused before it
+is read). Nothing else of the machine is readable through it, and what is
+read is drawn the way the same format in a fence is — as an image, or in a
+frame that loads nothing — so a file shown reaches nothing either. A file
+that is not there, may not be embedded or will not draw is one quiet line
+naming it (_Not embedded: there is no file out/plot.png._). A PDF is not
+embedded.
+
 ### Markdown
 
 A ` ```markdown ` block is drawn by the conversation's own renderer, one

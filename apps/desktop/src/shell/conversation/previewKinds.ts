@@ -24,6 +24,7 @@ import { isPatch } from "./patch";
 export type PreviewKindId =
   | "diff"
   | "html"
+  | "image"
   | "marp"
   | "markdown"
   | "mermaid"
@@ -50,6 +51,11 @@ export interface PreviewKind {
    * so that drawing it again inside itself has to stop somewhere.
    */
   readonly nests?: boolean;
+  /**
+   * A file of bytes rather than text (a PNG): drawn from a `data:` URL, with
+   * no source to show. Only ever a file, never a fence.
+   */
+  readonly binary?: boolean;
 }
 
 /**
@@ -74,6 +80,15 @@ export function isMarpDeck(markdown: string): boolean {
 const hasText = (code: string) => code.trim() !== "";
 
 export const PREVIEW_KINDS: readonly PreviewKind[] = [
+  {
+    id: "image",
+    languages: [],
+    extensions: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif"],
+    accepts: () => true,
+    showLabel: "Show image",
+    defaultView: "preview",
+    binary: true,
+  },
   {
     id: "svg",
     languages: ["svg", "xml"],

@@ -24,7 +24,7 @@ import type {
   SlideImagesRequestWire,
   SlidesPdfRequestWire,
 } from "../../ipc/contract";
-import type { FileRange } from "../../ipc/conversation";
+import type { EmbedFileWire, FileRange } from "../../ipc/conversation";
 import type { VoiceApi } from "../../ipc/voice";
 import type {
   EntryId,
@@ -138,6 +138,13 @@ export interface ConversationActions {
     cwd: string | undefined,
     paths: readonly string[],
   ) => Promise<readonly (string | null)[]>;
+  /**
+   * The bytes of a file an answer embeds (an absolute path `resolvePaths`
+   * answered), or `null` when it is gone. See `FileEmbed.tsx`.
+   */
+  readonly readEmbedFile: (path: string) => Promise<EmbedFileWire | null>;
+  /** What changes when that file does, or `null` when it is gone. */
+  readonly embedSignature: (path: string) => Promise<string | null>;
   /**
    * Open a file on the Agent's machine in the editor — the open Workspace's
    * that contains it, else the Agent's own — at `range`.

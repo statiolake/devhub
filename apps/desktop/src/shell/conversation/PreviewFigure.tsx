@@ -7,6 +7,7 @@
 
 import type { MouseEvent, ReactNode } from "react";
 import { useConversationActions } from "./ConversationContext";
+import { useEmbedSource } from "./embedContext";
 import type { PreviewKindId } from "./previewKinds";
 
 /** One item of a preview's right-click menu, and what choosing it does. */
@@ -50,6 +51,27 @@ export function usePreviewMenu(
   };
 }
 
+/**
+ * What a header names first: the language, or — for an embedded file — the
+ * file, as a button that opens it in the editor.
+ */
+export function HeaderName({ language }: { readonly language: ReactNode }) {
+  const embed = useEmbedSource();
+  if (embed === undefined) {
+    return <span className="conversation-code-language">{language}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className="conversation-code-language conversation-embed-name"
+      title={`Open ${embed.shown} in the editor`}
+      onClick={embed.open}
+    >
+      {embed.shown}
+    </button>
+  );
+}
+
 /** The language a header names: the fence's first word, else the kind's. */
 export function headerLanguage(
   info: string | undefined,
@@ -91,7 +113,7 @@ export function PreviewFigure({
       onContextMenu={menu === undefined ? undefined : onContextMenu}
     >
       <div className="conversation-code-header">
-        <span className="conversation-code-language">{language}</span>
+        <HeaderName language={language} />
         <span className="conversation-code-actions">
           {actions}
           {copy}

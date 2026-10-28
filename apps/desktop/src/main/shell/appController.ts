@@ -119,6 +119,10 @@ import {
 import { canonicalise, type ResolvedPath } from "../cli/canonical.js";
 import { resolvePathCandidates } from "../agent/conversation/pathLinks.js";
 import {
+	embedSignature,
+	readEmbedFile,
+} from "../agent/conversation/embedFiles.js";
+import {
 	installExtensions,
 	listExtensions,
 	uninstallExtensions,
@@ -1357,6 +1361,10 @@ export class AppController {
 					cwd,
 					paths,
 				),
+			readEmbedFile: (agentId, path) =>
+				readEmbedFile(runtimeById(this.agentMachine(agentId)), path),
+			embedSignature: (agentId, path) =>
+				embedSignature(runtimeById(this.agentMachine(agentId)), path),
 			openFile: (agentId, path, selection) =>
 				this.openFromConversation(agentId, path, selection),
 			cliDefaults: async (agentId, model) => {

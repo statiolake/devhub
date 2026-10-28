@@ -46,11 +46,20 @@ export const CONVERSATION_CHANNELS = {
 	mcpSignInDismiss: "devhub:conversation:mcp-sign-in-dismiss",
 	resolvePaths: "devhub:conversation:resolve-paths",
 	openFile: "devhub:conversation:open-file",
+	readEmbedFile: "devhub:conversation:read-embed-file",
+	embedSignature: "devhub:conversation:embed-signature",
 	cliDefaults: "devhub:conversation:cli-defaults",
 	setCliDefault: "devhub:conversation:set-cli-default",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
 } as const;
+
+/** A file an answer embeds, as read from the Agent's machine. */
+export interface EmbedFileWire {
+	readonly mediaType: string;
+	readonly bytes: Uint8Array;
+	readonly signature: string;
+}
 
 /** What the page may ask of a conversation. A person's words are always the person's. */
 export type ConversationCommandWire =
@@ -248,6 +257,19 @@ export interface ConversationApi {
 		cwd: string | undefined,
 		paths: readonly string[],
 	): Promise<readonly (string | null)[]>;
+	/**
+	 * The bytes of a file an answer embeds (`![alt](path)`), on the Agent's
+	 * machine: an absolute path `resolvePaths` answered, of a type an embed
+	 * draws, at most 20 MB (`main/agent/conversation/embedFiles.ts`). `null`
+	 * when there is no such file; rejects with the reason it may not be read.
+	 */
+	readEmbedFile(agentId: string, path: string): Promise<EmbedFileWire | null>;
+	/**
+	 * What changes when that file does (its size, time and checksum), or
+	 * `null` when it is gone: asked while an embed is on screen, so a file the
+	 * Agent writes again is drawn again.
+	 */
+	embedSignature(agentId: string, path: string): Promise<string | null>;
 	/**
 	 * Open a file on the Agent's machine (an absolute path `resolvePaths`
 	 * answered) in the editor of the open Workspace that contains it, else

@@ -1107,6 +1107,47 @@
   color-scheme: light;
 }
 
+/* A file an answer embeds: drawn as its kind is, its path in the header as
+   a button that opens it in the editor. Until its bytes arrive, a quiet
+   frame holds its place; a file that cannot be drawn is one quiet line. */
+.conversation-embed-name {
+  max-width: 70%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.conversation-embed-name:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.conversation-embed-name:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.conversation-embed-reading {
+  height: 4.5em;
+  margin: 0.75em 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-panel);
+  background: var(--wash);
+}
+
+.conversation-embed-note {
+  margin: 0.75em 0;
+  color: var(--secondary);
+  font-size: 0.85em;
+}
+
 /* The source drawn in place of a diagram that would not draw, and a quiet
    line under it saying why — the way an unparsable formula is its source. */
 .conversation-diagram-failed > .conversation-code {

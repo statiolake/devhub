@@ -116,6 +116,10 @@ export function ConversationPane({
       saveDraft: (text: string) => bridge.conversation.saveDraft(agentId, text),
       resolvePaths: (cwd: string | undefined, paths: readonly string[]) =>
         bridge.conversation.resolvePaths(agentId, cwd, paths),
+      readEmbedFile: (path: string) =>
+        bridge.conversation.readEmbedFile(agentId, path),
+      embedSignature: (path: string) =>
+        bridge.conversation.embedSignature(agentId, path),
       openFile: (path: string, range: FileRange | undefined) =>
         bridge.conversation.openFile(agentId, path, range),
       reportFailure,

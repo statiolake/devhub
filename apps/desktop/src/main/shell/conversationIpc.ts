@@ -11,6 +11,7 @@ import {
 	CONVERSATION_CHANNELS,
 	type ConversationAttachment,
 	type ConversationCommandWire,
+	type EmbedFileWire,
 } from "../../ipc/conversation.js";
 import {
 	attachedImages,
@@ -55,6 +56,16 @@ export interface ConversationIpcOptions {
 		cwd: string | undefined,
 		paths: readonly string[],
 	) => Promise<readonly (string | null)[]>;
+	/** A file a conversation embeds, read from the Agent's machine (`readEmbedFile`). */
+	readonly readEmbedFile: (
+		agentId: AgentId,
+		path: unknown,
+	) => Promise<EmbedFileWire | null>;
+	/** What changes when that file does (`embedSignature`). */
+	readonly embedSignature: (
+		agentId: AgentId,
+		path: unknown,
+	) => Promise<string | null>;
 	/** Open a file a conversation links to, in the editor `routeAgentOpen` says. */
 	readonly openFile: (
 		agentId: AgentId,
@@ -236,6 +247,15 @@ export function registerConversationIpc(options: ConversationIpcOptions): void {
 			throw new Error(`${JSON.stringify(paths)} is not a list of paths`);
 		return options.resolvePaths(agentId, cwd, paths);
 	});
+
+	// The path is checked where it is read (`embedPath`): absolute, and a
+	// type an embed draws.
+	handle(CONVERSATION_CHANNELS.readEmbedFile, (agentId, path) =>
+		options.readEmbedFile(agentId, path),
+	);
+	handle(CONVERSATION_CHANNELS.embedSignature, (agentId, path) =>
+		options.embedSignature(agentId, path),
+	);
 
 	handle(CONVERSATION_CHANNELS.openFile, (agentId, path, range) => {
 		if (typeof path !== "string" || !path.startsWith("/"))
