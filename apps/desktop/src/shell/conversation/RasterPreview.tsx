@@ -5,7 +5,8 @@
  * (as it is, or redrawn as one); a right-click offers the same.
  */
 
-import { memo } from "react";
+import { memo, useState } from "react";
+import { Lightbox, LightboxPicture, opensLightbox } from "./Lightbox";
 import { useConversationActions } from "./ConversationContext";
 import { CopyButton } from "./CopyButton";
 import type { PreviewProps } from "./Preview";
@@ -41,6 +42,8 @@ export const RasterPreview = memo(function RasterPreview({
 }: PreviewProps) {
   const { writeClipboardImage } = useConversationActions();
   const copy = async () => writeClipboardImage(await pngOf(url));
+  const [enlarged, setEnlarged] = useState(false);
+  const alt = info ?? "Image";
   return (
     <PreviewFigure
       kind="image"
@@ -48,10 +51,22 @@ export const RasterPreview = memo(function RasterPreview({
       actions={null}
       copy={<CopyButton copy={copy} label="Copy image" />}
       menu={[{ ...IMAGE_MENU[0], run: copy }]}
+      enlarge={() => setEnlarged(true)}
     >
-      <div className="conversation-diagram-picture">
-        <img src={url} alt={info ?? "Image"} draggable={false} />
+      <div
+        className="conversation-diagram-picture"
+        data-enlarge
+        onClick={(event) => {
+          if (opensLightbox(event)) setEnlarged(true);
+        }}
+      >
+        <img src={url} alt={alt} draggable={false} />
       </div>
+      {enlarged ? (
+        <Lightbox label={alt} onClose={() => setEnlarged(false)}>
+          <LightboxPicture src={url} alt={alt} />
+        </Lightbox>
+      ) : null}
     </PreviewFigure>
   );
 });

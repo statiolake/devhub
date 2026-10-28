@@ -8,6 +8,7 @@
 import type { MouseEvent, ReactNode } from "react";
 import { useConversationActions } from "./ConversationContext";
 import { useEmbedSource } from "./embedContext";
+import { MaximizeIcon } from "./icons";
 import type { PreviewKindId } from "./previewKinds";
 
 /** One item of a preview's right-click menu, and what choosing it does. */
@@ -93,6 +94,7 @@ export function PreviewFigure({
   className,
   children,
   label,
+  enlarge,
 }: {
   readonly kind: PreviewKindId;
   readonly language: string;
@@ -103,6 +105,8 @@ export function PreviewFigure({
   readonly children: ReactNode;
   /** The figure's accessible name: "Marp slides". */
   readonly label?: string;
+  /** Open the drawing large (`Lightbox.tsx`), from the header's button. */
+  readonly enlarge?: () => void;
 }) {
   const onContextMenu = usePreviewMenu(menu ?? []);
   return (
@@ -116,6 +120,17 @@ export function PreviewFigure({
         <HeaderName language={language} />
         <span className="conversation-code-actions">
           {actions}
+          {enlarge === undefined ? null : (
+            <button
+              type="button"
+              className="conversation-copy"
+              aria-label="Enlarge"
+              title="Enlarge"
+              onClick={enlarge}
+            >
+              <MaximizeIcon />
+            </button>
+          )}
           {copy}
         </span>
       </div>

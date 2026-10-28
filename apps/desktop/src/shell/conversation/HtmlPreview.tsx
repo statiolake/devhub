@@ -17,7 +17,8 @@
  * height that the person can drag taller (`resize`), and scrolls inside.
  */
 
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState } from "react";
+import { Lightbox } from "./Lightbox";
 import { useConversationActions } from "./ConversationContext";
 import { CopyButton } from "./CopyButton";
 import type { PreviewProps } from "./Preview";
@@ -94,6 +95,7 @@ export const HtmlPreview = memo(function HtmlPreview({
 }: PreviewProps) {
   const { writeClipboard } = useConversationActions();
   const tooLarge = code.length > MAX_HTML_SOURCE;
+  const [enlarged, setEnlarged] = useState(false);
   return (
     <PreviewFigure
       kind="html"
@@ -102,6 +104,7 @@ export const HtmlPreview = memo(function HtmlPreview({
       copy={<CopyButton text={code} label="Copy HTML" />}
       menu={[{ ...HTML_MENU[0], run: () => writeClipboard(code) }]}
       className="conversation-html-preview"
+      enlarge={tooLarge ? undefined : () => setEnlarged(true)}
     >
       {tooLarge ? (
         <p className="conversation-diagram-error" role="note">
@@ -112,6 +115,15 @@ export const HtmlPreview = memo(function HtmlPreview({
           <HtmlFrame code={code} title="HTML preview" />
         </div>
       )}
+      {enlarged ? (
+        <Lightbox label="HTML preview" onClose={() => setEnlarged(false)}>
+          <HtmlFrame
+            code={code}
+            title="HTML preview, enlarged"
+            className="conversation-html-frame conversation-lightbox-page"
+          />
+        </Lightbox>
+      ) : null}
     </PreviewFigure>
   );
 });

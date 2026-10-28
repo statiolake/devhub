@@ -42,6 +42,7 @@ import {
   type PreviewMenuItem,
 } from "./PreviewFigure";
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from "./icons";
+import { Lightbox, opensLightbox } from "./Lightbox";
 
 /** The items of the deck's save button, in order. */
 export const SAVE_MENU = [
@@ -139,6 +140,7 @@ function SlideViewer({
   const at = Math.min(wanted, count - 1);
   const url = useMemo(() => svgDataUrl(deck.slides[at]!), [deck, at]);
   const name = deckName(code);
+  const [enlarged, setEnlarged] = useState(false);
 
   const png = (slide: string) =>
     svgToPng(slide, deck.size, undefined, window.devicePixelRatio, 0);
@@ -220,6 +222,7 @@ function SlideViewer({
       menu={menu}
       label="Slides"
       className="conversation-slides"
+      enlarge={() => setEnlarged(true)}
     >
       <div
         className="conversation-slides-stage"
@@ -228,6 +231,9 @@ function SlideViewer({
         aria-roledescription="slide"
         aria-label={`Slide ${at + 1} of ${count}`}
         onKeyDown={onKeyDown}
+        onClick={(event) => {
+          if (opensLightbox(event)) setEnlarged(true);
+        }}
       >
         <img
           key={at}
@@ -238,31 +244,65 @@ function SlideViewer({
           draggable={false}
         />
       </div>
-      <div className="conversation-slides-bar">
-        <button
-          type="button"
-          className="conversation-copy"
-          aria-label="Previous slide"
-          title="Previous slide"
-          disabled={at === 0}
-          onClick={() => go(-1)}
+      <SlideBar at={at} count={count} go={go} />
+      {enlarged ? (
+        <Lightbox
+          label={`Slides, ${at + 1} of ${count}`}
+          onClose={() => setEnlarged(false)}
+          onKeyDown={onKeyDown}
         >
-          <ChevronLeftIcon />
-        </button>
-        <span className="conversation-slides-counter" aria-live="polite">
-          {at + 1} / {count}
-        </span>
-        <button
-          type="button"
-          className="conversation-copy"
-          aria-label="Next slide"
-          title="Next slide"
-          disabled={at === count - 1}
-          onClick={() => go(1)}
-        >
-          <ChevronRightIcon />
-        </button>
-      </div>
+          <div className="conversation-lightbox-slides">
+            <img
+              key={at}
+              src={url}
+              width={deck.size.width}
+              height={deck.size.height}
+              alt={`Slide ${at + 1} of ${count}`}
+              draggable={false}
+            />
+            <SlideBar at={at} count={count} go={go} />
+          </div>
+        </Lightbox>
+      ) : null}
     </PreviewFigure>
+  );
+}
+
+/** Previous, where in the deck, next. */
+function SlideBar({
+  at,
+  count,
+  go,
+}: {
+  readonly at: number;
+  readonly count: number;
+  readonly go: (step: number) => void;
+}) {
+  return (
+    <div className="conversation-slides-bar">
+      <button
+        type="button"
+        className="conversation-copy"
+        aria-label="Previous slide"
+        title="Previous slide"
+        disabled={at === 0}
+        onClick={() => go(-1)}
+      >
+        <ChevronLeftIcon />
+      </button>
+      <span className="conversation-slides-counter" aria-live="polite">
+        {at + 1} / {count}
+      </span>
+      <button
+        type="button"
+        className="conversation-copy"
+        aria-label="Next slide"
+        title="Next slide"
+        disabled={at === count - 1}
+        onClick={() => go(1)}
+      >
+        <ChevronRightIcon />
+      </button>
+    </div>
   );
 }

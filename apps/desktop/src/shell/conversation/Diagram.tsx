@@ -42,6 +42,7 @@ import { drawnMermaid, renderMermaid } from "./mermaid";
 import { drawnVegaLite, renderVegaLite } from "./vegaLite";
 import type { PreviewProps } from "./Preview";
 import { headerLanguage, PreviewFigure } from "./PreviewFigure";
+import { Lightbox, LightboxPicture, opensLightbox } from "./Lightbox";
 
 /** The items a right-click on a drawn diagram offers, in order. */
 export const DIAGRAM_MENU = [
@@ -174,6 +175,7 @@ function DrawnDiagram({
 }) {
   const { writeClipboard, writeClipboardImage } = useConversationActions();
   const url = useMemo(() => svgDataUrl(picture.svg), [picture.svg]);
+  const [enlarged, setEnlarged] = useState(false);
 
   const copyImage = async (ground: string | undefined) => {
     const printed = await pictureForCopy(kind, code);
@@ -194,8 +196,15 @@ function DrawnDiagram({
       actions={toggle}
       copy={<CopyButton copy={() => copyImage(undefined)} label="Copy image" />}
       menu={DIAGRAM_MENU.map(({ id, label }) => ({ id, label, run: run[id] }))}
+      enlarge={() => setEnlarged(true)}
     >
-      <div className="conversation-diagram-picture">
+      <div
+        className="conversation-diagram-picture"
+        data-enlarge
+        onClick={(event) => {
+          if (opensLightbox(event)) setEnlarged(true);
+        }}
+      >
         <img
           src={url}
           width={picture.size.width}
@@ -204,6 +213,16 @@ function DrawnDiagram({
           draggable={false}
         />
       </div>
+      {enlarged ? (
+        <Lightbox label={NAMES[kind].alt} onClose={() => setEnlarged(false)}>
+          <LightboxPicture
+            src={url}
+            alt={NAMES[kind].alt}
+            width={picture.size.width}
+            height={picture.size.height}
+          />
+        </Lightbox>
+      ) : null}
     </PreviewFigure>
   );
 }

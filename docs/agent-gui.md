@@ -952,6 +952,21 @@ the same picture (the same slide).
 
 Every kind can also be a file the answer embeds (below).
 
+### Opening a drawing large
+
+A click on a picture — a diagram, a chart, an SVG, an embedded image — or on
+a slide opens it large (`Lightbox.tsx`): an overlay over the Agents page,
+the page dimmed behind it. The header's _Enlarge_ button does the same, and
+is the way for a page, whose frame takes its own clicks. A picture is fitted
+to the window, however small it is; a click on it shows it at its own size,
+scrolling inside the overlay to pan, and a click again fits it. A page is
+the same sandboxed frame, large and scrollable; a deck is the slide viewer,
+large, ←/→ still flipping, and the deck in the answer is left on the slide
+the viewer was. Esc, _Close_ or a click outside the content closes it, and
+the focus goes back where it was. It arrives the way a popover does (a fade
+and a small scale on the motion tokens), and without motion under reduced
+motion.
+
 ### Embedding a file: `![alt](path)`
 
 So that an Agent need not write a big or often-edited picture, deck or page
