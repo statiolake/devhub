@@ -1847,7 +1847,6 @@
 
 .conversation-request-choice[data-tone="allow"] {
   background: var(--accent);
-  box-shadow: 0 1px 2px var(--shadow-mid);
   color: var(--accent-ink);
 }
 
@@ -2309,8 +2308,8 @@ label.conversation-question-option:hover,
   background: var(--material-float);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--status-waiting) 45%, var(--edge)),
-    0 2px 6px var(--shadow-soft),
-    0 8px 24px var(--shadow-mid);
+    0 1px 3px var(--shadow-soft),
+    0 4px 12px var(--shadow-mid);
   color: var(--primary);
   font: inherit;
   font-size: 0.85em;
@@ -2551,7 +2550,7 @@ label.conversation-question-option:hover,
   border: 0;
   border-radius: 1.1em 1.1em 0.35em 1.1em;
   background: var(--raised);
-  box-shadow: var(--focus-halo);
+  box-shadow: var(--focus-edge);
   color: var(--primary);
   font: inherit;
   line-height: 1.55;
@@ -2646,9 +2645,9 @@ label.conversation-question-option:hover,
 }
 
 /* The box is a resting card (elevation 1) with no border of its own: its
-   edge is the elevation's ring. With the keyboard it floats (elevation 2)
-   and its ring takes the focus colour with a soft halo, so focus reads as
-   the box lifting towards the person rather than as a second outline. */
+   edge is the elevation's ring. With the keyboard only that ring changes,
+   to a quiet accent hairline (`--focus-edge`): the box does not move, glow
+   or change colour — which field has the keyboard is all there is to say. */
 .conversation-composer-box {
   position: relative;
   display: flex;
@@ -3097,8 +3096,7 @@ button.conversation-background-line:hover {
 }
 
 .conversation-composer-box:focus-within {
-  background: color-mix(in srgb, var(--focus-ring) 3%, var(--raised));
-  box-shadow: var(--focus-halo), var(--elevation-2-shadow);
+  box-shadow: var(--focus-edge), var(--elevation-1-shadow);
 }
 
 .conversation-composer-box[data-disabled] {
@@ -3207,7 +3205,6 @@ button.conversation-background-line:hover {
 
 .conversation-send {
   background: var(--accent);
-  box-shadow: 0 1px 2px var(--shadow-mid);
   color: var(--accent-ink);
 }
 

@@ -311,33 +311,33 @@
   --edge: color-mix(in srgb, var(--primary) var(--ink-edge), transparent);
   --edge-highlight: light-dark(
     rgba(255, 255, 255, 0),
-    rgba(255, 255, 255, 0.06)
+    rgba(255, 255, 255, 0.04)
   );
-  --shadow-soft: light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.32));
-  --shadow-mid: light-dark(rgba(0, 0, 0, 0.09), rgba(0, 0, 0, 0.45));
-  --shadow-deep: light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.6));
+  /* The steps are kept small on purpose: the ring does most of the work and
+     the shadow under it only says which way is up. A level is told from the
+     one under it at a glance, never at length — a pane of floating cards
+     with deep shadows reads as a stack of paper, not as a tool. */
+  --shadow-soft: light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.22));
+  --shadow-mid: light-dark(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.3));
+  --shadow-deep: light-dark(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.4));
   --elevation-0: none;
   --elevation-1:
     0 0 0 1px var(--edge), inset 0 1px 0 var(--edge-highlight),
-    0 1px 2px var(--shadow-soft), 0 2px 8px var(--shadow-soft);
+    0 1px 2px var(--shadow-soft);
   --elevation-2:
     0 0 0 1px var(--edge), inset 0 1px 0 var(--edge-highlight),
-    0 2px 6px var(--shadow-soft), 0 10px 28px var(--shadow-mid);
+    0 1px 3px var(--shadow-soft), 0 4px 12px var(--shadow-mid);
   --elevation-3:
     0 0 0 1px var(--edge), inset 0 1px 0 var(--edge-highlight),
-    0 4px 12px var(--shadow-mid), 0 18px 48px var(--shadow-deep);
-  /* Elevation 2's shadows without its ring, for a surface whose edge is
-     something else while it floats: the focus halo below. */
-  --elevation-2-shadow:
-    inset 0 1px 0 var(--edge-highlight), 0 2px 6px var(--shadow-soft),
-    0 10px 28px var(--shadow-mid);
-  /* A field that has the keyboard: its edge takes the accent and a soft
-     accent glow spreads from it — the field lifting towards the person, not
-     a second outline drawn round it. */
-  --focus-halo:
-    0 0 0 1px color-mix(in srgb, var(--focus-ring) 50%, var(--edge)),
-    0 0 0 4px color-mix(in srgb, var(--focus-ring) 16%, transparent),
-    0 0 28px color-mix(in srgb, var(--focus-ring) 22%, transparent);
+    0 2px 6px var(--shadow-mid), 0 10px 28px var(--shadow-deep);
+  /* Elevation 1's shadow without its ring, for a surface whose edge is
+     something else: the focus edge below. */
+  --elevation-1-shadow:
+    inset 0 1px 0 var(--edge-highlight), 0 1px 2px var(--shadow-soft);
+  /* A field that has the keyboard: its edge, and only its edge, takes the
+     accent — a quiet hairline, no glow and no tint. Where the field is, is
+     already plain; which field has the keyboard is all this says. */
+  --focus-edge: 0 0 0 1px color-mix(in srgb, var(--focus-ring) 65%, var(--edge));
   --material-float: color-mix(in srgb, var(--raised) 90%, transparent);
   --material-blur: blur(20px) saturate(1.6);
 
