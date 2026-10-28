@@ -8,13 +8,19 @@
 
 import assert from 'assert';
 import { mainWindow } from '../../../../../base/browser/window.js';
+import { Emitter } from '../../../../../base/common/event.js';
+import { DisposableStore } from '../../../../../base/common/lifecycle.js';
+import { URI } from '../../../../../base/common/uri.js';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 import { ICodeEditor } from '../../../../../editor/browser/editorBrowser.js';
 import { IPosition } from '../../../../../editor/common/core/position.js';
 import { IRange } from '../../../../../editor/common/core/range.js';
-import { CommentThreadCollapsibleState } from '../../../../../editor/common/languages.js';
+import { Comment, CommentMode, CommentThread, CommentThreadCollapsibleState } from '../../../../../editor/common/languages.js';
+import { MenuId, MenuRegistry } from '../../../../../platform/actions/common/actions.js';
+import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contextkey.js';
+import { ICommentThreadChangedEvent } from '../../../comments/common/commentModel.js';
 import { BUILTIN_EX_SPECS } from '../../common/vimEx.js';
-import { COMMENT_WINDOW_CLOSE_STEPS, CommentWindow, VimWindowHistory, closeCommentWindow, commentWindowAt, inEditorGroup, lineForThread, windowOf } from '../../browser/vimWindows.js';
+import { COMMENT_WINDOW_STEPS, CommentServices, CommentWindow, EMPTY_COMMENT, VimWindowHistory, closeCommentWindow, commentWindowAt, commentWriteAction, inEditorGroup, lineForThread, windowOf, writeCommentWindow } from '../../browser/vimWindows.js';
 
 suite('DevHub Vim: windows', () => {
 
@@ -98,8 +104,7 @@ suite('DevHub Vim: windows', () => {
 	});
 
 	/** An editor as vimWindows.ts reads one: its nodes, cursor and focus. */
-	function fakeEditor(container: HTMLElement, lines = 10) {
-		const log: string[] = [];
+	function fakeEditor(container: HTMLElement, lines = 10, log: string[] = []) {
 		let position: IPosition = { lineNumber: 1, column: 1 };
 		const editor = {
 			getContainerDomNode: () => container,
@@ -107,7 +112,7 @@ suite('DevHub Vim: windows', () => {
 			getPosition: () => position,
 			setPosition: (p: IPosition) => { position = p; log.push(`cursor ${p.lineNumber}:${p.column}`); },
 			revealLineInCenterIfOutsideViewport: () => { },
-			getModel: () => ({ getLineCount: () => lines, getLineFirstNonWhitespaceColumn: () => 3 }),
+			getModel: () => ({ uri: URI.file('/a.ts'), getLineCount: () => lines, getLineFirstNonWhitespaceColumn: () => 3 }),
 			focus: () => log.push('focus'),
 		};
 		return { editor: editor as unknown as ICodeEditor, log, setCursor: (lineNumber: number) => position = { lineNumber, column: 1 } };
@@ -149,11 +154,266 @@ suite('DevHub Vim: windows', () => {
 		assert.deepStrictEqual(run(2, false, false, 9), ['closed', 'cursor 6:3', 'focus']);
 	});
 
-	test('every window step of :q :q! :close is one the comment widget takes', () => {
-		for (const name of ['quit', 'close']) {
+	test('every window step of :q :q! :close :w :wq :x :up is one the comment widget takes: a comment input never saves or closes the file', () => {
+		for (const name of ['quit', 'close', 'wq', 'xit', 'update']) {
 			for (const step of BUILTIN_EX_SPECS[name].steps) {
-				assert.ok(COMMENT_WINDOW_CLOSE_STEPS.has(step.command), `${name}: ${step.command}`);
+				assert.ok(COMMENT_WINDOW_STEPS.has(step.command), `${name}: ${step.command}`);
 			}
+		}
+		// :w is the engine's (vimEngine.ts exWrite), which runs VS Code's Save
+		assert.strictEqual(COMMENT_WINDOW_STEPS.get('workbench.action.files.save'), 'write');
+		assert.strictEqual(COMMENT_WINDOW_STEPS.get('devhubVim.update'), 'update');
+	});
+
+	test(':w writes what is typed, :x only what changed; nothing but blanks is never submitted', () => {
+		assert.strictEqual(commentWriteAction({ text: 'hi', original: '' }, 'write'), 'submit');
+		assert.strictEqual(commentWriteAction({ text: '', original: '' }, 'write'), 'empty');
+		assert.strictEqual(commentWriteAction({ text: ' \n ', original: '' }, 'write'), 'empty');
+		assert.strictEqual(commentWriteAction({ text: '', original: '' }, 'update'), 'unchanged');
+		assert.strictEqual(commentWriteAction({ text: 'hi', original: '' }, 'update'), 'submit');
+		// an edit: unchanged is no write for :x, a write for :w
+		assert.strictEqual(commentWriteAction({ text: 'body', original: 'body' }, 'update'), 'unchanged');
+		assert.strictEqual(commentWriteAction({ text: 'body', original: 'body' }, 'write'), 'submit');
+		assert.strictEqual(commentWriteAction({ text: '', original: 'body' }, 'update'), 'empty');
+	});
+
+	/**
+	 * A comment widget as the float's commands read it: a thread with
+	 * `comments` (`editing` one of them in its edit box, `edited` typed there),
+	 * its reply input (`typed`), the first buttons of their forms, and the
+	 * comment services.
+	 */
+	function float(store: DisposableStore, opts: { comments?: string[]; editing?: number; edited?: string; typed?: string; canReply?: boolean }) {
+		const doc = mainWindow.document;
+		const log: string[] = [];
+		const div = (cls: string, ...children: HTMLElement[]) => {
+			const e = doc.createElement('div');
+			e.className = cls;
+			e.append(...children);
+			return e;
+		};
+		const form = (name: string, ...children: HTMLElement[]) => {
+			const button = div('monaco-button');
+			button.addEventListener('click', () => log.push(`${name} button`));
+			return [...children, div('form-actions', div('other-actions', button))];
+		};
+		const input = (node: HTMLElement, value: string) => {
+			let text = value;
+			return { getContainerDomNode: () => node, getValue: () => text, setValue: (v: string) => { text = v; log.push(`typed '${v}'`); } } as unknown as ICodeEditor;
+		};
+		const comments: Comment[] = (opts.comments ?? []).map((body, i) => ({ body, uniqueIdInThread: i + 1, userName: 'u', mode: i === opts.editing ? CommentMode.Editing : CommentMode.Preview }));
+		const zone = div('zone-widget review-widget');
+		let edit: ICodeEditor | undefined;
+		comments.forEach((c, i) => {
+			if (i === opts.editing) {
+				const node = div('');
+				edit = input(node, opts.edited ?? String(c.body));
+				zone.append(div('review-comment', div('edit-container', ...form('save', node))));
+			} else {
+				zone.append(div('review-comment'));
+			}
+		});
+		const replyNode = div('');
+		zone.append(div('comment-form-container', ...form('reply', div('comment-form', replyNode))));
+		const reply = input(replyNode, opts.typed ?? '');
+		const changeComments = store.add(new Emitter<readonly Comment[] | undefined>());
+		const commentThread = {
+			threadId: 'typed',
+			range: { startLineNumber: 4, startColumn: 1, endLineNumber: 6, endColumn: 1 },
+			comments,
+			collapsibleState: CommentThreadCollapsibleState.Expanded,
+			isDisposed: false,
+			canReply: opts.canReply ?? true,
+			onDidChangeComments: changeComments.event,
+		};
+		/** What the extension does on submit (keeps the thread, replaces it). */
+		let onSubmit = () => { };
+		const thread = {
+			commentThread,
+			get hasUnsubmittedComments() { return !!reply.getValue(); },
+			submitComment: async () => {
+				log.push('submit');
+				reply.setValue('');
+				onSubmit();
+			},
+			focusCommentEditor: () => log.push('focus reply'),
+			focus: () => log.push('focus comment'),
+		};
+		const outer = div('monaco-editor', zone);
+		doc.body.appendChild(outer);
+		store.add({ dispose: () => outer.remove() });
+		const e = fakeEditor(outer, 10, log);
+		(e.editor as unknown as { getContribution: unknown }).getContribution = () => ({
+			revealCommentThread: (id: string, _comment: unknown, _fetch: unknown, focus: number) => log.push(`reveal ${id} focus ${focus}`),
+		});
+		const updates = store.add(new Emitter<ICommentThreadChangedEvent>());
+		const services = {
+			commentService: { onDidUpdateCommentThreads: updates.event },
+			contextKeyService: { getContext: () => ({ getValue: () => undefined }) },
+			commandService: { executeCommand: async (id: string) => { log.push(id); } },
+		} as unknown as CommentServices;
+		const at = (which: 'reply' | 'edit') => ({ editor: e.editor, thread, input: which === 'reply' ? { editor: reply } : { editor: edit, comment: opts.editing } }) as unknown as CommentWindow;
+		return {
+			log, services, commentThread, at, reply, edit, replyNode, zone, editor: e.editor,
+			onSubmit: (f: () => void) => onSubmit = f,
+			changeComments: (c: Comment[]) => {
+				commentThread.comments = c;
+				changeComments.fire(c);
+			},
+			added: (t: Partial<CommentThread>) => updates.fire({ added: [t], removed: [], changed: [], pending: [], uniqueOwner: 'o', owner: 'o', ownerLabel: 'o' } as unknown as ICommentThreadChangedEvent),
+			folded: () => commentThread.collapsibleState === CommentThreadCollapsibleState.Collapsed,
+		};
+	}
+
+	/** The timeouts a write leaves (the focus after the steps of its command). */
+	const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+
+	test('the input the focus is in is the float\'s buffer: the reply, or a comment\'s edit box', () => {
+		const store = new DisposableStore();
+		try {
+			const f = float(store, { comments: ['a', 'b'], editing: 1 });
+			const editors = [f.editor, f.reply, f.edit!];
+			assert.strictEqual(commentWindowAt(f.replyNode, editors)?.input?.editor, f.reply);
+			assert.strictEqual(commentWindowAt(f.replyNode, editors)?.input?.comment, undefined);
+			assert.strictEqual(commentWindowAt(f.edit!.getContainerDomNode(), editors)?.input?.editor, f.edit);
+			assert.strictEqual(commentWindowAt(f.edit!.getContainerDomNode(), editors)?.input?.comment, 1);
+			assert.strictEqual(commentWindowAt(f.zone, editors)?.input, undefined);
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test(':w in a reply submits it (VS Code\'s Ctrl+Enter) and the focus stays in the widget; nothing typed is an error and no submit; :x with nothing typed writes nothing', async () => {
+		const store = new DisposableStore();
+		try {
+			const f = float(store, { comments: ['a'], typed: 'hi' });
+			await writeCommentWindow(f.at('reply'), 'write', f.services);
+			await settle();
+			assert.deepStrictEqual(f.log, ['submit', `typed ''`, 'focus reply']);
+			assert.ok(!f.folded());
+			f.log.length = 0;
+			await assert.rejects(writeCommentWindow(f.at('reply'), 'write', f.services), new Error(EMPTY_COMMENT));
+			await writeCommentWindow(f.at('reply'), 'update', f.services);
+			await settle();
+			assert.deepStrictEqual(f.log, []);
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test(':wq in a reply submits it, folds the thread and the focus is back in the editor', async () => {
+		const store = new DisposableStore();
+		try {
+			const f = float(store, { comments: ['a'], typed: 'hi' });
+			const written = await writeCommentWindow(f.at('reply'), 'write', f.services);
+			closeCommentWindow(f.at('reply'), false, f.services, written);
+			await settle();
+			assert.ok(f.folded());
+			assert.deepStrictEqual(f.log, ['submit', `typed ''`, 'cursor 6:3', 'focus']);
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test('a reply while a comment is being edited is the reply\'s own submit (Ctrl+Enter would save the edit)', async () => {
+		const store = new DisposableStore();
+		try {
+			const f = float(store, { comments: ['a'], editing: 0, typed: 'hi' });
+			await writeCommentWindow(f.at('reply'), 'write', f.services);
+			assert.deepStrictEqual(f.log.slice(0, 1), ['reply button']);
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test(':w in a comment\'s edit box is its Save, then the focus is in the thread\'s reply (or on the comment when it takes none); :x unchanged saves nothing; an empty edit is an error', async () => {
+		const store = new DisposableStore();
+		try {
+			const f = float(store, { comments: ['a', 'b'], editing: 1, edited: 'b2' });
+			await writeCommentWindow(f.at('edit'), 'write', f.services);
+			await settle();
+			assert.deepStrictEqual(f.log, ['save button', 'focus reply']);
+			const g = float(store, { comments: ['a'], editing: 0, edited: 'a2', canReply: false });
+			await writeCommentWindow(g.at('edit'), 'write', g.services);
+			await settle();
+			assert.deepStrictEqual(g.log, ['save button', 'focus comment']);
+			const h = float(store, { comments: ['a'], editing: 0 });
+			await writeCommentWindow(h.at('edit'), 'update', h.services);
+			await assert.rejects(writeCommentWindow(float(store, { comments: ['a'], editing: 0, edited: ' ' }).at('edit'), 'update', h.services), new Error(EMPTY_COMMENT));
+			await settle();
+			assert.deepStrictEqual(h.log, []);
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test(':q in an edit box keeps a changed edit in the folded thread (hidden) and cancels an unchanged one; :q! cancels it; :q! empties a reply, :q keeps it', () => {
+		const store = new DisposableStore();
+		try {
+			store.add(MenuRegistry.appendMenuItem(MenuId.CommentActions, { command: { id: 'test.saveComment', title: 'Save' }, group: 'inline@1' }));
+			store.add(MenuRegistry.appendMenuItem(MenuId.CommentActions, { command: { id: 'test.cancelEditComment', title: 'Cancel' }, group: 'inline@2', when: ContextKeyExpr.true() }));
+			const run = (edited: string, discard: boolean) => {
+				const f = float(store, { comments: ['a'], editing: 0, edited });
+				closeCommentWindow(f.at('edit'), discard, f.services);
+				return [f.folded() ? 'folded' : 'open', ...f.log];
+			};
+			assert.deepStrictEqual(run('a', false), ['folded', 'test.cancelEditComment', 'cursor 6:3', 'focus']);
+			assert.deepStrictEqual(run('a2', false), ['folded', 'cursor 6:3', 'focus']);
+			assert.deepStrictEqual(run('a2', true), ['folded', 'test.cancelEditComment', 'cursor 6:3', 'focus']);
+			const reply = (discard: boolean) => {
+				const f = float(store, { comments: ['a'], typed: 'draft' });
+				closeCommentWindow(f.at('reply'), discard, f.services);
+				return [f.folded() ? 'folded' : 'open', f.reply.getValue(), ...f.log];
+			};
+			assert.deepStrictEqual(reply(false), ['folded', 'draft', 'cursor 6:3', 'focus']);
+			assert.deepStrictEqual(reply(true), ['folded', '', `typed ''`, 'cursor 6:3', 'focus']);
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test(':wq in a new thread: the editor gets the focus at once and the thread is folded once it has its comment (folding it before would drop it)', async () => {
+		const store = new DisposableStore();
+		try {
+			const f = float(store, { typed: 'hi' });
+			const written = await writeCommentWindow(f.at('reply'), 'write', f.services);
+			closeCommentWindow(f.at('reply'), false, f.services, written);
+			assert.ok(!f.folded());
+			assert.deepStrictEqual(f.log, ['submit', `typed ''`, 'cursor 6:3', 'focus']);
+			f.changeComments([{ body: 'hi', uniqueIdInThread: 1, userName: 'u' }]);
+			await settle();
+			assert.ok(f.folded());
+			assert.deepStrictEqual(f.log, ['submit', `typed ''`, 'cursor 6:3', 'focus']);
+		} finally {
+			store.dispose();
+		}
+	});
+
+	test(':w in a new thread the extension replaces with its own: the focus goes to that thread\'s reply once VS Code shows it; :wq folds it', async () => {
+		const store = new DisposableStore();
+		try {
+			const made = (f: ReturnType<typeof float>) => {
+				const t = { threadId: 'made', resource: URI.file('/a.ts').toString(), range: { startLineNumber: 4, startColumn: 1, endLineNumber: 6, endColumn: 1 }, comments: [{ body: 'hi', uniqueIdInThread: 1, userName: 'u' }], collapsibleState: CommentThreadCollapsibleState.Expanded };
+				f.onSubmit(() => {
+					f.added(t);
+					f.commentThread.isDisposed = true;
+				});
+				return t;
+			};
+			const f = float(store, { typed: 'hi' });
+			made(f);
+			await writeCommentWindow(f.at('reply'), 'write', f.services);
+			await settle();
+			assert.deepStrictEqual(f.log, ['submit', `typed ''`, 'reveal made focus 2']);
+			const g = float(store, { typed: 'hi' });
+			const t = made(g);
+			const written = await writeCommentWindow(g.at('reply'), 'write', g.services);
+			closeCommentWindow(g.at('reply'), false, g.services, written);
+			await settle();
+			assert.strictEqual(t.collapsibleState, CommentThreadCollapsibleState.Collapsed);
+			assert.deepStrictEqual(g.log, ['submit', `typed ''`, 'cursor 6:3', 'focus']);
+		} finally {
+			store.dispose();
 		}
 	});
 });

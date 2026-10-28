@@ -190,7 +190,9 @@ import { VIM_SHELL_COMMANDS } from './vimShell.js';
 import { VIM_JS_COMMANDS } from './vimJs.js';
 import './vimTabPages.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
-import { COMMENT_WINDOW_CLOSE_STEPS, VimWindowHistory, closeCommentWindow, commentWindowAt, focusedCommentWindow, inEditorGroup, leaveCommentWindow } from './vimWindows.js';
+import { COMMENT_WINDOW_STEPS, CommentServices, CommentWrite, VimWindowHistory, closeCommentWindow, commentWindowAt, focusedCommentWindow, inEditorGroup, leaveCommentWindow, writeCommentWindow } from './vimWindows.js';
+import { ICommentService } from '../../comments/browser/commentService.js';
+import { SimpleCommentEditor } from '../../comments/browser/simpleCommentEditor.js';
 
 /** The workbench commands an ex command runs that take the file it ran in (`from`). */
 const FROM_COMMANDS = [...VIM_EDIT_COMMANDS, ...VIM_SHELL_COMMANDS, ...VIM_JS_COMMANDS];
@@ -1238,14 +1240,9 @@ class VimEditor extends Disposable implements IVimHost {
 	}
 
 	executeCommand(command: string, args: unknown): Promise<unknown> {
-		const close = COMMENT_WINDOW_CLOSE_STEPS.get(command);
-		const comment = close && commentWindowAt(this.editor.getContainerDomNode(), this.owner.codeEditors());
-		if (close && comment) {
-			// `:q` `:close` `:q!` in a comment input: the comment widget is the window (vimWindows.ts)
-			if (close !== 'skip') {
-				closeCommentWindow(comment, close === 'discard');
-			}
-			return Promise.resolve();
+		const step = COMMENT_WINDOW_STEPS.get(command);
+		if (step && this.editor instanceof SimpleCommentEditor) {
+			return this.commentStep(step);
 		}
 		if ((FROM_COMMANDS as readonly string[]).includes(command) && (args === undefined || (typeof args === 'object' && args !== null && !('from' in args)))) {
 			// `:e {file}` `:sp {file}` `:w {file}` `:!cmd` ...: `%` and the current directory are this editor's, even after a split moved the focus
@@ -1259,6 +1256,35 @@ class VimEditor extends Disposable implements IVimHost {
 
 	refresh(): void {
 		this.owner.update();
+	}
+
+	/** The last write in this comment input, while the steps of its ex command run (the `:q` of `:wq`: the input may be gone by then). */
+	private commentWrite: CommentWrite | undefined;
+
+	/**
+	 * `:w` `:wq` `:x` `:q` `:close` `:q!` ... in a comment input: the comment
+	 * widget is a floating window and its comment the buffer (vimWindows.ts).
+	 * Never the file's Save or Close, even with the widget gone.
+	 */
+	private async commentStep(step: 'write' | 'update' | 'close' | 'discard' | 'skip'): Promise<void> {
+		const written = this.commentWrite;
+		const comment = commentWindowAt(this.editor.getContainerDomNode(), this.owner.codeEditors()) ?? written?.window;
+		if (!comment || step === 'skip') {
+			return;
+		}
+		if (step === 'write' || step === 'update') {
+			const write = await writeCommentWindow(comment, step, this.owner.commentServices);
+			this.commentWrite = write;
+			// only for the steps of the same ex command, which run before a timeout
+			setTimeout(() => {
+				if (this.commentWrite === write) {
+					this.commentWrite = undefined;
+				}
+			});
+			return;
+		}
+		this.commentWrite = undefined;
+		closeCommentWindow(comment, step === 'discard', this.owner.commentServices, written);
 	}
 }
 
@@ -1549,6 +1575,11 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		this.editors.delete(editor);
 	}
 
+	/** What a comment widget's `:w` `:q` ... use of VS Code's comments (vimWindows.ts); asked for only then, as only a comment widget needs them. */
+	get commentServices(): CommentServices {
+		return { commentService: this.instantiationService.invokeFunction(a => a.get(ICommentService)), contextKeyService: this.contextKeyService, commandService: this.commandService };
+	}
+
 	/** Every code editor (the comment inputs are ones too). */
 	codeEditors(): readonly ICodeEditor[] {
 		return this.codeEditorService.listCodeEditors();
@@ -1746,6 +1777,13 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		this.update();
 	}
 
+	/** `<C-w>p`: the focus goes back to where it was in the window before this one, if it still can. */
+	private goBack(): boolean {
+		const back = this.windows.previousFocus();
+		back?.focus();
+		return !!back && getActiveElement() === back;
+	}
+
 	/**
 	 * A nav command: the prefix is over, then the commands (if any) run in
 	 * order; `how` says where the focus is a window of its own first
@@ -1756,20 +1794,16 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		const comment = how.comment && focusedCommentWindow(this.codeEditors());
 		if (comment) {
 			if (how.comment === 'close') {
-				closeCommentWindow(comment, false);
-			} else {
+				closeCommentWindow(comment, false, this.commentServices);
+			} else if (!(how.back && this.goBack())) {
 				leaveCommentWindow(comment);
 			}
 			return;
 		}
 		if (how.editorFirst && !inEditorGroup(getActiveElement())) {
 			commands = ['workbench.action.focusActiveEditorGroup'];
-		} else if (how.back) {
-			const back = this.windows.previousFocus();
-			back?.focus();
-			if (back && getActiveElement() === back) {
-				return;
-			}
+		} else if (how.back && this.goBack()) {
+			return;
 		}
 		void (async () => {
 			for (const c of commands) {
@@ -1938,7 +1972,8 @@ rule('devhubVim.nav.escape', { primary: KeyCode.Escape }, NAV, KeybindingWeight.
  * widget's editor (`leave`) or closes the widget (`close`) instead of running
  * its commands. `editorFirst`: outside the editor groups (side bar, panel,
  * terminal, ...) it goes back to the active group instead. `back`: to the
- * window the focus was in before, its commands only when there is none.
+ * window the focus was in before, its commands only when there is none (in a
+ * comment widget, `leave` only then).
  */
 interface NavWindows {
 	readonly comment?: 'leave' | 'close';
@@ -1987,6 +2022,9 @@ const NAV_COMMANDS: readonly [string, string, boolean, readonly string[], NavWin
 	['definitionSplit', ']', true, ['editor.action.revealDefinitionAside']],
 	['definitionPreview', 'shift+]', false, ['editor.action.peekDefinition']],
 ];
+// `:x` `ZZ` `:up` (vimEx.ts): in a file VS Code's Save, as `:w`; in a comment input (VimEditor.commentStep) a write when modified
+CommandsRegistry.registerCommand('devhubVim.update', accessor => accessor.get(ICommandService).executeCommand('workbench.action.files.save'));
+
 // Vim's CTRL-W `:` (`:help CTRL-W_:`): the `:` prompt, also where `:` itself is
 // typed text or the page's (the terminal, an input, a webview)
 CommandsRegistry.registerCommand('devhubVim.nav.cmdline', () => {

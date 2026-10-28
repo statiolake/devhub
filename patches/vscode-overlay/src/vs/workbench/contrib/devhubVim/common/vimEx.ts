@@ -153,6 +153,12 @@ export function builtinExNameInfo(): { readonly name: string; readonly abbrev: s
 
 const SAVE = 'workbench.action.files.save';
 const SAVE_ALL = 'workbench.action.files.saveAll';
+/**
+ * `:x` `:up`: VS Code's Save in a file (browser/devhubVim.contribution.ts), its
+ * own step so that a comment input can tell "write when modified" from `:w`
+ * (browser/vimWindows.ts).
+ */
+const UPDATE = 'devhubVim.update';
 const CLOSE = 'workbench.action.closeActiveEditor';
 const CLOSE_ALL = 'workbench.action.closeAllEditors';
 const REVERT_CLOSE = 'workbench.action.revertAndCloseActiveEditor';
@@ -197,11 +203,11 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	// `:w` saves; `:[range]w[!] {file}` and `:w >> {file}` write to a file, `:[range]w !{cmd}` to a command (vimEngine.ts exWrite)
 	write: vim('write', { bang: true, nargs: '?', complete: 'file', defaultRange: '%', shell: true }),
 	wall: vs(SAVE_ALL, { bang: true }),
-	update: vs(SAVE, { bang: true }),
+	update: vs(UPDATE, { bang: true }),
 	quit: vs([...withBang(CLOSE, REVERT_CLOSE), { command: CLOSE_EMPTY_TAB }], { bang: true }),
 	qall: vs(withBang(CLOSE_ALL, ['workbench.action.files.revert', CLOSE_ALL]), { bang: true }),
 	wq: vs([SAVE, CLOSE, CLOSE_EMPTY_TAB], { bang: true }),
-	xit: vs([SAVE, CLOSE, CLOSE_EMPTY_TAB], { bang: true }),
+	xit: vs([UPDATE, CLOSE, CLOSE_EMPTY_TAB], { bang: true }),
 	xall: vs([SAVE_ALL, CLOSE_ALL], { bang: true }),
 	// 'nosplitbelow' / 'nosplitright' (the defaults): the new window is above / left, and gets the focus
 	// `:sp {file}` ...: the split, then the file in the new window (devhubVim.open)

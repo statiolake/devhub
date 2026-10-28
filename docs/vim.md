@@ -286,22 +286,48 @@ notifications are not windows: going there and back is no window change.
   before this one, and where in it the focus was (the terminal, the list item
   …), as Vim's previous window; twice is where you started. With no such window
   (or when it has gone) it is the previous editor group.
-* A comment widget belongs to its editor, a window below the thread's lines.
-  `CTRL-W p k j w W` (and the arrows up / down) go back to the editor, with
-  the cursor on the thread's lines (where it was if it is on one of them, else
-  on the line the widget is under); the widget and what is typed in it stay.
-  `:q` `:close` `CTRL-W c` `CTRL-W q` close the widget and go back to the
-  editor: VS Code drops a new thread with nothing typed in it, and a reply
-  being typed in a thread stays in the closed thread, as when VS Code folds it.
-  A new thread with text typed in it is not dropped: it stays open and only the
-  focus goes back (as Vim keeps a changed buffer whose window closes,
-  'hidden'); `:q!` drops it. Entering the widget ends the editor's visual
-  mode, as entering another window does in Vim (Add Comment on a visual
-  selection takes the selected lines as the thread's first). The comment input
-  is a Vim editor, in normal mode when it opens (`i` / `a` to type; `Ctrl+Enter`
-  submits, as in VS Code), and `<Esc>` there is always Vim's
-  ([Esc](#esc)). `CTRL-W` in its insert mode deletes a word, as in any Vim
-  editor.
+* A comment widget: see [Comment widgets](#comment-widgets).
+
+### Comment widgets
+
+A comment thread's widget is a Neovim floating window over its editor
+(focusable, with Neovim's default 'hidden'): it belongs to the editor, under
+the thread's lines, and its buffer is the comment being typed, the thread's
+reply input (a new thread's first comment) or a comment's edit box. Writing
+that buffer is submitting it: VS Code's Submit (`Ctrl+Enter` there,
+`editor.action.submitComment`, which runs the extension's submit or reply,
+e.g. Review Relay's), or for an edit box the comment's own Save (Review
+Relay's `reviewRelay.saveComment`). In a comment input the write and quit
+commands never reach the file: `:w` there saves no file and `:q` closes no
+editor.
+
+| In a comment input | Does |
+| --- | --- |
+| `:w` `:w!` | submit (or save the edit) and stay: the widget stays open with the focus in it, in its reply input (VS Code empties a submitted reply; an edit's Save ends the edit box, so the focus goes to the thread's reply input, or the comment when the thread takes no reply). A new thread the extension replaces with the thread it made (Review Relay does) puts the focus in that thread's reply input once VS Code shows it |
+| `:wq` `:wq!` | submit (or save), then close as `:q`: the thread folds and the focus is back in the editor. A new thread is folded once it has its comment (VS Code drops a folded thread with none) |
+| `:x` `ZZ` `:up` | as `:wq` (`:up`: as `:w`), but write only when the buffer is modified: nothing typed in a reply or new thread, or an edit not changed, just closes (`:x`) |
+| `:q` `:close` `CTRL-W c` `CTRL-W q` | close the float, keep what is typed ('hidden'): a reply draft stays in the folded thread, as when VS Code folds it; an edit with changes stays being edited in the folded thread; an unchanged edit is cancelled; a new thread with nothing typed is dropped (VS Code); a new thread with text typed stays open and only the focus goes back to the editor (VS Code keeps no folded new thread) |
+| `:q!` `ZQ` | close and drop what is typed: the reply draft is emptied, the edit cancelled (the comment's own action whose command says cancel, e.g. `reviewRelay.cancelEditComment`), a new thread dropped |
+| `<Esc>` | Vim's Esc, never closes the float ([Esc](#esc)) |
+| `CTRL-W k j w W` (and the arrows up / down) | back to the editor, the cursor on the thread's lines (where it was if on one of them, else the line the widget is under); the float and its buffer stay |
+| `CTRL-W p` | back to the window before the float, where the focus was in it (usually the editor; the editor when there is none) |
+
+With nothing but blanks typed, `:w` `:wq` `:x` submit nothing and say
+`Empty comment: nothing to submit` (and `:wq` does not close), as a write that
+fails. `:w {file}` writes the comment's lines to the file, as in any buffer;
+`:wa` `:xa` `:qa` are the workbench's (the files), not the comment.
+
+How it differs from Neovim's floats: `CTRL-W w` from a float goes back to its
+editor (and from any window outside the editor groups to the active group),
+so the float is not one more window in the `CTRL-W w` cycle: from the groups
+`CTRL-W w` cycles only the groups. Enter the float with the mouse, VS Code's
+comment commands, or `CTRL-W p` when it was the window before. Closing it
+goes back to its editor, which is where you came from when it opened.
+Entering it ends the editor's visual mode, as entering another window does in
+Vim (Add Comment on a visual selection takes the selected lines as the
+thread's first). The comment input is a Vim editor, in normal mode when it
+opens (`i` / `a` to type; `Ctrl+Enter` still submits, as in VS Code), and
+`CTRL-W` in its insert mode deletes a word, as in any Vim editor.
 
 ## Tab pages
 
@@ -942,8 +968,8 @@ a new one with what was typed: pressed any number of times it lands in normal
 mode in the input (and does nothing elsewhere in the widget), and the widget
 stays. Its weight, `EditorContrib + 1`, is just above Hide Comment's, so an
 editor widget in the input (hover, completion menu) still closes first. Close
-the widget with `:q` or `CTRL-W c` (see [Windows](#windows)); `Shift+Esc` is
-still VS Code's Hide Comment.
+the widget with `:q` or `CTRL-W c`, submit with `:w` / `:wq` (see [Comment
+widgets](#comment-widgets)); `Shift+Esc` is still VS Code's Hide Comment.
 
 To close a widget and stay in insert mode:
 
@@ -1253,7 +1279,8 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 | `:js {code}` `:js ={expr}` `:[range]jsd[o] {body}` | see [JavaScript](#javascript-js-and-jsdo) |
 
 VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]` (Save)
-`:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]`
+`:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]` (in a
+comment input: [Comment widgets](#comment-widgets))
 `:xa[ll]` `:sp[lit] [file]` `:vs[plit] [file]` `:new [file]` `:vne[w] [file]`
 `:e[dit][!] [file]` `:ene[w]` `:tabnew [file]` `:tabe[dit] [file]` (see
 [File names](#file-names)) `:tabn[ext]` `:tabp[revious]`

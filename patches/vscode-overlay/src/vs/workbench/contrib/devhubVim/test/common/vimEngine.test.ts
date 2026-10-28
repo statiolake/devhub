@@ -2881,7 +2881,7 @@ suite('Neovim scrolling and folds', () => {
 		assert.deepStrictEqual(await cmds(']D'), ['editor.action.marker.prev']);
 		assert.deepStrictEqual(await cmds(']q'), ['editor.action.marker.nextInFiles']);
 		assert.deepStrictEqual(await cmds('[b'), ['workbench.action.previousEditor']);
-		assert.deepStrictEqual(await cmds('ZZ'), ['workbench.action.files.save', 'workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
+		assert.deepStrictEqual(await cmds('ZZ'), ['devhubVim.update', 'workbench.action.closeActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
 		assert.deepStrictEqual(await cmds('ZQ'), ['workbench.action.revertAndCloseActiveEditor', 'devhubVim.tabpage.closeIfEmpty']);
 		// in visual mode gra acts on the selection, then visual mode ends
 		const v = new Vim('|abc').keys('vlgra');
