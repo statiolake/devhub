@@ -36,7 +36,11 @@ import {
 	openShellPage,
 	shellWindowIfCreated,
 } from "./shellWindow.js";
-import { installSettingsWindow, logDirectoryFor } from "./settingsWindow.js";
+import {
+	applySettingsWindowPalette,
+	installSettingsWindow,
+	logDirectoryFor,
+} from "./settingsWindow.js";
 import { refreshMenu } from "./menu.js";
 import { startControlServer } from "../cli/controlServer.js";
 import { controlSocketPath } from "../cli/protocol.js";
@@ -267,6 +271,7 @@ export async function bootstrapShell(
 	shellTheme().onDidChange(() => {
 		const next = shellTheme().palette();
 		shellWindowIfCreated()?.applyPalette(next);
+		applySettingsWindowPalette(next);
 		controller.publishTheme(next);
 		// The Agent panes' colours are part of the appearance, so every pane
 		// learns them the way it learns an edited setting.

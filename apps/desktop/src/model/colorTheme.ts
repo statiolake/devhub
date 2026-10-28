@@ -566,3 +566,88 @@ export function terminalPaletteOfTheme(
     ansi: COLOR_IDS.ansi.map((id) => theme.css(id) ?? foreground),
   };
 }
+
+/**
+ * The theme as VS Code's own `IInitialColorTheme` says one (`web.api.ts`):
+ * its type and the colours its file sets — what a workbench's theme service
+ * wears from its first frame when it has no theme of its own cached yet, until
+ * it has read the theme's file itself. Every colour the theme leaves unset is
+ * the registry's default there, exactly as it is here, so only what the file
+ * says is handed over. A value that is not a hex colour is left out rather
+ * than painted red (`Color.fromHex`).
+ */
+export interface InitialColorTheme {
+  readonly themeType: ColorThemeType;
+  readonly colors: Readonly<Record<string, string>>;
+}
+
+const HEX_COLOR = /^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+export function initialColorThemeOf(
+  definition: ColorThemeDefinition,
+): InitialColorTheme {
+  const colors: Record<string, string> = {};
+  for (const [id, value] of Object.entries(definition.colors)) {
+    if (HEX_COLOR.test(value)) colors[id] = value;
+  }
+  return { themeType: definition.type, colors };
+}
+
+/** VS Code's `ThemeTypeSelector`: the class a theme type puts on the page. */
+export type ThemeTypeSelector = "vs" | "vs-dark" | "hc-black" | "hc-light";
+
+/**
+ * A window splash's colours (`IPartsSplash` without `layoutInfo`) for a
+ * workbench about to start in this theme, computed the way the workbench's
+ * own `partsSplash.ts` computes the ones it stores: `background` is the
+ * editor's background as `#rrggbb` (or the workbench's ground), the title bar
+ * is opaque over that ground. With no layout the splash is the page's ground
+ * and ink alone, which is the whole of what is right before the workbench has
+ * laid anything out.
+ */
+export interface WindowSplashColors {
+  readonly baseTheme: ThemeTypeSelector;
+  readonly colorInfo: {
+    readonly background: string;
+    readonly foreground: string | undefined;
+    readonly editorBackground: string | undefined;
+    readonly titleBarBackground: string | undefined;
+    readonly sideBarBackground: string | undefined;
+  };
+  /** The stored splash's, carried over when one is replaced. */
+  readonly zoomLevel?: number;
+}
+
+export function windowSplashOfTheme(
+  theme: ResolvedColorTheme,
+): WindowSplashColors {
+  const ground = workbenchBackground(theme.type);
+  const { r, g, b } = (theme.getColor(COLOR_IDS.editorBackground) ?? ground)
+    .rgba;
+  return {
+    baseTheme: themeTypeSelectorOf(theme.type),
+    colorInfo: {
+      background: `#${hex2(r)}${hex2(g)}${hex2(b)}`,
+      foreground: theme.css(COLOR_IDS.foreground),
+      editorBackground: theme.css(COLOR_IDS.editorBackground),
+      titleBarBackground: theme
+        .getColor(COLOR_IDS.titleBarBackground)
+        ?.makeOpaque(ground)
+        .toString(),
+      sideBarBackground: theme.css(COLOR_IDS.sideBarBackground),
+    },
+  };
+}
+
+function themeTypeSelectorOf(type: ColorThemeType): ThemeTypeSelector {
+  switch (type) {
+    case "light":
+      return "vs";
+    case "hcDark":
+      return "hc-black";
+    case "hcLight":
+      return "hc-light";
+    case "dark":
+      return "vs-dark";
+  }
+}

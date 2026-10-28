@@ -16,9 +16,12 @@
  *       is handed where the built-in and installed extensions are, so the
  *       window can be created in the colour theme DevHub's settings name
  *       (`shell/shellTheme.ts`). Nothing else in `startup()` changed.
- *    4. (Retired: `IThemeMainService` was a DevHub subclass that announced
- *       each window splash, when the shell followed the workbenches' theme.
- *       It is upstream's own again.)
+ *    4. `IThemeMainService` is `DevHubThemeMainService`
+ *       (./services/devhubThemeMainService.ts), which stamps each window splash
+ *       with the colour theme it was saved in and hands a window one in the
+ *       theme DevHub names when the stored one is in another. (It was once a
+ *       subclass that announced each splash, when the shell followed the
+ *       workbenches' theme; that is gone.)
  *    5. `ILifecycleMainService` is `DevHubLifecycleMainService`
  *       (./services/devhubLifecycleMainService.ts), which translates a
  *       workbench's "restart" into DevHub's terms instead of taking the whole
@@ -44,6 +47,11 @@
  *    8. `--shared-data-dir` is the profile's, because `sharedDataFolderName` is
  *       one string for the whole build and every other directory a profile owns
  *       is the profile's. See `resolveArgs`.
+ *    9. `IProtocolMainService` is `DevHubProtocolMainService`
+ *       (./services/devhubProtocolMainService.ts), which puts the colour theme
+ *       a workbench is to start in into every window configuration it hands a
+ *       renderer, so the first frame of a load is in it. See
+ *       `shell/workbenchStartTheme.ts`.
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -78,6 +86,8 @@ import { connect as nodeIPCConnect, serve as nodeIPCServe, Server as NodeIPCServ
 import { DevHubApplication } from './devhubApplication.js';
 import { bootstrapShell } from './shell/bootstrapShell.js';
 import { installAppFence } from './shell/appFence.js';
+import { DevHubThemeMainService } from './services/devhubThemeMainService.js';
+import { DevHubProtocolMainService } from './services/devhubProtocolMainService.js';
 import { appController } from './shell/appController.js';
 import { activeProfile } from '../model/profile.js';
 import { localize } from 'code-oss-dev/out/vs/nls.js';
@@ -104,7 +114,6 @@ import { ConsoleMainLogger, getLogLevel, ILoggerService, ILogService, isDevConso
 import product from 'code-oss-dev/out/vs/platform/product/common/product.js';
 import { IProductService } from 'code-oss-dev/out/vs/platform/product/common/productService.js';
 import { IProtocolMainService } from 'code-oss-dev/out/vs/platform/protocol/electron-main/protocol.js';
-import { ProtocolMainService } from 'code-oss-dev/out/vs/platform/protocol/electron-main/protocolMainService.js';
 import { ITunnelService } from 'code-oss-dev/out/vs/platform/tunnel/common/tunnel.js';
 import { TunnelService } from 'code-oss-dev/out/vs/platform/tunnel/node/tunnelService.js';
 import { IRequestService } from 'code-oss-dev/out/vs/platform/request/common/request.js';
@@ -114,7 +123,6 @@ import { SignService } from 'code-oss-dev/out/vs/platform/sign/node/signService.
 import { IStateReadService, IStateService } from 'code-oss-dev/out/vs/platform/state/node/state.js';
 import { NullTelemetryService } from 'code-oss-dev/out/vs/platform/telemetry/common/telemetryUtils.js';
 import { IThemeMainService } from 'code-oss-dev/out/vs/platform/theme/electron-main/themeMainService.js';
-import { ThemeMainService } from 'code-oss-dev/out/vs/platform/theme/electron-main/themeMainServiceImpl.js';
 import { IUserDataProfilesMainService, UserDataProfilesMainService } from 'code-oss-dev/out/vs/platform/userDataProfile/electron-main/userDataProfile.js';
 import { isInnoSetupInstall } from 'code-oss-dev/out/vs/platform/update/electron-main/win32UpdateType.js';
 import { IPolicyService, NullPolicyService } from 'code-oss-dev/out/vs/platform/policy/common/policy.js';
@@ -356,7 +364,7 @@ class CodeMain {
 		services.set(IRequestService, new SyncDescriptor(RequestService, undefined, true));
 
 		// Themes
-		services.set(IThemeMainService, new SyncDescriptor(ThemeMainService));
+		services.set(IThemeMainService, new SyncDescriptor(DevHubThemeMainService));
 
 		// Signing
 		services.set(ISignService, new SyncDescriptor(SignService, undefined, false /* proxied to other processes */));
@@ -365,7 +373,7 @@ class CodeMain {
 		services.set(ITunnelService, new SyncDescriptor(TunnelService));
 
 		// Protocol (instantiated early and not using sync descriptor for security reasons)
-		services.set(IProtocolMainService, new ProtocolMainService(environmentMainService, userDataProfilesMainService, logService));
+		services.set(IProtocolMainService, new DevHubProtocolMainService(environmentMainService, userDataProfilesMainService, logService));
 
 		return [new InstantiationService(services, true), instanceEnvironment, environmentMainService, configurationService, stateService, bufferLogger, productService, userDataProfilesMainService];
 	}

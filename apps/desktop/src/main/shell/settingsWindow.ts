@@ -42,6 +42,8 @@ import {
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
+import { shellThemeIfInstalled } from "./shellTheme.js";
+import type { ShellPalette } from "../../ipc/palette.js";
 
 /** Where the log folder button opens, given the app's user-data directory. */
 export { logDirectoryFor } from "../diagnostics/mainLog.js";
@@ -121,6 +123,11 @@ export function openSettingsWindow(): void {
 		minHeight: 540,
 		title: WINDOW_TITLES.settings,
 		titleBarStyle: "hiddenInset",
+		// The ground the page paints (`windowBackground.css`), so a reload or
+		// a resize the page has not caught up with shows the theme's colour
+		// rather than Electron's white. Kept in step by
+		// `applySettingsWindowPalette`.
+		backgroundColor: shellThemeIfInstalled()?.palette().canvas,
 		show: false,
 		webPreferences: {
 			preload: settings.preloadPath,
@@ -139,6 +146,12 @@ export function openSettingsWindow(): void {
 }
 
 /** True while the Settings window is the key window. */
+/** The theme changed: the window's own ground follows, as the shell's does. */
+export function applySettingsWindowPalette(palette: ShellPalette): void {
+	if (!window || window.isDestroyed()) return;
+	window.setBackgroundColor(palette.canvas);
+}
+
 export function settingsWindowIsFocused(): boolean {
 	return window !== undefined && !window.isDestroyed() && window.isFocused();
 }

@@ -75,6 +75,16 @@ describe("the theme DevHub wears", () => {
 		expect(h.changes()).toBe(1);
 	});
 
+	it("is the theme a starting workbench is handed, for the appearance now", () => {
+		const h = harness();
+		h.theme.configure({ dark: "Monokai", light: "Light 2026" });
+		expect(h.theme.workbenchColorTheme().definition.settingsId).toBe("Monokai");
+		h.setDark(false);
+		expect(h.theme.workbenchColorTheme().definition.settingsId).toBe(
+			"Light 2026",
+		);
+	});
+
 	it("is the one the settings name, terminal colours included", () => {
 		const h = harness();
 		h.theme.configure({ dark: "Monokai", light: "Light 2026" });

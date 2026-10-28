@@ -14,10 +14,12 @@
  * nobody has said) — and still cannot make the editor disagree with DevHub.
  *
  * The workbench half is the overlay's `devhubManagedSettings.contribution.ts`.
- * It asks once as it starts (`vscode:devhubManagedSettingsRequest`), before
- * its theme service reads the configured theme — that waits for the
- * extensions to be registered, and this answer is one IPC round trip — and
- * is told again whenever the values change (`vscode:devhubManagedSettings`).
+ * A workbench starts with the values already on its window configuration
+ * (`workbenchStartTheme.ts`): its theme service decides which theme to paint
+ * its first frame in as it is constructed, before any question could be
+ * answered. It then asks once (`vscode:devhubManagedSettingsRequest`), which
+ * is what puts it among the workbenches told again whenever the values change
+ * (`vscode:devhubManagedSettings`).
  */
 
 import type { WorkbenchColorThemes } from "./shellTheme.js";

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  initialColorThemeOf,
   ResolvedColorTheme,
   shellPaletteOfTheme,
   terminalPaletteOfTheme,
   ThemeColor,
   themeTypeOfUiTheme,
+  windowSplashOfTheme,
   type ColorDefaultsTable,
   type ColorThemeDefinition,
   type ColorThemeType,
@@ -247,5 +249,66 @@ describe("the theme type", () => {
     expect(themeTypeOfUiTheme("hc-black")).toBe("hcDark");
     expect(themeTypeOfUiTheme("hc-light")).toBe("hcLight");
     expect(themeTypeOfUiTheme(undefined)).toBe("dark");
+  });
+});
+
+describe("what a workbench starts in", () => {
+  it("is the theme's type and the hex colours its file sets", () => {
+    expect(
+      initialColorThemeOf(
+        theme("hcLight", {
+          "editor.background": "#fafafa",
+          focusBorder: "#0000ff80",
+          "sideBar.background": "blue",
+          foreground: "#abc",
+        }),
+      ),
+    ).toEqual({
+      themeType: "hcLight",
+      colors: {
+        "editor.background": "#fafafa",
+        focusBorder: "#0000ff80",
+        foreground: "#abc",
+      },
+    });
+  });
+
+  it("splashes as partsSplash.ts would store it", () => {
+    const splash = windowSplashOfTheme(
+      new ResolvedColorTheme(
+        theme("dark", {
+          "editor.background": "#10203080",
+          "titleBar.activeBackground": "#ffffff80",
+          "sideBar.background": "#222222",
+          foreground: "#eeeeee",
+        }),
+      ),
+    );
+    expect(splash).toEqual({
+      baseTheme: "vs-dark",
+      colorInfo: {
+        // formatHex: the alpha is dropped, not composited.
+        background: "#102030",
+        foreground: "#eeeeee",
+        editorBackground: "rgba(16, 32, 48, 0.5)",
+        // Opaque over the workbench's own ground, #252526 in a dark theme.
+        titleBarBackground: "#929292",
+        sideBarBackground: "#222222",
+      },
+    });
+  });
+
+  it("names each theme type's class", () => {
+    const base = (type: ColorThemeType) =>
+      windowSplashOfTheme(new ResolvedColorTheme(theme(type))).baseTheme;
+    expect(base("light")).toBe("vs");
+    expect(base("dark")).toBe("vs-dark");
+    expect(base("hcDark")).toBe("hc-black");
+    expect(base("hcLight")).toBe("hc-light");
+  });
+
+  it("falls back to the workbench's ground for the splash background", () => {
+    const resolved = new ResolvedColorTheme(theme("light"), {});
+    expect(windowSplashOfTheme(resolved).colorInfo.background).toBe("#f3f3f3");
   });
 });

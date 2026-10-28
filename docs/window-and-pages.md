@@ -341,31 +341,64 @@ outright. A name no installed theme has, or a theme file that will not read, is
 said once (`color_theme_unavailable`) and VS Code's default for that half is
 worn instead.
 
-**Every workbench wears the same theme.** It is told, not asked: as it starts,
-the overlay's `devhubManagedSettings.contribution.ts` asks main
-(`vscode:devhubManagedSettingsRequest`) and is answered — and told again
-whenever the theme changes — with `workbench.colorTheme`,
-`workbench.preferredDarkColorTheme`, `workbench.preferredLightColorTheme` and
-`window.autoDetectColorScheme = true` (`workbenchManagedSettings.ts`). It holds
-them in VS Code's _memory_ configuration, the layer above the person's
-`settings.json` and a folder's `.vscode/settings.json` that nothing writes to
-disk. The person's files stay theirs, and still cannot make the editor disagree
-with the window around it; a theme chosen in an editor's own picker does not
-stick, because the theme is chosen in DevHub's Settings. The answer is one IPC
-round trip and the theme service reads its configured theme only once the
-extensions are registered, so a workbench comes up in DevHub's theme. (OS high
-contrast is still the workbench's own `window.autoDetectHighContrast`; DevHub
-does not follow it.)
+**Every workbench wears the same theme.** It is told, not asked:
+`workbench.colorTheme`, `workbench.preferredDarkColorTheme`,
+`workbench.preferredLightColorTheme` and `window.autoDetectColorScheme = true`
+(`workbenchManagedSettings.ts`), held in VS Code's _memory_ configuration, the
+layer above the person's `settings.json` and a folder's `.vscode/settings.json`
+that nothing writes to disk. The person's files stay theirs, and still cannot
+make the editor disagree with the window around it; a theme chosen in an
+editor's own picker does not stick, because the theme is chosen in DevHub's
+Settings. (OS high contrast is still the workbench's own
+`window.autoDetectHighContrast`; DevHub does not follow it.)
+
+**From the first frame** (`workbenchStartTheme.ts`). A workbench paints its
+window splash before any of its code runs, and its theme service is
+constructed while the workbench lays itself out — before any contribution and
+long before an answer to a question could arrive — and decides there whether
+the theme it cached last time (`colorThemeData`, token colours and all) is the
+one to show until the theme's file is read: only if it is the theme the
+settings name. When the values were only asked for by the overlay's
+contribution, the settings at that moment were the person's own (or VS Code's
+default), DevHub's cached theme was thrown away, and every reload, every wake
+from hibernation and every cold start painted VS Code's default dark or light
+and switched once the extensions were registered. So the theme is now handed
+over with the window configuration, which the renderer has before any of the
+workbench is loaded:
+
+- `devhubManagedSettings`: the same four settings. The overlay
+  (`devhubManagedSettings.contribution.ts`) registers the theme service as a
+  subclass that writes them into the memory configuration before upstream's
+  constructor reads them, so the cached theme is kept.
+- `devhubInitialColorTheme`: the theme's type and the colours its file sets —
+  upstream's `initialColorTheme`, which the web workbench's embedders use for
+  the same purpose — worn when nothing in that theme is cached (a profile that
+  never wore it, a workbench that slept through the change to it), until the
+  file is read.
+- The window splash. VS Code stores one for every window, saved by whichever
+  workbench saved last; `DevHubThemeMainService` stamps each save with the
+  theme it was saved in and hands a window one made from the theme being worn
+  (its colours, no layout) when the stored one is in another theme or was
+  never stamped. The workbench view's background is the splash's.
+
+`DevHubProtocolMainService` adds the first two to the configuration each time
+`CodeWindow` hands one to its renderer — every load, so a window reloaded
+(Developer: Reload Window, DevHub's own reload), woken or restored at a cold
+start starts in the theme worn at that load. After that the contribution asks
+once (`vscode:devhubManagedSettingsRequest`), which is how main learns to tell
+that workbench again whenever the theme changes. The shell's pages are served
+with the palette in their `<head>` (`shellPageProtocol.ts`), and the window and
+the Settings window are created with its ground as their background, so they
+need none of this.
 
 This replaced following the workbenches. The shell used to wear the window
-splash each workbench reported (`DevHubThemeMainService`, now upstream's
-`ThemeMainService` again), the panes read `--vscode-terminal-*` out of a
-workbench's page and kept the answer in `terminal-colors.json` for when none
-was awake, and a folder's own `workbench.colorTheme` could recolour the window
-whenever that workbench was in front. All of it is gone; nothing is cached,
-because the theme is read from its files in a few milliseconds at startup and
-again on every save of the settings (so a theme installed since is found by
-saving the setting that names it).
+splash each workbench reported (the first `DevHubThemeMainService`), the panes
+read `--vscode-terminal-*` out of a workbench's page and kept the answer in
+`terminal-colors.json` for when none was awake, and a folder's own
+`workbench.colorTheme` could recolour the window whenever that workbench was in
+front. All of it is gone; nothing is cached, because the theme is read from its
+files in a few milliseconds at startup and again on every save of the settings
+(so a theme installed since is found by saving the setting that names it).
 
 Three scopes survive underneath this, and they are about _subject_ rather than
 about routing: an Agent's own failure is drawn over that Agent's pane, a

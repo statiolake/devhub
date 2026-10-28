@@ -137,6 +137,15 @@ export class ShellTheme {
 		return { dark, light, current: this.prefersDark() ? dark : light };
 	}
 
+	/**
+	 * The theme a workbench wears now, resolved: what one that is starting is
+	 * handed, so that its first frame is already in it
+	 * (`workbenchStartTheme.ts`).
+	 */
+	workbenchColorTheme(): ResolvedColorTheme {
+		return this.current().theme;
+	}
+
 	/** Who to tell when any of the above changed. */
 	onDidChange(listener: () => void): void {
 		if (this.changed) {
