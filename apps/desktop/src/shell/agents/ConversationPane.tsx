@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AppAppearance } from "../../ipc/appShell";
+import type { ContextMenuRequestWire } from "../../ipc/contract";
 import type { FileRange } from "../../ipc/conversation";
 import {
   EMPTY_TRANSCRIPT,
@@ -64,6 +65,9 @@ export function ConversationPane({
     const bridge = devhub();
     return {
       writeClipboard: (text: string) => bridge.writeClipboard(text),
+      writeClipboardImage: (png: Uint8Array) => bridge.writeClipboardImage(png),
+      showContextMenu: (request: ContextMenuRequestWire) =>
+        bridge.showContextMenu(request),
       openExternalUrl: (url: string) => bridge.openExternalUrl(url),
       send: (text: string, images: readonly ImageRef[]) =>
         bridge.conversation.send(agentId, text, images),

@@ -159,3 +159,23 @@ export function ColumnIcon() {
     </Icon>
   );
 }
+
+/** A diagram's "Show source": the code it is drawn from. */
+export function CodeIcon() {
+  return (
+    <Icon>
+      <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />
+    </Icon>
+  );
+}
+
+/** A diagram's source's "Show diagram": boxes and the edge between them. */
+export function DiagramIcon() {
+  return (
+    <Icon>
+      <rect x="1.75" y="2.25" width="5" height="4" rx="1" />
+      <rect x="9.25" y="9.75" width="5" height="4" rx="1" />
+      <path d="M4.25 6.25v3.5a1.5 1.5 0 0 0 1.5 1.5h3.5" />
+    </Icon>
+  );
+}

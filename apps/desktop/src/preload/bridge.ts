@@ -290,6 +290,11 @@ export function focusSurface(): Promise<void> {
 	return ipcRenderer.invoke(CHANNELS.focusSurface) as Promise<void>;
 }
 
+/** Put a PNG on the Mac's clipboard — a diagram from a GUI Agent's answer. */
+export function writeClipboardImage(png: Uint8Array): Promise<void> {
+	return ipcRenderer.invoke(CHANNELS.writeClipboardImage, png) as Promise<void>;
+}
+
 /** Put text on the Mac's clipboard — OSC 52 from a pane. */
 export function writeClipboard(text: string): Promise<void> {
 	return ipcRenderer.invoke(CHANNELS.writeClipboard, text) as Promise<void>;

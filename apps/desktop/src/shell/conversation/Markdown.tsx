@@ -14,6 +14,9 @@
  * settled document is looked through: a path still being written would be
  * asked about one keystroke at a time.
  *
+ * A closed ```mermaid or ```svg block is drawn as a picture (`Diagram.tsx`);
+ * one still open is code like any other.
+ *
  * While the answer streams, its source is drawn as two documents: the settled
  * prefix, memoized so a delta does not parse it again, and the tail, which is
  * re-parsed on every delta and whose code is not coloured (see
@@ -34,6 +37,8 @@ import "katex/dist/katex.min.css";
 import { normalizeMath } from "./mathDelimiters";
 import { fileNotFoundError } from "../failure";
 import { CodeBlock } from "./CodeBlock";
+import { Diagram } from "./Diagram";
+import { diagramKindOf } from "./diagram";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
 import { LinkedText } from "./LinkedText";
@@ -184,13 +189,14 @@ function componentsFor(settled: boolean): Components {
           child.type === "element" && child.tagName === "code",
       );
       const text = code ? textOf(code.children) : "";
-      return (
-        <CodeBlock
-          code={text.endsWith("\n") ? text.slice(0, -1) : text}
-          info={code ? languageOf(code) : undefined}
-          settled={settled}
-        />
-      );
+      const source = text.endsWith("\n") ? text.slice(0, -1) : text;
+      const info = code ? languageOf(code) : undefined;
+      // A picture only once its fence has closed: until then it is code.
+      const kind = settled ? diagramKindOf(info, source) : undefined;
+      if (kind !== undefined) {
+        return <Diagram kind={kind} code={source} info={info} />;
+      }
+      return <CodeBlock code={source} info={info} settled={settled} />;
     },
     span({ node, children, className, style }) {
       // Raw HTML is skipped, so every span is one `rehypeLinks` or KaTeX made.

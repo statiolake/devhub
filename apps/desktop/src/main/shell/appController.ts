@@ -474,6 +474,7 @@ import { SettingsRefusal } from "./settingsRefusal.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
+import { writeClipboardImage } from "./clipboardImage.js";
 import { popupContextMenu } from "./contextMenu.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import {
@@ -8931,6 +8932,9 @@ export class AppController {
 		handle(CHANNELS.writeClipboard, (_event, text: string) => {
 			electron.clipboard.writeText(text);
 		});
+		handle(CHANNELS.writeClipboardImage, (_event, png: unknown) => {
+			writeClipboardImage(png);
+		});
 		// A drag in progress, which is the one geometric fact the page owns
 		// while it lasts: the pointer is in the page, and the model only learns
 		// where the person stopped. Everything else about the layout is
@@ -9000,16 +9004,21 @@ export class AppController {
 		// arrives in window coordinates — see `SidebarAreaWire` for how the
 		// page knows its own origin, which is main's number and not a
 		// measurement.
-		// A row's context menu, as a native menu over the window, so no view's
-		// bounds can clip it. The page's point plus the place main laid the
-		// Sidebar is where the click was. The tooltip goes first: it was about
+		// A row's context menu (or a diagram's, from the Agents page), as a
+		// native menu over the window, so no view's bounds can clip it. The
+		// page's point plus the place main laid that page is where the click
+		// was. The tooltip goes first: it was about
 		// the row the pointer rested on, and the menu is what is being read now.
 		handle(
 			CHANNELS.showContextMenu,
-			(_event, request: ContextMenuRequestWire) => {
+			(event, request: ContextMenuRequestWire) => {
 				const window = shellWindow();
 				window.tooltip.hide();
-				return popupContextMenu(window.window, request, window.sidebarArea());
+				return popupContextMenu(
+					window.window,
+					request,
+					window.contextMenuOrigin(event.sender),
+				);
 			},
 		);
 		receive(CHANNELS.showTooltip, (_event, request: TooltipRequestWire) => {

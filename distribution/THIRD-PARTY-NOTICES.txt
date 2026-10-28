@@ -33,6 +33,13 @@ Shipped application components
 * Shiki 4.4.3 (`shiki` and `@shikijs/*`) — MIT, with the packages it depends on
   (MIT); see `licenses/Shiki-MIT.txt`. It colours code in a GUI Agent's
   transcript with its JavaScript regex engine.
+* Mermaid 11.17.2 — MIT, with the packages it depends on (d3 and its modules,
+  dagre-d3-es, cytoscape, DOMPurify, KaTeX, khroma, roughjs, marked and the
+  rest; MIT, ISC, BSD-3-Clause, Apache-2.0, Unlicense, and DOMPurify under
+  MPL-2.0 OR Apache-2.0); see `licenses/Mermaid-and-dependencies.txt`, which
+  names every package and version with its licence text. The App Shell bundle
+  carries them as chunks loaded only when a GUI Agent's answer draws a
+  ```mermaid diagram.
 * The TextMate grammars for C, C#, CSS, diff, Dockerfile, Go, HTML, Java,
   JavaScript, JSON, JSON with Comments, JSX, Kotlin, Lua, Python, Rust, shell
   script, SQL, Swift, TSX, TypeScript and XML, and VS Code's Light+ and Dark+
@@ -99,6 +106,7 @@ Upstream source references
 * https://github.com/remarkjs/react-markdown
 * https://github.com/remarkjs/remark-gfm
 * https://github.com/shikijs/shiki
+* https://github.com/mermaid-js/mermaid
 * https://github.com/shikijs/textmate-grammars-themes
 * https://github.com/herdrdev/herdr
 * https://github.com/openai/codex

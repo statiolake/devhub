@@ -1309,6 +1309,19 @@ export interface AgentsBridge
 	 */
 	writeClipboard(text: string): Promise<void>;
 	/**
+	 * Put a picture on the Mac's clipboard: a diagram of a GUI Agent's answer,
+	 * rasterised by the page (`shell/conversation/diagramCopy.ts`). PNG bytes;
+	 * main refuses anything that is not one. Main's clipboard for the same
+	 * reason as `writeClipboard`: the page's is gated on focus.
+	 */
+	writeClipboardImage(png: Uint8Array): Promise<void>;
+	/**
+	 * Put a context menu up over the window, as a native menu — a right-click
+	 * on a diagram in a GUI Agent's answer. Resolves to the id chosen, or
+	 * `undefined`; the page runs it. `at` is in this page's coordinates.
+	 */
+	showContextMenu(request: ContextMenuRequestWire): Promise<string | undefined>;
+	/**
 	 * The Surface runtime.
 	 *
 	 * There is one, and there used to be two. An Agent had its own namespace
@@ -1707,6 +1720,7 @@ export const CHANNELS = {
 	openMicrophoneSettings: "devhub:open-microphone-settings",
 	openExternalUrl: "devhub:open-external-url",
 	writeClipboard: "devhub:write-clipboard",
+	writeClipboardImage: "devhub:write-clipboard-image",
 	previewLayout: "devhub:preview-layout",
 	focusSurface: "devhub:focus-surface",
 

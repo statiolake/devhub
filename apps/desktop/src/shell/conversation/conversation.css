@@ -938,6 +938,69 @@
   color: light-dark(var(--code-light), var(--code-dark));
 }
 
+.conversation-code-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* ------------------------------------------------------------- Diagrams */
+
+/* A ```mermaid or ```svg block, drawn: the code block's frame and header,
+   on the surface rather than in a recess, because a picture is drawn in the
+   surface's own colours (`diagramTheme.ts`). */
+.conversation-diagram {
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-panel);
+  margin: 0.75em 0;
+  background: var(--surface);
+}
+
+.conversation-diagram-picture {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3);
+  overflow-x: auto;
+}
+
+/* At its own size, and never wider than the column. */
+.conversation-diagram-picture img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  user-select: none;
+  animation: conversation-diagram-in var(--motion-base) var(--ease-enter);
+}
+
+@keyframes conversation-diagram-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-diagram-picture img {
+    animation: none;
+  }
+}
+
+.conversation-diagram-toggle[aria-pressed="true"] {
+  color: var(--secondary);
+}
+
+/* The source drawn in place of a diagram that would not draw, and a quiet
+   line under it saying why — the way an unparsable formula is its source. */
+.conversation-diagram-failed > .conversation-code {
+  margin-bottom: var(--space-1);
+}
+
+.conversation-diagram-error {
+  margin: 0 0 0.75em;
+  color: var(--secondary);
+  font-size: 0.8em;
+}
+
 /* --------------------------------------------------- Tool calls, subagents */
 
 /* One line: a status glyph, the verb and its target, the status. It opens

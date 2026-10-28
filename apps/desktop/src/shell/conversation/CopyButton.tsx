@@ -7,7 +7,7 @@ export const COPIED_MS = 1500;
 
 /**
  * Put one piece of the transcript on the clipboard: an answer's Markdown
- * source, or one code block's contents.
+ * source, one code block's contents, or a diagram as a picture.
  *
  * Through the page's `writeClipboard`, not `navigator.clipboard`: the browser
  * API is gated on the document having focus, and the Agents view does not
@@ -22,9 +22,13 @@ export const COPIED_MS = 1500;
  */
 export function CopyButton({
   text,
+  copy,
   label,
 }: {
-  readonly text: string;
+  /** Text, through `writeClipboard`… */
+  readonly text?: string;
+  /** …or a write of its own: a diagram's picture (`writeClipboardImage`). */
+  readonly copy?: () => Promise<void>;
   /** What is being copied, for the accessible name: "Copy answer". */
   readonly label: string;
 }) {
@@ -46,7 +50,7 @@ export function CopyButton({
       title={copied ? "Copied" : label}
       data-copied={copied || undefined}
       onClick={() => {
-        void writeClipboard(text).then(
+        void (copy ?? (() => writeClipboard(text ?? "")))().then(
           () => setCopiedAt(Date.now()),
           reportFailure,
         );

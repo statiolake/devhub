@@ -88,6 +88,11 @@ export class ChromeView {
 		this.view.setVisible(false);
 	}
 
+	/** Where the view is in the window, as it was last placed. */
+	bounds(): Electron.Rectangle {
+		return this.view.getBounds();
+	}
+
 	contents(): Electron.WebContents | undefined {
 		return this.view.webContents.isDestroyed()
 			? undefined

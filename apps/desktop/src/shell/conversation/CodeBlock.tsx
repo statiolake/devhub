@@ -1,4 +1,10 @@
-import { memo, useEffect, useState, type CSSProperties } from "react";
+import {
+  memo,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { CopyButton } from "./CopyButton";
 import {
   colouringOf,
@@ -22,10 +28,13 @@ export const CodeBlock = memo(function CodeBlock({
   code,
   info,
   settled,
+  actions,
 }: {
   readonly code: string;
   readonly info: string | undefined;
   readonly settled: boolean;
+  /** More buttons in the header, before the copy: a diagram's "Show diagram". */
+  readonly actions?: ReactNode;
 }) {
   const grammar = settled ? grammarFor(info) : undefined;
   // The colouring itself is kept by `highlight`; this state only says that
@@ -50,7 +59,10 @@ export const CodeBlock = memo(function CodeBlock({
     <div className="conversation-code" data-language={language || undefined}>
       <div className="conversation-code-header">
         <span className="conversation-code-language">{language}</span>
-        <CopyButton text={code} label="Copy code" />
+        <span className="conversation-code-actions">
+          {actions}
+          <CopyButton text={code} label="Copy code" />
+        </span>
       </div>
       <pre data-highlighted={lines !== undefined || undefined}>
         <code>

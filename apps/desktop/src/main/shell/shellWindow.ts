@@ -1338,6 +1338,20 @@ export class ShellWindow {
 		return sidebarRect(this.windowSize(), this.state);
 	}
 
+	/**
+	 * Where the page that asked for a context menu is, in the window: the
+	 * Agents view for a right-click in a GUI Agent's answer, the Sidebar for
+	 * every other request (the only other page that asks).
+	 */
+	contextMenuOrigin(sender: Electron.WebContents): SidebarAreaWire {
+		const agents = this.agents.contents();
+		if (agents !== undefined && sender === agents) {
+			const { x, y, width, height } = this.agents.bounds();
+			return { x, y, width, height };
+		}
+		return this.sidebarArea();
+	}
+
 	workbenchArea(): WorkbenchAreaWire {
 		const size = this.windowSize();
 		const seam = terminalSeam(size, this.state);

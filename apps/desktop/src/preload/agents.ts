@@ -6,8 +6,12 @@
  * `AgentsBridge`, and `shell/agents/AgentsApp.tsx`.
  */
 
-import { contextBridge } from "electron";
-import type { AgentsBridge } from "../ipc/contract.js";
+import { contextBridge, ipcRenderer } from "electron";
+import {
+	CHANNELS,
+	type AgentsBridge,
+	type ContextMenuRequestWire,
+} from "../ipc/contract.js";
 import {
 	agentActionsBridge,
 	appearanceBridge,
@@ -17,6 +21,7 @@ import {
 	projectionBridge,
 	repositoryStatusBridge,
 	writeClipboard,
+	writeClipboardImage,
 } from "./bridge.js";
 import { conversationApi } from "./conversation.js";
 import { terminalApi } from "./terminal.js";
@@ -32,6 +37,11 @@ const api: AgentsBridge = {
 	openModal,
 	openExternalUrl,
 	writeClipboard,
+	writeClipboardImage,
+	showContextMenu: (request: ContextMenuRequestWire) =>
+		ipcRenderer.invoke(CHANNELS.showContextMenu, request) as Promise<
+			string | undefined
+		>,
 	terminal: terminalApi,
 	conversation: conversationApi,
 	voice: voiceApi,

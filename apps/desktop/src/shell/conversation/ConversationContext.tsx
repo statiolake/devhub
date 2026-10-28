@@ -18,6 +18,7 @@
 
 import type { CliDefaults } from "../../model/cliDefaults";
 import { createContext, useContext } from "react";
+import type { ContextMenuRequestWire } from "../../ipc/contract";
 import type { FileRange } from "../../ipc/conversation";
 import type { VoiceApi } from "../../ipc/voice";
 import type {
@@ -35,6 +36,15 @@ export type SettingName = "model" | "effort" | "mode";
 
 export interface ConversationActions {
   readonly writeClipboard: (text: string) => Promise<void>;
+  /** Put a PNG on the clipboard, through main: a diagram's "Copy image". */
+  readonly writeClipboardImage: (png: Uint8Array) => Promise<void>;
+  /**
+   * Put a native context menu up at `at` (this page's coordinates) and
+   * resolve to the id chosen, or `undefined`: a right-click on a diagram.
+   */
+  readonly showContextMenu: (
+    request: ContextMenuRequestWire,
+  ) => Promise<string | undefined>;
   readonly openExternalUrl: (url: string) => Promise<void>;
   /**
    * Say something to the Agent as the person: written at once when it is
