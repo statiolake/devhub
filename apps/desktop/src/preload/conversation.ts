@@ -14,6 +14,7 @@ import {
 	type ConversationAttachment,
 	type ConversationCommandWire,
 	type ConversationEventListener,
+	type ConversationInsertListener,
 } from "../ipc/conversation.js";
 import type {
 	ConversationEvent,
@@ -21,6 +22,14 @@ import type {
 } from "../model/conversation.js";
 
 const listeners = new Map<string, ConversationEventListener>();
+const inserts = new Map<string, ConversationInsertListener>();
+
+ipcRenderer.on(
+	CONVERSATION_CHANNELS.insert,
+	(_event, agentId: string, text: string) => {
+		inserts.get(agentId)?.(text);
+	},
+);
 
 ipcRenderer.on(
 	CONVERSATION_CHANNELS.event,
@@ -41,11 +50,12 @@ function command(
 }
 
 export const conversationApi: ConversationApi = {
-	attach: async (agentId, onEvent) => {
+	attach: async (agentId, onEvent, onInsert) => {
 		// Listening before asking: an event main sends between reading the
 		// snapshot and answering arrives before the answer, and the page drops
 		// it by its revision rather than never seeing it.
 		listeners.set(agentId, onEvent);
+		if (onInsert !== undefined) inserts.set(agentId, onInsert);
 		try {
 			return (await ipcRenderer.invoke(
 				CONVERSATION_CHANNELS.attach,
@@ -53,11 +63,13 @@ export const conversationApi: ConversationApi = {
 			)) as ConversationAttachment;
 		} catch (failure: unknown) {
 			listeners.delete(agentId);
+			inserts.delete(agentId);
 			throw failure;
 		}
 	},
 	detach: async (agentId) => {
 		listeners.delete(agentId);
+		inserts.delete(agentId);
 		await ipcRenderer.invoke(CONVERSATION_CHANNELS.detach, agentId);
 	},
 	send: (agentId, text, images) =>

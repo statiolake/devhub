@@ -19,7 +19,9 @@ import {
 import type {
   ConversationAttachment,
   ConversationEventListener,
+  ConversationInsertListener,
 } from "../../ipc/conversation";
+import type { ComposerInsertion } from "../conversation/Composer";
 import {
   assistant,
   put,
@@ -31,19 +33,23 @@ import { ConversationPane } from "./ConversationPane";
 
 const drawn: Transcript[] = [];
 const drafts: (string | undefined)[] = [];
+const insertions: (readonly ComposerInsertion[] | undefined)[] = [];
 const repositories: (IssueRepository | undefined)[] = [];
 vi.mock("../conversation/ConversationSurface", () => ({
   ConversationSurface: ({
     transcript,
     savedDraft,
+    inserted,
     issueRepository,
   }: {
     transcript: Transcript;
     savedDraft: string | undefined;
+    inserted: readonly ComposerInsertion[] | undefined;
     issueRepository: IssueRepository | undefined;
   }) => {
     drawn.push(transcript);
     drafts.push(savedDraft);
+    insertions.push(inserted);
     repositories.push(issueRepository);
     return null;
   },
@@ -67,11 +73,14 @@ function runFrame() {
 }
 
 let listener: ConversationEventListener | undefined;
+let insertListener: ConversationInsertListener | undefined;
 let answerAttach: (attachment: ConversationAttachment) => void = () => {};
 
 beforeEach(() => {
   drawn.length = 0;
   drafts.length = 0;
+  insertions.length = 0;
+  insertListener = undefined;
   repositories.length = 0;
   repositoryStatus = { sequence: 0, workspaces: [] };
   reportFailure.mockReset();
@@ -86,8 +95,13 @@ beforeEach(() => {
   });
   window.devhub = {
     conversation: {
-      attach: (_agentId: string, onEvent: ConversationEventListener) => {
+      attach: (
+        _agentId: string,
+        onEvent: ConversationEventListener,
+        onInsert?: ConversationInsertListener,
+      ) => {
         listener = onEvent;
+        insertListener = onInsert;
         return new Promise<ConversationAttachment>((resolve) => {
           answerAttach = resolve;
         });
@@ -105,7 +119,11 @@ afterEach(() => {
 
 const STREAMING = transcriptOf([put(assistant("a1", "", { streaming: true }))]);
 
-async function attached(revision = 5, draft = "") {
+async function attached(
+  revision = 5,
+  draft = "",
+  inserted: readonly string[] = [],
+) {
   const view = render(
     <ConversationPane
       agentId="agent-1"
@@ -117,7 +135,7 @@ async function attached(revision = 5, draft = "") {
     />,
   );
   await act(async () => {
-    answerAttach({ transcript: STREAMING, revision, draft });
+    answerAttach({ transcript: STREAMING, revision, draft, inserted });
   });
   return view;
 }
@@ -236,6 +254,42 @@ describe("the kept draft", () => {
     await attached(5, "half a thought");
     expect(drafts[0]).toBeUndefined();
     expect(drafts.at(-1)).toBe("half a thought");
+  });
+});
+
+describe("words put in the composer from outside", () => {
+  const texts = () => (insertions.at(-1) ?? []).map((each) => each.text);
+
+  it("are the ones main held for the attachment, then each one it sends, numbered once each", async () => {
+    await attached(5, "", ["held"]);
+    expect(texts()).toEqual(["held"]);
+    act(() => insertListener?.("later"));
+    expect(texts()).toEqual(["held", "later"]);
+    expect((insertions.at(-1) ?? []).map((each) => each.id)).toEqual([1, 2]);
+  });
+
+  it("that arrive before the attachment answers come after the ones it held", async () => {
+    render(
+      <ConversationPane
+        agentId="agent-1"
+        workspaceId="workspace-1"
+        label="Agent 1"
+        cli="Claude"
+        appearance={undefined}
+        hidden={false}
+      />,
+    );
+    act(() => insertListener?.("early"));
+    expect(texts()).toEqual([]);
+    await act(async () => {
+      answerAttach({
+        transcript: STREAMING,
+        revision: 5,
+        draft: "",
+        inserted: ["held"],
+      });
+    });
+    expect(texts()).toEqual(["held", "early"]);
   });
 });
 

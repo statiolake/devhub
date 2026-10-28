@@ -864,6 +864,95 @@ Workspace whose editor cannot be reached, or a machine that could not be
 asked is said once, the way every other failure on the Agents page is — never
 an empty editor for a file that is not there.
 
+## Send the editor's selection to an Agent
+
+The other way round: from a file in the editor to an Agent's input box. In a
+Workspace's editor (VS Code mode), select some text and choose **Send to
+Agent…** — in the editor's context menu, in the Command Palette (_DevHub: Send
+to Agent…_, `devhub.sendSelectionToAgent`) or with `Cmd+Alt+K`
+(`Ctrl+Alt+K` elsewhere; rebind it in `keybindings.json` like any command).
+
+1. **Which Agent.** A list over the window: the Workspace's Agents, each with
+   its profile, whether it is a GUI or a terminal Agent, and its status —
+   the one last selected in the Workspace first, then the newest — and a
+   _New …_ row for every profile in `settings.toml`, which starts one as New
+   Agent does. The row chosen last time leads the list (_last used_), so a
+   second send is `Cmd+Alt+K Return`. It is remembered per Workspace, and a
+   _New_ row also for Workspaces with no choice of their own, for as long as
+   DevHub runs.
+2. **Beside the editor.** The Agent is shown as the split, the editor on the
+   left, the Agent on the right (as `Option-Return` in a picker shows one),
+   with the keyboard in it. A new Agent is started that way.
+3. **In its input box, not sent.** What is put there is a reference to the
+   file and lines, then the selected text as a fenced block in the file's
+   language, ending on a new line for your question. Nothing is sent: you
+   read it, add to it and send it yourself.
+
+What is written depends on who reads it:
+
+| Agent | Reference | |
+| --- | --- | --- |
+| GUI (Claude or Codex) | `[src/a.ts:12-20](src/a.ts#L12-L20)` | the conversation's own file link (above); after the draft if there is one |
+| Claude Code in a terminal | `@src/a.ts#L12-20` | its `@` mention, which attaches the file with that range — the form its editor integrations insert; a path with a space is `@"my dir/a.ts#L12-20"` |
+| Codex, or any other CLI, in a terminal | `src/a.ts:12-20` | a plain path: Codex's `@` is a file search that inserts the path as text |
+
+For example, lines 12–14 of `src/a.ts` sent to a terminal Claude:
+
+````text
+@src/a.ts#L12-14
+```typescript
+const a = 1;
+const b = 2;
+f(a, b);
+```
+````
+
+- **Paths** are relative to the Agent's working directory (its Workspace's
+  folder) when the file is in it, absolute otherwise. An SSH Workspace's
+  files are named by their path on the host; a dev container's by their path
+  in the container, which is absolute to an Agent on the host.
+- **The language** is the editor's (`typescriptreact` is `tsx`, `shellscript`
+  is `sh`, plain text has none); a fence is longer than any run of backticks
+  in the text.
+- **Several selections** (multiple cursors, `Cmd+D`) are each a reference and a
+  block, in document order, a blank line apart.
+- **No selection** sends the reference to the cursor's line alone — the file
+  and `#L42` — with no block. A document that is no file (an untitled
+  editor) sends the text alone.
+- **Attachments.** The composer attaches images, not files, so the reference
+  is the attachment: a GUI or terminal Agent reads the file itself.
+
+**Into a GUI Agent** the words go after the composer's draft, on a paragraph of
+their own, with the caret after them (`ConversationApi.attach`'s `onInsert`;
+for an Agent that has only just started, main holds them and hands them out
+with the attachment). **Into a terminal Agent** they are typed into its tmux
+pane as one bracketed paste with no Return
+(`TmuxTerminalRuntime.pasteAgentText`), the same paste Agent actions use, so a
+CLI keeps its line breaks in the prompt box. A terminal Agent that is asking
+a question (a permission menu, a trust prompt) is not typed into, because the
+keys would answer it: DevHub says so and types nothing. A new terminal Agent
+is waited for — up to 30 seconds, through a trust prompt you answer — until
+its prompt has been up for a second.
+
+**DevHub Vim.** In visual mode `devhubVim.run` runs a command with the visual
+selection on screen and then leaves visual mode, so a leader key can send it:
+
+```jsonc
+// keybindings.json: <Space>a sends the visual selection (or, in normal mode,
+// the cursor's line) to an Agent
+{ "key": "space a", "command": "devhubVim.run",
+  "args": { "command": "devhub.sendSelectionToAgent" },
+  "when": "devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'" }
+```
+
+`V` sends whole lines: a selection that ends at the start of a line does not
+take that line.
+
+How it is wired: the overlay's `contrib/devhubSendToAgent/` reads the editor
+(`sendToAgentPayload`) and sends `vscode:devhubSendToAgent` to main, which knows
+the Workspace from the workbench that sent it; `main/shell/sendToAgent.ts`
+asks, shows and inserts, and `main/agent/sendSelection.ts` writes the text.
+
 ## Issue and pull request references open on GitHub
 
 `#128` and `owner/repo#128` in the conversation are links to that Issue or

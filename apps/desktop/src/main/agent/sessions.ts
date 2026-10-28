@@ -225,6 +225,31 @@ export class AgentSessions {
 		);
 	}
 
+	/**
+	 * Put a block of text in one Agent's prompt, as though a person had pasted
+	 * it, and leave it there unsent. Whether its screen may be typed into is
+	 * the caller's to decide (`main/shell/sendToAgent.ts`).
+	 */
+	async paste(
+		machine: RuntimeId,
+		agentId: string,
+		workspaceId: string,
+		text: string,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		const runtime = await this.#runtimeFor(machine);
+		await runtime.pasteAgentText(
+			{
+				kind: "agent",
+				agentId,
+				workspaceId,
+				sessionName: agentSessionName(agentId),
+			},
+			text,
+			cancel,
+		);
+	}
+
 	/** The pid of the process an Agent's pane runs: its command, and so its CLI's. */
 	async panePid(
 		machine: RuntimeId,

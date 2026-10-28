@@ -9,6 +9,7 @@ import type { Transcript } from "../../model/conversation";
 import type { ConversationActions } from "./ConversationContext";
 import type { IssueRepository } from "./issueLinks";
 import { ConversationSurface } from "./ConversationSurface";
+import type { ComposerInsertion } from "./Composer";
 
 /** jsdom lays nothing out, so there is nothing for it to observe. */
 export function installResizeObserver(): void {
@@ -76,6 +77,7 @@ export function draw(
   /** The Agent's Workspace's GitHub repository, if it has one. */
   issueRepository?: IssueRepository,
 ) {
+  let inserted: readonly ComposerInsertion[] = [];
   const surface = (
     next: Transcript,
     nextHidden: boolean,
@@ -88,6 +90,7 @@ export function draw(
       hidden={nextHidden}
       label="Agent 1"
       savedDraft={nextDraft}
+      inserted={inserted}
       issueRepository={issueRepository}
     />
   );
@@ -106,6 +109,11 @@ export function draw(
     /** Main answering the attachment with the saved draft. */
     answerDraft(next: string) {
       draft = next;
+      view.rerender(surface(current, currentHidden, draft));
+    },
+    /** Main putting words in the composer ("Send to Agent…"). */
+    insert(text: string) {
+      inserted = [...inserted, { id: inserted.length + 1, text }];
       view.rerender(surface(current, currentHidden, draft));
     },
   };

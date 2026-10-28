@@ -205,7 +205,11 @@ import {
 	type OperationRefusal,
 	type RefusedOperation,
 } from "./agentFailure.js";
-import { AppModel, type NavigationSelection } from "../../model/appModel.js";
+import {
+	AppModel,
+	type AgentSnapshot,
+	type NavigationSelection,
+} from "../../model/appModel.js";
 import {
 	activeProfile,
 	DEFAULT_PROFILE,
@@ -569,6 +573,13 @@ import {
 	type CommandNeeds,
 } from "../../model/commands.js";
 import {
+	SEND_TO_AGENT_CHANNEL,
+	SendRefused,
+	SendToAgent,
+	type SendTargetAgent,
+} from "./sendToAgent.js";
+import type { ConversationIpc } from "./conversationIpc.js";
+import {
 	openSettingsWindow,
 	publishSettingsSnapshot,
 	settingsWindowContents,
@@ -929,6 +940,66 @@ export class AppController {
 		TerminalLauncherStatus
 	>();
 	private agentWiring: AgentWiring | undefined;
+	/** The Agents page's conversations, once registered: where words for a composer go. */
+	private conversationIpc: ConversationIpc | undefined;
+	/** "Send to Agent…" from the editors. See `sendToAgent.ts`. */
+	private readonly sendToAgent = new SendToAgent({
+		workspaceOf: (sender) => this.sendTargetWorkspace(sender),
+		profiles: () => {
+			const config = this.config;
+			if (!config) return [];
+			return config.agentProfiles.map((profile) => ({
+				id: profile.id,
+				displayName: profile.display_name,
+				presentation: profilePresentation(profile, config.agents),
+			}));
+		},
+		choose: (rows) =>
+			shellWindow().picker.choose({ kind: "send-to-agent", rows }),
+		show: async (agentId) => {
+			await this.dispatchAwaiting(
+				intentFromWire({
+					type: "select_context",
+					context: { kind: "agent", agentId },
+					split: true,
+				}),
+			);
+			// The keyboard into the Agent's half, as a chord's move puts it.
+			this.placeKeyboardOnSurface();
+			this.bringToFront();
+		},
+		create: async (workspaceId, profileId) => {
+			const before = this.modelAgentIds();
+			await this.dispatchAwaiting({
+				type: "create_agent",
+				workspaceId,
+				profileId: agentProfileId(profileId),
+				// Beside the editor it was sent from: the split.
+				presentation: "beside",
+			});
+			this.placeKeyboardOnSurface();
+			this.bringToFront();
+			const created = this.coordinator.model
+				.workspace(workspaceId)
+				?.agents.map((agent) => agent.id)
+				.find((id) => !before.has(id));
+			if (created === undefined)
+				throw new SendRefused("DevHub did not start the Agent.");
+			return created;
+		},
+		agent: (agentId) => this.sendTargetAgent(agentId),
+		insertDraft: (agentId, text) => {
+			if (this.conversationIpc === undefined)
+				throw new SendRefused("DevHub's Agents are not running yet.");
+			this.conversationIpc.insert(agentId, text);
+		},
+		paste: async (agentId, text) => {
+			if (this.agentWiring === undefined)
+				throw new SendRefused("DevHub's Agents are not running yet.");
+			await this.agentWiring.pasteToTerminal(agentId, text);
+		},
+		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+	});
 	/** Each GUI Agent's unsent draft, beside `state.json`. See `drafts.ts`. */
 	private readonly drafts: AgentDrafts;
 	/** What each Agent's automatic actions have already sent. See `runAutomaticActions`. */
@@ -1357,7 +1428,7 @@ export class AppController {
 				ask: () => electron.systemPreferences.askForMediaAccess("microphone"),
 			},
 		});
-		registerConversationIpc({
+		this.conversationIpc = registerConversationIpc({
 			ipcMain: electron.ipcMain,
 			conversations: agentWiring.conversations,
 			drafts: this.drafts,
@@ -9053,9 +9124,51 @@ export class AppController {
 		});
 	}
 
+	/** The Workspace whose workbench `sender` is, as "Send to Agent…" lists it. */
+	private sendTargetWorkspace(sender: unknown) {
+		const window = shellWindow();
+		const view = window.getViewByContents(sender as Electron.WebContents);
+		const key = view === undefined ? undefined : window.editorKeyOf(view);
+		if (key === undefined) return undefined;
+		const workspace = this.coordinator.model
+			.snapshot()
+			.workspaces.find((candidate) => candidate.key === key);
+		if (workspace === undefined) return undefined;
+		return {
+			id: workspace.id,
+			root: workspace.root,
+			agents: workspace.agents.map(sendTargetAgentOf),
+			lastAgentId: workspace.lastAgentId,
+			canCreateAgent: workspace.canCreateAgent,
+		};
+	}
+
+	private sendTargetAgent(agentId: AgentId): SendTargetAgent | undefined {
+		for (const workspace of this.coordinator.model.snapshot().workspaces) {
+			const agent = workspace.agents.find(
+				(candidate) => candidate.id === agentId,
+			);
+			if (agent !== undefined) return sendTargetAgentOf(agent);
+		}
+		return undefined;
+	}
+
 	private registerIpc(): void {
 		const handle = electron.ipcMain.handle.bind(electron.ipcMain);
 		const receive = electron.ipcMain.on.bind(electron.ipcMain);
+
+		// "Send to Agent…" from an editor: the workbench that sent it is the
+		// Workspace it is about (`sendToAgent.ts`).
+		receive(SEND_TO_AGENT_CHANNEL, (event, payload: unknown) => {
+			this.personStartedAction();
+			this.sendToAgent.send(event.sender, payload).catch((failure: unknown) => {
+				this.publishError(
+					failure instanceof SendRefused
+						? withDetail(errorWireAt("send_to_agent_refused"), failure.message)
+						: errorWire(failure),
+				);
+			});
+		});
 
 		handle(CHANNELS.getSnapshot, () => {
 			// A page asking for the world is also a page that has just started
@@ -9983,5 +10096,18 @@ function colorThemeNamesOf(config: Config): {
 	return {
 		dark: config.appearance.themeDark,
 		light: config.appearance.themeLight,
+	};
+}
+
+/** An Agent of the model, as "Send to Agent…" lists and reaches it. */
+function sendTargetAgentOf(agent: AgentSnapshot): SendTargetAgent {
+	return {
+		id: agent.id,
+		displayName: agent.displayName,
+		profileDisplayName: agent.profileDisplayName,
+		profileKind: agent.profileKind,
+		presentation: agent.presentation,
+		status: agent.status,
+		ordinal: agent.ordinal,
 	};
 }

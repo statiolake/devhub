@@ -1890,6 +1890,17 @@ export interface RecentlyClosedRowWire {
 	readonly detail: string;
 }
 
+/**
+ * One row of "Send to Agent…"'s list (`main/shell/sendToAgent.ts`): one of
+ * the Workspace's Agents, or a profile to start a new one from.
+ */
+export interface SendToAgentRowWire {
+	readonly label: string;
+	/** Its profile, presentation and status; for a New row, what it starts. */
+	readonly detail: string;
+	readonly kind: "agent" | "new";
+}
+
 export type ModalRequest =
 	| { readonly kind: "workspace-picker" }
 	| { readonly kind: "agent-picker"; readonly workspaceId: string }
@@ -1961,6 +1972,15 @@ export type ModalRequest =
 	| {
 			readonly kind: "recently-closed";
 			readonly rows: readonly RecentlyClosedRowWire[];
+	  }
+	/**
+	 * "Send to Agent…" from an editor: which of its Workspace's Agents, or a
+	 * new one from which profile, gets the selection. Closes with the index
+	 * of the row chosen, as the command palette does.
+	 */
+	| {
+			readonly kind: "send-to-agent";
+			readonly rows: readonly SendToAgentRowWire[];
 	  }
 	| {
 			/**

@@ -1818,6 +1818,73 @@ describe.skipIf(TMUX === undefined)(
       expect(gap).toBeGreaterThan(120);
     });
 
+    /**
+     * "Send to Agent…": the same paste, and no Return after it — the words
+     * wait in the prompt box for the person.
+     */
+    it("pastes text into an Agent's prompt and leaves it there unsent", async () => {
+      const test = fixture("paste");
+      const sessions = new AgentSessions(localAdapter(test.runtime));
+      const agentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab5";
+      const workspaceId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5";
+      const landed = join(test.home, "received.txt");
+      const script = join(test.home, "fake-agent.py");
+      writeFileSync(
+        script,
+        [
+          "import os, select, sys, time, tty",
+          "tty.setraw(sys.stdin.fileno())",
+          "sys.stdout.write('> ')",
+          "sys.stdout.flush()",
+          "buf = b''",
+          "end = time.time() + 25",
+          "closed_at = None",
+          // Everything that arrives for a second after the paste ends: a
+          // Return would be in it.
+          "while time.time() < end and (closed_at is None or time.time() < closed_at + 1):",
+          "    r, _, _ = select.select([sys.stdin], [], [], 0.05)",
+          "    if r:",
+          "        chunk = os.read(sys.stdin.fileno(), 65536)",
+          "        if not chunk: break",
+          "        buf += chunk",
+          "        if closed_at is None and b'\\x1b[201~' in buf:",
+          "            closed_at = time.time()",
+          "open(sys.argv[1] + '.part', 'wb').write(buf)",
+          "os.replace(sys.argv[1] + '.part', sys.argv[1])",
+          "time.sleep(30)",
+          "",
+        ].join("\n"),
+      );
+      await test.runtime.ensure(SCRATCH_TARGET);
+      await sessions.launch({
+        machine: "local",
+        agentId,
+        workspaceId,
+        root: test.home,
+        command: { file: "/usr/bin/python3", args: [script, landed], env: {} },
+      });
+      // The fake has to be reading before the paste goes in.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      await sessions.paste(
+        "local",
+        agentId,
+        workspaceId,
+        "[src/a.ts:1-2](src/a.ts#L1-L2)\n```ts\nconst a = 1;\n```\n",
+      );
+      for (let round = 0; round < 50 && !existsSync(landed); round += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      const received = readFileSync(landed, "utf8");
+      expect(received.startsWith("\u001b[200~")).toBe(true);
+      expect(received).toContain(
+        "[src/a.ts:1-2](src/a.ts#L1-L2)\r```ts\rconst a = 1;\r```\r",
+      );
+      // Nothing after the paste: no Return, so nothing was sent.
+      expect(received.endsWith("\u001b[201~")).toBe(true);
+    });
+
     /** The gate itself, against the states a real Agent actually passes through. */
     it("holds text back while an Agent is busy or asking", async () => {
       const queue = new AgentInjectionQueue();
@@ -2499,7 +2566,13 @@ describe.skipIf(TMUX === undefined)(
     it("lists the editor's panes with what runs in front, and brings them", async () => {
       const { test, ws, panes, target } = await editorWithTwoWindows("bring");
       const [first, second, third] = panes as [string, string, string];
-      tmuxOutside(test.socket, ["send-keys", "-t", first, "exec sleep 600", "Enter"]);
+      tmuxOutside(test.socket, [
+        "send-keys",
+        "-t",
+        first,
+        "exec sleep 600",
+        "Enter",
+      ]);
       let listed = await test.runtime.workspacePanes();
       for (let round = 0; round < 50; round += 1) {
         if (listed.find((pane) => pane.paneId === first)?.argv === "sleep 600")
@@ -2555,9 +2628,13 @@ describe.skipIf(TMUX === undefined)(
       await test.runtime.moveTerminalToWorkspace(target);
       expect(await test.runtime.paneTerminals()).toEqual([]);
       expect(
-        tmux(test.socket, ["list-windows", "-t", ws, "-F", "#{window_id}"]).split(
-          "\n",
-        ),
+        tmux(test.socket, [
+          "list-windows",
+          "-t",
+          ws,
+          "-F",
+          "#{window_id}",
+        ]).split("\n"),
       ).toHaveLength(2);
     });
   },

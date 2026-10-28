@@ -59,6 +59,7 @@ import { AgentActionsSheet } from "./AgentActionsSheet";
 import { ChordHelpSheet } from "./ChordHelpSheet";
 import { CommandPaletteSheet } from "./CommandPaletteSheet";
 import { RecentlyClosedSheet } from "./RecentlyClosedSheet";
+import { SendToAgentSheet } from "./SendToAgentSheet";
 
 /** Take one modal off screen, with the answer if it asked for one. */
 function close(id: string, response?: number): void {
@@ -190,6 +191,15 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
     case "recently-closed":
       return (
         <RecentlyClosedSheet
+          rows={request.rows}
+          onDismiss={(chosen) => {
+            close(id, chosen);
+          }}
+        />
+      );
+    case "send-to-agent":
+      return (
+        <SendToAgentSheet
           rows={request.rows}
           onDismiss={(chosen) => {
             close(id, chosen);

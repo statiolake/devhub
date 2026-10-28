@@ -498,7 +498,14 @@ export type AppErrorCodeWire =
 	 * gone, its session cannot be resumed, its machine did not answer. The
 	 * detail says which and what became of the entry (`model/recentlyClosed.ts`).
 	 */
-	| "closed_not_reopened";
+	| "closed_not_reopened"
+	/**
+	 * "Send to Agent…" could not put the editor's selection in the Agent
+	 * asked for (`main/shell/sendToAgent.ts`): the editor is no Workspace's,
+	 * there was nothing to send, or the terminal Agent is asking a question
+	 * its keys would answer. The detail says which; nothing was typed.
+	 */
+	| "send_to_agent_refused";
 
 /**
  * The sentence each failure is shown as.
@@ -582,6 +589,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	terminal_needs_agent_view:
 		"The terminal is shown with its Agent. Switch to the Agent (Cmd+Q Cmd+J) or split (Cmd+Q Z), then Cmd+Q V.",
 	closed_not_reopened: "DevHub could not bring back what was closed.",
+	send_to_agent_refused: "The selection was not put in the Agent's input box.",
 };
 export type AppErrorModuleWire =
 	| "app"

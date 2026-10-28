@@ -142,6 +142,12 @@ export interface AgentWiring {
 	 * cannot be told — never started on a new conversation instead.
 	 */
 	restartTerminal(agentId: AgentId): Promise<void>;
+	/**
+	 * Put text in a terminal Agent's prompt as a paste, with no Return
+	 * ("Send to Agent…"). Refused for a GUI Agent, whose words go to its
+	 * composer instead.
+	 */
+	pasteToTerminal(agentId: AgentId, text: string): Promise<void>;
 }
 
 export interface GuiConversations {
@@ -849,11 +855,23 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		});
 	};
 
+	const pasteToTerminal = async (
+		agentId: AgentId,
+		text: string,
+	): Promise<void> => {
+		const { agent, workspace, machine } = placeOf(agentId);
+		if (agent.presentation !== "tui") {
+			throw new Error(`${agent.displayName} is not a terminal Agent`);
+		}
+		await sessions.paste(machine, agentId, workspace.id, text);
+	};
+
 	return {
 		sessions,
 		conversations,
 		terminalSession: terminalSessionOf,
 		restartTerminal,
+		pasteToTerminal,
 	};
 }
 

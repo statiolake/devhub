@@ -240,7 +240,7 @@ export class PickerView {
 	async choose(
 		request: Extract<
 			ModalRequest,
-			{ kind: "command-palette" | "recently-closed" }
+			{ kind: "command-palette" | "recently-closed" | "send-to-agent" }
 		>,
 	): Promise<number> {
 		const id = this.openModal(request);

@@ -1291,6 +1291,12 @@ line or two in `wordCharacterClassifier.ts`, `wordHelper.ts` and
   { "key": "space f", "command": "workbench.action.quickOpen",
     "when": "devhubVim.active && devhubVim.mode == 'normal'" },
 
+  // <Space>a: Send to Agent… with the visual selection (or the cursor's line);
+  // see docs/agent-gui.md, "Send the editor's selection to an Agent"
+  { "key": "space a", "command": "devhubVim.run",
+    "args": { "command": "devhub.sendSelectionToAgent" },
+    "when": "devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'" },
+
   // A sneak-like "s<char>" that composes: ds, also works
   { "key": "s", "command": "devhubVim.awaitChar",
     "args": { "then": { "command": "devhubVim.motion", "args": { "motion": "tillForward" } } },

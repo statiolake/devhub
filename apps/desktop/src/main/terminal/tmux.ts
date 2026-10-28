@@ -2702,6 +2702,30 @@ export class TmuxTerminalRuntime {
 		text: string,
 		cancel = new CancellationToken(),
 	): Promise<void> {
+		await this.typeAgentText(record, text, true, cancel);
+	}
+
+	/**
+	 * Type text into one Agent's prompt, as a paste, and leave it there: the
+	 * same paste as `injectAgentText`, with no Return after it, so the words
+	 * wait in the prompt box for the person to finish and send ("Send to
+	 * Agent…"). A CLI reads a bracketed paste as one block whatever its line
+	 * breaks, so nothing in it submits.
+	 */
+	async pasteAgentText(
+		record: OwnedSessionRecord,
+		text: string,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		await this.typeAgentText(record, text, false, cancel);
+	}
+
+	private async typeAgentText(
+		record: OwnedSessionRecord,
+		text: string,
+		submit: boolean,
+		cancel: CancellationToken,
+	): Promise<void> {
 		if (record.kind !== "agent") throw portFailure("failed");
 		if (text.trim().length === 0) throw portFailure("failed");
 		const release = await this.gate.acquireOperation(cancel);
@@ -2735,6 +2759,7 @@ export class TmuxTerminalRuntime {
 				deadline,
 			);
 			if (!typed.success) throw typed.refusal();
+			if (!submit) return;
 			// The Return is a separate command a moment later, not the second
 			// half of this one. See `PASTE_SUBMIT_DELAY_MS`.
 			await new Promise((resolve) =>

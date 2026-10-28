@@ -52,6 +52,11 @@ export const CONVERSATION_CHANNELS = {
 	setCliDefault: "devhub:conversation:set-cli-default",
 	/** main → page: `(agentId, revision, event)`. */
 	event: "devhub:conversation:event",
+	/**
+	 * main → page: `(agentId, text)` — words for the Agent's composer, after
+	 * its draft and not sent ("Send to Agent…", `main/shell/sendToAgent.ts`).
+	 */
+	insert: "devhub:conversation:insert",
 } as const;
 
 /** A file an answer embeds, as read from the Agent's machine. */
@@ -135,7 +140,17 @@ export interface ConversationAttachment {
 	 * there is none.
 	 */
 	readonly draft: string;
+	/**
+	 * Words to add to the composer after the draft, oldest first, that main
+	 * was given for this Agent while no page had it attached ("Send to
+	 * Agent…" to an Agent that has just been started). Each is handed out
+	 * once; after the attachment they arrive through `onInsert`.
+	 */
+	readonly inserted: readonly string[];
 }
+
+/** Words for the composer, after what is in it: put there, never sent. */
+export type ConversationInsertListener = (text: string) => void;
 
 export type ConversationEventListener = (
 	revision: number,
@@ -151,6 +166,7 @@ export interface ConversationApi {
 	attach(
 		agentId: string,
 		onEvent: ConversationEventListener,
+		onInsert?: ConversationInsertListener,
 	): Promise<ConversationAttachment>;
 	detach(agentId: string): Promise<void>;
 	send(

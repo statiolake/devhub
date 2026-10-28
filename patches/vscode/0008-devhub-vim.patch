@@ -664,7 +664,7 @@ diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workb
 index 74be4cac..35486667 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts
 +++ b/src/vs/workbench/workbench.desktop.main.ts
-@@ -219,6 +219,27 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
+@@ -219,6 +219,30 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
  // System-wide (OS global) Keybindings
  import './contrib/keybindings/electron-browser/systemWideKeybindings.contribution.js';
  
@@ -688,6 +688,9 @@ index 74be4cac..35486667 100644
 +
 +// DevHub: no secondary side bar, its views in the primary one (patches/vscode/0012-no-secondary-side-bar.patch, docs/window-and-pages.md)
 +import './contrib/devhubNoAuxiliaryBar/browser/devhubNoAuxiliaryBar.contribution.js';
++
++// DevHub: Send to Agent, the editor's selection to one of the Workspace's Agents (overlay only, docs/agent-gui.md)
++import './contrib/devhubSendToAgent/electron-browser/devhubSendToAgent.contribution.js';
 +
  //#endregion
  

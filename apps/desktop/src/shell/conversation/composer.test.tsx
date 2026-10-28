@@ -44,6 +44,7 @@ import {
   COMPOSER_PLACEHOLDER,
   DRAFT_PAUSE_MS,
   REWIND_NOTE,
+  appendToDraft,
   composerPlaceholder,
 } from "./Composer";
 import { PENDING_TOOLTIP } from "./QueuedMessages";
@@ -1502,6 +1503,43 @@ describe("images", () => {
       clipboardData: { files: [], getData: () => "hello" },
     });
     expect(event).toBe(true);
+  });
+});
+
+describe("words put in the composer from outside", () => {
+  it("go after what is typed, on a paragraph of their own, with the keyboard there and nothing sent", () => {
+    const { actions, insert } = draw(withSession());
+    type("Why does this fail?");
+    insert("[src/a.ts:3](src/a.ts#L3)\n");
+    expect(composer()).toHaveValue(
+      "Why does this fail?\n\n[src/a.ts:3](src/a.ts#L3)\n",
+    );
+    expect(composer()).toHaveFocus();
+    expect(actions.send).not.toHaveBeenCalled();
+    // The same words drawn again are not put in twice; the next ones are.
+    insert("@b\n");
+    expect(composer()).toHaveValue(
+      "Why does this fail?\n\n[src/a.ts:3](src/a.ts#L3)\n\n@b\n",
+    );
+  });
+
+  it("go after the kept draft when they arrive with it", () => {
+    const { answerDraft, insert } = draw(
+      withSession(),
+      fakeActions(),
+      false,
+      NOT_YET,
+    );
+    insert("the selection\n");
+    answerDraft("kept");
+    expect(composer()).toHaveValue("kept\n\nthe selection\n");
+  });
+
+  it("fill an empty composer alone", () => {
+    expect(appendToDraft("", "x\n")).toBe("x\n");
+    expect(appendToDraft("  \n", "x\n")).toBe("x\n");
+    expect(appendToDraft("a\n", "x\n")).toBe("a\n\nx\n");
+    expect(appendToDraft("a\n\n", "x\n")).toBe("a\n\nx\n");
   });
 });
 
