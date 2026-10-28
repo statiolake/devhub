@@ -15,11 +15,16 @@ import {
   MAX_SVG_SOURCE,
   diagramKindOf,
   errorLine,
-  sanitizeSvg,
+  prepareSvg,
   svgDataUrl,
 } from "./diagramSvg";
 import { rasterScale } from "./diagramCopy";
-import { mixHex, parseCssColor, resolveDiagramTheme } from "./diagramTheme";
+import {
+  COPY_THEME,
+  mixHex,
+  parseCssColor,
+  resolveDiagramTheme,
+} from "./diagramTheme";
 import { DIAGRAM_MENU } from "./Diagram";
 import { Markdown } from "./Markdown";
 import { fakeActions } from "./surfaceTestKit";
@@ -50,7 +55,7 @@ beforeEach(() => {
     Promise.resolve(
       source.includes("bad")
         ? { ok: false, error: "Parse error on line 1: bad" }
-        : sanitizeSvg(PICTURE),
+        : prepareSvg(PICTURE),
     ),
   );
   png.svgToPng.mockReset();
@@ -98,77 +103,22 @@ describe("which blocks are pictures", () => {
   });
 });
 
-describe("an SVG made safe", () => {
-  function clean(markup: string): Document {
-    const result = sanitizeSvg(markup);
-    if (!result.ok) throw new Error(result.error);
-    return new DOMParser().parseFromString(result.svg, "image/svg+xml");
-  }
-
-  it("takes out scripts, handlers, foreign objects and animation", () => {
-    const doc =
-      clean(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">
-      <script>alert(1)</script>
-      <rect width="10" height="10" onclick="alert(2)" onmouseover="x()"/>
-      <foreignObject><iframe xmlns="http://www.w3.org/1999/xhtml" src="https://x"/></foreignObject>
-      <a href="javascript:alert(3)"><circle r="3"/></a>
-      <set attributeName="href" to="javascript:alert(4)"/>
-      <animate attributeName="x" to="1"/>
-      <html:div xmlns:html="http://www.w3.org/1999/xhtml">no</html:div>
-    </svg>`);
-    const markup = new XMLSerializer().serializeToString(doc);
-    expect(markup).not.toMatch(/script|onload|onclick|onmouseover|alert/i);
-    expect(markup).not.toMatch(/foreignObject|iframe|<set|<animate|html:div/);
-    // The link is gone; what it wrapped is drawn.
-    expect(doc.querySelector("circle")).not.toBeNull();
-    expect(doc.querySelector("a")).toBeNull();
-  });
-
-  it("takes out every reference to anything outside the picture", () => {
-    const doc =
-      clean(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-      <style>@import url(https://evil/x.css); rect { fill: red }</style>
-      <style>.a { fill: url(#grad) }</style>
-      <image href="https://evil/pixel.png" width="1" height="1"/>
-      <image xlink:href="data:image/png;base64,iVBORw0KGgo=" width="1" height="1"/>
-      <use href="other.svg#icon"/>
-      <use href="#local"/>
-      <rect fill="url(https://evil/p)" stroke="url(#ok)" style="fill: url('http://x')"/>
-    </svg>`);
-    const markup = new XMLSerializer().serializeToString(doc);
-    expect(markup).not.toMatch(
-      /evil|other\.svg|@import|https?:\/\/(?!www\.w3\.org)/,
-    );
-    const [remote, inline] = [...doc.querySelectorAll("image")];
-    expect(remote!.attributes).toHaveLength(2);
-    expect(inline!.getAttributeNS("http://www.w3.org/1999/xlink", "href")).toBe(
-      "data:image/png;base64,iVBORw0KGgo=",
-    );
-    const [outside, local] = [...doc.querySelectorAll("use")];
-    expect(outside!.hasAttribute("href")).toBe(false);
-    expect(local!.getAttribute("href")).toBe("#local");
-    const rect = doc.querySelector("rect")!;
-    expect(rect.hasAttribute("fill")).toBe(false);
-    expect(rect.hasAttribute("style")).toBe(false);
-    expect(rect.getAttribute("stroke")).toBe("url(#ok)");
-    expect(markup).toContain(".a { fill: url(#grad) }");
-  });
-
-  it("keeps a Mermaid label's text, and nothing else of its HTML", () => {
-    const result = sanitizeSvg(
-      `<svg xmlns="http://www.w3.org/2000/svg" style="max-width: 300px" viewBox="0 0 300 100"><foreignObject width="10" height="10"><div xmlns="http://www.w3.org/1999/xhtml" class="label" onclick="x()"><span>Start</span><img src="https://x"/><script>1</script></div></foreignObject></svg>`,
+describe("an SVG prepared to be drawn", () => {
+  it("leaves Mermaid's picture at its own size, not its page's", () => {
+    const result = prepareSvg(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="100%" style="max-width: 300px" viewBox="0 0 300 100"><g/></svg>`,
       { fromMermaid: true },
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.svg).toContain("<span>Start</span>");
-    expect(result.svg).not.toMatch(/onclick|<img|script|max-width/);
+    expect(result.svg).not.toContain("max-width");
+    expect(result.svg).toContain('width="300"');
     expect(result.size).toEqual({ width: 300, height: 100 });
   });
 
   it("sizes a picture by its own size, else its viewBox", () => {
     const size = (markup: string) => {
-      const result = sanitizeSvg(markup);
+      const result = prepareSvg(markup);
       return result.ok ? result.size : undefined;
     };
     const ns = 'xmlns="http://www.w3.org/2000/svg"';
@@ -192,24 +142,22 @@ describe("an SVG made safe", () => {
   });
 
   it("takes an <svg> written for a page, without its namespace", () => {
-    const result = sanitizeSvg(
-      '<svg viewBox="0 0 4 2"><rect width="4"/></svg>',
-    );
+    const result = prepareSvg('<svg viewBox="0 0 4 2"><rect width="4"/></svg>');
     expect(result.ok).toBe(true);
     expect(result.ok && result.svg).toContain("<rect");
   });
 
   it("writes the theme's ink as currentColor, unless the picture says", () => {
     const ns = 'xmlns="http://www.w3.org/2000/svg"';
-    const own = sanitizeSvg(`<svg ${ns} color="red"/>`, { color: "#fff" });
-    const none = sanitizeSvg(`<svg ${ns}/>`, { color: "#ffffff" });
+    const own = prepareSvg(`<svg ${ns} color="red"/>`, { color: "#fff" });
+    const none = prepareSvg(`<svg ${ns}/>`, { color: "#ffffff" });
     expect(own.ok && own.svg).toContain('color="red"');
     expect(none.ok && none.svg).toContain('color="#ffffff"');
   });
 
   it("says why markup is not a picture", () => {
     const fail = (markup: string) => {
-      const result = sanitizeSvg(markup);
+      const result = prepareSvg(markup);
       return result.ok ? undefined : result.error;
     };
     expect(fail("<svg xmlns='http://www.w3.org/2000/svg'><g></svg>")).toMatch(
@@ -277,6 +225,19 @@ describe("the theme a diagram is drawn in", () => {
 });
 
 describe("a diagram in an answer", () => {
+  it("is never markup in the page: a script in an SVG stays in its image", () => {
+    draw(
+      '```svg\n<svg xmlns="http://www.w3.org/2000/svg" onload="x()"><script>x()</script><rect width="4" height="2"/></svg>\n```\n',
+    );
+    const image = screen.getByRole("img", { name: "SVG image" });
+    expect(image.getAttribute("src")).toMatch(/^data:image\/svg\+xml/);
+    expect(document.querySelector("script")).toBeNull();
+    expect(document.querySelector("[onload]")).toBeNull();
+    expect(
+      document.querySelector(".conversation-diagram-picture svg"),
+    ).toBeNull();
+  });
+
   it("draws a closed mermaid block as a picture, from a data URL", async () => {
     draw(`Here:\n\n${FLOW}`);
     const image = await screen.findByRole("img", { name: "Mermaid diagram" });
@@ -359,7 +320,7 @@ describe("a diagram in an answer", () => {
     expect(screen.getByRole("img")).toBeInTheDocument();
   });
 
-  it("copies the picture as a PNG through main, and says so", async () => {
+  it("copies the picture as a transparent PNG through main, and says so", async () => {
     const { actions } = draw(FLOW);
     await screen.findByRole("img");
     const copy = screen.getByRole("button", { name: "Copy image" });
@@ -369,11 +330,44 @@ describe("a diagram in an answer", () => {
     expect(png.svgToPng).toHaveBeenCalledWith(
       expect.stringContaining("<svg"),
       { width: 40, height: 20 },
-      expect.stringMatching(/^#[0-9a-f]{6}$/),
+      undefined,
     );
     expect(actions.writeClipboardImage).toHaveBeenCalledWith(PNG_BYTES);
     expect(actions.writeClipboard).not.toHaveBeenCalled();
     expect(copy).toHaveAttribute("title", "Copied");
+  });
+
+  it("copies a picture drawn for a light page, whatever the screen's theme", async () => {
+    document.documentElement.style.colorScheme = "dark";
+    try {
+      draw(FLOW);
+      await screen.findByRole("img");
+      expect(mermaid.render).toHaveBeenLastCalledWith(
+        "graph TD\n  A --> B",
+        expect.objectContaining({ scheme: "dark" }),
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+      });
+      expect(mermaid.render).toHaveBeenLastCalledWith(
+        "graph TD\n  A --> B",
+        COPY_THEME,
+      );
+      expect(COPY_THEME.scheme).toBe("light");
+      // Dark ink, for a white or light ground.
+      expect(parseCssColor(COPY_THEME.ink)!.r).toBeLessThan(64);
+    } finally {
+      document.documentElement.style.colorScheme = "";
+    }
+  });
+
+  it("copies an SVG with currentColor as the copy's dark ink", async () => {
+    draw("```svg\n<svg xmlns='http://www.w3.org/2000/svg'><g/></svg>\n```\n");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy image" }));
+    });
+    const [svg] = png.svgToPng.mock.calls[0]!;
+    expect(svg).toContain(`color="${COPY_THEME.ink}"`);
   });
 
   it("does not say Copied when the picture could not be made", async () => {
@@ -401,12 +395,12 @@ describe("a diagram in an answer", () => {
       return actions;
     }
 
-    it("offers the picture, its SVG and its source, at the click", async () => {
+    it("offers the picture on two grounds, and its source, at the click", async () => {
       const actions = await choose(undefined);
       expect(actions.showContextMenu).toHaveBeenCalledWith({
         items: [
-          { id: "copy-image", label: "Copy Image" },
-          { id: "copy-svg", label: "Copy SVG" },
+          { id: "copy-image-transparent", label: "Copy Image (Transparent)" },
+          { id: "copy-image-white", label: "Copy Image (White Background)" },
           { id: "copy-source", label: "Copy Source" },
         ],
         at: { x: 12, y: 34 },
@@ -416,19 +410,24 @@ describe("a diagram in an answer", () => {
       expect(actions.writeClipboardImage).not.toHaveBeenCalled();
     });
 
-    it("copies the image", async () => {
-      const actions = await choose("copy-image");
+    it("copies the image on a transparent ground", async () => {
+      const actions = await choose("copy-image-transparent");
       await waitFor(() =>
         expect(actions.writeClipboardImage).toHaveBeenCalledWith(PNG_BYTES),
       );
+      expect(png.svgToPng.mock.calls[0]![2]).toBeUndefined();
+      expect(mermaid.render).toHaveBeenLastCalledWith(
+        expect.any(String),
+        COPY_THEME,
+      );
     });
 
-    it("copies the sanitized SVG markup as text", async () => {
-      const actions = await choose("copy-svg");
-      await waitFor(() => expect(actions.writeClipboard).toHaveBeenCalled());
-      const [text] = vi.mocked(actions.writeClipboard).mock.calls[0]!;
-      expect(text).toMatch(/^<svg[^>]*xmlns="http:\/\/www.w3.org\/2000\/svg"/);
-      expect(text).toContain('width="40"');
+    it("copies the image on white", async () => {
+      const actions = await choose("copy-image-white");
+      await waitFor(() =>
+        expect(actions.writeClipboardImage).toHaveBeenCalledWith(PNG_BYTES),
+      );
+      expect(png.svgToPng.mock.calls[0]![2]).toBe("#ffffff");
     });
 
     it("copies the mermaid source", async () => {

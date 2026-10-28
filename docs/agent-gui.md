@@ -920,14 +920,11 @@ closes; while Mermaid is loading or drawing, the block is its code.
 
 **Safe by construction.** What an Agent writes is not trusted, and neither is
 what Mermaid makes of it. Both are drawn as an `<img>` of a `data:` URL, never
-as markup in the page: an SVG loaded as an image runs no script, fires no
-handler and fetches nothing. The markup is also sanitized first
-(`diagramSvg.ts`), because the same markup is what "Copy SVG" puts on the
-clipboard: an allow-list of SVG elements; no scripts, event handlers,
-animation, embedded documents or `foreignObject` (Mermaid's own labels
-excepted, with text-level HTML only); no `href` but a `#fragment` or an inline
-raster `data:` image; no `url()` or `@import` that leaves the picture.
-Mermaid runs with `securityLevel: "strict"` and SVG text labels.
+as markup in the page, and a copied PNG is painted from the same image: an
+SVG loaded as an image runs no script, fires no handler and fetches nothing.
+The markup is only checked to be one `<svg>` and given its namespace and size
+(`diagramSvg.ts`). Mermaid runs with `securityLevel: "strict"` and SVG text
+labels.
 
 **Large or invalid.** A Mermaid source over 20,000 characters, an SVG over
 512 KB, or anything that does not parse is drawn as its code with one quiet
@@ -943,14 +940,19 @@ SVG's `currentColor` is the theme's ink.
 **Source, copy, menu.** The header is a code block's, icon-only with
 tooltips: a toggle between the picture and its source (_Show source_ /
 _Show diagram_), and a copy. On the picture the copy puts it on the
-clipboard as a PNG — rasterised at twice its size (or the screen's pixel
-ratio, if higher) on the theme's background with a margin, and written by
-main (`writeClipboardImage`, `clipboard.writeImage`), since the page's own
+clipboard as a PNG with a transparent ground — rasterised at twice its size
+(or the screen's pixel ratio, if higher) with a margin, and written by main
+(`writeClipboardImage`, `clipboard.writeImage`), since the page's own
 clipboard needs the focus; on the source it copies the code. A right-click
 on the picture opens a native menu (the Sidebar's mechanism,
-`main/shell/contextMenu.ts`): _Copy Image_ (PNG), _Copy SVG_ (the sanitized
-markup, as text) and _Copy Source_. The SVG goes as text only: Electron's
-clipboard cannot write a custom `image/svg+xml` flavour beside text.
+`main/shell/contextMenu.ts`): _Copy Image (Transparent)_, _Copy Image (White
+Background)_ and _Copy Source_.
+
+A copied picture is not the one on screen. It is pasted into a document or a
+slide, which is almost always light, so it is drawn again in a fixed light
+palette (`COPY_THEME` in `diagramTheme.ts`: dark ink, soft fills; an SVG's
+`currentColor` is that ink), whatever DevHub's theme is — copied from a dark
+theme, the screen's picture would be light-grey lines that vanish on white.
 
 **Loading.** Mermaid is not in the page until the first diagram asks for
 it: it and each diagram type are chunks of their own, so the Agents page

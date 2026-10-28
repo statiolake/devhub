@@ -1,6 +1,6 @@
 /**
- * Which fenced blocks of an answer are pictures, and how a picture an Agent
- * wrote is made safe to show.
+ * Which fenced blocks of an answer are pictures, and how a picture is
+ * prepared to be drawn.
  *
  * Two kinds: a ```mermaid block, drawn by Mermaid (`mermaid.ts`), and a
  * ```svg block — or an ```xml one whose whole content is one `<svg>` — drawn
@@ -8,16 +8,12 @@
  *
  * What an Agent writes is not trusted, and neither is what Mermaid makes of
  * it. Both are drawn the same way: as an `<img>` of a `data:` URL, never as
- * markup in this document. An SVG loaded as an image is in Chromium's secure
- * static mode — no script runs, no event handler fires, nothing outside it is
- * fetched — so the image is the boundary. `sanitizeSvg` is a second one,
- * because the same markup is also put on the clipboard ("Copy SVG") and
- * pasted into whatever the person pastes it into: scripts, event handlers,
- * animation (which can rewrite an `href`), embedded documents, and every
- * reference to anything outside the picture are taken out before the markup
- * is used at all. `foreignObject` is kept only in Mermaid's own output, which
- * DOMPurify has already cleaned under `securityLevel: "strict"`, and then only
- * with text-level HTML in it.
+ * markup in this document — and the PNG a copy makes is painted from the same
+ * image. An SVG loaded as an image is in Chromium's secure static mode: no
+ * script runs, no event handler fires, nothing outside it is fetched. The
+ * image is the boundary, so the markup is not rewritten for safety here; it
+ * is only checked to be one `<svg>`, given its namespace and a size, and told
+ * what `currentColor` is.
  */
 
 export type DiagramKind = "mermaid" | "svg";
@@ -48,114 +44,25 @@ export function diagramKindOf(
 }
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-const XHTML_NS = "http://www.w3.org/1999/xhtml";
-const XLINK_NS = "http://www.w3.org/1999/xlink";
-
-/** The SVG elements a picture may have. Anything else goes, with what is in it. */
-const SVG_ELEMENTS = new Set(
-  [
-    "svg",
-    "g",
-    "defs",
-    "symbol",
-    "use",
-    "switch",
-    "title",
-    "desc",
-    "style",
-    "path",
-    "rect",
-    "circle",
-    "ellipse",
-    "line",
-    "polyline",
-    "polygon",
-    "text",
-    "tspan",
-    "textPath",
-    "image",
-    "marker",
-    "pattern",
-    "clipPath",
-    "mask",
-    "linearGradient",
-    "radialGradient",
-    "stop",
-    "filter",
-    "feBlend",
-    "feColorMatrix",
-    "feComponentTransfer",
-    "feComposite",
-    "feConvolveMatrix",
-    "feDiffuseLighting",
-    "feDisplacementMap",
-    "feDistantLight",
-    "feDropShadow",
-    "feFlood",
-    "feFuncA",
-    "feFuncB",
-    "feFuncG",
-    "feFuncR",
-    "feGaussianBlur",
-    "feMerge",
-    "feMergeNode",
-    "feMorphology",
-    "feOffset",
-    "fePointLight",
-    "feSpecularLighting",
-    "feSpotLight",
-    "feTile",
-    "feTurbulence",
-  ].map((name) => name.toLowerCase()),
-);
-
-/** What may be inside one of Mermaid's `foreignObject` labels. */
-const LABEL_ELEMENTS = new Set([
-  "div",
-  "span",
-  "p",
-  "br",
-  "b",
-  "strong",
-  "i",
-  "em",
-  "code",
-  "sub",
-  "sup",
-  "u",
-  "s",
-]);
-
-/** An `<a>` is inert in an image, and is drawn as the group it wraps. */
-const UNWRAPPED = new Set(["a"]);
-
-/** A raster image an `<image>` may carry inline. Nothing is fetched. */
-const INLINE_IMAGE =
-  /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]*$/i;
-
-/** A `url(…)` in a style or a presentation attribute that leaves the picture. */
-const OUTSIDE_URL = /url\(\s*(?!['"]?\s*#)/i;
-const IMPORT = /@import/i;
-
 export interface SvgSize {
   readonly width: number;
   readonly height: number;
 }
 
-export interface SanitizedSvg {
+export interface PreparedSvg {
   readonly svg: string;
   /** The size it is drawn at, in CSS pixels. */
   readonly size: SvgSize;
 }
 
 export type SvgResult =
-  | ({ readonly ok: true } & SanitizedSvg)
+  | ({ readonly ok: true } & PreparedSvg)
   | { readonly ok: false; readonly error: string };
 
-export interface SanitizeOptions {
+export interface PrepareOptions {
   /**
-   * Mermaid's output, never an Agent's SVG: its `foreignObject` labels are
-   * kept, and the root's style — a `max-width` for a page — is not.
+   * Mermaid's output: the root's style — a `max-width` for a page — is not
+   * kept.
    */
   readonly fromMermaid?: boolean;
   /**
@@ -214,87 +121,6 @@ export function svgSizeOf(root: Element): SvgSize {
   };
 }
 
-function isHref(attribute: Attr): boolean {
-  return (
-    attribute.localName === "href" &&
-    (attribute.namespaceURI === null || attribute.namespaceURI === XLINK_NS)
-  );
-}
-
-function cleanAttributes(element: Element, inLabel: boolean): void {
-  for (const attribute of [...element.attributes]) {
-    const name = attribute.name.toLowerCase();
-    const value = attribute.value;
-    const keep = (() => {
-      if (name.startsWith("on")) return false;
-      if (name === "xml:base" || attribute.localName === "base") return false;
-      if (isHref(attribute)) {
-        const target = value.trim();
-        // Inside the picture: a `<use>`, a gradient's template, a text path.
-        if (target.startsWith("#")) return true;
-        return element.localName === "image" && INLINE_IMAGE.test(target);
-      }
-      if (inLabel && name !== "class" && name !== "style") return false;
-      return !OUTSIDE_URL.test(value) && !IMPORT.test(value);
-    })();
-    if (!keep) element.removeAttributeNode(attribute);
-  }
-}
-
-function clean(element: Element, options: SanitizeOptions, inLabel: boolean) {
-  for (const child of [...element.childNodes]) {
-    if (child.nodeType === 3 /* text */ || child.nodeType === 4 /* CDATA */) {
-      if (
-        element.localName === "style" &&
-        (IMPORT.test(child.nodeValue ?? "") ||
-          OUTSIDE_URL.test(child.nodeValue ?? ""))
-      ) {
-        child.remove();
-      }
-      continue;
-    }
-    if (child.nodeType !== 1 /* element */) {
-      child.remove();
-      continue;
-    }
-    const el = child as Element;
-    const name = el.localName.toLowerCase();
-    if (inLabel) {
-      if (el.namespaceURI !== XHTML_NS || !LABEL_ELEMENTS.has(name)) {
-        el.remove();
-        continue;
-      }
-      cleanAttributes(el, true);
-      clean(el, options, true);
-      continue;
-    }
-    if (el.namespaceURI !== SVG_NS) {
-      el.remove();
-      continue;
-    }
-    if (name === "foreignobject") {
-      if (options.fromMermaid !== true) {
-        el.remove();
-        continue;
-      }
-      cleanAttributes(el, false);
-      clean(el, options, true);
-      continue;
-    }
-    if (UNWRAPPED.has(name)) {
-      clean(el, options, false);
-      el.replaceWith(...el.childNodes);
-      continue;
-    }
-    if (!SVG_ELEMENTS.has(name)) {
-      el.remove();
-      continue;
-    }
-    cleanAttributes(el, false);
-    clean(el, options, false);
-  }
-}
-
 function firstLine(text: string): string {
   const line = text.trim().split("\n", 1)[0]!.trim();
   return line.length > 160 ? `${line.slice(0, 159)}…` : line;
@@ -312,12 +138,12 @@ function withSvgNamespace(markup: string): string {
 }
 
 /**
- * `markup` as a picture that is safe to draw and to hand to another
- * application, with the size it is drawn at — or why it cannot be one.
+ * `markup` as one `<svg>` ready to be drawn as an image, with the size it is
+ * drawn at — or why it cannot be one.
  */
-export function sanitizeSvg(
+export function prepareSvg(
   markup: string,
-  options: SanitizeOptions = {},
+  options: PrepareOptions = {},
 ): SvgResult {
   const max = options.maxLength ?? MAX_SVG_SOURCE;
   if (markup.length > max) {
@@ -358,8 +184,6 @@ export function sanitizeSvg(
   for (const node of [...document.childNodes]) {
     if (node !== root) node.remove();
   }
-  cleanAttributes(root, false);
-  clean(root, options, false);
   const size = svgSizeOf(root);
   root.setAttribute("width", String(size.width));
   root.setAttribute("height", String(size.height));

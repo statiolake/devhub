@@ -3,7 +3,7 @@
  *
  * Only a closed block is drawn (`settled`, see `markdownBlocks.ts`): one
  * still being written is its code, the way every open fence is, and becomes
- * a picture once its fence closes. A picture is an `<img>` of a sanitized SVG
+ * a picture once its fence closes. A picture is an `<img>` of its SVG
  * (`diagramSvg.ts`), drawn in DevHub's colours (`diagramTheme.ts`) and drawn
  * again when the theme changes. While Mermaid is still loading or drawing,
  * and whenever the source will not draw, the block is its code — with a line
@@ -12,9 +12,15 @@
  *
  * The header is the code block's, quiet and icon-only: the language, a
  * toggle between the picture and its source, and a copy — of the picture as
- * a PNG, or of the source when the source is shown. A right-click on the
- * picture offers the rest, as a native menu (`showContextMenu`): the picture,
- * its SVG markup, its source.
+ * a PNG with a transparent ground, or of the source when the source is
+ * shown. A right-click on the picture offers the rest, as a native menu
+ * (`showContextMenu`): the picture on a transparent or a white ground, and
+ * its source.
+ *
+ * A copy is pasted into a document or a slide, which is almost always light,
+ * so it is not the picture on screen: it is drawn again in a fixed light
+ * palette (`COPY_THEME`), whatever DevHub's theme is. A diagram copied from a
+ * dark theme would otherwise be light-grey lines that vanish on white.
  */
 
 import {
@@ -29,23 +35,39 @@ import { CodeBlock } from "./CodeBlock";
 import { useConversationActions } from "./ConversationContext";
 import { CopyButton } from "./CopyButton";
 import {
-  sanitizeSvg,
+  prepareSvg,
   svgDataUrl,
   type DiagramKind,
-  type SanitizedSvg,
+  type PreparedSvg,
   type SvgResult,
 } from "./diagramSvg";
 import { svgToPng } from "./diagramCopy";
-import { useDiagramTheme, type DiagramTheme } from "./diagramTheme";
+import { COPY_THEME, useDiagramTheme, type DiagramTheme } from "./diagramTheme";
 import { CodeIcon, DiagramIcon } from "./icons";
 import { drawnMermaid, renderMermaid } from "./mermaid";
 
 /** The items a right-click on a drawn diagram offers, in order. */
 export const DIAGRAM_MENU = [
-  { id: "copy-image", label: "Copy Image" },
-  { id: "copy-svg", label: "Copy SVG" },
+  { id: "copy-image-transparent", label: "Copy Image (Transparent)" },
+  { id: "copy-image-white", label: "Copy Image (White Background)" },
   { id: "copy-source", label: "Copy Source" },
 ] as const;
+
+/** What a copied picture is painted on: nothing, or a sheet of paper. */
+const WHITE = "#ffffff";
+
+/** The picture drawn for pasting elsewhere: in `COPY_THEME`, not the screen's. */
+export async function pictureForCopy(
+  kind: DiagramKind,
+  code: string,
+): Promise<PreparedSvg> {
+  const result =
+    kind === "mermaid"
+      ? await renderMermaid(code, COPY_THEME)
+      : prepareSvg(code, { color: COPY_THEME.ink });
+  if (!result.ok) throw new Error(result.error);
+  return result;
+}
 
 type MenuId = (typeof DIAGRAM_MENU)[number]["id"];
 
@@ -60,8 +82,7 @@ function useDrawing(
   theme: DiagramTheme,
 ): Drawing {
   const svg = useMemo(
-    () =>
-      kind === "svg" ? sanitizeSvg(code, { color: theme.ink }) : undefined,
+    () => (kind === "svg" ? prepareSvg(code, { color: theme.ink }) : undefined),
     [kind, code, theme.ink],
   );
   const [mermaid, setMermaid] = useState<
@@ -135,7 +156,6 @@ export const Diagram = memo(function Diagram({
       code={code}
       info={info}
       picture={drawing}
-      theme={theme}
       toggle={toggle}
     />
   );
@@ -146,14 +166,12 @@ function DrawnDiagram({
   code,
   info,
   picture,
-  theme,
   toggle,
 }: {
   readonly kind: DiagramKind;
   readonly code: string;
   readonly info: string | undefined;
-  readonly picture: SanitizedSvg;
-  readonly theme: DiagramTheme;
+  readonly picture: PreparedSvg;
   readonly toggle: ReactNode;
 }) {
   const {
@@ -165,13 +183,15 @@ function DrawnDiagram({
   const url = useMemo(() => svgDataUrl(picture.svg), [picture.svg]);
   const language = info?.trim().split(/\s+/, 1)[0] || kind;
 
-  const copyImage = async () =>
-    writeClipboardImage(
-      await svgToPng(picture.svg, picture.size, theme.background),
+  const copyImage = async (ground: string | undefined) => {
+    const printed = await pictureForCopy(kind, code);
+    await writeClipboardImage(
+      await svgToPng(printed.svg, printed.size, ground),
     );
+  };
   const run: Record<MenuId, () => Promise<void>> = {
-    "copy-image": copyImage,
-    "copy-svg": () => writeClipboard(picture.svg),
+    "copy-image-transparent": () => copyImage(undefined),
+    "copy-image-white": () => copyImage(WHITE),
     "copy-source": () => writeClipboard(code),
   };
 
@@ -200,7 +220,7 @@ function DrawnDiagram({
         <span className="conversation-code-language">{language}</span>
         <span className="conversation-code-actions">
           {toggle}
-          <CopyButton copy={copyImage} label="Copy image" />
+          <CopyButton copy={() => copyImage(undefined)} label="Copy image" />
         </span>
       </div>
       <div className="conversation-diagram-picture">

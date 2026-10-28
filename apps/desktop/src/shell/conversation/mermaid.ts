@@ -10,8 +10,8 @@
  * `securityLevel: "strict"`: Mermaid encodes the text it is given, runs its
  * output through DOMPurify and binds no click handlers. Labels are SVG text
  * (`htmlLabels: false`), so the picture needs no HTML to draw. What comes
- * back is sanitized again and drawn as an image (`diagramSvg.ts`), never put in
- * the page as markup.
+ * back is drawn as an image (`diagramSvg.ts`), never put in the page as
+ * markup.
  *
  * Mermaid's configuration is one global, so drawings are made one at a time,
  * each under the theme it asked for. A drawing is kept by its source and its
@@ -24,7 +24,7 @@ import {
   MAX_MERMAID_SOURCE,
   MAX_SVG_OUTPUT,
   errorLine,
-  sanitizeSvg,
+  prepareSvg,
   type SvgResult,
 } from "./diagramSvg";
 import { mixHex, type DiagramTheme } from "./diagramTheme";
@@ -141,7 +141,7 @@ async function draw(source: string, theme: DiagramTheme): Promise<SvgResult> {
   const id = `devhub-mermaid-${++drawn}`;
   try {
     const { svg } = await mermaid.render(id, source);
-    return sanitizeSvg(svg, {
+    return prepareSvg(svg, {
       fromMermaid: true,
       color: theme.ink,
       maxLength: MAX_SVG_OUTPUT,
@@ -156,7 +156,7 @@ async function draw(source: string, theme: DiagramTheme): Promise<SvgResult> {
 }
 
 /**
- * `source` drawn under `theme`, sanitized: the picture, or the line that says
+ * `source` drawn under `theme`: the picture, or the line that says
  * why there is none. Never rejects.
  */
 export function renderMermaid(

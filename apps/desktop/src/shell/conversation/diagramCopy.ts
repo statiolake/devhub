@@ -1,11 +1,11 @@
 /**
  * A diagram, as a PNG for the clipboard.
  *
- * The picture is already a sanitized SVG (`diagramSvg.ts`); it is loaded as an
- * image — where nothing in it runs or fetches — and painted on a canvas
- * filled with the theme's background, at twice its size or the screen's
- * pixel ratio if that is more, so a paste into a document is sharp on a
- * Retina display, with a margin of the background around it. A side past
+ * The picture is an SVG drawn for pasting (`pictureForCopy`, in
+ * `COPY_THEME`); it is loaded as an image — where nothing in it runs or
+ * fetches — and painted on a canvas, transparent or filled with a ground, at
+ * twice its size or the screen's pixel ratio if that is more, so a paste into
+ * a document is sharp on a Retina display, with a margin around it. A side past
  * `MAX_CANVAS_SIDE` lowers the scale instead.
  *
  * The bytes go to main (`writeClipboardImage`), which writes the image: the
@@ -25,11 +25,11 @@ export function rasterScale(size: SvgSize, pixelRatio: number): number {
   return Math.min(wanted, MAX_CANVAS_SIDE / side);
 }
 
-/** `svg` at `size`, on `background`, as PNG bytes. */
+/** `svg` at `size`, on `background` (none: transparent), as PNG bytes. */
 export async function svgToPng(
   svg: string,
   size: SvgSize,
-  background: string,
+  background: string | undefined,
   pixelRatio: number = window.devicePixelRatio,
 ): Promise<Uint8Array> {
   const image = new Image();
@@ -43,8 +43,10 @@ export async function svgToPng(
   canvas.height = Math.max(1, Math.round(size.height * scale + 2 * margin));
   const context = canvas.getContext("2d");
   if (context === null) throw new Error("There is no canvas to draw on.");
-  context.fillStyle = background;
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  if (background !== undefined) {
+    context.fillStyle = background;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
   context.drawImage(
     image,
     margin,

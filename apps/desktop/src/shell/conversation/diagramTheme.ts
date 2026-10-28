@@ -16,7 +16,7 @@ import { documentColorScheme, observeColorScheme } from "../appearance";
 
 export interface DiagramTheme {
   readonly scheme: "light" | "dark";
-  /** What a diagram is drawn on, and what its PNG is filled with. */
+  /** What a diagram is drawn on. */
   readonly background: string;
   readonly ink: string;
   readonly secondary: string;
@@ -192,6 +192,29 @@ export function resolveDiagramTheme(view: Window = window): DiagramTheme {
     probe.remove();
   }
 }
+
+/**
+ * The palette a copied diagram is drawn in, whatever the screen's theme:
+ * dark ink and soft fills that read on the white or near-white page of a
+ * document or a slide it is pasted into, and on nothing at all — a
+ * transparent PNG is pasted onto whatever ground the document has, which is
+ * almost always light.
+ */
+export const COPY_THEME: DiagramTheme = {
+  scheme: "light",
+  background: "#ffffff",
+  ink: "#1f1f1f",
+  secondary: "#555555",
+  line: "#d4d4d4",
+  lineStrong: "#9a9a9a",
+  wash: "#f3f3f3",
+  sunken: "#e9e9e9",
+  accent: "#3d6a8a",
+  accentInk: "#ffffff",
+  waiting: "#b25000",
+  fontFamily:
+    '-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif',
+};
 
 /**
  * What the theme is right now, as a string that changes exactly when it can
