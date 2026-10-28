@@ -447,6 +447,14 @@ export function SmartButtons({
       }}
       onPointerMove={(event) => {
         if (drag === undefined || metrics === undefined) return;
+        // No button held: the press ended where this view did not hear it
+        // (another view took the pointer, the window lost focus). Hovering
+        // never moves the box.
+        if ((event.buttons & 1) === 0) {
+          dragged.current = false;
+          setDrag(undefined);
+          return;
+        }
         const moved = {
           x: event.clientX - drag.pointer.x,
           y: event.clientY - drag.pointer.y,

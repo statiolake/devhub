@@ -479,7 +479,12 @@ describe("dragging the box", () => {
       isPrimary: true,
     });
     // A trackpad click drifts a pixel or three.
-    fireEvent.pointerMove(button, { clientX: 902, clientY: 582, pointerId: 1 });
+    fireEvent.pointerMove(button, {
+      buttons: 1,
+      clientX: 902,
+      clientY: 582,
+      pointerId: 1,
+    });
     expect(box()).not.toHaveAttribute("data-dragging");
     fireEvent.pointerUp(button, { pointerId: 1 });
     fireEvent.click(button);
@@ -503,6 +508,7 @@ describe("dragging the box", () => {
       pointerId: 1,
     });
     fireEvent.pointerMove(handle(), {
+      buttons: 1,
       clientX: 700,
       clientY: 480,
       pointerId: 1,
@@ -522,6 +528,33 @@ describe("dragging the box", () => {
     expect(runAgentAction).not.toHaveBeenCalled();
   });
 
+  it("never moves on a hover: a press it did not hear end is over", () => {
+    const { dispatch, runAgentAction } = mount();
+    fireEvent.pointerDown(handle(), {
+      button: 0,
+      clientX: 900,
+      clientY: 580,
+      pointerId: 1,
+    });
+    // The release went to another view; the pointer now only hovers.
+    fireEvent.pointerMove(handle(), {
+      buttons: 0,
+      clientX: 700,
+      clientY: 480,
+      pointerId: 1,
+    });
+    expect(box()).not.toHaveAttribute("data-dragging");
+    fireEvent.pointerMove(handle(), {
+      buttons: 0,
+      clientX: 600,
+      clientY: 400,
+      pointerId: 1,
+    });
+    expect(box()).not.toHaveAttribute("data-dragging");
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(runAgentAction).not.toHaveBeenCalled();
+  });
+
   it("stops the box at the pane's edges", () => {
     const { dispatch } = mount({ over: { presentation: "gui" } });
     fireEvent.pointerDown(handle(), {
@@ -531,6 +564,7 @@ describe("dragging the box", () => {
       pointerId: 1,
     });
     fireEvent.pointerMove(handle(), {
+      buttons: 1,
       clientX: -4000,
       clientY: -4000,
       pointerId: 1,
@@ -552,6 +586,7 @@ describe("dragging the box", () => {
       pointerId: 1,
     });
     fireEvent.pointerMove(handle(), {
+      buttons: 1,
       clientX: 901,
       clientY: 581,
       pointerId: 1,
@@ -585,6 +620,7 @@ describe("dragging the box", () => {
       pointerId: 1,
     });
     fireEvent.pointerMove(handle(), {
+      buttons: 1,
       clientX: 716,
       clientY: 460,
       pointerId: 1,
@@ -605,6 +641,7 @@ describe("dragging the box", () => {
     const move = (x: number, y: number) =>
       act(() => {
         fireEvent.pointerMove(handle(), {
+          buttons: 1,
           clientX: x,
           clientY: y,
           pointerId: 1,
@@ -638,6 +675,7 @@ describe("dragging the box", () => {
     });
     // To right 116, bottom 125: 5px above the default, so it snaps there.
     fireEvent.pointerMove(handle(), {
+      buttons: 1,
       clientX: 684,
       clientY: 475,
       pointerId: 1,
@@ -764,6 +802,7 @@ describe("the box in an Agent's pane", () => {
         pointerId: 1,
       });
       fireEvent.pointerMove(handle, {
+        buttons: 1,
         clientX: 900 - 20 * step,
         clientY: 580,
         pointerId: 1,
