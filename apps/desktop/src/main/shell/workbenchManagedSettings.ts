@@ -13,7 +13,19 @@
  * tool owns them (see `workbenchDefaults.ts` for why DevHub writes only what
  * nobody has said) — and still cannot make the editor disagree with DevHub.
  *
- * The workbench half is the overlay's `devhubManagedSettings.contribution.ts`.
+ * They are also the workbench's *defaults* (`registerDefaultConfigurations`,
+ * source "DevHub"). The Settings editor never shows the memory layer — only a
+ * setting's user, workspace and default values — so "Preferred Dark Color
+ * Theme" read VS Code's default while DevHub's theme was worn; as the default
+ * it reads what applies. And the workbench puts the memory values back after
+ * every reload of its configuration, which upstream answers by starting the
+ * memory layer again from nothing: Start Debugging (F5) and Run Task reload it
+ * before every run, and with the values gone the person's own
+ * `window.autoDetectColorScheme` picked the preferred theme at VS Code's
+ * default.
+ *
+ * The workbench half is the overlay's `devhubManagedSettings.contribution.ts`
+ * and `common/devhubManagedSettings.ts`.
  * A workbench starts with the values already on its window configuration
  * (`workbenchStartTheme.ts`): its theme service decides which theme to paint
  * its first frame in as it is constructed, before any question could be

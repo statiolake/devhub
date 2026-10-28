@@ -3,14 +3,17 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// DevHub: the settings DevHub decides for every workbench, held in memory
+// DevHub: the settings DevHub decides for every workbench
 // (apps/desktop/src/main/shell/workbenchManagedSettings.ts). Today that is the
 // colour theme: DevHub reads the theme its own settings name and paints its
-// chrome and Agent panes in it, so this workbench wears the same one. The
-// values go into the MEMORY configuration target — above the user's and the
-// folder's settings, and never written to a file — so the person's
-// settings.json stays theirs and still cannot make the editor disagree with
-// the window around it.
+// chrome and Agent panes in it, so this workbench wears the same one.
+// `DevhubManagedSettingsService` (../common/devhubManagedSettings.ts) holds
+// them — in the MEMORY configuration, above the user's and the folder's
+// settings and never written to a file, so the person's settings.json stays
+// theirs and still cannot make the editor disagree with the window around it;
+// as the defaults, so the Settings editor shows the values that apply; and
+// again after every reload of the configuration, which upstream answers by
+// dropping the memory layer. This file is how the values reach it.
 //
 // From the first frame (apps/desktop/src/main/shell/workbenchStartTheme.ts).
 // The theme service reads the configured theme in its constructor, to decide
@@ -21,9 +24,9 @@
 // VS Code's default) at that moment, DevHub's cached theme was thrown away,
 // and every load painted the default theme first. So main puts the values on
 // the window configuration, which the renderer has before any of the
-// workbench is loaded, and `DevhubWorkbenchThemeService` writes them into the
-// memory configuration as the theme service is constructed, before upstream's
-// constructor reads them. The theme's own colours come the same way, for a
+// workbench is loaded, and `DevhubWorkbenchThemeService` hands them to the
+// managed settings service as the theme service is constructed, before
+// upstream's constructor reads them. The theme's own colours come the same way, for a
 // workbench with nothing cached in that theme — upstream's
 // `initialColorTheme`, which an embedder of the web workbench uses for exactly
 // this.
@@ -32,10 +35,8 @@
 // appearance change, and this contribution asks once (which is also how main
 // learns to tell this workbench).
 
-import { equals } from '../../../../base/common/objects.js';
-import { onUnexpectedError } from '../../../../base/common/errors.js';
 import { context, ipcRenderer } from '../../../../base/parts/sandbox/electron-browser/globals.js';
-import { ConfigurationTarget, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { IStorageService } from '../../../../platform/storage/common/storage.js';
@@ -53,6 +54,7 @@ import { IUserDataInitializationService } from '../../../services/userData/brows
 import { IHostService } from '../../../services/host/browser/host.js';
 import { IWorkbenchThemeService } from '../../../services/themes/common/workbenchThemeService.js';
 import { WorkbenchThemeService } from '../../../services/themes/browser/workbenchThemeService.js';
+import { DevhubManagedSettingsService, IDevhubManagedSettingsService } from '../common/devhubManagedSettings.js';
 
 const MANAGED_SETTINGS_CHANNEL = 'vscode:devhubManagedSettings';
 const MANAGED_SETTINGS_REQUEST = 'vscode:devhubManagedSettingsRequest';
@@ -69,20 +71,6 @@ function workbenchStart(): WorkbenchStartConfiguration | undefined {
 	// The configuration is resolved before the workbench is imported
 	// (`workbench.ts`, `load`), so it is there by the time anything runs.
 	return context?.configuration() as WorkbenchStartConfiguration | undefined;
-}
-
-/** Hold `settings` in the memory configuration, writing only what changed. */
-function applyManagedSettings(configurationService: IConfigurationService, settings: unknown): void {
-	if (typeof settings !== 'object' || settings === null) {
-		return;
-	}
-	for (const [key, value] of Object.entries(settings)) {
-		if (!equals(configurationService.inspect(key).memoryValue, value)) {
-			// A memory write is made synchronously, before the returned
-			// promise settles; the promise only carries a failure.
-			configurationService.updateValue(key, value, ConfigurationTarget.MEMORY).catch(onUnexpectedError);
-		}
-	}
 }
 
 /**
@@ -117,10 +105,11 @@ class DevhubWorkbenchThemeService extends WorkbenchThemeService {
 		@IUserDataInitializationService userDataInitializationService: IUserDataInitializationService,
 		@ILanguageService languageService: ILanguageService,
 		@INotificationService notificationService: INotificationService,
-		@IHostService hostService: IHostService
+		@IHostService hostService: IHostService,
+		@IDevhubManagedSettingsService managedSettings: IDevhubManagedSettingsService
 	) {
 		const start = workbenchStart();
-		applyManagedSettings(configurationService, start?.devhubManagedSettings);
+		managedSettings.set(start?.devhubManagedSettings);
 		super(
 			extensionService,
 			storageService,
@@ -140,6 +129,10 @@ class DevhubWorkbenchThemeService extends WorkbenchThemeService {
 	}
 }
 
+// Constructed with the theme service, before it: its listener for a reload of
+// the configuration is in place before the theme service's.
+registerSingleton(IDevhubManagedSettingsService, DevhubManagedSettingsService, InstantiationType.Eager);
+
 // Registered after upstream's (`workbench.common.main.ts` is imported first),
 // so this is the one the workbench gets.
 registerSingleton(IWorkbenchThemeService, DevhubWorkbenchThemeService, InstantiationType.Eager);
@@ -148,10 +141,10 @@ class DevhubManagedSettings implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.devhubManagedSettings';
 
 	constructor(
-		@IConfigurationService configurationService: IConfigurationService,
+		@IDevhubManagedSettingsService managedSettings: IDevhubManagedSettingsService,
 	) {
 		ipcRenderer.on(MANAGED_SETTINGS_CHANNEL, (_event: unknown, ...args: unknown[]) => {
-			applyManagedSettings(configurationService, args[0]);
+			managedSettings.set(args[0]);
 		});
 		ipcRenderer.send(MANAGED_SETTINGS_REQUEST);
 	}

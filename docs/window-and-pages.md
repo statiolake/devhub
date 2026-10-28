@@ -402,6 +402,27 @@ editor's own picker does not stick, because the theme is chosen in DevHub's
 Settings. (OS high contrast is still the workbench's own
 `window.autoDetectHighContrast`; DevHub does not follow it.)
 
+The same values are the workbench's _defaults_ too, registered with "DevHub"
+as their source (`registerDefaultConfigurations`; the overlay's
+`common/devhubManagedSettings.ts` holds both layers). VS Code's Settings editor
+never shows the memory layer — only a setting's user, workspace and default
+values — so "Workbench: Preferred Dark Color Theme" read VS Code's default
+(Dark 2026) while Nord was worn; now it reads DevHub's theme, marked "Default
+value changed by DevHub". A value the person put in their own `settings.json`
+is still shown there as theirs, and still does not apply.
+
+**Across a reload of the configuration.** Upstream's configuration service
+starts the memory layer again from nothing whenever it reloads its
+configuration (`WorkspaceService.loadConfiguration`): Start Debugging (F5) and
+Run Task call `reloadConfiguration()` before every run, and a profile switch or
+a change of workspace does the same. With the values gone, the person's own
+`window.autoDetectColorScheme: true` picked `workbench.preferredDarkColorTheme`
+at its default, and F5 switched the editor to Dark 2026 until DevHub's theme
+next changed. The overlay puts the memory values back from the listener that
+sees the change — registered before the theme service's, whose answer runs a
+turn later — and the defaults, which a reload rebuilds from the registry, were
+DevHub's throughout.
+
 **From the first frame** (`workbenchStartTheme.ts`). A workbench paints its
 window splash before any of its code runs, and its theme service is
 constructed while the workbench lays itself out — before any contribution and
@@ -418,7 +439,7 @@ workbench is loaded:
 
 - `devhubManagedSettings`: the same four settings. The overlay
   (`devhubManagedSettings.contribution.ts`) registers the theme service as a
-  subclass that writes them into the memory configuration before upstream's
+  subclass that holds them (memory and defaults) before upstream's
   constructor reads them, so the cached theme is kept.
 - `devhubInitialColorTheme`: the theme's type and the colours its file sets —
   upstream's `initialColorTheme`, which the web workbench's embedders use for

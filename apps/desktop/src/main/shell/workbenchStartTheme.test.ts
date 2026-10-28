@@ -50,6 +50,23 @@ describe("a window configuration", () => {
 		});
 	});
 
+	it("of an Extension Development Host carries the same theme", () => {
+		// F5 in an extension repository opens one: a window of its own, which
+		// is upstream's `openInBrowserWindow` throughout, but loaded through
+		// the same configuration URL as every other.
+		const configuration = {
+			windowId: 7,
+			extensionDevelopmentPath: ["/repo/extension"],
+		};
+		const start = startIn(MONOKAI);
+		expect(withWorkbenchStart(configuration, start)).toMatchObject({
+			windowId: 7,
+			extensionDevelopmentPath: ["/repo/extension"],
+			devhubManagedSettings: start.settings,
+			devhubInitialColorTheme: start.initialColorTheme,
+		});
+	});
+
 	it("is a copy: the configuration the window keeps is untouched", () => {
 		const configuration = { windowId: 3 };
 		withWorkbenchStart(configuration, startIn(MONOKAI));
