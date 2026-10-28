@@ -557,7 +557,9 @@ export function serverReach(stderr: Buffer): ServerReach {
 		) {
 			return { kind: "no_server" };
 		}
-		if (reason === "File name too long") {
+		// strerror(ENAMETOOLONG): glibc and macOS say "File name too long",
+		// musl — the static tmux DevHub installs on Linux hosts — "Filename too long".
+		if (reason === "File name too long" || reason === "Filename too long") {
 			return {
 				kind: "socket_unusable",
 				failure: portFailure("socket_path_too_long", {

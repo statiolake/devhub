@@ -1882,7 +1882,9 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	 * is a copy dispatched on the window itself (WebviewElement
 	 * handleKeyEvent): this listener captures there too, and stopping the copy
 	 * keeps the keybinding service's own (bubbling) window listener from
-	 * resolving it a second time.
+	 * resolving it a second time. Immediately: a copy dispatched on the window
+	 * is at its target there, and Chromium runs a target's bubbling listeners
+	 * after `stopPropagation` in its capturing one.
 	 */
 	private onWindowKeyDown(e: KeyboardEvent): void {
 		if (!this.nav.active) {
@@ -1899,7 +1901,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			return;
 		}
 		e.preventDefault();
-		e.stopPropagation();
+		e.stopImmediatePropagation();
 		if (action === 'run' && found?.commandId) {
 			this.commandService.executeCommand(found.commandId, ...(found.commandArgs === undefined ? [] : [found.commandArgs])).catch(onUnexpectedError);
 		}

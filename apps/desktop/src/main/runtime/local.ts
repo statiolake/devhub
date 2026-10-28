@@ -16,7 +16,7 @@
  */
 
 import { Buffer } from "node:buffer";
-import { watch, type FSWatcher } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import { REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS } from "./cadence.js";
 import {
 	mkdir,
@@ -411,11 +411,13 @@ export class LocalRuntime implements Runtime {
 		const watchers: FSWatcher[] = [];
 		try {
 			watchers.push(watch(gitDirectory, () => onChange()));
-			watchers.push(
-				watch(join(gitDirectory, "refs"), { recursive: true }, () =>
-					onChange(),
-				),
-			);
+			// A linked worktree's git directory has a `refs/` only for its own
+			// per-worktree refs, and an older git (2.43, say) makes none until
+			// there is such a ref; its branches live in the common directory.
+			const refs = join(gitDirectory, "refs");
+			if (existsSync(refs)) {
+				watchers.push(watch(refs, { recursive: true }, () => onChange()));
+			}
 		} catch (failure: unknown) {
 			for (const watcher of watchers) watcher.close();
 			throw failure;
