@@ -33,19 +33,25 @@ export const FILE_LINK_INSTRUCTIONS = [
 ].join(" ");
 
 /**
- * What every GUI Agent is told about diagrams: the transcript draws a closed
- * ```svg block as an image and a ```mermaid block as a diagram
- * (`shell/conversation/Diagram.tsx`), each with its source a click away, so a
- * picture asked for belongs in the reply — SVG first, Mermaid for a big graph
- * whose layout is better left to it — rather than in a file nobody asked for
- * or in ASCII art. An SVG is drawn as an image, so a script or an external
- * reference in it would do nothing; it is asked to be self-contained so that
- * it draws at all.
+ * What every GUI Agent is told about rich output: the transcript draws a
+ * closed block of each previewable kind (`shell/conversation/previewKinds.ts`)
+ * as what it says — a picture, a deck, a change, a page, a chart — and embeds
+ * a local file written as a Markdown image (`FileEmbed.tsx`), redrawn when
+ * the file changes. So the Agent is told which fences and files those are,
+ * and when to use which: a small or one-off picture inline, one that is being
+ * revised as a file it embeds (so it is not written out again each time);
+ * SVG for a figure, Vega-Lite for a chart, Marp for slides and HTML for a
+ * document, a diff for a proposed change, and never ASCII art. Everything is
+ * drawn as an image or in a frame that loads nothing, so it is asked to be
+ * self-contained in order to draw at all.
  */
-export const DIAGRAM_INSTRUCTIONS = [
-	"Diagrams: DevHub draws a ```svg block (one self-contained <svg>, no scripts or external resources; currentColor follows the theme) and a ```mermaid block as pictures.",
-	"Asked for a diagram, chart or figure, draw it in the reply, as a ```svg block by default (```mermaid only for a big graph best laid out for you) — not ASCII art, and not a file unless one is asked for.",
-	"Unasked, draw one only where it explains better than prose (architecture, data flow, a state machine), and keep it small.",
+export const RICH_OUTPUT_INSTRUCTIONS = [
+	"Rich output: DevHub draws closed ```svg, ```mermaid, ```markdown, ```marp (Marp slides, `marp: true` front matter), ```diff, ```html and ```vega-lite (JSON spec) blocks, and embeds a local file written as ![alt](path), the path as for a file link — PNG/JPEG (e.g. from matplotlib), .svg, .md (Marp too), .mmd, .diff, .html, .vl.json — redrawn when the file changes.",
+	"Keep them self-contained: no scripts or external resources (chart data inline in values).",
+	"A diagram or figure: an inline ```svg first; once it is being revised, write the SVG to a file and embed it.",
+	"A chart or graph: inline ```vega-lite, or embed a script's output (a PNG, a spec file).",
+	"Slides: Marp, best as a .md file embedded. A write-up or document: HTML, best as a file embedded. A proposed change: ```diff.",
+	"Never ASCII art: anything picture-like is SVG. Unasked, draw only where a picture explains better than prose, and keep it small.",
 ].join(" ");
 
 /**
@@ -56,5 +62,5 @@ export const DIAGRAM_INSTRUCTIONS = [
  */
 export const GUI_AGENT_INSTRUCTIONS = [
 	FILE_LINK_INSTRUCTIONS,
-	DIAGRAM_INSTRUCTIONS,
+	RICH_OUTPUT_INSTRUCTIONS,
 ].join(" ");

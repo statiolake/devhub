@@ -2,11 +2,11 @@ import { defaultUrlTransform } from "react-markdown";
 import { describe, expect, it } from "vitest";
 import { pathOfHref } from "./textLinks";
 import {
-  DIAGRAM_INSTRUCTIONS,
   FILE_LINK_INSTRUCTIONS,
   GUI_AGENT_INSTRUCTIONS,
+  RICH_OUTPUT_INSTRUCTIONS,
 } from "../../main/agent/conversation/linkInstructions";
-import { diagramKindOf } from "./diagramSvg";
+import { previewKindOfFence, previewKindsOfPath } from "./previewKinds";
 
 /** The `[text](target)` links the instructions give as examples, as Markdown reads their targets. */
 function exampleTargets(text: string): readonly string[] {
@@ -49,30 +49,89 @@ describe("what GUI Agents are told about file links", () => {
   });
 });
 
-describe("what GUI Agents are told about diagrams", () => {
-  it("names the two fences the transcript draws, and they are drawn", () => {
-    expect(DIAGRAM_INSTRUCTIONS).toContain("```mermaid");
-    expect(DIAGRAM_INSTRUCTIONS).toContain("```svg");
-    expect(diagramKindOf("mermaid", "graph TD")).toBe("mermaid");
-    expect(
-      diagramKindOf("svg", '<svg xmlns="http://www.w3.org/2000/svg"></svg>'),
-    ).toBe("svg");
+describe("what GUI Agents are told about rich output", () => {
+  const FENCES = [
+    "```svg",
+    "```mermaid",
+    "```markdown",
+    "```marp",
+    "```diff",
+    "```html",
+    "```vega-lite",
+  ];
+
+  it("names every fence the transcript draws, and each is drawn", () => {
+    for (const fence of FENCES) {
+      expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(
+        new RegExp(`${fence}(?![\\w-])`, "u"),
+      );
+    }
+    const samples: Record<string, string> = {
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+      mermaid: "graph TD",
+      markdown: "# A",
+      marp: "# A",
+      diff: "@@ -1 +1 @@\n-a\n+b",
+      html: "<p>a</p>",
+      "vega-lite": '{"mark": "bar"}',
+    };
+    for (const fence of FENCES) {
+      const word = fence.slice(3);
+      expect(previewKindOfFence(word, samples[word]!)?.id).toBe(word);
+    }
+    expect(RICH_OUTPUT_INSTRUCTIONS).toContain("`marp: true`");
   });
 
-  it("asks for small, self-contained pictures, and only where they help", () => {
-    expect(DIAGRAM_INSTRUCTIONS).toMatch(/no scripts or external resources/);
-    expect(DIAGRAM_INSTRUCTIONS).toMatch(/keep it small/);
-    expect(DIAGRAM_INSTRUCTIONS).toMatch(/architecture/);
-    // Asked for one, SVG in the reply rather than a file or ASCII art.
-    expect(DIAGRAM_INSTRUCTIONS).toMatch(/as a ```svg block by default/);
-    expect(DIAGRAM_INSTRUCTIONS).toMatch(/not a file unless one is asked for/);
+  it("names the files it embeds by ![alt](path), and that they redraw", () => {
+    expect(RICH_OUTPUT_INSTRUCTIONS).toContain("![alt](path)");
+    for (const name of [
+      "a.png",
+      "a.svg",
+      "a.md",
+      "a.mmd",
+      "a.diff",
+      "a.html",
+      "a.vl.json",
+    ]) {
+      const extension = name.slice(1);
+      expect(RICH_OUTPUT_INSTRUCTIONS).toContain(
+        extension === ".png" ? "PNG" : extension,
+      );
+      expect(previewKindsOfPath(name).length).toBeGreaterThan(0);
+    }
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(/redrawn when the file changes/);
+  });
+
+  it("says which to use when, as the person asked", () => {
+    // A figure: inline SVG first, a file embedded once it is revised.
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(
+      /diagram or figure: an inline ```svg first; once it is being revised, write the SVG to a file and embed it/,
+    );
+    // A chart: inline Vega-Lite, or a script's output embedded.
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(
+      /chart or graph: inline ```vega-lite, or embed a script's output/,
+    );
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(
+      /Slides: Marp, best as a \.md file embedded/,
+    );
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(
+      /write-up or document: HTML, best as a file embedded/,
+    );
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(/proposed change: ```diff/);
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(
+      /Never ASCII art: anything picture-like is SVG/,
+    );
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(
+      /no scripts or external resources/,
+    );
+    expect(RICH_OUTPUT_INSTRUCTIONS).toMatch(/keep it small/);
     // Concise: it is sent with every start and every resume.
-    expect(DIAGRAM_INSTRUCTIONS.length).toBeLessThan(500);
+    expect(RICH_OUTPUT_INSTRUCTIONS.length).toBeLessThan(1000);
   });
 
   it("is sent after the file links, on one line", () => {
     expect(GUI_AGENT_INSTRUCTIONS).toBe(
-      `${FILE_LINK_INSTRUCTIONS} ${DIAGRAM_INSTRUCTIONS}`,
+      `${FILE_LINK_INSTRUCTIONS} ${RICH_OUTPUT_INSTRUCTIONS}`,
     );
     expect(GUI_AGENT_INSTRUCTIONS).not.toContain("\n");
   });

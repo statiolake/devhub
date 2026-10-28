@@ -562,8 +562,8 @@ nothing. Esc and Ctrl+C stop a running turn from anywhere in the pane.
 **Reading and copying.** The transcript is text: you can drag-select any of
 it — answers, code, tool output, a subagent's work — and copy it with Cmd+C.
 Every message also has a quiet Copy action under it, always shown, and every
-code block has one in its header (a diagram's copies its picture; see
-"Diagrams").
+code block has one in its header (a preview's copies what it draws; see
+"Previews").
 
 **Settings in the composer.** Model, Effort and Permissions sit under the
 message box at the same size as what you type. A value the CLI has not named
@@ -832,7 +832,7 @@ local path (`FILE_LINK_INSTRUCTIONS` in
 > brackets: [my file.ts](<docs/my file.ts#L3>). Never link a GitHub or other
 > remote URL for a file that is on this machine.
 
-The diagram instruction (below, "Diagrams") follows it in the same text.
+The rich-output instruction (below, "Previews") follows it in the same text.
 Claude gets it as `--append-system-prompt`, after the profile's own: Claude
 keeps only the last `--append-system-prompt`, so one in the profile's
 arguments is folded into DevHub's, its text first
@@ -1155,15 +1155,27 @@ it: it and each diagram type are chunks of their own, so the Agents page
 starts as before.
 
 **Agents are told.** With the file-link instruction, every GUI Agent is told
-(`DIAGRAM_INSTRUCTIONS` in `main/agent/conversation/linkInstructions.ts`):
+about rich output (`RICH_OUTPUT_INSTRUCTIONS` in
+`main/agent/conversation/linkInstructions.ts`), on the same one line:
 
-> Diagrams: DevHub draws a ` ```svg ` block (one self-contained <svg>, no
-> scripts or external resources; currentColor follows the theme) and a
-> ` ```mermaid ` block as pictures. Asked for a diagram, chart or figure, draw
-> it in the reply, as a ` ```svg ` block by default (` ```mermaid ` only for a
-> big graph best laid out for you) — not ASCII art, and not a file unless one
-> is asked for. Unasked, draw one only where it explains better than prose
-> (architecture, data flow, a state machine), and keep it small.
+> Rich output: DevHub draws closed ` ```svg `, ` ```mermaid `,
+> ` ```markdown `, ` ```marp ` (Marp slides, `marp: true` front matter),
+> ` ```diff `, ` ```html ` and ` ```vega-lite ` (JSON spec) blocks, and
+> embeds a local file written as `![alt](path)`, the path as for a file link
+> — PNG/JPEG (e.g. from matplotlib), .svg, .md (Marp too), .mmd, .diff,
+> .html, .vl.json — redrawn when the file changes. Keep them self-contained:
+> no scripts or external resources (chart data inline in values). A diagram
+> or figure: an inline ` ```svg ` first; once it is being revised, write the
+> SVG to a file and embed it. A chart or graph: inline ` ```vega-lite `, or
+> embed a script's output (a PNG, a spec file). Slides: Marp, best as a .md
+> file embedded. A write-up or document: HTML, best as a file embedded. A
+> proposed change: ` ```diff `. Never ASCII art: anything picture-like is
+> SVG. Unasked, draw only where a picture explains better than prose, and
+> keep it small.
+
+Small and one-off goes inline; what is large or edited again and again goes
+in a file the answer embeds, so it is not written out in full each time and
+redraws as the Agent changes it.
 
 ## Messages that wait, and sending one into a turn
 
