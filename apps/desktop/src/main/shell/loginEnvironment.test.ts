@@ -335,11 +335,18 @@ describe("a dev container whose devhub command could not be installed", () => {
 	});
 });
 
+/**
+ * The tmux the cases below configure: a name launchd's PATH does not reach.
+ * On a Mac that is `tmux` itself (it lives under Homebrew), but a Linux
+ * machine has it in /usr/bin, so the cases name a tool no system directory has.
+ */
+const ABSENT_TOOL = "devhub-absent-tool";
+
 describe("runtime resolution in the imported environment", () => {
 	const runtimes = {
 		shell: "/bin/sh",
 		git: "git",
-		tmux: "tmux",
+		tmux: ABSENT_TOOL,
 		tmux_socket_name: "devhub",
 		tmux_args: [],
 	};
@@ -349,7 +356,7 @@ describe("runtime resolution in the imported environment", () => {
 		expect(resolved.tmux.kind).toBe("unavailable");
 		if (resolved.tmux.kind !== "unavailable") return;
 		expect(runtimeUnavailableMessage(resolved.tmux)).toBe(
-			"DevHub could not find 'tmux' on PATH (looked in: /usr/bin, /bin, /usr/sbin, /sbin).",
+			`DevHub could not find '${ABSENT_TOOL}' on PATH (looked in: /usr/bin, /bin, /usr/sbin, /sbin).`,
 		);
 	});
 
@@ -370,13 +377,13 @@ describe("runtime resolution in the imported environment", () => {
 		expect(resolved.tmux.kind).toBe("unavailable");
 		if (resolved.tmux.kind !== "unavailable") return;
 		expect(runtimeUnavailableMessage(resolved.tmux)).toBe(
-			"DevHub could not find 'tmux' on PATH (PATH is empty).",
+			`DevHub could not find '${ABSENT_TOOL}' on PATH (PATH is empty).`,
 		);
 	});
 
 	it("finds an executable the login shell's PATH reaches and launchd's does not", async () => {
 		const directory = mkdtempSync(join(tmpdir(), "devhub-loginenv-bin-"));
-		const tool = join(directory, "tmux");
+		const tool = join(directory, ABSENT_TOOL);
 		writeFileSync(tool, "#!/bin/sh\nexit 0\n");
 		chmodSync(tool, 0o755);
 
@@ -395,7 +402,7 @@ describe("why an executable could not be found", () => {
 	const runtimes = {
 		shell: "/bin/sh",
 		git: "git",
-		tmux: "tmux",
+		tmux: ABSENT_TOOL,
 		tmux_socket_name: "devhub",
 		tmux_args: [],
 	};
@@ -418,7 +425,7 @@ describe("why an executable could not be found", () => {
 		});
 		const message = executableMissingMessage(resolved.tmux, timedOut);
 		// Both facts, in one sentence: what was not found, and why not.
-		expect(message).toContain("could not find 'tmux' on PATH");
+		expect(message).toContain(`could not find '${ABSENT_TOOL}' on PATH`);
 		expect(message).toContain("/bin/zsh");
 		expect(message).toContain("did not answer within 10 seconds");
 	});

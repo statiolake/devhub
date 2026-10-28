@@ -13,6 +13,7 @@
     "typecheck": "pnpm --filter @devhub/desktop typecheck && pnpm --filter @devhub/bridge typecheck && pnpm --filter devhub-remote typecheck && pnpm --filter devhub-copilot typecheck",
     "test": "pnpm --filter @devhub/desktop test && pnpm --filter @devhub/bridge test && pnpm --filter devhub-remote test && pnpm --filter devhub-copilot test && pnpm run test:scripts",
     "test:scripts": "python3 -m unittest discover -s scripts -p '*_test.py'",
+    "test:local": "scripts/test-local.sh",
     "build": "scripts/build-app.sh",
     "smoke": "scripts/smoke_packaged_app.py dist/DevHub.app",
     "build:packages": "pnpm --filter @devhub/desktop build && pnpm --filter @devhub/bridge build && pnpm --filter devhub-remote build && pnpm --filter devhub-copilot build",

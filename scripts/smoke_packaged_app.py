@@ -42,6 +42,13 @@ with it. See apps/desktop/src/model/profile.ts.
 Run it standalone against any bundle:
 
     scripts/smoke_packaged_app.py path/to/DevHub.app
+
+or against a source run — `apps/desktop/scripts/dev.sh`, what `pnpm dev`
+starts — which is how it runs where no bundle can be built (Linux, under
+`xvfb-run`; see scripts/test-local.sh). The startup checks are the same; the
+bundle-layout checks are the bundle's own and are left out:
+
+    scripts/smoke_packaged_app.py --source [--electron-arg=--no-sandbox]
 """
 
 from __future__ import annotations
@@ -276,6 +283,74 @@ def launch_command(
 	return argv, environment
 
 
+def source_launch_command(
+	repo: Path,
+	state: Path,
+	electron_args: list[str] | None = None,
+	base_environment: dict[str, str] | None = None,
+) -> tuple[list[str], dict[str, str]]:
+	"""How to start a source run so that it owns nothing a live DevHub owns.
+
+	`dev.sh` derives the editor's directories from the profile and HOME rather
+	than taking them on the command line, so HOME moves into the throwaway state
+	along with the config directory, and the profile is `smoke` as for a
+	bundle; the tmux socket directory moves too, so the server the app starts
+	can be ended with it. `dev.sh` would otherwise try to build a remote
+	extension host first.
+	"""
+	environment = dict(os.environ if base_environment is None else base_environment)
+	environment["DEVHUB_PROFILE"] = SMOKE_PROFILE
+	environment["XDG_CONFIG_HOME"] = str(state / "config")
+	environment["HOME"] = str(state / "home")
+	environment["DEVHUB_SKIP_REH_BUILD"] = "1"
+	environment["TMUX_TMPDIR"] = str(state / "tmux")
+	argv = [str(repo / "apps" / "desktop" / "scripts" / "dev.sh"), *(electron_args or [])]
+	return argv, environment
+
+
+def source_electron(repo: Path) -> Path:
+	"""The Electron `dev.sh` boots, as it names it."""
+	if sys.platform == "darwin":
+		return repo / "vscode" / ".build" / "devhub-electron" / "DevHub.app" / "Contents" / "MacOS" / "DevHub"
+	return repo / "vscode" / ".build" / "electron" / "code-oss"
+
+
+def source_user_data_directory(repo: Path, environment: dict[str, str]) -> Path:
+	"""Where a source run under `environment` keeps its editor state.
+
+	Asked of `out/main/profilePaths.js`, the derivation `dev.sh` itself evals,
+	rather than spelled a second time here.
+	"""
+	output = subprocess.run(
+		[str(source_electron(repo)), str(repo / "apps" / "desktop" / "out" / "main" / "profilePaths.js")],
+		env={**environment, "ELECTRON_RUN_AS_NODE": "1"},
+		check=True,
+		capture_output=True,
+		text=True,
+	).stdout
+	for line in output.splitlines():
+		name, _, value = line.partition("=")
+		if name == "DEVHUB_USER_DATA_DIR":
+			return Path(value.strip("'"))
+	raise RuntimeError(f"profilePaths.js named no DEVHUB_USER_DATA_DIR:\n{output}")
+
+
+def smoke_source(repo: Path, timeout: float, settle: float, electron_args: list[str]) -> int:
+	if not source_electron(repo).is_file():
+		print(f"no Electron at {source_electron(repo)}: run scripts/provision-vscode.sh", file=sys.stderr)
+		return 1
+	if not (repo / "apps" / "desktop" / "out" / "main" / "main.js").is_file():
+		print("apps/desktop is not built: run 'pnpm --filter @devhub/desktop build'", file=sys.stderr)
+		return 1
+	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
+	argv, environment = source_launch_command(repo, state, electron_args)
+	for directory in ("HOME", "XDG_CONFIG_HOME", "TMUX_TMPDIR"):
+		Path(environment[directory]).mkdir(parents=True, exist_ok=True)
+	user_data = source_user_data_directory(repo, environment)
+	print(f"    a source run (apps/desktop/scripts/dev.sh) under the {SMOKE_PROFILE} profile")
+	return run_and_probe(argv, environment, state, user_data, timeout, settle)
+
+
 def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 	executable = app / "Contents" / "MacOS" / "DevHub"
 	if not executable.is_file():
@@ -294,7 +369,19 @@ def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
 	argv, environment = launch_command(executable, state)
-	user_data = user_data_directory(state)
+	return run_and_probe(argv, environment, state, user_data_directory(state), timeout, settle)
+
+
+def run_and_probe(
+	argv: list[str],
+	environment: dict[str, str],
+	state: Path,
+	user_data: Path,
+	timeout: float,
+	settle: float,
+) -> int:
+	"""Start the app, require a reply on its control socket and a workbench
+	it outlives, and take it and its state down again whatever happened."""
 	# A file rather than a pipe: nothing reads a pipe while the app runs, and
 	# an app that fills one blocks on its own console.log.
 	log_path = state / "app.log"
@@ -339,16 +426,35 @@ def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 		# event loop that is gone — so there is nothing gentler than SIGKILL to
 		# end it with, and the whole session goes so no child outlives the test.
 		try:
-			process.send_signal(signal.SIGKILL)
+			os.killpg(process.pid, signal.SIGKILL)
 		except ProcessLookupError:
 			pass
 		process.wait(timeout=30)
+		# tmux daemonizes out of the session, so a server the app started is
+		# ended by name, on the socket directory the run was given.
+		if "TMUX_TMPDIR" in environment and shutil.which("tmux"):
+			subprocess.run(
+				["tmux", "-L", f"devhub-{SMOKE_PROFILE}", "kill-server"],
+				env=environment,
+				capture_output=True,
+			)
 		shutil.rmtree(state, ignore_errors=True)
 
 
 def main() -> int:
 	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument("app", type=Path, help="the DevHub.app bundle to start")
+	parser.add_argument("app", type=Path, nargs="?", help="the DevHub.app bundle to start")
+	parser.add_argument(
+		"--source",
+		action="store_true",
+		help="start this checkout's source run (apps/desktop/scripts/dev.sh) instead of a bundle",
+	)
+	parser.add_argument(
+		"--electron-arg",
+		action="append",
+		default=[],
+		help="an extra argument for a source run's Electron (repeatable), e.g. --no-sandbox",
+	)
 	parser.add_argument(
 		"--timeout",
 		type=float,
@@ -362,6 +468,15 @@ def main() -> int:
 		help="how long the app must keep running after a workbench view has loaded",
 	)
 	args = parser.parse_args()
+	if args.source:
+		if args.app is not None:
+			parser.error("--source starts this checkout; it takes no bundle")
+		repo = Path(__file__).resolve().parent.parent
+		return smoke_source(repo, args.timeout, args.settle, args.electron_arg)
+	if args.app is None:
+		parser.error("name a DevHub.app bundle, or pass --source")
+	if args.electron_arg:
+		parser.error("--electron-arg is for --source")
 	return smoke(args.app.resolve(), args.timeout, args.settle)
 
 

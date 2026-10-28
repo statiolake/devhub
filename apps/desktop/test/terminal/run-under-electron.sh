@@ -64,7 +64,7 @@ if [ -d "$SOCKET_DIR" ]; then
 	for socket in "$SOCKET_DIR"/*; do
 		[ -e "$socket" ] || continue
 		echo "the PTY tests left a tmux socket behind: $(basename "$socket") — every test that starts a tmux server has to kill it" >&2
-		for candidate in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux; do
+		for candidate in ${DEVHUB_TEST_TMUX:-} /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux; do
 			[ -x "$candidate" ] || continue
 			"$candidate" -L "$(basename "$socket")" kill-server >/dev/null 2>&1 || true
 			break

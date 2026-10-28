@@ -479,6 +479,7 @@ CI=true pnpm install --frozen-lockfile
 pnpm run provision   # submodule, toolchain, patches, compile + bundle, Electron
 pnpm dev             # build apps/desktop and run it
 pnpm run check       # extension checks, format, lint, types, tests
+pnpm test:local      # all of CI, locally (Linux too): see CONTRIBUTING.md
 ```
 
 Type checking and the main-process build use `tsgo` (`@typescript/native-preview`,

@@ -7,7 +7,13 @@
  * are in `tmux.real.test.ts`.
  */
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -526,7 +532,11 @@ describe("executable resolution", () => {
     // process's own working directory.
     expect(resolveExecutable(context, "bin/echo")).toBeUndefined();
     expect(resolveExecutable(context, "")).toBeUndefined();
-    expect(resolveExecutable(context, "/bin/echo")?.path).toBe("/bin/echo");
+    // The resolved path is canonical: on a merged-/usr Linux /bin/echo is
+    // /usr/bin/echo.
+    expect(resolveExecutable(context, "/bin/echo")?.path).toBe(
+      realpathSync("/bin/echo"),
+    );
   });
 });
 

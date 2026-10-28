@@ -25,6 +25,7 @@ from pathlib import Path
 from smoke_packaged_app import (
 	SMOKE_PROFILE,
 	launch_command,
+	source_launch_command,
 	user_data_directory,
 	wait_for_workbench,
 	workbench_loaded,
@@ -67,6 +68,34 @@ class Launch(unittest.TestCase):
 	def test_extensions_are_installed_into_the_throwaway_state(self) -> None:
 		extensions = Path(self.argv[self.argv.index("--extensions-dir") + 1])
 		self.assertTrue(extensions.is_relative_to(self.state))
+
+
+class SourceLaunch(unittest.TestCase):
+	"""A source run (`--source`) moves the same three things, plus HOME, which
+	is what `dev.sh` derives the editor's directories from."""
+
+	def setUp(self) -> None:
+		self.state = Path("/state")
+		self.argv, self.environment = source_launch_command(
+			Path("/repo"),
+			self.state,
+			["--no-sandbox"],
+			{"HOME": "/home/tester", "PATH": "/usr/bin"},
+		)
+
+	def test_starts_dev_sh_with_the_extra_arguments(self) -> None:
+		self.assertEqual(self.argv, ["/repo/apps/desktop/scripts/dev.sh", "--no-sandbox"])
+
+	def test_runs_under_its_own_profile(self) -> None:
+		self.assertEqual(self.environment["DEVHUB_PROFILE"], SMOKE_PROFILE)
+
+	def test_moves_home_config_and_tmux_into_the_throwaway_state(self) -> None:
+		for name in ("HOME", "XDG_CONFIG_HOME", "TMUX_TMPDIR"):
+			self.assertTrue(Path(self.environment[name]).is_relative_to(self.state), name)
+
+	def test_builds_no_remote_extension_host(self) -> None:
+		self.assertEqual(self.environment["DEVHUB_SKIP_REH_BUILD"], "1")
+		self.assertEqual(self.environment["PATH"], "/usr/bin")
 
 
 LOADED = "[devhub] workbench view 1000007: its page has finished loading\n"

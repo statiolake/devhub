@@ -58,7 +58,9 @@ import {
 const SCRATCH_ROOT = fileURLToPath(
   new URL("../../../../.spike/", import.meta.url),
 );
+// DEVHUB_TEST_TMUX first, as in test/tmuxSockets.ts.
 const TMUX = [
+  ...(process.env.DEVHUB_TEST_TMUX ? [process.env.DEVHUB_TEST_TMUX] : []),
   "/opt/homebrew/bin/tmux",
   "/usr/local/bin/tmux",
   "/usr/bin/tmux",

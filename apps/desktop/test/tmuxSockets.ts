@@ -28,7 +28,12 @@ import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { makeSocketDir } from "../src/model/testScratch";
 
+// `DEVHUB_TEST_TMUX` names one first: a machine whose own tmux is older than
+// the one these tests are written against (Ubuntu 24.04's 3.4 escapes the
+// record separators DevHub frames its listings with) points it at DevHub's
+// published tmux. scripts/test-local.sh does.
 const TMUX_CANDIDATES = [
+  ...(process.env["DEVHUB_TEST_TMUX"] ? [process.env["DEVHUB_TEST_TMUX"]] : []),
   "/opt/homebrew/bin/tmux",
   "/usr/local/bin/tmux",
   "/usr/bin/tmux",

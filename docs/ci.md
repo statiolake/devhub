@@ -43,6 +43,12 @@ Together the jobs run everything `pnpm run check` runs (which is unchanged: a
 developer still runs it whole before pushing), plus a test build and the tests
 that start it.
 
+`scripts/test-local.sh` (`pnpm test:local`) runs all of it on one machine,
+Linux included, stage by stage — `Test: app` as a smoke test of a source run
+under `xvfb-run`, since packaging is macOS-only — so CI is the final check
+rather than the place a change is iterated on. The script's header lists the
+stages and the job each stands for.
+
 - What needs neither macOS nor a provisioned VS Code runs on Linux, which
   starts in seconds and does not queue behind macOS runners.
 - The desktop tests and the app build need a provisioned VS Code but not each
