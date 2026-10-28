@@ -82,9 +82,7 @@ describe("the usage-limits readout", () => {
     expect(readout).not.toHaveTextContent("Codex");
     const claude = readout.querySelector(".sidebar-usage-cli")!;
     // The five-hour window is the shorter: its number, its reset.
-    expect(claude).toHaveTextContent(
-      "Claude12%(until 20:00)7-day limit nearly reached",
-    );
+    expect(claude).toHaveTextContent("Claude12%7-day limit nearly reached");
     expect(
       (
         claude.querySelector(".sidebar-usage-fill") as HTMLElement
@@ -270,7 +268,7 @@ describe("the usage-limits readout", () => {
       .getByRole("status")
       .querySelectorAll(".sidebar-usage-cli");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toHaveTextContent("Claude40%(until 19:00)");
+    expect(rows[0]).toHaveTextContent("Claude40%");
   });
 
   it("shows the shortest window as reset, faded, once its last reading's reset has passed, rather than a longer window", () => {
@@ -314,8 +312,8 @@ describe("the usage-limits readout", () => {
     const [claude, codex] = [
       ...screen.getByRole("status").querySelectorAll(".sidebar-usage-cli"),
     ];
-    // The five-hour window has started again: empty, and said to be reset.
-    expect(claude).toHaveTextContent("Claude0%(reset)Approaching 7-day limit");
+    // The five-hour window has started again: empty, and faded.
+    expect(claude).toHaveTextContent("Claude0%Approaching 7-day limit");
     expect(claude).toHaveAttribute("data-stale", "true");
     expect(
       (
@@ -324,7 +322,7 @@ describe("the usage-limits readout", () => {
     ).toBe("0%");
     // The seven-day window still colours the row, and the caption says so.
     expect(claude).toHaveAttribute("data-level", "near");
-    expect(codex).toHaveTextContent(/^Codex0%\(reset\)$/u);
+    expect(codex).toHaveTextContent(/^Codex0%$/u);
     // A reset window is not a warning.
     expect(codex).toHaveAttribute("data-level", "calm");
     expect(screen.getByRole("status")).toHaveAccessibleName(
@@ -332,7 +330,7 @@ describe("the usage-limits readout", () => {
     );
   });
 
-  it("leaves the parenthesis out when the reset was not reported", () => {
+  it("leaves the reset to the tooltip, reported or not", () => {
     render(
       <UsageLimits
         limits={{
@@ -347,7 +345,6 @@ describe("the usage-limits readout", () => {
       .getByRole("status")
       .querySelector(".sidebar-usage-cli")!;
     expect(codex).toHaveTextContent(/^Codex41%$/u);
-    expect(codex.querySelector(".sidebar-usage-reset")).toBeNull();
   });
 
   it("colours a row by the shared rule: quiet below 75%, warning from 75%, danger from 90%", () => {
@@ -425,13 +422,12 @@ describe("the usage-limits readout", () => {
       const readout = screen.getByRole("status");
       const rows = [...readout.querySelectorAll(".sidebar-usage-cli")];
       expect(rows).toHaveLength(2);
-      // Different words beside each bar: a parenthesis and a caption on one,
-      // neither on the other.
-      expect(rows[0]).toHaveTextContent("(until 19:00)");
-      expect(rows[1]!.querySelector(".sidebar-usage-reset")).toBeNull();
+      // Different words beside each bar: a caption on one, none on the other.
+      expect(rows[0]!.querySelector(".sidebar-usage-caption")).not.toBeNull();
+      expect(rows[1]!.querySelector(".sidebar-usage-caption")).toBeNull();
       expect(getComputedStyle(readout).display).toBe("grid");
       expect(getComputedStyle(readout).gridTemplateColumns).toBe(
-        "3.6em minmax(16px, 1fr) 2.6em minmax(0, max-content)",
+        "3.6em minmax(16px, 1fr) 2.6em",
       );
       const boxes = rows.map((row) => {
         const track = row.querySelector(".sidebar-usage-track")!;
@@ -460,7 +456,6 @@ describe("the usage-limits readout", () => {
         );
       expect(columns(".sidebar-usage-name")).toEqual(["1", "1"]);
       expect(columns(".sidebar-usage-value")).toEqual(["3", "3"]);
-      expect(columns(".sidebar-usage-reset")).toEqual(["4"]);
       // The caption is under the bar, from its left edge to the row's end.
       expect(columns(".sidebar-usage-caption")).toEqual(["2 / -1"]);
     } finally {

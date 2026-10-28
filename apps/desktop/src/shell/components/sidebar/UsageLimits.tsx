@@ -2,21 +2,18 @@
  * Claude's and Codex's rate limits, at the foot of the Sidebar.
  *
  * One slim row per CLI that has reported: its name, a bar of how much is used
- * of its shortest window (the five-hour one over the seven-day one), the
- * percentage and when that window resets, `12% (until 16:50)`: the time when
- * the reset is later today, the date alone when it is another day
- * (`resetTime.ts`, the words the tooltip uses too). A reset that is unknown
- * has no parenthesis rather than a guess; one that has passed means the
- * window has started again since its last reading, and the row says so,
- * faded, `0% (reset)`. The row is coloured by the strictest of the CLI's
+ * of its shortest window (the five-hour one over the seven-day one) and the
+ * percentage. When that window resets is the tooltip's to say, not the row's:
+ * a parenthesis there took its width from every bar in the grid. A reset that
+ * has passed means the window has started again since its last reading, and
+ * the row is faded, `0%`. The row is coloured by the strictest of the CLI's
  * windows, and when that is not the shown one a small caption under
  * the bar names it, *Approaching 7-day limit* (`usageRow.ts` decides all
  * three). On the rail the names and numbers go and the bars stay, one per
  * CLI, so a limit coming close still shows.
  *
  * The rows share one grid, so every bar has the same edges whatever the
- * width of the words beside it; when the column is narrow the parenthesis
- * gives way before the percentage or the bar.
+ * width of the words beside it.
  *
  * A CLI whose sign-in has no plan limits (an API key, Bedrock) and no
  * reading of any window has a quiet row saying so, *No plan limits*, and no
@@ -174,9 +171,6 @@ export function UsageLimits({
           <span className="sidebar-usage-value">
             {percent(row.usedPercent)}
           </span>
-          {row.until === undefined ? null : (
-            <span className="sidebar-usage-reset">({row.until})</span>
-          )}
           {row.caption === undefined ? null : (
             <span className="sidebar-usage-caption">{row.caption}</span>
           )}
