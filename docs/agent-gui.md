@@ -910,6 +910,19 @@ only when DevHub already has it — the Workspace's own Issue and pull request,
 from the Sidebar's status — and the URL otherwise. A browser that could not
 be opened is said the way every other failure on the Agents page is.
 
+## Tables copy as CSV
+
+A Markdown table in an answer scrolls sideways in its own box rather than
+widening the transcript (`shell/conversation/Table.tsx`). While the pointer
+or the keyboard is in it, a quiet copy button sits in its top corner, in
+room the last column keeps for it, and puts the table on the clipboard as
+CSV (RFC 4180: a field with a comma, a quote or a line break is quoted). A
+right-click offers _Copy as CSV_ and _Copy as TSV_ — TSV is what a
+spreadsheet takes as cells when pasted. Both are read off the drawn table
+(`tableCopy.ts`), so a cell is what it shows: a link's text, inline code
+without its backticks. A right-click on text selected in the table is left
+to the page.
+
 ## Previews: diagrams, documents and slides
 
 Some blocks of an answer are drawn as what they say rather than as their

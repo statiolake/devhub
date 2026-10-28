@@ -45,6 +45,7 @@ import { previewKindOfFence } from "./previewKinds";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
 import { LinkedText } from "./LinkedText";
+import { Table } from "./Table";
 import { linkSpans, pathOfHref, rangeSuffix } from "./textLinks";
 
 const REMARK_PLUGINS = [remarkGfm, remarkMath];
@@ -229,12 +230,8 @@ function componentsFor(settled: boolean, depth: number): Components {
     },
     table({ children }) {
       // Wide tables scroll inside their own box rather than widening the
-      // transcript.
-      return (
-        <div className="conversation-table">
-          <table>{children}</table>
-        </div>
-      );
+      // transcript, and copy as CSV (`Table.tsx`).
+      return <Table>{children}</Table>;
     },
   };
 }

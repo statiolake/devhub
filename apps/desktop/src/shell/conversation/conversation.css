@@ -745,7 +745,7 @@
   margin-bottom: 0;
 }
 
-.conversation-markdown :is(p, ul, ol, blockquote, .conversation-table) {
+.conversation-markdown :is(p, ul, ol, blockquote, .conversation-table-block) {
   margin: 0.75em 0;
 }
 
@@ -857,6 +857,31 @@
   overflow-x: auto;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-panel);
+}
+
+/* The copy sits in the header row's corner, in room kept for it, only while
+   the pointer or the keyboard is in the table. */
+.conversation-table-block {
+  position: relative;
+}
+
+.conversation-table-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  font-size: 0.8em;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-standard);
+}
+
+.conversation-table-block tr > :last-child {
+  padding-right: 2.4em;
+}
+
+.conversation-table-block:hover > .conversation-table-actions,
+.conversation-table-block:focus-within > .conversation-table-actions {
+  opacity: 1;
 }
 
 .conversation-table table {
