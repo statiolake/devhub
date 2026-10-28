@@ -16,8 +16,9 @@ interface FakeItemOptions {
 	readonly type?: string;
 	readonly role?: string;
 	readonly registerAccelerator?: boolean;
+	readonly accelerator?: string;
 	readonly submenu?: FakeMenu;
-	readonly click?: () => void;
+	readonly click?: (event?: unknown) => void;
 }
 
 class FakeMenuItem {
@@ -26,14 +27,16 @@ class FakeMenuItem {
 	readonly type: string | undefined;
 	readonly role: string | undefined;
 	readonly registerAccelerator: boolean | undefined;
+	readonly accelerator: string | undefined;
 	readonly submenu: FakeMenu | undefined;
-	readonly click: (() => void) | undefined;
+	readonly click: ((event?: unknown) => void) | undefined;
 	constructor(options: FakeItemOptions) {
 		this.id = options.id;
 		this.label = options.label;
 		this.type = options.type;
 		this.role = options.role;
 		this.registerAccelerator = options.registerAccelerator;
+		this.accelerator = options.accelerator;
 		this.submenu = options.submenu;
 		this.click = options.click;
 	}
@@ -75,7 +78,7 @@ vi.mock("../electron.js", () => ({
 	},
 }));
 
-const { installMenu } = await import("./menu.js");
+const { installMenu, setMenuAcceleratorClaim } = await import("./menu.js");
 const { EDITING_COMMAND_GROUPS } = await import("./editingCommands.js");
 const { electron } = await import("../electron.js");
 
@@ -226,5 +229,82 @@ describe("terminal mode's menu bar", () => {
 		installMenu({ ...host(), hasWorkbenches: () => false });
 		expect(viewLabels()).not.toContain("Toggle Integrated Terminal");
 		expect(viewLabels()).toContain("togglefullscreen");
+	});
+});
+
+describe("an accelerator on a bar built by somebody else", () => {
+	/** The workbench's File menu: New Text File on Command-N. */
+	function workbenchBar(ran: string[]) {
+		const menu = FakeMenu.buildFromTemplate([
+			{ label: "Code", submenu: [{ label: "About Code" }] as never },
+			{
+				label: "File",
+				submenu: [
+					{
+						label: "New Text File",
+						accelerator: "Cmd+N",
+						click: () => {
+							ran.push("New Text File");
+						},
+					},
+					{ label: "No Accelerator", click: () => ran.push("plain") },
+				] as never,
+			},
+		] as never);
+		electron.Menu.setApplicationMenu(menu as never);
+		return applied?.items[1]?.submenu?.items ?? [];
+	}
+
+	beforeEach(() => {
+		setMenuAcceleratorClaim(undefined);
+	});
+
+	it("is offered to the chord layer first, and not run when it is taken", () => {
+		const offered: string[] = [];
+		setMenuAcceleratorClaim((accelerator) => {
+			offered.push(accelerator);
+			return true;
+		});
+		const ran: string[] = [];
+		const [newFile] = workbenchBar(ran);
+		newFile.click?.({ triggeredByAccelerator: true });
+		expect(offered).toEqual(["Cmd+N"]);
+		expect(ran).toEqual([]);
+	});
+
+	it("runs its item when the chord layer does not take it", () => {
+		setMenuAcceleratorClaim(() => false);
+		const ran: string[] = [];
+		const [newFile] = workbenchBar(ran);
+		newFile.click?.({ triggeredByAccelerator: true });
+		expect(ran).toEqual(["New Text File"]);
+	});
+
+	it("is not offered for a click with the pointer", () => {
+		const offered: string[] = [];
+		setMenuAcceleratorClaim((accelerator) => {
+			offered.push(accelerator);
+			return true;
+		});
+		const ran: string[] = [];
+		const [newFile, plain] = workbenchBar(ran);
+		newFile.click?.({ triggeredByAccelerator: false });
+		plain.click?.({ triggeredByAccelerator: true });
+		expect(offered).toEqual([]);
+		expect(ran).toEqual(["New Text File", "plain"]);
+	});
+
+	it("is wrapped once, however often the same menu is set", () => {
+		let offers = 0;
+		setMenuAcceleratorClaim(() => {
+			offers += 1;
+			return false;
+		});
+		const ran: string[] = [];
+		const [newFile] = workbenchBar(ran);
+		electron.Menu.setApplicationMenu(applied as never);
+		newFile.click?.({ triggeredByAccelerator: true });
+		expect(offers).toBe(1);
+		expect(ran).toEqual(["New Text File"]);
 	});
 });

@@ -16,7 +16,12 @@ vi.mock("../electron.js", () => ({
 	},
 }));
 
-const { handleInput, resetChordRouterForTests } = await import("./keyboard.js");
+const {
+	acceleratorStroke,
+	claimMenuAccelerator,
+	handleInput,
+	resetChordRouterForTests,
+} = await import("./keyboard.js");
 const { SHELL_ORIGIN } = await import("./shellPageProtocol.js");
 
 type ChordHost = Parameters<typeof handleInput>[0];
@@ -526,5 +531,99 @@ describe("a chord, as Electron delivers it", () => {
 		]);
 		expect(taken).toEqual([false, false]);
 		expect(calls).toEqual([]);
+	});
+});
+
+/**
+ * The second stroke of a chord that never reached a web contents.
+ *
+ * While a Workspace's workbench is being replaced — restarting, waking from
+ * sleep, crashed and relaunching — or too busy to take a key, the keyboard is
+ * in no web contents and a Command-modified key goes to the menu bar, which is
+ * the workbench's own with VS Code's accelerators on it. `Cmd+Q Cmd+N` then ran
+ * File ▸ New Text File, whose fallback with no workbench in front opens an
+ * empty window, which DevHub answers by selecting Scratch.
+ */
+describe("a chord completed through a menu accelerator", () => {
+	beforeEach(() => {
+		resetChordRouterForTests();
+	});
+
+	/** On widget's own row, the row the person is on. */
+	const ON_WIDGET = {
+		...SNAPSHOT,
+		selection: {
+			context: { kind: "workspace", workspaceId: "w-1" },
+			presentation: "full",
+		},
+	} as unknown as ReturnType<ChordHost["snapshot"]>;
+
+	function selections() {
+		const moves: unknown[] = [];
+		const { calls, chordHost } = host();
+		const selecting: ChordHost = {
+			...chordHost,
+			snapshot: () => ON_WIDGET,
+			selectContext: (context) => {
+				moves.push(context);
+			},
+		};
+		return { calls, moves, chordHost: selecting };
+	}
+
+	it("steps to the next row from the selection, not to Scratch", () => {
+		const { calls, moves, chordHost } = selections();
+		type(chordHost, [PREFIX]);
+		expect(claimMenuAccelerator(chordHost, "Cmd+N")).toBe(true);
+		expect(moves).toEqual([{ kind: "agent", agentId: "a-1" }]);
+		expect(calls).toEqual([]);
+	});
+
+	it("steps back from the selection on Cmd+P the same way", () => {
+		const { moves, chordHost } = selections();
+		type(chordHost, [PREFIX]);
+		expect(claimMenuAccelerator(chordHost, "CmdOrCtrl+P")).toBe(true);
+		expect(moves).toEqual([{ kind: "workspace", workspaceId: "s-0" }]);
+	});
+
+	it("runs a shifted chord from its accelerator: Shift+Cmd+N is N", () => {
+		expect(acceleratorStroke("Shift+Cmd+N")).toMatchObject({
+			key: "N",
+			command: true,
+		});
+		expect(acceleratorStroke("Cmd+N")).toMatchObject({
+			key: "n",
+			command: true,
+			shift: false,
+		});
+		expect(acceleratorStroke("Cmd+Up").key).toBe("arrowup");
+		expect(acceleratorStroke("Cmd+Plus").key).toBe("+");
+	});
+
+	it("is one chord: the stroke disarms it, and the next accelerator is the menu's", () => {
+		const { chordHost } = selections();
+		type(chordHost, [PREFIX]);
+		expect(claimMenuAccelerator(chordHost, "Cmd+N")).toBe(true);
+		expect(claimMenuAccelerator(chordHost, "Cmd+N")).toBe(false);
+	});
+
+	it("takes nothing while no chord is armed", () => {
+		const { moves, chordHost } = selections();
+		expect(claimMenuAccelerator(chordHost, "Cmd+N")).toBe(false);
+		expect(moves).toEqual([]);
+	});
+
+	it("swallows an accelerator that completes no chord, as a key would be", () => {
+		const { calls, moves, chordHost } = selections();
+		type(chordHost, [PREFIX]);
+		expect(claimMenuAccelerator(chordHost, "Cmd+Shift+F12")).toBe(true);
+		expect(moves).toEqual([]);
+		expect(calls).toEqual([]);
+	});
+
+	it("leaves the real Command-Q to the menu item it fired", () => {
+		const { chordHost } = selections();
+		type(chordHost, [PREFIX]);
+		expect(claimMenuAccelerator(chordHost, "Cmd+Q")).toBe(false);
 	});
 });

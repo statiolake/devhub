@@ -501,7 +501,7 @@ import {
 	type SlideExportHost,
 } from "./slideExport.js";
 import { popupContextMenu } from "./contextMenu.js";
-import { installMenu, refreshMenu } from "./menu.js";
+import { installMenu, refreshMenu, setMenuAcceleratorClaim } from "./menu.js";
 import {
 	devhubSkillPaths,
 	devhubSkillText,
@@ -520,6 +520,7 @@ import {
 	type TellWorkspace,
 } from "../cli/tell/service.js";
 import {
+	claimMenuAccelerator,
 	installKeyboard,
 	setArmingObserver,
 	runCommand,
@@ -1938,6 +1939,11 @@ export class AppController {
 		};
 		this.chordHost = chordHost;
 		installKeyboard(inputSource, report, chordHost);
+		// A chord's second stroke that reached the menu bar rather than a web
+		// contents is still the chord's. See `claimMenuAccelerator`.
+		setMenuAcceleratorClaim((accelerator) =>
+			claimMenuAccelerator(chordHost, accelerator),
+		);
 		setArmingObserver((armed) => {
 			this.send(CHANNELS.chordArmedChanged, armed);
 		});

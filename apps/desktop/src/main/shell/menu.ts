@@ -297,6 +297,56 @@ function mergePermanentItems(menu: Electron.Menu): void {
 }
 
 /**
+ * Who may take an accelerator before its menu item runs: the chord layer,
+ * completing an armed chord (`keyboard.ts`, `claimMenuAccelerator`).
+ */
+let acceleratorClaim: ((accelerator: string) => boolean) | undefined;
+
+export function setMenuAcceleratorClaim(
+	claim: ((accelerator: string) => boolean) | undefined,
+): void {
+	acceleratorClaim = claim;
+}
+
+/** Marks an item whose click already offers its accelerator to the claim. */
+const CLAIMED = Symbol("devhub.acceleratorClaimed");
+
+type ClickableItem = Electron.MenuItem & {
+	click: (...args: unknown[]) => void;
+	[CLAIMED]?: true;
+};
+
+/**
+ * Offer every accelerator on this menu to the chord layer before its item runs.
+ *
+ * A key that reaches no web contents is answered by the menu bar directly,
+ * and the bar is usually the workbench's, accelerators and all. A chord armed
+ * a moment before is still waiting for its second stroke, and that stroke is
+ * the chord's — not File ▸ New Text File's. Only a click the accelerator raised
+ * is offered; a click with the pointer is a person choosing the item.
+ */
+function claimAccelerators(menu: Electron.Menu): void {
+	for (const item of menu.items as ClickableItem[]) {
+		if (item.submenu) claimAccelerators(item.submenu);
+		const accelerator = item.accelerator;
+		if (typeof accelerator !== "string" || accelerator.length === 0) continue;
+		if (item[CLAIMED] || typeof item.click !== "function") continue;
+		const original = item.click;
+		item.click = (...args: unknown[]) => {
+			const event = args[0] as { triggeredByAccelerator?: boolean } | undefined;
+			if (
+				event?.triggeredByAccelerator === true &&
+				acceleratorClaim?.(accelerator) === true
+			) {
+				return;
+			}
+			original.apply(item, args);
+		};
+		item[CLAIMED] = true;
+	}
+}
+
+/**
  * Take over `setApplicationMenu`, once.
  *
  * Every menu the application ever wears goes through the replacement, so there
@@ -310,7 +360,10 @@ function claimApplicationMenu(): void {
 	claimed = true;
 	const original = electron.Menu.setApplicationMenu.bind(electron.Menu);
 	electron.Menu.setApplicationMenu = (menu: Electron.Menu | null) => {
-		if (menu) mergePermanentItems(menu);
+		if (menu) {
+			mergePermanentItems(menu);
+			claimAccelerators(menu);
+		}
 		original(menu);
 	};
 }

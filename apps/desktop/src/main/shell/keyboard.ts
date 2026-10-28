@@ -45,7 +45,11 @@
  */
 
 import { electron } from "../electron.js";
-import { isModifierKey, strokeKey } from "../../model/chordKeys.js";
+import {
+	isModifierKey,
+	parseChordKey,
+	strokeKey,
+} from "../../model/chordKeys.js";
 import { ChordInputSource, type InputSourcePort } from "./chordInputSource.js";
 import { editingCommandFor, type EditingRole } from "./editingCommands.js";
 import { terminalZoomFor } from "./terminalZoom.js";
@@ -348,6 +352,128 @@ export function runCommand(host: ChordHost, commandId: CommandId): boolean {
 	if (!effect) return false;
 	perform(host, effect);
 	return true;
+}
+
+/** An Electron accelerator's modifier words, as the stroke's flags. */
+const ACCELERATOR_MODIFIERS: Readonly<
+	Record<string, "command" | "control" | "option" | "shift">
+> = {
+	command: "command",
+	cmd: "command",
+	commandorcontrol: "command",
+	cmdorctrl: "command",
+	meta: "command",
+	super: "command",
+	control: "control",
+	ctrl: "control",
+	alt: "option",
+	option: "option",
+	altgr: "option",
+	shift: "shift",
+};
+
+/** An accelerator's named keys, as the names Chromium gives the same keys. */
+const ACCELERATOR_KEYS: Readonly<Record<string, string>> = {
+	up: "arrowup",
+	down: "arrowdown",
+	left: "arrowleft",
+	right: "arrowright",
+	return: "enter",
+	enter: "enter",
+	esc: "escape",
+	escape: "escape",
+	space: " ",
+	plus: "+",
+};
+
+/**
+ * The keystroke an Electron accelerator (`"Cmd+N"`, `"Shift+Cmd+["`) stands
+ * for, spelled the way `strokeOf` spells a key event.
+ *
+ * A letter in an accelerator names the key, not the character: `Cmd+N` is the
+ * N key without Shift, which produces `n`. So the key is lower-cased and Shift
+ * folded back in by the config's own rule (`parseChordKey`), which is what
+ * makes `Shift+Cmd+N` the `N` a binding would name. A spelling this cannot read
+ * is a stroke with no key, which completes nothing.
+ */
+export function acceleratorStroke(accelerator: string): KeyStroke {
+	const flags = { command: false, control: false, option: false, shift: false };
+	const segments = accelerator.split("+");
+	let keyToken = segments.pop() ?? "";
+	// `Cmd++` is the plus key.
+	if (keyToken === "" && segments.at(-1) === "") {
+		segments.pop();
+		keyToken = "+";
+	}
+	for (const segment of segments) {
+		const field = ACCELERATOR_MODIFIERS[segment.trim().toLowerCase()];
+		if (field !== undefined) flags[field] = true;
+	}
+	const stroke = (key: string | undefined, shift: boolean): KeyStroke => ({
+		key,
+		code: "",
+		command: flags.command,
+		control: flags.control,
+		option: flags.option,
+		shift,
+		isAutoRepeat: false,
+	});
+	const written = keyToken.trim();
+	if (written.length > 1) {
+		const named = ACCELERATOR_KEYS[written.toLowerCase()];
+		return stroke(named ?? written.toLowerCase(), flags.shift);
+	}
+	if (written.length === 0) return stroke(undefined, flags.shift);
+	try {
+		const parsed = parseChordKey(
+			[...(flags.shift ? ["Shift"] : []), written.toLowerCase()].join("+"),
+		);
+		return stroke(parsed.key, flags.shift);
+	} catch {
+		return stroke(undefined, flags.shift);
+	}
+}
+
+/**
+ * A menu accelerator fired while a chord is armed: the chord's second stroke,
+ * arriving by the one road that does not pass `before-input-event`.
+ *
+ * Every key a web contents receives is seen here first, and a stroke that
+ * completes a chord is `preventDefault`ed, which keeps it from the menu as
+ * well. But a key that reaches **no** web contents — the keyboard was in a
+ * workbench whose view is being replaced (restarting, waking, crashed and
+ * relaunching), or in one too busy to take it — goes straight to the
+ * application menu. That menu is the workbench's own as soon as an editor has
+ * had the keyboard, and it carries VS Code's accelerators: `Cmd+Q Cmd+N` then
+ * ran File ▸ New Text File, whose fallback with no workbench in front opens an
+ * empty window — which DevHub answers as Scratch. That was `Cmd+Q N` "jumping
+ * to Scratch" instead of to the next row.
+ *
+ * So while the prefix is armed, the keyboard belongs to the chord layer
+ * whichever way the stroke arrived: an accelerator is routed exactly as the
+ * key would have been, and the menu item does not run. Answers whether it took
+ * the stroke. Unarmed, it takes nothing, so every accelerator behaves as it
+ * always has — and the real Command-Q a `forward_prefix` stands for is left to
+ * the item it fired, which is what quitting is.
+ */
+export function claimMenuAccelerator(
+	host: ChordHost,
+	accelerator: string,
+): boolean {
+	if (!router.isArmed()) return false;
+	const decision = router.route(acceleratorStroke(accelerator));
+	switch (decision.kind) {
+		case "forward":
+		case "pass":
+			return false;
+		case "run":
+			runCommand(host, decision.commandId);
+			return true;
+		case "armed":
+		case "consume":
+		case "cancelled":
+			return true;
+	}
 }
 
 /**
