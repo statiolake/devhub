@@ -46,6 +46,12 @@ Shipped application components
   `licenses/Marp-Core-and-dependencies.txt`, which names every package and
   version with its licence text. The App Shell bundle carries them as chunks
   loaded only when a GUI Agent's answer draws a Marp deck.
+* Vega 6.4.0, Vega-Lite 6.5.0 and vega-interpreter 2.3.2 — BSD-3-Clause, with
+  the packages they depend on (d3 modules, topojson-client, json-stringify-
+  pretty-compact and the rest; BSD-3-Clause, ISC, MIT, 0BSD, Unlicense); see
+  `licenses/Vega-and-dependencies.txt`, which names every package and version
+  with its licence text. The App Shell bundle carries them as chunks loaded
+  only when a GUI Agent's answer draws a Vega-Lite chart.
 * The TextMate grammars for C, C#, CSS, diff, Dockerfile, Go, HTML, Java,
   JavaScript, JSON, JSON with Comments, JSX, Kotlin, Lua, Python, Rust, shell
   script, SQL, Swift, TSX, TypeScript and XML, and VS Code's Light+ and Dark+
@@ -114,6 +120,8 @@ Upstream source references
 * https://github.com/shikijs/shiki
 * https://github.com/mermaid-js/mermaid
 * https://github.com/marp-team/marp-core
+* https://github.com/vega/vega
+* https://github.com/vega/vega-lite
 * https://github.com/shikijs/textmate-grammars-themes
 * https://github.com/herdrdev/herdr
 * https://github.com/openai/codex

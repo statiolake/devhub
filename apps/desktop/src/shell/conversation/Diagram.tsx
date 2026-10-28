@@ -1,5 +1,6 @@
 /**
- * A ```mermaid or ```svg block of an answer, drawn as the picture it is.
+ * A ```mermaid, ```svg or ```vega-lite block of an answer, drawn as the
+ * picture it is.
  *
  * Only a closed block is drawn (`settled`, see `markdownBlocks.ts`): one
  * still being written is its code, the way every open fence is, and becomes
@@ -38,6 +39,7 @@ import {
 import { svgToPng } from "./diagramCopy";
 import { COPY_THEME, useDiagramTheme, type DiagramTheme } from "./diagramTheme";
 import { drawnMermaid, renderMermaid } from "./mermaid";
+import { drawnVegaLite, renderVegaLite } from "./vegaLite";
 import type { PreviewProps } from "./Preview";
 import { headerLanguage, PreviewFigure } from "./PreviewFigure";
 
@@ -57,20 +59,36 @@ export async function pictureForCopy(
   code: string,
 ): Promise<PreparedSvg> {
   const result =
-    kind === "mermaid"
-      ? await renderMermaid(code, COPY_THEME)
-      : prepareSvg(code, { color: COPY_THEME.ink });
+    kind === "svg"
+      ? prepareSvg(code, { color: COPY_THEME.ink })
+      : await RENDERERS[kind].render(code, COPY_THEME);
   if (!result.ok) throw new Error(result.error);
   return result;
 }
 
 type MenuId = (typeof DIAGRAM_MENU)[number]["id"];
 
+/** The kinds drawn by a library, later: each one's drawing and what it has already drawn. */
+const RENDERERS = {
+  mermaid: { render: renderMermaid, drawn: drawnMermaid },
+  "vega-lite": { render: renderVegaLite, drawn: drawnVegaLite },
+} as const;
+
+/** What a picture of each kind is called, for its `alt` and its failure line. */
+const NAMES: Record<
+  DiagramKind,
+  { readonly alt: string; readonly what: string }
+> = {
+  mermaid: { alt: "Mermaid diagram", what: "Diagram" },
+  svg: { alt: "SVG image", what: "SVG" },
+  "vega-lite": { alt: "Vega-Lite chart", what: "Chart" },
+};
+
 type Drawing = SvgResult | { readonly ok: "pending" };
 
 const PENDING: Drawing = { ok: "pending" };
 
-/** The picture for `code`, under `theme`: at once for an SVG, later for Mermaid. */
+/** The picture for `code`, under `theme`: at once for an SVG, later for the rest. */
 function useDrawing(
   kind: DiagramKind,
   code: string,
@@ -80,18 +98,18 @@ function useDrawing(
     () => (kind === "svg" ? prepareSvg(code, { color: theme.ink }) : undefined),
     [kind, code, theme.ink],
   );
-  const [mermaid, setMermaid] = useState<
+  const [later, setLater] = useState<
     { readonly code: string; readonly result: SvgResult } | undefined
   >(() => {
-    if (kind !== "mermaid") return undefined;
-    const result = drawnMermaid(code, theme);
+    if (kind === "svg") return undefined;
+    const result = RENDERERS[kind].drawn(code, theme);
     return result === undefined ? undefined : { code, result };
   });
   useEffect(() => {
-    if (kind !== "mermaid") return;
+    if (kind === "svg") return;
     let current = true;
-    void renderMermaid(code, theme).then((result) => {
-      if (current) setMermaid({ code, result });
+    void RENDERERS[kind].render(code, theme).then((result) => {
+      if (current) setLater({ code, result });
     });
     return () => {
       current = false;
@@ -100,8 +118,8 @@ function useDrawing(
   if (svg !== undefined) return svg;
   // A drawing in the last theme stands until this one's arrives, so a theme
   // change does not flash the code; a drawing of other words is not this one.
-  if (mermaid === undefined || mermaid.code !== code) return PENDING;
-  return mermaid.result;
+  if (later === undefined || later.code !== code) return PENDING;
+  return later.result;
 }
 
 export const Diagram = memo(function Diagram({
@@ -110,7 +128,10 @@ export const Diagram = memo(function Diagram({
   info,
   toggle,
 }: PreviewProps) {
-  const kind: DiagramKind = previewKind.id === "mermaid" ? "mermaid" : "svg";
+  const kind: DiagramKind =
+    previewKind.id === "mermaid" || previewKind.id === "vega-lite"
+      ? previewKind.id
+      : "svg";
   const theme = useDiagramTheme();
   const drawing = useDrawing(kind, code, theme);
 
@@ -122,7 +143,7 @@ export const Diagram = memo(function Diagram({
       <div className="conversation-diagram-failed">
         <CodeBlock code={code} info={info} settled />
         <p className="conversation-diagram-error" role="note">
-          {kind === "mermaid" ? "Diagram" : "SVG"} not drawn: {drawing.error}
+          {NAMES[kind].what} not drawn: {drawing.error}
         </p>
       </div>
     );
@@ -179,7 +200,7 @@ function DrawnDiagram({
           src={url}
           width={picture.size.width}
           height={picture.size.height}
-          alt={kind === "mermaid" ? "Mermaid diagram" : "SVG image"}
+          alt={NAMES[kind].alt}
           draggable={false}
         />
       </div>

@@ -947,6 +947,8 @@ the same picture (the same slide).
 | ` ```marp `, or ` ```markdown ` / ` ```md ` with `marp: true` | slides |
 | ` ```markdown `, ` ```md ` | the Markdown, rendered |
 | ` ```diff `, ` ```patch ` | the change, file by file |
+| ` ```vega-lite `, ` ```vegalite ` (a JSON spec) | a chart |
+| ` ```html ` | the page, in a sandboxed frame |
 
 ### Markdown
 
@@ -1014,6 +1016,37 @@ hunks are read; words before the first file are left out of the drawing. A
 toggle in the header shows the lines inline or side by side (old left, new
 right, each run of removed lines beside the added run that follows it); the
 copy and the right-click (_Copy Patch_) copy the patch.
+
+### Charts (Vega-Lite)
+
+A ` ```vega-lite ` block is a chart: its JSON spec compiled by Vega-Lite and
+drawn by Vega (`vegaLite.ts`), both chunks of their own loaded by the first
+chart. Vega-Lite rather than a charting library with callbacks: a spec is
+declarative data — values, marks, encodings — with nothing an Agent could
+make run. The chart is drawn headless (a `View` that renders nothing,
+written out with `toSVG`) and shown as a picture, exactly like a diagram:
+the same header, toggle, transparent PNG copy and right-click menu, drawn in
+DevHub's colours on screen (axes, grid, labels and a calm category palette
+from the tokens) and in the light copy palette when copied; the spec's own
+`config` wins over both. Nothing of Vega is in the page, so there are no
+tooltips or actions menu. Its expressions are interpreted
+(`vega-interpreter`), never compiled to functions, and its loader loads
+nothing: a spec with `data.url` is its source with _Chart not drawn: … put
+the data in `values`_.
+
+### HTML pages
+
+A ` ```html ` block is the page it is, in an `<iframe>` of its source
+(`srcdoc`, `HtmlPreview.tsx`) with `sandbox` and no permission at all — no
+script, form, popup or same origin, so it cannot reach the Agents page —
+under a Content Security Policy that loads only what the page carries
+(`data:` images, fonts and styles), placed first in its document and asked
+of the frame (`csp`). A navigation of the frame away from its own document
+— a link, a `<meta refresh>` — is refused by main (`will-frame-navigate`,
+`main/shell/externalLinks.ts`), not sent to the browser. Without script the
+frame cannot say how tall its page is: it is 360px high, drags taller, and
+scrolls inside. Its ground is white, as a page's is. The copy and the
+right-click copy the HTML.
 
 ### Diagrams
 

@@ -16,7 +16,8 @@
  * what `currentColor` is.
  */
 
-export type DiagramKind = "mermaid" | "svg";
+/** The kinds drawn as a picture by `Diagram.tsx`. */
+export type DiagramKind = "mermaid" | "svg" | "vega-lite";
 
 /** A source past these is drawn as its code, with a line saying why. */
 export const MAX_MERMAID_SOURCE = 20_000;

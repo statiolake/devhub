@@ -236,3 +236,22 @@ export function DiffIcon() {
     </Icon>
   );
 }
+
+/** A chart's source's "Show chart": bars on a baseline. */
+export function ChartIcon() {
+  return (
+    <Icon>
+      <path d="M2.5 13.5h11M4.5 13.5V9M8 13.5V4.5M11.5 13.5V7" />
+    </Icon>
+  );
+}
+
+/** A page's source's "Show page": a browser window. */
+export function PageIcon() {
+  return (
+    <Icon>
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.5" />
+      <path d="M1.75 5.75h12.5" />
+    </Icon>
+  );
+}

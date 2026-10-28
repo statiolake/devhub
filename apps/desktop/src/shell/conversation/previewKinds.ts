@@ -21,7 +21,14 @@
 import { diagramKindOf } from "./diagramSvg";
 import { isPatch } from "./patch";
 
-export type PreviewKindId = "diff" | "marp" | "markdown" | "mermaid" | "svg";
+export type PreviewKindId =
+  | "diff"
+  | "html"
+  | "marp"
+  | "markdown"
+  | "mermaid"
+  | "svg"
+  | "vega-lite";
 
 export interface PreviewKind {
   readonly id: PreviewKindId;
@@ -92,6 +99,22 @@ export const PREVIEW_KINDS: readonly PreviewKind[] = [
     defaultView: "preview",
   },
   {
+    id: "vega-lite",
+    languages: ["vega-lite", "vegalite", "vl"],
+    extensions: [".vl.json", ".vega-lite.json"],
+    accepts: hasText,
+    showLabel: "Show chart",
+    defaultView: "preview",
+  },
+  {
+    id: "html",
+    languages: ["html", "htm"],
+    extensions: [".html", ".htm"],
+    accepts: hasText,
+    showLabel: "Show page",
+    defaultView: "preview",
+  },
+  {
     id: "marp",
     languages: ["marp", "markdown", "md"],
     extensions: [".md", ".markdown"],
@@ -145,10 +168,18 @@ export function extensionOf(path: string): string {
   return dot <= 0 ? "" : name.slice(dot).toLowerCase();
 }
 
-/** The kinds a file may be by its name, in the order they are tried. */
+/**
+ * The kinds a file may be by its name, in the order they are tried. An
+ * extension may have two dots (`.vl.json`); the name before it may not be
+ * empty.
+ */
 export function previewKindsOfPath(path: string): readonly PreviewKind[] {
-  const extension = extensionOf(path);
-  return PREVIEW_KINDS.filter((kind) => kind.extensions.includes(extension));
+  const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+  return PREVIEW_KINDS.filter((kind) =>
+    kind.extensions.some(
+      (extension) => name.endsWith(extension) && name.length > extension.length,
+    ),
+  );
 }
 
 /** The kind a file's contents are drawn as, or `undefined` when none fits. */

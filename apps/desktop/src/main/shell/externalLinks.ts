@@ -38,6 +38,11 @@ function leavesTheApp(url: string): boolean {
 	return !url.startsWith(`${SHELL_SCHEME}:`) && !url.startsWith("about:");
 }
 
+/** Whether a frame inside a page may load this: only its own document. */
+export function staysInItsFrame(url: string): boolean {
+	return url === "about:srcdoc" || url === "about:blank";
+}
+
 /**
  * Make one of DevHub's own web contents send links to the browser.
  *
@@ -52,6 +57,15 @@ export function sendLinksToTheBrowser(contents: Electron.WebContents): void {
 		// somebody else's page in it wearing DevHub's preload is worse than no
 		// window at all.
 		return { action: "deny" };
+	});
+	// A frame inside the page — a GUI Agent's ```html preview, a sandboxed
+	// `srcdoc` — stays on the document it was given. Anything else would be a
+	// stranger's page fetched into DevHub's, by a link or a `<meta refresh>`
+	// nobody clicked; it is refused, not sent to the browser.
+	contents.on("will-frame-navigate", (event) => {
+		if (!event.isMainFrame && !staysInItsFrame(event.url)) {
+			event.preventDefault();
+		}
 	});
 	contents.on("will-navigate", (event, url) => {
 		if (!leavesTheApp(url)) return;
