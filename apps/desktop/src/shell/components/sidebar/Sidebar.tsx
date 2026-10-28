@@ -21,6 +21,7 @@ import {
 import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
 import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
 import { closingDeletesWorktree } from "../../../model/worktrees";
+import { agentLeadingText } from "../../../model/domain";
 import {
   useChordArmed,
   useSidebar,
@@ -530,11 +531,18 @@ function WorkspaceRow({
              * is doing, so that is what leads, at the size a row's own name is
              * set in.
              *
+             * Unless somebody named it. A name a person gave an Agent — in the
+             * rename sheet, or with `devhub --tell` when it was started — is
+             * not "Claude" again: it is the word they chose to tell this one
+             * from the rest, and the word they will scan the column for. So it
+             * leads, and what the Agent is doing follows it, dimmed.
+             *
              * An Agent that has not said anything yet leads with its name
              * instead. The leading text is never empty: a row whose only words
              * were 11px dimmed would be a row you cannot read the name of.
+             * The rule is `agentLeadingText`, which the window title reads too.
              */
-            const leading = agent.activity ?? agent.displayName;
+            const leading = agentLeadingText(agent);
             const agentFacts = agentRowFacts(agent, {
               label: workspace.label,
               icon: identity.glyph,
@@ -549,14 +557,18 @@ function WorkspaceRow({
              * row's status mark, it is what you chose when you started it, and
              * a row that spent its remaining width repeating it was spending it
              * on the one fact nobody was going to read. What is worth keeping
-             * is what tells two Agents apart: the ordinal, or the name somebody
-             * gave it. So the kind word is dropped and anything else is kept.
+             * is what tells two Agents apart: the ordinal. So the kind word is
+             * dropped and anything else is kept.
+             *
+             * A named Agent's name is already leading, so what follows it is
+             * the other thing: what it is doing.
              */
             const profileName = agentProfiles.find(
               (profile) => profile.id === agent.profileId,
             )?.displayName;
-            const naming =
-              agent.activity && agent.displayName !== profileName
+            const naming = agent.named
+              ? agent.activity
+              : agent.activity && agent.displayName !== profileName
                 ? agent.displayName
                 : undefined;
             return (
@@ -647,9 +659,10 @@ function WorkspaceRow({
                         })
                       }
                     >
-                      {/* What it is doing, then which Agent it is, then why it
-                          may not be doing it — one line, fading out under the
-                          row's own controls. */}
+                      {/* What it is doing, then which Agent it is — or, for an
+                          Agent somebody named, the other way round — then why
+                          it may not be doing it: one line, fading out under
+                          the row's own controls. */}
                       <span className="row-text">
                         <span className="row-label">{leading}</span>
                         {naming ? (

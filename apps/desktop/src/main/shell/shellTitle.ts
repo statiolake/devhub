@@ -9,7 +9,7 @@
  * So the title always carries two things — the word "DevHub" and the name of
  * the Workspace — and puts in front of them whatever is more specific than the
  * Workspace right now: the file the Editor is showing, or what the selected
- * Agent says it is doing. `shellWindowTitle` in `ipc/windowTitles.ts` is that
+ * Agent says it is doing — or its name, if somebody gave it one. `shellWindowTitle` in `ipc/windowTitles.ts` is that
  * rule; this file is where the facts it needs are collected.
  *
  * **The Editor's part comes from the workbench itself.** VS Code writes its
@@ -24,7 +24,8 @@
  * **The Agent's part comes from the reconciler.** It is the same word the
  * sidebar row shows, read once in `main/agent/activity.ts` and read from the
  * model here, so a row and a title can never disagree about what an Agent is
- * doing.
+ * doing. Which of that and its name leads is `agentLeadingText`, for the same
+ * reason.
  */
 
 import type {
@@ -36,6 +37,7 @@ import {
 	shellWindowTitle,
 	type ShellTitleParts,
 } from "../../ipc/windowTitles.js";
+import { agentLeadingText } from "../../model/domain.js";
 
 /** Everything the title is a function of. */
 export interface ShellTitleFacts {
@@ -96,10 +98,11 @@ function titleParts(facts: ShellTitleFacts): ShellTitleParts {
 		case "agent": {
 			const found = findAgent(facts, context.agentId);
 			return {
-				// An Agent that has said nothing is still an Agent you are
-				// looking at, and its name is the most specific true thing
-				// there is to say about the window.
-				element: found.agent.activity ?? found.agent.displayName,
+				// What the row leads with (`agentLeadingText`): what it is
+				// doing, or the name a person gave it. An Agent that has said
+				// nothing is still an Agent you are looking at, and its name is
+				// the most specific true thing there is to say about the window.
+				element: agentLeadingText(found.agent),
 				workspace: found.workspace.label,
 			};
 		}

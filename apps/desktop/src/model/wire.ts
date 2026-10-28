@@ -385,6 +385,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     profileKind: agent.profileKind,
     presentation: agent.presentation,
     displayName: agent.displayName,
+    ...(agent.named ? { named: true } : {}),
     ordinal: agent.ordinal,
     status: agent.status,
     runtimeHealth: agent.runtimeHealth,

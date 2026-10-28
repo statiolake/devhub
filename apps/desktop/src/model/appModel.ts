@@ -173,6 +173,12 @@ export interface AgentSnapshot {
   readonly profileKind: AgentProfile["kind"];
   readonly profileDisplayName: string;
   readonly displayName: string;
+  /**
+   * Whether a person gave it `displayName`, rather than DevHub. A name somebody
+   * gave an Agent is what tells it apart, so it leads its row; a label DevHub
+   * made up does not. See `Agent.named`.
+   */
+  readonly named: boolean;
   readonly ordinal: number;
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
@@ -2148,6 +2154,7 @@ export class AppModel {
         profileKind: agent.profile.kind,
         profileDisplayName: agent.profile.displayName,
         displayName: agentLabelFor(agent, workspace.agents),
+        named: agent.named,
         ordinal: agent.ordinal,
         status: agent.status,
         runtimeHealth: agent.runtimeHealth,

@@ -12,6 +12,11 @@
  * because it is the one fact on the row that nobody needs — it is what you
  * chose when you started the Agent, and there is a status mark in front of it.
  *
+ * An Agent somebody named is the other way round: the name they gave it is
+ * the word they will scan the column for, so it leads, and what the Agent is
+ * doing follows it, dimmed. DevHub's own labels never count as a name somebody
+ * gave — see `named` on the wire.
+ *
  * An Agent that has said nothing leads with its name instead, because the line
  * is never empty.
  *
@@ -128,6 +133,8 @@ function mountNamed(
   activity: string | undefined,
   status: AgentStatus = "working",
   unread: AgentStatus | undefined = undefined,
+  /** Whether a person gave it `displayName`, rather than DevHub. */
+  named = false,
 ): void {
   const value = {
     dispatch: vi.fn().mockResolvedValue(undefined),
@@ -149,6 +156,7 @@ function mountNamed(
         ...agent,
         displayName,
         status,
+        ...(named ? { named: true } : {}),
       })),
     })),
   } as unknown as AppSnapshot;
@@ -157,6 +165,15 @@ function mountNamed(
       <Sidebar snapshot={withAgent} />
     </SidebarContext.Provider>,
   );
+}
+
+/** The same row, for an Agent a person gave `displayName` to. */
+function mountGivenName(
+  displayName: string,
+  activity: string | undefined,
+  status: AgentStatus = "working",
+): void {
+  mountNamed(displayName, activity, status, undefined, true);
 }
 
 /** An Agent that is idle, which is the one state unread is drawn in. */
@@ -228,6 +245,80 @@ describe("what an Agent's row leads with", () => {
     // Nothing after it: the name is the leading word, and repeating it would
     // be the row saying one thing twice.
     expect(agentLines()).toEqual({ leading: "Claude 1", after: undefined });
+  });
+});
+
+/**
+ * A name somebody gave an Agent leads its row.
+ *
+ * It was given to tell this Agent from the rest, so it is the word a person
+ * scans the column for; what the Agent is doing is still on the row, after it
+ * and dimmed, where the name used to be.
+ */
+describe("what a row leads with when somebody named the Agent", () => {
+  it("leads with the name, and puts what it is doing after it", () => {
+    mountGivenName("Investigator", "Reading the reconciler");
+    expect(agentLines()).toEqual({
+      leading: "Investigator",
+      after: "Reading the reconciler",
+    });
+  });
+
+  it("leads with the name alone while the Agent has said nothing", () => {
+    mountGivenName("Investigator", undefined);
+    expect(agentLines()).toEqual({ leading: "Investigator", after: undefined });
+  });
+
+  /**
+   * Named is a fact about who chose the words, not about the words. A person
+   * who renamed an Agent "Claude" chose that, so it leads like any other
+   * name — and is not dropped as the kind word, which is DevHub's rule for
+   * DevHub's own label.
+   */
+  it("keeps a given name that happens to be the kind word", () => {
+    mountGivenName("Claude", "Reading the reconciler");
+    expect(agentLines()).toEqual({
+      leading: "Claude",
+      after: "Reading the reconciler",
+    });
+  });
+
+  /** DevHub's label is not a name somebody gave, so it keeps today's order. */
+  it("leaves an Agent DevHub labelled leading with what it is doing", () => {
+    mountNamed("Claude 2", "Reading the reconciler");
+    expect(agentLines()).toEqual({
+      leading: "Reading the reconciler",
+      after: "Claude 2",
+    });
+  });
+
+  it("says the name first in the row's accessible name, and the doing too", () => {
+    mountGivenName("Investigator", "Reading the reconciler");
+    const name =
+      document
+        .querySelector(".agent-row .sidebar-context-button")
+        ?.getAttribute("aria-label") ?? "";
+    expect(name.split("\n")[0]).toBe("Investigator");
+    expect(name).toContain("Reading the reconciler");
+  });
+
+  /**
+   * The tooltip leads the way the row does, and carries the second thing too:
+   * on the rail it is the only place left to read what a named Agent is doing.
+   */
+  it("leads the tooltip with the name, and what it is doing after it", () => {
+    mountGivenName("Investigator", "Reading the reconciler");
+    expect(agentTooltip()).toEqual([
+      { icon: "statusWorking", text: "Investigator", tone: "working" },
+      { text: "Reading the reconciler", style: "muted" },
+    ]);
+  });
+
+  it("is the name alone in the tooltip while the Agent has said nothing", () => {
+    mountGivenName("Investigator", undefined, "idle");
+    expect(agentTooltip()).toEqual([
+      { icon: "statusIdle", text: "Investigator", tone: "idle" },
+    ]);
   });
 });
 

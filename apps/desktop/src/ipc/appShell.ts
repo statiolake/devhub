@@ -146,6 +146,13 @@ export interface AgentWire {
 	 */
 	readonly failure?: AgentFailureStateWire;
 	readonly displayName: string;
+	/**
+	 * `displayName` is a name a person gave it — renamed, or named when it was
+	 * started — rather than the label DevHub made up ("Claude", "Claude 2").
+	 * A name somebody gave leads the Agent's row; a label does not. Absent is
+	 * DevHub's label.
+	 */
+	readonly named?: true;
 	readonly id: string;
 	readonly ordinal: number;
 	readonly profileId: string;

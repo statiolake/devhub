@@ -11,6 +11,8 @@ const SCRATCH = workspaceId("0c1d2e3f-4a5b-4c6d-8e7f-8091a2b3c4d5");
 function facts(
 	overrides: Partial<ShellTitleFacts> & {
 		readonly activity?: string | undefined;
+		readonly displayName?: string;
+		readonly named?: boolean;
 	} = {},
 ): ShellTitleFacts {
 	return {
@@ -27,7 +29,8 @@ function facts(
 				agents: [
 					{
 						id: AGENT,
-						displayName: "Claude 1",
+						displayName: overrides.displayName ?? "Claude 1",
+						named: overrides.named ?? false,
 						activity: overrides.activity,
 					},
 				],
@@ -92,6 +95,26 @@ describe("the shell window's title", () => {
 				}),
 			),
 		).toBe("Claude 1 — widget — DevHub");
+	});
+
+	/**
+	 * The row's rule (`agentLeadingText`): a name a person gave the Agent leads
+	 * its row, so it is what the window is called after too.
+	 */
+	it("is called after the name somebody gave the Agent, over what it is doing", () => {
+		expect(
+			shellTitleFor(
+				facts({
+					selection: {
+						context: { kind: "agent", agentId: AGENT },
+						presentation: "full",
+					},
+					displayName: "Investigator",
+					named: true,
+					activity: "Reading the reconciler",
+				}),
+			),
+		).toBe("Investigator — widget — DevHub");
 	});
 
 	it("never loses DevHub or the workspace, whatever is selected", () => {

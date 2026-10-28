@@ -14,6 +14,7 @@ import {
   PROJECT_SCOPE_HINT,
   projectsTooltip,
 } from "../../../model/projectStatus";
+import { agentLeadingText } from "../../../model/domain";
 import { statusLabel } from "./status";
 import { unreadShows } from "./StatusMark";
 import {
@@ -649,7 +650,8 @@ export function agentRowDescription(
 }
 
 /**
- * The one fact an Agent's tooltip is: its mark, and what the row leads with.
+ * The one fact an Agent's tooltip is: its mark, and what the row leads with —
+ * and, for an Agent somebody named, what the row says after its name.
  *
  * A Workspace's tooltip is a list because a Workspace *has* a list of facts a
  * person cannot see on the row — the path, the branch, the Issue, the machine.
@@ -663,9 +665,13 @@ export function agentRowDescription(
  *
  * The mark and its tone are the row's, taken from the same place
  * `agentRowFacts` takes them, so the box and the row cannot disagree about
- * what colour this Agent is. The text is the row's leading rule from
- * `Sidebar.tsx`: what it says it is doing, or its name when it has not said
- * anything yet.
+ * what colour this Agent is. The text is the row's leading rule,
+ * `agentLeadingText`: what it says it is doing, or its name when it has not
+ * said anything yet — or the name, first, when a person gave it one. Then the
+ * box carries the second thing too, dimmed, the way the row does: on the rail
+ * the box is the only place left to read what a named Agent is doing, and a
+ * tooltip that answered "Investigator" and stopped would have dropped the one
+ * fact the row had and the rail did not.
  *
  * The spoken sentence is *not* cut down with it. A reader has no mark to look
  * at and no row to glance at either, so `agentRowFacts` stays as it was and
@@ -674,11 +680,14 @@ export function agentRowDescription(
  */
 export function agentTooltipFacts(agent: AgentSnapshot): RowFact[] {
   const unread = unreadShows(agent.status, agent.unread);
-  return [
+  return said([
     {
       icon: unread ? "statusUnread" : STATUS_GLYPH[agent.status],
-      text: agent.activity ?? agent.displayName,
+      text: agentLeadingText(agent),
       tone: agent.unread !== undefined && unread ? agent.unread : agent.status,
     },
-  ];
+    agent.named === true && agent.activity !== undefined
+      ? { text: agent.activity, style: "muted" }
+      : undefined,
+  ]);
 }

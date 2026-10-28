@@ -1050,6 +1050,28 @@ export function cliStoppedItself(
 }
 
 /**
+ * What an Agent is introduced by where there is room for one thing: its
+ * Sidebar row, that row's tooltip, the window title.
+ *
+ * **The one place that decides it**, so a row and a title cannot disagree
+ * about which Agent this is. A name somebody gave it leads, because a person
+ * who named an Agent did it to tell it from the rest, and the name is what
+ * they will be scanning for. Otherwise what it says it is doing leads, because
+ * DevHub's own labels — "Claude", "Claude 2" — say only what you started it
+ * as; and an Agent that has said nothing leads with its label, because the
+ * line is never empty.
+ */
+export function agentLeadingText(agent: {
+  readonly displayName: string;
+  readonly named?: boolean;
+  readonly activity: string | undefined;
+}): string {
+  return agent.named === true
+    ? agent.displayName
+    : (agent.activity ?? agent.displayName);
+}
+
+/**
  * Which way an Agent can be carried on in its other presentation, if it can:
  * `"terminal"` for a GUI Agent, `"gui"` for a terminal Claude or Codex Agent.
  *
@@ -1339,6 +1361,11 @@ export interface AgentRestoreRecord {
   readonly presentation: AgentPresentation;
   readonly ordinal: number;
   readonly temporaryName?: string;
+  /**
+   * Whether `temporaryName` is a name a person gave it. See `Agent.named`.
+   * Absent is not: a name is only a person's when something said it was.
+   */
+  readonly named?: boolean;
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
   readonly controlState: AgentControlState;
@@ -1367,6 +1394,17 @@ export function agentRestoreRecord(
 /** Agent resource owned by exactly one Workspace. */
 export class Agent {
   private nameOverride: string | undefined;
+  /**
+   * Whether a person gave this Agent the name it has.
+   *
+   * Its own fact rather than read off `nameOverride`, because an override is
+   * not always somebody's word: a state file written before this fact existed
+   * holds every Agent's label as its override — "Claude", "Claude 2" — and
+   * there is no telling those from a name typed into the rename sheet. So
+   * those load as not named, which is what they look like, and an Agent is
+   * named only by `rename`, the one way a person names an Agent.
+   */
+  private namedValue: boolean;
   /**
    * What this Agent last said it was doing.
    *
@@ -1415,6 +1453,7 @@ export class Agent {
     readonly presentation: AgentPresentation,
     readonly ordinal: number,
     nameOverride: string | undefined,
+    named: boolean,
     private statusValue: AgentStatus,
     private runtimeHealthValue: RuntimeHealth,
     private controlStateValue: AgentControlState,
@@ -1431,6 +1470,8 @@ export class Agent {
     private unreadValue: UnreadReason | undefined,
   ) {
     this.nameOverride = nameOverride;
+    // A name somebody gave it is a name; a flag with no name under it is not.
+    this.namedValue = named && nameOverride !== undefined;
   }
 
   static create(
@@ -1465,6 +1506,7 @@ export class Agent {
       validated.presentation,
       validated.ordinal,
       validated.temporaryName,
+      validated.named === true,
       validated.status,
       validated.runtimeHealth,
       validated.controlState,
@@ -1480,6 +1522,7 @@ export class Agent {
       this.presentation,
       this.ordinal,
       this.nameOverride,
+      this.namedValue,
       this.statusValue,
       this.runtimeHealthValue,
       this.controlStateValue,
@@ -1501,6 +1544,11 @@ export class Agent {
 
   get temporaryName(): string | undefined {
     return this.nameOverride;
+  }
+
+  /** Whether a person gave it its name. See `namedValue`. */
+  get named(): boolean {
+    return this.namedValue;
   }
 
   get status(): AgentStatus {
@@ -1602,18 +1650,23 @@ export class Agent {
     if (!validDisplayName(displayName)) {
       throw invalid(DomainErrorCode.InvalidDisplayName);
     }
-    if (this.nameOverride === displayName) {
+    // The same words are news when they were DevHub's until now: a person
+    // who types "Claude 2" over the label "Claude 2" has named it.
+    if (this.nameOverride === displayName && this.namedValue) {
       return false;
     }
     this.nameOverride = displayName;
+    this.namedValue = true;
     return true;
   }
 
+  /** Back to the name DevHub gives it, which nobody gave it. */
   resetName(): boolean {
     if (this.nameOverride === undefined) {
       return false;
     }
     this.nameOverride = undefined;
+    this.namedValue = false;
     return true;
   }
 

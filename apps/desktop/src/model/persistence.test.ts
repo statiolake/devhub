@@ -167,6 +167,48 @@ describe("projection", () => {
     expect(restored.snapshot().workspaces[0].agents[0].unread).toBeUndefined();
   });
 
+  /**
+   * Whether a person gave an Agent its name is kept, because it decides what
+   * the Agent's row leads with — and the name alone could not say it: every
+   * Agent's label is written down as `temporary_name`.
+   */
+  it("round-trips a name a person gave an Agent as theirs", () => {
+    const model = populatedModel();
+    model.renameAgent(AG_A, "Investigator");
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[0].agents[0]).toMatchObject({
+      temporary_name: "Investigator",
+      named: true,
+    });
+    const agent = hydrateModel(state, [codex], today()).snapshot().workspaces[0]
+      .agents[0];
+    expect(agent.displayName).toBe("Investigator");
+    expect(agent.named).toBe(true);
+  });
+
+  it("writes an Agent DevHub labelled as not named, and loads it so", () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    expect("named" in state.workspaces[0].agents[0]).toBe(false);
+    const agent = hydrateModel(state, [codex], today()).snapshot().workspaces[0]
+      .agents[0];
+    expect(agent.displayName).toBe("Codex");
+    expect(agent.named).toBe(false);
+  });
+
+  /**
+   * A file from before the fact existed wrote every Agent's label as its
+   * `temporary_name`, and nothing in it tells a label from a typed name. So
+   * the name is kept, and it is not taken for a person's.
+   */
+  it("loads an older file's name as kept but not named", () => {
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    state.workspaces[0].agents[0].temporary_name = "Investigator";
+    const agent = hydrateModel(state, [codex], today()).snapshot().workspaces[0]
+      .agents[0];
+    expect(agent.displayName).toBe("Investigator");
+    expect(agent.named).toBe(false);
+  });
+
   it("round-trips the Agent a workspace was last in", () => {
     const model = populatedModel();
     model.selectContext({ kind: "agent", agentId: AG_A });
@@ -457,6 +499,19 @@ describe("store", () => {
     const load = await store.loadState();
     expect(load.metadata.origin).toBe("primary");
     expect(load.state).toEqual(state);
+  });
+
+  it("reads back a name a person gave, from the file", async () => {
+    const store = new JsonStateStore(path);
+    const model = populatedModel();
+    model.renameAgent(AG_A, "Investigator");
+    await store.saveState(stateFromSnapshot(model.snapshot()));
+    const load = await store.loadState();
+    expect(load.state.workspaces[0]!.agents[0]!.named).toBe(true);
+    expect(
+      hydrateModel(load.state, [codex], today()).snapshot().workspaces[0]!
+        .agents[0]!.named,
+    ).toBe(true);
   });
 
   it("keeps a backup of the last file that parsed", async () => {

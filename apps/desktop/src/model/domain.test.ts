@@ -173,6 +173,63 @@ describe("agent naming", () => {
     expect(agent.displayName).toBe("Codex 2");
   });
 
+  /**
+   * Named is who chose the words. Only `rename` is a person's word, so only it
+   * names an Agent; `resetName` hands the name back to DevHub.
+   */
+  it("is named by a rename and only by one, and unnamed by a reset", () => {
+    const agent = Agent.create(
+      agentId(UUID_A),
+      workspaceId(UUID_B),
+      profile,
+      2,
+      "tui",
+    );
+    expect(agent.named).toBe(false);
+    expect(agent.rename("Investigator")).toBe(true);
+    expect(agent.named).toBe(true);
+    expect(agent.clone().named).toBe(true);
+    expect(agent.resetName()).toBe(true);
+    expect(agent.named).toBe(false);
+  });
+
+  /**
+   * A restored label is DevHub's words in a person's field. Typing the same
+   * words over it is still a person naming the Agent, so it is news.
+   */
+  it("is named when somebody types over a restored label with the same words", () => {
+    const agent = Agent.restore({
+      id: agentId(UUID_A),
+      workspaceId: workspaceId(UUID_B),
+      profile,
+      presentation: "tui",
+      ordinal: 2,
+      temporaryName: "Codex 2",
+      status: "idle",
+      runtimeHealth: "healthy",
+      controlState: { kind: "running" },
+    });
+    expect(agent.named).toBe(false);
+    expect(agent.rename("Codex 2")).toBe(true);
+    expect(agent.named).toBe(true);
+    expect(agent.rename("Codex 2")).toBe(false);
+  });
+
+  it("is not named by a flag with no name under it", () => {
+    const agent = Agent.restore({
+      id: agentId(UUID_A),
+      workspaceId: workspaceId(UUID_B),
+      profile,
+      presentation: "tui",
+      ordinal: 1,
+      named: true,
+      status: "idle",
+      runtimeHealth: "healthy",
+      controlState: { kind: "running" },
+    });
+    expect(agent.named).toBe(false);
+  });
+
   it("refuses a blank rename", () => {
     const agent = Agent.create(
       agentId(UUID_A),

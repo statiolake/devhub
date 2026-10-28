@@ -593,7 +593,8 @@
 }
 
 /* Everything after the name on that run is context, so it is dimmed and set
-   small: a Workspace's branch, an Agent's own name, an Agent's runtime note.
+   small: a Workspace's branch, an Agent's own name (or, for an Agent somebody
+   named, what it is doing), an Agent's runtime note.
    They are `flex: none` — they do not shrink, they are simply carried past the
    edge of the column and faded, which is the one truncation rule this row
    has. */

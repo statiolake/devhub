@@ -450,6 +450,17 @@ export interface AgentStateRecord {
   presentation: AgentPresentation;
   ordinal: number;
   temporary_name?: string;
+  /**
+   * `temporary_name` is a name a person gave it, rather than the label DevHub
+   * wrote down for it. See `Agent.named`.
+   *
+   * No version bump, for the reason `sidebar.collapsed` had none: absent is
+   * not named, which is what every file written before this is read as — such
+   * a file wrote every Agent's label here, and a label is not a person's word.
+   * An older DevHub drops the key on its next save, and the name it keeps is
+   * then shown the way a label is: after what the Agent is doing.
+   */
+  named?: boolean;
   status: AgentStatus;
   /**
    * Why this Agent is owed a look, or absent if it has been read.
@@ -1416,6 +1427,7 @@ export function hydrateModel(
           presentation: agentRecord.presentation,
           ordinal: agentRecord.ordinal,
           temporaryName: agentRecord.temporary_name,
+          named: agentRecord.named === true,
           status,
           unread: unreadFrom(agentRecord.unread),
           runtimeHealth,
@@ -1587,6 +1599,7 @@ export function stateFromSnapshot(
         presentation: agent.presentation,
         ordinal: agent.ordinal,
         temporary_name: agent.displayName,
+        ...(agent.named ? { named: true } : {}),
         status: agent.status,
         unread: agent.unread,
         runtime_health: agent.runtimeHealth,
@@ -2037,6 +2050,9 @@ function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {
     ordinal: decodeNumber(at("ordinal"), object["ordinal"]),
     temporary_name: decodeOptional(object["temporary_name"], (entry) =>
       decodeString(at("temporary_name"), entry),
+    ),
+    named: decodeOptional(object["named"], (entry) =>
+      decodeBoolean(at("named"), entry),
     ),
     status: decodeMember(at("status"), object["status"], AGENT_STATUSES),
     unread: decodeOptional(object["unread"], (entry) =>

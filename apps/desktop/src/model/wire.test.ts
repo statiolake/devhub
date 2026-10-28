@@ -397,6 +397,32 @@ describe("where the Smart Buttons were dragged, across the wire", () => {
   });
 });
 
+/**
+ * Whether a person gave an Agent its name crosses as `named`, present only
+ * when they did — the row needs it to know what leads.
+ */
+describe("a name somebody gave an Agent, across the wire", () => {
+  const project = (named: boolean) =>
+    snapshotWire(
+      snapshotOf([
+        workspace({ kind: "available" }, [
+          { ...agent({ kind: "running" }), named },
+        ]),
+      ]),
+      "ready",
+      () => undefined,
+      () => undefined,
+    ).workspaces[0]!.agents[0]!;
+
+  it("says named when somebody named it", () => {
+    expect(project(true).named).toBe(true);
+  });
+
+  it("says nothing at all when the name is DevHub's own label", () => {
+    expect("named" in project(false)).toBe(false);
+  });
+});
+
 describe("an automatic action ticked, across the wire", () => {
   const AGENT = "33333333-3333-4333-8333-333333333333";
   const tick = (actionId: unknown, automatic: unknown) =>

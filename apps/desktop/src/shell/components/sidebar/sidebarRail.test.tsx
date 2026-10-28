@@ -50,7 +50,10 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function snapshot(collapsed: boolean): AppSnapshot {
+function snapshot(
+  collapsed: boolean,
+  agent: Record<string, unknown> = {},
+): AppSnapshot {
   return {
     schemaVersion: 1,
     revision: 1,
@@ -96,6 +99,7 @@ function snapshot(collapsed: boolean): AppSnapshot {
               waitingFor: "nothing_queued",
               lastResult: undefined,
             },
+            ...agent,
           },
         ],
       },
@@ -129,6 +133,7 @@ function mount(
   collapsed: boolean,
   repository?: typeof REPOSITORY,
   openExternalUrl = vi.fn(),
+  agent: Record<string, unknown> = {},
 ) {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   const value = {
@@ -147,7 +152,7 @@ function mount(
   } as unknown as SidebarValue;
   render(
     <SidebarContext.Provider value={value}>
-      <Sidebar snapshot={snapshot(collapsed)} />
+      <Sidebar snapshot={snapshot(collapsed, agent)} />
     </SidebarContext.Provider>,
   );
   return Object.assign(
@@ -412,6 +417,28 @@ describe("what a rail entry does under the pointer", () => {
     );
     expect(shell).toContain(
       '.sidebar[data-collapsed="true"] .agent-row .sidebar-context-button {\n  flex: 0 0 0;',
+    );
+  });
+
+  /**
+   * An Agent somebody named is asked about by its name on the rail too, and
+   * the box is where what it is doing went: the row says that after the name,
+   * and the rail has taken the row's words away.
+   */
+  it("names a named Agent first in its rail tooltip, then what it is doing", () => {
+    mount(true, undefined, vi.fn(), {
+      displayName: "Investigator",
+      named: true,
+      status: "working",
+      unread: undefined,
+      activity: "Reading the reconciler",
+    });
+    const row = document.querySelector(".agent-row");
+    expect(JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]")).toEqual(
+      [
+        { icon: "statusWorking", text: "Investigator", tone: "working" },
+        { text: "Reading the reconciler", style: "muted" },
+      ],
     );
   });
 
