@@ -106,7 +106,9 @@ import {
 	type EditorAttachmentWire,
 	type NoticeRetiredWire,
 	type ReplayWire,
+	sidebarWorkspaces,
 } from "../../ipc/appShell.js";
+import { placeWorkspaceBelow } from "../../model/workspaceOrder.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import {
 	CLOSE_BUDGET_MS,
@@ -751,6 +753,19 @@ function workbenchContentsOf(
 	}
 	return contents;
 }
+
+/**
+ * Where a Workspace a folder open makes goes in the Sidebar.
+ *
+ * `below-selection` is for the flows a person runs from DevHub itself to add
+ * a Workspace next to what they are in — the folder picker (`Cmd+Q F`, Add
+ * Workspace… in the palette and the menu), an SSH folder, New Project, Clone:
+ * directly under the Workspace the selection is in (`placeWorkspaceBelow`).
+ * `automatic` is everything else — `devhub <folder>` from a terminal, VS
+ * Code's own opens, Reopen Closed, an Issue's worktree — which is not said
+ * from a row and keeps the order's own rule (`orderWorkspaces`).
+ */
+type WorkspacePlacement = "automatic" | "below-selection";
 
 /**
  * How long `--metrics` waits for tmux to list its clients.
@@ -6755,6 +6770,7 @@ export class AppController {
 	private async openFolder(
 		location: RequestedWorkspaceLocation,
 		withAgent?: AgentLaunchWire,
+		placement: WorkspacePlacement = "automatic",
 	): Promise<AppOutcomeWire> {
 		// Opening a folder is going there, keyboard and all: the selection it
 		// makes is where the keys land, the Sidebar it may have been asked
@@ -6764,10 +6780,21 @@ export class AppController {
 			throw workspaceFailure(TERMINAL_MODE_NO_SSH);
 		}
 		this.keyboardInSidebar = false;
+		const anchor =
+			placement === "below-selection" ? this.placementAnchor() : undefined;
+		const openBefore = new Set(
+			this.coordinator.model.workspaces.map((workspace) => workspace.id),
+		);
 		const opened = await this.dispatchAwaiting({
 			type: "open_folder",
 			location,
 		});
+		if (anchor !== undefined) {
+			const workspaceId = this.openedWorkspaceId(location);
+			// Only a row this open made. A folder that was open already is
+			// selected where it stands: it was put there by somebody.
+			if (!openBefore.has(workspaceId)) this.placeBelow(workspaceId, anchor);
+		}
 		if (withAgent === undefined) {
 			await this.syncEditorView();
 			return outcomeWire(
@@ -6795,6 +6822,42 @@ export class AppController {
 			this.repositoryOf,
 			this.homeOf,
 		);
+	}
+
+	/**
+	 * The Workspace a new row opened from the Sidebar's own flows goes under:
+	 * the one the selection is in, its row or one of its Agents.
+	 *
+	 * Nothing for Scratch. It is not one of the ordered rows — it is pinned
+	 * above them — and being in it is being in no Workspace in particular, so
+	 * a folder opened from there lands where it always has.
+	 */
+	private placementAnchor(): WorkspaceId | undefined {
+		const model = this.coordinator.model;
+		const context = model.selection.context;
+		const workspace =
+			context.kind === "workspace"
+				? model.workspace(context.workspaceId)
+				: model.workspaceForAgent(context.agentId);
+		if (workspace === undefined || workspace.id === model.scratchWorkspaceId) {
+			return undefined;
+		}
+		return workspace.id;
+	}
+
+	/**
+	 * Put a row just opened directly under `anchor`, as a drop there would
+	 * (`placeWorkspaceBelow`), and write the order down the way a drop does.
+	 */
+	private placeBelow(workspaceId: WorkspaceId, anchor: WorkspaceId): void {
+		const order = placeWorkspaceBelow(
+			sidebarWorkspaces(this.snapshot()).rows,
+			(row) => row.groupKey,
+			workspaceId,
+			anchor,
+		);
+		if (order === undefined) return;
+		this.dispatchOwn(intentFromWire({ type: "reorder_workspaces", order }));
 	}
 
 	/**
@@ -9078,6 +9141,7 @@ export class AppController {
 							path: create ? await ensureWorkspaceFolder(path) : path,
 						}),
 						withAgent,
+						"below-selection",
 					);
 				} catch (error: unknown) {
 					throw namedFailure(error);
@@ -9110,6 +9174,7 @@ export class AppController {
 					return await this.openFolder(
 						requestedLocation({ kind: "ssh", host, path }),
 						withAgent,
+						"below-selection",
 					);
 				} catch (error: unknown) {
 					throw namedFailure(error);
@@ -9198,6 +9263,7 @@ export class AppController {
 							path: await createProject(path),
 						}),
 						withAgent,
+						"below-selection",
 					);
 				} catch (error: unknown) {
 					throw namedFailure(error);
@@ -9221,6 +9287,7 @@ export class AppController {
 							path: await this.clone(url, parentDirectory),
 						}),
 						withAgent,
+						"below-selection",
 					);
 				} catch (error: unknown) {
 					throw namedFailure(error);

@@ -349,6 +349,69 @@ export function placeWorkspace<T extends OrderableWorkspace>(
 }
 
 /**
+ * Put a row just opened directly below the row the person was in.
+ *
+ * Opening a folder from the Sidebar's own flows (`Cmd+Q F`, the picker, New
+ * Project, Clone) is usually opening it *next to* what one is working on, and
+ * the automatic rule would put it wherever its name sorts — one more row to
+ * drag back. So it lands under `anchorId`, by the same primitive a drop is
+ * (`placeWorkspace`), which means the grouping rule still has the last word:
+ *
+ * - A row that is a group of its own (any folder that is not a worktree of an
+ *   open repository) goes right after the anchor's group — after the anchor
+ *   itself when that is a group of one, and after the anchor's repository and
+ *   its worktrees otherwise, because a group cannot be split.
+ * - A worktree that joined an open repository's group stays in that group,
+ *   where the automatic rule put it. It moves to just below the anchor only
+ *   when the anchor is in the same group.
+ *
+ * `undefined` when there is nothing to do: the row or the anchor is not one
+ * of `ordered`, the row is the anchor, or it is already where this would put
+ * it. The result, like every placement's, is the whole order.
+ */
+export function placeWorkspaceBelow<T extends OrderableWorkspace>(
+  /** The rows exactly as they are drawn, the new one among them. */
+  ordered: readonly T[],
+  mainWorktreeOf: (workspace: T) => string | undefined,
+  workspaceId: string,
+  anchorId: string,
+): EntryOrder | undefined {
+  if (workspaceId === anchorId) return undefined;
+  if (!ordered.some((one) => one.id === anchorId)) return undefined;
+  const groupKeyOf = (workspace: T) =>
+    groupKeyFor(workspace.key, mainWorktreeOf(workspace));
+  const groups = groupsOf(ordered, groupKeyOf);
+  const own = groups.findIndex((group) =>
+    group.some((member) => member.id === workspaceId),
+  );
+  if (own < 0) return undefined;
+  const group = groups[own];
+  if (group[0].id === workspaceId) {
+    const others = groups.filter((_, at) => at !== own);
+    const anchorAt = others.findIndex((one) =>
+      one.some((member) => member.id === anchorId),
+    );
+    // The anchor is one of this group's own worktrees: the row leads them.
+    if (anchorAt < 0) return undefined;
+    return placeWorkspace(
+      ordered,
+      mainWorktreeOf,
+      workspaceId,
+      others[anchorAt + 1]?.[0].id,
+    );
+  }
+  const rest = group.filter((member) => member.id !== workspaceId);
+  const anchorAt = rest.findIndex((member) => member.id === anchorId);
+  if (anchorAt < 0) return undefined;
+  return placeWorkspace(
+    ordered,
+    mainWorktreeOf,
+    workspaceId,
+    rest[anchorAt + 1]?.id,
+  );
+}
+
+/**
  * One row, one step among its siblings.
  *
  * A step up is a drop in front of the sibling above; a step down is a drop in

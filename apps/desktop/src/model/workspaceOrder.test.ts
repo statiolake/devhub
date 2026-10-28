@@ -5,6 +5,7 @@ import {
   orderWorkspaces,
   placeAgent,
   placeWorkspace,
+  placeWorkspaceBelow,
   type EntryOrder,
   type MoveDirection,
 } from "./workspaceOrder.js";
@@ -378,6 +379,86 @@ describe("dropping a row somewhere", () => {
     expect(
       placeWorkspace(drawn(), (row) => row.main, "z", "z"),
     ).toBeUndefined();
+  });
+});
+
+describe("a row just opened, below the row the person was in", () => {
+  const BETA: Row = { id: "b", label: "beta", key: "/b", main: "/b" };
+  const WIDGET_C: Row = {
+    id: "wc",
+    label: "widget_c",
+    key: "/w_c",
+    main: "/w",
+  };
+  const below = (opened: Row, anchor: string) => {
+    const rows = [...TREE, opened];
+    return labelsOf(
+      placeWorkspaceBelow(
+        drawn([], rows),
+        (row) => row.main,
+        opened.id,
+        anchor,
+      ),
+      rows,
+    );
+  };
+
+  it("lands directly under a row that is a group of its own", () => {
+    expect(below(BETA, "z")).toEqual([
+      "alpha",
+      "widget",
+      "widget_a",
+      "widget_b",
+      "zebra",
+      "beta",
+    ]);
+  });
+
+  it("lands under the whole group when the row it was opened from is in one", () => {
+    // Opened from a worktree: a repository's rows are not split, so the new
+    // one goes under the last of them.
+    expect(below(BETA, "wa")).toEqual([
+      "alpha",
+      "widget",
+      "widget_a",
+      "widget_b",
+      "beta",
+      "zebra",
+    ]);
+  });
+
+  it("keeps a new worktree with its repository, under the anchor when that is a sibling", () => {
+    expect(below(WIDGET_C, "wa")).toEqual([
+      "alpha",
+      "widget",
+      "widget_a",
+      "widget_c",
+      "widget_b",
+      "zebra",
+    ]);
+    // Opened from somewhere else, its repository is still where it goes.
+    expect(below(WIDGET_C, "z")).toBeUndefined();
+  });
+
+  it("is a no-op where the automatic rule already put it there", () => {
+    expect(below(BETA, "a")).toBeUndefined();
+  });
+
+  it("is a no-op for an anchor that is not a row", () => {
+    expect(below(BETA, "nobody")).toBeUndefined();
+    expect(below(BETA, "b")).toBeUndefined();
+  });
+
+  it("writes down the whole list, like a drop", () => {
+    const rows = [...TREE, BETA];
+    const order = placeWorkspaceBelow(
+      drawn([], rows),
+      (row) => row.main,
+      "b",
+      "z",
+    );
+    expect(order).toEqual(["a", "w", "wa", "wb", "z", "b"]);
+    expect(arranged(order ?? [], rows)).toEqual(labelsOf(order, rows));
   });
 });
 
