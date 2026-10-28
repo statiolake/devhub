@@ -89,7 +89,7 @@ function host(filePath: string | undefined) {
 		host: {
 			showSaveDialog: vi.fn(async (options: Electron.SaveDialogOptions) => {
 				dialogs.push(options);
-				return { canceled: filePath === undefined, filePath };
+				return { canceled: filePath === undefined, filePath: filePath ?? "" };
 			}),
 			createWindow: (options: Electron.BrowserWindowConstructorOptions) => {
 				created.push(options);
