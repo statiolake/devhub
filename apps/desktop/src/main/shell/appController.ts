@@ -3167,20 +3167,20 @@ export class AppController {
 	 *   earlier sessions, `/resume` in another worktree, `devhub` — is given
 	 *   that name back, as Reopen Closed gives it back. Only an Agent started
 	 *   since DevHub did: one that was already running when it started has
-	 *   been seen by whoever renamed it or reset its name.
+	 *   been seen by whoever renamed it or reset its name (`persist` counts
+	 *   the Agents of the state file as seen before its first sweep).
 	 */
 	private sweepSessionNames(): void {
 		const agents = this.coordinator.model.workspaces.flatMap(
 			(workspace) => workspace.agents,
 		);
-		const first = this.sweptAgents === undefined;
 		const swept = (this.sweptAgents ??= new Map());
 		for (const agent of agents) {
 			const kind = agent.profile.kind;
 			if (kind !== "claude" && kind !== "codex") continue;
 			const resumed = resumedSession(kind, agent.profile.args);
 			const seen = swept.has(agent.id);
-			if (!seen && !first && !agent.named && resumed !== undefined) {
+			if (!seen && !agent.named && resumed !== undefined) {
 				const name = sessionNameOf(this.state.session_names, kind, resumed);
 				if (name !== undefined) {
 					swept.set(agent.id, name);
@@ -5145,6 +5145,15 @@ export class AppController {
 
 	private async persist(token: OperationToken): Promise<void> {
 		try {
+			// The Agents DevHub started with were seen before anybody could
+			// start one on a named session: they are not given a name back.
+			this.sweptAgents ??= new Map(
+				this.state.workspaces.flatMap((workspace) =>
+					workspace.agents.map(
+						(agent) => [parseAgentId(agent.agent_id), undefined] as const,
+					),
+				),
+			);
 			this.state = applySnapshot(this.state, this.coordinator.snapshot());
 			this.sweepSessionNames();
 			await this.saveState();
