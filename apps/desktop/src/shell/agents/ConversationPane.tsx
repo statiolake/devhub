@@ -194,6 +194,19 @@ export function ConversationPane({
                 },
               );
           }}
+          // Another worktree's session goes on there, in a new Agent; this
+          // one is left as it is.
+          onChooseElsewhere={(session) => {
+            void devhub()
+              .conversation.resumeSessionElsewhere(agentId, session)
+              .then(
+                () => setResuming(false),
+                (error: unknown) => {
+                  setResuming(false);
+                  reportFailure(error);
+                },
+              );
+          }}
           onCancel={() => setResuming(false)}
         />
       ) : null}

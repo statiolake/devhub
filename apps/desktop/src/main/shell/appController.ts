@@ -86,6 +86,9 @@ import {
 	type IssueAssignment,
 	type IssueFolderRequest,
 	type WorkspacePlaceWire,
+	type BranchListWire,
+	type PastSessionWire,
+	type ResumeElsewhereWire,
 	type ModalRequest,
 	type RepositoryStatusWire,
 	type ContextMenuRequestWire,
@@ -402,12 +405,22 @@ import type {
 } from "../runtime/runtime.js";
 import { resolveAgentProfile } from "./agentProfileCommand.js";
 import {
+	carryClaudeSession,
 	claudeSessionPresent,
 	listPastSessions,
 	previewPastSession,
 	resumeArgs,
+	resumedSession,
 	withSession,
+	type ListingContext,
+	type RepositoryWorktrees,
 } from "../agent/conversation/resume.js";
+import { repositoryWorktrees, resumeFolder } from "./sessionWorktree.js";
+import {
+	rememberSessionName,
+	sessionNameOf,
+	type SessionNameKind,
+} from "../../model/sessionNames.js";
 import {
 	agentEntriesOf,
 	closedEntryDetail,
@@ -457,6 +470,8 @@ import {
 } from "./projects.js";
 import {
 	ensureWorktree,
+	listBranchCandidates,
+	repositoryName,
 	switchRootBranch,
 	issueBranchPlan,
 	fetchBranchFrom,
@@ -1406,6 +1421,8 @@ export class AppController {
 				};
 			},
 			limitResumes: this.limitResumes,
+			listingContext: (runtime, root, kind) =>
+				this.listingContext(runtime, root, kind),
 			cacheKeeping: () => {
 				const { agents } = this.requireConfig();
 				return {
@@ -1430,7 +1447,15 @@ export class AppController {
 		});
 		this.conversationIpc = registerConversationIpc({
 			ipcMain: electron.ipcMain,
-			conversations: agentWiring.conversations,
+			// `/resume` gives an Agent with no name of its own the name the
+			// session it goes on with was given.
+			conversations: {
+				...agentWiring.conversations,
+				resume: async (agentId, session) => {
+					await agentWiring.conversations.resume(agentId, session);
+					await this.sessionResumedIn(agentId, session);
+				},
+			},
 			drafts: this.drafts,
 			agentsPage: () => shellWindow().agents.contents(),
 			// A continue of an Agent that is not idle is a question first
@@ -1441,6 +1466,9 @@ export class AppController {
 			// `/restart`: the question, when there is one, goes to the same
 			// sheet as the Sidebar's Restart Session and the chord's.
 			restart: (agentId) => this.requestRestartAgent(agentId),
+			// `/resume` on another worktree's session: there, in a new Agent.
+			resumeElsewhere: (agentId, session) =>
+				this.resumeAgentSessionElsewhere(agentId, session),
 			terminalSession: (agentId) => agentWiring.terminalSession(agentId),
 			resolvePaths: (agentId, cwd, paths) =>
 				resolvePathCandidates(
@@ -3053,6 +3081,335 @@ export class AppController {
 		await this.stateStore.saveState(this.state);
 	}
 
+	//#region sessions across worktrees, and the names they were given
+
+	/**
+	 * What a listing of `root`'s earlier sessions knows beyond the CLI's own
+	 * store: the repository's worktrees, so another branch's sessions are
+	 * listed with it, and the names people gave the Agents that ran them.
+	 * Best effort — a folder git cannot be asked about lists its own.
+	 */
+	private async listingContext(
+		runtime: Runtime,
+		root: string,
+		kind: AgentProfileKind,
+	): Promise<ListingContext> {
+		let repository: RepositoryWorktrees | undefined;
+		try {
+			repository = await repositoryWorktrees(
+				await this.gitCommand(runtime),
+				await runtime.realpath(root),
+			);
+		} catch {
+			// Not a swallow: no git on that machine is a folder of its own
+			// sessions, which is what the listing reads then.
+			repository = undefined;
+		}
+		const names =
+			kind === "claude" || kind === "codex"
+				? this.sessionNames(kind)
+				: new Map<string, string>();
+		return {
+			...(repository === undefined ? {} : { repository }),
+			nameOf: (session) => names.get(session),
+		};
+	}
+
+	/**
+	 * Every session of `kind`'s CLI a person-given name is known for: those
+	 * written down (`state.session_names`), and the sessions the named Agents
+	 * running now were started on, which win.
+	 */
+	private sessionNames(kind: SessionNameKind): Map<string, string> {
+		const names = new Map<string, string>();
+		for (const record of this.state.session_names.toReversed()) {
+			if (record.kind === kind) names.set(record.session, record.name);
+		}
+		for (const workspace of this.coordinator.model.workspaces) {
+			for (const agent of workspace.agents) {
+				if (!agent.named || agent.profile.kind !== kind) continue;
+				const session = resumedSession(kind, agent.profile.args);
+				if (session !== undefined) names.set(session, agent.displayName);
+			}
+		}
+		return names;
+	}
+
+	/** Write down that `session` was the named Agent `name`'s. Saved with the next save. */
+	private rememberSessionName(
+		kind: AgentProfileKind,
+		session: string,
+		name: string,
+	): void {
+		if (kind !== "claude" && kind !== "codex") return;
+		this.state.session_names = rememberSessionName(this.state.session_names, {
+			kind,
+			session,
+			name,
+			at: Date.now(),
+		});
+	}
+
+	/** The Agents the name sweep has seen, and the name it wrote down for each. */
+	private sweptAgents: Map<AgentId, string | undefined> | undefined;
+
+	/**
+	 * Keep `session_names` in step with the Agents, on every save.
+	 *
+	 * Two things, both about Agents the sweep has not seen as they are now:
+	 *
+	 * - **A named Agent** has its session written down under its name. A
+	 *   resumed one says its session in its own record (`resumedSession`); a
+	 *   GUI Agent's conversation knows it once its CLI has named one; a
+	 *   terminal Agent's is read from its processes, once per name. Its close
+	 *   writes it down again (`closedAgentOf`), which catches the rest.
+	 * - **An Agent started on a session that had a name** — from New Agent's
+	 *   earlier sessions, `/resume` in another worktree, `devhub` — is given
+	 *   that name back, as Reopen Closed gives it back. Only an Agent started
+	 *   since DevHub did: one that was already running when it started has
+	 *   been seen by whoever renamed it or reset its name.
+	 */
+	private sweepSessionNames(): void {
+		const agents = this.coordinator.model.workspaces.flatMap(
+			(workspace) => workspace.agents,
+		);
+		const first = this.sweptAgents === undefined;
+		const swept = (this.sweptAgents ??= new Map());
+		for (const agent of agents) {
+			const kind = agent.profile.kind;
+			if (kind !== "claude" && kind !== "codex") continue;
+			const resumed = resumedSession(kind, agent.profile.args);
+			const seen = swept.has(agent.id);
+			if (!seen && !first && !agent.named && resumed !== undefined) {
+				const name = sessionNameOf(this.state.session_names, kind, resumed);
+				if (name !== undefined) {
+					swept.set(agent.id, name);
+					const agentId = agent.id;
+					// After this save: a rename is an intent of its own.
+					queueMicrotask(() => {
+						void this.dispatchAwaiting({
+							type: "rename_agent",
+							agentId,
+							displayName: name,
+						}).catch((error: unknown) => {
+							console.warn(
+								`[devhub] Agent ${agentId}: its session's name could not be given back: ${failureText(error)}`,
+							);
+						});
+					});
+					continue;
+				}
+			}
+			const name = agent.named ? agent.displayName : undefined;
+			if (seen && swept.get(agent.id) === name) continue;
+			swept.set(agent.id, name);
+			if (name === undefined) continue;
+			if (resumed !== undefined) {
+				this.rememberSessionName(kind, resumed, name);
+				continue;
+			}
+			const agentId = agent.id;
+			void this.sessionAtClose(agentId).then((session) => {
+				if (session === undefined) {
+					// Not named yet by its CLI: asked again on a later save.
+					if (agent.presentation === "gui") swept.delete(agentId);
+					return;
+				}
+				const now = this.coordinator.model.agent(agentId);
+				if (now?.named !== true) return;
+				const before = this.state.session_names;
+				this.rememberSessionName(kind, session, now.displayName);
+				if (this.state.session_names !== before) {
+					void this.saveState().catch(() => undefined);
+				}
+			});
+		}
+		for (const agentId of [...swept.keys()]) {
+			if (!agents.some((agent) => agent.id === agentId)) swept.delete(agentId);
+		}
+	}
+
+	/**
+	 * After `/resume` in a GUI Agent: an Agent with no name of its own takes
+	 * the name the session was given.
+	 */
+	private async sessionResumedIn(
+		agentId: AgentId,
+		session: string,
+	): Promise<void> {
+		const agent = this.coordinator.model.agent(agentId);
+		const kind = agent?.profile.kind;
+		if (agent === undefined || agent.named) return;
+		if (kind !== "claude" && kind !== "codex") return;
+		const name = sessionNameOf(this.state.session_names, kind, session);
+		if (name === undefined) return;
+		await this.dispatchAwaiting({
+			type: "rename_agent",
+			agentId,
+			displayName: name,
+		});
+	}
+
+	/**
+	 * Go on with a session of another worktree of the repository at `place`,
+	 * in that worktree: see `sessionWorktree.ts`. The Workspace is opened (or
+	 * focused) under the selection's, the session carried where its CLI will
+	 * look for it, and an Agent of the profile started there on it.
+	 */
+	private async resumeSessionElsewhere(
+		request: ResumeElsewhereWire,
+	): Promise<AppOutcomeWire> {
+		if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(request.session)) {
+			throw workspaceFailure(`${request.session} is not a session id.`);
+		}
+		const location = workspaceLocation(request.place);
+		const runtime = runtimeFor(location);
+		const root = await resumeFolder(
+			await this.gitCommand(runtime),
+			request.place.path,
+			request.worktree,
+		);
+		const target: WorkspacePlaceWire = { ...request.place, path: root };
+		const { profile } = await this.sessionsProfile(target, request.profileId);
+		if (profile.kind === "claude" && request.cwd !== undefined) {
+			await carryClaudeSession(
+				runtime,
+				profile,
+				request.cwd,
+				root,
+				request.session,
+			);
+		}
+		const opening = requestedLocation(target);
+		await this.openFolder(opening, undefined, "below-selection");
+		const settled = await this.dispatchAwaiting({
+			type: "create_agent",
+			workspaceId: this.openedWorkspaceId(opening),
+			profileId: agentProfileId(request.profileId),
+			presentation: request.split === true ? "beside" : "full",
+			...(request.presentation === undefined
+				? {}
+				: { agentPresentation: agentPresentation(request.presentation) }),
+			resume: sessionId(request.session),
+		});
+		await this.syncEditorView();
+		return outcomeWire(
+			settled,
+			this.coordinator.readiness,
+			this.repositoryOf,
+			this.homeOf,
+		);
+	}
+
+	/** `/resume` in a GUI Agent, on a session of another worktree. */
+	private async resumeAgentSessionElsewhere(
+		agentId: AgentId,
+		session: PastSessionWire,
+	): Promise<void> {
+		const agent = this.coordinator.model.agent(agentId);
+		const workspace = this.coordinator.model.workspaceForAgent(agentId);
+		if (agent === undefined || workspace === undefined || !session.worktree) {
+			throw new Error(`there is no running Agent ${agentId}`);
+		}
+		await this.resumeSessionElsewhere({
+			place: workspacePlaceOf(workspace),
+			profileId: agent.profile.id,
+			session: session.id,
+			worktree: session.worktree,
+			...(session.cwd === undefined ? {} : { cwd: session.cwd }),
+			presentation: agent.presentation,
+		});
+	}
+
+	/**
+	 * The branches of the repository the selection's Workspace is in, for the
+	 * workspace picker: nothing for Scratch, a folder git does not know, or a
+	 * git that cannot be asked.
+	 */
+	private async selectionBranches(): Promise<BranchListWire | undefined> {
+		const model = this.coordinator.model;
+		const anchor = this.placementAnchor();
+		const workspace =
+			anchor === undefined ? undefined : model.workspace(anchor);
+		if (workspace === undefined) return undefined;
+		const place = workspacePlaceOf(workspace);
+		try {
+			const runtime = runtimeFor(workspaceLocation(place));
+			const command = await this.gitCommand(runtime);
+			const branches = await listBranchCandidates(command, place.path);
+			const repository = await repositoryWorktrees(command, place.path);
+			const open = new Set(
+				model.workspaces.map((each) => locationKey(each.location)),
+			);
+			// A Workspace's root is its real path; git lists the path it was given.
+			const real = new Map(
+				await Promise.all(
+					branches.flatMap((branch) =>
+						branch.worktree === undefined
+							? []
+							: [
+									runtime
+										.realpath(branch.worktree)
+										.catch(() => branch.worktree!)
+										.then((path) => [branch.worktree!, path] as const),
+								],
+					),
+				),
+			);
+			const keyOf = (path: string) =>
+				locationKey(
+					workspaceLocation({ ...place, path: real.get(path) ?? path }),
+				);
+			return {
+				place,
+				repository: repositoryName(
+					repository?.worktrees[0]?.path ?? place.path,
+				),
+				branches: branches.map((branch) => ({
+					name: branch.name,
+					...(branch.remote === undefined ? {} : { remote: branch.remote }),
+					committedAt: branch.committedAt * 1000,
+					...(branch.worktree === undefined
+						? {}
+						: { worktree: branch.worktree }),
+					open:
+						branch.worktree !== undefined && open.has(keyOf(branch.worktree)),
+				})),
+			};
+		} catch (error: unknown) {
+			console.warn(
+				`[devhub] the branches of ${place.path} could not be listed: ${failureText(error)}`,
+			);
+			return undefined;
+		}
+	}
+
+	/**
+	 * A branch row of the workspace picker: its worktree opened (or focused),
+	 * or made for it first — `ensureWorktree` with the branch as the work —
+	 * and placed under the selection's Workspace like every opening from here.
+	 */
+	private async openBranchWorkspace(
+		place: WorkspacePlaceWire,
+		branch: string,
+		withAgent: AgentLaunchWire | undefined,
+	): Promise<AppOutcomeWire> {
+		const location = workspaceLocation(place);
+		const path = await ensureWorktree(
+			await this.gitCommand(runtimeFor(location)),
+			place.path,
+			{ kind: "branch" },
+			branch,
+		);
+		return this.openFolder(
+			requestedLocation({ ...place, path }),
+			withAgent,
+			"below-selection",
+		);
+	}
+
+	//#endregion
+
 	//#region recently closed
 
 	/**
@@ -3122,6 +3479,10 @@ export class AppController {
 		const agent = this.coordinator.model.agent(agentId);
 		if (agent === undefined) throw new Error(`no Agent ${agentId} is open`);
 		const session = await this.sessionAtClose(agentId);
+		// A named Agent's session keeps its name for the resume lists.
+		if (agent.named && session !== undefined) {
+			this.rememberSessionName(agent.profile.kind, session, agent.displayName);
+		}
 		return {
 			profile_id: agent.profile.id,
 			profile_kind: agent.profile.kind,
@@ -4785,6 +5146,7 @@ export class AppController {
 	private async persist(token: OperationToken): Promise<void> {
 		try {
 			this.state = applySnapshot(this.state, this.coordinator.snapshot());
+			this.sweepSessionNames();
 			await this.saveState();
 		} catch (error) {
 			// A save that did not happen is reported as degraded, so the model can
@@ -9227,6 +9589,24 @@ export class AppController {
 			);
 			return operationId;
 		});
+		handle(CHANNELS.listSelectionBranches, () => this.selectionBranches());
+		handle(
+			CHANNELS.openBranchWorkspace,
+			async (
+				_event,
+				place: WorkspacePlaceWire,
+				branch: string,
+				withAgent: AgentLaunchWire | undefined,
+			) => {
+				this.cancelPicker?.();
+				this.cancelPicker = undefined;
+				try {
+					return await this.openBranchWorkspace(place, branch, withAgent);
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
 		handle(CHANNELS.cancelWorkspacePicker, () => {
 			this.cancelPicker?.();
 			this.cancelPicker = undefined;
@@ -9457,7 +9837,23 @@ export class AppController {
 						place,
 						profileId,
 					);
-					return await listPastSessions(runtime, profile, place.path);
+					return await listPastSessions(
+						runtime,
+						profile,
+						place.path,
+						"here",
+						await this.listingContext(runtime, place.path, profile.kind),
+					);
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
+		handle(
+			CHANNELS.resumeSessionElsewhere,
+			async (_event, request: ResumeElsewhereWire) => {
+				try {
+					return await this.resumeSessionElsewhere(request);
 				} catch (error: unknown) {
 					throw namedFailure(error);
 				}
@@ -10110,4 +10506,12 @@ function sendTargetAgentOf(agent: AgentSnapshot): SendTargetAgent {
 		status: agent.status,
 		ordinal: agent.ordinal,
 	};
+}
+
+/** Where a Workspace is, in the shape a page names a place: its folder, on its machine. */
+function workspacePlaceOf(workspace: Workspace): WorkspacePlaceWire {
+	const location = workspace.location;
+	return location.kind === "ssh"
+		? { kind: "ssh", host: location.host, path: location.path }
+		: { kind: "local", path: location.path };
 }

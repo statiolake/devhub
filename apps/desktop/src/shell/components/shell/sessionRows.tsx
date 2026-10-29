@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import type {
   PastSessionWire,
   SessionPreviewLineWire,
+  SessionWorktreeWire,
 } from "../../../ipc/contract";
 import { toAppError } from "../../failure";
 
@@ -37,13 +38,36 @@ export function sessionDetail(
   where: boolean,
 ): string | undefined {
   const parts = [
+    // A row titled by the name its Agent was given says what the CLI calls
+    // it here, so the conversation can still be recognised by its words.
+    session.agentName === undefined ? undefined : session.title,
     session.updatedAt === undefined
       ? undefined
       : relativeTime(session.updatedAt, now),
-    session.branch,
+    session.worktree === undefined
+      ? session.branch
+      : worktreeLabel(session.worktree),
     where ? session.cwd : undefined,
   ].filter((part): part is string => part !== undefined && part !== "");
   return parts.length === 0 ? undefined : parts.join(" · ");
+}
+
+/** What a session row leads with: the name its Agent was given, else the CLI's title. */
+export function sessionTitle(session: PastSessionWire): string {
+  return session.agentName ?? session.title;
+}
+
+/**
+ * Which other worktree a session ran in, as its row says it: the branch and
+ * the folder — and, when the folder is gone, that choosing the row makes the
+ * worktree again.
+ */
+export function worktreeLabel(worktree: SessionWorktreeWire): string {
+  const folder = worktree.root.slice(worktree.root.lastIndexOf("/") + 1);
+  const branch = worktree.branch ?? "another branch";
+  return worktree.present
+    ? `${branch} (worktree ${folder})`
+    : `${branch} (worktree ${folder}, removed — made again)`;
 }
 
 const RELATIVE = new Intl.RelativeTimeFormat("en", { numeric: "auto" });

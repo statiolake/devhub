@@ -37,11 +37,13 @@ import type {
 import type {
   AgentActionWire,
   AssignmentBranchWire,
+  BranchListWire,
   GitHubLoginWire,
   IssueAssignment,
   IssueFolderRequest,
   IssueRepository,
   PastSessionWire,
+  ResumeElsewhereWire,
   SessionPreviewLineWire,
   SshHostWire,
   WorkspacePickerCandidate,
@@ -79,6 +81,14 @@ export interface PickerValue {
     withAgent?: AgentLaunchWire,
   ) => Promise<AppOutcome | undefined>;
   readonly chooseWorkspaceFolder: () => Promise<string | undefined>;
+  /** The selection's repository's branches, for the workspace picker's branch rows. */
+  readonly listSelectionBranches: () => Promise<BranchListWire | undefined>;
+  /** A branch row taken: its worktree opened, or made for it and opened. */
+  readonly openBranchWorkspace: (
+    place: WorkspacePlaceWire,
+    branch: string,
+    withAgent?: AgentLaunchWire,
+  ) => Promise<AppOutcome>;
   /** The machines `~/.ssh/config` names, read fresh when the picker opens. */
   readonly listSshHosts: () => Promise<readonly SshHostWire[]>;
   /**
@@ -162,6 +172,10 @@ export interface PickerValue {
     session: string,
     cwd: string,
   ) => Promise<readonly SessionPreviewLineWire[]>;
+  /** An earlier session of another worktree, gone on with in that worktree. */
+  readonly resumeSessionElsewhere: (
+    request: ResumeElsewhereWire,
+  ) => Promise<AppOutcome>;
 
   /** The ways of starting an agent on an Issue, as Settings lists them. */
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
@@ -325,6 +339,11 @@ export function PickerProvider({ children }: { children: ReactNode }) {
           await bridge.selectWorkspacePicker(path, create, withAgent),
         ),
       chooseWorkspaceFolder: () => bridge.chooseWorkspaceFolder(),
+      listSelectionBranches: () => bridge.listSelectionBranches(),
+      openBranchWorkspace: async (place, branch, withAgent) =>
+        applyOpening(
+          await bridge.openBranchWorkspace(place, branch, withAgent),
+        ),
       listSshHosts: () => bridge.listSshHosts(),
       sshOffered,
       openSshWorkspace: async (host, path, withAgent) =>
@@ -367,6 +386,8 @@ export function PickerProvider({ children }: { children: ReactNode }) {
         bridge.listAgentSessions(place, profileId),
       previewAgentSession: (place, profileId, session, cwd) =>
         bridge.previewAgentSession(place, profileId, session, cwd),
+      resumeSessionElsewhere: async (request) =>
+        applyOpening(await bridge.resumeSessionElsewhere(request)),
 
       agentActions: () => bridge.agentActions(),
       runAgentAction: async (agentId, actionId) => {

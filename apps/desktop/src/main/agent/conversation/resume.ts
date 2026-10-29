@@ -67,6 +67,47 @@ export interface PastSession {
 	 * project's; Codex resumes a thread in any directory it is given.
 	 */
 	readonly resumableHere: boolean;
+	/**
+	 * It ran in another worktree of the Workspace's repository: which one.
+	 * Set only by a listing told about the repository (`ListingContext`).
+	 */
+	readonly worktree?: SessionWorktree;
+	/** The name a person gave the Agent that ran it (`model/sessionNames.ts`). */
+	readonly agentName?: string;
+}
+
+/** The worktree a session ran in, when it is not the Workspace's own. */
+export interface SessionWorktree {
+	/** Its folder: where it is, or was. */
+	readonly root: string;
+	/** The branch checked out there, or the one the CLI last recorded. */
+	readonly branch?: string;
+	/** The folder is still one of the repository's worktrees. */
+	readonly present: boolean;
+}
+
+/**
+ * What a listing knows beyond the CLI's own store: the repository the
+ * Workspace is a checkout of, and the names people gave the Agents.
+ */
+export interface ListingContext {
+	readonly repository?: RepositoryWorktrees;
+	/** The name given to the Agent that ran this CLI's `session`, if one was. */
+	readonly nameOf?: (session: string) => string | undefined;
+}
+
+/**
+ * The repository's checkouts, as `git worktree list` gives them (real paths),
+ * and the prefix DevHub's own worktrees of it start with
+ * (`worktreeSiblingPrefix`) — which still says a session ran in one of them
+ * once its folder has been removed.
+ */
+export interface RepositoryWorktrees {
+	readonly worktrees: readonly {
+		readonly path: string;
+		readonly branch?: string;
+	}[];
+	readonly siblingPrefix: string;
 }
 
 /**
@@ -195,16 +236,112 @@ export async function listPastSessions(
 	profile: SessionProfile,
 	root: string,
 	scope: SessionScope = "here",
+	context: ListingContext = {},
 ): Promise<readonly PastSession[]> {
 	const kind = resumableKind(profile.kind);
 	const cwd = await runtime.realpath(root);
-	return kind === "claude"
-		? listClaudeSessions(runtime, profile, cwd, scope)
-		: listCodexSessions(runtime, profile, {
-				cwd,
-				scope,
-				sourceKinds: undefined,
+	const repository = context.repository;
+	const listed =
+		kind === "claude"
+			? await listClaudeSessions(runtime, profile, cwd, scope, repository)
+			: await listCodexSessions(runtime, profile, {
+					cwd,
+					scope,
+					sourceKinds: undefined,
+					repository,
+				});
+	const placed =
+		repository === undefined
+			? listed
+			: placeSessions(kind, listed, cwd, repository, scope);
+	const nameOf = context.nameOf;
+	return nameOf === undefined
+		? placed
+		: placed.map((session) => {
+				const agentName = nameOf(session.id);
+				return agentName === undefined ? session : { ...session, agentName };
 			});
+}
+
+/** `path` is `root` or a folder under it. */
+function within(root: string, path: string): boolean {
+	const base = root.replace(/\/+$/u, "");
+	return path === base || path.startsWith(`${base}/`);
+}
+
+/**
+ * Sessions of a repository's checkouts, each said to be the Workspace's own
+ * or another worktree's. Exported for its tests.
+ *
+ * Which checkout a session ran in is the deepest worktree its directory is
+ * in, so a worktree nested inside the repository's folder is its own. One in
+ * none of them that ran under DevHub's worktree prefix ran in a worktree that
+ * has since been removed: the folder under the prefix it ran in is that
+ * worktree's. For Claude, a session kept under the Workspace's own directory
+ * is the Workspace's whatever its lines say, since that is where Claude finds
+ * it. Listing `here`, a session of none of the repository's checkouts is not
+ * offered; listing `everywhere`, it is, as it was.
+ */
+export function placeSessions(
+	kind: ResumableKind,
+	sessions: readonly PastSession[],
+	root: string,
+	repository: RepositoryWorktrees,
+	scope: SessionScope,
+): readonly PastSession[] {
+	const placed: PastSession[] = [];
+	for (const session of sessions) {
+		const cwd = session.cwd;
+		const owner =
+			cwd === undefined
+				? undefined
+				: repository.worktrees
+						.filter((worktree) => within(worktree.path, cwd))
+						.reduce<
+							RepositoryWorktrees["worktrees"][number] | undefined
+						>((deepest, worktree) => (deepest === undefined || worktree.path.length > deepest.path.length ? worktree : deepest), undefined);
+		const here =
+			kind === "claude"
+				? session.resumableHere
+				: owner !== undefined
+					? owner.path === root
+					: cwd !== undefined && within(root, cwd);
+		if (here) {
+			placed.push({ ...session, resumableHere: true });
+			continue;
+		}
+		if (owner !== undefined) {
+			const branch = owner.branch ?? session.branch;
+			placed.push({
+				...session,
+				resumableHere: false,
+				worktree: {
+					root: owner.path,
+					...(branch === undefined ? {} : { branch }),
+					present: true,
+				},
+			});
+			continue;
+		}
+		const prefix = repository.siblingPrefix;
+		if (cwd !== undefined && cwd.startsWith(prefix)) {
+			const segment = cwd.slice(prefix.length).split("/")[0] ?? "";
+			if (segment.length > 0) {
+				placed.push({
+					...session,
+					resumableHere: false,
+					worktree: {
+						root: `${prefix}${segment}`,
+						...(session.branch === undefined ? {} : { branch: session.branch }),
+						present: false,
+					},
+				});
+				continue;
+			}
+		}
+		if (scope === "everywhere") placed.push(session);
+	}
+	return placed;
 }
 
 /**
@@ -783,7 +920,7 @@ async function claudeProjectDirectory(
 	cwd: string,
 ): Promise<string> {
 	const config = await claudeConfigDirectory(runtime, profile);
-	return `${config}/projects/${cwd.replace(/[^a-zA-Z0-9]/g, "-")}`;
+	return `${config}/projects/${claudeProjectName(cwd)}`;
 }
 
 /**
@@ -805,11 +942,16 @@ async function claudeProjectDirectory(
  */
 const CLAUDE_LISTING_SCRIPT = `[ -d "$1" ] || exit 0
 cd -- "$1" || exit 71
-find . -mindepth "$2" -maxdepth "$2" -name '*.jsonl' -type f -exec sh -c 'stat -c "%Y %n" -- "$@" 2>/dev/null || stat -f "%m %N" -- "$@"' sh {} + |
+depth=$2
+shift 2
+taken() { [ "$#" -le 1 ] && return 0; d=$1; shift; for p in "$@"; do case "$d" in $p) return 0 ;; esac; done; return 1; }
+find . -mindepth "$depth" -maxdepth "$depth" -name '*.jsonl' -type f -exec sh -c 'stat -c "%Y %n" -- "$@" 2>/dev/null || stat -f "%m %N" -- "$@"' sh {} + |
 	sort -rn | {
 	n=0
 	while IFS= read -r l; do
 		f=\${l#* }
+		g=\${f#./}
+		taken "\${g%%/*}" "$@" || continue
 		n=$((n + 1))
 		[ "$n" -le ${LISTED} ] || break
 		b=\${f##*/}
@@ -827,15 +969,50 @@ END { print stamp; print cwd; print branch; print named; print title; print c + 
 }
 `;
 
+/**
+ * The name Claude keeps a directory's sessions under, in `projects/`: every
+ * character but a letter or a digit as `-`.
+ */
+export function claudeProjectName(cwd: string): string {
+	return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/**
+ * Which of `projects/`'s directories a listing of a repository's sessions
+ * reads: every checkout's, and — as a pattern — every folder under DevHub's
+ * worktree prefix, so a worktree that has been removed still has its
+ * sessions listed. The pattern takes more than it should (a sibling named
+ * `{repo}-x` escapes the same way); `placeSessions` keeps only the sessions
+ * whose own lines say they ran in one of the repository's folders.
+ */
+export function claudeRepositoryProjects(
+	cwd: string,
+	repository: RepositoryWorktrees,
+): readonly string[] {
+	return [
+		...new Set([
+			claudeProjectName(cwd),
+			...repository.worktrees.map((worktree) =>
+				claudeProjectName(worktree.path),
+			),
+			`${claudeProjectName(repository.siblingPrefix)}*`,
+		]),
+	];
+}
+
 async function listClaudeSessions(
 	runtime: Runtime,
 	profile: SessionProfile,
 	cwd: string,
 	scope: SessionScope,
+	repository?: RepositoryWorktrees,
 ): Promise<readonly PastSession[]> {
 	const here = await claudeProjectDirectory(runtime, profile, cwd);
+	// A repository's sessions are read across its checkouts' directories,
+	// which are siblings under `projects/`.
+	const across = scope === "here" && repository !== undefined;
 	const directory =
-		scope === "here" ? here : here.slice(0, here.lastIndexOf("/"));
+		scope === "here" && !across ? here : here.slice(0, here.lastIndexOf("/"));
 	const answer = await askMachine(
 		runtime,
 		`DevHub could not list Claude's sessions in ${directory}`,
@@ -846,7 +1023,8 @@ async function listClaudeSessions(
 			CLAUDE_LISTING_SCRIPT,
 			"sh",
 			directory,
-			scope === "here" ? "1" : "2",
+			scope === "here" && !across ? "1" : "2",
+			...(across ? claudeRepositoryProjects(cwd, repository) : []),
 		],
 		env: await runtime.environment(),
 		deadline: OperationDeadline.in(15_000),
@@ -1030,6 +1208,67 @@ export async function claudeSessionPresent(
 		await runtime.realpath(root),
 	);
 	return (await runtime.stat(`${directory}/${session}.jsonl`)) === "file";
+}
+
+/**
+ * Copy `$1/$3.jsonl` (and the session's own folder of subagent and tool
+ * records, `$1/$3/`, when there is one) into `$2`, unless `$2` has it already.
+ */
+const CARRY_SCRIPT = `[ -f "$1/$3.jsonl" ] || { echo "there is no $1/$3.jsonl" >&2; exit 66; }
+[ -e "$2/$3.jsonl" ] && exit 0
+mkdir -p -- "$2" || exit 73
+cp -p -- "$1/$3.jsonl" "$2/$3.jsonl" || exit 74
+[ ! -d "$1/$3" ] || [ -e "$2/$3" ] || cp -Rp -- "$1/$3" "$2/$3" || exit 75
+`;
+
+/**
+ * Make Claude session `session`, which ran in `from`, one Claude can resume
+ * in `to`.
+ *
+ * Claude finds a session by the directory it is kept under — the directory
+ * it ran in, escaped (`claudeProjectDirectory`) — and resumes only what is
+ * under the one it is started in, so a session whose worktree was removed
+ * and made again somewhere else is not there for it. The session's file is
+ * copied under `to`'s name, and the original is left where it was: it is the
+ * CLI's record, and the folder it names may come back. Nothing is done when
+ * `to` keeps it already — the same folder, or a copy made before.
+ */
+export async function carryClaudeSession(
+	runtime: Runtime,
+	profile: SessionProfile,
+	from: string,
+	to: string,
+	session: string,
+): Promise<void> {
+	if (!/^[A-Za-z0-9_-]+$/.test(session)) {
+		throw new Error(`${JSON.stringify(session)} is not a session id`);
+	}
+	const source = await claudeProjectDirectory(runtime, profile, from);
+	const target = await claudeProjectDirectory(
+		runtime,
+		profile,
+		await runtime.realpath(to),
+	);
+	if (source === target) return;
+	const answer = await askMachine(
+		runtime,
+		`DevHub could not carry Claude's session ${session} over to ${to}`,
+	)({
+		argv: ["sh", "-c", CARRY_SCRIPT, "sh", source, target, session],
+		env: await runtime.environment(),
+		deadline: OperationDeadline.in(30_000),
+		cancel: new CancellationToken(),
+		limits: {
+			stdoutBytes: 16 * 1024,
+			stderrBytes: 16 * 1024,
+			overflow: { kind: "truncate" },
+		},
+	});
+	if (answer.code !== 0) {
+		throw new SessionNotResumable(
+			`DevHub could not carry Claude's session ${session} over to ${to}${runtime.where}: ${answer.stderr.toString("utf8").trim() || `exit ${String(answer.code ?? answer.signal)}`}`,
+		);
+	}
 }
 
 /**
@@ -1301,16 +1540,82 @@ function taskNotification(record: Record<string, unknown>): string | undefined {
  * however the JSON is spaced; a pattern tied to one serializer's spacing left
  * the input open until the deadline.
  */
-const CODEX_LISTING_SCRIPT = `d=$(mktemp -d) || exit 70
+const CODEX_LISTING_SCRIPT = `want=$1
+shift
+d=$(mktemp -d) || exit 70
 trap 'rm -rf "$d"' EXIT
 { cat; until [ -e "$d/done" ]; do sleep 0.1; done; } | "$@" | {
+	left=$want
 	while IFS= read -r l; do
 		printf '%s\\n' "$l"
-		printf '%s\\n' "$l" | grep -Eq '^[{][[:space:]]*"id"[[:space:]]*:[[:space:]]*2[[:space:]]*[,}]|[,{][[:space:]]*"id"[[:space:]]*:[[:space:]]*2[[:space:]]*[}][[:space:]]*$' && break
+		rest=
+		for id in $left; do
+			printf '%s\\n' "$l" | grep -Eq "^[{][[:space:]]*\\"id\\"[[:space:]]*:[[:space:]]*$id[[:space:]]*[,}]|[,{][[:space:]]*\\"id\\"[[:space:]]*:[[:space:]]*$id[[:space:]]*[}][[:space:]]*\\$" || rest="$rest $id"
+		done
+		left=$rest
+		[ -n "$left" ] || break
 	done
 	: >"$d/done"
 }
 `;
+
+/** How many threads the listing of a repository's removed worktrees looks through. */
+const LISTED_ACROSS = 200;
+
+/** The file Codex records the sessions it imported from another agent in. */
+const CODEX_IMPORT_LEDGER = "external_agent_session_imports.json";
+
+/**
+ * The threads Codex made by importing another agent's sessions — Claude
+ * Code's, through its "import from another agent" migration.
+ *
+ * Nothing on the thread itself says so: an imported thread is written like
+ * one app-server started (its `source` is `appServer`, its `threadSource`
+ * none). The one record is the import ledger Codex keeps beside its state,
+ * `$CODEX_HOME/external_agent_session_imports.json`, whose `records` each
+ * name the `imported_thread_id` an imported session became (codex-rs
+ * `external-agent-migration/src/sessions/ledger.rs`). Those are not
+ * sessions anybody ran in Codex, and the same conversation is already in the
+ * list as the Claude session it came from, so the listings leave them out.
+ *
+ * A ledger that is not there is none imported; one that cannot be read or
+ * parsed is treated the same, because it is a filter on a list, not a reason
+ * to refuse the list.
+ */
+export async function codexImportedThreads(
+	runtime: Runtime,
+	profile: SessionProfile,
+): Promise<ReadonlySet<string>> {
+	try {
+		const text = await runtime.readTextFile(
+			`${await codexHome(runtime, profile)}/${CODEX_IMPORT_LEDGER}`,
+			8 * 1024 * 1024,
+		);
+		return importedThreadIds(text);
+	} catch {
+		// Not a swallow: absent or unreadable both mean nothing to leave out.
+		return new Set();
+	}
+}
+
+/** The thread ids an import ledger's text names. Exported for its tests. */
+export function importedThreadIds(text: string): ReadonlySet<string> {
+	const ids = new Set<string>();
+	const ledger: unknown = JSON.parse(text);
+	const records =
+		typeof ledger === "object" && ledger !== null
+			? (ledger as Record<string, unknown>)["records"]
+			: undefined;
+	if (!Array.isArray(records)) return ids;
+	for (const record of records as unknown[]) {
+		const id =
+			typeof record === "object" && record !== null
+				? (record as Record<string, unknown>)["imported_thread_id"]
+				: undefined;
+		if (typeof id === "string" && id.length > 0) ids.add(id);
+	}
+	return ids;
+}
 
 async function listCodexSessions(
 	runtime: Runtime,
@@ -1321,8 +1626,42 @@ async function listCodexSessions(
 		/** Only threads of these sources; absent, Codex's own default (the interactive ones). */
 		readonly sourceKinds: readonly ThreadSourceKind[] | undefined;
 		readonly limit?: number;
+		/**
+		 * The repository the directory is a checkout of: `here` then lists
+		 * every checkout's threads, and looks through the newest threads of
+		 * every directory for those of its worktrees that have been removed.
+		 */
+		readonly repository?: RepositoryWorktrees;
 	},
 ): Promise<readonly PastSession[]> {
+	const imported = await codexImportedThreads(runtime, profile);
+	// Left out by the server where it can be, before its limit is applied —
+	// it takes up to a hundred — and by this side always.
+	const excluded =
+		imported.size > 0 && imported.size <= 100
+			? { excludedThreadIds: [...imported] }
+			: {};
+	const across = asked.scope === "here" && asked.repository !== undefined;
+	const cwds = across
+		? [
+				...new Set([
+					asked.cwd,
+					...asked.repository!.worktrees.map((worktree) => worktree.path),
+				]),
+			]
+		: asked.cwd;
+	const list = (id: number, params: ThreadListParams) => ({
+		id,
+		method: "thread/list",
+		params: {
+			...params,
+			sortKey: "updated_at",
+			...excluded,
+			...(asked.sourceKinds === undefined
+				? {}
+				: { sourceKinds: [...asked.sourceKinds] }),
+		} satisfies ThreadListParams,
+	});
 	const requests = [
 		{
 			id: 1,
@@ -1330,18 +1669,11 @@ async function listCodexSessions(
 			params: { clientInfo: { name: "devhub", version: "0" } },
 		},
 		{ method: "initialized" },
-		{
-			id: 2,
-			method: "thread/list",
-			params: {
-				...(asked.scope === "here" ? { cwd: asked.cwd } : {}),
-				limit: asked.limit ?? LISTED,
-				sortKey: "updated_at",
-				...(asked.sourceKinds === undefined
-					? {}
-					: { sourceKinds: [...asked.sourceKinds] }),
-			} satisfies ThreadListParams,
-		},
+		list(2, {
+			...(asked.scope === "here" ? { cwd: cwds } : {}),
+			limit: asked.limit ?? LISTED,
+		}),
+		...(across ? [list(3, { limit: LISTED_ACROSS })] : []),
 	];
 	const answer = await askMachine(
 		runtime,
@@ -1352,6 +1684,7 @@ async function listCodexSessions(
 			"-c",
 			CODEX_LISTING_SCRIPT,
 			"sh",
+			across ? "2 3" : "2",
 			profile.command,
 			// A resumed Agent's snapshot ends with the thread it resumed, which
 			// app-server takes no argument for.
@@ -1376,27 +1709,56 @@ async function listCodexSessions(
 			},
 		},
 	});
-	return parseCodexListing(
-		answer.stdout.toString("utf8"),
-		answer.stderr.toString("utf8"),
-	);
+	const stdout = answer.stdout.toString("utf8");
+	const stderr = answer.stderr.toString("utf8");
+	const listed = parseCodexListing(stdout, stderr);
+	const merged = across
+		? mergeListings(
+				listed,
+				// Only the threads under DevHub's worktree prefix: those of the
+				// checkouts that are there were listed by directory already.
+				parseCodexListing(stdout, stderr, 3).filter(
+					(thread) =>
+						thread.cwd !== undefined &&
+						thread.cwd.startsWith(asked.repository!.siblingPrefix),
+				),
+			)
+		: listed;
+	return merged.filter((thread) => !imported.has(thread.id));
+}
+
+/** Two listings as one: each session once, newest first, as long as one listing. */
+function mergeListings(
+	first: readonly PastSession[],
+	second: readonly PastSession[],
+): readonly PastSession[] {
+	const seen = new Set(first.map((session) => session.id));
+	return [...first, ...second.filter((session) => !seen.has(session.id))]
+		.sort(
+			(a, b) =>
+				(b.updatedAt ?? Number.NEGATIVE_INFINITY) -
+				(a.updatedAt ?? Number.NEGATIVE_INFINITY),
+		)
+		.slice(0, LISTED);
 }
 
 /** app-server's lines, as sessions. Exported for its tests. */
 export function parseCodexListing(
 	stdout: string,
 	stderr: string,
+	/** Which request's answer: the listing's own, or a second one asked beside it. */
+	id = 2,
 ): readonly PastSession[] {
 	const reader = new Reader(undefined);
 	for (const line of stdout.split("\n")) {
 		if (line.trim().length === 0) continue;
 		const message = decodeLine(reader, line);
-		if (message.kind === "error" && (message.id === 1 || message.id === 2)) {
+		if (message.kind === "error" && (message.id === 1 || message.id === id)) {
 			throw new SessionsUnreadable(
 				`codex did not list its threads: ${message.message} (${message.code})`,
 			);
 		}
-		if (message.kind === "response" && message.id === 2) {
+		if (message.kind === "response" && message.id === id) {
 			const branches = threadBranches(reader, message.result);
 			return threadListResponse(reader, message.result).map((thread) => ({
 				id: thread.id,

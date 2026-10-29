@@ -29,6 +29,7 @@ import {
 } from "../../model/wire.js";
 import {
 	baseName,
+	branchWorktreeDirectory,
 	worktreeDirectory,
 	type WorkItem,
 } from "../../model/worktrees.js";
@@ -741,6 +742,103 @@ export async function listBranches(
 	return [...new Set(names)];
 }
 
+/** One branch the workspace picker offers, and what is already true of it. */
+export interface BranchCandidate {
+	/** Its short name: `main`, `feature/128-x` — the local name it has or would have. */
+	readonly name: string;
+	/** The remote it is only on, when it is not local yet. */
+	readonly remote?: string;
+	/** Its tip's commit time, in seconds since the epoch. */
+	readonly committedAt: number;
+	/** The worktree it is checked out in, the repository's own folder included. */
+	readonly worktree?: string;
+}
+
+/**
+ * Every branch of the repository `directory` is in, newest commit first:
+ * the local ones, and the remote-tracking ones no local branch has the name
+ * of yet, each named once — and where each one is checked out.
+ *
+ * The remote a ref is under comes from git's own list of remotes, as
+ * `findBranch` reads it, because a remote may be called `my/fork`. Of two
+ * remotes with the same branch, `origin`'s is the one offered.
+ */
+export async function listBranchCandidates(
+	command: GitCommand,
+	directory: string,
+	cancel?: CancellationToken,
+): Promise<readonly BranchCandidate[]> {
+	const [refs, worktrees, remotes] = await Promise.all([
+		runGit(
+			command,
+			[
+				"for-each-ref",
+				"--sort=-committerdate",
+				"--format=%(committerdate:unix)%09%(refname)",
+				"refs/heads",
+				"refs/remotes",
+			],
+			{ cwd: directory, cancel },
+		),
+		runGit(command, ["worktree", "list", "--porcelain"], {
+			cwd: directory,
+			cancel,
+		}),
+		remoteNames(command, directory),
+	]);
+	return branchCandidates(refs, parseWorktrees(worktrees), remotes);
+}
+
+/** `listBranchCandidates`'s reading of git's answers. Exported for its tests. */
+export function branchCandidates(
+	refs: string,
+	worktrees: readonly WorktreeRecord[],
+	remotes: readonly string[],
+): readonly BranchCandidate[] {
+	const held = new Map<string, string>();
+	for (const record of worktrees) {
+		if (record.branch !== undefined && !held.has(record.branch))
+			held.set(record.branch, record.path);
+	}
+	// Longest first, so `my/fork` is matched before `my`.
+	const byLength = [...remotes].sort((a, b) => b.length - a.length);
+	const local: BranchCandidate[] = [];
+	const remote = new Map<string, BranchCandidate>();
+	for (const line of refs.split("\n")) {
+		const cut = line.indexOf("\t");
+		if (cut < 0) continue;
+		const committedAt = Number(line.slice(0, cut)) || 0;
+		const ref = line.slice(cut + 1).trim();
+		if (ref.startsWith("refs/heads/")) {
+			const name = ref.slice("refs/heads/".length);
+			const worktree = held.get(name);
+			local.push({
+				name,
+				committedAt,
+				...(worktree === undefined ? {} : { worktree }),
+			});
+			continue;
+		}
+		if (!ref.startsWith("refs/remotes/")) continue;
+		const rest = ref.slice("refs/remotes/".length);
+		const owner = byLength.find((each) => rest.startsWith(`${each}/`));
+		if (owner === undefined) continue;
+		const name = rest.slice(owner.length + 1);
+		if (name === "HEAD" || name.length === 0) continue;
+		const known = remote.get(name);
+		if (
+			known === undefined ||
+			(owner === "origin" && known.remote !== "origin")
+		)
+			remote.set(name, { name, remote: owner, committedAt });
+	}
+	const locals = new Set(local.map((each) => each.name));
+	return [
+		...local,
+		...[...remote.values()].filter((each) => !locals.has(each.name)),
+	].sort((a, b) => b.committedAt - a.committedAt);
+}
+
 /**
  * Where a branch is, in the one form a `worktree add` can be given.
  *
@@ -920,12 +1018,30 @@ export interface WorktreeOptions {
 	 * to carry on anyway.
 	 */
 	readonly allowStaleBase?: boolean;
+	/**
+	 * Where the new worktree goes, in place of the name the work gives it.
+	 *
+	 * A session resumed in a worktree that has since been removed goes back to
+	 * the folder it ran in, when that path is free: it is where the CLI kept
+	 * the session, and where its own resume looks first. Taken only while
+	 * nothing is there; an occupied path falls back to the usual name.
+	 */
+	readonly preferredDirectory?: string;
 }
+
+/**
+ * The work a worktree is made for: an Issue or a pull request, or simply a
+ * branch somebody picked by name (the workspace picker's branch rows, a
+ * session resumed on the branch it ran on). A picked branch is one that
+ * exists — it was listed from this clone's refs — so, like a pull request's,
+ * it is checked out and never created.
+ */
+export type WorktreeWork = WorkItem | { readonly kind: "branch" };
 
 export async function ensureWorktree(
 	command: GitCommand,
 	directory: string,
-	work: WorkItem,
+	work: WorktreeWork,
 	branch: string,
 	options: WorktreeOptions = {},
 ): Promise<string> {
@@ -934,8 +1050,10 @@ export async function ensureWorktree(
 	// now. It changes two things: the remote is fetched *before* the branch is
 	// looked for, and a name that is still nowhere afterwards is a failure
 	// rather than a branch to create, because creating it would hand somebody
-	// an empty branch under the name of the work they asked to review.
-	const branchExistsAlready = work.kind === "pull";
+	// an empty branch under the name of the work they asked to review. A
+	// picked branch exists too, but in this clone's own refs, which is where
+	// it was listed from: there is nothing to fetch first.
+	const branchExistsAlready = work.kind === "pull" || work.kind === "branch";
 	const name = branch.trim();
 	if (name.length === 0) {
 		throw workspaceFailure("Enter a branch name.");
@@ -967,9 +1085,19 @@ export async function ensureWorktree(
 	// `findBranch` reads refs, which are only as current as the last fetch, so
 	// without this a pull request opened five minutes ago looks like a branch
 	// that does not exist and would be created empty.
-	if (branchExistsAlready) await fetchOrigin(command, directory, options);
+	if (work.kind === "pull") await fetchOrigin(command, directory, options);
 
-	const target = worktreeDirectory(repository.mainWorktree, work, name);
+	const named =
+		work.kind === "branch"
+			? branchWorktreeDirectory(repository.mainWorktree, name)
+			: worktreeDirectory(repository.mainWorktree, work, name);
+	const preferred = options.preferredDirectory;
+	const target =
+		preferred !== undefined &&
+		!worktrees.some((record) => record.path === preferred) &&
+		!(await exists(command.runtime, preferred))
+			? preferred
+			: named;
 	const occupant = worktrees.find((record) => record.path === target);
 	if (occupant) {
 		throw workspaceFailure(
@@ -985,7 +1113,9 @@ export async function ensureWorktree(
 	const here = await findBranch(command, directory, name);
 	if (branchExistsAlready && !here) {
 		throw workspaceFailure(
-			`${name} is on neither this machine nor any remote this clone has. A pull request from a fork has its branch on the fork.`,
+			work.kind === "branch"
+				? `${name} is on neither this machine nor any remote this clone has any more.`
+				: `${name} is on neither this machine nor any remote this clone has. A pull request from a fork has its branch on the fork.`,
 		);
 	}
 	// `--relative-paths` where this git has it: see `worktreeAddArguments`.
@@ -994,8 +1124,18 @@ export async function ensureWorktree(
 		? here.kind === "local"
 			? [...add, target, name]
 			: // Started from the remote-tracking ref by name: a branch of the same
-				// name on a second remote must not be able to decide this.
-				[...add, "-b", name, target, here.ref]
+				// name on a second remote must not be able to decide this. A
+				// picked remote branch says `--track` outright, so the local
+				// branch it becomes follows the remote one whatever
+				// `branch.autoSetupMerge` says.
+				[
+					...add,
+					...(work.kind === "branch" ? ["--track"] : []),
+					"-b",
+					name,
+					target,
+					here.ref,
+				]
 		: [
 				...add,
 				// A new branch does not track the trunk it starts from: that is

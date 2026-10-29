@@ -4,7 +4,11 @@
  *
  * The Workspace's sessions lead; "All projects" lists every directory's, as the CLIs' own pickers do,
  * and a session Claude cannot resume in this Workspace (it ran elsewhere) is
- * listed with that reason rather than hidden. The row the person is on is
+ * listed with that reason rather than hidden. The sessions of the
+ * repository's other worktrees are listed with the Workspace's, each saying
+ * which branch and worktree it ran in, and one of them is gone on with there
+ * (`onChooseElsewhere`). A session whose Agent a person named leads with
+ * that name. The row the person is on is
  * previewed beside the list — its last few messages, read on demand and kept
  * for as long as the sheet stands — so a session can be told apart from its
  * neighbours by more than a title.
@@ -24,6 +28,7 @@ import {
   said,
   sessionDetail,
   SessionPreview,
+  sessionTitle,
   useSessionPreview,
 } from "./sessionRows";
 
@@ -45,6 +50,8 @@ export interface SessionPickerProps {
   readonly cli: string;
   readonly source: SessionSource;
   readonly onChoose: (session: string) => void;
+  /** A session of another worktree of the repository, gone on with there. */
+  readonly onChooseElsewhere?: (session: PastSessionWire) => void;
   readonly onCancel: () => void;
 }
 
@@ -56,6 +63,7 @@ export function SessionPicker({
   cli,
   source,
   onChoose,
+  onChooseElsewhere,
   onCancel,
 }: SessionPickerProps) {
   const [scope, setScope] = useState<SessionScopeWire>("here");
@@ -93,19 +101,21 @@ export function SessionPicker({
           Date.now(),
           scope === "everywhere",
         );
+        const there =
+          session.worktree !== undefined && onChooseElsewhere !== undefined;
         return {
           id: session.id,
-          label: session.title,
+          label: sessionTitle(session),
           ...(detail === undefined ? {} : { detail }),
-          searchText: `${session.title} ${session.branch ?? ""} ${session.cwd ?? ""}`,
-          ...(session.resumableHere
+          searchText: `${session.agentName ?? ""} ${session.title} ${session.worktree?.branch ?? session.branch ?? ""} ${session.cwd ?? ""}`,
+          ...(session.resumableHere || there
             ? {}
             : {
                 unavailable: `${cli} goes on with it only in ${session.cwd ?? "the directory it ran in"}.`,
               }),
         };
       }),
-    [sessions, scope, cli],
+    [sessions, scope, cli, onChooseElsewhere],
   );
 
   // The preview of the row the person is on.
@@ -173,7 +183,17 @@ export function SessionPicker({
             : `There are no earlier ${cli} sessions on this machine.`
       }
       emptyNoMatch="No earlier session matches."
-      onChoose={(choice) => onChoose(choice.id)}
+      onChoose={(choice) => {
+        const session = byId.get(choice.id);
+        if (
+          session?.worktree !== undefined &&
+          onChooseElsewhere !== undefined
+        ) {
+          onChooseElsewhere(session);
+          return;
+        }
+        onChoose(choice.id);
+      }}
       onCancel={onCancel}
     />
   );

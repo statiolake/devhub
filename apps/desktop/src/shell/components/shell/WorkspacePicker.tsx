@@ -24,7 +24,7 @@
  * the far side of whatever had to happen first.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePicker } from "../../picker/PickerContext";
 import { AgentProfilePicker } from "./AgentProfilePicker";
 import { Picker, type PickerItem } from "./Picker";
@@ -38,6 +38,8 @@ import {
   useSshHosts,
 } from "./SshSheets";
 import type { AgentLaunchWire } from "../../../ipc/appShell";
+import type { BranchListWire, WorkspacePlaceWire } from "../../../ipc/contract";
+import { relativeTime } from "./sessionRows";
 
 export interface WorkspacePickerProps {
   readonly onDismiss: () => void;
@@ -61,6 +63,64 @@ const NEW_PROJECT = "devhub:new-project";
 const CLONE_PROJECT = "devhub:clone-project";
 const SSH_CONNECT = "devhub:ssh-connect";
 const OTHER_FOLDER = "devhub:other-folder";
+/** A branch row's id: the prefix, then the branch's name. */
+const BRANCH_ROW = "devhub:branch:";
+
+function BranchGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5 3.2v9.6M11 3.2v2.6a2.4 2.4 0 0 1-2.4 2.4H5" />
+      <path d="M5 3.2h0.01M11 3.2h0.01M5 12.8h0.01" />
+    </svg>
+  );
+}
+
+/**
+ * The branches of the selection's repository, as rows beside the folders.
+ *
+ * A branch is somewhere work can happen as much as a folder is, and the two
+ * are one question — "where do I want to be" — so they are one list: searched
+ * by the branch's name, drawn with a branch where a folder row has a folder.
+ * Newest commit first, as git sorted them. Each says what choosing it does: a
+ * branch already checked out opens (or goes to) the folder it is in; one that
+ * is not gets a worktree of its own first, and one only a remote has becomes
+ * a local branch tracking it. The right end says which of those it is.
+ */
+export function branchItems(
+  list: BranchListWire | undefined,
+  now: number,
+): readonly PickerItem[] {
+  if (list === undefined) return [];
+  return list.branches.map((branch) => {
+    const when = relativeTime(branch.committedAt, now);
+    const where =
+      branch.worktree !== undefined ? (
+        <>
+          {list.repository} · {when} · <PathLabel path={branch.worktree} />
+        </>
+      ) : branch.remote !== undefined ? (
+        `${list.repository} · ${when} · on ${branch.remote} only — a worktree tracking it is made`
+      ) : (
+        `${list.repository} · ${when} · a worktree is made for it`
+      );
+    const state = branch.open
+      ? "Open"
+      : branch.worktree !== undefined
+        ? "Worktree"
+        : branch.remote !== undefined
+          ? branch.remote
+          : "Branch";
+    return {
+      id: `${BRANCH_ROW}${branch.name}`,
+      label: branch.name,
+      detail: where,
+      searchText: branch.name,
+      glyph: <BranchGlyph />,
+      accessory: () => state,
+      worktree: true,
+    };
+  });
+}
 
 function PlusGlyph() {
   return (
@@ -162,6 +222,12 @@ type Chosen =
    * agent question goes in front of the act, and the act is still one call.
    */
   | { readonly kind: "ssh"; readonly host: string; readonly path?: string }
+  /** A branch of the selection's repository: its worktree, made if need be. */
+  | {
+      readonly kind: "branch";
+      readonly place: WorkspacePlaceWire;
+      readonly branch: string;
+    }
   /** No machine named yet: the destination is the next question. */
   | { readonly kind: "ssh-connect" };
 
@@ -191,7 +257,34 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     chooseWorkspaceFolder,
     openSshWorkspace,
     sshOffered,
+    listSelectionBranches,
+    openBranchWorkspace,
   } = usePicker();
+
+  // The selection's repository's branches, read once as the sheet opens:
+  // the folders come from the sources as they are typed for, the branches
+  // are one short local list, filtered here like the rest.
+  const [branchList, setBranchList] = useState<BranchListWire>();
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve()
+      .then(() => listSelectionBranches())
+      .then(
+        (list) => {
+          if (live) setBranchList(list);
+        },
+        // Not a swallow: a repository git cannot list is a sheet of folders,
+        // which is what it was before branches were offered.
+        () => undefined,
+      );
+    return () => {
+      live = false;
+    };
+  }, [listSelectionBranches]);
+  const branches = useMemo(
+    () => branchItems(branchList, Date.now()),
+    [branchList],
+  );
 
   // The machines `~/.ssh/config` names, as rows in the same list as the
   // folders the local sources found — because to the person opening one they
@@ -310,6 +403,9 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
         case "open":
           finish(() => selectWorkspacePicker(row.path, row.create, agent));
           return;
+        case "branch":
+          finish(() => openBranchWorkspace(row.place, row.branch, agent));
+          return;
         case "ssh-connect":
           void cancelWorkspacePicker();
           setAsking("ssh-destination");
@@ -337,6 +433,7 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
       ask,
       cancelWorkspacePicker,
       finish,
+      openBranchWorkspace,
       openSshWorkspace,
       selectWorkspacePicker,
     ],
@@ -429,9 +526,13 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
   return (
     <Picker
       title="Open Workspace"
-      question="Which workspace should this window open? Type to search the folders your sources cover."
+      question="Which workspace should this window open? Type to search the folders your sources cover, and the branches of the repository you are in."
       // Terminal mode is local-only, so it offers no machine to connect to.
-      items={sshOffered ? [...pool, ...sshHostItems(sshHosts)] : pool}
+      items={
+        sshOffered
+          ? [...pool, ...branches, ...sshHostItems(sshHosts)]
+          : [...pool, ...branches]
+      }
       pinned={
         sshOffered
           ? ACTIONS
@@ -467,26 +568,32 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
           return;
         }
         const alias = aliasFromRowId(choice.id);
+        const branch =
+          choice.id.startsWith(BRANCH_ROW) && branchList !== undefined
+            ? choice.id.slice(BRANCH_ROW.length)
+            : undefined;
         const row: Chosen =
-          choice.id === NEW_PROJECT
-            ? { kind: "new", query: choice.query }
-            : choice.id === CLONE_PROJECT
-              ? { kind: "clone", query: choice.query }
-              : choice.id === SSH_CONNECT
-                ? { kind: "ssh-connect" }
-                : alias !== undefined
-                  ? { kind: "ssh", host: alias }
-                  : {
-                      kind: "open",
-                      path: choice.id,
-                      // Only a row that said it is missing may make a folder, and
-                      // the row said it because the source it came from said so.
-                      // Nothing here decides it, and nothing here looks at the disk
-                      // to second-guess it.
-                      create:
-                        pool.find((item) => item.id === choice.id)?.missing ??
-                        false,
-                    };
+          branch !== undefined && branchList !== undefined
+            ? { kind: "branch", place: branchList.place, branch }
+            : choice.id === NEW_PROJECT
+              ? { kind: "new", query: choice.query }
+              : choice.id === CLONE_PROJECT
+                ? { kind: "clone", query: choice.query }
+                : choice.id === SSH_CONNECT
+                  ? { kind: "ssh-connect" }
+                  : alias !== undefined
+                    ? { kind: "ssh", host: alias }
+                    : {
+                        kind: "open",
+                        path: choice.id,
+                        // Only a row that said it is missing may make a folder, and
+                        // the row said it because the source it came from said so.
+                        // Nothing here decides it, and nothing here looks at the disk
+                        // to second-guess it.
+                        create:
+                          pool.find((item) => item.id === choice.id)?.missing ??
+                          false,
+                      };
         if (choice.alternate) {
           void cancelWorkspacePicker();
           setChosen(row);

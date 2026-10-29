@@ -43,6 +43,8 @@ export function AgentPickerSheet({
       // Until the projection has arrived there is no folder to read, and the
       // New rows are the whole of the answer.
       place={workspace === undefined ? undefined : placeOf(workspace)}
+      // Another worktree's session goes on in its own Workspace.
+      onResumedElsewhere={onDismiss}
       onChoose={(choice) => {
         void dispatch({
           type: "request_create_agent",
@@ -74,6 +76,8 @@ export interface FolderAgentPickerProps {
   readonly failure?: string;
   /** Offers "Just open the editor", where the folder can be opened alone. */
   readonly onOpenEditor?: () => void;
+  /** Offers the repository's other worktrees' sessions; see `AgentProfilePicker`. */
+  readonly onResumedElsewhere?: () => void;
   readonly onChoose: (choice: AgentChoice) => void;
   readonly onCancel: () => void;
 }
@@ -89,6 +93,7 @@ export function FolderAgentPicker({
   step,
   failure,
   onOpenEditor,
+  onResumedElsewhere,
   onChoose,
   onCancel,
 }: FolderAgentPickerProps) {
@@ -106,6 +111,7 @@ export function FolderAgentPicker({
       hint={hint}
       sessionsIn={place}
       onOpenEditor={onOpenEditor}
+      onResumedElsewhere={onResumedElsewhere}
       onChoose={onChoose}
       onCancel={onCancel}
     />

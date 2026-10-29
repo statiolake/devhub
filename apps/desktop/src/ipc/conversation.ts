@@ -37,6 +37,7 @@ export const CONVERSATION_CHANNELS = {
 	listSessions: "devhub:conversation:list-sessions",
 	previewSession: "devhub:conversation:preview-session",
 	resumeSession: "devhub:conversation:resume-session",
+	resumeSessionElsewhere: "devhub:conversation:resume-session-elsewhere",
 	restartSession: "devhub:conversation:restart-session",
 	rewind: "devhub:conversation:rewind",
 	saveDraft: "devhub:conversation:save-draft",
@@ -234,6 +235,16 @@ export interface ConversationApi {
 	 * runs or when the session cannot be read back.
 	 */
 	resumeSession(agentId: string, session: string): Promise<void>;
+	/**
+	 * `/resume` on a session that ran in another worktree of the Agent's
+	 * repository (`PastSessionWire.worktree`): it is gone on with there, in a
+	 * new Agent of the same profile in that worktree's Workspace — opened, or
+	 * the worktree made again on its branch — and this Agent is left as it is.
+	 */
+	resumeSessionElsewhere(
+		agentId: string,
+		session: PastSessionWire,
+	): Promise<void>;
 	setSetting(
 		agentId: string,
 		which: "model" | "effort" | "mode",

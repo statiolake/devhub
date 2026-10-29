@@ -26,6 +26,7 @@ import {
 	type AgentProfilesBridge,
 	type AppearanceBridge,
 	type AssignmentBranchWire,
+	type BranchListWire,
 	type GitHubLoginWire,
 	type IssueAssignment,
 	type IssueFolderRequest,
@@ -172,6 +173,21 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 			) as Promise<AppOutcome>,
 		onWorkspacePicker: (listener) =>
 			on<WorkspacePickerEvent>(CHANNELS.workspacePicker, listener),
+		listSelectionBranches: () =>
+			ipcRenderer.invoke(CHANNELS.listSelectionBranches) as Promise<
+				BranchListWire | undefined
+			>,
+		openBranchWorkspace: (
+			place: WorkspacePlaceWire,
+			branch: string,
+			withAgent?: AgentLaunchWire,
+		) =>
+			ipcRenderer.invoke(
+				CHANNELS.openBranchWorkspace,
+				place,
+				branch,
+				withAgent,
+			) as Promise<AppOutcome>,
 		createProject: (path: string, withAgent?: AgentLaunchWire) =>
 			ipcRenderer.invoke(
 				CHANNELS.createProject,

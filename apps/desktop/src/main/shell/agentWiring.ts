@@ -63,6 +63,7 @@ import {
 	resumedSession,
 	terminalSession,
 	withSession,
+	type ListingContext,
 	type PastSession,
 	type PreviewLine,
 	type SessionScope,
@@ -122,6 +123,16 @@ export interface AgentWiringOptions {
 	readonly devhubSkill?: (
 		machine: RuntimeId,
 	) => Promise<DevhubSkill | undefined>;
+	/**
+	 * What a listing of earlier sessions knows beyond the CLI's store: the
+	 * repository the folder is in, for its other worktrees' sessions, and the
+	 * names people gave the Agents that ran them. Absent lists the folder's.
+	 */
+	readonly listingContext?: (
+		runtime: Runtime,
+		root: string,
+		kind: AgentProfile["kind"],
+	) => Promise<ListingContext>;
 }
 
 /** What the rest of main reaches of the Agents: their sessions, and the GUI ones' conversations. */
@@ -300,7 +311,17 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		registry,
 		async pastSessions(agentId, scope) {
 			const { agent, workspace, runtime } = placeOf(agentId);
-			return listPastSessions(runtime, agent.profile, workspace.root, scope);
+			return listPastSessions(
+				runtime,
+				agent.profile,
+				workspace.root,
+				scope,
+				(await options.listingContext?.(
+					runtime,
+					workspace.root,
+					agent.profile.kind,
+				)) ?? {},
+			);
 		},
 		async previewSession(agentId, session, cwd) {
 			const { agent, runtime } = placeOf(agentId);

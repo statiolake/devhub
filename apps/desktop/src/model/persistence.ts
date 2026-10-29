@@ -82,6 +82,7 @@ import {
   decodeRecentlyClosed,
   type ClosedEntryRecord,
 } from "./recentlyClosed.js";
+import { decodeSessionNames, type SessionNameRecord } from "./sessionNames.js";
 
 /**
  * Version 4 took the close out of the file entirely; version 3 made a close's
@@ -733,6 +734,12 @@ export interface PersistedAppState {
    * `model/recentlyClosed.ts`.
    */
   recently_closed: ClosedEntryRecord[];
+  /**
+   * The names people gave the Agents that ran each CLI session, newest
+   * first, for the resume lists to lead with. Main's, like
+   * `recently_closed`. See `model/sessionNames.ts`.
+   */
+  session_names: SessionNameRecord[];
 }
 
 export function freshState(): PersistedAppState {
@@ -760,6 +767,7 @@ export function freshState(): PersistedAppState {
     },
     shutdown: { clean: true, launch_generation: 0 },
     recently_closed: [],
+    session_names: [],
   };
 }
 
@@ -1230,6 +1238,7 @@ export function validateState(state: PersistedAppState): void {
     }
   }
   decodeArray("recently_closed", state.recently_closed);
+  decodeArray("session_names", state.session_names);
   decodeObject("navigation", state.navigation);
   if (state.navigation.context !== undefined) {
     decodeObject("navigation.context", state.navigation.context);
@@ -2796,6 +2805,8 @@ function decodeParsed(parsed: Extract<Parsed, { kind: "document" }>): Decoded {
       // Absent is the empty stack, and an entry that does not read is left
       // out rather than refusing the file: it is history, not work.
       recently_closed: decodeRecentlyClosed(object["recently_closed"]),
+      // The same bargain: labels, not work. See `model/sessionNames.ts`.
+      session_names: decodeSessionNames(object["session_names"]),
       navigation:
         object["navigation"] === undefined
           ? fresh.navigation

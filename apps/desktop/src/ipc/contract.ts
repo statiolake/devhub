@@ -17,6 +17,7 @@ import type { ConversationApi } from "./conversation.js";
 import type { VoiceApi } from "./voice.js";
 import type {
 	AgentLaunchWire,
+	AgentPresentationWire,
 	AgentProfiles,
 	AgentStatusWire,
 	AppAppearance,
@@ -1027,6 +1028,24 @@ export interface WorkspaceOpeningBridge {
 	onWorkspacePicker(
 		listener: (event: WorkspacePickerEvent) => void,
 	): () => void;
+	/**
+	 * The branches of the repository the selection's Workspace is in, for the
+	 * workspace picker to offer beside its folders. Nothing when the selection
+	 * is in no repository (Scratch, a plain folder) or git cannot be asked.
+	 */
+	listSelectionBranches(): Promise<BranchListWire | undefined>;
+	/**
+	 * Open `branch` of the repository at `place` as a Workspace: its worktree
+	 * when it has one (focused when it is open already), else a worktree made
+	 * for it — a remote-only branch as a local branch tracking it — placed
+	 * under the selection's Workspace. A refusal (a folder in the way, git's
+	 * own) is thrown with its reason.
+	 */
+	openBranchWorkspace(
+		place: WorkspacePlaceWire,
+		branch: string,
+		withAgent?: AgentLaunchWire,
+	): Promise<AppOutcome>;
 
 	/**
 	 * The two ways a workspace can start that are not "find one that exists".
@@ -1665,6 +1684,49 @@ export interface PickerBridge
 		session: string,
 		cwd: string,
 	): Promise<readonly SessionPreviewLineWire[]>;
+	/**
+	 * Resume a listed session that ran in another worktree of the place's
+	 * repository, in that worktree: its Workspace opened or focused (the
+	 * worktree made again on its branch when it is gone) and an Agent of the
+	 * profile started there on the session.
+	 */
+	resumeSessionElsewhere(request: ResumeElsewhereWire): Promise<AppOutcome>;
+}
+
+/** An earlier session to go on with in the worktree it ran in. */
+export interface ResumeElsewhereWire {
+	/** The folder the list was read for, on its machine: the repository, and the machine. */
+	readonly place: WorkspacePlaceWire;
+	readonly profileId: string;
+	readonly session: string;
+	readonly worktree: SessionWorktreeWire;
+	/** Where the CLI said it ran. */
+	readonly cwd?: string;
+	readonly presentation?: AgentPresentationWire;
+	/** Beside the editor. */
+	readonly split?: boolean;
+}
+
+/** The branches the workspace picker offers, and the repository they are of. */
+export interface BranchListWire {
+	/** The folder git was asked in, on its machine: where a worktree is made from. */
+	readonly place: WorkspacePlaceWire;
+	/** The repository's name, for the rows to say whose branches they are. */
+	readonly repository: string;
+	/** Newest commit first. */
+	readonly branches: readonly BranchWire[];
+}
+
+export interface BranchWire {
+	readonly name: string;
+	/** The remote it is only on, when there is no local branch of the name yet. */
+	readonly remote?: string;
+	/** Its tip's commit time, in ms since the epoch. */
+	readonly committedAt: number;
+	/** The folder it is checked out in, when it is. */
+	readonly worktree?: string;
+	/** That folder is open as a Workspace now. */
+	readonly open: boolean;
 }
 
 /** Which earlier sessions a picker lists: the Workspace's directory's, or every directory's. */
@@ -1690,6 +1752,25 @@ export interface PastSessionWire {
 	 * directory's and says so rather than offering it.
 	 */
 	readonly resumableHere: boolean;
+	/**
+	 * It ran in another worktree of the Workspace's repository, on another
+	 * branch: which one. Choosing it resumes it there — that worktree's
+	 * Workspace, opened or focused, or the worktree made again when it is
+	 * gone — rather than in the Workspace the list was asked for.
+	 */
+	readonly worktree?: SessionWorktreeWire;
+	/** The name a person gave the Agent that ran it, when one did. */
+	readonly agentName?: string;
+}
+
+/** The worktree an earlier session ran in, when it is not the Workspace's own. */
+export interface SessionWorktreeWire {
+	/** The worktree's folder: where it is, or was. */
+	readonly root: string;
+	/** The branch checked out there, or the one the CLI last recorded. */
+	readonly branch?: string;
+	/** The folder is still a worktree of the repository. */
+	readonly present: boolean;
 }
 
 /** One message of a session's last exchanges, as the resume picker previews it. */
@@ -1737,6 +1818,9 @@ export const CHANNELS = {
 	findIssueRepositories: "devhub:find-issue-repositories",
 	cancelPickerLookup: "devhub:cancel-picker-lookup",
 	listAgentSessions: "devhub:list-agent-sessions",
+	resumeSessionElsewhere: "devhub:resume-session-elsewhere",
+	listSelectionBranches: "devhub:list-selection-branches",
+	openBranchWorkspace: "devhub:open-branch-workspace",
 	previewAgentSession: "devhub:preview-agent-session",
 	cloneRepository: "devhub:clone-repository",
 	listBranches: "devhub:list-branches",

@@ -1913,6 +1913,33 @@ describe("what was closed, across a restart", () => {
     removeScratchDir(directory);
   });
 
+  it("keeps the names sessions' Agents were given, and loads a file without them as none", async () => {
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const store = new JsonStateStore(path);
+    const state = freshState();
+    state.session_names = [
+      { kind: "claude", session: "s-1", name: "Docs", at: 1_700_000_000_000 },
+    ];
+    await store.saveState(state);
+    const load = await new JsonStateStore(path).loadState();
+    expect(load.state.session_names).toEqual(state.session_names);
+    const model = new AppModel(localWorkspace("/scratch", WS_A));
+    expect(applySnapshot(load.state, model.snapshot()).session_names).toEqual(
+      state.session_names,
+    );
+    const document = JSON.parse(JSON.stringify(freshState())) as Record<
+      string,
+      unknown
+    >;
+    delete document["session_names"];
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    expect(
+      (await new JsonStateStore(path).loadState()).state.session_names,
+    ).toEqual([]);
+    removeScratchDir(directory);
+  });
+
   it("writes the stack and reads it back, and a re-projection keeps it", async () => {
     const directory = makeScratchDir("state");
     const path = join(directory, "state.json");

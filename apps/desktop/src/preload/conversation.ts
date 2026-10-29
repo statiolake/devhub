@@ -128,6 +128,12 @@ export const conversationApi: ConversationApi = {
 			agentId,
 			session,
 		) as Promise<void>,
+	resumeSessionElsewhere: (agentId, session) =>
+		ipcRenderer.invoke(
+			CONVERSATION_CHANNELS.resumeSessionElsewhere,
+			agentId,
+			session,
+		) as Promise<void>,
 	interrupt: (agentId) => command(agentId, { kind: "interrupt" }),
 	stopTask: (agentId, task) => command(agentId, { kind: "stop-task", task }),
 	answer: (agentId, request, answer) =>

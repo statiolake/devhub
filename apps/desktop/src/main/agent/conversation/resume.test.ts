@@ -42,6 +42,12 @@ import {
 	resumeArgs,
 	resumedSession,
 	withSession,
+	carryClaudeSession,
+	claudeProjectName,
+	codexImportedThreads,
+	importedThreadIds,
+	placeSessions,
+	type RepositoryWorktrees,
 	type SessionProfile,
 } from "./resume.js";
 import { SessionNotResumable } from "./failures.js";
@@ -1111,3 +1117,242 @@ function fakeRuntime(home: string): Runtime {
 	};
 	return runtime as Runtime;
 }
+
+describe("a Workspace's sessions across its repository's worktrees", () => {
+	let dir: string;
+	beforeEach(async () => {
+		dir = await mkdtemp(join(tmpdir(), "devhub-resume-across-"));
+	});
+	afterEach(async () => {
+		await rm(dir, { recursive: true, force: true });
+	});
+
+	/** `/work/widget` and its worktree `/work/widget_topic`; `/work/widget_gone` was one. */
+	const REPOSITORY: RepositoryWorktrees = {
+		worktrees: [
+			{ path: "/work/widget", branch: "main" },
+			{ path: "/work/widget_topic", branch: "topic" },
+		],
+		siblingPrefix: "/work/widget_",
+	};
+
+	async function claudeSession(
+		cwd: string,
+		id: string,
+		text: string,
+		seconds: number,
+		branch?: string,
+	): Promise<void> {
+		const project = join(dir, ".claude", "projects", claudeProjectName(cwd));
+		await mkdir(project, { recursive: true });
+		await writeFile(
+			join(project, `${id}.jsonl`),
+			JSON.stringify({
+				type: "user",
+				uuid: "x",
+				cwd,
+				...(branch === undefined ? {} : { gitBranch: branch }),
+				timestamp: new Date(seconds * 1000).toISOString(),
+				message: { content: text },
+			}),
+		);
+		await touch(join(project, `${id}.jsonl`), seconds);
+	}
+
+	it("lists Claude's sessions of every worktree, a removed one's included, each saying which, and named by their Agents", async () => {
+		await claudeSession("/work/widget", "here", "Here", 1_000, "main");
+		await claudeSession("/work/widget_topic", "topic", "On topic", 2_000, "x");
+		await claudeSession("/work/widget_gone", "gone", "Gone", 3_000, "old");
+		// Escapes like a worktree's folder, and is another repository.
+		await claudeSession("/work/widget-bridge", "bridge", "Bridge", 4_000);
+		await claudeSession("/work/unrelated", "far", "Far", 5_000);
+
+		const sessions = await listPastSessions(
+			fakeRuntime(dir),
+			CLAUDE,
+			"/work/widget",
+			"here",
+			{
+				repository: REPOSITORY,
+				nameOf: (id) => (id === "topic" ? "Refactor bot" : undefined),
+			},
+		);
+		expect(sessions).toEqual([
+			{
+				id: "gone",
+				title: "Gone",
+				updatedAt: 3_000_000,
+				cwd: "/work/widget_gone",
+				branch: "old",
+				resumableHere: false,
+				worktree: { root: "/work/widget_gone", branch: "old", present: false },
+			},
+			{
+				id: "topic",
+				title: "On topic",
+				updatedAt: 2_000_000,
+				cwd: "/work/widget_topic",
+				branch: "x",
+				resumableHere: false,
+				// The branch checked out there now, over the one the CLI recorded.
+				worktree: {
+					root: "/work/widget_topic",
+					branch: "topic",
+					present: true,
+				},
+				agentName: "Refactor bot",
+			},
+			{
+				id: "here",
+				title: "Here",
+				updatedAt: 1_000_000,
+				cwd: "/work/widget",
+				branch: "main",
+				resumableHere: true,
+			},
+		]);
+	});
+
+	it("leaves out Codex's imported threads, and asks for every worktree's and the removed ones'", async () => {
+		const codex = join(dir, "codex");
+		const requests = join(dir, "requests");
+		await mkdir(join(dir, ".codex"), { recursive: true });
+		await writeFile(
+			join(dir, ".codex", "external_agent_session_imports.json"),
+			JSON.stringify({
+				records: [
+					{
+						source_path: "/home/u/.claude/projects/x/s.jsonl",
+						content_sha256: "ab",
+						imported_thread_id: "t-imported",
+						imported_at: 1,
+					},
+				],
+				detected_connector_records: [],
+			}),
+		);
+		const thread = (id: string, cwd: string, updatedAt: number) =>
+			JSON.stringify({ id, preview: id, name: null, updatedAt, cwd });
+		const answer = (id: number, threads: string[]) =>
+			`{"id":${String(id)},"result":{"data":[${threads.join(",")}],"nextCursor":null}}`;
+		await writeFile(
+			codex,
+			`#!/bin/sh
+while IFS= read -r line; do
+	printf '%s\\n' "$line" >>"${requests}"
+	case $line in
+	*'"initialize"'*) printf '%s\\n' '{"id":1,"result":{}}' ;;
+	*'"id":2'*) printf '%s\\n' '${answer(2, [thread("t-here", "/work/widget", 30), thread("t-topic", "/work/widget_topic/src", 20), thread("t-imported", "/work/widget", 40)])}' ;;
+	*'"id":3'*) sleep 0.2; printf '%s\\n' '${answer(3, [thread("t-gone", "/work/widget_gone", 25), thread("t-far", "/work/far", 50), thread("t-here", "/work/widget", 30)])}' ;;
+	esac
+done
+`,
+		);
+		await chmod(codex, 0o755);
+
+		const sessions = await listPastSessions(
+			fakeRuntime(dir),
+			{ ...CODEX, command: codex },
+			"/work/widget",
+			"here",
+			{ repository: REPOSITORY },
+		);
+		expect(
+			sessions.map((each) => [each.id, each.resumableHere, each.worktree]),
+		).toEqual([
+			["t-here", true, undefined],
+			["t-gone", false, { root: "/work/widget_gone", present: false }],
+			[
+				"t-topic",
+				false,
+				{ root: "/work/widget_topic", branch: "topic", present: true },
+			],
+		]);
+		const asked = (await readFile(requests, "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { id?: number; params?: unknown });
+		expect(asked.find((each) => each.id === 2)?.params).toEqual({
+			cwd: ["/work/widget", "/work/widget_topic"],
+			limit: 50,
+			sortKey: "updated_at",
+			excludedThreadIds: ["t-imported"],
+		});
+		expect(asked.find((each) => each.id === 3)?.params).toEqual({
+			limit: 200,
+			sortKey: "updated_at",
+			excludedThreadIds: ["t-imported"],
+		});
+	});
+
+	it("reads Codex's import ledger as the threads it names, and nothing from one that is not there", async () => {
+		expect([
+			...importedThreadIds(
+				'{"records":[{"imported_thread_id":"a"},{"imported_thread_id":"b"},{"title":"x"}]}',
+			),
+		]).toEqual(["a", "b"]);
+		expect((await codexImportedThreads(fakeRuntime(dir), CODEX)).size).toBe(0);
+	});
+
+	it("keeps every directory's sessions when asked for all of them, saying which ran in a worktree", () => {
+		const session = (id: string, cwd: string) => ({
+			id,
+			title: id,
+			updatedAt: 1,
+			cwd,
+			branch: undefined,
+			resumableHere: true,
+		});
+		expect(
+			placeSessions(
+				"codex",
+				[
+					session("a", "/work/widget"),
+					session("b", "/work/widget_topic"),
+					session("c", "/work/far"),
+				],
+				"/work/widget",
+				REPOSITORY,
+				"everywhere",
+			).map((each) => [each.id, each.worktree?.root]),
+		).toEqual([
+			["a", undefined],
+			["b", "/work/widget_topic"],
+			["c", undefined],
+		]);
+	});
+
+	it("carries a Claude session over to the folder it is resumed in, once", async () => {
+		await claudeSession("/work/widget_gone", "s1", "Gone", 1_000);
+		await mkdir(
+			join(dir, ".claude", "projects", "-work-widget-gone", "s1", "subagents"),
+			{ recursive: true },
+		);
+		await carryClaudeSession(
+			fakeRuntime(dir),
+			CLAUDE,
+			"/work/widget_gone",
+			"/work/widget_topic",
+			"s1",
+		);
+		const moved = join(dir, ".claude", "projects", "-work-widget-topic");
+		expect(await readdir(moved)).toEqual(["s1", "s1.jsonl"].sort());
+		// Already there: nothing is done again.
+		await carryClaudeSession(
+			fakeRuntime(dir),
+			CLAUDE,
+			"/work/widget_gone",
+			"/work/widget_topic",
+			"s1",
+		);
+		await expect(
+			carryClaudeSession(
+				fakeRuntime(dir),
+				CLAUDE,
+				"/work/widget_gone",
+				"/work/widget",
+				"missing",
+			),
+		).rejects.toThrow(/there is no/u);
+	});
+});

@@ -70,6 +70,45 @@ export function worktreeDirectory(
 }
 
 /**
+ * Where a worktree picked by its branch goes — the workspace picker's branch
+ * rows, and a session resumed in a worktree that is gone.
+ *
+ * The same sibling as an Issue's, under the same rule: a branch that carries
+ * an Issue number (`feature/128-short-name`, `issueNumberFromBranch`) is that
+ * Issue's work and lands in `{repo}_128`, the folder the Issue flow would have
+ * made for it. A branch that names no Issue has nothing steadier than its own
+ * name, so the folder is named for it, every character a folder name would
+ * trip on (`/` above all) turned into `-`: `release/2.0` → `{repo}_release-2.0`.
+ */
+export function branchWorktreeDirectory(
+  mainWorktree: string,
+  branch: string,
+): string {
+  const number = issueNumberFromBranch(branch);
+  const parent = parentDirectory(mainWorktree);
+  const suffix =
+    number !== undefined
+      ? String(number)
+      : branch
+          .trim()
+          .replace(/[^A-Za-z0-9._-]+/gu, "-")
+          .replace(/^[-.]+|-+$/gu, "");
+  const name = `${baseName(mainWorktree)}_${suffix.length > 0 ? suffix : "branch"}`;
+  return parent === "/" ? `/${name}` : `${parent}/${name}`;
+}
+
+/**
+ * The prefix every worktree DevHub makes for this repository starts with:
+ * `{main worktree's parent}/{repo}_`. A session that ran in a folder under it
+ * ran in one of this repository's worktrees, even after the folder is gone.
+ */
+export function worktreeSiblingPrefix(mainWorktree: string): string {
+  const parent = parentDirectory(mainWorktree);
+  const name = `${baseName(mainWorktree)}_`;
+  return parent === "/" ? `/${name}` : `${parent}/${name}`;
+}
+
+/**
  * Whether closing this workspace deletes a folder — the one rule, in one place.
  *
  * "Close" and "delete the worktree" are the same act in DevHub: a worktree is a

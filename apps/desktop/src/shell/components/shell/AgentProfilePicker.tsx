@@ -15,9 +15,13 @@
  * "New Claude Session", "New Codex Session", … — one per profile, first, drawn
  * the moment the sheet opens. Under them the earlier sessions of each profile
  * whose CLI keeps sessions DevHub can list (Claude and Codex), newest first
- * across profiles: those that ran in `sessionsIn` itself, not in another
- * worktree of the same repository — a session is its checkout's work, on its
- * branch, and Claude goes on with one only in the directory it ran in. They
+ * across profiles: those that ran in `sessionsIn` itself and — where the
+ * caller can go somewhere else (`onResumedElsewhere`) — those of the other
+ * worktrees of its repository, each saying which branch and worktree. A
+ * session is its checkout's work, on its branch, so one of another worktree
+ * is gone on with *there* (`resumeSessionElsewhere`): that worktree's
+ * Workspace, made again when it was removed. A session whose Agent a person
+ * named leads with that name. They
  * are read on that folder's machine after the sheet is up, so a slow listing
  * never holds the New rows back: while one is still being read the list ends
  * in a quiet row that says so, and a listing that failed says why in the note,
@@ -59,6 +63,7 @@ import {
   said,
   sessionDetail,
   SessionPreview,
+  sessionTitle,
   useSessionPreview,
 } from "./sessionRows";
 
@@ -96,6 +101,12 @@ export interface AgentProfilePickerProps {
    * unchanged.
    */
   readonly onOpenEditor?: () => void;
+  /**
+   * Offers the sessions of the repository's other worktrees: one taken is
+   * resumed in its own worktree, and this is called once that has been asked
+   * for, for the sheet to go. Absent, only `sessionsIn`'s are offered.
+   */
+  readonly onResumedElsewhere?: () => void;
   readonly onChoose: (choice: AgentChoice) => void;
   readonly onCancel: () => void;
 }
@@ -127,10 +138,17 @@ export function AgentProfilePicker({
   hint,
   sessionsIn,
   onOpenEditor,
+  onResumedElsewhere,
   onChoose,
   onCancel,
 }: AgentProfilePickerProps) {
-  const { agentProfiles, listAgentSessions, previewAgentSession } = usePicker();
+  const {
+    agentProfiles,
+    listAgentSessions,
+    previewAgentSession,
+    resumeSessionElsewhere,
+  } = usePicker();
+  const elsewhere = onResumedElsewhere !== undefined;
   const profiles = agentProfiles.profiles;
   const listings = useListings(sessionsIn, profiles, listAgentSessions);
 
@@ -169,6 +187,7 @@ export function AgentProfilePicker({
       if (listing?.kind === "reading") reading = true;
       if (listing?.kind !== "listed") continue;
       for (const session of listing.sessions) {
+        if (session.worktree !== undefined && !elsewhere) continue;
         const same = `${profile.kind}\u0000${session.id}`;
         if (offered.has(same)) continue;
         offered.add(same);
@@ -179,9 +198,9 @@ export function AgentProfilePicker({
           at: session.updatedAt ?? Number.NEGATIVE_INFINITY,
           item: {
             id,
-            label: `${profile.displayName} Session: ${session.title}`,
+            label: `${profile.displayName} Session: ${sessionTitle(session)}`,
             ...(detail === undefined ? {} : { detail }),
-            searchText: `${profile.displayName} ${session.branch ?? ""} ${session.title}`,
+            searchText: `${profile.displayName} ${session.worktree?.branch ?? session.branch ?? ""} ${session.agentName ?? ""} ${session.title}`,
             accessory: presentationAccessory(profile),
           },
         });
@@ -201,7 +220,7 @@ export function AgentProfilePicker({
       });
     }
     return { items, targets, sessionCount: past.length };
-  }, [profiles, listings, onOpenEditor]);
+  }, [profiles, listings, onOpenEditor, elsewhere]);
 
   const [activeId, setActiveId] = useState<string>();
   const onActiveChange = useCallback((item: PickerItem | undefined) => {
@@ -277,6 +296,29 @@ export function AgentProfilePicker({
           throw new Error(
             `the picker offered a row it does not have: ${choice.id}`,
           );
+        }
+        const worktree = target.session?.worktree;
+        if (
+          worktree !== undefined &&
+          target.session !== undefined &&
+          sessionsIn !== undefined &&
+          onResumedElsewhere !== undefined
+        ) {
+          // Another worktree's session goes on there; the sheet goes, and a
+          // refusal (a folder in the way, a branch that is gone) is a notice.
+          void resumeSessionElsewhere({
+            place: sessionsIn,
+            profileId: target.profile.id,
+            session: target.session.id,
+            worktree,
+            ...(target.session.cwd === undefined
+              ? {}
+              : { cwd: target.session.cwd }),
+            presentation: launchPresentation(target.profile, choice.alternate),
+            split: choice.split,
+          });
+          onResumedElsewhere();
+          return;
         }
         onChoose({
           profileId: target.profile.id,

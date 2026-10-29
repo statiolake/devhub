@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   baseName,
+  branchWorktreeDirectory,
   closingDeletesWorktree,
+  worktreeSiblingPrefix,
   worktreeDirectory,
   worktreeNumber,
 } from "./worktrees.js";
@@ -107,5 +109,35 @@ describe("whether closing a workspace deletes its worktree", () => {
         "/projects/widget/packages/app",
       ),
     ).toBe(false);
+  });
+});
+
+describe("the worktree for a branch picked by name", () => {
+  it("is the Issue's folder when the branch carries an Issue number", () => {
+    expect(
+      branchWorktreeDirectory("/projects/widget", "feature/128-short-name"),
+    ).toBe("/projects/widget_128");
+  });
+
+  it("is named for the branch otherwise, with what a folder name trips on as -", () => {
+    expect(branchWorktreeDirectory("/projects/widget", "release/2.0")).toBe(
+      "/projects/widget_release-2.0",
+    );
+    expect(
+      branchWorktreeDirectory("/projects/widget/", "alice/fix the crash"),
+    ).toBe("/projects/widget_alice-fix-the-crash");
+    expect(branchWorktreeDirectory("/projects/widget", "///")).toBe(
+      "/projects/widget_branch",
+    );
+  });
+
+  it("starts with the prefix every DevHub worktree of the repository does", () => {
+    expect(worktreeSiblingPrefix("/projects/widget")).toBe("/projects/widget_");
+    expect(
+      branchWorktreeDirectory("/projects/widget", "topic").startsWith(
+        worktreeSiblingPrefix("/projects/widget"),
+      ),
+    ).toBe(true);
+    expect(worktreeSiblingPrefix("/widget")).toBe("/widget_");
   });
 });

@@ -32,6 +32,7 @@ import type { AgentDrafts } from "../agent/conversation/drafts.js";
 import type { FileSelection } from "../cli/openFiles.js";
 import { fileSelection } from "../agent/conversation/pathLinks.js";
 import type { GuiConversations } from "./agentWiring.js";
+import type { PastSessionWire } from "../../ipc/contract.js";
 
 export interface ConversationIpcOptions {
 	readonly ipcMain: IpcMain;
@@ -48,6 +49,14 @@ export interface ConversationIpcOptions {
 	) => Promise<unknown>;
 	/** Ask the model to restart an Agent's session: the one way the Sidebar and the chord go too. */
 	readonly restart: (agentId: AgentId) => Promise<unknown>;
+	/**
+	 * `/resume` on a session of another worktree of the Agent's repository:
+	 * gone on with there, in a new Agent, and this one left as it is.
+	 */
+	readonly resumeElsewhere: (
+		agentId: AgentId,
+		session: PastSessionWire,
+	) => Promise<unknown>;
 	/** The session a terminal Agent's CLI is in (`AgentWiring.terminalSession`). */
 	readonly terminalSession: (agentId: AgentId) => Promise<string>;
 	/** Which of a conversation's path candidates are files on the Agent's machine (`resolvePathCandidates`). */
@@ -234,6 +243,13 @@ export function registerConversationIpc(
 			throw new Error(`${JSON.stringify(session)} is not a session to resume`);
 		return options.conversations.resume(agentId, session);
 	});
+
+	handle(
+		CONVERSATION_CHANNELS.resumeSessionElsewhere,
+		async (agentId, session) => {
+			await options.resumeElsewhere(agentId, pastSessionWire(session));
+		},
+	);
 
 	handle(CONVERSATION_CHANNELS.mcpSignIn, (agentId, server) => {
 		if (typeof server !== "string")
@@ -462,4 +478,29 @@ function requestFrom(wire: unknown):
 		}
 	}
 	throw new Error(`${JSON.stringify(wire)} is not a conversation command`);
+}
+
+/**
+ * A listed session as the page sent it back, checked: the fields the resume
+ * reads, each of the type the listing gave it.
+ */
+function pastSessionWire(value: unknown): PastSessionWire {
+	if (typeof value !== "object" || value === null)
+		throw new Error(`${JSON.stringify(value)} is not a listed session`);
+	const session = value as Record<string, unknown>;
+	const worktree = session["worktree"] as Record<string, unknown> | undefined;
+	if (
+		typeof session["id"] !== "string" ||
+		typeof session["title"] !== "string" ||
+		(session["cwd"] !== undefined && typeof session["cwd"] !== "string") ||
+		typeof worktree !== "object" ||
+		worktree === null ||
+		typeof worktree["root"] !== "string" ||
+		typeof worktree["present"] !== "boolean" ||
+		(worktree["branch"] !== undefined && typeof worktree["branch"] !== "string")
+	)
+		throw new Error(
+			`${JSON.stringify(value)} is not a session of another worktree`,
+		);
+	return value as PastSessionWire;
 }

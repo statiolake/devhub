@@ -57,6 +57,7 @@ function harness() {
 		agentsPage: () => page as unknown as WebContents,
 		continueIn: unused,
 		restart: unused,
+		resumeElsewhere: unused,
 		terminalSession: unused,
 		resolvePaths: unused,
 		readEmbedFile: unused,

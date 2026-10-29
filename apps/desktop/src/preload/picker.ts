@@ -72,6 +72,11 @@ const api: PickerBridge = {
 			session,
 			cwd,
 		) as Promise<readonly SessionPreviewLineWire[]>,
+	resumeSessionElsewhere: (request) =>
+		ipcRenderer.invoke(
+			CHANNELS.resumeSessionElsewhere,
+			request,
+		) as Promise<AppOutcome>,
 };
 
 contextBridge.exposeInMainWorld("devhub", api);
