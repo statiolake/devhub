@@ -10,7 +10,11 @@
  * while it records, puts committed words in at the caret as they come (and
  * shows the tentative ones beside them) without sending, keeps what is typed
  * meanwhile, throws the rest away on Esc without stopping the turn, and hands
- * a refusal to the page's root.
+ * a refusal to the page's root. A press shows at once and captures at once —
+ * what is heard before main has opened the session is kept and sent after —
+ * a second press while the microphone opens gives up, a microphone that
+ * never opens is given up on and said so, and so is a press where there is no
+ * recogniser.
  *
  * jsdom has no microphone and no Web Audio, so both are stood in for: the
  * fake processor is fed chunks by the test, as the audio thread would.
@@ -41,7 +45,9 @@ import {
   downsample,
   insertDictation,
   isDictationKey,
+  DICTATION_UNAVAILABLE_TITLE,
   level,
+  MICROPHONE_OPEN_MS,
   nextLanguage,
   pcm16,
   placeDictation,
@@ -180,20 +186,32 @@ interface FakeProcessor {
 
 let processor: FakeProcessor | undefined;
 let tracksStopped = 0;
+let contextsOpen = 0;
+/** What `getUserMedia` answers; a test may hold it back. */
+let openMicrophone: () => Promise<unknown>;
+
+const stream = {
+  getTracks: () => [{ stop: () => void tracksStopped++ }],
+};
 
 function installAudio() {
   processor = undefined;
   tracksStopped = 0;
-  const stream = {
-    getTracks: () => [{ stop: () => void tracksStopped++ }],
-  };
+  contextsOpen = 0;
+  openMicrophone = () => Promise.resolve(stream);
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true,
-    value: { getUserMedia: vi.fn(() => Promise.resolve(stream)) },
+    value: {
+      getUserMedia: vi.fn(() => openMicrophone()),
+      enumerateDevices: vi.fn(() => Promise.resolve([])),
+    },
   });
   class FakeAudioContext {
     readonly sampleRate = 48_000;
     readonly destination = {};
+    constructor() {
+      contextsOpen += 1;
+    }
     createMediaStreamSource() {
       return { connect() {}, disconnect() {} };
     }
@@ -202,11 +220,34 @@ function installAudio() {
       processor = made;
       return made;
     }
+    createAnalyser() {
+      return {
+        fftSize: 2048,
+        smoothingTimeConstant: 0.8,
+        getFloatTimeDomainData(into: Float32Array) {
+          into.fill(0.1);
+        },
+      };
+    }
     close() {
+      contextsOpen -= 1;
       return Promise.resolve();
     }
   }
   vi.stubGlobal("AudioContext", FakeAudioContext);
+  // jsdom draws nothing; the waveform's own tests stand in a context.
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+}
+
+/** A promise and the hands that settle it. */
+function held<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
 }
 
 /** One chunk from the microphone, as the audio thread would hand it over. */
@@ -275,7 +316,7 @@ describe("dictating in the composer", () => {
     expect(screen.queryByRole("button", { name: "Dictate" })).toBeNull();
   });
 
-  it("says why when this build has no recogniser", async () => {
+  it("says why when this build has no recogniser, and again when pressed", async () => {
     const voice = fakeVoice({
       status: () =>
         Promise.resolve({
@@ -283,10 +324,126 @@ describe("dictating in the composer", () => {
           reason: "No recogniser.",
         }),
     });
-    draw(READY, fakeActions({ voice }));
+    const actions = fakeActions({ voice });
+    draw(READY, actions);
     const button = screen.getByRole("button", { name: "Dictate" });
-    await waitFor(() => expect(button).toBeDisabled());
+    await waitFor(() =>
+      expect(button).toHaveAttribute("aria-disabled", "true"),
+    );
     expect(button).toHaveAttribute("title", "No recogniser.");
+    fireEvent.click(button);
+    const reported = toAppError(
+      vi.mocked(actions.reportFailure).mock.calls[0]![0],
+    );
+    expect(reported.summary).toBe(DICTATION_UNAVAILABLE_TITLE);
+    expect(reported.detail).toBe("No recogniser.");
+    expect(voice.begin).not.toHaveBeenCalled();
+  });
+
+  it("shows the press at once, and keeps what it hears until main has opened the session", async () => {
+    const begun = held<{ ok: true; value: number }>();
+    const voice = fakeVoice({ begin: vi.fn(() => begun.promise) });
+    draw(READY, fakeActions({ voice }));
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    // In the same task as the press: drawn pressed, everything asked for.
+    const pressed = screen.getByRole("button", { name: "Cancel dictation" });
+    expect(pressed).toHaveAttribute("data-phase", "starting");
+    expect(pressed).toHaveAttribute("aria-pressed", "true");
+    expect(voice.begin).toHaveBeenCalledWith("ja");
+    expect(voice.warm).toHaveBeenCalled();
+    // The microphone opens before main answers: it records, and keeps it.
+    await screen.findByRole("button", { name: "Stop dictating" });
+    expect(document.querySelector(".conversation-dictation-wave")).not.toBe(
+      null,
+    );
+    hear(12000);
+    hear(6000);
+    expect(voice.audio).not.toHaveBeenCalled();
+    await act(async () => begun.resolve({ ok: true, value: 7 }));
+    expect(voice.audio).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(voice.audio).mock.calls[0]![0]).toBe(7);
+    expect(vi.mocked(voice.audio).mock.calls[0]![1].byteLength).toBe(12000);
+    fireEvent.click(screen.getByRole("button", { name: "Stop dictating" }));
+    // Stopped: the waveform and the audio are let go of.
+    expect(document.querySelector(".conversation-dictation-wave")).toBe(null);
+    await waitFor(() => expect(composer().value).toBe("直して"));
+    expect(contextsOpen).toBe(0);
+    expect(tracksStopped).toBe(1);
+  });
+
+  it("ends a recording stopped before main answered, with all it heard", async () => {
+    const begun = held<{ ok: true; value: number }>();
+    const voice = fakeVoice({ begin: vi.fn(() => begun.promise) });
+    draw(READY, fakeActions({ voice }));
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    await screen.findByRole("button", { name: "Stop dictating" });
+    hear(4800);
+    fireEvent.click(screen.getByRole("button", { name: "Stop dictating" }));
+    expect(voice.end).not.toHaveBeenCalled();
+    await act(async () => begun.resolve({ ok: true, value: 7 }));
+    await waitFor(() => expect(composer().value).toBe("直して"));
+    expect(vi.mocked(voice.audio).mock.calls[0]![1].byteLength).toBe(3200);
+    expect(voice.end).toHaveBeenCalledWith(7);
+  });
+
+  it("gives up when pressed again while the microphone opens", async () => {
+    const opened = held<unknown>();
+    openMicrophone = () => opened.promise;
+    const voice = fakeVoice();
+    draw(READY, fakeActions({ voice }));
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    await waitFor(() =>
+      expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel dictation" }));
+    expect(screen.getByRole("button", { name: "Dictate" })).toHaveAttribute(
+      "data-phase",
+      "idle",
+    );
+    await waitFor(() => expect(voice.cancel).toHaveBeenCalledWith(7));
+    // The microphone that opens after is closed again at once.
+    await act(async () => opened.resolve(stream));
+    await waitFor(() => expect(tracksStopped).toBe(1));
+    expect(processor).toBeUndefined();
+  });
+
+  it("gives up on a microphone that does not open, and says so", async () => {
+    vi.useFakeTimers();
+    try {
+      openMicrophone = () => new Promise(() => undefined);
+      const voice = fakeVoice();
+      const actions = fakeActions({ voice });
+      draw(READY, actions);
+      fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+      await act(() => vi.advanceTimersByTimeAsync(MICROPHONE_OPEN_MS + 100));
+      const reported = toAppError(
+        vi.mocked(actions.reportFailure).mock.calls[0]![0],
+      );
+      expect(reported.summary).toBe(VOICE_FAILED_TITLE);
+      expect(reported.detail).toMatch(/did not open within 10 seconds/);
+      expect(voice.cancel).toHaveBeenCalledWith(7);
+      expect(contextsOpen).toBe(0);
+      expect(screen.getByRole("button", { name: "Dictate" })).toHaveAttribute(
+        "data-phase",
+        "idle",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("loads the recogniser when the composer is focused, for someone who dictates", () => {
+    const voice = fakeVoice();
+    localStorage.removeItem("devhub.dictation.used");
+    draw(READY, fakeActions({ voice }));
+    fireEvent.focus(composer());
+    expect(voice.warm).not.toHaveBeenCalled();
+    cleanup();
+    localStorage.setItem("devhub.dictation.used", "1");
+    draw(READY, fakeActions({ voice }));
+    fireEvent.focus(composer());
+    expect(voice.warm).toHaveBeenCalledTimes(1);
+    localStorage.removeItem("devhub.dictation.used");
   });
 
   it("streams 16 kHz to main, and puts the words at the caret unsent", async () => {

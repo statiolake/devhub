@@ -329,3 +329,44 @@ export function saveLanguage(
     // A preference that is not kept is the default next time.
   }
 }
+
+export const DICTATION_UNAVAILABLE_TITLE = "Dictation is not available.";
+
+/** Pressing the microphone where there is no recogniser: why, said aloud. */
+export function dictationUnavailable(reason: string): UserFacingFailure {
+  return new UserFacingFailure(DICTATION_UNAVAILABLE_TITLE, reason, []);
+}
+
+/**
+ * How long the microphone may take to open before the press is given up on
+ * and said so. A device that never answers (a headset gone to sleep, a
+ * permission prompt nobody sees) otherwise leaves the button waiting forever.
+ */
+export const MICROPHONE_OPEN_MS = 10_000;
+
+const USED_KEY = "devhub.dictation.used";
+
+/**
+ * Whether the person has dictated on this Mac. Only then does focusing the
+ * composer load the recogniser ahead of the press: the model takes GPU
+ * memory, which someone who never dictates should not give.
+ */
+export function hasDictated(
+  storage: Pick<Storage, "getItem"> | undefined,
+): boolean {
+  try {
+    return storage?.getItem(USED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markDictated(
+  storage: Pick<Storage, "setItem"> | undefined,
+): void {
+  try {
+    storage?.setItem(USED_KEY, "1");
+  } catch {
+    // Not kept: the recogniser is loaded at the press next time, as now.
+  }
+}

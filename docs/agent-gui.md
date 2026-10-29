@@ -2087,9 +2087,17 @@ the caret (over the selection, if there was one), and the next one follows
 it. Typing elsewhere in the field meanwhile is kept. When you stop, the last
 phrase is transcribed once more and put in. Nothing is sent: you read it and
 send it with ⌘Return as usual. **Esc** while recording throws away what has
-not gone in yet and stops (it does not stop a running turn). While it
-records the button is red and its halo follows your voice; while it finishes
-the last phrase it pulses.
+not gone in yet and stops (it does not stop a running turn). The button
+turns red the moment it is pressed and pulses while the microphone opens
+(pressing it again then gives up); recording starts as soon as the
+microphone is open, before the recogniser has answered, and nothing heard
+in between is lost. While it records its halo follows your voice and the
+composer's box draws what the microphone hears behind the words — thin bars
+in the accent colour flowing right to left (under Reduce Motion, a still
+level meter along the box's bottom edge); while it finishes the last phrase
+it pulses. A microphone that does not open within ten seconds is given up on
+and said so, and in a build with no recogniser pressing the button says
+why.
 
 The small label beside it is the language Whisper listens for: **日本語**
 (the default), **English** or **Auto**, cycled by clicking and remembered on
@@ -2104,7 +2112,8 @@ built with Metal, no network code compiled in) with the
 `small` model (f16, `ggml-small.bin`), both inside the app at
 `DevHub.app/Contents/Resources/whisper/`. Nothing is downloaded while DevHub
 runs. The recogniser is loaded when you point at the microphone or start
-dictating (a second or two, once) and stays loaded until dictation has been
+dictating — and, once you have dictated on this Mac, whenever the composer
+gets the keyboard — (a second or two, once) and stays loaded until dictation has been
 unused for ten minutes. While loaded, the words of what you are saying show,
 dimmed, about once a second; a phrase goes into the field shortly after the
 pause after it (0.4 s of quiet ends it), and stopping takes about as long as

@@ -61,7 +61,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type KeyboardEvent,
   type RefObject,
 } from "react";
@@ -97,9 +96,11 @@ import {
   isDictationKey,
   LANGUAGE_LABELS,
   nextLanguage,
+  hasDictated,
   saveLanguage,
   savedLanguage,
 } from "./dictation";
+import { DictationWaveform } from "./DictationWaveform";
 import { MicIcon, SendIcon, StopIcon } from "./icons";
 import { useDictation, type Dictation } from "./useDictation";
 import type { VoiceLanguage } from "../../ipc/voice";
@@ -740,6 +741,7 @@ export function Composer({
           event.preventDefault();
           attach([...event.dataTransfer.files]);
         }}
+        data-dictating={dictation.analyser !== undefined || undefined}
         // A click on the box's padding or toolbar gap is a click on the field.
         onMouseDown={(event) => {
           if (event.target !== event.currentTarget) return;
@@ -747,6 +749,9 @@ export function Composer({
           inputRef.current?.focus();
         }}
       >
+        {dictation.analyser !== undefined ? (
+          <DictationWaveform analyser={dictation.analyser} />
+        ) : null}
         <Attachments
           images={attachments}
           remove={(image) =>
@@ -775,6 +780,12 @@ export function Composer({
                 text: event.target.value,
                 caret: event.target.selectionStart,
               });
+            }}
+            onFocus={() => {
+              // Someone who dictates is likely to again: the recogniser is
+              // loaded while they type, not when they press.
+              if (voice !== undefined && hasDictated(storage()))
+                dictation.warm();
             }}
             onSelect={(event) => {
               const field = event.currentTarget;
@@ -877,16 +888,18 @@ function storage(): Storage | undefined {
 
 const DICTATION_TITLES = {
   idle: `Dictate (${DICTATION_KEY})`,
-  starting: "Opening the microphone…",
+  starting: "Opening the microphone… — press again to give up",
   recording: `Stop dictating (${DICTATION_KEY}) — Esc discards what is not in yet`,
   transcribing: "Finishing the last words on this Mac…",
 } as const;
 
 /**
  * The microphone and the language it listens for. The button is the state:
- * red and pulsing with the level while it records, waiting while it
- * transcribes, and unavailable — with the reason as its title — in a build
- * with no recogniser.
+ * red from the frame after the press, pulsing while the microphone opens (a
+ * second press gives up), with a halo of the level while it records (the
+ * box behind the words draws what it hears, `DictationWaveform`), waiting
+ * while it transcribes. In a build with no recogniser it is drawn
+ * unavailable, and a press says why.
  */
 function DictationControls({
   dictation,
@@ -901,6 +914,7 @@ function DictationControls({
 }) {
   const { phase } = dictation;
   const recording = phase === "recording";
+  const unavailable = phase === "unavailable";
   return (
     <>
       {phase !== "unavailable" ? (
@@ -919,24 +933,18 @@ function DictationControls({
         type="button"
         className="conversation-dictation"
         data-phase={phase}
-        aria-label={recording ? "Stop dictating" : "Dictate"}
-        aria-pressed={recording}
-        title={
-          phase === "unavailable" ? dictation.reason : DICTATION_TITLES[phase]
-        }
-        disabled={
-          disabled ||
-          phase === "unavailable" ||
-          phase === "starting" ||
-          phase === "transcribing"
-        }
-        style={
+        aria-label={
           recording
-            ? ({
-                "--dictation-level": dictation.level.toFixed(2),
-              } as CSSProperties)
-            : undefined
+            ? "Stop dictating"
+            : phase === "starting"
+              ? "Cancel dictation"
+              : "Dictate"
         }
+        aria-pressed={recording || phase === "starting"}
+        // Unavailable is drawn so, and still pressed: the press says why.
+        aria-disabled={unavailable || undefined}
+        title={unavailable ? dictation.reason : DICTATION_TITLES[phase]}
+        disabled={disabled || phase === "transcribing"}
         onClick={dictation.toggle}
         onPointerEnter={dictation.warm}
         onFocus={dictation.warm}

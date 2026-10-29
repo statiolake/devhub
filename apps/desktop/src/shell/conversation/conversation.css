@@ -3664,11 +3664,42 @@ button.conversation-background-line:hover {
   transition: box-shadow 80ms linear;
 }
 
+/* Pressed: red at once, pulsing while the microphone opens. */
+.conversation-dictation[data-phase="starting"] {
+  background: color-mix(in srgb, var(--danger) 70%, var(--raised));
+  color: var(--surface);
+}
+
 .conversation-dictation:is(
   [data-phase="starting"],
   [data-phase="transcribing"]
 ) {
   animation: conversation-dictation-wait 1.2s ease-in-out infinite;
+}
+
+/* No recogniser: drawn unavailable, and a press says why. */
+.conversation-dictation[aria-disabled="true"] {
+  color: var(--tertiary);
+}
+
+/* What the microphone hears, behind the words (`DictationWaveform.tsx`):
+   the box's own background, under its text and controls, in the accent at
+   low contrast. The box is its stacking context, so the canvas sits over the
+   box's fill and under everything in it. */
+.conversation-composer-box[data-dictating] {
+  isolation: isolate;
+}
+
+.conversation-dictation-wave {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  color: color-mix(in srgb, var(--accent) 30%, transparent);
+  pointer-events: none;
+  animation: conversation-fade-in var(--motion-base) var(--ease-enter);
 }
 
 @keyframes conversation-dictation-wait {
