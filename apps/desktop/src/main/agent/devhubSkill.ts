@@ -109,7 +109,7 @@ export function codexGuiInstructions(skill: DevhubSkill | undefined): string {
 export function devhubSkillText(cli: string): string {
 	return `---
 name: devhub
-description: Drive DevHub, the app this agent runs in - open workspaces, start agents, hand GitHub Issues to new agents with a good branch name, monitor, message and answer other agents, and open your own terminal (on the right of your pane) and drive it with tmux. Use when the user says /devhub, asks to delegate work to another agent in DevHub, or asks to prepare / open / use a terminal ("open a terminal", "the terminal on the right", "右のターミナル").
+description: Drive DevHub, the app this agent runs in - open workspaces, start agents, hand GitHub Issues to new agents with a good branch name, monitor, message and answer other agents, and open your own terminal (on the right of your pane) and drive it with tmux. Use when the user says /devhub, explicitly asks for another agent or workspace in DevHub, or asks to prepare / open / use a terminal ("open a terminal", "the terminal on the right", "右のターミナル"). Not for subagents: "use a subagent" / "サブエージェント" / parallel helpers mean your own CLI's subagents, not DevHub agents.
 ---
 
 # /devhub - drive DevHub from here
@@ -126,6 +126,15 @@ them.
 **When asked via /devhub, delegate - do not do the work yourself.** "/devhub
 handle this Issue" means: start another agent on it and report back. Do not
 start editing the Issue's code in your own session.
+
+**A subagent is not a DevHub agent.** When the person asks you to use a
+subagent, sub-agents, a helper or parallel workers ("サブエージェントで",
+"use a subagent", "in parallel"), use your own CLI's subagent mechanism (in
+Claude Code the Agent / Task tool; in Codex its own sub-agents) and keep the
+work in this session. Start a DevHub agent with \`devhub --tell agent new\`
+only when the person says /devhub or explicitly asks for another agent,
+pane or workspace in DevHub (a new agent they will see and talk to), or to
+hand an Issue on.
 
 Add \`--json\` right after \`--tell\` for machine-readable output (recommended
 when you parse results): \`devhub --tell --json agents\`.
