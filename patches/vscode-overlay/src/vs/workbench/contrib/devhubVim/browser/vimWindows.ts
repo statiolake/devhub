@@ -461,5 +461,10 @@ export const COMMENT_WINDOW_STEPS: ReadonlyMap<string, 'write' | 'update' | 'clo
 	[QUIT_WINDOW_DISCARD_COMMAND, 'discard'],
 	['workbench.action.closeActiveEditor', 'close'],
 	['workbench.action.revertAndCloseActiveEditor', 'discard'],
+	// `:bd` `:bw` (`!`): the comment is the buffer
+	['devhubVim.buffer.delete', 'close'],
+	['devhubVim.buffer.wipeout', 'close'],
+	['devhubVim.buffer.deleteDiscard', 'discard'],
+	['devhubVim.buffer.wipeoutDiscard', 'discard'],
 	['devhubVim.tabpage.closeIfEmpty', 'skip'],
 ]);

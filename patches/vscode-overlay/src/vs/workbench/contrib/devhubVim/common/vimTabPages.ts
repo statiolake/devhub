@@ -16,6 +16,8 @@
 export interface TabPageMeta {
 	readonly windows: readonly string[];
 	readonly active: number;
+	/** The buffers (../browser/vimBufferKey.ts keys) its windows show, for `:ls` (`a`: shown in a window of any tab page). */
+	readonly shown?: readonly string[];
 }
 
 export interface TabPage extends TabPageMeta {
@@ -73,7 +75,9 @@ export function restoreTabPages(raw: string | undefined, workingSets: readonly {
 				return;
 			}
 			const windows = page.windows.map(w => typeof w === 'string' ? w : '');
-			const meta = { windows, active: Math.max(0, Math.min(windows.length - 1, page.active | 0)) };
+			const rawShown = (page as Record<string, unknown>).shown;
+			const shown = Array.isArray(rawShown) ? rawShown.filter((k): k is string => typeof k === 'string') : undefined;
+			const meta = { windows, active: Math.max(0, Math.min(windows.length - 1, page.active | 0)), ...(shown ? { shown } : {}) };
 			if (i === p.current) {
 				if (typeof page.ws === 'string') {
 					stale.push(page.ws);
@@ -97,7 +101,7 @@ export function restoreTabPages(raw: string | undefined, workingSets: readonly {
 }
 
 export function serializeTabPages(state: TabPagesState): string {
-	return JSON.stringify({ current: state.current, pages: state.pages.map(p => ({ ws: p.ws, windows: p.windows, active: p.active })) });
+	return JSON.stringify({ current: state.current, pages: state.pages.map(p => ({ ws: p.ws, windows: p.windows, active: p.active, ...(p.shown ? { shown: p.shown } : {}) })) });
 }
 
 /** Vim's E474 for a page number that is none. */

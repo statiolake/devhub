@@ -9,6 +9,7 @@
 // keybindings on devhubVim.cmdlineFocus, and whose completion is VS Code's
 // suggest on its own model.
 
+import { WebviewTextEntry } from '../../../webview/browser/webviewTextEntry.js';
 import assert from 'assert';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { timeout } from '../../../../../base/common/async.js';
@@ -607,11 +608,15 @@ suite('DevHub Vim: the prompt line', () => {
 		}
 	}));
 
-	test('the mode wherever the focus is: normal in a list (no Vim buffer), insert in an input, none in a webview; CTRL-W : opens the prompt from each and gives the focus back', () => withPrompt(async ({ vim, origin, instantiation, root, run, visible }) => {
+	test('the mode wherever the focus is: normal in a list (no Vim buffer), insert in an input, in a webview as its page says (insert until it says); CTRL-W : opens the prompt from each and gives the focus back', () => withPrompt(async ({ vim, origin, instantiation, root, run, visible }) => {
 		origin.setHasTextFocus(false);
-		const cases: [string, string | undefined, string][] = [['div', 'monaco-list-row', 'normal'], ['input', undefined, 'insert'], ['iframe', undefined, '']];
-		for (const [tag, className, mode] of cases) {
+		const cases: [string, string | undefined, string, boolean?][] = [['div', 'monaco-list-row', 'normal'], ['input', undefined, 'insert'], ['iframe', undefined, 'insert'], ['iframe', undefined, 'normal', false], ['iframe', undefined, 'insert', true]];
+		for (const [tag, className, mode, textEntry] of cases) {
 			const element = focusOn(root, tag, className);
+			if (textEntry !== undefined) {
+				// what the webview's host frame said (webviewTextEntry.ts)
+				WebviewTextEntry.set(element, textEntry);
+			}
 			vim.update();
 			assert.strictEqual(globalKey(instantiation, 'devhubVim.mode'), mode, tag);
 			assert.strictEqual(globalKey(instantiation, 'devhubVim.active'), false, tag);

@@ -617,8 +617,8 @@ suite('DevHub Vim engine', () => {
 		assert.deepStrictEqual(run('|a', ':q<CR>').host.commands.map(c => c.command), ['devhubVim.tabpage.quitWindow']);
 		assert.deepStrictEqual(run('|a', ':q!<CR>').host.commands.map(c => c.command), ['devhubVim.tabpage.quitWindowDiscard']);
 		// the buffer is :bd's
-		assert.deepStrictEqual(run('|a', ':bd<CR>').host.commands.map(c => c.command), ['workbench.action.closeActiveEditor']);
-		assert.deepStrictEqual(run('|a', ':bw!<CR>').host.commands.map(c => c.command), ['workbench.action.revertAndCloseActiveEditor']);
+		assert.deepStrictEqual(run('|a', ':bd<CR>').host.commands.map(c => c.command), ['devhubVim.buffer.delete']);
+		assert.deepStrictEqual(run('|a', ':bw!<CR>').host.commands.map(c => c.command), ['devhubVim.buffer.wipeoutDiscard']);
 		assert.deepStrictEqual(run('|a', ':noh<CR>').host.commands, []);
 	});
 
@@ -905,8 +905,8 @@ suite('DevHub Vim keymap is keybindings', () => {
 		const plainInInsert = new Set(['hideSuggestWidget', 'editor.action.inlineSuggest.hide', 'deleteLeft', 'editor.action.triggerParameterHints', 'editor.action.triggerSuggest', 'selectNextSuggestion', 'selectPrevSuggestion']);
 		for (const b of DEFAULT_KEYBINDINGS) {
 			if (b.when === VIM_WHEN.elsewhere) {
-				// where no Vim buffer has the focus (a list, the side bar): `:`, tab pages, the jump list
-				assert.ok(b.command.startsWith('devhubVim.tabpage.') || b.command === 'devhubVim.cmdline' || b.command.startsWith('workbench.action.navigate'), b.command);
+				// where no Vim buffer has the focus (a list, the side bar, a webview's page): `:`, tab pages, buffers, the jump list
+				assert.ok(b.command.startsWith('devhubVim.tabpage.') || b.command.startsWith('devhubVim.buffer.') || b.command === 'devhubVim.cmdline' || b.command.startsWith('workbench.action.navigate'), b.command);
 				continue;
 			}
 			if (b.when === VIM_WHEN.comment) {
@@ -2883,7 +2883,17 @@ suite('Neovim scrolling and folds', () => {
 		assert.deepStrictEqual(await cmds('[d'), ['editor.action.marker.prev']);
 		assert.deepStrictEqual(await cmds(']D'), ['editor.action.marker.prev']);
 		assert.deepStrictEqual(await cmds(']q'), ['editor.action.marker.nextInFiles']);
-		assert.deepStrictEqual(await cmds('[b'), ['workbench.action.previousEditor']);
+		// buffers (browser/vimBuffers.ts): [b ]b with a count, [B ]B, CTRL-^ with {N}
+		assert.deepStrictEqual(await cmds('[b'), ['devhubVim.buffer.previous']);
+		const args = async (keys: string) => {
+			const v = new Vim('|a\nb\nc').keys(keys);
+			await flush();
+			return v.host.commands.map(c => [c.command, c.args]);
+		};
+		assert.deepStrictEqual(await args('3]b'), [['devhubVim.buffer.next', { count: 3 }]]);
+		assert.deepStrictEqual(await args(']B'), [['devhubVim.buffer.last', undefined]]);
+		assert.deepStrictEqual(await args('<C-6>'), [['devhubVim.buffer.alternate', { count: null }]]);
+		assert.deepStrictEqual(await args('2<C-6>'), [['devhubVim.buffer.alternate', { count: 2 }]]);
 		assert.deepStrictEqual(await cmds('ZZ'), ['devhubVim.update', 'devhubVim.tabpage.quitWindow']);
 		assert.deepStrictEqual(await cmds('ZQ'), ['devhubVim.tabpage.quitWindowDiscard']);
 		// in visual mode gra acts on the selection, then visual mode ends

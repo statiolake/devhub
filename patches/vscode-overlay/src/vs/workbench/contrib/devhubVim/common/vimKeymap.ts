@@ -117,6 +117,27 @@ function notPendingOp(name: string, when: string = W.motion): string {
 	return `${when} && devhubVim.pendingOperator != '${name}'`;
 }
 
+/**
+ * The buffer keys (browser/vimBuffers.ts): CTRL-^ the alternate buffer
+ * (`{N}` CTRL-^: buffer N), `]b` `[b` `:bnext` / `:bprevious` (a count: that
+ * many), `]B` `[B` `:blast` / `:bfirst`. `counted`: in a Vim buffer, where a
+ * count is typed.
+ */
+function BUFFER_KEYS(when: string, counted: boolean): VimKeybinding[] {
+	const buf = (key: string, command: string, count?: string, weight?: 'override'): VimKeybinding => ({
+		...counted
+			? { key, command: 'devhubVim.run', args: { command: `devhubVim.buffer.${command}`, ...(count ? { args: { count } } : {}) }, when }
+			: { key, command: `devhubVim.buffer.${command}`, when },
+		...(weight ? { weight } : {}),
+	});
+	return [
+		// above VS Code's Focus Sixth Editor Group (CTRL-6 off macOS)
+		buf('ctrl+6', 'alternate', '${rawCount}', 'override'),
+		buf('] b', 'next', '${count}'), buf('[ b', 'previous', '${count}'),
+		buf('] shift+b', 'last'), buf('[ shift+b', 'first'),
+	];
+}
+
 function motion(key: string, name: string, when: string = W.motion): VimKeybinding {
 	return { key, command: 'devhubVim.motion', args: { motion: name }, when };
 }
@@ -387,10 +408,9 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	run('] d', 'editor.action.marker.next'), run('[ d', 'editor.action.marker.prev'),
 	{ key: '] shift+d', command: 'devhubVim.run', args: { commands: [{ command: 'devhubVim.motion', args: { motion: 'fileStart' } }, { command: 'editor.action.marker.prev' }] }, when: W.normal },
 	{ key: '[ shift+d', command: 'devhubVim.run', args: { commands: [{ command: 'devhubVim.motion', args: { motion: 'fileEnd' } }, { command: 'editor.action.marker.next' }] }, when: W.normal },
-	// [q ]q (:cprevious / :cnext): problems across files; [b ]b [B ]B (:bprevious ...): editors
+	// [q ]q (:cprevious / :cnext): problems across files; [b ]b [B ]B (:bprevious :bnext :bfirst :blast): buffers (browser/vimBuffers.ts)
 	run('] q', 'editor.action.marker.nextInFiles'), run('[ q', 'editor.action.marker.prevInFiles'),
-	run('] b', 'workbench.action.nextEditor'), run('[ b', 'workbench.action.previousEditor'),
-	run('] shift+b', 'workbench.action.lastEditorInGroup', W.normal, { count: 'ignore' }), run('[ shift+b', 'workbench.action.firstEditorInGroup', W.normal, { count: 'ignore' }),
+	...BUFFER_KEYS(W.normal, true),
 	// gt {count}gt gT {count}gT: tab pages (browser/vimTabPages.ts)
 	{ key: 'g t', command: 'devhubVim.run', args: { command: 'devhubVim.tabpage.next', args: { count: '${rawCount}' } }, when: W.normal },
 	{ key: 'g shift+t', command: 'devhubVim.run', args: { command: 'devhubVim.tabpage.previous', args: { count: '${count}' } }, when: W.normal },
@@ -407,8 +427,8 @@ const KEYMAP_BY_CHARACTER: readonly VimKeybinding[] = [
 	]),
 	{ key: 'ctrl+o', command: 'workbench.action.navigateBack', when: W.elsewhere, weight: OVERRIDE },
 	{ key: 'ctrl+i', command: 'workbench.action.navigateForward', when: W.elsewhere, weight: OVERRIDE },
-	// CTRL-^: the alternate file
-	run('ctrl+6', 'workbench.action.openPreviousRecentlyUsedEditorInGroup', W.normal, { count: 'ignore' }),
+	// ... CTRL-^, ]b [b ]B [B (no count there)
+	...BUFFER_KEYS(W.elsewhere, false),
 
 	// ---- insert mode ----
 	// Neovim: i_CTRL-W / i_CTRL-U start a new undo step first (i_CTRL-W-default)

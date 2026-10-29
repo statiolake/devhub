@@ -638,6 +638,199 @@ index afa69423..29646028 100644
  	}
  
  	private doLayout(dimension: Dimension, top = this.top, left = this.left): void {
+diff --git a/src/vs/workbench/contrib/webview/browser/pre/index.html b/src/vs/workbench/contrib/webview/browser/pre/index.html
+index 42c7c01a..2431f303 100644
+--- a/src/vs/workbench/contrib/webview/browser/pre/index.html
++++ b/src/vs/workbench/contrib/webview/browser/pre/index.html
+@@ -5,7 +5,7 @@
+ 	<meta charset="UTF-8">
+ 
+ 	<meta http-equiv="Content-Security-Policy"
+-		content="default-src 'none'; script-src 'sha256-FFQoOVVa2tOE3uqUvirwaMNT20TZmrHcL2aaOjJ8BUo=' 'self'; frame-src 'self'; style-src 'unsafe-inline';">
++		content="default-src 'none'; script-src 'sha256-iCiQQiWRnIkPf/fhjr6fFsD+uadGetOEnmYZ6Pti204=' 'self'; frame-src 'self'; style-src 'unsafe-inline';">
+ 
+ 	<!-- Disable pinch zooming -->
+ 	<meta name="viewport"
+@@ -584,6 +584,83 @@
+ 			}
+ 		};
+ 
++		// DevHub: whether the focused element of the page takes typing, sent with
++		// each key (did-keydown) and when the focus moves (did-devhub-text-entry),
++		// so DevHub Vim's normal mode applies only while the page is not being
++		// typed into (webviewTextEntry.ts).
++		const devhubNonTextInputs = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit']);
++
++		/**
++		 * @param {any} target
++		 * @return {Document}
++		 */
++		const devhubDocumentOf = (target) => {
++			if (target && target.nodeType === 9) {
++				return target;
++			}
++			return target && target.ownerDocument ? target.ownerDocument : document;
++		};
++
++		/**
++		 * @param {Document | null | undefined} doc
++		 * @return {boolean}
++		 */
++		const devhubTextEntry = (doc) => {
++			if (!doc) {
++				return false;
++			}
++			if (doc.designMode === 'on') {
++				return true;
++			}
++			/** @type {Element | null} */
++			let element = doc.activeElement;
++			while (element && element.shadowRoot && element.shadowRoot.activeElement) {
++				element = element.shadowRoot.activeElement;
++			}
++			if (!element || element === doc.body || element === doc.documentElement) {
++				return false;
++			}
++			const tag = element.tagName.toLowerCase();
++			if (tag === 'iframe' || tag === 'frame' || tag === 'object' || tag === 'embed') {
++				// a document of its own, which cannot be looked into: as if it were typed into
++				return true;
++			}
++			if (tag === 'textarea' || tag === 'select') {
++				return true;
++			}
++			if (tag === 'input') {
++				return !devhubNonTextInputs.has(/** @type {HTMLInputElement} */ (element).type);
++			}
++			if (/** @type {HTMLElement} */ (element).isContentEditable) {
++				return true;
++			}
++			const role = element.getAttribute('role');
++			return role === 'textbox' || role === 'searchbox' || role === 'combobox';
++		};
++
++		/** @type {boolean | undefined} */
++		let devhubLastTextEntry;
++
++		/**
++		 * @param {Document | null | undefined} doc
++		 */
++		const devhubPostTextEntry = (doc) => {
++			const textEntry = devhubTextEntry(doc);
++			if (textEntry !== devhubLastTextEntry) {
++				devhubLastTextEntry = textEntry;
++				hostMessaging.postMessage('did-devhub-text-entry', { textEntry });
++			}
++		};
++
++		/**
++		 * @param {FocusEvent} e
++		 */
++		const devhubHandleInnerFocus = (e) => {
++			const doc = devhubDocumentOf(e.target);
++			// after the focus has moved (a focusout comes before the next focusin)
++			setTimeout(() => devhubPostTextEntry(doc), 0);
++		};
++
+ 		/**
+ 		 * @param {KeyboardEvent} e
+ 		 */
+@@ -616,7 +693,8 @@
+ 				ctrlKey: e.ctrlKey,
+ 				metaKey: e.metaKey,
+ 				repeat: e.repeat,
+-				isTrusted: e.isTrusted
++				isTrusted: e.isTrusted,
++				devhubTextEntry: devhubTextEntry(devhubDocumentOf(e.target))
+ 			};
+ 			hostMessaging.postMessage('did-keydown', data);
+ 		};
+@@ -1051,6 +1129,8 @@
+ 
+ 				newFrame.contentWindow.addEventListener('keydown', handleInnerKeydown);
+ 				newFrame.contentWindow.addEventListener('keyup', handleInnerKeyup);
++				newFrame.contentWindow.addEventListener('focusin', devhubHandleInnerFocus, true);
++				newFrame.contentWindow.addEventListener('focusout', devhubHandleInnerFocus, true);
+ 
+ 				/**
+ 				 * @param {Document} contentDocument
+@@ -1176,6 +1256,8 @@
+ 					contentWindow.addEventListener('auxclick', handleAuxClick);
+ 					contentWindow.addEventListener('keydown', handleInnerKeydown);
+ 					contentWindow.addEventListener('keyup', handleInnerKeyup);
++					contentWindow.addEventListener('focusin', devhubHandleInnerFocus, true);
++					contentWindow.addEventListener('focusout', devhubHandleInnerFocus, true);
+ 					contentWindow.addEventListener('contextmenu', e => {
+ 						if (e.defaultPrevented) {
+ 							// Extension code has already handled this event
+@@ -1314,7 +1396,12 @@
+ 			});
+ 
+ 			trackFocus({
+-				onFocus: () => hostMessaging.postMessage('did-focus', undefined),
++				onFocus: () => {
++					hostMessaging.postMessage('did-focus', undefined);
++					// what has the focus in the page now (DevHub)
++					devhubLastTextEntry = undefined;
++					devhubPostTextEntry(getActiveFrame()?.contentDocument);
++				},
+ 				onBlur: () => hostMessaging.postMessage('did-blur', undefined)
+ 			});
+ 
+diff --git a/src/vs/workbench/contrib/webview/browser/webviewElement.ts b/src/vs/workbench/contrib/webview/browser/webviewElement.ts
+index dc07538f..74262ede 100644
+--- a/src/vs/workbench/contrib/webview/browser/webviewElement.ts
++++ b/src/vs/workbench/contrib/webview/browser/webviewElement.ts
+@@ -38,6 +38,7 @@ import { WebviewThemeDataProvider } from './themeing.js';
+ import { areWebviewContentOptionsEqual, IWebviewElement, WebviewContentOptions, WebviewExtensionDescription, WebviewInitInfo, WebviewMessageReceivedEvent, WebviewOptions } from './webview.js';
+ import { WebviewFindDelegate, WebviewFindWidget } from './webviewFindWidget.js';
+ import { FromWebviewMessage, KeyEvent, ToWebviewMessage, WebViewDragEvent } from './webviewMessages.js';
++import { WebviewTextEntry } from './webviewTextEntry.js';
+ 
+ interface WebviewContent {
+ 	readonly html: string;
+@@ -252,9 +253,19 @@ export class WebviewElement extends Disposable implements IWebviewElement, Webvi
+ 		}));
+ 
+ 		this._register(this.on('did-keydown', (data) => {
++			// DevHub: before the workbench resolves the key, whether the page is being typed into (webviewTextEntry.ts)
++			if (this.element && typeof data.devhubTextEntry === 'boolean') {
++				WebviewTextEntry.set(this.element, data.devhubTextEntry);
++			}
+ 			this.handleKeyEvent('keydown', data);
+ 		}));
+ 
++		this._register(this.on('did-devhub-text-entry', ({ textEntry }) => {
++			if (this.element) {
++				WebviewTextEntry.set(this.element, textEntry);
++			}
++		}));
++
+ 		this._register(this.on('did-keyup', (data) => {
+ 			this.handleKeyEvent('keyup', data);
+ 		}));
+diff --git a/src/vs/workbench/contrib/webview/browser/webviewMessages.d.ts b/src/vs/workbench/contrib/webview/browser/webviewMessages.d.ts
+index 5ae67343..1fe65662 100644
+--- a/src/vs/workbench/contrib/webview/browser/webviewMessages.d.ts
++++ b/src/vs/workbench/contrib/webview/browser/webviewMessages.d.ts
+@@ -16,6 +16,8 @@ type KeyEvent = {
+ 	readonly metaKey: boolean;
+ 	readonly repeat: boolean;
+ 	readonly isTrusted: boolean;
++	/** DevHub: the page's focused element takes typing (webviewTextEntry.ts). */
++	readonly devhubTextEntry?: boolean;
+ }
+ 
+ type WebViewDragEvent = {
+@@ -39,6 +41,8 @@ export type FromWebviewMessage = {
+ 	'no-csp-found': void;
+ 	'did-keydown': KeyEvent;
+ 	'did-keyup': KeyEvent;
++	/** DevHub: the focus moved into or out of a text field of the page (webviewTextEntry.ts). */
++	'did-devhub-text-entry': { textEntry: boolean };
+ 	'did-context-menu': { clientX: number; clientY: number; context: { [key: string]: unknown } };
+ 	'drag-start': void;
+ 	'drag': WebViewDragEvent;
 diff --git a/src/vs/workbench/electron-browser/desktop.contribution.ts b/src/vs/workbench/electron-browser/desktop.contribution.ts
 index 41250d7b..4bc50a1e 100644
 --- a/src/vs/workbench/electron-browser/desktop.contribution.ts
@@ -661,7 +854,7 @@ index 41250d7b..4bc50a1e 100644
  		});
  	}
 diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
-index 74be4cac..35486667 100644
+index 74be4cac..a812552d 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts
 +++ b/src/vs/workbench/workbench.desktop.main.ts
 @@ -219,6 +219,30 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut

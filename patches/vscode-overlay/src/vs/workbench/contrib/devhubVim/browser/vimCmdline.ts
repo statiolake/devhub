@@ -87,6 +87,7 @@ import { BUILTIN_EX_REGISTRY, resolveExFileArg } from '../common/vimEx.js';
 import { resolveFileBase } from './vimEdit.js';
 import { VIM_CMDLINE_COMMANDS, VIM_CMDLINE_CONTEXT, VimCmdlineController, cmdlineCompletionContext, cmdlineCompletions, splitFileArg } from '../common/vimCmdline.js';
 import { captureKey } from '../common/vimKeys.js';
+import { VimBuffers } from './vimBuffers.js';
 import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 import './media/vimCmdline.css';
 
@@ -722,8 +723,12 @@ export class VimCmdline extends Disposable {
 		return p;
 	}
 
-	/** Open editors, most recent first, for `:b`. */
+	/** The buffers for `:b`: the listed ones by number (vimBuffers.ts), named as `:ls` names them; else the open editors, most recent first. */
 	private buffers(): { name: string; detail: string }[] {
+		const list = VimBuffers.instance?.completions();
+		if (list) {
+			return list;
+		}
 		const seen = new Set<string>();
 		const out: { name: string; detail: string }[] = [];
 		for (const { editor } of this.editorService.getEditors(EditorsOrder.MOST_RECENTLY_ACTIVE)) {

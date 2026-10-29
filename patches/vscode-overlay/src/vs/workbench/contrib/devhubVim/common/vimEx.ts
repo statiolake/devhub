@@ -102,7 +102,7 @@ const EX_NAMES: readonly (readonly [string, string, string?])[] = [
 	['tabnew', 'tabnew'], ['tabedit', 'tabe'], ['tabnext', 'tabn'], ['tabprevious', 'tabp'], ['tabNext', 'tabN', 'tabprevious'],
 	['tabclose', 'tabc'], ['tabonly', 'tabo'], ['tabfirst', 'tabfir'], ['tabrewind', 'tabr', 'tabfirst'], ['tablast', 'tabl'],
 	['tabmove', 'tabm'], ['tabs', 'tabs'],
-	['bnext', 'bn'], ['bprevious', 'bp'], ['bNext', 'bN', 'bprevious'], ['bdelete', 'bd'], ['bwipeout', 'bw', 'bdelete'],
+	['bnext', 'bn'], ['bprevious', 'bp'], ['bNext', 'bN', 'bprevious'], ['bdelete', 'bd'], ['bwipeout', 'bw'],
 	['bfirst', 'bf'], ['brewind', 'br', 'bfirst'], ['blast', 'bl'], ['buffers', 'buffers'], ['files', 'files', 'buffers'], ['ls', 'ls', 'buffers'],
 	['buffer', 'b'], ['saveas', 'sav'], ['close', 'clo'], ['only', 'on'],
 	['cnext', 'cn'], ['cprevious', 'cp'], ['cNext', 'cN', 'cprevious'], ['copen', 'cope'], ['cclose', 'ccl'],
@@ -159,8 +159,9 @@ const SAVE_ALL = 'workbench.action.files.saveAll';
  * (browser/vimWindows.ts).
  */
 const UPDATE = 'devhubVim.update';
-const CLOSE = 'workbench.action.closeActiveEditor';
-const REVERT_CLOSE = 'workbench.action.revertAndCloseActiveEditor';
+/** The buffer commands (browser/vimBuffers.ts). */
+const BUF = 'devhubVim.buffer.';
+const BUF_ARGS = { arg: '${args}', count: '${count}' };
 const TAB = 'devhubVim.tabpage.';
 
 /**
@@ -255,13 +256,16 @@ export const BUILTIN_EX_SPECS: Readonly<Record<string, ExSpec>> = {
 	tablast: vs(TAB + 'last'),
 	tabmove: vs({ command: TAB + 'move', args: { arg: '${args}' } }, { nargs: '?' }),
 	tabs: vs(TAB + 'list'),
-	bnext: vs('workbench.action.nextEditor', { bang: true, nargs: '?' }),
-	bprevious: vs('workbench.action.previousEditor', { bang: true, nargs: '?' }),
-	bdelete: vs(withBang(CLOSE, REVERT_CLOSE), { bang: true, nargs: '*', complete: 'buffer' }),
-	bfirst: vs('workbench.action.firstEditorInGroup', { bang: true }),
-	blast: vs('workbench.action.lastEditorInGroup', { bang: true }),
-	buffers: vs('workbench.action.showAllEditors', { bang: true }),
-	buffer: vs({ command: 'workbench.action.quickOpen', args: 'edt ${args}' }, { bang: true, nargs: '?', complete: 'buffer' }),
+	// buffers: VS Code's editors, numbered (browser/vimBuffers.ts): `:bn [N]` `:{N}bn` `:bp` `:bf` `:bl`,
+	// `:b {N | name | % | #}` in the current window, `:ls[!] [flags]`, `:bd[!] [N | name ...]`, `:bw[!]`
+	bnext: vs({ command: BUF + 'next', args: { count: '${count}', arg: '${args}' } }, { bang: true, nargs: '?', range: 'count', defaultRange: 0 }),
+	bprevious: vs({ command: BUF + 'previous', args: { count: '${count}', arg: '${args}' } }, { bang: true, nargs: '?', range: 'count', defaultRange: 0 }),
+	bdelete: vs(withBang({ command: BUF + 'delete', args: BUF_ARGS }, { command: BUF + 'deleteDiscard', args: BUF_ARGS }), { bang: true, nargs: '*', range: 'count', defaultRange: 0, complete: 'buffer' }),
+	bwipeout: vs(withBang({ command: BUF + 'wipeout', args: BUF_ARGS }, { command: BUF + 'wipeoutDiscard', args: BUF_ARGS }), { bang: true, nargs: '*', range: 'count', defaultRange: 0, complete: 'buffer' }),
+	bfirst: vs(BUF + 'first', { bang: true }),
+	blast: vs(BUF + 'last', { bang: true }),
+	buffers: vs({ command: BUF + 'list', args: { bang: '${bang}', arg: '${args}' } }, { bang: true, nargs: '?' }),
+	buffer: vs({ command: BUF + 'goto', args: BUF_ARGS }, { bang: true, nargs: '?', range: 'count', defaultRange: 0, complete: 'buffer' }),
 	// `:sav[!] {file}`: written there (E13 when it exists, without !), and the editor is that file's (vimEngine.ts exSaveAs)
 	saveas: vim('saveas', { range: 'none', bang: true, nargs: '1', complete: 'file' }),
 	// the window, its buffers hidden; the last one of a tab page closes the tab page, never the last one (E444; browser/vimTabPages.ts)

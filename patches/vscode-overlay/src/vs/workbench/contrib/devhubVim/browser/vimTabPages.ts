@@ -61,6 +61,7 @@ import { IUntitledTextEditorService } from '../../../services/untitled/common/un
 import { afterClosing, freeUntitledNumber, wantsEmptyBuffer, movePage, nextTabPage, previousTabPage, restoreTabPages, serializeTabPages, TAB_PAGE_WORKING_SET_NAME, TabPage, TabPageMeta, TabPagesState, tabMoveTarget, tabPageIndex, tabPageLabel } from '../common/vimTabPages.js';
 import { CLOSE_WINDOW_COMMAND, CLOSE_WORKSPACE_COMMAND, E444, QUIT_WINDOW_COMMAND, QUIT_WINDOW_DISCARD_COMMAND } from '../common/vimEx.js';
 import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
+import { bufferKey } from './vimBufferKey.js';
 import './media/vimTabline.css';
 
 /** Workspace storage: the list of tab pages (common/vimTabPages.ts serializeTabPages). */
@@ -104,6 +105,8 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 	/** Switches and the other changes of the list run one at a time, in order. */
 	private queue: Promise<unknown> = Promise.resolve();
 	private switching = false;
+	/** A switch is applying a layout: the editors it closes are in a tab page's layout (hidden buffers), not closed by the user (vimBuffers.ts). */
+	get isSwitching(): boolean { return this.switching; }
 
 	constructor(
 		@IEditorGroupsService private readonly groups: IEditorGroupsService,
@@ -148,7 +151,11 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 	liveMeta(): TabPageMeta {
 		const part = this.groups.mainPart;
 		const groups = part.getGroups(GroupsOrder.GRID_APPEARANCE);
-		return { windows: groups.map(g => g.activeEditor?.getName() ?? ''), active: Math.max(0, groups.indexOf(part.activeGroup)) };
+		return {
+			windows: groups.map(g => g.activeEditor?.getName() ?? ''),
+			active: Math.max(0, groups.indexOf(part.activeGroup)),
+			shown: groups.flatMap(g => g.activeEditor ? [bufferKey(g.activeEditor)] : []),
+		};
 	}
 
 	/** The pages with the current one's meta read from the live layout. */
@@ -436,7 +443,8 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 	 * you land in, as with `:tabc`). The last window of the last page is Vim
 	 * quitting: DevHub's close of the Workspace (`devhubVim.closeWorkspace`,
 	 * electron-browser/vimQuit.contribution.ts), the same as its close button,
-	 * which asks on its sheet when something would be lost; where the
+	 * unless a modified buffer stops it first (E37 / E162, the buffer made
+	 * current: vimBuffers.ts refuseQuit); where the
 	 * workbench has no DevHub to ask (or the Workspace is Scratch, which never
 	 * closes) it is Vim's E444.
 	 */

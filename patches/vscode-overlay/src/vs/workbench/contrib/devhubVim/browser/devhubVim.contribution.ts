@@ -189,7 +189,10 @@ import { VIM_EDIT_COMMANDS } from './vimEdit.js';
 import { VIM_SHELL_COMMANDS } from './vimShell.js';
 import { VIM_JS_COMMANDS } from './vimJs.js';
 import './vimTabPages.js';
+import { VimBuffers } from './vimBuffers.js';
 import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
+import { WebviewTextEntry } from '../../webview/browser/webviewTextEntry.js';
+import { IWebview, IWebviewService } from '../../webview/browser/webview.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
 import { COMMENT_WINDOW_STEPS, CommentServices, CommentWrite, VimWindowHistory, closeCommentWindow, commentWindowAt, focusedCommentWindow, inEditorGroup, leaveCommentWindow, writeCommentWindow } from './vimWindows.js';
 import { ICommentService } from '../../comments/browser/commentService.js';
@@ -325,7 +328,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	},
 });
 
-const VIM_MODE = new RawContextKey<string>('devhubVim.mode', '', localize('devhubVim.mode', "The Vim mode wherever the focus is: normal, insert, replace, visual, visualLine, visualBlock, operatorPending, cmdline, nav (Ctrl-W waits for its key); normal also where the focus is in nothing that takes typing (an empty editor group, a list, the side bar), insert in an input; empty in a webview."));
+const VIM_MODE = new RawContextKey<string>('devhubVim.mode', '', localize('devhubVim.mode', "The Vim mode wherever the focus is: normal, insert, replace, visual, visualLine, visualBlock, operatorPending, cmdline, nav (Ctrl-W waits for its key); normal also wherever else the focus is not text entry (an empty editor group, a list, the side bar, a webview's page outside its fields), insert where it is (an input, a webview's field)."));
 const VIM_ACTIVE = new RawContextKey<boolean>('devhubVim.active', false, localize('devhubVim.active', "Whether the focus is in a Vim buffer: a text editor driven by DevHub Vim, or an empty editor group (its empty buffer)."));
 /** The PoC's name for `devhubVim.active`, kept for existing `when` clauses. */
 const VIM_ATTACHED = new RawContextKey<boolean>('devhubVim.attached', false, localize('devhubVim.attached', "Same as devhubVim.active."));
@@ -1292,7 +1295,8 @@ class VimEditor extends Disposable implements IVimHost {
 
 /**
  * The empty buffer: Vim's buffer where the focus is in normal mode with no Vim
- * editor (an empty editor group, a list, the side bar, the panel), one for all
+ * editor (an empty editor group, a list, the side bar, the panel, a webview's
+ * page outside its fields), one for all
  * of them. Neovim's empty, 'nomodifiable' buffer: one empty line, motions
  * and operators that need text do nothing, insert mode is refused, and
  * everything that needs no text works as in a Vim editor: `:` and every ex
@@ -1334,11 +1338,15 @@ class VimEmptyBuffer implements IVimHost {
 	cmdlineOrigin(): IVimCmdlineOrigin {
 		const active = getActiveElement();
 		const element = isHTMLElement(active) ? active : mainWindow.document.body;
+		// a webview: its own focus, which puts the keyboard back where it was in its page
+		const webview = element.tagName === 'IFRAME' ? this.owner.activeWebview() : undefined;
 		return {
 			element,
 			uri: undefined,
 			focus: () => {
-				if (element.isConnected) {
+				if (webview && element.isConnected) {
+					webview.focus();
+				} else if (element.isConnected) {
 					element.focus();
 				}
 			},
@@ -1393,6 +1401,34 @@ class VimEmptyBuffer implements IVimHost {
 
 /** Where the keys go: a Vim editor, or the empty buffer. */
 type VimBuffer = VimEditor | VimEmptyBuffer;
+
+/**
+ * Whether the focused element takes typing — text entry, where Vim's normal
+ * mode does not apply and the keys are the element's: an input, a textarea, a
+ * select, an element with an edit context (a code editor, the terminal),
+ * contenteditable, role textbox / searchbox; a webview whose page says its
+ * focused element is one (WebviewTextEntry, from the webview's host frame),
+ * or has not said yet; any other frame, which cannot be looked into.
+ * Everything else (a list, a tree, a button, a tab, a view's empty space, a
+ * webview's page outside its fields, nothing at all) is normal mode.
+ */
+export function isTextEntry(element: Element): boolean {
+	if (isEditableElement(element)) {
+		return true;
+	}
+	const tag = element.tagName;
+	if (tag === 'SELECT') {
+		return true;
+	}
+	if (tag === 'IFRAME' || tag === 'WEBVIEW' || tag === 'FRAME' || tag === 'OBJECT' || tag === 'EMBED') {
+		return WebviewTextEntry.get(element) ?? true;
+	}
+	if (isHTMLElement(element) && element.isContentEditable) {
+		return true;
+	}
+	const role = element.getAttribute('role');
+	return role === 'textbox' || role === 'searchbox';
+}
 
 /** The focused element is an empty editor group (EditorGroupView: `.editor-group-container.empty`, focusable while it has no editor). */
 function isEmptyGroup(element: Element | null): boolean {
@@ -1536,6 +1572,13 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			}
 		}));
 		store.add({ dispose: () => { for (const v of this.editors.values()) { v.dispose(); } } });
+		// a webview's page moved its focus into or out of a text field (webviewTextEntry.ts)
+		store.add(WebviewTextEntry.onDidChange(() => this.update()));
+		// a quit refused over a modified buffer made that buffer current: the buffer with the focus says why (E37 / E162)
+		store.add(VimBuffers.onDidRefuseQuit(message => {
+			(this.focused() ?? this.emptyBuffer)?.engine.say(message);
+			this.update();
+		}));
 		store.add(Event.runAndSubscribe(onDidRegisterWindow, ({ window, disposables }) => {
 			const local = new DisposableStore();
 			disposables.add(local);
@@ -1582,6 +1625,15 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		return { commentService: this.instantiationService.invokeFunction(a => a.get(ICommentService)), contextKeyService: this.contextKeyService, commandService: this.commandService };
 	}
 
+	/** The webview that has the focus, if any (asked only then: not every workbench has the service). */
+	activeWebview(): IWebview | undefined {
+		try {
+			return this.instantiationService.invokeFunction(a => a.get(IWebviewService)).activeWebview;
+		} catch {
+			return undefined;
+		}
+	}
+
 	/** Every code editor (the comment inputs are ones too). */
 	codeEditors(): readonly ICodeEditor[] {
 		return this.codeEditorService.listCodeEditors();
@@ -1606,11 +1658,10 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 
 	/**
 	 * The buffer that takes the keys: the Vim editor with the text focus, or the
-	 * empty buffer wherever the focus is in nothing that takes typing (an empty
-	 * editor group, a list, the side bar, the panel, nothing at all). None in an
-	 * input, a plain editor, the terminal or the prompt line (they type), nor in
-	 * a webview (its page has the keys, and whether one of its inputs has the
-	 * focus is the page's to know).
+	 * empty buffer wherever the focus is not text entry (isTextEntry: an empty
+	 * editor group, a list, the side bar, the panel, a webview's page outside
+	 * its fields, nothing at all). None in an input, a plain editor, the
+	 * terminal, the prompt line or a webview's field (they type).
 	 */
 	private focused(): VimBuffer | undefined {
 		const active = getActiveElement();
@@ -1635,7 +1686,15 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		if (found) {
 			return found;
 		}
-		return active && (isEditableElement(active) || active.tagName === 'IFRAME') ? undefined : this.emptyBuffer;
+		return active && isTextEntry(active) ? undefined : this.emptyBuffer;
+	}
+
+	/** Which buffer has the keys and whether the focus is text entry, as update() last set the context keys from them. */
+	private focusSignature = '';
+
+	private currentFocusSignature(): string {
+		const v = this.focused();
+		return `${v === undefined ? 'none' : v === this.emptyBuffer ? 'empty' : 'editor'}:${v instanceof VimEditor ? v.editor.getId() : ''}`;
 	}
 
 	/**
@@ -1760,7 +1819,8 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		const mode = this.nav.active ? 'nav'
 			: ctx ? ctx.mode
 				: prompt ? 'cmdline'
-					: active && isEditableElement(active) ? 'insert' : '';
+					: active && isTextEntry(active) ? 'insert' : '';
+		this.focusSignature = this.currentFocusSignature();
 		this.modeKey.set(mode);
 		for (const k of this.activeKeys) {
 			k.set(v instanceof VimEditor || !!v && isEmptyGroup(active));
@@ -1802,7 +1862,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			return 'terminal';
 		}
 		const active = getActiveElement();
-		return active && isEditableElement(active) ? 'input' : 'other';
+		return active && isTextEntry(active) ? 'input' : 'other';
 	}
 
 	/** `<C-w>`: wait for one nav key. `terminal`: also from the terminal (VimNavPrefix.enter). */
@@ -1887,6 +1947,14 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	 * after `stopPropagation` in its capturing one.
 	 */
 	private onWindowKeyDown(e: KeyboardEvent): void {
+		// The one rule, at the key: normal mode wherever the focus is not text
+		// entry. A focus that moved without a focus event (a focused element
+		// removed, a webview's page focusing its own field, the window given the
+		// keyboard back) is caught up with before the keybinding service resolves
+		// the key (its listener is the window's bubbling one: this one captures).
+		if (this.currentFocusSignature() !== this.focusSignature) {
+			this.update();
+		}
 		if (!this.nav.active) {
 			return;
 		}

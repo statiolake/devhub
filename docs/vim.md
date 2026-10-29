@@ -236,7 +236,7 @@ quitting](#closing-a-window-and-quitting)), `o` (only this group), `=` (equal si
 editor to a new [tab page](#tab-pages)), `d` (the
 diagnostic at the cursor, Neovim `CTRL-W_d-default`), `]` / `}` (definition in
 a split / peek), `:` (the `:` prompt, Vim's `CTRL-W :`: also from where `:`
-itself is typed text, the terminal, an input, a webview). In insert mode
+itself is typed text, the terminal, an input, a webview's field). In insert mode
 `CTRL-W` deletes a word, as in Vim. Any
 other command can follow `CTRL-W` too: whatever the key is bound to while
 `devhubVim.mode == 'nav'` runs once and the prefix ends, as with the defaults
@@ -260,8 +260,10 @@ with `{ "terminal": true }` it also enters nav from the terminal (then leave
 A webview's page gets its keys first and has the workbench resolve a copy of
 each (VS Code's `WebviewElement` dispatches it on the window, with the
 webview as its target), so the prefix and the key after it work there as
-anywhere else; the page has seen the key too (typed into a field of its own,
-if one has the focus). While Vim is on, `Cmd+W` never closes the window:
+anywhere else, in its fields too; the page has seen the key too (typed into a
+field of its own, if one has the focus). Outside its fields a webview is
+normal mode with the keys of [the places without a Vim
+buffer](#tab-pages) (`:` `gt` …). While Vim is on, `Cmd+W` never closes the window:
 VS Code's macOS rule for it (`workbench.action.closeWindow` when no editor is
 open) has `!config.devhub.vim.enabled` in its `when`
 (`patches/vscode/0008-devhub-vim.patch`), so a tab page with no editor, or a
@@ -300,12 +302,12 @@ Vim, which in DevHub is closing the Workspace.
 | --- | --- |
 | `:q[uit]` `CTRL-W q` `CTRL-W CTRL-Q` | close the current window (editor group); its buffers become hidden (below). The last window of a tab page closes the tab page when there are others; the last window of the last tab page closes the Workspace |
 | `:wq` `:x[it]` `:exi[t]` `ZZ` | write (`:x` `ZZ`: when modified), then as `:q` |
-| `:q!` `ZQ` | as `:q`, but the window's current editor drops its changes first, unless another window of the tab page shows it (Vim's `:q!` unloads the current buffer); its other editors keep theirs, hidden |
+| `:q!` `ZQ` | as `:q`, but the window's current editor drops its changes first, unless another window of the tab page shows it (Vim's `:q!` unloads the current buffer); its other editors keep theirs, hidden. In the last window of the last tab page a modified hidden buffer still stops it (below) |
 | `:clo[se][!]` `CTRL-W c` | as `:q`, but never the last window: in the last one of the last tab page, `E444: Cannot close last window` |
-| `:qa[ll]` `:quita[ll]` | close the Workspace |
+| `:qa[ll]` `:quita[ll]` | close the Workspace, unless a buffer is modified (below) |
 | `:qa!` | drop every unsaved change in the workbench, then close the Workspace |
-| `:wqa[ll]` `:xa[ll]` | write all (Save All), then close the Workspace |
-| `:bd[elete][!]` `:bw[ipeout][!]` | close the buffer: VS Code's Close Editor (`!`: Revert and Close), asking about a modified one as VS Code does |
+| `:wqa[ll]` `:xa[ll]` | write all (Save All), then as `:qa` |
+| `:bd[elete][!]` `:bw[ipeout][!]` | delete the buffer: its editors closed in every group ([Buffers](#buffers)) |
 | `:tabc[lose]` | close the tab page ([Tab pages](#tab-pages)) |
 
 **Hidden buffers.** Neovim's default `'hidden'` lets a window close over a
@@ -324,33 +326,106 @@ the closed group's editor the other window's current one, which would then
 show this window's buffer.) An empty window (an empty editor group, Vim's
 empty buffer) just closes.
 
-**Quitting is closing the Workspace.** `:q` in the last window of the last
-tab page, `:qa`, `:wqa` and `:xa` ask DevHub to press the Workspace's close
-button — the same close path as the button, the menu's Close Workspace and
-terminal mode's shell `exit` in the editor area
-([terminal mode](terminal-mode.md)): a Workspace with nothing to lose closes;
-one with something to lose (unsaved editors — in any tab page, hidden ones
-too —, a busy Agent, a dirty worktree) raises the close's confirmation sheet,
-which is DevHub's answer to Vim's `E37` / `E162`, and cancelling it leaves
-everything as it was. **Scratch** is never closed (terminal mode starts its
-shell over instead): there quitting is Vim's `E444: Cannot close last window:
-Scratch is never closed`, and nothing is discarded, `:qa!` included — the
-workbench asks main first whether the Workspace can close at all, and drops
-changes only once it can. A workbench with no DevHub to ask says `E444`.
-The request is the workbench's `vscode:devhubCloseWorkspace`
-(`devhubVim/electron-browser/vimQuit.contribution.ts`, the command
-`devhubVim.closeWorkspace { discard?: "all" | "active" }`), answered in main by
+**A modified buffer stops the quit, as in Neovim.** `:q` (`:wq` `:x` `ZZ`
+`CTRL-W q`) in the last window of the last tab page, `:qa`, `:wqa` and `:xa`
+first check the buffers as Neovim's quit does (`:help :quit`, `:help :qall`,
+`E37`, `E162`; check_changed_any): when one is modified, nothing closes, the
+message is `E37: No write since last change  E162: No write since last change
+for buffer "{name}"`, and that buffer is made current so you can write it
+(`:w`), drop it (`:e!`, `:bd!`) or look at it at once, without `:ls` and `:b`.
+The first modified buffer is taken in Neovim's order: the current one, then
+those the other windows show, then the hidden ones by number, then a file
+modified with no editor at all (a refactoring's edit): it is made current in
+the window that shows it, or else in the current window (a hidden buffer is
+moved into it, a file opened in it). `:q!` (`ZQ`) drops the current buffer's
+changes and then checks only the buffers no window shows, as Neovim's `:q!`
+does: a modified hidden buffer still stops it, with the same message, and
+becomes current. `:qa!` drops every change and never stops.
+
+**Quitting is closing the Workspace.** Once no modified buffer stops it, the
+quit asks DevHub to press the Workspace's close button — the same close path
+as the button, the menu's Close Workspace and terminal mode's shell `exit` in
+the editor area ([terminal mode](terminal-mode.md)): a Workspace with nothing
+to lose closes; one with something that is not an editor's to ask about (a
+busy Agent, a dirty worktree) raises the close's confirmation sheet, and
+cancelling it leaves everything as it was. Unsaved editors never reach that
+sheet from a quit: they stopped it first. **Scratch** is never closed
+(terminal mode starts its shell over instead): there quitting is Vim's `E444:
+Cannot close last window: Scratch is never closed`, and nothing is
+discarded, `:qa!` included — the workbench asks main first whether the
+Workspace can close at all, and drops or checks changes only once it can. A
+workbench with no DevHub to ask says `E444`. The request is the workbench's
+`vscode:devhubCloseWorkspace` (`devhubVim/electron-browser/vimQuit.contribution.ts`,
+the command `devhubVim.closeWorkspace { discard?: "all" | "active" }`; the
+check is `devhubVim/browser/vimBuffers.ts` `refuseQuit`), answered in main by
 `apps/desktop/src/main/shell/workbenchCloseRequests.ts`.
 
 How it differs from Neovim: a hidden buffer is a VS Code editor in another
-group's tabs, not out of sight; `:q!` in the last window of the last tab page
-with another modified buffer does not make that one current (Vim's `E37`
-behaviour) — the close's sheet asks about it; `:qa!` drops the changes before
-the close's sheet, so a close then cancelled over a busy Agent has still
-dropped them (as Vim's `:qa!` would have); `:q` in a comment widget closes the
-widget ([Comment widgets](#comment-widgets)). Your own bindings may still run
-VS Code's Close Editor; `devhubVim.tabpage.closeIfEmpty` after it closes a
-tab page left with no editor.
+group's tabs, not out of sight; `:qa!` drops the changes before the close's
+sheet, so a close then cancelled over a busy Agent has still dropped them (as
+Vim's `:qa!` would have); `:wqa` saves an untitled editor through VS Code's
+Save As dialog (cancelled, it stops the quit with E162, where Neovim says
+`E141`); `:q` in a comment widget closes the widget ([Comment
+widgets](#comment-widgets)). Your own bindings may still run VS Code's Close
+Editor; `devhubVim.tabpage.closeIfEmpty` after it closes a tab page left with
+no editor.
+
+### Buffers
+
+VS Code's editors — the tabs of the editor groups — are Vim's buffers (a file,
+an untitled file, a diff, Settings, an extension's page …). Each has a
+**buffer number**, given when the editor is first seen (opened, or restored
+with the layout) and never reused, as in Vim: the same file opened again — in
+another group, after it was closed, after a reload or hibernation (the list is
+in workspace storage, `devhubVim.buffers`) — is the same buffer with the same
+number. Two editors are one buffer when they are the same kind of editor on
+the same resources (`devhubVim/browser/vimBufferKey.ts`).
+
+| Command | Does |
+| --- | --- |
+| `:ls[!] [flags]` `:buffers` `:files` | the buffer list in a quick pick, one line each as Vim prints it: `  3 #h + "src/util.ts"   line 12`; picking one is `:b N`. `!` adds the unlisted buffers; `flags` keep the buffers with all of them (`:ls +`, `:ls h`, as in Vim) |
+| `:b[uffer] {N}` `:{N}b` `:b {name}` `:b %` `:b #` | buffer N, or the one whose name matches (Vim's file pattern, `*` `?`; anywhere in the name, then at its start, its end, the whole name, until one listed buffer is left; unlisted ones only when no listed one matches), in the current window. `E86`, `E93` (more than one), `E94` (none) |
+| `:bn[ext] [N]` `:{N}bn` `]b` `{N}]b` / `:bp[revious]` `:bN[ext]` `[b` | N listed buffers on / back, in number order, round from the last to the first |
+| `:bf[irst]` `:br[ewind]` `[B` / `:bl[ast]` `]B` | the first / last listed buffer |
+| `CTRL-^` `:b#` / `{N}CTRL-^` | the window's alternate buffer (`E23` without one) / `:b N` |
+| `:bd[elete][!] [N \| name …]` `:{N}bd` | the buffer's editors are closed in every group, so it is unlisted; a modified one only with `!`, which drops its changes (`E89: No write since last change for buffer N (add ! to override)`) |
+| `:bw[ipeout][!] …` | as `:bd`, and the number is forgotten |
+
+The flags of `:ls`:
+
+| Flag | Means |
+| --- | --- |
+| `u` | unlisted (`:ls!` only): its editor was closed — by `:bd`, its tab's close, a preview editor replaced |
+| `%` / `#` | the current window's buffer (the active group's editor) / its alternate buffer (the one it showed before; each window has its own, and a split starts with that of the window it was split from) |
+| `a` | shown in a window: some group's active editor, in this tab page or another one |
+| `h` | hidden: an editor of the live layout that no window shows (a background tab) |
+| (blank) | not loaded: in another tab page's layout only (switching tab pages closes the live layout's editors), or unlisted |
+| `-` | not modifiable: a read-only editor |
+| `+` | modified |
+
+`line N` is the buffer's cursor line, last known (`line 0`: never shown since
+it was numbered). The list holds every buffer of every group, every auxiliary
+window and every tab page: a buffer stays listed while some tab page's layout
+has it, and when a tab page switch or `:tabc` closes it there (it is hidden,
+not loaded, as Vim's buffers of a closed tab page are), until you close it
+yourself.
+
+**`:b` puts the buffer in the current window**, as Vim does: an editor this
+group has is made active; one that another window has only as a hidden
+buffer (a tab it does not show) is moved here; one another window shows is
+opened here too (two windows on one buffer); one no group has any more is
+opened again from its file. The editor that was current is pinned first, so
+VS Code's preview editor is never replaced (closed) by a buffer switch. The
+commands are `devhubVim.buffer.list { bang?, arg? }` `.goto { arg?, count? }`
+`.next` `.previous { count? }` `.first` `.last` `.alternate { count? }`
+`.delete` `.deleteDiscard` `.wipeout` `.wipeoutDiscard { arg?, count? }`
+(`devhubVim/browser/vimBuffers.ts`); the ones without arguments are in the
+Command Palette (`Vim: Next Buffer (:bn)` …).
+
+Not like Vim: a hidden buffer is a tab in some group (the tabs are VS Code's,
+and a buffer is listed in the group that last had it); `:ls` is a quick pick,
+not the message area; `:badd`, `:sb[uffer]`, `:ball`, `:bufdo`, `:bmodified`
+and `:ls`'s terminal flags do not exist.
 
 ### Comment widgets
 
@@ -473,25 +548,57 @@ and quitting](#closing-a-window-and-quitting)). If
 the group is not focused (after a click in the side bar, say), click into it
 or use `CTRL-W h j k l`.
 
-**Where no Vim buffer has the focus** but nothing takes typing either (a list
-or tree, the side bar, the panel, a Settings or Keyboard Shortcuts editor
-outside its inputs), `devhubVim.mode` is `normal` and the same empty buffer
-takes the few Vim keys bound there, with `when` `devhubVim.mode == 'normal' &&
+**Where no Vim buffer has the focus** but the focus is not text entry
+either, `devhubVim.mode` is `normal` and the same empty buffer takes the
+few Vim keys bound there, with `when` `devhubVim.mode == 'normal' &&
 !devhubVim.active` (`VIM_WHEN.elsewhere`), so a list keeps Enter, Space, the
-arrows and its other keys:
+arrows and its other keys. The rule is one: **normal mode wherever the focus
+is not text entry** ([Context keys](#context-keys)). That is a list or tree
+(the Explorer, Search results, SCM's changes, Problems, the Debug Console's
+output, the Extensions view, a notification), the side bar, the panel,
+Settings and Keyboard Shortcuts outside their inputs (a setting's row, its
+checkbox, the keybindings table), the Welcome page and a walkthrough's
+buttons, a notebook outside its cells' editors, an auxiliary window, nothing
+at all (after Quick Open or a notification closed with the focus on nothing)
+— and a **webview's page outside its fields**: an extension's details page,
+the Markdown preview, release notes, a webview editor or view. (Output, a
+diff's two sides, the merge editor's panes and a notebook's cells are code
+editors, so Vim editors with every key.)
 
 | Keys | Command |
 |---|---|
-| `:` | `devhubVim.cmdline { "kind": ":" }`: [the prompt](#the-prompt), for the empty buffer; the focus goes back to the list afterwards |
+| `:` | `devhubVim.cmdline { "kind": ":" }`: [the prompt](#the-prompt), for the empty buffer; the focus goes back to the list (the webview, where it was in its page) afterwards |
 | `gt` / `gT` | `devhubVim.tabpage.next` / `.previous` |
 | `{N}gt` / `{N}gT` (N 1-9) | the same with `{ "count": N }`: three-key chords (`3 g t`), as no count is typed there; for more, `:tabn {N}` or `:tabs` |
 | CTRL-O / CTRL-I | `workbench.action.navigateBack` / `navigateForward` |
+| CTRL-^ | `devhubVim.buffer.alternate` ([Buffers](#buffers)) |
+| `]b` `[b` `]B` `[B` | `devhubVim.buffer.next` / `.previous` / `.last` / `.first` |
+| CTRL-W … | the window keys, as everywhere ([Windows](#windows)) |
 
-These take `g` and `:` from a list's type-to-navigate. In a webview
-`devhubVim.mode` is empty and none of them is bound: its page has the keys,
-and DevHub cannot tell whether one of its fields has the focus (`gt` typed in
-a comment box would switch tab pages). There, and in the terminal and an
-input, `CTRL-W :` opens the prompt.
+These take `g`, `:`, `]` and `[` from a list's type-to-navigate. Your own
+bindings with `devhubVim.mode == 'normal'` (without `devhubVim.active`) hold
+in all of these places too. Text entry keeps its keys: an input or search
+box, a code editor that is no Vim editor, the terminal, Quick Open, the chat
+and Copilot inputs (Vim editors, in their own modes), a `<select>`,
+contenteditable, `role="textbox"` — and a webview's field.
+
+**How a webview tells.** A webview's page is another document, so the
+workbench sees only its `<iframe>` as focused. DevHub's patch of VS Code's
+webview host frame (`vs/workbench/contrib/webview/browser/pre/index.html`,
+in `patches/vscode/0008-devhub-vim.patch`) sends, with every key it forwards
+to the workbench (`did-keydown`, before the workbench resolves the key) and
+whenever the focus moves inside the page (`did-devhub-text-entry`), whether
+the page's focused element takes typing: an `<input>` that takes text (not a
+button, checkbox, radio, range, color or file input), a `<textarea>`, a
+`<select>`, contenteditable or a document in design mode, `role` `textbox` /
+`searchbox` / `combobox`, inside shadow roots too; a frame of its own inside
+the page, which cannot be looked into, counts as text entry. `WebviewElement`
+records it per webview (`webview/browser/webviewTextEntry.ts`) and DevHub
+Vim reads it (`devhubVim.contribution.ts` `isTextEntry`): the page outside
+its fields is normal mode, a field of the page is `insert` (the keys are the
+page's), and a webview that has said nothing yet is text entry. The page
+still sees every key too (the workbench resolves a copy), so `gt` in a page
+that has its own `g` key does both.
 
 **The tab line**: with two tab pages or more (Vim's `'showtabline'` 1) a thin
 bar above the editor groups lists them: the number and the active window's
@@ -649,12 +756,12 @@ does too; the other cursors are left as they are.
 | `]D` `[D` | last / first diagnostic | `gg` then `editor.action.marker.prev` / `G` then `.next` |
 | `CTRL-W d` `CTRL-W CTRL-D` | diagnostic float | `editor.action.showHover` |
 | `]q` `[q` | `:cnext` `:cprevious` | `editor.action.marker.nextInFiles` / `.prevInFiles` (problems across files) |
-| `]b` `[b` `]B` `[B` | `:bnext` `:bprevious` `:blast` `:bfirst` | `workbench.action.nextEditor` / `previousEditor` / `lastEditorInGroup` / `firstEditorInGroup` |
+| `]b` `[b` `]B` `[B` | `:bnext` `:bprevious` `:blast` `:bfirst` | `devhubVim.buffer.next` / `previous` (a count: that many) / `last` / `first` ([Buffers](#buffers)) |
 | `[<Space>` `]<Space>` | blank line above / below | `devhubVim.action blankLineAbove` / `blankLineBelow` |
 | `{Visual}an` `{Visual}in` | outer / inner syntax node (0.12) | `editor.action.smartSelect.expand` / `.shrink` |
 | `gx` | open the link | `editor.action.openLink` |
 | `gt` `gT` | next / previous tab page | `devhubVim.tabpage.next` / `previous` (a count is a page number / how many back, see [Tab pages](#tab-pages)) |
-| `CTRL-^` | alternate file | `workbench.action.openPreviousRecentlyUsedEditorInGroup` |
+| `CTRL-^` `{N}CTRL-^` | alternate file / buffer N | `devhubVim.buffer.alternate` (`{ "count": N }`) |
 
 Neovim's `[l ]l [t ]t [a ]a [Q ]Q` (location list, tags, argument list,
 first / last quickfix) have no VS Code counterpart and are not bound.
@@ -894,7 +1001,7 @@ indent outdent copyFromAbove copyFromBelow insertLastInserted oneCommand`.
 | Key | Values |
 | --- | --- |
 | `devhubVim.active` | the focus is in a Vim buffer: a text editor driven by Vim, or an [empty editor group](#tab-pages) (its empty buffer) (`devhubVim.attached` is the old name) |
-| `devhubVim.mode` | the mode wherever the focus is: `normal`, `insert`, `replace`, `visual`, `visualLine`, `visualBlock`, `operatorPending` in a Vim buffer; `cmdline` (the prompt line has the focus); `nav` (after `CTRL-W`); `normal` also where the focus is in nothing that takes typing (a list, the side bar, the panel, a Settings editor outside its inputs, nothing at all); `insert` in an input, a plain editor and the terminal; `''` in a webview |
+| `devhubVim.mode` | the mode wherever the focus is: `normal`, `insert`, `replace`, `visual`, `visualLine`, `visualBlock`, `operatorPending` in a Vim buffer; `cmdline` (the prompt line has the focus); `nav` (after `CTRL-W`); `normal` also wherever else the focus is not text entry (a list, the side bar, the panel, a Settings editor outside its inputs, a webview's page outside its fields, nothing at all); `insert` in text entry: an input, a plain editor, the terminal, a webview's field |
 | `devhubVim.visual` | any visual mode |
 | `devhubVim.insert` | insert or replace mode |
 | `devhubVim.acceptsMotion` | a motion, operator, count or action may come next: normal, visual or operator-pending mode, and no key is being captured |
@@ -928,10 +1035,17 @@ same:
 | operator pending | motion `&& devhubVim.mode == 'operatorPending'` |
 | text object (after `i`/`a`) | `devhubVim.active && devhubVim.textObjectPending` |
 | insert | `devhubVim.active && devhubVim.insert && !devhubVim.awaitingChar` |
-| elsewhere: normal mode with no Vim buffer (a list, the side bar) | `devhubVim.mode == 'normal' && !devhubVim.active` |
+| elsewhere: normal mode with no Vim buffer (a list, the side bar, a webview's page) | `devhubVim.mode == 'normal' && !devhubVim.active` |
 
 **Normal mode wherever the focus is** is `devhubVim.mode == 'normal'`: a Vim
-editor or an empty group in normal mode, and any place that takes no typing.
+editor or an empty group in normal mode, and any place that is not text entry
+(`devhubVim.contribution.ts` `isTextEntry`: an input, a textarea, a select,
+an element with an edit context — a code editor, the terminal —,
+contenteditable, `role` `textbox` / `searchbox`, a webview whose page says
+its focus is in a field or has said nothing yet, any other frame). It is
+worked out again on every key, before the key is resolved, so a focus that
+moved without a focus event (an input removed from the page, the window
+given the keyboard back) never leaves the keys of the last place in force.
 Use it for a key that needs no buffer at all (Quick Open, a view, the
 Problems panel), so it works in the side bar and the panel too; with
 `devhubVim.active &&` in front it is Vim editors and empty groups only (for a
@@ -1377,7 +1491,8 @@ widgets](#comment-widgets))
 [File names](#file-names)) `:tabn[ext]` `:tabp[revious]`
 `:tabc[lose]` `:tabo[nly]` `:tabfir[st]` `:tabl[ast]` `:tabm[ove]` `:tabs`
 (see [Tab pages](#tab-pages)) `:bn[ext]` `:bp[revious]`
-`:bd[elete][!]` `:bf[irst]` `:bl[ast]` `:ls` `:buffers` `:b[uffer] {name}`
+`:bd[elete][!]` `:bw[ipeout][!]` `:bf[irst]` `:bl[ast]` `:ls[!]` `:buffers`
+`:b[uffer] {N|name}` (see [Buffers](#buffers))
 `:clo[se]` `:on[ly]` `:cn[ext]` `:cp[revious]` `:cope[n]`
 `:ccl[ose]` `:ter[minal]` `:gr[ep] {text}`. `:{command} | {command}`
 runs both, the second after the first has finished (not after `:g` and
@@ -1837,6 +1952,13 @@ otherwise.
   and other Vimscript, `:make`, the location list
   / tags / argument list, `CTRL-W x r`, `'scrolloff'` (VS Code's
   `editor.cursorSurroundingLines` applies).
+* Where normal mode cannot reach: a frame inside a webview's page (a page
+  that embeds another document: VS Code forwards keys only from the page's
+  own frame, so the workbench never sees them; `CTRL-W` does not work there
+  either), the title bar's menus while open (a menu takes letters as its
+  mnemonics), native dialogs and menus, and a webview's page in the moment
+  before its host frame has said anything (taken as text entry). A webview's
+  page sees each key the workbench takes too.
 * Patterns are JavaScript regular expressions (VS Code's find), not Vim's:
   `\%V`, `\%23l`, `\v` and the other Vim-only atoms do not exist. A match
   must lie inside the `:s` / `:g` range (Vim lets it run past the last line),
