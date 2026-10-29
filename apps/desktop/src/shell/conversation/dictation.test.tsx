@@ -276,7 +276,9 @@ function fakeVoice(overrides: Partial<VoiceApi> = {}): VoiceApi {
     requestMicrophone: vi.fn(() =>
       Promise.resolve({ ok: true as const, value: true }),
     ),
-    warm: vi.fn(),
+    warm: vi.fn(() =>
+      Promise.resolve({ ok: true as const, value: true as const }),
+    ),
     begin: vi.fn(() => Promise.resolve({ ok: true as const, value: 7 })),
     audio: vi.fn(),
     end: vi.fn(() => Promise.resolve({ ok: true as const, value: "直して" })),
@@ -369,6 +371,72 @@ describe("dictating in the composer", () => {
     await waitFor(() => expect(composer().value).toBe("直して"));
     expect(contextsOpen).toBe(0);
     expect(tracksStopped).toBe(1);
+  });
+
+  it("spins, saying what it waits on, until the microphone and the recogniser are both live", async () => {
+    const opened = held<unknown>();
+    openMicrophone = () => opened.promise;
+    const warmed = held<{ ok: true; value: true }>();
+    const voice = fakeVoice({ warm: vi.fn(() => warmed.promise) });
+    draw(READY, fakeActions({ voice }));
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    const opening = screen.getByRole("button", { name: "Cancel dictation" });
+    expect(opening).toHaveAttribute("aria-busy", "true");
+    expect(opening).toHaveAttribute("data-waiting", "microphone");
+    expect(opening.getAttribute("title")).toMatch(/^Starting the microphone…/);
+    expect(
+      opening.querySelector(".conversation-dictation-spinner"),
+    ).not.toBeNull();
+    // The microphone is open; the recogniser is still loading: it records
+    // into the buffer, draws what it hears, and still spins.
+    await act(async () => opened.resolve(stream));
+    const recording = await screen.findByRole("button", {
+      name: "Stop dictating",
+    });
+    expect(recording).toHaveAttribute("data-waiting", "recogniser");
+    expect(recording.getAttribute("title")).toMatch(
+      /^Starting speech recognition…/,
+    );
+    expect(document.querySelector(".conversation-dictation-wave")).not.toBe(
+      null,
+    );
+    hear(12000);
+    // Live: the recording look, no spinner.
+    await act(async () => warmed.resolve({ ok: true, value: true }));
+    expect(recording).not.toHaveAttribute("data-waiting");
+    expect(recording).not.toHaveAttribute("aria-busy");
+    expect(recording.querySelector(".conversation-dictation-spinner")).toBe(
+      null,
+    );
+    expect(recording.getAttribute("title")).toMatch(/^Stop dictating/);
+  });
+
+  it("says so when the recogniser cannot start, and closes the microphone", async () => {
+    const voice = fakeVoice({
+      warm: vi.fn(() =>
+        Promise.resolve({
+          ok: false as const,
+          reason: "The recogniser stopped (exit code 1).",
+        }),
+      ),
+    });
+    const actions = fakeActions({ voice });
+    draw(READY, actions);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    await waitFor(() => expect(actions.reportFailure).toHaveBeenCalled());
+    const reported = toAppError(
+      vi.mocked(actions.reportFailure).mock.calls[0]![0],
+    );
+    expect(reported.summary).toBe(VOICE_FAILED_TITLE);
+    expect(reported.detail).toBe("The recogniser stopped (exit code 1).");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Dictate" })).toHaveAttribute(
+        "data-phase",
+        "idle",
+      ),
+    );
+    expect(voice.cancel).toHaveBeenCalledWith(7);
+    expect(contextsOpen).toBe(0);
   });
 
   it("ends a recording stopped before main answered, with all it heard", async () => {

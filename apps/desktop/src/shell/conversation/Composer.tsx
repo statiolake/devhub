@@ -886,6 +886,13 @@ function storage(): Storage | undefined {
   }
 }
 
+/** What a press still waits on, as its tooltip says it; a press gives up (or stops). */
+const WAITING_TITLES = {
+  microphone: "Starting the microphone… — press again to give up",
+  recogniser:
+    "Starting speech recognition… — what you say is kept meanwhile; press to stop",
+} as const;
+
 const DICTATION_TITLES = {
   idle: `Dictate (${DICTATION_KEY})`,
   starting: "Opening the microphone… — press again to give up",
@@ -912,7 +919,7 @@ function DictationControls({
   readonly disabled: boolean;
   readonly cycleLanguage: () => void;
 }) {
-  const { phase } = dictation;
+  const { phase, waitingFor } = dictation;
   const recording = phase === "recording";
   const unavailable = phase === "unavailable";
   return (
@@ -943,13 +950,25 @@ function DictationControls({
         aria-pressed={recording || phase === "starting"}
         // Unavailable is drawn so, and still pressed: the press says why.
         aria-disabled={unavailable || undefined}
-        title={unavailable ? dictation.reason : DICTATION_TITLES[phase]}
+        data-waiting={waitingFor}
+        aria-busy={waitingFor !== undefined || undefined}
+        title={
+          unavailable
+            ? dictation.reason
+            : waitingFor !== undefined
+              ? WAITING_TITLES[waitingFor]
+              : DICTATION_TITLES[phase]
+        }
         disabled={disabled || phase === "transcribing"}
         onClick={dictation.toggle}
         onPointerEnter={dictation.warm}
         onFocus={dictation.warm}
       >
-        <MicIcon />
+        {waitingFor !== undefined ? (
+          <span className="conversation-dictation-spinner" aria-hidden="true" />
+        ) : (
+          <MicIcon />
+        )}
       </button>
     </>
   );

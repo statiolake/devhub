@@ -94,8 +94,13 @@ export interface VoiceApi {
 	 * may record.
 	 */
 	requestMicrophone(): Promise<VoiceResult<boolean>>;
-	/** Start loading the recogniser, if it is not loaded: the microphone is about to be used. */
-	warm(): void;
+	/**
+	 * Start loading the recogniser, if it is not loaded: the microphone is
+	 * about to be used. Answers once the recogniser can take audio (at once
+	 * when it already can, or when there is only the CLI, which is run at
+	 * `end`), or why it cannot.
+	 */
+	warm(): Promise<VoiceResult<true>>;
 	/** Start a dictation in `language`; its session number. */
 	begin(language: VoiceLanguage): Promise<VoiceResult<number>>;
 	/** More of the recording (see the module comment for its format). */

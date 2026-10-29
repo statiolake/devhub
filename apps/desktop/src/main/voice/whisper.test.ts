@@ -292,6 +292,40 @@ describe("the Agents page's requests", () => {
 		).toBeUndefined();
 	});
 
+	it("answers a warm-up once the recogniser can take audio, or why it cannot", async () => {
+		let started!: () => void;
+		const warm = vi.fn(
+			() => new Promise<void>((resolve) => void (started = resolve)),
+		);
+		const { call } = register({
+			transcriber: { live: true, transcribe: vi.fn(), warm },
+		});
+		let answered: unknown;
+		const warming = Promise.resolve(call(VOICE_CHANNELS.warm)).then(
+			(answer) => void (answered = answer),
+		);
+		await Promise.resolve();
+		expect(answered).toBeUndefined();
+		started();
+		await warming;
+		expect(answered).toEqual({ ok: true, value: true });
+
+		const failing = register({
+			transcriber: {
+				live: true,
+				transcribe: vi.fn(),
+				warm: () => Promise.reject(new Error("The recogniser stopped.")),
+			},
+		});
+		await expect(failing.call(VOICE_CHANNELS.warm)).resolves.toEqual({
+			ok: false,
+			reason: "The recogniser stopped.",
+		});
+		await expect(
+			register({ installed: false }).call(VOICE_CHANNELS.warm),
+		).resolves.toEqual({ ok: false, reason: NO_RECOGNISER });
+	});
+
 	it("says a build with no recogniser has none, and begins nothing", async () => {
 		const { call } = register({ installed: false });
 		await expect(call(VOICE_CHANNELS.status)).resolves.toEqual({

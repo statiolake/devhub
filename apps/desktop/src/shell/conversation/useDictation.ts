@@ -23,7 +23,9 @@
  * composer focused by someone who dictates — warms those, and main's
  * recogniser, ahead of the press (`warm`). A microphone that does not open
  * within `MICROPHONE_OPEN_MS` is given up on and said so, and a second press
- * while it opens gives up too.
+ * while it opens gives up too. Until both the microphone and main's
+ * recogniser are live (`warm` answers when the recogniser can take audio),
+ * the press says which it waits on (`waitingFor`), and the button spins.
  *
  * The level drawn under the words (`DictationWaveform`) is read from an
  * `AnalyserNode` on the same source, by that component's own animation
@@ -89,8 +91,17 @@ interface Recording {
   readonly stop: () => void;
 }
 
+/**
+ * What a press is still waiting on before it is fully live: the microphone
+ * opening ("starting"), or — the microphone already recording into a buffer
+ * — the recogniser starting in main (its model loading, its first answer).
+ */
+export type DictationWait = "microphone" | "recogniser";
+
 export interface Dictation {
   readonly phase: DictationPhase;
+  /** What the press still waits on, while it waits; `undefined` once all is live. */
+  readonly waitingFor: DictationWait | undefined;
   /** Why dictation is unavailable, when it is. */
   readonly reason: string | undefined;
   /** The microphone's level, to draw, while recording. */
@@ -213,6 +224,8 @@ export function useDictation(options: {
   );
   const [analyser, setAnalyser] = useState<AnalyserNode | undefined>(undefined);
   const [tentative, setTentative] = useState("");
+  /** Whether main's recogniser has said it can take this press's audio. */
+  const [recogniserLive, setRecogniserLive] = useState(false);
   /** The press being answered: opening, recording or transcribing. */
   const attempt = useRef<Attempt | undefined>(undefined);
   const recording = useRef<Recording | undefined>(undefined);
@@ -347,7 +360,8 @@ export function useDictation(options: {
     primeAudio();
     if (Date.now() - warmed.current < 60_000) return;
     warmed.current = Date.now();
-    voice.warm();
+    // Nobody waits on this one; a press asks again and waits.
+    void voice.warm().catch(() => undefined);
   }, [voice]);
 
   const start = useCallback(async () => {
@@ -361,10 +375,26 @@ export function useDictation(options: {
     attempt.current = given;
     setPhase("starting");
     setTentative("");
+    setRecogniserLive(false);
     latest.current.onBegin();
     warmed.current = Date.now();
-    voice.warm();
+    const recogniser = voice.warm();
     markDictated(storage());
+
+    // Live once main has the session and the recogniser can take audio;
+    // until then what the microphone hears is kept.
+    void Promise.all([given.session, recogniser]).then(
+      ([begun, warmedUp]) => {
+        if (given.cancelled || !begun.ok) return;
+        if (!warmedUp.ok) {
+          abandon(given);
+          fail("transcribe", new Error(warmedUp.reason));
+          return;
+        }
+        setRecogniserLive(true);
+      },
+      () => undefined,
+    );
 
     void given.session.then(
       (begun) => {
@@ -497,5 +527,20 @@ export function useDictation(options: {
     else if (phase === "recording") finish();
   }, [abandon, cancel, finish, phase, reason, start]);
 
-  return { phase, reason, analyser, tentative, toggle, cancel, warm };
+  const waitingFor: DictationWait | undefined =
+    phase === "starting"
+      ? "microphone"
+      : phase === "recording" && !recogniserLive
+        ? "recogniser"
+        : undefined;
+  return {
+    phase,
+    waitingFor,
+    reason,
+    analyser,
+    tentative,
+    toggle,
+    cancel,
+    warm,
+  };
 }

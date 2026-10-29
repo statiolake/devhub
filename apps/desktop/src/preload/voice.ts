@@ -22,9 +22,8 @@ export const voiceApi: VoiceApi = {
 		ipcRenderer.invoke(VOICE_CHANNELS.microphone) as Promise<
 			VoiceResult<boolean>
 		>,
-	warm: () => {
-		void ipcRenderer.invoke(VOICE_CHANNELS.warm).catch(() => undefined);
-	},
+	warm: () =>
+		ipcRenderer.invoke(VOICE_CHANNELS.warm) as Promise<VoiceResult<true>>,
 	begin: (language: VoiceLanguage) =>
 		ipcRenderer.invoke(VOICE_CHANNELS.begin, language) as Promise<
 			VoiceResult<number>

@@ -3664,16 +3664,34 @@ button.conversation-background-line:hover {
   transition: box-shadow 80ms linear;
 }
 
-/* Pressed: red at once, pulsing while the microphone opens. */
-.conversation-dictation[data-phase="starting"] {
-  background: color-mix(in srgb, var(--danger) 70%, var(--raised));
-  color: var(--surface);
+/* Pressed and not live yet — the microphone opening, or the recogniser
+   starting while what is heard is kept: held down at once, an accent
+   spinner in place of the microphone (`data-waiting`). The recording look
+   comes when both are live. */
+.conversation-dictation[data-waiting] {
+  background: var(--wash-strong);
+  box-shadow: none;
+  color: var(--accent);
 }
 
-.conversation-dictation:is(
-  [data-phase="starting"],
-  [data-phase="transcribing"]
-) {
+.conversation-dictation-spinner {
+  width: 1em;
+  height: 1em;
+  box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: conversation-dictation-spin calc(var(--motion-slower) * 2.5) linear
+    infinite;
+}
+
+@keyframes conversation-dictation-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.conversation-dictation[data-phase="transcribing"] {
   animation: conversation-dictation-wait 1.2s ease-in-out infinite;
 }
 
@@ -3708,8 +3726,11 @@ button.conversation-background-line:hover {
   }
 }
 
+/* Under Reduce Motion the spinner stands still: a ring with its accent arc,
+   busy without moving. */
 @media (prefers-reduced-motion: reduce) {
-  .conversation-dictation {
+  .conversation-dictation,
+  .conversation-dictation-spinner {
     animation: none !important;
     transition: none !important;
   }

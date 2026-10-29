@@ -131,9 +131,19 @@ export function registerVoiceIpc(options: {
 		}
 	});
 
-	handle(VOICE_CHANNELS.warm, () => {
-		// A failure to start is reported to the dictation that waits for it.
-		void transcriber?.warm?.().catch(() => undefined);
+	// Answered when the recogniser can take audio, so the page can say it is
+	// still starting; a failure to start is the answer too.
+	handle(VOICE_CHANNELS.warm, async (): Promise<VoiceResult<true>> => {
+		if (transcriber === undefined) return { ok: false, reason: NO_RECOGNISER };
+		try {
+			await transcriber.warm?.();
+			return { ok: true, value: true };
+		} catch (error: unknown) {
+			return {
+				ok: false,
+				reason: error instanceof Error ? error.message : String(error),
+			};
+		}
 	});
 
 	handle(VOICE_CHANNELS.begin, (language: unknown): VoiceResult<number> => {
