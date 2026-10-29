@@ -22,6 +22,7 @@ import {
   type ReactNode,
 } from "react";
 import { REVEAL_EVENT } from "./findInTranscript";
+import { markScrollIntent } from "./followScroll";
 
 /**
  * Where the scroller must be for an element that moved from `before` to
@@ -75,6 +76,8 @@ export function Clip({ children }: { readonly children: ReactNode }) {
     const button = toggle.current;
     const scroller = button?.closest<HTMLElement>(".conversation-scroll");
     if (!button || !scroller) return;
+    // The person closed it: where that leaves the view is theirs.
+    markScrollIntent(scroller);
     scroller.scrollTop = anchoredScrollTop(
       scroller.scrollTop,
       before,

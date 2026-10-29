@@ -407,6 +407,7 @@ export function Composer({
   openTask,
   edits,
   draftFlush,
+  onSend,
 }: {
   readonly transcript: Transcript;
   readonly inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -430,6 +431,11 @@ export function Composer({
   readonly edits: ReadonlyMap<PendingId, string>;
   /** Filled with what tells main the draft now, for the queued messages' editors. */
   readonly draftFlush: RefObject<() => void>;
+  /**
+   * A message is being sent from here: the transcript goes back to its end
+   * to follow the reply (`followScroll.ts`), wherever it was scrolled to.
+   */
+  readonly onSend?: () => void;
 }) {
   const {
     send,
@@ -606,9 +612,13 @@ export function Composer({
         line.trim() === "" && images.length === 0 && canSendNow
           ? transcript.pending.find((message) => !edits.has(message.id))
           : undefined;
-      if (held !== undefined) void sendPendingNow(held.id).catch(reportFailure);
+      if (held !== undefined) {
+        onSend?.();
+        void sendPendingNow(held.id).catch(reportFailure);
+      }
       return;
     }
+    onSend?.();
     void send(line, images).then(() => {
       // Only what was sent is cleared: anything typed or attached since stays.
       // Main is told at once, so a restart right after cannot bring it back.

@@ -66,7 +66,7 @@ import {
 } from "./EntryView";
 import { FindBar, type FindBarHandle } from "./FindBar";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
-import { useFollowScroll } from "./followScroll";
+import { markScrollIntent, useFollowScroll } from "./followScroll";
 import { ActivityLine } from "./ActivityLine";
 import { useFreshEntries, useNoReplayOnShow } from "./freshEntries";
 import { IssueRepositoryProvider, type IssueRepository } from "./issueLinks";
@@ -370,6 +370,8 @@ export function ConversationSurface({
         fold.open = true;
       }
       const focused = wanted.open?.(found) ?? found;
+      const view = found.closest(".conversation-scroll");
+      if (view) markScrollIntent(view);
       found.scrollIntoView({ block: "center" });
       focused.focus();
     },
@@ -565,6 +567,7 @@ export function ConversationSurface({
                                 inserted={inserted}
                                 edits={edits}
                                 draftFlush={draftFlush}
+                                onSend={jumpToLatest}
                               />
                             </div>
                           </div>

@@ -219,6 +219,11 @@
   overflow-anchor: auto;
 }
 
+/* Following the end, the end is the anchor (`followScroll.ts`). */
+.conversation-scroll[data-following] {
+  overflow-anchor: none;
+}
+
 .conversation-transcript {
   max-width: calc(var(--conversation-measure) + 2 * var(--conversation-gutter));
   box-sizing: border-box;

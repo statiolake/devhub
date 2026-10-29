@@ -14,13 +14,27 @@
  * by the browser's own scroll anchoring (`overflow-anchor`), which is what
  * keeps the entry being read still under a reflow.
  *
- * Only a scroll up stops following. A scroll event is read after the layout
- * it follows, so content that grows between the transcript being put at the
- * end and the event being read — a cut message drawing its Show all, a queued
- * message's editor opening — leaves a following transcript short of the end
- * with nobody having scrolled; and scroll anchoring, holding the lines on
- * screen still while something above them is first laid out, scrolls down.
- * Neither is the person leaving the end, so either is put back there.
+ * Only the person leaves the end. Content moves the scroll position without
+ * anybody scrolling, and in both directions: what shrinks at the end (a
+ * "sending" bubble replaced by its echo, the composer emptied by a send, an
+ * entry drawn smaller than the room `content-visibility` kept for it) clamps
+ * the position up, and a scroll event is read a frame after the layout it
+ * came from — by which time something else may have grown that nothing has
+ * followed yet (the Smart Buttons' reserve under the last line, a diagram, a
+ * picture, a cut message's Show all). Read as a direction, that was "the
+ * person scrolled up, away from the end", and the transcript stopped
+ * following on every send. So a scroll leaves the end only while the person
+ * is scrolling: a wheel or trackpad turned up, a key that scrolls, a press on
+ * the scroller (its scrollbar, a drag selection running past an edge), a
+ * touch — or code that moves the view on the person's behalf (find, a
+ * reveal) saying so with `markScrollIntent`. Any other scroll of a following
+ * transcript is put back at the end.
+ *
+ * Growth is followed by watching the transcript's border box, padding
+ * included (the Smart Buttons' reserve is padding), and the scroller's own
+ * box. While following, scroll anchoring is off (`data-following`): the end
+ * is the anchor then, and the browser holding some line still would only pull
+ * against it.
  *
  * A hidden surface (a parked Agent in the pool) has no box, so nothing it
  * reports means anything: its scrolls and resizes are ignored, and where it
@@ -38,6 +52,46 @@ import {
 
 /** How close to the end still counts as the end: sub-pixel scroll positions. */
 export const BOTTOM_SLACK_PX = 2;
+
+/**
+ * How long after the person's last wheel turn, key or touch a scroll is still
+ * theirs: a smooth scroll or a trackpad's momentum runs on after its input.
+ * Each scroll that arrives in the window extends it.
+ */
+export const INTENT_MS = 250;
+
+/** What `markScrollIntent` sends the scroller. */
+export const SCROLL_INTENT_EVENT = "devhub-scroll-intent";
+
+/**
+ * Code is about to move `scroller` for the person (find's next match, a
+ * request revealed): the move is theirs, and leaves the end if it goes away
+ * from it.
+ */
+export function markScrollIntent(scroller: Element): void {
+  scroller.dispatchEvent(new Event(SCROLL_INTENT_EVENT));
+}
+
+/** Keys that scroll a view, when the keyboard is not in a field. */
+const SCROLL_KEYS = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+  " ",
+]);
+
+function isEditable(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLSelectElement)
+  );
+}
 
 export interface ScrollMetrics {
   readonly scrollTop: number;
@@ -107,7 +161,7 @@ export interface FollowScroll {
   readonly following: boolean;
   /** Whether output arrived since the transcript stopped following. */
   readonly unseen: boolean;
-  /** Scroll to the end, which resumes following. */
+  /** Scroll to the end, which resumes following. Sending a message does this. */
   readonly jumpToLatest: () => void;
 }
 
@@ -134,6 +188,14 @@ export function useFollowScroll({
     if (element) element.scrollTop = element.scrollHeight;
   }, [scroller]);
 
+  const setFollowingNow = useCallback(
+    (value: boolean) => {
+      followingNow.current = value;
+      scroller.current?.toggleAttribute("data-following", value);
+    },
+    [scroller],
+  );
+
   // The person's scrolls, and the resizes nobody made.
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -141,19 +203,24 @@ export function useFollowScroll({
     if (!element || !inner) {
       throw new Error("the conversation's scroller was not mounted");
     }
-    let lastTop = element.scrollTop;
+    element.toggleAttribute("data-following", followingNow.current);
+    /** Until when a scroll is the person's; a press holds it open. */
+    let intentUntil = -Infinity;
+    let pressed = false;
+    const intends = (ms = INTENT_MS) => {
+      intentUntil = Math.max(intentUntil, performance.now() + ms);
+    };
+    const intending = () => pressed || performance.now() < intentUntil;
     const onScroll = () => {
       if (element.clientHeight === 0) return;
-      const top = element.scrollTop;
-      const up = top < lastTop;
-      lastTop = top;
-      if (followingNow.current && !up && !isAtBottom(element)) {
-        toBottom();
-        lastTop = element.scrollTop;
+      const atBottom = isAtBottom(element);
+      if (followingNow.current && !intending()) {
+        if (!atBottom) toBottom();
         return;
       }
-      const atBottom = isAtBottom(element);
-      followingNow.current = atBottom;
+      // A smooth scroll or momentum still running is still theirs.
+      if (intending()) intends(INTENT_MS / 2);
+      setFollowingNow(atBottom);
       anchor.current = atBottom ? undefined : anchorOf(element, inner);
       setFollowing(atBottom);
       if (atBottom) setUnseen(false);
@@ -162,15 +229,72 @@ export function useFollowScroll({
       if (element.clientHeight === 0) return;
       if (followingNow.current) toBottom();
     };
+    // A wheel turned down at the end cannot leave it: only up is intent.
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0 || !followingNow.current) intends();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (!SCROLL_KEYS.has(event.key) || isEditable(event.target)) return;
+      const target = event.target;
+      const here =
+        target === document.body ||
+        target === document.documentElement ||
+        (target instanceof Node && element.contains(target));
+      if (here) intends(INTENT_MS * 2);
+    };
+    // A press on the scroller's own box is its scrollbar (or the margin
+    // beside the column): held, whatever scrolls is the drag. A press on the
+    // words is a selection, which scrolls only once dragged past an edge.
+    let pressing = false;
+    const onPress = (event: Event) => {
+      pressing = true;
+      pressed = event.target === element;
+    };
+    // A finger on the scroller scrolls it, wherever it is put down.
+    const onTouch = () => {
+      pressing = true;
+      pressed = true;
+    };
+    const onDrag = (event: PointerEvent) => {
+      if (!pressing || pressed) return;
+      const box = element.getBoundingClientRect();
+      if (event.clientY < box.top || event.clientY > box.bottom) intends();
+    };
+    const onRelease = () => {
+      if (!pressing) return;
+      if (pressed) intends();
+      pressing = false;
+      pressed = false;
+    };
+    const onIntent = () => intends();
     element.addEventListener("scroll", onScroll, { passive: true });
+    element.addEventListener("wheel", onWheel, { passive: true });
+    element.addEventListener("pointerdown", onPress);
+    element.addEventListener("touchstart", onTouch, { passive: true });
+    element.addEventListener(SCROLL_INTENT_EVENT, onIntent);
+    window.addEventListener("pointermove", onDrag, { passive: true });
+    window.addEventListener("pointerup", onRelease);
+    window.addEventListener("pointercancel", onRelease);
+    window.addEventListener("touchend", onRelease);
+    document.addEventListener("keydown", onKey, true);
     const observer = new ResizeObserver(onResize);
     observer.observe(element);
-    observer.observe(inner);
+    // The border box: the Smart Buttons' reserve is padding.
+    observer.observe(inner, { box: "border-box" });
     return () => {
       element.removeEventListener("scroll", onScroll);
+      element.removeEventListener("wheel", onWheel);
+      element.removeEventListener("pointerdown", onPress);
+      element.removeEventListener("touchstart", onTouch);
+      element.removeEventListener(SCROLL_INTENT_EVENT, onIntent);
+      window.removeEventListener("pointermove", onDrag);
+      window.removeEventListener("pointerup", onRelease);
+      window.removeEventListener("pointercancel", onRelease);
+      window.removeEventListener("touchend", onRelease);
+      document.removeEventListener("keydown", onKey, true);
       observer.disconnect();
     };
-  }, [scroller, content, toBottom]);
+  }, [scroller, content, toBottom, setFollowingNow]);
 
   // New output, and being shown again. Either way a following transcript goes
   // to the end. Otherwise new output is flagged, and a surface coming back
@@ -200,12 +324,12 @@ export function useFollowScroll({
   }, [revision, hidden, scroller, content, toBottom]);
 
   const jumpToLatest = useCallback(() => {
-    followingNow.current = true;
+    setFollowingNow(true);
     anchor.current = undefined;
     setFollowing(true);
     setUnseen(false);
     toBottom();
-  }, [toBottom]);
+  }, [toBottom, setFollowingNow]);
 
   return { following, unseen, jumpToLatest };
 }

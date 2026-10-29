@@ -21,6 +21,8 @@
  * page's own (`FIND_FOLD`) is told to open by `REVEAL_EVENT`.
  */
 
+import { markScrollIntent } from "./followScroll";
+
 /** Marks an element that folds away part of what it holds, and opens on `REVEAL_EVENT`. */
 export const FIND_FOLD = "data-find-fold";
 
@@ -260,6 +262,7 @@ export function scrollMatchIntoView(match: Range): void {
       /auto|scroll/.test(style.overflowX) &&
       element.scrollWidth > element.clientWidth;
     if (!down && !across) continue;
+    markScrollIntent(element);
     const box = match.getBoundingClientRect();
     const view = element.getBoundingClientRect();
     if (down)
