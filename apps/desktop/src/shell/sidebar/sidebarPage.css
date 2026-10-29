@@ -49,3 +49,83 @@
 .sidebar-page .sidebar-resize-handle::after {
   margin-inline: 9px 0;
 }
+
+/*
+ * Compact mode's floating Sidebar: the expanded column on a raised card over
+ * the content, while the pointer is on the rail (`useSidebarOverlay.ts`).
+ *
+ * It is this same pane, drawn expanded — the rows are told the Sidebar is not
+ * collapsed — so everything above about the column holds, and only the frame
+ * changes. Main widened this view to the card for as long as it floats
+ * (`windowLayout.sidebarRect`): the inset on the leading side, the expanded
+ * width, and `--sidebar-overlay-shadow` past it for the shadow, all of it
+ * spelled once in main and served to this page with the chrome's geometry.
+ * Everything in the view that is not the card is transparent and shows the
+ * workbench under it.
+ *
+ * The card is the Sidebar's own colour, opaque. `--material-float` is for a
+ * surface that can blur what passes under it, and a view cannot blur another
+ * view: translucent here would be the editor's text showing through the rows.
+ */
+.sidebar-page > .sidebar[data-overlay] {
+  width: var(--sidebar-width);
+  flex: 1 1 auto;
+  align-self: flex-start;
+}
+
+.sidebar-page > .sidebar[data-overlay="open"] {
+  margin: var(--sidebar-overlay-inset) 0 var(--sidebar-overlay-inset)
+    var(--sidebar-overlay-inset);
+  border-right: 0;
+  border-radius: var(--radius-card);
+  background: var(--chrome);
+  box-shadow: var(--elevation-3);
+  overflow: hidden;
+  /* Out of the rail's edge: the card is uncovered from the rail's width to
+     its own, decelerating, the way a tab bar slides out from its strip. A
+     clip rather than a slide, because the rail is the card's own leading
+     part and must not move while the rest arrives. */
+  animation: sidebar-overlay-out var(--motion-base) var(--ease-enter);
+}
+
+@keyframes sidebar-overlay-out {
+  from {
+    clip-path: inset(
+      -40px calc(100% - var(--sidebar-rail-collapsed-width)) -40px -40px round
+        var(--radius-card)
+    );
+    opacity: 0.85;
+  }
+
+  to {
+    clip-path: inset(-40px -40px -40px -40px round var(--radius-card));
+    opacity: 1;
+  }
+}
+
+/*
+ * Landing: compact mode was turned off under the card. The Sidebar is docked
+ * now, at the width the card already had, and main has moved the content over
+ * once; the card lets go of its inset, its corners and its shadow where it
+ * stands, and is the column. The view stays as wide as the card until this
+ * has finished (`LAND_MS`), so nothing of the card is cut off on the way.
+ */
+.sidebar-page > .sidebar[data-overlay="landing"] {
+  animation: sidebar-overlay-land var(--motion-base) var(--ease-standard);
+}
+
+@keyframes sidebar-overlay-land {
+  from {
+    margin: var(--sidebar-overlay-inset) 0 var(--sidebar-overlay-inset)
+      var(--sidebar-overlay-inset);
+    border-radius: var(--radius-card);
+    background: var(--chrome);
+    box-shadow: var(--elevation-3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-page > .sidebar[data-overlay] {
+    animation: none;
+  }
+}

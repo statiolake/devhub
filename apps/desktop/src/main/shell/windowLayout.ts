@@ -96,6 +96,28 @@ const HAIRLINE = 1;
  * not there. The strip is the honest width instead.
  */
 const SPLIT_DIVIDER = 6;
+/**
+ * `--sidebar-overlay-inset`: how far the floating Sidebar stands off the
+ * window's leading edge and off the top and foot of its own column.
+ *
+ * Compact mode's overlay is a card, not a column: it is the expanded Sidebar
+ * lifted over the content, the way a browser's vertical tab bar floats its
+ * full width over the page while the pointer is on the strip. A card flush
+ * against the window's edge would read as the docked column drawn over the
+ * workbench by mistake; the inset is what says it floats.
+ */
+const SIDEBAR_OVERLAY_INSET = 6;
+/**
+ * `--sidebar-overlay-shadow`: the room past the card's trailing edge that its
+ * shadow is drawn in.
+ *
+ * The shadow is the page's own paint, so it has to be inside the view — and
+ * every pixel of the view takes the pointer, transparent or not: a
+ * `WebContentsView` has no hit-test region of its own. So this is as narrow as
+ * a shadow can be and still read as one, and a press in it closes the overlay
+ * at once (`useSidebarOverlay.ts`) rather than swallowing a second click.
+ */
+const SIDEBAR_OVERLAY_SHADOW = 14;
 /** How far the notices sit from the window's corner. */
 const TOASTS_MARGIN = 12;
 /** Between a tooltip and the row it is about. */
@@ -172,7 +194,17 @@ export type KeyboardHalf =
 export interface LayoutState {
 	readonly titleBar: TitleBarMode;
 	readonly density: SidebarDensity;
-	readonly sidebar: { readonly width: number; readonly collapsed: boolean };
+	readonly sidebar: {
+		readonly width: number;
+		readonly collapsed: boolean;
+		/**
+		 * The page is floating the expanded Sidebar over the content: compact
+		 * mode under the pointer, or the moment it lands as compact mode is
+		 * turned off (`useSidebarOverlay.ts`). Only the Sidebar's own view
+		 * moves for it — see `sidebarRect` — and absent is no overlay.
+		 */
+		readonly overlay?: boolean;
+	};
 	readonly surface: SurfaceArrangement;
 	readonly keyboard: KeyboardHalf;
 	/**
@@ -322,6 +354,8 @@ export function chromeVariables(): ReadonlyArray<readonly [string, string]> {
 	return [
 		["--titlebar-height", `${TITLE_BAR_HEIGHT}px`],
 		["--traffic-light-span", `${TRAFFIC_LIGHT_SPAN}px`],
+		["--sidebar-overlay-inset", `${SIDEBAR_OVERLAY_INSET}px`],
+		["--sidebar-overlay-shadow", `${SIDEBAR_OVERLAY_SHADOW}px`],
 	];
 }
 
@@ -389,6 +423,15 @@ export function surfaceRect(
  * The rail's floor is still about the lights (see `sidebarColumnWidth`): they
  * are drawn over this column whether or not the band belongs to it, and a rail
  * narrower than their span would put the close button on a workbench.
+ *
+ * **The overlay is the one time this is not the column.** While the page
+ * floats the expanded Sidebar over the content (`state.sidebar.overlay`), the
+ * view is widened to the card it draws — the inset, the expanded width, and
+ * the room its shadow takes — and nothing else moves: the content area is
+ * still laid out from `sidebarColumnWidth`, which an overlay does not change,
+ * so the workbench and the Agent keep their rectangles to the pixel. The view
+ * is sized to the card and not to the window because every pixel of a view
+ * takes the pointer, transparent or not; the card is all that should.
  */
 export function sidebarRect(
 	windowSize: LayoutSize,
@@ -396,10 +439,23 @@ export function sidebarRect(
 ): LayoutRect {
 	const band =
 		state.titleBar === "shown" ? TITLE_BAR_HEIGHT + HAIRLINE : TITLE_BAR_HEIGHT;
+	const column = sidebarColumnWidth(state);
+	const width =
+		state.sidebar.overlay === true
+			? Math.max(
+					column,
+					Math.min(
+						windowSize.width,
+						SIDEBAR_OVERLAY_INSET +
+							Math.round(state.sidebar.width) +
+							SIDEBAR_OVERLAY_SHADOW,
+					),
+				)
+			: column;
 	return {
 		x: 0,
 		y: band,
-		width: sidebarColumnWidth(state),
+		width,
 		height: Math.max(0, windowSize.height - band),
 	};
 }
@@ -832,9 +888,11 @@ function layer(
  * see `parkedRect`.
  *
  * `sidebar` and `agents` are always in it, because both exist for the life of
- * the window and neither is ever a layer over anything: they are columns
- * beside the workbench, so their being present costs nothing and their
- * ordering against each other never comes up.
+ * the window: they are columns beside the workbench, so their being present
+ * costs nothing and their ordering against each other never comes up. The one
+ * exception is compact mode's floating Sidebar (`state.sidebar.overlay`),
+ * which is over the content by definition — so for as long as it floats the
+ * Sidebar is moved from the bottom of the stack to just under the layers.
  */
 export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	const { windowSize, state } = input;
@@ -847,18 +905,21 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	const editorRect = workbenchRect(windowSize, state);
 	const onScreen = onScreenEditor(input);
 
+	const sidebar: LayoutChild = {
+		identity: { kind: "sidebar" },
+		rect: sidebarRect(windowSize, state),
+		visible: true,
+	};
+	const overlay = state.sidebar.overlay === true;
 	const children: LayoutChild[] = [
 		{ identity: { kind: "shell" }, rect: shellRect, visible: true },
 		// Always there, and always under everything else that is drawn over
 		// the content area: the Sidebar is the one child that is never covered
 		// and never absent, so nothing above it in this list can be wrong
 		// about it. Collapsed it is a rail rather than gone — `collapsed` is a
-		// width, not a visibility.
-		{
-			identity: { kind: "sidebar" },
-			rect: sidebarRect(windowSize, state),
-			visible: true,
-		},
+		// width, not a visibility. Floating, it is the exception, and it is
+		// placed with the content instead (below).
+		...(overlay ? [] : [sidebar]),
 	];
 	// Every workbench is sized, whether or not it is drawn: a view that is
 	// shown at the size it had when it was last hidden lays itself out against
@@ -946,6 +1007,11 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			visible: shown,
 		});
 	}
+	// The floating Sidebar is over the content — every workbench, whatever
+	// they attached, the Agents and the terminals — because that is what
+	// floating means, and under every layer, because a notice, a question and
+	// a tooltip are above everything that is the window's own.
+	if (overlay) children.push(sidebar);
 	children.push(
 		layer(
 			{ kind: "toasts" },

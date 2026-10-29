@@ -1045,3 +1045,106 @@ describe("terminal mode's editor area", () => {
 		});
 	});
 });
+
+/**
+ * Compact mode's floating Sidebar (`useSidebarOverlay.ts`): the expanded
+ * Sidebar on a card over the content, like a browser's vertical tab bar.
+ * Only the Sidebar's own view moves for it, and it moves *up the stack*.
+ */
+describe("the floating Sidebar", () => {
+	const floating = (overrides: Partial<LayoutState> = {}) =>
+		state({
+			sidebar: { width: 248, collapsed: true, overlay: true },
+			...overrides,
+		});
+	const variables = new Map(chromeVariables());
+	const inset = Number.parseFloat(
+		variables.get("--sidebar-overlay-inset") ?? "",
+	);
+	const shadow = Number.parseFloat(
+		variables.get("--sidebar-overlay-shadow") ?? "",
+	);
+
+	it("tells every page the card's inset and its shadow's room", () => {
+		expect(inset).toBeGreaterThan(0);
+		expect(shadow).toBeGreaterThan(0);
+	});
+
+	it("widens the Sidebar's view to the card: inset, expanded width, shadow", () => {
+		expect(sidebarRect(WINDOW, floating())).toEqual({
+			x: 0,
+			y: 33,
+			width: inset + 248 + shadow,
+			height: 867,
+		});
+	});
+
+	it("moves nothing in the content area: it is laid out from the rail", () => {
+		const rail = state({ sidebar: { width: 248, collapsed: true } });
+		expect(surfaceRect(WINDOW, floating())).toEqual(surfaceRect(WINDOW, rail));
+		expect(workbenchRect(WINDOW, floating())).toEqual(
+			workbenchRect(WINDOW, rail),
+		);
+		const split = { kind: "split", editorKey: "/a", ratio: 0.5 } as const;
+		expect(agentsRect(WINDOW, floating({ surface: split }))).toEqual(
+			agentsRect(
+				WINDOW,
+				state({ sidebar: { width: 248, collapsed: true }, surface: split }),
+			),
+		);
+	});
+
+	it("is stacked over the content and under every layer", () => {
+		const children = windowLayout(
+			input({
+				state: floating({
+					surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
+					terminal: { terminalId: "t", share: 0.3 },
+				}),
+				terminals: ["t"],
+				attached: [attached()],
+			}),
+		);
+		const order = kinds(children);
+		const sidebar = order.indexOf("sidebar");
+		for (const content of ["editor", "attached", "agents", "terminal"]) {
+			expect(order.lastIndexOf(content as never)).toBeLessThan(sidebar);
+		}
+		for (const layer of ["toasts", "picker", "tooltip"]) {
+			expect(order.indexOf(layer as never)).toBeGreaterThan(sidebar);
+		}
+		expect(order.filter((kind) => kind === "sidebar")).toHaveLength(1);
+	});
+
+	it("stays under the content when it is docked or a rail", () => {
+		for (const collapsed of [false, true]) {
+			const order = kinds(
+				windowLayout(
+					input({ state: state({ sidebar: { width: 248, collapsed } }) }),
+				),
+			);
+			expect(order.indexOf("sidebar")).toBe(1);
+		}
+	});
+
+	/**
+	 * Compact mode turned off under the card: the column is docked at once —
+	 * the content moves over, once — while the view stays as wide as the card
+	 * and over the content until the page says it has landed.
+	 */
+	it("lands: docked content, the card's view, until the page lets go", () => {
+		const landing = state({
+			sidebar: { width: 248, collapsed: false, overlay: true },
+		});
+		const docked = state({ sidebar: { width: 248, collapsed: false } });
+		expect(surfaceRect(WINDOW, landing)).toEqual(surfaceRect(WINDOW, docked));
+		expect(surfaceRect(WINDOW, landing).x).toBe(248);
+		expect(sidebarRect(WINDOW, landing).width).toBe(inset + 248 + shadow);
+		expect(sidebarRect(WINDOW, docked).width).toBe(248);
+	});
+
+	it("is never wider than the window", () => {
+		const narrow = { width: 200, height: 600 };
+		expect(sidebarRect(narrow, floating()).width).toBe(200);
+	});
+});

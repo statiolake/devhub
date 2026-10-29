@@ -558,6 +558,13 @@ export interface LayoutPreviewWire {
 	 * of the seam's `extent` — whichever way it runs (`TerminalSeamWire`).
 	 */
 	readonly terminalShare?: number | null;
+	/**
+	 * Compact mode's floating Sidebar is up (or landing as compact mode is
+	 * turned off): the one other geometric fact the page owns while it lasts,
+	 * because the pointer it follows is in the page. `false` or `null` ends
+	 * it. See `windowLayout.sidebarRect` and `useSidebarOverlay.ts`.
+	 */
+	readonly sidebarOverlay?: boolean | null;
 }
 
 /**
@@ -1282,7 +1289,7 @@ export interface SidebarBridge
 	 * One way, like `raiseFailure` and for the same reason: what is being sent
 	 * is a fact about the pointer, not a request waiting on an answer, and a
 	 * tooltip that had to await a round trip would arrive after the pointer
-	 * had moved on. The page still owns *when* — the rest delay and the one
+	 * had moved on. The page still owns *when* — at once, now — and the one
 	 * tooltip for the whole tree — because only it can see the pointer in this
 	 * view. It no longer owns the leave: see `releaseTooltip`.
 	 */

@@ -1211,6 +1211,13 @@ export class AppController {
 		shellWindow().onContentFocused((pane) => {
 			this.paneFocused(pane);
 		});
+		// The Sidebar's page started over, so whatever it was floating is
+		// gone with it; the view goes back to its column.
+		shellWindow().onSidebarRestarted(() => {
+			if (!this.sidebarOverlay) return;
+			this.sidebarOverlay = false;
+			this.publishLayoutState();
+		});
 		// Loaded before any page exists, so a file that would not read is said
 		// with the other startup failures. Pruned to the Agents the model has:
 		// a draft goes when its Agent does.
@@ -4460,6 +4467,7 @@ export class AppController {
 			sidebar: {
 				width: this.sidebarWidthPreview ?? snapshot.sidebar.width,
 				collapsed: snapshot.sidebar.collapsed,
+				...(this.sidebarOverlay ? { overlay: true } : {}),
 			},
 			surface:
 				surface.kind === "split" && this.splitRatioPreview !== undefined
@@ -4520,6 +4528,12 @@ export class AppController {
 	 * pointer, which the page owns, and not a rectangle, which it does not.
 	 */
 	private sidebarWidthPreview: number | undefined;
+	/**
+	 * Whether the Sidebar page is floating the expanded Sidebar over the
+	 * content (compact mode under the pointer). The page's to say, like a drag
+	 * preview, and for the same reason: see `LayoutPreviewWire.sidebarOverlay`.
+	 */
+	private sidebarOverlay = false;
 	private splitRatioPreview: number | undefined;
 	/** The divider between the Agent and its terminal, being dragged. */
 	private terminalSharePreview: number | undefined;
@@ -10083,6 +10097,9 @@ export class AppController {
 		handle(CHANNELS.previewLayout, (_event, preview: LayoutPreviewWire) => {
 			if (preview.sidebarWidth !== undefined) {
 				this.sidebarWidthPreview = preview.sidebarWidth ?? undefined;
+			}
+			if (preview.sidebarOverlay !== undefined) {
+				this.sidebarOverlay = preview.sidebarOverlay === true;
 			}
 			if (preview.splitRatio !== undefined) {
 				this.splitRatioPreview = preview.splitRatio ?? undefined;

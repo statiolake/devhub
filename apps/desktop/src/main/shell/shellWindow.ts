@@ -726,6 +726,20 @@ export class ShellWindow {
 		this.contentFocused = changed;
 	}
 
+	/**
+	 * Register the one reader of "the Sidebar's page started over": a reload,
+	 * or its renderer gone. Whatever that page was holding — the floating
+	 * Sidebar's widened view, above all — went with it, and a view left wide
+	 * over the workbench by a page that no longer knows it is would take the
+	 * workbench's clicks for nothing.
+	 */
+	onSidebarRestarted(restarted: () => void): void {
+		const contents = this.sidebar.contents();
+		if (!contents) return;
+		contents.on("did-start-loading", restarted);
+		contents.on("render-process-gone", restarted);
+	}
+
 	//#endregion
 
 	//#region the views a workbench attaches to itself

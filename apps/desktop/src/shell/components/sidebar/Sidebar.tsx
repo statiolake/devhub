@@ -42,6 +42,7 @@ import {
 } from "../../../model/projectStatus";
 import { moveIntent, sourceOfTreeItem } from "./reorder";
 import { useReorder, type Reorder } from "./useReorder";
+import { useSidebarOverlay } from "./useSidebarOverlay";
 import {
   agentNote,
   agentRowFacts,
@@ -1298,8 +1299,31 @@ export function Sidebar({ snapshot }: SidebarProps) {
    */
   const reorder = useReorder(snapshot);
 
+  /**
+   * Compact mode's floating Sidebar (`useSidebarOverlay.ts`). While it is up
+   * — or landing as compact mode goes off — the pane is drawn *expanded*: the
+   * same rows with their words, exactly as the docked column draws them, so
+   * the rows are told the Sidebar is not collapsed. The model's `collapsed`
+   * does not move for it; it is a way of looking at the rail, not a state of
+   * the Sidebar.
+   */
+  const paneRef = useRef<HTMLElement>(null);
+  const overlay = useSidebarOverlay(collapsed, paneRef, reorder.active);
+  const drawnCollapsed = collapsed && overlay.phase === "closed";
+  const drawn = useMemo(
+    () =>
+      drawnCollapsed === snapshot.sidebar.collapsed
+        ? snapshot
+        : {
+            ...snapshot,
+            sidebar: { ...snapshot.sidebar, collapsed: drawnCollapsed },
+          },
+    [drawnCollapsed, snapshot],
+  );
+
   return (
     <aside
+      ref={paneRef}
       className="sidebar"
       aria-label="Workspace navigation"
       // Collapsed is drawn and never rendered differently: the same rows in the
@@ -1307,7 +1331,19 @@ export function Sidebar({ snapshot }: SidebarProps) {
       // labels a screen reader reads and the roving tab stop are one set of
       // markup in both states, and there is no second render path to keep in
       // step with the first.
-      data-collapsed={collapsed ? "true" : undefined}
+      data-collapsed={drawnCollapsed ? "true" : undefined}
+      // The card the overlay floats, and the moment it lands. See
+      // `styles/shell.css` — the same pane, raised.
+      data-overlay={overlay.phase === "closed" ? undefined : overlay.phase}
+      {...overlay.paneHandlers}
+      // A row chosen in the floating Sidebar does what a row does, and the
+      // card goes, the way a browser's tab bar folds away after a tab is
+      // picked.
+      onClickCapture={(event) => {
+        if ((event.target as Element).closest("[data-tree-item-id]") !== null) {
+          overlay.dismiss();
+        }
+      }}
       // A row is in the air, so the rows it may not land among are dimmed:
       // the lit part of the list is the range. See `styles/reorder.css`.
       data-reordering={reorder.active ? "true" : undefined}
@@ -1321,6 +1357,8 @@ export function Sidebar({ snapshot }: SidebarProps) {
         if (isImeComposing(event.nativeEvent)) return;
         if (event.key !== "Escape") return;
         event.preventDefault();
+        // The floating Sidebar goes first; the keyboard goes back with it.
+        overlay.dismiss();
         leaveSidebar();
       }}
     >
@@ -1434,7 +1472,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
             workspace={scratch}
             identity={rowIdentity(scratch, snapshot.scratchWorkspaceId)}
             repository={repositories.get(scratch.id)}
-            snapshot={snapshot}
+            snapshot={drawn}
             agentProfiles={agentProfiles.profiles}
             agentProfilesAvailability={agentProfiles.availability}
             chordDigit={armed ? 0 : undefined}
@@ -1498,7 +1536,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
                     snapshot.scratchWorkspaceId,
                   )}
                   repository={repositories.get(entry.workspace.id)}
-                  snapshot={snapshot}
+                  snapshot={drawn}
                   agentProfiles={agentProfiles.profiles}
                   agentProfilesAvailability={agentProfiles.availability}
                   chordDigit={
@@ -1526,7 +1564,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
           disabled separator is a keyboard stop that answers nothing — and the
           width it would set is still there, waiting, for when the Sidebar
           comes back. */}
-      {collapsed ? null : (
+      {collapsed || overlay.phase !== "closed" ? null : (
         <SidebarResizeHandle
           width={renderedWidth}
           onPreview={previewResize}
@@ -1538,7 +1576,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
           collapsed rail, so a tooltip drawn in it is clipped by it, which is
           the exact failure `title` was replaced to avoid. Where it goes is the
           owner's and takes no argument from here: beside the row, always. */}
-      <RowTooltip />
+      <RowTooltip generation={overlay.generation} />
     </aside>
   );
 }

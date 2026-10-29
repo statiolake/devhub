@@ -31,10 +31,9 @@
  * run out over the editor and there is no width at which it stops being
  * readable. This page keeps the three things only it can know:
  *
- * - **When.** The pointer has to *rest* on a row (`HOVER_DELAY_MS`); a pointer
- *   crossing the column on its way somewhere else raises nothing. The keyboard
- *   has no such delay, because a row reached with the arrows was chosen rather
- *   than crossed.
+ * - **When.** As soon as the pointer is on a row (`HOVER_DELAY_MS`, which is
+ *   nothing now), and as soon as the keyboard reaches one. A pointer that
+ *   passes over a row inside one event turn still raises nothing.
  * - **One tooltip for the whole tree**, not one per row. Saying so here is
  *   what makes it true rather than hoping every row hides its own when another
  *   shows — and main cannot hold two either, so the rule is kept twice.
@@ -78,15 +77,17 @@ import { tooltipLines } from "./rowDescription";
 const LIVE_TICK_MS = 1000;
 
 /**
- * How long the pointer rests on a row before its tooltip is drawn.
+ * How long the pointer is on a row before its tooltip is drawn: not at all.
  *
- * A pointer crossing the Sidebar on its way somewhere else passes over every
- * row it crosses, and a tooltip raised on entry for each of them is a flicker
- * of sentences nobody asked for. Resting on a row is the question; this is how
- * long resting takes. The keyboard has no such delay: a row reached with the
- * arrows was chosen, not crossed.
+ * It was 300 ms, a rest the pointer had to make first, and the person found a
+ * tooltip that waits to be a tooltip that is not there. It is still a timer
+ * rather than a call, so that a row left inside the same turn of the event
+ * loop — an `over` and an `out` in one dispatch — raises nothing, and so that
+ * the floating Sidebar has opened before the row is asked (see `generation`).
+ * The flicker it used to guard is guarded where it is decided now: main holds
+ * a tooltip being left for `RELEASE_GRACE_MS` (`tooltipView.ts`).
  */
-const HOVER_DELAY_MS = 300;
+const HOVER_DELAY_MS = 0;
 
 /**
  * What this element has to say, as the lines a tooltip draws.
@@ -136,7 +137,18 @@ export function tooltipFor(
   return text === undefined || text === "" ? undefined : [{ text }];
 }
 
-export function RowTooltip() {
+export interface RowTooltipProps {
+  /**
+   * The floating Sidebar's count of openings and closings
+   * (`useSidebarOverlay.ts`). A row the pointer arrived on as the card opened
+   * or closed raises nothing: the card already shows that row in full, and a
+   * sentence about it beside the card is the rail's tooltip doubled up with
+   * the overlay. The next row the pointer goes to is asked as usual.
+   */
+  readonly generation?: () => number;
+}
+
+export function RowTooltip({ generation }: RowTooltipProps = {}) {
   /**
    * Where main has laid this view, which is the whole of what this page
    * knows about where it is. Undefined until the first push, and a tooltip
@@ -223,15 +235,18 @@ export function RowTooltip() {
       if (!element || element === anchor.current) return undefined;
       return element;
     };
-    // The pointer has to rest on a row first. See `HOVER_DELAY_MS`.
+    // On the next turn, not this one. See `HOVER_DELAY_MS`.
     const pointerEnter = (event: Event) => {
       const element = anchorFor(event);
       if (!element) return;
       cancelRest();
       anchor.current = element;
+      const arrivedIn = generation?.();
       resting.current = setTimeout(() => {
         resting.current = undefined;
-        if (anchor.current === element) show(element);
+        if (anchor.current !== element) return;
+        if (generation !== undefined && generation() !== arrivedIn) return;
+        show(element);
       }, HOVER_DELAY_MS);
     };
     // The keyboard chose the row; it is drawn at once.
@@ -301,7 +316,7 @@ export function RowTooltip() {
       window.removeEventListener("resize", hide);
       window.removeEventListener("blur", hide);
     };
-  }, [hide, release, show]);
+  }, [generation, hide, release, show]);
 
   // Nothing is drawn here. That is the point of the file.
   return null;

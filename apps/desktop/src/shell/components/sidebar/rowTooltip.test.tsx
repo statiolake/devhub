@@ -11,8 +11,8 @@
  * the column, which is what gave the rail no hover at all and gave an expanded
  * row a sentence wrapped into a ribbon — one complaint, not two.
  *
- * So what is pinned here is what this page still owns. **When**: the pointer
- * has to rest, the keyboard does not. **One for the whole tree.** **What it
+ * So what is pinned here is what this page still owns. **When**: at once, for
+ * the pointer and the keyboard alike. **One for the whole tree.** **What it
  * says**, with the row's own lines. And the one number it has to get right —
  * the anchor in the *window's* coordinates, which is the row's box plus the
  * rectangle main told this view it occupies, never anything this page
@@ -122,7 +122,7 @@ function layOut(area: SidebarAreaWire) {
 function hover(row: HTMLElement) {
   fireEvent.pointerOver(row);
   act(() => {
-    vi.advanceTimersByTime(300);
+    vi.advanceTimersByTime(0);
   });
 }
 
@@ -165,20 +165,40 @@ afterEach(() => {
 });
 
 describe("the Sidebar's tooltips", () => {
-  it("waits for the pointer to rest on the row before asking for anything", () => {
+  /**
+   * No rest any more: the person asked for tooltips at once. It is still a
+   * timer of nothing rather than a call, so the request comes on the next
+   * turn of the event loop — after the floating Sidebar has opened, which is
+   * what `generation` reads.
+   */
+  it("asks as soon as the pointer is on the row", () => {
     mount(100);
     layOut(COLUMN);
     const row = screen.getByRole("button");
     fireEvent.pointerOver(row);
-    expect(sent).toEqual([]);
     act(() => {
-      vi.advanceTimersByTime(299);
-    });
-    expect(sent).toEqual([]);
-    act(() => {
-      vi.advanceTimersByTime(1);
+      vi.advanceTimersByTime(0);
     });
     expect(raised().lines).toEqual(FACTS);
+  });
+
+  it("asks nothing for a row the pointer arrived on as the overlay moved", () => {
+    let generation = 0;
+    render(
+      <>
+        <Row top={100} />
+        <RowTooltip generation={() => generation} />
+      </>,
+    );
+    layOut(COLUMN);
+    const row = screen.getByRole("button");
+    fireEvent.pointerOver(row);
+    // The same pointer move opened the floating Sidebar under it.
+    generation += 1;
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+    expect(requests()).toEqual([]);
   });
 
   it("asks for nothing for a row the pointer only crossed", () => {
