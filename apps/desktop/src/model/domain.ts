@@ -1955,7 +1955,10 @@ export class Workspace {
    * its editor whatever was chosen.
    */
   get editorView(): EditorView {
-    return effectiveEditorView(this, this.editorViewValue);
+    return effectiveEditorView(
+      this,
+      this.editorViewValue ?? DEFAULT_EDITOR_VIEW,
+    );
   }
 
   /** Show the other view, or this one. False when nothing changed. */
@@ -1965,7 +1968,18 @@ export class Workspace {
     return this.editorView !== before;
   }
 
-  private editorViewValue: EditorView = DEFAULT_EDITOR_VIEW;
+  /**
+   * Give a Workspace that has no view yet the default one
+   * (`general.default_view`), which it then keeps. One that has a view — chosen
+   * with `Cmd+Q E`, or read from the state file — is left as it is. Called by
+   * `AppModel` as the Workspace enters it.
+   */
+  adoptDefaultEditorView(view: EditorView): void {
+    this.editorViewValue ??= view;
+  }
+
+  /** Undefined until it is chosen, restored or given the default. */
+  private editorViewValue: EditorView | undefined = undefined;
 
   get selectedPath(): DisplayPath {
     return this.selectedPathValue;

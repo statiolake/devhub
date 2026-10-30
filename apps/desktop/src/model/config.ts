@@ -34,6 +34,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DEFAULT_NOTICE_SECONDS } from "./noticeCenter.js";
+import { DEFAULT_EDITOR_VIEW, type EditorView } from "./editorView.js";
 import {
   ACTION_TRIGGERS,
   BUILT_IN_ACTIONS,
@@ -396,6 +397,29 @@ export interface GeneralConfig {
    * shown ones sleep at once. `0` is no cap.
    */
   readonly workbench_awake_max: number;
+  /**
+   * What the editor area of a Workspace with no remembered view shows: its
+   * terminal (`terminal`, DevHub's default) or its VS Code editor (`editor`).
+   * See `model/editorView.ts` and `docs/terminal-mode.md`. A new Workspace,
+   * and one from a state file that does not say, starts in it; from then on
+   * the Workspace remembers its own view, so a change applies to Workspaces
+   * made after it, at once, and leaves the others as they are.
+   */
+  readonly default_view: string;
+}
+
+/**
+ * The only values `general.default_view` takes: one list for the validator
+ * and the Settings popup, as `APPEARANCE_MODES` is.
+ */
+export const DEFAULT_VIEWS: readonly EditorView[] = ["terminal", "editor"];
+
+/** `general.default_view` as the model wants it; anything else is the default. */
+export function defaultViewOf(config: Config | undefined): EditorView {
+  const value = config?.general.default_view;
+  return value === "editor" || value === "terminal"
+    ? value
+    : DEFAULT_EDITOR_VIEW;
 }
 
 export interface RuntimeConfig {
@@ -839,6 +863,7 @@ export function defaultConfig(): Config {
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
       workbench_hibernate_minutes: DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
       workbench_awake_max: DEFAULT_WORKBENCH_AWAKE_MAX,
+      default_view: DEFAULT_EDITOR_VIEW,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -875,6 +900,7 @@ export type ValidationCode =
   | "invalid_socket_name"
   | "forbidden_tmux_argument"
   | "invalid_appearance"
+  | "invalid_default_view"
   | "invalid_keybinding"
   | "unknown_command"
   | "invalid_font_family"
@@ -989,7 +1015,7 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.color_scheme":
     "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
   "general.workbench":
-    "every Workspace's editor area shows its terminal now, and Cmd+Q E switches that Workspace to its VS Code editor and back; a VS Code editor is started the first time it is shown",
+    'every Workspace\'s editor area shows its terminal now, and Cmd+Q E switches that Workspace to its VS Code editor and back; a VS Code editor is started the first time it is shown; `general.default_view = "editor"` makes VS Code what a new Workspace shows',
   "runtimes.herdr":
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
@@ -1454,6 +1480,11 @@ function validateAgentProfiles(
 export function validateConfig(config: Config): void {
   if (config.version !== CONFIG_SCHEMA_VERSION) {
     fail("unsupported_version", "version");
+  }
+  if (
+    !(DEFAULT_VIEWS as readonly string[]).includes(config.general.default_view)
+  ) {
+    fail("invalid_default_view", "general.default_view");
   }
   validateRuntimes(config.runtimes);
   validateAppearance(config.appearance);
@@ -2064,6 +2095,7 @@ export function interpretConfig(document: unknown): Config {
       "terminal_idle_seconds",
       "workbench_hibernate_minutes",
       "workbench_awake_max",
+      "default_view",
     ],
     "general",
   );
@@ -2173,6 +2205,12 @@ export function interpretConfig(document: unknown): Config {
         generalTable,
         "workbench_awake_max",
         DEFAULT_WORKBENCH_AWAKE_MAX,
+      ),
+      default_view: optionalString(
+        generalTable,
+        "default_view",
+        "general",
+        DEFAULT_EDITOR_VIEW,
       ),
     },
     runtimes: {
@@ -2385,6 +2423,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       terminal_idle_seconds: config.general.terminal_idle_seconds,
       workbench_hibernate_minutes: config.general.workbench_hibernate_minutes,
       workbench_awake_max: config.general.workbench_awake_max,
+      default_view: config.general.default_view,
     },
     runtimes: {
       shell: config.runtimes.shell,

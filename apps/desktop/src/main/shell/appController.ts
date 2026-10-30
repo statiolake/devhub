@@ -225,6 +225,7 @@ import {
 	DEFAULT_WORKBENCH_AWAKE_MAX,
 	DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
 	defaultConfigPaths,
+	defaultViewOf,
 	profilePresentation,
 	withProfileRuntimes,
 	type AgentsConfig,
@@ -9203,6 +9204,9 @@ export class AppController {
 		const config = withProfileRuntimes(accepted, activeProfile()).config;
 		this.config = config;
 		this.settingsRefusal.accepted();
+		// `general.default_view`, for the Workspaces made from now on; the ones
+		// open keep the view they remember (`model/editorView.ts`).
+		this.coordinator.model.setDefaultEditorView(defaultViewOf(config));
 		// A new `[scratch] daily` names a different folder for today, and that
 		// folder is Scratch from now on; the old one stays as an ordinary row.
 		// Not caught here: a failure goes to the main process's root.
@@ -10485,7 +10489,12 @@ export async function createAppController(
 	let model: AppModel;
 	let projectionFailure: string | undefined;
 	try {
-		model = hydrateModel(state, profiles, today.workspace);
+		model = hydrateModel(
+			state,
+			profiles,
+			today.workspace,
+			defaultViewOf(config),
+		);
 	} catch (error) {
 		// Two different things used to arrive here and both started the app
 		// empty in silence, which is every workspace gone and a working-looking
@@ -10498,7 +10507,7 @@ export async function createAppController(
 		// attached: starting empty would move it somewhere it cannot be found.
 		if (!(error instanceof StateError)) throw error;
 		projectionFailure = error.describe(stateStore.path);
-		model = new AppModel(today.workspace);
+		model = new AppModel(today.workspace, defaultViewOf(config));
 	}
 	if (today.failure !== undefined) {
 		model.markWorkspaceUnavailable(

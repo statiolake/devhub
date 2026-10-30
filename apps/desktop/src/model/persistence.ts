@@ -73,6 +73,11 @@ import {
 } from "./appModel.js";
 import { isTerminalZoomOffset } from "./terminalZoom.js";
 import {
+  DEFAULT_EDITOR_VIEW,
+  isEditorView,
+  type EditorView,
+} from "./editorView.js";
+import {
   TERMINAL_DEFAULT_SHARE,
   isTerminalShare,
   legacyAgentTerminal,
@@ -550,13 +555,15 @@ export interface WorkspaceStateRecord {
   /** Absent: the editor is on the Workspace's own machine. See version 12. */
   editor?: EditorRecord;
   /**
-   * What its editor area shows (`model/editorView.ts`): `"editor"` for its
-   * VS Code editor, absent for its terminal — the default, and what every file
-   * written before per-Workspace views means. No bump, for the reason
-   * `recently_closed` had none: an older DevHub that drops it on its next save
-   * loses which view was shown, never anything open.
+   * What its editor area shows (`model/editorView.ts`): `"terminal"` or
+   * `"editor"`, written for every Workspace. Absent — every file written
+   * before `general.default_view`, where only `"editor"` was written — is a
+   * Workspace with no remembered view, which is given `general.default_view`
+   * as it is restored. No bump, for the reason `recently_closed` had none: an
+   * older DevHub reads `"terminal"` as its own default, the terminal, and
+   * drops nothing open.
    */
-  editor_view?: "editor";
+  editor_view?: EditorView;
   repository_id?: string;
   /**
    * There is deliberately no `issue_url` here any more.
@@ -1399,6 +1406,11 @@ export function hydrateModel(
    * an ordinary row.
    */
   today: Workspace,
+  /**
+   * `general.default_view`: what a Workspace whose record has no `editor_view`
+   * shows (`model/editorView.ts`). Today's new Scratch is given it too.
+   */
+  defaultEditorView: EditorView = DEFAULT_EDITOR_VIEW,
 ): AppModel {
   validateState(state);
   const profileById = new Map<string, AgentProfile>();
@@ -1423,7 +1435,11 @@ export function hydrateModel(
       );
       const started = record.editor?.started_container_id;
       if (started !== undefined) made.noteStartedContainer(started);
-      if (record.editor_view === "editor") made.setEditorView("editor");
+      // Absent is no remembered view: `model.addWorkspace` (or the
+      // constructor, for Scratch) gives it `general.default_view`.
+      if (record.editor_view !== undefined) {
+        made.setEditorView(record.editor_view);
+      }
       return made;
     });
     return { record, where, workspace };
@@ -1431,7 +1447,7 @@ export function hydrateModel(
   const scratch =
     restored.find(({ workspace }) => workspace.key === today.key)?.workspace ??
     today;
-  const model = new AppModel(scratch);
+  const model = new AppModel(scratch, defaultEditorView);
   for (const { record, where, workspace } of restored) {
     const id = workspace.id;
     if (workspace !== scratch) {
@@ -1620,9 +1636,7 @@ export function stateFromSnapshot(
       canonical_path: workspace.root,
       location: locationRecord(workspace.location),
       ...editorRecord(workspace.editor, workspace.startedContainer),
-      ...(workspace.editorView === "editor"
-        ? { editor_view: "editor" as const }
-        : {}),
+      editor_view: workspace.editorView,
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
       lifecycle: lifecycleFrom(workspace.state),
@@ -2225,10 +2239,10 @@ function decodeWorkspaceRecord(
     ...(object["editor"] === undefined
       ? {}
       : { editor: decodeEditor(at("editor"), object["editor"]) }),
-    // Anything but `"editor"` is the terminal, which is the default: a view
-    // is a convenience, and a file is never refused over one.
-    ...(object["editor_view"] === "editor"
-      ? { editor_view: "editor" as const }
+    // Anything but the two views is no remembered view, which is the
+    // default: a view is a convenience, and a file is never refused over one.
+    ...(isEditorView(object["editor_view"])
+      ? { editor_view: object["editor_view"] }
       : {}),
     repository_id: decodeOptional(object["repository_id"], (entry) =>
       decodeString(at("repository_id"), entry),

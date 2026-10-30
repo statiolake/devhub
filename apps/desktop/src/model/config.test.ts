@@ -21,6 +21,7 @@ import {
   appearanceModeIn,
   DEFAULT_THEME_DARK,
   DEFAULT_THEME_LIGHT,
+  defaultViewOf,
   type ValidationCode,
   profilePresentation,
 } from "./config.js";
@@ -693,6 +694,36 @@ describe("parsing", () => {
           replacement: expect.stringContaining("Cmd+Q E") as unknown as string,
         },
       ]);
+    });
+  });
+
+  describe("general.default_view", () => {
+    it("is the terminal unless the file says otherwise", () => {
+      expect(defaultConfig().general.default_view).toBe("terminal");
+      expect(parseConfig(MINIMAL).general.default_view).toBe("terminal");
+      expect(defaultViewOf(undefined)).toBe("terminal");
+      expect(defaultViewOf(parseConfig(MINIMAL))).toBe("terminal");
+    });
+
+    it("is read, kept and written back", () => {
+      const config = parseConfig(
+        'version = 1\n[general]\ndefault_view = "editor"\n',
+      );
+      expect(config.general.default_view).toBe("editor");
+      expect(defaultViewOf(config)).toBe("editor");
+      expect(configToToml(config)).toContain('default_view = "editor"');
+      expect(parseConfig(configToToml(config)).general.default_view).toBe(
+        "editor",
+      );
+    });
+
+    it("refuses anything but the two views, naming the key", () => {
+      const text = 'version = 1\n[general]\ndefault_view = "vscode"\n';
+      expect(codeOf(() => parseConfig(text))).toBe("invalid_default_view");
+      expect(pathOf(() => parseConfig(text))).toBe("general.default_view");
+      expect(
+        codeOf(() => parseConfig("version = 1\n[general]\ndefault_view = 1\n")),
+      ).toBe("invalid_type");
     });
   });
 

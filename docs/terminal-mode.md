@@ -9,24 +9,37 @@ in it, or anything else.
 
 `Cmd+Q E` switches that Workspace's editor area to its **VS Code editor**,
 starting its workbench the first time, and back. Each Workspace has its own
-answer, and remembers it across restarts.
+answer, and remembers it across restarts. `[general] default_view = "editor"`
+makes the VS Code editor what a new Workspace starts with (below).
 
 ## The model
 
 ```text
-editor area of a Workspace = terminal (default)  ─ Cmd+Q E ─▶  editor (VS Code)
-                                                 ◀─ Cmd+Q E ─
+editor area of a Workspace = terminal (default_view)  ─ Cmd+Q E ─▶  editor (VS Code)
+                                                      ◀─ Cmd+Q E ─
 ```
 
 - **Per Workspace.** `Workspace.editorView` (`model/domain.ts`, the rule in
   `model/editorView.ts`) is `terminal` or `editor`; the intent that changes it
   is `set_editor_view`, raised by main. It does not move the selection:
   switching pages or Workspaces finds each one showing what it showed.
-- **Remembered.** The state file writes `editor_view = "editor"` on a
-  Workspace showing its VS Code editor and nothing for one showing its
-  terminal, so every file from before this (and every new Workspace) shows the
-  terminal. No schema bump: an older DevHub that drops the key loses which
-  view was shown, never anything open.
+- **Remembered.** The state file writes `editor_view = "terminal"` or
+  `"editor"` for every Workspace. No schema bump: an older DevHub reads
+  `"terminal"` as its own default and loses at most which view was shown,
+  never anything open.
+- **The default: `general.default_view`** (`"terminal"`, DevHub's default, or
+  `"editor"`). A Workspace with no remembered view shows it: a new Workspace,
+  Scratch's new day included, and one from a state file without `editor_view`
+  (every file written before this setting, where only `"editor"` was written
+  and an absent key meant the terminal; a value that is neither view reads as
+  absent). It is given the default as it enters the model
+  (`Workspace.adoptDefaultEditorView`, from `AppModel.addWorkspace` and the
+  constructor; `hydrateModel` takes the default for the restored ones) and
+  remembers it from then on. A change in Settings applies at once to the
+  Workspaces made after it (`AppModel.setDefaultEditorView`, from
+  `adoptConfig`); the Workspaces already open keep the view they show. With
+  `"editor"` the lazy start below is unchanged: only the Workspace on screen
+  starts its workbench at launch, and each other one when it is shown.
 - **SSH Workspaces have no terminal view.** Their editor area is their VS Code
   workbench on the host, always (`effectiveEditorView`); `Cmd+Q E` in it says
   so (`editor_has_no_terminal`) and changes nothing. The terminal view is a
@@ -76,8 +89,9 @@ selects none.
 So:
 
 - **At DevHub start no workbench is started**, unless the Workspace on screen
-  was left showing its VS Code editor (or is an SSH Workspace), in which case
-  that one — the one being looked at — starts.
+  shows its VS Code editor (left that way, given it by
+  `default_view = "editor"`, or an SSH Workspace), in which case that one — the
+  one being looked at — starts, and no other.
 - **The first `Cmd+Q E`** makes the Workspace's editor the selected one, and
   the plan opens it (`start`, or `wake` from that never-started sleep). The
   slot shows a spinner, "Starting VS Code…" (`starting`, or `waking` with no
@@ -161,13 +175,22 @@ In the VS Code editor the editor's Vim does the same with its last window:
 
 ## Settings
 
-There is no setting for any of this. `general.workbench` (`"vscode"` /
-`"terminal"`, a restart) is **retired** (`RETIRED_KEYS` in `model/config.ts`):
-a file that still has it loads, the key is ignored and said once at info
-level, and the next save drops it. A default view setting and an
-"open files in" override were considered and left out: the terminal is the
-default, VS Code costs nothing until it is shown, and opens follow what is on
-screen.
+`general.default_view` (`"terminal"` | `"editor"`, default `"terminal"`) is
+the one setting: what a Workspace with no remembered view shows (above).
+Anything else is refused as `invalid_default_view`, naming the key; it is the
+Settings window's General ▸ Editors ▸ Default view popup.
+
+```toml
+[general]
+default_view = "editor"   # new Workspaces open in VS Code; Cmd+Q E still switches
+```
+
+`general.workbench` (`"vscode"` / `"terminal"`, a restart) is **retired**
+(`RETIRED_KEYS` in `model/config.ts`): a file that still has it loads, the key
+is ignored and said once at info level, and the next save drops it; its
+`"vscode"` is `default_view = "editor"` now, per Workspace and without a
+restart. An "open files in" override was considered and left out: opens
+follow what is on screen.
 
 The Settings window's General ▸ Editors group says how the two views work;
 `general.workbench_hibernate_minutes` and `general.workbench_awake_max` are

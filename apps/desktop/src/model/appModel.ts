@@ -63,7 +63,7 @@ import {
 } from "./terminalZoom.js";
 import { SCRATCH_NAME } from "../ipc/windowTitles.js";
 import type { PromptCache } from "./conversation.js";
-import type { EditorView } from "./editorView.js";
+import { DEFAULT_EDITOR_VIEW, type EditorView } from "./editorView.js";
 import type {
   TerminalActivity,
   WorkspaceTerminalObservation,
@@ -511,7 +511,13 @@ export class AppModel {
    */
   private readonly history: NavigationHistory<NavigationSelection>;
 
-  constructor(scratch: Workspace) {
+  constructor(
+    scratch: Workspace,
+    /** `general.default_view`. See `setDefaultEditorView`. */
+    defaultEditorView: EditorView = DEFAULT_EDITOR_VIEW,
+  ) {
+    this.defaultEditorViewValue = defaultEditorView;
+    scratch.adoptDefaultEditorView(defaultEditorView);
     this.workspaceList.push(scratch);
     this.scratchId = scratch.id;
     this.selectionValue = {
@@ -970,9 +976,27 @@ export class AppModel {
     ) {
       fail(DomainErrorCode.UnknownRepository);
     }
+    workspace.adoptDefaultEditorView(this.defaultEditorViewValue);
     this.workspaceList.push(workspace);
     this.bumpRevision();
   }
+
+  /**
+   * What a Workspace with no view of its own shows (`general.default_view`):
+   * given to each one as it enters the model — a new one, or one restored from
+   * a state file that does not say — and kept by it from then on. A change
+   * applies to the Workspaces that enter after it; the ones here keep the view
+   * they have. Nothing on screen changes, so no revision.
+   */
+  setDefaultEditorView(view: EditorView): void {
+    this.defaultEditorViewValue = view;
+  }
+
+  get defaultEditorView(): EditorView {
+    return this.defaultEditorViewValue;
+  }
+
+  private defaultEditorViewValue: EditorView;
 
   associateRepository(
     id: WorkspaceId,

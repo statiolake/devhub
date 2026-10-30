@@ -123,7 +123,8 @@ anywhere.
 A Workspace's editor area shows its own tmux session (`ws-…`) until you ask
 for the workbench: `Cmd+Q E` switches that Workspace to its VS Code editor —
 started the first time, then put to sleep and woken like any other — and back,
-and each Workspace remembers which it shows. Files DevHub is asked to open go
+and each Workspace remembers which it shows (`[general] default_view =
+"editor"` makes VS Code what a new Workspace starts with). Files DevHub is asked to open go
 to whichever is shown: the workbench, or a Neovim DevHub runs in that session.
 See [`docs/terminal-mode.md`](docs/terminal-mode.md).
 
@@ -330,6 +331,10 @@ workbench_awake_max = 2     # at most this many such editors open; past it, the
                             # ones shown least recently close at once, on the
                             # switch. Cmd+Q N/P passing through never wakes one.
                             # 0: no cap.
+default_view = "terminal"   # what a new Workspace's editor area shows: "terminal"
+                            # (its ws- tmux session) or "editor" (its VS Code
+                            # editor, started when shown). Cmd+Q E switches one;
+                            # each Workspace remembers its own. SSH: always VS Code.
 
 [appearance]
 theme_dark = "Dark 2026"    # the VS Code colour theme DevHub wears in the dark

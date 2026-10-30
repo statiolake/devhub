@@ -224,8 +224,27 @@ export function GeneralSection({
 
       <Group
         heading="Editors"
-        note="A Workspace's editor area shows its terminal; Cmd+Q E switches it to the Workspace's VS Code editor and back. A VS Code editor is started the first time it is shown. One that has been off screen for a while is closed to free its memory, and opens again where it was when you show it, unsaved changes included. Its Agents and terminal sessions keep running. An editor with a running terminal command or a debug session stays open, and so do SSH and dev container editors. Closing and the limit apply to VS Code editors only."
+        note="A Workspace's editor area shows its terminal or its VS Code editor; Cmd+Q E switches between them, and each Workspace remembers which it shows. A VS Code editor is started the first time it is shown. One that has been off screen for a while is closed to free its memory, and opens again where it was when you show it, unsaved changes included. Its Agents and terminal sessions keep running. An editor with a running terminal command or a debug session stays open, and so do SSH and dev container editors. Closing and the limit apply to VS Code editors only."
       >
+        <Row
+          label="Default view"
+          help="What a new Workspace's editor area shows: its terminal, or its VS Code editor (started when the Workspace is first shown, not at launch). Workspaces you have already used keep the view they remember; SSH Workspaces always show VS Code. Default Terminal."
+        >
+          <Popup
+            label="Default view"
+            value={config.general.defaultView}
+            options={[
+              ["terminal", "Terminal"],
+              ["editor", "VS Code"],
+            ]}
+            onChange={(defaultView) => {
+              update({
+                ...config,
+                general: { ...config.general, defaultView },
+              });
+            }}
+          />
+        </Row>
         <Row
           label="Close after (minutes)"
           help="How long an editor may be off screen before it is closed. 0 keeps every editor open. Default 10."

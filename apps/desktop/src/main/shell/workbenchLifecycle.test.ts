@@ -1171,6 +1171,23 @@ describe("lazy start: a workbench only for an editor that is shown", () => {
 		]);
 	});
 
+	it("with general.default_view = editor, starts only the Workspace shown at launch, and each other one when it is shown", () => {
+		// Every Workspace is in its editor view, so the selected one's editor is
+		// on screen: it alone starts. The rest are asleep, never opened, until
+		// the person goes to them — not a workbench per Workspace at launch.
+		const { lifecycle, plan } = life();
+		expect(opens(plan("scratch"))).toEqual([
+			{ kind: "open", folder: "scratch", cause: "start" },
+		]);
+		expect(lifecycle.foldersIn("asleep")).toEqual(["a", "b", "c"]);
+		lifecycle.loaded("scratch", 0);
+		expect(opens(plan("scratch", ["scratch"]))).toEqual([]);
+		expect(opens(plan("c", ["scratch"]))).toEqual([
+			{ kind: "open", folder: "c", cause: "wake" },
+		]);
+		expect(lifecycle.foldersIn("asleep")).toEqual(["a", "b"]);
+	});
+
 	it("then lives under the cap like any other: going back to the terminal lets it sleep", () => {
 		const { lifecycle, plan } = life();
 		plan("a");
