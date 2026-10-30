@@ -120,6 +120,12 @@ in every sense the workbench itself can observe, laid into DevHub's single
 window as a `WebContentsView`. Extensions, settings, the integrated terminal
 and the extension host are the real ones, on disk, with no "remote" semantics
 anywhere.
+A Workspace's editor area shows its own tmux session (`ws-…`) until you ask
+for the workbench: `Cmd+Q E` switches that Workspace to its VS Code editor —
+started the first time, then put to sleep and woken like any other — and back,
+and each Workspace remembers which it shows. Files DevHub is asked to open go
+to whichever is shown: the workbench, or a Neovim DevHub runs in that session.
+See [`docs/terminal-mode.md`](docs/terminal-mode.md).
 
 **Agents** — an Agent is a tmux session, with no runtime in between. It lives
 on DevHub's own tmux socket, carries DevHub's own markers, and is attached by

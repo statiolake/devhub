@@ -41,6 +41,7 @@ import {
   sshHost,
 } from "./domain.js";
 import type { AppErrorWire } from "../ipc/appShell.js";
+import type { EditorView } from "./editorView.js";
 import type { AppSnapshot, PaneFocusTarget } from "./appModel.js";
 import type { SmartButtonsSpot } from "./smartButtons.js";
 import type { TerminalZoomDirection } from "./terminalZoom.js";
@@ -266,6 +267,16 @@ export type UserIntent =
       readonly type: "editor_container_started";
       readonly workspaceId: WorkspaceId;
       readonly containerId: string;
+    }
+  /**
+   * What a Workspace's editor area shows: its terminal or its VS Code editor
+   * (`model/editorView.ts`). Raised by main, for `Cmd+Q E` and for a request
+   * that needs the workbench; the selection does not move.
+   */
+  | {
+      readonly type: "set_editor_view";
+      readonly workspaceId: WorkspaceId;
+      readonly view: EditorView;
     }
   | {
       readonly type: "adopt_scratch_day";

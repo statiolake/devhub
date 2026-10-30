@@ -97,6 +97,18 @@ export interface ChordHost {
 		focus?: Landing,
 		passing?: true,
 	): void;
+	/**
+	 * `Cmd+Q E`: show this Workspace's terminal or its VS Code editor in its
+	 * editor area and go there, keyboard and all — starting its workbench the
+	 * first time it is shown (`docs/terminal-mode.md`).
+	 */
+	showEditorView(
+		workspaceId: string,
+		view: "terminal" | "editor",
+		presentation?: "beside",
+	): void;
+	/** `Cmd+Q E` in an SSH Workspace's editor: say there is no terminal view. */
+	editorHasNoTerminal(workspaceId: string): void;
 	/** A key the chords did not want, a modifier alone aside: someone is typing. */
 	typed(): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
@@ -242,6 +254,12 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 				effect.focus,
 				effect.passing,
 			);
+			return;
+		case "show-editor-view":
+			host.showEditorView(effect.workspaceId, effect.view, effect.presentation);
+			return;
+		case "editor-has-no-terminal":
+			host.editorHasNoTerminal(effect.workspaceId);
 			return;
 		case "swap-split-focus":
 			host.swapSplitFocus();

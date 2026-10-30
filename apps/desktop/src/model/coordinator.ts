@@ -692,6 +692,9 @@ export class AppCoordinator {
       case "attach_editor":
         this.model.attachEditor(intent.workspaceId, intent.editor);
         return this.transitionOutcome(beforeRevision, id);
+      case "set_editor_view":
+        this.model.setEditorView(intent.workspaceId, intent.view);
+        return this.transitionOutcome(beforeRevision, id);
       case "editor_container_started":
         this.model.noteEditorContainerStarted(
           intent.workspaceId,

@@ -396,57 +396,6 @@ export interface GeneralConfig {
    * shown ones sleep at once. `0` is no cap.
    */
   readonly workbench_awake_max: number;
-  /**
-   * What the editor area is: a VS Code workbench per Workspace (`vscode`),
-   * or the Workspace's own tmux session (`terminal`). See `WORKBENCH_MODES`
-   * and `docs/terminal-mode.md`. Read once, at launch: a change takes a
-   * restart, which the Settings row says.
-   */
-  readonly workbench: string;
-}
-
-/**
- * The two things the editor area can be, and the only values
- * `general.workbench` takes.
- *
- * One list for the reason `APPEARANCE_MODES` is one: the validator, the
- * Settings popup and the launch-time reading (`workbenchModeIn`) have to
- * agree, and a fourth spelling is how a value becomes selectable in one place
- * and refused in another.
- */
-export const WORKBENCH_MODES: readonly string[] = ["vscode", "terminal"];
-
-/** What `general.workbench` says, once it is known to be one of the two. */
-export type WorkbenchMode = "vscode" | "terminal";
-
-export const DEFAULT_WORKBENCH_MODE: WorkbenchMode = "vscode";
-
-/**
- * `general.workbench` as read from the settings file, for the one caller that
- * needs it before the settings are loaded — `titleBarModeIn`'s twin, for the
- * same reason: whether workbenches exist at all is decided before the
- * controller that loads the config is built, and it holds for the life of
- * the process.
- *
- * A file that will not parse answers with the default. The real load runs
- * moments later on the same text and is what reports the problem.
- */
-export function workbenchModeIn(text: string | undefined): WorkbenchMode {
-  if (text === undefined) return DEFAULT_WORKBENCH_MODE;
-  let table: Record<string, unknown>;
-  try {
-    table = parseConfigText(text);
-  } catch {
-    return DEFAULT_WORKBENCH_MODE;
-  }
-  const general = table["general"];
-  if (typeof general !== "object" || general === null) {
-    return DEFAULT_WORKBENCH_MODE;
-  }
-  const value = (general as Record<string, unknown>)["workbench"];
-  return value === "terminal" || value === "vscode"
-    ? value
-    : DEFAULT_WORKBENCH_MODE;
 }
 
 export interface RuntimeConfig {
@@ -890,7 +839,6 @@ export function defaultConfig(): Config {
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
       workbench_hibernate_minutes: DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
       workbench_awake_max: DEFAULT_WORKBENCH_AWAKE_MAX,
-      workbench: DEFAULT_WORKBENCH_MODE,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -927,7 +875,6 @@ export type ValidationCode =
   | "invalid_socket_name"
   | "forbidden_tmux_argument"
   | "invalid_appearance"
-  | "invalid_workbench"
   | "invalid_keybinding"
   | "unknown_command"
   | "invalid_font_family"
@@ -1041,6 +988,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.color_scheme":
     "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
+  "general.workbench":
+    "every Workspace's editor area shows its terminal now, and Cmd+Q E switches that Workspace to its VS Code editor and back; a VS Code editor is started the first time it is shown",
   "runtimes.herdr":
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
@@ -1505,9 +1454,6 @@ function validateAgentProfiles(
 export function validateConfig(config: Config): void {
   if (config.version !== CONFIG_SCHEMA_VERSION) {
     fail("unsupported_version", "version");
-  }
-  if (!WORKBENCH_MODES.includes(config.general.workbench)) {
-    fail("invalid_workbench", "general.workbench");
   }
   validateRuntimes(config.runtimes);
   validateAppearance(config.appearance);
@@ -2118,7 +2064,6 @@ export function interpretConfig(document: unknown): Config {
       "terminal_idle_seconds",
       "workbench_hibernate_minutes",
       "workbench_awake_max",
-      "workbench",
     ],
     "general",
   );
@@ -2228,12 +2173,6 @@ export function interpretConfig(document: unknown): Config {
         generalTable,
         "workbench_awake_max",
         DEFAULT_WORKBENCH_AWAKE_MAX,
-      ),
-      workbench: optionalString(
-        generalTable,
-        "workbench",
-        "general",
-        DEFAULT_WORKBENCH_MODE,
       ),
     },
     runtimes: {
@@ -2446,7 +2385,6 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       terminal_idle_seconds: config.general.terminal_idle_seconds,
       workbench_hibernate_minutes: config.general.workbench_hibernate_minutes,
       workbench_awake_max: config.general.workbench_awake_max,
-      workbench: config.general.workbench,
     },
     runtimes: {
       shell: config.runtimes.shell,

@@ -214,24 +214,6 @@ describe("the Edit menu", () => {
 	});
 });
 
-describe("terminal mode's menu bar", () => {
-	const viewLabels = () =>
-		(applied?.items.find((item) => item.label === "View")?.submenu?.items ?? [])
-			.map((item) => item.label ?? item.role)
-			.filter((label) => label !== undefined);
-
-	it("offers Toggle Integrated Terminal while there are workbenches", () => {
-		installMenu(host());
-		expect(viewLabels()).toContain("Toggle Integrated Terminal");
-	});
-
-	it("does not offer it when there are none", () => {
-		installMenu({ ...host(), hasWorkbenches: () => false });
-		expect(viewLabels()).not.toContain("Toggle Integrated Terminal");
-		expect(viewLabels()).toContain("togglefullscreen");
-	});
-});
-
 describe("an accelerator on a bar built by somebody else", () => {
 	/** The workbench's File menu: New Text File on Command-N. */
 	function workbenchBar(ran: string[]) {

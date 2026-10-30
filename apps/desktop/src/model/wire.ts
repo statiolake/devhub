@@ -179,7 +179,6 @@ export function appearanceWire(
   config: AppearanceConfig,
   sequence: number,
   vsCodeTerminal: TerminalPaletteWire | undefined,
-  workbench: "vscode" | "terminal" = "vscode",
 ): AppAppearanceWire {
   const wire: AppAppearanceWire = {
     sequence,
@@ -192,7 +191,6 @@ export function appearanceWire(
     terminalScrollSensitivity: config.terminalScrollSensitivity,
     terminalMargin: config.terminalMargin,
     terminalTheme: terminalThemeWire(config.terminalTheme, vsCodeTerminal),
-    ...(workbench === "terminal" ? { workbench } : {}),
   };
   validateAppearanceWire(wire);
   return wire;
@@ -506,6 +504,7 @@ export function snapshotWire(
     label: workspace.label,
     location: workspaceLocationWire(workspace.location),
     editor: editorAttachmentWire(workspace.root, workspace.editor),
+    editorView: workspace.editorView,
     root: workspace.root,
     displayRoot: abbreviateHome(workspace.root, homeOf(workspace.location)),
     key: workspace.key,
@@ -776,6 +775,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "terminal_launcher_unavailable":
     case "terminal_needs_agent":
     case "terminal_needs_agent_view":
+    case "editor_has_no_terminal":
     case "workspace_sessions_left_running":
     case "tmux_command_failed":
     case "tmux_command_timed_out":
@@ -814,6 +814,7 @@ export function errorWireAt(
     code === "usage_unreadable" ||
     code === "terminal_needs_agent" ||
     code === "terminal_needs_agent_view" ||
+    code === "editor_has_no_terminal" ||
     // Pressing the chord again is the retry, and it goes further back.
     code === "closed_not_reopened" ||
     code === "send_to_agent_refused" ||

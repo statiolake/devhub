@@ -20,7 +20,11 @@ the main process died the moment the first workbench view committed its
 navigation, a second after the socket had answered. So after the reply the
 app is kept running until a workbench view reports that its page finished
 loading, and it has to still be alive when that happens. See
-`wait_for_workbench`.
+`wait_for_workbench`. DevHub starts no workbench by itself — every
+Workspace's editor area shows its terminal until `Cmd+Q E` asks for its VS
+Code editor — so the smoke first requires that none is made for a few
+seconds, then runs `toggle_editor` over the socket the way `devhub --tell
+run` does, which starts Scratch's.
 
 It also reads the bundle before starting it, for the faults a reply cannot
 rule out. An asset the workbench fetches by path — a wasm file, say — going
@@ -68,8 +72,9 @@ import time
 from pathlib import Path
 
 
-def probe(socket_path: Path, deadline: float) -> dict:
-	"""Ask the running app for its version, or raise once the deadline passes.
+def probe(socket_path: Path, deadline: float, request: dict | None = None) -> dict:
+	"""Ask the running app for its version (or `request`), or raise once the
+	deadline passes.
 
 	The socket file appears before the app is listening, and a stalled app lets
 	the kernel accept a connection it will never read, so neither the file nor a
@@ -85,7 +90,7 @@ def probe(socket_path: Path, deadline: float) -> dict:
 		client.settimeout(max(remaining, 0.1))
 		try:
 			client.connect(str(socket_path))
-			client.sendall(json.dumps({"kind": "version"}).encode() + b"\n")
+			client.sendall(json.dumps(request or {"kind": "version"}).encode() + b"\n")
 			buffered = b""
 			while b"\n" not in buffered:
 				chunk = client.recv(4096)
@@ -131,15 +136,64 @@ DEVHUB_SPAWNED_BINARY = "out/native/devhub-input-source"
 
 
 # What `WorkbenchView` (apps/desktop/src/main/shell/workbenchView.ts) prints
-# once a workbench's page has loaded: the first workbench a fresh DevHub opens
-# is Scratch, so a startup that gets this far has created a view, navigated it
-# and survived the commit.
+# once a workbench's page has loaded. A fresh DevHub opens none by itself —
+# every Workspace's editor area shows its terminal until `Cmd+Q E` asks for its
+# VS Code editor (docs/terminal-mode.md) — so the smoke asks for Scratch's, the
+# way the chord does (`devhub --tell run toggle_editor`), and a startup that
+# gets this far has created a view, navigated it and survived the commit.
 WORKBENCH_LOADED = re.compile(r"\[devhub\] workbench view \d+: its page has finished loading")
+
+# What `browserWindowShim.ts` prints the moment a workbench view is made.
+WORKBENCH_CREATED = re.compile(r"\[devhub\] workbench view \d+ created")
+
+# `Cmd+Q E`, as the control socket runs it: Scratch's editor area switched
+# from its terminal to its VS Code editor, which starts its workbench.
+TOGGLE_EDITOR = {"kind": "tell", "command": {"verb": "run", "command": "toggle_editor"}}
 
 
 def workbench_loaded(log_text: str) -> bool:
 	"""Whether the app's output says a workbench view finished loading its page."""
 	return WORKBENCH_LOADED.search(log_text) is not None
+
+
+def workbench_created(log_text: str) -> bool:
+	"""Whether the app's output says a workbench view was made at all."""
+	return WORKBENCH_CREATED.search(log_text) is not None
+
+
+def no_workbench_for(process: subprocess.Popen, log_path: Path, quiet: float) -> str | None:
+	"""None if the app ran `quiet` seconds without making a workbench view;
+	otherwise why not. No workbench is started until one is asked for: that is
+	the memory the editor area's terminal default is there to save."""
+	until = time.monotonic() + quiet
+	while time.monotonic() < until:
+		code = process.poll()
+		if code is not None:
+			return f"the app exited before any workbench was asked for (exit status {code})"
+		try:
+			if workbench_created(log_path.read_text(errors="replace")):
+				return "a workbench view was made before any was asked for"
+		except OSError:
+			pass
+		time.sleep(0.25)
+	return None
+
+
+def ask_for_workbench(socket_path: Path, deadline: float) -> str | None:
+	"""Run `toggle_editor` until it acts (the model is ready); None once it
+	has, otherwise why not."""
+	last = "no reply"
+	while time.monotonic() < deadline:
+		try:
+			reply = probe(socket_path, deadline, TOGGLE_EDITOR)
+		except TimeoutError as error:
+			return f"the app did not answer toggle_editor ({error})"
+		data = reply.get("data")
+		if reply.get("ok") and isinstance(data, dict) and data.get("ran") is True:
+			return None
+		last = str(reply.get("message", reply))
+		time.sleep(0.5)
+	return f"toggle_editor never ran: {last}"
 
 
 def wait_for_workbench(
@@ -379,9 +433,11 @@ def run_and_probe(
 	user_data: Path,
 	timeout: float,
 	settle: float,
+	quiet: float = 5.0,
 ) -> int:
-	"""Start the app, require a reply on its control socket and a workbench
-	it outlives, and take it and its state down again whatever happened."""
+	"""Start the app, require a reply on its control socket, no workbench
+	until one is asked for, and then a workbench it outlives — and take it
+	and its state down again whatever happened."""
 	# A file rather than a pipe: nothing reads a pipe while the app runs, and
 	# an app that fills one blocks on its own console.log.
 	log_path = state / "app.log"
@@ -414,7 +470,19 @@ def run_and_probe(
 		first_line = str(reply.get("message", "")).splitlines()[0:1]
 		print(f"    the control socket answered: {first_line[0] if first_line else reply}")
 
-		problem = wait_for_workbench(process, log_path, started + timeout, settle)
+		problem = no_workbench_for(process, log_path, quiet)
+		if problem is not None:
+			print(f"    {problem}", file=sys.stderr)
+			print(log_tail(log_path), file=sys.stderr)
+			return 1
+		print(f"    no workbench was started in the first {quiet:.0f}s, before one was asked for")
+		problem = ask_for_workbench(user_data / "devhub" / "control.sock", started + timeout)
+		if problem is not None:
+			print(f"    {problem}", file=sys.stderr)
+			print(log_tail(log_path), file=sys.stderr)
+			return 1
+		print("    toggle_editor ran: Scratch's editor area asked for its VS Code editor")
+		problem = wait_for_workbench(process, log_path, time.monotonic() + timeout, settle)
 		if problem is not None:
 			print(f"    {problem}", file=sys.stderr)
 			print(log_tail(log_path), file=sys.stderr)

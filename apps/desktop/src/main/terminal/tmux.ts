@@ -2111,7 +2111,7 @@ export class TmuxTerminalRuntime {
 
 	/**
 	 * Start `argv` in a new window of a Workspace's own (`ws-`) session, made
-	 * first when it is not there: terminal mode's managed Neovim
+	 * first when it is not there: the terminal view's managed Neovim
 	 * (`editor/managedNeovim.ts`). A window and not a split, so the editor has
 	 * the whole editor area and the person's layout is left alone. Answers the
 	 * new pane's id (`%12`).

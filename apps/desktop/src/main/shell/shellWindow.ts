@@ -266,11 +266,12 @@ export class ShellWindow {
 	 */
 	private readonly terminalViews = new Map<string, ChromeView>();
 	/**
-	 * Terminal mode's editor area: one view per Workspace shown so far, by
-	 * its editor key, on that Workspace's own tmux session. The Agent
-	 * terminal pane's page, named by a `workspace:` fragment — the same
-	 * terminal surface, not a second one. Made and ended by
-	 * `syncEditorTerminalViews`; empty in VS Code mode.
+	 * The editor area's terminal view: one view per Workspace whose terminal
+	 * has been shown, by its editor key, on that Workspace's own tmux
+	 * session. The Agent terminal pane's page, named by a `workspace:`
+	 * fragment — the same terminal surface, not a second one. Made and ended
+	 * by `syncEditorTerminalViews`; kept, hidden, while the Workspace's
+	 * editor area shows its workbench.
 	 */
 	private readonly editorTerminalViews = new Map<string, ChromeView>();
 	/** Each editor terminal view's Workspace, by the same editor key. */
@@ -651,7 +652,7 @@ export class ShellWindow {
 
 	/**
 	 * Make a view for every Workspace terminal the editor area has shown, and
-	 * end the ones whose Workspace has gone (terminal mode).
+	 * end the ones whose Workspace has gone (the terminal view).
 	 *
 	 * Kept, like an Agent terminal's view, so that coming back to a Workspace
 	 * finds its terminal attached and where it was rather than reattaching and

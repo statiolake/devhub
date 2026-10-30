@@ -567,13 +567,10 @@ import type { Landing } from "./chords.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
 import { resolveExecutable } from "./runtimes.js";
 import {
-	isTerminalMode,
-	workbenchMode,
-	workspacesWantingWorkbenches,
-	terminalModeSupports,
-	TERMINAL_MODE_NO_DEV_CONTAINERS,
-	TERMINAL_MODE_NO_SSH,
-} from "./workbenchMode.js";
+	hasTerminalView,
+	opensInNeovim,
+	type EditorView,
+} from "../../model/editorView.js";
 import { EditorTerminalExits } from "./editorTerminalExits.js";
 import { listenForCloseRequests } from "./workbenchCloseRequests.js";
 import { WORKSPACE_TERMINAL_SURFACE_PREFIX } from "../../ipc/terminal.js";
@@ -889,7 +886,7 @@ export class AppController {
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
 	/**
-	 * Terminal mode: what the editor area's shell exiting does — the
+	 * The terminal view: what the editor area's shell exiting does — the
 	 * Workspace's close button, else its terminal started over
 	 * (`editorTerminalExits.ts`).
 	 */
@@ -940,7 +937,7 @@ export class AppController {
 		}
 	}
 	/**
-	 * Terminal mode's file jumps: one Neovim per Workspace, DevHub's own.
+	 * The terminal view's file jumps: one Neovim per Workspace, DevHub's own.
 	 * Built with the terminal runtime it runs on; see
 	 * `editor/managedNeovim.ts`.
 	 */
@@ -1387,14 +1384,20 @@ export class AppController {
 			// apart. See `remoteCliBinDirectory`.
 			controlSocketPath: controlSocketPath(userDataPath),
 			model: () => this.coordinator.model,
-			// Terminal mode: the editor area's session ending under the
-			// person is the Workspace's close button (`editorTerminalExits.ts`).
+			// The editor area's terminal view: its session ending under the
+			// person is the Workspace's close button (`editorTerminalExits.ts`)
+			// — while that view is what the editor area shows. Behind the
+			// Workspace's VS Code editor, nobody watched it end, so it is only
+			// started over, ready for the next `Cmd+Q E`.
 			onSurfaceEnded: (surfaceKey) => {
-				if (!isTerminalMode()) return;
 				if (!surfaceKey.startsWith(WORKSPACE_TERMINAL_SURFACE_PREFIX)) return;
-				void this.editorTerminalExits.ended(
-					surfaceKey.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length),
-				);
+				const id = surfaceKey.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length);
+				const workspace = this.workspaceByRawId(id);
+				if (workspace !== undefined && workspace.editorView !== "terminal") {
+					shellWindow().restartEditorTerminal(id);
+					return;
+				}
+				void this.editorTerminalExits.ended(id);
 			},
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
@@ -1600,9 +1603,9 @@ export class AppController {
 	}
 
 	/**
-	 * The managed Neovims of terminal mode, on this Mac's tmux. Built in
-	 * either mode — it costs nothing until a jump asks — and only ever asked
-	 * in terminal mode.
+	 * The managed Neovims of the terminal view, on this Mac's tmux. Built at
+	 * once — it costs nothing until a jump asks — and asked only for a
+	 * Workspace whose editor area shows its terminal (`opensInNeovim`).
 	 */
 	private createManagedNeovims(userDataPath: string): ManagedNeovims {
 		const local = async () => {
@@ -1777,7 +1780,6 @@ export class AppController {
 			toggleIntegratedTerminal: () => {
 				this.toggleIntegratedTerminal();
 			},
-			hasWorkbenches: () => !isTerminalMode(),
 			// The menu item is the same command as the chord and the sidebar's
 			// button, so it is the same line. It used to go straight to
 			// `requestCloseWorkspace`, around the worktree rule — so File ▸ Close
@@ -1904,6 +1906,25 @@ export class AppController {
 			},
 			terminalNeedsAgentView: () => {
 				this.publishError(errorWireAt("terminal_needs_agent_view"));
+			},
+			editorHasNoTerminal: () => {
+				this.publishError(errorWireAt("editor_has_no_terminal"));
+			},
+			showEditorView: (workspaceId, view, presentation) => {
+				const id = workspaceId as WorkspaceId;
+				// The view first, then the move: the arrangement the move
+				// publishes is the one with the view shown, so the keyboard lands
+				// in it (the terminal's xterm, or the workbench — which takes it
+				// once it has started, `ShellWindow.setLayoutState`).
+				this.dispatchOwn({ type: "set_editor_view", workspaceId: id, view });
+				this.arrive(
+					intentFromWire({
+						type: "select_context",
+						context: { kind: "workspace", workspaceId },
+						...(presentation === "beside" ? { split: true } : {}),
+					}),
+					view === "editor" ? "editor" : undefined,
+				);
 			},
 			closeTerminal: (terminalId) => {
 				void this.closePaneTerminal(terminalId).catch(report);
@@ -3691,7 +3712,7 @@ export class AppController {
 		await this.openFolder(opening);
 		const workspaceId = this.openedWorkspaceId(opening);
 		const notes: string[] = [];
-		if (place.dev_container !== undefined && !isTerminalMode()) {
+		if (place.dev_container !== undefined) {
 			try {
 				await this.attachEditor(workspaceId, {
 					kind: "devContainer",
@@ -4188,7 +4209,6 @@ export class AppController {
 			// `terminal_theme = "vscode"`. A controller built without a
 			// theme (in a test) has the built-in palettes.
 			shellThemeIfInstalled()?.terminalPalette(),
-			workbenchMode(),
 		);
 	}
 
@@ -4387,11 +4407,19 @@ export class AppController {
 			layout.kind === "workbench" || layout.kind === "split"
 				? this.editorKeyForSurfaceKey(layout.editorKey)
 				: undefined;
+		// What the editor area shows: the Workspace's terminal, or its VS
+		// Code editor (`model/editorView.ts`).
+		const showsTerminal =
+			editorKey !== undefined &&
+			this.workspaceForEditorKey(editorKey)?.editorView === "terminal";
 		// Its phase, as the page draws it: anything standing in for the
 		// workbench means the workbench itself is not what is in the area.
+		// Not for the terminal, which is there whatever the workbench is doing.
 		const restarting =
 			editorKey !== undefined &&
+			!showsTerminal &&
 			this.workbenches.placeholder(editorKey) !== undefined;
+		const view = showsTerminal ? { view: "terminal" as const } : {};
 		// Nothing is drawn in the content area until the model is ready, and a
 		// workbench being rebuilt is a state of the area rather than a reason
 		// to leave it — in both cases the page has the rectangle and no
@@ -4410,8 +4438,9 @@ export class AppController {
 									editorKey,
 									ratio: snapshot.splitRatio,
 									...hidden,
+									...view,
 								}
-							: { kind: "editor", editorKey, ...hidden };
+							: { kind: "editor", editorKey, ...hidden, ...view };
 		// Both panes of a split are drawn; which of them holds the keyboard is
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
@@ -4439,11 +4468,12 @@ export class AppController {
 		shell.syncTerminalViews(
 			model.agentTerminals().map((one) => one.terminalId),
 		);
-		// Terminal mode's editor area: a view for every Workspace shown so far,
-		// on its own tmux session, in the place a workbench would be.
-		if (isTerminalMode()) {
-			shell.syncEditorTerminalViews(this.editorTerminalViews(editorKey));
-		}
+		// The editor area's terminal view: a view for every Workspace whose
+		// terminal has been shown so far, on its own tmux session, in the
+		// place its workbench goes.
+		shell.syncEditorTerminalViews(
+			this.editorTerminalViews(showsTerminal ? editorKey : undefined),
+		);
 		const paneFocus = model.paneFocus;
 		const keyboard: KeyboardHalf = this.keyboardInSidebar
 			? "sidebar"
@@ -4493,7 +4523,7 @@ export class AppController {
 	}
 
 	/**
-	 * Terminal mode: the Workspaces whose editor-area terminal has been on
+	 * The terminal view: the Workspaces whose editor-area terminal has been on
 	 * screen, by editor key. Each keeps its view — attached, hidden — once it
 	 * has been shown, the way an Agent terminal's does; one whose Workspace
 	 * has gone, or cannot have one, is dropped. See `docs/terminal-mode.md`.
@@ -4507,7 +4537,7 @@ export class AppController {
 		const entries: { editorKey: string; workspaceId: string }[] = [];
 		for (const workspace of this.coordinator.model.workspaces) {
 			if (!this.editorTerminalsShown.has(workspace.key)) continue;
-			if (!terminalModeSupports(workspace)) continue;
+			if (!hasTerminalView(workspace)) continue;
 			entries.push({ editorKey: workspace.key, workspaceId: workspace.id });
 		}
 		const kept = new Set(entries.map((entry) => entry.editorKey));
@@ -5974,11 +6004,14 @@ export class AppController {
 			try {
 				vetoed = await withCloseDeadline(
 					step,
-					// Terminal mode's editor is the managed Neovim: it goes with
-					// its Workspace, in the step a workbench's unload is in.
-					isTerminalMode()
-						? this.closeManagedNeovim(closing).then(() => undefined)
-						: this.askEditorToClose(workspaceId),
+					// Both of its editors go with the Workspace, in this step: the
+					// workbench, which may refuse (unsaved work), and then the
+					// managed Neovim, whose unsaved buffers the close's question
+					// already counted as a running program.
+					this.askEditorToClose(workspaceId).then(async (vetoed) => {
+						if (vetoed === undefined) await this.closeManagedNeovim(closing);
+						return vetoed;
+					}),
 				);
 			} finally {
 				// A question the workbench raised while this step waited — an
@@ -6758,16 +6791,25 @@ export class AppController {
 	 * workbench, which is what makes that arrangement a split rather than a
 	 * jump.
 	 *
-	 * Nothing, for the two layouts with no workbench in them: a Workspace that
-	 * cannot be shown, and an Agent filling the content area on its own. In
-	 * neither case is a workbench closed or forgotten — it is only that no
-	 * workbench is the thing on screen, so there is none to reveal.
+	 * Nothing, for the layouts with no workbench on screen: a Workspace that
+	 * cannot be shown, an Agent filling the content area on its own, and a
+	 * Workspace whose editor area shows its terminal. In none of them is a
+	 * workbench closed or forgotten — it is only that no workbench is the
+	 * thing on screen, so there is none to reveal.
 	 */
 	private selectedEditorSurfaceKey(): string | undefined {
 		const layout = this.coordinator.snapshot().layout;
-		return layout.kind === "unavailable" || layout.kind === "agent"
+		if (layout.kind === "unavailable" || layout.kind === "agent") {
+			return undefined;
+		}
+		const surfaceKey = surfaceKeyName(layout.editor);
+		// The editor area shows the Workspace's terminal: its workbench is not
+		// on screen, so the lifecycle does not start or wake it for this.
+		const folder = this.editorKeyForSurfaceKey(surfaceKey);
+		return folder !== undefined &&
+			this.workspaceForEditorKey(folder)?.editorView === "terminal"
 			? undefined
-			: surfaceKeyName(layout.editor);
+			: surfaceKey;
 	}
 
 	/**
@@ -6844,23 +6886,25 @@ export class AppController {
 			DEFAULT_WORKBENCH_HIBERNATE_MINUTES;
 		return this.workbenches.plan({
 			now,
-			// Terminal mode wants none, so the plan opens, sleeps, caps and
-			// reports nothing — and raises no placeholder for a workbench that
-			// will never come. See `workspacesWantingWorkbenches`.
-			wanted: workspacesWantingWorkbenches(
-				workbenchMode(),
-				model.workspaces,
-			).map((workspace) => ({
-				folder: workspace.key,
-				surfaceKey: `workspace-editor:${workspace.id}`,
-				// Not SSH or a dev container: their weight is on the far
-				// machine, and reconnecting costs.
-				sleepable:
-					workspace.location.kind === "local" &&
-					workspace.editor.kind === "host",
-				closing: workspace.close.kind === "running",
-				awayMs: shell.editorAwayMs(workspace.key, now),
-			})),
+			// Every Workspace whose folder is there (asking for one that is gone
+			// is what put VS Code's "path does not exist" box on screen), each
+			// started only when its editor is shown: until `Cmd+Q E` asks for
+			// it, a Workspace's workbench is asleep without ever having been
+			// opened (`lazy`, `docs/terminal-mode.md`).
+			wanted: model.workspaces
+				.filter((workspace) => workspace.state.kind !== "unavailable")
+				.map((workspace) => ({
+					folder: workspace.key,
+					surfaceKey: `workspace-editor:${workspace.id}`,
+					// Not SSH or a dev container: their weight is on the far
+					// machine, and reconnecting costs.
+					sleepable:
+						workspace.location.kind === "local" &&
+						workspace.editor.kind === "host",
+					closing: workspace.close.kind === "running",
+					awayMs: shell.editorAwayMs(workspace.key, now),
+					lazy: true,
+				})),
 			selected:
 				selectedKey === undefined
 					? undefined
@@ -7155,7 +7199,7 @@ export class AppController {
 	private async closeManagedNeovim(
 		workspace: Workspace | undefined,
 	): Promise<void> {
-		if (workspace === undefined || !terminalModeSupports(workspace)) return;
+		if (workspace === undefined || !hasTerminalView(workspace)) return;
 		await this.managedNeovims?.close({
 			machine: "local",
 			workspaceId: workspace.id,
@@ -7210,6 +7254,16 @@ export class AppController {
 				relocatedOnSameMachine(location, location.path),
 			),
 		});
+		// VS Code asked for this folder's workbench, so that is what its
+		// editor area shows (`docs/terminal-mode.md`).
+		const workspace = this.workspaceForEditorKey(locationKey(location));
+		if (workspace !== undefined && workspace.editorView !== "editor") {
+			this.dispatchOwn({
+				type: "set_editor_view",
+				workspaceId: workspace.id,
+				view: "editor",
+			});
+		}
 	}
 
 	/**
@@ -7231,10 +7285,6 @@ export class AppController {
 		// Opening a folder is going there, keyboard and all: the selection it
 		// makes is where the keys land, the Sidebar it may have been asked
 		// from included. See `arrive`.
-		// Terminal mode is local-only; every way of opening one meets here.
-		if (isTerminalMode() && location.kind === "ssh") {
-			throw workspaceFailure(TERMINAL_MODE_NO_SSH);
-		}
 		this.keyboardInSidebar = false;
 		const anchor =
 			placement === "below-selection" ? this.placementAnchor() : undefined;
@@ -7350,7 +7400,6 @@ export class AppController {
 		target: ContainerTarget,
 	): Promise<string> {
 		const { path, position, waitMarkerPath } = request;
-		if (isTerminalMode()) throw new Error(TERMINAL_MODE_NO_DEV_CONTAINERS);
 		const id = containerHostId(target);
 		const workspace = this.coordinator.model.workspaces.find((candidate) => {
 			const attached = containerTargetOf(candidate.location, candidate.editor);
@@ -7374,9 +7423,10 @@ export class AppController {
 			context: { kind: "workspace", workspaceId: workspace.id },
 			presentation: "full",
 		});
-		await this.syncEditorView();
+		// The container's path is only the workbench's to open: the editor
+		// area shows it, whichever view it was on.
 		openFileInWorkbench(
-			await this.workbenchWindow(workspace.key),
+			await this.selectedWorkbench(workspace.key),
 			id,
 			resolved,
 			position,
@@ -7412,11 +7462,6 @@ export class AppController {
 			throw new Error(
 				`no workspace ${workspaceId} is open to attach an editor to`,
 			);
-		}
-		// There is no VS Code editor to move in terminal mode: a dev container
-		// is only ever where a workbench runs, and terminal mode has none.
-		if (isTerminalMode()) {
-			throw workspaceFailure(TERMINAL_MODE_NO_DEV_CONTAINERS);
 		}
 		const bringUp = (target: ContainerTarget) =>
 			containerHostFor(target).ensureUp(
@@ -7678,6 +7723,8 @@ export class AppController {
 			);
 		}
 		await this.attachEditor(workspaceId, workspace.editor);
+		// Asked from the row, for the editor: shown, so it is the one opened.
+		await this.setEditorView(workspaceId, "editor");
 	}
 
 	/**
@@ -7704,6 +7751,7 @@ export class AppController {
 	/** Reopen a Workspace's editor on its own machine: the row's way out. */
 	async reopenEditorLocally(workspaceId: WorkspaceId): Promise<void> {
 		await this.attachEditor(workspaceId, EDITOR_ON_HOST);
+		await this.setEditorView(workspaceId, "editor");
 	}
 
 	/**
@@ -7811,19 +7859,44 @@ export class AppController {
 	}
 
 	/**
+	 * What a Workspace's editor area shows: its terminal or its VS Code
+	 * editor (`docs/terminal-mode.md`). The selection does not move; the
+	 * lifecycle's plan follows, which is what starts or wakes a workbench
+	 * shown for the first time.
+	 */
+	private async setEditorView(
+		workspaceId: WorkspaceId,
+		view: EditorView,
+	): Promise<void> {
+		const workspace = this.coordinator.model.workspace(workspaceId);
+		if (workspace === undefined || workspace.editorView === view) return;
+		await this.dispatchAwaiting({
+			type: "set_editor_view",
+			workspaceId,
+			view,
+		});
+	}
+
+	/** `setEditorView`, for the Workspace a workbench key names. */
+	private async showEditorViewOf(
+		folder: string,
+		view: EditorView,
+	): Promise<void> {
+		const workspace = this.workspaceForEditorKey(folder);
+		if (workspace !== undefined) await this.setEditorView(workspace.id, view);
+	}
+
+	/**
 	 * The workbench of the folder just selected, for a request that goes on to
 	 * use it: asleep, the lifecycle's plan wakes it (a hold for a passing
 	 * `Cmd+Q N/P` released, since this is not passing), and this waits for
 	 * that open. Never an open of its own — the plan is the one executor.
 	 */
 	private async selectedWorkbench(folder: string): Promise<ICodeWindow> {
-		// The callers that wait for a folder's workbench would wait for ever
-		// in terminal mode, where none is ever opened.
-		if (isTerminalMode()) {
-			throw new Error(
-				"DevHub is in terminal mode, so there is no VS Code editor to open this in.",
-			);
-		}
+		// A request that goes on to use the workbench is a request to show
+		// it: the editor area switches to it, which is what makes it the
+		// selected editor the plan opens or wakes.
+		await this.showEditorViewOf(folder, "editor");
 		this.workbenches.needed(folder, Date.now());
 		await this.syncEditorView();
 		return await this.workbenchWindow(folder);
@@ -8111,8 +8184,11 @@ export class AppController {
 
 	/**
 	 * Carry out where an open was routed: select what it lands in — beside
-	 * the Agent that asked, when it was one — and hand the workbench the file.
-	 * The sentence it answers with says where, and why.
+	 * the Agent that asked, when it was one — and hand the file to the editor
+	 * that Workspace's editor area is showing: its managed Neovim while it
+	 * shows its terminal, its workbench while it shows its VS Code editor
+	 * (`docs/terminal-mode.md`). The sentence it answers with says where, and
+	 * why.
 	 */
 	private async openRouted(
 		destination: OpenDestination,
@@ -8122,7 +8198,17 @@ export class AppController {
 		waitMarkerPath: string | undefined,
 		before: NavigationSelection,
 	): Promise<string> {
-		if (isTerminalMode()) {
+		if (
+			opensInNeovim(
+				destination.kind === "scratch"
+					? this.scratchWorkspace()
+					: this.workspaceAt(
+							destination.workspace.root,
+							runtimeMachine(destination.workspace.machine),
+						),
+				machine,
+			)
+		) {
 			return this.openInManagedNeovim(
 				destination,
 				machine,
@@ -8200,8 +8286,8 @@ export class AppController {
 	}
 
 	/**
-	 * `openRouted` in terminal mode: the same Workspace, selected the same
-	 * way — beside the Agent that asked, for a conversation link — with the
+	 * `openRouted` for a Workspace showing its terminal: the same Workspace,
+	 * selected the same way — beside the Agent that asked, for a conversation link — with the
 	 * editor area in front and the keyboard in it, and the file opened in that
 	 * Workspace's managed Neovim (`editor/managedNeovim.ts`), started in a new
 	 * window of its tmux session if it is not running.
@@ -8223,8 +8309,10 @@ export class AppController {
 						destination.workspace.root,
 						runtimeMachine(destination.workspace.machine),
 					);
-		if (!terminalModeSupports(workspace) || machine !== "local") {
-			throw new Error(TERMINAL_MODE_NO_SSH);
+		if (!opensInNeovim(workspace, machine)) {
+			throw new Error(
+				`${workspace.root} has no terminal view on this Mac to open ${target.path} in.`,
+			);
 		}
 		const besideAgent =
 			destination.kind !== "scratch" && destination.reason === "origin-agent"
@@ -8491,7 +8579,6 @@ export class AppController {
 				takenAt: Date.now(),
 				uptimeMs: Math.round(process.uptime() * 1000),
 				titleBar: shellWindow().titleBar,
-				workbench: workbenchMode(),
 				mainProcessCpu: {
 					userMs: Math.round(cpu.user / 1000),
 					systemMs: Math.round(cpu.system / 1000),

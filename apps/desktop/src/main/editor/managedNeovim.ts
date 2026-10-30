@@ -1,9 +1,10 @@
 /**
- * The Neovim DevHub manages for each Workspace, in terminal mode.
+ * The Neovim DevHub manages for each Workspace, for its terminal view.
  *
  * A file jump — a conversation's file link, `devhub <file>`, Finder's Open
- * With — needs an editor DevHub can address. In terminal mode there is no
- * workbench, so DevHub keeps one Neovim server per Workspace of its own: a
+ * With — needs an editor DevHub can address. While a Workspace's editor area
+ * shows its terminal, that is no workbench, so DevHub keeps one Neovim server
+ * per Workspace of its own: a
  * new tmux window in the Workspace's `ws-` session running `nvim --listen
  * <socket>`, opened on the first jump and reused while it lives. It is
  * separate from any Neovim the person runs in the same session; two of them is

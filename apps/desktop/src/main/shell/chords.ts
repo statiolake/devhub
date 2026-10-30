@@ -151,6 +151,19 @@ export type ChordEffect =
 			/** `Cmd+Q N/P`, maybe only passing through: an asleep editor waits a moment. */
 			readonly passing?: true;
 	  }
+	/**
+	 * `Cmd+Q E`: this Workspace's editor area, showing `view` — its terminal
+	 * or its VS Code editor (`model/editorView.ts`) — with the keyboard in it.
+	 * `beside` keeps a split a split, the editor half in front.
+	 */
+	| {
+			readonly kind: "show-editor-view";
+			readonly workspaceId: string;
+			readonly view: "terminal" | "editor";
+			readonly presentation?: "beside";
+	  }
+	/** `Cmd+Q E` in an SSH Workspace's editor, which has no terminal: said. */
+	| { readonly kind: "editor-has-no-terminal"; readonly workspaceId: string }
 	/** Side by side already: move the keyboard rather than the selection. */
 	| { readonly kind: "swap-split-focus" }
 	/**
@@ -495,18 +508,36 @@ export function resolveChord(
 			};
 		}
 
-		case "focus_editor":
+		case "toggle_editor": {
 			// What "focused" means for DevHub's content area is what is selected:
 			// the selection decides the layout, and `ShellWindow.focusSurface` puts
 			// the keyboard wherever the layout put the surface. So this selects the
-			// workbench rather than reaching for a second notion of focus that the
-			// window would then have to reconcile with the first.
+			// Workspace's editor area rather than reaching for a second notion of
+			// focus — and in it, switches what the area shows. See
+			// `model/commands.ts` for the rule.
+			const target =
+				workspace ??
+				snapshot.workspaces.find(
+					(one) => one.id === snapshot.scratchWorkspaceId,
+				);
+			if (!target) return undefined;
+			const inEditor =
+				snapshot.selection.context.kind === "workspace" &&
+				focusedTerminal(snapshot) === undefined;
+			const shown = target.editorView;
+			if (inEditor && target.location.kind !== "local") {
+				return { kind: "editor-has-no-terminal", workspaceId: target.id };
+			}
 			return {
-				kind: "select-context",
-				context: workspace
-					? { kind: "workspace", workspaceId: workspace.id }
-					: scratchContext(snapshot),
+				kind: "show-editor-view",
+				workspaceId: target.id,
+				view: inEditor && shown === "editor" ? "terminal" : "editor",
+				...(snapshot.selection.presentation === "beside" &&
+				workspace !== undefined
+					? { presentation: "beside" as const }
+					: {}),
 			};
+		}
 
 		case "swap_split_focus": {
 			// Every pane on screen: the selection's own — one, or two side by

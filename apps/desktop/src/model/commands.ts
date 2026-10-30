@@ -52,7 +52,7 @@
  * | `Cmd+Q Shift+J`             | `toggle_scratch`          |
  * | `Cmd+Q O`                   | `swap_split_focus`        |
  * | `Cmd+Q V`                   | `toggle_terminal`         |
- * | `Cmd+Q E`                   | `focus_editor`            |
+ * | `Cmd+Q E`                   | `toggle_editor`           |
  * | (palette only)              | `focus_sidebar`           |
  * | `Cmd+Q B`                   | `toggle_sidebar`          |
  * | `Cmd+Q F`                   | `add_workspace`           |
@@ -183,6 +183,17 @@
  * has no terminal, and `V` says so. `Cmd+Q X` with
  * the terminal in front closes it, session and all, and a terminal whose
  * shell exits closes its pane.
+ *
+ * **`Cmd+Q E` switches the editor area between the terminal and VS Code.**
+ * A Workspace's editor area shows its own tmux session by default, and each
+ * Workspace remembers which of the two it shows (`model/editorView.ts`). In
+ * the editor area — the Workspace's row selected, or its half of a split in
+ * front — `E` is a toggle: terminal to VS Code and back, the keyboard landing
+ * in what is now shown. From anywhere else (an Agent in front, its terminal
+ * focused) it goes to the Workspace's VS Code editor, which is what `Cmd+Q E`
+ * always did. The first time a Workspace's VS Code editor is shown is when its
+ * workbench is started; nothing starts one before. An SSH Workspace has no
+ * terminal view, so in its editor `E` says so and changes nothing.
  *
  * **`Cmd+Q Z` is the multiplexer's `zoom`, moved to the noun DevHub has.** A
  * DevHub context is not tiled panes, so there is nothing to zoom in the tmux
@@ -400,7 +411,7 @@ export type CommandId =
   | "toggle_workspace_agent"
   | "toggle_split"
   | "toggle_scratch"
-  | "focus_editor"
+  | "toggle_editor"
   | "focus_sidebar"
   | "toggle_sidebar"
   | "add_workspace"
@@ -632,8 +643,8 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: ["v"],
   },
   {
-    id: "focus_editor",
-    label: "Show the editor",
+    id: "toggle_editor",
+    label: "Switch the editor area between the terminal and VS Code",
     needs: "nothing",
     category: "View",
     defaultKeys: ["e"],

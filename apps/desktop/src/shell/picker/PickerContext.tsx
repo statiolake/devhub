@@ -5,8 +5,7 @@
  * every way of starting a Workspace, the two ends of a reviewed message, and
  * the confirmation this page is the one place in DevHub that can both show and
  * answer. Nothing else — no repository status, no window title, no notices: a
- * sheet draws none of them. Of the appearance this context reads one fact,
- * whether SSH is offered (not in terminal mode); the monospace family a
+ * sheet draws none of them, and no appearance: the monospace family a
  * reviewed message is set in is the document's (`installMonoFont` in
  * `main.tsx`), not this context's. See
  * `PickerBridge` in `ipc/contract.ts` and `preload/picker.ts`.
@@ -53,7 +52,6 @@ import type {
 import { devhub } from "./client";
 import {
   useAgentProfiles,
-  useAppearance,
   useProjection,
   useRaiseFailure,
   type PendingConfirmation,
@@ -91,11 +89,6 @@ export interface PickerValue {
   ) => Promise<AppOutcome>;
   /** The machines `~/.ssh/config` names, read fresh when the picker opens. */
   readonly listSshHosts: () => Promise<readonly SshHostWire[]>;
-  /**
-   * Whether SSH Workspaces are offered at all: not in terminal mode, which is
-   * local-only (`docs/terminal-mode.md`).
-   */
-  readonly sshOffered: boolean;
   /** Open a folder on another machine as a Workspace. */
   readonly openSshWorkspace: (
     host: string,
@@ -263,8 +256,6 @@ export function PickerProvider({ children }: { children: ReactNode }) {
     setPendingConfirmation,
   );
   const agentProfiles = useAgentProfiles(bridge, attempt);
-  const appearance = useAppearance(bridge, reportFailure, attempt);
-  const sshOffered = appearance?.workbench !== "terminal";
   const picker = useWorkspacePickerRun(bridge, reportFailure);
 
   /**
@@ -345,7 +336,6 @@ export function PickerProvider({ children }: { children: ReactNode }) {
           await bridge.openBranchWorkspace(place, branch, withAgent),
         ),
       listSshHosts: () => bridge.listSshHosts(),
-      sshOffered,
       openSshWorkspace: async (host, path, withAgent) =>
         applyOpening(await bridge.openSshWorkspace(host, path, withAgent)),
       createProject: async (path, withAgent) =>
@@ -436,7 +426,6 @@ export function PickerProvider({ children }: { children: ReactNode }) {
       pendingConfirmation,
       picker,
       reportFailure,
-      sshOffered,
       state,
     ],
   );

@@ -21,7 +21,6 @@ import {
   appearanceModeIn,
   DEFAULT_THEME_DARK,
   DEFAULT_THEME_LIGHT,
-  workbenchModeIn,
   type ValidationCode,
   profilePresentation,
 } from "./config.js";
@@ -682,41 +681,18 @@ describe("parsing", () => {
   });
 
   describe("general.workbench", () => {
-    it("is a VS Code workbench unless the file says otherwise", () => {
-      expect(defaultConfig().general.workbench).toBe("vscode");
-      expect(parseConfig(MINIMAL).general.workbench).toBe("vscode");
-    });
-
-    it("is read, kept and written back", () => {
-      const config = parseConfig(
-        'version = 1\n[general]\nworkbench = "terminal"\n',
-      );
-      expect(config.general.workbench).toBe("terminal");
-      expect(configToToml(config)).toContain('workbench = "terminal"');
-    });
-
-    it("refuses anything but the two modes, naming the key", () => {
-      const text = 'version = 1\n[general]\nworkbench = "neovim"\n';
-      expect(codeOf(() => parseConfig(text))).toBe("invalid_workbench");
-      expect(pathOf(() => parseConfig(text))).toBe("general.workbench");
-      expect(
-        codeOf(() => parseConfig("version = 1\n[general]\nworkbench = 1\n")),
-      ).toBe("invalid_type");
-    });
-
-    it("is readable on its own, before the rest of the settings are", () => {
-      // Whether workbenches exist is decided before the config is loaded, so
-      // it has its own reader, like the title bar. It has to agree with the
-      // loader, and a file it cannot read is the default.
-      expect(workbenchModeIn(undefined)).toBe("vscode");
-      expect(workbenchModeIn(MINIMAL)).toBe("vscode");
-      expect(
-        workbenchModeIn('version = 1\n[general]\nworkbench = "terminal"\n'),
-      ).toBe("terminal");
-      expect(workbenchModeIn("this is not toml = = =")).toBe("vscode");
-      expect(workbenchModeIn('[general]\nworkbench = "emacs"\n')).toBe(
-        "vscode",
-      );
+    it("is retired: loaded, ignored, said once, and dropped by the next save", () => {
+      // Every Workspace's editor area chooses for itself now (`Cmd+Q E`), so a
+      // file that still says which one DevHub is in is not refused over it.
+      const text = 'version = 1\n[general]\nworkbench = "terminal"\n';
+      const config = parseConfig(text);
+      expect(configToToml(config)).not.toContain("workbench =");
+      expect(retiredKeysIn(parseConfigText(text))).toEqual([
+        {
+          key: "general.workbench",
+          replacement: expect.stringContaining("Cmd+Q E") as unknown as string,
+        },
+      ]);
     });
   });
 

@@ -19,6 +19,7 @@ import {
 	type LayoutInput,
 	type TooltipPlacement,
 	type LayoutState,
+	onScreenEditor,
 	onScreenEditorTerminal,
 } from "./windowLayout.js";
 
@@ -944,14 +945,32 @@ describe("the Agent's terminal, with its Agent", () => {
 	});
 });
 
-describe("terminal mode's editor area", () => {
-	// No workbenches at all; a Workspace terminal view per Workspace shown,
-	// in the place a workbench would be (`docs/terminal-mode.md`).
-	const terminalMode = (overrides: Partial<LayoutInput> = {}) =>
-		input({ editors: [], editorTerminals: ["/a", "/b"], ...overrides });
+describe("the editor area's terminal view", () => {
+	// A Workspace terminal view per Workspace whose terminal was shown, in the
+	// place its workbench goes (`docs/terminal-mode.md`); the arrangement says
+	// which of the two the editor area shows.
+	const showing = (
+		overrides: Partial<LayoutState> = {},
+		inputs: Partial<LayoutInput> = {},
+	) =>
+		input({
+			editors: ["/a"],
+			editorTerminals: ["/a", "/b"],
+			state: state({
+				surface: { kind: "editor", editorKey: "/a", view: "terminal" },
+				...overrides,
+			}),
+			...inputs,
+		});
+	const splitTerminal = {
+		kind: "split" as const,
+		editorKey: "/a",
+		ratio: 0.5,
+		view: "terminal" as const,
+	};
 
-	it("lays the selected Workspace's terminal where its workbench would be, and only it", () => {
-		const children = windowLayout(terminalMode());
+	it("lays the selected Workspace's terminal where its workbench is, and not the workbench", () => {
+		const children = windowLayout(showing());
 		const terminals = children.filter(
 			(child) => child.identity.kind === "editorTerminal",
 		);
@@ -963,19 +982,42 @@ describe("terminal mode's editor area", () => {
 		for (const child of terminals) {
 			expect(child.rect).toEqual(workbenchRect(WINDOW, state()));
 		}
-		expect(kinds(children)).not.toContain("editor");
+		// Its workbench exists, and stays built and hidden behind it.
+		expect(
+			children.filter(
+				(child) => child.identity.kind === "editor" && child.visible,
+			),
+		).toEqual([]);
+		expect(onScreenEditor(showing())).toBeUndefined();
+	});
+
+	it("shows the workbench instead once the editor area shows the editor", () => {
+		const editor = showing({ surface: { kind: "editor", editorKey: "/a" } });
+		expect(onScreenEditor(editor)).toBe("/a");
+		expect(onScreenEditorTerminal(editor)).toBeUndefined();
+		expect(keyboardChild(editor)).toEqual({ kind: "editor", editorKey: "/a" });
+		expect(keyboardChild(showing())).toEqual({
+			kind: "editorTerminal",
+			editorKey: "/a",
+		});
+	});
+
+	it("gives way to a question its own workbench is asking", () => {
+		const asking = showing({}, { asking: "/a" });
+		expect(onScreenEditorTerminal(asking)).toBeUndefined();
+		expect(onScreenEditor(asking)).toBe("/a");
 	});
 
 	it("is the left half of a split, with the Agent beside it", () => {
-		const split = state({
-			surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
-			keyboard: "agents",
-		});
-		const children = windowLayout(terminalMode({ state: split }));
+		const children = windowLayout(
+			showing({ surface: splitTerminal, keyboard: "agents" }),
+		);
 		const shown = children.find(
 			(child) => child.identity.kind === "editorTerminal" && child.visible,
 		);
-		expect(shown?.rect).toEqual(workbenchRect(WINDOW, split));
+		expect(shown?.rect).toEqual(
+			workbenchRect(WINDOW, state({ surface: splitTerminal })),
+		);
 		const agents = children.find((child) => child.identity.kind === "agents");
 		expect(agents?.visible).toBe(true);
 		expect(agents?.rect.x).toBeGreaterThan(
@@ -984,62 +1026,47 @@ describe("terminal mode's editor area", () => {
 	});
 
 	it("is not drawn under a full Agent, but stays sized", () => {
-		const children = windowLayout(
-			terminalMode({ state: state({ surface: { kind: "agent" } }) }),
-		);
+		const children = windowLayout(showing({ surface: { kind: "agent" } }));
 		expect(
 			children.filter(
 				(child) => child.identity.kind === "editorTerminal" && child.visible,
 			),
 		).toEqual([]);
-		expect(onScreenEditorTerminal(terminalMode())).toBe("/a");
+		expect(onScreenEditorTerminal(showing())).toBe("/a");
 	});
 
-	it("draws nothing for a Workspace that has no terminal view, which the page speaks for", () => {
-		// An SSH Workspace: no view is made, and the window's own page draws
-		// "not available in terminal mode" in the rectangle.
+	it("draws nothing for a Workspace whose terminal has no view yet", () => {
 		const children = windowLayout(
-			terminalMode({
-				state: state({ surface: { kind: "editor", editorKey: "/ssh" } }),
+			showing({
+				surface: { kind: "editor", editorKey: "/c", view: "terminal" },
 			}),
 		);
 		expect(
 			children.some(
-				(child) => child.identity.kind === "editorTerminal" && child.visible,
+				(child) =>
+					(child.identity.kind === "editorTerminal" ||
+						child.identity.kind === "editor") &&
+					child.visible,
 			),
 		).toBe(false);
-		expect(
-			keyboardChild(
-				terminalMode({
-					state: state({ surface: { kind: "editor", editorKey: "/ssh" } }),
-				}),
-			),
-		).toEqual({ kind: "shell" });
 	});
 
 	it("takes the keyboard as the editor half, in the split and alone", () => {
-		expect(keyboardChild(terminalMode())).toEqual({
-			kind: "editorTerminal",
-			editorKey: "/a",
-		});
-		const split = state({
-			surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
-		});
-		expect(keyboardChild(terminalMode({ state: split }))).toEqual({
+		expect(keyboardChild(showing({ surface: splitTerminal }))).toEqual({
 			kind: "editorTerminal",
 			editorKey: "/a",
 		});
 		expect(
-			keyboardChild(terminalMode({ state: { ...split, keyboard: "agents" } })),
+			keyboardChild(showing({ surface: splitTerminal, keyboard: "agents" })),
 		).toEqual({ kind: "agents" });
 	});
 
 	it("falls back to the editor area from an Agent terminal that is not on screen", () => {
-		const split = state({
-			surface: { kind: "split", editorKey: "/a", ratio: 0.5 },
-			keyboard: { terminal: "t1" },
-		});
-		expect(keyboardChild(terminalMode({ state: split }))).toEqual({
+		expect(
+			keyboardChild(
+				showing({ surface: splitTerminal, keyboard: { terminal: "t1" } }),
+			),
+		).toEqual({
 			kind: "editorTerminal",
 			editorKey: "/a",
 		});

@@ -63,6 +63,7 @@ import {
 } from "./terminalZoom.js";
 import { SCRATCH_NAME } from "../ipc/windowTitles.js";
 import type { PromptCache } from "./conversation.js";
+import type { EditorView } from "./editorView.js";
 import type {
   TerminalActivity,
   WorkspaceTerminalObservation,
@@ -229,6 +230,8 @@ export interface WorkspaceSnapshot {
   readonly editor: EditorAttachment;
   /** See `Workspace.startedContainer`. */
   readonly startedContainer: string | undefined;
+  /** What its editor area shows. See `Workspace.editorView`. */
+  readonly editorView: EditorView;
   readonly repositoryId: RepositoryId | undefined;
   readonly state: WorkspaceState;
   /** What its close has to say. See `WorkspaceClose`. */
@@ -733,6 +736,23 @@ export class AppModel {
       fail(DomainErrorCode.UnknownWorkspace);
     }
     if (!workspace.attachEditor(editor)) {
+      return false;
+    }
+    this.bumpRevision();
+    return true;
+  }
+
+  /**
+   * Show a Workspace's terminal or its VS Code editor in its editor area. See
+   * `model/editorView.ts`. An unknown Workspace is a failure, as for
+   * `attachEditor`: main asks this for a Workspace it has just looked at.
+   */
+  setEditorView(workspaceId: WorkspaceId, view: EditorView): boolean {
+    const workspace = this.workspace(workspaceId);
+    if (!workspace) {
+      fail(DomainErrorCode.UnknownWorkspace);
+    }
+    if (!workspace.setEditorView(view)) {
       return false;
     }
     this.bumpRevision();
@@ -2138,6 +2158,7 @@ export class AppModel {
       key: workspace.key,
       editor: workspace.editor,
       startedContainer: workspace.startedContainer,
+      editorView: workspace.editorView,
       selectedPath: workspace.selectedPath,
       repositoryId: workspace.repositoryId,
       state: workspace.state,

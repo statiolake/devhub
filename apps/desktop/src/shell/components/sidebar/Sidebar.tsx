@@ -832,13 +832,8 @@ function WorkspaceMarks({
   readonly repository: WorkspaceRepositoryWire | undefined;
   readonly editor: EditorAttachmentWire;
 }) {
-  const { openExternalUrl, appearance } = useSidebar();
-  // Terminal mode has no workbench to put in a container: the folder is the
-  // local folder it is, and the row says nothing about a container.
-  const editorFact =
-    appearance?.workbench === "terminal"
-      ? undefined
-      : editorAttachmentFact(editor);
+  const { openExternalUrl } = useSidebar();
+  const editorFact = editorAttachmentFact(editor);
   const pullRequest = repository?.pullRequest;
   const ciBadge = pullRequest ? checksBadge(pullRequest) : undefined;
   return (
@@ -1220,13 +1215,8 @@ export function Sidebar({ snapshot }: SidebarProps) {
     void devhub().openModal({ kind: "agent-rename", agentId: agent.id });
   }, []);
 
-  const {
-    reopenEditorLocally,
-    reopenEditorInContainer,
-    continueAgent,
-    appearance,
-  } = useSidebar();
-  const noWorkbenches = appearance?.workbench === "terminal";
+  const { reopenEditorLocally, reopenEditorInContainer, continueAgent } =
+    useSidebar();
 
   /**
    * The row's context menu: a native menu over the window (`rowMenu.ts`), so
@@ -1254,18 +1244,12 @@ export function Sidebar({ snapshot }: SidebarProps) {
           reopenInContainer: reopenEditorInContainer,
           reopenLocally: reopenEditorLocally,
           close: closeWorkspaceRow,
-          noWorkbenches,
           ...menu,
         }),
         at,
       );
     },
-    [
-      closeWorkspaceRow,
-      noWorkbenches,
-      reopenEditorInContainer,
-      reopenEditorLocally,
-    ],
+    [closeWorkspaceRow, reopenEditorInContainer, reopenEditorLocally],
   );
 
   const resize = useCallback(

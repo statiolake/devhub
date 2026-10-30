@@ -2129,11 +2129,13 @@ export interface EditorPlaceholderEvent {
 }
 
 /**
- * `restarting`: being rebuilt after a failure. `asleep`: hibernated, with the
- * frame it left as a data URL ("" when none could be taken). `waking`: asleep
- * and opening again, the frame still up.
+ * `starting`: opening for the first time, the first `Cmd+Q E` on a Workspace
+ * included. `restarting`: being rebuilt after a failure. `asleep`: hibernated
+ * (or never started), with the frame it left as a data URL ("" when none
+ * could be taken). `waking`: asleep and opening again, the frame still up.
  */
 export type EditorPlaceholderWire =
+	| { readonly kind: "starting" }
 	| { readonly kind: "restarting" }
 	| { readonly kind: "asleep"; readonly frame: string }
 	| { readonly kind: "waking"; readonly frame: string };

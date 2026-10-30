@@ -224,27 +224,8 @@ export function GeneralSection({
 
       <Group
         heading="Editors"
-        note="A Workspace's editor that has been off screen for a while is closed to free its memory, and opens again where it was when you show it, unsaved changes included. Its Agents and terminal sessions keep running. An editor with a running terminal command or a debug session stays open, and so do SSH and dev container editors. Closing and the limit apply to VS Code editors only."
+        note="A Workspace's editor area shows its terminal; Cmd+Q E switches it to the Workspace's VS Code editor and back. A VS Code editor is started the first time it is shown. One that has been off screen for a while is closed to free its memory, and opens again where it was when you show it, unsaved changes included. Its Agents and terminal sessions keep running. An editor with a running terminal command or a debug session stays open, and so do SSH and dev container editors. Closing and the limit apply to VS Code editors only."
       >
-        <Row
-          label="Editor area"
-          help="VS Code gives every Workspace a VS Code editor. Terminal shows the Workspace's own tmux session there instead, with no VS Code at all, and opens files DevHub is asked to open in a Neovim it starts in that session. Terminal is for local Workspaces for now. Whether editors exist is decided at launch, so this takes effect the next time DevHub starts."
-        >
-          <Popup
-            label="Editor area"
-            value={config.general.workbench}
-            options={[
-              ["vscode", "VS Code"],
-              ["terminal", "Terminal (tmux)"],
-            ]}
-            onChange={(workbench) => {
-              update({
-                ...config,
-                general: { ...config.general, workbench },
-              });
-            }}
-          />
-        </Row>
         <Row
           label="Close after (minutes)"
           help="How long an editor may be off screen before it is closed. 0 keeps every editor open. Default 10."

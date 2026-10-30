@@ -27,7 +27,9 @@ from smoke_packaged_app import (
 	launch_command,
 	source_launch_command,
 	user_data_directory,
+	no_workbench_for,
 	wait_for_workbench,
+	workbench_created,
 	workbench_loaded,
 )
 
@@ -149,6 +151,38 @@ class AfterTheReply(unittest.TestCase):
 		process = self.start("import time; time.sleep(30)")
 		problem = wait_for_workbench(process, self.log, time.monotonic() + 0.5, settle=0.5)
 		self.assertIn("in time", problem or "")
+
+
+class BeforeAnyIsAskedFor(unittest.TestCase):
+	"""No workbench is started until `toggle_editor` asks for one: every
+	Workspace's editor area shows its terminal first (docs/terminal-mode.md)."""
+
+	def setUp(self) -> None:
+		self.directory = tempfile.TemporaryDirectory()
+		self.log = Path(self.directory.name) / "app.log"
+
+	def tearDown(self) -> None:
+		self.directory.cleanup()
+
+	def start(self, script: str) -> subprocess.Popen:
+		process = subprocess.Popen([sys.executable, "-I", "-c", script])
+		self.addCleanup(process.wait)
+		self.addCleanup(process.kill)
+		return process
+
+	def test_recognises_the_line_a_made_workbench_prints(self) -> None:
+		self.assertTrue(workbench_created("[devhub] workbench view 1000007 created — 1 view(s) in the shell\n"))
+		self.assertFalse(workbench_created("[devhub] workbench 'a' absent -> asleep: not started: not shown yet\n"))
+
+	def test_passes_while_none_is_made(self) -> None:
+		self.log.write_text("[devhub] workbench '/x' absent -> asleep: not started: not shown yet\n")
+		process = self.start("import time; time.sleep(30)")
+		self.assertIsNone(no_workbench_for(process, self.log, 0.5))
+
+	def test_fails_when_one_is_made_unasked(self) -> None:
+		self.log.write_text("[devhub] workbench view 1000007 created — 1 view(s) in the shell\n")
+		process = self.start("import time; time.sleep(30)")
+		self.assertIn("before any was asked for", no_workbench_for(process, self.log, 0.5) or "")
 
 
 if __name__ == "__main__":

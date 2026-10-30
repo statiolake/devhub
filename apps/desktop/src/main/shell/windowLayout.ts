@@ -154,6 +154,8 @@ export type SurfaceArrangement =
 			readonly kind: "editor";
 			readonly editorKey: string;
 			readonly hidden?: true;
+			/** The editor area shows the Workspace's terminal, not its workbench. */
+			readonly view?: "terminal";
 	  }
 	/** A workbench and an Agent's pane, split at `ratio` of the area. */
 	| {
@@ -162,6 +164,8 @@ export type SurfaceArrangement =
 			readonly ratio: number;
 			/** Being rebuilt: its rectangle is the page's until it has loaded. */
 			readonly hidden?: true;
+			/** The editor area shows the Workspace's terminal, not its workbench. */
+			readonly view?: "terminal";
 	  }
 	/** An Agent over the whole area: the workbenches stay built, none shown. */
 	| { readonly kind: "agent" }
@@ -241,12 +245,12 @@ export interface LayoutInput {
 	 */
 	readonly terminals?: readonly string[];
 	/**
-	 * Terminal mode's editor area: every Workspace terminal that has a view,
-	 * by the editor key a workbench would have had. Drawn exactly where a
-	 * workbench would be — the whole content area, or a split's left half —
-	 * and never alongside one: in terminal mode there are no workbenches, and
-	 * in VS Code mode this is empty. See `docs/terminal-mode.md`. Optional so
-	 * that every caller from before it still reads; absent is none.
+	 * The editor area's terminal view: every Workspace terminal that has a
+	 * view, by its Workspace's editor key. Drawn exactly where the workbench
+	 * is — the whole content area, or a split's left half — when the
+	 * arrangement says the editor area shows the terminal (`view`), and never
+	 * with the same Workspace's workbench. See `docs/terminal-mode.md`.
+	 * Optional so that every caller from before it still reads; absent is none.
 	 */
 	readonly editorTerminals?: readonly string[];
 }
@@ -313,7 +317,7 @@ export type ChildIdentity =
 	  }
 	/** An Agent's terminal, with its Agent — see `model/agentTerminal.ts`. */
 	| { readonly kind: "terminal"; readonly terminalId: string }
-	/** Terminal mode's editor area: a Workspace's own tmux session. */
+	/** The editor area's terminal view: a Workspace's own tmux session. */
 	| { readonly kind: "editorTerminal"; readonly editorKey: string }
 	| { readonly kind: "toasts" }
 	| { readonly kind: "picker" }
@@ -736,20 +740,29 @@ export function onScreenEditor(input: LayoutInput): string | undefined {
 	}
 	const surface = input.state.surface;
 	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
-	return surface.hidden !== true && input.editors.includes(surface.editorKey)
+	return surface.hidden !== true &&
+		surface.view !== "terminal" &&
+		input.editors.includes(surface.editorKey)
 		? surface.editorKey
 		: undefined;
 }
 
 /**
- * Which Workspace terminal is in the editor area, if any (terminal mode).
- *
- * The same reading as `onScreenEditor` without the question: a terminal never
- * asks anything of the picker, so only the arrangement decides.
+ * Which Workspace terminal is in the editor area, if any: the arrangement
+ * says the editor area shows the terminal (`view`). A question the
+ * Workspace's own workbench is asking outranks it, as it outranks the
+ * arrangement for `onScreenEditor`: the workbench is drawn so that what it
+ * asks is seen against what it is about.
  */
 export function onScreenEditorTerminal(input: LayoutInput): string | undefined {
 	const surface = input.state.surface;
 	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
+	if (surface.view !== "terminal") return undefined;
+	if (
+		input.asking === surface.editorKey &&
+		input.editors.includes(input.asking)
+	)
+		return undefined;
 	return surface.hidden !== true &&
 		(input.editorTerminals ?? []).includes(surface.editorKey)
 		? surface.editorKey
@@ -758,7 +771,7 @@ export function onScreenEditorTerminal(input: LayoutInput): string | undefined {
 
 /**
  * What is in the editor area as a child the keyboard can go to: the
- * workbench on screen, or in terminal mode the Workspace terminal there.
+ * workbench on screen, or the Workspace terminal the editor area shows.
  */
 function editorChild(input: LayoutInput): ChildIdentity | undefined {
 	const editorKey = onScreenEditor(input);
@@ -962,10 +975,10 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			visible: child.visible,
 		});
 	}
-	// Terminal mode's editor area, in the workbenches' place and for their
-	// reasons: every one sized whether or not it is drawn, the one on screen
-	// last. There are no workbenches in that mode, so nothing above is ever
-	// under one of these; in VS Code mode the list is empty.
+	// The editor area's terminal views, in the workbenches' place and for
+	// their reasons: every one sized whether or not it is drawn, the one on
+	// screen last. When one is drawn no workbench is (the arrangement shows
+	// one or the other), so nothing above is ever under it on screen.
 	const onScreenTerminal = onScreenEditorTerminal(input);
 	for (const editorKey of input.editorTerminals ?? []) {
 		if (editorKey === onScreenTerminal) continue;

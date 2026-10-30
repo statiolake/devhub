@@ -501,6 +501,37 @@ describe("store", () => {
     expect(load.state).toEqual(state);
   });
 
+  it("remembers which view each Workspace's editor area shows, through the file", async () => {
+    const store = new JsonStateStore(path);
+    const model = populatedModel();
+    model.setEditorView(WS_B, "editor");
+    const state = stateFromSnapshot(model.snapshot());
+    // The terminal is the default and is written as nothing at all.
+    expect("editor_view" in state.workspaces[0]!).toBe(false);
+    expect(state.workspaces[1]!.editor_view).toBe("editor");
+    await store.saveState(state);
+    const load = await store.loadState();
+    const restored = hydrateModel(load.state, [codex], today()).snapshot();
+    expect(restored.workspaces.map((one) => one.editorView)).toEqual([
+      "terminal",
+      "editor",
+    ]);
+  });
+
+  it("reads a file from before per-Workspace views as every one on its terminal", async () => {
+    const store = new JsonStateStore(path);
+    const state = stateFromSnapshot(populatedModel().snapshot());
+    await store.saveState(state);
+    const restored = hydrateModel(
+      (await store.loadState()).state,
+      [codex],
+      today(),
+    ).snapshot();
+    expect(
+      restored.workspaces.every((one) => one.editorView === "terminal"),
+    ).toBe(true);
+  });
+
   it("reads back a name a person gave, from the file", async () => {
     const store = new JsonStateStore(path);
     const model = populatedModel();

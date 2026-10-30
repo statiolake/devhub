@@ -39,10 +39,6 @@ import {
   TERMINAL_MIN_SHARE,
   clampTerminalShare,
 } from "../../../model/agentTerminal";
-import {
-  TERMINAL_MODE_NO_SSH,
-  terminalModeSupports,
-} from "../../../model/terminalMode";
 import type {
   TerminalSeamWire,
   WorkbenchAreaWire,
@@ -330,9 +326,7 @@ export function Unavailable({
  * area a few pixels from where the eye says the seam is.
  */
 export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
-  const { dispatch, closeWorkspace, chooseWorkspaceFolder, appearance } =
-    useShellPage();
-  const terminalMode = appearance?.workbench === "terminal";
+  const { dispatch, closeWorkspace, chooseWorkspaceFolder } = useShellPage();
   const layout = snapshot.layout;
   const workspace = workspaceForContext(snapshot, snapshot.selection.context);
   const placeholders = useEditorPlaceholders();
@@ -457,41 +451,41 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     // draw under it. The workbenches stay built and running behind both: this
     // is an Agent covering a workbench, not a workbench going away.
     surfaceState = "agent";
-  } else if (
-    terminalMode &&
-    workspace !== undefined &&
-    !terminalModeSupports(workspace)
-  ) {
-    // Terminal mode draws the editor area from the Workspace's own tmux
-    // session on this Mac, and this Workspace is on an SSH host, which
-    // terminal mode does not offer (`docs/terminal-mode.md`). No view is laid
-    // here, so this page says so in the rectangle one would have had.
-    surfaceState = "editor-unsupported";
+  } else if (workspace?.editorView === "terminal") {
+    // The editor area shows the Workspace's own terminal, a view main lays
+    // over this rectangle (`docs/terminal-mode.md`). Whatever its workbench is
+    // doing — asleep, never started — is not what is on screen.
+    surfaceState = "editor-terminal";
     editorKey = layout.editorKey;
-    body = (
-      <Failure
-        summary={TERMINAL_MODE_NO_SSH}
-        detail="Its Agents and their terminals work as usual. Set Settings ▸ General ▸ Editor area to VS Code to edit it in this DevHub."
-      />
-    );
+    announce = false;
   } else if (placeholders.has(layout.editorKey)) {
-    // The workbench is being rebuilt in this same slot, asleep, or waking.
-    // The selection has not moved and must not: what changed is that there
-    // is nothing to show yet, which is a state of this area rather than a
-    // reason to leave it. One that slept shows the frame it left.
+    // The workbench is starting, being rebuilt in this same slot, asleep, or
+    // waking. The selection has not moved and must not: what changed is that
+    // there is nothing to show yet, which is a state of this area rather than
+    // a reason to leave it. One that slept shows the frame it left.
     const placeholder = placeholders.get(layout.editorKey);
-    surfaceState =
-      placeholder?.kind === "asleep" ? "editor-asleep" : "editor-restarting";
     editorKey = layout.editorKey;
-    body =
-      placeholder === undefined || placeholder.kind === "restarting" ? (
-        <Waiting label="Restarting the editor…" />
-      ) : (
+    if (
+      placeholder?.kind === "starting" ||
+      (placeholder?.kind === "waking" && placeholder.frame === "")
+    ) {
+      // The first `Cmd+Q E` on a Workspace, or one woken with no frame to
+      // show: there is nothing yet but the wait.
+      surfaceState = "editor-starting";
+      body = <Waiting label="Starting VS Code…" />;
+    } else if (placeholder === undefined || placeholder.kind === "restarting") {
+      surfaceState = "editor-restarting";
+      body = <Waiting label="Restarting the editor…" />;
+    } else {
+      surfaceState =
+        placeholder.kind === "asleep" ? "editor-asleep" : "editor-restarting";
+      body = (
         <Asleep
           frame={placeholder.frame}
           label={placeholder.kind === "waking" ? "起動中…" : "休止中"}
         />
       );
+    }
   } else {
     surfaceState = layout.kind;
     editorKey = layout.editorKey;

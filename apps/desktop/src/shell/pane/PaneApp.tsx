@@ -22,13 +22,13 @@
  * A person who wants a second shell splits inside it with tmux's own keys;
  * DevHub draws one terminal pane.
  *
- * # The editor area, in terminal mode
+ * # The editor area's terminal view
  *
- * The same page is the editor area when there is no VS Code workbench
- * (`docs/terminal-mode.md`): a fragment of `workspace:<id>` names a
- * Workspace instead of an Agent terminal, and the surface is that
- * Workspace's own tmux session (`workspace-terminal:<id>`) — the session the
- * editor's DevHub terminal tabs attach to in VS Code mode. One terminal
+ * The same page is the editor area while it shows the Workspace's terminal
+ * rather than its VS Code editor (`docs/terminal-mode.md`): a fragment of
+ * `workspace:<id>` names a Workspace instead of an Agent terminal, and the
+ * surface is that Workspace's own tmux session (`workspace-terminal:<id>`) —
+ * the session the workbench's DevHub terminal tabs attach to. One terminal
  * surface for both, not a second implementation.
  */
 

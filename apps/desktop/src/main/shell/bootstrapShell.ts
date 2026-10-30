@@ -59,9 +59,7 @@ import {
 	colorThemesIn,
 	defaultConfigPaths,
 	titleBarModeIn,
-	workbenchModeIn,
 } from "../../model/config.js";
-import { settleWorkbenchMode } from "./workbenchMode.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
@@ -189,11 +187,6 @@ export async function bootstrapShell(
 	// that will not parse is reported from there. See `titleBarModeIn`.
 	const settingsText = readSettingsText();
 	const titleBar = titleBarModeIn(settingsText);
-	// The other: whether there are workbenches at all. Settled before the
-	// controller exists, because the controller's lifecycle executor, the
-	// layout and VS Code's window service all read it, and it holds for the
-	// life of the process. See `workbenchMode.ts` and docs/terminal-mode.md.
-	settleWorkbenchMode(workbenchModeIn(settingsText));
 
 	// The colour theme comes first, before the page is servable and before the
 	// window exists, because both are created wearing it. It is the theme

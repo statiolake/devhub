@@ -307,6 +307,45 @@ describe("dispatch", () => {
   });
 });
 
+describe("what a Workspace's editor area shows", () => {
+  it("is its terminal until it is set to the editor, and back; each change is saved", () => {
+    const driver = new Driver();
+    const scratch = driver.coordinator.model.scratchWorkspaceId;
+    const view = () =>
+      driver.coordinator.snapshot().workspaces.find((one) => one.id === scratch)
+        ?.editorView;
+    expect(view()).toBe("terminal");
+    const selection = driver.coordinator.snapshot().selection;
+    expect(
+      driver.dispatch({
+        type: "set_editor_view",
+        workspaceId: scratch,
+        view: "editor",
+      }).kind,
+    ).toBe("updated");
+    expect(view()).toBe("editor");
+    expect(driver.drainEffects().map((effect) => effect.kind)).toEqual([
+      "persist_state",
+    ]);
+    // The selection is not the view's business.
+    expect(driver.coordinator.snapshot().selection).toEqual(selection);
+    driver.settle();
+    expect(
+      driver.dispatch({
+        type: "set_editor_view",
+        workspaceId: scratch,
+        view: "editor",
+      }).kind,
+    ).toBe("noop");
+    driver.dispatch({
+      type: "set_editor_view",
+      workspaceId: scratch,
+      view: "terminal",
+    });
+    expect(view()).toBe("terminal");
+  });
+});
+
 describe("opening a folder", () => {
   it("resolves, generates an identity, and adds the workspace", () => {
     const driver = new Driver();

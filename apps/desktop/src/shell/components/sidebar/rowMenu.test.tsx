@@ -290,12 +290,6 @@ describe("what a right-click on a Workspace offers", () => {
     ).toEqual(["Close Worktree…"]);
   });
 
-  it("offers no reopen in terminal mode, where there is no VS Code editor to reopen", () => {
-    expect(
-      labels(workspaceMenuItems(workspace(), actions({ noWorkbenches: true }))),
-    ).toEqual(["Close Workspace…"]);
-  });
-
   it("offers Scratch no close: nothing outside a dev container", () => {
     const local = workspace({ editor: { kind: "local" } } as never);
     expect(workspaceMenuItems(local, actions({ fixed: true }))).toEqual([]);

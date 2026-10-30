@@ -67,18 +67,10 @@ export function workspaceMenuItems(
     /** Closing deletes the folder (`closingDeletesWorktree`), and says so. */
     readonly deletesWorktree: boolean;
     readonly fixed: boolean;
-    /**
-     * Terminal mode: there is no VS Code editor to reopen anywhere, so the
-     * two reopen items are not offered (`docs/terminal-mode.md`).
-     */
-    readonly noWorkbenches?: boolean;
   },
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [];
-  if (
-    workspace.editor.kind === "devContainer" &&
-    actions.noWorkbenches !== true
-  ) {
+  if (workspace.editor.kind === "devContainer") {
     items.push(
       {
         // The way back in when the editor could not open because its

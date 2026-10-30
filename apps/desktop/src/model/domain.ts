@@ -1,5 +1,10 @@
 import type { PromptCache } from "./conversation.js";
 import { TerminalPanes } from "./terminalActivity.js";
+import {
+  DEFAULT_EDITOR_VIEW,
+  effectiveEditorView,
+  type EditorView,
+} from "./editorView.js";
 
 /**
  * Pure DevHub domain values and lifecycle rules.
@@ -1856,6 +1861,7 @@ export class Workspace {
     );
     copy.closeValue = this.closeValue;
     copy.startedContainerValue = this.startedContainerValue;
+    copy.editorViewValue = this.editorViewValue;
     copy.terminalPanes = this.terminalPanes.clone();
     for (const agent of this.agentList) {
       copy.agentList.push(agent.clone());
@@ -1942,6 +1948,24 @@ export class Workspace {
   }
 
   private startedContainerValue: string | undefined = undefined;
+
+  /**
+   * What its editor area shows: its terminal or its VS Code editor. See
+   * `model/editorView.ts`. An SSH Workspace has no terminal view, so it shows
+   * its editor whatever was chosen.
+   */
+  get editorView(): EditorView {
+    return effectiveEditorView(this, this.editorViewValue);
+  }
+
+  /** Show the other view, or this one. False when nothing changed. */
+  setEditorView(next: EditorView): boolean {
+    const before = this.editorView;
+    this.editorViewValue = next;
+    return this.editorView !== before;
+  }
+
+  private editorViewValue: EditorView = DEFAULT_EDITOR_VIEW;
 
   get selectedPath(): DisplayPath {
     return this.selectedPathValue;

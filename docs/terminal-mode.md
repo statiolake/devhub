@@ -1,54 +1,124 @@
-# Terminal mode: a tmux editor area instead of a VS Code workbench
+# The editor area: a Workspace's terminal, and its VS Code editor on demand
 
-DevHub hosts a patched VS Code and gives every Workspace a workbench of its
-own. Terminal mode is the other answer to "what is in the editor area": no
-workbench at all, and in its place the Workspace's own tmux session — the same
-`ws-<digest>` session the editor's DevHub terminal tabs attach to — drawn by
-DevHub's own terminal surface. Neovim does not occupy it. It is a terminal; the
-person may run Neovim in it, or anything else.
+DevHub hosts a patched VS Code and can give every Workspace a workbench of its
+own. It does not start one until it is asked for. Every Workspace's editor
+area shows, by default, its own tmux session — the same `ws-<digest>` session
+the workbench's DevHub terminal tabs attach to — drawn by DevHub's own terminal
+surface. Neovim does not occupy it. It is a terminal; the person may run Neovim
+in it, or anything else.
 
-DevHub is built assuming Neovim is the editor in this mode. There is no
-`editor = "vscode" | "neovim"` setting and no plan for one: what is chosen is
-whether a workbench exists, and the one place DevHub itself needs an editor —
-a file jump — is answered by a Neovim DevHub manages (below). The person's own
-Neovim configuration stays in their dotfiles; DevHub never writes it.
+`Cmd+Q E` switches that Workspace's editor area to its **VS Code editor**,
+starting its workbench the first time, and back. Each Workspace has its own
+answer, and remembers it across restarts.
 
-## The setting
+## The model
 
-```toml
-[general]
-workbench = "terminal"   # or "vscode", the default
+```text
+editor area of a Workspace = terminal (default)  ─ Cmd+Q E ─▶  editor (VS Code)
+                                                 ◀─ Cmd+Q E ─
 ```
 
-`general.workbench` is application level, like `appearance.title_bar`: it is
-read **once, at launch**, from the file's text before anything is built
-(`workbenchModeIn` in `model/config.ts`, `main/shell/workbenchMode.ts`), and a
-change takes effect the next time DevHub starts. The Settings window offers it
-under General ▸ Editors ("Editor area") and says so. A file that will not parse
-answers with the default, for the same reason `titleBarModeIn` does: the real
-load runs moments later on the same text and is what reports the problem.
+- **Per Workspace.** `Workspace.editorView` (`model/domain.ts`, the rule in
+  `model/editorView.ts`) is `terminal` or `editor`; the intent that changes it
+  is `set_editor_view`, raised by main. It does not move the selection:
+  switching pages or Workspaces finds each one showing what it showed.
+- **Remembered.** The state file writes `editor_view = "editor"` on a
+  Workspace showing its VS Code editor and nothing for one showing its
+  terminal, so every file from before this (and every new Workspace) shows the
+  terminal. No schema bump: an older DevHub that drops the key loses which
+  view was shown, never anything open.
+- **SSH Workspaces have no terminal view.** Their editor area is their VS Code
+  workbench on the host, always (`effectiveEditorView`); `Cmd+Q E` in it says
+  so (`editor_has_no_terminal`) and changes nothing. The terminal view is a
+  folder on this Mac: an Agent that needs another machine drives it itself
+  through tmux and `ssh`. Their Agents and those Agents' terminals are as
+  always.
+- **Dev containers are only where a workbench runs.** A Workspace whose editor
+  is attached to a container (`EditorAttachment`) has the terminal view of the
+  local folder it is — its `ws-` session on this Mac, file opens to its managed
+  Neovim — and its VS Code editor in the container. Reopen Editor in Container
+  / Locally from its row switches it to the editor, since that is what was
+  asked for; `devhub <file>` inside the container opens in that workbench,
+  switching to it.
 
-Why a restart rather than a live switch: everything about a workbench — the
-lifecycle's plan, the VS Code services it is built through, the terminal
-colours it reports, the views attached to it — would have to be torn down or
-brought up in one step, and a Workspace half in one mode and half in the other
-is a state nobody needs. One mode per process is one answer everywhere.
+## The chord
+
+`Cmd+Q E` is `toggle_editor` ("Switch the editor area between the terminal and
+VS Code", `model/commands.ts`), the key `focus_editor` had. It keeps that
+command's job and adds the switch:
+
+| Where the keyboard is                                   | `Cmd+Q E`                                         |
+| ------------------------------------------------------- | ------------------------------------------------- |
+| the editor area (the Workspace's row, or its split half) | toggle: terminal ↔ VS Code, the split kept         |
+| an Agent, an Agent's terminal, the Sidebar               | go to the Workspace's editor area, showing VS Code |
+| an SSH Workspace's editor                                | said: it has no terminal view                     |
+
+The keyboard lands in what is now shown: the terminal's xterm, or the
+workbench's active editor group (`focusActiveEditorGroup`, the toggles' landing
+in `chords.ts`). A workbench that is still starting takes the keyboard when it
+arrives — `ShellWindow.setLayoutState` places the keyboard again whenever the
+answer changes.
+
+`devhub --tell run toggle_editor` runs the same command; the app smoke test
+does exactly that (below).
+
+## Lazy start, and the lifecycle
+
+Every workbench comes from one executor, `AppController.reconcileWorkbenches`
+over the lifecycle's plan (`workbenchLifecycle.ts`). Every Workspace whose
+folder is there is wanted, and every one is **lazy** (`WantedWorkbench.lazy`):
+absent and not the selected editor, it goes straight to `asleep` with no frame
+— "not started: not shown yet" — and nothing is opened. The selected editor is
+the workbench of the selected Workspace *only while its editor area shows its
+VS Code editor* (`selectedEditorSurfaceKey`); a Workspace on its terminal
+selects none.
+
+So:
+
+- **At DevHub start no workbench is started**, unless the Workspace on screen
+  was left showing its VS Code editor (or is an SSH Workspace), in which case
+  that one — the one being looked at — starts.
+- **The first `Cmd+Q E`** makes the Workspace's editor the selected one, and
+  the plan opens it (`start`, or `wake` from that never-started sleep). The
+  slot shows a spinner, "Starting VS Code…" (`starting`, or `waking` with no
+  frame), until the view has loaded; the view is hidden until then.
+- **Then it is a workbench like any other.** It counts toward
+  `general.workbench_awake_max`, sleeps after
+  `general.workbench_hibernate_minutes` away, and is put to sleep by the cap
+  when another is woken. Going back to the terminal is being away from it.
+  `Cmd+Q E` on a Workspace whose workbench is asleep wakes it (a passing
+  `Cmd+Q N/P` landing on one showing its editor still holds the wake for a
+  moment, as before). SSH and dev container workbenches never sleep, as
+  before.
+- A request that needs the workbench — a file routed to it, VS Code's own
+  open of a folder, Scratch's empty window, `devhub` inside a container —
+  switches that Workspace to its editor first (`selectedWorkbench`), which is
+  what makes the plan open it.
+
+VS Code's main process runs from the start: it is what DevHub is built inside,
+and the `devhub` CLI's extension commands talk to it. What is not there until
+`Cmd+Q E` is any renderer, extension host or remote extension host.
 
 ## What changes in the window
 
-The layout (`main/shell/windowLayout.ts`) has a child kind for it,
-`editorTerminal`, keyed by the Workspace's editor key exactly as a workbench
-is. Everything that is "where the editor is" is answered for it the same way:
+The layout (`main/shell/windowLayout.ts`) has a child kind for the terminal
+view, `editorTerminal`, keyed by the Workspace's editor key exactly as a
+workbench is, and the arrangement says which of the two the editor area shows
+(`SurfaceArrangement.view`). Everything that is "where the editor is" is
+answered for whichever is shown:
 
-| Arrangement                | VS Code mode                  | Terminal mode                                  |
-| -------------------------- | ----------------------------- | ---------------------------------------------- |
-| Workspace selected (full)  | its workbench                 | its editor terminal, the whole content area    |
-| Split (`Cmd+Q Z`)          | workbench left, Agent right   | editor terminal left, Agent right              |
-| Agent alone                | Agent; workbenches stay built | Agent; editor terminals stay attached, hidden  |
-| Keyboard `editor` half     | the workbench                 | the editor terminal                            |
-| `Cmd+Q E`, `Cmd+Q O`       | to / through the workbench    | to / through the editor terminal               |
+| Arrangement               | Terminal shown                               | VS Code shown                  |
+| ------------------------- | -------------------------------------------- | ------------------------------ |
+| Workspace selected (full) | its terminal, the whole content area          | its workbench                  |
+| Split (`Cmd+Q Z`)         | terminal left, Agent right                    | workbench left, Agent right    |
+| Agent alone               | Agent; terminals stay attached, hidden        | Agent; workbenches stay built  |
+| Keyboard `editor` half    | the terminal                                  | the workbench                  |
+| `Cmd+Q O`                 | through the terminal                          | through the workbench          |
 
-The editor terminal is the **Agent terminal pane's machinery reused**: one
+A question the Workspace's own workbench is asking (a close's unsaved-changes
+dialog) outranks the terminal: the workbench is drawn while it asks.
+
+The terminal view is the **Agent terminal pane's machinery reused**: one
 `pane.html` view per Workspace (`ShellWindow.syncEditorTerminalViews`), whose
 fragment names the Workspace (`#workspace:<id>`) instead of an Agent terminal,
 mounting the same `TerminalSurface` on the surface key
@@ -56,9 +126,8 @@ mounting the same `TerminalSurface` on the surface key
 resolved to the Workspace's `ws-` session. There is no second terminal
 implementation; chords, the IME, zoom, scroll sensitivity, the theme and the
 attach/detach protocol are the Agent pane's. A view is made the first time its
-Workspace is shown and kept (hidden, attached) until the Workspace goes, so
-coming back is a move rather than a reattach and a reflow, the way an Agent
-terminal's view is kept.
+Workspace's terminal is shown and kept (hidden, attached) until the Workspace
+goes, so coming back is a move rather than a reattach and a reflow.
 
 A click into it is the editor half taking the keyboard (`ContentFocus`
 `editor`), so the split's selected half follows the click as it does for a
@@ -66,16 +135,17 @@ workbench.
 
 ### The shell exiting is the close button
 
-When the editor area's session ends under the person — `exit` in its last
-shell, or the session killed — it is the Workspace's close button being
-pressed (`main/shell/editorTerminalExits.ts`), through the one close path
-(`closeWorkspaceOrWorktree`): a Workspace with nothing to lose closes, and one
-with something to ask about (busy Agents, running programs, a dirty worktree)
-raises the same sheet the button does. If the Workspace stays — the question
-is cancelled, the close fails — or cannot be closed (Scratch never is), the
-view is started over in place, which makes a fresh `ws-` session. A client
-that ended while its session still runs (detached with tmux's own keys) is
-attached again.
+When the terminal view's session ends under the person — `exit` in its last
+shell, or the session killed — while the editor area shows it, it is the
+Workspace's close button being pressed (`main/shell/editorTerminalExits.ts`),
+through the one close path (`closeWorkspaceOrWorktree`): a Workspace with
+nothing to lose closes, and one with something to ask about (busy Agents,
+running programs, a dirty worktree) raises the same sheet the button does. If
+the Workspace stays — the question is cancelled, the close fails — or cannot
+be closed (Scratch never is), the view is started over in place, which makes a
+fresh `ws-` session. A client that ended while its session still runs
+(detached with tmux's own keys) is attached again. Behind the VS Code editor
+nobody saw it end, so the hidden view is only started over.
 
 Only a tmux client that ended on its own counts
 (`AttachmentManagerOptions.onEndedByItself`): everything DevHub ends itself —
@@ -85,58 +155,23 @@ shutting down, and a terminal that keeps ending as soon as it starts is
 started over at most three times in thirty seconds, then left with the
 surface's own Retry.
 
-In VS Code mode the editor's Vim does the same with its last window: `:q`
-there, and `:qa` `:wqa` `:xa`, press the same close button
+In the VS Code editor the editor's Vim does the same with its last window:
+`:q` there, and `:qa` `:wqa` `:xa`, press the same close button
 (`main/shell/workbenchCloseRequests.ts`; see [Vim](vim.md#closing-a-window-and-quitting)).
 
-## Local only
+## Settings
 
-Terminal mode serves folders on this Mac and nothing else: an Agent that needs
-another machine drives it itself, through tmux and `ssh`, and setting a remote
-machine or a container up for that is the job of separate tools (`dockim`,
-`sshim`), not DevHub's. SSH Workspaces and dev containers remain VS Code mode's
-(`docs/remote-ssh.md`, `docs/remote-containers.md`).
+There is no setting for any of this. `general.workbench` (`"vscode"` /
+`"terminal"`, a restart) is **retired** (`RETIRED_KEYS` in `model/config.ts`):
+a file that still has it loads, the key is ignored and said once at info
+level, and the next save drops it. A default view setting and an
+"open files in" override were considered and left out: the terminal is the
+default, VS Code costs nothing until it is shown, and opens follow what is on
+screen.
 
-- **SSH Workspaces are not offered.** The Open Workspace picker has no
-  "SSH: Connect…" row and lists no SSH hosts, and opening a folder on a host
-  by any other way (`openFolder`, where every way meets) is refused with
-  "SSH Workspaces are not available in terminal mode. Use VS Code mode to open
-  them." One restored from an earlier VS Code mode run stays in the Sidebar:
-  its editor area draws that sentence (the window's own page, in the rectangle
-  a view would be laid into) and no view is made, and a file jump to it is
-  refused with the same sentence. Its Agents and their terminals work as
-  before — those are tmux sessions on the host that do not depend on a
-  workbench.
-- **A dev container is only where a workbench runs.** A Workspace's terminals,
-  Agents and git are where its folder is whether or not its editor is
-  attached to a container (`EditorAttachment`), so in terminal mode a
-  Workspace whose editor was in a dev container is simply the local folder it
-  is: its editor area is its `ws-` session on this Mac, its file jumps go to
-  its managed Neovim, and its row wears no container mark. The attachment is
-  kept, and is what VS Code mode opens next time. Reopen Editor in Container /
-  Locally is not offered, and `devhub` run inside a container is refused with
-  "Dev containers are not available in terminal mode. Use VS Code mode to
-  reopen a folder in its container."
-
-## No workbench is created
-
-Every workbench comes from one executor, `AppController.reconcileWorkbenches`
-over the lifecycle's plan (`workbenchLifecycle.ts`). In terminal mode it plans
-nothing: `wanted` is empty, so nothing is opened, nothing sleeps, nothing is
-capped, and the minute check has nothing to do. The other doors are closed as
-well, so that a workbench cannot appear by a side entrance:
-
-- `scratchWorkbench`, `selectedWorkbench` and `workbenchReady` — the callers
-  that wait for "the" workbench of a folder — refuse with a sentence instead
-  of waiting for an open that will never come.
-- VS Code's own `openInBrowserWindow` (a request no DevHub entrance makes in
-  this mode, but an extension-less VS Code main process can still be asked) is
-  answered by selecting the Workspace and opening nothing.
-- Reopening an editor in or out of a dev container is refused.
-
-VS Code's main process still runs: it is what DevHub is built inside, and the
-`devhub` CLI's extension commands still talk to it. What does not exist is any
-renderer, extension host or remote extension host.
+The Settings window's General ▸ Editors group says how the two views work;
+`general.workbench_hibernate_minutes` and `general.workbench_awake_max` are
+there as before.
 
 ## The managed Neovim server
 
@@ -157,7 +192,7 @@ it is in front however the person has moved around since.
 
 Then DevHub selects the Workspace (beside the asking Agent, for a conversation
 link, exactly as the VS Code routing does), puts the keyboard in the editor
-area, and opens the file over RPC.
+area — its terminal view — and opens the file over RPC.
 
 ### The socket
 
@@ -220,7 +255,8 @@ early — with "Neovim exited before it opened its socket" — if the pane has
 already gone, which is what a broken config that `:cq`s looks like.
 
 **Closing a Workspace** kills the managed pane and unlinks the socket, in the
-close's `editor` step (the step a workbench's unload is in VS Code mode). Its
+close's `editor` step, after its workbench (if it has one) has agreed to
+close. Its
 unsaved buffers are protected the way any running program in the Workspace's
 session is: the close confirmation counts a pane running something other than
 the shell as busy work, so the person is asked first. **Quitting DevHub** only
@@ -237,44 +273,23 @@ the jump is refused — not a pane that flashes and closes.
 ## File-open routing
 
 The rule that picks *which Workspace* is unchanged (`routeOpen`,
-`routeAgentOpen`); what changes is what is done with the answer
-(`AppController.openRouted`).
+`routeAgentOpen`); what is done with the answer follows **what that
+Workspace's editor area shows** (`opensInNeovim` in `model/editorView.ts`,
+`AppController.openRouted`): the terminal on this Mac → its managed Neovim;
+the VS Code editor, an SSH Workspace, or a path on another machine → its
+workbench. Scratch is a Workspace like any other.
 
-| Entrance                                         | VS Code mode                                   | Terminal mode                                                 |
-| ------------------------------------------------ | ---------------------------------------------- | ------------------------------------------------------------- |
-| `devhub <file>` on this Mac                      | the containing Workspace's workbench / Scratch | that Workspace's managed Neovim / Scratch's                   |
-| `devhub -g <file>:<line>:<col>`                  | caret at the position                          | cursor at the position                                        |
-| `devhub --wait <file>`                           | `filesToWait`                                  | buffer autocommands delete the marker; DevHub on server death |
-| `devhub <folder>`                                | Workspace selected, workbench shown            | Workspace selected, editor terminal shown                     |
-| Conversation file link                           | split beside the Agent, workbench in front     | split beside the Agent, editor terminal in front, Neovim      |
-| Finder Open With / Dock drop / `open -a`         | via `openFromCli`                              | via `openFromCli`, as above                                   |
-| `devhub` on an SSH host                          | that Workspace's remote workbench              | refused: not available in terminal mode                       |
-| `devhub` in a dev container                      | the window attached to that container          | refused: not available in terminal mode                       |
-| An SSH Workspace                                 | its workbench                                  | refused, as above                                             |
-| A local Workspace whose editor is in a container | its workbench, in the container                | its managed Neovim, on this Mac                               |
-| VS Code's own open (`openInBrowserWindow`)       | DevHub's Workspace / Scratch rule              | Workspace selected; no workbench is opened                    |
-
-## What is hidden or inert in terminal mode
-
-None of these error; they are not offered, or have nothing to act on.
-
-- **Everything that lives inside a workbench**: DevHub Vim, tidy, Copilot, the
-  bridge and remote extensions, VS Code's menus and command palette, the
-  integrated Browser, diff and review editors. There is no workbench for them
-  to run in.
-- **Workbench hibernation and the awake cap** (`general.workbench_hibernate_minutes`,
-  `general.workbench_awake_max`): the plan has nothing to put to sleep. The
-  Settings rows stay, with a note that they apply to VS Code mode.
-- **View ▸ Toggle Integrated Terminal** and its chord: not in the menu.
-- **Reopen Editor in Container / Locally** on a Workspace row: not in the menu.
-- **SSH: Connect…** and the SSH hosts in the Open Workspace picker: not listed.
-- **Workbench placeholders** (asleep, waking, restarting, gave up): never
-  raised.
-
-Agents, Agent terminals, the Sidebar, notices, chords, usage, the `devhub`
-command and every tmux-side feature (`devhub --tell terminal …`, moving an
-Agent's terminal to the editor — which now lands in the editor area, in view)
-are unchanged.
+| Entrance                                          | Terminal shown                                                | VS Code shown                                  |
+| ------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------- |
+| `devhub <file>` on this Mac                       | that Workspace's managed Neovim / Scratch's                   | the containing Workspace's workbench / Scratch |
+| `devhub -g <file>:<line>:<col>`                   | cursor at the position                                        | caret at the position                          |
+| `devhub --wait <file>`                            | buffer autocommands delete the marker; DevHub on server death | `filesToWait`                                  |
+| `devhub <folder>`                                 | Workspace selected, its terminal shown                        | Workspace selected, workbench shown            |
+| Conversation file link, Send to Agent's reference | split beside the Agent, terminal in front, Neovim             | split beside the Agent, workbench in front     |
+| Finder Open With / Dock drop / `open -a`          | via `openFromCli`, as above                                   | via `openFromCli`                              |
+| `devhub` on an SSH host, an SSH Workspace         | — (always VS Code)                                            | that Workspace's remote workbench              |
+| `devhub` in a dev container                       | switched to VS Code: the window attached to that container    | the window attached to that container          |
+| VS Code's own open (`openInBrowserWindow`)        | switched to VS Code                                           | DevHub's Workspace / Scratch rule              |
 
 ## Theme
 
@@ -283,9 +298,9 @@ DevHub's own settings name (`appearance.theme_dark` / `appearance.theme_light`,
 read by `colorThemeCatalog.ts` and `shellTheme.ts` from the extensions on
 disk), not from a workbench's report. That source never needed a workbench —
 it paints the window from a cold start and with every workbench asleep — so
-terminal mode uses it unchanged: the editor area's terminal is an Agent pane's
-surface and wears the same `terminal_theme` (the theme's terminal colours by
-default, or the configured palettes).
+the terminal view uses it unchanged: it is an Agent pane's surface and wears
+the same `terminal_theme` (the theme's terminal colours by default, or the
+configured palettes).
 
 ## Open questions
 
@@ -303,6 +318,6 @@ default, or the configured palettes).
   program in its session prints, and Neovim redrawing as the person types is
   that. Should an editor (`nvim`, `vim`) in front of a pane count as a prompt
   rather than as work?
-- **The setting's name.** `general.workbench` names what is chosen (whether a
-  workbench exists). If a third mode ever appears this stays right; an
-  `editor = …` would not.
+- **A hint.** Nothing on screen says that `Cmd+Q E` brings up VS Code; the
+  chord help and the command palette list it. Should the terminal view show
+  it once?

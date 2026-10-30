@@ -549,6 +549,14 @@ export interface WorkspaceStateRecord {
   location?: WorkspaceLocationRecord;
   /** Absent: the editor is on the Workspace's own machine. See version 12. */
   editor?: EditorRecord;
+  /**
+   * What its editor area shows (`model/editorView.ts`): `"editor"` for its
+   * VS Code editor, absent for its terminal — the default, and what every file
+   * written before per-Workspace views means. No bump, for the reason
+   * `recently_closed` had none: an older DevHub that drops it on its next save
+   * loses which view was shown, never anything open.
+   */
+  editor_view?: "editor";
   repository_id?: string;
   /**
    * There is deliberately no `issue_url` here any more.
@@ -1415,6 +1423,7 @@ export function hydrateModel(
       );
       const started = record.editor?.started_container_id;
       if (started !== undefined) made.noteStartedContainer(started);
+      if (record.editor_view === "editor") made.setEditorView("editor");
       return made;
     });
     return { record, where, workspace };
@@ -1611,6 +1620,9 @@ export function stateFromSnapshot(
       canonical_path: workspace.root,
       location: locationRecord(workspace.location),
       ...editorRecord(workspace.editor, workspace.startedContainer),
+      ...(workspace.editorView === "editor"
+        ? { editor_view: "editor" as const }
+        : {}),
       repository_id: workspace.repositoryId,
       last_agent_id: workspace.lastAgentId,
       lifecycle: lifecycleFrom(workspace.state),
@@ -2213,6 +2225,11 @@ function decodeWorkspaceRecord(
     ...(object["editor"] === undefined
       ? {}
       : { editor: decodeEditor(at("editor"), object["editor"]) }),
+    // Anything but `"editor"` is the terminal, which is the default: a view
+    // is a convenience, and a file is never refused over one.
+    ...(object["editor_view"] === "editor"
+      ? { editor_view: "editor" as const }
+      : {}),
     repository_id: decodeOptional(object["repository_id"], (entry) =>
       decodeString(at("repository_id"), entry),
     ),

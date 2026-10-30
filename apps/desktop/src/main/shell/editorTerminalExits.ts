@@ -1,8 +1,8 @@
 /**
- * Terminal mode: the editor area's shell exiting is the Workspace's close
+ * The terminal view: the editor area's shell exiting is the Workspace's close
  * button.
  *
- * In terminal mode the editor area is the Workspace's own tmux session
+ * In its terminal view the editor area is the Workspace's own tmux session
  * (`docs/terminal-mode.md`). When that session ends under the person — they
  * typed `exit` in its last shell, or it was killed — the editor area has
  * nothing left to show, and what they meant is the same as pressing the

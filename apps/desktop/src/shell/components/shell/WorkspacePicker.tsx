@@ -256,7 +256,6 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     selectWorkspacePicker,
     chooseWorkspaceFolder,
     openSshWorkspace,
-    sshOffered,
     listSelectionBranches,
     openBranchWorkspace,
   } = usePicker();
@@ -527,17 +526,8 @@ export function WorkspacePicker({ onDismiss }: WorkspacePickerProps) {
     <Picker
       title="Open Workspace"
       question="Which workspace should this window open? Type to search the folders your sources cover, and the branches of the repository you are in."
-      // Terminal mode is local-only, so it offers no machine to connect to.
-      items={
-        sshOffered
-          ? [...pool, ...branches, ...sshHostItems(sshHosts)]
-          : [...pool, ...branches]
-      }
-      pinned={
-        sshOffered
-          ? ACTIONS
-          : ACTIONS.filter((action) => action.id !== SSH_CONNECT)
-      }
+      items={[...pool, ...branches, ...sshHostItems(sshHosts)]}
+      pinned={ACTIONS}
       busy={pickerBusy}
       emptyNoMatch="No workspaces match."
       // Two different things to say, and an empty list cannot tell them apart.

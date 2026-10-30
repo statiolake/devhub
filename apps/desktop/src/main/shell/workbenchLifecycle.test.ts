@@ -14,7 +14,6 @@ import {
 	type LifecycleEffect,
 	type WorkbenchPhase,
 } from "./workbenchLifecycle.js";
-import { workspacesWantingWorkbenches } from "./workbenchMode.js";
 
 interface Workspace {
 	sleepable: boolean;
@@ -276,8 +275,15 @@ describe("opening workbenches", () => {
 		});
 		app.loadAll();
 		expect(app.kinds()).toEqual({ scratch: "awake", a: "awake", b: "awake" });
-		// A first open stands in for nothing: the slot has never had a workbench.
-		expect(app.told).toEqual([]);
+		// A first open stands "starting" in its slot until it has loaded.
+		expect(app.told.map((one) => one.placeholder?.kind)).toEqual([
+			"starting",
+			"starting",
+			"starting",
+			undefined,
+			undefined,
+			undefined,
+		]);
 	});
 
 	it("takes down the workbench of a Workspace that left, and forgets it", () => {
@@ -718,7 +724,7 @@ describe("the placeholder is the phase", () => {
 		expect(placeholderOf({ kind: "absent" })).toBeUndefined();
 		expect(
 			placeholderOf({ kind: "opening", cause: "start", frame: "" }),
-		).toBeUndefined();
+		).toEqual({ kind: "starting" });
 		expect(
 			placeholderOf({ kind: "opening", cause: "restart", frame: "" }),
 		).toEqual({ kind: "restarting" });
@@ -756,6 +762,9 @@ describe("the placeholder is the phase", () => {
 		app.advance(WAKE_DELAY_MS);
 		app.load("d");
 		expect(app.told.filter((one) => one.surfaceKey === "surface:d")).toEqual([
+			// Its first start, from `fourAwake`.
+			{ surfaceKey: "surface:d", placeholder: { kind: "starting" } },
+			{ surfaceKey: "surface:d" },
 			{
 				surfaceKey: "surface:d",
 				placeholder: { kind: "asleep", frame: "frame:d" },
@@ -1086,43 +1095,95 @@ function harnessCap(app: ReturnType<typeof harness>, max: number) {
 	return app.planWith({ awakeMax: max });
 }
 
-describe("terminal mode", () => {
-	// The executor plans from `workspacesWantingWorkbenches`; in terminal mode
-	// it wants none, and that is the whole of "no workbench is created".
-	const workspaces = [
-		{ key: "scratch", state: { kind: "ready" } },
-		{ key: "a", state: { kind: "ready" } },
-		{ key: "gone", state: { kind: "unavailable" } },
-	];
-	const planFor = (mode: "vscode" | "terminal", tick = false) => {
-		const life = new WorkbenchLifecycle(new EditorSupervisor(), () => {});
-		return life.plan({
-			now: 0,
-			wanted: workspacesWantingWorkbenches(mode, workspaces).map((one) => ({
-				folder: one.key,
-				surfaceKey: `workspace-editor:${one.key}`,
-				sleepable: true,
-				closing: false,
-				awayMs: undefined,
-			})),
-			selected: "a",
-			views: [],
-			awakeMax: 2,
-			hibernateAfterMs: 600_000,
-			tick,
+describe("lazy start: a workbench only for an editor that is shown", () => {
+	// Every Workspace's editor area shows its terminal until `Cmd+Q E` asks
+	// for its VS Code editor, so the executor marks every one `lazy`: nothing
+	// is opened for an editor nobody has looked at (`docs/terminal-mode.md`).
+	const life = () => {
+		const logs: string[] = [];
+		const lifecycle = new WorkbenchLifecycle(new EditorSupervisor(), (line) => {
+			logs.push(line);
 		});
+		const plan = (
+			selected: string | undefined,
+			views: readonly string[] = [],
+			now = 0,
+			awakeMax = 2,
+		) =>
+			lifecycle.plan({
+				now,
+				wanted: ["scratch", "a", "b", "c"].map((folder) => ({
+					folder,
+					surfaceKey: `workspace-editor:${folder}`,
+					sleepable: true,
+					closing: false,
+					awayMs: folder === selected ? undefined : 1,
+					lazy: true,
+				})),
+				selected,
+				views,
+				awakeMax,
+				hibernateAfterMs: 600_000,
+			});
+		return { lifecycle, plan, logs };
 	};
+	const opens = (effects: readonly LifecycleEffect[]) =>
+		effects.filter((effect) => effect.kind === "open");
 
-	it("wants every Workspace whose folder is there in VS Code mode", () => {
+	it("opens nothing at all while no editor is shown, on the minute check too", () => {
+		const { lifecycle, plan } = life();
+		expect(opens(plan(undefined))).toEqual([]);
+		expect(lifecycle.foldersIn("asleep")).toEqual(["scratch", "a", "b", "c"]);
+		expect(opens(plan(undefined))).toEqual([]);
 		expect(
-			workspacesWantingWorkbenches("vscode", workspaces).map((one) => one.key),
-		).toEqual(["scratch", "a"]);
-		expect(planFor("vscode").filter((e) => e.kind === "open")).toHaveLength(2);
+			opens(
+				lifecycle.plan({
+					now: HIBERNATE_CHECK_MS,
+					wanted: [],
+					selected: undefined,
+					views: [],
+					awakeMax: 2,
+					hibernateAfterMs: 600_000,
+					tick: true,
+				}),
+			),
+		).toEqual([]);
 	});
 
-	it("opens nothing, not even the selected one, and stands nothing in for one", () => {
-		expect(workspacesWantingWorkbenches("terminal", workspaces)).toEqual([]);
-		expect(planFor("terminal")).toEqual([]);
-		expect(planFor("terminal", true)).toEqual([]);
+	it("starts the one shown, and only it, with a spinner standing in until it loads", () => {
+		const { lifecycle, plan } = life();
+		plan(undefined);
+		const shown = plan("a");
+		expect(opens(shown)).toEqual([
+			{ kind: "open", folder: "a", cause: "wake" },
+		]);
+		expect(lifecycle.placeholder("a")).toEqual({ kind: "waking", frame: "" });
+		lifecycle.loaded("a", 1);
+		expect(lifecycle.phase("a")).toEqual({ kind: "awake" });
+		expect(lifecycle.placeholder("a")).toBeUndefined();
+		expect(lifecycle.phase("b")).toEqual({ kind: "asleep", frame: "" });
+	});
+
+	it("starts the editor shown at the very first plan, the way a selection is", () => {
+		const { plan } = life();
+		expect(opens(plan("b"))).toEqual([
+			{ kind: "open", folder: "b", cause: "start" },
+		]);
+	});
+
+	it("then lives under the cap like any other: going back to the terminal lets it sleep", () => {
+		const { lifecycle, plan } = life();
+		plan("a");
+		lifecycle.loaded("a", 0);
+		plan("b", ["a"]);
+		lifecycle.loaded("b", 0);
+		// Two awake, cap 2: a third shown puts the least recently shown to sleep.
+		const third = plan("c", ["a", "b"], 10, 2);
+		expect(opens(third)).toEqual([
+			{ kind: "open", folder: "c", cause: "wake" },
+		]);
+		expect(third.filter((effect) => effect.kind === "hibernate")).toHaveLength(
+			1,
+		);
 	});
 });

@@ -125,6 +125,8 @@ function host(zoomActs = true) {
 		toggleTerminal: record("toggleTerminal"),
 		terminalNeedsAgent: record("terminalNeedsAgent"),
 		terminalNeedsAgentView: record("terminalNeedsAgentView"),
+		showEditorView: record("showEditorView"),
+		editorHasNoTerminal: record("editorHasNoTerminal"),
 		closeTerminal: record("closeTerminal"),
 		focusSidebar: record("focusSidebar"),
 		toggleSidebar: record("toggleSidebar"),

@@ -9,7 +9,7 @@
  * Workspace with nothing to lose closes; one with something to ask about —
  * unsaved editors, a busy Agent, a dirty worktree — raises the same sheet
  * the button does, and cancelling it leaves everything where it was. It is
- * the VS Code half of what terminal mode's shell `exit` already does in the
+ * the VS Code half of what the terminal view's shell `exit` already does in the
  * editor area (`editorTerminalExits.ts`).
  *
  * The workbench half is the overlay's `devhubVim/electron-browser/
@@ -17,7 +17,7 @@
  *
  * - `probe`: may this Workspace be closed at all? Asked first so that `:qa!`
  *   and `:q!` drop unsaved changes only when the close will go ahead —
- *   Scratch is never closed (as terminal mode's `exit` never closes it), and
+ *   Scratch is never closed (as the terminal view's `exit` never closes it), and
  *   there the answer is `scratch` and Vim says E444 with nothing lost.
  * - `close`: run the close button. Answered at once with `closing`; what the
  *   close then does is the sheet's and the projection's, never this reply's.

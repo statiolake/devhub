@@ -23,6 +23,7 @@
  *
  * ```text
  * absent          ─ wanted ─────────────▶ opening(start), or asleep past the cap
+ *                                          or lazy and not shown
  * opening         ─ loaded ─────────────▶ awake
  *                 ─ nothing coming ─────▶ awake if its view is there, else failed
  * opening, awake  ─ failed ─────────────▶ restart-waiting, or gave-up
@@ -138,7 +139,7 @@ export function placeholderOf(
 				? { kind: "restarting" }
 				: phase.cause === "wake"
 					? { kind: "waking", frame: phase.frame }
-					: undefined;
+					: { kind: "starting" };
 		case "restart-waiting":
 			return { kind: "restarting" };
 		case "asleep":
@@ -164,6 +165,15 @@ export interface WantedWorkbench {
 	readonly closing: boolean;
 	/** Off screen this long, or nothing while it is shown (or has no view). */
 	readonly awayMs: number | undefined;
+	/**
+	 * Started only when shown: absent and not the selected editor, it is
+	 * asleep without ever having been opened, and the first time it is shown
+	 * is its wake. Every Workspace is, in DevHub: its editor area shows its
+	 * terminal until `Cmd+Q E` asks for its workbench (`docs/terminal-mode.md`),
+	 * so no workbench is started for one nobody has looked at. Absent is the
+	 * eager start: opened as soon as it is wanted.
+	 */
+	readonly lazy?: boolean;
 }
 
 export interface LifecycleInput {
@@ -523,6 +533,13 @@ export class WorkbenchLifecycle {
 					this.move(folder, record, { kind: "awake" }, "adopted");
 				} else if (one.closing) {
 					// Its view went with the close; nothing reopens it meanwhile.
+				} else if (!isSelected && one.lazy === true) {
+					this.move(
+						folder,
+						record,
+						{ kind: "asleep", frame: "" },
+						"not started: not shown yet",
+					);
 				} else if (
 					!isSelected &&
 					one.sleepable &&

@@ -79,6 +79,7 @@ function workspace(
 		label: id,
 		location: { kind: "local" },
 		editor: { kind: "host" },
+		editorView: "terminal",
 		root: `/workspaces/${id}`,
 		displayRoot: `/workspaces/${id}`,
 		key: `/workspaces/${id}`,
@@ -457,7 +458,7 @@ describe("the two halves of a workspace", () => {
 				}),
 			),
 			run(
-				"focus_editor",
+				"toggle_editor",
 				snapshotOf({
 					workspaces: [two],
 					context: { kind: "agent", agentId: "b2" },
@@ -684,17 +685,78 @@ describe("the layout toggles", () => {
 		expect(run("swap_split_focus", snapshotOf())).toBeUndefined();
 	});
 
-	it("shows the editor by selecting it, from an Agent or from Scratch", () => {
+	it("goes to the VS Code editor from an Agent, and from nothing to Scratch's", () => {
 		expect(
 			run(
-				"focus_editor",
+				"toggle_editor",
 				snapshotOf({
 					workspaces: [two],
 					context: { kind: "agent", agentId: "b1" },
 				}),
 			),
-		).toEqual(selects({ kind: "workspace", workspaceId: "two" }));
-		expect(run("focus_editor", snapshotOf())).toEqual(selects(SCRATCH));
+		).toEqual({
+			kind: "show-editor-view",
+			workspaceId: "two",
+			view: "editor",
+		});
+	});
+
+	it("in the editor area, toggles between the terminal and VS Code", () => {
+		const inTwo = (editorView: "terminal" | "editor") =>
+			snapshotOf({
+				workspaces: [workspace("two", ["b1"], { editorView })],
+				context: { kind: "workspace", workspaceId: "two" },
+			});
+		expect(run("toggle_editor", inTwo("terminal"))).toEqual({
+			kind: "show-editor-view",
+			workspaceId: "two",
+			view: "editor",
+		});
+		expect(run("toggle_editor", inTwo("editor"))).toEqual({
+			kind: "show-editor-view",
+			workspaceId: "two",
+			view: "terminal",
+		});
+		// Scratch is a Workspace like any other.
+		expect(run("toggle_editor", snapshotOf())).toEqual({
+			kind: "show-editor-view",
+			workspaceId: SCRATCH_ID,
+			view: "editor",
+		});
+	});
+
+	it("keeps a split a split, with the editor half in front", () => {
+		expect(
+			run(
+				"toggle_editor",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "workspace", workspaceId: "two" },
+					presentation: "beside",
+				}),
+			),
+		).toEqual({
+			kind: "show-editor-view",
+			workspaceId: "two",
+			view: "editor",
+			presentation: "beside",
+		});
+	});
+
+	it("says an SSH Workspace's editor has no terminal, and changes nothing", () => {
+		const ssh = workspace("ssh", [], {
+			location: { kind: "ssh", host: "build" } as never,
+			editorView: "editor",
+		});
+		expect(
+			run(
+				"toggle_editor",
+				snapshotOf({
+					workspaces: [ssh],
+					context: { kind: "workspace", workspaceId: "ssh" },
+				}),
+			),
+		).toEqual({ kind: "editor-has-no-terminal", workspaceId: "ssh" });
 	});
 });
 

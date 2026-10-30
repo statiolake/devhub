@@ -344,13 +344,13 @@ becomes current. `:qa!` drops every change and never stops.
 
 **Quitting is closing the Workspace.** Once no modified buffer stops it, the
 quit asks DevHub to press the Workspace's close button — the same close path
-as the button, the menu's Close Workspace and terminal mode's shell `exit` in
-the editor area ([terminal mode](terminal-mode.md)): a Workspace with nothing
+as the button, the menu's Close Workspace and the shell `exit` in the editor
+area's terminal view ([terminal view](terminal-mode.md)): a Workspace with nothing
 to lose closes; one with something that is not an editor's to ask about (a
 busy Agent, a dirty worktree) raises the close's confirmation sheet, and
 cancelling it leaves everything as it was. Unsaved editors never reach that
 sheet from a quit: they stopped it first. **Scratch** is never closed
-(terminal mode starts its shell over instead): there quitting is Vim's `E444:
+(the terminal view starts its shell over instead): there quitting is Vim's `E444:
 Cannot close last window: Scratch is never closed`, and nothing is
 discarded, `:qa!` included — the workbench asks main first whether the
 Workspace can close at all, and drops or checks changes only once it can. A

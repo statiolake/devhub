@@ -46,7 +46,6 @@ import { locationKey } from "../../model/domain.js";
 import { editorPlaceFromWorkspaceUri } from "../shell/editorPlace.js";
 import { appController } from "../shell/appController.js";
 import { inheritWindowTerminal } from "./windowTerminal.js";
-import { isTerminalMode } from "../shell/workbenchMode.js";
 
 /** The part of the upstream options DevHub reads, plus the method it replaces. */
 interface WindowsMainServiceInternals {
@@ -214,16 +213,6 @@ const upstreamOpenInBrowserWindow = (
 	const editorKey = location === undefined ? undefined : locationKey(location);
 
 	const controller = appController();
-
-	// Terminal mode has no workbenches (`docs/terminal-mode.md`). No DevHub
-	// entrance asks for one there; a request that still arrives is answered
-	// the DevHub way — a folder becomes its Workspace, selected — and no
-	// window is made.
-	if (isTerminalMode()) {
-		if (location) controller.noteLocation(location);
-		console.log("[devhub] open: terminal mode — no workbench is opened");
-		throw new Error("DevHub is in terminal mode and opens no VS Code windows.");
-	}
 
 	if (!location || editorKey === undefined) {
 		// An empty window in place of a workbench attached to a dev container
