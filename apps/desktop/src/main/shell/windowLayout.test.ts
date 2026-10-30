@@ -8,6 +8,7 @@ import {
 	agentsRect,
 	chromeVariables,
 	sidebarColumnWidth,
+	sidebarOverlayHolds,
 	sidebarRect,
 	surfaceRect,
 	tooltipRect,
@@ -1085,23 +1086,23 @@ describe("the floating Sidebar", () => {
 			...overrides,
 		});
 	const variables = new Map(chromeVariables());
-	const inset = Number.parseFloat(
-		variables.get("--sidebar-overlay-inset") ?? "",
-	);
 	const shadow = Number.parseFloat(
 		variables.get("--sidebar-overlay-shadow") ?? "",
 	);
 
-	it("tells every page the card's inset and its shadow's room", () => {
-		expect(inset).toBeGreaterThan(0);
+	it("tells every page the room its shadow is drawn in", () => {
 		expect(shadow).toBeGreaterThan(0);
 	});
 
-	it("widens the Sidebar's view to the card: inset, expanded width, shadow", () => {
+	/**
+	 * The rail growing: the same left edge and top as the rail, so nothing in
+	 * it moves but its trailing edge.
+	 */
+	it("widens the Sidebar's view from the rail's own edge: expanded width, shadow", () => {
 		expect(sidebarRect(WINDOW, floating())).toEqual({
 			x: 0,
 			y: 33,
-			width: inset + 248 + shadow,
+			width: 248 + shadow,
 			height: 867,
 		});
 	});
@@ -1166,8 +1167,53 @@ describe("the floating Sidebar", () => {
 		const docked = state({ sidebar: { width: 248, collapsed: false } });
 		expect(surfaceRect(WINDOW, landing)).toEqual(surfaceRect(WINDOW, docked));
 		expect(surfaceRect(WINDOW, landing).x).toBe(248);
-		expect(sidebarRect(WINDOW, landing).width).toBe(inset + 248 + shadow);
+		expect(sidebarRect(WINDOW, landing).width).toBe(248 + shadow);
 		expect(sidebarRect(WINDOW, docked).width).toBe(248);
+	});
+
+	it("is the rail's own rectangle, grown", () => {
+		const rail = sidebarRect(
+			WINDOW,
+			state({ sidebar: { width: 248, collapsed: true } }),
+		);
+		const card = sidebarRect(WINDOW, floating());
+		expect({ x: card.x, y: card.y, height: card.height }).toEqual({
+			x: rail.x,
+			y: rail.y,
+			height: rail.height,
+		});
+	});
+
+	/**
+	 * The page asks this once the pointer has left its document: the card,
+	 * the rail included, and the tooltip a row raised hold it; the room the
+	 * shadow is drawn in and the rest of the window do not.
+	 */
+	it("is held by a cursor on the card or on its tooltip, and nowhere else", () => {
+		const tooltip: TooltipPlacement = {
+			anchor: { x: 8, y: 100, width: 232, height: 26 },
+			size: { width: 200, height: 60 },
+		};
+		const holds = (x: number, y: number, raised = tooltip) =>
+			sidebarOverlayHolds({ x, y }, WINDOW, floating(), raised);
+		expect(holds(10, 300)).toBe(true);
+		expect(holds(247, 300)).toBe(true);
+		// The shadow's room is not the card.
+		expect(holds(248 + shadow / 2, 300)).toBe(false);
+		// The tooltip, beside the row, is.
+		const box = tooltipRect(WINDOW, tooltip);
+		expect(holds(box.x + 5, box.y + 5)).toBe(true);
+		expect(
+			sidebarOverlayHolds(
+				{ x: box.x + 5, y: box.y + 5 },
+				WINDOW,
+				floating(),
+				undefined,
+			),
+		).toBe(false);
+		expect(holds(800, 300)).toBe(false);
+		// Above the card is the window's band, not the card.
+		expect(holds(10, 10)).toBe(false);
 	});
 
 	it("is never wider than the window", () => {

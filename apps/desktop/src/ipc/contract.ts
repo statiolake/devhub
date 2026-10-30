@@ -649,6 +649,17 @@ export interface SidebarAreaWire {
 }
 
 /**
+ * Where the cursor is, as the floating Sidebar's page asks main once the
+ * pointer has left its document (`useSidebarOverlay.ts`): whether it is still
+ * on the card or on the tooltip a row raised, and whether the window is in
+ * front. See `windowLayout.sidebarOverlayHolds`.
+ */
+export interface SidebarPointerWire {
+	readonly inside: boolean;
+	readonly active: boolean;
+}
+
+/**
  * One item of a context menu a page asks main to put up.
  *
  * Only what the menu draws: the act stays with the page, which runs the item
@@ -1263,6 +1274,11 @@ export interface SidebarBridge
 	 * window. See `SidebarAreaWire` — the origin is the owner's number.
 	 */
 	onSidebarArea(listener: (area: SidebarAreaWire) => void): () => void;
+	/**
+	 * Where the cursor is, for the floating Sidebar: on the card or its
+	 * tooltip, and whether the window is in front. See `SidebarPointerWire`.
+	 */
+	sidebarPointer(): Promise<SidebarPointerWire>;
 	/**
 	 * Whether the chord prefix (`Cmd+Q`) is armed. While it is, each row wears
 	 * the digit that selects it in place of its folder mark.
@@ -1897,6 +1913,7 @@ export const CHANNELS = {
 	toastsSize: "devhub:toasts-size",
 	/** Where main laid the Sidebar, so a row can say where it is in the window. */
 	sidebarAreaChanged: "devhub:sidebar-area-changed",
+	sidebarPointer: "devhub:sidebar-pointer",
 	/** The chord prefix was armed or disarmed: the Sidebar numbers its rows. */
 	chordArmedChanged: "devhub:chord-armed-changed",
 	/** A row's context menu, put up by main as a native menu. */

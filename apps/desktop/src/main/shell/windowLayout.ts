@@ -97,27 +97,21 @@ const HAIRLINE = 1;
  */
 const SPLIT_DIVIDER = 6;
 /**
- * `--sidebar-overlay-inset`: how far the floating Sidebar stands off the
- * window's leading edge and off the top and foot of its own column.
+ * `--sidebar-overlay-shadow`: the room past the floating Sidebar's trailing
+ * edge that its shadow is drawn in.
  *
- * Compact mode's overlay is a card, not a column: it is the expanded Sidebar
- * lifted over the content, the way a browser's vertical tab bar floats its
- * full width over the page while the pointer is on the strip. A card flush
- * against the window's edge would read as the docked column drawn over the
- * workbench by mistake; the inset is what says it floats.
+ * Compact mode's overlay is the rail growing to the right, the way a
+ * browser's vertical tab bar floats its full width over the page while the
+ * pointer is on the strip: the same left edge and the same top as the rail,
+ * so nothing in it moves but its trailing edge. The shadow is the page's own
+ * paint on that edge, so it has to be inside the view — and every pixel of a
+ * view takes the pointer, transparent or not: a `WebContentsView` has no
+ * hit-test region of its own. So this is exactly what the shadow needs and no
+ * more: the page's shadow (`--sidebar-overlay-elevation` in
+ * `sidebarPage.css`) is held to it by a test, and a press in it closes the
+ * overlay at once (`useSidebarOverlay.ts`).
  */
-const SIDEBAR_OVERLAY_INSET = 6;
-/**
- * `--sidebar-overlay-shadow`: the room past the card's trailing edge that its
- * shadow is drawn in.
- *
- * The shadow is the page's own paint, so it has to be inside the view — and
- * every pixel of the view takes the pointer, transparent or not: a
- * `WebContentsView` has no hit-test region of its own. So this is as narrow as
- * a shadow can be and still read as one, and a press in it closes the overlay
- * at once (`useSidebarOverlay.ts`) rather than swallowing a second click.
- */
-const SIDEBAR_OVERLAY_SHADOW = 14;
+const SIDEBAR_OVERLAY_SHADOW = 24;
 /** How far the notices sit from the window's corner. */
 const TOASTS_MARGIN = 12;
 /** Between a tooltip and the row it is about. */
@@ -358,7 +352,6 @@ export function chromeVariables(): ReadonlyArray<readonly [string, string]> {
 	return [
 		["--titlebar-height", `${TITLE_BAR_HEIGHT}px`],
 		["--traffic-light-span", `${TRAFFIC_LIGHT_SPAN}px`],
-		["--sidebar-overlay-inset", `${SIDEBAR_OVERLAY_INSET}px`],
 		["--sidebar-overlay-shadow", `${SIDEBAR_OVERLAY_SHADOW}px`],
 	];
 }
@@ -430,8 +423,8 @@ export function surfaceRect(
  *
  * **The overlay is the one time this is not the column.** While the page
  * floats the expanded Sidebar over the content (`state.sidebar.overlay`), the
- * view is widened to the card it draws — the inset, the expanded width, and
- * the room its shadow takes — and nothing else moves: the content area is
+ * view is widened to the card it draws — the expanded width from the same
+ * left edge, and the room its shadow takes — and nothing else moves: the content area is
  * still laid out from `sidebarColumnWidth`, which an overlay does not change,
  * so the workbench and the Agent keep their rectangles to the pixel. The view
  * is sized to the card and not to the window because every pixel of a view
@@ -450,9 +443,7 @@ export function sidebarRect(
 					column,
 					Math.min(
 						windowSize.width,
-						SIDEBAR_OVERLAY_INSET +
-							Math.round(state.sidebar.width) +
-							SIDEBAR_OVERLAY_SHADOW,
+						Math.round(state.sidebar.width) + SIDEBAR_OVERLAY_SHADOW,
 					),
 				)
 			: column;
@@ -462,6 +453,48 @@ export function sidebarRect(
 		width,
 		height: Math.max(0, windowSize.height - band),
 	};
+}
+
+/**
+ * Whether a pointer at `point` (window coordinates) is still somewhere the
+ * floating Sidebar belongs to: on the card — the rail is its leading part —
+ * or on the tooltip one of its rows raised, which is its own view beside it.
+ *
+ * Asked by the Sidebar's page when the pointer has left its document and the
+ * grace is up (`useSidebarOverlay.ts`). The page cannot answer it: a pointer
+ * that went onto the tooltip, or out of a window that is not in front, looks
+ * exactly the same from inside the page as a pointer that went away. Main
+ * reads the cursor instead of trusting a leave event across view boundaries.
+ * The room the shadow is drawn in is *not* the card: a pointer there has
+ * left.
+ */
+export function sidebarOverlayHolds(
+	point: { readonly x: number; readonly y: number },
+	windowSize: LayoutSize,
+	state: LayoutState,
+	tooltip: TooltipPlacement | undefined,
+): boolean {
+	const view = sidebarRect(windowSize, state);
+	const card: LayoutRect = {
+		...view,
+		width: Math.min(view.width, Math.round(state.sidebar.width)),
+	};
+	if (within(point, card)) return true;
+	return (
+		tooltip !== undefined && within(point, tooltipRect(windowSize, tooltip))
+	);
+}
+
+function within(
+	point: { readonly x: number; readonly y: number },
+	rect: LayoutRect,
+): boolean {
+	return (
+		point.x >= rect.x &&
+		point.x < rect.x + rect.width &&
+		point.y >= rect.y &&
+		point.y < rect.y + rect.height
+	);
 }
 
 /**

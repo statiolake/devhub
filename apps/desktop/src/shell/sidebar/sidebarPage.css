@@ -51,64 +51,114 @@
 }
 
 /*
- * Compact mode's floating Sidebar: the expanded column on a raised card over
- * the content, while the pointer is on the rail (`useSidebarOverlay.ts`).
+ * Compact mode's floating Sidebar: the rail, grown to the full width over the
+ * content while the pointer is on it (`useSidebarOverlay.ts`).
  *
- * It is this same pane, drawn expanded — the rows are told the Sidebar is not
- * collapsed — so everything above about the column holds, and only the frame
- * changes. Main widened this view to the card for as long as it floats
- * (`windowLayout.sidebarRect`): the inset on the leading side, the expanded
- * width, and `--sidebar-overlay-shadow` past it for the shadow, all of it
- * spelled once in main and served to this page with the chrome's geometry.
- * Everything in the view that is not the card is transparent and shows the
- * workbench under it.
+ * It is the rail itself and not a second drawing of the Sidebar: the same
+ * markup (`data-collapsed` stays), the same left edge and top, every row at
+ * the height the rail gives it and every mark where the rail has it. What
+ * changes is only the trailing edge, which moves out to `--sidebar-width`, and
+ * the words, which the rail takes off and this lets back in beside the marks.
+ * So as it grows, nothing moves: the labels appear as the edge passes them.
+ *
+ * Main widened this view to the card and its shadow for as long as it floats
+ * (`windowLayout.sidebarRect`); everything in the view that is not the card is
+ * transparent and shows the workbench under it.
  *
  * The card is the Sidebar's own colour, opaque. `--material-float` is for a
  * surface that can blur what passes under it, and a view cannot blur another
  * view: translucent here would be the editor's text showing through the rows.
+ *
+ * Its shadow is on the trailing side only — the rail is growing, not lifting
+ * off the window's edge — and it is held inside `--sidebar-overlay-shadow`,
+ * the room main leaves for it: each layer reaches its x offset plus its blur
+ * plus its spread, and `sidebarOverlay.test.tsx` checks the sum against the
+ * room. A shadow wider than the room is a shadow cut off in a straight line.
  */
+.app-shell {
+  --sidebar-overlay-elevation:
+    1px 0 0 var(--edge), 4px 0 12px -4px var(--shadow-mid),
+    8px 0 20px -8px var(--shadow-deep);
+}
+
 .sidebar-page > .sidebar[data-overlay] {
   width: var(--sidebar-width);
   flex: 1 1 auto;
   align-self: flex-start;
 }
 
-.sidebar-page > .sidebar[data-overlay="open"] {
-  margin: var(--sidebar-overlay-inset) 0 var(--sidebar-overlay-inset)
-    var(--sidebar-overlay-inset);
+.sidebar-page > .sidebar[data-collapsed="true"][data-overlay] {
+  flex-basis: auto;
   border-right: 0;
-  border-radius: var(--radius-card);
+  border-radius: 0 var(--radius-card) var(--radius-card) 0;
   background: var(--chrome);
-  box-shadow: var(--elevation-3);
-  overflow: hidden;
-  /* Out of the rail's edge: the card is uncovered from the rail's width to
-     its own, decelerating, the way a tab bar slides out from its strip. A
-     clip rather than a slide, because the rail is the card's own leading
-     part and must not move while the rest arrives. */
-  animation: sidebar-overlay-out var(--motion-base) var(--ease-enter);
+  box-shadow: var(--sidebar-overlay-elevation);
 }
 
-@keyframes sidebar-overlay-out {
+/* The words come back, on the line the rail's rows already have: every row's
+   text is one line, so the row is no taller for it. */
+.sidebar[data-collapsed="true"][data-overlay] .row-text {
+  display: flex;
+}
+
+.sidebar[data-collapsed="true"][data-overlay] .sidebar-context-button {
+  flex: 1 1 auto;
+}
+
+/* An Agent's mark is a sibling of its button, not inside it; the gap the
+   button's own `gap` gives a Workspace's mark is padding here. */
+.sidebar[data-collapsed="true"][data-overlay]
+  .agent-row
+  .sidebar-context-button {
+  flex: 1 1 auto;
+  padding-inline-start: var(--space-2);
+}
+
+/* The rate limits stay the rail's bars, in the rail's column. */
+.sidebar[data-collapsed="true"][data-overlay] .sidebar-usage {
+  width: var(--sidebar-rail-collapsed-width);
+}
+
+/* Growing: the trailing edge runs out from the rail's to the card's, and on
+   past it to the shadow's, decelerating. A clip and not a width, so nothing
+   in the card is laid out twice: the rows are already at their full width,
+   and the edge uncovers them. */
+.sidebar-page > .sidebar[data-overlay="open"] {
+  animation: sidebar-overlay-grow var(--motion-base) var(--ease-enter);
+}
+
+/* Retracting: the same edge, back in, quicker. It holds the rail's clip until
+   the page lets the view go, so the frame after is the rail it already is. */
+.sidebar-page > .sidebar[data-overlay="closing"] {
+  animation: sidebar-overlay-retract var(--motion-exit) var(--ease-exit)
+    forwards;
+}
+
+@keyframes sidebar-overlay-grow {
   from {
-    clip-path: inset(
-      -40px calc(100% - var(--sidebar-rail-collapsed-width)) -40px -40px round
-        var(--radius-card)
-    );
-    opacity: 0.85;
+    clip-path: inset(0 calc(100% - var(--sidebar-rail-collapsed-width)) 0 0);
   }
 
   to {
-    clip-path: inset(-40px -40px -40px -40px round var(--radius-card));
-    opacity: 1;
+    clip-path: inset(0 calc(-1 * var(--sidebar-overlay-shadow)) 0 0);
+  }
+}
+
+@keyframes sidebar-overlay-retract {
+  from {
+    clip-path: inset(0 calc(-1 * var(--sidebar-overlay-shadow)) 0 0);
+  }
+
+  to {
+    clip-path: inset(0 calc(100% - var(--sidebar-rail-collapsed-width)) 0 0);
   }
 }
 
 /*
- * Landing: compact mode was turned off under the card. The Sidebar is docked
- * now, at the width the card already had, and main has moved the content over
- * once; the card lets go of its inset, its corners and its shadow where it
- * stands, and is the column. The view stays as wide as the card until this
- * has finished (`LAND_MS`), so nothing of the card is cut off on the way.
+ * Landing: compact mode was turned off under the card. The card is already
+ * where the docked column goes, at its width, so it stays; main has moved the
+ * content over once, and the shadow and the corner fade into the column's
+ * edge before the view becomes a column (`LAND_MS`).
  */
 .sidebar-page > .sidebar[data-overlay="landing"] {
   animation: sidebar-overlay-land var(--motion-base) var(--ease-standard);
@@ -116,11 +166,9 @@
 
 @keyframes sidebar-overlay-land {
   from {
-    margin: var(--sidebar-overlay-inset) 0 var(--sidebar-overlay-inset)
-      var(--sidebar-overlay-inset);
-    border-radius: var(--radius-card);
+    border-radius: 0 var(--radius-card) var(--radius-card) 0;
     background: var(--chrome);
-    box-shadow: var(--elevation-3);
+    box-shadow: var(--sidebar-overlay-elevation);
   }
 }
 

@@ -1284,26 +1284,14 @@ export function Sidebar({ snapshot }: SidebarProps) {
   const reorder = useReorder(snapshot);
 
   /**
-   * Compact mode's floating Sidebar (`useSidebarOverlay.ts`). While it is up
-   * — or landing as compact mode goes off — the pane is drawn *expanded*: the
-   * same rows with their words, exactly as the docked column draws them, so
-   * the rows are told the Sidebar is not collapsed. The model's `collapsed`
-   * does not move for it; it is a way of looking at the rail, not a state of
-   * the Sidebar.
+   * Compact mode's floating Sidebar (`useSidebarOverlay.ts`): the rail grown
+   * to the full width. It is still the rail's markup — the same rows at the
+   * same heights, every mark where the rail has it — with the words let back
+   * in beside the marks (`sidebarPage.css`), so nothing in it moves but its
+   * trailing edge. The model's `collapsed` does not move for it.
    */
   const paneRef = useRef<HTMLElement>(null);
   const overlay = useSidebarOverlay(collapsed, paneRef, reorder.active);
-  const drawnCollapsed = collapsed && overlay.phase === "closed";
-  const drawn = useMemo(
-    () =>
-      drawnCollapsed === snapshot.sidebar.collapsed
-        ? snapshot
-        : {
-            ...snapshot,
-            sidebar: { ...snapshot.sidebar, collapsed: drawnCollapsed },
-          },
-    [drawnCollapsed, snapshot],
-  );
 
   return (
     <aside
@@ -1315,9 +1303,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
       // labels a screen reader reads and the roving tab stop are one set of
       // markup in both states, and there is no second render path to keep in
       // step with the first.
-      data-collapsed={drawnCollapsed ? "true" : undefined}
-      // The card the overlay floats, and the moment it lands. See
-      // `styles/shell.css` — the same pane, raised.
+      data-collapsed={collapsed ? "true" : undefined}
+      // The rail grown over the content, retracting, or landing as compact
+      // mode goes off. See `sidebarPage.css` — the same pane, raised.
       data-overlay={overlay.phase === "closed" ? undefined : overlay.phase}
       {...overlay.paneHandlers}
       // A row chosen in the floating Sidebar does what a row does, and the
@@ -1456,7 +1444,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
             workspace={scratch}
             identity={rowIdentity(scratch, snapshot.scratchWorkspaceId)}
             repository={repositories.get(scratch.id)}
-            snapshot={drawn}
+            snapshot={snapshot}
             agentProfiles={agentProfiles.profiles}
             agentProfilesAvailability={agentProfiles.availability}
             chordDigit={armed ? 0 : undefined}
@@ -1520,7 +1508,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
                     snapshot.scratchWorkspaceId,
                   )}
                   repository={repositories.get(entry.workspace.id)}
-                  snapshot={drawn}
+                  snapshot={snapshot}
                   agentProfiles={agentProfiles.profiles}
                   agentProfilesAvailability={agentProfiles.availability}
                   chordDigit={

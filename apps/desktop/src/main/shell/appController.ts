@@ -10207,6 +10207,8 @@ export class AppController {
 		// Escape in the Sidebar. The page can blur its own row but it cannot
 		// focus a native workbench view, so where the keyboard goes stays main's
 		// one answer and this is only the ask.
+		// The floating Sidebar lost sight of the pointer and asks where it is.
+		handle(CHANNELS.sidebarPointer, () => shellWindow().sidebarPointer());
 		handle(CHANNELS.focusSurface, () => {
 			this.placeKeyboardOnSurface();
 		});

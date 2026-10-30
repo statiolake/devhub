@@ -25,6 +25,7 @@ import {
 	terminalExtent,
 	terminalSeam,
 	terminalStacked,
+	sidebarOverlayHolds,
 	sidebarRect,
 	surfaceRect,
 	trafficLightPosition,
@@ -37,7 +38,11 @@ import {
 	type LayoutState,
 } from "./windowLayout.js";
 import type { TitleBarMode } from "../../model/config.js";
-import type { SidebarAreaWire, WorkbenchAreaWire } from "../../ipc/contract.js";
+import type {
+	SidebarAreaWire,
+	SidebarPointerWire,
+	WorkbenchAreaWire,
+} from "../../ipc/contract.js";
 import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
@@ -1351,6 +1356,30 @@ export class ShellWindow {
 	 */
 	sidebarArea(): SidebarAreaWire {
 		return sidebarRect(this.windowSize(), this.state);
+	}
+
+	/**
+	 * Where the cursor is, for the floating Sidebar's page, which has lost
+	 * sight of it: on the card or on its tooltip (`sidebarOverlayHolds`), and
+	 * whether this window is in front. Read off the cursor, not off DOM
+	 * events: a pointer that crossed into the tooltip's view, or a window
+	 * that went to the back, is a leave as far as the page can tell.
+	 */
+	sidebarPointer(): SidebarPointerWire {
+		const active = !this.window.isDestroyed() && this.window.isFocused();
+		if (this.window.isDestroyed()) return { inside: false, active };
+		const cursor = electron.screen.getCursorScreenPoint();
+		const content = this.window.getContentBounds();
+		const point = { x: cursor.x - content.x, y: cursor.y - content.y };
+		return {
+			inside: sidebarOverlayHolds(
+				point,
+				this.windowSize(),
+				this.state,
+				this.tooltip.placement(),
+			),
+			active,
+		};
 	}
 
 	/**

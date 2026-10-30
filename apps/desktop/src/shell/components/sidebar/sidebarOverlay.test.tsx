@@ -10,6 +10,7 @@
  * where the view goes (`windowLayout.test.ts`).
  */
 
+import { readFileSync } from "node:fs";
 import "@testing-library/jest-dom/vitest";
 import {
   act,
@@ -20,21 +21,34 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../../ipc/appShell";
-import type { LayoutPreviewWire } from "../../../ipc/contract";
+import type {
+  LayoutPreviewWire,
+  SidebarPointerWire,
+} from "../../../ipc/contract";
 import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 import { SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
-import { CLOSE_GRACE_MS, LAND_MS } from "./useSidebarOverlay";
+import { CLOSE_GRACE_MS, CLOSE_MS, LAND_MS } from "./useSidebarOverlay";
+import { chromeVariables } from "../../../main/shell/windowLayout";
 
 let previews: LayoutPreviewWire[] = [];
 let tooltips: string[] = [];
+/** What main says about the cursor when the page asks (`sidebarPointer`). */
+let cursor: SidebarPointerWire = { inside: false, active: true };
+let asked = 0;
 
 beforeEach(() => {
   vi.useFakeTimers();
   previews = [];
   tooltips = [];
+  cursor = { inside: false, active: true };
+  asked = 0;
   window.devhub = {
+    sidebarPointer: () => {
+      asked += 1;
+      return Promise.resolve(cursor);
+    },
     openModal: vi.fn(() => Promise.resolve("")),
     focusSurface: vi.fn(() => Promise.resolve()),
     previewLayout: (preview: LayoutPreviewWire) => {
@@ -143,9 +157,10 @@ function leave(pane: HTMLElement) {
   fireEvent.pointerLeave(pane);
 }
 
-function wait(ms: number) {
-  act(() => {
-    vi.advanceTimersByTime(ms);
+/** Time passes, and main's answers arrive. */
+async function wait(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
   });
 }
 
@@ -155,13 +170,16 @@ const overlays = () =>
     .map((preview) => preview.sidebarOverlay);
 
 describe("the floating Sidebar", () => {
-  it("floats the expanded Sidebar the moment the pointer moves on the rail", () => {
+  /**
+   * The rail grows: the same markup, still the rail's (`data-collapsed`), with
+   * the words let back in by the stylesheet — so no row moves.
+   */
+  it("grows the rail the moment the pointer moves on it", () => {
     const { pane } = mount(true);
     expect(pane()).toHaveAttribute("data-collapsed", "true");
     point(pane());
     expect(pane()).toHaveAttribute("data-overlay", "open");
-    // Drawn expanded: the rows are the docked column's.
-    expect(pane()).not.toHaveAttribute("data-collapsed");
+    expect(pane()).toHaveAttribute("data-collapsed", "true");
     expect(overlays()).toEqual([true]);
   });
 
@@ -172,30 +190,79 @@ describe("the floating Sidebar", () => {
     expect(overlays()).toEqual([]);
   });
 
-  it("goes after the grace once the pointer has left", () => {
+  it("asks main after the grace, and retracts once the cursor is off it", async () => {
     const { pane } = mount(true);
     point(pane());
     leave(pane());
-    wait(CLOSE_GRACE_MS - 1);
+    await wait(CLOSE_GRACE_MS - 1);
+    expect(asked).toBe(0);
     expect(pane()).toHaveAttribute("data-overlay", "open");
-    wait(1);
+    await wait(1);
+    expect(asked).toBe(1);
+    expect(pane()).toHaveAttribute("data-overlay", "closing");
+    // The view is the card's until it has retracted.
+    expect(overlays()).toEqual([true]);
+    await wait(CLOSE_MS);
     expect(pane()).not.toHaveAttribute("data-overlay");
-    expect(pane()).toHaveAttribute("data-collapsed", "true");
     expect(overlays()).toEqual([true, false]);
   });
 
-  it("stays, without flickering, for a pointer that comes back inside the grace", () => {
+  it("stays, without flickering, for a pointer that comes back inside the grace", async () => {
     const { pane } = mount(true);
     point(pane());
     leave(pane());
-    wait(CLOSE_GRACE_MS / 2);
+    await wait(CLOSE_GRACE_MS / 2);
     point(pane(), 30, 120);
-    wait(CLOSE_GRACE_MS * 2);
+    await wait(CLOSE_GRACE_MS * 3);
+    expect(pane()).toHaveAttribute("data-overlay", "open");
+    expect(asked).toBe(0);
+    expect(overlays()).toEqual([true]);
+  });
+
+  it("comes back out for a pointer that returns while it retracts", async () => {
+    const { pane } = mount(true);
+    point(pane());
+    leave(pane());
+    await wait(CLOSE_GRACE_MS);
+    expect(pane()).toHaveAttribute("data-overlay", "closing");
+    point(pane(), 22, 130);
+    expect(pane()).toHaveAttribute("data-overlay", "open");
+    await wait(CLOSE_MS * 2);
     expect(pane()).toHaveAttribute("data-overlay", "open");
     expect(overlays()).toEqual([true]);
   });
 
-  it("is held by focus the keyboard put in it", () => {
+  /**
+   * The tooltip a row raised is a view of its own: the pointer on it has left
+   * this document, and only main can say it is still the overlay's.
+   */
+  it("is held while the cursor is on the tooltip, and goes once it leaves", async () => {
+    const { pane } = mount(true);
+    point(pane());
+    cursor = { inside: true, active: true };
+    leave(pane());
+    await wait(CLOSE_GRACE_MS * 5);
+    expect(asked).toBe(5);
+    expect(pane()).toHaveAttribute("data-overlay", "open");
+    cursor = { inside: false, active: true };
+    await wait(CLOSE_GRACE_MS);
+    expect(pane()).toHaveAttribute("data-overlay", "closing");
+  });
+
+  it("is kept while the window is in the back, and decided once it is in front", async () => {
+    const { pane } = mount(true);
+    point(pane());
+    fireEvent.blur(window);
+    cursor = { inside: false, active: false };
+    leave(pane());
+    await wait(CLOSE_GRACE_MS * 10);
+    expect(pane()).toHaveAttribute("data-overlay", "open");
+    cursor = { inside: false, active: true };
+    await wait(CLOSE_GRACE_MS);
+    expect(pane()).toHaveAttribute("data-overlay", "closing");
+  });
+
+  it("is held by focus the keyboard put in it", async () => {
     const { pane } = mount(true);
     point(pane());
     const row = screen.getByRole("button", { name: /widget workspace/ });
@@ -204,14 +271,16 @@ describe("the floating Sidebar", () => {
       row.focus();
     });
     leave(pane());
-    wait(CLOSE_GRACE_MS * 3);
+    await wait(CLOSE_GRACE_MS * 3);
     expect(pane()).toHaveAttribute("data-overlay", "open");
   });
 
-  it("closes on Escape and stays closed until the pointer has left", () => {
+  it("closes on Escape and stays closed until the pointer has left", async () => {
     const { pane } = mount(true);
     point(pane());
     fireEvent.keyDown(pane(), { key: "Escape" });
+    expect(pane()).toHaveAttribute("data-overlay", "closing");
+    await wait(CLOSE_MS);
     expect(pane()).not.toHaveAttribute("data-overlay");
     point(pane(), 25, 110);
     expect(pane()).not.toHaveAttribute("data-overlay");
@@ -220,22 +289,24 @@ describe("the floating Sidebar", () => {
     expect(pane()).toHaveAttribute("data-overlay", "open");
   });
 
-  it("folds away after a row is chosen, the way a tab bar does", () => {
+  it("folds away after a row is chosen, the way a tab bar does", async () => {
     const { pane } = mount(true);
     point(pane());
     fireEvent.click(screen.getByRole("button", { name: /^Scratch workspace/ }));
+    await wait(CLOSE_MS);
     expect(pane()).not.toHaveAttribute("data-overlay");
     expect(overlays()).toEqual([true, false]);
   });
 
-  it("closes at once on a press outside the card", () => {
+  it("is gone at once on a press outside the card", () => {
     const { pane } = mount(true);
     point(pane());
     fireEvent.pointerDown(document.body);
     expect(pane()).not.toHaveAttribute("data-overlay");
+    expect(overlays()).toEqual([true, false]);
   });
 
-  it("is held while a row is dragged", () => {
+  it("is held while a row is dragged", async () => {
     const { pane } = mount(true);
     point(pane());
     const row = screen
@@ -244,12 +315,12 @@ describe("the floating Sidebar", () => {
     if (!row) throw new Error("the row is not draggable");
     fireEvent.dragStart(row);
     leave(pane());
-    wait(CLOSE_GRACE_MS * 3);
+    await wait(CLOSE_GRACE_MS * 3);
     expect(pane()).toHaveAttribute("data-overlay", "open");
     // Let go outside the card: it goes, after the grace.
     fireEvent.dragOver(document.body);
     fireEvent.dragEnd(row);
-    wait(CLOSE_GRACE_MS);
+    await wait(CLOSE_GRACE_MS + CLOSE_MS);
     expect(pane()).not.toHaveAttribute("data-overlay");
   });
 
@@ -269,11 +340,11 @@ describe("the floating Sidebar", () => {
   });
 
   /**
-   * Compact mode turned off under the card: it lands. Docked at once — the
-   * model's width, drawn expanded — while main still keeps the view as wide
-   * as the card, and only after the landing does the view become a column.
+   * Compact mode turned off under the card: it is already where the docked
+   * column goes, so it stays — docked at once at the same width, while main
+   * keeps the view wide enough for the shadow to fade, and then lets it go.
    */
-  it("lands in place when compact mode is turned off under it", () => {
+  it("lands in place when compact mode is turned off under it", async () => {
     const { pane, setCollapsed } = mount(true);
     point(pane());
     setCollapsed(false);
@@ -281,16 +352,44 @@ describe("the floating Sidebar", () => {
     expect(pane()).not.toHaveAttribute("data-collapsed");
     expect(pane().style.getPropertyValue("--sidebar-width")).toBe("248px");
     expect(overlays()).toEqual([true]);
-    wait(LAND_MS);
+    await wait(LAND_MS);
     expect(pane()).not.toHaveAttribute("data-overlay");
     expect(overlays()).toEqual([true, false]);
     // The docked column, resize handle and all.
     expect(screen.getByRole("separator")).toBeInTheDocument();
   });
 
-  it("takes down whatever tooltip was up as it opens and closes", () => {
+  it("takes down whatever tooltip was up as it opens", () => {
     const { pane } = mount(true);
     point(pane());
     expect(tooltips).toContain("hide");
+  });
+});
+
+/**
+ * The card's shadow is drawn inside the room main leaves for it past the
+ * card's edge; a layer reaching further is cut off in a straight line.
+ */
+describe("the floating Sidebar's shadow", () => {
+  it("fits the room main leaves for it", () => {
+    const css = readFileSync("src/shell/sidebar/sidebarPage.css", "utf8");
+    const declaration = /--sidebar-overlay-elevation:([^;]+);/.exec(css)?.[1];
+    if (declaration === undefined) throw new Error("no overlay elevation");
+    const room = Number.parseFloat(
+      new Map(chromeVariables()).get("--sidebar-overlay-shadow") ?? "",
+    );
+    const layers = declaration.split(/,(?![^(]*\))/);
+    expect(layers.length).toBeGreaterThan(1);
+    for (const layer of layers) {
+      // `x y blur spread colour`: the lengths are the words before the colour.
+      const lengths = layer
+        .trim()
+        .split(/\s+/)
+        .filter((word) => /^-?\d+(\.\d+)?(px)?$/.test(word))
+        .map((word) => Number.parseFloat(word));
+      expect(lengths.length).toBeGreaterThanOrEqual(3);
+      const [x = 0, , blur = 0, spread = 0] = lengths;
+      expect(x + blur + spread).toBeLessThanOrEqual(room);
+    }
   });
 });

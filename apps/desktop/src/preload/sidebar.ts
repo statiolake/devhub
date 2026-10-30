@@ -13,6 +13,7 @@ import {
 	type MenuCommand,
 	type SidebarAreaWire,
 	type SidebarBridge,
+	type SidebarPointerWire,
 	type TooltipRequestWire,
 } from "../ipc/contract.js";
 import {
@@ -56,6 +57,8 @@ const api: SidebarBridge = {
 	// One way, both of them: what is being sent is a fact about where the
 	// pointer is resting, not a request waiting on an answer, and a tooltip
 	// that had to await a round trip would arrive after the pointer moved on.
+	sidebarPointer: () =>
+		ipcRenderer.invoke(CHANNELS.sidebarPointer) as Promise<SidebarPointerWire>,
 	onChordArmed: (listener) => on<boolean>(CHANNELS.chordArmedChanged, listener),
 	showContextMenu: (request: ContextMenuRequestWire) =>
 		ipcRenderer.invoke(CHANNELS.showContextMenu, request) as Promise<
