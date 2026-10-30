@@ -129,3 +129,19 @@
     animation: none;
   }
 }
+
+/*
+ * While it floats, the page under the card is not the window's ground: it is
+ * the room the card's shadow is drawn in, over a live workbench. So a page
+ * that would paint the ground (`windowBackground.css` — no material to
+ * reveal) paints nothing here; the card paints itself.
+ */
+:root[data-window-material="none"] body:has(.sidebar[data-overlay]) {
+  background: transparent;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  body:has(.sidebar[data-overlay]) {
+    background: transparent;
+  }
+}
