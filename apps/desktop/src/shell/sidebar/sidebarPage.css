@@ -54,12 +54,12 @@
  * Compact mode's floating Sidebar: the rail, grown to the full width over the
  * content while the pointer is on it (`useSidebarOverlay.ts`).
  *
- * It is the rail itself and not a second drawing of the Sidebar: the same
- * markup (`data-collapsed` stays), the same left edge and top, every row at
- * the height the rail gives it and every mark where the rail has it. What
- * changes is only the trailing edge, which moves out to `--sidebar-width`, and
- * the words, which the rail takes off and this lets back in beside the marks.
- * So as it grows, nothing moves: the labels appear as the edge passes them.
+ * It is drawn as the docked column, and the docked column is the rail's own
+ * arrangement with more of it shown (`tokens.css`): the same left edge and
+ * top, every row at the height the rail gives it, every mark at the rail's x.
+ * So as it grows nothing moves but the trailing edge — the words, the marks
+ * and the controls appear as it passes them — and when compact mode is turned
+ * off under it, it is already the docked column and stays.
  *
  * Main widened this view to the card and its shadow for as long as it floats
  * (`windowLayout.sidebarRect`); everything in the view that is not the card is
@@ -87,36 +87,12 @@
   align-self: flex-start;
 }
 
-.sidebar-page > .sidebar[data-collapsed="true"][data-overlay] {
-  flex-basis: auto;
+.sidebar-page > .sidebar[data-overlay="open"],
+.sidebar-page > .sidebar[data-overlay="closing"] {
   border-right: 0;
   border-radius: 0 var(--radius-card) var(--radius-card) 0;
   background: var(--chrome);
   box-shadow: var(--sidebar-overlay-elevation);
-}
-
-/* The words come back, on the line the rail's rows already have: every row's
-   text is one line, so the row is no taller for it. */
-.sidebar[data-collapsed="true"][data-overlay] .row-text {
-  display: flex;
-}
-
-.sidebar[data-collapsed="true"][data-overlay] .sidebar-context-button {
-  flex: 1 1 auto;
-}
-
-/* An Agent's mark is a sibling of its button, not inside it; the gap the
-   button's own `gap` gives a Workspace's mark is padding here. */
-.sidebar[data-collapsed="true"][data-overlay]
-  .agent-row
-  .sidebar-context-button {
-  flex: 1 1 auto;
-  padding-inline-start: var(--space-2);
-}
-
-/* The rate limits stay the rail's bars, in the rail's column. */
-.sidebar[data-collapsed="true"][data-overlay] .sidebar-usage {
-  width: var(--sidebar-rail-collapsed-width);
 }
 
 /* Growing: the trailing edge runs out from the rail's to the card's, and on

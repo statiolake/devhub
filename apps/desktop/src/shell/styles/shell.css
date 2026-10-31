@@ -205,36 +205,54 @@
     var(--space-4);
 }
 
-/* The heading is a band of the same height as a row, so the run of text down
-   the Sidebar keeps one rhythm: heading to first row is the same step as row
-   to row. Its leading edge is the column the rows' own words start on
-   (`--sidebar-text-inset`), so the section's name and the names under it read
-   down one edge — there is one leading column now, and a heading hung off it
-   would have started to the left of every word in the list. */
+/* The section heading is a rule: the hairline between Scratch and the
+   workspaces under it, with the air of one section step either side, in the
+   docked column exactly as in the rail. It was a band as tall as a row with
+   "WORKSPACES" in it, which put every workspace row 17px lower in the docked
+   column than in the rail — so turning compact mode off moved every row, and
+   the rail grown over the content (compact mode's overlay) could not be the
+   docked column it lands as.
+
+   The words are taken off the screen and not out of the document. A heading
+   that stopped existing would take the section with it — a screen reader would
+   find one flat list of rows where there are two groups — so the `h2` keeps its
+   text and gives up its box, which is the standard way of saying exactly that. */
 .sidebar-section-heading {
-  display: flex;
-  height: var(--row-height);
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 2px 0 var(--sidebar-text-inset);
-  margin-top: var(--sidebar-section-gap);
-  color: var(--tertiary);
+  position: relative;
+  height: 1px;
+  margin: var(--sidebar-section-gap) var(--space-2);
 }
 
-/* The band owns the layout; the heading element owns only the text. Left to
-   the user agent an `h2` arrives at 1.5em bold with 0.83em of vertical margin,
-   which both oversizes the label and eats the gap before the first row. */
-.sidebar-section-actions {
-  display: flex;
-  align-items: center;
+/* The rule itself, stopping short of the two actions at its trailing end so
+   the line runs into them rather than through them. */
+.sidebar-section-heading::before {
+  position: absolute;
+  inset: 0 calc(2 * 20px + var(--space-2)) 0 0;
+  background: var(--line);
+  content: "";
 }
 
 .sidebar-section-heading h2 {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
   margin: 0;
-  font-size: 11px;
-  font-weight: 590;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The two ways to start work stand on the rule's trailing end, centred on it,
+   where the band's trailing edge had them. They are taller than the rule's air
+   by a pixel or two either side, which the rows' own block padding absorbs:
+   nothing is moved to make room for them. */
+.sidebar-section-actions {
+  position: absolute;
+  top: 50%;
+  right: calc(2px - var(--space-2));
+  display: flex;
+  align-items: center;
+  transform: translateY(-50%);
 }
 
 .workspace-tree,
@@ -491,19 +509,12 @@
 }
 
 /* An Agent's mark is the exception, and for the reason the shift exists: it is
-   levelled against the *row*, not against a label beside it. An Agent's words
-   sit two columns to the right with a connector between them, and the elbow
-   that meets this mark is drawn at the row's own centre line
-   (`--row-height / 2`), so a mark nudged a pixel down would be a mark the
-   connector no longer points at. */
+   levelled against the *row*, not against a label beside it — an Agent's
+   status is read down the column, against the row's own centre line
+   (`--row-height / 2`). It stands in its Workspace's icon column, as the rail
+   has it: `--sidebar-agent-glyph-inset` is the row's own inset. */
 .agent-row .row-glyph {
   transform: none;
-  /* Indented under its Workspace, right of the connector: the column starts at
-     `--sidebar-agent-glyph-inset`, counted here from the end of the row's own
-     inset, which is where this column would otherwise be. */
-  margin-left: calc(
-    var(--sidebar-agent-glyph-inset) - var(--sidebar-row-inset)
-  );
 }
 
 .row-glyph svg {
@@ -851,12 +862,8 @@
 /*
  * Where a row's words start.
  *
- * Every row clears the icon column; an Agent clears the connector column as
- * well, because that is where the guide that says whose Agent it is is drawn.
- * Both are written as the button's whole leading padding rather than as an
- * addition to it, so there is one expression per row kind and not a calc that
- * has to be kept agreeing with another one. The numbers are in `tokens.css`,
- * with the rest of the geometry.
+ * Every row clears the icon column, an Agent's as a Workspace's: one column,
+ * one gap. The numbers are in `tokens.css`, with the rest of the geometry.
  */
 .agent-row .sidebar-context-button {
   /* The button starts where the Agent's own icon column ends, so it clears one
@@ -866,63 +873,13 @@
 }
 
 /*
- * The connector: the bent guide from a Workspace down to each of its Agents.
- *
- * It is `tree`(1)'s drawing, and it is drawn here because the thing it says is
- * said by the indent as well: an Agent's status mark stands right of the
- * guide, under its Workspace's name, the way a file tree draws a child. The
- * connector is a vertical dropping from under the Workspace's folder through
- * the run, and an elbow turning right into each Agent's mark — `├` for every
- * Agent but the last, `└` for the last, which is the one thing that says where
- * a Workspace's Agents stop.
- *
- * Two pseudo-elements rather than an element. There is nothing to read here —
- * the tree is in the markup, where `aria-level` and the arrow-key walk are —
- * so a `span` would be a node the keyboard and the accessibility tree would
- * have to be taught to ignore.
- *
- * `--line` and not `--row-glyph-ink`: it is the Sidebar's hairline, the same
- * ink as the rule under the section heading, because that is what it is. It
- * does not light up on hover or on selection — the hierarchy is not a thing
- * you can point at.
+ * There is no connector. An Agent's mark stands in its Workspace's own icon
+ * column, as the rail has it, and the tree is in the markup — `aria-level`,
+ * the arrow-key walk — and in the order of the rows, an Agent under the
+ * Workspace it belongs to. The bent guide needed the Agent indented to turn
+ * into, and an indent the rail has no room for is a mark that steps sideways
+ * every time compact mode is turned on or off.
  */
-
-/* The vertical. It runs the full height of the row so that it meets the one on
-   the row above and the row below — the rows sit flush — and it stops at the
-   row's own centre line on the last Agent, which is where the elbow turns and
-   is where a `└` ends. */
-.agent-row::before {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--sidebar-tree-line);
-  width: 1px;
-  background: var(--line);
-  content: "";
-}
-
-.agent-tree > li:last-child .agent-row::before {
-  bottom: auto;
-  /* Every row centres its first line's mark at exactly `--row-height / 2` from
-     its own top, whatever else it has to say — see `.row-head`. So the elbow
-     and the mark it points at are one term and not two. */
-  height: calc(var(--row-height) / 2);
-}
-
-/* The elbow's horizontal run, from the vertical to one gap short of the
-   Agent's mark. */
-.agent-row::after {
-  position: absolute;
-  top: calc(var(--row-height) / 2);
-  left: var(--sidebar-tree-line);
-  width: calc(
-    var(--sidebar-agent-glyph-inset) - var(--sidebar-tree-line) -
-      var(--sidebar-tree-gap)
-  );
-  height: 1px;
-  background: var(--line);
-  content: "";
-}
 
 /* A workspace that is not simply open reads as secondary ink, and nothing
    more. It used to be italic as well; italic is for a word being *mentioned*
@@ -1906,41 +1863,9 @@ body.is-resizing-rows {
   display: none;
 }
 
-/* The section heading becomes the rule it was already acting as.
- *
- * "WORKSPACES" is a word wider than the column it labels, and it labels the
- * only section there is. What the heading actually does here is separate
- * Scratch from the workspaces under it — so that is all it is: a hairline, on
- * the same vertical rhythm the heading held, so the rows below do not move
- * when the pane collapses.
- *
- * The words are taken off the screen and not out of the document. A heading
- * that stopped existing would take the section with it — a screen reader would
- * find one flat list of rows where there are two groups — and the collapse is
- * about width, not about what the Sidebar says. So the `h2` keeps its text and
- * gives up its box, which is the standard way of saying exactly that. */
-.sidebar[data-collapsed="true"] .sidebar-section-heading {
-  height: 1px;
-  padding: 0;
-  margin: var(--sidebar-section-gap) var(--space-2);
-  background: var(--line);
-}
-
-.sidebar[data-collapsed="true"] .sidebar-section-heading h2 {
-  position: absolute;
-  overflow: hidden;
-  width: 1px;
-  height: 1px;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-/* The connector connects two columns that are one column here. Two rows one
-   above the other, both leading with the same mark at the same x, are already
-   as joined as they can be — and there is no text for an elbow to turn into. */
-.sidebar[data-collapsed="true"] .agent-row::before,
-.sidebar[data-collapsed="true"] .agent-row::after {
-  content: none;
+/* The rule runs the rail's whole width: the actions are not drawn here. */
+.sidebar[data-collapsed="true"] .sidebar-section-heading::before {
+  right: 0;
 }
 
 /* Nothing is left in an Agent's button in the rail — its one mark is in the

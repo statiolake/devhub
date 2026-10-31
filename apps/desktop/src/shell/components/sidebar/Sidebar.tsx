@@ -1285,13 +1285,26 @@ export function Sidebar({ snapshot }: SidebarProps) {
 
   /**
    * Compact mode's floating Sidebar (`useSidebarOverlay.ts`): the rail grown
-   * to the full width. It is still the rail's markup — the same rows at the
-   * same heights, every mark where the rail has it — with the words let back
-   * in beside the marks (`sidebarPage.css`), so nothing in it moves but its
-   * trailing edge. The model's `collapsed` does not move for it.
+   * to the full width over the content. While it floats — or lands as compact
+   * mode goes off — the pane is drawn as the docked column, and the docked
+   * column is the rail's arrangement with more of it shown (`tokens.css`): the
+   * same rows at the same heights, every mark at the rail's x. So nothing in
+   * it moves as it grows but its trailing edge, and it lands as exactly what
+   * it already is. The model's `collapsed` does not move for it.
    */
   const paneRef = useRef<HTMLElement>(null);
   const overlay = useSidebarOverlay(collapsed, paneRef, reorder.active);
+  const drawnCollapsed = collapsed && overlay.phase === "closed";
+  const drawn = useMemo(
+    () =>
+      drawnCollapsed === snapshot.sidebar.collapsed
+        ? snapshot
+        : {
+            ...snapshot,
+            sidebar: { ...snapshot.sidebar, collapsed: drawnCollapsed },
+          },
+    [drawnCollapsed, snapshot],
+  );
 
   return (
     <aside
@@ -1303,7 +1316,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
       // labels a screen reader reads and the roving tab stop are one set of
       // markup in both states, and there is no second render path to keep in
       // step with the first.
-      data-collapsed={collapsed ? "true" : undefined}
+      data-collapsed={drawnCollapsed ? "true" : undefined}
       // The rail grown over the content, retracting, or landing as compact
       // mode goes off. See `sidebarPage.css` — the same pane, raised.
       data-overlay={overlay.phase === "closed" ? undefined : overlay.phase}
@@ -1444,7 +1457,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
             workspace={scratch}
             identity={rowIdentity(scratch, snapshot.scratchWorkspaceId)}
             repository={repositories.get(scratch.id)}
-            snapshot={snapshot}
+            snapshot={drawn}
             agentProfiles={agentProfiles.profiles}
             agentProfilesAvailability={agentProfiles.availability}
             chordDigit={armed ? 0 : undefined}
@@ -1508,7 +1521,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
                     snapshot.scratchWorkspaceId,
                   )}
                   repository={repositories.get(entry.workspace.id)}
-                  snapshot={snapshot}
+                  snapshot={drawn}
                   agentProfiles={agentProfiles.profiles}
                   agentProfilesAvailability={agentProfiles.availability}
                   chordDigit={

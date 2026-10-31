@@ -1167,7 +1167,7 @@ describe("the ink every mark in a row rests at", () => {
  * drifting: a stylesheet that stopped reading the token would fail the second
  * half, and a token whose value moved would fail the first.
  */
-describe("a row's leading columns, and the connector between them", () => {
+describe("a row's leading columns: the rail's, docked or not", () => {
   const shell = readFileSync("src/shell/styles/shell.css", "utf8");
   const tokens = readFileSync("src/shell/styles/tokens.css", "utf8");
   const reorder = readFileSync("src/shell/styles/reorder.css", "utf8");
@@ -1178,194 +1178,132 @@ describe("a row's leading columns, and the connector between them", () => {
     if (!match?.[1]) throw new Error(`${name} is not a plain px value`);
     return Number(match[1]);
   }
+  /** One `--name: var(--space-N);` resolved through the spacing scale. */
+  function spacing(source: string, name: string): number {
+    const match = new RegExp(`${name}: var\\((--space-\\d)\\);`, "u").exec(
+      source,
+    );
+    if (!match?.[1]) throw new Error(`${name} is not a spacing step`);
+    return pixels(tokens, match[1]);
+  }
 
   const gap = pixels(tokens, "--space-2");
-  /** `--sidebar-tree-gap`, and the step the vertical stands past the icon. */
-  const step = pixels(tokens, "--space-1");
 
   /**
-   * Where everything on a row lands, at one density — from the density's own
-   * numbers, through the arrangement the stylesheets are written in.
+   * Where a row's mark lands from the pane's leading edge — docked and in the
+   * rail — at one density and one chrome, through the expressions the
+   * stylesheets are written in. The rail's width is main's
+   * (`windowLayout.sidebarColumnWidth`): the glyph column and 12px either
+   * side with a title bar, the traffic lights' 76px without.
    */
-  function geometry(density: "compact" | "comfortable") {
+  function geometry(
+    density: "compact" | "comfortable",
+    titleBar: "shown" | "hidden",
+  ) {
     const block = tokens.slice(
       tokens.indexOf(`[data-sidebar-density="${density}"]`),
     );
     const glyph = pixels(block, "--sidebar-glyph-width");
-    const ink = pixels(block, "--sidebar-glyph-ink");
-    // `--sidebar-row-inset: var(--sidebar-glyph-width)` — the list's indent
-    // from the pane's leading edge.
-    const inset = glyph;
-    const workspaceText = inset + glyph + gap;
-    // `--sidebar-agent-glyph-inset: var(--sidebar-text-inset)`.
-    const agentIcon = workspaceText;
+    const rowHeight = pixels(block, "--row-height");
+    const scrollInset = spacing(block, "--sidebar-scroll-inset");
+    const rail = titleBar === "shown" ? glyph + 2 * 12 : 76;
+    // `--sidebar-row-inset`: half the rail, less half a glyph, past the
+    // scroll region's own inset.
+    const rowInset = (rail - glyph) / 2 - scrollInset;
+    const docked = scrollInset + rowInset;
+    // The rail: `--sidebar-rail-air`, then the entry's own padding.
+    const air = (rail - rowHeight) / 2;
+    const railed = air + (rowHeight - glyph) / 2;
     return {
-      inset: { from: 0, to: inset },
-      /** A Workspace's icon column, and the mark centred in it. */
-      icon: { from: inset, to: inset + glyph, centre: inset + glyph / 2 },
-      workspaceText,
-      /** `--sidebar-tree-line`: down the middle of the Workspace's icon. */
-      vertical: inset + glyph / 2,
-      /** An Agent's own icon column, and its mark. */
-      agentIcon: { from: agentIcon, to: agentIcon + glyph },
-      agentMark: {
-        from: agentIcon + (glyph - ink) / 2,
-        to: agentIcon + (glyph + ink) / 2,
-      },
-      /** Where the elbow stops, one gap short of the Agent's icon column. */
-      elbowEnd: agentIcon - step,
-      /** `--sidebar-agent-text-inset`: after the Agent's icon, one gap. */
-      agentText: agentIcon + glyph + gap,
+      docked,
+      railed,
+      /** `--sidebar-agent-glyph-inset` is the row's own inset. */
+      agent: scrollInset + rowInset,
+      words: docked + glyph + gap,
     };
   }
 
-  it("indents an Agent's mark under its Workspace's name, right of the guide", () => {
+  /**
+   * Compact mode turned on or off moves no mark sideways: the docked column
+   * puts its icon column where the rail centres it, and an Agent's mark is in
+   * its Workspace's column in both.
+   */
+  it("puts every mark at the rail's x, docked or not, in either chrome", () => {
     for (const density of ["compact", "comfortable"] as const) {
-      const at = geometry(density);
-      expect(at.agentIcon.from).toBe(at.workspaceText);
-      expect(at.agentMark.from).toBeGreaterThan(at.vertical);
-      expect(at.agentIcon.from).toBeGreaterThan(at.icon.to);
+      for (const titleBar of ["shown", "hidden"] as const) {
+        const at = geometry(density, titleBar);
+        expect(at.docked).toBe(at.railed);
+        expect(at.agent).toBe(at.docked);
+      }
     }
-    expect(geometry("compact").inset.to).toBe(16);
-    expect(geometry("compact").icon.to).toBe(32);
-    expect(geometry("compact").agentIcon).toEqual({ from: 40, to: 56 });
-    expect(geometry("comfortable").agentIcon).toEqual({ from: 44, to: 62 });
-  });
-
-  it("drops the vertical from under the Workspace's folder", () => {
-    for (const density of ["compact", "comfortable"] as const) {
-      const at = geometry(density);
-      expect(at.vertical).toBe(at.icon.centre);
-    }
-    expect(geometry("compact").vertical).toBe(24);
-    expect(geometry("comfortable").vertical).toBe(27);
-  });
-
-  it("turns the elbow into the Agent's mark, stopping a gap short of it", () => {
-    for (const density of ["compact", "comfortable"] as const) {
-      const at = geometry(density);
-      expect(at.elbowEnd).toBeGreaterThan(at.vertical);
-      expect(at.agentIcon.from - at.elbowEnd).toBe(step);
-    }
-    expect(geometry("compact").elbowEnd).toBe(36);
-    expect(geometry("comfortable").elbowEnd).toBe(40);
-  });
-
-  it("starts an Agent's words one gap past its own mark", () => {
-    for (const density of ["compact", "comfortable"] as const) {
-      const at = geometry(density);
-      expect(at.agentText - at.agentIcon.to).toBe(gap);
-      expect(at.workspaceText - at.icon.to).toBe(gap);
-    }
-    expect(geometry("compact").agentText).toBe(64);
-    expect(geometry("comfortable").agentText).toBe(70);
+    expect(geometry("compact", "shown").docked).toBe(12);
+    expect(geometry("compact", "shown").words).toBe(36);
+    expect(geometry("comfortable", "shown").docked).toBe(12);
+    expect(geometry("compact", "hidden").docked).toBe(30);
   });
 
   it("is one arrangement, declared once", () => {
     expect(tokens).toContain(
-      "--sidebar-row-inset: var(--sidebar-glyph-width);",
+      "--sidebar-row-inset: calc(\n    (var(--sidebar-rail-collapsed-width) - var(--sidebar-glyph-width)) / 2 -\n      var(--sidebar-scroll-inset)\n  );",
     );
     expect(tokens).toContain(
-      "--sidebar-tree-line: calc(\n    var(--sidebar-row-inset) + var(--sidebar-glyph-width) / 2\n  );",
-    );
-    expect(tokens).toContain("--sidebar-tree-gap: var(--space-1);");
-    expect(tokens).toContain(
-      "--sidebar-agent-glyph-inset: var(--sidebar-text-inset);",
+      "--sidebar-agent-glyph-inset: var(--sidebar-row-inset);",
     );
     expect(tokens).toContain(
       "--sidebar-agent-text-inset: calc(\n    var(--sidebar-agent-glyph-inset) + var(--sidebar-glyph-width) +\n      var(--space-2)\n  );",
     );
-    // On `.app-shell`, where the glyph column they are written in terms of is
-    // also declared: a custom property resolves its own `var()`s where it is
-    // *declared*, so the same expression at `:root` inherits down as nothing.
+    // On `.app-shell`, where the glyph column and the rail's width they are
+    // written in terms of are also declared: a custom property resolves its
+    // own `var()`s where it is *declared*, so the same expression at `:root`
+    // inherits down as nothing.
     const at = tokens.indexOf("--sidebar-agent-glyph-inset");
     expect(tokens.lastIndexOf(".app-shell {", at)).toBeGreaterThan(
       tokens.lastIndexOf(":root {", at),
     );
+    expect(tokens).not.toContain("--sidebar-tree-line");
     expect(tokens).not.toContain("--sidebar-rail-width");
-    expect(tokens).not.toContain("--sidebar-agent-indent");
     expect(shell).not.toContain(".row-rail");
-  });
-
-  /**
-   * The bent guide: a vertical through the run, and an elbow into each row —
-   * `├` for every Agent but the last, `└` for the last, which is the one thing
-   * that says where a Workspace's Agents stop.
-   */
-  it("draws the vertical, the elbow, and a stem that closes on the last row", () => {
-    expect(shell).toContain(
-      '.agent-row::before {\n  position: absolute;\n  top: 0;\n  bottom: 0;\n  left: var(--sidebar-tree-line);\n  width: 1px;\n  background: var(--line);\n  content: "";\n}',
-    );
-    // The elbow meets the mark it points at off one term — every row centres
-    // its first line at `--row-height / 2`, whatever else it has to say — so
-    // the stem that closes and the run that turns cannot disagree about where
-    // the row's middle is.
-    expect(shell).toContain(
-      ".agent-tree > li:last-child .agent-row::before {\n  bottom: auto;",
-    );
-    expect(shell).toContain("  height: calc(var(--row-height) / 2);");
-    expect(shell).toContain(
-      ".agent-row::after {\n  position: absolute;\n  top: calc(var(--row-height) / 2);\n  left: var(--sidebar-tree-line);",
-    );
-  });
-
-  it("is the Sidebar's hairline, and never lights up", () => {
-    // `--line`, the same ink as the rule under the section heading, because
-    // that is what it is. The hierarchy is not a thing you can point at.
-    expect(shell).not.toContain(".agent-row:hover::before");
-    expect(shell).not.toContain(".agent-row.is-selected::before");
-  });
-
-  it("moves the row, its connector and its drop line together", () => {
-    // The row's own inset, the connector beside it, and the drop line the
-    // reorder draws all start from the same terms, so none of them can drift.
-    expect(shell).toContain(
-      "  margin-left: calc(\n    var(--sidebar-agent-glyph-inset) - var(--sidebar-row-inset)\n  );",
-    );
-    expect(shell).toContain(
-      "  width: calc(\n    var(--sidebar-agent-glyph-inset) - var(--sidebar-tree-line) -\n      var(--sidebar-tree-gap)\n  );",
-    );
     // The row's own indent, and the rail trading it for the rail's own: the
     // glyph column centred in an entry as wide as the row is tall.
     expect(shell).toContain("  padding-inline: var(--sidebar-row-inset) 0;");
     expect(shell).toContain(
       '.sidebar[data-collapsed="true"] .sidebar-row {\n  padding-inline: calc(\n    (var(--sidebar-rail-entry) - var(--sidebar-glyph-width)) / 2\n  );\n}',
     );
+    expect(shell).toContain(
+      '.sidebar[data-collapsed="true"] .sidebar-scroll-region {\n  --sidebar-rail-air: calc(\n    (var(--sidebar-rail-collapsed-width) - var(--sidebar-rail-entry)) / 2\n  );',
+    );
     expect(reorder).toContain("  left: var(--sidebar-text-inset);");
     expect(reorder).toContain("  left: var(--sidebar-agent-text-inset);");
   });
 
   /**
-   * The collapse is a subtraction and nothing else: the connector and the words
-   * come off, and the icon column does not move within its row. The rail is
-   * then centred by the pane rather than by each row, which is what stopped the
-   * marks stepping from side to side down the column.
+   * No connector: the bent guide needed an indent to turn into, and the rail
+   * has room for one column.
    */
-  it("takes the connector and the words off, and moves nothing", () => {
-    // The rail is one column: an Agent's mark is not indented there.
+  it("draws no connector, docked or not", () => {
+    expect(shell).not.toMatch(/\.agent-row::(before|after)/);
+  });
+
+  /**
+   * And no mark moves down: the section heading is the rail's rule in the
+   * docked column too, with the rail's air either side, so every row below it
+   * is at one height in both. The words stay in the document for whoever
+   * reads the list without seeing it.
+   */
+  it("is the rail's rule between Scratch and the workspaces, docked or not", () => {
     expect(shell).toContain(
-      '.sidebar[data-collapsed="true"] .agent-row .row-glyph {\n  margin-left: 0;\n}',
+      ".sidebar-section-heading {\n  position: relative;\n  height: 1px;\n  margin: var(--sidebar-section-gap) var(--space-2);\n}",
     );
     expect(shell).toContain(
-      '.sidebar[data-collapsed="true"] .agent-row::before,\n.sidebar[data-collapsed="true"] .agent-row::after {\n  content: none;\n}',
+      ".sidebar-section-heading h2 {\n  position: absolute;\n  overflow: hidden;\n  width: 1px;\n  height: 1px;",
     );
+    // Nothing in the rail sizes the heading differently.
+    expect(shell).not.toMatch(
+      /\.sidebar\[data-collapsed="true"\] \.sidebar-section-heading \{/,
+    );
+    // The actions stand on the rule, out of the flow: they move nothing.
     expect(shell).toContain(
-      '.sidebar[data-collapsed="true"] .sidebar-scroll-region {\n  --sidebar-rail-air: calc(\n    (var(--sidebar-rail-collapsed-width) - var(--sidebar-rail-entry)) / 2\n  );\n\n  padding-inline: var(--sidebar-rail-air)\n    calc(var(--sidebar-rail-air) - var(--sidebar-edge));\n}',
-    );
-    // An entry is a square: as wide as a row is tall at either density, which
-    // is the only number the rail adds, and it is written as that relation.
-    // The rail's own width is `windowLayout.test.ts`'s to pin, and does not
-    // move — the square is paid for out of the air around it.
-    expect(tokens).toContain("  --sidebar-rail-entry: var(--row-height);");
-    // The Sidebar's trailing hairline is inside the rail's width, so the air
-    // after the entry is short by it; both read one term.
-    expect(tokens).toContain("  --sidebar-edge: 1px;");
-    expect(shell).toContain(
-      "  border-right: var(--sidebar-edge) solid var(--line-strong);",
-    );
-    // Nothing re-centres a row, which is what used to move the icon.
-    expect(shell).not.toContain(
-      '.sidebar[data-collapsed="true"] .row-head {\n  justify-content: center;\n}',
+      ".sidebar-section-actions {\n  position: absolute;",
     );
   });
 });

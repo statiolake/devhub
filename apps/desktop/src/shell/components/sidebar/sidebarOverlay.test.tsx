@@ -171,15 +171,20 @@ const overlays = () =>
 
 describe("the floating Sidebar", () => {
   /**
-   * The rail grows: the same markup, still the rail's (`data-collapsed`), with
-   * the words let back in by the stylesheet — so no row moves.
+   * The rail grows into the docked column: drawn as the docked column, which
+   * is the rail's arrangement with more of it shown (`tokens.css`), so no row
+   * moves as it grows and it lands as what it already is.
    */
-  it("grows the rail the moment the pointer moves on it", () => {
+  it("grows the rail into the docked column the moment the pointer moves on it", () => {
     const { pane } = mount(true);
     expect(pane()).toHaveAttribute("data-collapsed", "true");
     point(pane());
     expect(pane()).toHaveAttribute("data-overlay", "open");
-    expect(pane()).toHaveAttribute("data-collapsed", "true");
+    expect(pane()).not.toHaveAttribute("data-collapsed");
+    // The docked column's own controls are there, as docked.
+    expect(
+      screen.getByRole("button", { name: "Open workspace picker" }),
+    ).toBeInTheDocument();
     expect(overlays()).toEqual([true]);
   });
 
