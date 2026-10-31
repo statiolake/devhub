@@ -347,6 +347,15 @@ theme_light = "Light 2026"  # and the light appearance (`mode` picks; auto is th
                             # by the name the picker shows or its id. Unset: VS
                             # Code's defaults. Settings > General > Appearance.
 
+[terminal]
+mac_option_is_meta = false  # macOS Option in DevHub's terminals: false types the
+                            # layout's characters (≈, @, {); true sends ESC+key for
+                            # Alt mappings (Neovim <A-e>, readline, tmux M-); "left"
+                            # only the left Option, the right one still composes.
+                            # Option+¥ on a JIS keyboard is always \. Not VS Code's
+                            # terminal (terminal.integrated.macOptionIsMeta).
+                            # Settings > Terminal. See docs/terminal-mode.md.
+
 [scratch]
 daily = "~/junk/YYYYMMDD"   # today's Scratch folder, in the date-source tokens
 

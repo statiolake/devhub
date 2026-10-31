@@ -459,6 +459,62 @@ describe("the shared xterm session", () => {
     session.dispose();
   });
 
+  /**
+   * The rule is `optionKey.test.ts`'s; what is pinned here is that xterm's own
+   * switch is set from it before xterm reads it — for the key, not once per
+   * session — and that a settings change reaches a terminal already open.
+   */
+  it("sets xterm's Option-as-Meta switch per key, from the live setting", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const appearance = {
+      terminalFontFamily: "Menlo",
+      terminalFontSize: 13,
+      terminalLineHeight: 1,
+      terminalScrollSensitivity: 3,
+      terminalMacOptionIsMeta: "left",
+    } as never;
+    const session = openXtermSession(host, {
+      appearance,
+      inputLabel: "Example terminal input",
+      isHidden: () => false,
+      onGeometry: () => undefined,
+    });
+    const terminal = session.terminal as unknown as {
+      keyHandler: (event: KeyboardEvent) => boolean;
+      sent: string[];
+    };
+    const key = (type: string, code: string, altKey = true) =>
+      terminal.keyHandler(
+        new KeyboardEvent(type, { code, key: "x", altKey, cancelable: true }),
+      );
+
+    key("keydown", "AltLeft");
+    // Left Option: xterm is told Meta, and still does the encoding itself.
+    expect(key("keydown", "KeyX")).toBe(true);
+    expect(session.terminal.options.macOptionIsMeta).toBe(true);
+    key("keyup", "AltLeft", false);
+
+    key("keydown", "AltRight");
+    expect(key("keydown", "KeyX")).toBe(true);
+    expect(session.terminal.options.macOptionIsMeta).toBe(false);
+
+    // The JIS backslash composes even with the left Option.
+    key("keyup", "AltRight", false);
+    key("keydown", "AltLeft");
+    key("keydown", "IntlYen");
+    expect(session.terminal.options.macOptionIsMeta).toBe(false);
+
+    session.applyAppearance({
+      ...(appearance as object),
+      terminalMacOptionIsMeta: false,
+    } as never);
+    key("keydown", "KeyX");
+    expect(session.terminal.options.macOptionIsMeta).toBe(false);
+    expect(terminal.sent).toEqual([]);
+    session.dispose();
+  });
+
   it("keeps the font a CSS value when the appearance changes later", () => {
     const session = open("Menlo");
     session.applyAppearance({

@@ -4210,6 +4210,7 @@ export class AppController {
 			// `terminal_theme = "vscode"`. A controller built without a
 			// theme (in a test) has the built-in palettes.
 			shellThemeIfInstalled()?.terminalPalette(),
+			config.terminal.macOptionIsMeta,
 		);
 	}
 

@@ -252,6 +252,12 @@ export interface AppAppearanceWire {
 	readonly terminalScrollSensitivity: number;
 	readonly terminalMargin: number;
 	readonly terminalTheme: TerminalThemeWire;
+	/**
+	 * `[terminal] mac_option_is_meta`: `false`, `true` or `"left"`. It rides
+	 * with the appearance because it is read by the same surfaces at the same
+	 * moments — when a terminal is built, and live whenever settings change.
+	 */
+	readonly terminalMacOptionIsMeta: boolean | "left";
 }
 /** `open_microphone_settings` opens System Settings at Privacy & Security → Microphone. */
 export type AppErrorActionWire =

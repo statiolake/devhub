@@ -19,6 +19,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SettingsClient } from "./client";
@@ -54,21 +55,25 @@ async function askToMove() {
   return { applied };
 }
 
-/** The rows, in the order the arrows and Return walk them. */
+/**
+ * The sheet's rows, in the order the arrows and Return walk them. Only the
+ * sheet's: the screen behind it has popups whose items are options too.
+ */
+function sheetOptions(): HTMLElement[] {
+  return within(screen.getByRole("dialog")).getAllByRole("option");
+}
+
 function rows(): string[] {
-  return screen
-    .getAllByRole("option")
-    .map((row) => row.querySelector(".mac-list-title")?.textContent ?? "");
+  return sheetOptions().map(
+    (row) => row.querySelector(".mac-list-title")?.textContent ?? "",
+  );
 }
 
 describe("changing the tmux socket", () => {
   it("offers two rows, with the one that changes nothing first", async () => {
     await askToMove();
     expect(rows()).toEqual(["Keep the current socket", "Move the terminals"]);
-    expect(screen.getAllByRole("option")[0]).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    expect(sheetOptions()[0]).toHaveAttribute("aria-selected", "true");
   });
 
   it("says what moving costs, on the row that costs it", async () => {

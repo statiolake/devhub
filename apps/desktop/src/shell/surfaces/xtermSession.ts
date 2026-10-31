@@ -22,6 +22,8 @@ import "@xterm/xterm/css/xterm.css";
 import "./xtermSession.css";
 import { surfaceBridge } from "../terminal/surfaceBridge";
 import { editingSequence } from "./keys";
+import { OptionKeys } from "./optionKey";
+import type { MacOptionIsMeta } from "../../model/macOption";
 import {
   terminalFontStack,
   xtermTheme,
@@ -441,7 +443,20 @@ export function openXtermSession(
    * Everything else still returns true, so Cmd+C, Cmd+V and the rest reach the
    * browser and DevHub's menus exactly as before.
    */
+  /**
+   * Option as Meta, decided per key (see `optionKey.ts`) and handed to xterm's
+   * own switch before xterm reads it, which is later in this same keydown.
+   * Every event goes through it — keyup too — so the left and right Option are
+   * followed as they go down and come up.
+   */
+  let macOptionIsMeta: MacOptionIsMeta =
+    options.appearance?.terminalMacOptionIsMeta ?? false;
+  const optionKeys = new OptionKeys();
   terminal.attachCustomKeyEventHandler((event) => {
+    const meta = optionKeys.isMeta(macOptionIsMeta, event);
+    if (terminal.options.macOptionIsMeta !== meta) {
+      terminal.options.macOptionIsMeta = meta;
+    }
     if (event.type !== "keydown") return true;
     const sequence = editingSequence(event);
     if (sequence === undefined) return true;
@@ -556,6 +571,8 @@ export function openXtermSession(
         terminal.options.lineHeight = appearance.terminalLineHeight;
         terminal.options.scrollSensitivity =
           appearance.terminalScrollSensitivity;
+        // Read at the next key, which is as live as a keyboard setting gets.
+        macOptionIsMeta = appearance.terminalMacOptionIsMeta;
       }
       remeasure();
     },

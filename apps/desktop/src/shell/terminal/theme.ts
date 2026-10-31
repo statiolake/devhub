@@ -42,6 +42,8 @@ export interface TerminalAppearance {
   readonly terminalScrollSensitivity: number;
   readonly terminalMargin: number;
   readonly terminalTheme: TerminalTheme;
+  /** `[terminal] mac_option_is_meta`. See `../surfaces/optionKey.ts`. */
+  readonly terminalMacOptionIsMeta: boolean | "left";
 }
 
 /**

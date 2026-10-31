@@ -210,6 +210,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			terminalMargin: config.appearance.terminalMargin,
 			terminalTheme: config.appearance.terminalTheme,
 		},
+		terminal: { macOptionIsMeta: config.terminal.macOptionIsMeta },
 		keybindings: {
 			prefix: config.keybindings.prefix,
 			chords: { ...config.keybindings.chords },
@@ -354,6 +355,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			terminalMargin: wire.appearance.terminalMargin,
 			terminalTheme: wire.appearance.terminalTheme,
 		},
+		terminal: { macOptionIsMeta: wire.terminal.macOptionIsMeta },
 		keybindings: {
 			prefix: wire.keybindings.prefix,
 			chords: { ...wire.keybindings.chords },

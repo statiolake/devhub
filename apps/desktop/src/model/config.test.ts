@@ -727,6 +727,50 @@ describe("parsing", () => {
     });
   });
 
+  describe("terminal.mac_option_is_meta", () => {
+    it("is off unless the file says otherwise", () => {
+      expect(defaultConfig().terminal.macOptionIsMeta).toBe(false);
+      expect(parseConfig(MINIMAL).terminal.macOptionIsMeta).toBe(false);
+    });
+
+    it("reads, keeps and writes back true, false and left", () => {
+      for (const [written, read] of [
+        ["true", true],
+        ["false", false],
+        ['"left"', "left"],
+      ] as const) {
+        const config = parseConfig(
+          `version = 1\n[terminal]\nmac_option_is_meta = ${written}\n`,
+        );
+        expect(config.terminal.macOptionIsMeta).toBe(read);
+        expect(configToToml(config)).toContain(
+          `mac_option_is_meta = ${written}`,
+        );
+        expect(parseConfig(configToToml(config)).terminal.macOptionIsMeta).toBe(
+          read,
+        );
+      }
+    });
+
+    it("refuses anything else, naming the key", () => {
+      const text = 'version = 1\n[terminal]\nmac_option_is_meta = "right"\n';
+      expect(codeOf(() => parseConfig(text))).toBe(
+        "invalid_mac_option_is_meta",
+      );
+      expect(pathOf(() => parseConfig(text))).toBe(
+        "terminal.mac_option_is_meta",
+      );
+      expect(
+        codeOf(() =>
+          parseConfig("version = 1\n[terminal]\nmac_option_is_meta = 1\n"),
+        ),
+      ).toBe("invalid_type");
+      expect(
+        codeOf(() => parseConfig("version = 1\n[terminal]\noption = true\n")),
+      ).toBe("unknown_key");
+    });
+  });
+
   it("scrolls an Agent pane three lines a notch until told otherwise", () => {
     // One at a time is what xterm.js gives on its own, and it is far heavier
     // than every other terminal on the machine.

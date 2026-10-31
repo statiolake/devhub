@@ -102,6 +102,11 @@ import {
 import { isPaletteColor } from "../ipc/palette.js";
 import type { AppearanceConfig, ConfigDiagnostic } from "./config.js";
 import {
+  DEFAULT_MAC_OPTION_IS_META,
+  isMacOptionIsMeta,
+  type MacOptionIsMeta,
+} from "./macOption.js";
+import {
   defaultTerminalPalettes,
   TERMINAL_THEME_VSCODE,
   type TerminalThemeConfig,
@@ -179,6 +184,7 @@ export function appearanceWire(
   config: AppearanceConfig,
   sequence: number,
   vsCodeTerminal: TerminalPaletteWire | undefined,
+  macOptionIsMeta: MacOptionIsMeta = DEFAULT_MAC_OPTION_IS_META,
 ): AppAppearanceWire {
   const wire: AppAppearanceWire = {
     sequence,
@@ -191,6 +197,7 @@ export function appearanceWire(
     terminalScrollSensitivity: config.terminalScrollSensitivity,
     terminalMargin: config.terminalMargin,
     terminalTheme: terminalThemeWire(config.terminalTheme, vsCodeTerminal),
+    terminalMacOptionIsMeta: macOptionIsMeta,
   };
   validateAppearanceWire(wire);
   return wire;
@@ -213,6 +220,7 @@ function validateAppearanceWire(wire: AppAppearanceWire): void {
     wire.terminalScrollSensitivity < 0.1 ||
     wire.terminalScrollSensitivity > 20 ||
     wire.terminalMargin > 64 ||
+    !isMacOptionIsMeta(wire.terminalMacOptionIsMeta) ||
     !terminalPaletteIsValid(wire.terminalTheme.light) ||
     !terminalPaletteIsValid(wire.terminalTheme.dark)
   ) {

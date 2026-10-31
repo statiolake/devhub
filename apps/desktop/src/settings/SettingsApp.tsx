@@ -119,7 +119,7 @@ const SECTION_SCOPE: Readonly<
   Agents: ["agentProfiles"],
   Actions: ["agentActions"],
   Keyboard: ["keybindings"],
-  Terminal: ["appearance"],
+  Terminal: ["appearance", "terminal"],
   Advanced: ["runtimes"],
 };
 

@@ -196,6 +196,44 @@ The Settings window's General ▸ Editors group says how the two views work;
 `general.workbench_hibernate_minutes` and `general.workbench_awake_max` are
 there as before.
 
+### The Option key
+
+`terminal.mac_option_is_meta` (`false` | `true` | `"left"`, default `false`)
+is what macOS's Option key is in DevHub's own terminals — the Workspace
+terminal, pane terminals and Agent panes — and is the Terminal screen's
+Keys ▸ Option key popup. It applies at the next key press, no restart.
+
+- `false`: Option types what the keyboard layout puts on it (`≈` for
+  Option+X on a US layout; `@`, `{`, `[` on German and the international
+  layouts). Alt mappings do not fire: Neovim's `<A-e>` sees `´`, a dead key.
+- `true`: Option with a key sends `ESC` and the key (`ESC x`, `ESC X` with
+  Shift), which is what Neovim `<A-…>` / `<M-…>` mappings, readline's `M-b`
+  and tmux's `M-` bindings read. The characters on Option are gone.
+- `"left"`: the left Option is Meta and the right one still composes — iTerm2's
+  "Left Option key: Esc+", Ghostty's `macos-option-as-alt = left`.
+
+Whatever the value, **Option+¥ on a Japanese (JIS) keyboard types `\`**: as
+Meta it would be `ESC \`, and that is how a JIS Mac types a backslash. The
+key is recognised by its code (`IntlYen`), so it holds for any layout on that
+keyboard.
+
+xterm.js does the encoding (its `macOptionIsMeta`); DevHub decides, per key,
+whether that switch is on (`shell/surfaces/optionKey.ts`). The left Option is
+followed from its own keydown and keyup, since a letter's keydown does not say
+which Option is held; one already held when the terminal took focus counts as
+up until it is pressed again. A refused value is `invalid_mac_option_is_meta`.
+
+VS Code's integrated terminal is not covered: it reads
+`terminal.integrated.macOptionIsMeta` (a boolean; no left-only choice), and
+DevHub writes no terminal settings into the workbench (see
+`main/workbenchDefaults.ts`). Nor is the editor: VS Code dispatches `alt+…`
+keybindings by key code, so they work with Option on a Mac regardless.
+
+```toml
+[terminal]
+mac_option_is_meta = "left"   # left Option is Meta (ESC-prefixed); right Option composes
+```
+
 ## The managed Neovim server
 
 A file jump needs an editor that DevHub can address. DevHub keeps **one

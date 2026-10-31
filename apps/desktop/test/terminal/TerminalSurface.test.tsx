@@ -179,6 +179,7 @@ function appearanceFixture(): TerminalAppearance {
     terminalLineHeight: 1.2,
     terminalScrollSensitivity: 3,
     terminalMargin: 4,
+    terminalMacOptionIsMeta: false,
     terminalTheme: {
       light: PALETTE,
       dark: { ...PALETTE, background: "#121314" },

@@ -51,6 +51,7 @@ export function testConfig(
     },
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },
+    terminal: { macOptionIsMeta: false },
     agents: {
       defaultPresentation: "tui",
       resumeAfterLimit: true,

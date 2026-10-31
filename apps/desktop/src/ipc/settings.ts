@@ -191,6 +191,12 @@ export interface SettingsConfigWire {
 	readonly general: SettingsGeneralWire;
 	readonly runtimes: SettingsRuntimeConfigWire;
 	readonly appearance: SettingsAppearanceWire;
+	/**
+	 * `[terminal]`: `macOptionIsMeta` is `false`, `true` or `"left"` — what
+	 * Option is in DevHub's own terminals. See `MacOptionIsMeta` in
+	 * `model/config.ts`.
+	 */
+	readonly terminal: { readonly macOptionIsMeta: boolean | "left" };
 	readonly keybindings: SettingsKeybindingsWire;
 	readonly workspaceSources: readonly SettingsWorkspaceSourceWire[];
 	/** `[scratch]`: where Scratch is, `daily = "~/junk/YYYYMMDD"`. */
@@ -376,6 +382,7 @@ export type SettingsDiagnosticCodeWire =
 	| "forbidden_tmux_argument"
 	| "invalid_appearance"
 	| "invalid_default_view"
+	| "invalid_mac_option_is_meta"
 	| "invalid_keybinding"
 	| "unknown_command"
 	| "invalid_font_family"
@@ -469,6 +476,7 @@ export type SettingsScopeKeyWire =
 	| "general"
 	| "runtimes"
 	| "appearance"
+	| "terminal"
 	| "keybindings"
 	| "workspaceSources"
 	| "scratch"

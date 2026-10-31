@@ -1361,6 +1361,9 @@ function EnvironmentList({
 
 // ---------------------------------------------------------------- terminal
 
+/** `[terminal] mac_option_is_meta` as the Option key popup spells it. */
+type OptionChoice = "false" | "left" | "true";
+
 export function TerminalSection({
   config,
   update,
@@ -1458,6 +1461,36 @@ export function TerminalSection({
               Force 256 colours <code className="mac-mono">-2</code>
             </label>
           </div>
+        </Row>
+      </Group>
+
+      <Group
+        heading="Keys"
+        note="DevHub's own terminals: the Workspace terminal, pane terminals and Agent panes. VS Code's integrated terminal has its own setting, terminal.integrated.macOptionIsMeta."
+      >
+        <Row
+          label="Option key"
+          help="As Meta, Option with a key sends Esc and the key, which is what Alt mappings in Neovim, Emacs, readline and tmux read; it no longer types the characters your keyboard layout puts on Option. Left Option only keeps the right one for those characters. Option+¥ on a Japanese keyboard always types a backslash. Default Types characters."
+        >
+          <Popup
+            label="Option key"
+            value={String(config.terminal.macOptionIsMeta) as OptionChoice}
+            options={[
+              ["false", "Types characters"],
+              ["left", "Left Option is Meta"],
+              ["true", "Both are Meta"],
+            ]}
+            onChange={(choice) => {
+              update({
+                ...config,
+                terminal: {
+                  ...config.terminal,
+                  macOptionIsMeta:
+                    choice === "left" ? "left" : choice === "true",
+                },
+              });
+            }}
+          />
         </Row>
       </Group>
     </Form>

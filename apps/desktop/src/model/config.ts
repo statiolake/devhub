@@ -54,6 +54,11 @@ import {
 import { DEFAULT_SCRATCH_DAILY, scratchDailyProblem } from "./scratchDay.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
+  DEFAULT_MAC_OPTION_IS_META,
+  isMacOptionIsMeta,
+  type MacOptionIsMeta,
+} from "./macOption.js";
+import {
   DEFAULT_RESUME_MESSAGE,
   resumeMessageProblem,
 } from "./conversation.js";
@@ -581,6 +586,11 @@ export interface ScratchConfig {
   readonly daily: string;
 }
 
+export interface TerminalConfig {
+  /** `[terminal] mac_option_is_meta`. See `model/macOption.ts`. */
+  readonly macOptionIsMeta: MacOptionIsMeta;
+}
+
 export interface ProjectsConfig {
   /**
    * Where new projects go: an absolute or `~/` path, taken as written (no date
@@ -595,6 +605,8 @@ export interface Config {
   readonly general: GeneralConfig;
   readonly runtimes: RuntimeConfig;
   readonly appearance: AppearanceConfig;
+  /** `[terminal]`: how DevHub's own terminals read the keyboard. */
+  readonly terminal: TerminalConfig;
   /**
    * What arms a chord, and what the second stroke reaches.
    *
@@ -867,6 +879,7 @@ export function defaultConfig(): Config {
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
+    terminal: { macOptionIsMeta: DEFAULT_MAC_OPTION_IS_META },
     keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
     scratch: { daily: DEFAULT_SCRATCH_DAILY },
@@ -901,6 +914,7 @@ export type ValidationCode =
   | "forbidden_tmux_argument"
   | "invalid_appearance"
   | "invalid_default_view"
+  | "invalid_mac_option_is_meta"
   | "invalid_keybinding"
   | "unknown_command"
   | "invalid_font_family"
@@ -1488,6 +1502,9 @@ export function validateConfig(config: Config): void {
   }
   validateRuntimes(config.runtimes);
   validateAppearance(config.appearance);
+  if (!isMacOptionIsMeta(config.terminal.macOptionIsMeta)) {
+    fail("invalid_mac_option_is_meta", "terminal.mac_option_is_meta");
+  }
   validateKeybindings(config.keybindings);
   validateWorkspaceSources(config.workspaceSources);
   if (scratchDailyProblem(config.scratch.daily)) {
@@ -1521,6 +1538,7 @@ const TOP_LEVEL_KEYS = [
   "general",
   "runtimes",
   "appearance",
+  "terminal",
   "keybindings",
   "workspace_sources",
   "scratch",
@@ -2139,6 +2157,22 @@ export function interpretConfig(document: unknown): Config {
     "appearance",
   );
 
+  const terminalTable = requireTable(table["terminal"] ?? {}, "terminal");
+  checkKeys(terminalTable, ["mac_option_is_meta"], "terminal");
+  const macOptionIsMeta =
+    terminalTable["mac_option_is_meta"] ?? DEFAULT_MAC_OPTION_IS_META;
+  if (!isMacOptionIsMeta(macOptionIsMeta)) {
+    // A string other than "left" is not the wrong *kind* of value — "right"
+    // and "both" are the guesses a person makes — so it gets the rule that
+    // names the three it can be, not "wrong type".
+    fail(
+      typeof macOptionIsMeta === "string"
+        ? "invalid_mac_option_is_meta"
+        : "invalid_type",
+      "terminal.mac_option_is_meta",
+    );
+  }
+
   const keybindingsTable = requireTable(
     table["keybindings"] ?? {},
     "keybindings",
@@ -2291,6 +2325,7 @@ export function interpretConfig(document: unknown): Config {
         fileVersion,
       ),
     },
+    terminal: { macOptionIsMeta },
     keybindings: {
       prefix: optionalString(
         keybindingsTable,
@@ -2451,6 +2486,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
               dark: paletteToTable(config.appearance.terminalTheme.dark),
             },
     },
+    terminal: { mac_option_is_meta: config.terminal.macOptionIsMeta },
     keybindings: {
       prefix: config.keybindings.prefix,
       // Written even when empty, so the table a person edits by hand is a table
@@ -2560,6 +2596,7 @@ export type ConfigScopeKey =
   | "general"
   | "runtimes"
   | "appearance"
+  | "terminal"
   | "keybindings"
   | "workspaceSources"
   | "scratch"
