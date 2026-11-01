@@ -21,7 +21,7 @@ import { KeybindingResolver, ResultKind } from '../../../../../platform/keybindi
 import { KeybindingsRegistry } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { ResolvedKeybindingItem } from '../../../../../platform/keybinding/common/resolvedKeybindingItem.js';
 import { USLayoutResolvedKeybinding } from '../../../../../platform/keybinding/common/usLayoutResolvedKeybinding.js';
-import { navKeybinding } from '../../browser/devhubVim.contribution.js';
+import '../../browser/devhubVim.contribution.js';
 import '../../browser/vimTabPages.js';
 import { DEFAULT_KEYBINDINGS, VIM_WHEN, evaluateWhen } from '../../common/vimKeymap.js';
 
@@ -29,15 +29,22 @@ import { DEFAULT_KEYBINDINGS, VIM_WHEN, evaluateWhen } from '../../common/vimKey
 const USER_KEYBINDINGS: readonly { key: string; command: string; args?: unknown; when?: string }[] = [
 	{ key: 'cmd+h', command: 'editor.action.startFindReplaceAction' },
 	{ key: 'cmd+w', command: '-workbench.action.closeActiveEditor' },
-	{ key: 'j', command: 'list.focusDown', when: 'listFocus && !inputFocus' },
-	{ key: 'k', command: 'list.focusUp', when: 'listFocus && !inputFocus' },
-	{ key: 'h', command: 'list.collapse', when: 'listFocus && !inputFocus' },
-	{ key: 'l', command: 'list.expand', when: 'listFocus && !inputFocus' },
-	{ key: 'v', command: 'list.toggleSelection', when: 'listFocus && listSupportsMultiselect && !inputFocus' },
-	{ key: 'x', command: 'filesExplorer.cut', when: 'filesExplorerFocus && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus' },
-	{ key: 'p', command: 'filesExplorer.paste', when: 'filesExplorerFocus && !explorerResourceReadonly && !inputFocus' },
+	// a list's Vim keys, kept off nav's keys (`devhubVim.mode != 'nav'`): a user's binding outranks DevHub's defaults
+	{ key: 'j', command: 'list.focusDown', when: 'listFocus && !inputFocus && devhubVim.mode != \'nav\'' },
+	{ key: 'k', command: 'list.focusUp', when: 'listFocus && !inputFocus && devhubVim.mode != \'nav\'' },
+	{ key: 'h', command: 'list.collapse', when: 'listFocus && !inputFocus && devhubVim.mode != \'nav\'' },
+	{ key: 'l', command: 'list.expand', when: 'listFocus && !inputFocus && devhubVim.mode != \'nav\'' },
+	{ key: 'o', command: 'list.select', when: 'listFocus && !inputFocus && devhubVim.mode != \'nav\'' },
+	{ key: 'v', command: 'list.toggleSelection', when: 'listFocus && listSupportsMultiselect && !inputFocus && devhubVim.mode != \'nav\'' },
+	{ key: 'd', command: 'deleteFile', when: 'filesExplorerFocus && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus && devhubVim.mode != \'nav\'' },
+	{ key: 'x', command: 'filesExplorer.cut', when: 'filesExplorerFocus && !explorerResourceIsRoot && !explorerResourceReadonly && !inputFocus && devhubVim.mode != \'nav\'' },
+	{ key: 'p', command: 'filesExplorer.paste', when: 'filesExplorerFocus && !explorerResourceReadonly && !inputFocus && devhubVim.mode != \'nav\'' },
 	{ key: 'cmd+w', command: 'devhubVim.nav.enter', args: { terminal: true }, when: 'config.devhub.vim.enabled && devhubVim.mode != \'nav\' && !devhubVim.cmdlineFocus && (!devhubVim.active || !devhubVim.insert) && !inQuickInput' },
 	{ key: 'cmd+w', command: 'devhubVim.nav.next', when: 'devhubVim.mode == \'nav\'' },
+	{ key: 'cmd+h', command: 'devhubVim.nav.left', when: 'devhubVim.mode == \'nav\'' },
+	{ key: 'cmd+j', command: 'devhubVim.nav.down', when: 'devhubVim.mode == \'nav\'' },
+	{ key: 'cmd+k', command: 'devhubVim.nav.up', when: 'devhubVim.mode == \'nav\'' },
+	{ key: 'cmd+l', command: 'devhubVim.nav.right', when: 'devhubVim.mode == \'nav\'' },
 	{ key: 'n', command: '-devhubVim.nav.new' },
 	{ key: 'n', command: 'devhubVim.tabpage.next', when: 'devhubVim.mode == \'nav\'' },
 	{ key: 'p', command: '-devhubVim.nav.lastAccessed' },
@@ -90,14 +97,10 @@ suite('DevHub Vim: CTRL-W / Cmd-W and its keys everywhere, with a user\'s keybin
 
 	ensureNoDisposablesAreLeakedInTestSuite();
 
-	/** What the key runs: nav's own bindings first while nav waits (DevhubVim.navBinding), else the resolver's. */
-	function run(r: KeybindingResolver, key: string, values: Record<string, unknown>): string | undefined {
+	/** What the key runs: the resolver's answer, as the keybinding service (and DevHub Vim's nav, softDispatch) has it. */
+	function run(r: KeybindingResolver, key: string, values: Record<string, unknown>, user = USER_KEYBINDINGS): string | undefined {
 		const chord = resolved(key)!.getDispatchChords()[0]!;
-		const nav = values['devhubVim.mode'] === 'nav' ? navKeybinding(r.getKeybindings(), chord, ctx(values)) : undefined;
-		if (nav) {
-			return nav.commandId;
-		}
-		const result = r.resolve(ctx(values), [], chord);
+		const result = (user === USER_KEYBINDINGS ? r : resolver(user)).resolve(ctx(values), [], chord);
 		return result.kind === ResultKind.KbFound ? result.commandId ?? undefined : undefined;
 	}
 
@@ -111,16 +114,19 @@ suite('DevHub Vim: CTRL-W / Cmd-W and its keys everywhere, with a user\'s keybin
 		assert.notStrictEqual(run(r, 'cmd+w', insert), 'devhubVim.nav.enter');
 	});
 
-	test('after it, h j k l move to the neighbouring window from every place: a list\'s h / l (the user\'s list.collapse / list.expand) do not take them', () => {
+	test('after it, h j k l (and the user\'s Cmd-held h j k l) move to the neighbouring window from every place; a user\'s list keys hold back with devhubVim.mode != \'nav\'', () => {
 		const r = resolver();
 		const list = { ...PLACES['the side bar (the Explorer)'], 'devhubVim.mode': 'nav' };
-		// what the resolver alone gives in a list: the user's list keys outrank DevHub's defaults (the reported bug)
-		const plain = r.resolve(ctx(list), [], resolved('h')!.getDispatchChords()[0]!);
-		assert.strictEqual(plain.kind === ResultKind.KbFound ? plain.commandId : undefined, 'list.collapse');
+		// without the condition a user's list key outranks DevHub's default, as any user binding does (the reported bug)
+		const unguarded = USER_KEYBINDINGS.map(u => u.command === 'list.collapse' ? { ...u, when: 'listFocus && !inputFocus' } : u);
+		assert.strictEqual(run(r, 'h', list, unguarded), 'list.collapse');
+		assert.strictEqual(run(r, 'h', { ...list, 'devhubVim.mode': 'normal' }), 'list.collapse', 'outside nav the list keeps its h');
+		assert.strictEqual(run(r, 'd', list), 'devhubVim.nav.diagnostic', 'CTRL-W d in the Explorer deletes no file');
 		for (const [place, values] of Object.entries(PLACES)) {
 			const nav = { ...values, 'devhubVim.mode': 'nav', 'devhubVim.acceptsMotion': false };
-			assert.deepStrictEqual(['h', 'j', 'k', 'l', 'ctrl+h', 'left'].map(k => run(r, k, nav)), [
+			assert.deepStrictEqual(['h', 'j', 'k', 'l', 'ctrl+h', 'left', 'cmd+h', 'cmd+j', 'cmd+k', 'cmd+l'].map(k => run(r, k, nav)), [
 				'devhubVim.nav.left', 'devhubVim.nav.down', 'devhubVim.nav.up', 'devhubVim.nav.right', 'devhubVim.nav.left', 'devhubVim.nav.leftArrow',
+				'devhubVim.nav.left', 'devhubVim.nav.down', 'devhubVim.nav.up', 'devhubVim.nav.right',
 			], place);
 			assert.strictEqual(run(r, 'cmd+w', nav), 'devhubVim.nav.next', `Cmd-W Cmd-W in ${place}`);
 		}

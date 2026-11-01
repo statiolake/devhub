@@ -165,7 +165,7 @@ import { CommandsRegistry, ICommandService } from '../../../../platform/commands
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { TextEditorSelectionSource } from '../../../../platform/editor/common/editor.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
-import { ContextKeyExpr, ContextKeyExpression, IContext, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
+import { ContextKeyExpr, ContextKeyExpression, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ResultKind } from '../../../../platform/keybinding/common/keybindingResolver.js';
@@ -1465,30 +1465,6 @@ function currentEvent(): globalThis.Event | undefined {
 /** Modifier keys alone (they leave nav waiting). */
 const MODIFIER_KEYS = ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn', 'OS', 'AltGraph'];
 
-/** A keybinding as the resolver has it (ResolvedKeybindingItem). */
-export interface NavKeybindingItem {
-	readonly chords: readonly string[];
-	readonly command: string | null;
-	readonly commandArgs: unknown;
-	readonly when: ContextKeyExpression | undefined;
-}
-
-/**
- * While nav waits: the binding of the one-chord key `chord` that is written
- * for nav (its `when` has `devhubVim.mode == 'nav'`) and applies in
- * `context`, the last one as the resolver's precedence goes; undefined when
- * there is none (then the ordinary resolution decides).
- */
-export function navKeybinding(items: readonly NavKeybindingItem[], chord: string, context: IContext): { commandId: string; commandArgs: unknown } | undefined {
-	for (let i = items.length - 1; i >= 0; i--) {
-		const k = items[i];
-		if (k.chords.length === 1 && k.chords[0] === chord && k.command && k.when && k.when.serialize().includes(`devhubVim.mode == 'nav'`) && k.when.evaluate(context)) {
-			return { commandId: k.command, commandArgs: k.commandArgs };
-		}
-	}
-	return undefined;
-}
-
 /** The focused element is an empty editor group (EditorGroupView: `.editor-group-container.empty`, focusable while it has no editor). */
 function isEmptyGroup(element: Element | null): boolean {
 	return !!element?.classList.contains('editor-group-container') && element.classList.contains('empty');
@@ -2050,32 +2026,10 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		}
 	}
 
-	/**
-	 * The command the key resolves to while nav waits, if any. A binding
-	 * written for nav (`devhubVim.mode == 'nav'` in its `when`) comes first,
-	 * before any other that applies here, a user's included: a list's `h` /
-	 * `l` (`list.collapse` / `list.expand` when `listFocus`) does not take
-	 * `CTRL-W h` / `CTRL-W l` away in the side bar or the panel. A key with
-	 * Cmd held that is bound to nothing is taken as the same key with CTRL
-	 * (`Cmd+W Cmd+H` = `CTRL-W CTRL-H` = `CTRL-W h`), Cmd-W being the usual
-	 * alias of CTRL-W on a Mac.
-	 */
+	/** The command the key resolves to while nav waits, if any. */
 	private navBinding(event: StandardKeyboardEvent, target: HTMLElement): { commandId: string; commandArgs: unknown } | undefined {
-		const chord = this.keybindingService.resolveKeyboardEvent(event).getDispatchChords()[0];
-		const nav = chord ? navKeybinding(this.keybindingService.getKeybindings(), chord, this.contextKeyService.getContext(target)) : undefined;
-		if (nav) {
-			return nav;
-		}
 		const result = this.keybindingService.softDispatch(event, target);
-		if (result.kind === ResultKind.KbFound && result.commandId) {
-			return { commandId: result.commandId, commandArgs: result.commandArgs };
-		}
-		if (event.metaKey && !event.ctrlKey) {
-			const b = event.browserEvent;
-			const asCtrl = new KeyboardEvent('keydown', { key: b.key, code: b.code, keyCode: b.keyCode, ctrlKey: true, shiftKey: b.shiftKey, altKey: b.altKey });
-			return this.navBinding(new StandardKeyboardEvent(asCtrl), target);
-		}
-		return undefined;
+		return result.kind === ResultKind.KbFound && result.commandId ? { commandId: result.commandId, commandArgs: result.commandArgs } : undefined;
 	}
 }
 

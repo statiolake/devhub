@@ -276,13 +276,16 @@ frame's parent flow to an anchor with no id, so a focused webview was in no
 part and View: Navigate Left/Right/Up/Down did nothing there
 (`patches/vscode/0013-webview-flows-to-its-editor.patch`).
 
-While nav waits, a binding written for it (`devhubVim.mode == 'nav'` in its
-`when`, DevHub's `devhubVim.nav.*` or yours) comes before any other binding of
-the key, yours included: a list binding such as `h` → `list.collapse` (`when`
-`listFocus`) does not take `CTRL-W h` away in the Explorer, the panel or any
-other list. A key with Cmd held that nothing binds is taken as the same key
-with CTRL (`Cmd+W Cmd+L` = `CTRL-W CTRL-L` = `CTRL-W l`), for `Cmd+W` bound as
-the prefix; a Cmd key you bound yourself (`Cmd+H`) stays yours. While Vim is on, `Cmd+W` never closes the window:
+While nav waits, keys resolve as everywhere else: your keybindings outrank
+DevHub's defaults. So a binding of yours on a key nav uses (`h j k l w p o v
+d x …`) takes that key after `CTRL-W` too wherever its `when` holds — a list
+binding such as `h` → `list.collapse` (`when` `listFocus`) would make `CTRL-W
+h` collapse a folder in the Explorer instead of moving left. Give such
+bindings `&& devhubVim.mode != 'nav'` (harmless in plain VS Code, where the
+key does not exist and the condition is true). Keys held with Cmd after a
+`Cmd+W` prefix are bindings of their own: bind them for nav yourself, as
+`Cmd+W` itself (`{ "key": "cmd+h", "command": "devhubVim.nav.left", "when":
+"devhubVim.mode == 'nav'" }`). While Vim is on, `Cmd+W` never closes the window:
 VS Code's macOS rule for it (`workbench.action.closeWindow` when no editor is
 open) has `!config.devhub.vim.enabled` in its `when`
 (`patches/vscode/0008-devhub-vim.patch`), so a tab page with no editor, or a
