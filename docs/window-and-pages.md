@@ -620,6 +620,18 @@ through `app.on("web-contents-created")`. That is the only place a chord can
 work: it sits in front of every surface, and a completed chord is
 `preventDefault`ed there so its keys never reach the surface underneath.
 
+So after the prefix the keyboard has to be in a WebContents, and while a chord
+is armed DevHub keeps it in one: it stays where the prefix was typed, and any
+move DevHub would make meanwhile (the workbench that had it being replaced —
+waking, restarting, crashed — or a workbench chosen before it existed
+arriving) goes to the window's own page instead, which is never swapped; the
+move it stood for is made when the chord ends (`ShellWindow.chordArmedChanged`).
+A key in no WebContents goes to the menu bar, which is often the workbench's;
+there is no second road for chords through menu accelerators. A workbench menu
+item that falls back to an empty window because no workbench has the keyboard
+(New Text File, New Window — `OpenContext.MENU`) opens nothing, rather than
+Scratch (`devhubWindowsMainService.ts`).
+
 It is not in front of an input method. On macOS Chromium hands a key to the
 input method first (`interpretKeyEvents:`), and a key the input method takes
 comes back as a process key that is never raised as `before-input-event` — with

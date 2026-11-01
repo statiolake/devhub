@@ -636,6 +636,44 @@ describe("the shell window's workbench views", () => {
 			expect(focused).toBe(contentsOf(a));
 		});
 
+		/**
+		 * Mid-chord the keyboard is DevHub's: a stroke only reaches the chord
+		 * layer in a web contents, and a workbench being replaced (waking,
+		 * restarting, crashed) is not one that can take it. So while the
+		 * prefix is armed DevHub moves the keyboard to nothing but the
+		 * window's own page, and makes the move it stood for when the chord
+		 * ends.
+		 */
+		describe("while a chord is armed", () => {
+			const shellPage = () =>
+				(shell.window.webContents as unknown as { id: number }).id;
+
+			it("keeps the keyboard on the window's page while the workbench is replaced", () => {
+				show(shell, a);
+				expect(focused).toBe(contentsOf(a));
+				shell.chordArmedChanged(true);
+				// a's renderer goes; its replacement arrives mid-chord.
+				shell.detach(a);
+				expect(focused).toBe(shellPage());
+				const replacement = new WorkbenchView(shell, {});
+				shell.attach(replacement);
+				shell.bindEditorKey(replacement.id, keyOf(a));
+				expect(focused).toBe(shellPage());
+				// The chord ends: the replacement gets the keyboard.
+				shell.chordArmedChanged(false);
+				expect(focused).toBe(contentsOf(replacement));
+			});
+
+			it("leaves the keyboard where the prefix was typed when nothing moves it", () => {
+				show(shell, a);
+				shell.chordArmedChanged(true);
+				show(shell, a);
+				expect(focused).toBe(contentsOf(a));
+				shell.chordArmedChanged(false);
+				expect(focused).toBe(contentsOf(a));
+			});
+		});
+
 		const theWindow = () => shell.window as unknown as FakeWindow;
 		/** The modal layer's own contents, once a sheet has put it on screen. */
 		const layer = () =>

@@ -188,6 +188,10 @@ export class ShellWindow {
 	private readonly attached: AttachedEntry[] = [];
 	/** Names the attached views apart for the owner; never reused. */
 	private attachedCounter = 0;
+	/** Whether a chord's prefix is armed; see `chordArmedChanged`. */
+	private chordArmed = false;
+	/** A keyboard move held on this window's own page until the chord ends. */
+	private keyboardWaitsForChord = false;
 	/** `keyboardChild`'s answer as of the last `layout()`. */
 	private keyboardAnswer: string | undefined;
 	/**
@@ -1068,7 +1072,40 @@ export class ShellWindow {
 	 */
 	private placeKeyboardIn(contents: Electron.WebContents): void {
 		if (!this.mayPlaceTheKeyboard()) return;
+		if (
+			this.chordArmed &&
+			contents !== this.window.webContents &&
+			!contents.isFocused()
+		) {
+			// Mid-chord, the keyboard goes nowhere but this window's own page,
+			// and the move it stood for waits for the chord to end. See
+			// `chordArmedChanged`.
+			this.keyboardWaitsForChord = true;
+			this.window.webContents.focus();
+			return;
+		}
 		contents.focus();
+	}
+
+	/**
+	 * The chord prefix was armed or has stopped being (`keyboard.ts`).
+	 *
+	 * After the prefix the next stroke is DevHub's, and DevHub only sees a
+	 * stroke that arrives in a web contents (`before-input-event`). So while
+	 * the prefix is armed the keyboard stays where it is — where the prefix
+	 * was just seen — or, if DevHub has to move it (the workbench that had it
+	 * is being replaced: restarting, waking, crashed; a workbench chosen
+	 * before it existed arriving), it goes to this window's own page, which
+	 * is always there and never swapped. A workbench whose page is still
+	 * loading cannot take a key, and one handed to it went to the menu bar
+	 * instead — the workbench's, where `Cmd+N` is New Text File. The move it
+	 * stood for is made when the chord ends, after its command has run.
+	 */
+	chordArmedChanged(armed: boolean): void {
+		this.chordArmed = armed;
+		if (armed || !this.keyboardWaitsForChord) return;
+		this.keyboardWaitsForChord = false;
+		this.focusSurface();
 	}
 
 	/** Whether moving the keyboard would be moving it, rather than raising. */

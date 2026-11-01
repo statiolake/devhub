@@ -133,6 +133,16 @@ export class DevHubWindowsMainService extends WindowsMainService {
 	 * other `DOCK` caller is upstream's own Dock menu (`menubar.ts`), whose
 	 * "New Window" item this therefore also drops — DevHub's Dock menu is not
 	 * VS Code's to write, and taking it back is the `app` fence's job.
+	 *
+	 * `OpenContext.MENU` is dropped for the same reason. Upstream asks for it
+	 * from exactly two places, the workbench menu bar's fallbacks for New Text
+	 * File (`Cmd+N`) and New Window (`Shift+Cmd+N`) — what those items do
+	 * when no workbench has the keyboard (`menubar.ts`, `fallbackMenuHandlers`).
+	 * In DevHub that is an Agent or a DevHub page being in front, and an empty
+	 * window there was answered as Scratch: a `Cmd+N` meant for something else
+	 * jumped to Scratch. With a workbench in front the same items run in it,
+	 * and its own New Window asks with `OpenContext.API`, which still opens
+	 * Scratch.
 	 */
 	override openEmptyWindow(
 		openConfig: IOpenEmptyConfiguration,
@@ -140,6 +150,12 @@ export class DevHubWindowsMainService extends WindowsMainService {
 	): Promise<ICodeWindow[]> {
 		if (openConfig.context === OpenContext.DOCK) {
 			console.log("[devhub] open: the Dock icon is the App Shell's to answer");
+			return Promise.resolve([]);
+		}
+		if (openConfig.context === OpenContext.MENU) {
+			console.log(
+				"[devhub] open: a workbench menu item with no workbench in front opens nothing",
+			);
 			return Promise.resolve([]);
 		}
 		return super.openEmptyWindow(openConfig, options);

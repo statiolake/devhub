@@ -41,12 +41,18 @@ describe("who answers the Dock", () => {
 		expect(asked).toEqual([]);
 	});
 
-	it("still opens an empty window for everything that is not the Dock", () => {
+	it("opens nothing for the workbench menu's fallback with no workbench in front", () => {
+		// New Text File (Cmd+N) and New Window with the keyboard on an Agent or
+		// a DevHub page: upstream's fallback asks for an empty window, which
+		// DevHub would answer as Scratch.
 		void openEmpty(OpenContext.MENU);
+		expect(asked).toEqual([]);
+	});
+
+	it("still opens an empty window for everything else", () => {
 		void openEmpty(OpenContext.API);
 		void openEmpty(OpenContext.DESKTOP);
 		expect(asked.map((request) => request.context)).toEqual([
-			OpenContext.MENU,
 			OpenContext.API,
 			OpenContext.DESKTOP,
 		]);
