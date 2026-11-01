@@ -95,7 +95,6 @@ export interface ChordHost {
 		context: NavigationContext,
 		presentation?: SurfacePresentationWire,
 		focus?: Landing,
-		passing?: true,
 	): void;
 	/**
 	 * `Cmd+Q E`: show this Workspace's terminal or its VS Code editor in its
@@ -109,8 +108,13 @@ export interface ChordHost {
 	): void;
 	/** `Cmd+Q E` in an SSH Workspace's editor: say there is no terminal view. */
 	editorHasNoTerminal(workspaceId: string): void;
-	/** A key the chords did not want, a modifier alone aside: someone is typing. */
-	typed(): void;
+	/**
+	 * Somebody did something in this web contents — a key the chords and the
+	 * history keys did not want (a modifier alone aside), a click, a scroll.
+	 * Main decides whether that page is a place (`isDestinationSurface`), and
+	 * if so the place on screen enters Back and Forward's history.
+	 */
+	interacted(surfaceUrl: string): void;
 	/** Side by side: move the keyboard between the editor and the Agent. */
 	swapSplitFocus(): void;
 	/** The next pane on screen, the terminal included (`Cmd+Q O`). */
@@ -248,12 +252,7 @@ function strokeOf(input: Electron.Input): KeyStroke {
 function perform(host: ChordHost, effect: ChordEffect): void {
 	switch (effect.kind) {
 		case "select-context":
-			host.selectContext(
-				effect.context,
-				effect.presentation,
-				effect.focus,
-				effect.passing,
-			);
+			host.selectContext(effect.context, effect.presentation, effect.focus);
 			return;
 		case "show-editor-view":
 			host.showEditorView(effect.workspaceId, effect.view, effect.presentation);
@@ -517,7 +516,6 @@ export function handleInput(
 	// because they mean different things to a reader.
 	if (decision.kind === "forward") return;
 	if (decision.kind === "pass") {
-		if (!isModifierKey(stroke.code)) host.typed();
 		// The chord layer wants nothing from this key. It may still be one of
 		// the Mac's editing keys landing on a surface that has no way to
 		// answer it — DevHub's own chrome — in which case this layer answers
@@ -534,6 +532,9 @@ export function handleInput(
 			take();
 			return;
 		}
+		// Anything else typed here is somebody being here. After the history
+		// keys, so walking Back from a place does not first record it.
+		if (!isModifierKey(stroke.code)) host.interacted(url);
 		const zoom = terminalZoomFor(url, stroke);
 		if (zoom !== undefined && host.terminalZoom(zoom)) {
 			take();
@@ -556,7 +557,32 @@ export function handleInput(
 	runCommand(host, decision.commandId);
 }
 
+/**
+ * A pointer input that is somebody doing something where it landed: a press
+ * of the ordinary buttons (a drag starts with one) or a scroll. Not a move,
+ * and not the side buttons, which are Back and Forward (`historyButtons.ts`).
+ */
+export function isPointerInteraction(input: {
+	readonly type: string;
+	readonly button?: string;
+}): boolean {
+	if (input.type === "mouseWheel") return true;
+	return (
+		input.type === "mouseDown" &&
+		(input.button === "left" ||
+			input.button === "middle" ||
+			input.button === "right")
+	);
+}
+
 function attach(contents: Electron.WebContents, host: ChordHost): void {
+	// Every pointer event this contents receives passes here, so the test is a
+	// field read; only a press or a scroll goes further.
+	contents.on("input-event", (_event, input) => {
+		if (isPointerInteraction(input as { type: string; button?: string })) {
+			host.interacted(contents.getURL());
+		}
+	});
 	contents.on("before-input-event", (event, input) => {
 		handleInput(
 			host,

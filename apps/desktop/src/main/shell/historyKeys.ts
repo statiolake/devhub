@@ -58,6 +58,31 @@ const APP_HISTORY_PAGES = [
 	"pane.html",
 ].map((page) => `${SHELL_ORIGIN}/${page}`);
 
+/**
+ * Whether input in this web contents is somebody doing something *in the
+ * place on screen*, which is what enters it into the app's history
+ * (`AppModel.noteInteraction`): a workbench (and anything it hosts), the
+ * Agents, a terminal pane. Not the Sidebar — a click there is choosing where
+ * to go, not being somewhere — nor the window's own page (the title bar's
+ * Back and Forward live there), the modals, the notices, the tooltip, the
+ * Settings window, or a Web Inspector.
+ */
+export function isDestinationSurface(surfaceUrl: string): boolean {
+	if (surfaceUrl.startsWith(`${SHELL_ORIGIN}/`)) {
+		return DESTINATION_PAGES.some((page) => surfaceUrl.startsWith(page));
+	}
+	return (
+		surfaceUrl !== "" &&
+		!surfaceUrl.startsWith("devtools:") &&
+		!surfaceUrl.startsWith("chrome:") &&
+		surfaceUrl !== "about:blank"
+	);
+}
+
+const DESTINATION_PAGES = ["agents.html", "pane.html"].map(
+	(page) => `${SHELL_ORIGIN}/${page}`,
+);
+
 /** Whether this web contents is one of DevHub's own pages that walk app history. */
 export function isAppHistorySurface(surfaceUrl: string): boolean {
 	return APP_HISTORY_PAGES.some((page) => surfaceUrl.startsWith(page));

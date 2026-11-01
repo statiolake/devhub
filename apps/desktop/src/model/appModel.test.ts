@@ -23,6 +23,7 @@ import {
 
 const WS_A = workspaceId("550e8400-e29b-41d4-a716-446655440000");
 const WS_B = workspaceId("550e8400-e29b-41d4-a716-446655440001");
+const WS_C = workspaceId("550e8400-e29b-41d4-a716-4466554400c3");
 const AG_A = agentId("550e8400-e29b-41d4-a716-4466554400a0");
 const AG_B = agentId("550e8400-e29b-41d4-a716-4466554400a1");
 
@@ -1011,9 +1012,20 @@ describe("arranging the rows", () => {
 describe("Back and Forward", () => {
   const A = { kind: "workspace", workspaceId: WS_A } as const;
   const B = { kind: "workspace", workspaceId: WS_B } as const;
+  const C = { kind: "workspace", workspaceId: WS_C } as const;
 
   function history(model: AppModel) {
     return model.snapshot().history;
+  }
+
+  /** Go there and do something there: a key, a click, a scroll. */
+  function visit(
+    model: AppModel,
+    context: Parameters<AppModel["selectContext"]>[0],
+    presentation?: Parameters<AppModel["selectContext"]>[1],
+  ) {
+    model.selectContext(context, presentation);
+    model.noteInteraction();
   }
 
   it("has nowhere to go on a fresh model", () => {
@@ -1021,10 +1033,10 @@ describe("Back and Forward", () => {
     expect(history(model)).toEqual({ canGoBack: false, canGoForward: false });
   });
 
-  it("walks back and forward over selections without recording its own moves", () => {
+  it("walks back and forward over places interacted with, without recording its own moves", () => {
     const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
-    model.selectContext(A);
-    model.selectContext(B);
+    visit(model, A);
+    visit(model, B);
     expect(model.navigateHistory("back")).toBe(true);
     expect(model.selection.context).toEqual(A);
     expect(model.navigateHistory("back")).toBe(true);
@@ -1036,13 +1048,60 @@ describe("Back and Forward", () => {
     expect(model.navigateHistory("forward")).toBe(false);
   });
 
-  it("cuts off Forward when somewhere new is selected after going back", () => {
+  it("records nothing for a place only passed through (Cmd+Q N/P, a Sidebar row)", () => {
+    const model = modelWith(
+      [WS_A, "/dev/a"],
+      [WS_B, "/dev/b"],
+      [WS_C, "/dev/c"],
+    );
+    visit(model, A);
+    // Flicked past B and C, then something done in C.
+    model.selectContext(B);
+    model.selectContext(C);
+    model.noteInteraction();
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual(A);
+    model.navigateHistory("forward");
+    expect(model.selection.context).toEqual(C);
+  });
+
+  it("goes Back from a place only passed through to the last place interacted with, Forward kept", () => {
+    const model = modelWith(
+      [WS_A, "/dev/a"],
+      [WS_B, "/dev/b"],
+      [WS_C, "/dev/c"],
+    );
+    visit(model, A);
+    visit(model, B);
+    model.navigateHistory("back");
+    // At A, Forward is B. Passing on to C does not cut it off.
+    model.selectContext(C);
+    expect(history(model)).toEqual({ canGoBack: true, canGoForward: true });
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual(A);
+    model.navigateHistory("forward");
+    expect(model.selection.context).toEqual(B);
+  });
+
+  it("records a place once, however much is done there", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    visit(model, A);
+    const revision = model.snapshot().revision;
+    expect(model.interactionIsNew()).toBe(false);
+    expect(model.noteInteraction()).toBe(false);
+    expect(model.snapshot().revision).toBe(revision);
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual(scratchOf(model));
+    expect(model.navigateHistory("back")).toBe(false);
+  });
+
+  it("cuts off Forward when somewhere new is interacted with after going back", () => {
     const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
-    model.selectContext(A);
-    model.selectContext(B);
+    visit(model, A);
+    visit(model, B);
     model.navigateHistory("back");
     model.navigateHistory("back");
-    model.selectContext(B);
+    visit(model, B);
     expect(history(model).canGoForward).toBe(false);
     model.navigateHistory("back");
     expect(model.selection.context).toEqual(scratchOf(model));
@@ -1050,18 +1109,18 @@ describe("Back and Forward", () => {
 
   it("skips a Workspace that has been closed", () => {
     const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
-    model.selectContext(A);
-    model.selectContext(B);
+    visit(model, A);
+    visit(model, B);
     model.closeWorkspace(WS_A, CLEAN_CLOSE_INSPECTION, drawn(model));
     model.navigateHistory("back");
     expect(model.selection.context).toEqual(scratchOf(model));
   });
 
-  it("records a new Agent, and skips it once it has exited", () => {
+  it("records a new Agent, somewhere gone on purpose, and skips it once it has exited", () => {
     const model = modelWith([WS_A, "/dev/a"]);
-    model.selectContext(A);
+    visit(model, A);
     model.addAgent(WS_A, AG_A, codex, "tui");
-    model.selectContext(scratchOf(model));
+    visit(model, scratchOf(model));
     model.navigateHistory("back");
     expect(model.selection.context).toEqual({ kind: "agent", agentId: AG_A });
     model.navigateHistory("forward");
@@ -1073,9 +1132,10 @@ describe("Back and Forward", () => {
   it("treats the two halves of one split as one place", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex, "tui");
-    model.selectContext(scratchOf(model));
-    model.selectContext({ kind: "agent", agentId: AG_A }, "beside");
+    visit(model, scratchOf(model));
+    visit(model, { kind: "agent", agentId: AG_A }, "beside");
     model.swapSplitFocus();
+    model.noteInteraction();
     model.navigateHistory("back");
     expect(model.selection.context).toEqual(scratchOf(model));
     model.navigateHistory("forward");

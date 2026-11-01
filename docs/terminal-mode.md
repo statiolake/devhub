@@ -39,7 +39,9 @@ editor area of a Workspace = terminal (default_view)  ─ Cmd+Q E ─▶  editor
   Workspaces made after it (`AppModel.setDefaultEditorView`, from
   `adoptConfig`); the Workspaces already open keep the view they show. With
   `"editor"` the lazy start below is unchanged: only the Workspace on screen
-  starts its workbench at launch, and each other one when it is shown.
+  starts its workbench at launch, and each other one when somebody asks for
+  it — opening it, `Cmd+Q E`, Enter on its placeholder — not when it is only
+  gone to (`docs/window-and-pages.md`, What it costs).
 - **SSH Workspaces have no terminal view.** Their editor area is their VS Code
   workbench on the host, always (`effectiveEditorView`); `Cmd+Q E` in it says
   so (`editor_has_no_terminal`) and changes nothing. The terminal view is a
@@ -60,11 +62,11 @@ editor area of a Workspace = terminal (default_view)  ─ Cmd+Q E ─▶  editor
 VS Code", `model/commands.ts`), the key `focus_editor` had. It keeps that
 command's job and adds the switch:
 
-| Where the keyboard is                                   | `Cmd+Q E`                                         |
-| ------------------------------------------------------- | ------------------------------------------------- |
+| Where the keyboard is                                    | `Cmd+Q E`                                          |
+| -------------------------------------------------------- | -------------------------------------------------- |
 | the editor area (the Workspace's row, or its split half) | toggle: terminal ↔ VS Code, the split kept         |
 | an Agent, an Agent's terminal, the Sidebar               | go to the Workspace's editor area, showing VS Code |
-| an SSH Workspace's editor                                | said: it has no terminal view                     |
+| an SSH Workspace's editor                                | said: it has no terminal view                      |
 
 The keyboard lands in what is now shown: the terminal's xterm, or the
 workbench's active editor group (`focusActiveEditorGroup`, the toggles' landing
@@ -80,10 +82,11 @@ does exactly that (below).
 Every workbench comes from one executor, `AppController.reconcileWorkbenches`
 over the lifecycle's plan (`workbenchLifecycle.ts`). Every Workspace whose
 folder is there is wanted, and every one is **lazy** (`WantedWorkbench.lazy`):
-absent and not the selected editor, it goes straight to `asleep` with no frame
-— "not started: not shown yet" — and nothing is opened. The selected editor is
-the workbench of the selected Workspace *only while its editor area shows its
-VS Code editor* (`selectedEditorSurfaceKey`); a Workspace on its terminal
+absent, it goes straight to `asleep` (never started, no frame) — "not
+started: not shown yet", or "shown, not asked for" — and nothing is opened
+until somebody asks for it (`WorkbenchLifecycle.wake`). The selected editor is
+the workbench of the selected Workspace _only while its editor area shows its
+VS Code editor_ (`selectedEditorSurfaceKey`); a Workspace on its terminal
 selects none.
 
 So:
@@ -91,23 +94,29 @@ So:
 - **At DevHub start no workbench is started**, unless the Workspace on screen
   shows its VS Code editor (left that way, given it by
   `default_view = "editor"`, or an SSH Workspace), in which case that one — the
-  one being looked at — starts, and no other.
-- **The first `Cmd+Q E`** makes the Workspace's editor the selected one, and
-  the plan opens it (`start`, or `wake` from that never-started sleep). The
-  slot shows a spinner, "Starting VS Code…" (`starting`, or `waking` with no
-  frame), until the view has loaded; the view is hidden until then.
+  one being looked at — starts (the launch asks for it), and no other.
+- **The first `Cmd+Q E`** makes the Workspace's editor the selected one and
+  asks for it, and the plan opens it (`start`). The slot shows a spinner,
+  "Starting VS Code…", until the view has loaded; the view is hidden until
+  then. Opening the Workspace (`Cmd+Q F`) asks the same way when its view is
+  the editor.
+- **Going to a Workspace whose editor is shown but not started** — `Cmd+Q N/P`,
+  a Sidebar row, an Agent opened beside it, a Workspace opened for an Agent
+  (`Cmd+Q I`, New Agent in a new folder, Reopen Closed, `devhub --tell`) —
+  starts nothing: the editor area says "VS Code is not running — press Enter
+  to start", and Enter or a click starts it.
 - **Then it is a workbench like any other.** It counts toward
   `general.workbench_awake_max`, sleeps after
   `general.workbench_hibernate_minutes` away, and is put to sleep by the cap
   when another is woken. Going back to the terminal is being away from it.
-  `Cmd+Q E` on a Workspace whose workbench is asleep wakes it (a passing
-  `Cmd+Q N/P` landing on one showing its editor still holds the wake for a
-  moment, as before). SSH and dev container workbenches never sleep, as
-  before.
+  Asleep, it is woken only by being asked for: Enter or a click on "Sleeping
+  — press Enter to wake", `Cmd+Q E`, opening the Workspace, or a request that
+  needs it. Nothing wakes it on its own — there is no delayed wake. SSH and
+  dev container workbenches never sleep, as before.
 - A request that needs the workbench — a file routed to it, VS Code's own
   open of a folder, Scratch's empty window, `devhub` inside a container —
-  switches that Workspace to its editor first (`selectedWorkbench`), which is
-  what makes the plan open it.
+  switches that Workspace to its editor first and asks for it
+  (`selectedWorkbench`, `needed`), which is what makes the plan open it.
 
 VS Code's main process runs from the start: it is what DevHub is built inside,
 and the `devhub` CLI's extension commands talk to it. What is not there until
@@ -121,13 +130,13 @@ workbench is, and the arrangement says which of the two the editor area shows
 (`SurfaceArrangement.view`). Everything that is "where the editor is" is
 answered for whichever is shown:
 
-| Arrangement               | Terminal shown                               | VS Code shown                  |
-| ------------------------- | -------------------------------------------- | ------------------------------ |
-| Workspace selected (full) | its terminal, the whole content area          | its workbench                  |
-| Split (`Cmd+Q Z`)         | terminal left, Agent right                    | workbench left, Agent right    |
-| Agent alone               | Agent; terminals stay attached, hidden        | Agent; workbenches stay built  |
-| Keyboard `editor` half    | the terminal                                  | the workbench                  |
-| `Cmd+Q O`                 | through the terminal                          | through the workbench          |
+| Arrangement               | Terminal shown                         | VS Code shown                 |
+| ------------------------- | -------------------------------------- | ----------------------------- |
+| Workspace selected (full) | its terminal, the whole content area   | its workbench                 |
+| Split (`Cmd+Q Z`)         | terminal left, Agent right             | workbench left, Agent right   |
+| Agent alone               | Agent; terminals stay attached, hidden | Agent; workbenches stay built |
+| Keyboard `editor` half    | the terminal                           | the workbench                 |
+| `Cmd+Q O`                 | through the terminal                   | through the workbench         |
 
 A question the Workspace's own workbench is asking (a close's unsaved-changes
 dialog) outranks the terminal: the workbench is drawn while it asks.
@@ -298,7 +307,7 @@ server dies without running its autocommands (a `kill -9`).
 client, waitMarkers }` per Workspace. Every jump re-establishes the truth
 before using it:
 
-1. **Alive** — the record's connection is open *and* the pane is still one of
+1. **Alive** — the record's connection is open _and_ the pane is still one of
    that Workspace's marked panes on DevHub's tmux server: activate the pane,
    open the file.
 2. **Not known, but a server answers on the socket** — DevHub restarted while
@@ -333,7 +342,7 @@ the jump is refused — not a pane that flashes and closes.
 
 ## File-open routing
 
-The rule that picks *which Workspace* is unchanged (`routeOpen`,
+The rule that picks _which Workspace_ is unchanged (`routeOpen`,
 `routeAgentOpen`); what is done with the answer follows **what that
 Workspace's editor area shows** (`opensInNeovim` in `model/editorView.ts`,
 `AppController.openRouted`): the terminal on this Mac → its managed Neovim;

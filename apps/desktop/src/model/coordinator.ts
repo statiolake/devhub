@@ -680,6 +680,9 @@ export class AppCoordinator {
       case "toggle_scratch":
         this.model.toggleScratch();
         return this.transitionOutcome(beforeRevision, id);
+      case "note_interaction":
+        this.model.noteInteraction();
+        return this.transitionOutcome(beforeRevision, id);
       case "adopt_scratch_day":
         this.model.adoptScratchDay(
           new Workspace(

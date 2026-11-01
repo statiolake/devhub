@@ -10,6 +10,7 @@ import {
 	appCommandDirection,
 	historyDirectionFor,
 	isAppHistorySurface,
+	isDestinationSurface,
 	swipeDirection,
 } from "./historyKeys.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
@@ -74,5 +75,37 @@ describe("Back and Forward's other gestures", () => {
 		expect(swipeDirection("left")).toBe("back");
 		expect(swipeDirection("right")).toBe("forward");
 		expect(swipeDirection("up")).toBeUndefined();
+	});
+});
+
+describe("where input makes a place for Back and Forward", () => {
+	it("is a workbench, the Agents and a terminal pane", () => {
+		expect(isDestinationSurface(WORKBENCH)).toBe(true);
+		expect(isDestinationSurface(`${SHELL_ORIGIN}/agents.html`)).toBe(true);
+		expect(isDestinationSurface(`${SHELL_ORIGIN}/pane.html#t1`)).toBe(true);
+		expect(isDestinationSurface(`${SHELL_ORIGIN}/pane.html#workspace:w1`)).toBe(
+			true,
+		);
+	});
+
+	it("is not the Sidebar (choosing where to go), the window's own page, the modals, the notices or the tooltip", () => {
+		for (const page of [
+			"sidebar.html",
+			"index.html",
+			"picker.html",
+			"toasts.html",
+			"tooltip.html",
+			"settings.html",
+		]) {
+			expect(isDestinationSurface(`${SHELL_ORIGIN}/${page}`)).toBe(false);
+		}
+	});
+
+	it("is not a Web Inspector or a blank page", () => {
+		expect(isDestinationSurface("devtools://devtools/bundled/x.html")).toBe(
+			false,
+		);
+		expect(isDestinationSurface("")).toBe(false);
+		expect(isDestinationSurface("about:blank")).toBe(false);
 	});
 });

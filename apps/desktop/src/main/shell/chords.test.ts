@@ -147,9 +147,9 @@ function selects(context: NavigationContext) {
 	return { kind: "select-context", context };
 }
 
-/** `Cmd+Q N/P`: a selection that may only be passing through. */
+/** `Cmd+Q N/P`: a selection like any other — it wakes nothing. */
 function passes(context: NavigationContext) {
-	return { ...selects(context), passing: true };
+	return selects(context);
 }
 
 describe("the workspace cycle", () => {

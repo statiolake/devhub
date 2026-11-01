@@ -20,6 +20,7 @@ const {
 	acceleratorStroke,
 	claimMenuAccelerator,
 	handleInput,
+	isPointerInteraction,
 	resetChordRouterForTests,
 } = await import("./keyboard.js");
 const { SHELL_ORIGIN } = await import("./shellPageProtocol.js");
@@ -111,6 +112,8 @@ const SNAPSHOT = {
 
 function host(zoomActs = true) {
 	const calls: string[] = [];
+	/** Where `interacted` was said, apart from `calls`: almost every key is one. */
+	const interactions: string[] = [];
 	const record =
 		(name: string) =>
 		(...args: unknown[]) => {
@@ -119,7 +122,9 @@ function host(zoomActs = true) {
 	const chordHost: ChordHost = {
 		snapshot: () => SNAPSHOT,
 		selectContext: record("selectContext"),
-		typed: () => undefined,
+		interacted: (url) => {
+			interactions.push(url);
+		},
 		swapSplitFocus: record("swapSplitFocus"),
 		cyclePaneFocus: record("cyclePaneFocus"),
 		toggleTerminal: record("toggleTerminal"),
@@ -160,7 +165,7 @@ function host(zoomActs = true) {
 		openLog: record("openLog"),
 		openCommandPalette: record("openCommandPalette"),
 	};
-	return { calls, chordHost };
+	return { calls, chordHost, interactions };
 }
 
 /** Feed a sequence, and report what was taken and what was run. */
@@ -203,7 +208,7 @@ function named(commandId: string): string {
 			return "openChordHelp";
 		default:
 			// previous_agent, next_agent, next_workspace: all selections.
-			return "selectContext [object Object] undefined undefined undefined";
+			return "selectContext [object Object] undefined undefined";
 	}
 }
 
@@ -309,7 +314,7 @@ describe("a chord, as Electron delivers it", () => {
 		expect(taken).toEqual([true, false, true]);
 		// `Shift+P` from Scratch steps back to the last workspace.
 		expect(calls).toEqual([
-			"selectContext [object Object] undefined undefined undefined",
+			"selectContext [object Object] undefined undefined",
 		]);
 	});
 
@@ -525,6 +530,25 @@ describe("a chord, as Electron delivers it", () => {
 		expect(calls).toEqual(["navigateHistory back", "navigateHistory forward"]);
 	});
 
+	it("says a key typed into a surface is somebody being there, but not a chord or a history key", () => {
+		const { chordHost, interactions } = host();
+		type(chordHost, [input("KeyF", "f")]);
+		expect(interactions).toEqual([WORKBENCH]);
+		// A modifier alone is nobody doing anything yet.
+		type(chordHost, [input("ShiftLeft", "Shift", { shift: true })]);
+		expect(interactions).toHaveLength(1);
+		// Neither stroke of a chord: passing on with Cmd+Q N records nothing.
+		type(chordHost, [PREFIX, input("KeyN", "n")]);
+		expect(interactions).toHaveLength(1);
+		// Nor Back itself, on DevHub's own pages.
+		type(
+			chordHost,
+			[input("BracketLeft", "[", { meta: true })],
+			`${SHELL_ORIGIN}/agents.html`,
+		);
+		expect(interactions).toHaveLength(1);
+	});
+
 	it("leaves Cmd+[ and Cmd+] to the editor in a workbench", () => {
 		const { calls, chordHost } = host();
 		const taken = type(chordHost, [
@@ -627,5 +651,30 @@ describe("a chord completed through a menu accelerator", () => {
 		const { chordHost } = selections();
 		type(chordHost, [PREFIX]);
 		expect(claimMenuAccelerator(chordHost, "Cmd+Q")).toBe(false);
+	});
+});
+
+describe("a pointer input as somebody doing something", () => {
+	it("is a press of the ordinary buttons (a drag begins with one) or a scroll", () => {
+		expect(isPointerInteraction({ type: "mouseDown", button: "left" })).toBe(
+			true,
+		);
+		expect(isPointerInteraction({ type: "mouseDown", button: "right" })).toBe(
+			true,
+		);
+		expect(isPointerInteraction({ type: "mouseDown", button: "middle" })).toBe(
+			true,
+		);
+		expect(isPointerInteraction({ type: "mouseWheel" })).toBe(true);
+	});
+
+	it("is not a move, a release, or a key (keys are told apart in `handleInput`)", () => {
+		for (const type of ["mouseMove", "mouseUp", "mouseEnter", "keyDown"]) {
+			expect(isPointerInteraction({ type, button: "left" })).toBe(false);
+		}
+		// The side buttons are Back and Forward, not being somewhere.
+		expect(isPointerInteraction({ type: "mouseDown", button: "back" })).toBe(
+			false,
+		);
 	});
 });

@@ -148,8 +148,6 @@ export type ChordEffect =
 			readonly presentation?: SurfacePresentationWire;
 			/** Where the keyboard lands in an editor. See `Landing`. */
 			readonly focus?: Landing;
-			/** `Cmd+Q N/P`, maybe only passing through: an asleep editor waits a moment. */
-			readonly passing?: true;
 	  }
 	/**
 	 * `Cmd+Q E`: this Workspace's editor area, showing `view` — its terminal
@@ -731,10 +729,7 @@ export function resolveChord(
 			const direction = commandId === "next_tab" ? 1 : -1;
 			const tabs = everyTab(snapshot);
 			if (tabs.length < 2) return undefined;
-			const effect = step(tabs, snapshot.selection.context, direction);
-			return effect?.kind === "select-context"
-				? { ...effect, passing: true }
-				: effect;
+			return step(tabs, snapshot.selection.context, direction);
 		}
 	}
 }

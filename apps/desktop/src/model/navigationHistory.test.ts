@@ -102,4 +102,28 @@ describe("navigation history", () => {
     expect(h.list).toEqual(["c"]);
     expect(h.can("back", always)).toBe(false);
   });
+
+  it("goes Back from a place it has no entry for to the cursor's own entry", () => {
+    // On screen: "x", only passed through. The last place recorded is "b".
+    const h = history("a", "b");
+    expect(h.can("back", always, "x")).toBe(true);
+    expect(h.can("forward", always, "x")).toBe(false);
+    expect(h.go("back", always, "x")).toBe("b");
+    expect(h.go("back", always)).toBe("a");
+    // Back at "a", passed on to "y": Forward is still "b", Back is "a".
+    expect(h.go("forward", always, "y")).toBe("b");
+    h.go("back", always);
+    expect(h.go("back", always, "y")).toBe("a");
+    expect(h.list).toEqual(["a", "b"]);
+  });
+
+  it("from a place passed through, Back is the cursor's entry and Forward what is ahead", () => {
+    const h = history("a", "b", "c");
+    h.go("back", always);
+    // At "b", passed on to "a" (an entry too, but not where the cursor is).
+    expect(h.go("forward", always, "a")).toBe("c");
+    h.go("back", always);
+    expect(h.go("back", always, "a")).toBe("b");
+    expect(h.go("back", always, "b")).toBe("a");
+  });
 });

@@ -32,7 +32,7 @@ import {
 import { useShellPage } from "../../ShellPageContext";
 import { devhub } from "../../client";
 import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
-import { Asleep, Failure, Waiting } from "./SurfaceState";
+import { Asleep, Failure, Waiting, Waking } from "./SurfaceState";
 import { useEditorPlaceholders } from "./workbenchDialogs";
 import {
   TERMINAL_MAX_SHARE,
@@ -462,9 +462,11 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     // The workbench is starting, being rebuilt in this same slot, asleep, or
     // waking. The selection has not moved and must not: what changed is that
     // there is nothing to show yet, which is a state of this area rather than
-    // a reason to leave it. One that slept shows the frame it left.
+    // a reason to leave it. One that slept shows the frame it left, and waits
+    // for Enter or a click: nothing wakes it on its own.
     const placeholder = placeholders.get(layout.editorKey);
-    editorKey = layout.editorKey;
+    const surfaceKey = layout.editorKey;
+    editorKey = surfaceKey;
     if (
       placeholder?.kind === "starting" ||
       (placeholder?.kind === "waking" && placeholder.frame === "")
@@ -476,13 +478,21 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     } else if (placeholder === undefined || placeholder.kind === "restarting") {
       surfaceState = "editor-restarting";
       body = <Waiting label="Restarting the editor…" />;
+    } else if (placeholder.kind === "waking") {
+      surfaceState = "editor-starting";
+      body = <Waking frame={placeholder.frame} />;
     } else {
-      surfaceState =
-        placeholder.kind === "asleep" ? "editor-asleep" : "editor-restarting";
+      surfaceState = "editor-asleep";
       body = (
         <Asleep
+          // A different Workspace's is a different control: it takes the
+          // keyboard again.
+          key={surfaceKey}
           frame={placeholder.frame}
-          label={placeholder.kind === "waking" ? "起動中…" : "休止中"}
+          started={placeholder.started}
+          onWake={() => {
+            void devhub().wakeEditor(surfaceKey);
+          }}
         />
       );
     }

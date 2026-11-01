@@ -894,13 +894,39 @@ bar draws Back and Forward beside the Sidebar button.
 **An entry is the selection** (`AppModel.selection`): a Workspace, an Agent,
 or the two side by side, with the presentation it was shown in. That is the
 shell's whole notion of "where you are", so there is no second record of
-pages to drift from it. It is recorded in one place — `AppModel.bumpRevision`
-— so every way the selection moves is recorded without having to remember to
-be: a click, a chord, a new Agent, the selection repaired after a close. The
-rules are `model/navigationHistory.ts`'s, and they are a browser's: going back
-and then somewhere new cuts Forward off; Back and Forward do not record
-themselves (the cursor moves first, so the move arrives at the entry it
-already points to); the same place twice in a row is one entry; the two
+pages to drift from it.
+
+**A place enters it once somebody does something there**, not when the
+selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
+
+| What happened while the place was shown                                                                                                                             | Recorded?             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                              | yes, at the first one |
+| a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                        | yes, at the first one |
+| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F` …), `Cmd+Q E`, Enter or a click on an asleep editor's placeholder | yes                   |
+| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, a Sidebar row, `Cmd+Q Shift+J`, a selection repaired after a close                                                    | no                    |
+| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                | no                    |
+
+"In it" means its views: a workbench (and what it hosts), the Agents' page (a
+GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`, the
+Workspace's terminal view included) — `isDestinationSurface` in
+`historyKeys.ts`. The Sidebar is choosing where to go, not being somewhere, and
+the window's own page holds the title bar's arrows, so neither counts; nor do
+the modals, the notices, the tooltip, Settings or a Web Inspector. Main sees
+it all without the pages' help: keys in the chord layer's
+`before-input-event` (`ChordHost.interacted`, after the chords and the history
+keys have had theirs), presses and scrolls in each contents' `input-event`
+(`isPointerInteraction`; a move is one field read and nothing more). The entry
+is the selection at that moment, deduplicated against the cursor's entry
+(`AppModel.interactionIsNew` is asked first, so a thousand keystrokes dispatch
+one `note_interaction`). From a place with no entry, Back goes to the cursor's
+own entry — the last place recorded — and Forward is what it was: passing on
+cuts nothing off; doing something there does.
+
+The rest of the rules are `model/navigationHistory.ts`'s, and they are a
+browser's: going back and then doing something somewhere new cuts Forward
+off; Back and Forward do not record themselves; the same place twice in a row
+is one entry; the two
 halves of one split are one place (swapping the keyboard between them updates
 the entry); a closed Agent or Workspace is _skipped_, not removed; and only the
 newest 100 entries are kept. Each arrow is disabled when there is nowhere it
@@ -1016,11 +1042,11 @@ A workbench is a renderer, an extension host and its language servers and
 watchers, so one per Workspace adds up. Each folder's workbench is in one
 lifecycle phase at a time, owned by `workbenchLifecycle.ts` and nothing else:
 _absent_, _opening_ (an open in flight or a view not yet loaded; cause start,
-restart or wake), _awake_, _hibernating_, _asleep_, _held_ (asleep, selected
-by a passing `Cmd+Q N`/`P`), _restart-waiting_ (failed, backing off), _gave-up_
-and _parked_ (given up on and unavailable until Retry or Locate…). Events —
-an open settled, a view loaded or died, an unload finished, a pass, a key —
-move the phase; `AppController.reconcileWorkbenches`, the one executor, asks
+restart or wake), _awake_, _hibernating_, _asleep_ (put to sleep, or never
+started), _restart-waiting_ (failed, backing off), _gave-up_ and _parked_
+(given up on and unavailable until Retry or Locate…). Events — an open
+settled, a view loaded or died, an unload finished, somebody asking for an
+editor (`wake`) — move the phase; `AppController.reconcileWorkbenches`, the one executor, asks
 its `plan` (phases + projection + selection + window) on every projection
 change, every event, the lifecycle's own deadlines and the minute check, and
 carries out the effects: open, dispose, hibernate, report giving up, and the
@@ -1037,9 +1063,9 @@ or closed — the least
 recently shown awake ones are closed at once, on the switch that went over:
 never the shown one, one opening or waking, one closing, or one that has just
 refused (asked again on the minute check); a folder that would start past the
-cap, not selected, starts asleep. Passing through never wakes, so stepping
-through any number of Workspaces moves nothing; only a wake (1 s on it, or a
-key) raises the count, and each puts at most one other to sleep. Before
+cap, not selected, starts asleep. Selecting never wakes, so stepping through
+any number of Workspaces moves nothing; only an asked-for wake (below) raises
+the count, and each puts at most one other to sleep. Before
 closing, main asks the workbench what that would lose (`vscode:devhubKeepAwake`,
 answered by the overlay's `devhubHibernate.contribution.ts`): a process in one
 of its own terminals (a task, or a shell with children; DevHub's terminal is
@@ -1048,28 +1074,56 @@ tmux and never counts), a debug session, and unsaved editors only with
 next one. Otherwise its frame is captured (`capturePage`) and it is unloaded
 as VS Code unloads every window on Cmd+Q (`UnloadReason.QUIT`: the backup
 tracker backs up unsaved editors instead of asking, storage is written,
-extensions deactivate), and its view destroyed. Asleep, selecting it wakes it
-through the ordinary open path, whose `registerFolderBackup` hands it the same
-backup folder, so VS Code restores its editors, layout and unsaved changes.
-A request that lands in a workbench — an empty or new window, or a file no
-Workspace contains, both Scratch's — selects it, which wakes it, and waits for
-that open (a passing hold on it released).
-`Cmd+Q N`/`P` landing on it holds it `WAKE_DELAY_MS` (1 s) first, in case it is
-only passed through; leaving cancels, and any key but a modifier wakes it at
-once. Nothing else is touched: the row, its Agents, their tmux sessions, GUI
-conversations and repository status. A woken workbench is a new view, so it
-is not tidied on its return.
+extensions deactivate), and its view destroyed. Woken, it opens through the
+ordinary open path, whose `registerFolderBackup` hands it the same backup
+folder, so VS Code restores its editors, layout and unsaved changes. Nothing
+else is touched: the row, its Agents, their tmux sessions, GUI conversations
+and repository status. A woken workbench is a new view, so it is not tidied
+on its return.
+
+**Nothing wakes an asleep editor on its own.** Showing one — however long it
+is looked at — shows its placeholder and nothing else; there is no delayed
+wake. It opens only when somebody asks for it (`WorkbenchLifecycle.wake`, a
+`WakeReason`), and the ask is spent by the first plan that has it as the
+selected editor (it lapses after `ASK_GRACE_MS`, 2 s, if none does):
+
+| How the editor came to be shown                                                                                                                                                                                                                                    | Asleep / never started editor                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| Enter or a click on its placeholder (`asked`)                                                                                                                                                                                                                      | wakes / starts                                                  |
+| `Cmd+Q E` to VS Code, the palette's or `devhub --tell run toggle_editor` (`shown`)                                                                                                                                                                                 | wakes / starts                                                  |
+| opening the Workspace: `Cmd+Q F` / Add Workspace… (a folder, a branch's worktree, or one already open), New / Clone Project, `devhub <folder>`, VS Code's own open (`opened`)                                                                                      | wakes / starts when its editor area shows VS Code               |
+| a request that needs the workbench: an empty window, a file for Scratch or a container, Reopen in Container (`needed`)                                                                                                                                             | wakes / starts                                                  |
+| DevHub starting, for the Workspace the restored window shows (`launch`)                                                                                                                                                                                            | starts (nothing has slept yet)                                  |
+| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, a Sidebar row (click or keys), Back/Forward, `Cmd+Q Shift+J`                                                                                                                                                         | placeholder, waits                                              |
+| a flow that opens a Workspace for an Agent: the picker's "with an Agent", `Cmd+Q I` (Assign an Issue, unless "just the editor"), New Agent in a new folder, Reopen Closed (Workspace or Agent), resuming a session in its worktree, `devhub --tell workspace open` | placeholder, waits — the Agent opens, the editor does not start |
+
+With `general.default_view = "editor"` a Workspace opened for an Agent shows
+the not-started placeholder rather than its terminal: the view it was given is
+kept (switching it to the terminal would be remembered as a choice nobody
+made), and VS Code is one Enter away.
+
+The placeholder (`Asleep` in `SurfaceState.tsx`) covers the whole editor area:
+the frame it left, grey under a quiet scrim of `--canvas`, and one centred
+line — "Sleeping — press Enter to wake", or "VS Code is not running — press
+Enter to start" for one that never ran. It fades in on `--motion-slow` /
+`--ease-standard` (none under reduced motion). The whole area is one control:
+it takes DOM focus when it appears and whenever the page gets the keyboard back
+(main puts the keys in the window's page while no workbench stands in the
+slot), Enter or a click calls `wakeEditor`, and every other key does nothing —
+DevHub's `Cmd+Q` chords still work, since main takes them before any page.
+Woken, it shows the "Starting VS Code…" spinner over the dim frame until the
+view has loaded, and the keyboard goes into the workbench when it arrives.
 
 What the slot shows is the phase (`placeholderOf`), sent to the page whenever
 it changes (`editorPlaceholder`), so it cannot outlive its state: "Restarting
 the editor…" while restart-waiting or reopening after a failure, the captured
-frame grey and dim with "休止中" while asleep or held and "起動中…" while
-waking (the view `hidden` in the arrangement, a split keeping its Agent); the
-frame lives in memory only. A workbench that dies unasked is opened again
+frame under the "Sleeping" or "not running" line while asleep, and "Starting
+VS Code…" while starting or waking (the view `hidden` in the arrangement, a
+split keeping its Agent); the frame lives in memory only. A workbench that dies unasked is opened again
 after a backoff that doubles from 250 ms (`editorSupervisor.ts`), and after
 five failures in a row it is given up on and its Workspace made unavailable;
-one that dies while hibernating is simply asleep. Every transition and every
-skipped hibernation or wake is a line `[devhub] workbench '<folder>' …` in
+one that dies while hibernating is simply asleep. Every transition, every ask,
+and every skipped hibernation is a line `[devhub] workbench '<folder>' …` in
 main's log (`<userData>/logs/devhub-main.log`, `DevHub: Open Log`).
 
 Time to the first editor, measured on an isolated instance from the process's

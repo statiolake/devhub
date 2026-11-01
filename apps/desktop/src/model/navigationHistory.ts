@@ -17,11 +17,15 @@
  * - **A visit after going back cuts off what was ahead.** Forward is "undo my
  *   Back", and once you have gone somewhere new there is nothing it could
  *   undo.
- * - **Going back or forward is not a visit.** The model records every move the
- *   selection makes, including the ones Back makes; that is safe because the
- *   cursor moves first, so the move arrives at the entry it already points to
- *   and `visit` sees nothing new. One rule, rather than a flag every caller
- *   would have to remember to raise.
+ * - **A place is somewhere you were, not somewhere you passed.** The model
+ *   records a place when the person *does* something there — a key, a click,
+ *   a scroll inside it — or arrives there on purpose (a new Agent, an opened
+ *   Workspace, `Cmd+Q E`), never because the selection passed over it
+ *   (`Cmd+Q N/P`, a Sidebar row). So the place on screen may be one history
+ *   has no entry for (`here`, below): Back from it goes to the latest place
+ *   recorded, which is the cursor's own entry, and Forward is what it was.
+ * - **Going back or forward is not a visit.** The cursor moves, and the
+ *   selection follows it; nothing is recorded.
  * - **The same place twice in a row is one entry.** Clicking the row you are
  *   on, or a revision that changed something other than the selection, is not
  *   somewhere to go back to.
@@ -112,29 +116,40 @@ export class NavigationHistory<T> {
     this.index = 0;
   }
 
-  /** The index Back or Forward would land on, or nothing. */
+  /**
+   * The index Back or Forward would land on, or nothing.
+   *
+   * `here` is the place on screen. When it is not the cursor's entry — the
+   * selection moved on without anything being done there — Back starts at the
+   * cursor's own entry, the last place that was recorded.
+   */
   private target(
     direction: NavigationDirection,
     exists: (entry: T) => boolean,
+    here: T,
   ): number | undefined {
     const step = direction === "back" ? -1 : 1;
-    for (
-      let at = this.index + step;
-      at >= 0 && at < this.entries.length;
-      at += step
-    ) {
+    const start =
+      direction === "back" && !this.same(this.current, here)
+        ? this.index
+        : this.index + step;
+    for (let at = start; at >= 0 && at < this.entries.length; at += step) {
       const entry = this.entries[at];
       // A neighbour that is the place on screen is no move: two entries can
       // become the same once what was between them has been skipped.
-      if (!exists(entry) || this.same(entry, this.current)) continue;
+      if (!exists(entry) || this.same(entry, here)) continue;
       return at;
     }
     return undefined;
   }
 
   /** Whether `go(direction)` would go anywhere. */
-  can(direction: NavigationDirection, exists: (entry: T) => boolean): boolean {
-    return this.target(direction, exists) !== undefined;
+  can(
+    direction: NavigationDirection,
+    exists: (entry: T) => boolean,
+    here: T = this.current,
+  ): boolean {
+    return this.target(direction, exists, here) !== undefined;
   }
 
   /**
@@ -145,8 +160,9 @@ export class NavigationHistory<T> {
   go(
     direction: NavigationDirection,
     exists: (entry: T) => boolean,
+    here: T = this.current,
   ): T | undefined {
-    const at = this.target(direction, exists);
+    const at = this.target(direction, exists, here);
     if (at === undefined) return undefined;
     this.index = at;
     return this.entries[at];

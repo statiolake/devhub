@@ -500,14 +500,15 @@ export class AppModel {
   private editorHost: EditorHostState = { kind: "starting" };
   private revision = 0;
   /**
-   * Every selection this window has shown, for Back and Forward.
+   * The places this window has shown *and the person did something in*, for
+   * Back and Forward.
    *
-   * Written in one place, `bumpRevision`, rather than by each of the five ways
-   * the selection moves: every one of them ends in a revision, so none of
-   * them can forget to be recorded — a new Agent, a repaired selection after a
-   * close and a rolled-back close included. Going Back moves the cursor
-   * before it selects, so the move it makes is recorded as no change. See
-   * `model/navigationHistory.ts`.
+   * Not every selection: a place enters it when the person interacts with it
+   * while it is shown (`noteInteraction`, which main raises for a key, a
+   * click or a scroll inside the page's views), or when they arrived on
+   * purpose — a new Agent (`addAgent`), and main's explicit opens. Passing
+   * over a place with `Cmd+Q N/P` or a Sidebar row records nothing. Going
+   * Back moves the cursor before it selects. See `model/navigationHistory.ts`.
    */
   private readonly history: NavigationHistory<NavigationSelection>;
 
@@ -587,8 +588,10 @@ export class AppModel {
 
   /** Whether Back (or Forward) would select anything. */
   canNavigate(direction: NavigationDirection): boolean {
-    return this.history.can(direction, (entry) =>
-      this.contextExists(entry.context),
+    return this.history.can(
+      direction,
+      (entry) => this.contextExists(entry.context),
+      this.selectionValue,
     );
   }
 
@@ -603,8 +606,10 @@ export class AppModel {
    * that has no other half.
    */
   navigateHistory(direction: NavigationDirection): boolean {
-    const target = this.history.go(direction, (entry) =>
-      this.contextExists(entry.context),
+    const target = this.history.go(
+      direction,
+      (entry) => this.contextExists(entry.context),
+      this.selectionValue,
     );
     if (target === undefined) return false;
     // A `beside` with no pair any more is shown `full`, as `selectContext`
@@ -630,6 +635,21 @@ export class AppModel {
    */
   resetHistory(): void {
     this.history.reset(this.selectionValue);
+  }
+
+  /**
+   * The person did something in the place on screen: it enters the history
+   * (deduplicated against the cursor's entry). Answers whether it changed.
+   */
+  noteInteraction(): boolean {
+    if (!this.recordSelection()) return false;
+    this.revision += 1;
+    return true;
+  }
+
+  /** Whether `noteInteraction` would record anything: main asks it first. */
+  interactionIsNew(): boolean {
+    return !sameSelection(this.history.current, this.selectionValue);
   }
 
   setEditorHostState(state: EditorHostState): boolean {
@@ -1050,6 +1070,8 @@ export class AppModel {
       context: { kind: "agent", agentId: id },
       presentation,
     };
+    // A new Agent is somewhere the person went on purpose.
+    this.recordSelection();
     this.bumpRevision();
   }
 
@@ -2144,7 +2166,6 @@ export class AppModel {
 
   private bumpRevision(): void {
     this.revision += 1;
-    this.recordSelection();
   }
 
   /**
@@ -2155,7 +2176,7 @@ export class AppModel {
    * rather than adding one: Back from a split goes to wherever was before the
    * split, not to the other half of it.
    */
-  private recordSelection(): void {
+  private recordSelection(): boolean {
     const before = this.history.current;
     const now = this.selectionValue;
     const workspace = this.splitWorkspace(before.context);
@@ -2164,7 +2185,7 @@ export class AppModel {
       now.presentation === "beside" &&
       workspace !== undefined &&
       workspace === this.splitWorkspace(now.context);
-    this.history.visit(now, sameSplit);
+    return this.history.visit(now, sameSplit);
   }
 
   /** The Workspace whose split this context is a half of, if it still is. */

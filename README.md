@@ -323,17 +323,19 @@ terminal_idle_seconds = 5   # a Workspace row wears the Agents' working mark whi
                             # Settings > General. See src/main/terminal/paneActivity.ts.
 workbench_hibernate_minutes = 10  # close a Workspace's editor (renderer, extension
                             # host, language servers) after this long off screen;
-                            # it reopens where it was when shown, unsaved editors
-                            # included (hot exit). Agents and tmux stay. Not with a
+                            # it reopens where it was when woken (Enter on its
+                            # "Sleeping" placeholder, Cmd+Q E, opening it), unsaved
+                            # editors included (hot exit); nothing wakes it on its
+                            # own. Agents and tmux stay. Not with a
                             # busy terminal or a debug session; never SSH or dev
                             # container editors. 0: off.
 workbench_awake_max = 2     # at most this many such editors open; past it, the
                             # ones shown least recently close at once, on the
-                            # switch. Cmd+Q N/P passing through never wakes one.
+                            # switch. Going to one (Cmd+Q N/P) never wakes it.
                             # 0: no cap.
 default_view = "terminal"   # what a new Workspace's editor area shows: "terminal"
                             # (its ws- tmux session) or "editor" (its VS Code
-                            # editor, started when shown). Cmd+Q E switches one;
+                            # editor, started when asked for). Cmd+Q E switches one;
                             # each Workspace remembers its own. SSH: always VS Code.
 
 [appearance]
@@ -408,16 +410,16 @@ translucent until pointed at. Drag the box by its handle anywhere in the pane
 box's top or right edge it snaps to it and stays anchored there as the input
 box grows. Double-click the handle to put it back.
 
-| Trigger | Shown when | Variables | Ships as |
-| --- | --- | --- | --- |
-| `issue` | (assigning an Issue; not a button) | `ISSUE_URL`, `ISSUE_NO` | Work on the Issue |
-| `commit` | there are uncommitted changes | — | Commit the changes |
-| `push` | the branch has commits its upstream does not | `BRANCH` | Push the commits |
-| `pull_request` | a branch that is not the default one has no pull request (pushed or not) | `BRANCH` | Open a pull request |
-| `draft_pull_request` | the branch's pull request is a draft | `PR_URL`, `PR_NO`, `BRANCH` | Get the draft PR ready |
-| `unresolved_review_comments` | its pull request is open or a draft and has unresolved review conversations | `PR_URL`, `PR_NO`, `UNRESOLVED`, `BRANCH` | Address review comments |
-| `ci_failing` | its pull request is open or a draft and CI is failing | `PR_URL`, `PR_NO`, `BRANCH`, `FAILING` | Fix CI |
-| `always` | the Agent is idle (no other condition; shown even if the repository is unknown) | — | OK |
+| Trigger                      | Shown when                                                                      | Variables                                 | Ships as                |
+| ---------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------- | ----------------------- |
+| `issue`                      | (assigning an Issue; not a button)                                              | `ISSUE_URL`, `ISSUE_NO`                   | Work on the Issue       |
+| `commit`                     | there are uncommitted changes                                                   | —                                         | Commit the changes      |
+| `push`                       | the branch has commits its upstream does not                                    | `BRANCH`                                  | Push the commits        |
+| `pull_request`               | a branch that is not the default one has no pull request (pushed or not)        | `BRANCH`                                  | Open a pull request     |
+| `draft_pull_request`         | the branch's pull request is a draft                                            | `PR_URL`, `PR_NO`, `BRANCH`               | Get the draft PR ready  |
+| `unresolved_review_comments` | its pull request is open or a draft and has unresolved review conversations     | `PR_URL`, `PR_NO`, `UNRESOLVED`, `BRANCH` | Address review comments |
+| `ci_failing`                 | its pull request is open or a draft and CI is failing                           | `PR_URL`, `PR_NO`, `BRANCH`, `FAILING`    | Fix CI                  |
+| `always`                     | the Agent is idle (no other condition; shown even if the repository is unknown) | —                                         | OK                      |
 
 `always` buttons are hidden while a turn is running like the rest, and are never automatic (an always-true condition would fire on every idle). Hide the built-in OK button with `button = false` under `[agent_actions.always.send_ok]`, or write your own `[agent_actions.always.<id>]`.
 
@@ -430,7 +432,7 @@ automatic for that one Agent (the header's bolt lists every action that can
 be, with when it fires, for those whose button is not on screen yet): from
 then on it is sent on its own at the moment its button would appear, as
 though pressed — review comments arriving on the pull request are answered
-without anybody pressing *Address review comments*. Only `commit`, `push`,
+without anybody pressing _Address review comments_. Only `commit`, `push`,
 `unresolved_review_comments` and `ci_failing` actions can be automatic
 (opening a pull request or readying a draft is a decision about when the work
 is done). Every switch starts off, the choice is the Agent's and lasts for
@@ -471,10 +473,14 @@ TypeScript file that defines commands, and only commands:
 import * as vscode from "vscode";
 import { defineCommand } from "devhub";
 
-defineCommand("user.copyFileName", async () => {
-  const doc = vscode.window.activeTextEditor?.document;
-  if (doc) await vscode.env.clipboard.writeText(doc.fileName);
-}, { title: "Copy File Name" });
+defineCommand(
+  "user.copyFileName",
+  async () => {
+    const doc = vscode.window.activeTextEditor?.document;
+    if (doc) await vscode.env.clipboard.writeText(doc.fileName);
+  },
+  { title: "Copy File Name" },
+);
 ```
 
 Keys stay in `keybindings.json`, `:` commands in `devhub.vim.exCommands`, both
@@ -518,7 +524,7 @@ to force a rebuild). The zip uses `zip -1` (`--zip-level 0-9|ditto`, or
 `DEVHUB_ZIP_LEVEL`): about 2.5x faster than `ditto` for roughly 10% more bytes.
 CI starts clean, so these only ever miss there.
 
-Provisioning is idempotent and stamped over the submodule commit *and* the
+Provisioning is idempotent and stamped over the submodule commit _and_ the
 patches, so a bump or a patch edit recompiles and nothing else does. `--force`
 redoes every step. The two VS Code trees are stamped separately and built only
 for whoever needs them: `--for dev` compiles `vscode/out` (`npm run compile`,

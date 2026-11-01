@@ -118,18 +118,80 @@ export function Waiting({ label }: { readonly label: string }) {
   );
 }
 
-/** An asleep workbench: the frame it left, grey and dim, and what it is doing. */
+/**
+ * An asleep workbench, or one that was never started: the frame it left (if
+ * any) under a quiet scrim across the whole editor area, and one line saying
+ * how to bring it back.
+ *
+ * Nothing wakes it on its own (`workbenchLifecycle.ts`): only Enter here, or a
+ * click anywhere on it, calls `onWake`. Every other key does nothing — and
+ * DevHub's `Cmd+Q` chords still work, since main takes those before any page
+ * sees them. The whole area is the one control, so it takes the keyboard when
+ * it appears and again whenever the page gets it back: main puts the keys in
+ * this page while no workbench stands in the slot, and they must land here
+ * rather than on `body`.
+ */
 export function Asleep({
   frame,
-  label,
+  started,
+  onWake,
 }: {
   readonly frame: string;
-  readonly label: string;
+  /** It ran and was put to sleep; not, it was never started. */
+  readonly started: boolean;
+  readonly onWake: () => void;
 }) {
+  const area = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const take = () => {
+      area.current?.focus({ preventScroll: true });
+    };
+    take();
+    window.addEventListener("focus", take);
+    return () => {
+      window.removeEventListener("focus", take);
+    };
+  }, []);
+  const title = started ? "Sleeping" : "VS Code is not running";
+  const hint = started ? "press Enter to wake" : "press Enter to start";
   return (
-    <div className="surface-asleep" role="status">
+    <div
+      ref={area}
+      className="surface-asleep"
+      data-started={started ? "true" : "false"}
+      role="button"
+      tabIndex={0}
+      aria-label={`${title} — ${hint}`}
+      onClick={onWake}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        event.preventDefault();
+        onWake();
+      }}
+    >
       {frame === "" ? null : <img src={frame} alt="" />}
-      <p className="surface-asleep-label">{label}</p>
+      <div className="surface-asleep-scrim" aria-hidden="true" />
+      <p className="surface-asleep-message" aria-hidden="true">
+        <span className="surface-asleep-title">{title}</span>
+        <span className="surface-asleep-hint"> — {hint}</span>
+      </p>
+    </div>
+  );
+}
+
+/**
+ * An asleep workbench on its way back: the frame it left, still dim, with the
+ * same spinner and words as a first start.
+ */
+export function Waking({ frame }: { readonly frame: string }) {
+  return (
+    <div className="surface-asleep" data-waking="true" role="status">
+      {frame === "" ? null : <img src={frame} alt="" />}
+      <div className="surface-asleep-scrim" aria-hidden="true" />
+      <div className="surface-asleep-message">
+        <Waiting label="Starting VS Code…" />
+      </div>
     </div>
   );
 }

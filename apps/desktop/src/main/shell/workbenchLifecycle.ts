@@ -19,19 +19,20 @@
  * do; `plan` reads the phases, the projection and the selection, moves the
  * phases, and answers with effects to carry out. It reads no clock and runs no
  * timer: every call is given `now`, and `nextDeadline` says when it next
- * needs a `plan` (a wake hold running out, a restart's backoff).
+ * needs a `plan` (a restart's backoff, an open nobody settled).
  *
  * ```text
- * absent          ─ wanted ─────────────▶ opening(start), or asleep past the cap
- *                                          or lazy and not shown
+ * absent          ─ wanted ─────────────▶ opening(start), or asleep (never
+ *                                          started) past the cap, or lazy and
+ *                                          not asked for
  * opening         ─ loaded ─────────────▶ awake
  *                 ─ nothing coming ─────▶ awake if its view is there, else failed
  * opening, awake  ─ failed ─────────────▶ restart-waiting, or gave-up
  * awake           ─ away / over the cap ▶ hibernating
  * hibernating     ─ unloaded, or died ──▶ asleep
  *                 ─ refused, shown ─────▶ awake
- * asleep          ─ selected ───────────▶ opening(wake), or held if passing
- * held            ─ 1 s, a key ─────────▶ opening(wake);  ─ left ▶ asleep
+ * asleep          ─ selected and asked ─▶ opening(wake), or opening(start)
+ *                                          if it never started
  * restart-waiting ─ backoff over ───────▶ opening(restart)
  * gave-up         ─ unwanted ───────────▶ parked  ─ wanted again ▶ absent
  * any but parked  ─ unwanted ───────────▶ absent (forgotten)
@@ -39,18 +40,24 @@
  *
  * The rules, each in one place:
  *
- * - **Only `plan` opens.** A folder is opened when it is wanted and absent,
- *   when its restart's backoff is over, and — the only way out of asleep — when
- *   it is the selected editor and not held. Revealing is never opening.
- * - **Waking waits for a pass to settle.** `Cmd+Q N/P` landing on an asleep
- *   editor holds it `WAKE_DELAY_MS`; a typed key or the delay running out with
- *   it still selected wakes it, and moving on drops the hold.
+ * - **Only `plan` opens.** A folder is opened when it is wanted and absent
+ *   (and not lazy), when its restart's backoff is over, and — the only way out
+ *   of asleep — when it is the selected editor *and somebody asked for it*
+ *   (`wake`). Revealing is never opening, and neither is selecting.
+ * - **Nothing wakes on its own.** Showing an asleep editor — `Cmd+Q N/P`, a
+ *   Sidebar row, an Agent opening beside it — shows its placeholder ("Sleeping
+ *   — press Enter to wake", or "not started" for one that never ran) and
+ *   nothing more. Only an explicit act asks (`WakeReason`): Enter or a click on
+ *   that placeholder, `Cmd+Q E`, opening the Workspace (`Cmd+Q F`), a request
+ *   that needs the workbench, and DevHub's own start for the editor it shows.
+ *   An ask is used by the first plan that has its folder selected, and lapses
+ *   after `ASK_GRACE_MS` if no plan does.
  * - **The cap is a fact about the state, checked on every `plan`.** More than
  *   `awakeMax` sleepable workbenches up or opening, and the least recently
  *   shown awake ones go to sleep at once — never the selected one, never one
  *   opening, waking or closing, never one that has just refused (it said why;
  *   it is asked again on the minute check). Only a deliberate wake raises the
- *   count, and passing never wakes, so stepping through many Workspaces moves
+ *   count, and selecting never wakes, so stepping through many Workspaces moves
  *   nothing; each wake puts at most one other to sleep. A folder that would
  *   start past the cap, not selected, starts asleep instead of being opened to
  *   be closed.
@@ -61,7 +68,7 @@
  *   is parked until a person brings the folder back (Retry, Locate…). A view
  *   ending while it hibernates is the sleep it was going to.
  * - **The placeholder is the phase.** What stands in the editor's slot —
- *   "Restarting…", "休止中" with the frame it left, "起動中…" — is derived from
+ *   "Restarting…", "Sleeping" with the frame it left, "Starting…" — is derived from
  *   the phase (`placeholderOf`) and re-sent whenever it changes, so it cannot
  *   outlive the state it describes.
  *
@@ -69,7 +76,7 @@
  * cap. SSH and dev container workbenches never sleep: their input says
  * `sleepable: false` and nothing here hibernates or counts them.
  *
- * Every transition and every skipped hibernation or wake is one log line,
+ * Every transition, every ask, and every skipped hibernation is one log line,
  * `[devhub] workbench '<folder>' …`.
  */
 
@@ -79,8 +86,29 @@ import { EditorSupervisor } from "./editorSupervisor.js";
 /** Checked this often: time-based sleep, and the cap's retry of a refusal. */
 export const HIBERNATE_CHECK_MS = 60_000;
 
-/** `Cmd+Q N/P` landing on an asleep editor wakes it after this, if still there. */
-export const WAKE_DELAY_MS = 1_000;
+/**
+ * How long an ask (`wake`) waits for its folder to be the selected editor: the
+ * act that asked moves the selection there itself, a moment later at most.
+ * Not a delay before anything — an ask nobody's selection reaches does
+ * nothing.
+ */
+export const ASK_GRACE_MS = 2_000;
+
+/** The selected editor still opening after this is said once in the log. */
+const SLOW_OPEN_NOTE_MS = 10_000;
+
+/**
+ * Who asked for an asleep (or never started) editor to open — the only way
+ * one does:
+ *
+ * - `asked`: Enter or a click on its placeholder.
+ * - `shown`: `Cmd+Q E` switching the editor area to it.
+ * - `opened`: the Workspace was opened (`Cmd+Q F`, a folder from the command
+ *   line, VS Code's own open) — not as a side effect of starting an Agent.
+ * - `needed`: a request routed to its workbench (an empty window, a file).
+ * - `launch`: DevHub starting, for the editor it shows first.
+ */
+export type WakeReason = "asked" | "shown" | "opened" | "needed" | "launch";
 
 /**
  * An open whose load has not been heard by then is settled anyway: up if its
@@ -111,10 +139,16 @@ export type WorkbenchPhase =
 			/** It was the selected editor again since this began. */
 			readonly shown: boolean;
 	  }
-	/** No view; `frame` is what it showed when it went, a data URL or "". */
-	| { readonly kind: "asleep"; readonly frame: string }
-	/** Asleep and selected, but only passed through: wakes at `until`. */
-	| { readonly kind: "held"; readonly frame: string; readonly until: number }
+	/**
+	 * No view; `frame` is what it showed when it went, a data URL or "".
+	 * `started`: it ran and was put to sleep, rather than never having been
+	 * opened (lazy, or past the cap).
+	 */
+	| {
+			readonly kind: "asleep";
+			readonly frame: string;
+			readonly started: boolean;
+	  }
 	/** Failed; opened again at `until`. */
 	| { readonly kind: "restart-waiting"; readonly until: number }
 	/** Failed too often, still wanted until the report makes it unavailable. */
@@ -143,8 +177,7 @@ export function placeholderOf(
 		case "restart-waiting":
 			return { kind: "restarting" };
 		case "asleep":
-		case "held":
-			return { kind: "asleep", frame: phase.frame };
+			return { kind: "asleep", frame: phase.frame, started: phase.started };
 		case "absent":
 		case "awake":
 		case "hibernating":
@@ -166,12 +199,11 @@ export interface WantedWorkbench {
 	/** Off screen this long, or nothing while it is shown (or has no view). */
 	readonly awayMs: number | undefined;
 	/**
-	 * Started only when shown: absent and not the selected editor, it is
-	 * asleep without ever having been opened, and the first time it is shown
-	 * is its wake. Every Workspace is, in DevHub: its editor area shows its
-	 * terminal until `Cmd+Q E` asks for its workbench (`docs/terminal-mode.md`),
-	 * so no workbench is started for one nobody has looked at. Absent is the
-	 * eager start: opened as soon as it is wanted.
+	 * Started only when asked for: absent, it is asleep without ever having
+	 * been opened until it is the selected editor and something asks for it
+	 * (`wake`). Every Workspace is, in DevHub: no workbench is started for one
+	 * nobody asked to see (`docs/terminal-mode.md`). Absent is the eager
+	 * start: opened as soon as it is wanted.
 	 */
 	readonly lazy?: boolean;
 }
@@ -252,8 +284,11 @@ export class WorkbenchLifecycle {
 		string,
 		{ readonly surfaceKey: string; readonly text: string }
 	>();
-	/** The editor `Cmd+Q N/P` last landed on, and when its wake may start. */
-	private hold: { readonly folder: string; until: number } | undefined;
+	/** Folders somebody asked to open, until a plan has them selected. */
+	private readonly asks = new Map<
+		string,
+		{ readonly why: WakeReason; readonly until: number }
+	>();
 	private selected: string | undefined;
 	/** The last thing said about the cap, so it is said once. */
 	private capNote = "";
@@ -286,7 +321,7 @@ export class WorkbenchLifecycle {
 	nextDeadline(): number | undefined {
 		const deadlines = [...this.records.values()].flatMap(
 			({ phase, openingSince }) =>
-				phase.kind === "held" || phase.kind === "restart-waiting"
+				phase.kind === "restart-waiting"
 					? [phase.until]
 					: phase.kind === "opening"
 						? [openingSince + OPEN_SETTLE_MS]
@@ -297,35 +332,14 @@ export class WorkbenchLifecycle {
 
 	//#region events
 
-	/** `Cmd+Q N/P` is landing on this folder's editor, maybe only passing. */
-	pass(folder: string | undefined, now: number): void {
-		this.dropHold("passed on");
-		if (folder === undefined) return;
-		this.hold = { folder, until: now + WAKE_DELAY_MS };
-	}
-
 	/**
-	 * Something needs this folder's workbench now — a request routed to it
-	 * (an empty window, a file opened in Scratch): a wake held for a passing
-	 * `Cmd+Q N/P` on it starts at the next `plan` instead of after the delay.
+	 * Somebody asked for this folder's workbench (`WakeReason`): the next plan
+	 * that has it as the selected editor opens it if it is asleep or was never
+	 * started. The one way an asleep editor opens.
 	 */
-	needed(folder: string, now: number): void {
-		if (this.hold?.folder === folder && this.hold.until > now) {
-			this.hold.until = now;
-			if (this.phase(folder).kind === "held") {
-				this.say(folder, "hold released: needed now");
-			}
-		}
-	}
-
-	/** A key was typed: a held wake starts now. True when one was held. */
-	typed(now: number): boolean {
-		if (!this.hold || this.hold.until <= now) return false;
-		this.hold.until = now;
-		if (this.phase(this.hold.folder).kind === "held") {
-			this.say(this.hold.folder, "hold released by a typed key");
-		}
-		return true;
+	wake(folder: string, why: WakeReason, now: number): void {
+		this.asks.set(folder, { why, until: now + ASK_GRACE_MS });
+		this.say(folder, `asked for (${why})`);
 	}
 
 	/** Its view finished loading (again). */
@@ -347,7 +361,12 @@ export class WorkbenchLifecycle {
 		const { phase } = record;
 		if (phase.kind === "hibernating") {
 			// It was going anyway; whatever it was asked, it is asleep now.
-			this.move(folder, record, { kind: "asleep", frame: "" }, reason);
+			this.move(
+				folder,
+				record,
+				{ kind: "asleep", frame: "", started: true },
+				reason,
+			);
 			return;
 		}
 		if (phase.kind !== "opening" && phase.kind !== "awake") {
@@ -396,11 +415,11 @@ export class WorkbenchLifecycle {
 		const record = this.records.get(folder);
 		if (record?.phase.kind === "asleep" && record.phase.frame === "") {
 			// Its view ended during the unload, before this said it was done.
-			record.phase = { kind: "asleep", frame };
+			record.phase = { kind: "asleep", frame, started: true };
 			return;
 		}
 		if (record?.phase.kind !== "hibernating") return;
-		this.move(folder, record, { kind: "asleep", frame });
+		this.move(folder, record, { kind: "asleep", frame, started: true });
 	}
 
 	/** It stays up, and why; the cap leaves it be until the minute check. */
@@ -426,8 +445,15 @@ export class WorkbenchLifecycle {
 			input.selected !== undefined && wanted.has(input.selected)
 				? input.selected
 				: undefined;
-		if (this.hold && this.hold.folder !== selected) this.dropHold("left");
 		this.selected = selected;
+		// An ask is spent on the first plan with its folder selected; one no
+		// selection reached in time lapses.
+		for (const [folder, ask] of this.asks) {
+			if (folder === selected || ask.until > input.now) continue;
+			this.asks.delete(folder);
+			this.say(folder, `ask (${ask.why}) lapsed: not shown`);
+		}
+		const asked = selected !== undefined && this.asks.delete(selected);
 
 		const loading =
 			input.loading === undefined ? undefined : new Set(input.loading);
@@ -454,7 +480,6 @@ export class WorkbenchLifecycle {
 			if (
 				!wanted.has(folder) ||
 				kind === "asleep" ||
-				kind === "held" ||
 				kind === "parked" ||
 				kind === "gave-up"
 			) {
@@ -468,7 +493,16 @@ export class WorkbenchLifecycle {
 			(a, b) => Number(b.folder === selected) - Number(a.folder === selected),
 		);
 		for (const one of order) {
-			this.step(one, one.folder === selected, views, loading, input, effects);
+			const isSelected = one.folder === selected;
+			this.step(
+				one,
+				isSelected,
+				isSelected && asked,
+				views,
+				loading,
+				input,
+				effects,
+			);
 		}
 		this.noteSelected(selected, input.now);
 
@@ -494,6 +528,7 @@ export class WorkbenchLifecycle {
 	private step(
 		one: WantedWorkbench,
 		isSelected: boolean,
+		asked: boolean,
 		views: ReadonlySet<string>,
 		loading: ReadonlySet<string> | undefined,
 		input: LifecycleInput,
@@ -533,12 +568,14 @@ export class WorkbenchLifecycle {
 					this.move(folder, record, { kind: "awake" }, "adopted");
 				} else if (one.closing) {
 					// Its view went with the close; nothing reopens it meanwhile.
-				} else if (!isSelected && one.lazy === true) {
+				} else if (one.lazy === true && !asked) {
 					this.move(
 						folder,
 						record,
-						{ kind: "asleep", frame: "" },
-						"not started: not shown yet",
+						{ kind: "asleep", frame: "", started: false },
+						isSelected
+							? "not started: shown, not asked for"
+							: "not started: not shown yet",
 					);
 				} else if (
 					!isSelected &&
@@ -549,7 +586,7 @@ export class WorkbenchLifecycle {
 					this.move(
 						folder,
 						record,
-						{ kind: "asleep", frame: "" },
+						{ kind: "asleep", frame: "", started: false },
 						`not started: ${String(input.awakeMax)} already awake`,
 					);
 				} else {
@@ -576,33 +613,16 @@ export class WorkbenchLifecycle {
 				}
 				return;
 			case "asleep":
-			case "held": {
-				if (!isSelected) {
-					if (phase.kind === "held") {
-						this.move(folder, record, { kind: "asleep", frame: phase.frame });
-					}
-					return;
-				}
-				const hold = this.hold?.folder === folder ? this.hold : undefined;
-				if (hold && now < hold.until) {
-					if (phase.kind !== "held" || phase.until !== hold.until) {
-						this.move(
-							folder,
-							record,
-							{ kind: "held", frame: phase.frame, until: hold.until },
-							`wake held ${String(hold.until - now)} ms: passing through`,
-						);
-					}
-					return;
-				}
-				if (hold) this.hold = undefined;
-				open(record, "wake", phase.frame);
+				// Shown or not, it stays asleep until somebody asks: being
+				// selected is not being asked for (`docs/window-and-pages.md`).
+				if (!asked) return;
+				if (phase.started) open(record, "wake", phase.frame);
+				else open(record, "start");
 				return;
-			}
 			case "opening": {
 				// Nothing more is coming for it: the loaded event was missed (a
 				// page that finished before anyone listened), or the open's
-				// effect never ran. Left alone it would say "起動中…" for ever and
+				// effect never ran. Left alone it would say "Starting…" for ever and
 				// count against the cap without ever being one it could put to
 				// sleep.
 				const waiting =
@@ -638,7 +658,7 @@ export class WorkbenchLifecycle {
 	}
 
 	/**
-	 * The selected editor is asleep, held or still opening at the end of a
+	 * The selected editor is asleep or still opening at the end of a
 	 * plan: one line saying why it is not up yet, said when that changes.
 	 */
 	private noteSelected(selected: string | undefined, now: number): void {
@@ -646,14 +666,14 @@ export class WorkbenchLifecycle {
 		let note = "";
 		if (selected !== undefined && phase !== undefined) {
 			const record = this.records.get(selected);
-			if (phase.kind === "held") {
-				note = `wake held until ${String(phase.until)}: passing through`;
-			} else if (phase.kind === "asleep") {
-				note = "asleep, no open planned";
+			if (phase.kind === "asleep") {
+				note = phase.started
+					? "asleep, waiting to be asked to wake"
+					: "not started, waiting to be asked to start";
 			} else if (
 				phase.kind === "opening" &&
 				record !== undefined &&
-				now - record.openingSince >= WAKE_DELAY_MS * 10
+				now - record.openingSince >= SLOW_OPEN_NOTE_MS
 			) {
 				note = `still opening (${phase.cause}) since ${String(record.openingSince)}`;
 			}
@@ -827,16 +847,6 @@ export class WorkbenchLifecycle {
 				detail === undefined ? "" : `: ${detail}`
 			}`,
 		);
-	}
-
-	private dropHold(why: string): void {
-		if (!this.hold) return;
-		const { folder } = this.hold;
-		this.hold = undefined;
-		// Said only where it held something back: every N/P sets one.
-		if (this.phase(folder).kind === "held") {
-			this.say(folder, `hold dropped: ${why}`);
-		}
 	}
 
 	private say(folder: string, what: string): void {

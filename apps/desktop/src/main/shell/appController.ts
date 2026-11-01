@@ -557,6 +557,7 @@ import {
 import {
 	appCommandDirection,
 	isAppHistorySurface,
+	isDestinationSurface,
 	swipeDirection,
 } from "./historyKeys.js";
 import type { NavigationDirection } from "../../model/navigationHistory.js";
@@ -857,6 +858,8 @@ export class AppController {
 	/** A plan is being carried out; one asked for meanwhile runs right after. */
 	private reconciling = false;
 	private reconcileAgain = false;
+	/** The launch's one ask, for the editor the restored window shows. */
+	private launchWakeAsked = false;
 
 	/**
 	 * The one place anything waits for VS Code's main process to be usable.
@@ -1870,17 +1873,9 @@ export class AppController {
 		};
 		const chordHost: ChordHost = {
 			snapshot: () => this.chordSnapshot(),
-			selectContext: (context, presentation, focus, passing) => {
-				if (passing) {
-					const model = this.coordinator.model;
-					this.workbenches.pass(
-						(context.kind === "workspace"
-							? model.workspace(context.workspaceId as WorkspaceId)
-							: model.workspaceForAgent(parseAgentId(context.agentId))
-						)?.key,
-						Date.now(),
-					);
-				}
+			selectContext: (context, presentation, focus) => {
+				// Going somewhere is not waking it: an asleep editor shows its
+				// placeholder until somebody asks (`workbenchLifecycle.ts`).
 				this.arrive(
 					intentFromWire({
 						type: "select_context",
@@ -1893,8 +1888,8 @@ export class AppController {
 			swapSplitFocus: () => {
 				this.swapSplitFocus();
 			},
-			typed: () => {
-				if (this.workbenches.typed(Date.now())) this.reconcileWorkbenches();
+			interacted: (surfaceUrl) => {
+				if (isDestinationSurface(surfaceUrl)) this.noteInteraction();
 			},
 			cyclePaneFocus: () => {
 				this.arrive({ type: "cycle_pane_focus", direction: 1 }, undefined);
@@ -1926,6 +1921,14 @@ export class AppController {
 					}),
 					view === "editor" ? "editor" : undefined,
 				);
+				// `Cmd+Q E` is asking for the editor: asleep or never started,
+				// it opens now. And it is somewhere the person went on purpose.
+				const folder = this.coordinator.model.workspace(id)?.key;
+				if (view === "editor" && folder !== undefined) {
+					this.workbenches.wake(folder, "shown", Date.now());
+					this.reconcileWorkbenches();
+				}
+				this.noteInteraction();
 			},
 			closeTerminal: (terminalId) => {
 				void this.closePaneTerminal(terminalId).catch(report);
@@ -3310,7 +3313,7 @@ export class AppController {
 			);
 		}
 		const opening = requestedLocation(target);
-		await this.openFolder(opening, undefined, "below-selection");
+		await this.openFolder(opening, undefined, "below-selection", "for-agent");
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
 			workspaceId: this.openedWorkspaceId(opening),
@@ -3710,7 +3713,9 @@ export class AppController {
 		}
 		const opening = requestedLocation(requested);
 		progress.opened = true;
-		await this.openFolder(opening);
+		// Brought back with its Agents, or for one of them: its editor waits
+		// to be asked for like any asleep one.
+		await this.openFolder(opening, undefined, "automatic", "for-agent");
 		const workspaceId = this.openedWorkspaceId(opening);
 		const notes: string[] = [];
 		if (place.dev_container !== undefined) {
@@ -6292,9 +6297,9 @@ export class AppController {
 	 *
 	 * Never an open of its own: whether a folder gets a workbench is the
 	 * lifecycle's plan (`reconcileWorkbenches`), which runs first so that a
-	 * Workspace just added or selected has had its open started. A folder
-	 * that is asleep and selected is woken by that plan, not by this; one that
-	 * is held for a passing `Cmd+Q N/P`, or asleep and not selected, has none.
+	 * Workspace just asked for has had its open started. A folder that is
+	 * asleep is woken by that plan when somebody asked (`wake`), never by
+	 * this; one nobody asked for has none.
 	 */
 	private async workbenchReady(
 		folder: string,
@@ -6597,7 +6602,7 @@ export class AppController {
 			// there. The main frame's load, not `isLoading`: that one is also
 			// true while any iframe loads, and a workbench restoring its
 			// editors starts webviews the moment its page has loaded — which is
-			// how a wake was left "起動中…" for good. Whatever still slips
+			// how a wake was left "Starting…" for good. Whatever still slips
 			// through is settled by the plan (`loading`).
 			if (!view.webContents.isLoadingMainFrame()) {
 				this.workbenchLoaded(editorKey);
@@ -6828,7 +6833,7 @@ export class AppController {
 	 * Run on every projection change (a Workspace added or gone, a selection
 	 * moved, which is when the awake cap is checked), on every lifecycle event
 	 * (an open settled, a view loaded or died, an unload finished), at the
-	 * lifecycle's own deadlines (a wake hold ending, a backoff over) and on the
+	 * lifecycle's own deadlines (a backoff over, an open nobody settled) and on the
 	 * minute check (`tick`, for time-based sleep). Asking twice is harmless:
 	 * the plan has already moved each phase, so it asks for nothing twice.
 	 *
@@ -6860,8 +6865,8 @@ export class AppController {
 			} while (this.reconcileAgain);
 		} finally {
 			this.reconciling = false;
-			// Even after a throw: a hold or a backoff with no timer behind it is
-			// a wake that waits for the minute check.
+			// Even after a throw: a backoff with no timer behind it is a
+			// restart that waits for the minute check.
 			this.scheduleWorkbenchDeadline();
 		}
 	}
@@ -6882,6 +6887,18 @@ export class AppController {
 		}
 		const model = this.coordinator.model;
 		const selectedKey = this.selectedEditorSurfaceKey();
+		const selected =
+			selectedKey === undefined
+				? undefined
+				: this.editorKeyForSurfaceKey(selectedKey);
+		// DevHub starting is the one start nobody asks for in so many words:
+		// the editor the restored window shows (if it shows one) is started,
+		// as before. Never started yet, by definition — nothing has slept.
+		if (!this.launchWakeAsked) {
+			this.launchWakeAsked = true;
+			if (selected !== undefined)
+				this.workbenches.wake(selected, "launch", now);
+		}
 		const general = this.config?.general;
 		const minutes =
 			general?.workbench_hibernate_minutes ??
@@ -6890,9 +6907,9 @@ export class AppController {
 			now,
 			// Every Workspace whose folder is there (asking for one that is gone
 			// is what put VS Code's "path does not exist" box on screen), each
-			// started only when its editor is shown: until `Cmd+Q E` asks for
-			// it, a Workspace's workbench is asleep without ever having been
-			// opened (`lazy`, `docs/terminal-mode.md`).
+			// started only when somebody asks for it (`wake`): until then a
+			// Workspace's workbench is asleep without ever having been opened
+			// (`lazy`, `docs/terminal-mode.md`).
 			wanted: model.workspaces
 				.filter((workspace) => workspace.state.kind !== "unavailable")
 				.map((workspace) => ({
@@ -6907,10 +6924,7 @@ export class AppController {
 					awayMs: shell.editorAwayMs(workspace.key, now),
 					lazy: true,
 				})),
-			selected:
-				selectedKey === undefined
-					? undefined
-					: this.editorKeyForSurfaceKey(selectedKey),
+			selected,
 			views: shell.editorBindings().map(([folder]) => folder),
 			// What an opening folder is still waiting for: its open, or its
 			// page. One waiting for neither is settled by the plan.
@@ -7266,6 +7280,9 @@ export class AppController {
 				view: "editor",
 			});
 		}
+		// And it asked for it to be open: an asleep one opens.
+		this.workbenches.wake(locationKey(location), "opened", Date.now());
+		this.reconcileWorkbenches();
 	}
 
 	/**
@@ -7278,11 +7295,21 @@ export class AppController {
 	 * own. Every way of opening ends up here, so the gesture means the same
 	 * thing on a folder that already existed, one a source offered to make, one
 	 * just created and one just cloned.
+	 *
+	 * `opening` is why: `explicit` — somebody opened this Workspace (the
+	 * Workspace picker, `Cmd+Q F`, a folder from the command line) — starts or
+	 * wakes its editor at once when that is what its editor area shows, and
+	 * is a place for Back and Forward. `for-agent` — a flow opening it on the
+	 * way to an Agent (a resumed session, an Issue's worktree, `devhub --tell`,
+	 * a reopened Agent) — starts nothing: the editor area shows its placeholder
+	 * until somebody asks (`docs/window-and-pages.md`). An Agent asked for
+	 * here (`withAgent`) makes it `for-agent` too.
 	 */
 	private async openFolder(
 		location: RequestedWorkspaceLocation,
 		withAgent?: AgentLaunchWire,
 		placement: WorkspacePlacement = "automatic",
+		opening: "explicit" | "for-agent" = "explicit",
 	): Promise<AppOutcomeWire> {
 		// Opening a folder is going there, keyboard and all: the selection it
 		// makes is where the keys land, the Sidebar it may have been asked
@@ -7304,6 +7331,7 @@ export class AppController {
 			if (!openBefore.has(workspaceId)) this.placeBelow(workspaceId, anchor);
 		}
 		if (withAgent === undefined) {
+			if (opening === "explicit") this.openedOnPurpose(location);
 			await this.syncEditorView();
 			return outcomeWire(
 				opened,
@@ -7330,6 +7358,31 @@ export class AppController {
 			this.repositoryOf,
 			this.homeOf,
 		);
+	}
+
+	/**
+	 * A Workspace somebody opened on purpose: its editor starts or wakes now
+	 * if it is what the Workspace shows (the lifecycle ignores the ask when
+	 * the editor area shows the terminal), and it is a place in the history.
+	 */
+	private openedOnPurpose(location: RequestedWorkspaceLocation): void {
+		const workspace = this.coordinator.model.workspace(
+			this.openedWorkspaceId(location),
+		);
+		if (workspace === undefined) return;
+		this.workbenches.wake(workspace.key, "opened", Date.now());
+		this.reconcileWorkbenches();
+		this.noteInteraction();
+	}
+
+	/**
+	 * The person did something in the place on screen, or went there on
+	 * purpose: it enters Back and Forward's history. Asked first, so the
+	 * thousandth keystroke in one place dispatches nothing.
+	 */
+	private noteInteraction(): void {
+		if (!this.coordinator.model.interactionIsNew()) return;
+		this.dispatchOwn({ type: "note_interaction" });
 	}
 
 	/**
@@ -7890,16 +7943,16 @@ export class AppController {
 
 	/**
 	 * The workbench of the folder just selected, for a request that goes on to
-	 * use it: asleep, the lifecycle's plan wakes it (a hold for a passing
-	 * `Cmd+Q N/P` released, since this is not passing), and this waits for
-	 * that open. Never an open of its own — the plan is the one executor.
+	 * use it: asleep, the lifecycle's plan wakes it (this asks, `needed`), and
+	 * this waits for that open. Never an open of its own — the plan is the one executor.
 	 */
 	private async selectedWorkbench(folder: string): Promise<ICodeWindow> {
 		// A request that goes on to use the workbench is a request to show
 		// it: the editor area switches to it, which is what makes it the
 		// selected editor the plan opens or wakes.
 		await this.showEditorViewOf(folder, "editor");
-		this.workbenches.needed(folder, Date.now());
+		this.workbenches.wake(folder, "needed", Date.now());
+		this.reconcileWorkbenches();
 		await this.syncEditorView();
 		return await this.workbenchWindow(folder);
 	}
@@ -8710,7 +8763,8 @@ export class AppController {
 					};
 				}
 				const location = requestedLocation(target);
-				await this.openFolder(location);
+				// An Agent asking (`devhub --tell workspace open`), not a person.
+				await this.openFolder(location, undefined, "automatic", "for-agent");
 				return this.openedWorkspaceId(location);
 			},
 			createAgent: async (workspaceId, profileId, presentation) => {
@@ -9297,8 +9351,8 @@ export class AppController {
 	 *
 	 * Nothing is opened here. Whether the selected folder has a workbench is
 	 * the lifecycle's plan (`reconcileWorkbenches`, which `workbenchReady`
-	 * runs): a new Workspace's open is started there, an asleep one is woken
-	 * there unless a passing `Cmd+Q N/P` holds it. What is left is waiting for
+	 * runs): an editor somebody asked for is started or woken there, and an
+	 * asleep one nobody asked for stays asleep. What is left is waiting for
 	 * an open already in flight, for the callers that go on to use the
 	 * workbench, and asking the arrangement again — see
 	 * `ShellWindow.assertArrangement`.
@@ -9432,7 +9486,7 @@ export class AppController {
 			// with its editor, and no agent is started or told anything.
 			return this.openFolder(opening);
 		}
-		await this.openFolder(opening);
+		await this.openFolder(opening, undefined, "automatic", "for-agent");
 		// Not `openFolder(opening, withAgent)`: this flow has more to do around
 		// the creation than that shortcut can express — the Agent goes beside the
 		// editor when the person asked for that, it may resume a session, and the
@@ -9686,6 +9740,15 @@ export class AppController {
 		);
 
 		handle(CHANNELS.chooseWorkspaceFolder, () => this.pickFolder());
+		// Enter or a click on an asleep (or never started) editor's
+		// placeholder: the one way the page asks for a workbench.
+		handle(CHANNELS.wakeEditor, (_event, surfaceKey: string) => {
+			const folder = this.editorKeyForSurfaceKey(String(surfaceKey));
+			if (folder === undefined) return;
+			this.workbenches.wake(folder, "asked", Date.now());
+			this.reconcileWorkbenches();
+			this.noteInteraction();
+		});
 
 		handle(CHANNELS.startWorkspacePicker, (_event, query: string) => {
 			this.cancelPicker?.();

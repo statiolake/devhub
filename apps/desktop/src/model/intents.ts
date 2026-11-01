@@ -238,6 +238,14 @@ export type UserIntent =
    */
   | { readonly type: "toggle_scratch" }
   /**
+   * The person did something in the place on screen — a key, a click, a
+   * scroll in its views — or opened it on purpose: it enters Back and
+   * Forward's history (`AppModel.noteInteraction`).
+   *
+   * Raised by main only, never by a page: main sees the input on every view.
+   */
+  | { readonly type: "note_interaction" }
+  /**
    * Today's daily folder is Scratch from now on.
    *
    * Raised by main, never by the page: at launch and at each local midnight,

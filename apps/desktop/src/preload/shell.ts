@@ -37,6 +37,8 @@ const api: ShellPageBridge = {
 		on<WorkbenchAreaWire>(CHANNELS.workbenchAreaChanged, listener),
 	onEditorPlaceholder: (listener) =>
 		on<EditorPlaceholderEvent>(CHANNELS.editorPlaceholder, listener),
+	wakeEditor: (surfaceKey) =>
+		ipcRenderer.invoke(CHANNELS.wakeEditor, surfaceKey) as Promise<void>,
 
 	openModal,
 	closeWorkspace,

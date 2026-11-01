@@ -89,7 +89,7 @@ describe("the editor's placeholder", () => {
     render(<Probe surfaceKey={SURFACE} />);
     announce({
       surfaceKey: SURFACE,
-      placeholder: { kind: "asleep", frame: "data:x" },
+      placeholder: { kind: "asleep", frame: "data:x", started: true },
     });
     expect(screen.getByTestId("state")).toHaveTextContent("asleep data:x");
     announce({

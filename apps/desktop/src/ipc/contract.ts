@@ -1194,6 +1194,13 @@ export interface ShellPageBridge
 		listener: (event: EditorPlaceholderEvent) => void,
 	): () => void;
 	/**
+	 * Wake (or start) the workbench whose placeholder stands in this editor
+	 * slot (`workspace-editor:<id>`): Enter or a click on "Sleeping — press
+	 * Enter to wake". The one way the page asks for one; nothing wakes on its
+	 * own (`docs/window-and-pages.md`).
+	 */
+	wakeEditor(surfaceKey: string): Promise<void>;
+	/**
 	 * Put a modal on screen. Resolves to the id that closes it again.
 	 *
 	 * A page never draws a modal itself: main owns the set that is open, and
@@ -1834,6 +1841,7 @@ export const CHANNELS = {
 	dispatch: "devhub:dispatch",
 	replay: "devhub:replay",
 	chooseWorkspaceFolder: "devhub:choose-workspace-folder",
+	wakeEditor: "devhub:wake-editor",
 	startWorkspacePicker: "devhub:start-workspace-picker",
 	cancelWorkspacePicker: "devhub:cancel-workspace-picker",
 	selectWorkspacePicker: "devhub:select-workspace-picker",
@@ -2148,13 +2156,18 @@ export interface EditorPlaceholderEvent {
 /**
  * `starting`: opening for the first time, the first `Cmd+Q E` on a Workspace
  * included. `restarting`: being rebuilt after a failure. `asleep`: hibernated
- * (or never started), with the frame it left as a data URL ("" when none
- * could be taken). `waking`: asleep and opening again, the frame still up.
+ * (`started`) or never started, with the frame it left as a data URL ("" when
+ * none could be taken); it waits for Enter or a click (`wakeEditor`), nothing
+ * wakes it on its own. `waking`: asleep and opening again, the frame still up.
  */
 export type EditorPlaceholderWire =
 	| { readonly kind: "starting" }
 	| { readonly kind: "restarting" }
-	| { readonly kind: "asleep"; readonly frame: string }
+	| {
+			readonly kind: "asleep";
+			readonly frame: string;
+			readonly started: boolean;
+	  }
 	| { readonly kind: "waking"; readonly frame: string };
 
 /**
