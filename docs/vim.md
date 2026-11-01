@@ -241,7 +241,7 @@ itself is typed text, the terminal, an input, a webview's field). In insert mode
 other command can follow `CTRL-W` too: whatever the key is bound to while
 `devhubVim.mode == 'nav'` runs once and the prefix ends, as with the defaults
 (see [Customising keys](#customising-keys)); a key bound to nothing only ends
-the prefix. Nav mode is not insert mode, so `CTRL-W <BS>` / `<Tab>` / `<Del>`
+the prefix (see below). Nav mode is not insert mode, so `CTRL-W <BS>` / `<Tab>` / `<Del>`
 edit nothing (see [Typing keys are insert-mode keys](#typing-keys-are-insert-mode-keys)).
 
 `CTRL-W` is `devhubVim.nav.enter` (no arguments), `when`
@@ -258,23 +258,34 @@ with `{ "terminal": true }` it also enters nav from the terminal (then leave
 `!terminalFocus` out of its `when`), for a key the shell does not take.
 
 A webview's page gets its keys first and has the workbench resolve a copy of
-each (VS Code's `WebviewElement` dispatches it on the window, with the
-webview as its target), so the prefix and the key after it work there as
+each (VS Code's `WebviewElement` dispatches it on the webview's element, with
+the webview as its target, so it reaches the window's listeners as any key in
+the workbench does), so the prefix and the key after it work there as
 anywhere else, in its fields too; the page has seen the key too (typed into a
 field of its own, if one has the focus). Outside its fields a webview is
 normal mode with the keys of [the places without a Vim
-buffer](#tab-pages) (`:` `gt` …). A copy's target is the window itself, whose
-listeners run in the order they were added, so the keybinding service
-resolves it before DevHub Vim's own window listener sees it: the copy of the
-key that entered nav is not taken as nav's key as well (it was, and `Cmd+W` /
-`CTRL-W` in a webview ran `CTRL-W CTRL-W` at once and seemed to do nothing),
-and a copy the keybinding service ran a command for only ends the prefix. A
-webview counts as in the window it shows in (its editor group, or the side bar
-/ panel of its view; VS Code lays the frame out over it, `setParentFlowTo`),
-and `h j k l` from it reach the neighbouring part: VS Code's overlay gave the
-frame's parent flow to an anchor with no id, so a focused webview was in no
-part and View: Navigate Left/Right/Up/Down did nothing there
+buffer](#tab-pages) (`:` `gt` …). A webview counts as in the window it shows
+in (its editor group, or the side bar / panel of its view; VS Code lays the
+frame out over it, `setParentFlowTo`), and `h j k l` from it reach the
+neighbouring part: VS Code's overlay gave the frame's parent flow to an anchor
+with no id, so a focused webview was in no part and View: Navigate
+Left/Right/Up/Down did nothing there
 (`patches/vscode/0013-webview-flows-to-its-editor.patch`).
+
+There is one way a key after `CTRL-W` is handled: `devhubVim.nav.enter` sets
+`devhubVim.mode` to `nav`, and VS Code's keybinding service resolves and runs
+the next key as any key, with that context — DevHub's `devhubVim.nav.*`
+defaults and your bindings, in VS Code's own precedence. DevHub Vim only
+watches for that key (a capturing keydown listener on the window, which runs
+nothing) and ends the prefix once it has been handled, whatever it was bound
+to; a lone modifier (`Shift` for `CTRL-W H`) keeps it waiting, and a click,
+the window losing the focus or the focus moving away also end it. A key
+bound to nothing is not eaten: it ends the prefix and does what it does there
+(in an input it types, in the terminal it goes to the shell; in a Vim editor
+nav mode types nothing). In the terminal the keys of `devhubVim.nav.*` skip
+the shell (they are in VS Code's default `terminal.integrated.commandsToSkipShell`,
+as View: Navigate Left/Right/Up/Down are); a binding of yours in nav that is
+to work from the terminal too needs its command in that setting.
 
 While nav waits, keys resolve as everywhere else: your keybindings outrank
 DevHub's defaults. So a binding of yours on a key nav uses (`h j k l w p o v
@@ -285,13 +296,11 @@ bindings `&& devhubVim.mode != 'nav'` (harmless in plain VS Code, where the
 key does not exist and the condition is true). Keys held with Cmd after a
 `Cmd+W` prefix are bindings of their own: bind them for nav yourself, as
 `Cmd+W` itself (`{ "key": "cmd+h", "command": "devhubVim.nav.left", "when":
-"devhubVim.mode == 'nav'" }`). While Vim is on, `Cmd+W` never closes the window:
-VS Code's macOS rule for it (`workbench.action.closeWindow` when no editor is
-open) has `!config.devhub.vim.enabled` in its `when`
-(`patches/vscode/0008-devhub-vim.patch`), so a tab page with no editor, or a
-`Cmd+W` that reached the workbench twice from a webview (the copy, and the
-Close Window menu item's accelerator that rule made `Cmd+W`), closes nothing.
-Close Window is `Shift+Cmd+W`.
+"devhubVim.mode == 'nav'" }`). VS Code's own macOS rule that `Cmd+W` closes
+the window when no editor is open (`workbench.action.closeWindow`, for a tab
+page with no editor too) stays as VS Code has it; if `Cmd+W` is your prefix,
+remove it in your keybindings (`{ "key": "cmd+w", "command":
+"-workbench.action.closeWindow" }`). Close Window is `Shift+Cmd+W`.
 
 ### Windows
 
@@ -558,8 +567,9 @@ Shortcuts editor (`-devhubVim.tabpage.next` removes one):
 | Cmd+K Cmd+Shift+← / →; Ctrl+Shift+PageUp / PageDown | Move Editor Left / Right in Group | `.move { "arg": "-1" }` / `{ "arg": "+1" }` (`:tabmove -1` / `+1`) |
 
 Cmd+1 … 9 (Ctrl+1 … 9 elsewhere) stay VS Code's Focus Nth Editor Group: the
-windows of the page. Cmd+W is no editor-tab key here: with Vim on it is free
-for the `CTRL-W` prefix (bind it, as above); `:bd` / `:q` close.
+windows of the page. Cmd+W is no editor-tab key here: it stays VS Code's
+Close Editor unless you make it the `CTRL-W` prefix (bind it and remove VS
+Code's bindings of it, as above); `:bd` / `:q` close.
 
 **Editors a working set cannot hold close when their page is left.** A
 working set keeps only what some serializer can serialize. An extension's

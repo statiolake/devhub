@@ -1959,19 +1959,12 @@ suite('DevHub Vim ex commands', () => {
 
 suite('DevHub Vim <C-w> nav prefix', () => {
 
-	/** The default nav keybindings, as the workbench registers them (when devhubVim.mode == nav). */
-	const bindings: Record<string, string> = {
-		'h': 'devhubVim.nav.left', 'j': 'devhubVim.nav.down', 'k': 'devhubVim.nav.up', 'l': 'devhubVim.nav.right',
-		'Escape': 'devhubVim.nav.escape',
-	};
+	const key = (k: string) => ({ key: k });
 
-	function key(k: string, extra: { metaKey?: boolean; isComposing?: boolean; keyCode?: number } = {}) {
-		return { key: k, keyCode: 0, isComposing: false, metaKey: false, ...extra };
-	}
-
-	function press(nav: VimNavPrefix, k: string, extra: { metaKey?: boolean; isComposing?: boolean; keyCode?: number } = {}) {
-		const bound = nav.active && !extra.metaKey ? bindings[k] : undefined;
-		return { action: nav.key(key(k, extra), bound), command: bound };
+	/** A keydown as the workbench takes it: the key the keybinding service resolves in nav mode, then the prefix is over (DevhubVim.onWindowKeyDown). */
+	function press(nav: VimNavPrefix, k: string): boolean {
+		const entry = nav.key(key(k));
+		return entry !== undefined && nav.ends(entry);
 	}
 
 	test('Esc never enters nav: only <C-w> does', () => {
@@ -1987,50 +1980,37 @@ suite('DevHub Vim <C-w> nav prefix', () => {
 		assert.strictEqual(vimCursorStyle(vim.mode, nav.active, 'line'), 'underline-thin');
 	});
 
-	test('<C-w> h j k l run the nav command once, then the prefix is over', () => {
-		for (const [k, command] of [['h', 'devhubVim.nav.left'], ['j', 'devhubVim.nav.down'], ['k', 'devhubVim.nav.up'], ['l', 'devhubVim.nav.right']]) {
+	test('one key, whatever it is bound to (or not), and the prefix is over; the next key is a plain key again', () => {
+		for (const k of ['h', 'n', 'u', 'Escape', 'Backspace', 'w']) {
 			const nav = new VimNavPrefix();
 			nav.enter('normal');
-			assert.deepStrictEqual(press(nav, k), { action: 'run', command }, k);
+			assert.strictEqual(press(nav, k), true, k);
 			assert.strictEqual(nav.active, false, k);
-			// one-shot: the next h is a plain key again
-			assert.strictEqual(press(nav, k).action, 'pass', k);
+			assert.strictEqual(nav.key(key(k)), undefined, k);
 		}
 	});
 
-	test('Esc in nav cancels it; the editor is still in plain normal mode', () => {
-		const { host, vim, v } = run('ab|c', '');
+	test('a lone modifier keeps it waiting (Shift for <C-w>H, Ctrl for <C-w><C-h>)', () => {
 		const nav = new VimNavPrefix();
 		nav.enter('normal');
-		assert.strictEqual(press(nav, 'Escape').action, 'run');
-		assert.strictEqual(nav.active, false);
-		v.press('<Esc>');
-		assert.strictEqual(vim.mode, 'normal');
-		assert.strictEqual(vim.pending, false);
-		assert.strictEqual(host.state(), 'ab|c');
-		assert.strictEqual(vimCursorStyle(vim.mode, nav.active, 'line'), 'block');
-	});
-
-	test('a key nav does not bind cancels it and is eaten, as in Vim', () => {
-		const nav = new VimNavPrefix();
-		nav.enter('other');
-		assert.strictEqual(press(nav, 'u').action, 'swallow');
-		assert.strictEqual(nav.active, false);
-		nav.enter('input');
-		assert.strictEqual(press(nav, 'x').action, 'swallow');
-	});
-
-	test('modifiers wait; Cmd chords and IME keys pass through', () => {
-		const nav = new VimNavPrefix();
-		nav.enter('normal');
-		assert.strictEqual(press(nav, 'Shift').action, 'wait');
-		assert.strictEqual(press(nav, 'Control').action, 'wait');
+		for (const k of ['Shift', 'Control', 'Alt', 'Meta']) {
+			assert.strictEqual(nav.key(key(k)), undefined, k);
+		}
 		assert.strictEqual(nav.active, true);
-		assert.strictEqual(press(nav, 'w', { metaKey: true }).action, 'pass');
-		assert.strictEqual(nav.active, false);
+		assert.strictEqual(press(nav, 'H'), true);
+	});
+
+	test('a key whose command ended the prefix itself (devhubVim.nav.*) or entered it again leaves it as that command did', () => {
+		const nav = new VimNavPrefix();
 		nav.enter('normal');
-		assert.strictEqual(press(nav, 'h', { keyCode: 229 }).action, 'pass');
-		assert.strictEqual(nav.active, false);
+		const entry = nav.key(key('h'))!;
+		nav.cancel(); // devhubVim.nav.left: runNav ends it
+		assert.strictEqual(nav.ends(entry), false);
+		nav.enter('normal');
+		const again = nav.key(key('w'))!;
+		nav.enter('normal'); // a user's binding in nav that enters it again
+		assert.strictEqual(nav.ends(again), false);
+		assert.strictEqual(nav.active, true);
 	});
 
 	test('where <C-w> means something else it is not the prefix', () => {
@@ -2049,23 +2029,11 @@ suite('DevHub Vim <C-w> nav prefix', () => {
 		assert.strictEqual(new VimNavPrefix().enter('pending', { terminal: true }), false);
 	});
 
-	test('whatever the key is bound to while nav waits runs once after <C-w>, then the prefix is over', () => {
-		// a user's { key: 'n', command: 'workbench.action.nextEditorInGroup', when: "devhubVim.mode == 'nav'" }
-		const nav = new VimNavPrefix();
-		nav.enter('normal');
-		assert.strictEqual(nav.key(key('n'), 'workbench.action.nextEditorInGroup'), 'run');
-		assert.strictEqual(nav.active, false);
-		assert.strictEqual(nav.key(key('n'), undefined), 'pass');
-	});
-
 	test('<C-w> <BS> / <Tab> / <Del> edit nothing: the editor\'s typing keys do not apply in nav mode', () => {
 		for (const active of [true, false]) {
 			const ctx = { editorTextFocus: true, textInputFocus: true, 'devhubVim.active': active, 'devhubVim.mode': 'nav' };
 			assert.deepStrictEqual(EDITOR_TYPING_KEYS.filter(b => evaluateWhen(b.when, ctx)).map(b => b.key), [], `active: ${active}`);
 		}
-		const nav = new VimNavPrefix();
-		nav.enter('normal');
-		assert.strictEqual(nav.key(key('Backspace'), undefined), 'swallow');
 	});
 
 	test('no default Vim key binding matches while nav waits', () => {
@@ -2079,7 +2047,7 @@ suite('DevHub Vim <C-w> nav prefix', () => {
 		nav.enter('other');
 		nav.cancel();
 		assert.strictEqual(nav.active, false);
-		assert.strictEqual(press(nav, 'h').action, 'pass');
+		assert.strictEqual(nav.key(key('h')), undefined);
 	});
 });
 

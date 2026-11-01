@@ -638,6 +638,27 @@ index afa69423..29646028 100644
  	}
  
  	private doLayout(dimension: Dimension, top = this.top, left = this.left): void {
+diff --git a/src/vs/workbench/contrib/terminal/common/terminal.ts b/src/vs/workbench/contrib/terminal/common/terminal.ts
+index 0532a062..ccb90d28 100644
+--- a/src/vs/workbench/contrib/terminal/common/terminal.ts
++++ b/src/vs/workbench/contrib/terminal/common/terminal.ts
+@@ -20,6 +20,7 @@ import { IEnvironmentVariableInfo } from './environmentVariable.js';
+ import { IExtensionPointDescriptor } from '../../../services/extensions/common/extensionsRegistry.js';
+ import { defaultTerminalContribCommandsToSkipShell } from '../terminalContribExports.js';
+ import type { SingleOrMany } from '../../../../base/common/types.js';
++import { VIM_NAV_COMMAND_IDS } from '../../devhubVim/common/vimNavCommands.js';
+ 
+ export const TERMINAL_VIEW_ID = 'terminal';
+ 
+@@ -661,6 +662,8 @@ export const DEFAULT_COMMANDS_TO_SKIP_SHELL: string[] = [
+ 	'workbench.action.terminal.chat.insertCommand',
+ 	'workbench.action.terminal.chat.viewInChat',
+ 	...defaultTerminalContribCommandsToSkipShell,
++	// DevHub: the keys of Vim's `<C-w>` prefix (devhubVim/common/vimNavCommands.ts), as the navigate commands above
++	...VIM_NAV_COMMAND_IDS,
+ ];
+ 
+ export const terminalContributionsDescriptor: IExtensionPointDescriptor<ITerminalContributions> = {
 diff --git a/src/vs/workbench/contrib/webview/browser/pre/index.html b/src/vs/workbench/contrib/webview/browser/pre/index.html
 index 42c7c01a..2431f303 100644
 --- a/src/vs/workbench/contrib/webview/browser/pre/index.html
@@ -778,7 +799,7 @@ index 42c7c01a..2431f303 100644
  			});
  
 diff --git a/src/vs/workbench/contrib/webview/browser/webviewElement.ts b/src/vs/workbench/contrib/webview/browser/webviewElement.ts
-index dc07538f..74262ede 100644
+index dc07538f..813c71ac 100644
 --- a/src/vs/workbench/contrib/webview/browser/webviewElement.ts
 +++ b/src/vs/workbench/contrib/webview/browser/webviewElement.ts
 @@ -38,6 +38,7 @@ import { WebviewThemeDataProvider } from './themeing.js';
@@ -809,6 +830,26 @@ index dc07538f..74262ede 100644
  		this._register(this.on('did-keyup', (data) => {
  			this.handleKeyEvent('keyup', data);
  		}));
+@@ -727,13 +738,17 @@ export class WebviewElement extends Disposable implements IWebviewElement, Webvi
+ 		// We have to detect keyboard events in the <webview> and dispatch them to our
+ 		// keybinding service because these events do not bubble to the parent window anymore.
+ 		// Create a fake KeyboardEvent from the data provided
+-		const emulatedKeyboardEvent = new KeyboardEvent(type, event);
++		// DevHub: dispatched on the webview's element and bubbling, so that it
++		// goes through the window's capturing and bubbling listeners as a key
++		// pressed in the workbench does (the window's capturing ones first; on
++		// the window itself they ran in the order they were added).
++		const emulatedKeyboardEvent = new KeyboardEvent(type, { ...event, bubbles: true, cancelable: true });
+ 		// Force override the target
+ 		Object.defineProperty(emulatedKeyboardEvent, 'target', {
+ 			get: () => this.element,
+ 		});
+ 		// And re-dispatch
+-		this.window?.dispatchEvent(emulatedKeyboardEvent);
++		(this.element ?? this.window)?.dispatchEvent(emulatedKeyboardEvent);
+ 	}
+ 
+ 	private handleDragEvent(type: 'drag', event: WebViewDragEvent) {
 diff --git a/src/vs/workbench/contrib/webview/browser/webviewMessages.d.ts b/src/vs/workbench/contrib/webview/browser/webviewMessages.d.ts
 index 5ae67343..1fe65662 100644
 --- a/src/vs/workbench/contrib/webview/browser/webviewMessages.d.ts
@@ -831,28 +872,6 @@ index 5ae67343..1fe65662 100644
  	'did-context-menu': { clientX: number; clientY: number; context: { [key: string]: unknown } };
  	'drag-start': void;
  	'drag': WebViewDragEvent;
-diff --git a/src/vs/workbench/electron-browser/desktop.contribution.ts b/src/vs/workbench/electron-browser/desktop.contribution.ts
-index 41250d7b..4bc50a1e 100644
---- a/src/vs/workbench/electron-browser/desktop.contribution.ts
-+++ b/src/vs/workbench/electron-browser/desktop.contribution.ts
-@@ -54,10 +54,16 @@ import product from '../../platform/product/common/product.js';
- 		// but can run without a document opened and allow to close
- 		// the window when the last document is closed
- 		// (https://github.com/microsoft/vscode/issues/126042)
-+		// DevHub: not while DevHub Vim is on. There a tab page with no editor
-+		// is ordinary (its editors closed) and Cmd-W is often bound to CTRL-W's
-+		// nav prefix (devhubVim.nav.enter); this rule would still close the
-+		// whole window from a webview, whose Cmd-W reaches the workbench twice
-+		// (the copy WebviewElement dispatches, and the accelerator this rule
-+		// gives the Close Window menu item).
- 		KeybindingsRegistry.registerKeybindingRule({
- 			id: CloseWindowAction.ID,
- 			weight: KeybindingWeight.WorkbenchContrib,
--			when: ContextKeyExpr.and(EditorsVisibleContext.toNegated(), SingleEditorGroupsContext),
-+			when: ContextKeyExpr.and(EditorsVisibleContext.toNegated(), SingleEditorGroupsContext, ContextKeyExpr.not('config.devhub.vim.enabled')),
- 			primary: KeyMod.CtrlCmd | KeyCode.KeyW
- 		});
- 	}
 diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
 index 74be4cac..a812552d 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts

@@ -132,8 +132,8 @@
 //
 // User documentation: docs/vim.md in the DevHub repository.
 
-import { addDisposableListener, getActiveElement, getActiveWindow, isEditableElement, isHTMLElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
-import { IKeyboardEvent, StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
+import { addDisposableListener, getActiveElement, isEditableElement, isHTMLElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
+import { IKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
 import { onUnexpectedError } from '../../../../base/common/errors.js';
@@ -182,7 +182,8 @@ import { CommonFindController } from '../../../../editor/contrib/find/browser/fi
 import { FindReplaceState, FindReplaceStateChangedEvent } from '../../../../editor/contrib/find/browser/findState.js';
 import { escapeRegExpCharacters } from '../../../../base/common/strings.js';
 import './media/devhubVim.css';
-import { BUILTIN_EX_SPECS, builtinExNameForms, CLOSE_WINDOW_COMMAND, QUIT_WINDOW_COMMAND } from '../common/vimEx.js';
+import { BUILTIN_EX_SPECS, builtinExNameForms } from '../common/vimEx.js';
+import { NAV_COMMANDS, NavWindows } from '../common/vimNavCommands.js';
 import { DEFAULT_KEYBINDINGS, INSERT_ESCAPE_DISMISSES, VIM_WEIGHTS, jisKeys } from '../common/vimKeymap.js';
 import { CMDLINE_KEYBINDINGS } from '../common/vimCmdline.js';
 import { IVimCmdlineOrigin, VIM_CMDLINE_AUTOCOMPLETE_SETTING, VIM_CMDLINE_CLASS, VIM_CMDLINE_FOCUS, VimCmdline } from './vimCmdline.js';
@@ -1456,14 +1457,6 @@ export function isTextEntry(element: Element): boolean {
 	return role === 'textbox' || role === 'searchbox';
 }
 
-/** The event the window is dispatching right now (`window.event`), if any. */
-function currentEvent(): globalThis.Event | undefined {
-	return (getActiveWindow() as Window & { event?: globalThis.Event }).event ?? (mainWindow as Window & { event?: globalThis.Event }).event;
-}
-
-/** Modifier keys alone (they leave nav waiting). */
-const MODIFIER_KEYS = ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn', 'OS', 'AltGraph'];
-
 /** The focused element is an empty editor group (EditorGroupView: `.editor-group-container.empty`, focusable while it has no editor). */
 function isEmptyGroup(element: Element | null): boolean {
 	return !!element?.classList.contains('editor-group-container') && element.classList.contains('empty');
@@ -1494,12 +1487,6 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	/** The empty buffer, while Vim is on. */
 	private emptyBuffer: VimEmptyBuffer | undefined;
 	readonly nav = new VimNavPrefix();
-	/**
-	 * The keydown that entered nav, while the workbench is still dispatching
-	 * it (a webview's copy reaches the keybinding service before
-	 * onWindowKeyDown: see there), so that it is not taken as nav's key too.
-	 */
-	private navEnteredBy: globalThis.Event | undefined;
 	/** The window the focus was in before this one (`<C-w>p`, vimWindows.ts). */
 	private readonly windows = new VimWindowHistory();
 	clipboardCache = '';
@@ -1905,7 +1892,6 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		const v = this.focused();
 		const focus = this.navFocus(v);
 		const terminal = typeof args === 'object' && args !== null && (args as { terminal?: unknown }).terminal === true;
-		this.navEnteredBy = currentEvent();
 		if (!this.nav.enter(focus, { terminal }) && focus === 'pending') {
 			// As in Vim, `<C-w>` is not a motion: it aborts the operator / count.
 			v?.execute('devhubVim.escape', undefined);
@@ -1966,64 +1952,34 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	}
 
 	/**
-	 * While `<C-w>` waits, its key goes to the keybinding service before the
-	 * focused widget (a list's type-to-find, an input's typing) sees it. A key
-	 * that resolves to a command (a `devhubVim.nav.*` one, a user's
-	 * `devhubVim.mode == 'nav'` binding, any binding that applies here) runs it
-	 * once, as the dispatcher would; any other key ends the prefix
-	 * (VimNavPrefix.key decides whether it is eaten or let through). The prefix
-	 * is over before the command runs. The editor's Backspace / Tab / Delete do
-	 * not apply in nav mode (EditorContextKeys.devhubVimAllowsTyping), so
-	 * Ctrl-W Backspace edits nothing without any filter here.
+	 * Every keydown of the workbench, before the focused widget and the
+	 * keybinding service see it (a capturing listener on the window; a
+	 * webview's key is a copy dispatched on its element, so it comes through
+	 * here first too). It runs nothing.
 	 *
-	 * A webview's key is a copy dispatched on the window itself (WebviewElement
-	 * handleKeyEvent). The window is then the event's target, and a target's
-	 * listeners run in the order they were added, capturing or not: the
-	 * keybinding service's (added at startup) before this one. So the copy
-	 * has been resolved already when it gets here: the copy of the key that
-	 * entered nav (`Cmd+W` itself, navEnteredBy) is not nav's key as well (it
-	 * was: `Cmd+W` in a webview entered nav and ran `Cmd+W`'s nav binding at
-	 * once, so it seemed to do nothing), and a copy the keybinding service
-	 * ran a command for (it prevents its default) only ends the prefix.
+	 * * The one rule, at the key: normal mode wherever the focus is not text
+	 *   entry. A focus that moved without a focus event (a focused element
+	 *   removed, a webview's page focusing its own field, the window given the
+	 *   keyboard back) is caught up with before the keybinding service resolves
+	 *   the key.
+	 * * While `<C-w>` waits, the key is nav's: the keybinding service resolves
+	 *   and runs it as any key, with `devhubVim.mode == 'nav'` (DevHub's
+	 *   `devhubVim.nav.*` defaults and the user's bindings, in VS Code's own
+	 *   precedence). Whatever it was bound to, or if nothing was, the prefix
+	 *   is over once the key has been handled (VimNavPrefix.key).
 	 */
 	private onWindowKeyDown(e: KeyboardEvent): void {
-		// The one rule, at the key: normal mode wherever the focus is not text
-		// entry. A focus that moved without a focus event (a focused element
-		// removed, a webview's page focusing its own field, the window given the
-		// keyboard back) is caught up with before the keybinding service resolves
-		// the key (its listener is the window's bubbling one: this one captures).
 		if (this.currentFocusSignature() !== this.focusSignature) {
 			this.update();
 		}
-		if (!this.nav.active || e === this.navEnteredBy) {
-			return;
+		const entered = this.nav.key(e);
+		if (entered !== undefined) {
+			setTimeout(() => {
+				if (this.nav.ends(entered)) {
+					this.update();
+				}
+			});
 		}
-		if (e.defaultPrevented && MODIFIER_KEYS.indexOf(e.key) < 0) {
-			// resolved and run by the keybinding service already (a webview's copy, above)
-			this.cancelNav();
-			return;
-		}
-		const event = new StandardKeyboardEvent(e);
-		const found = this.navBinding(event, e.target as HTMLElement);
-		const action = this.nav.key(e, found?.commandId ?? undefined);
-		if (action === 'wait') {
-			return;
-		}
-		this.update();
-		if (action === 'pass') {
-			return;
-		}
-		e.preventDefault();
-		e.stopImmediatePropagation();
-		if (action === 'run' && found?.commandId) {
-			this.commandService.executeCommand(found.commandId, ...(found.commandArgs === undefined ? [] : [found.commandArgs])).catch(onUnexpectedError);
-		}
-	}
-
-	/** The command the key resolves to while nav waits, if any. */
-	private navBinding(event: StandardKeyboardEvent, target: HTMLElement): { commandId: string; commandArgs: unknown } | undefined {
-		const result = this.keybindingService.softDispatch(event, target);
-		return result.kind === ResultKind.KbFound && result.commandId ? { commandId: result.commandId, commandArgs: result.commandArgs } : undefined;
 	}
 }
 
@@ -2138,63 +2094,6 @@ rule('devhubVim.nav.enter', { primary: ctrlW, mac: { primary: macCtrlW } },
 	KeybindingWeight.WorkbenchContrib + 50, (vim, args) => vim.enterNav(args));
 rule('devhubVim.nav.escape', { primary: KeyCode.Escape }, NAV, KeybindingWeight.EditorCore + 50, vim => vim.runNav([]));
 
-/**
- * Where a nav command first treats the focus as a window of its own
- * (vimWindows.ts). `comment`: in a comment widget it goes back to the
- * widget's editor (`leave`) or closes the widget (`close`) instead of running
- * its commands. `editorFirst`: outside the editor groups (side bar, panel,
- * terminal, ...) it goes back to the active group instead. `back`: to the
- * window the focus was in before, its commands only when there is none (in a
- * comment widget, `leave` only then).
- */
-interface NavWindows {
-	readonly comment?: 'leave' | 'close';
-	readonly editorFirst?: boolean;
-	readonly back?: boolean;
-}
-
-/** `<C-w>{key}`: [command id suffix, key (by character, US notation, as the keymap; registered on the JIS keys), also with Ctrl held, commands it runs, NavWindows]. */
-const NAV_COMMANDS: readonly [string, string, boolean, readonly string[], NavWindows?][] = [
-	['left', 'h', true, ['workbench.action.navigateLeft']],
-	['down', 'j', true, ['workbench.action.navigateDown'], { comment: 'leave' }],
-	['up', 'k', true, ['workbench.action.navigateUp'], { comment: 'leave' }],
-	['right', 'l', true, ['workbench.action.navigateRight']],
-	['leftArrow', 'left', false, ['workbench.action.navigateLeft']],
-	['downArrow', 'down', false, ['workbench.action.navigateDown'], { comment: 'leave' }],
-	['upArrow', 'up', false, ['workbench.action.navigateUp'], { comment: 'leave' }],
-	['rightArrow', 'right', false, ['workbench.action.navigateRight']],
-	['next', 'w', true, ['workbench.action.focusNextGroup'], { comment: 'leave', editorFirst: true }],
-	['previous', 'shift+w', false, ['workbench.action.focusPreviousGroup'], { comment: 'leave', editorFirst: true }],
-	['lastAccessed', 'p', true, ['workbench.action.focusPreviousGroup'], { comment: 'leave', back: true }],
-	['top', 't', true, ['workbench.action.focusFirstEditorGroup']],
-	['bottom', 'b', true, ['workbench.action.focusLastEditorGroup']],
-	['split', 's', true, ['workbench.action.splitEditorUp']],
-	['splitShift', 'shift+s', false, ['workbench.action.splitEditorUp']],
-	['vsplit', 'v', true, ['workbench.action.splitEditorLeft']],
-	['new', 'n', true, ['workbench.action.splitEditorUp', 'workbench.action.files.newUntitledFile']],
-	// the window (editor group), its buffers hidden; the last window of a tab page closes the tab
-	// page; the last of the last one: `c` E444, `q` the Workspace's close (vimTabPages.ts quitWindow)
-	['close', 'c', false, [CLOSE_WINDOW_COMMAND], { comment: 'close' }],
-	['quit', 'q', true, [QUIT_WINDOW_COMMAND], { comment: 'close' }],
-	['moveToNewTabPage', 'shift+t', false, ['devhubVim.tabpage.moveEditorToNew']],
-	['only', 'o', true, ['workbench.action.closeEditorsInOtherGroups']],
-	['equalize', '=', false, ['workbench.action.evenEditorWidths']],
-	['maximizeHeight', 'shift+-', false, ['workbench.action.toggleMaximizeEditorGroup']],
-	['maximizeWidth', 'shift+\\', false, ['workbench.action.toggleMaximizeEditorGroup']],
-	['increaseHeight', 'shift+=', false, ['workbench.action.increaseViewHeight']],
-	['decreaseHeight', '-', false, ['workbench.action.decreaseViewHeight']],
-	['decreaseWidth', 'shift+,', false, ['workbench.action.decreaseViewWidth']],
-	['increaseWidth', 'shift+.', false, ['workbench.action.increaseViewWidth']],
-	['moveFarLeft', 'shift+h', false, ['workbench.action.moveActiveEditorGroupLeft']],
-	['moveFarDown', 'shift+j', false, ['workbench.action.moveActiveEditorGroupDown']],
-	['moveFarUp', 'shift+k', false, ['workbench.action.moveActiveEditorGroupUp']],
-	['moveFarRight', 'shift+l', false, ['workbench.action.moveActiveEditorGroupRight']],
-	// Neovim: <C-w>d / <C-w><C-d> show the diagnostic at the cursor (CTRL-W_d-default)
-	['diagnostic', 'd', true, ['editor.action.showHover']],
-	// 'tagfunc' is the language server's: <C-w>] splits to the definition, <C-w>} previews it
-	['definitionSplit', ']', true, ['editor.action.revealDefinitionAside']],
-	['definitionPreview', 'shift+]', false, ['editor.action.peekDefinition']],
-];
 // `:x` `ZZ` `:up` (vimEx.ts): in a file VS Code's Save, as `:w`; in a comment input (VimEditor.commentStep) a write when modified
 CommandsRegistry.registerCommand('devhubVim.update', accessor => accessor.get(ICommandService).executeCommand('workbench.action.files.save'));
 

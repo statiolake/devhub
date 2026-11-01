@@ -93,17 +93,6 @@ export type VimNavFocus =
 	/** a list, tree or anything else that is not text */
 	| 'other';
 
-/** What the workbench does with a keydown while the prefix waits. */
-export type VimNavKeyAction =
-	/** run the command the keybindings bind the key to while nav waits, whatever it is */
-	| 'run'
-	/** the key is not the prefix's: it does what it does anyway */
-	| 'pass'
-	/** eat the key: it only cancels the prefix */
-	| 'swallow'
-	/** a lone modifier: keep waiting for the key it modifies */
-	| 'wait';
-
 /**
  * Vim's window prefix, workbench wide: `<C-w>` then one key, as in Vim's
  * `<C-w>h` / `<C-w>j` / `<C-w>k` / `<C-w>l`. It is one-shot: whatever the next
@@ -116,6 +105,8 @@ export type VimNavKeyAction =
 export class VimNavPrefix {
 
 	private _active = false;
+	/** How many times the prefix was entered (key / ends). */
+	private _entries = 0;
 
 	get active(): boolean {
 		return this._active;
@@ -135,36 +126,28 @@ export class VimNavPrefix {
 			return false;
 		}
 		this._active = true;
+		this._entries++;
 		return true;
 	}
 
 	/**
-	 * A keydown while the prefix waits; `command` is the command the
-	 * keybindings bind it to here (`devhubVim.mode == 'nav'` holds): a
-	 * `devhubVim.nav.*` one (h j k l by default), a user's binding with that
-	 * `when`, or any other binding that applies here. No key is filtered: the
-	 * editor's keys that type or erase a character (Backspace, Tab, Enter ...)
-	 * do not apply while nav waits (EditorContextKeys.devhubVimAllowsTyping),
-	 * so they resolve to nothing. Every key but a lone modifier ends the
-	 * prefix, also one that runs a command. A key nothing binds cancels it and
-	 * is eaten, as in Vim; Cmd chords and IME keys are let through (Cmd-W
-	 * still closes the editor).
+	 * A keydown: while the prefix waits, every key but a lone modifier is its
+	 * key. The keybinding service resolves and runs it (in nav mode), and the
+	 * caller ends the prefix once the key has been handled (`ends`). Returns
+	 * which entry of the prefix the key belongs to, or `undefined` when it is
+	 * not the prefix's key.
 	 */
-	key(e: { readonly key: string; readonly keyCode: number; readonly isComposing: boolean; readonly metaKey: boolean }, command: string | undefined): VimNavKeyAction {
-		if (!this._active) {
-			return 'pass';
-		}
-		if (MODIFIER_KEYS.has(e.key)) {
-			return 'wait';
+	key(e: { readonly key: string }): number | undefined {
+		return this._active && !MODIFIER_KEYS.has(e.key) ? this._entries : undefined;
+	}
+
+	/** The prefix entered by entry `entry` is over (unless it was entered again since); whether it was still waiting. */
+	ends(entry: number): boolean {
+		if (!this._active || entry !== this._entries) {
+			return false;
 		}
 		this._active = false;
-		if (e.isComposing || e.keyCode === 229 || e.key === 'Process') {
-			return 'pass';
-		}
-		if (command) {
-			return 'run';
-		}
-		return e.metaKey ? 'pass' : 'swallow';
+		return true;
 	}
 
 	/** A click, a focus change, a window switch: the prefix is forgotten. */

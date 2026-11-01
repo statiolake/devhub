@@ -538,52 +538,38 @@ suite('DevHub Vim: the prompt line', () => {
 		assert.ok(applies('devhubVim.cmdline', page) && applies('devhubVim.tabpage.next', page));
 	});
 
-	test('a webview\'s key while CTRL-W waits (a copy dispatched on the window, WebviewElement) ends the prefix and is resolved once, not again by the window\'s other listeners', () => withPrompt(({ vim, root }) => {
+	test('a key while CTRL-W waits, a webview\'s copy included (dispatched on its element, WebviewElement): the keybinding service resolves it in nav mode, and the prefix is over once it is handled', () => withPrompt(async ({ vim, root, instantiation }) => {
 		const iframe = root.appendChild(mainWindow.document.createElement('iframe'));
-		let reached = 0;
-		const listener = () => reached++;
-		mainWindow.addEventListener('keydown', listener);
-		try {
-			vim.enterNav();
-			assert.strictEqual(vim.nav.active, true);
-			const copy = new KeyboardEvent('keydown', { key: 'x', code: 'KeyX', keyCode: 88 });
-			Object.defineProperty(copy, 'target', { get: () => iframe });
-			mainWindow.dispatchEvent(copy);
-			assert.strictEqual(vim.nav.active, false);
-			assert.strictEqual(reached, 0);
-		} finally {
-			mainWindow.removeEventListener('keydown', listener);
-		}
-	}));
-
-	test('a webview\'s copy of the key that entered nav (Cmd+W) is not nav\'s key as well; a copy the keybinding service already ran a command for only ends the prefix', () => withPrompt(({ vim, root }) => {
-		const iframe = root.appendChild(mainWindow.document.createElement('iframe'));
-		const onWindowKeyDown = (e: KeyboardEvent) => (vim as unknown as { onWindowKeyDown(e: KeyboardEvent): void }).onWindowKeyDown(e);
-		// A copy's target is the window, whose listeners run in the order they were added: the
-		// keybinding service's (added at startup) before DevHub Vim's. Emulated: the keybinding
-		// service's work, then DevHub Vim's listener, while the copy is dispatched.
-		const dispatch = (init: KeyboardEventInit, keybindingService: (e: KeyboardEvent) => void) => {
-			const copy = new KeyboardEvent('keydown', { ...init, cancelable: true });
-			Object.defineProperty(copy, 'target', { get: () => iframe });
-			const listener = (e: globalThis.Event) => {
-				if (e === copy) {
-					keybindingService(copy);
-					onWindowKeyDown(copy);
-				}
-			};
-			mainWindow.addEventListener('keydown', listener);
-			try {
-				mainWindow.dispatchEvent(copy);
-			} finally {
-				mainWindow.removeEventListener('keydown', listener);
-			}
+		// the keybinding service: the window's bubbling listener, the one that resolves and runs keys
+		const seen: unknown[] = [];
+		let onKey = (_e: KeyboardEvent) => { };
+		const keybindingService = (e: KeyboardEvent) => {
+			seen.push(globalKey(instantiation, 'devhubVim.mode'));
+			onKey(e);
 		};
-		// Cmd+W: the keybinding service runs devhubVim.nav.enter (and prevents the default)
-		dispatch({ key: 'w', code: 'KeyW', keyCode: 87, metaKey: true }, e => { vim.enterNav(); e.preventDefault(); });
-		assert.strictEqual(vim.nav.active, true, 'nav waits for its key');
-		// h: the keybinding service ran devhubVim.nav.left already (it prevented the default)
-		dispatch({ key: 'h', code: 'KeyH', keyCode: 72 }, e => e.preventDefault());
-		assert.strictEqual(vim.nav.active, false, 'the key ended the prefix');
+		mainWindow.addEventListener('keydown', keybindingService);
+		const copy = (init: KeyboardEventInit) => {
+			const e = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true });
+			Object.defineProperty(e, 'target', { get: () => iframe });
+			iframe.dispatchEvent(e);
+		};
+		const settle = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+		try {
+			// Cmd+W, bound to devhubVim.nav.enter: its own copy is not nav's key
+			onKey = () => vim.enterNav();
+			copy({ key: 'w', code: 'KeyW', keyCode: 87, metaKey: true });
+			await settle();
+			assert.strictEqual(vim.nav.active, true, 'nav waits for its key');
+			// a key nav binds or not: resolved with devhubVim.mode == 'nav', then nav is over
+			onKey = () => { };
+			copy({ key: 'x', code: 'KeyX', keyCode: 88 });
+			assert.strictEqual(seen.at(-1), 'nav');
+			await settle();
+			assert.strictEqual(vim.nav.active, false, 'the key ended the prefix');
+			assert.strictEqual(seen.length, 2, 'each copy reached the keybinding service once');
+		} finally {
+			mainWindow.removeEventListener('keydown', keybindingService);
+		}
 	}));
 
 	/** The workbench's own context keys (DevhubVim binds them there). */
