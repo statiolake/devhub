@@ -7,6 +7,8 @@
 // editor groups, a comment thread's widget, the side bar and the panel.
 
 import assert from 'assert';
+import { isAncestorUsingFlowTo } from '../../../../../base/browser/dom.js';
+import { OverlayLayoutElement } from '../../../../../base/browser/overlayLayoutElement.js';
 import { mainWindow } from '../../../../../base/browser/window.js';
 import { Emitter } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -64,6 +66,50 @@ suite('DevHub Vim: windows', () => {
 			// <C-w>w cycles the groups only from a group itself
 			assert.deepStrictEqual(['t1', 'g2', 't3', 'button', 'term', 'quick'].map(id => inEditorGroup(w.at(id))), [true, true, false, false, false, false]);
 		} finally {
+			w.dispose();
+		}
+	});
+
+	test('a webview is in the window it shows in: its frame is laid out outside it, flowing to it (setParentFlowTo), in an editor group or the side bar', () => {
+		const w = workbench();
+		const overlay = (to: HTMLElement) => {
+			to.id ||= `anchor-${Math.random()}`;
+			const content = mainWindow.document.createElement('div');
+			content.dataset.parentFlowToElementId = to.id;
+			const frame = content.appendChild(mainWindow.document.createElement('iframe'));
+			w.root.appendChild(content);
+			return frame;
+		};
+		try {
+			const inEditor = overlay(w.at('e2'));
+			assert.strictEqual(windowOf(inEditor), w.at('g2'));
+			assert.strictEqual(inEditorGroup(inEditor), true);
+			const inView = overlay(w.at('list'));
+			assert.strictEqual(windowOf(inView), w.at('list').closest('.part'));
+			assert.strictEqual(inEditorGroup(inView), false);
+			// flowing to nothing (an anchor without an id): in no window
+			const lost = overlay(w.at('e1'));
+			lost.parentElement!.dataset.parentFlowToElementId = '';
+			assert.strictEqual(windowOf(lost), undefined);
+		} finally {
+			w.dispose();
+		}
+	});
+
+	test('a webview laid out over an anchor with no id still flows to it (patches/vscode: OverlayLayoutElement gives the anchor one), so a focused webview is in its editor part', () => {
+		const w = workbench();
+		const layout = new OverlayLayoutElement();
+		try {
+			const anchor = w.at('e2');
+			anchor.removeAttribute('id');
+			layout.setAnchorElement(anchor);
+			const frame = layout.content.appendChild(mainWindow.document.createElement('iframe'));
+			w.root.appendChild(layout.root);
+			assert.ok(anchor.id, 'the anchor has an id');
+			assert.ok(isAncestorUsingFlowTo(frame, w.root.querySelector('.part.editor')!), 'IWorkbenchLayoutService.hasFocus(EDITOR_PART) holds');
+			assert.strictEqual(windowOf(frame), w.root.querySelector('#g2'));
+		} finally {
+			layout.dispose();
 			w.dispose();
 		}
 	});

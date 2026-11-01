@@ -588,6 +588,37 @@ index 0d95d0bf..5ac0b265 100644
  	public setExtensionKeybindings(rules: IExtensionKeybindingRule[]): void {
  		const result: IKeybindingItem[] = [];
  		let keybindingsLen = 0;
+diff --git a/src/vs/workbench/browser/parts/editor/editorGroupView.ts b/src/vs/workbench/browser/parts/editor/editorGroupView.ts
+index 57087fd2..e2999e30 100644
+--- a/src/vs/workbench/browser/parts/editor/editorGroupView.ts
++++ b/src/vs/workbench/browser/parts/editor/editorGroupView.ts
+@@ -61,6 +61,15 @@ import { IHostService } from '../../../services/host/browser/host.js';
+ import { DiffEditorInput } from '../../../common/editor/diffEditorInput.js';
+ import { FileSystemProviderCapabilities, IFileService } from '../../../../platform/files/common/files.js';
+ 
++/**
++ * DevHub: editors a Vim tab page keeps while another page is the live layout
++ * (contrib/devhubVim/browser/vimTabPages.ts): closed by the switch, as every
++ * editor of the layout is, but not disposed, so that one a working set
++ * cannot restore (an extension's details, release notes, a webview panel
++ * with no serializer) is opened again, the same editor, on the way back.
++ */
++export const devhubKeptEditors = new Set<EditorInput>();
++
+ export class EditorGroupView extends Themable implements IEditorGroupView {
+ 
+ 	//#region factory
+@@ -714,6 +723,10 @@ export class EditorGroupView extends Themable implements IEditorGroupView {
+ 	}
+ 
+ 	private canDispose(editor: EditorInput): boolean {
++		if (devhubKeptEditors.has(editor)) {
++			return false; // DevHub: a Vim tab page keeps it while another page is the live layout
++		}
++
+ 		for (const groupView of this.editorPartsView.groups) {
+ 			if (groupView instanceof EditorGroupView && groupView.model.contains(editor, {
+ 				strictEquals: true,						// only if this input is not shared across editor groups
 diff --git a/src/vs/workbench/browser/parts/editor/editorPart.ts b/src/vs/workbench/browser/parts/editor/editorPart.ts
 index afa69423..29646028 100644
 --- a/src/vs/workbench/browser/parts/editor/editorPart.ts

@@ -22,10 +22,13 @@ import { IEditorService } from '../../../../services/editor/common/editorService
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IUntitledTextEditorService } from '../../../../services/untitled/common/untitledTextEditorService.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { KeybindingsRegistry, KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { DevhubFocus } from '../../../devhubFocus/browser/devhubFocus.contribution.js';
-import { TAB_PAGES_STORAGE_KEY, VimTabPages } from '../../browser/vimTabPages.js';
+import { NATIVE_TAB_KEYS, TAB_PAGES_STORAGE_KEY, VimTabPages } from '../../browser/vimTabPages.js';
+import { devhubKeptEditors } from '../../../../browser/parts/editor/editorGroupView.js';
 
-interface FakeEditor { name: string; dirty: boolean }
+/** `serializable: false`: no working set holds it (an extension's details, a webview panel with no serializer); `disposed`: closed for good. */
+interface FakeEditor { name: string; dirty: boolean; serializable?: boolean; disposed?: boolean }
 interface FakeGroup { id: number; editors: FakeEditor[]; active: number }
 interface Layout { groups: FakeGroup[]; active: number }
 
@@ -47,8 +50,8 @@ class FakeWorkbench {
 	readonly disposables = new DisposableStore();
 	readonly onChange = this.disposables.add(new Emitter<void>());
 
-	open(name: string, dirty = false, group = this.layout.active): FakeEditor {
-		const e = { name, dirty };
+	open(name: string, dirty = false, group = this.layout.active, serializable = true): FakeEditor {
+		const e: FakeEditor = { name, dirty, serializable };
 		const g = this.layout.groups[group];
 		g.editors.push(e);
 		g.active = g.editors.length - 1;
@@ -81,6 +84,12 @@ class FakeWorkbench {
 	/** As EditorPart.applyState: every editor whose close would ask is kept, and opened in the active group of the new layout unless that has it. */
 	apply(target: Layout | 'empty'): void {
 		const kept = this.layout.groups.flatMap(g => g.editors.filter(e => e.dirty));
+		// as EditorGroupView: a closed editor no group has is disposed, unless a tab page keeps it (devhubKeptEditors)
+		for (const e of this.layout.groups.flatMap(g => g.editors.filter(e => !e.dirty))) {
+			if (!devhubKeptEditors.has(this.input(e))) {
+				e.disposed = true;
+			}
+		}
 		const next: Layout = target === 'empty' ? { groups: [{ id: 1, editors: [], active: 0 }], active: 0 } : clone(target);
 		for (const e of kept) {
 			if (!next.groups.some(g => g.editors.some(x => x.name === e.name))) {
@@ -91,21 +100,55 @@ class FakeWorkbench {
 		this.onChange.fire();
 	}
 
+	private readonly inputs = new Map<FakeEditor, EditorInput>();
+
+	/** One EditorInput per editor, as the workbench has them. */
+	input(e: FakeEditor): EditorInput {
+		let input = this.inputs.get(e);
+		if (!input) {
+			const wb = this;
+			input = {
+				getName: () => e.name,
+				isDirty: () => e.dirty,
+				isDisposed: () => !!e.disposed,
+				dispose: () => { e.disposed = true; },
+				closeHandler: undefined,
+				fake: e,
+				matches: (other: EditorInput) => other.getName() === e.name,
+				revert: async () => { e.dirty = false; wb.reverted.push(e.name); },
+				toUntyped: () => ({ resource: undefined, options: {}, label: e.name }),
+			} as unknown as EditorInput;
+			this.inputs.set(e, input);
+		}
+		return input;
+	}
+
 	group(g: FakeGroup): IEditorGroup {
 		const wb = this;
-		const editor = (e: FakeEditor | undefined) => e && ({
-			getName: () => e.name,
-			isDirty: () => e.dirty,
-			matches: (other: EditorInput) => other.getName() === e.name,
-			revert: async () => { e.dirty = false; wb.reverted.push(e.name); },
-			toUntyped: () => ({ resource: undefined, options: {}, label: e.name }),
-		} as unknown as EditorInput);
+		const editor = (e: FakeEditor | undefined) => e && wb.input(e);
 		return new class extends mock<IEditorGroup>() {
 			override get id() { return g.id; }
 			override get activeEditor() { return editor(g.editors[g.active]) ?? null; }
 			override get count() { return g.editors.length; }
 			override get isEmpty() { return g.editors.length === 0; }
 			override get editors() { return g.editors.map(e => editor(e)!); }
+			override getEditors() { return g.editors.map(e => editor(e)!); }
+			override isPinned() { return true; }
+			override isSticky() { return false; }
+			override contains(input: EditorInput) { return g.editors.some(e => wb.input(e) === input); }
+			// as EditorGroupView.openEditor of an editor it does not have: at the index, active unless `inactive`
+			override async openEditor(input: EditorInput, options?: { index?: number; inactive?: boolean }) {
+				const e = (input as unknown as { fake: FakeEditor }).fake;
+				const at = Math.min(options?.index ?? g.editors.length, g.editors.length);
+				g.editors.splice(at, 0, e);
+				if (!options?.inactive) {
+					g.active = at;
+				} else if (at <= g.active && g.editors.length > 1) {
+					g.active++;
+				}
+				wb.onChange.fire();
+				return undefined;
+			}
 			override focus() { wb.focused = g.id; }
 			// as EditorGroupView.moveEditors: an editor the target has is only taken out of this group; `inactive` keeps the target's active editor
 			override moveEditors(editors: { editor: EditorInput; options?: { inactive?: boolean } }[], target: IEditorGroup) {
@@ -176,7 +219,14 @@ class FakeWorkbench {
 			override saveWorkingSet(name: string): IEditorWorkingSet {
 				const id = `ws${wb.nextId++}`;
 				wb.saves++;
-				wb.sets.set(id, clone(wb.layout));
+				// as a working set: what no serializer serializes is not in it
+				const l = clone(wb.layout);
+				for (const g of l.groups) {
+					const active = g.editors[g.active];
+					g.editors = g.editors.filter(e => e.serializable !== false);
+					g.active = Math.max(0, active ? g.editors.indexOf(active) : 0);
+				}
+				wb.sets.set(id, l);
 				wb.storeSets();
 				return { id, name };
 			}
@@ -243,6 +293,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		}));
 
 	setup(() => {
+		VimTabPages.canSerialize = editor => (editor as unknown as { fake: FakeEditor }).fake.serializable !== false;
 		wb = new FakeWorkbench();
 		disposables.add(wb.disposables);
 		storage = disposables.add(new InMemoryStorageService());
@@ -274,7 +325,7 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		await pages.previous(1);
 		assert.deepStrictEqual(wb.shown(), [['c.ts']]);
 		// {count}gt: page {count}; no such page: nothing
-		await pages.next(1);
+		await pages.next(undefined);
 		assert.deepStrictEqual(wb.shown(), [['a.ts'], ['b.ts']]);
 		const applies = wb.applies.length;
 		await pages.next(5);
@@ -578,5 +629,90 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.deepStrictEqual(tabs(), ['*1a.ts', '2b.ts']);
 		await pages.only();
 		assert.strictEqual(bar(), undefined);
+	});
+
+	test('a webview editor no working set can hold (an extension\'s details, a webview panel without a serializer) is kept, not closed for good: back on its page it is the same editor, where it was', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		const page = wb.open('Extension: Foo', false, wb.layout.active, false);
+		wb.open('b.ts');
+		wb.layout.groups[0].active = 1;
+		const input = wb.input(page);
+		await pages.newPage(FILE);
+		wb.open('c.ts');
+		assert.deepStrictEqual(wb.shown(), [['c.ts']]);
+		assert.strictEqual(page.disposed, undefined, 'not disposed by the switch');
+		assert.ok(devhubKeptEditors.has(input));
+		await pages.previous(1);
+		assert.deepStrictEqual(wb.shown(), [['a.ts', 'Extension: Foo', 'b.ts']]);
+		assert.strictEqual(wb.layout.groups[0].active, 1, 'the editor the group showed');
+		assert.strictEqual(wb.group(wb.layout.groups[0]).activeEditor, input, 'the same editor');
+		assert.ok(!devhubKeptEditors.has(input), 'kept only while its page is not the live one');
+		// a closed page lets its kept editors go, as closing them would
+		await pages.next(undefined);
+		assert.ok(devhubKeptEditors.has(input));
+		await pages.close(1);
+		assert.strictEqual(page.disposed, true);
+		assert.strictEqual(devhubKeptEditors.size, 0);
+	});
+
+	test('a kept editor that went away meanwhile (its extension disposed the panel) is not opened again; :tabo lets every kept editor go', async () => {
+		const pages = create();
+		const gone = wb.open('Release Notes', false, wb.layout.active, false);
+		await pages.newPage(FILE);
+		wb.open('x.ts');
+		gone.disposed = true;
+		await pages.previous(1);
+		assert.deepStrictEqual(wb.shown(), [[]]);
+		const kept = wb.open('Webview Panel', false, wb.layout.active, false);
+		await pages.next(undefined);
+		assert.ok(devhubKeptEditors.has(wb.input(kept)));
+		await pages.only();
+		assert.strictEqual(kept.disposed, true);
+		assert.strictEqual(devhubKeptEditors.size, 0);
+	});
+
+	test('VS Code\'s editor-tab keys are the tab pages\' while Vim is on: next / previous, page N, the last, :tabmove; as default keybindings, not in Quick Open', () => {
+		const ids = NATIVE_TAB_KEYS.map(k => `${k.replaces} -> ${k.command}${k.args ? ' ' + JSON.stringify(k.args) : ''}`);
+		assert.deepStrictEqual(ids, [
+			'workbench.action.quickOpenPreviousRecentlyUsedEditorInGroup -> devhubVim.tabpage.next',
+			'workbench.action.quickOpenLeastRecentlyUsedEditorInGroup -> devhubVim.tabpage.previous',
+			'workbench.action.nextEditor -> devhubVim.tabpage.next',
+			'workbench.action.previousEditor -> devhubVim.tabpage.previous',
+			'workbench.action.nextEditorInGroup -> devhubVim.tabpage.next',
+			'workbench.action.previousEditorInGroup -> devhubVim.tabpage.previous',
+			...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => `workbench.action.openEditorAtIndex${i} -> devhubVim.tabpage.goto {"index":${i}}`),
+			'workbench.action.lastEditorInGroup -> devhubVim.tabpage.last',
+			'workbench.action.moveEditorLeftInGroup -> devhubVim.tabpage.move {"arg":"-1"}',
+			'workbench.action.moveEditorRightInGroup -> devhubVim.tabpage.move {"arg":"+1"}',
+		]);
+		const defaults = KeybindingsRegistry.getDefaultKeybindings();
+		const ctx = (c: Record<string, unknown>) => ({ getValue: <T>(k: string) => c[k] as T });
+		for (const k of NATIVE_TAB_KEYS) {
+			const rules = defaults.filter(d => d.command === k.command && JSON.stringify(d.commandArgs) === JSON.stringify(k.args));
+			assert.ok(rules.length > 0, k.replaces);
+			for (const r of rules) {
+				assert.ok(r.weight1 > KeybindingWeight.WorkbenchContrib, 'above VS Code\'s own');
+				assert.ok(r.when?.evaluate(ctx({ 'config.devhub.vim.enabled': true, editorTextFocus: true })));
+				assert.ok(r.when?.evaluate(ctx({ 'config.devhub.vim.enabled': true, activeWebviewPanelId: 'x' })), 'in a webview too');
+				assert.ok(!r.when?.evaluate(ctx({ 'config.devhub.vim.enabled': false })), 'Vim off: VS Code\'s');
+				assert.ok(!r.when?.evaluate(ctx({ 'config.devhub.vim.enabled': true, inQuickInput: true })), 'Quick Open keeps its Ctrl+Tab');
+			}
+		}
+	});
+
+	test('the tab page commands the keys run: goto {index}, last, move {arg}', async () => {
+		const pages = create();
+		wb.open('a.ts');
+		await pages.newPage(FILE);
+		wb.open('b.ts');
+		await pages.newPage(FILE);
+		wb.open('c.ts');
+		await CommandsRegistry.getCommand('devhubVim.tabpage.goto')!.handler(undefined!, { index: 1 });
+		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
+		await CommandsRegistry.getCommand('devhubVim.tabpage.last')!.handler(undefined!);
+		assert.deepStrictEqual(wb.shown(), [['c.ts']]);
+		await CommandsRegistry.getCommand('devhubVim.tabpage.move')!.handler(undefined!, { arg: '-1' });
+		assert.deepStrictEqual(pages.pages().map(p => p.windows), [['a.ts'], ['c.ts'], ['b.ts']]);
 	});
 });

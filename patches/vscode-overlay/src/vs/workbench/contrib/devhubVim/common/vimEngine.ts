@@ -131,6 +131,14 @@ export interface IVimHost {
 	undo(): void;
 	redo(): void;
 	indentUnit(): string;
+	/**
+	 * What starts the line `o` (`below`) / `O` opens next to `line`: the
+	 * indentation VS Code's Enter gives there (`editor.autoIndent`: the
+	 * language's onEnterRules, indentation rules and brackets), with the text
+	 * an onEnterRule continues (a comment's ` * `). Undefined: the indentation
+	 * of `line` (Vim's 'autoindent').
+	 */
+	openLinePrefix?(line: number, below: boolean): string | undefined;
 	tabSize(): number;
 	/**
 	 * The buffer's 'tabstop' 'shiftwidth' 'expandtab': the model's tab size,
@@ -1922,7 +1930,7 @@ export class VimEngine {
 				break;
 			}
 			case 'lineBelow': case 'lineAbove': {
-				const indent = this.indentOf(cur.line);
+				const indent = this.host.openLinePrefix?.(cur.line, at === 'lineBelow') ?? this.indentOf(cur.line);
 				this.openChange();
 				if (at === 'lineBelow') {
 					this.edit([{ start: pos(cur.line, this.len(cur.line)), end: pos(cur.line, this.len(cur.line)), text: '\n' + indent }]);
@@ -2770,7 +2778,7 @@ export class VimEngine {
 			if (!interrupt && typed) {
 				if (ins.count > 1) {
 					const more = ins.repeat === 'inline' ? typed.repeat(ins.count - 1)
-						: new Array(ins.count - 1).fill(this.indentOf(ins.start.line).slice(0, ins.start.col) + typed).map(t => '\n' + t).join('');
+						: new Array(ins.count - 1).fill(this.host.lineText(ins.start.line).slice(0, ins.start.col) + typed).map(t => '\n' + t).join('');
 					if (this._mode === 'replace') {
 						this.typeText(more);
 					} else if (ins.repeat === 'inline') {

@@ -530,7 +530,12 @@ suite('DevHub Vim: the prompt line', () => {
 			assert.ok(applies('devhubVim.cmdline', ctx), JSON.stringify(ctx));
 		}
 		assert.ok(applies('devhubVim.run', emptyGroup) && applies('devhubVim.tabpage.next', sideBar) && applies('devhubVim.tabpage.previous', sideBar));
-		assert.ok(!applies('devhubVim.cmdline', webview) && !applies('devhubVim.tabpage.next', webview) && !applies('devhubVim.run', webview));
+		// a webview that has said nothing about its focus is text entry (no mode): the Vim keys are its page's (Ctrl+Tab, VS Code's tab key, still is the next tab page)
+		const vimKeys = (command: string, ctx: Record<string, unknown>) => defaults.filter(k => k.command === command && !k.keybinding?.chords.some(c => c.ctrlKey || c.metaKey)).some(k => !k.when || k.when.evaluate({ getValue: <T>(key: string) => ctx[key] as T }));
+		assert.ok(!vimKeys('devhubVim.cmdline', webview) && !vimKeys('devhubVim.tabpage.next', webview) && !vimKeys('devhubVim.run', webview));
+		// once its page says its focus is not in a field, it is normal mode with the keys of the places without a Vim buffer
+		const page = { ...webview, 'devhubVim.mode': 'normal', 'devhubVim.acceptsMotion': true };
+		assert.ok(applies('devhubVim.cmdline', page) && applies('devhubVim.tabpage.next', page));
 	});
 
 	test('a webview\'s key while CTRL-W waits (a copy dispatched on the window, WebviewElement) ends the prefix and is resolved once, not again by the window\'s other listeners', () => withPrompt(({ vim, root }) => {
@@ -549,6 +554,36 @@ suite('DevHub Vim: the prompt line', () => {
 		} finally {
 			mainWindow.removeEventListener('keydown', listener);
 		}
+	}));
+
+	test('a webview\'s copy of the key that entered nav (Cmd+W) is not nav\'s key as well; a copy the keybinding service already ran a command for only ends the prefix', () => withPrompt(({ vim, root }) => {
+		const iframe = root.appendChild(mainWindow.document.createElement('iframe'));
+		const onWindowKeyDown = (e: KeyboardEvent) => (vim as unknown as { onWindowKeyDown(e: KeyboardEvent): void }).onWindowKeyDown(e);
+		// A copy's target is the window, whose listeners run in the order they were added: the
+		// keybinding service's (added at startup) before DevHub Vim's. Emulated: the keybinding
+		// service's work, then DevHub Vim's listener, while the copy is dispatched.
+		const dispatch = (init: KeyboardEventInit, keybindingService: (e: KeyboardEvent) => void) => {
+			const copy = new KeyboardEvent('keydown', { ...init, cancelable: true });
+			Object.defineProperty(copy, 'target', { get: () => iframe });
+			const listener = (e: globalThis.Event) => {
+				if (e === copy) {
+					keybindingService(copy);
+					onWindowKeyDown(copy);
+				}
+			};
+			mainWindow.addEventListener('keydown', listener);
+			try {
+				mainWindow.dispatchEvent(copy);
+			} finally {
+				mainWindow.removeEventListener('keydown', listener);
+			}
+		};
+		// Cmd+W: the keybinding service runs devhubVim.nav.enter (and prevents the default)
+		dispatch({ key: 'w', code: 'KeyW', keyCode: 87, metaKey: true }, e => { vim.enterNav(); e.preventDefault(); });
+		assert.strictEqual(vim.nav.active, true, 'nav waits for its key');
+		// h: the keybinding service ran devhubVim.nav.left already (it prevented the default)
+		dispatch({ key: 'h', code: 'KeyH', keyCode: 72 }, e => e.preventDefault());
+		assert.strictEqual(vim.nav.active, false, 'the key ended the prefix');
 	}));
 
 	/** The workbench's own context keys (DevhubVim binds them there). */

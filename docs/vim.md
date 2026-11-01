@@ -263,7 +263,26 @@ webview as its target), so the prefix and the key after it work there as
 anywhere else, in its fields too; the page has seen the key too (typed into a
 field of its own, if one has the focus). Outside its fields a webview is
 normal mode with the keys of [the places without a Vim
-buffer](#tab-pages) (`:` `gt` …). While Vim is on, `Cmd+W` never closes the window:
+buffer](#tab-pages) (`:` `gt` …). A copy's target is the window itself, whose
+listeners run in the order they were added, so the keybinding service
+resolves it before DevHub Vim's own window listener sees it: the copy of the
+key that entered nav is not taken as nav's key as well (it was, and `Cmd+W` /
+`CTRL-W` in a webview ran `CTRL-W CTRL-W` at once and seemed to do nothing),
+and a copy the keybinding service ran a command for only ends the prefix. A
+webview counts as in the window it shows in (its editor group, or the side bar
+/ panel of its view; VS Code lays the frame out over it, `setParentFlowTo`),
+and `h j k l` from it reach the neighbouring part: VS Code's overlay gave the
+frame's parent flow to an anchor with no id, so a focused webview was in no
+part and View: Navigate Left/Right/Up/Down did nothing there
+(`patches/vscode/0013-webview-flows-to-its-editor.patch`).
+
+While nav waits, a binding written for it (`devhubVim.mode == 'nav'` in its
+`when`, DevHub's `devhubVim.nav.*` or yours) comes before any other binding of
+the key, yours included: a list binding such as `h` → `list.collapse` (`when`
+`listFocus`) does not take `CTRL-W h` away in the Explorer, the panel or any
+other list. A key with Cmd held that nothing binds is taken as the same key
+with CTRL (`Cmd+W Cmd+L` = `CTRL-W CTRL-L` = `CTRL-W l`), for `Cmd+W` bound as
+the prefix; a Cmd key you bound yourself (`Cmd+H`) stays yours. While Vim is on, `Cmd+W` never closes the window:
 VS Code's macOS rule for it (`workbench.action.closeWindow` when no editor is
 open) has `!config.devhub.vim.enabled` in its `when`
 (`patches/vscode/0008-devhub-vim.patch`), so a tab page with no editor, or a
@@ -277,8 +296,10 @@ The windows `CTRL-W` moves between are where the focus stays: the editor
 groups, a comment thread's widget in an editor (the review widget the gutter
 **+**, Add Comment or a thread's reply opens: a window of its own under the
 lines it is on), the side bar, the panel (and the terminal in it) and the
-secondary side bar. Quick input, the [prompt](#the-prompt), menus, dialogs and
-notifications are not windows: going there and back is no window change.
+secondary side bar. A webview is in the window it shows in (a webview editor
+in its group, a webview view in its side bar or panel). Quick input, the
+[prompt](#the-prompt), menus, dialogs and notifications are not windows: going
+there and back is no window change.
 
 * `CTRL-W w` / `CTRL-W CTRL-W` / `CTRL-W W` first put the focus back in the
   editor: from outside the editor groups (the side bar, the panel, a
@@ -518,6 +539,42 @@ The commands are `devhubVim.tabpage.new { file? }` (without a file: with an empt
 `"count": "${rawCount}"` / `"${count}"`, keybindings like every other key, and
 the ones without arguments are in the Command Palette (`Vim: Next Tab Page`
 …), which also works where no Vim editor has the focus (an empty tab page).
+
+**VS Code's editor-tab keys are the tab pages' keys** while Vim is on (an
+editor tab is a [buffer](#buffers): `:ls` `:b` `]b`): DevHub's default
+keybindings, above VS Code's own, with `when` `config.devhub.vim.enabled &&
+!inQuickInput` (Quick Open keeps its own Ctrl+Tab), listed in the Keyboard
+Shortcuts editor (`-devhubVim.tabpage.next` removes one):
+
+| Keys (macOS; elsewhere) | Was | Now |
+|---|---|---|
+| Ctrl+Tab / Ctrl+Shift+Tab | the editors of the group by most recent use | `devhubVim.tabpage.next` / `.previous` |
+| Cmd+Alt+→ / ←, Cmd+Shift+] / [, Ctrl+PageDown / PageUp; Ctrl+PageDown / PageUp | Next / Previous Editor | `.next` / `.previous` (Vim's `<C-PageDown>` / `<C-PageUp>`) |
+| Cmd+K Cmd+Alt+→ / ←; Ctrl+K Ctrl+PageDown / PageUp | Next / Previous Editor in Group | `.next` / `.previous` |
+| Ctrl+1 … 9; Alt+1 … 9 | Open Editor at Index N | `.goto { "index": N }` (`{N}gt`) |
+| Ctrl+0, Cmd+9; Alt+0, Ctrl+9 | Open Last Editor in Group | `.last` (`:tablast`) |
+| Cmd+K Cmd+Shift+← / →; Ctrl+Shift+PageUp / PageDown | Move Editor Left / Right in Group | `.move { "arg": "-1" }` / `{ "arg": "+1" }` (`:tabmove -1` / `+1`) |
+
+Cmd+1 … 9 (Ctrl+1 … 9 elsewhere) stay VS Code's Focus Nth Editor Group: the
+windows of the page. Cmd+W is no editor-tab key here: with Vim on it is free
+for the `CTRL-W` prefix (bind it, as above); `:bd` / `:q` close.
+
+**Editors a working set cannot hold go along with their page.** A working
+set keeps only what some serializer can serialize. An extension's details
+page, release notes, and an extension's webview panel whose extension
+registered no serializer have none, so applying another page's layout used to
+close them for good (an extension's panel was disposed, as if you had closed
+it) and coming back found them gone. Now a page keeps them — the same editor
+objects, not disposed (`devhubKeptEditors`, patched into VS Code's
+`EditorGroupView`, which does not dispose an editor a tab page keeps) — while
+another page is the live layout, and coming back opens them again where they
+were (their group, their place in it, the one each group showed). An editor
+whose extension disposed it meanwhile is not opened again; `:tabc` and
+`:tabo` let a closed page's kept editors go (disposed, as closing them would).
+They live in memory: a reload or hibernation, which restores only the working
+sets, loses them, as VS Code loses them at a reload. A webview editor that has
+a serializer (the Markdown preview, a custom editor) was always in the working
+set: switching back revives it from its saved state, as a reload does.
 
 **The empty buffer of `:tabnew`** is an untitled editor (`Untitled-N`, with an
 N no other tab page's layout has, so two pages never share one). Empty, it is
@@ -980,6 +1037,16 @@ syntaxNode` — with counts (`d2iw`, `2daw`, `d2i(`).
 
 `at` for insert: `before after lineEnd firstNonBlank lineStart lastInsert
 lineBelow lineAbove`.
+
+`o` / `O` (`lineBelow` / `lineAbove`) open the line with what VS Code's Enter
+puts there, as Vim does with 'indentexpr': `o` is Enter at the end of the
+line, `O` Enter at the end of the line above (VS Code's Insert Line Below /
+Above), so `editor.autoIndent` and the language's brackets, indentation rules
+and onEnterRules decide — `o` after `{` is one level deeper, `O` above `}` is
+inside the block, `o` in a `/**` comment continues it with ` * `
+(`autoIndent` `keep`: the line's own indentation; `none`: none). `O` on the
+first line keeps that line's indentation. A count repeats the typed line with
+the same start (`3o`).
 
 Actions (normal mode): `deleteChar deleteCharBefore deleteToLineEnd
 changeToLineEnd substituteChar substituteLine yankLine yankToLineEnd put
@@ -1958,7 +2025,11 @@ otherwise.
   either), the title bar's menus while open (a menu takes letters as its
   mnemonics), native dialogs and menus, and a webview's page in the moment
   before its host frame has said anything (taken as text entry). A webview's
-  page sees each key the workbench takes too.
+  page sees each key the workbench takes too, and on macOS a Cmd key in a
+  webview also reaches the menu bar, whose accelerators answer it (the page's
+  own key is not cancelled: only the workbench's copy is): a key you hold Cmd
+  for after `Cmd+W` there may also run the menu item on it (Cmd+H hides
+  DevHub).
 * Patterns are JavaScript regular expressions (VS Code's find), not Vim's:
   `\%V`, `\%23l`, `\v` and the other Vim-only atoms do not exist. A match
   must lie inside the `:s` / `:g` range (Vim lets it run past the last line),

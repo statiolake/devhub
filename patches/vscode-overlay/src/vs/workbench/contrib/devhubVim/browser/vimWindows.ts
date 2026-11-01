@@ -53,9 +53,27 @@ const COMMENT_WINDOW = '.review-widget';
 const GROUP_WINDOW = '.editor-group-container';
 const PART_WINDOW = '.part.sidebar, .part.panel, .part.auxiliarybar';
 
-/** The window an element is in, if it is in one. */
+/**
+ * `selector`'s closest match around `element`, where an element VS Code lays
+ * out over another one (a webview's frame, kept outside the editor and view
+ * it shows in, `setParentFlowTo`) counts as inside the one it flows to.
+ */
+function closestFlowing(element: Element | null | undefined, selector: string): Element | undefined {
+	for (let e: Element | null | undefined = element, hops = 0; e && hops < 8; hops++) {
+		const found = e.closest(selector);
+		if (found) {
+			return found;
+		}
+		const flowing = e.closest<HTMLElement>('[data-parent-flow-to-element-id]');
+		const id = flowing?.dataset.parentFlowToElementId;
+		e = id ? flowing.ownerDocument.getElementById(id) : undefined;
+	}
+	return undefined;
+}
+
+/** The window an element is in, if it is in one (a webview: the editor group or view it shows in). */
 export function windowOf(element: Element | null | undefined): Element | undefined {
-	return element?.closest(COMMENT_WINDOW) ?? element?.closest(GROUP_WINDOW) ?? element?.closest(PART_WINDOW) ?? undefined;
+	return closestFlowing(element, COMMENT_WINDOW) ?? closestFlowing(element, GROUP_WINDOW) ?? closestFlowing(element, PART_WINDOW);
 }
 
 /** In an editor group itself, not in a comment widget of one of its editors nor outside the editor area. */

@@ -63,6 +63,7 @@ import { IWorkingCopyService } from '../../../services/workingCopy/common/workin
 import { bufferCount, bufferFlags, deleteRefusal, edgeBuffer, findBuffer, formatBufferLine, listBuffers, parseStoredBuffers, quitBlocker, quitRefusal, serializeStoredBuffers, stepBuffer, StoredBuffer, StoredBufferOpen, VimBufferEntry, VimBufferError, VimBufferMarks } from '../common/vimBuffers.js';
 import { bufferKey, isDurableKey, reopenData } from './vimBufferKey.js';
 import { VimTabPages } from './vimTabPages.js';
+import { devhubKeptEditors } from '../../../browser/parts/editor/editorGroupView.js';
 import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 
 /** Workspace storage: the buffer list (common/vimBuffers.ts serializeStoredBuffers). */
@@ -232,7 +233,7 @@ export class VimBuffers extends Disposable implements IWorkbenchContribution {
 					break;
 				}
 				r.open = reopenData(editor) ?? r.open;
-				if (!isDurableKey(key)) {
+				if (!isDurableKey(key) && !devhubKeptEditors.has(editor)) {
 					// nothing to open it again from
 					this.records.delete(key);
 				} else if (!VimTabPages.instance?.isSwitching) {
@@ -246,9 +247,10 @@ export class VimBuffers extends Disposable implements IWorkbenchContribution {
 
 	/** The active window's cursor line is the buffer's last known line (`:ls` shows it for hidden buffers). */
 	private followCursor(): void {
-		const group = this.groups.activeGroup;
-		const editor = group.activeEditor;
-		let control = group.activeEditorPane?.getControl();
+		// none yet while the editor area has never been shown (a Workspace that opens on its terminal)
+		const group = this.groups.activeGroup as IEditorGroup | undefined;
+		const editor = group?.activeEditor;
+		let control = group?.activeEditorPane?.getControl();
 		if (isDiffEditor(control)) {
 			control = control.getModifiedEditor();
 		}

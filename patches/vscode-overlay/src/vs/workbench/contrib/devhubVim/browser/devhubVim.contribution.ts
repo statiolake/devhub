@@ -132,7 +132,7 @@
 //
 // User documentation: docs/vim.md in the DevHub repository.
 
-import { addDisposableListener, getActiveElement, isEditableElement, isHTMLElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
+import { addDisposableListener, getActiveElement, getActiveWindow, isEditableElement, isHTMLElement, onDidRegisterWindow } from '../../../../base/browser/dom.js';
 import { IKeyboardEvent, StandardKeyboardEvent } from '../../../../base/browser/keyboardEvent.js';
 import { mainWindow } from '../../../../base/browser/window.js';
 import { RunOnceScheduler } from '../../../../base/common/async.js';
@@ -149,6 +149,7 @@ import { ICodeEditorService } from '../../../../editor/browser/services/codeEdit
 import { EditorOption, cursorStyleToString } from '../../../../editor/common/config/editorOptions.js';
 import { ModalCursor } from '../../../../editor/common/cursor/modalCursor.js';
 import { CursorChangeReason } from '../../../../editor/common/cursorEvents.js';
+import { EnterOperation } from '../../../../editor/common/cursor/cursorTypeEditOperations.js';
 import { IPosition, Position } from '../../../../editor/common/core/position.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import { Selection } from '../../../../editor/common/core/selection.js';
@@ -164,7 +165,7 @@ import { CommandsRegistry, ICommandService } from '../../../../platform/commands
 import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { TextEditorSelectionSource } from '../../../../platform/editor/common/editor.js';
 import { ConfigurationScope, Extensions as ConfigurationExtensions, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
-import { ContextKeyExpr, ContextKeyExpression, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
+import { ContextKeyExpr, ContextKeyExpression, IContext, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
 import { IKeybindingService } from '../../../../platform/keybinding/common/keybinding.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
 import { ResultKind } from '../../../../platform/keybinding/common/keybindingResolver.js';
@@ -1083,6 +1084,32 @@ class VimEditor extends Disposable implements IVimHost {
 		return o.insertSpaces ? ' '.repeat(o.indentSize) : '\t';
 	}
 
+	/**
+	 * `o` / `O`: what VS Code's Enter puts on the new line (EnterOperation, the
+	 * code of `editor.action.insertLineAfter` / `insertLineBefore`), with
+	 * `editor.autoIndent` and the language's rules: `o` is Enter at the end of
+	 * the line, `O` Enter at the end of the line above. On the first line `O`
+	 * keeps the line's own indentation (Vim's 'autoindent'; VS Code's Insert
+	 * Line Above puts none there).
+	 */
+	openLinePrefix(line: number, below: boolean): string | undefined {
+		const config = this.editor._getViewModel()?.cursorConfig;
+		const model = this.editor.getModel();
+		const at = below ? line + 1 : line;
+		if (!config || !model || (!below && line === 0)) {
+			return undefined;
+		}
+		const column = model.getLineMaxColumn(at);
+		const [command] = EnterOperation.lineInsertAfter(config, model, [new Selection(at, column, at, column)]);
+		let text: string | undefined;
+		command?.getEditOperations(model, {
+			addEditOperation: (_range, t) => { text ??= t ?? ''; },
+			addTrackedEditOperation: (_range, t) => { text ??= t ?? ''; },
+			trackSelection: () => '',
+		});
+		return text === undefined ? undefined : text.split('\n')[1] ?? '';
+	}
+
 	tabSize(): number {
 		return this.model.getOptions().tabSize;
 	}
@@ -1430,6 +1457,38 @@ export function isTextEntry(element: Element): boolean {
 	return role === 'textbox' || role === 'searchbox';
 }
 
+/** The event the window is dispatching right now (`window.event`), if any. */
+function currentEvent(): globalThis.Event | undefined {
+	return (getActiveWindow() as Window & { event?: globalThis.Event }).event ?? (mainWindow as Window & { event?: globalThis.Event }).event;
+}
+
+/** Modifier keys alone (they leave nav waiting). */
+const MODIFIER_KEYS = ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn', 'OS', 'AltGraph'];
+
+/** A keybinding as the resolver has it (ResolvedKeybindingItem). */
+export interface NavKeybindingItem {
+	readonly chords: readonly string[];
+	readonly command: string | null;
+	readonly commandArgs: unknown;
+	readonly when: ContextKeyExpression | undefined;
+}
+
+/**
+ * While nav waits: the binding of the one-chord key `chord` that is written
+ * for nav (its `when` has `devhubVim.mode == 'nav'`) and applies in
+ * `context`, the last one as the resolver's precedence goes; undefined when
+ * there is none (then the ordinary resolution decides).
+ */
+export function navKeybinding(items: readonly NavKeybindingItem[], chord: string, context: IContext): { commandId: string; commandArgs: unknown } | undefined {
+	for (let i = items.length - 1; i >= 0; i--) {
+		const k = items[i];
+		if (k.chords.length === 1 && k.chords[0] === chord && k.command && k.when && k.when.serialize().includes(`devhubVim.mode == 'nav'`) && k.when.evaluate(context)) {
+			return { commandId: k.command, commandArgs: k.commandArgs };
+		}
+	}
+	return undefined;
+}
+
 /** The focused element is an empty editor group (EditorGroupView: `.editor-group-container.empty`, focusable while it has no editor). */
 function isEmptyGroup(element: Element | null): boolean {
 	return !!element?.classList.contains('editor-group-container') && element.classList.contains('empty');
@@ -1460,6 +1519,12 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	/** The empty buffer, while Vim is on. */
 	private emptyBuffer: VimEmptyBuffer | undefined;
 	readonly nav = new VimNavPrefix();
+	/**
+	 * The keydown that entered nav, while the workbench is still dispatching
+	 * it (a webview's copy reaches the keybinding service before
+	 * onWindowKeyDown: see there), so that it is not taken as nav's key too.
+	 */
+	private navEnteredBy: globalThis.Event | undefined;
 	/** The window the focus was in before this one (`<C-w>p`, vimWindows.ts). */
 	private readonly windows = new VimWindowHistory();
 	clipboardCache = '';
@@ -1870,6 +1935,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		const v = this.focused();
 		const focus = this.navFocus(v);
 		const terminal = typeof args === 'object' && args !== null && (args as { terminal?: unknown }).terminal === true;
+		this.navEnteredBy = currentEvent();
 		if (!this.nav.enter(focus, { terminal }) && focus === 'pending') {
 			// As in Vim, `<C-w>` is not a motion: it aborts the operator / count.
 			v?.execute('devhubVim.escape', undefined);
@@ -1938,13 +2004,17 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 	 * (VimNavPrefix.key decides whether it is eaten or let through). The prefix
 	 * is over before the command runs. The editor's Backspace / Tab / Delete do
 	 * not apply in nav mode (EditorContextKeys.devhubVimAllowsTyping), so
-	 * Ctrl-W Backspace edits nothing without any filter here. A webview's key
-	 * is a copy dispatched on the window itself (WebviewElement
-	 * handleKeyEvent): this listener captures there too, and stopping the copy
-	 * keeps the keybinding service's own (bubbling) window listener from
-	 * resolving it a second time. Immediately: a copy dispatched on the window
-	 * is at its target there, and Chromium runs a target's bubbling listeners
-	 * after `stopPropagation` in its capturing one.
+	 * Ctrl-W Backspace edits nothing without any filter here.
+	 *
+	 * A webview's key is a copy dispatched on the window itself (WebviewElement
+	 * handleKeyEvent). The window is then the event's target, and a target's
+	 * listeners run in the order they were added, capturing or not: the
+	 * keybinding service's (added at startup) before this one. So the copy
+	 * has been resolved already when it gets here: the copy of the key that
+	 * entered nav (`Cmd+W` itself, navEnteredBy) is not nav's key as well (it
+	 * was: `Cmd+W` in a webview entered nav and ran `Cmd+W`'s nav binding at
+	 * once, so it seemed to do nothing), and a copy the keybinding service
+	 * ran a command for (it prevents its default) only ends the prefix.
 	 */
 	private onWindowKeyDown(e: KeyboardEvent): void {
 		// The one rule, at the key: normal mode wherever the focus is not text
@@ -1955,7 +2025,12 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		if (this.currentFocusSignature() !== this.focusSignature) {
 			this.update();
 		}
-		if (!this.nav.active) {
+		if (!this.nav.active || e === this.navEnteredBy) {
+			return;
+		}
+		if (e.defaultPrevented && MODIFIER_KEYS.indexOf(e.key) < 0) {
+			// resolved and run by the keybinding service already (a webview's copy, above)
+			this.cancelNav();
 			return;
 		}
 		const event = new StandardKeyboardEvent(e);
@@ -1975,10 +2050,32 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		}
 	}
 
-	/** The command the key resolves to while nav waits, if any. */
+	/**
+	 * The command the key resolves to while nav waits, if any. A binding
+	 * written for nav (`devhubVim.mode == 'nav'` in its `when`) comes first,
+	 * before any other that applies here, a user's included: a list's `h` /
+	 * `l` (`list.collapse` / `list.expand` when `listFocus`) does not take
+	 * `CTRL-W h` / `CTRL-W l` away in the side bar or the panel. A key with
+	 * Cmd held that is bound to nothing is taken as the same key with CTRL
+	 * (`Cmd+W Cmd+H` = `CTRL-W CTRL-H` = `CTRL-W h`), Cmd-W being the usual
+	 * alias of CTRL-W on a Mac.
+	 */
 	private navBinding(event: StandardKeyboardEvent, target: HTMLElement): { commandId: string; commandArgs: unknown } | undefined {
+		const chord = this.keybindingService.resolveKeyboardEvent(event).getDispatchChords()[0];
+		const nav = chord ? navKeybinding(this.keybindingService.getKeybindings(), chord, this.contextKeyService.getContext(target)) : undefined;
+		if (nav) {
+			return nav;
+		}
 		const result = this.keybindingService.softDispatch(event, target);
-		return result.kind === ResultKind.KbFound && result.commandId ? { commandId: result.commandId, commandArgs: result.commandArgs } : undefined;
+		if (result.kind === ResultKind.KbFound && result.commandId) {
+			return { commandId: result.commandId, commandArgs: result.commandArgs };
+		}
+		if (event.metaKey && !event.ctrlKey) {
+			const b = event.browserEvent;
+			const asCtrl = new KeyboardEvent('keydown', { key: b.key, code: b.code, keyCode: b.keyCode, ctrlKey: true, shiftKey: b.shiftKey, altKey: b.altKey });
+			return this.navBinding(new StandardKeyboardEvent(asCtrl), target);
+		}
+		return undefined;
 	}
 }
 
