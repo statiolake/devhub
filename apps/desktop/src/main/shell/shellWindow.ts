@@ -52,10 +52,7 @@ import { shellThemeIfInstalled } from "./shellTheme.js";
 import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import type { Landing } from "./chords.js";
-import {
-	WORKBENCH_RETURNED_COMMAND,
-	WorkbenchAbsence,
-} from "./workbenchAbsence.js";
+import { WorkbenchAbsence } from "./workbenchAbsence.js";
 
 /**
  * The one window's construction options.
@@ -1638,22 +1635,15 @@ export class ShellWindow {
 			this.titleChanged();
 		}
 
-		// A workbench that has just come back on screen hears how long it was
-		// away (`workbenchAbsence.ts`); it may tidy its layout. Said before the
-		// keyboard moves, so the editor it focuses is the one the keys land in.
+		// How long each workbench has been off screen, for hibernation
+		// (`workbenchAbsence.ts`).
 		const shownView =
 			onScreen === undefined ? undefined : this.viewForEditorKey(onScreen);
-		for (const { view, awayMs } of this.absence.observe(
+		this.absence.observe(
 			this.views.filter((candidate) => !candidate.isDestroyed()),
 			(candidate) => candidate === shownView,
 			Date.now(),
-		)) {
-			view.webContents.send("vscode:runAction", {
-				id: WORKBENCH_RETURNED_COMMAND,
-				args: [{ awayMs }],
-				from: "menu",
-			});
-		}
+		);
 
 		// Where the keys go is a function of the same input, and it moves with
 		// it — not only with the arrangement. A workbench that was chosen

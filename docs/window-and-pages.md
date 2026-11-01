@@ -613,27 +613,6 @@ person's move is, and makes `workbench.action.toggleAuxiliaryBar` and
 `workbench.action.focusAuxiliaryBar`, which a keybinding or an extension may
 still run, toggle and focus the primary side bar.
 
-**A workbench back from being away opens tidy.** When a workbench comes back
-on screen after `devhub.workbench.tidyAfterAwayMinutes` (default 10; `0` is
-off) — another Workspace or an Agent was shown in its place — it hides its
-panel (the terminal with it) and side bar (`devhub.workbench.tidyParts`,
-both by default) and puts the keyboard in
-its active editor group, so it opens as a big, clean editor; with no editor
-open the parts are hidden all the same. **DevHub: Tidy Editor Layout** in the
-command palette is the same tidy at any time.
-
-"Away" is DevHub's own answer, so main measures it, from the layout:
-`workbenchAbsence.ts` notes when each workbench left the screen (stopped
-being `onScreenEditor`) and, on the `layout()` pass that brings it back,
-sends it `_devhub.workbench.returned` with `{ awayMs }` over
-`vscode:runAction`; the overlay's `devhubTidy.contribution.ts` compares that
-with the setting. It is not the renderer's `document.visibilityState` nor its
-window focus, because those answer a different question: DevHub in the
-background, minimized or behind another app is not the workbench being away,
-and neither is the Agent of a split holding the keyboard — the editor stayed
-in front of the person the whole time, and is never tidied for it, however
-long. A workbench's first showing is not a return.
-
 ## Chords are answered in main
 
 `keyboard.ts` installs `before-input-event` on every WebContents DevHub owns,
@@ -1037,7 +1016,7 @@ an open already in flight and asks the arrangement again.
 
 **A workbench away longer than `general.workbench_hibernate_minutes`
 (default 10; `0` is off) is closed** on the minute check, measured by the
-same `workbenchAbsence.ts` as the tidy above (a split is on screen; a
+main's `workbenchAbsence.ts`, from DevHub's own layout (a split is on screen; a
 workbench never shown is away from launch). **Past
 `general.workbench_awake_max`** (default 2; `0` is no cap) — awake or opening,
 Scratch counted like any local one, SSH and dev container ones never counted
