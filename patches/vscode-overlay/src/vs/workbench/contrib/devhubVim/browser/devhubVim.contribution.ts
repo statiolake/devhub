@@ -440,6 +440,8 @@ class VimEditor extends Disposable implements IVimHost {
 	private undoQueue: Promise<void> = Promise.resolve();
 	/** settle() is queued (after an undo / redo, or a paste or cut over the visual selection). */
 	private settleQueued = false;
+	/** The last undo / redo's change: where it starts (settle puts the cursor there). */
+	private undone: { readonly start: Position; readonly redo: boolean } | undefined;
 	/** Inside applyEdits: the engine's own edits. */
 	private applying = 0;
 	/** The selections a visual mode put, as ranges (what Cmd+X / Cmd+V replace). */
@@ -524,6 +526,9 @@ class VimEditor extends Disposable implements IVimHost {
 				onUnexpectedError(err);
 			}
 			if (e.isUndoing || e.isRedoing) {
+				// where the change starts (the topmost change's start is the same before and after it)
+				const start = e.changes.map(c => Range.getStartPosition(c.range)).reduce<Position | undefined>((a, b) => !a || b.isBefore(a) ? b : a, undefined);
+				this.undone = start && { start, redo: e.isRedoing };
 				this.queueSettle();
 			} else if (!this.applying && this.engine.mode.startsWith('visual') && e.changes.length > 0 && e.changes.every(c => this.visualRanges.some(r => r.equalsRange(c.range)))) {
 				// Cmd+X, Cmd+V or any other command that wrote over the visual
@@ -1057,24 +1062,44 @@ class VimEditor extends Disposable implements IVimHost {
 	 * undo or redo by any means (`u`, CTRL-R, `Cmd+Z`, the Edit menu, another
 	 * file's refactoring undone), or a Cmd+X / Cmd+V (or any command) over the
 	 * visual selection. Outside insert mode the editor is then in normal mode
-	 * with one caret. VS Code puts back the selection the change started from,
-	 * which after a visual-mode change is the visual area; the caret goes to
-	 * its start, where Vim puts it (the change's start), and the caret rule
-	 * keeps it on a character (modalCursor.ts). After a paste the caret is
-	 * VS Code's, after the pasted text.
+	 * with one caret. After an undo or redo the caret goes where Vim puts it:
+	 * on the first line of the change, at the column VS Code put the cursor
+	 * back to when that is on this line (the cursor before the undone change,
+	 * Vim's saved cursor), else at the change's start; a redo at the change's
+	 * start. It is revealed (centred when it was off screen), also in an editor
+	 * VS Code did not reveal (it reveals only a focused one). Several carets
+	 * VS Code put back (a multi-cursor change undone) stay. After a command
+	 * over the visual selection the caret goes to the start of what VS Code
+	 * selected; after a paste it is VS Code's, after the pasted text. The caret
+	 * rule keeps it on a character (modalCursor.ts).
 	 */
 	private settle(): void {
 		this.settleQueued = false;
+		const undone = this.undone;
+		this.undone = undefined;
 		if (!this.editor.getModel() || this.typing()) {
 			return;
 		}
 		if (this.engine.mode !== 'normal' || this.engine.pending) {
 			this.engine.reset();
 		}
-		const selections = this.editor.getSelections();
-		if (selections?.some(s => !s.isEmpty())) {
-			const start = selections.map(s => s.getStartPosition()).reduce((a, b) => b.isBefore(a) ? b : a);
-			this.editor.setPosition(start, 'devhubVim');
+		const selections = this.editor.getSelections() ?? [];
+		const severalCarets = selections.length > 1 && selections.every(s => s.isEmpty());
+		let target: Position | undefined;
+		if (undone && !severalCarets) {
+			const restored = this.editor.getPosition();
+			target = !undone.redo && restored && selections.every(s => s.isEmpty()) && restored.lineNumber === undone.start.lineNumber ? restored : undone.start;
+		} else if (selections.some(s => !s.isEmpty())) {
+			target = selections.map(s => s.getStartPosition()).reduce((a, b) => b.isBefore(a) ? b : a);
+		}
+		if (target) {
+			this.editor.setPosition(target, 'devhubVim');
+		}
+		if (undone) {
+			const at = this.editor.getPosition();
+			if (at) {
+				this.editor.revealPositionInCenterIfOutsideViewport(at, this.scrollType());
+			}
 		}
 		this.owner.update();
 	}

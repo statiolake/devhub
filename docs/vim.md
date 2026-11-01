@@ -1380,12 +1380,17 @@ step where a Vim change begins and where it ends, so
   click) breaks it as in VS Code, and so do accepting a completion, a snippet
   or an inline suggestion, format on type and `Alt+Backspace`.
 
-After an undo or redo — from `u`, `CTRL-R`, `:undo`, `Cmd+Z` or the menu — the
-caret is where VS Code puts it back (the selection the change started from),
-and outside insert mode the editor is in normal mode with one collapsed caret:
-a selection put back (after a visual-mode change) collapses to its start,
-where the change began, and a visual mode that was on when you pressed
-`Cmd+Z` ends. The caret rule keeps it on a character. `Cmd+Z` in insert mode
+After an undo or redo — from `u`, `CTRL-R`, `:undo`, `:redo`, `Cmd+Z` or the
+menu, with a count too (`3u`) — outside insert mode the editor is in normal
+mode with one collapsed caret on the change, as in Vim: on the first line of
+the undone change, at the column the cursor had before that change when VS
+Code puts it back on that line (Vim's saved cursor), else at the start of the
+change (an edit made from elsewhere, a format or a refactoring, is undone
+where it changed the text, not where it was made from); after a redo at the
+start of the change. The caret is revealed, centred when it was off screen.
+A visual mode that was on when you pressed `Cmd+Z` ends; several carets VS
+Code puts back (a multi-cursor edit undone) stay. The caret rule keeps it on
+a character. `Cmd+Z` in insert mode
 undoes and stays in insert mode, as in VS Code.
 
 ## The clipboard

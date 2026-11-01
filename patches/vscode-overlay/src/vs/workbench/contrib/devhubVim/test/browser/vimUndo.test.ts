@@ -10,7 +10,7 @@
 // step of its own; inside an insert the editor's own typing stops apply (a
 // word, a newline, ...) as in any editor. After an undo or redo, from any key
 // or menu, a Vim editor outside insert mode is in normal mode with one
-// collapsed caret.
+// collapsed caret, on the change and revealed.
 
 import assert from 'assert';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
@@ -254,6 +254,46 @@ suite('DevHub Vim: undo is VS Code\'s, normal-mode changes are steps', () => {
 		assert.strictEqual(text(), 'abc def ghi');
 		assert.strictEqual(mode(), 'normal');
 		assert.ok(editor.getSelection()!.isEmpty());
+	}));
+
+	test('after u / CTRL-R the caret is on the change, revealed: the cursor VS Code puts back when it is on the change\'s first line, else the change\'s start; a redo at its start; several carets stay', () => withVim(Array.from({ length: 200 }, (_, i) => `line ${i + 1} text`).join('\n'), async ({ vim, editor, text, undo, redo }) => {
+		const model = editor.getModel()!;
+		// what is revealed (a test editor has no view that scrolls)
+		const revealed: number[] = [];
+		const reveal = editor.revealPositionInCenterIfOutsideViewport.bind(editor);
+		editor.revealPositionInCenterIfOutsideViewport = (p, t) => { revealed.push(p.lineNumber); reveal(p, t); };
+		const visible = (line: number) => revealed.at(-1) === line;
+		// x on line 10, then far away: u comes back to it
+		editor.setPosition({ lineNumber: 10, column: 3 });
+		vim.execute('devhubVim.action', { action: 'deleteChar' });
+		editor.setPosition({ lineNumber: 180, column: 1 });
+		await undo();
+		assert.strictEqual(model.getLineContent(10), 'line 10 text');
+		assert.deepStrictEqual(editor.getSelections(), [new Selection(10, 3, 10, 3)]);
+		assert.ok(visible(10), 'revealed');
+		// CTRL-R: at the change's start
+		editor.setPosition({ lineNumber: 180, column: 1 });
+		revealed.length = 0;
+		await redo();
+		assert.deepStrictEqual(editor.getSelections(), [new Selection(10, 3, 10, 3)]);
+		assert.ok(visible(10));
+		// an edit made from elsewhere (a format, a refactoring): its undo goes to the change, not to where it was made from
+		editor.setPosition({ lineNumber: 150, column: 1 });
+		model.pushStackElement();
+		model.pushEditOperations([new Selection(150, 1, 150, 1)], [{ range: new Range(40, 6, 40, 8), text: 'XX' }], () => null);
+		model.pushStackElement();
+		await undo();
+		assert.ok(text().includes('line 40 text'));
+		assert.deepStrictEqual(editor.getSelections(), [new Selection(40, 6, 40, 6)]);
+		assert.ok(visible(40));
+		// a multi-cursor change undone: VS Code's carets stay
+		const carets = [new Selection(5, 1, 5, 1), new Selection(6, 1, 6, 1)];
+		editor.setSelections(carets);
+		model.pushStackElement();
+		model.pushEditOperations(carets, [{ range: new Range(5, 1, 5, 1), text: 'Z' }, { range: new Range(6, 1, 6, 1), text: 'Z' }], () => null);
+		model.pushStackElement();
+		await undo();
+		assert.deepStrictEqual(editor.getSelections(), carets);
 	}));
 
 	test('Cmd+Z in insert mode stays in insert mode, as in VS Code', () => withVim('x', async ({ vim, editor, text, mode, undo }) => {
