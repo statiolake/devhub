@@ -873,10 +873,10 @@ index 5ae67343..1fe65662 100644
  	'drag-start': void;
  	'drag': WebViewDragEvent;
 diff --git a/src/vs/workbench/workbench.desktop.main.ts b/src/vs/workbench/workbench.desktop.main.ts
-index 74be4cac..a812552d 100644
+index 74be4cac..7d2d2240 100644
 --- a/src/vs/workbench/workbench.desktop.main.ts
 +++ b/src/vs/workbench/workbench.desktop.main.ts
-@@ -219,6 +219,30 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
+@@ -219,6 +219,27 @@ import './contrib/keybindingsExport/electron-browser/keybindingsExport.contribut
  // System-wide (OS global) Keybindings
  import './contrib/keybindings/electron-browser/systemWideKeybindings.contribution.js';
  
@@ -888,9 +888,6 @@ index 74be4cac..a812552d 100644
 +
 +// DevHub: word boundaries between scripts (patches/vscode/0010-devhub-word-boundaries-by-script.patch)
 +import './contrib/devhubWordBoundaries/browser/devhubWordBoundaries.contribution.js';
-+
-+// DevHub: a tidy editor after being away (overlay only, docs/window-and-pages.md)
-+import './contrib/devhubTidy/browser/devhubTidy.contribution.js';
 +
 +// DevHub: what closing an away workbench would lose (overlay only, docs/window-and-pages.md)
 +import './contrib/devhubHibernate/electron-browser/devhubHibernate.contribution.js';
