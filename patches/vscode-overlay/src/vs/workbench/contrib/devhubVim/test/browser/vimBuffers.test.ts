@@ -12,7 +12,6 @@ import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { ILabelService } from '../../../../../platform/label/common/label.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../../platform/quickinput/common/quickInput.js';
@@ -231,33 +230,32 @@ suite('DevHub Vim buffers on VS Code\'s editor parts', () => {
 	test('quitting (the last window): a modified current buffer stops it with E37 / E162 where it is', async () => {
 		await open('a.ts', parts.activeGroup, true);
 		const buffers = create();
-		await assert.rejects(buffers.refuseQuit(false), /^Error: E37: No write since last change {2}E162: No write since last change for buffer "a\.ts"$/);
+		await assert.rejects(buffers.refuseQuit(), /^Error: E37: No write since last change {2}E162: No write since last change for buffer "a\.ts"$/);
 		assert.deepStrictEqual(shown(), [['a.ts*+']]);
 	});
 
-	test('quitting: a modified hidden buffer stops :q and :q! alike, and is made current in the current window at once (no :ls, no :b)', async () => {
+	test('quitting: a modified hidden buffer stops it, and is made current in the current window at once (no :ls, no :b); one another window shows, in that window', async () => {
 		await open('hidden.ts', parts.activeGroup, true);
 		await open('a.ts');
 		const buffers = create();
-		await assert.rejects(buffers.refuseQuit(true), /E162: No write since last change for buffer "hidden\.ts"/);
+		await assert.rejects(buffers.refuseQuit(), /E162: No write since last change for buffer "hidden\.ts"/);
 		assert.strictEqual(parts.activeGroup.activeEditor, input('hidden.ts'));
-		// a modified buffer another window shows: :q goes to that window; :q! only checks the hidden ones
+		// a modified buffer another window shows: the quit goes to that window
 		const right = parts.addGroup(parts.activeGroup, GroupDirection.RIGHT);
 		await open('shown.ts', right, true);
 		input('hidden.ts').dirty = false;
 		parts.activateGroup(parts.groups[0]);
-		await buffers.refuseQuit(true);
-		await assert.rejects(buffers.refuseQuit(false), /E162: No write since last change for buffer "shown\.ts"/);
+		await assert.rejects(buffers.refuseQuit(), /E162: No write since last change for buffer "shown\.ts"/);
 		assert.strictEqual(parts.activeGroup, right);
 		input('shown.ts').dirty = false;
-		await buffers.refuseQuit(false);
+		await buffers.refuseQuit();
 	});
 
 	test('quitting: a file modified with no editor (a refactoring\'s edit) stops it too, and is opened', async () => {
 		await open('a.ts');
 		const buffers = create();
 		loose = [{ resource: URI.file('/work/edited.ts'), typeId: '', name: 'edited.ts' } as IWorkingCopy, { resource: URI.parse('vscode-notebook:/x'), typeId: 'notebook/x', name: 'x' } as IWorkingCopy];
-		await assert.rejects(buffers.refuseQuit(false), /E162: No write since last change for buffer "edited\.ts"/);
+		await assert.rejects(buffers.refuseQuit(), /E162: No write since last change for buffer "edited\.ts"/);
 		assert.deepStrictEqual(reopened, ['edited.ts']);
 	});
 
@@ -271,8 +269,7 @@ suite('DevHub Vim buffers on VS Code\'s editor parts', () => {
 				storage,
 				new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 				new class extends mock<IQuickInputService>() { },
-				accessor.untitledTextEditorService,
-				new class extends mock<ICommandService>() { }));
+				accessor.untitledTextEditorService));
 			await open('a.ts');
 			await open('b.ts');
 			const buffers = create();

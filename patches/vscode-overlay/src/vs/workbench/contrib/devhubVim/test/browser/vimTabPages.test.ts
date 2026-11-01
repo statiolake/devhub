@@ -21,7 +21,7 @@ import { GroupsOrder, IEditorGroup, IEditorGroupsService, IEditorPart, IEditorWo
 import { IEditorService } from '../../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService } from '../../../../services/layout/browser/layoutService.js';
 import { IUntitledTextEditorService } from '../../../../services/untitled/common/untitledTextEditorService.js';
-import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
+import { CommandsRegistry } from '../../../../../platform/commands/common/commands.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
 import { NATIVE_TAB_KEYS, TAB_PAGES_STORAGE_KEY, VimTabPages } from '../../browser/vimTabPages.js';
 
@@ -277,16 +277,11 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 	let logs: string[];
 	let log: typeof console.log;
 
-	/** The commands the tab pages ran (the Workspace's close). */
-	let ran: [string, unknown][];
 	const create = () => disposables.add(new VimTabPages(wb.groupsService(), wb.editorService(), storage,
 		new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 		new class extends mock<IQuickInputService>() {
 			override async pick<T extends IQuickPickItem>(items: T[]) { return (picked === undefined ? undefined : items[picked]) as never; }
-		}, wb.untitledService(),
-		new class extends mock<ICommandService>() {
-			override async executeCommand<T>(id: string, arg?: unknown) { ran.push(arg === undefined ? [id, undefined] : [id, arg]); return undefined as T; }
-		}));
+		}, wb.untitledService()));
 
 	setup(() => {
 		wb = new FakeWorkbench();
@@ -294,7 +289,6 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		storage = disposables.add(new InMemoryStorageService());
 		wb.storage = storage;
 		picked = undefined;
-		ran = [];
 		logs = [];
 		log = console.log;
 		console.log = (m: string) => { logs.push(m); };
@@ -434,7 +428,6 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.strictEqual(wb.layout.groups[0].editors[wb.layout.groups[0].active].name, 'a.ts', 'the other window shows what it showed');
 		assert.strictEqual(wb.focused, wb.layout.groups[0].id, 'the focus is in the other window');
 		assert.deepStrictEqual(wb.reverted, []);
-		assert.deepStrictEqual(ran, []);
 		assert.strictEqual(pages.state.pages.length, 1);
 	});
 
@@ -461,10 +454,9 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		wb.split();
 		await pages.quitWindow();
 		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
-		assert.deepStrictEqual(ran, []);
 	});
 
-	test(':q in the last window of a page closes the page (a modified editor goes along); in the last window of the last page it closes the Workspace', async () => {
+	test(':q in the last window of a page closes the page (a modified editor goes along); in the last window of the last page :q and :q! are E444 and never close the Workspace (:qa does)', async () => {
 		const workspaceClose = CommandsRegistry.registerCommand('devhubVim.closeWorkspace', () => { });
 		try {
 			const pages = create();
@@ -474,12 +466,11 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 			await pages.quitWindow();
 			assert.strictEqual(pages.state.pages.length, 1);
 			assert.deepStrictEqual(wb.shown(), [['a.ts', 'b.ts+']]);
-			assert.deepStrictEqual(ran, []);
-			await pages.quitWindow();
-			assert.deepStrictEqual(ran, [['devhubVim.closeWorkspace', undefined]], 'DevHub\'s close flow, which asks about b.ts');
-			assert.deepStrictEqual(wb.shown(), [['a.ts', 'b.ts+']], 'nothing closed here');
-			await pages.quitWindow(true);
-			assert.deepStrictEqual(ran[1], ['devhubVim.closeWorkspace', { discard: 'active' }]);
+			await assert.rejects(pages.quitWindow(), /^Error: E444: Cannot close last window \(:qa closes the Workspace\)$/);
+			await assert.rejects(pages.quitWindow(true), /E444/);
+			await assert.rejects(pages.closeWindow(), /E444/);
+			assert.deepStrictEqual(wb.reverted, [], ':q! drops nothing there');
+			assert.deepStrictEqual(wb.shown(), [['a.ts', 'b.ts+']], 'nothing closed');
 		} finally {
 			workspaceClose.dispose();
 		}
@@ -495,10 +486,10 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
 	});
 
-	test(':q in the last window of the last page with no DevHub to ask (a workbench without its close): E444', async () => {
+	test(':q in the last window of the last page with no DevHub to close the Workspace: E444 without the :qa hint', async () => {
 		const pages = create();
 		wb.open('a.ts');
-		await assert.rejects(pages.quitWindow(), /E444: Cannot close last window/);
+		await assert.rejects(pages.quitWindow(), /^Error: E444: Cannot close last window$/);
 		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
 	});
 
@@ -518,7 +509,6 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.strictEqual(pages.state.pages.length, 1);
 		await assert.rejects(pages.closeWindow(), /E444: Cannot close last window/);
 		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
-		assert.deepStrictEqual(ran, [], 'not the Workspace');
 	});
 
 	test(':tabnew without a file: the new page has an empty untitled editor (Vim\'s new empty buffer); it is not modified, so switching and closing never ask', async () => {

@@ -229,8 +229,8 @@ every selected line, Neovim `v_@-default`).
 (move between parts), `w W p t b` (editor groups; see
 [Windows](#windows) for `w W p` and comment widgets), `s v n` (split above /
 left, as 'nosplitbelow' 'nosplitright'; `n` with a new file), `c` (close the
-window: the group, never the last one), `q` (quit the window: the group, and
-with the last one the Workspace; see [Closing a window and
+window: the group, never the last one), `q` (quit the window: the group,
+never the last one either; see [Closing a window and
 quitting](#closing-a-window-and-quitting)), `o` (only this group), `=` (equal sizes), `_ |`
 (maximise), `+ - < >` (resize), `H J K L` (move the group), `T` (move the
 editor to a new [tab page](#tab-pages)), `d` (the
@@ -328,15 +328,16 @@ there and back is no window change.
 #### Closing a window and quitting
 
 `:q` closes the **window** — an editor group — not the buffer (VS Code's
-editor tab): that is `:bd`. As in Vim, quitting the last window is quitting
-Vim, which in DevHub is closing the Workspace.
+editor tab): that is `:bd`. Unlike Vim, quitting the last window does not
+quit: the last window of the last tab page is never closed (`E444`), and only
+`:qa` (`:qa!` `:wqa` `:xa`) closes the Workspace.
 
 | Command | Does |
 | --- | --- |
-| `:q[uit]` `CTRL-W q` `CTRL-W CTRL-Q` | close the current window (editor group); its buffers become hidden (below). The last window of a tab page closes the tab page when there are others; the last window of the last tab page closes the Workspace |
-| `:wq` `:x[it]` `:exi[t]` `ZZ` | write (`:x` `ZZ`: when modified), then as `:q` |
-| `:q!` `ZQ` | as `:q`, but the window's current editor drops its changes first, unless another window of the tab page shows it (Vim's `:q!` unloads the current buffer); its other editors keep theirs, hidden. In the last window of the last tab page a modified hidden buffer still stops it (below) |
-| `:clo[se][!]` `CTRL-W c` | as `:q`, but never the last window: in the last one of the last tab page, `E444: Cannot close last window` |
+| `:q[uit]` `CTRL-W q` `CTRL-W CTRL-Q` | close the current window (editor group); its buffers become hidden (below). The last window of a tab page closes the tab page when there are others; in the last window of the last tab page, `E444: Cannot close last window (:qa closes the Workspace)` and nothing closes |
+| `:wq` `:x[it]` `:exi[t]` `ZZ` | write (`:x` `ZZ`: when modified), then as `:q` (in the last window: written, then `E444`) |
+| `:q!` `ZQ` | as `:q`, but the window's current editor drops its changes first, unless another window of the tab page shows it (Vim's `:q!` unloads the current buffer); its other editors keep theirs, hidden. In the last window of the last tab page `E444`, and nothing is dropped |
+| `:clo[se][!]` `CTRL-W c` | as `:q` |
 | `:qa[ll]` `:quita[ll]` | close the Workspace, unless a buffer is modified (below) |
 | `:qa!` | drop every unsaved change in the workbench, then close the Workspace |
 | `:wqa[ll]` `:xa[ll]` | write all (Save All), then as `:qa` |
@@ -359,8 +360,7 @@ the closed group's editor the other window's current one, which would then
 show this window's buffer.) An empty window (an empty editor group, Vim's
 empty buffer) just closes.
 
-**A modified buffer stops the quit, as in Neovim.** `:q` (`:wq` `:x` `ZZ`
-`CTRL-W q`) in the last window of the last tab page, `:qa`, `:wqa` and `:xa`
+**A modified buffer stops the quit, as in Neovim.** `:qa`, `:wqa` and `:xa`
 first check the buffers as Neovim's quit does (`:help :quit`, `:help :qall`,
 `E37`, `E162`; check_changed_any): when one is modified, nothing closes, the
 message is `E37: No write since last change  E162: No write since last change
@@ -370,10 +370,7 @@ The first modified buffer is taken in Neovim's order: the current one, then
 those the other windows show, then the hidden ones by number, then a file
 modified with no editor at all (a refactoring's edit): it is made current in
 the window that shows it, or else in the current window (a hidden buffer is
-moved into it, a file opened in it). `:q!` (`ZQ`) drops the current buffer's
-changes and then checks only the buffers no window shows, as Neovim's `:q!`
-does: a modified hidden buffer still stops it, with the same message, and
-becomes current. `:qa!` drops every change and never stops.
+moved into it, a file opened in it). `:qa!` drops every change and never stops.
 
 **Quitting is closing the Workspace.** Once no modified buffer stops it, the
 quit asks DevHub to press the Workspace's close button — the same close path
@@ -389,11 +386,13 @@ discarded, `:qa!` included — the workbench asks main first whether the
 Workspace can close at all, and drops or checks changes only once it can. A
 workbench with no DevHub to ask says `E444`. The request is the workbench's
 `vscode:devhubCloseWorkspace` (`devhubVim/electron-browser/vimQuit.contribution.ts`,
-the command `devhubVim.closeWorkspace { discard?: "all" | "active" }`; the
+the command `devhubVim.closeWorkspace { discard?: "all" }`; the
 check is `devhubVim/browser/vimBuffers.ts` `refuseQuit`), answered in main by
 `apps/desktop/src/main/shell/workbenchCloseRequests.ts`.
 
-How it differs from Neovim: a hidden buffer is a VS Code editor in another
+How it differs from Neovim: `:q` and the other window quits never quit (in
+the last window they are `E444`, as `:close` is in Vim), so a Workspace is
+closed only on purpose; a hidden buffer is a VS Code editor in another
 group's tabs, not out of sight; `:qa!` drops the changes before the close's
 sheet, so a close then cancelled over a busy Agent has still dropped them (as
 Vim's `:qa!` would have); `:wqa` saves an untitled editor through VS Code's
@@ -540,7 +539,7 @@ copy).
 | | `:tabm[ove] [N \| +N \| -N \| $]` | move the current tab page after page N (`0`: first; none or `$`: last), or N places right / left |
 | | `:tabs` | the tab pages and their windows, in a quick pick; picking one goes there |
 | `CTRL-W T` | | move the current editor (window) to a new tab page (not when it is the only editor of the page) |
-| `CTRL-W q` `ZZ` `ZQ` `CTRL-W c` | `:q` `:wq` `:x` `:q!` `:close` | closing the last window of a tab page also closes the tab page (when there is another one; its modified editors go along into the page you land in); in the last tab page `:q` closes the Workspace and `:close` says `E444` ([Closing a window and quitting](#closing-a-window-and-quitting)) |
+| `CTRL-W q` `ZZ` `ZQ` `CTRL-W c` | `:q` `:wq` `:x` `:q!` `:close` | closing the last window of a tab page also closes the tab page (when there is another one; its modified editors go along into the page you land in); in the last window of the last tab page they say `E444` (`:qa` closes the Workspace; [Closing a window and quitting](#closing-a-window-and-quitting)) |
 
 The commands are `devhubVim.tabpage.new { file? }` (without a file: with an empty untitled editor) `.next { count, arg }` `.previous
 { count }` `.first` `.last` `.goto { index }` (1 is the first) `.close
@@ -608,7 +607,7 @@ mode. It is one buffer, DevHub's `VimEmptyBuffer`: it has no file (`%` is
 empty, `:w` has no name), and its registers, history and macros are the
 editors' own. `:q`, CTRL-W `c` / `q` there close the window (the empty
 group); in the last window of a tab page they close the tab page, and in the
-last one of the last tab page `:q` closes the Workspace ([Closing a window
+last one of the last tab page they say `E444` ([Closing a window
 and quitting](#closing-a-window-and-quitting)). If
 the group is not focused (after a click in the side bar, say), click into it
 or use `CTRL-W h j k l`.
@@ -1558,7 +1557,7 @@ Vim's own (run on the buffer, with ranges, counts and abbreviations):
 
 VS Code commands (`common/vimEx.ts` `BUILTIN_EX_SPECS`): `:w[rite]` (Save)
 `:wa[ll]` `:up[date]` `:q[uit][!]` `:qa[ll][!]` `:wq` `:x[it]` `:exi[t]` (the
-window, and with the last one the Workspace: [Closing a window and
+window; `:qa` the Workspace: [Closing a window and
 quitting](#closing-a-window-and-quitting); in a comment input: [Comment
 widgets](#comment-widgets))
 `:xa[ll]` `:sp[lit] [file]` `:vs[plit] [file]` `:new [file]` `:vne[w] [file]`

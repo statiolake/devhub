@@ -178,10 +178,9 @@ export const QUIT_WINDOW_DISCARD_COMMAND = 'devhubVim.tabpage.quitWindowDiscard'
 /** `:clo[se]` / `CTRL-W c`: the window, never the last one (E444). */
 export const CLOSE_WINDOW_COMMAND = 'devhubVim.tabpage.closeWindow';
 /**
- * Vim quitting: DevHub's close of the Workspace (`:qa` `:wqa` `:xa`, and `:q`
- * on the last window of the last tab page), with `{ discard: 'all' }`
- * (`:qa!`) or `{ discard: 'active' }` (`:q!`) dropping changes first
- * (electron-browser/vimQuit.contribution.ts).
+ * Vim quitting: DevHub's close of the Workspace (`:qa` `:wqa` `:xa`; `:q` on
+ * the last window is E444), with `{ discard: 'all' }` (`:qa!`) dropping
+ * every change first (electron-browser/vimQuit.contribution.ts).
  */
 export const CLOSE_WORKSPACE_COMMAND = 'devhubVim.closeWorkspace';
 /** Vim's error for closing the last window. */

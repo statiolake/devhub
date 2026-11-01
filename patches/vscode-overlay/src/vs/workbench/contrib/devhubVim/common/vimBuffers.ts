@@ -195,13 +195,12 @@ export function bufferCount(v: unknown): number | undefined {
  * What quitting must not abandon (Neovim's check_changed_any): the first
  * modified buffer, in Vim's order — the current one, those shown in the
  * current tab page's other windows, then every other one by number — or
- * undefined. With `hiddenOnly` (`:q!`, whose current buffer is abandoned)
- * only the buffers no window shows.
+ * undefined.
  */
-export function quitBlocker<T extends { readonly modified: boolean; readonly shown: boolean; readonly current: boolean; readonly nr: number }>(buffers: readonly T[], hiddenOnly: boolean): T | undefined {
+export function quitBlocker<T extends { readonly modified: boolean; readonly shown: boolean; readonly current: boolean; readonly nr: number }>(buffers: readonly T[]): T | undefined {
 	const order = (b: T) => b.current ? 0 : b.shown ? 1 : 2;
 	return [...buffers]
-		.filter(b => b.modified && (!hiddenOnly || !b.shown))
+		.filter(b => b.modified)
 		.sort((a, b) => order(a) - order(b) || a.nr - b.nr)[0];
 }
 

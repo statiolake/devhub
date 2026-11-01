@@ -12,7 +12,6 @@ import { Event } from '../../../../../base/common/event.js';
 import { DisposableStore } from '../../../../../base/common/lifecycle.js';
 import { URI } from '../../../../../base/common/uri.js';
 import { mock } from '../../../../../base/test/common/mock.js';
-import { ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { ConfirmResult } from '../../../../../platform/dialogs/common/dialogs.js';
 import { SyncDescriptor } from '../../../../../platform/instantiation/common/descriptors.js';
 import { IQuickInputService } from '../../../../../platform/quickinput/common/quickInput.js';
@@ -56,8 +55,7 @@ suite('DevHub Vim tab pages: modified editors on VS Code\'s editor parts', () =>
 				disposables.add(new InMemoryStorageService()),
 				new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 				new class extends mock<IQuickInputService>() { },
-				accessor.untitledTextEditorService,
-				new class extends mock<ICommandService>() { }));
+				accessor.untitledTextEditorService));
 
 			const clean = disposables.add(new TestFileEditorInput(URI.file('/clean.txt'), TEST_INPUT_ID));
 			const dirty = disposables.add(new TestFileEditorInput(URI.file('/dirty.txt'), TEST_INPUT_ID));
@@ -128,8 +126,7 @@ suite('DevHub Vim tab pages: modified editors on VS Code\'s editor parts', () =>
 				disposables.add(new InMemoryStorageService()),
 				new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 				new class extends mock<IQuickInputService>() { },
-				untitled,
-				new class extends mock<ICommandService>() { }));
+				untitled));
 			const file = disposables.add(new TestFileEditorInput(URI.file('/a.txt'), TEST_INPUT_ID));
 			disposables.add(registerTestEditor(TEST_EDITOR_ID, [new SyncDescriptor(TestFileEditorInput)], TEST_INPUT_ID));
 			await parts.activeGroup.openEditor(file, { pinned: true });
@@ -185,8 +182,7 @@ suite('DevHub Vim tab pages: modified editors on VS Code\'s editor parts', () =>
 				disposables.add(new InMemoryStorageService()),
 				new class extends mock<IWorkbenchLayoutService>() { override hasFocus() { return true; } },
 				new class extends mock<IQuickInputService>() { },
-				accessor.untitledTextEditorService,
-				new class extends mock<ICommandService>() { }));
+				accessor.untitledTextEditorService));
 			const left = disposables.add(new TestFileEditorInput(URI.file('/left.txt'), TEST_INPUT_ID));
 			const dirty = disposables.add(new TestFileEditorInput(URI.file('/dirty.txt'), TEST_INPUT_ID));
 			const clean = disposables.add(new TestFileEditorInput(URI.file('/clean.txt'), TEST_INPUT_ID));

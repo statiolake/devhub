@@ -178,8 +178,8 @@ shutting down, and a terminal that keeps ending as soon as it starts is
 started over at most three times in thirty seconds, then left with the
 surface's own Retry.
 
-In the VS Code editor the editor's Vim does the same with its last window:
-`:q` there, and `:qa` `:wqa` `:xa`, press the same close button
+In the VS Code editor the editor's Vim does the same with `:qa` `:wqa` `:xa`
+(not `:q`, which never closes the last window): they press the same close button
 (`main/shell/workbenchCloseRequests.ts`; see [Vim](vim.md#closing-a-window-and-quitting)).
 
 ## Settings

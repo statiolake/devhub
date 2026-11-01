@@ -50,7 +50,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { ILocalizedString } from '../../../../platform/action/common/action.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
-import { CommandsRegistry, ICommandService } from '../../../../platform/commands/common/commands.js';
+import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IKeybindings, KeybindingsRegistry, KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
@@ -86,6 +86,11 @@ function workingSet(id: string) {
 	return { id, name: TAB_PAGE_WORKING_SET_NAME };
 }
 
+/** E444 for the last window of the last tab page; where DevHub can close the Workspace, how. */
+function lastWindowError(): Error {
+	return new Error(CommandsRegistry.getCommand(CLOSE_WORKSPACE_COMMAND) ? `${E444} (:qa closes the Workspace)` : E444);
+}
+
 function num(v: unknown): number | null {
 	return typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : null;
 }
@@ -117,7 +122,6 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		@IWorkbenchLayoutService private readonly layoutService: IWorkbenchLayoutService,
 		@IQuickInputService private readonly quickInputService: IQuickInputService,
 		@IUntitledTextEditorService private readonly untitledService: IUntitledTextEditorService,
-		@ICommandService private readonly commandService: ICommandService,
 	) {
 		super();
 		const { state, stale, orphans } = restoreTabPages(storageService.get(TAB_PAGES_STORAGE_KEY, StorageScope.WORKSPACE), groups.getWorkingSets());
@@ -442,13 +446,8 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 	 * (an editor group). With other windows in the page it closes and its
 	 * buffers become hidden (hideWindow). The last window of a page closes the
 	 * page when there are others (its modified editors go along into the page
-	 * you land in, as with `:tabc`). The last window of the last page is Vim
-	 * quitting: DevHub's close of the Workspace (`devhubVim.closeWorkspace`,
-	 * electron-browser/vimQuit.contribution.ts), the same as its close button,
-	 * unless a modified buffer stops it first (E37 / E162, the buffer made
-	 * current: vimBuffers.ts refuseQuit); where the
-	 * workbench has no DevHub to ask (or the Workspace is Scratch, which never
-	 * closes) it is Vim's E444.
+	 * you land in, as with `:tabc`). The last window of the last page is not
+	 * closed (E444): quitting the Workspace is `:qa` (lastWindowError).
 	 */
 	quitWindow(discard = false): Promise<void> {
 		if (this.groups.count > 1) {
@@ -457,15 +456,7 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		if (this._state.pages.length > 1) {
 			return (discard ? this.discardCurrent(this.groups.activeGroup) : Promise.resolve()).then(() => this.close());
 		}
-		return this.quitWorkspace(discard ? 'active' : undefined);
-	}
-
-	/** The last window of the last tab page: the Workspace closes (DevHub's close flow), or E444. */
-	private async quitWorkspace(discard: 'active' | undefined): Promise<void> {
-		if (!CommandsRegistry.getCommand(CLOSE_WORKSPACE_COMMAND)) {
-			throw new Error(E444);
-		}
-		await this.commandService.executeCommand(CLOSE_WORKSPACE_COMMAND, discard ? { discard } : undefined);
+		return Promise.reject(lastWindowError());
 	}
 
 	/**
@@ -480,7 +471,7 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		if (this._state.pages.length > 1) {
 			return this.close();
 		}
-		return Promise.reject(new Error(E444));
+		return Promise.reject(lastWindowError());
 	}
 
 	/** `:tabs`: the pages and their windows; picking one goes there. */
@@ -581,7 +572,7 @@ tabPageCommand('devhubVim.tabpage.only', localize2('devhubVim.tabpage.only', "Cl
 tabPageCommand('devhubVim.tabpage.move', localize2('devhubVim.tabpage.move', "Move Tab Page"), false, (p, a) => p.move(a.arg));
 tabPageCommand('devhubVim.tabpage.moveEditorToNew', localize2('devhubVim.tabpage.moveEditorToNew', "Move Editor to New Tab Page"), true, p => p.moveEditorToNewPage());
 tabPageCommand(CLOSE_WINDOW_COMMAND, localize2('devhubVim.tabpage.closeWindow', "Close Window (Group), or the Tab Page with Its Last Window"), false, p => p.closeWindow());
-tabPageCommand(QUIT_WINDOW_COMMAND, localize2('devhubVim.tabpage.quitWindow', "Quit Window (Group): the Tab Page with Its Last Window, the Workspace with the Last One"), false, p => p.quitWindow());
+tabPageCommand(QUIT_WINDOW_COMMAND, localize2('devhubVim.tabpage.quitWindow', "Quit Window (Group): the Tab Page with Its Last Window"), false, p => p.quitWindow());
 tabPageCommand(QUIT_WINDOW_DISCARD_COMMAND, localize2('devhubVim.tabpage.quitWindowDiscard', "Quit Window (Group), Discarding Its Editor's Changes"), false, p => p.quitWindow(true));
 tabPageCommand('devhubVim.tabpage.closeIfEmpty', localize2('devhubVim.tabpage.closeIfEmpty', "Close Tab Page If It Has No Editor"), false, p => p.closeIfEmpty());
 tabPageCommand('devhubVim.tabpage.list', localize2('devhubVim.tabpage.list', "List Tab Pages"), true, p => p.list());

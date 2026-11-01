@@ -5,20 +5,19 @@
 
 // DevHub native Vim: Vim quitting is DevHub closing the Workspace.
 //
-// `:qa` `:wqa` `:xa`, and `:q` `:wq` `:x` `ZZ` `CTRL-W q` in the last window
-// of the last tab page (browser/vimTabPages.ts quitWindow), leave the
-// workbench as Vim leaves the editor, in Neovim's order:
+// `:qa` `:qa!` `:wqa` `:xa` leave the workbench as Vim leaves the editor, in
+// Neovim's order (`:q` and the other window quits never do: in the last window
+// of the last tab page they are E444, browser/vimTabPages.ts quitWindow):
 //
 // 1. Scratch is never closed; there, and where there is no DevHub to ask, it
 //    is Vim's E444 ("Cannot close last window"), and nothing is discarded
 //    (main is asked first, `probe`).
 // 2. `:qa!` (`{ discard: 'all' }`) drops every unsaved change of the
-//    workbench; `:q!` (`{ discard: 'active' }`) those of the current editor
-//    (Vim's `:q!` abandons the current buffer).
-// 3. A modified buffer left stops the quit, as Neovim's check_changed_any
-//    does: E37 / E162 naming it, and it is made current in its window
-//    (browser/vimBuffers.ts refuseQuit) — for `:q!` only one no window
-//    shows (a hidden buffer). DevHub's close sheet never asks about it.
+//    workbench.
+// 3. Otherwise a modified buffer stops the quit, as Neovim's
+//    check_changed_any does: E37 / E162 naming it, and it is made current in
+//    its window (browser/vimBuffers.ts refuseQuit). DevHub's close sheet
+//    never asks about it.
 // 4. Otherwise DevHub's main process runs the Workspace's close button
 //    (apps/desktop/src/main/shell/workbenchCloseRequests.ts, then
 //    AppController.closeWorkspaceOrWorktree), the one close path: it may still
@@ -28,7 +27,6 @@
 
 import { ipcRenderer } from '../../../../base/parts/sandbox/electron-browser/globals.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
-import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkingCopyService } from '../../../services/workingCopy/common/workingCopyService.js';
 import { CLOSE_WORKSPACE_COMMAND, E444 } from '../common/vimEx.js';
 import { VimBuffers } from '../browser/vimBuffers.js';
@@ -50,11 +48,10 @@ function refusal(answer: CloseAnswer): Error {
 
 CommandsRegistry.registerCommand({
 	id: CLOSE_WORKSPACE_COMMAND,
-	metadata: { description: 'Vim: quit: DevHub closes the Workspace (its close button). { discard?: "all" | "active" } drops unsaved changes first (`:qa!`, `:q!`); a modified buffer left stops it (E37 / E162, the buffer made current). E444 for Scratch.' },
+	metadata: { description: 'Vim: quit: DevHub closes the Workspace (its close button). { discard?: "all" } drops unsaved changes first (`:qa!`); a modified buffer left stops it (E37 / E162, the buffer made current). E444 for Scratch.' },
 	handler: async (accessor, args?: unknown) => {
 		const discard = typeof args === 'object' && args !== null ? (args as { discard?: unknown }).discard : undefined;
 		const workingCopyService = accessor.get(IWorkingCopyService);
-		const editorService = accessor.get(IEditorService);
 		const probe = await ask('probe');
 		if (probe !== 'closable') {
 			throw refusal(probe);
@@ -62,13 +59,7 @@ CommandsRegistry.registerCommand({
 		if (discard === 'all') {
 			await Promise.allSettled(workingCopyService.modifiedWorkingCopies.map(workingCopy => workingCopy.revert()));
 		} else {
-			if (discard === 'active') {
-				const editor = editorService.activeEditorPane;
-				if (editor?.input.isDirty()) {
-					await editor.input.revert(editor.group.id);
-				}
-			}
-			await VimBuffers.instance?.refuseQuit(discard === 'active');
+			await VimBuffers.instance?.refuseQuit();
 		}
 		const answer = await ask('close');
 		if (answer !== 'closing') {

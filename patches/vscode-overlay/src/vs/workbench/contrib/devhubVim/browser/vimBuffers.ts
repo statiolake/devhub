@@ -30,8 +30,7 @@
 // its resources. The editor that was current is pinned first, so VS Code's
 // preview editor is never replaced (closed) by a buffer switch.
 //
-// Quitting (refuseQuit): the last window's `:q`, `:qa`, `:wqa` (and `:q!`,
-// for the buffers it does not abandon) stop as Neovim's check_changed_any
+// Quitting (refuseQuit): `:qa`, `:wqa` stop as Neovim's check_changed_any
 // stops them when a buffer is modified: E37 and E162 naming the first such
 // buffer (the current one, those other windows show, then the hidden ones by
 // number, then files modified with no editor), which is made current in its
@@ -505,12 +504,12 @@ export class VimBuffers extends Disposable implements IWorkbenchContribution {
 
 	/**
 	 * Neovim's check before it quits (check_changed_any): when a buffer is
-	 * modified — with `hiddenOnly` (`:q!`) one no window shows — it is made
+	 * modified it is made
 	 * current (in the window that shows it, or the current window) and the
 	 * quit is refused with E37 / E162. Files modified with no editor (a
 	 * refactoring's edits) are such buffers too, last.
 	 */
-	async refuseQuit(hiddenOnly: boolean): Promise<void> {
+	async refuseQuit(): Promise<void> {
 		const live = this.live();
 		const activeGroup = this.groups.activeGroup;
 		const current = activeGroup.activeEditor;
@@ -518,7 +517,7 @@ export class VimBuffers extends Disposable implements IWorkbenchContribution {
 			key, b, nr: this.records.get(key)?.nr ?? Number.MAX_SAFE_INTEGER,
 			modified: b.editor.isDirty(), shown: b.shownIn.length > 0, current: !!current && b.editor === current,
 		}));
-		const blocker = quitBlocker(candidates, hiddenOnly);
+		const blocker = quitBlocker(candidates);
 		if (blocker) {
 			const name = this.nameOf(blocker.b.editor).name;
 			const shownIn = blocker.b.shownIn.find(g => g.id === activeGroup.id) ?? blocker.b.shownIn[0];

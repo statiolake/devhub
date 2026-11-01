@@ -83,12 +83,10 @@ suite('DevHub Vim buffers: the list', () => {
 
 	test('what stops a quit (Neovim check_changed_any): the current buffer, then the other windows\', then the hidden ones by number; :q! only hidden ones', () => {
 		const b = (nr: number, modified: boolean, shown = false, current = false) => ({ nr, modified, shown, current });
-		assert.strictEqual(quitBlocker([b(1, false, true, true), b(2, false)], false), undefined);
-		assert.strictEqual(quitBlocker([b(4, true), b(1, true, true, true), b(2, true, true)], false)?.nr, 1);
-		assert.strictEqual(quitBlocker([b(4, true), b(1, false, true, true), b(9, true, true)], false)?.nr, 9);
-		assert.strictEqual(quitBlocker([b(4, true), b(3, true), b(1, false, true, true)], false)?.nr, 3);
-		assert.strictEqual(quitBlocker([b(1, true, true, true), b(2, true, true)], true), undefined, ':q!: the buffers windows show are not checked');
-		assert.strictEqual(quitBlocker([b(1, true, true, true), b(7, true)], true)?.nr, 7);
+		assert.strictEqual(quitBlocker([b(1, false, true, true), b(2, false)]), undefined);
+		assert.strictEqual(quitBlocker([b(4, true), b(1, true, true, true), b(2, true, true)])?.nr, 1);
+		assert.strictEqual(quitBlocker([b(4, true), b(1, false, true, true), b(9, true, true)])?.nr, 9);
+		assert.strictEqual(quitBlocker([b(4, true), b(3, true), b(1, false, true, true)])?.nr, 3);
 		assert.strictEqual(quitRefusal('src/a.ts'), 'E37: No write since last change  E162: No write since last change for buffer "src/a.ts"');
 	});
 
