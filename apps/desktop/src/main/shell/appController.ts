@@ -303,6 +303,7 @@ import {
 	WorkbenchLifecycle,
 	type EditorPlaceholder,
 	type LifecycleEffect,
+	type WakeReason,
 } from "./workbenchLifecycle.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
@@ -1924,8 +1925,7 @@ export class AppController {
 				// it opens now. And it is somewhere the person went on purpose.
 				const folder = this.coordinator.model.workspace(id)?.key;
 				if (view === "editor" && folder !== undefined) {
-					this.workbenches.wake(folder, "shown", Date.now());
-					this.reconcileWorkbenches();
+					this.askForWorkbench(folder, "shown");
 				}
 				this.noteInteraction();
 			},
@@ -6839,6 +6839,21 @@ export class AppController {
 	 * Code's services exist waits inside `openEditorView` for exactly as long
 	 * as it has to. See `mainServices.ts`.
 	 */
+	/**
+	 * Somebody asked for this folder's workbench (`WakeReason`), with its
+	 * selection already made: the plan this runs opens it if it is asleep or
+	 * was never started, and only if it is the selected editor. The ask is
+	 * that one plan's (`LifecycleInput.ask`) — held here only across a plan
+	 * already running, which runs once more for it.
+	 */
+	private askForWorkbench(folder: string, why: WakeReason): void {
+		this.workbenchAsk = { folder, why };
+		this.reconcileWorkbenches();
+	}
+
+	/** The ask the next plan comes with; see `askForWorkbench`. */
+	private workbenchAsk: { folder: string; why: WakeReason } | undefined;
+
 	private reconcileWorkbenches(
 		options: { readonly tick?: boolean } = {},
 	): void {
@@ -6891,10 +6906,13 @@ export class AppController {
 		// DevHub starting is the one start nobody asks for in so many words:
 		// the editor the restored window shows (if it shows one) is started,
 		// as before. Never started yet, by definition — nothing has slept.
+		let ask = this.workbenchAsk;
+		this.workbenchAsk = undefined;
 		if (!this.launchWakeAsked) {
 			this.launchWakeAsked = true;
-			if (selected !== undefined)
-				this.workbenches.wake(selected, "launch", now);
+			if (ask === undefined && selected !== undefined) {
+				ask = { folder: selected, why: "launch" };
+			}
 		}
 		const general = this.config?.general;
 		const minutes =
@@ -6904,7 +6922,7 @@ export class AppController {
 			now,
 			// Every Workspace whose folder is there (asking for one that is gone
 			// is what put VS Code's "path does not exist" box on screen), each
-			// started only when somebody asks for it (`wake`): until then a
+			// started only when somebody asks for it (`ask`): until then a
 			// Workspace's workbench is asleep without ever having been opened
 			// (`lazy`, `docs/terminal-mode.md`).
 			wanted: model.workspaces
@@ -6939,6 +6957,7 @@ export class AppController {
 			awakeMax: general?.workbench_awake_max ?? DEFAULT_WORKBENCH_AWAKE_MAX,
 			hibernateAfterMs: minutes > 0 ? minutes * 60_000 : 0,
 			tick,
+			...(ask === undefined ? {} : { ask }),
 		});
 	}
 
@@ -7261,7 +7280,20 @@ export class AppController {
 		if (this.workbenches.phase(locationKey(location)).kind === "opening") {
 			return;
 		}
-		this.dispatchOwn({
+		// A refusal is drawn where it happens; here it only ends the open.
+		void this.openedByVsCode(location).catch((error: unknown) => {
+			console.warn(
+				`[devhub] open: '${locationKey(location)}' did not open: ${failureText(error)}`,
+			);
+		});
+	}
+
+	/**
+	 * `noteLocation`'s open, and then — once it has settled, so the selection
+	 * it makes is in place — the editor view and the ask that go with it.
+	 */
+	private async openedByVsCode(location: WorkspaceLocation): Promise<void> {
+		await this.dispatchAwaiting({
 			type: "open_folder",
 			location: requestedLocation(
 				relocatedOnSameMachine(location, location.path),
@@ -7278,8 +7310,7 @@ export class AppController {
 			});
 		}
 		// And it asked for it to be open: an asleep one opens.
-		this.workbenches.wake(locationKey(location), "opened", Date.now());
-		this.reconcileWorkbenches();
+		this.askForWorkbench(locationKey(location), "opened");
 	}
 
 	/**
@@ -7367,8 +7398,7 @@ export class AppController {
 			this.openedWorkspaceId(location),
 		);
 		if (workspace === undefined) return;
-		this.workbenches.wake(workspace.key, "opened", Date.now());
-		this.reconcileWorkbenches();
+		this.askForWorkbench(workspace.key, "opened");
 		this.noteInteraction();
 	}
 
@@ -7948,8 +7978,7 @@ export class AppController {
 		// it: the editor area switches to it, which is what makes it the
 		// selected editor the plan opens or wakes.
 		await this.showEditorViewOf(folder, "editor");
-		this.workbenches.wake(folder, "needed", Date.now());
-		this.reconcileWorkbenches();
+		this.askForWorkbench(folder, "needed");
 		await this.syncEditorView();
 		return await this.workbenchWindow(folder);
 	}
@@ -9742,8 +9771,7 @@ export class AppController {
 		handle(CHANNELS.wakeEditor, (_event, surfaceKey: string) => {
 			const folder = this.editorKeyForSurfaceKey(String(surfaceKey));
 			if (folder === undefined) return;
-			this.workbenches.wake(folder, "asked", Date.now());
-			this.reconcileWorkbenches();
+			this.askForWorkbench(folder, "asked");
 			this.noteInteraction();
 		});
 

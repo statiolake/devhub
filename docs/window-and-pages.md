@@ -1051,14 +1051,15 @@ extensions deactivate), and its view destroyed. Woken, it opens through the
 ordinary open path, whose `registerFolderBackup` hands it the same backup
 folder, so VS Code restores its editors, layout and unsaved changes. Nothing
 else is touched: the row, its Agents, their tmux sessions, GUI conversations
-and repository status. A woken workbench is a new view, so it is not tidied
-on its return.
+and repository status.
 
 **Nothing wakes an asleep editor on its own.** Showing one — however long it
 is looked at — shows its placeholder and nothing else; there is no delayed
-wake. It opens only when somebody asks for it (`WorkbenchLifecycle.wake`, a
-`WakeReason`), and the ask is spent by the first plan that has it as the
-selected editor (it lapses after `ASK_GRACE_MS`, 2 s, if none does):
+wake. It opens only when somebody asks for it (a `WakeReason`). The act that
+asks makes its selection first and then hands the ask to the very plan that
+follows (`LifecycleInput.ask`, `AppController.askForWorkbench`); that plan
+opens it if it is the selected editor, and nothing is kept for later — no
+timer bridges an ask and a selection:
 
 | How the editor came to be shown                                                                                                                                                                                                                                    | Asleep / never started editor                                   |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |

@@ -50,8 +50,9 @@
  *   nothing more. Only an explicit act asks (`WakeReason`): Enter or a click on
  *   that placeholder, `Cmd+Q E`, opening the Workspace (`Cmd+Q F`), a request
  *   that needs the workbench, and DevHub's own start for the editor it shows.
- *   An ask is used by the first plan that has its folder selected, and lapses
- *   after `ASK_GRACE_MS` if no plan does.
+ *   An ask comes with the plan it is for (`LifecycleInput.ask`), made by the
+ *   act once its selection is in place, and is used only if that plan has its
+ *   folder selected — there is nothing kept between plans and no timer.
  * - **The cap is a fact about the state, checked on every `plan`.** More than
  *   `awakeMax` sleepable workbenches up or opening, and the least recently
  *   shown awake ones go to sleep at once — never the selected one, never one
@@ -85,14 +86,6 @@ import { EditorSupervisor } from "./editorSupervisor.js";
 
 /** Checked this often: time-based sleep, and the cap's retry of a refusal. */
 export const HIBERNATE_CHECK_MS = 60_000;
-
-/**
- * How long an ask (`wake`) waits for its folder to be the selected editor: the
- * act that asked moves the selection there itself, a moment later at most.
- * Not a delay before anything — an ask nobody's selection reaches does
- * nothing.
- */
-export const ASK_GRACE_MS = 2_000;
 
 /** The selected editor still opening after this is said once in the log. */
 const SLOW_OPEN_NOTE_MS = 10_000;
@@ -230,6 +223,14 @@ export interface LifecycleInput {
 	readonly hibernateAfterMs: number;
 	/** The minute check: time-based sleep, and the cap asks refusals again. */
 	readonly tick?: boolean;
+	/**
+	 * Somebody asked, with this plan, for this folder's workbench
+	 * (`WakeReason`): opened if it is asleep or was never started — the one
+	 * way an asleep editor opens — provided it is the selected editor in this
+	 * same plan. The act that asks makes its selection first; an ask whose
+	 * folder is not selected does nothing.
+	 */
+	readonly ask?: { readonly folder: string; readonly why: WakeReason };
 }
 
 /** What the executor carries out, in this order. */
@@ -284,11 +285,6 @@ export class WorkbenchLifecycle {
 		string,
 		{ readonly surfaceKey: string; readonly text: string }
 	>();
-	/** Folders somebody asked to open, until a plan has them selected. */
-	private readonly asks = new Map<
-		string,
-		{ readonly why: WakeReason; readonly until: number }
-	>();
 	private selected: string | undefined;
 	/** The last thing said about the cap, so it is said once. */
 	private capNote = "";
@@ -331,16 +327,6 @@ export class WorkbenchLifecycle {
 	}
 
 	//#region events
-
-	/**
-	 * Somebody asked for this folder's workbench (`WakeReason`): the next plan
-	 * that has it as the selected editor opens it if it is asleep or was never
-	 * started. The one way an asleep editor opens.
-	 */
-	wake(folder: string, why: WakeReason, now: number): void {
-		this.asks.set(folder, { why, until: now + ASK_GRACE_MS });
-		this.say(folder, `asked for (${why})`);
-	}
 
 	/** Its view finished loading (again). */
 	loaded(folder: string, now: number): void {
@@ -446,14 +432,15 @@ export class WorkbenchLifecycle {
 				? input.selected
 				: undefined;
 		this.selected = selected;
-		// An ask is spent on the first plan with its folder selected; one no
-		// selection reached in time lapses.
-		for (const [folder, ask] of this.asks) {
-			if (folder === selected || ask.until > input.now) continue;
-			this.asks.delete(folder);
-			this.say(folder, `ask (${ask.why}) lapsed: not shown`);
+		// An ask is for this plan only, and only for the selected editor.
+		const ask = input.ask;
+		const asked = ask !== undefined && ask.folder === selected;
+		if (ask !== undefined) {
+			this.say(
+				ask.folder,
+				asked ? `asked for (${ask.why})` : `ask (${ask.why}) unused: not shown`,
+			);
 		}
-		const asked = selected !== undefined && this.asks.delete(selected);
 
 		const loading =
 			input.loading === undefined ? undefined : new Set(input.loading);

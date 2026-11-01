@@ -6,7 +6,6 @@ import {
 } from "./editorSupervisor.js";
 import {
 	HIBERNATE_CHECK_MS,
-	ASK_GRACE_MS,
 	OPEN_SETTLE_MS,
 	WorkbenchLifecycle,
 	placeholderOf,
@@ -51,7 +50,10 @@ function harness(
 	let selected: string | undefined;
 	let awakeMax = options.awakeMax ?? 3;
 
-	const plan = (tick = false) => {
+	const plan = (
+		tick = false,
+		ask?: { readonly folder: string; readonly why: WakeReason },
+	) => {
 		for (const [folder] of workspaces) {
 			if (folder !== selected && !leftAt.has(folder)) leftAt.set(folder, now);
 		}
@@ -75,6 +77,7 @@ function harness(
 			awakeMax,
 			hibernateAfterMs: options.hibernateAfterMs ?? 10 * 60_000,
 			tick,
+			...(ask === undefined ? {} : { ask }),
 		});
 		for (const effect of done) {
 			if (effect.kind === "dispose") views.delete(effect.folder);
@@ -158,12 +161,15 @@ function harness(
 			if (selected !== undefined && selected !== folder) {
 				leftAt.set(selected, now);
 			}
-			if (ask !== undefined && folder !== undefined) {
-				life.wake(folder, ask, now);
-			}
 			selected = folder;
 			if (folder !== undefined) leftAt.delete(folder);
-			return plan();
+			// One call: the selection and the ask that comes with it.
+			return plan(
+				false,
+				ask !== undefined && folder !== undefined
+					? { folder, why: ask }
+					: undefined,
+			);
 		},
 		advance(ms: number) {
 			const until = now + ms;
@@ -219,8 +225,7 @@ function harness(
 		},
 		/** Enter or a click on the selected one's placeholder. */
 		wake(folder: string, why: WakeReason = "asked") {
-			life.wake(folder, why, now);
-			return plan();
+			return plan(false, { folder, why });
 		},
 		/** The hibernate effect, carried out: unloaded, or kept awake. */
 		sleep(folder: string, frame = `frame:${folder}`) {
@@ -426,21 +431,18 @@ describe("waking", () => {
 		expect(opens(app.effects)).not.toContain("a wake");
 	});
 
-	it("an ask is spent on the plan that shows it, and lapses if nothing shows it", () => {
+	it("an ask is used by the plan it comes with, and only for the editor shown", () => {
 		const app = oneAsleep();
-		// Asked for while b is shown: nothing yet.
+		// Asked for while b is shown: nothing, and nothing kept for later.
 		expect(opens(app.wake("a"))).toEqual([]);
-		app.advance(ASK_GRACE_MS);
-		app.plan();
-		// Too late: a selection arriving now is only a selection.
-		expect(opens(app.select("a"))).toEqual([]);
 		expect(app.logs).toContain(
-			"[devhub] workbench 'a' ask (asked) lapsed: not shown",
+			"[devhub] workbench 'a' ask (asked) unused: not shown",
 		);
-		// Within the grace, the selection that follows the ask opens it.
+		// A selection arriving afterwards is only a selection.
+		expect(opens(app.select("a"))).toEqual([]);
+		// The selection and the ask together open it.
 		app.select("b");
-		app.wake("a", "shown");
-		expect(opens(app.select("a"))).toEqual(["a wake"]);
+		expect(opens(app.select("a", "shown"))).toEqual(["a wake"]);
 		// And it is spent: asleep again later, being shown wakes nothing.
 		app.load("a");
 		app.select("b");
@@ -1137,13 +1139,20 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 		const lifecycle = new WorkbenchLifecycle(new EditorSupervisor(), (line) => {
 			logs.push(line);
 		});
+		// The ask the next plan comes with (`LifecycleInput.ask`).
+		let ask: { folder: string; why: WakeReason } | undefined;
+		const wake = (folder: string, why: WakeReason) => {
+			ask = { folder, why };
+		};
 		const plan = (
 			selected: string | undefined,
 			views: readonly string[] = [],
 			now = 0,
 			awakeMax = 2,
-		) =>
-			lifecycle.plan({
+		) => {
+			const asked = ask;
+			ask = undefined;
+			return lifecycle.plan({
 				now,
 				wanted: ["scratch", "a", "b", "c"].map((folder) => ({
 					folder,
@@ -1157,8 +1166,10 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 				views,
 				awakeMax,
 				hibernateAfterMs: 600_000,
+				...(asked === undefined ? {} : { ask: asked }),
 			});
-		return { lifecycle, plan, logs };
+		};
+		return { lifecycle, plan, logs, wake };
 	};
 	const opens = (effects: readonly LifecycleEffect[]) =>
 		effects.filter((effect) => effect.kind === "open");
@@ -1184,7 +1195,7 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 	});
 
 	it("does not start the one shown until it is asked for, then starts it alone behind a spinner", () => {
-		const { lifecycle, plan } = life();
+		const { lifecycle, plan, wake } = life();
 		plan(undefined);
 		// Shown (a Sidebar row, Cmd+Q N/P, an Agent opened beside it): it says
 		// it is not running and waits.
@@ -1194,7 +1205,7 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 			frame: "",
 			started: false,
 		});
-		lifecycle.wake("a", "asked", 0);
+		wake("a", "asked");
 		expect(opens(plan("a"))).toEqual([
 			{ kind: "open", folder: "a", cause: "start" },
 		]);
@@ -1210,8 +1221,8 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 	});
 
 	it("starts the editor shown at the very first plan when the launch asks for it", () => {
-		const { lifecycle, plan } = life();
-		lifecycle.wake("b", "launch", 0);
+		const { plan, wake } = life();
+		wake("b", "launch");
 		expect(opens(plan("b"))).toEqual([
 			{ kind: "open", folder: "b", cause: "start" },
 		]);
@@ -1236,8 +1247,8 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 		// Every Workspace is in its editor view, so the selected one's editor is
 		// on screen: the launch asks for it alone. The rest are asleep, never
 		// opened, until somebody asks — going to them is not asking.
-		const { lifecycle, plan } = life();
-		lifecycle.wake("scratch", "launch", 0);
+		const { lifecycle, plan, wake } = life();
+		wake("scratch", "launch");
 		expect(opens(plan("scratch"))).toEqual([
 			{ kind: "open", folder: "scratch", cause: "start" },
 		]);
@@ -1245,7 +1256,7 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 		lifecycle.loaded("scratch", 0);
 		expect(opens(plan("scratch", ["scratch"]))).toEqual([]);
 		expect(opens(plan("c", ["scratch"]))).toEqual([]);
-		lifecycle.wake("c", "opened", 0);
+		wake("c", "opened");
 		expect(opens(plan("c", ["scratch"]))).toEqual([
 			{ kind: "open", folder: "c", cause: "start" },
 		]);
@@ -1253,16 +1264,16 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 	});
 
 	it("then lives under the cap like any other: going back to the terminal lets it sleep", () => {
-		const { lifecycle, plan } = life();
-		lifecycle.wake("a", "shown", 0);
+		const { lifecycle, plan, wake } = life();
+		wake("a", "shown");
 		plan("a");
 		lifecycle.loaded("a", 0);
-		lifecycle.wake("b", "shown", 0);
+		wake("b", "shown");
 		plan("b", ["a"]);
 		lifecycle.loaded("b", 0);
 		// Two awake, cap 2: a third asked for puts the least recently shown to
 		// sleep.
-		lifecycle.wake("c", "shown", 10);
+		wake("c", "shown");
 		const third = plan("c", ["a", "b"], 10, 2);
 		expect(opens(third)).toEqual([
 			{ kind: "open", folder: "c", cause: "start" },
