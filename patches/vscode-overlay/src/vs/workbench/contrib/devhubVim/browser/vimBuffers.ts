@@ -63,8 +63,6 @@ import { IWorkingCopyService } from '../../../services/workingCopy/common/workin
 import { bufferCount, bufferFlags, deleteRefusal, edgeBuffer, findBuffer, formatBufferLine, listBuffers, parseStoredBuffers, quitBlocker, quitRefusal, serializeStoredBuffers, stepBuffer, StoredBuffer, StoredBufferOpen, VimBufferEntry, VimBufferError, VimBufferMarks } from '../common/vimBuffers.js';
 import { bufferKey, isDurableKey, reopenData } from './vimBufferKey.js';
 import { VimTabPages } from './vimTabPages.js';
-import { devhubKeptEditors } from '../../../browser/parts/editor/editorGroupView.js';
-import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 
 /** Workspace storage: the buffer list (common/vimBuffers.ts serializeStoredBuffers). */
 export const BUFFERS_STORAGE_KEY = 'devhubVim.buffers';
@@ -233,7 +231,7 @@ export class VimBuffers extends Disposable implements IWorkbenchContribution {
 					break;
 				}
 				r.open = reopenData(editor) ?? r.open;
-				if (!isDurableKey(key) && !devhubKeptEditors.has(editor)) {
+				if (!isDurableKey(key)) {
 					// nothing to open it again from
 					this.records.delete(key);
 				} else if (!VimTabPages.instance?.isSwitching) {
@@ -588,11 +586,7 @@ function bufferCommand(id: string, title: ILocalizedString, f1: boolean, run: (b
 		async run(_accessor: ServicesAccessor, args?: unknown): Promise<void> {
 			const buffers = VimBuffers.instance;
 			if (buffers) {
-				try {
-					await run(buffers, typeof args === 'object' && args !== null ? args as BufferArgs : {});
-				} finally {
-					DevhubFocus.instance?.afterCommand();
-				}
+				await run(buffers, typeof args === 'object' && args !== null ? args as BufferArgs : {});
 			}
 		}
 	});

@@ -191,7 +191,6 @@ import { VIM_SHELL_COMMANDS } from './vimShell.js';
 import { VIM_JS_COMMANDS } from './vimJs.js';
 import './vimTabPages.js';
 import { VimBuffers } from './vimBuffers.js';
-import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 import { WebviewTextEntry } from '../../webview/browser/webviewTextEntry.js';
 import { IWebview, IWebviewService } from '../../webview/browser/webview.js';
 import { VimCursorStyle, VimNavFocus, VimNavPrefix, captureKey, typedChar, vimCursorStyle } from '../common/vimKeys.js';
@@ -1738,14 +1737,9 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 		return `${v === undefined ? 'none' : v === this.emptyBuffer ? 'empty' : 'editor'}:${v instanceof VimEditor ? v.editor.getId() : ''}`;
 	}
 
-	/**
-	 * A command a Vim buffer runs (an ex command's step, a key's VS Code
-	 * command): when it is done, a focus it left on nothing goes back to the
-	 * active editor group (DevhubFocus, the safety net).
-	 */
+	/** A command a Vim buffer runs (an ex command's step, a key's VS Code command). */
 	runCommand(command: string, args: unknown): Promise<unknown> {
-		const done = () => DevhubFocus.instance?.afterCommand();
-		return this.commandService.executeCommand(command, ...(args === undefined ? [] : [args])).finally(done);
+		return this.commandService.executeCommand(command, ...(args === undefined ? [] : [args]));
 	}
 
 	/**
@@ -1952,7 +1946,7 @@ export class DevhubVim extends Disposable implements IWorkbenchContribution {
 			for (const c of commands) {
 				await this.commandService.executeCommand(c);
 			}
-		})().catch(err => this.navFailed(err)).finally(() => DevhubFocus.instance?.afterCommand());
+		})().catch(err => this.navFailed(err));
 	}
 
 	/**

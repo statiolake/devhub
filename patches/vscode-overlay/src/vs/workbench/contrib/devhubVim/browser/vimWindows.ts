@@ -392,15 +392,6 @@ export function cancelCommentEdit(w: CommentWindow, services: CommentServices): 
 }
 
 /**
- * The focus is not where closing the float leaves it: on nothing (`<body>`,
- * an element no longer in the page) or still in the float's widget `zone`.
- */
-export function focusLeftInFloat(zone: Element | undefined): boolean {
-	const active = getActiveElement();
-	return !active || active === active.ownerDocument.body || !active.isConnected || !!zone?.contains(active);
-}
-
-/**
  * `:q` `:close` `<C-w>c` `<C-w>q` in a comment widget: the float closes and
  * the focus goes back to its editor; what is typed stays (Neovim's 'hidden'),
  * `discard` (`:q!`) drops it.
@@ -416,11 +407,7 @@ export function focusLeftInFloat(zone: Element | undefined): boolean {
  * The focus is in the editor, on the thread's lines, before anything in the
  * widget changes: VS Code then folds or drops a widget that no longer has it,
  * so neither its hide nor its dispose (which removes the input) can leave the
- * focus on `<body>` or in a hidden input. Whatever the widget's own code or
- * the extension does with the focus right after (an edit's Cancel, a reply
- * input that refocuses itself on a thread update), the focus is put back in
- * the editor once more after this task when it is not anywhere else
- * (focusLeftInFloat); a place the user went to meanwhile keeps it.
+ * focus on `<body>` or in a hidden input.
  *
  * `written`: the write of the same `:wq` `:x`, which this marks closed; a new
  * thread it submitted is folded by the write once it has its comment.
@@ -454,13 +441,6 @@ export function closeCommentWindow(w: CommentWindow, discard: boolean, services?
 	if (fold && widget) {
 		widget.commentThread.collapsibleState = CommentThreadCollapsibleState.Collapsed;
 	}
-	const keep = () => {
-		if (focusLeftInFloat(w.zone)) {
-			w.editor.focus();
-		}
-	};
-	keep();
-	setTimeout(keep);
 }
 
 /**

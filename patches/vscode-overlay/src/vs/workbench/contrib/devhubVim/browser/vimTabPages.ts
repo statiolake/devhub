@@ -57,17 +57,12 @@ import { IKeybindings, KeybindingsRegistry, KeybindingWeight } from '../../../..
 import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkbenchContribution, WorkbenchPhase, registerWorkbenchContribution2 } from '../../../common/contributions.js';
-import { Registry } from '../../../../platform/registry/common/platform.js';
-import { devhubKeptEditors } from '../../../browser/parts/editor/editorGroupView.js';
-import { EditorExtensions, EditorsOrder, IEditorFactoryRegistry } from '../../../common/editor.js';
-import { EditorInput } from '../../../common/editor/editorInput.js';
 import { GroupsOrder, IEditorGroup, IEditorGroupsService, IEditorPart } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
 import { IUntitledTextEditorService } from '../../../services/untitled/common/untitledTextEditorService.js';
 import { afterClosing, freeUntitledNumber, wantsEmptyBuffer, movePage, nextTabPage, previousTabPage, restoreTabPages, serializeTabPages, TAB_PAGE_WORKING_SET_NAME, TabPage, TabPageMeta, TabPagesState, tabMoveTarget, tabPageIndex, tabPageLabel } from '../common/vimTabPages.js';
 import { CLOSE_WINDOW_COMMAND, CLOSE_WORKSPACE_COMMAND, E444, QUIT_WINDOW_COMMAND, QUIT_WINDOW_DISCARD_COMMAND } from '../common/vimEx.js';
-import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 import { bufferKey } from './vimBufferKey.js';
 import './media/vimTabline.css';
 
@@ -87,46 +82,6 @@ function hasTopBar(part: IEditorPart): part is IEditorPartWithTopBar {
 	return typeof (part as Partial<IEditorPartWithTopBar>).setDevhubTopBar === 'function';
 }
 
-/**
- * An editor of a tab page that its working set cannot hold (no serializer, or
- * one that will not serialize it: an extension's details, release notes, a
- * webview panel whose extension registered no serializer), kept alive while
- * another page is the live layout and opened again where it was.
- */
-export interface ParkedEditor {
-	readonly editor: EditorInput;
-	/** Its group, by position in the layout (GroupsOrder.GRID_APPEARANCE). */
-	readonly group: number;
-	readonly index: number;
-	readonly active: boolean;
-	readonly pinned: boolean;
-	readonly sticky: boolean;
-}
-
-/**
- * The editors of `groups` (the live layout, in grid order) that a working set
- * would drop: no serializer can serialize them. Not modified ones, nor ones
- * whose close asks: the switch does not close those, they go along into the
- * next page (EditorPart.applyState).
- */
-export function parkableEditors(groups: readonly IEditorGroup[], canSerialize: (editor: EditorInput) => boolean): ParkedEditor[] {
-	const out: ParkedEditor[] = [];
-	groups.forEach((g, group) => {
-		g.getEditors(EditorsOrder.SEQUENTIAL).forEach((editor, index) => {
-			if (editor.isDirty() || editor.closeHandler?.showConfirm() || canSerialize(editor)) {
-				return;
-			}
-			out.push({ editor, group, index, active: g.activeEditor === editor, pinned: g.isPinned(editor), sticky: g.isSticky(editor) });
-		});
-	});
-	return out;
-}
-
-function canSerializeEditor(editor: EditorInput): boolean {
-	const serializer = Registry.as<IEditorFactoryRegistry>(EditorExtensions.EditorFactory).getEditorSerializer(editor);
-	return !!serializer?.canSerialize(editor);
-}
-
 function workingSet(id: string) {
 	return { id, name: TAB_PAGE_WORKING_SET_NAME };
 }
@@ -142,18 +97,12 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 	/** The one in this window (the commands run on it). */
 	static instance: VimTabPages | undefined;
 
-	/** Whether a working set holds this editor (some serializer serializes it); the tests' fake editors say themselves. */
-	static canSerialize: (editor: EditorInput) => boolean = canSerializeEditor;
-
 	private _state: TabPagesState;
 	get state(): TabPagesState { return this._state; }
 
 	private readonly _onDidChange = this._register(new Emitter<void>());
 	/** The list, the current page, or what the current page shows changed. */
 	readonly onDidChange = this._onDidChange.event;
-
-	/** The editors each page that is not the live layout keeps alive (ParkedEditor), by its working set's id. */
-	private readonly parked = new Map<string, ParkedEditor[]>();
 
 	/** Switches and the other changes of the list run one at a time, in order. */
 	private queue: Promise<unknown> = Promise.resolve();
@@ -194,10 +143,6 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		}
 		VimTabPages.instance = this;
 		this._register(toDisposable(() => {
-			this.parked.clear();
-			this.syncKept();
-		}));
-		this._register(toDisposable(() => {
 			if (VimTabPages.instance === this) {
 				VimTabPages.instance = undefined;
 			}
@@ -234,50 +179,6 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		}
 	}
 
-	/**
-	 * The editors the pages keep (devhubKeptEditors, which EditorGroupView
-	 * does not dispose when it closes them) are those of `parked`; one no page
-	 * keeps any more and no group has open is disposed, as its close would
-	 * have done.
-	 */
-	private syncKept(): void {
-		const want = new Set([...this.parked.values()].flat().map(p => p.editor));
-		for (const editor of [...devhubKeptEditors]) {
-			if (!want.has(editor)) {
-				devhubKeptEditors.delete(editor);
-				if (!editor.isDisposed() && !this.groups.groups.some(g => g.contains(editor, { strictEquals: true }))) {
-					editor.dispose();
-				}
-			}
-		}
-		for (const editor of want) {
-			devhubKeptEditors.add(editor);
-		}
-	}
-
-	/** The page's kept editors go back where they were in its layout (now the live one), the same editors. */
-	private async unpark(list: readonly ParkedEditor[] | undefined, focus: boolean): Promise<void> {
-		if (!list?.length) {
-			return;
-		}
-		const groups = this.groups.mainPart.getGroups(GroupsOrder.GRID_APPEARANCE);
-		// the active ones last, so that each group shows the editor it showed
-		for (const p of [...list].sort((a, b) => Number(a.active) - Number(b.active) || a.group - b.group || a.index - b.index)) {
-			if (p.editor.isDisposed() || this.groups.groups.some(g => g.contains(p.editor, { strictEquals: true }))) {
-				continue;
-			}
-			const group = groups[p.group] ?? this.groups.activeGroup;
-			// the active group's own editor takes the focus as opening it does (the focus was in the editor area)
-			const takesFocus = focus && p.active && group === this.groups.activeGroup;
-			await group.openEditor(p.editor, { index: p.index, pinned: p.pinned, sticky: p.sticky, inactive: !p.active, preserveFocus: !takesFocus });
-		}
-	}
-
-	/** The editors the page whose working set is `ws` keeps (tests). */
-	parkedOf(ws: string): readonly ParkedEditor[] {
-		return this.parked.get(ws) ?? [];
-	}
-
 	private run<T>(fn: () => Promise<T>): Promise<T> {
 		const next = this.queue.then(fn);
 		this.queue = next.catch(() => undefined);
@@ -295,13 +196,7 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 		const started = performance.now();
 		const editorFocused = this.layoutService.hasFocus(Parts.EDITOR_PART);
 		if (!close) {
-			const keep = parkableEditors(this.groups.mainPart.getGroups(GroupsOrder.GRID_APPEARANCE), VimTabPages.canSerialize);
 			const saved = this.groups.saveWorkingSet(TAB_PAGE_WORKING_SET_NAME);
-			if (keep.length) {
-				// before the layout is applied: closing them for it does not dispose them
-				this.parked.set(saved.id, keep);
-				this.syncKept();
-			}
 			pages[from] = { ws: saved.id, ...this.liveMeta() };
 			// stored before anything else changes: a window that goes away during the switch still has the page
 			this._state = { pages, current: from };
@@ -324,21 +219,7 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 			if (to.ws) {
 				this.groups.deleteWorkingSet(workingSet(to.ws));
 			}
-		}
-		const back = to.ws ? this.parked.get(to.ws) : undefined;
-		if (to.ws) {
-			this.parked.delete(to.ws);
-		}
-		try {
-			this.switching = true;
-			await this.unpark(back, editorFocused);
-		} finally {
-			this.switching = false;
-			this.syncKept();
-			const current = close && target > from ? target - 1 : target;
-			// what the page shows with its kept editors back
-			pages[current] = { ws: null, ...this.liveMeta() };
-			this.setState({ pages, current });
+			this.setState({ pages, current: close && target > from ? target - 1 : target });
 		}
 		const done = performance.now();
 		const groups = this.groups.mainPart.getGroups(GroupsOrder.GRID_APPEARANCE);
@@ -435,8 +316,6 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 			this.setState({ pages: rest, current: index < current ? current - 1 : current });
 			if (ws) {
 				this.groups.deleteWorkingSet(workingSet(ws));
-				this.parked.delete(ws);
-				this.syncKept();
 			}
 		});
 	}
@@ -451,8 +330,6 @@ export class VimTabPages extends Disposable implements IWorkbenchContribution {
 					this.groups.deleteWorkingSet(workingSet(p.ws));
 				}
 			}
-			this.parked.clear();
-			this.syncKept();
 		});
 	}
 
@@ -687,12 +564,7 @@ function tabPageCommand(id: string, title: ILocalizedString, f1: boolean, run: (
 		async run(_accessor: ServicesAccessor, args?: unknown): Promise<void> {
 			const pages = VimTabPages.instance;
 			if (pages) {
-				try {
-					await run(pages, typeof args === 'object' && args !== null ? args as TabPageArgs : {});
-				} finally {
-					// a switch whose layout had nothing to take the focus (DevhubFocus, the safety net)
-					DevhubFocus.instance?.afterCommand();
-				}
+				await run(pages, typeof args === 'object' && args !== null ? args as TabPageArgs : {});
 			}
 		}
 	});

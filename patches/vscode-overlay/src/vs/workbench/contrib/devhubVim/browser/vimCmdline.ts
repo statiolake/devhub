@@ -88,7 +88,6 @@ import { resolveFileBase } from './vimEdit.js';
 import { VIM_CMDLINE_COMMANDS, VIM_CMDLINE_CONTEXT, VimCmdlineController, cmdlineCompletionContext, cmdlineCompletions, splitFileArg } from '../common/vimCmdline.js';
 import { captureKey } from '../common/vimKeys.js';
 import { VimBuffers } from './vimBuffers.js';
-import { DevhubFocus } from '../../devhubFocus/browser/devhubFocus.contribution.js';
 import './media/vimCmdline.css';
 
 /** Editors inside an element with this class are never Vim editors (devhubVim.contribution.ts `vimDrives`). */
@@ -522,8 +521,6 @@ export class VimCmdline extends Disposable {
 		s.view.container.classList.add('hidden');
 		if (refocus) {
 			s.origin.focus();
-			// an origin that went away while the line was open (an empty group closed, a list re-rendered)
-			DevhubFocus.instance?.afterCommand(s.view.window);
 		}
 	}
 

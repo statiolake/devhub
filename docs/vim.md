@@ -481,8 +481,7 @@ the thread's lines (as `CTRL-W k` above puts it), in normal mode, as leaving a w
 (one mode for every window: an editor left in insert or visual mode when the
 widget opened is back in normal mode). The focus is put in the editor before
 the widget folds or VS Code drops it, so its hide and dispose never take it
-with them, and once more after the command when the widget's code or the
-extension left it on nothing or back in the widget. The keys typed in a
+with them. The keys typed in a
 comment input are the input's, never its editor's: an editor's own record of
 having the text focus learns of a blur only from the event, which a workbench
 without the OS focus never gets, so the editor a comment input is in can still
@@ -562,22 +561,18 @@ Cmd+1 … 9 (Ctrl+1 … 9 elsewhere) stay VS Code's Focus Nth Editor Group: the
 windows of the page. Cmd+W is no editor-tab key here: with Vim on it is free
 for the `CTRL-W` prefix (bind it, as above); `:bd` / `:q` close.
 
-**Editors a working set cannot hold go along with their page.** A working
-set keeps only what some serializer can serialize. An extension's details
-page, release notes, and an extension's webview panel whose extension
-registered no serializer have none, so applying another page's layout used to
-close them for good (an extension's panel was disposed, as if you had closed
-it) and coming back found them gone. Now a page keeps them — the same editor
-objects, not disposed (`devhubKeptEditors`, patched into VS Code's
-`EditorGroupView`, which does not dispose an editor a tab page keeps) — while
-another page is the live layout, and coming back opens them again where they
-were (their group, their place in it, the one each group showed). An editor
-whose extension disposed it meanwhile is not opened again; `:tabc` and
-`:tabo` let a closed page's kept editors go (disposed, as closing them would).
-They live in memory: a reload or hibernation, which restores only the working
-sets, loses them, as VS Code loses them at a reload. A webview editor that has
-a serializer (the Markdown preview, a custom editor) was always in the working
-set: switching back revives it from its saved state, as a reload does.
+**Editors a working set cannot hold close when their page is left.** A
+working set keeps only what some serializer can serialize. An extension's
+details page, release notes, and an extension's webview panel whose extension
+registered no serializer have none, so leaving their tab page closes them, as
+applying any VS Code working set does (an extension's panel is disposed, as if
+you had closed it), and coming back does not find them. Open them again there.
+A webview editor that has a serializer (the Markdown preview, a custom editor)
+is in the working set: switching back revives it from its saved state, as a
+reload does. (Keeping every editor open and changing only what each page
+shows is not possible with VS Code's editor groups: a group shows its own
+editors, a page's layout has its own number of groups, and VS Code has no
+hidden groups to keep the others' editors in.)
 
 **The empty buffer of `:tabnew`** is an untitled editor (`Untitled-N`, with an
 N no other tab page's layout has, so two pages never share one). Empty, it is

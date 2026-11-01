@@ -23,9 +23,7 @@ import { IWorkbenchLayoutService } from '../../../../services/layout/browser/lay
 import { IUntitledTextEditorService } from '../../../../services/untitled/common/untitledTextEditorService.js';
 import { CommandsRegistry, ICommandService } from '../../../../../platform/commands/common/commands.js';
 import { KeybindingsRegistry, KeybindingWeight } from '../../../../../platform/keybinding/common/keybindingsRegistry.js';
-import { DevhubFocus } from '../../../devhubFocus/browser/devhubFocus.contribution.js';
 import { NATIVE_TAB_KEYS, TAB_PAGES_STORAGE_KEY, VimTabPages } from '../../browser/vimTabPages.js';
-import { devhubKeptEditors } from '../../../../browser/parts/editor/editorGroupView.js';
 
 /** `serializable: false`: no working set holds it (an extension's details, a webview panel with no serializer); `disposed`: closed for good. */
 interface FakeEditor { name: string; dirty: boolean; serializable?: boolean; disposed?: boolean }
@@ -84,11 +82,9 @@ class FakeWorkbench {
 	/** As EditorPart.applyState: every editor whose close would ask is kept, and opened in the active group of the new layout unless that has it. */
 	apply(target: Layout | 'empty'): void {
 		const kept = this.layout.groups.flatMap(g => g.editors.filter(e => e.dirty));
-		// as EditorGroupView: a closed editor no group has is disposed, unless a tab page keeps it (devhubKeptEditors)
+		// as EditorGroupView: a closed editor no group has is disposed
 		for (const e of this.layout.groups.flatMap(g => g.editors.filter(e => !e.dirty))) {
-			if (!devhubKeptEditors.has(this.input(e))) {
-				e.disposed = true;
-			}
+			e.disposed = true;
 		}
 		const next: Layout = target === 'empty' ? { groups: [{ id: 1, editors: [], active: 0 }], active: 0 } : clone(target);
 		for (const e of kept) {
@@ -293,7 +289,6 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		}));
 
 	setup(() => {
-		VimTabPages.canSerialize = editor => (editor as unknown as { fake: FakeEditor }).fake.serializable !== false;
 		wb = new FakeWorkbench();
 		disposables.add(wb.disposables);
 		storage = disposables.add(new InMemoryStorageService());
@@ -357,27 +352,6 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.deepStrictEqual(wb.shown(), [['notes.md+', 'c.ts']]);
 		assert.strictEqual(pages.state.pages.length, 1);
 		assert.strictEqual(wb.sets.size, 0);
-	});
-
-	test('a tab page command, when it is done, has the safety net put a focus left on nothing in the active group (DevhubFocus)', async () => {
-		const pages = create();
-		wb.open('a.ts');
-		await pages.newPage(FILE);
-		const before = DevhubFocus.instance;
-		let checked = 0;
-		DevhubFocus.instance = { afterCommand: () => { checked++; } } as unknown as DevhubFocus;
-		try {
-			assert.strictEqual(VimTabPages.instance, pages);
-			await CommandsRegistry.getCommand('devhubVim.tabpage.next')!.handler(undefined!, { count: null });
-			assert.strictEqual(pages.state.current, 0);
-			assert.strictEqual(checked, 1);
-			// also when the command fails (E784)
-			await pages.close();
-			await assert.rejects(Promise.resolve(CommandsRegistry.getCommand('devhubVim.tabpage.close')!.handler(undefined!, {})));
-			assert.strictEqual(checked, 2);
-		} finally {
-			DevhubFocus.instance = before;
-		}
 	});
 
 	test(':tabc closes the current page (to the next one, the previous from the last), :tabc N another; E784 on the last one', async () => {
@@ -631,45 +605,14 @@ suite('DevHub Vim tab pages: switching on working sets', () => {
 		assert.strictEqual(bar(), undefined);
 	});
 
-	test('a webview editor no working set can hold (an extension\'s details, a webview panel without a serializer) is kept, not closed for good: back on its page it is the same editor, where it was', async () => {
+	test('an editor no working set can hold (an extension\'s details, a webview panel without a serializer) closes when its page is left, as VS Code\'s working sets close it', async () => {
 		const pages = create();
 		wb.open('a.ts');
 		const page = wb.open('Extension: Foo', false, wb.layout.active, false);
-		wb.open('b.ts');
-		wb.layout.groups[0].active = 1;
-		const input = wb.input(page);
 		await pages.newPage(FILE);
-		wb.open('c.ts');
-		assert.deepStrictEqual(wb.shown(), [['c.ts']]);
-		assert.strictEqual(page.disposed, undefined, 'not disposed by the switch');
-		assert.ok(devhubKeptEditors.has(input));
-		await pages.previous(1);
-		assert.deepStrictEqual(wb.shown(), [['a.ts', 'Extension: Foo', 'b.ts']]);
-		assert.strictEqual(wb.layout.groups[0].active, 1, 'the editor the group showed');
-		assert.strictEqual(wb.group(wb.layout.groups[0]).activeEditor, input, 'the same editor');
-		assert.ok(!devhubKeptEditors.has(input), 'kept only while its page is not the live one');
-		// a closed page lets its kept editors go, as closing them would
-		await pages.next(undefined);
-		assert.ok(devhubKeptEditors.has(input));
-		await pages.close(1);
 		assert.strictEqual(page.disposed, true);
-		assert.strictEqual(devhubKeptEditors.size, 0);
-	});
-
-	test('a kept editor that went away meanwhile (its extension disposed the panel) is not opened again; :tabo lets every kept editor go', async () => {
-		const pages = create();
-		const gone = wb.open('Release Notes', false, wb.layout.active, false);
-		await pages.newPage(FILE);
-		wb.open('x.ts');
-		gone.disposed = true;
 		await pages.previous(1);
-		assert.deepStrictEqual(wb.shown(), [[]]);
-		const kept = wb.open('Webview Panel', false, wb.layout.active, false);
-		await pages.next(undefined);
-		assert.ok(devhubKeptEditors.has(wb.input(kept)));
-		await pages.only();
-		assert.strictEqual(kept.disposed, true);
-		assert.strictEqual(devhubKeptEditors.size, 0);
+		assert.deepStrictEqual(wb.shown(), [['a.ts']]);
 	});
 
 	test('VS Code\'s editor-tab keys are the tab pages\' while Vim is on: next / previous, page N, the last, :tabmove; as default keybindings, not in Quick Open', () => {
