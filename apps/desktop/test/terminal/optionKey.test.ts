@@ -4,8 +4,8 @@
  * The bytes are xterm's: with its `macOptionIsMeta` on, Option+X is `ESC x`,
  * and off, Option composes. What is DevHub's is the per-key answer to "on or
  * off", and that is what is pinned here — including the two things a Mac
- * keyboard does not tell a letter's keydown: which Option is held, and that a
- * Japanese keyboard's Option+¥ is a backslash rather than a chord.
+ * keyboard does not tell a letter's keydown: which Option is held. No key is
+ * excepted from the setting.
  */
 
 import { describe, expect, it } from "vitest";
@@ -81,14 +81,16 @@ describe("Option as Meta in DevHub's terminals", () => {
     expect(keys.isMeta("left", down("KeyX"))).toBe(false);
   });
 
-  it("keeps Option+¥ the JIS backslash whatever the setting", () => {
+  it("excepts no key: Option+¥ follows the setting like any other", () => {
     for (const setting of [true, "left", false] as const) {
       const keys = new OptionKeys();
       keys.isMeta(setting, down("AltLeft"));
-      expect(keys.isMeta(setting, down("IntlYen"))).toBe(false);
-      // …and only that key: the next letter is Meta again.
-      expect(keys.isMeta(setting, down("KeyX"))).toBe(setting !== false);
+      expect(keys.isMeta(setting, down("IntlYen"))).toBe(setting !== false);
     }
+    // Under "left" the right Option still composes it: the JIS backslash.
+    const keys = new OptionKeys();
+    keys.isMeta("left", down("AltRight"));
+    expect(keys.isMeta("left", down("IntlYen"))).toBe(false);
   });
 
   it("answers the keypress and keyup of a chord as its keydown", () => {

@@ -20,9 +20,9 @@
  *   nobody asked for. Any event without Option forgets it, so a keyup lost to
  *   another window cannot leave it stuck.
  *
- * Whatever the setting, Option+¥ (`IntlYen`, the key left of Backspace on a
- * Japanese keyboard) composes. On a JIS Mac that is how `\` is typed, and as
- * Meta it would be `ESC \` — a terminal in which a backslash cannot be typed.
+ * No key is excepted: under `true` every Option chord is Meta, including the
+ * ones a layout types a character with (Option+¥ is `\` on a JIS Mac). Who
+ * needs those and Alt mappings both uses `"left"`, as in iTerm2 and Ghostty.
  *
  * Off a Mac none of this matters: xterm reads Alt as Meta there regardless of
  * the switch.
@@ -51,8 +51,6 @@ export class OptionKeys {
     if (event.code === "AltLeft") this.left = event.type !== "keyup";
     if (!event.altKey) this.left = false;
     if (setting === false) return false;
-    // Composes whatever the setting: the JIS backslash.
-    if (event.code === "IntlYen") return false;
     if (setting === true) return true;
     return this.left;
   }

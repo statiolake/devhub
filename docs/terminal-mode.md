@@ -221,10 +221,11 @@ Keys ▸ Option key popup. It applies at the next key press, no restart.
 - `"left"`: the left Option is Meta and the right one still composes — iTerm2's
   "Left Option key: Esc+", Ghostty's `macos-option-as-alt = left`.
 
-Whatever the value, **Option+¥ on a Japanese (JIS) keyboard types `\`**: as
-Meta it would be `ESC \`, and that is how a JIS Mac types a backslash. The
-key is recognised by its code (`IntlYen`), so it holds for any layout on that
-keyboard.
+No key is excepted: under `true` every Option chord is Meta, including the
+ones the layout types a character with. On a Japanese (JIS) keyboard `\` is
+Option+¥, so under `true` it is `ESC \`; a JIS user who wants Alt mappings
+and `\` uses `"left"` and types `\` with the right Option (or keeps `false`).
+This is the same answer iTerm2 and Ghostty give.
 
 xterm.js does the encoding (its `macOptionIsMeta`); DevHub decides, per key,
 whether that switch is on (`shell/surfaces/optionKey.ts`). The left Option is

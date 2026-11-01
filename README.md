@@ -354,7 +354,8 @@ mac_option_is_meta = false  # macOS Option in DevHub's terminals: false types th
                             # layout's characters (≈, @, {); true sends ESC+key for
                             # Alt mappings (Neovim <A-e>, readline, tmux M-); "left"
                             # only the left Option, the right one still composes.
-                            # Option+¥ on a JIS keyboard is always \. Not VS Code's
+                            # JIS: for \ via Option+¥ use "left" (right Option) or
+                            # false. Not VS Code's
                             # terminal (terminal.integrated.macOptionIsMeta).
                             # Settings > Terminal. See docs/terminal-mode.md.
 

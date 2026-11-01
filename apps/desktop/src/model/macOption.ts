@@ -22,8 +22,9 @@
  * as xterm.js's own `macOptionIsMeta` does. `"left"` does that for the left
  * Option only and leaves the right one composing, which is what iTerm2
  * ("Left Option key: Esc+") and Ghostty (`macos-option-as-alt = left`) offer:
- * both, on one keyboard. Either way Option+¥ (the `IntlYen` key of a Japanese
- * keyboard) still types `\`; see `shell/surfaces/optionKey.ts`.
+ * both, on one keyboard. No key is excepted from `true`: a JIS keyboard that
+ * types `\` with Option+¥ uses `"left"` (the right Option composes) or
+ * `false`; see `shell/surfaces/optionKey.ts`.
  *
  * DevHub's terminals only — the Workspace terminal, a pane's terminal and an
  * Agent's. VS Code's integrated terminal reads its own

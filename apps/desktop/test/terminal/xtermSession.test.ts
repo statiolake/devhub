@@ -499,11 +499,14 @@ describe("the shared xterm session", () => {
     expect(key("keydown", "KeyX")).toBe(true);
     expect(session.terminal.options.macOptionIsMeta).toBe(false);
 
-    // The JIS backslash composes even with the left Option.
+    // The right Option composes any key, the JIS backslash (Option+¥)
+    // included; the left one makes it Meta like any other.
+    key("keydown", "IntlYen");
+    expect(session.terminal.options.macOptionIsMeta).toBe(false);
     key("keyup", "AltRight", false);
     key("keydown", "AltLeft");
     key("keydown", "IntlYen");
-    expect(session.terminal.options.macOptionIsMeta).toBe(false);
+    expect(session.terminal.options.macOptionIsMeta).toBe(true);
 
     session.applyAppearance({
       ...(appearance as object),

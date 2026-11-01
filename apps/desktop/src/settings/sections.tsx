@@ -1470,7 +1470,7 @@ export function TerminalSection({
       >
         <Row
           label="Option key"
-          help="As Meta, Option with a key sends Esc and the key, which is what Alt mappings in Neovim, Emacs, readline and tmux read; it no longer types the characters your keyboard layout puts on Option. Left Option only keeps the right one for those characters. Option+¥ on a Japanese keyboard always types a backslash. Default Types characters."
+          help="As Meta, Option with a key sends Esc and the key, which is what Alt mappings in Neovim, Emacs, readline and tmux read; it no longer types the characters your keyboard layout puts on Option. Left Option only keeps the right one for those characters — on a Japanese keyboard, use it (or Types characters) to type a backslash with Option+¥. Default Types characters."
         >
           <Popup
             label="Option key"
