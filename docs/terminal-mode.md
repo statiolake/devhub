@@ -373,6 +373,11 @@ the terminal view uses it unchanged: it is an Agent pane's surface and wears
 the same `terminal_theme` (the theme's terminal colours by default, or the
 configured palettes).
 
+The programs inside the terminal are told the theme too — `DEVHUB_THEME`,
+`DEVHUB_FZF_COLORS` and the rest in every new pane's environment, a
+`theme.json` that is rewritten on every change, and `User DevhubTheme` in the
+managed Neovim — see `docs/window-and-pages.md`, "Terminal programs".
+
 ## Open questions
 
 - **Selections.** A link with a range puts the cursor at its start. Should it

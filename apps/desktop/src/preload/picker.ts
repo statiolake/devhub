@@ -60,6 +60,8 @@ const api: PickerBridge = {
 		) as Promise<AppOutcome>,
 	cancelPickerLookup: () =>
 		ipcRenderer.invoke(CHANNELS.cancelPickerLookup) as Promise<void>,
+	previewColorTheme: (name: string) =>
+		ipcRenderer.invoke(CHANNELS.previewColorTheme, name) as Promise<void>,
 	listAgentSessions: (place, profileId) =>
 		ipcRenderer.invoke(CHANNELS.listAgentSessions, place, profileId) as Promise<
 			readonly PastSessionWire[]

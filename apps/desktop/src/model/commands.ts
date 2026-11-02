@@ -71,6 +71,7 @@
  * | `Cmd+Q M`                   | `show_notifications`      |
  * | `Cmd+Q Shift+,`             | `open_settings`           |
  * | (palette only)              | `open_log`                |
+ * | (palette only)              | `preview_color_theme`     |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
  * | `Cmd+Q :`                   | `open_command_palette`    |
  * | `Cmd+Q H` / `L`              | `navigate_back` / `navigate_forward` |
@@ -432,6 +433,7 @@ export type CommandId =
   | "show_notifications"
   | "open_settings"
   | "open_log"
+  | "preview_color_theme"
   | "show_chord_help"
   | "open_command_palette"
   | "navigate_back"
@@ -800,6 +802,15 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: [],
   },
   {
+    // Every colour theme, worn while the cursor is on it; the one chosen is
+    // kept for the session only. Palette only: see `PALETTE_ONLY_COMMANDS`.
+    id: "preview_color_theme",
+    label: "Theme: Preview…",
+    needs: "nothing",
+    category: "DevHub",
+    defaultKeys: [],
+  },
+  {
     id: "show_chord_help",
     label: "Keyboard shortcuts",
     needs: "nothing",
@@ -849,6 +860,7 @@ export const PALETTE_ONLY_COMMANDS: ReadonlySet<CommandId> = new Set([
   "focus_sidebar",
   "open_log",
   "open_recently_closed",
+  "preview_color_theme",
 ]);
 
 const BY_ID = new Map<string, CommandDefinition>(

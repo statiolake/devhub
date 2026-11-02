@@ -59,6 +59,7 @@ import { AgentActionsSheet } from "./AgentActionsSheet";
 import { ChordHelpSheet } from "./ChordHelpSheet";
 import { CommandPaletteSheet } from "./CommandPaletteSheet";
 import { RecentlyClosedSheet } from "./RecentlyClosedSheet";
+import { ThemePreviewSheet } from "./ThemePreviewSheet";
 import { SendToAgentSheet } from "./SendToAgentSheet";
 
 /** Take one modal off screen, with the answer if it asked for one. */
@@ -183,6 +184,16 @@ function Modal({ modal }: { readonly modal: OpenModal }) {
       return (
         <CommandPaletteSheet
           rows={request.rows}
+          onDismiss={(chosen) => {
+            close(id, chosen);
+          }}
+        />
+      );
+    case "theme-preview":
+      return (
+        <ThemePreviewSheet
+          rows={request.rows}
+          current={request.current}
           onDismiss={(chosen) => {
             close(id, chosen);
           }}

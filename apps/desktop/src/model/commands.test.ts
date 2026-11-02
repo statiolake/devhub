@@ -121,6 +121,7 @@ describe("the registry itself", () => {
       "focus_sidebar",
       "open_log",
       "open_recently_closed",
+      "preview_color_theme",
     ]);
     expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
   });

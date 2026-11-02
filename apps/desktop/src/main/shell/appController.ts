@@ -246,6 +246,7 @@ import {
 import {
 	agentProfilesWire,
 	appearanceWire,
+	terminalThemeWire,
 	errorWire,
 	errorWireAt,
 	intentFromWire,
@@ -519,6 +520,9 @@ import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
 import { SettingsRefusal } from "./settingsRefusal.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
+import { themePublicationIfInstalled } from "./themePublication.js";
+import { ThemePreview } from "./themePreview.js";
+import { publishedThemeOf } from "../../model/publishedTheme.js";
 import { RepositoryStatusWatcher } from "./repositoryStatus.js";
 import { writeClipboardImage } from "./clipboardImage.js";
 import {
@@ -949,6 +953,19 @@ export class AppController {
 	 * `editor/managedNeovim.ts`.
 	 */
 	private managedNeovims: ManagedNeovims | undefined;
+	/** Theme: Preview… (`themePreview.ts`). */
+	private readonly themePreview = new ThemePreview({
+		theme: () => shellThemeIfInstalled(),
+		choose: (rows, current) =>
+			shellWindow().picker.choose({ kind: "theme-preview", rows, current }),
+		report: (problem) => {
+			this.noteFailure(
+				new NamedFailure(
+					withDetail(errorWireAt("color_theme_unavailable"), problem),
+				),
+			);
+		},
+	});
 	/** This profile's user-data directory, from `startRuntimes`. */
 	private userDataPath: string | undefined;
 	/** The launcher installation, asked for once per machine. */
@@ -1409,6 +1426,16 @@ export class AppController {
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
 		this.managedNeovims = this.createManagedNeovims(userDataPath);
+		// The theme, before any tmux server is brought up: a server is started
+		// with it, and told again on every change after (`themePublication.ts`).
+		this.publishTerminalTheme();
+		const managedNeovims = this.managedNeovims;
+		themePublicationIfInstalled()?.addSink("tmux", () =>
+			terminalRuntimes.publishThemeEnvironment(),
+		);
+		themePublicationIfInstalled()?.addSink("the managed Neovims", (theme) =>
+			managedNeovims.publishTheme(theme),
+		);
 		const skill = this.writeAgentSkill(userDataPath);
 		this.agentWiring = wireAgents({
 			// This Mac's skill is written at startup; another machine's is
@@ -1670,6 +1697,12 @@ export class AppController {
 			socketDirectory,
 			onExit: (workspaceId) => {
 				console.log(`[devhub] the managed Neovim of ${workspaceId} ended`);
+			},
+			theme: () => themePublicationIfInstalled()?.current(),
+			onThemeFailure: (workspaceId, error) => {
+				console.error(
+					`[devhub] the managed Neovim of ${workspaceId} was not told the theme: ${failureText(error)}`,
+				);
 			},
 		});
 	}
@@ -2079,6 +2112,9 @@ export class AppController {
 			},
 			openLog: () => {
 				void this.openLog().catch(report);
+			},
+			previewColorTheme: () => {
+				this.openThemePreview();
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
 			openCommandPalette: () => {
@@ -4635,10 +4671,55 @@ export class AppController {
 	 */
 	publishAppearance(): void {
 		if (!this.config) return;
+		this.publishTerminalTheme();
 		this.send(CHANNELS.appearanceChanged, this.appearance());
 		// The title bar and the sidebar's density are two of the numbers the
 		// layout is made of: changing either moves every child in the window.
 		this.publishLayoutState();
+	}
+
+	/**
+	 * Theme: Preview…, from the palette or from Settings: the main window is
+	 * brought forward, since that is what is being recoloured.
+	 */
+	openThemePreview(): void {
+		shellWindow().raiseFromAppActivation();
+		void this.themePreview.open().catch((error: unknown) => {
+			this.noteFailure(
+				new NamedFailure(
+					withDetail(
+						errorWireAt("color_theme_unavailable"),
+						failureText(error),
+					),
+				),
+			);
+		});
+	}
+
+	/**
+	 * Tell the programs in DevHub's terminals the theme (`themePublication.ts`):
+	 * its name, and the palette DevHub's own terminals are given under it —
+	 * the theme's terminal colours, or the person's own palettes under
+	 * `[appearance.terminal_theme]` — for the appearance worn now. Published
+	 * whenever the appearance is, which is every change of theme, of
+	 * appearance and of settings; an unchanged value goes nowhere.
+	 */
+	publishTerminalTheme(): void {
+		const publication = themePublicationIfInstalled();
+		const theme = shellThemeIfInstalled();
+		const config = this.config;
+		if (!publication || !theme || !config) return;
+		const palettes = terminalThemeWire(
+			config.appearance.terminalTheme,
+			theme.terminalPalette(),
+		);
+		publication.publish(
+			publishedThemeOf({
+				theme: theme.workbenchColorTheme(),
+				terminal: palettes[theme.palette().base],
+				temporary: theme.temporaryTheme() !== undefined,
+			}),
+		);
 	}
 
 	/**
@@ -10094,6 +10175,11 @@ export class AppController {
 		// Escape, or the sheet going away. There is one lookup at a time, so
 		// there is nothing to identify: this ends the one that is running, and
 		// the `git` child dies with it rather than at the deadline.
+		// Theme: Preview…'s cursor moved; ignored unless that sheet is open.
+		handle(CHANNELS.previewColorTheme, (_event, name: unknown) => {
+			if (typeof name === "string") this.themePreview.preview(name);
+			return Promise.resolve();
+		});
 		handle(CHANNELS.cancelPickerLookup, () => {
 			this.pickerLookup?.cancel();
 			this.pickerLookup = undefined;

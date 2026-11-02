@@ -16,6 +16,16 @@ import { installMainFailureRoot } from "./mainFailureRoot.js";
 import { appearanceMode } from "./appearanceMode.js";
 import { installShellTheme, ShellTheme, shellTheme } from "./shellTheme.js";
 import {
+	installThemePublication,
+	ThemePublication,
+} from "./themePublication.js";
+import { themeFilePath } from "../../model/publishedTheme.js";
+import { themeTypeOfUiTheme } from "../../model/colorTheme.js";
+import { ThemeLibrary, themeLibraryDirectory } from "./themeLibrary.js";
+import { OpenVsxClient } from "./openVsx.js";
+import { themeSettings } from "./themeSettings.js";
+import { tmpdir } from "node:os";
+import {
 	findColorTheme,
 	listColorThemes,
 	loadColorTheme,
@@ -200,10 +210,27 @@ export async function bootstrapShell(
 	// settings ask for is applied first; the controller applies the same
 	// value again once it has loaded them.
 	appearanceMode().apply(appearanceModeIn(settingsText));
+	// DevHub's own theme library is a third place themes are found in.
+	const roots: ExtensionRoots = {
+		...extensionRoots,
+		devhub: themeLibraryDirectory(userDataPath),
+	};
+	// What the programs in DevHub's terminals are told about the theme
+	// (`themePublication.ts`); the controller publishes into it.
+	installThemePublication(
+		new ThemePublication({
+			file: themeFilePath(activeProfile(), homedir()),
+			onFailure: (what, error) => {
+				console.error(
+					`[devhub] the colour theme was not published to ${what}: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			},
+		}),
+	);
 	installShellTheme(
 		new ShellTheme(
 			() => {
-				const themes = listColorThemes(extensionRoots);
+				const themes = listColorThemes(roots);
 				return (name) => {
 					const entry = findColorTheme(themes, name);
 					return entry && loadColorTheme(entry);
@@ -211,6 +238,20 @@ export async function bootstrapShell(
 			},
 			() => electron.nativeTheme.shouldUseDarkColors,
 			colorThemesIn(settingsText),
+			() =>
+				listColorThemes(roots).map((entry) => ({
+					name: entry.settingsId,
+					label: entry.label,
+					type: themeTypeOfUiTheme(entry.uiTheme),
+					extension: entry.extension,
+					source:
+						roots.devhub !== undefined && entry.path.startsWith(roots.devhub)
+							? "devhub"
+							: roots.builtin !== undefined &&
+								  entry.path.startsWith(roots.builtin)
+								? "builtin"
+								: "extension",
+				})),
 		),
 	);
 	const palette = shellTheme().palette();
@@ -450,6 +491,24 @@ export async function bootstrapShell(
 			};
 		},
 		changeSocket: (name) => controller.changeTerminalSocket(name),
+		themes: themeSettings({
+			theme: shellTheme,
+			library: new ThemeLibrary(themeLibraryDirectory(userDataPath), tmpdir()),
+			// Electron's network stack: the system's proxy and certificates.
+			openVsx: new OpenVsxClient((url, init) => electron.net.fetch(url, init)),
+			workbench: () =>
+				Promise.resolve({
+					installVsix: async (path: string) => {
+						await controller.installExtensionsFromCli([path], true, homedir());
+					},
+					uninstall: async (id: string) => {
+						await controller.uninstallExtensionsFromCli([id], true);
+					},
+				}),
+			preview: () => {
+				controller.openThemePreview();
+			},
+		}),
 	});
 
 	controller.installChords();

@@ -471,6 +471,132 @@ front. All of it is gone; nothing is cached, because the theme is read from its
 files in a few milliseconds at startup and again on every save of the settings
 (so a theme installed since is found by saving the setting that names it).
 
+### Themes from Open VSX: DevHub's own library
+
+Settings ▸ General ▸ Colour themes searches Open VSX
+(`https://open-vsx.org/api/-/search?category=Themes&query=…`, `openVsx.ts`)
+and installs a result into DevHub's own library,
+`<userData>/devhub/themes/<publisher>.<name>-<version>/`
+(`themeLibrary.ts`). The network is reached only from that group, only when
+the person searches or presses Install — never at startup — and every failure
+(offline, a status, a timeout, a download from another origin or over 25 MB)
+is a sentence shown there.
+
+The `.vsix` is untrusted. It is read through its zip central directory with
+caps on the number of entries, each entry's inflated size and the total
+(`zipArchive.ts`); an entry name that is absolute, has a drive letter, a
+backslash or a `..` segment, an encrypted or ZIP64 entry, one that inflates
+past the size it declares or fails its CRC, are refusals. Of what is in it only
+the colour theme is kept: `extension/package.json` must contribute `themes`;
+the theme files it names (JSON only) and every file they reach through
+`include` or a `tokenColors` path — each inside the extension — are
+extracted, with `package.nls.json` and the licence. The `package.json` written
+is reduced to its identity and `contributes.themes`: no `main`, no activation
+events, no other contribution, so nothing in the library can run. It is written
+to a staging directory and renamed into place, replacing other versions.
+`colorThemeCatalog.ts` reads the library as a third root after the built-ins,
+before the extensions directory; a theme in both is listed once.
+
+**The workbench wears it too.** A workbench is told the theme's name, and its
+own theme service falls back to VS Code's default for a name its catalog does
+not have. So the same reduced copy is also installed into the workbench's
+extensions directory, through VS Code's own install-from-VSIX — DevHub zips
+exactly the files it extracted and hands that `.vsix` to the running app's
+extension management service, the path `devhub --install-extension x.vsix`
+takes (`extensionCommands.ts`). That is VS Code's installer writing its own
+`extensions.json`, rather than DevHub writing into a directory VS Code owns,
+and what it installs is the inert copy, not the download. Should it fail, the
+library keeps its copy, Settings says the editors will wear VS Code's default,
+and the shell, panes and terminals still wear the theme. Uninstall removes the
+library copy and the workbench's. (Feeding the colours through
+`devhubInitialColorTheme` alone was rejected: it paints only until the
+workbench reads its catalog, and carries no token colours.)
+
+### Theme: Preview…
+
+The command palette's **Theme: Preview…** (`preview_color_theme`, palette
+only) and Settings' Preview Themes… open a picker of every theme that can be
+worn (`themePreview.ts`), the one worn now first. The row under the cursor is
+worn at once — `ShellTheme.wearTemporarily(name, "preview")`, which is the
+same change as any other: the window and its pages, every workbench (one
+theme for both halves of its managed settings while it lasts), the panes, and
+the programs in the terminals through the publication below. Return keeps it
+for the session; Escape puts back what was worn before the picker opened.
+Nothing is written: the settings still name what they named, and the next
+time they are applied — a save, Reload in Settings (even when the file did not
+change), a restart — `ShellTheme.configure` drops the temporary theme. While
+one is worn, the published theme says `temporary: true`.
+
+### Terminal programs
+
+DevHub tells the programs in its own terminals — the Workspaces' `ws-` tmux
+sessions, Scratch, the Agents' sessions, the managed Neovim — which theme it
+wears, so that a Neovim or an fzf can follow it. It only publishes: what to do
+with it is the person's own config. The value is `model/publishedTheme.ts`'s
+and its delivery `main/shell/themePublication.ts`'s; it is the theme worn now
+(a temporary one included) with the palette DevHub's own terminals are given
+under it — the theme's `terminal.*` colours, or the person's
+`[appearance.terminal_theme]` palettes — for the appearance worn now.
+
+**Environment**, for every new pane. Stated in each DevHub tmux server's
+_global_ environment: a new server is started with it (so Scratch's very first
+pane has it), a server an earlier DevHub left running is told on bring-up, and
+every running server is told again with `set-environment -g` when the theme
+changes. Panes already running keep the environment they started with.
+
+| Variable | Value |
+| --- | --- |
+| `DEVHUB_THEME` | the theme's name, as `theme_dark` / `theme_light` say it (`Nord`, `Dark 2026`) |
+| `DEVHUB_THEME_KIND` | `dark`, `light` or `hc` (either high-contrast theme) |
+| `DEVHUB_THEME_BACKGROUND` | `dark` or `light`: what a program that knows only two should take |
+| `DEVHUB_THEME_COLORS` | `bg=#rrggbb fg=… cursor=… cursor_text=… selection=… [selection_fg=…] color0=… … color15=…` |
+| `DEVHUB_FZF_COLORS` | a ready `fzf --color=` value: `fg:…,bg:…,hl:…,fg+:…,bg+:…,…` |
+| `DEVHUB_THEME_FILE` | the file below (on this Mac only; a host's panes get the rest) |
+
+**The file**, for programs already running: `$XDG_STATE_HOME/devhub/theme.json`
+(`~/.local/state/devhub/theme.json` when `XDG_STATE_HOME` is unset;
+`devhub-<profile>/` for another profile). Written before the first terminal
+starts — synchronously, so a Neovim colouring its first frame from it never
+finds it missing — and again a moment after every change (one write per pause
+while the preview moves), always whole: written beside and renamed into place,
+so a watcher (`fs_event`, `inotify`, kqueue) sees only complete files. Its
+object, `version: 1`:
+
+```json
+{
+  "version": 1,
+  "name": "Nord", "label": "Nord",
+  "kind": "dark", "type": "dark", "background": "dark",
+  "temporary": false,
+  "colors": { "background": "#2e3440", "foreground": "#d8dee9",
+              "cursor": "…", "cursorText": "…",
+              "selectionBackground": "…", "selectionForeground": "…",
+              "ansi": ["#3b4252", "… sixteen …"] },
+  "editor": { "editor.background": "#2e3440", "editorLineNumber.foreground": "…" },
+  "tokens": { "comment": { "fg": "#616e88", "italic": true }, "keyword": { "fg": "#81a1c1" } },
+  "fzf": "fg:#d8dee9,bg:#2e3440,…"
+}
+```
+
+`editor` is the editor's colours VS Code resolves under the theme
+(`COLOR_IDS.editor`, registry defaults included); `tokens` is, for a fixed
+list of TextMate scopes (`PUBLISHED_SCOPES`), what the theme's `tokenColors`
+give it — each of colour and style from its most specific rule, as VS Code
+picks them; selectors with a descendant or an exclusion are not taken. Every
+colour is `#rrggbb`, made opaque over the background.
+
+**The managed Neovim**, told over its msgpack-rpc socket as it is started or
+adopted and whenever the theme changes: `g:devhub_theme` (the name),
+`g:devhub_theme_kind`, `g:devhub_theme_background`, `g:devhub_theme_info` (the
+whole object above), the `DEVHUB_*` variables in its environment, and then
+`User DevhubTheme` fires with the object as its `data`. A handler that throws
+is logged and changes nothing else.
+
+**devhub.nvim** is a Neovim colorscheme built on exactly this
+(`:colorscheme devhub`): it reads the file synchronously from its `plugin/`,
+before the first redraw, and applies the same highlights on `User
+DevhubTheme`, so the first frame is already in the theme. See its README.
+
 Three scopes survive underneath this, and they are about _subject_ rather than
 about routing: an Agent's own failure is drawn over that Agent's pane, a
 Workspace's over its surface, and the failure that stopped a page from starting

@@ -1706,6 +1706,11 @@ export interface PickerBridge
 	 */
 	cancelPickerLookup(): Promise<void>;
 	/**
+	 * Theme: Preview…'s cursor is on this theme now: wear it, for the moment.
+	 * Only while that sheet is open; main ignores it otherwise.
+	 */
+	previewColorTheme(name: string): Promise<void>;
+	/**
 	 * The earlier sessions of a profile's CLI that ran in `place`, newest
 	 * first, read on its machine: the past-session rows of the agent picker.
 	 * Throws the reason (`sessions_unreadable`, or the profile's own refusal)
@@ -1858,6 +1863,7 @@ export const CHANNELS = {
 	createProject: "devhub:create-project",
 	findIssueRepositories: "devhub:find-issue-repositories",
 	cancelPickerLookup: "devhub:cancel-picker-lookup",
+	previewColorTheme: "devhub:preview-color-theme",
 	listAgentSessions: "devhub:list-agent-sessions",
 	resumeSessionElsewhere: "devhub:resume-session-elsewhere",
 	listSelectionBranches: "devhub:list-selection-branches",
@@ -2008,6 +2014,15 @@ export interface CommandPaletteRowWire {
 	readonly recent: boolean;
 }
 
+/** One row of Theme: Preview…: a theme that can be worn. */
+export interface ThemePreviewRowWire {
+	/** What the settings name it by — what is previewed and chosen. */
+	readonly name: string;
+	readonly label: string;
+	/** `Dark · VS Code`, `Light · DevHub library · publisher.name`. */
+	readonly detail: string;
+}
+
 /** One row of the Recently Closed picker: what it was, and when it closed. */
 export interface RecentlyClosedRowWire {
 	/** `Workspace ~/src/app`, `Agent “Reviewer” in ~/src/app`. */
@@ -2098,6 +2113,18 @@ export type ModalRequest =
 	| {
 			readonly kind: "recently-closed";
 			readonly rows: readonly RecentlyClosedRowWire[];
+	  }
+	/**
+	 * Theme: Preview… — every theme that can be worn. The row under the
+	 * cursor is worn while it is there (`previewColorTheme`); choosing one
+	 * keeps it for the session, closing with its index; Escape puts back what
+	 * was worn before. Nothing is written to the settings.
+	 */
+	| {
+			readonly kind: "theme-preview";
+			readonly rows: readonly ThemePreviewRowWire[];
+			/** The row of the theme worn when it opened. */
+			readonly current: number;
 	  }
 	/**
 	 * "Send to Agent…" from an editor: which of its Workspace's Agents, or a

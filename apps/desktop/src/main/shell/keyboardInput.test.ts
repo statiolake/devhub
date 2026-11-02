@@ -158,6 +158,7 @@ function host(zoomActs = true) {
 		openChordHelp: record("openChordHelp"),
 		openSettings: record("openSettings"),
 		openLog: record("openLog"),
+		previewColorTheme: record("previewColorTheme"),
 		openCommandPalette: record("openCommandPalette"),
 	};
 	return { calls, chordHost, interactions };

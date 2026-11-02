@@ -194,6 +194,8 @@ export interface ChordHost {
 	openSettings(): void;
 	/** Main's log file, `DevHub: Open Log`. */
 	openLog(): void;
+	/** Theme: Preview…: wear themes for the session only. */
+	previewColorTheme(): void;
 	/** Every command, by name — `Cmd+Q :`. */
 	openCommandPalette(): void;
 }
@@ -339,6 +341,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "open-log":
 			host.openLog();
+			return;
+		case "preview-color-theme":
+			host.previewColorTheme();
 			return;
 		case "open-command-palette":
 			host.openCommandPalette();

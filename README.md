@@ -348,6 +348,14 @@ theme_light = "Light 2026"  # and the light appearance (`mode` picks; auto is th
                             # A built-in theme or one from an installed extension,
                             # by the name the picker shows or its id. Unset: VS
                             # Code's defaults. Settings > General > Appearance.
+                            # Settings > General > Colour themes installs more
+                            # from Open VSX into DevHub's own library (and its
+                            # editors); "Theme: Preview…" wears one for the
+                            # session only. The theme is published to the
+                            # programs in DevHub's terminals (DEVHUB_THEME,
+                            # DEVHUB_FZF_COLORS, ~/.local/state/devhub/theme.json,
+                            # User DevhubTheme in the managed Neovim):
+                            # docs/window-and-pages.md, Terminal programs.
 
 [terminal]
 mac_option_is_meta = false  # macOS Option in DevHub's terminals: false types the
