@@ -412,4 +412,58 @@ describe("the Sidebar's tooltips", () => {
     expect(sent.length).toBeGreaterThan(first);
     expect(raised().lines).toEqual(FACTS);
   });
+
+  /**
+   * An Issue mark or a stop button is a few pixels inside its row; the box
+   * main puts beside the column is level with the *row*.
+   */
+  it("anchors level with the row the element is in", () => {
+    render(
+      <>
+        <div
+          className="sidebar-row"
+          ref={(node) => {
+            if (!node) return;
+            node.getBoundingClientRect = () =>
+              ({
+                left: 0,
+                right: 240,
+                top: 100,
+                bottom: 126,
+                width: 240,
+                height: 26,
+              }) as DOMRect;
+          }}
+        >
+          <button
+            type="button"
+            data-tooltip="Issue #128"
+            ref={(node) => {
+              if (!node) return;
+              node.getBoundingClientRect = () =>
+                ({
+                  left: 150,
+                  right: 170,
+                  top: 103,
+                  bottom: 123,
+                  width: 20,
+                  height: 20,
+                }) as DOMRect;
+            }}
+          >
+            mark
+          </button>
+        </div>
+        <RowTooltip />
+      </>,
+    );
+    layOut(COLUMN);
+    hover(screen.getByRole("button"));
+    expect(raised().anchor).toEqual({
+      x: 150,
+      y: COLUMN.y + 100,
+      width: 20,
+      height: 26,
+    });
+  });
 });

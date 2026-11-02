@@ -10,6 +10,7 @@ import {
 	sidebarColumnWidth,
 	sidebarOverlayHolds,
 	sidebarRect,
+	sidebarTrailingEdge,
 	surfaceRect,
 	tooltipRect,
 	trafficLightPosition,
@@ -602,7 +603,7 @@ describe("where a tooltip goes", () => {
 		expect(tooltip(input())?.visible).toBe(false);
 		expect(tooltip(input({ tooltip: placement() }))).toEqual({
 			identity: { kind: "tooltip" },
-			rect: tooltipRect(WINDOW, placement()),
+			rect: tooltipRect(WINDOW, placement(), 248),
 			visible: true,
 		});
 	});
@@ -1201,7 +1202,8 @@ describe("the floating Sidebar", () => {
 		// The shadow's room is not the card.
 		expect(holds(248 + shadow / 2, 300)).toBe(false);
 		// The tooltip, beside the row, is.
-		const box = tooltipRect(WINDOW, tooltip);
+		const box = tooltipRect(WINDOW, tooltip, 248);
+		expect(box.x).toBeGreaterThan(248);
 		expect(holds(box.x + 5, box.y + 5)).toBe(true);
 		expect(
 			sidebarOverlayHolds(
@@ -1219,5 +1221,83 @@ describe("the floating Sidebar", () => {
 	it("is never wider than the window", () => {
 		const narrow = { width: 200, height: 600 };
 		expect(sidebarRect(narrow, floating()).width).toBe(200);
+	});
+});
+
+/**
+ * A tooltip is about a row in the Sidebar, and it never stands over the
+ * Sidebar's rows: it starts past the column's visible trailing edge — the
+ * docked column's, the rail's, or the floating card's — level with the row,
+ * and only the window's edge can bring it back.
+ */
+describe("a tooltip beside the Sidebar, never over its rows", () => {
+	/** An Issue mark half way along a row: 20 wide at x 150, the row at y 140. */
+	const mark: TooltipPlacement = {
+		anchor: { x: 150, y: 140, width: 20, height: 26 },
+		size: { width: 240, height: 64 },
+	};
+	const placed = (sidebar: LayoutState["sidebar"], size = WINDOW) => {
+		const at = state({ sidebar });
+		const child = windowLayout(
+			input({ windowSize: size, state: at, tooltip: mark }),
+		).find((each) => each.identity.kind === "tooltip");
+		if (!child?.visible) throw new Error("no tooltip");
+		return { rect: child.rect, edge: sidebarTrailingEdge(size, at) };
+	};
+
+	it("starts past the docked column, level with the row", () => {
+		const { rect, edge } = placed({ width: 248, collapsed: false });
+		expect(edge).toBe(248);
+		expect(rect.x).toBe(248 + 6);
+		expect(rect.y).toBe(140);
+	});
+
+	it("starts past the floating card, at the card's full width", () => {
+		const { rect, edge } = placed({
+			width: 300,
+			collapsed: true,
+			overlay: true,
+		});
+		expect(edge).toBe(300);
+		expect(rect.x).toBe(306);
+		expect(rect.y).toBe(140);
+	});
+
+	it("starts past the rail, and past its own mark", () => {
+		const rail = placed({ width: 248, collapsed: true });
+		expect(rail.edge).toBe(40);
+		// The anchor is further right than the rail here; the box is past
+		// whichever is further, so it never covers what it is about.
+		expect(rail.rect.x).toBe(150 + 20 + 6);
+		const glyph = windowLayout(
+			input({
+				state: state({ sidebar: { width: 248, collapsed: true } }),
+				tooltip: {
+					anchor: { x: 12, y: 100, width: 16, height: 26 },
+					size: { width: 240, height: 64 },
+				},
+			}),
+		).find((each) => each.identity.kind === "tooltip");
+		expect(glyph?.rect.x).toBe(40 + 6);
+	});
+
+	it("never flips back over the rows; only the window's edge clamps it", () => {
+		const narrow = { width: 420, height: 600 };
+		const { rect } = placed({ width: 248, collapsed: false }, narrow);
+		// No room past the column: against the window's edge, not mirrored to
+		// the leading side of the mark.
+		expect(rect.x).toBe(420 - 240 - 4);
+		expect(rect.x).toBeGreaterThan(150 - 240);
+	});
+
+	it("moves up, and only up, at the foot of the window", () => {
+		const low: TooltipPlacement = {
+			...mark,
+			anchor: { ...mark.anchor, y: 880 },
+		};
+		const child = windowLayout(input({ tooltip: low })).find(
+			(each) => each.identity.kind === "tooltip",
+		);
+		expect(child?.rect.y).toBe(900 - 64 - 4);
 	});
 });

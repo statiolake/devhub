@@ -166,8 +166,10 @@ describe("the tooltip layer", () => {
 		show();
 		tooltip.setSize({ width: 220, height: 34 });
 		const bounds = view().bounds;
-		expect(bounds).toEqual({ x: 14 + 16 + 6, y: 120, width: 220, height: 34 });
-		expect(bounds!.x + bounds!.width).toBeGreaterThan(44);
+		// Past the rail it is about — the traffic lights' 76px here — and not
+		// merely past the glyph: a tooltip never stands over the Sidebar's rows.
+		expect(bounds).toEqual({ x: 76 + 6, y: 120, width: 220, height: 34 });
+		expect(bounds!.x + bounds!.width).toBeGreaterThan(76);
 	});
 
 	it("is parked, never taken out of the window, when the tooltip goes down", () => {

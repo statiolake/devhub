@@ -456,6 +456,28 @@ export function sidebarRect(
 }
 
 /**
+ * Where the Sidebar's visible trailing edge is, in the window: the docked
+ * column's or the rail's width, or — while it floats — the card's full width.
+ *
+ * The card's *full* width even while it is still growing out of the rail: a
+ * tooltip placed against it is outside the card in every frame of the growth
+ * rather than overtaken by it, and it is already where the edge comes to
+ * rest. A tooltip is only ever about a row in this column, so this is the line
+ * no tooltip may be placed across (`tooltipRect`).
+ */
+export function sidebarTrailingEdge(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): number {
+	const column = sidebarColumnWidth(state);
+	if (state.sidebar.overlay !== true) return column;
+	return Math.max(
+		column,
+		Math.min(windowSize.width, Math.round(state.sidebar.width)),
+	);
+}
+
+/**
  * Whether a pointer at `point` (window coordinates) is still somewhere the
  * floating Sidebar belongs to: on the card — the rail is its leading part —
  * or on the tooltip one of its rows raised, which is its own view beside it.
@@ -481,7 +503,11 @@ export function sidebarOverlayHolds(
 	};
 	if (within(point, card)) return true;
 	return (
-		tooltip !== undefined && within(point, tooltipRect(windowSize, tooltip))
+		tooltip !== undefined &&
+		within(
+			point,
+			tooltipRect(windowSize, tooltip, sidebarTrailingEdge(windowSize, state)),
+		)
 	);
 }
 
@@ -732,10 +758,18 @@ function clamp(value: number, low: number, high: number): number {
  * A row near the foot of the window moves the box *up* — it is the only
  * direction the clamp can move it — so nothing is ever placed below the row
  * it is about.
+ *
+ * **Outside the Sidebar, and never over its rows.** Given the Sidebar's
+ * visible trailing edge (`column`, see `sidebarTrailingEdge`), the box starts
+ * past it, whatever inside the row it is about — an Issue mark half way along
+ * a row used to put its sentence over the rest of that row and the rows below.
+ * There is no flip then: the leading side is the rows. Only the window's own
+ * edge can bring it back over them, in a window too narrow for both.
  */
 export function tooltipRect(
 	windowSize: LayoutSize,
 	placement: TooltipPlacement,
+	column?: number,
 ): LayoutRect {
 	const { anchor, size } = placement;
 	// Never wider or taller than the window itself: everything below is
@@ -746,6 +780,18 @@ export function tooltipRect(
 	const lastX = Math.max(0, windowSize.width - width - TOOLTIP_MARGIN);
 	const lastY = Math.max(0, windowSize.height - height - TOOLTIP_MARGIN);
 
+	if (column !== undefined) {
+		return {
+			x: clamp(
+				Math.max(anchor.x + anchor.width, column) + TOOLTIP_GAP,
+				TOOLTIP_MARGIN,
+				lastX,
+			),
+			y: clamp(anchor.y, TOOLTIP_MARGIN, lastY),
+			width,
+			height,
+		};
+	}
 	const right = anchor.x + anchor.width + TOOLTIP_GAP;
 	// Flipped to the anchor's leading side when the trailing side would run
 	// past the window's edge.
@@ -1095,7 +1141,13 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 		layer(
 			{ kind: "tooltip" },
 			windowSize,
-			input.tooltip ? tooltipRect(windowSize, input.tooltip) : undefined,
+			input.tooltip
+				? tooltipRect(
+						windowSize,
+						input.tooltip,
+						sidebarTrailingEdge(windowSize, state),
+					)
+				: undefined,
 		),
 	);
 	return children;

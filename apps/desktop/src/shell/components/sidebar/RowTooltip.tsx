@@ -191,7 +191,20 @@ export function RowTooltip({ generation }: RowTooltipProps = {}) {
     shown.current = { element, text: JSON.stringify(lines) };
     const sidebar = area.current;
     if (!sidebar) return;
-    const box = element.getBoundingClientRect();
+    const own = element.getBoundingClientRect();
+    // Level with the *row*, whatever in it the pointer is on: an Issue mark
+    // or a stop button is a few pixels inside its row, and the box beside the
+    // column is about the row it stands level with. Across, it is the
+    // element's own box — main puts the tooltip past the Sidebar's edge
+    // whatever it is (`windowLayout.tooltipRect`).
+    const row = element.closest<HTMLElement>(".sidebar-row");
+    const level = row === null ? own : row.getBoundingClientRect();
+    const box = {
+      left: own.left,
+      width: own.width,
+      top: level.top,
+      height: level.height,
+    };
     // This view's own pixels plus this view's origin in the window. The
     // row's box is relative to the view; main's rectangle says where the
     // view is; the sum is where the row is on the window.
