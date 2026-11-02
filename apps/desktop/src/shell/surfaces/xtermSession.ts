@@ -428,6 +428,46 @@ export function openXtermSession(
   input?.addEventListener("compositionend", onCompositionEnd);
   input?.addEventListener("input", onInput);
   /**
+   * Keep the composition an Option-as-Meta key starts away from xterm.
+   *
+   * Pressing a key with Option held on a Mac hands it to macOS's text input
+   * before the page sees the keydown, and a dead key — Option+N (`˜`), Option+E
+   * (`´`), Option+U, Option+I, Option+` on a US layout — starts a composition
+   * there. Cancelling the keydown, which xterm does once it has sent `ESC n`,
+   * stops a character from being *typed*, but not a composition from being
+   * *started*: Chromium raises compositionstart regardless, xterm's composition
+   * helper picks it up, and the next key commits the dead key's mark together
+   * with that key's own Option character — Option+N then Option+P sent `ESC n`,
+   * `ESC p` and then `˜π`. xterm ignores the composition *keydown* under
+   * `macOptionIsMeta` already; this makes it ignore the composition too.
+   *
+   * So a composition that starts on a Meta keydown is stopped before it
+   * reaches the textarea's listeners (xterm's and the ones above), from its
+   * start to its end, and the scratch pad is emptied, which also tells the
+   * browser and macOS to drop the mark. A composition that starts on any
+   * other key — a Japanese IME, the right Option under `"left"`, every Option
+   * under `false` — is not touched, so Option+E then e is still `é`.
+   */
+  /** Whether the latest keydown was an Option chord xterm sent as Meta. */
+  let optionWasMeta = false;
+  let metaComposition = false;
+  const onMetaComposition = (event: Event): void => {
+    if (event.type === "compositionstart") metaComposition = optionWasMeta;
+    if (!metaComposition) return;
+    event.stopPropagation();
+    if (event.type === "compositionend") metaComposition = false;
+    clearWhenIdle();
+  };
+  const metaCompositionEvents = [
+    "compositionstart",
+    "compositionupdate",
+    "compositionend",
+    "input",
+  ] as const;
+  for (const type of metaCompositionEvents) {
+    host.addEventListener(type, onMetaComposition, true);
+  }
+  /**
    * Answer the Mac editing chords the way Ghostty does; leave everything else.
    *
    * The handler used to say yes to every key, and xterm's own encoder bails out
@@ -447,7 +487,8 @@ export function openXtermSession(
    * Option as Meta, decided per key (see `optionKey.ts`) and handed to xterm's
    * own switch before xterm reads it, which is later in this same keydown.
    * Every event goes through it — keyup too — so the left and right Option are
-   * followed as they go down and come up.
+   * followed as they go down and come up. A keydown also notes whether it was
+   * Meta, for the composition guard above.
    */
   let macOptionIsMeta: MacOptionIsMeta =
     options.appearance?.terminalMacOptionIsMeta ?? false;
@@ -458,6 +499,7 @@ export function openXtermSession(
       terminal.options.macOptionIsMeta = meta;
     }
     if (event.type !== "keydown") return true;
+    optionWasMeta = meta && event.altKey;
     const sequence = editingSequence(event);
     if (sequence === undefined) return true;
     event.preventDefault();
@@ -588,6 +630,9 @@ export function openXtermSession(
       input?.removeEventListener("compositionstart", onCompositionStart);
       input?.removeEventListener("compositionend", onCompositionEnd);
       input?.removeEventListener("input", onInput);
+      for (const type of metaCompositionEvents) {
+        host.removeEventListener(type, onMetaComposition, true);
+      }
       observer?.disconnect();
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;

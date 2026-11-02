@@ -233,6 +233,15 @@ followed from its own keydown and keyup, since a letter's keydown does not say
 which Option is held; one already held when the terminal took focus counts as
 up until it is pressed again. A refused value is `invalid_mac_option_is_meta`.
 
+A Meta key sends only its `ESC` sequence. Option+N, E, U, I and `` ` `` are dead
+keys on a US layout, and macOS starts their composition before the page sees
+the key, so cancelling the keydown is not enough: the next key would commit
+the mark (Option+N then Option+P used to add `˜π` after `ESC n ESC p`). A
+composition that starts on a Meta key is therefore kept from xterm and its
+text dropped (`shell/surfaces/xtermSession.ts`); one that starts on any other
+key — the right Option under `"left"`, every Option under `false`, an IME — is
+untouched, so Option+E then e is still `é`.
+
 VS Code's integrated terminal is not covered: it reads
 `terminal.integrated.macOptionIsMeta` (a boolean; no left-only choice), and
 DevHub writes no terminal settings into the workbench (see
