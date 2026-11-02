@@ -118,6 +118,102 @@ export function gapUnder(
   return at + 1 < lane.length ? lane[at + 1] : undefined;
 }
 
+/**
+ * Which gap the pointer means over *any* row — forgiving where the group rules
+ * allow it, the way a file tree or a browser's tabs are.
+ *
+ * A row of the lane is `gapUnder`. A row that is not, but belongs to a group in
+ * the lane, still means a gap of that lane rather than nothing:
+ *
+ * - A worktree row under a repository that is moving among repositories is
+ *   part of that repository's group on screen, so it means the gap *after* the
+ *   group — and the last group's last worktree, which is the bottom of the
+ *   list, is the end. Nothing else could have meant "move to the end" there:
+ *   the visually last row was not a place to drop at all.
+ * - A repository's own row, over which one of its worktrees is being dragged,
+ *   is above every gap that worktree may use: it means the first of them.
+ * - An Agent dragged over its own Workspace's row means the first of its
+ *   Agents, symmetrically with the end.
+ * - Scratch, above every other row, is the top edge: the start of the list
+ *   for a row that moves among the top-level rows.
+ *
+ * Anything else — another group, another Workspace's Agents — is still
+ * `"none"`: a group is never split and an Agent never leaves its Workspace.
+ */
+export function gapOver(
+  snapshot: AppSnapshot,
+  source: DragSource,
+  lane: readonly string[],
+  rowId: string,
+  half: "top" | "bottom",
+): string | undefined | "none" {
+  if (lane.includes(rowId)) return gapUnder(lane, rowId, half);
+  if (lane.length === 0) return "none";
+  if (source.kind === "agent") {
+    return rowId === source.workspaceId ? lane[0] : "none";
+  }
+  const rows = sidebarWorkspaces(snapshot).rows;
+  // Scratch, the row above every other: the top edge, for a row that moves
+  // among the top-level rows — the start of the list.
+  if (rowId === snapshot.scratchWorkspaceId) {
+    return lane[0] === rows[0]?.id ? lane[0] : "none";
+  }
+  const at = rows.findIndex((row) => row.id === rowId);
+  const target = rows[at];
+  if (target === undefined) return "none";
+  const groupOf = (id: string) => rows.find((row) => row.id === id)?.groupKey;
+  const group = target.groupKey;
+  const kin = lane.filter((id) => groupOf(id) === group);
+  if (kin.length === 0) return "none";
+  const indexOf = (id: string) => rows.findIndex((row) => row.id === id);
+  const before = kin.filter((id) => indexOf(id) < at);
+  if (before.length === 0) return kin[0];
+  // After the group whose head is above this row: the next row of the lane.
+  const head = before[before.length - 1] as string;
+  const next = lane.indexOf(head) + 1;
+  return next < lane.length ? lane[next] : undefined;
+}
+
+/**
+ * Which gap a pointer at `clientY` means when it is over no row at all — the
+ * empty space under the last row, the band above the first, the rule between
+ * Scratch and the workspaces — given where the lane's rows are drawn.
+ *
+ * A gap is in front of the first row whose middle is below the pointer, and
+ * under all of them is the end: so anywhere below the list is "move to the
+ * end" and anywhere above it is "move to the start", whatever the distance.
+ */
+export function gapAtY(
+  lane: readonly { readonly id: string; readonly rect: DOMRect }[],
+  clientY: number,
+): string | undefined {
+  for (const { id, rect } of lane) {
+    if (clientY < rect.top + rect.height / 2) return id;
+  }
+  return undefined;
+}
+
+/**
+ * How far to scroll a list a drag is near the edge of, this event: towards
+ * the edge, faster the nearer, within `zone` pixels of it; nothing otherwise.
+ */
+export function edgeScroll(
+  region: { readonly top: number; readonly bottom: number },
+  clientY: number,
+  zone = 28,
+  most = 12,
+): number {
+  if (clientY < region.top + zone) {
+    const depth = Math.min(zone, region.top + zone - clientY);
+    return -Math.ceil((most * depth) / zone);
+  }
+  if (clientY > region.bottom - zone) {
+    const depth = Math.min(zone, clientY - (region.bottom - zone));
+    return Math.ceil((most * depth) / zone);
+  }
+  return 0;
+}
+
 /** Which half of a row a pointer at `clientY` is in. */
 export function halfOf(rect: DOMRect, clientY: number): "top" | "bottom" {
   return clientY < rect.top + rect.height / 2 ? "top" : "bottom";

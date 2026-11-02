@@ -29,7 +29,9 @@ import { useSidebarDispatch } from "../../sidebar/SidebarContext";
 import {
   dropIntent,
   dropLane,
-  gapUnder,
+  edgeScroll,
+  gapAtY,
+  gapOver,
   halfOf,
   type DragSource,
 } from "./reorder";
@@ -37,6 +39,8 @@ import {
 /** What one row needs on it, drag or no drag. */
 export interface RowDragProps {
   readonly draggable: boolean;
+  /** Which row this is, for the list's own area to find where it is drawn. */
+  readonly "data-reorder-id": string;
   readonly "data-dragging"?: "true";
   /** Absent when nothing is being dragged: there is no range to be outside. */
   readonly "data-reorder-target"?: "true" | "false";
@@ -48,10 +52,26 @@ export interface RowDragProps {
   readonly onDragEnd: () => void;
 }
 
+/**
+ * What the list's own area wears: the space around and between the rows.
+ *
+ * A drop is not only ever onto a row. The empty space under the last row is
+ * where a person puts something they want at the end, and the band above the
+ * first is where they put something they want first; both are gaps of the
+ * lane (`gapAtY`). The area also scrolls itself while a drag is near its top
+ * or bottom edge (`edgeScroll`), so a long list can be dragged along.
+ */
+export interface RegionDragProps {
+  readonly onDragOverCapture: (event: React.DragEvent<HTMLElement>) => void;
+  readonly onDragOver: (event: React.DragEvent<HTMLElement>) => void;
+  readonly onDrop: (event: React.DragEvent<HTMLElement>) => void;
+}
+
 export interface Reorder {
   /** Whether a row is in the air. The pane dims what is out of range on it. */
   readonly active: boolean;
   readonly rowProps: (source: DragSource) => RowDragProps;
+  readonly regionProps: RegionDragProps;
 }
 
 interface DragState {
@@ -81,6 +101,7 @@ export function useReorder(snapshot: AppSnapshot): Reorder {
       const showsLine = drag !== undefined && drag.over && inLane;
       return {
         draggable: true,
+        "data-reorder-id": source.id,
         ...(dragging ? { "data-dragging": "true" as const } : {}),
         ...(drag === undefined
           ? {}
@@ -112,9 +133,18 @@ export function useReorder(snapshot: AppSnapshot): Reorder {
         onDragOver: (event) => {
           const current = drag;
           if (!current) return;
+          // A Workspace in the air over one of a Workspace's Agents is over
+          // that Workspace: the Agent's row is inside it, and the Workspace's
+          // own row — which this event reaches next — is the one that says
+          // which gap that is.
+          if (current.source.kind === "workspace" && source.kind === "agent") {
+            return;
+          }
           event.stopPropagation();
           const rows = dropLane(snapshot, current.source);
-          const gap = gapUnder(
+          const gap = gapOver(
+            snapshot,
+            current.source,
             rows,
             source.id,
             halfOf(event.currentTarget.getBoundingClientRect(), event.clientY),
@@ -151,5 +181,47 @@ export function useReorder(snapshot: AppSnapshot): Reorder {
     [dispatch, drag, lane, snapshot],
   );
 
-  return { active: drag !== undefined, rowProps };
+  const regionProps = useMemo((): RegionDragProps => {
+    /** The gap under a pointer over no row, from where the lane is drawn. */
+    const gapIn = (region: HTMLElement, clientY: number) => {
+      const drawn = lane.flatMap((id) => {
+        const element = region.querySelector<HTMLElement>(
+          `[data-reorder-id="${CSS.escape(id)}"]`,
+        );
+        return element === null
+          ? []
+          : [{ id, rect: element.getBoundingClientRect() }];
+      });
+      return drawn.length === 0 ? "none" : gapAtY(drawn, clientY);
+    };
+    return {
+      onDragOverCapture: (event) => {
+        if (!drag) return;
+        const region = event.currentTarget;
+        const by = edgeScroll(region.getBoundingClientRect(), event.clientY);
+        if (by !== 0) region.scrollTop += by;
+      },
+      onDragOver: (event) => {
+        const current = drag;
+        if (!current) return;
+        const gap = gapIn(event.currentTarget, event.clientY);
+        if (gap === "none") return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        if (current.over && current.before === gap) return;
+        setDrag({ ...current, before: gap, over: true });
+      },
+      onDrop: (event) => {
+        const current = drag;
+        if (!current) return;
+        event.preventDefault();
+        setDrag(undefined);
+        if (!current.over) return;
+        const intent = dropIntent(snapshot, current.source, current.before);
+        if (intent) dispatch(intent);
+      },
+    };
+  }, [dispatch, drag, lane, snapshot]);
+
+  return { active: drag !== undefined, rowProps, regionProps };
 }

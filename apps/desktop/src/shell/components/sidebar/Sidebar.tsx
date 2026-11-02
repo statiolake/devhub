@@ -1352,7 +1352,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
     >
       {/* The Sidebar runs the full height of the window, so its own top strip
           is where the window buttons live and where the window is dragged. */}
-      <div className="sidebar-scroll-region">
+      <div className="sidebar-scroll-region" {...reorder.regionProps}>
         <ul
           ref={workspaceTreeRef}
           className="workspace-tree"

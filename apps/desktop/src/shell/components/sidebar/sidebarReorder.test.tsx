@@ -20,6 +20,7 @@ import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
+import { edgeScroll } from "./reorder";
 
 window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
@@ -426,5 +427,165 @@ describe("moving a row with the keyboard", () => {
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: /^a-1/ }),
     );
+  });
+});
+
+/**
+ * Forgiving where the group rules allow, the way a file tree or a browser's
+ * tabs are: the end of the list is wherever below it the pointer is, and the
+ * start wherever above it.
+ */
+describe("dropping at the ends of the list", () => {
+  /** The rows in the order they are drawn, each twenty pixels under the last. */
+  const DRAWN = [
+    "w-alpha",
+    "a-1",
+    "a-2",
+    "w-widget",
+    "w-wt-a",
+    "w-wt-b",
+    "w-zebra",
+  ];
+
+  beforeEach(() => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        const at = DRAWN.indexOf(this.getAttribute("data-reorder-id") ?? "");
+        const top = at < 0 ? 0 : at * ROW_HEIGHT;
+        return {
+          top,
+          bottom: top + ROW_HEIGHT,
+          height: ROW_HEIGHT,
+          left: 0,
+          right: 100,
+          width: 100,
+          x: 0,
+          y: top,
+          toJSON: () => ({}),
+        } as DOMRect;
+      },
+    );
+  });
+
+  /** The list's own area: the space around and between the rows. */
+  const region = () => {
+    const element = document.querySelector<HTMLElement>(
+      ".sidebar-scroll-region",
+    );
+    if (!element) throw new Error("no list area");
+    return element;
+  };
+  const overArea = (clientY: number) =>
+    fireEvent(
+      region(),
+      new MouseEvent("dragover", { bubbles: true, cancelable: true, clientY }),
+    );
+
+  it("moves a row to the end from anywhere in the empty space under the list", () => {
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+    mount(dispatch);
+    fireEvent.dragStart(row(ALPHA), { dataTransfer: transfer() });
+    overArea(600);
+    expect(row(ZEBRA)).toHaveAttribute("data-drop-after", "true");
+    fireEvent.drop(region(), { dataTransfer: transfer() });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "reorder_workspaces",
+      order: ["w-widget", "w-wt-a", "w-wt-b", "w-zebra", "w-alpha"],
+    });
+  });
+
+  it("moves a row to the start from the space above the first", () => {
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+    mount(dispatch);
+    fireEvent.dragStart(row(ZEBRA), { dataTransfer: transfer() });
+    overArea(-40);
+    expect(row(ALPHA)).toHaveAttribute("data-drop-before", "true");
+    fireEvent.drop(region(), { dataTransfer: transfer() });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "reorder_workspaces",
+      order: ["w-zebra", "w-alpha", "w-widget", "w-wt-a", "w-wt-b"],
+    });
+  });
+
+  it("takes the start from Scratch, the row above every other", () => {
+    mount(vi.fn());
+    fireEvent.dragStart(row(ZEBRA), { dataTransfer: transfer() });
+    dragOver(row(/^Scratch workspace/), "bottom");
+    expect(row(ALPHA)).toHaveAttribute("data-drop-before", "true");
+  });
+
+  /**
+   * The bottom of a list whose last group is a repository's: its worktree
+   * rows are not places a repository lands, and they were the rows a person
+   * aimed at to put something last. They are its group's, so they mean the
+   * gap after the group.
+   */
+  it("reads a worktree row as its repository's group, for a repository in the air", () => {
+    const dispatch = vi.fn().mockResolvedValue(undefined);
+    mount(dispatch);
+    fireEvent.dragStart(row(ALPHA), { dataTransfer: transfer() });
+    dragOver(row(WT_B), "top");
+    expect(row(ZEBRA)).toHaveAttribute("data-drop-before", "true");
+    fireEvent.drop(row(WT_B), { dataTransfer: transfer() });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "reorder_workspaces",
+      order: ["w-widget", "w-wt-a", "w-wt-b", "w-alpha", "w-zebra"],
+    });
+  });
+
+  it("reads a repository's own row as the start of its worktrees", () => {
+    mount(vi.fn());
+    fireEvent.dragStart(row(WT_B), { dataTransfer: transfer() });
+    dragOver(row(WIDGET), "bottom");
+    expect(row(WT_A)).toHaveAttribute("data-drop-before", "true");
+  });
+
+  it("reads an Agent row as its Workspace's, for a Workspace in the air", () => {
+    mount(vi.fn());
+    fireEvent.dragStart(row(ZEBRA), { dataTransfer: transfer() });
+    dragOver(row(/^a-1/), "top");
+    expect(row(ALPHA)).toHaveAttribute("data-drop-before", "true");
+  });
+
+  it("reads an Agent's own Workspace row as the start of its Agents", () => {
+    mount(vi.fn());
+    fireEvent.dragStart(row(/^a-2/), { dataTransfer: transfer() });
+    dragOver(row(ALPHA), "top");
+    expect(row(/^a-1/)).toHaveAttribute("data-drop-before", "true");
+  });
+
+  it("puts an Agent at the end of its own Workspace's from the space under the list", () => {
+    mount(vi.fn());
+    fireEvent.dragStart(row(/^a-1/), { dataTransfer: transfer() });
+    overArea(600);
+    expect(row(/^a-2/)).toHaveAttribute("data-drop-after", "true");
+  });
+
+  it("still splits no group and takes no Agent out of its Workspace", () => {
+    mount(vi.fn());
+    fireEvent.dragStart(row(WT_A), { dataTransfer: transfer() });
+    dragOver(row(ZEBRA), "bottom");
+    expect(row(WT_B)).not.toHaveAttribute("data-drop-after");
+    expect(row(ZEBRA)).not.toHaveAttribute("data-drop-after");
+    cleanup();
+    mount(vi.fn());
+    fireEvent.dragStart(row(/^a-1/), { dataTransfer: transfer() });
+    dragOver(row(ZEBRA), "top");
+    expect(row(/^a-1/)).not.toHaveAttribute("data-drop-before");
+  });
+});
+
+/** A drag near the top or bottom of a scrolled list scrolls it along. */
+describe("scrolling while dragging", () => {
+  const area = { top: 100, bottom: 500 };
+
+  it("scrolls towards the edge the pointer is near, faster the nearer", () => {
+    expect(edgeScroll(area, 300)).toBe(0);
+    expect(edgeScroll(area, 120)).toBeLessThan(0);
+    expect(edgeScroll(area, 101)).toBeLessThan(edgeScroll(area, 120));
+    expect(edgeScroll(area, 480)).toBeGreaterThan(0);
+    expect(edgeScroll(area, 499)).toBeGreaterThan(edgeScroll(area, 480));
+    expect(edgeScroll(area, 900)).toBe(12);
+    expect(edgeScroll(area, -50)).toBe(-12);
   });
 });
