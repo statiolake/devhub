@@ -217,11 +217,26 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	 */
 	const bootId = randomUUID().slice(0, 8);
 	/**
-	 * The GUI Agents DevHub is stopping. Their sessions vanish on purpose, and
-	 * a round that sees one gone before the stop has returned must not report
-	 * the ending as news.
+	 * The GUI Agents DevHub is stopping, each with how many stops of it are
+	 * under way (a second Stop pressed before the first returned is its own
+	 * stop, and the first one returning does not make the second's ending
+	 * news). Their sessions vanish on purpose, and a round that sees one gone
+	 * before the stop has returned must not report the ending as news.
 	 */
-	const stopping = new Set<AgentId>();
+	const stopping = new Map<AgentId, number>();
+	/**
+	 * Each GUI Agent's ending under way, whoever saw it first: a stop, or a
+	 * round that found its session gone. There is one ending per Agent, and
+	 * whoever comes second waits for it rather than ending the Agent again.
+	 * Two endings of one Agent raced: the round's, which had taken the
+	 * conversation and was waiting for it to stop following, outlived the
+	 * stop's, which found nothing left to stop, removed the host files and
+	 * stopped counting the Agent as stopping. The round then read the ending
+	 * of files that were gone and said so app-wide: "DevHub could not read how
+	 * “…” ended: there is no host state at …" over the Agent the person had
+	 * just closed.
+	 */
+	const endings = new Map<AgentId, Promise<void>>();
 	/** Each GUI Agent's MCP sign-in, running or run last. */
 	const signIns = new Map<AgentId, McpSignInRun>();
 
@@ -430,7 +445,23 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	 * Agent is gone either way, and a row kept for a directory would be a row
 	 * for nothing.
 	 */
-	const endConversation = async (
+	const endConversation = (
+		machine: RuntimeId,
+		agentId: AgentId,
+		name: string,
+		kind: string,
+	): Promise<void> => {
+		const under = endings.get(agentId);
+		if (under !== undefined) return under;
+		const ending = endOnce(machine, agentId, name, kind).finally(() => {
+			endings.delete(agentId);
+		});
+		endings.set(agentId, ending);
+		return ending;
+	};
+
+	/** The one ending of a GUI Agent (`endConversation`, which makes sure it is one). */
+	const endOnce = async (
 		machine: RuntimeId,
 		agentId: AgentId,
 		name: string,
@@ -469,7 +500,7 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 	): Promise<void> => {
 		const agent = options.model().agent(agentId);
 		const gui = agent?.presentation === "gui";
-		if (gui) stopping.add(agentId);
+		if (gui) stopping.set(agentId, (stopping.get(agentId) ?? 0) + 1);
 		try {
 			await sessions.terminate(machine, agentId);
 			if (gui) {
@@ -481,7 +512,11 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 				);
 			}
 		} finally {
-			stopping.delete(agentId);
+			if (gui) {
+				const left = (stopping.get(agentId) ?? 1) - 1;
+				if (left > 0) stopping.set(agentId, left);
+				else stopping.delete(agentId);
+			}
 		}
 	};
 	/**
