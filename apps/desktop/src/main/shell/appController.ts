@@ -428,6 +428,7 @@ import {
 	agentEntriesOf,
 	closedEntryDetail,
 	closedEntryLabel,
+	closeRemembers,
 	placeKey,
 	placeLabel,
 	rememberClosed,
@@ -437,6 +438,7 @@ import {
 	type ClosedAgentRecord,
 	type ClosedEntryRecord,
 	type ClosedPlaceRecord,
+	type ClosedWorktreeRecord,
 } from "../../model/recentlyClosed.js";
 import {
 	readClaudeDefaults,
@@ -3540,6 +3542,7 @@ export class AppController {
 	/** What reopening this Workspace needs, its running Agents included. */
 	private async closedWorkspaceEntry(
 		workspaceId: WorkspaceId,
+		worktree?: ClosedWorktreeRecord,
 	): Promise<ClosedEntryRecord | undefined> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
 		if (
@@ -3555,6 +3558,7 @@ export class AppController {
 			agents: await Promise.all(
 				workspace.agents.map((agent) => this.closedAgentOf(agent.id)),
 			),
+			...(worktree === undefined ? {} : { worktree }),
 		};
 	}
 
@@ -3690,8 +3694,9 @@ export class AppController {
 	private async openClosedPlace(
 		place: ClosedPlaceRecord,
 		progress: { opened: boolean },
+		worktree?: ClosedWorktreeRecord,
 	): Promise<{ readonly workspaceId: WorkspaceId; readonly notes: string[] }> {
-		const requested: WorkspacePlaceWire =
+		let requested: WorkspacePlaceWire =
 			place.kind === "local"
 				? { kind: "local", path: place.path }
 				: { kind: "ssh", host: place.host, path: place.path };
@@ -3701,8 +3706,18 @@ export class AppController {
 		} catch {
 			throw new ReopenRefused("DevHub no longer reads where it was.");
 		}
-		const kind = await runtimeFor(location).stat(location.path);
-		if (kind !== "directory") {
+		const runtime = runtimeFor(location);
+		const kind = await runtime.stat(location.path);
+		if (kind === "absent" && worktree !== undefined) {
+			// The worktree its close deleted, made again on its branch at the
+			// path it had (`model/recentlyClosed.ts`).
+			const made = await this.remakeClosedWorktree(
+				requested,
+				runtime,
+				worktree,
+			);
+			requested = { ...requested, path: made };
+		} else if (kind !== "directory") {
 			throw new ReopenRefused(
 				`${placeLabel(requested)} is no longer a folder${
 					kind === "absent" ? " there: it has been deleted or moved." : "."
@@ -3729,6 +3744,41 @@ export class AppController {
 			}
 		}
 		return { workspaceId, notes };
+	}
+
+	/**
+	 * Make a closed worktree again on its branch, at the path it had, and
+	 * answer where it is. What can never work — the repository or the branch
+	 * gone, the path taken by something else — is a refusal; anything else (a
+	 * host that did not answer) is a failure the entry survives.
+	 */
+	private async remakeClosedWorktree(
+		requested: WorkspacePlaceWire,
+		runtime: ReturnType<typeof runtimeFor>,
+		worktree: ClosedWorktreeRecord,
+	): Promise<string> {
+		if ((await runtime.stat(worktree.repository)) !== "directory") {
+			throw new ReopenRefused(
+				`its worktree was deleted when it closed, and the repository it was made from (${worktree.repository}) is no longer there to make it again.`,
+			);
+		}
+		try {
+			return await resumeFolder(
+				await this.gitCommand(runtime),
+				worktree.repository,
+				{ root: requested.path, branch: worktree.branch },
+			);
+		} catch (error: unknown) {
+			if (
+				error instanceof NamedFailure &&
+				error.wire.code === "workspace_unavailable"
+			) {
+				throw new ReopenRefused(
+					`its worktree was deleted when it closed, and could not be made again on ${worktree.branch}: ${failureText(error)}`,
+				);
+			}
+			throw error;
+		}
 	}
 
 	/**
@@ -3759,6 +3809,7 @@ export class AppController {
 		const { workspaceId, notes } = await this.openClosedPlace(
 			entry.place,
 			progress,
+			entry.worktree,
 		);
 		let first: AgentId | undefined;
 		for (const agent of entry.agents) {
@@ -6035,12 +6086,18 @@ export class AppController {
 				return;
 			}
 			// What reopening it needs, its Agents' sessions included, read
-			// while they are still running. A worktree this close deletes has
-			// no folder to come back to, so it is not remembered.
-			reopenable =
-				worktree === "keep"
-					? await this.closedWorkspaceEntry(workspaceId)
-					: undefined;
+			// while they are still running. A worktree this close deletes is
+			// remembered as its branch, read now while git still knows it,
+			// and made again by the reopen (`closeRemembers`).
+			const remembers = closeRemembers(
+				worktree,
+				this.lastRepositoryStatus.workspaces.find(
+					(entry) => entry.workspaceId === workspaceId,
+				),
+			);
+			reopenable = remembers.remember
+				? await this.closedWorkspaceEntry(workspaceId, remembers.worktree)
+				: undefined;
 
 			step = "agents";
 			const agentAdapter = agents();

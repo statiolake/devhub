@@ -47,10 +47,18 @@
  * and may have resumed them already — but they are put back on the stack, so
  * the next press brings back each one deliberately.
  *
- * **A worktree deleted by its close is not remembered.** There is no folder
- * to open; remembering it would only produce a notice saying so. A folder
- * that is gone by the time it is reopened (deleted by hand, a disk not
- * mounted) is said in a notice and the entry dropped.
+ * **A worktree its close deleted comes back as its branch.** Closing a
+ * worktree deletes its folder (`closeWorkspaceOrWorktree`) but never its
+ * branch, and the branch is the work: the entry remembers the repository and
+ * the branch, and reopening makes the worktree again at the same path — where
+ * the CLIs look for the Agents' sessions — the way the Workspace picker's
+ * branch row and a resumed session of a gone worktree do (`resumeFolder`).
+ * Remembering only folders that survived their close made `Cmd+Q Shift+T`
+ * do nothing after closing any worktree, which since the picker's branch rows
+ * is most Workspaces. A detached worktree (no branch) has nothing to make
+ * again and is not remembered (`closeRemembers`). A folder that is gone by the
+ * time it is reopened (deleted by hand, a disk not mounted) and has no branch
+ * to make it again from is said in a notice and the entry dropped.
  *
  * **A failure that may pass leaves the entry where it was.** A host that does
  * not answer, a launch that failed: the entry is put back, so pressing again
@@ -67,6 +75,7 @@ import {
   type AgentPresentation,
   type AgentProfileKind,
 } from "./domain.js";
+import type { WorktreeDisposition } from "./intents.js";
 
 /** How many closed things are remembered. The oldest is forgotten first. */
 export const RECENTLY_CLOSED_LIMIT = 20;
@@ -92,6 +101,13 @@ export interface ClosedAgentRecord {
   session?: string;
 }
 
+/** A deleted worktree, as making it again needs it. */
+export interface ClosedWorktreeRecord {
+  /** The repository's main worktree, where git is run to make it again. */
+  repository: string;
+  branch: string;
+}
+
 export type ClosedEntryRecord =
   | {
       kind: "workspace";
@@ -100,6 +116,12 @@ export type ClosedEntryRecord =
       place: ClosedPlaceRecord;
       /** The Agents that were running in it when it closed, in sidebar order. */
       agents: ClosedAgentRecord[];
+      /**
+       * The worktree its close deleted, to be made again at `place.path`:
+       * the repository's main worktree and the branch it had checked out.
+       * Absent: its folder was left where it was.
+       */
+      worktree?: ClosedWorktreeRecord;
     }
   | {
       kind: "agent";
@@ -108,6 +130,34 @@ export type ClosedEntryRecord =
       place: ClosedPlaceRecord;
       agent: ClosedAgentRecord;
     };
+
+/**
+ * Whether a Workspace's close is remembered, and with which worktree.
+ *
+ * Every way of closing a Workspace — the Sidebar row's button, its menu, the
+ * File menu, `Cmd+Q W`, Vim's `:qa`, the terminal view's shell exiting, the
+ * confirmation sheet's Close — ends in one close with one of these
+ * dispositions, so this is the one place it is decided. A folder left where
+ * it was is remembered as itself; a worktree the close deletes is remembered
+ * as its branch, read before the close (`repository`), and only a worktree
+ * on no branch is not remembered at all.
+ */
+export function closeRemembers(
+  disposition: WorktreeDisposition,
+  repository:
+    | { readonly mainWorktree?: string; readonly branch?: string }
+    | undefined,
+):
+  | { readonly remember: false }
+  | { readonly remember: true; readonly worktree?: ClosedWorktreeRecord } {
+  if (disposition === "keep") return { remember: true };
+  const mainWorktree = repository?.mainWorktree;
+  const branch = repository?.branch;
+  if (mainWorktree === undefined || branch === undefined || branch === "") {
+    return { remember: false };
+  }
+  return { remember: true, worktree: { repository: mainWorktree, branch } };
+}
 
 /** What makes two places the same folder: the machine and the path. */
 export function placeKey(place: ClosedPlaceRecord): string {
@@ -222,7 +272,11 @@ export function closedEntryDetail(
   const count = entry.agents.length;
   const agents =
     count === 0 ? "no Agents" : count === 1 ? "1 Agent" : `${count} Agents`;
-  return `${agents} · closed ${ago}`;
+  const branch =
+    entry.worktree === undefined
+      ? ""
+      : ` · worktree of ${entry.worktree.branch}`;
+  return `${agents}${branch} · closed ${ago}`;
 }
 
 function closedAgo(ms: number): string {
@@ -319,11 +373,28 @@ function decodeEntry(value: unknown): ClosedEntryRecord | undefined {
   if (value["kind"] === "workspace" && Array.isArray(value["agents"])) {
     const agents = value["agents"].map(decodeAgent);
     if (agents.some((agent) => agent === undefined)) return undefined;
+    const worktree = value["worktree"];
+    let decodedWorktree: ClosedWorktreeRecord | undefined;
+    if (worktree !== undefined) {
+      if (
+        !isObject(worktree) ||
+        !isAbsolute(worktree["repository"]) ||
+        typeof worktree["branch"] !== "string" ||
+        worktree["branch"].length === 0
+      ) {
+        return undefined;
+      }
+      decodedWorktree = {
+        repository: worktree["repository"],
+        branch: worktree["branch"],
+      };
+    }
     return {
       kind: "workspace",
       closed_at: closedAt,
       place,
       agents: agents as ClosedAgentRecord[],
+      ...(decodedWorktree === undefined ? {} : { worktree: decodedWorktree }),
     };
   }
   return undefined;

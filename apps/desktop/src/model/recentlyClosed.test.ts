@@ -3,6 +3,7 @@ import {
   agentEntriesOf,
   closedEntryDetail,
   closedEntryLabel,
+  closeRemembers,
   decodeRecentlyClosed,
   placeKey,
   RECENTLY_CLOSED_LIMIT,
@@ -174,5 +175,78 @@ describe("reading it from the file", () => {
         null,
       ]),
     ).toEqual([good, workspaceEntry("/b", 2, [reviewer])]);
+  });
+});
+
+describe("which closes are remembered", () => {
+  // Every way of closing a Workspace — the Sidebar row's button and menu, the
+  // File menu, Cmd+Q W, Vim's :qa, the terminal view's shell exiting, the
+  // confirmation sheet's Close — is one close with one of these dispositions.
+  const worktreeOnBranch = { mainWorktree: "/src/app", branch: "feat" };
+
+  it("remembers a folder its close leaves where it was, as itself", () => {
+    expect(closeRemembers("keep", undefined)).toEqual({ remember: true });
+    expect(closeRemembers("keep", worktreeOnBranch)).toEqual({
+      remember: true,
+    });
+  });
+
+  it("remembers a clean worktree its close deleted without asking, as its branch", () => {
+    expect(closeRemembers("remove", worktreeOnBranch)).toEqual({
+      remember: true,
+      worktree: { repository: "/src/app", branch: "feat" },
+    });
+  });
+
+  it("remembers a worktree deleted with its changes, as its branch", () => {
+    expect(closeRemembers("remove-anyway", worktreeOnBranch)).toEqual({
+      remember: true,
+      worktree: { repository: "/src/app", branch: "feat" },
+    });
+  });
+
+  it("forgets a deleted worktree that was on no branch: nothing could make it again", () => {
+    expect(closeRemembers("remove", { mainWorktree: "/src/app" })).toEqual({
+      remember: false,
+    });
+    expect(closeRemembers("remove-anyway", undefined)).toEqual({
+      remember: false,
+    });
+  });
+
+  it("says the branch a deleted worktree comes back on", () => {
+    expect(
+      closedEntryDetail(
+        {
+          ...workspaceEntry("/src/app-feat", 0),
+          worktree: { repository: "/src/app", branch: "feat" },
+        },
+        0,
+      ),
+    ).toBe("no Agents · worktree of feat · closed just now");
+  });
+});
+
+describe("a deleted worktree in the file", () => {
+  const entry: ClosedEntryRecord = {
+    ...workspaceEntry("/src/app-feat", 7, [reviewer]),
+    worktree: { repository: "/src/app", branch: "feat/x" },
+  };
+
+  it("reads back as it was written", () => {
+    expect(decodeRecentlyClosed(JSON.parse(JSON.stringify([entry])))).toEqual([
+      entry,
+    ]);
+  });
+
+  it("leaves out a worktree that does not read rather than reopening a folder", () => {
+    for (const worktree of [
+      { repository: "src/app", branch: "feat" },
+      { repository: "/src/app", branch: "" },
+      { repository: "/src/app" },
+      "feat",
+    ]) {
+      expect(decodeRecentlyClosed([{ ...entry, worktree }])).toEqual([]);
+    }
   });
 });

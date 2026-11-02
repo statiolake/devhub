@@ -2045,6 +2045,13 @@ describe("what was closed, across a restart", () => {
           },
         ],
       },
+      {
+        kind: "workspace",
+        closed_at: 1_699_999_500_000,
+        place: { kind: "local", path: "/Users/d/src/app-feat" },
+        agents: [],
+        worktree: { repository: "/Users/d/src/app", branch: "feat" },
+      },
     ];
     await store.saveState(state);
     const load = await new JsonStateStore(path).loadState();
