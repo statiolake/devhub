@@ -3,7 +3,7 @@
 /**
  * Scratch is today's daily folder, and the Sidebar draws it as the Workspace
  * it is: the first row of the tree, under the name "Scratch" and the terminal
- * mark, with its Agents under it and its folder in its tooltip. Yesterday's
+ * mark, with its Agents under it and its folder in its accessible name. Yesterday's
  * folder is not Scratch any more, and is drawn like any other Workspace.
  */
 
@@ -20,11 +20,7 @@ window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
   focusSurface: vi.fn(() => Promise.resolve()),
   onMenuCommand: () => () => undefined,
-  onSidebarArea: () => () => undefined,
   onChordArmed: () => () => undefined,
-  showTooltip: () => undefined,
-  hideTooltip: () => undefined,
-  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(() => {
@@ -107,11 +103,8 @@ function mount(value: AppSnapshot) {
   );
 }
 
-function tooltipOf(button: HTMLElement): string[] {
-  const lines = JSON.parse(
-    button.closest(".sidebar-row")?.getAttribute("data-tooltip-lines") ?? "[]",
-  ) as { text: string }[];
-  return lines.map((line) => line.text);
+function spokenOf(button: HTMLElement): string[] {
+  return (button.getAttribute("aria-label") ?? "").split("\n");
 }
 
 const treeItems = () =>
@@ -133,11 +126,11 @@ describe("the Scratch row", () => {
     ).toHaveAttribute("aria-current", "page");
   });
 
-  it("says in its tooltip which folder Scratch is today", () => {
+  it("says in its accessible name which folder Scratch is today", () => {
     mount(snapshot());
     expect(
-      tooltipOf(screen.getByRole("button", { name: /^Scratch workspace/ })),
-    ).toEqual(["Scratch", "~/junk/20260923"]);
+      spokenOf(screen.getByRole("button", { name: /^Scratch workspace/ })),
+    ).toEqual(["Scratch workspace", "path ~/junk/20260923"]);
   });
 
   it("keeps its Agents under it, like any Workspace", () => {
@@ -183,10 +176,10 @@ describe("yesterday's folder", () => {
       within(yesterday).getByRole("button", { name: "Close 20260922" }),
     ).toBeInTheDocument();
     expect(
-      tooltipOf(
+      spokenOf(
         within(yesterday).getByRole("button", { name: /^20260922 workspace/ }),
       ),
-    ).toEqual(["20260922", "~/junk/20260922"]);
+    ).toEqual(["20260922 workspace", "path ~/junk/20260922"]);
     expect(
       within(yesterday).getByRole("button", { name: /^a-old/ }),
     ).toBeInTheDocument();

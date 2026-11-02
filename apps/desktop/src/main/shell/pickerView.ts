@@ -20,8 +20,7 @@
  * removed instead, and a view out of the window is a hidden page that paints
  * nothing: the first question of a session waited for a first layout, and
  * every later one opened on a frame of the previous sheet. See `parkedRect`
- * in `windowLayout.ts` and `layerView.ts`, which the notices and the tooltip
- * share.
+ * in `windowLayout.ts` and `layerView.ts`, which the notices share.
  *
  * The dim behind a question is the view's own background, not something the
  * page draws — see `scrimColor`.

@@ -366,9 +366,8 @@ describe("the shell window's workbench views", () => {
 	/**
 	 * The Sidebar's own rectangle is main's number, not the page's.
 	 *
-	 * The page needs it to say where one of its rows is *in the window*, so
-	 * that a tooltip is placed against the window rather than against the
-	 * column. It must not work it out for itself: `window.screenX` is the
+	 * A context menu the page asks for is placed against it. The page must
+	 * not work it out for itself: `window.screenX` is the
 	 * screen's, and a view's own box is stale for a while after main moves it
 	 * — measured, the collapsed Sidebar went on answering 249 for seconds
 	 * after being narrowed to 76. So this asserts the number moves with the
@@ -386,32 +385,9 @@ describe("the shell window's workbench views", () => {
 			...shell.layoutState(),
 			sidebar: { width: 248, collapsed: true },
 		});
-		// Collapsed with no title bar, the rail is the traffic lights' span —
-		// and it is exactly the case the old in-page tooltip refused to draw
-		// in, because 76px is not a column a sentence fits in.
+		// Collapsed with no title bar, the rail is the traffic lights' span.
 		expect(shell.sidebarArea().width).toBe(76);
 		expect(shell.sidebarArea().x).toBe(0);
-	});
-
-	/**
-	 * A question coming up takes the tooltip down.
-	 *
-	 * The Sidebar hides its own when the pointer leaves the row, which covers
-	 * a question opened by clicking something. It does not cover one opened
-	 * from the keyboard with the pointer still resting on a row — measured on
-	 * a running instance, the tooltip stayed up and stood over the sheet. So
-	 * it is the window's rule, decided where the modal set is known.
-	 */
-	it("takes the tooltip down when a question comes up", () => {
-		shell.tooltip.show({
-			lines: [{ text: "widget", style: "name" }],
-			anchor: { x: 14, y: 120, width: 16, height: 24 },
-		});
-		shell.tooltip.setSize({ width: 220, height: 34 });
-		expect(shell.tooltip.isPresent()).toBe(true);
-
-		shell.picker.openModal({ kind: "workspace-picker" });
-		expect(shell.tooltip.isPresent()).toBe(false);
 	});
 
 	it("shows nothing until the selection says what to show", () => {
@@ -899,7 +875,7 @@ describe("the shell window's modal layer", () => {
 
 	/**
 	 * The highest child that is over the window. A parked layer — the notices
-	 * or the tooltip with nothing to show — is in the list and above
+	 * or the questions with nothing to show — is in the list and above
 	 * everything, but it is all but one pixel outside the window.
 	 */
 	function topmostOverWindow(): FakeView | undefined {
@@ -999,8 +975,7 @@ describe("the shell window's modal layer", () => {
 		// is a *sibling* of the workbench in this window — a view nested inside
 		// another `WebContentsView` is never painted on macOS with this
 		// Electron. So the owner places it, and everything the owner puts over
-		// the content area is still over it: the notices, the questions, the
-		// tooltip.
+		// the content area is still over it: the notices and the questions.
 		show(shell, editor);
 		const browser = new FakeView();
 		asBrowserWindow(editor).contentView.addChildView(
@@ -1174,7 +1149,6 @@ describe("the pages in the shell window", () => {
 				"devhub-app://shell/picker.html",
 				"devhub-app://shell/sidebar.html",
 				"devhub-app://shell/toasts.html",
-				"devhub-app://shell/tooltip.html",
 			].sort(),
 		);
 	});

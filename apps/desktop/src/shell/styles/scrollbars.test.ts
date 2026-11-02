@@ -24,7 +24,6 @@ const PAGES = [
   "shell/agents/main.tsx",
   "shell/picker/main.tsx",
   "shell/toasts/main.tsx",
-  "shell/tooltip/main.tsx",
   "settings/SettingsApp.tsx",
 ] as const;
 

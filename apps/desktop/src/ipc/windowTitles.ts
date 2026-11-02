@@ -40,8 +40,7 @@ export type ShellWindowKind =
 	| "picker"
 	| "sidebar"
 	| "agents"
-	| "pane"
-	| "tooltip";
+	| "pane";
 
 export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
 	shell: "DevHub",
@@ -55,7 +54,6 @@ export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
 	sidebar: "DevHub",
 	agents: "DevHub",
 	pane: "DevHub",
-	tooltip: "DevHub",
 };
 
 /**

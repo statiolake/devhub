@@ -108,7 +108,6 @@ export function StatusMark({ status, unread, subject }: StatusMarkProps) {
       className={`status-mark status-mark-${status}${showsUnread ? " is-unread" : ""}`}
       data-status={status}
       data-unread={showsUnread ? "true" : undefined}
-      data-tooltip={label}
       aria-label={label}
       role="img"
     >

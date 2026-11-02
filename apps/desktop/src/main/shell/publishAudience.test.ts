@@ -21,13 +21,11 @@ const SIDEBAR = "sidebar page";
 const AGENTS = "agents page";
 const PICKER = "picker page";
 const TOASTS = "toasts page";
-const TOOLTIP = "tooltip page";
 const SETTINGS = "settings page";
 
 function pages(options?: {
 	readonly picker?: boolean;
 	readonly toasts?: boolean;
-	readonly tooltip?: boolean;
 	readonly gone?: boolean;
 }) {
 	return {
@@ -42,9 +40,6 @@ function pages(options?: {
 		},
 		toasts: {
 			contents: () => (options?.toasts === false ? undefined : TOASTS),
-		},
-		tooltip: {
-			contents: () => (options?.tooltip === false ? undefined : TOOLTIP),
 		},
 	};
 }
@@ -117,8 +112,7 @@ describe("a window that has gone", () => {
  * `toasts` has `onTheme` on its bridge and no model behind it, so it was not
  * in the projection audience and had therefore never been recoloured at
  * runtime — a page wearing the palette it was served with, on a window that
- * had since changed theme. The tooltip would have been the second such page
- * the moment it left the Sidebar's document.
+ * had since changed theme.
  *
  * So the rule is stated rather than coincidental, and this is what keeps it
  * so: every page with `onTheme` is in this audience. That is all of them.
@@ -131,23 +125,20 @@ describe("the palette", () => {
 			AGENTS,
 			PICKER,
 			TOASTS,
-			TOOLTIP,
 		]);
 	});
 
 	/**
-	 * The two pages this audience exists for. A notice and a tooltip are
-	 * drawn over a live workbench, so a stale palette on either is a light
-	 * box on a dark window — the most visible possible way to be wrong.
+	 * The page this audience exists for. A notice is drawn over a live
+	 * workbench, so a stale palette on it is a light box on a dark window —
+	 * the most visible possible way to be wrong.
 	 */
-	it("reaches the two pages that have no model at all", () => {
+	it("reaches the page that has no model at all", () => {
 		const told = chromeAudience(pages());
 		expect(told).toContain(TOASTS);
-		expect(told).toContain(TOOLTIP);
 		// Which is exactly what the projection audience does not do, and
-		// correctly so: neither page has a snapshot to be told about.
+		// correctly so: that page has no snapshot to be told about.
 		expect(projectionAudience(pages())).not.toContain(TOASTS);
-		expect(projectionAudience(pages())).not.toContain(TOOLTIP);
 	});
 
 	it("says nothing to a window that is gone", () => {
@@ -155,7 +146,7 @@ describe("the palette", () => {
 	});
 
 	it("skips a page that does not exist yet", () => {
-		expect(chromeAudience(pages({ tooltip: false }))).not.toContain(TOOLTIP);
+		expect(chromeAudience(pages({ toasts: false }))).not.toContain(TOASTS);
 	});
 });
 

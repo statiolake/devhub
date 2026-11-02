@@ -31,11 +31,7 @@ window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
   focusSurface,
   onMenuCommand: () => () => undefined,
-  onSidebarArea: () => () => undefined,
   onChordArmed: () => () => undefined,
-  showTooltip: () => undefined,
-  hideTooltip: () => undefined,
-  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(() => {

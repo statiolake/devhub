@@ -1,4 +1,3 @@
-import type { PromptCache } from "./conversation.js";
 import { TerminalPanes } from "./terminalActivity.js";
 import {
   DEFAULT_EDITOR_VIEW,
@@ -1056,7 +1055,7 @@ export function cliStoppedItself(
 
 /**
  * What an Agent is introduced by where there is room for one thing: its
- * Sidebar row, that row's tooltip, the window title.
+ * Sidebar row, the window title.
  *
  * **The one place that decides it**, so a row and a title cannot disagree
  * about which Agent this is. A name somebody gave it leads, because a person
@@ -1267,11 +1266,6 @@ export interface AgentObservation {
    * said something.
    */
   readonly activity: string | undefined;
-  /**
-   * A GUI Claude Agent's prompt cache, as its conversation last reported it;
-   * absent for an Agent with nothing to say about one.
-   */
-  readonly promptCache?: PromptCache | undefined;
   /** What DevHub is holding for this Agent, and why it has not gone yet. */
   readonly injection: AgentInjection;
   /**
@@ -1420,7 +1414,6 @@ export class Agent {
    * one, which is the same thing `status` does with `unknown`.
    */
   private activityValue: string | undefined;
-  private promptCacheValue: PromptCache | undefined;
   private injectionValue: AgentInjection = NO_INJECTION;
   /**
    * The ids of the actions a person ticked as automatic for this Agent: sent
@@ -1534,7 +1527,6 @@ export class Agent {
       this.unreadValue,
     );
     copy.activityValue = this.activityValue;
-    copy.promptCacheValue = this.promptCacheValue;
     copy.injectionValue = this.injectionValue;
     copy.automaticActionsValue = this.automaticActionsValue;
     copy.failureValue = this.failureValue;
@@ -1558,17 +1550,6 @@ export class Agent {
 
   get status(): AgentStatus {
     return this.statusValue;
-  }
-
-  /** Its prompt cache, as its conversation last reported it. */
-  get promptCache(): PromptCache | undefined {
-    return this.promptCacheValue;
-  }
-
-  setPromptCache(cache: PromptCache | undefined): boolean {
-    if (this.promptCacheValue === cache) return false;
-    this.promptCacheValue = cache;
-    return true;
   }
 
   /** What the Agent says it is doing, in its own words, or nothing. */

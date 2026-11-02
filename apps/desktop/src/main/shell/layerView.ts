@@ -1,9 +1,9 @@
 /**
  * A layer: a child view of the window whose page draws over the others only
- * while it has something to show — the notices, the questions, the tooltip.
+ * while it has something to show — the notices and the questions.
  *
- * The three are one kind of thing and are built and placed here once, so that
- * what was measured about one of them holds for all three:
+ * The two are one kind of thing and are built and placed here once, so that
+ * what was measured about one of them holds for both:
  *
  * - The view is built once, at startup, never destroyed, and **never taken out
  *   of the window**. A view out of the window is a hidden page, and a hidden
@@ -20,7 +20,7 @@
  *   its children in order and this is that order arriving.
  *
  * What each layer does with the keyboard, and what it tells its page before it
- * moves, is its own; see `PickerView`, `ToastsView` and `TooltipView`.
+ * moves, is its own; see `PickerView` and `ToastsView`.
  */
 
 import { electron } from "../electron.js";

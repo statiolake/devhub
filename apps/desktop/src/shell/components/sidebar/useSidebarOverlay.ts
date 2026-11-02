@@ -19,9 +19,8 @@
  * })`), it widens this view to the card and its shadow and lifts it over the
  * content, and leaves every other child's rectangle alone
  * (`windowLayout.sidebarRect`). And main settles every leave: a pointer that
- * left this document may have gone onto the tooltip a row raised (another
- * view), or out of a window that went to the back, and from in here those look
- * like any other leave. So when the grace is up the page asks main where the
+ * left this document may have gone out of a window that went to the back, and
+ * from in here that looks like any other leave. So when the grace is up the page asks main where the
  * cursor is (`sidebarPointer`) rather than trusting the DOM.
  *
  * # The rules
@@ -29,7 +28,7 @@
  * - **Opens at once** on the pointer moving on the rail, and grows out of it
  *   (`OPEN_MS`). No rest delay: a rail that waits is a rail that feels stuck.
  * - **Closes after a grace** (`CLOSE_GRACE_MS`) once the cursor is off the
- *   card *and* off its tooltip, and retracts the way it grew (`CLOSE_MS`).
+ *   card, and retracts the way it grew (`CLOSE_MS`).
  *   Coming back inside the grace, or while it retracts, keeps it.
  * - **A window in the back keeps it.** Nothing is decided while DevHub is not
  *   in front: the card waits, and the first check after it comes back decides.
@@ -60,7 +59,7 @@ import { devhub } from "../../sidebar/client";
  * Long enough to forgive an overshoot of the card's edge and a pass through
  * the room its shadow is in; short enough that leaving reads as leaving. It is
  * also how often main is asked again while the answer is "not yet" — the
- * cursor is on the tooltip, or the window is in the back.
+ * window is in the back.
  */
 export const CLOSE_GRACE_MS = 200;
 
@@ -115,13 +114,6 @@ export type TreeMotion = "growing" | "shrinking";
 export interface SidebarOverlay {
   readonly phase: OverlayPhase;
   readonly tree: TreeMotion | undefined;
-  /**
-   * Counts every time the card opened or closed, read at the moment it is
-   * asked. The tooltips ask it: a row the pointer arrived on as the card
-   * opened is a row the card is about to show in full, and a sentence about it
-   * beside the card is the rail's tooltip doubled up with the overlay.
-   */
-  readonly generation: () => number;
   /** Close it now, and keep it closed under a pointer that has not left. */
   readonly dismiss: () => void;
   /** The handlers the pane wears. */
@@ -169,7 +161,6 @@ export function useSidebarOverlay(
     setTree(next);
   }, []);
   const phaseRef = useRef<OverlayPhase>("closed");
-  const generationRef = useRef(0);
   const collapsedRef = useRef(collapsed);
   const holdingRef = useRef(holding);
   holdingRef.current = holding;
@@ -195,20 +186,12 @@ export function useSidebarOverlay(
       const was = phaseRef.current;
       if (was === next) return;
       phaseRef.current = next;
-      // Opening and closing are what a tooltip has to know about; retracting
-      // and coming back out of a retract are one opening.
-      if (next === "closed" || (next === "open" && was === "closed")) {
-        generationRef.current += 1;
-      }
       setPhaseState(next);
       // Out of the rail, the tree grows in with the width; back into it, it
       // folds away with the retract. Landing is already the docked column.
       if (next === "open") growTree();
       else settleTree(next === "closing" ? "shrinking" : undefined);
       if (next === "open" && was === "closing") return;
-      // Whatever tooltip was up is about a row that just changed shape under
-      // it; the next one is asked for by the row the pointer goes to next.
-      devhub().hideTooltip();
       const floating = next !== "closed";
       if (floating !== (was !== "closed")) {
         void devhub().previewLayout({ sidebarOverlay: floating });
@@ -265,9 +248,9 @@ export function useSidebarOverlay(
 
   /**
    * The grace is up: ask main where the cursor is, and close only if it is
-   * off the card and its tooltip *and* the window is in front. Otherwise ask
-   * again after another grace — the pointer is on the tooltip, or DevHub is in
-   * the back and nothing is to be decided until it comes forward.
+   * off the card *and* the window is in front. Otherwise ask again after
+   * another grace — the pointer is back on the card, or DevHub is in the back
+   * and nothing is to be decided until it comes forward.
    */
   const scheduleClose = useCallback(() => {
     if (phaseRef.current !== "open") return;
@@ -451,12 +434,9 @@ export function useSidebarOverlay(
     [],
   );
 
-  const generation = useCallback(() => generationRef.current, []);
-
   return {
     phase,
     tree,
-    generation,
     dismiss,
     paneHandlers: { onPointerMove, onPointerEnter, onPointerLeave },
   };

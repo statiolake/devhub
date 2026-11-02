@@ -26,13 +26,7 @@ window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
   focusSurface: vi.fn(() => Promise.resolve()),
   onMenuCommand: () => () => undefined,
-  // The Sidebar asks main for its tooltips now rather than drawing them
-  // (`RowTooltip.tsx`), so every render of it reaches these three.
-  onSidebarArea: () => () => undefined,
   onChordArmed: () => () => undefined,
-  showTooltip: () => undefined,
-  hideTooltip: () => undefined,
-  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 /** Every row is twenty pixels tall, so 5 is its top half and 15 its bottom. */

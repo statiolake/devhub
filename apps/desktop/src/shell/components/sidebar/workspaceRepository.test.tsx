@@ -32,13 +32,7 @@ const openModal = vi.fn(() => Promise.resolve(""));
 window.devhub = {
   openModal,
   onMenuCommand: () => () => undefined,
-  // The Sidebar asks main for its tooltips now rather than drawing them
-  // (`RowTooltip.tsx`), so every render of it reaches these three.
-  onSidebarArea: () => () => undefined,
   onChordArmed: () => () => undefined,
-  showTooltip: () => undefined,
-  hideTooltip: () => undefined,
-  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(() => {
@@ -184,7 +178,7 @@ describe("a workspace row", () => {
   it("says its name and the Issue's icon, in the branch's place, when the Issue is known", () => {
     // `{name} {icon}` and then the pull request's mark. Neither the branch nor
     // the Issue's title is drawn in words: the icon says there is an Issue and
-    // in which state, and everything else is in its tooltip.
+    // in which state, and everything else is in its accessible name.
     mount(WORKING_ON);
     const row = document.querySelector(".workspace-row:not(.is-scratch)");
     expect(row?.querySelector(".row-text")?.textContent).toBe("widget");
@@ -202,50 +196,13 @@ describe("a workspace row", () => {
     const marks = row?.querySelector(".row-marks");
     expect(marks?.querySelector(".is-issue-open")).toBeNull();
     expect(marks?.lastElementChild).toHaveClass("is-pr-draft");
-    // Everything the row no longer says in words is in the mark's hover: the
-    // number and the whole title, the repository it is in, the branch.
-    expect(
-      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]"),
-    ).toEqual([
-      { icon: "issueOpen", text: "#128 Tidy the picker" },
-      { icon: "repository", text: "example/widget" },
-      { icon: "branch", text: "feature/128-tidy" },
-    ]);
-    // And in its accessible name, for whoever cannot hover.
+    // No hover of its own: the number and the whole title are in its
+    // accessible name.
+    expect(mark).not.toHaveAttribute("data-tooltip-lines");
     expect(mark).toHaveAttribute(
       "aria-label",
       "Issue #128, open: Tidy the picker",
     );
-  });
-
-  it("names the repository the workspace numbers its Issues in, over the URL's", () => {
-    mount({
-      sequence: 1,
-      workspaces: [
-        {
-          ...WORKING_ON.workspaces[0],
-          issueRepository: { owner: "upstream-org", repository: "widget" },
-          issue: {
-            url: "https://example.invalid/128",
-            number: 128,
-            title:
-              "A title long enough that it would never have fitted on the row at all",
-            state: "open",
-          },
-        },
-      ],
-    });
-    const mark = document.querySelector(".row-issue-title");
-    expect(mark?.textContent).toBe("");
-    expect(
-      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]").slice(0, 2),
-    ).toEqual([
-      {
-        icon: "issueOpen",
-        text: "#128 A title long enough that it would never have fitted on the row at all",
-      },
-      { icon: "repository", text: "upstream-org/widget" },
-    ]);
   });
 
   it("says its name and the branch, with the marks trailing, when the Issue is not known", () => {
@@ -311,10 +268,10 @@ describe("a workspace row", () => {
     ).toBe("widgetmain");
   });
 
-  it("says what the pull request is called in the mark's own hover", () => {
+  it("says what the pull request is called in the mark's accessible name", () => {
     // A branch that names no Issue can still have a pull request out from it,
     // and then the pull request is what the work is called. It is the mark's
-    // sentence rather than the row's words, like every other mark here.
+    // name rather than the row's words, like every other mark here.
     mount({
       sequence: 1,
       workspaces: [
@@ -331,13 +288,12 @@ describe("a workspace row", () => {
         },
       ],
     });
-    expect(
-      JSON.parse(
-        document
-          .querySelector(".row-link-button.is-pr-open")
-          ?.getAttribute("data-tooltip-lines") ?? "[]",
-      ),
-    ).toEqual([{ icon: "pullRequest", text: "#7 Rework the picker" }]);
+    const mark = document.querySelector(".row-link-button.is-pr-open");
+    expect(mark).toHaveAttribute(
+      "aria-label",
+      "Pull request #7, open: Rework the picker",
+    );
+    expect(mark).not.toHaveAttribute("data-tooltip-lines");
   });
 
   /**
@@ -437,8 +393,8 @@ describe("a workspace row", () => {
  *
  * A pull request whose review conversations are all resolved says nothing
  * about them, and one with any left open wears a small conversation mark over
- * its own and says how many in the mark's hover — the same words the row's
- * tooltip and its spoken name carry, from one list of facts.
+ * its own and says how many in the mark's accessible name — the same words the
+ * row's spoken name carries, from one list of facts.
  */
 describe("a pull request's unresolved conversations", () => {
   function withConversations(unresolved: number, uncounted = 0) {
@@ -472,14 +428,8 @@ describe("a pull request's unresolved conversations", () => {
     );
   });
 
-  it("says how many in the mark's own hover, and to a reader", () => {
+  it("says how many to a reader", () => {
     const mark = withConversations(3);
-    expect(
-      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]"),
-    ).toEqual([
-      { icon: "pullRequest", text: "#7 Rework the picker" },
-      { icon: "conversation", text: "3 unresolved conversations" },
-    ]);
     expect(mark).toHaveAttribute(
       "aria-label",
       "Pull request #7, open: Rework the picker\n3 unresolved conversations",
@@ -488,33 +438,34 @@ describe("a pull request's unresolved conversations", () => {
 
   it("says one conversation in the singular", () => {
     const mark = withConversations(1);
-    expect(mark?.getAttribute("data-tooltip-lines")).toContain(
-      '"1 unresolved conversation"',
+    expect(mark?.getAttribute("aria-label")?.split("\n")).toContain(
+      "1 unresolved conversation",
     );
   });
 
-  it("says it in the row's own tooltip too", () => {
+  it("says it in the row's own accessible name too", () => {
     withConversations(2);
-    const row = document.querySelector(".workspace-row:not(.is-scratch)");
-    expect(
-      JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]"),
-    ).toContainEqual({
-      icon: "conversation",
-      text: "2 unresolved conversations",
-      style: "muted",
-    });
+    const row = document.querySelector(
+      ".workspace-row:not(.is-scratch) .sidebar-context-button",
+    );
+    expect(row?.getAttribute("aria-label")?.split("\n")).toContain(
+      "2 unresolved conversations",
+    );
   });
 
   it("draws nothing and says nothing when every conversation is resolved", () => {
     const mark = withConversations(0);
     expect(mark?.querySelector(".row-mark-badge")).toBeNull();
-    expect(
-      JSON.parse(mark?.getAttribute("data-tooltip-lines") ?? "[]"),
-    ).toEqual([{ icon: "pullRequest", text: "#7 Rework the picker" }]);
+    expect(mark).toHaveAttribute(
+      "aria-label",
+      "Pull request #7, open: Rework the picker",
+    );
     expect(
       document
-        .querySelector(".workspace-row:not(.is-scratch)")
-        ?.getAttribute("data-tooltip-lines"),
+        .querySelector(
+          ".workspace-row:not(.is-scratch) .sidebar-context-button",
+        )
+        ?.getAttribute("aria-label"),
     ).not.toContain("conversation");
   });
 
@@ -529,16 +480,16 @@ describe("a pull request's unresolved conversations", () => {
   it("says a count read from one page of threads is only that", () => {
     const mark = withConversations(4, 150);
     expect(mark?.querySelector(".row-mark-badge")).not.toBeNull();
-    expect(mark?.getAttribute("data-tooltip-lines")).toContain(
-      '"4 unresolved conversations, 150 more not counted"',
+    expect(mark?.getAttribute("aria-label")?.split("\n")).toContain(
+      "4 unresolved conversations, 150 more not counted",
     );
   });
 
   it("does not draw a conversation it did not count, but says it went uncounted", () => {
     const mark = withConversations(0, 150);
     expect(mark?.querySelector(".row-mark-badge")).toBeNull();
-    expect(mark?.getAttribute("data-tooltip-lines")).toContain(
-      '"0 unresolved conversations, 150 more not counted"',
+    expect(mark?.getAttribute("aria-label")?.split("\n")).toContain(
+      "0 unresolved conversations, 150 more not counted",
     );
   });
 });
@@ -549,8 +500,8 @@ describe("a pull request's unresolved conversations", () => {
  * A failure wears a red cross and a run still going an amber dot, at the pull
  * request mark's bottom-right; a pass is said in words and not drawn, because
  * it is the ordinary case and asks nothing. Nothing is drawn or said when
- * nothing has reported. The words are the same in the mark's hover, the row's
- * tooltip and the spoken name, from one list of facts.
+ * nothing has reported. The words are the same in the mark's accessible name
+ * and the row's, from one list of facts.
  */
 describe("a pull request's CI", () => {
   function withChecks(
@@ -589,10 +540,8 @@ describe("a pull request's CI", () => {
     );
   }
 
-  function hover(mark: Element | null) {
-    return JSON.parse(
-      mark?.getAttribute("data-tooltip-lines") ?? "[]",
-    ) as unknown;
+  function spoken(mark: Element | null): string[] {
+    return (mark?.getAttribute("aria-label") ?? "").split("\n");
   }
 
   it("wears a cross when it is failing, and says how many of how many", () => {
@@ -603,10 +552,6 @@ describe("a pull request's CI", () => {
       pending: 0,
     });
     expect(badges(mark)).toEqual(["checksFailing"]);
-    expect(hover(mark)).toEqual([
-      { icon: "pullRequest", text: "#7 Rework the picker" },
-      { icon: "checksFailing", text: "CI: failing (3 of 12 checks)" },
-    ]);
     expect(mark).toHaveAttribute(
       "aria-label",
       "Pull request #7, open: Rework the picker\nCI: failing (3 of 12 checks)",
@@ -621,10 +566,7 @@ describe("a pull request's CI", () => {
       pending: 4,
     });
     expect(badges(mark)).toEqual(["checksPending"]);
-    expect(hover(mark)).toContainEqual({
-      icon: "checksPending",
-      text: "CI: pending (4 of 12 checks)",
-    });
+    expect(spoken(mark)).toContain("CI: pending (4 of 12 checks)");
   });
 
   it("wears nothing when it is passing, and says so in words", () => {
@@ -635,10 +577,7 @@ describe("a pull request's CI", () => {
       pending: 0,
     });
     expect(badges(mark)).toEqual([]);
-    expect(hover(mark)).toContainEqual({
-      icon: "checksPassing",
-      text: "CI: passing (1 check)",
-    });
+    expect(spoken(mark)).toContain("CI: passing (1 check)");
   });
 
   it("says the verdict alone when none of the counted checks are in it", () => {
@@ -649,16 +588,13 @@ describe("a pull request's CI", () => {
       pending: 0,
     });
     expect(badges(mark)).toEqual(["checksFailing"]);
-    expect(hover(mark)).toContainEqual({
-      icon: "checksFailing",
-      text: "CI: failing",
-    });
+    expect(spoken(mark)).toContain("CI: failing");
   });
 
   it("draws nothing and says nothing when nothing has reported", () => {
     const mark = withChecks(undefined);
     expect(badges(mark)).toEqual([]);
-    expect(JSON.stringify(hover(mark))).not.toContain("CI:");
+    expect(mark?.getAttribute("aria-label")).not.toContain("CI:");
   });
 
   it("sits beside the conversation badge, each saying its own line", () => {
@@ -667,23 +603,19 @@ describe("a pull request's CI", () => {
       2,
     );
     expect(badges(mark)).toEqual(["conversation", "checksFailing"]);
-    expect(hover(mark)).toEqual([
-      { icon: "pullRequest", text: "#7 Rework the picker" },
-      { icon: "conversation", text: "2 unresolved conversations" },
-      { icon: "checksFailing", text: "CI: failing (3 of 12 checks)" },
+    expect(spoken(mark)).toEqual([
+      "Pull request #7, open: Rework the picker",
+      "2 unresolved conversations",
+      "CI: failing (3 of 12 checks)",
     ]);
   });
 
-  it("says it in the row's own tooltip too", () => {
+  it("says it in the row's own accessible name too", () => {
     withChecks({ state: "pending", total: 3, failing: 0, pending: 1 });
-    const row = document.querySelector(".workspace-row:not(.is-scratch)");
-    expect(
-      JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]"),
-    ).toContainEqual({
-      icon: "checksPending",
-      text: "CI: pending (1 of 3 checks)",
-      style: "muted",
-    });
+    const row = document.querySelector(
+      ".workspace-row:not(.is-scratch) .sidebar-context-button",
+    );
+    expect(spoken(row)).toContain("CI: pending (1 of 3 checks)");
   });
 });
 
@@ -749,14 +681,6 @@ describe("the mark a workspace row starts with", () => {
     const button = document.querySelector(
       "[data-tree-item-id='workspace:w-1']",
     );
-    const row = button?.closest("[data-tooltip-lines]");
-    expect(
-      JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]"),
-    ).toContainEqual({
-      icon: "worktree",
-      text: "/projects/other",
-      style: "muted",
-    });
     expect(button?.getAttribute("aria-label")).toContain(
       "worktree of /projects/other",
     );
@@ -782,11 +706,10 @@ describe("the mark a workspace row starts with", () => {
     ).toBeNull();
   });
 
-  it("is the link, when there is a repository behind it", () => {
-    // One mark, one question. The folder *is* the checkout, so the folder is
-    // what leads to the page it is a checkout of; the `repository` mark that
-    // used to sit in the trailing group was that same question asked twice, in
-    // a second silhouette a person had to learn in order to press it.
+  it("is no link even when there is a repository behind it", () => {
+    // The folder used to open the repository's page, and people pressed it
+    // meaning to select the row. It is inert now: under the select button's
+    // hit area, so a click on it is a click on the row.
     const { openExternalUrl } = mount({
       sequence: 1,
       workspaces: [
@@ -803,29 +726,20 @@ describe("the mark a workspace row starts with", () => {
     const glyph = document.querySelector(
       ".workspace-row:not(.is-scratch) .row-glyph",
     );
-    expect(glyph?.tagName).toBe("BUTTON");
-    expect(glyph).toHaveClass("row-glyph-button");
-    // The row's own sentence, and then what pressing it does — not a second,
-    // shorter account of which Workspace this is.
-    expect(glyph?.getAttribute("aria-label")).toBe(
-      [
-        "widget workspace",
-        "path /projects/widget",
-        "repository github.com/example/widget",
-        "branch main",
-      ].join("\n") + ", open on GitHub",
-    );
+    expect(glyph?.tagName).toBe("SPAN");
+    expect(glyph).toHaveAttribute("aria-hidden", "true");
+    expect(screen.queryByRole("button", { name: /on GitHub/u })).toBeNull();
     fireEvent.click(glyph!);
-    expect(openExternalUrl).toHaveBeenCalledWith(
-      "https://github.com/example/widget",
-    );
+    expect(openExternalUrl).not.toHaveBeenCalled();
+    // Its CSS does not raise it over the select button's hit area, which is
+    // what makes a click on it land on the row in the app.
+    const shell = readFileSync("src/shell/styles/shell.css", "utf8");
+    expect(shell).not.toContain("row-glyph-button");
   });
 
   it("is inert, and not a control at all, when there is no repository", () => {
-    // Not a disabled button: a control that can never be pressed is one that
-    // has to explain itself, and there is nothing here to explain. The row is
-    // still selected by clicking it, because the select button's hit area runs
-    // under the whole row.
+    // The row is selected by clicking it, because the select button's hit
+    // area runs under the whole row.
     mount({
       sequence: 1,
       workspaces: [{ workspaceId: "w-1", branch: "main" }],
@@ -839,8 +753,8 @@ describe("the mark a workspace row starts with", () => {
   });
 
   it("leaves the trailing group to what the row is for, not what it is", () => {
-    // What this is a checkout of is the folder glyph. Nothing in the mark group
-    // says it a second time.
+    // What this is a checkout of is in the row's accessible name. Nothing in
+    // the mark group draws it.
     mount({
       sequence: 1,
       workspaces: [
@@ -852,38 +766,6 @@ describe("the mark a workspace row starts with", () => {
       ],
     });
     expect(document.querySelector(".row-mark-repository")).toBeNull();
-    expect(
-      document.querySelector(".row-marks [data-glyph='repository']"),
-    ).toBeNull();
-    expect(
-      document.querySelector(".row-marks [data-glyph='worktree']"),
-    ).toBeNull();
-  });
-
-  it("takes a worktree to the repository's page, under the same one mark", () => {
-    // A worktree is not a separate thing on GitHub, so the folder that is a
-    // worktree leads to the same page as the folder that is not. Which of the
-    // two this is, is a line in the tooltip.
-    const { openExternalUrl } = mount({
-      sequence: 1,
-      workspaces: [
-        {
-          workspaceId: "w-1",
-          branch: "feature/128-tidy",
-          mainWorktree: "/projects/other",
-          worktree: "/projects/widget",
-          repositoryUrl: "https://github.com/example/widget",
-        },
-      ],
-    });
-    const glyph = document.querySelector(
-      ".workspace-row:not(.is-scratch) .row-glyph-button",
-    );
-    expect(glyph?.querySelector("svg")?.dataset.glyph).toBe("folder");
-    fireEvent.click(glyph!);
-    expect(openExternalUrl).toHaveBeenCalledWith(
-      "https://github.com/example/widget",
-    );
   });
 });
 
@@ -953,14 +835,14 @@ describe("a workspace row, continued", () => {
      * The button says which of the two closes it is. Closing a worktree
      * deletes the folder, and a control that says "Close workspace" while
      * deleting a directory is a control that lies once and is never trusted
-     * again. The ellipsis is the rest of the promise: a question may follow.
+     * again.
      */
     it("says it is a worktree it is about to close", () => {
       mount(worktree(true));
       const button = screen.getByRole("button", {
         name: "Close the worktree widget",
       });
-      expect(button).toHaveAttribute("data-tooltip", "Close worktree…");
+      expect(button).not.toHaveAttribute("data-tooltip");
     });
 
     it("says only 'close' where nothing is going to be deleted", () => {
@@ -979,7 +861,7 @@ describe("a workspace row, continued", () => {
       ]) {
         mount({ sequence: 1, workspaces });
         const button = screen.getByRole("button", { name: "Close widget" });
-        expect(button).toHaveAttribute("data-tooltip", "Close workspace");
+        expect(button).not.toHaveAttribute("data-tooltip");
         cleanup();
       }
     });
@@ -1047,18 +929,14 @@ describe("a workspace row, continued", () => {
         },
       ],
     });
-    // A mark rather than a sentence, and still on the row rather than only in
-    // the tooltip: a failure nobody can see without hovering is a failure
-    // nobody sees.
+    // A mark rather than a sentence, and still on the row: a failure nobody
+    // can see is a failure nobody sees.
     const mark = document.querySelector(".row-mark-unavailable");
     expect(mark).toHaveAttribute(
       "aria-label",
       "#128 · GitHub has no issue example/widget#128.",
     );
-    expect(mark).toHaveAttribute(
-      "data-tooltip",
-      "#128 · GitHub has no issue example/widget#128.",
-    );
+    expect(mark).not.toHaveAttribute("data-tooltip");
     // The branch is still said; it is the fact this row is named by.
     expect(screen.getByText("feature/128-tidy")).toBeInTheDocument();
     // And no Issue mark, because DevHub does not know the state to draw.

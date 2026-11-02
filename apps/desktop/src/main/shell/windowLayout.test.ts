@@ -10,16 +10,13 @@ import {
 	sidebarColumnWidth,
 	sidebarOverlayHolds,
 	sidebarRect,
-	sidebarTrailingEdge,
 	surfaceRect,
-	tooltipRect,
 	trafficLightPosition,
 	insideRect,
 	windowLayout,
 	workbenchRect,
 	type AttachedPlacement,
 	type LayoutInput,
-	type TooltipPlacement,
 	type LayoutState,
 	onScreenEditor,
 	onScreenEditorTerminal,
@@ -46,7 +43,6 @@ function input(overrides: Partial<LayoutInput> = {}): LayoutInput {
 		asking: undefined,
 		toasts: undefined,
 		picker: "none",
-		tooltip: undefined,
 		attached: [],
 		...overrides,
 	};
@@ -143,7 +139,6 @@ describe("the child list", () => {
 			"agents",
 			"toasts",
 			"picker",
-			"tooltip",
 		]);
 	});
 
@@ -203,7 +198,7 @@ describe("the child list", () => {
 		// In the window's child list, at the window's size and one pixel inside
 		// it, so its page is never hidden and never has to lay itself out when
 		// it has something to show; the rest outside the window, so it takes
-		// no click. The notices, the questions and the tooltip are one rule.
+		// no click. The notices and the questions are one rule.
 		const parked = {
 			rect: { x: WINDOW.width - 1, y: WINDOW.height - 1, ...WINDOW },
 			visible: false,
@@ -221,9 +216,8 @@ describe("the child list", () => {
 				"agents",
 				"toasts",
 				"picker",
-				"tooltip",
 			]);
-			for (const kind of ["toasts", "picker", "tooltip"] as const) {
+			for (const kind of ["toasts", "picker"] as const) {
 				expect(children.find((child) => child.identity.kind === kind)).toEqual({
 					identity: { kind },
 					...parked,
@@ -273,7 +267,6 @@ describe("the child list", () => {
 				terminal: 5,
 				toasts: 6,
 				picker: 7,
-				tooltip: 8,
 			} as const;
 			expect(order[0]).toBe("shell");
 			for (let index = 1; index < order.length; index += 1) {
@@ -470,179 +463,6 @@ describe("the Sidebar and the Agents as children of their own", () => {
 });
 
 /**
- * A tooltip is placed against the *window*, which is the whole reason it is a
- * child of the window.
- *
- * The Sidebar drew its own until now, against its own box, and the row that
- * most needed one — a glyph on a collapsed rail — was in a box 40 to 76px
- * wide. There was no arithmetic that made a sentence readable in that, so the
- * page refused to draw one at all. These are the assertions that say the
- * refusal is gone: the rectangle may start inside the Sidebar's column and
- * end well outside it, and the only thing it may not leave is the window.
- */
-describe("where a tooltip goes", () => {
-	const size = { width: 300, height: 40 };
-	function placement(
-		overrides: Partial<TooltipPlacement> = {},
-	): TooltipPlacement {
-		return {
-			anchor: { x: 8, y: 100, width: 36, height: 24 },
-			size,
-			...overrides,
-		};
-	}
-
-	/**
-	 * The rail's case, and the one that could not be drawn before: the anchor
-	 * is a glyph in a 40px column and the sentence runs out over the editor.
-	 */
-	it("puts a rail's tooltip beside the glyph, out over the editor", () => {
-		const rect = tooltipRect(WINDOW, placement());
-		expect(rect).toEqual({ x: 8 + 36 + 6, y: 100, width: 300, height: 40 });
-		// The assertion that matters: it ends outside the column it started in.
-		expect(rect.x + rect.width).toBeGreaterThan(76);
-	});
-
-	/**
-	 * And the expanded column's case is the same case. It used to be under the
-	 * row, which in a list of stacked rows is over the *next* row: the answer
-	 * to what you just pointed at covering the thing you are pointing at next,
-	 * to be dodged before it can be clicked. There is one side now, and it is
-	 * the side with a workbench on it.
-	 */
-	it("puts an expanded row's tooltip beside it too, never under it", () => {
-		const anchor = { x: 0, y: 100, width: 248, height: 26 };
-		expect(tooltipRect(WINDOW, placement({ anchor }))).toEqual({
-			x: 248 + 6,
-			y: 100,
-			width: 300,
-			height: 40,
-		});
-	});
-
-	/**
-	 * Flipped to the other side of the anchor rather than squeezed into what
-	 * is left. A tooltip is one rectangle with one width; narrowing it to fit
-	 * is how a sentence becomes a ribbon, which is the failure this whole view
-	 * exists to end.
-	 */
-	it("flips to the other side of the anchor at the trailing edge", () => {
-		const anchor = { x: 1300, y: 100, width: 36, height: 24 };
-		const rect = tooltipRect(WINDOW, placement({ anchor }));
-		expect(rect.x).toBe(1300 - 6 - 300);
-		expect(rect.width).toBe(300);
-	});
-
-	/**
-	 * The bottom of the column, where a box that hung under the row would have
-	 * been off the window. Beside the row there is nothing to flip: the box
-	 * starts level with the row's own top and the clamp lifts it until it fits,
-	 * which can only ever move it *up*. Nothing is placed below the row it is
-	 * about, so nothing lands on the row after it.
-	 */
-	it("lifts a tooltip at the bottom edge rather than dropping it below", () => {
-		const anchor = { x: 8, y: 890, width: 36, height: 24 };
-		const rect = tooltipRect(WINDOW, placement({ anchor }));
-		expect(rect.y).toBeLessThanOrEqual(890);
-		expect(rect.y + rect.height).toBeLessThanOrEqual(WINDOW.height);
-		expect(rect.height).toBe(40);
-	});
-
-	/**
-	 * A sentence too wide for either side of the row. It does not fall back to
-	 * hanging under the row — there is no such side any more — it ends against
-	 * the window's trailing edge, still level with the row it is about.
-	 */
-	it("clamps a very wide tooltip to the window, still beside the row", () => {
-		const anchor = { x: 0, y: 100, width: 248, height: 26 };
-		const rect = tooltipRect(
-			WINDOW,
-			placement({ anchor, size: { width: WINDOW.width - 20, height: 40 } }),
-		);
-		expect(rect.y).toBe(100);
-		expect(rect.x + rect.width).toBeLessThanOrEqual(WINDOW.width);
-		expect(rect.width).toBe(WINDOW.width - 20);
-	});
-
-	/**
-	 * A flip can still land out of bounds when the anchor is itself in the
-	 * corner, so the clamp is the last word. Off-window is the one result that
-	 * is never readable.
-	 */
-	it("is clamped to the window when even the flip does not fit", () => {
-		const rect = tooltipRect(
-			WINDOW,
-			placement({ anchor: { x: 2, y: 890, width: 36, height: 24 } }),
-		);
-		expect(rect.x).toBeGreaterThanOrEqual(4);
-		expect(rect.y).toBeGreaterThanOrEqual(4);
-		expect(rect.x + rect.width).toBeLessThanOrEqual(WINDOW.width);
-		expect(rect.y + rect.height).toBeLessThanOrEqual(WINDOW.height);
-	});
-
-	it("never grows past the window, however long the sentence is", () => {
-		const rect = tooltipRect(
-			WINDOW,
-			placement({ size: { width: 4000, height: 3000 } }),
-		);
-		expect(rect.width).toBe(WINDOW.width);
-		expect(rect.height).toBe(WINDOW.height);
-	});
-
-	/**
-	 * Over the window exactly when there is a tooltip up — the rule of every
-	 * layer: a native view takes every click inside its bounds, so a layer
-	 * over the window with nothing to say is a permanent hole in the editor.
-	 * With nothing to say it is parked (see "parks every layer").
-	 */
-	it("is over the window exactly when a tooltip is up", () => {
-		const tooltip = (arrangement: LayoutInput) =>
-			windowLayout(arrangement).find(
-				(child) => child.identity.kind === "tooltip",
-			);
-		expect(tooltip(input())?.visible).toBe(false);
-		expect(tooltip(input({ tooltip: placement() }))).toEqual({
-			identity: { kind: "tooltip" },
-			rect: tooltipRect(WINDOW, placement(), 248),
-			visible: true,
-		});
-	});
-
-	/**
-	 * Above every other child, the questions included. Not because a tooltip
-	 * may stand over a modal — the pointer leaves the row before a sheet is
-	 * drawn — but because it is the one child that takes no click and hides
-	 * nothing, so there is nothing it could be underneath *for*.
-	 */
-	it("is the topmost child of all, above the questions", () => {
-		const children = windowLayout(
-			input({
-				tooltip: placement(),
-				picker: "window",
-				toasts: { width: 320, height: 90 },
-			}),
-		);
-		expect(kinds(children)).toEqual([
-			"shell",
-			"sidebar",
-			"editor",
-			"editor",
-			"agents",
-			"toasts",
-			"picker",
-			"tooltip",
-		]);
-	});
-
-	/** It is never what the keys go to: there is nothing in it to type into. */
-	it("never takes the keyboard", () => {
-		expect(keyboardChild(input({ tooltip: placement() }))).not.toEqual({
-			kind: "tooltip",
-		});
-	});
-});
-
-/**
  * Where a view a workbench opened inside itself goes.
  *
  * It is a sibling of the workbench, not a child of it — a nested
@@ -753,10 +573,6 @@ describe("a view a workbench attached to itself", () => {
 					attached: [attached()],
 					toasts: { width: 300, height: 80 },
 					picker: "window",
-					tooltip: {
-						anchor: { x: 8, y: 100, width: 36, height: 24 },
-						size: { width: 300, height: 40 },
-					},
 				}),
 			),
 		);
@@ -769,7 +585,6 @@ describe("a view a workbench attached to itself", () => {
 			"agents",
 			"toasts",
 			"picker",
-			"tooltip",
 		]);
 	});
 
@@ -1139,7 +954,7 @@ describe("the floating Sidebar", () => {
 		for (const content of ["editor", "attached", "agents", "terminal"]) {
 			expect(order.lastIndexOf(content as never)).toBeLessThan(sidebar);
 		}
-		for (const layer of ["toasts", "picker", "tooltip"]) {
+		for (const layer of ["toasts", "picker"]) {
 			expect(order.indexOf(layer as never)).toBeGreaterThan(sidebar);
 		}
 		expect(order.filter((kind) => kind === "sidebar")).toHaveLength(1);
@@ -1187,32 +1002,16 @@ describe("the floating Sidebar", () => {
 
 	/**
 	 * The page asks this once the pointer has left its document: the card,
-	 * the rail included, and the tooltip a row raised hold it; the room the
-	 * shadow is drawn in and the rest of the window do not.
+	 * the rail included, holds it; the room the shadow is drawn in and the
+	 * rest of the window do not.
 	 */
-	it("is held by a cursor on the card or on its tooltip, and nowhere else", () => {
-		const tooltip: TooltipPlacement = {
-			anchor: { x: 8, y: 100, width: 232, height: 26 },
-			size: { width: 200, height: 60 },
-		};
-		const holds = (x: number, y: number, raised = tooltip) =>
-			sidebarOverlayHolds({ x, y }, WINDOW, floating(), raised);
+	it("is held by a cursor on the card, and nowhere else", () => {
+		const holds = (x: number, y: number) =>
+			sidebarOverlayHolds({ x, y }, WINDOW, floating());
 		expect(holds(10, 300)).toBe(true);
 		expect(holds(247, 300)).toBe(true);
 		// The shadow's room is not the card.
 		expect(holds(248 + shadow / 2, 300)).toBe(false);
-		// The tooltip, beside the row, is.
-		const box = tooltipRect(WINDOW, tooltip, 248);
-		expect(box.x).toBeGreaterThan(248);
-		expect(holds(box.x + 5, box.y + 5)).toBe(true);
-		expect(
-			sidebarOverlayHolds(
-				{ x: box.x + 5, y: box.y + 5 },
-				WINDOW,
-				floating(),
-				undefined,
-			),
-		).toBe(false);
 		expect(holds(800, 300)).toBe(false);
 		// Above the card is the window's band, not the card.
 		expect(holds(10, 10)).toBe(false);
@@ -1221,83 +1020,5 @@ describe("the floating Sidebar", () => {
 	it("is never wider than the window", () => {
 		const narrow = { width: 200, height: 600 };
 		expect(sidebarRect(narrow, floating()).width).toBe(200);
-	});
-});
-
-/**
- * A tooltip is about a row in the Sidebar, and it never stands over the
- * Sidebar's rows: it starts past the column's visible trailing edge — the
- * docked column's, the rail's, or the floating card's — level with the row,
- * and only the window's edge can bring it back.
- */
-describe("a tooltip beside the Sidebar, never over its rows", () => {
-	/** An Issue mark half way along a row: 20 wide at x 150, the row at y 140. */
-	const mark: TooltipPlacement = {
-		anchor: { x: 150, y: 140, width: 20, height: 26 },
-		size: { width: 240, height: 64 },
-	};
-	const placed = (sidebar: LayoutState["sidebar"], size = WINDOW) => {
-		const at = state({ sidebar });
-		const child = windowLayout(
-			input({ windowSize: size, state: at, tooltip: mark }),
-		).find((each) => each.identity.kind === "tooltip");
-		if (!child?.visible) throw new Error("no tooltip");
-		return { rect: child.rect, edge: sidebarTrailingEdge(size, at) };
-	};
-
-	it("starts past the docked column, level with the row", () => {
-		const { rect, edge } = placed({ width: 248, collapsed: false });
-		expect(edge).toBe(248);
-		expect(rect.x).toBe(248 + 6);
-		expect(rect.y).toBe(140);
-	});
-
-	it("starts past the floating card, at the card's full width", () => {
-		const { rect, edge } = placed({
-			width: 300,
-			collapsed: true,
-			overlay: true,
-		});
-		expect(edge).toBe(300);
-		expect(rect.x).toBe(306);
-		expect(rect.y).toBe(140);
-	});
-
-	it("starts past the rail, and past its own mark", () => {
-		const rail = placed({ width: 248, collapsed: true });
-		expect(rail.edge).toBe(40);
-		// The anchor is further right than the rail here; the box is past
-		// whichever is further, so it never covers what it is about.
-		expect(rail.rect.x).toBe(150 + 20 + 6);
-		const glyph = windowLayout(
-			input({
-				state: state({ sidebar: { width: 248, collapsed: true } }),
-				tooltip: {
-					anchor: { x: 12, y: 100, width: 16, height: 26 },
-					size: { width: 240, height: 64 },
-				},
-			}),
-		).find((each) => each.identity.kind === "tooltip");
-		expect(glyph?.rect.x).toBe(40 + 6);
-	});
-
-	it("never flips back over the rows; only the window's edge clamps it", () => {
-		const narrow = { width: 420, height: 600 };
-		const { rect } = placed({ width: 248, collapsed: false }, narrow);
-		// No room past the column: against the window's edge, not mirrored to
-		// the leading side of the mark.
-		expect(rect.x).toBe(420 - 240 - 4);
-		expect(rect.x).toBeGreaterThan(150 - 240);
-	});
-
-	it("moves up, and only up, at the foot of the window", () => {
-		const low: TooltipPlacement = {
-			...mark,
-			anchor: { ...mark.anchor, y: 880 },
-		};
-		const child = windowLayout(input({ tooltip: low })).find(
-			(each) => each.identity.kind === "tooltip",
-		);
-		expect(child?.rect.y).toBe(900 - 64 - 4);
 	});
 });

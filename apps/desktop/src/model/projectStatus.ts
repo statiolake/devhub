@@ -3,7 +3,7 @@
  * single-select) it sits in, per board.
  *
  * Pure, and shared by main (which parses the GraphQL answer) and the shell
- * (which draws the letter and the tooltip), so the two cannot disagree.
+ * (which draws the letter and says the lanes), so the two cannot disagree.
  */
 
 /** One board the Issue is on, and the lane it is in there. */
@@ -88,14 +88,14 @@ export function primaryLane(
 }
 
 /** "Projects: DevHub Roadmap — In Review; Triage". */
-export function projectsTooltip(lanes: readonly ProjectLane[]): string {
+export function projectsLabel(lanes: readonly ProjectLane[]): string {
   const parts = lanes.map((l) =>
     l.status ? `${l.project} — ${l.status}` : l.project,
   );
   return `Projects: ${parts.join("; ")}`;
 }
 
-/** Shown in the tooltip when the token cannot read Projects. */
+/** Said in place of the lanes when the token cannot read Projects. */
 export const PROJECT_SCOPE_HINT =
   "Project status unavailable: run `gh auth refresh -s read:project`";
 

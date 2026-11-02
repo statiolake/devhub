@@ -52,8 +52,8 @@
  * attempt reads. A reading ends the streak. Readings already taken stay in the
  * readout meanwhile, which goes on with what GUI Agents report, and the
  * reader's status (`deps.status`: when it last read, why its latest attempt
- * gave nothing) goes on the wire, so the readout fades and its tooltip says
- * when it last read and why it could not since. Readings are one at a time per
+ * gave nothing) goes on the wire, so the readout fades and its accessible name
+ * says when it last read. Readings are one at a time per
  * CLI, so a slow one never overlaps or holds up the next. A failure to start
  * also looks the command up again at the next attempt, in case it moved.
  *

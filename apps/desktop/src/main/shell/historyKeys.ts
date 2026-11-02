@@ -49,7 +49,7 @@ import type { NavigationDirection } from "../../model/navigationHistory.js";
  * The pages where the app's history is the only one there is.
  *
  * Every page DevHub draws in the main window except the modals' and the
- * passive layers (notices, the tooltip), which never hold the keyboard.
+ * passive layer (the notices), which never holds the keyboard.
  */
 const APP_HISTORY_PAGES = [
 	"index.html",
@@ -64,7 +64,7 @@ const APP_HISTORY_PAGES = [
  * (`AppModel.noteInteraction`): a workbench (and anything it hosts), the
  * Agents, a terminal pane. Not the Sidebar — a click there is choosing where
  * to go, not being somewhere — nor the window's own page (the title bar's
- * Back and Forward live there), the modals, the notices, the tooltip, the
+ * Back and Forward live there), the modals, the notices, the
  * Settings window, or a Web Inspector.
  */
 export function isDestinationSurface(surfaceUrl: string): boolean {

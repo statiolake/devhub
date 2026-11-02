@@ -3,7 +3,7 @@ import {
   laneColorToken,
   parseProjectLanes,
   primaryLane,
-  projectsTooltip,
+  projectsLabel,
   statusLetter,
 } from "./projectStatus.js";
 
@@ -75,10 +75,10 @@ describe("primaryLane", () => {
   });
 });
 
-describe("projectsTooltip", () => {
+describe("projectsLabel", () => {
   it("lists every board with its lane", () => {
     expect(
-      projectsTooltip([
+      projectsLabel([
         { project: "DevHub Roadmap", status: "In Review" },
         { project: "Triage" },
       ]),

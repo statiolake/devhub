@@ -47,7 +47,6 @@ import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
 import { PickerView } from "./pickerView.js";
 import { ToastsView } from "./toastsView.js";
-import { TooltipView } from "./tooltipView.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
@@ -238,7 +237,6 @@ export class ShellWindow {
 	readonly agents: ChromeView;
 	readonly toasts: ToastsView;
 	readonly picker: PickerView;
-	readonly tooltip: TooltipView;
 	/** How the surface key of the workbench on screen is looked up. */
 	private surfaceKeyOfView: (view: WorkbenchView) => string | undefined = () =>
 		undefined;
@@ -369,20 +367,6 @@ export class ShellWindow {
 			},
 			focusSurface: () => this.focusSurface(),
 		});
-		// Built at startup like every other child, and never lazily. A tooltip
-		// is asked for at the moment a pointer stops moving; a view created
-		// then would have a page still loading when the sentence arrived, and
-		// the first tooltip of a session would be the one that did not appear.
-		this.tooltip = new TooltipView(
-			preloadFor("tooltip"),
-			`${pageBase}/tooltip.html`,
-		);
-		this.tooltip.adopt({
-			window: this.window,
-			tooltipChanged: () => {
-				this.layout();
-			},
-		});
 		this.picker = new PickerView(
 			preloadFor("picker"),
 			`${pageBase}/picker.html`,
@@ -392,19 +376,6 @@ export class ShellWindow {
 			focusSurface: () => this.focusSurface(),
 			focusModal: (contents) => this.focusModal(contents),
 			modalsChanged: () => {
-				// A question coming up takes the tooltip down, and it has to be
-				// said here rather than left to the pointer. The Sidebar hides
-				// its tooltip when the pointer leaves the row, which covers a
-				// question opened by clicking something — but a question opened
-				// from the keyboard, with the pointer still resting on a row,
-				// leaves the pointer exactly where it was. Measured: the
-				// tooltip stayed up and stood over the sheet.
-				//
-				// So it is the window's rule, decided where the modal set is
-				// known, and it is one direction only: a tooltip is about a row
-				// behind a modal the person has to answer first, which makes it
-				// a sentence about something they cannot act on.
-				this.tooltip.hide();
 				this.layout();
 				// A modal owns the keyboard while it stands, so every workbench
 				// loses focus when one opens and the one on screen gets it back
@@ -484,7 +455,6 @@ export class ShellWindow {
 		this.sidebar.openPage();
 		this.agents.openPage();
 		this.toasts.openPage();
-		this.tooltip.openPage();
 		this.picker.openPage();
 		for (const view of this.terminalViews.values()) view.openPage();
 		for (const view of this.editorTerminalViews.values()) view.openPage();
@@ -497,7 +467,6 @@ export class ShellWindow {
 			this.sidebar.contents(),
 			this.agents.contents(),
 			this.toasts.contents(),
-			this.tooltip.contents(),
 		]) {
 			contents?.on("focus", () => this.picker.reclaimFrom(contents));
 		}
@@ -1220,12 +1189,10 @@ export class ShellWindow {
 					this.viewForEditorKey(identity.editorKey)?.webContents ??
 					this.window.webContents
 				);
-			case "tooltip":
 			case "attached":
-				// There is nothing in a tooltip to type into, and a view a
-				// workbench opened inside itself takes the keyboard from VS
-				// Code rather than from DevHub — the browser is focused by the
-				// editor that owns it. `keyboardChild` names neither. Reaching
+				// A view a workbench opened inside itself takes the keyboard
+				// from VS Code rather than from DevHub — the browser is focused
+				// by the editor that owns it. `keyboardChild` never names it. Reaching
 				// here means the one answer to "where do the keys go" has
 				// started giving an answer that is not a place DevHub can put
 				// them, which is a broken invariant rather than a case to
@@ -1382,11 +1349,8 @@ export class ShellWindow {
 	 * screen's and needs the window's origin subtracted back off;
 	 * `documentElement`'s box is the view's own and is stale for a while after
 	 * main moves it — measured, the collapsed Sidebar went on answering 249
-	 * for seconds after being narrowed to 76. The Sidebar needs it for exactly
-	 * one thing: saying where one of its rows is *in the window*, so that a
-	 * tooltip can be placed against the window rather than against the column.
-	 *
-	 * Told rather than asked, like the workbench area and for the same reason.
+	 * for seconds after being narrowed to 76. A context menu the Sidebar asks
+	 * for is placed against it (`contextMenuOrigin`).
 	 */
 	sidebarArea(): SidebarAreaWire {
 		return sidebarRect(this.windowSize(), this.state);
@@ -1394,10 +1358,9 @@ export class ShellWindow {
 
 	/**
 	 * Where the cursor is, for the floating Sidebar's page, which has lost
-	 * sight of it: on the card or on its tooltip (`sidebarOverlayHolds`), and
-	 * whether this window is in front. Read off the cursor, not off DOM
-	 * events: a pointer that crossed into the tooltip's view, or a window
-	 * that went to the back, is a leave as far as the page can tell.
+	 * sight of it: on the card or not (`sidebarOverlayHolds`), and whether this
+	 * window is in front. Read off the cursor, not off DOM events: a window
+	 * that went to the back is a leave as far as the page can tell.
 	 */
 	sidebarPointer(): SidebarPointerWire {
 		const active = !this.window.isDestroyed() && this.window.isFocused();
@@ -1406,12 +1369,7 @@ export class ShellWindow {
 		const content = this.window.getContentBounds();
 		const point = { x: cursor.x - content.x, y: cursor.y - content.y };
 		return {
-			inside: sidebarOverlayHolds(
-				point,
-				this.windowSize(),
-				this.state,
-				this.tooltip.placement(),
-			),
+			inside: sidebarOverlayHolds(point, this.windowSize(), this.state),
 			active,
 		};
 	}
@@ -1485,7 +1443,6 @@ export class ShellWindow {
 			asking: this.askingEditorKey(),
 			toasts: this.toasts.contentSize(),
 			picker: this.picker.scope(),
-			tooltip: this.tooltip.placement(),
 			attached: this.attachedPlacements(),
 			terminals: [...this.terminalViews.keys()],
 			editorTerminals: [...this.editorTerminalViews.keys()],
@@ -1640,9 +1597,6 @@ export class ShellWindow {
 				case "picker":
 					this.picker.place(child.rect, child.visible, this.scrim());
 					break;
-				case "tooltip":
-					this.tooltip.place(child.rect, child.visible);
-					break;
 				case "editor": {
 					if (!child.visible) break;
 					const view = this.viewForEditorKey(child.identity.editorKey);
@@ -1689,7 +1643,7 @@ export class ShellWindow {
 		// would put the keyboard in it: it went to the window's own page while
 		// there was nothing else, and stayed there. Asked only when the answer
 		// changed, so a pass that moves nothing about the keyboard — a
-		// tooltip, a resize — never takes it out of wherever the person put it.
+		// notice, a resize — never takes it out of wherever the person put it.
 		const keyboard = JSON.stringify(keyboardChild(this.layoutInput()));
 		if (keyboard !== this.keyboardAnswer) {
 			this.keyboardAnswer = keyboard;

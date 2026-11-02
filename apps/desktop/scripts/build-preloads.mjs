@@ -22,7 +22,6 @@ const PAGES = [
   "agents",
   "pane",
   "toasts",
-  "tooltip",
   "picker",
   "settings",
 ];

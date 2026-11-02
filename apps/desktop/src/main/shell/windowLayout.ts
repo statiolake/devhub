@@ -114,10 +114,6 @@ const SPLIT_DIVIDER = 6;
 const SIDEBAR_OVERLAY_SHADOW = 24;
 /** How far the notices sit from the window's corner. */
 const TOASTS_MARGIN = 12;
-/** Between a tooltip and the row it is about. */
-const TOOLTIP_GAP = 6;
-/** How close a tooltip may come to the window's own edges. */
-const TOOLTIP_MARGIN = 4;
 
 export type SidebarDensity = keyof typeof SIDEBAR_GLYPH_WIDTH;
 
@@ -228,8 +224,6 @@ export interface LayoutInput {
 	/** How big the notices are, as the page measured its own stack. */
 	readonly toasts: LayoutSize | undefined;
 	readonly picker: PickerScope;
-	/** The tooltip that is up, if one is. See `TooltipPlacement`. */
-	readonly tooltip: TooltipPlacement | undefined;
 	/** Every view VS Code has attached to a workbench. See below. */
 	readonly attached: readonly AttachedPlacement[];
 	/**
@@ -277,27 +271,6 @@ export interface AttachedPlacement {
 	readonly visible: boolean;
 }
 
-/**
- * Everything the owner needs to place a tooltip, and nothing the page keeps.
- *
- * The anchor is in the *window's* coordinates, which is the whole point of
- * this layer existing: the Sidebar's own box stops at its column, and a
- * tooltip that cannot leave that column is the tooltip this replaced. The
- * page converts its row's box once, against the rectangle the owner told it
- * it occupies (`sidebarAreaChanged`), and never against `window.screenX` or
- * its own `innerWidth` — both of which are a view's, and stale for a frame
- * after main moves it.
- *
- * `size` is the page's and only the page's: how big a sentence is depends on
- * how it wraps, which is the one thing here a renderer knows and main does
- * not. It arrives the way the notices' size does, and for the same reason —
- * see `tooltipView.ts`.
- */
-export interface TooltipPlacement {
-	readonly anchor: LayoutRect;
-	readonly size: LayoutSize;
-}
-
 export type ChildIdentity =
 	| { readonly kind: "shell" }
 	| { readonly kind: "sidebar" }
@@ -314,8 +287,7 @@ export type ChildIdentity =
 	/** The editor area's terminal view: a Workspace's own tmux session. */
 	| { readonly kind: "editorTerminal"; readonly editorKey: string }
 	| { readonly kind: "toasts" }
-	| { readonly kind: "picker" }
-	| { readonly kind: "tooltip" };
+	| { readonly kind: "picker" };
 
 export interface LayoutChild {
 	readonly identity: ChildIdentity;
@@ -456,36 +428,13 @@ export function sidebarRect(
 }
 
 /**
- * Where the Sidebar's visible trailing edge is, in the window: the docked
- * column's or the rail's width, or — while it floats — the card's full width.
- *
- * The card's *full* width even while it is still growing out of the rail: a
- * tooltip placed against it is outside the card in every frame of the growth
- * rather than overtaken by it, and it is already where the edge comes to
- * rest. A tooltip is only ever about a row in this column, so this is the line
- * no tooltip may be placed across (`tooltipRect`).
- */
-export function sidebarTrailingEdge(
-	windowSize: LayoutSize,
-	state: LayoutState,
-): number {
-	const column = sidebarColumnWidth(state);
-	if (state.sidebar.overlay !== true) return column;
-	return Math.max(
-		column,
-		Math.min(windowSize.width, Math.round(state.sidebar.width)),
-	);
-}
-
-/**
- * Whether a pointer at `point` (window coordinates) is still somewhere the
- * floating Sidebar belongs to: on the card — the rail is its leading part —
- * or on the tooltip one of its rows raised, which is its own view beside it.
+ * Whether a pointer at `point` (window coordinates) is still on the floating
+ * Sidebar's card — the rail is its leading part.
  *
  * Asked by the Sidebar's page when the pointer has left its document and the
  * grace is up (`useSidebarOverlay.ts`). The page cannot answer it: a pointer
- * that went onto the tooltip, or out of a window that is not in front, looks
- * exactly the same from inside the page as a pointer that went away. Main
+ * that went out of a window that is not in front looks exactly the same from
+ * inside the page as a pointer that went away. Main
  * reads the cursor instead of trusting a leave event across view boundaries.
  * The room the shadow is drawn in is *not* the card: a pointer there has
  * left.
@@ -494,21 +443,13 @@ export function sidebarOverlayHolds(
 	point: { readonly x: number; readonly y: number },
 	windowSize: LayoutSize,
 	state: LayoutState,
-	tooltip: TooltipPlacement | undefined,
 ): boolean {
 	const view = sidebarRect(windowSize, state);
 	const card: LayoutRect = {
 		...view,
 		width: Math.min(view.width, Math.round(state.sidebar.width)),
 	};
-	if (within(point, card)) return true;
-	return (
-		tooltip !== undefined &&
-		within(
-			point,
-			tooltipRect(windowSize, tooltip, sidebarTrailingEdge(windowSize, state)),
-		)
-	);
+	return within(point, card);
 }
 
 function within(
@@ -711,97 +652,11 @@ function toastsRect(windowSize: LayoutSize, size: LayoutSize): LayoutRect {
 }
 
 /**
- * Hold `value` inside `[low, high]`.
- *
- * `low` is itself held under `high` first, because the two can cross: a
- * tooltip as big as the window has no position that is both a margin in from
- * the leading edge and a margin in from the trailing one, and being inside the
- * window is the rule that matters. Without this a full-window tooltip was
- * placed at the margin and hung off the far edge by exactly that much.
+ * Hold `value` inside `[low, high]`, `low` itself held under `high` first in
+ * case the two cross.
  */
 function clamp(value: number, low: number, high: number): number {
 	return Math.max(Math.min(low, high), Math.min(value, high));
-}
-
-/**
- * Where a tooltip goes: beside the row it is about, inside the window.
- *
- * This is the placement that used to be done inside the Sidebar's own
- * document, against the Sidebar's own box — which is why it could not be done
- * at all on a rail. The arithmetic is the same shape; what changed is the box
- * it is against. It is the *window* now, so the sentence runs out over the
- * editor the way a tooltip is supposed to, and "does it fit" stopped being a
- * question about a 40px column.
- *
- * **Beside the row, and never under it.** The rows are stacked, so a box under
- * one is a box over the next: the thing a person's pointer is already moving
- * towards is covered by the answer to what they just pointed at, and they have
- * to dodge it to click. Out to the side there is a workbench, which is the one
- * direction in this window with room to spare. It used to be a question the
- * row answered — beside a glyph on the rail, under a line of text in the
- * expanded column — and the expanded column's answer was the one that covered
- * the next row.
- *
- * Two rules, in order:
- *
- * - **Flip** to the anchor's leading side when the trailing side has no room —
- *   not to a squeezed version of the same side. A tooltip is one rectangle
- *   with one width, and narrowing it to fit is how a sentence becomes a
- *   ribbon.
- * - **Clamp** to the window, which is the last word. A flip can still land out
- *   of bounds when the anchor is itself near an edge, and off-window is the
- *   one result that is never readable. A box too wide for either side of the
- *   row ends against the window's trailing edge, still beside the row.
- *
- * The cross-axis is the anchor's own top, clamped, so the box starts level
- * with the row and the eye has one line to follow from the mark to the words.
- * A row near the foot of the window moves the box *up* — it is the only
- * direction the clamp can move it — so nothing is ever placed below the row
- * it is about.
- *
- * **Outside the Sidebar, and never over its rows.** Given the Sidebar's
- * visible trailing edge (`column`, see `sidebarTrailingEdge`), the box starts
- * past it, whatever inside the row it is about — an Issue mark half way along
- * a row used to put its sentence over the rest of that row and the rows below.
- * There is no flip then: the leading side is the rows. Only the window's own
- * edge can bring it back over them, in a window too narrow for both.
- */
-export function tooltipRect(
-	windowSize: LayoutSize,
-	placement: TooltipPlacement,
-	column?: number,
-): LayoutRect {
-	const { anchor, size } = placement;
-	// Never wider or taller than the window itself: everything below is
-	// about *where* it goes, and a rectangle bigger than the window has no
-	// position that is inside it.
-	const width = Math.min(Math.round(size.width), windowSize.width);
-	const height = Math.min(Math.round(size.height), windowSize.height);
-	const lastX = Math.max(0, windowSize.width - width - TOOLTIP_MARGIN);
-	const lastY = Math.max(0, windowSize.height - height - TOOLTIP_MARGIN);
-
-	if (column !== undefined) {
-		return {
-			x: clamp(
-				Math.max(anchor.x + anchor.width, column) + TOOLTIP_GAP,
-				TOOLTIP_MARGIN,
-				lastX,
-			),
-			y: clamp(anchor.y, TOOLTIP_MARGIN, lastY),
-			width,
-			height,
-		};
-	}
-	const right = anchor.x + anchor.width + TOOLTIP_GAP;
-	// Flipped to the anchor's leading side when the trailing side would run
-	// past the window's edge.
-	const x = right > lastX ? anchor.x - TOOLTIP_GAP - width : right;
-	return {
-		x: clamp(x, TOOLTIP_MARGIN, lastX),
-		y: clamp(anchor.y, TOOLTIP_MARGIN, lastY),
-		width,
-		height,
-	};
 }
 
 /**
@@ -913,27 +768,25 @@ function agentsVisible(state: LayoutState): boolean {
  * rounded corner does not draw.
  *
  * A layer is a child that draws over the others only while it has something
- * to say — the notices, the questions, the tooltip. None of them is ever taken
+ * to say — the notices and the questions. None of them is ever taken
  * out of the window; each is either over it or parked here. Both halves were
  * measured to matter (an isolated instance, a CDP screencast of the layer's
  * own page, main's calls logged beside it):
  *
  * - Taken out of the window, the page is hidden, and a hidden page paints
- *   nothing. What it was told as it left — the empty set of sheets, no
- *   tooltip — was never drawn, so the layer's last frame still held the
- *   previous content and the next one opened on a frame of it: a question on
- *   the previous sheet, a tooltip on the previous row's sentence. Never yet
- *   in the window, the page is 0×0 and hidden, so the first one after launch
- *   waited for a first layout of the whole page before anything was drawn —
- *   the late sheet, and a first tooltip 140 ms behind its row where every
- *   later one took 5.
+ *   nothing. What it was told as it left — the empty set of sheets — was
+ *   never drawn, so the layer's last frame still held the previous content
+ *   and the next one opened on a frame of it: a question on the previous
+ *   sheet. Never yet in the window, the page is 0×0 and hidden, so the first
+ *   one after launch waited for a first layout of the whole page before
+ *   anything was drawn — the late sheet.
  * - Placed entirely outside the window, Chromium counts the view occluded and
  *   hides the page just the same (`visibilityState` went to `hidden` and the
  *   page stayed 0×0). One pixel inside keeps it visible.
  *
  * Parked here, the page's last frame is always what it was last told, laid
  * out at least as large as it will be shown, so bringing it over the window
- * is only a move — a notice or a tooltip is drawn at its page's origin, so
+ * is only a move — a notice is drawn at its page's origin, so
  * the smaller rectangle it is shown in is the corner of a frame already
  * drawn. The one pixel it covers is the one no click reaches, and an empty
  * layer's page has nothing under that pixel to answer a pointer.
@@ -970,12 +823,10 @@ function layer(
  * The order *is* the z-order, lowest first: the window's own page, the
  * Sidebar, then every workbench with the one on screen last among them, then
  * whatever those workbenches have attached to themselves, then the Agents,
- * then the notices, then the questions, then the tooltip. A
- * notice about the application is above the thing it is about, a question is
- * above the notice, and the tooltip is above all of them because it is the
- * only child that neither takes a click nor hides anything. Nothing in this
- * list is conditional on anything but content, and not even that decides who
- * is *in* it: `toasts`, `picker` and `tooltip` are layers, always in it, over
+ * then the notices, then the questions. A notice about the application is
+ * above the thing it is about, and a question is above the notice. Nothing in
+ * this list is conditional on anything but content, and not even that decides
+ * who is *in* it: `toasts` and `picker` are layers, always in it, over
  * the window exactly when they have something to draw and parked otherwise —
  * see `parkedRect`.
  *
@@ -1035,7 +886,7 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	// passes and for the same reason: sized whether or not it is drawn, and the
 	// ones belonging to the workbench on screen last. They sit above every
 	// workbench and below everything the shell puts over the content area — a
-	// notice, a question and a tooltip are about DevHub and are above anything
+	// notice and a question are about DevHub and are above anything
 	// a workbench opened inside itself.
 	for (const child of input.attached) {
 		if (child.editorKey === onScreen) continue;
@@ -1101,8 +952,8 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	}
 	// The floating Sidebar is over the content — every workbench, whatever
 	// they attached, the Agents and the terminals — because that is what
-	// floating means, and under every layer, because a notice, a question and
-	// a tooltip are above everything that is the window's own.
+	// floating means, and under every layer, because a notice and a question
+	// are above everything that is the window's own.
 	if (overlay) children.push(sidebar);
 	children.push(
 		layer(
@@ -1125,29 +976,6 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 				: input.picker === "workbench"
 					? editorRect
 					: shellRect,
-		),
-	);
-	// Above everything, the questions included. Not because a tooltip may
-	// stand over a modal — it may not, and in practice cannot: a question
-	// covers the window, which takes the pointer off the row that raised the
-	// tooltip, and the page hides it before the sheet is drawn. It is on top
-	// because it is the one child that is never anything but a few words to
-	// read: it takes no click (it is parked unless it has something to say,
-	// and what it says is the size of what it draws), it
-	// takes no keys, and nothing is ever meant to be seen *through* it. A
-	// layer with nothing behind it to protect is a layer with no reason to be
-	// underneath anything.
-	children.push(
-		layer(
-			{ kind: "tooltip" },
-			windowSize,
-			input.tooltip
-				? tooltipRect(
-						windowSize,
-						input.tooltip,
-						sidebarTrailingEdge(windowSize, state),
-					)
-				: undefined,
 		),
 	);
 	return children;

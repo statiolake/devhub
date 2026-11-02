@@ -1974,13 +1974,11 @@ empty), not only the shown one; when the colour comes from another window, a sma
 the bar names it by the CLI's label (_Approaching 7-day limit_, _7-day limit
 nearly reached_). The rows share one grid, so every CLI's bar has the same
 width and edges whatever the words beside it. On the collapsed rail the words
-go and the bars stay. The tooltip draws every window each CLI reports — Claude's
-five-hour and seven-day (`unifiedWindows` of its `rate_limit_event`), Codex's
-`primary` and `secondary`, named by their length (`5-hour`, `7-day`) — as a
-labelled bar with the percentage and its reset (_Resets in 2h 10m · 16:40_,
-or the date alone, _10/3_, when over twelve hours away), worked out by the tooltip as it opens. A reading
-whose reset has passed is history: faded, and said to be (_nothing reported
-since_).
+go and the bars stay. The readout has no hover: the windows other than the
+shown one, and when the shown one resets, are not drawn — the reset is said
+only in the readout's accessible name (_until 16:40_, or the date alone, _10/3_,
+when over twelve hours away). A reading whose reset has passed is history:
+faded, _0%_.
 
 The numbers come from two places, merged per window in main. **DevHub asks
 the accounts itself**, in the background (`main/shell/usageReaders.ts`): one
@@ -2009,9 +2007,9 @@ sparse updates) keeps that window as last seen.
 
 A sign-in with no plan limits — Claude's `rate_limits_available: false`, a
 Codex API key or Bedrock — is a state, not a failure: with no window read, the
-row says _No plan limits_ in place of a bar (nothing on the rail), and the
-tooltip says why. A profile whose command is not on this Mac starts no reader,
-and the tooltip says that instead. A reading that fails — its process will not
+row says _No plan limits_ in place of a bar (nothing on the rail). A profile
+whose command is not on this Mac starts no reader, and its CLI has no row. A
+reading that fails — its process will not
 start or stops, the CLI refuses the request, answers in a shape DevHub does
 not read (checked strictly, because `get_usage` is experimental), or does not
 finish within 30 s (the process is killed) — says so once as a notice (_DevHub
@@ -2020,9 +2018,8 @@ at the next tick of the usual cadence, with no backoff and no end, until a
 reading succeeds; the next failure after that is said again. Retries are silent. Claude answering that it could not fetch the limits just
 now (`rate_limits: null`) is no reading and no failure. Claude's request is
 sent with `skip_behaviors`, so the CLI does not scan session history for
-recommendations the readout never shows. The readout goes on with what GUI Agents report meanwhile. A CLI nothing has read says so in the tooltip (_Not read
-yet_) rather than showing zero, and while neither has anything to say nothing
-is drawn. The conversation itself shows no rate limits, except when one has
+recommendations the readout never shows. The readout goes on with what GUI Agents report meanwhile. A CLI nothing has read has no row rather
+than showing zero, and while neither has anything to say nothing is drawn. The conversation itself shows no rate limits, except when one has
 stopped it (below).
 
 ## Going on after a usage limit

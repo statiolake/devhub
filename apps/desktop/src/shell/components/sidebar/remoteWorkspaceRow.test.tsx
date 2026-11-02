@@ -11,10 +11,8 @@
  *
  * What is still not there is a process with a terminal on it: tmux, and the
  * PTY an Agent pane attaches to. That refusal is on the New Agent button,
- * disabled with the reason in its tooltip, in the sentence the wire sends —
- * one sentence, so the button and the terminal pane cannot drift apart. It is
- * not on the row's own lines any more, because it is not a fact about the
- * branch.
+ * disabled. It is not on the row's own lines any more, because it is not a
+ * fact about the branch.
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -30,13 +28,7 @@ import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
   onMenuCommand: () => () => undefined,
-  // The Sidebar asks main for its tooltips now rather than drawing them
-  // (`RowTooltip.tsx`), so every render of it reaches these three.
-  onSidebarArea: () => () => undefined,
   onChordArmed: () => () => undefined,
-  showTooltip: () => undefined,
-  hideTooltip: () => undefined,
-  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(() => {
@@ -128,7 +120,7 @@ describe("a Workspace row whose folder is on another machine", () => {
     // The fact that decides whether what you are about to do happens here or
     // over there, and it is the first thing on the row rather than words on the
     // line: this column is scanned, and a fact you have to read for is a fact
-    // you do not have while scanning. Which machine is the tooltip's business —
+    // you do not have while scanning. Which machine is the accessible name's —
     // there is one silhouette for "not here", and the host is a name.
     mount(REMOTE);
     expect(
@@ -191,23 +183,18 @@ describe("a Workspace row whose folder is on another machine", () => {
       name: /Create agent in api/u,
     });
     expect(button).not.toBeDisabled();
-    expect(button).toHaveAttribute("data-tooltip", "Create agent");
+    expect(button).not.toHaveAttribute("data-tooltip");
   });
 
   it("says the path and the machine in the row's own facts", () => {
     mount(REMOTE);
-    const lines = JSON.parse(
+    const lines = (
       document
         .querySelector("[data-tree-item-id='workspace:w-1']")
-        ?.closest("[data-tooltip-lines]")
-        ?.getAttribute("data-tooltip-lines") ?? "[]",
-    ) as { icon?: string; text: string }[];
-    expect(lines).toContainEqual({ text: "/srv/api", style: "muted" });
-    expect(lines).toContainEqual({
-      icon: "remote",
-      text: "ssh:build.example.com",
-      style: "muted",
-    });
+        ?.getAttribute("aria-label") ?? ""
+    ).split("\n");
+    expect(lines).toContain("path /srv/api");
+    expect(lines).toContain("on build.example.com");
   });
 
   it("is still a folder on this Mac when its editor is in a dev container", () => {
@@ -224,26 +211,22 @@ describe("a Workspace row whose folder is on another machine", () => {
       "container",
     );
     expect(mark).toHaveAttribute(
-      "data-tooltip",
-      "editor in dev container: python",
+      "aria-label",
+      "editor in the python dev container",
     );
+    expect(mark).not.toHaveAttribute("data-tooltip");
     expect(document.querySelectorAll('[data-glyph="remote"]')).toHaveLength(0);
   });
 
   it("says in the facts that the editor, and only the editor, is in the container", () => {
     mount(ATTACHED);
-    const lines = JSON.parse(
+    const lines = (
       document
         .querySelector("[data-tree-item-id='workspace:w-1']")
-        ?.closest("[data-tooltip-lines]")
-        ?.getAttribute("data-tooltip-lines") ?? "[]",
-    ) as { icon?: string; text: string }[];
-    expect(lines).toContainEqual({ text: "/projects/api", style: "muted" });
-    expect(lines).toContainEqual({
-      icon: "container",
-      text: "editor in dev container: python",
-      style: "muted",
-    });
+        ?.getAttribute("aria-label") ?? ""
+    ).split("\n");
+    expect(lines).toContain("path /projects/api");
+    expect(lines).toContain("editor in the python dev container");
   });
 
   it("wears no editor mark when the editor is on the Workspace's machine", () => {

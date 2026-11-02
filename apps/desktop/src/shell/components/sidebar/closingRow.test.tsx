@@ -22,13 +22,7 @@ import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 window.devhub = {
   openModal: vi.fn(() => Promise.resolve("")),
   onMenuCommand: () => () => undefined,
-  // The Sidebar asks main for its tooltips now rather than drawing them
-  // (`RowTooltip.tsx`), so every render of it reaches these three.
-  onSidebarArea: () => () => undefined,
   onChordArmed: () => () => undefined,
-  showTooltip: () => undefined,
-  hideTooltip: () => undefined,
-  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(() => {

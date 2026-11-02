@@ -28,7 +28,6 @@ const PAGES = [
 	"agents",
 	"pane",
 	"toasts",
-	"tooltip",
 	"picker",
 	"settings",
 ] as const;
@@ -106,29 +105,6 @@ describe("the pages, and what each of them may say", () => {
 	});
 
 	/**
-	 * The other direction of the same rule: a member a page's *bridge* declares
-	 * must be in that page's preload, or the page spells a name its `window.devhub`
-	 * does not have. TypeScript cannot catch that on its own — the preload builds
-	 * the interface, so an omission is a compile error there; but a member built
-	 * by a shared helper and simply not listed is not.
-	 *
-	 * `openExternalUrl` on the tooltip is the case worth pinning. The box draws a
-	 * row's facts and three of them name pages on GitHub, so it links to them the
-	 * way the row does. A page that could spell the call but whose preload never
-	 * exposed it would have a link that silently does nothing — which is exactly
-	 * the failure the per-page contract exists to make impossible.
-	 */
-	it("exposes a link to the browser on the tooltip page, which draws links", () => {
-		const contract = read("../ipc/contract.ts");
-		const tooltipBridge = /export interface TooltipBridge[\s\S]*?\n}/.exec(
-			contract,
-		)?.[0];
-		expect(tooltipBridge).toBeDefined();
-		expect(tooltipBridge).toContain("openExternalUrl");
-		expect(read("./tooltip.ts")).toContain("openExternalUrl");
-	});
-
-	/**
 	 * A conversation is attached by the page that draws it. Main sends every
 	 * event of every attached conversation to its attacher, so a second page
 	 * that could attach would be a second reader of every word, and a second
@@ -164,7 +140,6 @@ describe("the pages, and what each of them may say", () => {
 			agents: "agents/main.tsx",
 			pane: "pane/main.tsx",
 			toasts: "toasts/main.tsx",
-			tooltip: "tooltip/main.tsx",
 			picker: "picker/main.tsx",
 		} as const;
 		const bridges = {
@@ -172,7 +147,6 @@ describe("the pages, and what each of them may say", () => {
 			agents: "agents/client.tsx",
 			pane: "pane/client.tsx",
 			toasts: "toasts/client.tsx",
-			tooltip: "tooltip/client.tsx",
 			picker: "picker/client.tsx",
 		} as const;
 

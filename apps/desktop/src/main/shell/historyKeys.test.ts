@@ -88,13 +88,12 @@ describe("where input makes a place for Back and Forward", () => {
 		);
 	});
 
-	it("is not the Sidebar (choosing where to go), the window's own page, the modals, the notices or the tooltip", () => {
+	it("is not the Sidebar (choosing where to go), the window's own page, the modals or the notices", () => {
 		for (const page of [
 			"sidebar.html",
 			"index.html",
 			"picker.html",
 			"toasts.html",
-			"tooltip.html",
 			"settings.html",
 		]) {
 			expect(isDestinationSurface(`${SHELL_ORIGIN}/${page}`)).toBe(false);

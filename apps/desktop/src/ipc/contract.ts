@@ -19,7 +19,6 @@ import type {
 	AgentLaunchWire,
 	AgentPresentationWire,
 	AgentProfiles,
-	AgentStatusWire,
 	AppAppearance,
 	AppError,
 	AppIntent,
@@ -629,17 +628,8 @@ export interface WorkbenchAreaWire {
 /**
  * The rectangle the Sidebar's view is laid into, as main computed it.
  *
- * Pushed for one reason: the Sidebar has to be able to say where one of its
- * rows is *in the window*, and a page cannot work that out. `window.screenX`
- * is the screen's and needs the window's own origin subtracted back off;
- * `documentElement`'s box is the view's own and is one frame stale after main
- * moves it — measured, the collapsed Sidebar went on answering 249 for seconds
- * after being narrowed to 76. So the origin is the owner's number, told to the
- * page, exactly as the workbench area is.
- *
- * It is the whole rectangle rather than just the origin because the page has
- * to clip its anchor to it: a row scrolled half out of the column has half a
- * rectangle, and a tooltip pointing at the invisible half points at nothing.
+ * Main's own number and never the page's: a context menu the Sidebar asks for
+ * is placed at the page's point plus this origin (`contextMenuPoint`).
  */
 export interface SidebarAreaWire {
 	readonly x: number;
@@ -651,8 +641,7 @@ export interface SidebarAreaWire {
 /**
  * Where the cursor is, as the floating Sidebar's page asks main once the
  * pointer has left its document (`useSidebarOverlay.ts`): whether it is still
- * on the card or on the tooltip a row raised, and whether the window is in
- * front. See `windowLayout.sidebarOverlayHolds`.
+ * on the card, and whether the window is in front. See `windowLayout.sidebarOverlayHolds`.
  */
 export interface SidebarPointerWire {
 	readonly inside: boolean;
@@ -680,122 +669,6 @@ export interface ContextMenuItemWire {
 export interface ContextMenuRequestWire {
 	readonly items: readonly ContextMenuItemWire[];
 	readonly at: { readonly x: number; readonly y: number };
-}
-
-/**
- * A tooltip the Sidebar is asking for, in the window's own coordinates.
- *
- * The Sidebar composes the sentence and knows which row the pointer is
- * resting on; main owns where anything in the window goes. So the page sends
- * the two facts only it has — what to say and which rectangle it is about —
- * and never learns where it ended up. Which side of that rectangle the box
- * goes on is not one of them: it is beside the row, always, and that is
- * `tooltipRect`'s to know.
- *
- * `anchor` is in **window** coordinates, converted by the page from its own
- * box plus the rectangle main told it it occupies (`SidebarAreaWire`). That
- * conversion is the one thing the page must get right, and it is one addition.
- */
-export interface TooltipRequestWire {
-	readonly lines: readonly TooltipLineWire[];
-	readonly anchor: SidebarAreaWire;
-}
-
-/**
- * One fact, as a tooltip draws it: a mark, the fact itself, and how it is set.
- *
- * A tooltip used to be a string, and the string was a sentence about a row
- * composed out of label words — *widget workspace, path /projects/widget,
- * branch main*. Nobody reads that: the words "workspace", "path" and "branch"
- * are three quarters of the ink and they are the part the reader already knows,
- * because they are asking about a row in a list of workspaces.
- *
- * So a line is a fact and the mark in front of it is what the label word was:
- * the branch mark, then the branch. The reader recognises the mark the same way
- * they recognise it on the row, because it *is* the row's mark — `icon` is a
- * `GlyphName`, an identifier and never a drawing, so the tooltip page maps it
- * through the same `icons.tsx` the Sidebar draws from. Two pages, one set of
- * marks, and no SVG on the wire.
- *
- * `spoken` is what the words would have been. It is not sent — a screen reader
- * is never shown this — it is what the same composition produces for the row's
- * `aria-label`, which is the one place a label word still belongs. See
- * `shell/components/sidebar/rowDescription.ts`, where both come from one list
- * of facts, so the tooltip and the accessible name cannot come to disagree.
- *
- * A line is a fact in words (`TooltipFactLineWire`) or a measure drawn as a
- * bar (`TooltipMeterLineWire`), told apart by `kind`.
- */
-export type TooltipLineWire = TooltipFactLineWire | TooltipMeterLineWire;
-
-/** A fact in words, behind the mark the row would have drawn for it. */
-export interface TooltipFactLineWire {
-	/** Absent: a line is a fact unless it says it is something else. */
-	readonly kind?: undefined;
-	readonly icon?: GlyphNameWire;
-	readonly text: string;
-	/**
-	 * How the line is set. The name of the thing is `name`; anything that
-	 * qualifies it is `muted`; `note` is the stronger dim ink for a reason
-	 * something is not happening; `danger` is a failure.
-	 */
-	readonly style?: "name" | "muted" | "note" | "danger";
-	/**
-	 * The status colour this line's mark and words take, when the line is about
-	 * an Agent's status. Absent everywhere else, because nothing else in the
-	 * Sidebar is coloured.
-	 */
-	readonly tone?: AgentStatusWire;
-	/**
-	 * Where this fact leads, when the fact is a place.
-	 *
-	 * Three of a row's facts name a page on GitHub — the repository, the Issue,
-	 * the pull request — and the row itself already links to all three. The
-	 * tooltip draws the same facts, so it links to the same pages: a person
-	 * reading *#128 Fix the thing* in the box is looking at the thing they
-	 * would have clicked on the row, and a sentence that names a destination
-	 * and cannot be followed is a link that is only pretending.
-	 *
-	 * It is composed in one place with the rest of the facts
-	 * (`shell/components/sidebar/rowDescription.ts`), from the same URLs the
-	 * row's own links use, so the box and the row cannot lead anywhere
-	 * different. Absent on every fact that is not a place.
-	 */
-	readonly href?: string;
-}
-
-/**
- * How much of something is used, drawn as a labelled bar: a CLI's rate-limit
- * window, today the only one.
- *
- * The line carries the numbers and not the words, because the words depend on
- * when the tooltip is read: "resets in 2h 10m" and whether the reading is
- * already history (its reset has passed, and nothing newer came in) are worked
- * out by the tooltip page as it draws, from its own clock. Composed at the
- * row, they would be as old as the Sidebar's last render.
- */
-export interface TooltipMeterLineWire {
-	readonly kind: "meter";
-	/** What is measured, in words: "5-hour", "7-day", "primary". */
-	readonly label: string;
-	/** 0–100; absent when the CLI did not say. */
-	readonly usedPercent?: number;
-	/** When the measure starts again from zero, epoch milliseconds; absent when not said. */
-	readonly resetsAt?: number;
-}
-
-/**
- * Which mark a tooltip line carries, by name.
- *
- * It is a plain string on the wire and is checked against the drawings the
- * tooltip page actually has: a name that does not resolve draws no mark rather
- * than throwing, because a missing icon beside a fact still says the fact.
- */
-export type GlyphNameWire = string;
-
-/** What the tooltip page is given to draw: the facts, and nothing else. */
-export interface TooltipContentWire {
-	readonly lines: readonly TooltipLineWire[];
 }
 
 /**
@@ -1285,13 +1158,8 @@ export interface SidebarBridge
 	 */
 	focusSurface(): Promise<void>;
 	/**
-	 * Where main has laid this view, so a row can say where it is in the
-	 * window. See `SidebarAreaWire` — the origin is the owner's number.
-	 */
-	onSidebarArea(listener: (area: SidebarAreaWire) => void): () => void;
-	/**
-	 * Where the cursor is, for the floating Sidebar: on the card or its
-	 * tooltip, and whether the window is in front. See `SidebarPointerWire`.
+	 * Where the cursor is, for the floating Sidebar: on the card or not, and
+	 * whether the window is in front. See `SidebarPointerWire`.
 	 */
 	sidebarPointer(): Promise<SidebarPointerWire>;
 	/**
@@ -1308,42 +1176,6 @@ export interface SidebarBridge
 	 * runs the item itself, the way its own buttons would.
 	 */
 	showContextMenu(request: ContextMenuRequestWire): Promise<string | undefined>;
-	/**
-	 * Raise a tooltip over the window, about a row in this column.
-	 *
-	 * The Sidebar used to draw its own, which is why the rail had none: a box
-	 * in this document is clipped by this view, and this view is 44px wide on
-	 * a collapsed rail. It asks now, and the tooltip is a child of the window
-	 * (`main/shell/tooltipView.ts`), so the sentence may run out over the
-	 * editor.
-	 *
-	 * One way, like `raiseFailure` and for the same reason: what is being sent
-	 * is a fact about the pointer, not a request waiting on an answer, and a
-	 * tooltip that had to await a round trip would arrive after the pointer
-	 * had moved on. The page still owns *when* — at once, now — and the one
-	 * tooltip for the whole tree — because only it can see the pointer in this
-	 * view. It no longer owns the leave: see `releaseTooltip`.
-	 */
-	showTooltip(request: TooltipRequestWire): void;
-	/**
-	 * Take the tooltip down at once. Something moved out from under it.
-	 *
-	 * A scroll, a resize, the window losing focus, the keyboard leaving the
-	 * row: in every one of these the row the sentence is about is gone or
-	 * unreachable, and there is nothing to wait to find out.
-	 */
-	hideTooltip(): void;
-	/**
-	 * The pointer left the row. **A request, not an order.**
-	 *
-	 * The tooltip is a different view from this one, so a pointer travelling
-	 * from the row into the box leaves this view — and this page cannot tell
-	 * that from a pointer leaving for the editor. Only main sees both views, so
-	 * only main can decide: it holds the tooltip for a short grace and takes it
-	 * down unless the tooltip page says the pointer arrived there. See
-	 * `main/shell/tooltipView.ts`.
-	 */
-	releaseTooltip(): void;
 }
 
 /** Text and its HTML rendering, for `writeClipboardRich`. */
@@ -1564,69 +1396,6 @@ export interface ToastsBridge extends PageBridge {
 	reportListening(): void;
 }
 
-/**
- * The one box a tooltip is drawn in — `tooltip.html`.
- *
- * The smallest bridge DevHub has, smaller than the notices': a tooltip is a
- * sentence somebody else composed, and this page only draws it and says how
- * big it came out.
- *
- * **What is deliberately not here is the anchor.** The Sidebar sends it
- * (`TooltipRequestWire`) and main keeps it: it is the input to
- * `windowLayout.ts`, which turns it into a rectangle this page never sees.
- * Putting it on this bridge would be a member whose page has no use for it —
- * the shape `onModals` had on four bridges that could never receive it, and
- * the exact thing the per-page contract exists to make unspellable.
- */
-export interface TooltipBridge extends PageBridge {
-	/** The sentence to draw, or nothing at all to draw none. */
-	onTooltip(
-		listener: (tooltip: TooltipContentWire | undefined) => void,
-	): () => void;
-	/**
-	 * How big the box came out.
-	 *
-	 * This page's whole geometry protocol with the window, and it exists
-	 * because a `WebContentsView` is a native view whose hit testing is by
-	 * rectangle: every click inside its bounds is its own, whether or not
-	 * anything is painted there. So the view is exactly as big as the tooltip,
-	 * and this is the page saying how big that is. Nothing to say is a size of
-	 * zero, which takes the view out of the window entirely.
-	 *
-	 * One way, like `reportToastsSize`: a measurement is a fact the page has,
-	 * not a request it is waiting on.
-	 */
-	reportTooltipSize(size: {
-		readonly width: number;
-		readonly height: number;
-	}): void;
-	/**
-	 * Whether the pointer is in the box right now.
-	 *
-	 * The other half of the arbitration the Sidebar's `releaseTooltip` begins.
-	 * The row and the box are different views, so the pointer crossing from one
-	 * to the other is a leave in one document and an enter in the other, with
-	 * nothing in either page able to join them. Main joins them: it holds a
-	 * released tooltip for a grace, `true` within that grace keeps it up, and
-	 * `false` takes it down at once.
-	 *
-	 * One way, like the measurement beside it: where the pointer is, is a fact
-	 * this page has, not a request it is waiting on.
-	 */
-	reportTooltipPointer(inside: boolean): void;
-	/**
-	 * Follow one of the box's links.
-	 *
-	 * A tooltip line that names a page on GitHub (`TooltipLineWire.href`) is
-	 * drawn as a link, and a click on it goes to the person's browser — the
-	 * same destination, by the same route, as the link on the row it is about.
-	 * It is not left to the navigation backstop in `externalLinks.ts`: that one
-	 * catches what a page did not mean to do, and a refusal disappearing into
-	 * it is a click that reports nothing.
-	 */
-	openExternalUrl(url: string): Promise<void>;
-}
-
 /** Everything DevHub stops to ask — `picker.html`. */
 export interface PickerBridge
 	extends PageBridge,
@@ -1839,10 +1608,8 @@ export interface SettingsPageBridge extends PageBridge {
 /**
  * Channel names, for every page there is.
  *
- * Requests are `invoke`/`handle`, except the eight that answer nothing and
- * cannot (`raiseFailure`, `toastsSize`, `retryApp`, `showTooltip`,
- * `hideTooltip`, `releaseTooltip`, `tooltipSize`, `tooltipPointer`); the rest
- * are pushes. No
+ * Requests are `invoke`/`handle`, except the three that answer nothing and
+ * cannot (`raiseFailure`, `toastsSize`, `retryApp`); the rest are pushes. No
  * page reaches all of them — which page may spell which is decided by the
  * preload it was loaded with, and stated by the bridge interfaces above.
  */
@@ -1935,25 +1702,11 @@ export const CHANNELS = {
 	raiseFailure: "devhub:raise-failure",
 	/** The `toasts` page saying how much room its notices take up. */
 	toastsSize: "devhub:toasts-size",
-	/** Where main laid the Sidebar, so a row can say where it is in the window. */
-	sidebarAreaChanged: "devhub:sidebar-area-changed",
 	sidebarPointer: "devhub:sidebar-pointer",
 	/** The chord prefix was armed or disarmed: the Sidebar numbers its rows. */
 	chordArmedChanged: "devhub:chord-armed-changed",
 	/** A row's context menu, put up by main as a native menu. */
 	showContextMenu: "devhub:show-context-menu",
-	/** The Sidebar asking for a tooltip over the window, about one of its rows. */
-	showTooltip: "devhub:show-tooltip",
-	/** The Sidebar taking it down again, at once. */
-	hideTooltip: "devhub:hide-tooltip",
-	/** The pointer left the row: main decides, after a grace. */
-	releaseTooltip: "devhub:release-tooltip",
-	/** The `tooltip` page saying whether the pointer is in the box. */
-	tooltipPointer: "devhub:tooltip-pointer",
-	/** The sentence the `tooltip` page is to draw, or nothing to draw none. */
-	tooltipText: "devhub:tooltip-text",
-	/** The `tooltip` page saying how big the box it drew came out. */
-	tooltipSize: "devhub:tooltip-size",
 	/** "Try Again" on a notice, on its way to the page that owns the boot. */
 	retryApp: "devhub:retry-app",
 	/** A page telling main that a notice has left the screen, and why. */

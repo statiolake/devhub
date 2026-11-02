@@ -112,7 +112,7 @@ describe("the Agent status mark", () => {
         unknown: "Unknown",
       }[status];
       expect(mark).toHaveAccessibleName(label);
-      expect(mark).toHaveAttribute("data-tooltip", label);
+      expect(mark).not.toHaveAttribute("data-tooltip");
     }
   });
 
