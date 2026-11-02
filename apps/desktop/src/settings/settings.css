@@ -716,3 +716,61 @@ body {
   margin: 0;
   padding-inline-start: var(--space-4);
 }
+
+/* --------------------------------------------------- the colour themes */
+
+.settings-theme-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.settings-theme-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-theme-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-theme-text .mac-caption {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-theme-name {
+  color: var(--primary);
+}
+
+.settings-theme-uses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.settings-theme-use {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-theme-notice {
+  margin: 0;
+  color: var(--danger, #d1242f);
+}
+
+.settings-theme-done {
+  margin: 0;
+}

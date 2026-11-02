@@ -28,6 +28,7 @@
  * answer, and every value is applied where it is typed.
  */
 
+import { ThemeLibrary, type ThemesClient } from "./ThemeLibrary";
 import { useState } from "react";
 import { runtimeUnavailableMessage } from "../ipc/settings";
 import type {
@@ -130,7 +131,10 @@ export function GeneralSection({
   update,
   runtime,
   onReset,
+  themes,
 }: {
+  /** The colour themes and the library; absent in a harness without them. */
+  readonly themes?: ThemesClient;
   /** Absent while there is nothing to reset against yet. */
   readonly onReset?: () => void;
   readonly config: SettingsConfig;
@@ -362,6 +366,22 @@ export function GeneralSection({
           />
         </Row>
       </Group>
+      {themes ? (
+        <ThemeLibrary
+          client={themes}
+          nameTheme={(half, name) => {
+            update({
+              ...config,
+              appearance: {
+                ...config.appearance,
+                ...(half === "dark"
+                  ? { themeDark: name }
+                  : { themeLight: name }),
+              },
+            });
+          }}
+        />
+      ) : null}
 
       <Group heading="Agents">
         <Row

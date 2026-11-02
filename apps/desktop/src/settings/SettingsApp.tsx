@@ -719,6 +719,7 @@ export function SettingsApp({ client }: { readonly client?: SettingsClient }) {
             update={update}
             onReset={resetSection}
             runtime={snapshot.runtime}
+            themes={transport.themes}
           />
         ) : null}
         {section === "Workspaces" ? (

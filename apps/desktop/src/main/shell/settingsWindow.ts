@@ -29,6 +29,10 @@ import {
 	type SettingsSaveRequestWire,
 	type SettingsSnapshotWire,
 	type SettingsSocketPreflightWire,
+	type SettingsOpenVsxThemeWire,
+	type SettingsThemeOutcomeWire,
+	type SettingsThemeSearchWire,
+	type SettingsThemesWire,
 } from "../../ipc/settings.js";
 import {
 	ConfigError,
@@ -67,6 +71,24 @@ interface SettingsHost {
 	preflightSocket(socketName: string): Promise<SettingsSocketPreflightWire>;
 	/** Move DevHub's terminal sessions onto that socket, or fail loudly. */
 	changeSocket(socketName: string): Promise<void>;
+	/** The colour themes and DevHub's library; see `themeSettings.ts`. */
+	readonly themes?: SettingsThemesHost;
+}
+
+export interface SettingsThemesHost {
+	themes(): Promise<SettingsThemesWire>;
+	search(query: string): Promise<SettingsThemeSearchWire>;
+	install(theme: SettingsOpenVsxThemeWire): Promise<SettingsThemeOutcomeWire>;
+	uninstall(id: string): Promise<SettingsThemeOutcomeWire>;
+	preview(): void;
+	/** Reload: a theme worn for the session only goes, as with a save. */
+	revertTemporary(): void;
+}
+
+function requireThemes(): SettingsThemesHost {
+	const themes = requireHost().themes;
+	if (!themes) throw new Error("the colour themes are not available here");
+	return themes;
 }
 
 let host: SettingsHost | undefined;
@@ -535,6 +557,9 @@ function registerIpc(): void {
 			if (outcome.kind === "applied") {
 				settings.adopt(outcome.loaded.config);
 			}
+			// Reloading is going back to what the file says, theme included,
+			// even when the file has not changed.
+			settings.themes?.revertTemporary();
 			return await buildSnapshot();
 		} catch (error) {
 			throw settingsError(error);
@@ -610,5 +635,20 @@ function registerIpc(): void {
 
 	handle(SETTINGS_CHANNELS.close, () => {
 		window?.close();
+	});
+
+	handle(SETTINGS_CHANNELS.themes, () => requireThemes().themes());
+	handle(SETTINGS_CHANNELS.searchThemes, (_event, query: unknown) =>
+		requireThemes().search(typeof query === "string" ? query : ""),
+	);
+	handle(
+		SETTINGS_CHANNELS.installTheme,
+		(_event, theme: SettingsOpenVsxThemeWire) => requireThemes().install(theme),
+	);
+	handle(SETTINGS_CHANNELS.uninstallTheme, (_event, id: unknown) =>
+		requireThemes().uninstall(String(id)),
+	);
+	handle(SETTINGS_CHANNELS.previewThemes, () => {
+		requireThemes().preview();
 	});
 }

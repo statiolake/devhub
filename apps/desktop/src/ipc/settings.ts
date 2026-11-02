@@ -492,6 +492,62 @@ export interface SettingsResetRequestWire {
 	readonly keys: readonly SettingsScopeKeyWire[];
 }
 
+/**
+ * The colour themes, for Appearance: every theme DevHub can wear and DevHub's
+ * own library (`main/shell/themeLibrary.ts`). Searching and installing reach
+ * Open VSX, and only when the person asks.
+ */
+export interface SettingsColorThemeWire {
+	readonly name: string;
+	readonly label: string;
+	/** `light`, `dark`, `hcDark`, `hcLight`. */
+	readonly type: string;
+	readonly extension: string;
+	readonly source: "builtin" | "devhub" | "extension";
+}
+
+export interface SettingsLibraryThemeWire {
+	readonly id: string;
+	readonly version: string;
+	readonly displayName: string;
+	/** The names its themes are chosen by. */
+	readonly themes: readonly string[];
+	readonly inWorkbench: boolean;
+}
+
+export interface SettingsThemesWire {
+	readonly available: readonly SettingsColorThemeWire[];
+	readonly library: readonly SettingsLibraryThemeWire[];
+	/** Worn for this session only (Theme: Preview…), if anything. */
+	readonly temporary?: string;
+}
+
+export interface SettingsOpenVsxThemeWire {
+	readonly namespace: string;
+	readonly name: string;
+	readonly version: string;
+	readonly displayName: string;
+	readonly description: string;
+	readonly downloadCount: number;
+	readonly download: string;
+}
+
+/** An answer about themes: what is true now, and a sentence when something failed. */
+export interface SettingsThemeOutcomeWire {
+	readonly themes: SettingsThemesWire;
+	/** Said as a notice in Appearance. */
+	readonly problem?: string;
+	/** Said beside it, when nothing failed. */
+	readonly done?: string;
+}
+
+export type SettingsThemeSearchWire =
+	| {
+			readonly kind: "found";
+			readonly themes: readonly SettingsOpenVsxThemeWire[];
+	  }
+	| { readonly kind: "failed"; readonly problem: string };
+
 /** The surface the preload puts on `window.devhubSettings`. */
 /**
  * What the socket DevHub is being asked to move to looks like right now.
@@ -533,6 +589,14 @@ export interface SettingsApi {
 	socketApply(socketName: string): Promise<SettingsSnapshot>;
 	close(): Promise<void>;
 	onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void;
+	themes(): Promise<SettingsThemesWire>;
+	searchThemes(query: string): Promise<SettingsThemeSearchWire>;
+	installTheme(
+		theme: SettingsOpenVsxThemeWire,
+	): Promise<SettingsThemeOutcomeWire>;
+	uninstallTheme(id: string): Promise<SettingsThemeOutcomeWire>;
+	/** Theme: Preview… in the main window. */
+	previewThemes(): Promise<void>;
 }
 
 export const SETTINGS_CHANNELS = {
@@ -547,4 +611,9 @@ export const SETTINGS_CHANNELS = {
 	socketApply: "devhub-settings:socket-apply",
 	close: "devhub-settings:close",
 	changed: "devhub-settings:changed",
+	themes: "devhub-settings:themes",
+	searchThemes: "devhub-settings:search-themes",
+	installTheme: "devhub-settings:install-theme",
+	uninstallTheme: "devhub-settings:uninstall-theme",
+	previewThemes: "devhub-settings:preview-themes",
 } as const;

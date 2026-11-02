@@ -8,6 +8,7 @@ import type {
 } from "../ipc/settings";
 import type { SettingsPageBridge } from "../ipc/contract";
 import { pageBridge } from "../shell/bridge";
+import type { ThemesClient } from "./ThemeLibrary";
 
 export interface SettingsClient {
   getSnapshot(): Promise<SettingsSnapshot>;
@@ -21,6 +22,8 @@ export interface SettingsClient {
   socketApply(socketName: string): Promise<SettingsSnapshot>;
   close(): Promise<void>;
   subscribe(listener: (snapshot: SettingsSnapshot) => void): () => void;
+  /** Appearance's colour themes; absent where there is no main to ask. */
+  readonly themes?: ThemesClient;
 }
 
 declare global {
@@ -64,6 +67,13 @@ export function createSettingsClient(
     socketApply: (socketName) => api.socketApply(socketName),
     close: () => api.close(),
     subscribe: (listener) => api.onChanged(listener),
+    themes: {
+      themes: () => api.themes(),
+      search: (query) => api.searchThemes(query),
+      install: (theme) => api.installTheme(theme),
+      uninstall: (id) => api.uninstallTheme(id),
+      preview: () => api.previewThemes(),
+    },
   };
 }
 

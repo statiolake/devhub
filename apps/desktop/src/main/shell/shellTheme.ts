@@ -60,6 +60,18 @@ export type ColorThemeLoader = (
 	name: string,
 ) => ColorThemeDefinition | undefined;
 
+/** One theme that can be worn, for a list to choose from. */
+export interface AvailableColorTheme {
+	/** What the settings name it by. */
+	readonly name: string;
+	readonly label: string;
+	readonly type: ColorThemeType;
+	/** `publisher.name` of the extension that contributes it. */
+	readonly extension: string;
+	/** Where it was found: VS Code's own, DevHub's library, or installed. */
+	readonly source: "builtin" | "devhub" | "extension";
+}
+
 interface Worn {
 	readonly theme: ResolvedColorTheme;
 	readonly palette: ShellPalette;
@@ -75,9 +87,23 @@ function worn(definition: ColorThemeDefinition): Worn {
 	};
 }
 
+/**
+ * A theme worn for this session only, over what the settings name: the one
+ * being looked at while the Theme: Preview… picker moves (`preview`), or the
+ * one it chose (`session`). Neither is written anywhere; the next time the
+ * settings are applied — a save, a reload, a restart — it is gone.
+ */
+export type TemporaryThemeKind = "preview" | "session";
+
+interface Temporary {
+	readonly worn: Worn;
+	readonly kind: TemporaryThemeKind;
+}
+
 export class ShellTheme {
 	private dark: Worn;
 	private light: Worn;
+	private temporary: Temporary | undefined;
 	private changed: (() => void) | undefined;
 	private announced: string;
 	/** Problems not yet said, and every one already said (said once each). */
@@ -96,6 +122,7 @@ export class ShellTheme {
 			dark: DEFAULT_THEME_DARK,
 			light: DEFAULT_THEME_LIGHT,
 		},
+		private readonly catalog: () => readonly AvailableColorTheme[] = () => [],
 	) {
 		const load = loader();
 		this.dark = this.read(load, names.dark, DEFAULT_THEME_DARK, "dark");
@@ -112,7 +139,59 @@ export class ShellTheme {
 		const load = this.loader();
 		this.dark = this.read(load, names.dark, DEFAULT_THEME_DARK, "dark");
 		this.light = this.read(load, names.light, DEFAULT_THEME_LIGHT, "light");
+		// The settings are the answer again: a theme worn for the session
+		// only lasts until they are next applied.
+		this.temporary = undefined;
 		this.announce();
+	}
+
+	/**
+	 * Wear `name` for this session only, whatever the appearance, without
+	 * touching the settings — or, with `undefined`, go back to what they
+	 * name. Throws, with a sentence for the person, when no installed theme
+	 * is called that or its file will not read; what is worn then is
+	 * unchanged.
+	 */
+	wearTemporarily(name: string | undefined, kind: TemporaryThemeKind): void {
+		if (name === undefined) {
+			this.temporary = undefined;
+		} else {
+			const definition = this.loader()(name);
+			if (!definition) {
+				throw new Error(`No installed colour theme is called '${name}'.`);
+			}
+			this.temporary = { worn: worn(definition), kind };
+		}
+		this.announce();
+	}
+
+	/** Every theme that can be worn now, read afresh. */
+	available(): readonly AvailableColorTheme[] {
+		return this.catalog();
+	}
+
+	/** What the settings name for the appearance the process is in now. */
+	configuredName(): string {
+		return (this.prefersDark() ? this.dark : this.light).theme.definition
+			.settingsId;
+	}
+
+	/** What is worn for the session only, if anything, and how. */
+	temporaryTheme():
+		| { readonly name: string; readonly kind: TemporaryThemeKind }
+		| undefined {
+		const temporary = this.temporary;
+		return (
+			temporary && {
+				name: temporary.worn.theme.definition.settingsId,
+				kind: temporary.kind,
+			}
+		);
+	}
+
+	/** The name of the theme worn now: the temporary one, else the settings'. */
+	wornName(): string {
+		return this.current().theme.definition.settingsId;
 	}
 
 	/** The OS appearance (or `appearance.mode`) changed. */
@@ -132,6 +211,12 @@ export class ShellTheme {
 
 	/** What every workbench is told to wear. */
 	workbenchThemes(): WorkbenchColorThemes {
+		if (this.temporary) {
+			// One theme, both halves: the workbench's own appearance switch
+			// must not take it out of the theme being looked at.
+			const only = this.temporary.worn.theme.definition.settingsId;
+			return { dark: only, light: only, current: only };
+		}
 		const dark = this.dark.theme.definition.settingsId;
 		const light = this.light.theme.definition.settingsId;
 		return { dark, light, current: this.prefersDark() ? dark : light };
@@ -163,6 +248,7 @@ export class ShellTheme {
 	}
 
 	private current(): Worn {
+		if (this.temporary) return this.temporary.worn;
 		return this.prefersDark() ? this.dark : this.light;
 	}
 
