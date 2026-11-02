@@ -11,7 +11,15 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { OPEN_FILE_LUA } from "./managedNeovim.js";
+import { OPEN_FILE_LUA, PUBLISH_THEME_LUA } from "./managedNeovim.js";
+import {
+	ResolvedColorTheme,
+	terminalPaletteOfTheme,
+} from "../../model/colorTheme.js";
+import {
+	publishedThemeOf,
+	themeEnvironment,
+} from "../../model/publishedTheme.js";
 import { NeovimClient } from "./neovimRpc.js";
 import { makeScratchDir, makeSocketDir } from "../../model/testScratch.js";
 
@@ -119,5 +127,50 @@ describe.skipIf(NVIM === undefined)("a real Neovim", () => {
 		void client.request("nvim_command", ["qa!"]).catch(() => undefined);
 		await closed;
 		expect(client.closed).toBe(true);
+	});
+
+	it("is told the theme: g:devhub_theme, the environment, and User DevhubTheme with it", async () => {
+		const { client } = await startNvim();
+		const resolved = new ResolvedColorTheme({
+			settingsId: "Nord",
+			label: "Nord",
+			type: "dark",
+			colors: { "terminal.background": "#2e3440" },
+		});
+		const theme = publishedThemeOf({
+			theme: resolved,
+			terminal: terminalPaletteOfTheme(resolved),
+			temporary: true,
+		});
+		await client.request("nvim_exec_lua", [
+			`vim.api.nvim_create_autocmd("User", { pattern = "DevhubTheme", callback = function(event)
+				vim.g.heard = event.data.name .. " " .. event.data.colors.background
+			end })`,
+			[],
+		]);
+		await client.request("nvim_exec_lua", [
+			PUBLISH_THEME_LUA,
+			[theme, themeEnvironment(theme, undefined)],
+		]);
+		expect(await client.request("nvim_get_var", ["devhub_theme"])).toBe("Nord");
+		expect(await client.request("nvim_get_var", ["devhub_theme_kind"])).toBe(
+			"dark",
+		);
+		expect(await client.request("nvim_get_var", ["heard"])).toBe(
+			"Nord #2e3440",
+		);
+		expect(
+			await client.request("nvim_exec_lua", [
+				"return vim.env.DEVHUB_FZF_COLORS",
+				[],
+			]),
+		).toBe(theme.fzf);
+		expect(
+			await client.request("nvim_exec_lua", [
+				"return vim.g.devhub_theme_info.temporary",
+				[],
+			]),
+		).toBe(true);
+		client.close();
 	});
 });

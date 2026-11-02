@@ -46,10 +46,12 @@ function extension(
 		readonly path: string;
 	}[],
 	nls?: Record<string, string>,
+	publisher = "test",
+	name = directory.replace(/^.*[\\/]/, "").replace(/-\d.*$/, ""),
 ): void {
 	write(join(directory, "package.json"), {
-		name: directory.replace(/^.*[\\/]/, "").replace(/-\d.*$/, ""),
-		publisher: "test",
+		name,
+		publisher,
 		contributes: { themes },
 	});
 	if (nls) write(join(directory, "package.nls.json"), nls);
@@ -191,7 +193,79 @@ describe("reading a theme", () => {
 			label: "T",
 			type: "light",
 			colors: {},
+			tokenColors: [],
 		});
+	});
+
+	it("reads tokenColors through includes and from a file of their own", () => {
+		write(join(root, "tokens.json"), {
+			tokenColors: [{ scope: "comment", settings: { foreground: "#616e88" } }],
+		});
+		write(join(root, "base.json"), {
+			tokenColors: "./tokens.json",
+		});
+		write(join(root, "top.json"), {
+			include: "./base.json",
+			tokenColors: [
+				{
+					scope: ["keyword", "storage.type"],
+					settings: { foreground: "#81a1c1", fontStyle: "bold" },
+				},
+				{ scope: "nothing", settings: {} },
+				{ settings: { foreground: "#d8dee9" } },
+			],
+		});
+		expect(loadColorTheme(entry(join(root, "top.json"))).tokenColors).toEqual([
+			{ scopes: ["comment"], foreground: "#616e88" },
+			{
+				scopes: ["keyword", "storage.type"],
+				foreground: "#81a1c1",
+				fontStyle: "bold",
+			},
+			{ scopes: [], foreground: "#d8dee9" },
+		]);
+	});
+});
+
+describe("DevHub's theme library", () => {
+	it("is a third root, listed after the built-ins, and a theme in two roots is listed once", () => {
+		const builtin = join(root, "builtin");
+		extension(join(builtin, "theme-defaults"), [
+			{
+				id: "Default Dark",
+				label: "Default Dark",
+				uiTheme: "vs-dark",
+				path: "./d.json",
+			},
+		]);
+		const devhub = join(root, "devhub-themes");
+		extension(
+			join(devhub, "arcticicestudio.nord-0.19.0"),
+			[{ label: "Nord", uiTheme: "vs-dark", path: "./nord.json" }],
+			{},
+			"arcticicestudio",
+			"nord",
+		);
+		const user = join(root, "user");
+		extension(
+			join(user, "arcticicestudio.nord-0.19.0"),
+			[{ label: "Nord", uiTheme: "vs-dark", path: "./nord.json" }],
+			{},
+			"arcticicestudio",
+			"nord",
+		);
+		extension(join(user, "test.mine-1.0.0"), [
+			{ label: "Mine", uiTheme: "vs", path: "./mine.json" },
+		]);
+		const themes = listColorThemes({ builtin, user, devhub });
+		expect(themes.map((theme) => theme.settingsId)).toEqual([
+			"Default Dark",
+			"Nord",
+			"Mine",
+		]);
+		expect(findColorTheme(themes, "Nord")?.path).toBe(
+			join(devhub, "arcticicestudio.nord-0.19.0", "nord.json"),
+		);
 	});
 });
 

@@ -146,6 +146,7 @@ function fixture(
     readonly counting?: boolean;
     readonly host?: Runtime;
     readonly paneBinDirectory?: string;
+    readonly themeEnvironment?: () => Readonly<Record<string, string>>;
   },
 ): Fixture {
   sequence += 1;
@@ -178,6 +179,9 @@ function fixture(
     ...(options?.paneBinDirectory === undefined
       ? {}
       : { paneBinDirectory: options.paneBinDirectory }),
+    ...(options?.themeEnvironment === undefined
+      ? {}
+      : { themeEnvironment: options.themeEnvironment }),
   });
   const created = {
     home,
@@ -2636,6 +2640,65 @@ describe.skipIf(TMUX === undefined)(
           "#{window_id}",
         ]).split("\n"),
       ).toHaveLength(2);
+    });
+  },
+);
+
+/** One variable of the server's global environment. */
+function globalEnvironment(socket: string, name: string): string | undefined {
+  try {
+    const output = execFileSync(
+      TMUX as string,
+      ["-f", "/dev/null", "-L", socket, "show-environment", "-g", name],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        env: { ...process.env, TMUX: undefined } as never,
+      },
+    ).trim();
+    return output.startsWith(`${name}=`)
+      ? output.slice(name.length + 1)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+describe.skipIf(TMUX === undefined)(
+  "the colour theme in tmux's environment",
+  { timeout: 30_000 },
+  () => {
+    it("is in a new server from its first pane, and stated again when it changes", async () => {
+      let theme: Record<string, string> = {
+        DEVHUB_THEME: "Nord",
+        DEVHUB_FZF_COLORS: "fg:#d8dee9,bg:#2e3440",
+      };
+      const test = fixture("theme", undefined, {
+        themeEnvironment: () => theme,
+      });
+      // Nothing is started for this when there is no server.
+      await test.runtime.publishThemeEnvironment();
+      expect(tmuxSocketFiles()).not.toContain(test.socket);
+
+      await test.runtime.ensure(SCRATCH_TARGET);
+      expect(globalEnvironment(test.socket, "DEVHUB_THEME")).toBe("Nord");
+      // Scratch's own first pane, made by the bootstrap config, has it too.
+      const out = join(test.home, "scratch-theme");
+      tmuxOutside(test.socket, [
+        "send-keys",
+        "-t",
+        SCRATCH_SESSION,
+        published('"$DEVHUB_THEME"', out),
+        "Enter",
+      ]);
+      expect(await paneWrote(out)).toBe("Nord");
+
+      theme = { DEVHUB_THEME: "Light 2026;", DEVHUB_FZF_COLORS: "fg:#000000" };
+      await test.runtime.publishThemeEnvironment();
+      expect(globalEnvironment(test.socket, "DEVHUB_THEME")).toBe("Light 2026;");
+      expect(globalEnvironment(test.socket, "DEVHUB_FZF_COLORS")).toBe(
+        "fg:#000000",
+      );
     });
   },
 );

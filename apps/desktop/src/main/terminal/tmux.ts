@@ -1277,6 +1277,14 @@ export interface TmuxTerminalRuntimeOptions {
 	 * named the pane is not a slower answer, it is a wrong one.
 	 */
 	readonly host?: Runtime;
+	/**
+	 * What DevHub publishes about its colour theme to every program in a pane
+	 * (`DEVHUB_THEME` and the rest, `main/shell/themePublication.ts`), asked
+	 * for each time it is stated. It lives in the server's *global*
+	 * environment and nowhere else: a pane created later inherits it, and a
+	 * session-level copy would shadow the next change.
+	 */
+	readonly themeEnvironment?: () => Readonly<Record<string, string>>;
 }
 
 const MAX_STDERR_LINE = 200;
@@ -1437,6 +1445,26 @@ export function editorWindowArgs(
 	];
 }
 
+/**
+ * One client queue that states each variable in the server's global
+ * environment. Values travel as argv, never through a config file, so nothing
+ * in them is parsed by tmux — except a trailing `;`, which tmux reads as the
+ * end of a command in argv too and which is therefore written `\;`.
+ */
+export function themeEnvironmentArgs(
+	environment: Readonly<Record<string, string>>,
+): readonly string[] {
+	return Object.keys(environment)
+		.sort()
+		.flatMap((name, index) => [
+			...(index === 0 ? [] : [";"]),
+			"set-environment",
+			"-g",
+			name,
+			(environment[name] ?? "").replace(/;$/, "\\;"),
+		]);
+}
+
 /** Bring a pane's window to the front of its session, and the pane in it. */
 export function activatePaneArgs(paneId: string): readonly string[] {
 	return ["select-window", "-t", paneId, ";", "select-pane", "-t", paneId];
@@ -1466,6 +1494,7 @@ export class TmuxTerminalRuntime {
 	 * command runs the new one, and reports its own failure.
 	 */
 	private acceptedVersionOf: string | undefined;
+	private readonly themeEnvironment: () => Readonly<Record<string, string>>;
 	readonly timeoutMs: number;
 
 	constructor(options: TmuxTerminalRuntimeOptions) {
@@ -1492,6 +1521,7 @@ export class TmuxTerminalRuntime {
 		this.userTmuxConfigSource = options.userTmuxConfigSource ?? "/dev/null";
 		this.host = options.host ?? localRuntime();
 		this.paneBinDirectory = options.paneBinDirectory;
+		this.themeEnvironment = options.themeEnvironment ?? (() => ({}));
 	}
 
 	/** Which machine this adapter's tmux server is on. */
@@ -1765,7 +1795,52 @@ export class TmuxTerminalRuntime {
 		return this.listSessions(this.socket(), cancel, deadline);
 	}
 
+	/**
+	 * Say the colour theme again to a server that is running, after it
+	 * changed: `set-environment -g`, so every pane made from now on — in any
+	 * session — inherits it. Programs already running keep the environment
+	 * they started with; the theme file and the managed Neovim's event are
+	 * how those learn (`docs/window-and-pages.md`, Terminal programs).
+	 *
+	 * No server is started for this, and one that is not DevHub's is left
+	 * alone.
+	 */
+	async publishThemeEnvironment(
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		if (!this.adapterAvailable) return;
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			await this.ensureVersion(socket, cancel, deadline);
+			if ((await this.markerState(socket, cancel, deadline)) !== "owned") {
+				return;
+			}
+			await this.stateThemeEnvironment(socket, cancel, deadline);
+		} finally {
+			release();
+		}
+	}
+
 	// --- Implementation ----------------------------------------------------
+
+	private async stateThemeEnvironment(
+		socket: SocketName,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<void> {
+		const args = themeEnvironmentArgs(this.themeEnvironment());
+		if (args.length === 0) return;
+		const output = await this.runTmux(
+			socket,
+			args,
+			this.contextHome,
+			cancel,
+			deadline,
+		);
+		if (!output.success && !output.noServer) throw output.refusal();
+	}
 
 	private async preflightSync(
 		requestedSocketName: SocketName,
@@ -3263,6 +3338,9 @@ export class TmuxTerminalRuntime {
 		// a session created under the wrong config is a pane whose shell, keys
 		// and status line are not the ones the person asked for.
 		await this.applyUserConfig(socket, config, cancel, deadline);
+		// A server started by an earlier DevHub was started with that DevHub's
+		// theme; this one's is stated before any pane it goes on to make.
+		await this.stateThemeEnvironment(socket, cancel, deadline);
 		// Scratch is the *app's* terminal, not a folder's, and the app runs on
 		// one machine. A host's tmux got one too, because this ran on every
 		// machine's adapter — a session nothing on that host will ever attach
@@ -4094,6 +4172,10 @@ export class TmuxTerminalRuntime {
 				cwd: this.contextHome,
 				env: {
 					...this.tmuxEnvironment(),
+					// A new server's global environment is the environment of the
+					// client that started it, so the theme is in the very first
+					// pane — Scratch's, made by the config below — as well.
+					...this.themeEnvironment(),
 					[BOOTSTRAP_ENV_ROOT]: root,
 					[BOOTSTRAP_ENV_USER_CONFIG]: config.path,
 					...bootstrapEnvironment(sessionEnvironment),

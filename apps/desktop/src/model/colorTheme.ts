@@ -79,6 +79,20 @@ export interface ColorThemeDefinition {
   readonly type: ColorThemeType;
   /** Each colour id the theme sets, to the value it gives it. */
   readonly colors: Readonly<Record<string, string>>;
+  /**
+   * The theme's `tokenColors`, includes first, in file order — what the
+   * syntax is coloured with. Absent when nobody read them (a definition
+   * made in a test, or the registry's fallback).
+   */
+  readonly tokenColors?: readonly TokenColorRule[];
+}
+
+/** One `tokenColors` rule: its scope selectors and what it sets. */
+export interface TokenColorRule {
+  /** Each selector, as written: `keyword.control`, `source.js string`. */
+  readonly scopes: readonly string[];
+  readonly foreground?: string;
+  readonly fontStyle?: string;
 }
 
 /** The theme type of a contribution's `uiTheme`; VS Code's default is dark. */

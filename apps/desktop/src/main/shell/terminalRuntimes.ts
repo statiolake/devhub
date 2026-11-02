@@ -28,6 +28,7 @@ import { remoteCliBinDirectory } from "../terminal/launcher.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import type { Config } from "../../model/config.js";
 import type { SocketName } from "../terminal/ports.js";
+import { themePublicationIfInstalled } from "./themePublication.js";
 
 export interface TerminalRuntimesOptions {
 	readonly config: Config | undefined;
@@ -111,6 +112,21 @@ export class TerminalRuntimes {
 	 * end up on two different sockets — which is a set of sessions DevHub can
 	 * no longer see rather than a slower answer.
 	 */
+	/**
+	 * State the colour theme again on every machine's DevHub server that is
+	 * running (`themePublication.ts`). A machine that does not answer is
+	 * reported to the caller; the others are still told.
+	 */
+	async publishThemeEnvironment(): Promise<void> {
+		const results = await Promise.allSettled(
+			(await this.live()).map((adapter) => adapter.publishThemeEnvironment()),
+		);
+		const failed = results.find(
+			(result): result is PromiseRejectedResult => result.status === "rejected",
+		);
+		if (failed) throw failed.reason;
+	}
+
 	async setEffectiveSocket(name: SocketName): Promise<void> {
 		this.#socketName = name;
 		for (const adapter of await this.live()) adapter.setEffectiveSocket(name);
@@ -180,6 +196,10 @@ export class TerminalRuntimes {
 						),
 					}),
 			host,
+			// Asked each time it is stated, so a server started after a theme
+			// change is started in the new one.
+			themeEnvironment: () =>
+				themePublicationIfInstalled()?.environmentFor(host.id) ?? {},
 		});
 	}
 }

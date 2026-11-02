@@ -9,6 +9,13 @@
  * VS Code names it in `workbench.colorTheme` — its `id`, or its label when it
  * has none — and DevHub also accepts the label it shows in the theme picker.
  *
+ * And a third place VS Code does not look: DevHub's own theme library,
+ * `<userData>/devhub/themes`, where Settings installs a theme from Open VSX
+ * (`themeLibrary.ts`). It is laid out like the extensions directory — one
+ * `<publisher>.<name>-<version>` directory each — and holds only what a
+ * colour theme is made of. A theme found in both it and the extensions
+ * directory is the same theme, listed once.
+ *
  * Reading follows `colorThemeData.ts#_loadColorTheme`: the file is JSON with
  * comments, an `include` is read first and the including file's colours win,
  * and a colour written as `"default"` is taken back out. A TextMate
@@ -25,6 +32,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import {
 	themeTypeOfUiTheme,
 	type ColorThemeDefinition,
+	type TokenColorRule,
 } from "../../model/colorTheme.js";
 
 /** Where extensions are, as the running VS Code says. */
@@ -33,6 +41,8 @@ export interface ExtensionRoots {
 	readonly builtin: string | undefined;
 	/** The person's own: `<publisher>.<name>-<version>` directories. */
 	readonly user: string | undefined;
+	/** DevHub's theme library, laid out the same way. */
+	readonly devhub?: string | undefined;
 }
 
 /** One `contributes.themes` entry, found. */
@@ -230,12 +240,25 @@ function userExtensionDirectories(root: string | undefined): string[] {
 	return [...newest.values()].map(({ path }) => path);
 }
 
-/** Every theme contributed under these roots, built-ins first. */
+/**
+ * Every theme contributed under these roots: built-ins first, then DevHub's
+ * library, then the extensions directory. A theme two of them contribute (the
+ * library installs into the workbench as well) is listed once, from the first.
+ */
 export function listColorThemes(roots: ExtensionRoots): ColorThemeEntry[] {
+	const seen = new Set<string>();
 	return [
 		...subdirectories(roots.builtin),
+		...userExtensionDirectories(roots.devhub),
 		...userExtensionDirectories(roots.user),
-	].flatMap(themesOf);
+	]
+		.flatMap(themesOf)
+		.filter((entry) => {
+			const key = `${entry.extension.toLowerCase()}\0${entry.settingsId}`;
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
 }
 
 /**
@@ -266,10 +289,65 @@ export class ColorThemeUnreadable extends Error {}
 /** How deep `include` may go before it is a loop. */
 const MAX_INCLUDE_DEPTH = 16;
 
+/** One `tokenColors` entry as a rule, or nothing for one that sets nothing. */
+function tokenRuleOf(value: unknown): TokenColorRule | undefined {
+	const entry = record(value);
+	const settings = record(entry?.["settings"]);
+	if (!entry || !settings) return undefined;
+	const scope = entry["scope"];
+	const scopes = (
+		typeof scope === "string"
+			? scope.split(",")
+			: Array.isArray(scope)
+				? scope.filter((item): item is string => typeof item === "string")
+				: []
+	)
+		.map((item) => item.trim())
+		.filter((item) => item.length > 0);
+	const foreground = settings["foreground"];
+	const fontStyle = settings["fontStyle"];
+	if (typeof foreground !== "string" && typeof fontStyle !== "string") {
+		return undefined;
+	}
+	return {
+		scopes,
+		...(typeof foreground === "string" ? { foreground } : {}),
+		...(typeof fontStyle === "string" ? { fontStyle } : {}),
+	};
+}
+
+/**
+ * `tokenColors` as a theme writes it: the rules themselves, or the path of a
+ * JSON file that holds them. (A `.tmTheme` there is a plist DevHub does not
+ * read; its syntax colours are simply not published.)
+ */
+function collectTokenColors(
+	path: string,
+	value: unknown,
+	into: TokenColorRule[],
+): void {
+	if (typeof value === "string") {
+		const target = resolve(dirname(path), value);
+		if (extname(target).toLowerCase() !== ".json") return;
+		const document = readJson(target);
+		const rules = Array.isArray(document)
+			? document
+			: record(document)?.["tokenColors"];
+		if (Array.isArray(rules)) collectTokenColors(target, rules, into);
+		return;
+	}
+	if (!Array.isArray(value)) return;
+	for (const item of value) {
+		const rule = tokenRuleOf(item);
+		if (rule) into.push(rule);
+	}
+}
+
 function collectColors(
 	path: string,
 	into: Record<string, string>,
 	depth: number,
+	tokens: TokenColorRule[] = [],
 ): void {
 	if (depth > MAX_INCLUDE_DEPTH) {
 		throw new ColorThemeUnreadable(
@@ -292,8 +370,9 @@ function collectColors(
 	}
 	const include = document["include"];
 	if (typeof include === "string") {
-		collectColors(resolve(dirname(path), include), into, depth + 1);
+		collectColors(resolve(dirname(path), include), into, depth + 1, tokens);
 	}
+	collectTokenColors(path, document["tokenColors"], tokens);
 	const colors = document["colors"];
 	if (colors === undefined) return;
 	const table = record(colors);
@@ -313,11 +392,13 @@ function collectColors(
 /** The theme's type and colours, with its includes folded in. */
 export function loadColorTheme(entry: ColorThemeEntry): ColorThemeDefinition {
 	const colors: Record<string, string> = {};
-	collectColors(entry.path, colors, 0);
+	const tokenColors: TokenColorRule[] = [];
+	collectColors(entry.path, colors, 0, tokenColors);
 	return {
 		settingsId: entry.settingsId,
 		label: entry.label,
 		type: themeTypeOfUiTheme(entry.uiTheme),
 		colors,
+		tokenColors,
 	};
 }

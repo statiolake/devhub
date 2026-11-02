@@ -13,12 +13,22 @@ import {
 	MAX_SOCKET_PATH_BYTES,
 	neovimSocketName,
 	OPEN_FILE_LUA,
+	PUBLISH_THEME_LUA,
 	socketDirectoryFor,
 	type EditorPanes,
+	type ManagedNeovimOptions,
 	type NeovimFiles,
 	type PaneState,
 } from "./managedNeovim.js";
 import type { NeovimRpc } from "./neovimRpc.js";
+import {
+	publishedThemeOf,
+	type PublishedTheme,
+} from "../../model/publishedTheme.js";
+import {
+	ResolvedColorTheme,
+	terminalPaletteOfTheme,
+} from "../../model/colorTheme.js";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 
 const WORKSPACE: WorkspaceTerminalTarget = {
@@ -143,8 +153,9 @@ function world() {
 		}
 		return Promise.resolve(server);
 	};
-	const make = () =>
+	const make = (extra: Partial<ManagedNeovimOptions> = {}) =>
 		new ManagedNeovims({
+			...extra,
 			panes: editorPanes,
 			nvim: () =>
 				nvim === undefined
@@ -396,5 +407,65 @@ describe("where the sockets go", () => {
 		expect(() => socketDirectoryFor([long])).toThrow(
 			String(MAX_SOCKET_PATH_BYTES),
 		);
+	});
+});
+
+describe("the theme", () => {
+	const theme = (name: string): PublishedTheme => {
+		const resolved = new ResolvedColorTheme({
+			settingsId: name,
+			label: name,
+			type: "dark",
+			colors: {},
+		});
+		return publishedThemeOf({
+			theme: resolved,
+			terminal: terminalPaletteOfTheme(resolved),
+			temporary: false,
+		});
+	};
+	const told = (server: FakeServer | undefined) =>
+		(server?.calls ?? [])
+			.filter((call) => call.params[0] === PUBLISH_THEME_LUA)
+			.map((call) => {
+				const [value, env] = call.params[1] as [
+					PublishedTheme,
+					Record<string, string>,
+				];
+				return `${value.name} ${env["DEVHUB_THEME"] ?? ""}`;
+			});
+
+	it("is told to a Neovim as it starts, and to every live one when it changes", async () => {
+		const w = world();
+		let current = theme("Nord");
+		const failures: string[] = [];
+		const neovims = w.make({
+			theme: () => current,
+			onThemeFailure: (id) => failures.push(id),
+		});
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		expect(told(w.server())).toEqual(["Nord Nord"]);
+		current = theme("Light 2026");
+		await neovims.publishTheme(current);
+		expect(told(w.server())).toEqual(["Nord Nord", "Light 2026 Light 2026"]);
+		expect(failures).toEqual([]);
+	});
+
+	it("is not told to a Neovim that has gone, and a refusal is only reported", async () => {
+		const w = world();
+		const failures: string[] = [];
+		const neovims = w.make({
+			theme: () => theme("Nord"),
+			onThemeFailure: (id) => failures.push(id),
+		});
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		const server = w.server();
+		if (!server) throw new Error("no server");
+		server.request = () => Promise.reject(new Error("E5108: your config"));
+		await neovims.publishTheme(theme("X"));
+		expect(failures).toEqual([WORKSPACE.workspaceId]);
+		server.exit();
+		await neovims.publishTheme(theme("Y"));
+		expect(failures).toEqual([WORKSPACE.workspaceId]);
 	});
 });

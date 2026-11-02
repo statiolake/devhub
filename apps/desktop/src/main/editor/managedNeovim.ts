@@ -41,6 +41,10 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 import { NeovimClient, type NeovimRpc } from "./neovimRpc.js";
+import {
+	themeEnvironment,
+	type PublishedTheme,
+} from "../../model/publishedTheme.js";
 
 /** What a pane DevHub started is, as tmux says it. */
 export type PaneState = "alive" | "dead" | "gone";
@@ -111,6 +115,14 @@ export interface ManagedNeovimOptions {
 	readonly pollMs?: number;
 	/** Told when a server's connection ends, for the log. */
 	readonly onExit?: (workspaceId: string) => void;
+	/**
+	 * The colour theme DevHub publishes now, if any: told to a server as it
+	 * is started or adopted, and to every live one when it changes
+	 * (`publishTheme`).
+	 */
+	readonly theme?: () => PublishedTheme | undefined;
+	/** A theme push that failed, for the log; the jump goes on regardless. */
+	readonly onThemeFailure?: (workspaceId: string, error: unknown) => void;
 }
 
 interface ServerRecord {
@@ -176,7 +188,7 @@ if given(line) then
 end
 if given(marker) then
   local buffer = vim.api.nvim_get_current_buf()
-  local group = vim.api.nvim_create_augroup("devhub_wait_" .. tostring(vim.uv.hrtime()), { clear = true })
+  local group = vim.api.nvim_create_augroup("devhub_wait_" .. tostring((vim.uv or vim.loop).hrtime()), { clear = true })
   local function done()
     os.remove(marker)
     pcall(vim.api.nvim_del_augroup_by_id, group)
@@ -187,6 +199,26 @@ end
 `;
 
 const PANE_LUA = "return vim.env.TMUX_PANE";
+
+/**
+ * Tell a Neovim the theme DevHub wears. `g:devhub_theme` is its name — what
+ * `[appearance] theme_dark` / `theme_light` say — with `g:devhub_theme_kind`
+ * (`dark`, `light`, `hc`), `g:devhub_theme_background` (`dark` / `light`) and
+ * the whole published value in `g:devhub_theme_info`; the `DEVHUB_*`
+ * variables a new pane would get are updated in its environment, so a
+ * `:terminal` or a job started from it sees them too. Then `User DevhubTheme`
+ * fires with the value as its `data`. Nothing else: which colorscheme that
+ * means is the person's config's to say (`docs/window-and-pages.md`).
+ */
+export const PUBLISH_THEME_LUA = `
+local theme, env = ...
+vim.g.devhub_theme = theme.name
+vim.g.devhub_theme_kind = theme.kind
+vim.g.devhub_theme_background = theme.background
+vim.g.devhub_theme_info = theme
+for name, value in pairs(env) do vim.env[name] = value end
+vim.api.nvim_exec_autocmds("User", { pattern = "DevhubTheme", modeline = false, data = theme })
+`;
 
 function isRefused(error: unknown): boolean {
 	const code = (error as NodeJS.ErrnoException | undefined)?.code;
@@ -223,6 +255,19 @@ export class ManagedNeovims {
 	/** The pane a Workspace's managed Neovim is in, while one is known. */
 	paneOf(workspaceId: string): string | undefined {
 		return this.records.get(workspaceId)?.paneId;
+	}
+
+	/**
+	 * Tell every managed Neovim DevHub is connected to about this theme. One
+	 * that refuses (an error in the person's `User DevhubTheme` handler, say)
+	 * is reported and the rest are still told.
+	 */
+	async publishTheme(theme: PublishedTheme): Promise<void> {
+		await Promise.all(
+			[...this.records.entries()].map(([workspaceId, record]) =>
+				this.tellTheme(workspaceId, record, theme),
+			),
+		);
 	}
 
 	/**
@@ -414,8 +459,29 @@ export class ManagedNeovims {
 		}
 	}
 
+	private async tellTheme(
+		workspaceId: string,
+		record: ServerRecord,
+		theme: PublishedTheme | undefined = this.options.theme?.(),
+	): Promise<void> {
+		if (theme === undefined || record.client.closed) return;
+		try {
+			await record.client.request("nvim_exec_lua", [
+				PUBLISH_THEME_LUA,
+				// The file is this Mac's; a managed Neovim is always on it.
+				[theme, themeEnvironment(theme, undefined)],
+			]);
+		} catch (error) {
+			this.options.onThemeFailure?.(workspaceId, error);
+		}
+	}
+
 	private remember(workspaceId: string, record: ServerRecord): ServerRecord {
 		this.records.set(workspaceId, record);
+		// A Neovim started now has the theme in its environment already; one
+		// adopted may have been started under another. Either is told, so
+		// `g:devhub_theme` is there from the first jump.
+		void this.tellTheme(workspaceId, record);
 		record.client.onClose(() => {
 			// The server ended — `:q`, its pane killed, a crash. Forgotten now,
 			// so the next jump starts one rather than asking a dead socket.
