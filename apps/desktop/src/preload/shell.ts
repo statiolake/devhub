@@ -37,6 +37,8 @@ const api: ShellPageBridge = {
 		on<WorkbenchAreaWire>(CHANNELS.workbenchAreaChanged, listener),
 	onEditorPlaceholder: (listener) =>
 		on<EditorPlaceholderEvent>(CHANNELS.editorPlaceholder, listener),
+	replayEditorPlaceholders: () =>
+		ipcRenderer.invoke(CHANNELS.replayEditorPlaceholders) as Promise<void>,
 	wakeEditor: (surfaceKey) =>
 		ipcRenderer.invoke(CHANNELS.wakeEditor, surfaceKey) as Promise<void>,
 

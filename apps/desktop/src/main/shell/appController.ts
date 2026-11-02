@@ -79,6 +79,7 @@ import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/
 import {
 	CHANNELS,
 	type AgentActionWire,
+	type EditorPlaceholderEvent,
 	type ChordHelpRowWire,
 	type NoticeSettingsWire,
 	type LayoutPreviewWire,
@@ -9766,6 +9767,17 @@ export class AppController {
 		);
 
 		handle(CHANNELS.chooseWorkspaceFolder, () => this.pickFolder());
+		// A page that has just started listening for placeholders: told every
+		// standing one, in order on the same channel, so nothing said before it
+		// listened is lost (`WorkbenchLifecycle.standing`).
+		handle(CHANNELS.replayEditorPlaceholders, (event) => {
+			for (const { surfaceKey, placeholder } of this.workbenches.standing()) {
+				event.sender.send(CHANNELS.editorPlaceholder, {
+					surfaceKey,
+					placeholder,
+				} satisfies EditorPlaceholderEvent);
+			}
+		});
 		// Enter or a click on an asleep (or never started) editor's
 		// placeholder: the one way the page asks for a workbench.
 		handle(CHANNELS.wakeEditor, (_event, surfaceKey: string) => {

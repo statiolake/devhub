@@ -1093,7 +1093,11 @@ it changes (`editorPlaceholder`), so it cannot outlive its state: "Restarting
 the editor…" while restart-waiting or reopening after a failure, the captured
 frame under the "Sleeping" or "not running" line while asleep, and "Starting
 VS Code…" while starting or waking (the view `hidden` in the arrangement, a
-split keeping its Agent); the frame lives in memory only. A workbench that dies unasked is opened again
+split keeping its Agent); the frame lives in memory only. Only a change is
+sent, so the page, once it listens, asks for every placeholder standing
+(`replayEditorPlaceholders`, `WorkbenchLifecycle.standing`): the Workspaces put
+down as not started at launch are decided before the window's page has loaded,
+and without it they showed an empty editor area with nothing to press Enter on. A workbench that dies unasked is opened again
 after a backoff that doubles from 250 ms (`editorSupervisor.ts`), and after
 five failures in a row it is given up on and its Workspace made unavailable;
 one that dies while hibernating is simply asleep. Every transition, every ask,

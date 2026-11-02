@@ -283,7 +283,11 @@ export class WorkbenchLifecycle {
 	/** Where the placeholder each surface was last told stands. */
 	private readonly told = new Map<
 		string,
-		{ readonly surfaceKey: string; readonly text: string }
+		{
+			readonly surfaceKey: string;
+			readonly text: string;
+			readonly placeholder: EditorPlaceholder;
+		}
 	>();
 	private selected: string | undefined;
 	/** The last thing said about the cap, so it is said once. */
@@ -311,6 +315,25 @@ export class WorkbenchLifecycle {
 
 	placeholder(folder: string): EditorPlaceholder | undefined {
 		return placeholderOf(this.phase(folder));
+	}
+
+	/**
+	 * Every placeholder standing now, as the `placeholder` effects last said
+	 * it: what a page that was not listening then — the window's own page
+	 * still loading at launch, or reloaded — must be told when it starts to.
+	 *
+	 * The effects say only what changed, so a page that missed one would
+	 * never hear it again: a Workspace that was put down as not started at
+	 * launch showed an empty editor area, with nothing to press Enter on.
+	 */
+	standing(): {
+		readonly surfaceKey: string;
+		readonly placeholder: EditorPlaceholder;
+	}[] {
+		return [...this.told.values()].map(({ surfaceKey, placeholder }) => ({
+			surfaceKey,
+			placeholder,
+		}));
 	}
 
 	/** When `plan` must run again even if nothing else happens. */
@@ -814,7 +837,13 @@ export class WorkbenchLifecycle {
 				placeholder,
 			});
 			if (placeholder === undefined) this.told.delete(folder);
-			else this.told.set(folder, { surfaceKey: record.surfaceKey, text });
+			else {
+				this.told.set(folder, {
+					surfaceKey: record.surfaceKey,
+					text,
+					placeholder,
+				});
+			}
 		}
 		return effects;
 	}

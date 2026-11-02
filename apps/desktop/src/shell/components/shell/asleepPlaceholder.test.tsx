@@ -58,6 +58,13 @@ describe("an asleep editor's placeholder", () => {
     expect(area).toHaveFocus();
   });
 
+  it("a never started one takes the keyboard too, and Enter starts it", () => {
+    const { onWake, area } = asleep(false);
+    expect(area).toHaveFocus();
+    fireEvent.keyDown(area, { key: "Enter" });
+    expect(onWake).toHaveBeenCalledTimes(1);
+  });
+
   it("wakes on Enter", () => {
     const { onWake, area } = asleep();
     fireEvent.keyDown(area, { key: "Enter" });

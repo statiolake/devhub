@@ -21,6 +21,11 @@ import { devhub } from "../../client";
  * (`main/shell/workbenchLifecycle.ts`) and says it again whenever it changes,
  * so the page keeps what it was last told and nothing else — no merging, no
  * event that must arrive to take it down.
+ *
+ * Main says one only when it changes, so once listening the page asks for
+ * every one standing (`replayEditorPlaceholders`). Without that, each
+ * Workspace put down as not started at launch — decided before this page
+ * had loaded — showed an empty editor area with nothing to press Enter on.
  */
 export function useEditorPlaceholders(): ReadonlyMap<
   string,
@@ -30,18 +35,20 @@ export function useEditorPlaceholders(): ReadonlyMap<
     ReadonlyMap<string, EditorPlaceholderWire>
   >(new Map());
 
-  useEffect(
-    () =>
-      devhub().onEditorPlaceholder(({ surfaceKey, placeholder }) => {
-        setEditors((current) => {
-          const next = new Map(current);
-          if (placeholder === undefined) next.delete(surfaceKey);
-          else next.set(surfaceKey, placeholder);
-          return next;
-        });
-      }),
-    [],
-  );
+  useEffect(() => {
+    const stop = devhub().onEditorPlaceholder(({ surfaceKey, placeholder }) => {
+      setEditors((current) => {
+        const next = new Map(current);
+        if (placeholder === undefined) next.delete(surfaceKey);
+        else next.set(surfaceKey, placeholder);
+        return next;
+      });
+    });
+    // Said again over the same channel, after anything already on its way,
+    // so a later change still wins.
+    void devhub().replayEditorPlaceholders();
+    return stop;
+  }, []);
 
   return editors;
 }

@@ -1263,6 +1263,100 @@ describe("lazy start: a workbench only for an editor somebody asked for", () => 
 		expect(lifecycle.foldersIn("asleep")).toEqual(["a", "b"]);
 	});
 
+	it("keeps every standing placeholder for a page that was not listening when it was said", () => {
+		// The launch's first plan puts each Workspace it does not start down
+		// as not started, before the window's own page has loaded. The effect
+		// is said once (only changes are said), so the page asks for what
+		// stands when it starts listening — and gets the not started ones.
+		const { lifecycle, plan, wake } = life();
+		wake("scratch", "launch");
+		const first = plan("scratch");
+		const said = first.filter((effect) => effect.kind === "placeholder");
+		expect(said.map((effect) => effect.surfaceKey).sort()).toEqual([
+			"workspace-editor:a",
+			"workspace-editor:b",
+			"workspace-editor:c",
+			"workspace-editor:scratch",
+		]);
+		// Nothing changes on the next plan, so nothing is said again.
+		expect(
+			plan("scratch").filter((effect) => effect.kind === "placeholder"),
+		).toEqual([]);
+		const notStarted = { kind: "asleep", frame: "", started: false };
+		expect(lifecycle.standing()).toEqual([
+			{
+				surfaceKey: "workspace-editor:scratch",
+				placeholder: { kind: "starting" },
+			},
+			{ surfaceKey: "workspace-editor:a", placeholder: notStarted },
+			{ surfaceKey: "workspace-editor:b", placeholder: notStarted },
+			{ surfaceKey: "workspace-editor:c", placeholder: notStarted },
+		]);
+		// Navigated to (prefix+n, a Sidebar row): still not started, still
+		// standing; Enter on it starts it behind the spinner.
+		lifecycle.loaded("scratch", 0);
+		plan("b", ["scratch"]);
+		expect(lifecycle.standing()).toContainEqual({
+			surfaceKey: "workspace-editor:b",
+			placeholder: notStarted,
+		});
+		expect(lifecycle.standing().map((one) => one.surfaceKey)).not.toContain(
+			"workspace-editor:scratch",
+		);
+		wake("b", "asked");
+		expect(opens(plan("b", ["scratch"]))).toEqual([
+			{ kind: "open", folder: "b", cause: "start" },
+		]);
+		expect(lifecycle.standing()).toContainEqual({
+			surfaceKey: "workspace-editor:b",
+			placeholder: { kind: "starting" },
+		});
+	});
+
+	it("a slept one stands as asleep with its frame, and Enter wakes it", () => {
+		const { lifecycle, plan, wake } = life();
+		wake("a", "shown");
+		plan("a");
+		lifecycle.loaded("a", 0);
+		plan("b", ["a"]);
+		// The minute check puts it to sleep, away long enough.
+		const ticked = lifecycle.plan({
+			now: 700_000,
+			wanted: ["scratch", "a", "b", "c"].map((folder) => ({
+				folder,
+				surfaceKey: `workspace-editor:${folder}`,
+				sleepable: true,
+				closing: false,
+				awayMs: folder === "b" ? undefined : 700_000,
+				lazy: true,
+			})),
+			selected: "b",
+			views: ["a"],
+			awakeMax: 2,
+			hibernateAfterMs: 600_000,
+			tick: true,
+		});
+		expect(ticked).toContainEqual({
+			kind: "hibernate",
+			folder: "a",
+			why: "away",
+		});
+		lifecycle.hibernated("a", "data:frame");
+		plan("a", ["a"]);
+		expect(lifecycle.standing()).toContainEqual({
+			surfaceKey: "workspace-editor:a",
+			placeholder: { kind: "asleep", frame: "data:frame", started: true },
+		});
+		wake("a", "asked");
+		expect(opens(plan("a"))).toEqual([
+			{ kind: "open", folder: "a", cause: "wake" },
+		]);
+		expect(lifecycle.standing()).toContainEqual({
+			surfaceKey: "workspace-editor:a",
+			placeholder: { kind: "waking", frame: "data:frame" },
+		});
+	});
+
 	it("then lives under the cap like any other: going back to the terminal lets it sleep", () => {
 		const { lifecycle, plan, wake } = life();
 		wake("a", "shown");

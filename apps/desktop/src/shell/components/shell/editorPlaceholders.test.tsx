@@ -19,6 +19,9 @@ import { useEditorPlaceholders } from "./workbenchDialogs";
 
 let listener: ((event: EditorPlaceholderEvent) => void) | undefined;
 let subscriptions = 0;
+/** What main has standing, said again to a page that asks. */
+let standing: EditorPlaceholderEvent[] = [];
+let replays = 0;
 
 vi.mock("../../client", () => ({
   devhub: () => ({
@@ -28,6 +31,16 @@ vi.mock("../../client", () => ({
       return () => {
         listener = undefined;
       };
+    },
+    replayEditorPlaceholders: () => {
+      replays += 1;
+      // Main answers on the push channel, so it has to be listening by now.
+      if (!listener) throw new Error("asked for a replay before listening");
+      const said = listener;
+      queueMicrotask(() => {
+        for (const event of standing) said(event);
+      });
+      return Promise.resolve();
     },
   }),
 }));
@@ -57,6 +70,34 @@ describe("the editor's placeholder", () => {
     cleanup();
     listener = undefined;
     subscriptions = 0;
+    standing = [];
+    replays = 0;
+  });
+
+  it("hears what was decided before it listened: a Workspace never started at launch", async () => {
+    // Main puts every Workspace it does not start down as not started in its
+    // first plan, before the window's own page has loaded. It says a
+    // placeholder only when it changes, so unless the page asks, that one is
+    // never said again and the editor area stays empty with nothing to press
+    // Enter on.
+    standing = [
+      {
+        surfaceKey: SURFACE,
+        placeholder: { kind: "asleep", frame: "", started: false },
+      },
+    ];
+    render(<Probe surfaceKey={SURFACE} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(replays).toBe(1);
+    expect(screen.getByTestId("state")).toHaveTextContent(/^asleep$/);
+  });
+
+  it("asks once, not on every render", () => {
+    const view = render(<Probe surfaceKey={SURFACE} />);
+    view.rerender(<Probe surfaceKey={SURFACE} />);
+    expect(replays).toBe(1);
   });
 
   it("shows the workbench is restarting, then stops when it is back", () => {

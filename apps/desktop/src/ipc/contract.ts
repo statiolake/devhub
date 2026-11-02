@@ -1194,6 +1194,14 @@ export interface ShellPageBridge
 		listener: (event: EditorPlaceholderEvent) => void,
 	): () => void;
 	/**
+	 * Say every placeholder standing now again, to this page, over
+	 * `onEditorPlaceholder`. A page asks once it listens: main says a
+	 * placeholder only when it changes, and the ones decided before the page
+	 * was listening (every not started Workspace, at launch) would otherwise
+	 * never reach it.
+	 */
+	replayEditorPlaceholders(): Promise<void>;
+	/**
 	 * Wake (or start) the workbench whose placeholder stands in this editor
 	 * slot (`workspace-editor:<id>`): Enter or a click on "Sleeping — press
 	 * Enter to wake". The one way the page asks for one; nothing wakes on its
@@ -1842,6 +1850,8 @@ export const CHANNELS = {
 	replay: "devhub:replay",
 	chooseWorkspaceFolder: "devhub:choose-workspace-folder",
 	wakeEditor: "devhub:wake-editor",
+	/** Every standing editor placeholder, said again to the page that asks. */
+	replayEditorPlaceholders: "devhub:replay-editor-placeholders",
 	startWorkspacePicker: "devhub:start-workspace-picker",
 	cancelWorkspacePicker: "devhub:cancel-workspace-picker",
 	selectWorkspacePicker: "devhub:select-workspace-picker",
