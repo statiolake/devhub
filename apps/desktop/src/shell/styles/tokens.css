@@ -406,37 +406,41 @@
 }
 
 /*
- * The Sidebar's row geometry, in one place: one icon column, then the words.
+ * The Sidebar's row geometry, in one place: one icon column, then the tree
+ * connector, then the words.
  *
- * Every row — Scratch, a Workspace, an Agent — leads with the *same* column,
- * at the same x, holding the one mark that says what the row is: the terminal
- * glyph, the folder glyph, the Agent's status mark. There is no second leading
- * column and no depth before it, so the statuses are a column a person can run
- * an eye down.
+ * Every row — Scratch, a Workspace, an Agent — leads with a mark that says
+ * what the row is: the terminal glyph, the folder glyph, the Agent's status
+ * mark. A Workspace's mark is in the rail's column: the collapsed rail centres
+ * one entry in its width, and the docked column puts its icon column at the
+ * same x and its section rule at the same height, so the rail, the rail grown
+ * over the content (compact mode's overlay) and the docked column put every
+ * Workspace at one place and turning compact mode on or off moves no row.
  *
- * And it is the rail's column. The collapsed rail centres one entry in its
- * width; the docked column puts its icon column at the same x, and the
- * section rule at the same height, so the rail, the rail grown over the
- * content (compact mode's overlay) and the docked column are one arrangement
- * with more or less of it shown: turning compact mode on or off moves no mark,
- * sideways or down. An Agent used to be indented under its Workspace's name
- * with a bent guide drawn into the indent; the rail has room for one column,
- * so an indent there was a mark that stepped right every time the rail grew.
- * Which Workspace an Agent belongs to is the order of the rows and the tree
- * in the markup (`aria-level`).
+ * An Agent is drawn the way a file tree draws a child: indented. The vertical
+ * drops from the middle of its Workspace's icon column, under the folder, and
+ * the elbow turns right into the Agent's own icon column, which starts where
+ * its Workspace's words start — so the Agent's status mark stands under the
+ * Workspace's name, right of the guide, and the Agent's words follow it one
+ * `--space-2` on, as a Workspace's follow its folder. The elbow stops one
+ * `--sidebar-tree-gap` short of the mark. The rail has room for one column, so
+ * it takes the indent and the guide off; the Sidebar growing out of the rail
+ * grows them back in (`shell.css`, "The tree growing in"). The overlay and the
+ * docked column are both indented, so landing one as the other moves nothing.
  *
  * Measured from the pane's leading edge, with a title bar (a 40px rail at
  * compact density, 42px at comfortable):
  *
- *     compact       icon 12→28   words 36
- *     comfortable   icon 12→30   words 38
+ *     compact       icon 12→28   words 36   vertical 20   Agent icon 36→52   Agent words 60
+ *     comfortable   icon 12→30   words 38   vertical 21   Agent icon 38→56   Agent words 64
  *
  * Without a title bar the rail is the traffic lights' 76px and the column is
  * centred in that instead.
  *
- * Three stylesheets start a line on these columns: the row's own text inset,
- * the rail's padding, and the drop line in `reorder.css`. They all read these
- * terms, because a second copy of a number is how they come apart.
+ * Four stylesheets start a line on these columns: the row's own text inset,
+ * the connector beside it, the rail's padding, and the drop line in
+ * `reorder.css`. They all read these terms, because a second copy of a number
+ * is how they come apart.
  *
  * It is on `.app-shell` and not at the root because it is written in terms of
  * the glyph column, which is the density's to say and is declared on this same
@@ -461,11 +465,22 @@
   --sidebar-text-inset: calc(
     var(--sidebar-row-inset) + var(--sidebar-glyph-width) + var(--space-2)
   );
-  /* Where an Agent's icon column starts: the Workspace's own, as the rail has
-     it. It was indented under the Workspace's words, with a connector drawn
-     into it; the rail has room for one column only, and an Agent's mark that
-     stepped right as the rail grew into the column was a mark that moved. */
-  --sidebar-agent-glyph-inset: var(--sidebar-row-inset);
+  /* Where the vertical stands, from the row's leading edge: down the middle
+     of the Workspace's icon column, under its folder. */
+  --sidebar-tree-line: calc(
+    var(--sidebar-row-inset) + var(--sidebar-glyph-width) / 2
+  );
+  /* The air between the end of the elbow and the Agent's mark. */
+  --sidebar-tree-gap: var(--space-1);
+  /* Where an Agent's icon column starts: indented under its Workspace, where
+     the Workspace's words start. The rail has room for one column and takes
+     the indent off; the Sidebar growing out of the rail grows it back in. */
+  --sidebar-agent-glyph-inset: var(--sidebar-text-inset);
+  /* How far that is from the Workspace's own column: the indent itself, the
+     one distance the tree grows in by. */
+  --sidebar-agent-indent: calc(
+    var(--sidebar-agent-glyph-inset) - var(--sidebar-row-inset)
+  );
   /* Where an Agent's words start: after its own icon column, with one gap, as
      a Workspace's do after its folder. */
   --sidebar-agent-text-inset: calc(

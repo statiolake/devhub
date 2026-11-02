@@ -101,8 +101,20 @@ type Suppression =
   | { readonly until: "move"; readonly x: number; readonly y: number }
   | { readonly until: "leave" };
 
+/**
+ * The Agents' tree as the Sidebar grows out of the rail and back
+ * (`shell.css`, "The tree growing in"): the rail is one column with no
+ * guides, the expanded Sidebar is indented with them, and in between the
+ * indent and the guides grow in on the width's own duration and easing —
+ * `growing` for as long as that lasts, `shrinking` while the overlay retracts.
+ * Absent is a Sidebar that is simply there, which never moves: docked from the
+ * start, or landing from the overlay, which is already indented.
+ */
+export type TreeMotion = "growing" | "shrinking";
+
 export interface SidebarOverlay {
   readonly phase: OverlayPhase;
+  readonly tree: TreeMotion | undefined;
   /**
    * Counts every time the card opened or closed, read at the moment it is
    * asked. The tooltips ask it: a row the pointer arrived on as the card
@@ -138,6 +150,24 @@ export function useSidebarOverlay(
   holding: boolean,
 ): SidebarOverlay {
   const [phase, setPhaseState] = useState<OverlayPhase>("closed");
+  const [tree, setTree] = useState<TreeMotion | undefined>(undefined);
+  const treeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  /** The tree grows in, for as long as the width does. */
+  const growTree = useCallback(() => {
+    if (treeTimer.current !== undefined) clearTimeout(treeTimer.current);
+    setTree("growing");
+    treeTimer.current = setTimeout(() => {
+      treeTimer.current = undefined;
+      setTree(undefined);
+    }, OPEN_MS);
+  }, []);
+  const settleTree = useCallback((next: TreeMotion | undefined) => {
+    if (treeTimer.current !== undefined) clearTimeout(treeTimer.current);
+    treeTimer.current = undefined;
+    setTree(next);
+  }, []);
   const phaseRef = useRef<OverlayPhase>("closed");
   const generationRef = useRef(0);
   const collapsedRef = useRef(collapsed);
@@ -160,25 +190,32 @@ export function useSidebarOverlay(
     undefined,
   );
 
-  const setPhase = useCallback((next: OverlayPhase) => {
-    const was = phaseRef.current;
-    if (was === next) return;
-    phaseRef.current = next;
-    // Opening and closing are what a tooltip has to know about; retracting
-    // and coming back out of a retract are one opening.
-    if (next === "closed" || (next === "open" && was === "closed")) {
-      generationRef.current += 1;
-    }
-    setPhaseState(next);
-    if (next === "open" && was === "closing") return;
-    // Whatever tooltip was up is about a row that just changed shape under
-    // it; the next one is asked for by the row the pointer goes to next.
-    devhub().hideTooltip();
-    const floating = next !== "closed";
-    if (floating !== (was !== "closed")) {
-      void devhub().previewLayout({ sidebarOverlay: floating });
-    }
-  }, []);
+  const setPhase = useCallback(
+    (next: OverlayPhase) => {
+      const was = phaseRef.current;
+      if (was === next) return;
+      phaseRef.current = next;
+      // Opening and closing are what a tooltip has to know about; retracting
+      // and coming back out of a retract are one opening.
+      if (next === "closed" || (next === "open" && was === "closed")) {
+        generationRef.current += 1;
+      }
+      setPhaseState(next);
+      // Out of the rail, the tree grows in with the width; back into it, it
+      // folds away with the retract. Landing is already the docked column.
+      if (next === "open") growTree();
+      else settleTree(next === "closing" ? "shrinking" : undefined);
+      if (next === "open" && was === "closing") return;
+      // Whatever tooltip was up is about a row that just changed shape under
+      // it; the next one is asked for by the row the pointer goes to next.
+      devhub().hideTooltip();
+      const floating = next !== "closed";
+      if (floating !== (was !== "closed")) {
+        void devhub().previewLayout({ sidebarOverlay: floating });
+      }
+    },
+    [growTree, settleTree],
+  );
 
   const clearTimer = (
     timer: React.MutableRefObject<ReturnType<typeof setTimeout> | undefined>,
@@ -290,8 +327,11 @@ export function useSidebarOverlay(
     // Turned off. A card that was up is already where the column goes: it
     // stays, and lets its shadow go. One that was retracting simply goes.
     suppression.current = undefined;
-    if (phaseRef.current === "closing") {
-      setPhase("closed");
+    if (phaseRef.current === "closing") setPhase("closed");
+    // The docked column out of the rail with no overlay in between: its tree
+    // grows in as the column appears.
+    if (phaseRef.current === "closed") {
+      growTree();
       return;
     }
     if (phaseRef.current !== "open") return;
@@ -303,7 +343,7 @@ export function useSidebarOverlay(
       },
       reducedMotion() ? 0 : LAND_MS,
     );
-  }, [cancelClose, collapsed, setPhase]);
+  }, [cancelClose, collapsed, growTree, setPhase]);
 
   // A drag that ended decides for itself whether the card stays.
   useEffect(() => {
@@ -403,6 +443,7 @@ export function useSidebarOverlay(
     () => () => {
       clearTimer(closeTimer);
       clearTimer(settleTimer);
+      clearTimer(treeTimer);
       if (phaseRef.current !== "closed") {
         void devhub().previewLayout({ sidebarOverlay: false });
       }
@@ -414,6 +455,7 @@ export function useSidebarOverlay(
 
   return {
     phase,
+    tree,
     generation,
     dismiss,
     paneHandlers: { onPointerMove, onPointerEnter, onPointerLeave },

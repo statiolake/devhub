@@ -29,7 +29,12 @@ import type { SidebarValue } from "../../sidebar/SidebarContext";
 import { SidebarContext } from "../../sidebar/SidebarContext";
 import { Sidebar } from "./Sidebar";
 import { SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
-import { CLOSE_GRACE_MS, CLOSE_MS, LAND_MS } from "./useSidebarOverlay";
+import {
+  CLOSE_GRACE_MS,
+  CLOSE_MS,
+  LAND_MS,
+  OPEN_MS,
+} from "./useSidebarOverlay";
 import { chromeVariables } from "../../../main/shell/windowLayout";
 
 let previews: LayoutPreviewWire[] = [];
@@ -362,6 +367,52 @@ describe("the floating Sidebar", () => {
     expect(overlays()).toEqual([true, false]);
     // The docked column, resize handle and all.
     expect(screen.getByRole("separator")).toBeInTheDocument();
+  });
+
+  /**
+   * The Agents' tree grows in with the width, out of the rail, and folds back
+   * with the retract; a Sidebar that is simply there never moves.
+   */
+  it("grows the tree in as it opens, and folds it as it retracts", async () => {
+    const { pane } = mount(true);
+    expect(pane()).not.toHaveAttribute("data-tree");
+    point(pane());
+    expect(pane()).toHaveAttribute("data-tree", "growing");
+    await wait(OPEN_MS);
+    expect(pane()).not.toHaveAttribute("data-tree");
+    leave(pane());
+    await wait(CLOSE_GRACE_MS);
+    expect(pane()).toHaveAttribute("data-overlay", "closing");
+    expect(pane()).toHaveAttribute("data-tree", "shrinking");
+    await wait(CLOSE_MS);
+    expect(pane()).not.toHaveAttribute("data-tree");
+    expect(pane()).toHaveAttribute("data-collapsed", "true");
+  });
+
+  it("grows the tree in when compact mode is turned off with nothing floating", async () => {
+    const { pane, setCollapsed } = mount(true);
+    setCollapsed(false);
+    expect(pane()).toHaveAttribute("data-tree", "growing");
+    await wait(OPEN_MS);
+    expect(pane()).not.toHaveAttribute("data-tree");
+  });
+
+  /** Landing is already the docked column: nothing grows, nothing moves. */
+  it("moves nothing in the tree as it lands", async () => {
+    const { pane, setCollapsed } = mount(true);
+    point(pane());
+    await wait(OPEN_MS);
+    setCollapsed(false);
+    expect(pane()).toHaveAttribute("data-overlay", "landing");
+    expect(pane()).not.toHaveAttribute("data-tree");
+    await wait(LAND_MS);
+    expect(pane()).not.toHaveAttribute("data-tree");
+  });
+
+  it("never grows a tree that was docked from the start", () => {
+    const { pane } = mount(false);
+    point(pane());
+    expect(pane()).not.toHaveAttribute("data-tree");
   });
 
   it("takes down whatever tooltip was up as it opens", () => {

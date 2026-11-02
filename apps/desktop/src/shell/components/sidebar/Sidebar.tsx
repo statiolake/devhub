@@ -1320,6 +1320,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
       // The rail grown over the content, retracting, or landing as compact
       // mode goes off. See `sidebarPage.css` — the same pane, raised.
       data-overlay={overlay.phase === "closed" ? undefined : overlay.phase}
+      // The Agents' tree growing in out of the rail, or folding back into it.
+      // See `shell.css`, "The tree growing in".
+      data-tree={overlay.tree}
       {...overlay.paneHandlers}
       // A row chosen in the floating Sidebar does what a row does, and the
       // card goes, the way a browser's tab bar folds away after a tab is
