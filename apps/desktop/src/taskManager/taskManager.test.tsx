@@ -37,6 +37,7 @@ function row(
     kind: "process",
     label,
     memoryBytes: memoryMb * MB,
+    residentBytes: (memoryMb * MB) / 2,
     cpuPercent,
     processCount: 1,
     actions: [],
@@ -51,15 +52,29 @@ const ANALYZER = row("pid:122", "rust-analyzer", 1800, 48, {
 });
 const SNAPSHOT: TaskSnapshotWire = {
   takenAt: 0,
+  memoryMetric: "footprint",
   system: {
     totalBytes: 16 * 1024 * MB,
     usedBytes: 14 * 1024 * MB,
+    breakdown: {
+      appBytes: 9 * 1024 * MB,
+      wiredBytes: 3 * 1024 * MB,
+      compressedBytes: 2 * 1024 * MB,
+      compressorStoredBytes: 6 * 1024 * MB,
+      cachedBytes: 1024 * MB,
+      freeBytes: 1024 * MB,
+    },
     swapUsedBytes: 3 * 1024 * MB,
     swapTotalBytes: 4 * 1024 * MB,
     pressure: "warning",
     pressureSource: "kern.memorystatus_vm_pressure_level",
   },
-  total: { memoryBytes: 3000 * MB, cpuPercent: 60, processCount: 4 },
+  total: {
+    memoryBytes: 3000 * MB,
+    residentBytes: 1200 * MB,
+    cpuPercent: 60,
+    processCount: 4,
+  },
   rows: [
     row("devhub", "DevHub", 800, 5, { kind: "devhub", processCount: 2 }),
     row("workspace:w1", "widget", 2200, 55, {
@@ -120,10 +135,18 @@ describe("the header", () => {
   it("states the machine's memory, its pressure, swap and DevHub's total", async () => {
     await shown(client());
     const header = screen.getByRole("region", { name: "System memory" });
-    expect(header).toHaveTextContent("14.0 GB of 16.0 GB");
+    expect(header).toHaveTextContent("14.0 GB used of 16.0 GB");
     expect(header).toHaveTextContent("Warning");
-    expect(header).toHaveTextContent("Swap3.00 GB");
-    expect(header).toHaveTextContent("2.93 GB");
+    expect(header).toHaveTextContent("Swap3.00 GB of 4.00 GB");
+    expect(header).toHaveTextContent("DevHub2.93 GB· 1.17 GB in RAM");
+    const legend = within(header).getByRole("list", {
+      name: "Where memory is",
+    });
+    expect(legend).toHaveTextContent("App9.00 GB");
+    expect(legend).toHaveTextContent("Wired3.00 GB");
+    expect(legend).toHaveTextContent("Compressed2.00 GBholds 6.00 GB");
+    expect(legend).toHaveTextContent("Cached files1.00 GB");
+    expect(legend).toHaveTextContent("Free1.00 GB");
   });
 });
 
@@ -141,6 +164,32 @@ describe("the table", () => {
       "Renderer",
       "Fix the build",
       "DevHub",
+    ]);
+  });
+
+  it("shows each row's footprint and what of it is in RAM, sortable by either", async () => {
+    const grid = await shown(client());
+    const analyzer = within(grid)
+      .getAllByRole("row")
+      .find((one) => one.textContent?.includes("rust-analyzer"))!;
+    expect(analyzer).toHaveTextContent("1.76 GB");
+    expect(analyzer).toHaveTextContent("900 MB");
+    fireEvent.click(within(grid).getByRole("columnheader", { name: "In RAM" }));
+    expect(
+      within(grid).getByRole("columnheader", { name: "In RAM" }),
+    ).toHaveAttribute("aria-sort", "descending");
+    const toggled = new Set<string>();
+    const resident = visibleRows(
+      [
+        row("a", "swapped out", 1000, 0, { residentBytes: 10 * MB }),
+        row("b", "in RAM", 500, 0, { residentBytes: 500 * MB }),
+      ],
+      "resident",
+      toggled,
+    );
+    expect(resident.map((one) => one.row.label)).toEqual([
+      "in RAM",
+      "swapped out",
     ]);
   });
 

@@ -53,8 +53,13 @@ export interface TaskRowWire {
 	readonly detail?: string;
 	/** A process row's own pid. */
 	readonly pid?: number;
-	/** Resident memory of the row and everything under it. */
+	/**
+	 * The footprint of the row and everything under it: what it costs
+	 * wherever its pages are, compressed and swapped out included.
+	 */
 	readonly memoryBytes: number;
+	/** What of `memoryBytes` is in RAM now. */
+	readonly residentBytes: number;
 	readonly cpuPercent: number;
 	readonly processCount: number;
 	/** A workbench row's state. */
@@ -65,21 +70,52 @@ export interface TaskRowWire {
 	readonly children: readonly TaskRowWire[];
 }
 
+/**
+ * Where the machine's memory is, the way Activity Monitor breaks it down.
+ * The five parts add up to the total. See `docs/task-manager.md`.
+ */
+export interface MemoryBreakdownWire {
+	/** Processes' own (anonymous) memory, purgeable excluded. */
+	readonly appBytes: number;
+	/** Wired down: the kernel's, never compressed or paged. */
+	readonly wiredBytes: number;
+	/** RAM the compressor occupies. */
+	readonly compressedBytes: number;
+	/** What the compressor holds, uncompressed: what `compressedBytes` stores. */
+	readonly compressorStoredBytes: number;
+	/** File-backed and purgeable: given back as soon as something needs it. */
+	readonly cachedBytes: number;
+	/** Not used for anything. */
+	readonly freeBytes: number;
+}
+
 export interface SystemMemoryWire {
 	readonly totalBytes: number;
+	/** App, wired and compressed: Activity Monitor's "Memory Used". */
 	readonly usedBytes: number;
+	readonly breakdown: MemoryBreakdownWire;
 	readonly swapUsedBytes: number;
 	readonly swapTotalBytes: number;
 	readonly pressure: MemoryPressureWire;
 	readonly pressureSource: string;
 }
 
+/**
+ * Where a row's two memory figures come from: macOS's physical footprint
+ * (`devhub-footprint`) with the resident set as in RAM; Linux's `VmRSS +
+ * VmSwap` with `VmRSS`; or, where neither could be read, `ps`'s resident set
+ * for both.
+ */
+export type MemoryMetricWire = "footprint" | "rss-swap" | "rss";
+
 export interface TaskSnapshotWire {
 	readonly takenAt: number;
+	readonly memoryMetric: MemoryMetricWire;
 	readonly system: SystemMemoryWire;
 	/** Every row added up: what DevHub costs this machine. */
 	readonly total: {
 		readonly memoryBytes: number;
+		readonly residentBytes: number;
 		readonly cpuPercent: number;
 		readonly processCount: number;
 	};

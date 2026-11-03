@@ -1,0 +1,22 @@
+    1     0  12000   0.3 Ss   /sbin/launchd
+  100     1 310000   4.0 S    /Applications/DevHub.app/Contents/MacOS/DevHub
+  101   100 180000   2.5 S    /Applications/DevHub.app/Contents/Frameworks/DevHub Helper (GPU).app/Contents/MacOS/DevHub Helper (GPU)
+  120   100 650000  12.0 S    /Applications/DevHub.app/Contents/Frameworks/DevHub Helper (Renderer).app/Contents/MacOS/DevHub Helper (Renderer)
+  121   100 177000   6.0 S    /Applications/DevHub.app/Contents/Frameworks/DevHub Helper (Plugin).app/Contents/MacOS/DevHub Helper (Plugin)
+  122   121   4900  48.5 S    /Users/me/Library/Application Support/DevHub/extensions/rust-lang.rust-analyzer-0.3.2/server/rust-analyzer
+  124   121 120000   3.0 S    /Applications/DevHub.app/Contents/Frameworks/DevHub Helper (Plugin).app/Contents/MacOS/DevHub Helper (Plugin)
+  125   100  30000   0.1 S    /Applications/DevHub.app/Contents/Frameworks/DevHub Helper.app/Contents/MacOS/DevHub Helper
+  140   100   2000   0.0 S    /bin/sh
+  141   140   1000   0.0 S    /usr/bin/tail
+  142   140   1000   0.0 S    /bin/sh
+  143   142    900   0.0 S    /bin/cat
+  144   140    800   0.0 S    /bin/sleep
+  150   100      0   0.0 Z    /usr/bin/ssh
+  151   100      0   0.0 R    /usr/bin/vm_stat
+  152   100   1200   0.0 R    /bin/ps
+  200     1  30000   0.4 Ss   /opt/homebrew/bin/tmux
+  210   200   3000   0.0 Ss   /bin/sh
+  211   210  90000   1.0 S    /opt/homebrew/bin/node
+  212   210 250000   2.0 S    /Users/me/.local/share/claude/versions/2.1.0
+  213   212  60000   0.1 S    /opt/homebrew/bin/node
+  214   212  50000   0.1 S    /opt/homebrew/bin/node

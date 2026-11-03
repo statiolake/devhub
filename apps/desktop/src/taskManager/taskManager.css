@@ -25,7 +25,7 @@ body {
 .tm-window {
   --tm-row: 24px;
   --tm-indent: 16px;
-  --tm-columns: minmax(0, 1fr) 132px 64px 52px;
+  --tm-columns: minmax(0, 1fr) 128px 68px 56px 44px;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -96,22 +96,23 @@ body {
 .tm-header {
   display: flex;
   flex: none;
-  align-items: flex-end;
-  gap: var(--space-6);
+  flex-direction: column;
+  gap: 6px;
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--line);
 }
 
-.tm-meter-block {
-  flex: 1 1 220px;
-  min-width: 160px;
+.tm-header-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
 }
 
 .tm-meter-caption {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 5px;
+  gap: var(--space-2);
 }
 
 .tm-key,
@@ -129,36 +130,75 @@ body {
   font-weight: 400;
 }
 
-/* Used memory, with DevHub's share of it laid over the start. */
+/* The machine's memory as one bar: app, wired, compressed and cached files
+   laid end to end, what is free left as the track. */
 .tm-meter {
-  position: relative;
-  height: 6px;
+  display: flex;
+  height: 8px;
   overflow: hidden;
   border-radius: var(--radius-pill);
   background: var(--wash);
 }
 
 .tm-meter > span {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: inherit;
+  flex: none;
+  height: 100%;
 }
 
-.tm-meter-used {
-  background: color-mix(in srgb, var(--primary) 22%, transparent);
+.tm-meter > span + span {
+  box-shadow: inset 1px 0 0 var(--canvas);
 }
 
-.tm-meter[data-pressure="warning"] .tm-meter-used {
-  background: color-mix(in srgb, var(--waiting) 45%, transparent);
-}
-
-.tm-meter[data-pressure="critical"] .tm-meter-used {
-  background: color-mix(in srgb, var(--danger) 50%, transparent);
-}
-
-.tm-meter-devhub,
-.tm-swatch {
+[data-part="appBytes"] {
   background: var(--accent);
+}
+
+[data-part="wiredBytes"] {
+  background: color-mix(in srgb, var(--primary) 50%, transparent);
+}
+
+[data-part="compressedBytes"] {
+  background: var(--waiting);
+}
+
+[data-part="cachedBytes"] {
+  background: color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+[data-part="freeBytes"] {
+  background: var(--wash);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.tm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tm-legend li,
+.tm-devhub {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.tm-devhub {
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.tm-legend .tm-swatch {
+  display: inline-block;
+  flex: none;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
 }
 
 .tm-facts {
@@ -169,8 +209,8 @@ body {
 
 .tm-facts > div {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .tm-facts dd {
@@ -188,7 +228,6 @@ body {
   gap: 5px;
 }
 
-.tm-swatch,
 .tm-dot {
   display: inline-block;
   width: 7px;
@@ -438,8 +477,10 @@ body {
   font-weight: 400;
 }
 
-/* The row's share of DevHub's memory: a short track ahead of its figure, the
-   heaviest rows' filled in the accent. */
+/* The row's share of DevHub's footprint: a short track ahead of its figure.
+   The part in RAM is solid and the rest — compressed or swapped out — faint,
+   so a workbench whose pages went out keeps its length and loses its fill.
+   The heaviest rows' are in the accent. */
 .tm-bar {
   display: flex;
   flex: 1 1 auto;
@@ -451,14 +492,25 @@ body {
 }
 
 .tm-bar > span {
-  display: block;
+  display: flex;
   height: 100%;
   min-width: 1px;
+  overflow: hidden;
   border-radius: inherit;
-  background: color-mix(in srgb, var(--primary) 28%, transparent);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.tm-bar > span > span {
+  display: block;
+  height: 100%;
+  background: color-mix(in srgb, var(--primary) 45%, transparent);
 }
 
 .tm-row[data-heavy] .tm-bar > span {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.tm-row[data-heavy] .tm-bar > span > span {
   background: var(--accent);
 }
 

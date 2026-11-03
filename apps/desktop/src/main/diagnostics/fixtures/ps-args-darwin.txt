@@ -1,0 +1,22 @@
+    1 /sbin/launchd
+  100 /Applications/DevHub.app/Contents/MacOS/DevHub
+  101 /Applications/DevHub.app/Contents/Frameworks/DevHub Helper (GPU).app/Contents/MacOS/DevHub Helper (GPU) --type=gpu-process
+  120 /Applications/DevHub.app/Contents/Frameworks/DevHub Helper (Renderer).app/Contents/MacOS/DevHub Helper (Renderer) --type=renderer
+  121 /Applications/DevHub.app/Contents/Frameworks/DevHub Helper (Plugin).app/Contents/MacOS/DevHub Helper (Plugin) --type=utility --utility-sub-type=node.mojom.NodeService
+  122 /Users/me/Library/Application Support/DevHub/extensions/rust-lang.rust-analyzer-0.3.2/server/rust-analyzer
+  124 /Applications/DevHub.app/Contents/Frameworks/DevHub Helper (Plugin).app/Contents/MacOS/DevHub Helper (Plugin) /Users/me/.vscode/extensions/esbenp.prettier-vscode-11.0.0/node_modules/prettier/index.cjs
+  125 /Applications/DevHub.app/Contents/Frameworks/DevHub Helper.app/Contents/MacOS/DevHub Helper --type=utility --utility-sub-type=node.mojom.NodeService
+  140 /bin/sh -c set -u\nD=$1\nN=$2\nsay() { printf 'devhub-agent-stream: %s\\n' "$*" >&2; }\ndone\n devhub-agent-stream /Users/me/Library/Application Support/DevHub/agent-hosts/h1 4096
+  141 tail -c +4097 -f /Users/me/Library/Application Support/DevHub/agent-hosts/h1/out
+  142 /bin/sh -c set -u\nD=$1\nN=$2\nsay() { printf 'devhub-agent-stream: %s\\n' "$*" >&2; }\ndone\n devhub-agent-stream /Users/me/Library/Application Support/DevHub/agent-hosts/h1 4096
+  143 cat
+  144 sleep 1
+  150 <defunct>
+  151 (vm_stat)
+  152 ps -A -o pid=,args=
+  200 tmux -L devhub new-session -d -s scratch
+  210 /bin/sh -c set -u\nD=$1\n devhub-agent-host /Users/me/Library/Application Support/DevHub/agent-hosts/h1 /Users/me/.local/bin/claude --output-format stream-json
+  211 node /Users/me/.npm/_npx/9b1/node_modules/@modelcontextprotocol/server-github/dist/index.js
+  212 claude
+  213 npm exec @playwright/mcp@latest
+  214 node /Users/me/.npm/_npx/77a/node_modules/.bin/mcp-server-fetch --port 0

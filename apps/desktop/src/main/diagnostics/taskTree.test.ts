@@ -7,11 +7,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { TaskRowWire } from "../../ipc/taskManager.js";
-import { parseProcessTable } from "./processTable.js";
+import { parseProcessTable, parseProcessTables } from "./processTable.js";
 import {
 	buildTaskTree,
 	taskSnapshotText,
 	type TaskTreeInput,
+	utilitiesByWindow,
+	utilityLabel,
 } from "./taskTree.js";
 
 const processes = parseProcessTable(
@@ -44,7 +46,7 @@ const input: TaskTreeInput = {
 				state: "awake",
 				sleepable: true,
 				renderers: [120],
-				extensionHosts: [121],
+				utilities: [{ pid: 121, label: "Extension host" }],
 			},
 			agents: [
 				{
@@ -142,7 +144,7 @@ describe("attributing processes", () => {
 				{ Terminal: [{ "zsh[201]": ["nvim[202]"] }] },
 				{
 					"Fix the build": [
-						{ "claude[210]": ["server.mjs[211]"] },
+						{ "claude[210]": ["mcp[211]"] },
 						"tmux client[150]",
 						{ Terminal: ["zsh[220]"] },
 					],
@@ -172,7 +174,7 @@ describe("attributing processes", () => {
 				"Network Service[102]",
 				"Window page[110]",
 				"Sidebar page[111]",
-				"pty-host[130]",
+				"Terminal host (pty)[130]",
 			],
 		});
 	});
@@ -252,6 +254,14 @@ describe("the text snapshot", () => {
 			system: {
 				totalBytes: 16 * 1024 ** 3,
 				usedBytes: 14 * 1024 ** 3,
+				breakdown: {
+					appBytes: 9 * 1024 ** 3,
+					wiredBytes: 3 * 1024 ** 3,
+					compressedBytes: 2 * 1024 ** 3,
+					compressorStoredBytes: 6 * 1024 ** 3,
+					cachedBytes: 1024 ** 3,
+					freeBytes: 1024 ** 3,
+				},
 				swapUsedBytes: 3 * 1024 ** 3,
 				swapTotalBytes: 4 * 1024 ** 3,
 				pressure: "warning",
@@ -262,10 +272,182 @@ describe("the text snapshot", () => {
 		expect(lines[1]).toBe(
 			"System memory: 14.0 GB used of 16.0 GB · pressure warning (kern.memorystatus_vm_pressure_level) · swap 3.00 GB used of 4.00 GB",
 		);
+		expect(lines[2]).toBe(
+			"  app 9.00 GB · wired 3.00 GB · compressed 2.00 GB (storing 6.00 GB) · cached files 1.00 GB · free 1.00 GB",
+		);
+		expect(text).toContain("Footprint     In RAM     CPU Procs  Name\n");
 		expect(text).toContain("  widget ~/src/widget\n");
 		expect(text).toContain("VS Code (awake)");
 		expect(text).toMatch(/ {6}rust-analyzer \[122\]\n/u);
 		// Heaviest first: the Workspace with rust-analyzer before DevHub.
 		expect(text.indexOf("widget")).toBeLessThan(text.indexOf("DevHub\n"));
+	});
+});
+
+describe("a GUI Agent, a file watcher, and what is not DevHub's cost", () => {
+	// The two-run fixture: 121 an extension host and 125 its window's file
+	// watcher; 140 a GUI Agent's journal stream (with its tail, watchdog and
+	// sleep) for the host 210 runs in the Agent's pane; 150 a zombie, 151 a
+	// `(vm_stat)` already ending, 152 this reading's own `ps`.
+	const twoRuns = parseProcessTables(
+		readFileSync(
+			new URL("./fixtures/ps-stat-darwin.txt", import.meta.url),
+			"utf8",
+		),
+		readFileSync(
+			new URL("./fixtures/ps-args-darwin.txt", import.meta.url),
+			"utf8",
+		),
+	);
+	const utilities = utilitiesByWindow([
+		{ pid: 121, name: "extension-host [3]" },
+		{ pid: 125, name: "file-watcher [3]" },
+		{ pid: 126, name: "file-watcher [4]" },
+		{ pid: 130, name: "pty-host" },
+	]);
+	const gui = buildTaskTree({
+		takenAt: 0,
+		processes: twoRuns,
+		electron: [
+			{ pid: 100, type: "Browser" },
+			{ pid: 101, type: "GPU" },
+			{ pid: 120, type: "Tab" },
+			{ pid: 121, type: "Utility", name: "extension-host [3]" },
+			{ pid: 125, type: "Utility", name: "file-watcher [3]" },
+		],
+		pages: [],
+		workspaces: [
+			{
+				id: "w1",
+				label: "widget",
+				workbench: {
+					state: "awake",
+					sleepable: false,
+					renderers: [120],
+					utilities: utilities.get(3) ?? [],
+				},
+				agents: [{ id: "a1", label: "Codex", detail: "codex · GUI" }],
+			},
+		],
+		tmux: {
+			serverPid: 200,
+			panes: [
+				{
+					context: "agent",
+					workspaceId: "w1",
+					agentId: "a1",
+					sessionName: "ag-a1",
+					paneId: "%2",
+					pid: 210,
+				},
+			],
+			clients: [],
+		},
+		ignore: new Set([152]),
+		memory: new Map([
+			[
+				121,
+				{ footprintBytes: 900 * 1024 ** 2, residentBytes: 100 * 1024 ** 2 },
+			],
+			[122, { footprintBytes: 1200 * 1024 ** 2, residentBytes: 5 * 1024 ** 2 }],
+		]),
+		memoryMetric: "footprint",
+	});
+
+	it("finds each window's extension host and file watcher by window id", () => {
+		expect(utilities.get(3)).toEqual([
+			{ pid: 121, label: "Extension host" },
+			{ pid: 125, label: "File watcher" },
+		]);
+		expect(utilities.get(4)).toEqual([{ pid: 126, label: "File watcher" }]);
+	});
+
+	it("puts the file watcher with its workbench", () => {
+		expect(shape(find(gui.rows, "workbench:w1"))).toEqual({
+			"VS Code": [
+				"Renderer[120]",
+				{ "Extension host[121]": ["rust-analyzer[122]", "prettier[124]"] },
+				"File watcher[125]",
+			],
+		});
+	});
+
+	it("gives a GUI Agent the journal stream main follows it with", () => {
+		const agent = find(gui.rows, "agent:a1");
+		expect(shape(agent)).toEqual({
+			Codex: [
+				{
+					"sh[210]": [
+						"@modelcontextprotocol/server-github[211]",
+						{
+							"claude[212]": [
+								"@playwright/mcp@latest[213]",
+								"mcp-server-fetch[214]",
+							],
+						},
+					],
+				},
+				{
+					"Journal stream[140]": [
+						"tail[141]",
+						{ "sh[142]": ["cat[143]"] },
+						"sleep[144]",
+					],
+				},
+			],
+		});
+		expect(JSON.stringify(gui.rows)).not.toContain('"other"');
+	});
+
+	it("leaves out zombies, processes already ending, and its own ps", () => {
+		const text = JSON.stringify(gui.rows);
+		for (const pid of [150, 151, 152]) {
+			expect(text).not.toContain(`"pid:${String(pid)}"`);
+		}
+	});
+
+	it("counts the footprint where there is one, else the resident set", () => {
+		expect(gui.memoryMetric).toBe("footprint");
+		expect(find(gui.rows, "pid:122")).toMatchObject({
+			memoryBytes: 1200 * 1024 ** 2,
+			residentBytes: 5 * 1024 ** 2,
+		});
+		// No reading for 124: its resident set is both.
+		expect(find(gui.rows, "pid:124")).toMatchObject({
+			memoryBytes: 120000 * KIB,
+			residentBytes: 120000 * KIB,
+		});
+		// Summed over the subtree, each figure on its own.
+		expect(find(gui.rows, "pid:121")).toMatchObject({
+			memoryBytes: (900 + 1200) * 1024 ** 2 + 120000 * KIB,
+			residentBytes: (100 + 5) * 1024 ** 2 + 120000 * KIB,
+		});
+		expect(tree.memoryMetric).toBe("rss");
+	});
+
+	it("says a VS Code utility's name as words", () => {
+		expect(utilityLabel("file-watcher [1000006]")).toBe("File watcher");
+		expect(utilityLabel("shared-process")).toBe("Shared process");
+		expect(utilityLabel("some-new-thing")).toBe("Some new thing");
+		expect(utilityLabel("Network Service")).toBe("Network Service");
+	});
+});
+
+describe("a journal stream no Agent here owns", () => {
+	it("is DevHub's own work, not Other", () => {
+		const stray = buildTaskTree({
+			takenAt: 0,
+			processes: parseProcessTables(
+				"  100 1 1000 0.0 S /x/DevHub\n  140 100 2000 0.0 S /bin/sh\n",
+				"  100 /x/DevHub\n  140 /bin/sh -c x devhub-agent-stream /h/gone 0\n",
+			),
+			electron: [{ pid: 100, type: "Browser" }],
+			pages: [],
+			workspaces: [],
+			tmux: { serverPid: undefined, panes: [], clients: [] },
+		});
+		expect(shape(find(stray.rows, "devhub"))).toEqual({
+			DevHub: ["Main[100]", "Agent journal stream[140]"],
+		});
 	});
 });

@@ -9,22 +9,26 @@
  *   kern.memorystatus_vm_pressure_level` — the size, the swap line and the
  *   level the kernel's memory status uses itself (1 normal, 2 warning,
  *   4 critical: what Activity Monitor's pressure graph colours by) — and
- *   `vm_stat` for what is used, counted the way Activity Monitor counts
- *   "Memory Used": app memory (anonymous pages less purgeable ones), wired,
- *   and what the compressor occupies.
- * - **Linux.** `/proc/meminfo` (used is `MemTotal − MemAvailable`) and PSI's
- *   `/proc/pressure/memory`, read into the same three levels (`psiLevel`).
+ *   `vm_stat` for where it is, broken down the way Activity Monitor does
+ *   (`parseVmStatBreakdown`): app memory (anonymous pages less purgeable
+ *   ones), wired, what the compressor occupies (and what it stores), cached
+ *   files (file-backed and purgeable) and the rest free. "Used" is app, wired
+ *   and compressed, Activity Monitor's "Memory Used".
+ * - **Linux.** `/proc/meminfo` (used is `MemTotal − MemAvailable`, the parts
+ *   `parseMeminfo` says) and PSI's `/proc/pressure/memory`, read into the
+ *   same three levels (`psiLevel`).
  *
  * Every parser is a pure function of the text, so each is tested on what the
  * real command prints.
  */
 
 import type {
+	MemoryBreakdownWire as MemoryBreakdown,
 	MemoryPressureWire as MemoryPressure,
 	SystemMemoryWire as SystemMemory,
 } from "../../ipc/taskManager.js";
 
-export type { MemoryPressure, SystemMemory };
+export type { MemoryBreakdown, MemoryPressure, SystemMemory };
 
 /** The arguments to `sysctl`, in the order `parseDarwinSysctl` reads them. */
 export const DARWIN_SYSCTL_ARGUMENTS: readonly string[] = [
@@ -86,11 +90,17 @@ export function parseDarwinSysctl(stdout: string): {
 }
 
 /**
- * What `vm_stat` says is in use, in bytes: app memory, wired and compressed,
- * which is Activity Monitor's "Memory Used". A `vm_stat` without the
- * anonymous count (older macOS) counts active pages as the app's.
+ * Where `vm_stat` says the memory is, in bytes, as Activity Monitor breaks it
+ * down: app (anonymous less purgeable), wired, compressed (the RAM the
+ * compressor occupies; `compressorStoredBytes` is what it holds), cached
+ * files (file-backed and purgeable), and free — the rest of `totalBytes`, so
+ * the five add up. A `vm_stat` without the anonymous count (older macOS)
+ * counts active pages as the app's.
  */
-export function parseVmStatUsed(stdout: string): number {
+export function parseVmStatBreakdown(
+	stdout: string,
+	totalBytes: number,
+): MemoryBreakdown {
 	const pageSize = Number(/page size of (\d+) bytes/u.exec(stdout)?.[1]) || 0;
 	const pages = (label: string): number | undefined => {
 		const match = new RegExp(`^${label}:\\s+(\\d+)\\.?$`, "mu").exec(stdout);
@@ -104,13 +114,40 @@ export function parseVmStatUsed(stdout: string): number {
 			: Math.max(0, anonymous - purgeable);
 	const wired = pages("Pages wired down") ?? 0;
 	const compressed = pages("Pages occupied by compressor") ?? 0;
-	return (app + wired + compressed) * pageSize;
+	const cached = (pages("File-backed pages") ?? 0) + purgeable;
+	const appBytes = app * pageSize;
+	const wiredBytes = wired * pageSize;
+	const compressedBytes = compressed * pageSize;
+	const cachedBytes = cached * pageSize;
+	return {
+		appBytes,
+		wiredBytes,
+		compressedBytes,
+		compressorStoredBytes:
+			(pages("Pages stored in compressor") ?? 0) * pageSize,
+		cachedBytes,
+		freeBytes: Math.max(
+			0,
+			totalBytes - appBytes - wiredBytes - compressedBytes - cachedBytes,
+		),
+	};
 }
 
-/** `/proc/meminfo`'s totals, in bytes. */
+/** App, wired and compressed: Activity Monitor's "Memory Used". */
+export function usedOf(breakdown: MemoryBreakdown): number {
+	return breakdown.appBytes + breakdown.wiredBytes + breakdown.compressedBytes;
+}
+
+/**
+ * `/proc/meminfo`'s totals, in bytes, and the same five parts: app is
+ * `AnonPages`, wired the kernel's own (`SUnreclaim`, `KernelStack`,
+ * `PageTables`), compressed zswap's pool (`Zswap`, storing `Zswapped`),
+ * cached `Buffers + Cached + SReclaimable`, free `MemFree`.
+ */
 export function parseMeminfo(text: string): {
 	readonly totalBytes: number;
 	readonly usedBytes: number;
+	readonly breakdown: MemoryBreakdown;
 	readonly swapTotalBytes: number;
 	readonly swapUsedBytes: number;
 } {
@@ -122,6 +159,14 @@ export function parseMeminfo(text: string): {
 	return {
 		totalBytes: total,
 		usedBytes: Math.max(0, total - kib("MemAvailable")),
+		breakdown: {
+			appBytes: kib("AnonPages"),
+			wiredBytes: kib("SUnreclaim") + kib("KernelStack") + kib("PageTables"),
+			compressedBytes: kib("Zswap"),
+			compressorStoredBytes: kib("Zswapped"),
+			cachedBytes: kib("Buffers") + kib("Cached") + kib("SReclaimable"),
+			freeBytes: kib("MemFree"),
+		},
 		swapTotalBytes: swapTotal,
 		swapUsedBytes: Math.max(0, swapTotal - kib("SwapFree")),
 	};
@@ -172,9 +217,11 @@ export async function readSystemMemory(
 			sources.run("/usr/bin/vm_stat", []),
 		]);
 		const { totalBytes, swap, pressure } = parseDarwinSysctl(sysctl);
+		const breakdown = parseVmStatBreakdown(vmStat, totalBytes);
 		return {
 			totalBytes,
-			usedBytes: Math.min(totalBytes, parseVmStatUsed(vmStat)),
+			usedBytes: Math.min(totalBytes, usedOf(breakdown)),
+			breakdown,
 			swapUsedBytes: swap.usedBytes,
 			swapTotalBytes: swap.totalBytes,
 			pressure,

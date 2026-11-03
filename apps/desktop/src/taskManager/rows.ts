@@ -6,7 +6,8 @@
 
 import type { TaskRowWire } from "../ipc/taskManager";
 
-export type SortKey = "memory" | "cpu";
+/** Footprint, in RAM, or CPU. */
+export type SortKey = "memory" | "resident" | "cpu";
 
 export interface VisibleRow {
   readonly row: TaskRowWire;
@@ -15,15 +16,22 @@ export interface VisibleRow {
   readonly parentId: string | undefined;
 }
 
-/** Heaviest first by the chosen column, the other one breaking a tie. */
+const VALUE: Readonly<Record<SortKey, (row: TaskRowWire) => number>> = {
+  memory: (row) => row.memoryBytes,
+  resident: (row) => row.residentBytes,
+  cpu: (row) => row.cpuPercent,
+};
+
+/**
+ * Heaviest first by the chosen column; a tie is broken by the footprint (or,
+ * sorting by footprint, by CPU).
+ */
 export function sortRows(
   rows: readonly TaskRowWire[],
   key: SortKey,
 ): TaskRowWire[] {
-  const primary = (row: TaskRowWire) =>
-    key === "memory" ? row.memoryBytes : row.cpuPercent;
-  const secondary = (row: TaskRowWire) =>
-    key === "memory" ? row.cpuPercent : row.memoryBytes;
+  const primary = VALUE[key];
+  const secondary = VALUE[key === "memory" ? "cpu" : "memory"];
   return [...rows].sort(
     (a, b) =>
       primary(b) - primary(a) ||

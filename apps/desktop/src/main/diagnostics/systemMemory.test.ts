@@ -2,12 +2,14 @@
  * The header's numbers, from what each OS prints.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
 	darwinPressureLevel,
 	parseDarwinSysctl,
 	parseMeminfo,
-	parseVmStatUsed,
+	parseVmStatBreakdown,
+	usedOf,
 	psiLevel,
 	readSystemMemory,
 } from "./systemMemory.js";
@@ -57,15 +59,26 @@ describe("macOS", () => {
 		});
 	});
 
-	it("counts used memory as Activity Monitor does: app, wired, compressed", () => {
-		expect(parseVmStatUsed(VM_STAT)).toBe(
-			(400000 - 10000 + 150000 + 120000) * 16384,
-		);
+	it("breaks memory down as Activity Monitor does, the parts adding up", () => {
+		const page = 16384;
+		const total = 24 * 1024 ** 3;
+		const breakdown = parseVmStatBreakdown(VM_STAT, total);
+		expect(breakdown).toEqual({
+			appBytes: (400000 - 10000) * page,
+			wiredBytes: 150000 * page,
+			compressedBytes: 120000 * page,
+			compressorStoredBytes: 500000 * page,
+			cachedBytes: (200000 + 10000) * page,
+			freeBytes: total - (390000 + 150000 + 120000 + 210000) * page,
+		});
+		expect(usedOf(breakdown)).toBe((390000 + 150000 + 120000) * page);
 	});
 
 	it("counts active pages as the app's where vm_stat has no anonymous count", () => {
 		const old = VM_STAT.replace(/^Anonymous pages:.*\n/mu, "");
-		expect(parseVmStatUsed(old)).toBe((300000 + 150000 + 120000) * 16384);
+		expect(usedOf(parseVmStatBreakdown(old, 0))).toBe(
+			(300000 + 150000 + 120000) * 16384,
+		);
 	});
 
 	it("is read from sysctl and vm_stat", async () => {
@@ -85,6 +98,8 @@ describe("macOS", () => {
 		expect(asked.sort()).toEqual(["/usr/bin/vm_stat", "/usr/sbin/sysctl"]);
 		expect(memory.pressure).toBe("critical");
 		expect(memory.swapUsedBytes).toBe(0);
+		expect(memory.breakdown.compressedBytes).toBe(120000 * 16384);
+		expect(memory.usedBytes).toBe(usedOf(memory.breakdown));
 	});
 });
 
@@ -94,11 +109,28 @@ describe("Linux", () => {
 			parseMeminfo(
 				"MemTotal:       16000000 kB\nMemFree:         1000000 kB\nMemAvailable:    6000000 kB\nSwapTotal:       2000000 kB\nSwapFree:        1500000 kB\n",
 			),
-		).toEqual({
+		).toMatchObject({
 			totalBytes: 16000000 * 1024,
 			usedBytes: 10000000 * 1024,
 			swapTotalBytes: 2000000 * 1024,
 			swapUsedBytes: 500000 * 1024,
+		});
+	});
+
+	it("breaks a real /proc/meminfo down into the same five parts", () => {
+		const text = readFileSync(
+			new URL("./fixtures/meminfo-linux.txt", import.meta.url),
+			"utf8",
+		);
+		const kib = (name: string) =>
+			Number(new RegExp(`^${name}:\\s+(\\d+)`, "mu").exec(text)![1]) * 1024;
+		expect(parseMeminfo(text).breakdown).toEqual({
+			appBytes: kib("AnonPages"),
+			wiredBytes: kib("SUnreclaim") + kib("KernelStack") + kib("PageTables"),
+			compressedBytes: kib("Zswap"),
+			compressorStoredBytes: kib("Zswapped"),
+			cachedBytes: kib("Buffers") + kib("Cached") + kib("SReclaimable"),
+			freeBytes: kib("MemFree"),
 		});
 	});
 
@@ -126,7 +158,7 @@ describe("Linux", () => {
 						: undefined,
 				),
 		});
-		expect(memory).toEqual({
+		expect(memory).toMatchObject({
 			totalBytes: 102400,
 			usedBytes: 61440,
 			swapTotalBytes: 0,

@@ -86,21 +86,36 @@ const { TASK_MANAGER_CHANNELS } = await import("../../ipc/taskManager.js");
 
 const SNAPSHOT: TaskSnapshotWire = {
 	takenAt: 0,
+	memoryMetric: "rss",
 	system: {
 		totalBytes: 16 * 1024 ** 3,
 		usedBytes: 8 * 1024 ** 3,
+		breakdown: {
+			appBytes: 5 * 1024 ** 3,
+			wiredBytes: 2 * 1024 ** 3,
+			compressedBytes: 1024 ** 3,
+			compressorStoredBytes: 3 * 1024 ** 3,
+			cachedBytes: 4 * 1024 ** 3,
+			freeBytes: 4 * 1024 ** 3,
+		},
 		swapUsedBytes: 0,
 		swapTotalBytes: 0,
 		pressure: "normal",
 		pressureSource: "test",
 	},
-	total: { memoryBytes: 300 * 1024 ** 2, cpuPercent: 50, processCount: 2 },
+	total: {
+		memoryBytes: 300 * 1024 ** 2,
+		residentBytes: 300 * 1024 ** 2,
+		cpuPercent: 50,
+		processCount: 2,
+	},
 	rows: [
 		{
 			id: "workspace:w1",
 			kind: "workspace",
 			label: "widget",
 			memoryBytes: 300 * 1024 ** 2,
+			residentBytes: 300 * 1024 ** 2,
 			cpuPercent: 50,
 			processCount: 2,
 			actions: ["reveal"],
@@ -113,6 +128,7 @@ const SNAPSHOT: TaskSnapshotWire = {
 					detail: "/x/rust-analyzer",
 					pid: 122,
 					memoryBytes: 200 * 1024 ** 2,
+					residentBytes: 200 * 1024 ** 2,
 					cpuPercent: 48,
 					processCount: 1,
 					actions: ["kill"],
@@ -125,6 +141,7 @@ const SNAPSHOT: TaskSnapshotWire = {
 					detail: "/x/Helper --type=renderer",
 					pid: 120,
 					memoryBytes: 100 * 1024 ** 2,
+					residentBytes: 100 * 1024 ** 2,
 					cpuPercent: 2,
 					processCount: 1,
 					actions: [],

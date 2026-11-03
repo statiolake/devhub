@@ -35,12 +35,21 @@
  *
  * A row's memory, CPU and process count are its own plus everything under
  * it, so a Workspace's total is its workbench, its terminal and its Agents.
- * Memory is the resident set `ps` reports, which counts a page shared by two
- * processes twice; see `docs/task-manager.md`.
+ * Memory is two figures: the **footprint**, what a process costs wherever
+ * its pages are (macOS's physical footprint, Activity Monitor's "Memory":
+ * compressed and swapped pages included, shared frameworks not; Linux's
+ * `VmRSS + VmSwap`), and what of it is **in RAM** now. Without a reading of
+ * either (`memory` absent for a pid) both are the resident set `ps`
+ * reports. See `docs/task-manager.md`.
+ *
+ * Left out: zombies (they hold no memory, and a `(name)` row is a process
+ * already gone) and the processes this reading itself started (`ignore`: the
+ * `ps`, the `tmux` client, `vm_stat`).
  */
 
 import {
 	formatBytes,
+	type MemoryMetricWire,
 	type TaskActionWire,
 	type TaskRowKind,
 	type TaskRowWire,
@@ -48,7 +57,12 @@ import {
 	type WorkbenchStateWire,
 } from "../../ipc/taskManager.js";
 import type { ProcessPanes } from "../terminal/tmux.js";
-import { processName, type ProcessRow } from "./processTable.js";
+import { HOST_NAME, STREAM_NAME } from "../agent/conversation/hostScript.js";
+import {
+	processName,
+	type ProcessMemory,
+	type ProcessRow,
+} from "./processTable.js";
 
 /** One of Electron's own processes, with the best name anything has for it. */
 export interface ElectronProcess {
@@ -59,12 +73,20 @@ export interface ElectronProcess {
 	readonly name?: string;
 }
 
+/** One of the utility processes VS Code started for one window alone. */
+export interface TaskWindowUtility {
+	readonly pid: number;
+	/** `Extension host`, `File watcher`. */
+	readonly label: string;
+}
+
 export interface TaskWorkbench {
 	readonly state: WorkbenchStateWire;
 	/** It may be put to sleep now: local, awake, and not on screen. */
 	readonly sleepable: boolean;
 	readonly renderers: readonly number[];
-	readonly extensionHosts: readonly number[];
+	/** Its window's extension host(s) and file watcher. */
+	readonly utilities: readonly TaskWindowUtility[];
 }
 
 export interface TaskAgent {
@@ -94,12 +116,19 @@ export interface TaskTreeInput {
 	/** In the Sidebar's order. */
 	readonly workspaces: readonly TaskWorkspace[];
 	readonly tmux: ProcessPanes;
+	/** Each process's footprint and in-RAM memory, where they were read. */
+	readonly memory?: ReadonlyMap<number, ProcessMemory>;
+	/** Where `memory` came from; `rss` when it is absent. */
+	readonly memoryMetric?: MemoryMetricWire;
+	/** Processes this reading started itself, which are not DevHub's cost. */
+	readonly ignore?: ReadonlySet<number>;
 }
 
 export type TaskTree = Omit<TaskSnapshotWire, "system">;
 
 interface Totals {
 	memoryBytes: number;
+	residentBytes: number;
 	cpuPercent: number;
 	processCount: number;
 }
@@ -108,10 +137,11 @@ function totalsOf(rows: readonly TaskRowWire[]): Totals {
 	return rows.reduce<Totals>(
 		(sum, row) => ({
 			memoryBytes: sum.memoryBytes + row.memoryBytes,
+			residentBytes: sum.residentBytes + row.residentBytes,
 			cpuPercent: sum.cpuPercent + row.cpuPercent,
 			processCount: sum.processCount + row.processCount,
 		}),
-		{ memoryBytes: 0, cpuPercent: 0, processCount: 0 },
+		{ memoryBytes: 0, residentBytes: 0, cpuPercent: 0, processCount: 0 },
 	);
 }
 
@@ -133,6 +163,51 @@ function group(
 	};
 }
 
+/** VS Code's names for the utilities it starts, as a row says them. */
+const UTILITY_LABELS: Readonly<Record<string, string>> = {
+	"extension-host": "Extension host",
+	"file-watcher": "File watcher",
+	"pty-host": "Terminal host (pty)",
+	"shared-process": "Shared process",
+};
+
+/**
+ * A utility process's name as a row says it: VS Code's `file-watcher
+ * [1000006]` is `File watcher`, the window id that tells it from another
+ * window's being the row's place in the tree rather than its name.
+ */
+export function utilityLabel(name: string): string {
+	const bare = name.replace(/ \[\d+\]$/u, "");
+	const known = UTILITY_LABELS[bare];
+	if (known !== undefined) return known;
+	if (!/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/u.test(bare)) return bare;
+	const words = bare.replace(/[-_]/gu, " ");
+	return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * The utility processes VS Code started for one window alone — its extension
+ * host(s) and its file watcher, each named `<name> [<window id>]` — by
+ * window id.
+ */
+export function utilitiesByWindow(
+	utilities: readonly { readonly pid: number; readonly name: string }[],
+): Map<number, TaskWindowUtility[]> {
+	const byWindow = new Map<number, TaskWindowUtility[]>();
+	for (const utility of utilities) {
+		const match = /^(extension-host|file-watcher) \[(\d+)\]$/u.exec(
+			utility.name,
+		);
+		if (!match) continue;
+		const window = Number(match[2]);
+		byWindow.set(window, [
+			...(byWindow.get(window) ?? []),
+			{ pid: utility.pid, label: utilityLabel(match[1]!) },
+		]);
+	}
+	return byWindow;
+}
+
 /** What Electron's process is called in the table. */
 function electronLabel(
 	process: ElectronProcess,
@@ -146,14 +221,19 @@ function electronLabel(
 		case "Tab":
 			return pages.get(process.pid) ?? "Renderer";
 		default:
-			return process.name ?? process.type;
+			return process.name === undefined
+				? process.type
+				: utilityLabel(process.name);
 	}
 }
 
 export function buildTaskTree(input: TaskTreeInput): TaskTree {
-	const byPid = new Map(input.processes.map((row) => [row.pid, row]));
+	const processes = input.processes.filter(
+		(row) => !row.exited && !(input.ignore?.has(row.pid) ?? false),
+	);
+	const byPid = new Map(processes.map((row) => [row.pid, row]));
 	const childrenOf = new Map<number, ProcessRow[]>();
-	for (const row of input.processes) {
+	for (const row of processes) {
 		if (row.ppid === row.pid) continue;
 		const siblings = childrenOf.get(row.ppid) ?? [];
 		siblings.push(row);
@@ -171,8 +251,8 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 	]);
 	for (const workspace of input.workspaces) {
 		for (const pid of workspace.workbench?.renderers ?? []) anchors.add(pid);
-		for (const pid of workspace.workbench?.extensionHosts ?? []) {
-			anchors.add(pid);
+		for (const utility of workspace.workbench?.utilities ?? []) {
+			anchors.add(utility.pid);
 		}
 	}
 	/** Pids no row may offer to kill: DevHub's own core processes. */
@@ -182,6 +262,11 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 		...(tmux.serverPid === undefined ? [] : [tmux.serverPid]),
 	]);
 
+	const memoryOf = (row: ProcessRow): ProcessMemory =>
+		input.memory?.get(row.pid) ?? {
+			footprintBytes: row.rssKb * 1024,
+			residentBytes: row.rssKb * 1024,
+		};
 	const claimed = new Set<number>();
 	const processRow = (
 		pid: number,
@@ -206,7 +291,8 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 			label: options.label ?? processName(row),
 			detail: options.detail ?? row.args,
 			pid,
-			memoryBytes: row.rssKb * 1024 + below.memoryBytes,
+			memoryBytes: memoryOf(row).footprintBytes + below.memoryBytes,
+			residentBytes: memoryOf(row).residentBytes + below.residentBytes,
 			cpuPercent: row.cpuPercent + below.cpuPercent,
 			processCount: 1 + below.processCount,
 			actions,
@@ -258,6 +344,38 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 			}),
 		);
 
+	// A GUI Agent's journal is followed by a shell main starts
+	// (`hostLink.ts`: `sh -c … devhub-agent-stream <dir> <offset>`, with its
+	// `tail -f`, its watchdog's `cat` and its `sleep 1`). It is that Agent's:
+	// the one whose host (`devhub-agent-host <dir> …`) runs in its pane.
+	// `ps` prints the script's newlines as `\n` or `?`, so the name is found
+	// by what follows it: the directory (the script's own messages say
+	// `devhub-agent-stream: …`).
+	const streamDirectory = new RegExp(`${STREAM_NAME} ([^:].*) \\d+$`, "u");
+	const streams = processes.filter(
+		(row) => electron.has(row.ppid) && streamDirectory.test(row.args),
+	);
+	const pidsUnder = (rows: readonly TaskRowWire[]): number[] =>
+		rows.flatMap((row) => [
+			...(row.pid === undefined ? [] : [row.pid]),
+			...pidsUnder(row.children),
+		]);
+	const journalStreamRows = (agentRows: readonly TaskRowWire[]) => {
+		const hosts = pidsUnder(agentRows).flatMap((pid) => {
+			const args = byPid.get(pid)?.args ?? "";
+			return args.includes(`${HOST_NAME} `) ? [args] : [];
+		});
+		return streams
+			.filter((stream) => {
+				const dir = streamDirectory.exec(stream.args)?.[1];
+				return (
+					dir !== undefined &&
+					hosts.some((host) => host.includes(`${HOST_NAME} ${dir} `))
+				);
+			})
+			.flatMap((stream) => rowsOf([stream.pid], { label: "Journal stream" }));
+	};
+
 	const workspaceRows = input.workspaces.map((workspace) => {
 		const ownPanes = (pane: (typeof tmux.panes)[number]) =>
 			pane.context === "workspace" && pane.workspaceId === workspace.id;
@@ -269,7 +387,9 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 		if (workbench) {
 			const parts = [
 				...rowsOf(workbench.renderers, { label: "Renderer" }),
-				...rowsOf(workbench.extensionHosts, { label: "Extension host" }),
+				...workbench.utilities.flatMap((utility) =>
+					rowsOf([utility.pid], { label: utility.label }),
+				),
 				...tabs.flatMap((client) =>
 					rowsOf([client.pid], {
 						label: "Terminal tab",
@@ -306,6 +426,7 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 				...paneRows(panePids(own)),
 				...clientRows(clientsOf(sessionsOf(own))),
 			];
+			agentChildren.push(...journalStreamRows(agentChildren));
 			const terminalRows = [
 				...paneRows(panePids(itsTerminal)),
 				...clientRows(clientsOf(sessionsOf(itsTerminal))),
@@ -363,6 +484,13 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 		});
 		if (node) (named ? devhubChildren : unattributedRenderers).push(node);
 	}
+	// A journal stream no Agent here owns: a far Agent's (`ssh`, `docker`),
+	// or one whose Agent is going. Still DevHub's own work.
+	devhubChildren.push(
+		...streams.flatMap((stream) =>
+			rowsOf([stream.pid], { label: "Agent journal stream" }),
+		),
+	);
 
 	// Other: what Electron's processes started that no anchor accounts for.
 	const other: TaskRowWire[] = [...unattributedRenderers];
@@ -387,8 +515,22 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 			: []),
 		...(other.length > 0 ? [group("other", "other", "Other", other)] : []),
 	];
-	return { takenAt: input.takenAt, total: totalsOf(rows), rows };
+	return {
+		takenAt: input.takenAt,
+		memoryMetric:
+			input.memory === undefined ? "rss" : (input.memoryMetric ?? "rss"),
+		total: totalsOf(rows),
+		rows,
+	};
 }
+
+/** What the two memory columns are, said in the copied text. */
+const MEMORY_SOURCE: Readonly<Record<MemoryMetricWire, string>> = {
+	footprint:
+		"footprint is phys_footprint (compressed and swapped included); in RAM is the resident set, at most the footprint",
+	"rss-swap": "footprint is VmRSS + VmSwap; in RAM is VmRSS",
+	rss: "both are ps's resident set (no footprint could be read)",
+};
 
 /**
  * The table as text, for pasting into an issue or a conversation: the header,
@@ -396,12 +538,15 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
  */
 export function taskSnapshotText(snapshot: TaskSnapshotWire): string {
 	const { system, total } = snapshot;
+	const parts = system.breakdown;
 	const lines = [
 		`DevHub Task Manager — ${new Date(snapshot.takenAt).toISOString()}`,
 		`System memory: ${formatBytes(system.usedBytes)} used of ${formatBytes(system.totalBytes)} · pressure ${system.pressure} (${system.pressureSource}) · swap ${formatBytes(system.swapUsedBytes)} used of ${formatBytes(system.swapTotalBytes)}`,
-		`DevHub: ${formatBytes(total.memoryBytes)} · ${total.cpuPercent.toFixed(1)}% CPU · ${String(total.processCount)} processes`,
+		`  app ${formatBytes(parts.appBytes)} · wired ${formatBytes(parts.wiredBytes)} · compressed ${formatBytes(parts.compressedBytes)} (storing ${formatBytes(parts.compressorStoredBytes)}) · cached files ${formatBytes(parts.cachedBytes)} · free ${formatBytes(parts.freeBytes)}`,
+		`DevHub: ${formatBytes(total.memoryBytes)} footprint, ${formatBytes(total.residentBytes)} in RAM · ${total.cpuPercent.toFixed(1)}% CPU · ${String(total.processCount)} processes`,
+		`Memory: ${MEMORY_SOURCE[snapshot.memoryMetric]}`,
 		"",
-		`${"Memory".padStart(10)} ${"CPU".padStart(7)} ${"Procs".padStart(5)}  Name`,
+		`${"Footprint".padStart(10)} ${"In RAM".padStart(10)} ${"CPU".padStart(7)} ${"Procs".padStart(5)}  Name`,
 	];
 	const walk = (rows: readonly TaskRowWire[], depth: number): void => {
 		for (const row of [...rows].sort((a, b) => b.memoryBytes - a.memoryBytes)) {
@@ -414,7 +559,7 @@ export function taskSnapshotText(snapshot: TaskSnapshotWire): string {
 				.filter((part) => part !== undefined && part !== "")
 				.join(" ");
 			lines.push(
-				`${formatBytes(row.memoryBytes).padStart(10)} ${`${row.cpuPercent.toFixed(1)}%`.padStart(7)} ${String(row.processCount).padStart(5)}  ${"  ".repeat(depth)}${name}`,
+				`${formatBytes(row.memoryBytes).padStart(10)} ${formatBytes(row.residentBytes).padStart(10)} ${`${row.cpuPercent.toFixed(1)}%`.padStart(7)} ${String(row.processCount).padStart(5)}  ${"  ".repeat(depth)}${name}`,
 			);
 			walk(row.children, depth + 1);
 		}

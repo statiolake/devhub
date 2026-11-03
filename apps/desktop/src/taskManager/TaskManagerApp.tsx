@@ -2,12 +2,16 @@
  * The Task Manager: what each Workspace, workbench and Agent costs, now.
  *
  * One header and one table. The header is the machine — memory used of
- * total, the pressure the kernel reports, swap — and DevHub's own total
- * beside it. The table is DevHub's processes in the shape a person thinks in
+ * total, broken down as Activity Monitor does (app, wired, compressed, cached
+ * files, free), the pressure the kernel reports, swap — and DevHub's own
+ * total. The table is DevHub's processes in the shape a person thinks in
  * (`diagnostics/taskTree.ts`): Workspaces with their workbench, terminal and
- * Agents, then DevHub itself, tmux, and Other. Every number is right-aligned
- * in tabular figures, and a faint bar under each row's memory says its share
- * of DevHub's total, so the heaviest rows read at a glance without a chart.
+ * Agents, then DevHub itself, tmux, and Other. Each row has two memory
+ * figures: its footprint (what it costs wherever its pages are) and what of
+ * that is in RAM. Every number is right-aligned in tabular figures, and a
+ * short bar ahead of the footprint says the row's share of DevHub's total,
+ * its in-RAM part solid and the rest (compressed, swapped) faint — so a
+ * workbench whose pages went out keeps its length and loses its fill.
  *
  * It refreshes about every two seconds while the window is visible and not at
  * all otherwise, one request at a time (`useSnapshots`). The keyboard walks the
@@ -106,74 +110,116 @@ function percent(value: number): string {
   return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
 }
 
+/** The parts of the machine's memory, in the order the meter lays them. */
+const PARTS = [
+  { key: "appBytes", label: "App" },
+  { key: "wiredBytes", label: "Wired" },
+  { key: "compressedBytes", label: "Compressed" },
+  { key: "cachedBytes", label: "Cached files" },
+  { key: "freeBytes", label: "Free" },
+] as const;
+
 function Header({ snapshot }: { snapshot: TaskSnapshotWire }) {
   const { system, total } = snapshot;
-  const used =
+  const { breakdown } = system;
+  const share = (bytes: number) =>
     system.totalBytes > 0
-      ? Math.min(1, system.usedBytes / system.totalBytes)
-      : 0;
-  const devhubShare =
-    system.totalBytes > 0
-      ? Math.min(used, total.memoryBytes / system.totalBytes)
-      : 0;
+      ? `${Math.min(100, (bytes / system.totalBytes) * 100).toFixed(2)}%`
+      : "0%";
   return (
     <section className="tm-header" aria-label="System memory">
-      <div className="tm-meter-block">
+      <div className="tm-header-top">
         <div className="tm-meter-caption">
           <span className="tm-key">Memory</span>
           <span className="tm-figure">
             {formatBytes(system.usedBytes)}
-            <span className="tm-of"> of {formatBytes(system.totalBytes)}</span>
-          </span>
-        </div>
-        <div
-          className="tm-meter"
-          data-pressure={system.pressure}
-          role="meter"
-          aria-label="Memory used"
-          aria-valuemin={0}
-          aria-valuemax={system.totalBytes}
-          aria-valuenow={system.usedBytes}
-        >
-          <span
-            className="tm-meter-used"
-            style={{ width: `${(used * 100).toFixed(1)}%` }}
-          />
-          <span
-            className="tm-meter-devhub"
-            style={{ width: `${(devhubShare * 100).toFixed(1)}%` }}
-          />
-        </div>
-      </div>
-      <dl className="tm-facts">
-        <div title={system.pressureSource}>
-          <dt>Pressure</dt>
-          <dd className="tm-pressure" data-pressure={system.pressure}>
-            <span className="tm-dot" aria-hidden="true" />
-            {PRESSURE_LABEL[system.pressure]}
-          </dd>
-        </div>
-        <div>
-          <dt>Swap</dt>
-          <dd>{formatBytes(system.swapUsedBytes)}</dd>
-        </div>
-        <div>
-          <dt>
-            <span className="tm-swatch" aria-hidden="true" />
-            DevHub
-          </dt>
-          <dd>
-            {formatBytes(total.memoryBytes)}
             <span className="tm-of">
               {" "}
-              · {percent(total.cpuPercent)} CPU · {total.processCount} processes
+              used of {formatBytes(system.totalBytes)}
             </span>
-          </dd>
+          </span>
         </div>
-      </dl>
+        <dl className="tm-facts">
+          <div title={system.pressureSource}>
+            <dt>Pressure</dt>
+            <dd className="tm-pressure" data-pressure={system.pressure}>
+              <span className="tm-dot" aria-hidden="true" />
+              {PRESSURE_LABEL[system.pressure]}
+            </dd>
+          </div>
+          <div>
+            <dt>Swap</dt>
+            <dd>
+              {system.swapTotalBytes === 0 ? (
+                <span className="tm-of">none</span>
+              ) : (
+                <>
+                  {formatBytes(system.swapUsedBytes)}
+                  <span className="tm-of">
+                    {" "}
+                    of {formatBytes(system.swapTotalBytes)}
+                  </span>
+                </>
+              )}
+            </dd>
+          </div>
+        </dl>
+      </div>
+      <div
+        className="tm-meter"
+        data-pressure={system.pressure}
+        role="meter"
+        aria-label="Memory used"
+        aria-valuemin={0}
+        aria-valuemax={system.totalBytes}
+        aria-valuenow={system.usedBytes}
+      >
+        {PARTS.slice(0, 4).map((part) => (
+          <span
+            key={part.key}
+            data-part={part.key}
+            style={{ width: share(breakdown[part.key]) }}
+          />
+        ))}
+      </div>
+      <ul className="tm-legend" aria-label="Where memory is">
+        {PARTS.map((part) => (
+          <li key={part.key}>
+            <span
+              className="tm-swatch"
+              data-part={part.key}
+              aria-hidden="true"
+            />
+            <span className="tm-key">{part.label}</span>
+            <span className="tm-figure">
+              {formatBytes(breakdown[part.key])}
+            </span>
+            {part.key === "compressedBytes" &&
+            breakdown.compressorStoredBytes > 0 ? (
+              <span className="tm-of">
+                holds {formatBytes(breakdown.compressorStoredBytes)}
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      <div className="tm-devhub">
+        <span className="tm-key">DevHub</span>
+        <span className="tm-figure">{formatBytes(total.memoryBytes)}</span>
+        <span className="tm-of">
+          · {formatBytes(total.residentBytes)} in RAM ·{" "}
+          {percent(total.cpuPercent)} CPU · {total.processCount} processes
+        </span>
+      </div>
     </section>
   );
 }
+
+const SORT_LABEL = {
+  memory: "Footprint",
+  resident: "In RAM",
+  cpu: "CPU",
+} as const;
 
 const ACTION_LABEL = {
   sleep: "Sleep",
@@ -206,6 +252,8 @@ function Row({
 }) {
   const { row, depth, open } = visible;
   const share = total > 0 ? row.memoryBytes / total : 0;
+  const inRam =
+    row.memoryBytes > 0 ? Math.min(1, row.residentBytes / row.memoryBytes) : 0;
   const expandable = row.children.length > 0;
   return (
     <div
@@ -277,11 +325,14 @@ function Row({
       </div>
       <div role="gridcell" className="tm-num tm-memory">
         <span className="tm-bar" aria-hidden="true">
-          <span
-            style={{ width: `${Math.min(100, share * 100).toFixed(1)}%` }}
-          />
+          <span style={{ width: `${Math.min(100, share * 100).toFixed(1)}%` }}>
+            <span style={{ width: `${(inRam * 100).toFixed(1)}%` }} />
+          </span>
         </span>
         <span className="tm-figure">{formatBytes(row.memoryBytes)}</span>
+      </div>
+      <div role="gridcell" className="tm-num tm-resident">
+        {formatBytes(row.residentBytes)}
       </div>
       <div
         role="gridcell"
@@ -418,7 +469,7 @@ export function TaskManagerApp({ client }: { client: TaskManagerApi }) {
         <h1 className="tm-title">Task Manager</h1>
         <div className="tm-tools">
           <div className="tm-segmented" role="radiogroup" aria-label="Sort by">
-            {(["memory", "cpu"] as const).map((key) => (
+            {(["memory", "resident", "cpu"] as const).map((key) => (
               <button
                 key={key}
                 type="button"
@@ -428,7 +479,7 @@ export function TaskManagerApp({ client }: { client: TaskManagerApi }) {
                   setSort(key);
                 }}
               >
-                {key === "memory" ? "Memory" : "CPU"}
+                {SORT_LABEL[key]}
               </button>
             ))}
           </div>
@@ -469,7 +520,17 @@ export function TaskManagerApp({ client }: { client: TaskManagerApi }) {
                   setSort("memory");
                 }}
               >
-                Memory
+                Footprint
+              </div>
+              <div
+                role="columnheader"
+                className="tm-num tm-resident"
+                aria-sort={sort === "resident" ? "descending" : "none"}
+                onClick={() => {
+                  setSort("resident");
+                }}
+              >
+                In RAM
               </div>
               <div
                 role="columnheader"
