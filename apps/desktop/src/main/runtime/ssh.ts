@@ -348,7 +348,9 @@ export function sshOptionArgv(
 					"-o",
 					"ControlMaster=auto",
 					"-o",
-					`ControlPath=${join(controlDirectory, "%C")}`,
+					// Quoted: ssh splits an option's value at whitespace, and the
+					// preferred directory is under `~/Library/Application Support`.
+					`ControlPath="${join(controlDirectory, "%C")}"`,
 					"-o",
 					`ControlPersist=${CONTROL_PERSIST}`,
 				]),

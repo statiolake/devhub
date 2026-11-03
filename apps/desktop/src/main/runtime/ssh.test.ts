@@ -15,7 +15,7 @@
  */
 
 import { Buffer } from "node:buffer";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
 	chmod,
 	mkdir,
@@ -87,7 +87,7 @@ direction=''
 host=''
 while [ $# -gt 0 ]; do
   case "$1" in
-    -o) case "$2" in ControlPath=*) control="\${2#ControlPath=}";; esac; shift 2;;
+    -o) case "$2" in ControlPath=*) control="\${2#ControlPath=}"; control="\${control#\\"}"; control="\${control%\\"}";; esac; shift 2;;
     -O) operation="$2"; shift 2;;
     -R) forward="$2"; direction=-R; shift 2;;
     -L) forward="$2"; direction=-L; shift 2;;
@@ -287,13 +287,35 @@ describe("the ssh DevHub runs", () => {
 		// that only their own config knows.
 		expect(options).toContain("-o BatchMode=yes");
 		expect(options).toContain("-o ControlMaster=auto");
-		expect(options).toContain("-o ControlPath=/tmp/devhub/ssh/%C");
+		expect(options).toContain('-o ControlPath="/tmp/devhub/ssh/%C"');
 		expect(options).toContain("-o ControlPersist=10m");
 		expect(options).toContain("-o ConnectTimeout=10");
 		expect(options).toContain("-o ServerAliveInterval=15");
 		expect(options).not.toContain("StrictHostKeyChecking");
 		expect(options).not.toContain("-F");
 	});
+
+	it.runIf(spawnSync("ssh", ["-V"]).status === 0)(
+		"hands ssh a control path with a space in it whole",
+		() => {
+			// macOS's preferred directory is under `~/Library/Application
+			// Support`; unquoted, ssh read the value as two words and refused
+			// every command ("keyword controlpath extra arguments").
+			const result = spawnSync(
+				"ssh",
+				[
+					"-G",
+					...sshOptionArgv("/tmp/Application Support/ssh"),
+					"example.invalid",
+				],
+				{ encoding: "utf8" },
+			);
+			expect(result.stderr).not.toMatch(/controlpath/iu);
+			expect(result.stdout).toMatch(
+				/^controlpath \/tmp\/Application Support\/ssh\/[0-9a-f]{40}$/mu,
+			);
+		},
+	);
 
 	it("counts the socket path before binding it, not after", () => {
 		// `%C` is forty hex characters, so the length of the path is known
