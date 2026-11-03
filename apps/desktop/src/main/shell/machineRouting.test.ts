@@ -12,6 +12,7 @@
  * Two machines throughout, both fakes, neither of them this one.
  */
 
+import { defaultConfig } from "../../model/config.js";
 import { Buffer } from "node:buffer";
 import { describe, expect, it, vi } from "vitest";
 import { AgentSessions } from "../agent/sessions.js";
@@ -29,7 +30,7 @@ import {
 import { agents } from "./adapters.js";
 import {
 	memoryRecords,
-	RESUME_OFF,
+	AGENTS_OFF,
 } from "../agent/conversation/limitResumeTestKit.js";
 import { wireAgents } from "./agentWiring.js";
 import { LOCAL_CADENCE } from "../runtime/local.js";
@@ -225,7 +226,7 @@ function machines(): {
 		a,
 		b,
 		runtimes: new TerminalRuntimes({
-			config: undefined,
+			settings: { config: defaultConfig() },
 			effectiveSocketName: "devhub",
 			userTmuxConfigPath: "/home/here/.config/devhub/tmux.conf",
 			controlSocketPath: "/home/here/.devhub/control.sock",
@@ -499,7 +500,7 @@ describe("an adapter for a machine with no tmux", () => {
 				"DevHub could not put a tmux on build.example.com: no route to host",
 		});
 		const runtimes = new TerminalRuntimes({
-			config: undefined,
+			settings: { config: defaultConfig() },
 			effectiveSocketName: "devhub",
 			userTmuxConfigPath: "/home/here/.config/devhub/tmux.conf",
 			controlSocketPath: "/home/here/.devhub/control.sock",
@@ -629,7 +630,7 @@ describe("a reconcile round is about one machine's Agents", () => {
 			report: noGuiAgentHere,
 			clientVersion: "0.0.0-test",
 			profileTag: "0123456789ab",
-			resumeAfterLimit: () => RESUME_OFF,
+			settings: AGENTS_OFF,
 			limitResumes: memoryRecords(),
 		});
 		const adapter = agents();
@@ -676,7 +677,7 @@ describe("a launch the Agent port refuses", () => {
 			report: noGuiAgentHere,
 			clientVersion: "0.0.0-test",
 			profileTag: "0123456789ab",
-			resumeAfterLimit: () => RESUME_OFF,
+			settings: AGENTS_OFF,
 			limitResumes: memoryRecords(),
 		});
 		const adapter = agents();

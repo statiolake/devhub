@@ -4,6 +4,7 @@
  * clock the test turns by hand.
  */
 
+import { defaultConfig, type Config } from "../../../model/config.js";
 import type { AgentRecordStore } from "./agentRecords.js";
 import type {
 	LimitResumeClock,
@@ -20,6 +21,22 @@ export const RESUME_ON: LimitResumeSettings = {
 export const RESUME_OFF: LimitResumeSettings = {
 	enabled: false,
 	message: "続けて",
+};
+
+/**
+ * Settings, as the Agents wiring asks them (`SettingsReader`), with
+ * `[agents]`' going on after a limit and compacting before the cache expires
+ * both off: what a test that is not about either runs on.
+ */
+export const AGENTS_OFF: { readonly config: Config } = {
+	config: {
+		...defaultConfig(),
+		agents: {
+			...defaultConfig().agents,
+			resume_after_limit: false,
+			auto_compact_before_cache_expiry: false,
+		},
+	},
 };
 
 /** Records kept in memory, per Agent, as the file would keep them. */

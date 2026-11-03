@@ -72,7 +72,7 @@ import {
 import { CLAUDE_IDLE } from "../../src/main/agent/detect/claudeScreens.fixture";
 import {
   memoryRecords,
-  RESUME_OFF,
+  AGENTS_OFF,
 } from "../../src/main/agent/conversation/limitResumeTestKit";
 import { scratchDirectory } from "./scratch";
 import { makeSocketDir } from "../../src/model/testScratch";
@@ -2393,7 +2393,7 @@ describe.skipIf(TMUX === undefined)(
         report: (message) => reports.push(message),
         clientVersion: "0.0.0-test",
         profileTag: "0123456789ab",
-        resumeAfterLimit: () => RESUME_OFF,
+        settings: AGENTS_OFF,
         limitResumes: memoryRecords(),
       });
       const adapter = agents();

@@ -49,7 +49,6 @@ describe("where a new project goes", () => {
 	it("is the first folder source, then home, when the setting is unset", () => {
 		expect(defaultProjectDirectory(configWith(undefined))).toBe("/srv/code");
 		expect(defaultProjectDirectory(configWith(undefined, []))).toBe(homedir());
-		expect(defaultProjectDirectory(undefined)).toBe(homedir());
 	});
 });
 
@@ -82,6 +81,8 @@ describe("the folders a clone is offered", () => {
 		expect(cloneParentChoices(configWith(undefined), [])).toEqual([
 			"/srv/code",
 		]);
-		expect(cloneParentChoices(undefined, [])).toEqual([homedir()]);
+		expect(cloneParentChoices(configWith(undefined, []), [])).toEqual([
+			homedir(),
+		]);
 	});
 });

@@ -16,9 +16,6 @@ import {
   parseConfig,
   parseConfigText,
   retiredKeysIn,
-  titleBarModeIn,
-  colorThemesIn,
-  appearanceModeIn,
   DEFAULT_THEME_DARK,
   DEFAULT_THEME_LIGHT,
   defaultViewOf,
@@ -659,26 +656,6 @@ describe("parsing", () => {
       expect(config.appearance.titleBar).toBe("hidden");
       expect(configToToml(config)).toContain('title_bar = "hidden"');
     });
-
-    it("is readable on its own, before the rest of the settings are", () => {
-      // The window is made from this one value and made before the config is
-      // loaded, so it has its own reader. It has to agree with the loader.
-      expect(titleBarModeIn(undefined)).toBe("shown");
-      expect(titleBarModeIn("version = 1\n")).toBe("shown");
-      expect(
-        titleBarModeIn('version = 1\n[appearance]\ntitle_bar = "hidden"\n'),
-      ).toBe("hidden");
-      expect(
-        titleBarModeIn('version = 1\n[appearance]\ntitle_bar = "shown"\n'),
-      ).toBe("shown");
-    });
-
-    it("answers with the default for a file it cannot read, and does not throw", () => {
-      // A window has to be some shape. The load that runs moments later on the
-      // same text is what reports the problem; see `titleBarModeIn`.
-      expect(titleBarModeIn("this is not toml = = =")).toBe("shown");
-      expect(titleBarModeIn("[appearance]\ntitle_bar = 7\n")).toBe("shown");
-    });
   });
 
   describe("general.workbench", () => {
@@ -701,7 +678,6 @@ describe("parsing", () => {
     it("is the terminal unless the file says otherwise", () => {
       expect(defaultConfig().general.default_view).toBe("terminal");
       expect(parseConfig(MINIMAL).general.default_view).toBe("terminal");
-      expect(defaultViewOf(undefined)).toBe("terminal");
       expect(defaultViewOf(parseConfig(MINIMAL))).toBe("terminal");
     });
 
@@ -2123,31 +2099,6 @@ describe("the colour theme, as [appearance] theme_dark / theme_light say", () =>
     expect(
       codeOf(() => parseConfig(`${version}\n[appearance]\ntheme_light = ""\n`)),
     ).toBe("invalid_appearance");
-  });
-
-  it("is readable on its own, before the rest of the settings are", () => {
-    expect(colorThemesIn(undefined)).toEqual({
-      dark: "Dark 2026",
-      light: "Light 2026",
-    });
-    expect(
-      colorThemesIn(`${version}\n[appearance]\ntheme_dark = "Monokai"\n`),
-    ).toEqual({ dark: "Monokai", light: "Light 2026" });
-    // A file the load will refuse is the defaults here, as for the title bar.
-    expect(colorThemesIn("not toml = = =")).toEqual({
-      dark: "Dark 2026",
-      light: "Light 2026",
-    });
-    expect(colorThemesIn("[appearance]\ntheme_dark = 7\n").dark).toBe(
-      "Dark 2026",
-    );
-  });
-
-  it("has its appearance readable on its own too, which picks the theme the window starts in", () => {
-    expect(appearanceModeIn(undefined)).toBe("auto");
-    expect(appearanceModeIn('[appearance]\nmode = "dark"\n')).toBe("dark");
-    expect(appearanceModeIn('[appearance]\nmode = "dusk"\n')).toBe("auto");
-    expect(appearanceModeIn("not toml = = =")).toBe("auto");
   });
 });
 

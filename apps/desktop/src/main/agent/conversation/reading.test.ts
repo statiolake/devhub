@@ -11,6 +11,7 @@ import {
 	type ConversationEvent,
 } from "../../../model/conversation.js";
 import { HostLinkFailure } from "./hostLink.js";
+import { errorWireAt, NamedFailure, withDetail } from "../../../model/wire.js";
 import { observeConversation } from "./reading.js";
 
 const running: ConversationEvent[] = [
@@ -125,5 +126,25 @@ describe("reading a conversation", () => {
 				detail: "assistant.message.content: expected an array",
 			},
 		});
+	});
+
+	it("says what stopped it in that failure's own words, never as the wire it travels in", () => {
+		// The dialog this reaches draws the detail as it is. A named failure's
+		// message is its wire serialised for the IPC boundary, and the dialog
+		// once showed `{"code":"settings_refused",…}` for one.
+		const wire = withDetail(
+			errorWireAt("settings_refused"),
+			"/Users/someone/.config/devhub/settings.toml: general.default_view was refused: invalid_default_view. DevHub is running on its defaults until the file is fixed.",
+		);
+		const observed = observeConversation({
+			transcript: EMPTY_TRANSCRIPT,
+			lost: undefined,
+			crashed: new NamedFailure(wire),
+		});
+		expect(observed.failure).toEqual({
+			code: "conversation_failed",
+			detail: `DevHub could not use its settings file. ${wire.detail ?? ""}`,
+		});
+		expect(observed.failure?.detail).not.toContain("{");
 	});
 });

@@ -18,6 +18,7 @@ import type {
 	AgentFailureCode,
 	AgentStatus,
 } from "../../../model/domain.js";
+import { failureText } from "../../../model/wire.js";
 import type { ConversationReading } from "./conversation.js";
 
 export interface ConversationObservation {
@@ -42,7 +43,9 @@ export function observeConversation(
 		return {
 			status: "error",
 			activity: undefined,
-			failure: { code: "conversation_failed", detail: crashed.message },
+			// What stopped it, in its own words: a failure DevHub names is its
+			// summary and detail, never the wire it travels to a page as.
+			failure: { code: "conversation_failed", detail: failureText(crashed) },
 		};
 	}
 	// A conversation DevHub cannot follow is not read at all, whatever the last

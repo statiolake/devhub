@@ -26,12 +26,16 @@
 import { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import { remoteCliBinDirectory } from "../terminal/launcher.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
-import type { Config } from "../../model/config.js";
+import type { SettingsReader } from "./runningSettings.js";
 import type { SocketName } from "../terminal/ports.js";
 import { themePublicationIfInstalled } from "./themePublication.js";
 
 export interface TerminalRuntimesOptions {
-	readonly config: Config | undefined;
+	/**
+	 * The settings DevHub runs on, asked as each machine's adapter is built:
+	 * `[runtimes] tmux`, `shell` and `tmux_args` as they are then.
+	 */
+	readonly settings: SettingsReader;
 	readonly effectiveSocketName: string;
 	/**
 	 * `<configDirectory>/tmux.conf` on this Mac — the one user tmux config.
@@ -133,7 +137,7 @@ export class TerminalRuntimes {
 	}
 
 	async #build(host: Runtime): Promise<TmuxTerminalRuntime> {
-		const config = this.#options.config;
+		const config = this.#options.settings.config;
 		// The machine's own environment, asked of the machine. It used to be
 		// this Mac's, handed in from `appController`, and a host's tmux server
 		// was then started with this Mac's `PATH`, `TMPDIR` and
@@ -143,8 +147,8 @@ export class TerminalRuntimes {
 		// See `Runtime.environment`.
 		const environment = await host.environment();
 		const searchPath = environment["PATH"] ?? "";
-		const configuredTmux = config?.runtimes.tmux ?? "tmux";
-		const configuredShell = config?.runtimes.shell ?? "/bin/zsh";
+		const configuredTmux = config.runtimes.tmux;
+		const configuredShell = config.runtimes.shell;
 		const [home, scratch, tmux, shell] = await Promise.all([
 			host.home(),
 			host.scratchDirectory(),
@@ -175,7 +179,7 @@ export class TerminalRuntimes {
 							path: shell.value,
 							basename: basenameOf(configuredShell),
 						},
-			tmuxArgs: config?.runtimes.tmux_args ?? [],
+			tmuxArgs: config.runtimes.tmux_args,
 			effectiveSocketName: this.#socketName,
 			bootstrapDirectory: scratch,
 			// The path on *this* Mac, not the machine's answer about it: the

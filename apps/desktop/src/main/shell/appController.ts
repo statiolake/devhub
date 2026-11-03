@@ -213,26 +213,17 @@ import {
 	type AgentSnapshot,
 	type NavigationSelection,
 } from "../../model/appModel.js";
+import { activeProfile } from "../../model/profile.js";
 import {
-	activeProfile,
-	DEFAULT_PROFILE,
-	profileLocations,
-} from "../../model/profile.js";
-import { seedProfileSettings } from "../profileSeed.js";
-import {
-	ConfigStore,
-	DEFAULT_TERMINAL_IDLE_SECONDS,
+	colorThemeNamesOf,
 	DEFAULT_WORKBENCH_AWAKE_MAX,
 	DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
-	defaultConfigPaths,
 	defaultViewOf,
 	profilePresentation,
-	withProfileRuntimes,
 	type AgentsConfig,
 	type Config,
 	type ConfiguredAgentProfile,
 } from "../../model/config.js";
-import { DEFAULT_NOTICE_SECONDS } from "../../model/noticeCenter.js";
 import {
 	applySnapshot,
 	hydrateModel,
@@ -260,7 +251,6 @@ import {
 	fileNotFound,
 	withDetail,
 	withSummary,
-	unavailableAgentProfiles,
 	failureText,
 } from "../../model/wire.js";
 import {
@@ -516,8 +506,7 @@ import {
 } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
 import { AutomaticActions } from "../../model/automaticActions.js";
-import { DEFAULT_SCRATCH_DAILY } from "../../model/scratchDay.js";
-import { SettingsRefusal } from "./settingsRefusal.js";
+import type { RunningSettings } from "./runningSettings.js";
 import { type ScratchDay, ScratchFollower, scratchDay } from "./scratchDay.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import { themePublicationIfInstalled } from "./themePublication.js";
@@ -586,7 +575,6 @@ import { WORKSPACE_TERMINAL_SURFACE_PREFIX } from "../../ipc/terminal.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
 	COMMANDS,
-	defaultKeybindings,
 	isCommandId,
 	keysForCommand,
 	resolveBindings,
@@ -897,7 +885,14 @@ export class AppController {
 	private readonly mainServices = new MainServicesGate();
 	/** Handed over by `setServices`; released to the gate by `markReady`. */
 	private handedOverServices: MainServices | undefined;
-	private config: Config | undefined;
+	/**
+	 * The settings DevHub is running on, now: always a `Config`, the defaults
+	 * or the last accepted settings while the file cannot be used. Asked of
+	 * the one object that owns them (`runningSettings.ts`), never kept here.
+	 */
+	private get config(): Config {
+		return this.settings.config;
+	}
 	/**
 	 * The lookup a question on screen is waiting for, if there is one.
 	 *
@@ -1002,7 +997,6 @@ export class AppController {
 		workspaceOf: (sender) => this.sendTargetWorkspace(sender),
 		profiles: () => {
 			const config = this.config;
-			if (!config) return [];
 			return config.agentProfiles.map((profile) => ({
 				id: profile.id,
 				displayName: profile.display_name,
@@ -1118,8 +1112,8 @@ export class AppController {
 	/** Notifies when an Agent finishes or needs the person. See `agentNotifications.ts`. */
 	private readonly agentNotifier = new AgentNotifier({
 		settings: () => ({
-			enabled: this.config?.general.notify_on_idle ?? true,
-			sound: this.config?.general.notify_sound ?? true,
+			enabled: this.config.general.notify_on_idle,
+			sound: this.config.general.notify_sound,
 		}),
 		windowFocused: () => this.shellFocused,
 		snapshot: () => this.snapshot(),
@@ -1196,12 +1190,15 @@ export class AppController {
 	private stopWatchingConfig: (() => void) | undefined;
 
 	constructor(
-		readonly configStore: ConfigStore,
+		/**
+		 * The settings DevHub is running on, and the only reader of the file.
+		 * See `runningSettings.ts`.
+		 */
+		private readonly settings: RunningSettings,
 		private readonly stateStore: JsonStateStore,
 		private readonly cliArgs: NativeParsedArgs,
 		model: AppModel,
 		state: PersistedAppState,
-		config: Config | undefined,
 		/**
 		 * How the *previous* run ended, captured before this one marked itself
 		 * started — after that the flag describes this run, not the last one.
@@ -1209,24 +1206,15 @@ export class AppController {
 		private readonly previousExitValue: "clean" | "unclean" | "unknown",
 		/** Whether this run started from a state file that did not exist. */
 		private readonly freshState: boolean,
-		/** Why this run is on the defaults, when it is. See `settingsRefusal.ts`. */
-		private readonly settingsRefusal: SettingsRefusal,
 	) {
 		this.state = state;
-		this.config = config;
-		this.scratch = new ScratchFollower(scratchDaily(config), {
+		// The appearance and the colour theme this run starts on were applied
+		// from these same settings before the window was made
+		// (`bootstrapShell`); `settingsAccepted` applies every change after.
+		this.scratch = new ScratchFollower(this.config.scratch.daily, {
 			home: homedir(),
 			adopt: (day) => this.adoptScratchDay(day),
 		});
-		if (config) {
-			// The same call `adoptConfig` makes, for the config this run started
-			// with. Without it DevHub would run in `auto` until the first save.
-			appearanceMode().apply(config.appearance.mode);
-			// The theme names were read from the file's text before the window
-			// was made (`colorThemesIn`); this is the same answer, from the
-			// config, and changes nothing unless the two disagree.
-			shellThemeIfInstalled()?.configure(colorThemeNamesOf(config));
-		}
 		// Where a Workspace's close lands is the row after it as the Sidebar
 		// draws it, and the Sidebar's order is read with the repository status
 		// only main has — so the model is handed the same order the projection
@@ -1381,11 +1369,10 @@ export class AppController {
 		// adopted whether or not this is a first run.
 		const profile = activeProfile();
 		const configuredSocket = profile.isDefault
-			? config?.runtimes.tmux_socket_name
+			? config.runtimes.tmux_socket_name
 			: profile.tmuxSocketName;
 		if (
 			(this.freshState || !profile.isDefault) &&
-			configuredSocket !== undefined &&
 			this.state.tmux.transition.kind === "stable" &&
 			this.state.tmux.effective_socket_name !== configuredSocket
 		) {
@@ -1399,7 +1386,7 @@ export class AppController {
 		// either. One environment, one resolution: what
 		// DevHub can find and what a shell inside it can find cannot disagree.
 		this.loginEnvironment = await resolveLoginEnvironment({
-			enabled: config?.general.import_login_environment ?? true,
+			enabled: config.general.import_login_environment,
 		});
 		// It lands in DevHub's own process, which is what makes "one
 		// environment" true of VS Code's side as well: the workbench windows,
@@ -1415,7 +1402,7 @@ export class AppController {
 		// built (`terminalRuntimes.ts`) — and the Settings window asks its own
 		// for this Mac, which is what that window is about.
 		this.terminalsWiring = wireTerminals({
-			config,
+			settings: this.settings,
 			effectiveSocketName: this.state.tmux.effective_socket_name,
 			// One tmux config, in DevHub's own config directory, beside
 			// `settings.toml` and profile-aware with it. Not `~/.tmux.conf`:
@@ -1476,24 +1463,10 @@ export class AppController {
 				this.publishError(withDetail(errorWireAt("agent_exited"), message)),
 			clientVersion: electron.app.getVersion(),
 			profileTag: remoteProfileTag(controlSocketPath(userDataPath)),
-			resumeAfterLimit: () => {
-				const { agents } = this.requireConfig();
-				return {
-					enabled: agents.resume_after_limit,
-					message: agents.resume_after_limit_message,
-				};
-			},
+			settings: this.settings,
 			limitResumes: this.limitResumes,
 			listingContext: (runtime, root, kind) =>
 				this.listingContext(runtime, root, kind),
-			cacheKeeping: () => {
-				const { agents } = this.requireConfig();
-				return {
-					enabled: agents.auto_compact_before_cache_expiry,
-					leadSeconds: agents.auto_compact_lead_seconds,
-					minTokens: agents.auto_compact_min_tokens,
-				};
-			},
 		});
 		const agentWiring = this.agentWiring;
 		// Dictation into the GUI Agent composer: the bundled recogniser, if
@@ -1768,7 +1741,7 @@ export class AppController {
 	/**
 	 * Keeps Scratch on today's folder under the `[scratch] daily` this run is
 	 * on: at each local midnight, on a wake, and when settings with a
-	 * different `daily` are accepted (`adoptConfig`). Only the identity moves:
+	 * different `daily` are accepted (`settingsAccepted`). Only the identity moves:
 	 * yesterday's folder stays open as an ordinary row with its Agents and its
 	 * workbench exactly as they were. The launch itself was reconciled before
 	 * the model existed (`createAppController`).
@@ -2045,11 +2018,6 @@ export class AppController {
 				// the one thing that would make it a modal in name only.
 				if (shellWindow().picker.openModals().length > 0) return false;
 				const config = this.config;
-				// The base is the setting's, and a settings file that would not
-				// parse has no base to step from. There is nothing to zoom
-				// relative to, and inventing one would silently zoom from a
-				// size nobody chose.
-				if (!config) return false;
 				this.dispatchOwn({
 					type: "terminal_zoom",
 					direction,
@@ -2217,7 +2185,7 @@ export class AppController {
 	 * it.
 	 */
 	private applyChordLayout(): void {
-		const spec = this.config?.keybindings ?? defaultKeybindings();
+		const spec = this.config.keybindings;
 		const resolved = resolveBindings(spec);
 		setChordLayout({ prefix: resolved.prefix, table: resolved.bindings });
 	}
@@ -2231,7 +2199,7 @@ export class AppController {
 	 * to add it.
 	 */
 	private chordHelpRows(): readonly ChordHelpRowWire[] {
-		const spec = this.config?.keybindings ?? defaultKeybindings();
+		const spec = this.config.keybindings;
 		const { prefix, bindings } = resolveBindings(spec);
 		const armed = describeChordKey(prefix);
 		return COMMANDS.map((command) => ({
@@ -2599,7 +2567,7 @@ export class AppController {
 	private async openCommandPalette(host: ChordHost): Promise<void> {
 		const snapshot = this.chordSnapshot();
 		if (!snapshot) return;
-		const spec = this.config?.keybindings ?? defaultKeybindings();
+		const spec = this.config.keybindings;
 		const { prefix, bindings } = resolveBindings(spec);
 		const rows = commandPaletteRows({
 			prefix,
@@ -3931,7 +3899,7 @@ export class AppController {
 		const resumable = resumableSession(agent);
 		if (resumable.kind === "none") throw new ReopenRefused(resumable.why);
 		if (
-			!(this.config?.agentProfiles ?? []).some(
+			!this.config.agentProfiles.some(
 				(profile) => profile.id === agent.profile_id,
 			)
 		) {
@@ -4094,8 +4062,7 @@ export class AppController {
 		const verdicts = tracker.observe(
 			reading.panes,
 			Date.now(),
-			this.config?.general.terminal_idle_seconds ??
-				DEFAULT_TERMINAL_IDLE_SECONDS,
+			this.config.general.terminal_idle_seconds,
 			runtime.configuredShell,
 		);
 		// Read the model after the round, as the Agent round does: a Workspace
@@ -4423,7 +4390,7 @@ export class AppController {
 	 * whichever page forgot to add them.
 	 */
 	appearance(): AppAppearance {
-		const config = this.requireConfig();
+		const config = this.config;
 		this.appearanceSequence += 1;
 		return appearanceWire(
 			{
@@ -4445,29 +4412,12 @@ export class AppController {
 	agentProfiles(): AgentProfiles {
 		this.profileSequence += 1;
 		const config = this.config;
-		if (!config) {
-			// A config that would not parse is not an empty profile list, and the
-			// picker has to be able to tell those apart.
-			return unavailableAgentProfiles(
-				this.profileSequence,
-				"configuration_invalid",
-			);
-		}
 		return agentProfilesWire(
 			config.agentProfiles.map((profile) =>
 				toDomainProfile(profile, config.agents),
 			),
 			this.profileSequence,
 		);
-	}
-
-	/**
-	 * The config is the only source for appearance and profiles, so a file that
-	 * would not parse is reported rather than answered with silent defaults.
-	 */
-	private requireConfig(): Config {
-		if (!this.config) throw new NamedFailure(this.settingsRefusal.required());
-		return this.config;
 	}
 
 	/** Push one projection to every page that draws from the model. */
@@ -4517,8 +4467,7 @@ export class AppController {
 	/** `general.notice_seconds`, to the page that draws the notices. */
 	private publishNoticeSettings(): void {
 		this.sendToDisplay(CHANNELS.noticeSettings, {
-			hideAfterSeconds:
-				this.config?.general.notice_seconds ?? DEFAULT_NOTICE_SECONDS,
+			hideAfterSeconds: this.config.general.notice_seconds,
 		} satisfies NoticeSettingsWire);
 	}
 
@@ -4626,7 +4575,7 @@ export class AppController {
 		const shell = shellWindowIfCreated();
 		if (!shell || shell.window.isDestroyed()) return;
 		const snapshot = this.snapshot();
-		const appearance = this.config?.appearance;
+		const appearance = this.config.appearance;
 		const layout = snapshot.layout;
 		// The projection names a workbench by its *surface key*, which is the
 		// model's name for it; the window's children are folders, which is the
@@ -4719,11 +4668,9 @@ export class AppController {
 			// can have moved since; the setting wins, because it is what the
 			// page is drawing. Anything the config does not recognise is the
 			// chrome the window has, which is the one on screen.
-			titleBar: appearance?.titleBar === "hidden" ? "hidden" : "shown",
+			titleBar: appearance.titleBar === "hidden" ? "hidden" : "shown",
 			density:
-				appearance?.sidebarDensity === "comfortable"
-					? "comfortable"
-					: "compact",
+				appearance.sidebarDensity === "comfortable" ? "comfortable" : "compact",
 			sidebar: {
 				width: this.sidebarWidthPreview ?? snapshot.sidebar.width,
 				collapsed: snapshot.sidebar.collapsed,
@@ -4799,7 +4746,6 @@ export class AppController {
 	 * colour theme's terminal colours did.
 	 */
 	publishAppearance(): void {
-		if (!this.config) return;
 		this.publishTerminalTheme();
 		this.send(CHANNELS.appearanceChanged, this.appearance());
 		// The title bar and the sidebar's density are two of the numbers the
@@ -4837,7 +4783,7 @@ export class AppController {
 		const publication = themePublicationIfInstalled();
 		const theme = shellThemeIfInstalled();
 		const config = this.config;
-		if (!publication || !theme || !config) return;
+		if (!publication || !theme) return;
 		const palettes = terminalThemeWire(
 			config.appearance.terminalTheme,
 			theme.terminalPalette(),
@@ -4885,7 +4831,6 @@ export class AppController {
 	 */
 	startUsageReaders(): void {
 		const config = this.config;
-		if (!config) return;
 		this.usageReaders = startUsageReaders({
 			profiles: config.agentProfiles,
 			runtime: localRuntime(),
@@ -4973,7 +4918,7 @@ export class AppController {
 	 * `commit_changes`.
 	 */
 	private agentActionsWire(): readonly AgentActionWire[] {
-		return (this.config?.agentActions ?? [])
+		return this.config.agentActions
 			.filter((action) => action.enabled)
 			.map((action) => ({
 				trigger: action.trigger,
@@ -5601,7 +5546,7 @@ export class AppController {
 			.flatMap((workspace) => workspace.agents)
 			.find((candidate) => candidate.id === agentId);
 		if (!agent) throw workspaceFailure("That agent is not running.");
-		const action = this.config?.agentActions.find(
+		const action = this.config.agentActions.find(
 			(candidate) => candidate.id === actionId && candidate.enabled,
 		);
 		if (!action) {
@@ -5647,7 +5592,7 @@ export class AppController {
 	 * anything for it to be refused under.
 	 */
 	private runAutomaticActions(): void {
-		const actions = (this.config?.agentActions ?? [])
+		const actions = this.config.agentActions
 			.filter((action) => action.enabled)
 			.map((action) => ({ id: action.id, trigger: action.trigger }));
 		const firings = this.automaticActions.observe(
@@ -5750,7 +5695,7 @@ export class AppController {
 		// means they have none configured, which is a decision — the agent starts
 		// and DevHub says nothing — rather than a gap to fill with a default.
 		if (actionId === undefined) return;
-		const action = this.config?.agentActions.find(
+		const action = this.config.agentActions.find(
 			(candidate) => candidate.id === actionId && candidate.enabled,
 		);
 		if (action === undefined) return;
@@ -5837,7 +5782,7 @@ export class AppController {
 				readonly detail: string;
 		  }
 	> {
-		const configured = this.config?.agentProfiles.find(
+		const configured = this.config.agentProfiles.find(
 			(profile) => profile.id === profileId,
 		);
 		if (!configured) {
@@ -5886,7 +5831,7 @@ export class AppController {
 		}
 		return {
 			kind: "resolved",
-			profile: toDomainProfile(resolved.profile, this.config!.agents),
+			profile: toDomainProfile(resolved.profile, this.config.agents),
 		};
 	}
 
@@ -8984,7 +8929,7 @@ export class AppController {
 		// a name that is not in the config is a typo on a command line, not an
 		// operation that failed — and the person needs to be told which names
 		// there are, not that an operation could not be completed.
-		const configured = this.config?.agentProfiles ?? [];
+		const configured = this.config.agentProfiles;
 		if (!configured.some((profile) => profile.id === profileId)) {
 			const known = configured.map((profile) => profile.id).join(", ");
 			throw new Error(
@@ -9047,7 +8992,7 @@ export class AppController {
 		return {
 			workspaces: () => this.tellWorkspaces(),
 			profiles: () =>
-				(this.config?.agentProfiles ?? []).map((profile) => ({
+				this.config.agentProfiles.map((profile) => ({
 					id: profile.id,
 					kind: profile.kind,
 				})),
@@ -9349,7 +9294,7 @@ export class AppController {
 		readonly workspaceId: string;
 		readonly agentId: string | undefined;
 	}> {
-		const config = this.requireConfig();
+		const config = this.config;
 		const item = parseGitHubItemUrl(request.url);
 		if (!item)
 			throw new Error("That is not a GitHub Issue or pull request URL.");
@@ -9535,27 +9480,29 @@ export class AppController {
 
 	//#region config
 
+	/**
+	 * Follow the running settings. What they are now is always
+	 * `this.settings.config`; this is what DevHub does when they change, and
+	 * what it says when an edit to the file is refused — which changes nothing
+	 * it runs on and is said once, as the one notice.
+	 */
 	private watchConfig(): void {
-		this.stopWatchingConfig = this.configStore.watch(2000, (outcome) => {
-			if ("kind" in outcome && outcome.kind === "applied") {
-				this.adoptConfig(outcome.loaded.config);
+		const unsubscribe = this.settings.subscribe({
+			accepted: (config, from) => {
+				this.settingsAccepted(config);
+				// The Settings window answers its own write with a snapshot.
+				if (from === "file") publishSettingsSnapshot();
+			},
+			refused: (notice) => {
+				this.publishError(notice);
 				publishSettingsSnapshot();
-				return;
-			}
-			if (!("kind" in outcome)) {
-				// The file on disk no longer parses. The last good config stays in
-				// effect, and the person is told rather than left guessing why an edit
-				// did nothing.
-				this.publishError(
-					this.settingsRefusal.onReload(outcome, this.config !== undefined),
-				);
-				publishSettingsSnapshot();
-			}
+			},
 		});
-	}
-
-	currentConfig(): Config | undefined {
-		return this.config;
+		const stopWatching = this.settings.watch(2000);
+		this.stopWatchingConfig = () => {
+			stopWatching();
+			unsubscribe();
+		};
 	}
 
 	/**
@@ -9566,10 +9513,7 @@ export class AppController {
 	 * an edit to the file left Scratch and the OS appearance where they were
 	 * and a Settings save left the Agent actions and the profile's socket.
 	 */
-	adoptConfig(accepted: Config): void {
-		const config = withProfileRuntimes(accepted, activeProfile()).config;
-		this.config = config;
-		this.settingsRefusal.accepted();
+	private settingsAccepted(config: Config): void {
 		// `general.default_view`, for the Workspaces made from now on; the ones
 		// open keep the view they remember (`model/editorView.ts`).
 		this.coordinator.model.setDefaultEditorView(defaultViewOf(config));
@@ -9696,7 +9640,7 @@ export class AppController {
 		runtime: Runtime = localRuntime(),
 	): Promise<GitCommand> {
 		const git = await runtime.resolveProgram(
-			this.config?.runtimes.git ?? "git",
+			this.config.runtimes.git,
 			this.launchEnvironment["PATH"] ?? "",
 		);
 		if (git.kind === "unavailable") {
@@ -10074,9 +10018,6 @@ export class AppController {
 		handle(CHANNELS.startWorkspacePicker, (_event, query: string) => {
 			this.cancelPicker?.();
 			const config = this.config;
-			if (!config) {
-				throw namedFailure(new Error("config is unavailable"));
-			}
 			const operationId = randomUUID();
 			this.cancelPicker = startWorkspacePicker(
 				config,
@@ -10210,13 +10151,10 @@ export class AppController {
 			// wrong: a source that is a command can hang, and the person is
 			// looking at "Searching…" while it does. It is a lookup like the
 			// others and is bounded like the others.
-			const parents =
-				config === undefined
-					? []
-					: await this.boundedLookup(
-							"the folders a clone could go into",
-							(cancel) => collectParentDirectories(config, cancel),
-						);
+			const parents = await this.boundedLookup(
+				"the folders a clone could go into",
+				(cancel) => collectParentDirectories(config, cancel),
+			);
 			return cloneParentChoices(config, parents);
 		});
 		// Who `gh` says this person is, asked when a sheet needs it rather than
@@ -10294,7 +10232,7 @@ export class AppController {
 			// Either kind: which clones a repository has is a question about the
 			// repository, and an Issue and a pull request name theirs the same way.
 			const issue = parseGitHubItemUrl(issueUrl);
-			if (!config || !issue) {
+			if (!issue) {
 				throw workspaceFailure(
 					"That is not a GitHub Issue or pull request URL.",
 				);
@@ -10725,6 +10663,8 @@ let current: AppController | undefined;
 export async function createAppController(
 	userDataPath: string,
 	cliArgs: NativeParsedArgs,
+	/** The settings DevHub runs on, loaded before the window (`bootstrapShell`). */
+	settings: RunningSettings,
 ): Promise<AppController> {
 	if (current) {
 		throw new Error("the App Shell controller already exists");
@@ -10771,47 +10711,7 @@ export async function createAppController(
 		devcontainer: { path: devhubProduct.devcontainerPath ?? "devcontainer" },
 	});
 
-	// One switch, resolved once: which DevHub this is, and therefore where its
-	// settings, its state and its tmux server are. See model/profile.ts.
-	const profile = activeProfile();
-	const seeded = seedProfileSettings(
-		profile,
-		profileLocations(DEFAULT_PROFILE, homedir()),
-	);
-	if (seeded.kind === "copied") {
-		console.log(
-			`[devhub] profile ${profile.profile}: seeded ${seeded.to} from ${seeded.from}`,
-		);
-	}
-	const configStore = new ConfigStore(defaultConfigPaths(homedir()));
-	const settingsRefusal = new SettingsRefusal(configStore.paths.file);
-	let config: Config | undefined;
-	let launchRefusal: AppErrorWire | undefined;
-	try {
-		const loaded = (await configStore.load()).config;
-		const applied = withProfileRuntimes(loaded, profile);
-		if (applied.overriddenSocketName !== undefined) {
-			console.log(
-				`[devhub] profile ${profile.profile}: runtimes.tmux_socket_name = "${applied.overriddenSocketName}" is ignored here; this profile uses "${profile.tmuxSocketName}"`,
-			);
-		}
-		config = applied.config;
-		const migration = configStore.lastMigration();
-		if (migration.kind === "migrated") {
-			console.log(
-				`[devhub] settings: folded ${migration.from} into settings.toml and kept the old file as ${migration.to}`,
-			);
-		}
-	} catch (error) {
-		// A config that will not parse is not a reason not to start: the shell
-		// comes up, and the failure is reported to the page and the Settings
-		// window (`configStore.lastDiagnostic()`) rather than taking the app
-		// down. Said here too, because a person who cannot open Settings still
-		// has the log.
-		console.error("[devhub] settings could not be read:", error);
-		config = undefined;
-		launchRefusal = settingsRefusal.atLaunch(error);
-	}
+	const config = settings.config;
 
 	const stateStore = new JsonStateStore(
 		join(userDataPath, "devhub", "state.json"),
@@ -10833,15 +10733,13 @@ export async function createAppController(
 	markStarting(state);
 	await stateStore.saveState(state);
 
-	const profiles = (config?.agentProfiles ?? []).map((profile) =>
-		toDomainProfile(profile, config!.agents),
+	const profiles = config.agentProfiles.map((profile) =>
+		toDomainProfile(profile, config.agents),
 	);
 	// Scratch is today's folder, worked out now rather than read from the file:
 	// a file from yesterday names yesterday's folder as an ordinary Workspace,
-	// and today's becomes Scratch. With no readable settings it is the
-	// default, like every other setting — the settings failure is already on
-	// its way to the person.
-	const today = await scratchDay(scratchDaily(config), new Date(), homedir());
+	// and today's becomes Scratch.
+	const today = await scratchDay(config.scratch.daily, new Date(), homedir());
 	let model: AppModel;
 	let projectionFailure: string | undefined;
 	try {
@@ -10873,15 +10771,13 @@ export async function createAppController(
 	}
 
 	const created = new AppController(
-		configStore,
+		settings,
 		stateStore,
 		cliArgs,
 		model,
 		state,
-		config,
 		previousExit,
 		load.metadata.origin === "fresh",
-		settingsRefusal,
 	);
 	current = created;
 	// Every bring-up, whoever asked for it, tells the Workspaces attached to
@@ -10889,9 +10785,11 @@ export async function createAppController(
 	onContainerStarted((host, containerId) => {
 		created.noteContainerStarted(host, containerId);
 	});
-	// Before the pages ask for anything: what they are told when they need
-	// settings is this same notice (`requireConfig`).
-	if (launchRefusal !== undefined) current.noteStartupFailure(launchRefusal);
+	// The one notice about a settings file this run could not use. Nothing
+	// else says it: everything runs on the defaults in the meantime.
+	if (settings.launchRefusal !== undefined) {
+		current.noteStartupFailure(settings.launchRefusal);
+	}
 	// A file DevHub refused is a session that vanished, and there is exactly one
 	// place to say so before there is a page to say it to. Both halves report
 	// the same way: the file would not load, or it loaded and would not project.
@@ -10917,11 +10815,6 @@ export async function createAppController(
 		);
 	}
 	return current;
-}
-
-/** `[scratch] daily`, or its default when there are no readable settings. */
-function scratchDaily(config: Config | undefined): string {
-	return config?.scratch.daily ?? DEFAULT_SCRATCH_DAILY;
 }
 
 export function appController(): AppController {
@@ -10959,17 +10852,6 @@ function tellTerminalPane(pane: MarkedPane) {
 		command: pane.command,
 		title: pane.title,
 		dead: pane.dead,
-	};
-}
-
-/** The two theme names a config gives. */
-function colorThemeNamesOf(config: Config): {
-	readonly dark: string;
-	readonly light: string;
-} {
-	return {
-		dark: config.appearance.themeDark,
-		light: config.appearance.themeLight,
 	};
 }
 

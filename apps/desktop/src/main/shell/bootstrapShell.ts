@@ -69,12 +69,8 @@ import {
 	type SettingsProblem,
 } from "../workbenchDefaults.js";
 import { activeProfile } from "../../model/profile.js";
-import {
-	appearanceModeIn,
-	colorThemesIn,
-	defaultConfigPaths,
-	titleBarModeIn,
-} from "../../model/config.js";
+import { colorThemeNamesOf, titleBarModeOf } from "../../model/config.js";
+import { RunningSettings } from "./runningSettings.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
@@ -148,16 +144,6 @@ function unreadableSettingsError(
 	);
 }
 
-/** The settings file's text, or nothing when there is not one yet. */
-function readSettingsText(): string | undefined {
-	try {
-		return readFileSync(defaultConfigPaths(homedir()).file, "utf8");
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		throw error;
-	}
-}
-
 export async function bootstrapShell(
 	userDataPath: string,
 	cliArgs: NativeParsedArgs,
@@ -195,26 +181,24 @@ export async function bootstrapShell(
 	});
 	const settingsProblem = ensureWorkbenchDefaults(userDataPath);
 
-	// The one setting the window is *made* from, so it is read before the rest
-	// of the settings are: `titleBarStyle` is a constructor option, and the
-	// window has to exist before the controller that loads the config does.
-	// Everything else in the file is read once, by the controller, and a file
-	// that will not parse is reported from there. See `titleBarModeIn`.
-	const settingsText = readSettingsText();
-	const titleBar = titleBarModeIn(settingsText);
+	// The settings DevHub runs on, loaded before anything is made from them:
+	// the window is made with `appearance.title_bar` and in the colour theme
+	// they name, and everything after asks the same object
+	// (`runningSettings.ts`). A file DevHub cannot use is the defaults here
+	// and one notice once there is a page to show it on.
+	const settings = await RunningSettings.open(activeProfile(), homedir());
+	const titleBar = titleBarModeOf(settings.config);
 
 	// The colour theme comes first, before the page is servable and before the
 	// window exists, because both are created wearing it. It is the theme
 	// DevHub's own settings name, read here from the extensions VS Code would
 	// find it in — so the window, the pages and the Agent panes start in it
-	// whether or not any workbench ever comes up. The settings are read for
-	// it the way they are for the title bar: forgivingly, because the real
-	// load moments later is what reports a file that will not parse.
+	// whether or not any workbench ever comes up.
 	//
 	// Which of the two is the appearance's answer, so the appearance the
-	// settings ask for is applied first; the controller applies the same
-	// value again once it has loaded them.
-	appearanceMode().apply(appearanceModeIn(settingsText));
+	// settings ask for is applied first; the controller applies it again on
+	// every change.
+	appearanceMode().apply(settings.config.appearance.mode);
 	// DevHub's own theme library is a third place themes are found in.
 	const roots: ExtensionRoots = {
 		...extensionRoots,
@@ -242,7 +226,7 @@ export async function bootstrapShell(
 				};
 			},
 			() => electron.nativeTheme.shouldUseDarkColors,
-			colorThemesIn(settingsText),
+			colorThemeNamesOf(settings.config),
 			() =>
 				listColorThemes(roots).map((entry) => ({
 					name: entry.settingsId,
@@ -297,7 +281,7 @@ export async function bootstrapShell(
 		palette,
 		titleBar,
 	);
-	const controller = await createAppController(userDataPath, cliArgs);
+	const controller = await createAppController(userDataPath, cliArgs, settings);
 	// From here main has somewhere to put a failure nobody caught. Installed as
 	// early as there is a controller to publish through, because everything
 	// after this line is a thing that can fail.
@@ -478,15 +462,12 @@ export async function bootstrapShell(
 	});
 
 	installSettingsWindow({
-		store: controller.configStore,
+		settings,
 		logDirectory: logDirectoryFor(userDataPath),
 		preloadPath: join(preloadDirectory, "settings.js"),
 		previousExit: () => controller.previousExit(),
 		launchEnvironment: () => controller.launchEnvironmentValue(),
 		loginEnvironment: () => controller.loginEnvironmentValue(),
-		adopt: (config) => {
-			controller.adoptConfig(config);
-		},
 		preflightSocket: async (name) => {
 			const preflight = await controller.preflightTerminalSocket(name);
 			return {

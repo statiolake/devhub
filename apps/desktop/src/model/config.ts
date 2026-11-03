@@ -420,8 +420,8 @@ export interface GeneralConfig {
 export const DEFAULT_VIEWS: readonly EditorView[] = ["terminal", "editor"];
 
 /** `general.default_view` as the model wants it; anything else is the default. */
-export function defaultViewOf(config: Config | undefined): EditorView {
-  const value = config?.general.default_view;
+export function defaultViewOf(config: Config): EditorView {
+  const value = config.general.default_view;
   return value === "editor" || value === "terminal"
     ? value
     : DEFAULT_EDITOR_VIEW;
@@ -472,39 +472,12 @@ export const TITLE_BAR_MODES: readonly string[] = ["shown", "hidden"];
 /** What `title_bar` says, once it is known to be one of the two. */
 export type TitleBarMode = "shown" | "hidden";
 
-/**
- * `appearance.title_bar` as read from the settings file, for the one caller
- * that needs it before the settings can be loaded.
- *
- * The window is created before the config is: the controller is built around
- * the window, and the mode is stamped on the window the moment it exists — it
- * is what `--metrics` reports, and it is in the first appearance the page is
- * given. It takes the file's text rather than reading it, so it stays a pure
- * function of what is on disk.
- *
- * A file that will not parse answers with the default. That is not a swallowed
- * failure: the real load runs moments later on the same text, and *it* is what
- * reports the problem — to the page, to the Settings window and to the log.
- * The window in the meantime has to be some shape, and the default is the one
- * shape that is right when nothing is known.
- */
-export function titleBarModeIn(text: string | undefined): TitleBarMode {
-  if (text === undefined) return DEFAULT_TITLE_BAR;
-  let table: Record<string, unknown>;
-  try {
-    table = parseConfigText(text);
-  } catch {
-    return DEFAULT_TITLE_BAR;
-  }
-  const appearance = table["appearance"];
-  if (typeof appearance !== "object" || appearance === null) {
-    return DEFAULT_TITLE_BAR;
-  }
-  const value = (appearance as Record<string, unknown>)["title_bar"];
-  return value === "hidden" || value === "shown" ? value : DEFAULT_TITLE_BAR;
-}
-
 const DEFAULT_TITLE_BAR: TitleBarMode = "shown";
+
+/** `appearance.title_bar`, as the one window option it is. */
+export function titleBarModeOf(config: Config): TitleBarMode {
+  return config.appearance.titleBar === "hidden" ? "hidden" : "shown";
+}
 
 export interface AppearanceConfig {
   /**
@@ -674,56 +647,15 @@ export function withProfileRuntimes(
 export const DEFAULT_THEME_DARK = "Dark 2026";
 export const DEFAULT_THEME_LIGHT = "Light 2026";
 
-/**
- * The two theme names, read from the settings file before the settings are
- * loaded — for the same reason and with the same forgiveness as
- * `titleBarModeIn`: the window is created in the theme's colours.
- */
-export function colorThemesIn(text: string | undefined): {
+/** The two colour theme names the settings give, for the shell's theme. */
+export function colorThemeNamesOf(config: Config): {
   readonly dark: string;
   readonly light: string;
 } {
-  const defaults = { dark: DEFAULT_THEME_DARK, light: DEFAULT_THEME_LIGHT };
-  if (text === undefined) return defaults;
-  let table: Record<string, unknown>;
-  try {
-    table = parseConfigText(text);
-  } catch {
-    return defaults;
-  }
-  const appearance = table["appearance"];
-  if (typeof appearance !== "object" || appearance === null) return defaults;
-  const named = (key: string, fallback: string): string => {
-    const value = (appearance as Record<string, unknown>)[key];
-    return typeof value === "string" && value.trim() !== ""
-      ? value.trim()
-      : fallback;
-  };
   return {
-    dark: named("theme_dark", defaults.dark),
-    light: named("theme_light", defaults.light),
+    dark: config.appearance.themeDark,
+    light: config.appearance.themeLight,
   };
-}
-
-/**
- * `appearance.mode` as read from the settings file, before the settings are
- * loaded: the theme the window is created in is the one for this appearance,
- * so it is applied first. Forgiving, like `titleBarModeIn`.
- */
-export function appearanceModeIn(text: string | undefined): string {
-  if (text === undefined) return "auto";
-  let table: Record<string, unknown>;
-  try {
-    table = parseConfigText(text);
-  } catch {
-    return "auto";
-  }
-  const appearance = table["appearance"];
-  if (typeof appearance !== "object" || appearance === null) return "auto";
-  const value = (appearance as Record<string, unknown>)["mode"];
-  return typeof value === "string" && APPEARANCE_MODES.includes(value)
-    ? value
-    : "auto";
 }
 
 export function defaultAppearance(): AppearanceConfig {

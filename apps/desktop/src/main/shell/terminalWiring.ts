@@ -28,7 +28,7 @@ import {
 	registerTerminalService,
 	type TerminalService,
 } from "../terminal/service.js";
-import type { Config } from "../../model/config.js";
+import type { SettingsReader } from "./runningSettings.js";
 import type { AppModel } from "../../model/appModel.js";
 import {
 	agentId as parseAgentId,
@@ -153,7 +153,11 @@ export function createSurfaceResolver(
 }
 
 export interface TerminalWiringOptions {
-	readonly config: Config | undefined;
+	/**
+	 * The settings DevHub runs on, asked when a machine's adapter is built
+	 * (`TerminalRuntimes`): which tmux, which shell and its arguments.
+	 */
+	readonly settings: SettingsReader;
 	readonly effectiveSocketName: string;
 	/** `<configDirectory>/tmux.conf`: the one user tmux config, on this Mac. */
 	readonly userTmuxConfigPath: string;
@@ -187,7 +191,7 @@ export interface TerminalWiring {
  */
 export function wireTerminals(options: TerminalWiringOptions): TerminalWiring {
 	const runtimes = new TerminalRuntimes({
-		config: options.config,
+		settings: options.settings,
 		effectiveSocketName: options.effectiveSocketName,
 		userTmuxConfigPath: options.userTmuxConfigPath,
 		controlSocketPath: options.controlSocketPath,

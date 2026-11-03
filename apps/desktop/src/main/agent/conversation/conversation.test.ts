@@ -8,10 +8,10 @@
  * fixture recorded. The adapter is the real Claude adapter.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	EMPTY_TRANSCRIPT,
 	applyEvent,
@@ -22,6 +22,17 @@ import {
 	type Transcript,
 } from "../../../model/conversation.js";
 import { errorWire } from "../../../model/wire.js";
+import { CONFIG_SCHEMA_VERSION, ConfigStore } from "../../../model/config.js";
+import { DEFAULT_PROFILE, profileLocations } from "../../../model/profile.js";
+import {
+	makeScratchDir,
+	removeScratchDir,
+} from "../../../model/testScratch.js";
+import { RunningSettings } from "../../shell/runningSettings.js";
+import {
+	cacheKeepSettingsOf,
+	limitResumeSettingsOf,
+} from "../../shell/agentWiring.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
 import { RESTART_MARK } from "./protocolAdapter.js";
@@ -1675,6 +1686,106 @@ describe("asleep after the compaction before the cache expires", () => {
 		await compact();
 		expect(said(host)).toEqual(["first", "/compact"]);
 		expect(host.sleeps).toEqual([]);
+		await conversation.stop();
+	});
+});
+
+describe("a settings file DevHub cannot use", () => {
+	// The settings a GUI Agent's conversation asks on every change —
+	// `[agents]`' usage-limit and cache settings — come from the one object
+	// that owns the file, as `wireAgents` hands them over. A file DevHub
+	// cannot use used to make those questions throw, and the conversation
+	// took that for a failure it did not expect and stopped following.
+	let directory: string;
+	let file: string;
+
+	beforeEach(() => {
+		directory = makeScratchDir("conversation-settings");
+		file = join(directory, "settings.toml");
+	});
+
+	afterEach(() => {
+		removeScratchDir(directory);
+	});
+
+	const VERSION = `version = ${String(CONFIG_SCHEMA_VERSION)}`;
+	const BROKEN = `${VERSION}\n[general]\ndefault_view = "sideways"\n[appearance]\nmode = "dusk"\n`;
+
+	async function settingsFrom(text: string): Promise<RunningSettings> {
+		writeFileSync(file, text, "utf8");
+		return RunningSettings.load(
+			new ConfigStore({ file }),
+			profileLocations(DEFAULT_PROFILE, directory),
+		);
+	}
+
+	function following(settings: RunningSettings): {
+		readonly host: FakeHost;
+		readonly conversation: AgentConversation;
+	} {
+		const host = new FakeHost();
+		answeringCli(host);
+		const records = memoryRecords();
+		const conversation = new AgentConversation(
+			host,
+			new ClaudeAdapter("boot-a"),
+			() => undefined,
+			{
+				settings: () => limitResumeSettingsOf(settings.config),
+				record: {
+					get: () => records.get("agent"),
+					set: (record) => records.set("agent", record),
+				},
+				clock: new HandClock(0),
+			},
+			{ settings: () => cacheKeepSettingsOf(settings.config) },
+		);
+		conversation.start();
+		return { host, conversation };
+	}
+
+	it("edited in while a conversation is following: it keeps following", async () => {
+		const settings = await settingsFrom(`${VERSION}\n`);
+		const { conversation } = following(settings);
+		await settle();
+		await conversation.submit("first", []);
+		await settle();
+
+		writeFileSync(file, BROKEN, "utf8");
+		const refused: string[] = [];
+		settings.subscribe({ refused: (notice) => refused.push(notice.code) });
+		await settings.check();
+		expect(refused).toEqual(["settings_refused"]);
+
+		await conversation.submit("second", []);
+		await settle();
+		const reading = conversation.reading();
+		expect(reading.crashed).toBeUndefined();
+		expect(reading.lost).toBeUndefined();
+		expect(ids(conversation)).toEqual([
+			"user:u1",
+			"assistant:msg_1:0",
+			"turn:1",
+			"user:u2",
+			"assistant:msg_2:0",
+			"turn:2",
+		]);
+		await conversation.stop();
+	});
+
+	it("broken when DevHub started: a conversation starts and follows on the defaults", async () => {
+		const settings = await settingsFrom(BROKEN);
+		expect(settings.launchRefusal?.code).toBe("settings_refused");
+		const { conversation } = following(settings);
+		await settle();
+		await conversation.submit("first", []);
+		await settle();
+		expect(conversation.reading().crashed).toBeUndefined();
+		expect(ids(conversation)).toEqual([
+			"user:u1",
+			"assistant:msg_1:0",
+			"turn:1",
+		]);
 		await conversation.stop();
 	});
 });

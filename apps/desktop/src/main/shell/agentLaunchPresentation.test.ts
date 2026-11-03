@@ -28,7 +28,7 @@ import type { TmuxTerminalRuntime } from "../terminal/tmux.js";
 import { agents } from "./adapters.js";
 import {
 	memoryRecords,
-	RESUME_OFF,
+	AGENTS_OFF,
 } from "../agent/conversation/limitResumeTestKit.js";
 import { wireAgents } from "./agentWiring.js";
 import { SessionNotResumable } from "../agent/conversation/failures.js";
@@ -77,7 +77,7 @@ function wired() {
 		},
 		clientVersion: "0.0.0-test",
 		profileTag: "0123456789ab",
-		resumeAfterLimit: () => RESUME_OFF,
+		settings: AGENTS_OFF,
 		limitResumes: memoryRecords(),
 	});
 	const adapter = agents();

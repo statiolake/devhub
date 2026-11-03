@@ -37,7 +37,6 @@ import {
 import {
 	ConfigError,
 	type Config,
-	type ConfigStore,
 	type WorkspaceSource,
 } from "../../model/config.js";
 import { resolveRuntimes, runtimeHealth } from "./runtimes.js";
@@ -46,6 +45,7 @@ import {
 	type LoginEnvironment,
 } from "./loginEnvironment.js";
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
+import type { RunningSettings } from "./runningSettings.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 
@@ -53,7 +53,12 @@ import type { ShellPalette } from "../../ipc/palette.js";
 export { logDirectoryFor } from "../diagnostics/mainLog.js";
 
 interface SettingsHost {
-	readonly store: ConfigStore;
+	/**
+	 * The settings DevHub runs on, and the file they are in: what this window
+	 * shows, and what it writes through, so a save is adopted by the one
+	 * object everything else asks (`runningSettings.ts`).
+	 */
+	readonly settings: RunningSettings;
 	readonly logDirectory: string;
 	readonly preloadPath: string;
 	previousExit(): "clean" | "unclean" | "unknown";
@@ -65,8 +70,6 @@ interface SettingsHost {
 	 */
 	launchEnvironment(): Readonly<Record<string, string | undefined>>;
 	loginEnvironment(): LoginEnvironment;
-	/** Told when a save changed the config, so the shell re-projects it. */
-	adopt(config: Config): void;
 	/** What the socket a person wants to move to looks like right now. */
 	preflightSocket(socketName: string): Promise<SettingsSocketPreflightWire>;
 	/** Move DevHub's terminal sessions onto that socket, or fail loudly. */
@@ -422,13 +425,13 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 
 async function buildSnapshot(): Promise<SettingsSnapshotWire> {
 	const settings = requireHost();
-	const loaded = settings.store.current() ?? (await settings.store.load());
+	const loaded = settings.settings.editing();
 	const resolved = await resolveRuntimes(
 		loaded.config.runtimes,
 		settings.launchEnvironment()["PATH"] ?? "",
 	);
 	sequence += 1;
-	const diagnostic = settings.store.lastDiagnostic();
+	const diagnostic = settings.settings.diagnostic();
 	return {
 		schemaVersion: SETTINGS_SCHEMA_VERSION,
 		sequence,
@@ -521,11 +524,7 @@ function registerIpc(): void {
 		async (_event, request: SettingsResetRequestWire) => {
 			const settings = requireHost();
 			try {
-				const loaded = await settings.store.resetScope(
-					request.revision,
-					request.keys,
-				);
-				settings.adopt(loaded.config);
+				await settings.settings.resetScope(request.revision, request.keys);
 				return await buildSnapshot();
 			} catch (error) {
 				throw settingsError(error);
@@ -538,11 +537,10 @@ function registerIpc(): void {
 		async (_event, request: SettingsSaveRequestWire) => {
 			const settings = requireHost();
 			try {
-				const loaded = await settings.store.save(
+				await settings.settings.save(
 					request.revision,
 					fromWireConfig(request.config),
 				);
-				settings.adopt(loaded.config);
 				return await buildSnapshot();
 			} catch (error) {
 				throw settingsError(error);
@@ -553,10 +551,9 @@ function registerIpc(): void {
 	handle(SETTINGS_CHANNELS.reload, async () => {
 		const settings = requireHost();
 		try {
-			const outcome = await settings.store.reload();
-			if (outcome.kind === "applied") {
-				settings.adopt(outcome.loaded.config);
-			}
+			// The same read the watcher makes: an edit DevHub can use is adopted
+			// everywhere, and one it cannot is the one notice, said once.
+			await settings.settings.check();
 			// Reloading is going back to what the file says, theme included,
 			// even when the file has not changed.
 			settings.themes?.revertTemporary();
@@ -621,12 +618,11 @@ function registerIpc(): void {
 		const settings = requireHost();
 		try {
 			await settings.changeSocket(requested);
-			const loaded = settings.store.current() ?? (await settings.store.load());
-			const saved = await settings.store.save(loaded.revision, {
+			const loaded = settings.settings.editing();
+			await settings.settings.save(loaded.revision, {
 				...loaded.config,
 				runtimes: { ...loaded.config.runtimes, tmux_socket_name: requested },
 			});
-			settings.adopt(saved.config);
 			return await buildSnapshot();
 		} catch (error) {
 			throw settingsError(error);

@@ -251,18 +251,6 @@ export function agentProfilesWire(
   };
 }
 
-export function unavailableAgentProfiles(
-  sequence: number,
-  diagnostic: AgentProfilesWire["diagnostic"],
-): AgentProfilesWire {
-  return {
-    sequence: Math.max(1, sequence),
-    availability: "unavailable",
-    diagnostic,
-    profiles: [],
-  };
-}
-
 /**
  * The gesture, as the model's presentation.
  *

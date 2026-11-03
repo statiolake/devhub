@@ -16,6 +16,7 @@ import type { SettingsThemesHost } from "./settingsWindow.js";
 import type { ShellTheme } from "./shellTheme.js";
 import type { OpenVsxClient } from "./openVsx.js";
 import type { ThemeLibrary, WorkbenchExtensions } from "./themeLibrary.js";
+import { failureText } from "../../model/wire.js";
 
 export interface ThemeSettingsOptions {
 	readonly theme: () => ShellTheme;
@@ -27,8 +28,9 @@ export interface ThemeSettingsOptions {
 	readonly preview: () => void;
 }
 
+/** A failure in its own words: a named one as its summary and detail. */
 function sentence(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return failureText(error);
 }
 
 export function themeSettings(

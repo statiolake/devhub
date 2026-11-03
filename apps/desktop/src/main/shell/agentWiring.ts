@@ -37,10 +37,9 @@ import type { ProtocolAdapter } from "../agent/conversation/protocolAdapter.js";
 import { ConversationRefused } from "../agent/conversation/failures.js";
 import { McpSignInRun } from "../agent/conversation/mcpSignIn.js";
 import type { AgentRecordStore } from "../agent/conversation/agentRecords.js";
-import {
-	CACHE_KEEP_OFF,
-	type CacheKeepSettings,
-} from "../agent/conversation/cacheKeeper.js";
+import type { CacheKeepSettings } from "../agent/conversation/cacheKeeper.js";
+import type { Config } from "../../model/config.js";
+import type { SettingsReader } from "./runningSettings.js";
 import {
 	REAL_CLOCK,
 	type LimitResumeRecord,
@@ -109,12 +108,16 @@ export interface AgentWiringOptions {
 	readonly clientVersion: string;
 	/** This DevHub profile's tag, which keeps its host files apart from another profile's. */
 	readonly profileTag: string;
-	/** `[agents] resume_after_limit` and its message, as the config says now. */
-	readonly resumeAfterLimit: () => LimitResumeSettings;
+	/**
+	 * The settings DevHub runs on, asked each time a conversation needs
+	 * `[agents]` — its usage-limit and cache settings — so an edit applies to
+	 * the conversations already following. Always a `Config`: a settings file
+	 * DevHub cannot use is the defaults or the last accepted settings
+	 * (`runningSettings.ts`), never a failure a conversation could stop on.
+	 */
+	readonly settings: SettingsReader;
 	/** What each GUI Agent's conversation decided about a usage limit, kept across restarts. */
 	readonly limitResumes: AgentRecordStore<LimitResumeRecord>;
-	/** `[agents] auto_compact_*`, as the config says now; off when absent. */
-	readonly cacheKeeping?: () => CacheKeepSettings;
 	/**
 	 * The `/devhub` skill for Agents on `machine`, or nothing where there is
 	 * none (`agent/devhubSkill.ts`).
@@ -288,14 +291,14 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 						}),
 						publish,
 						{
-							settings: options.resumeAfterLimit,
+							settings: () => limitResumeSettingsOf(options.settings.config),
 							record: {
 								get: () => options.limitResumes.get(agentId),
 								set: (record) => options.limitResumes.set(agentId, record),
 							},
 							clock: REAL_CLOCK,
 						},
-						{ settings: options.cacheKeeping ?? (() => CACHE_KEEP_OFF) },
+						{ settings: () => cacheKeepSettingsOf(options.settings.config) },
 					),
 			)
 		);
@@ -1089,4 +1092,21 @@ async function terminate(
 		// pretending it is gone, and says what the port said.
 		return { kind: "failed", ...portRefusal(error) };
 	}
+}
+
+/** `[agents] resume_after_limit` and its message. */
+export function limitResumeSettingsOf(config: Config): LimitResumeSettings {
+	return {
+		enabled: config.agents.resume_after_limit,
+		message: config.agents.resume_after_limit_message,
+	};
+}
+
+/** `[agents] auto_compact_*`. */
+export function cacheKeepSettingsOf(config: Config): CacheKeepSettings {
+	return {
+		enabled: config.agents.auto_compact_before_cache_expiry,
+		leadSeconds: config.agents.auto_compact_lead_seconds,
+		minTokens: config.agents.auto_compact_min_tokens,
+	};
 }

@@ -71,7 +71,6 @@ export type AgentProfilesAvailabilityWire =
 	| "degraded"
 	| "unavailable";
 export type AgentProfilesDiagnosticWire =
-	| "configuration_invalid"
 	| "configuration_conflict"
 	| "projection_unavailable";
 export interface AgentProfilesWire {

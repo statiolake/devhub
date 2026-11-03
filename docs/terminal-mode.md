@@ -37,7 +37,7 @@ editor area of a Workspace = terminal (default_view)  ─ Cmd+Q E ─▶  editor
   constructor; `hydrateModel` takes the default for the restored ones) and
   remembers it from then on. A change in Settings applies at once to the
   Workspaces made after it (`AppModel.setDefaultEditorView`, from
-  `adoptConfig`); the Workspaces already open keep the view they show. With
+  `settingsAccepted`); the Workspaces already open keep the view they show. With
   `"editor"` the lazy start below is unchanged: only the Workspace on screen
   starts its workbench at launch, and each other one when somebody asks for
   it — opening it, `Cmd+Q E`, Enter on its placeholder — not when it is only

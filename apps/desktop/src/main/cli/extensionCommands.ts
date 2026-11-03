@@ -38,6 +38,7 @@ import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
 import { canonicalise } from "./canonical.js";
 import { localRuntime } from "../runtime/registry.js";
 import { expandPath } from "./resolve.js";
+import { failureText } from "../../model/wire.js";
 
 /**
  * How VS Code's own CLI tells an extension id from a `.vsix` (see
@@ -88,7 +89,7 @@ async function report(
 	try {
 		await run(host.cli(transcript), transcript);
 	} catch (error) {
-		const reason = error instanceof Error ? error.message : String(error);
+		const reason = failureText(error);
 		const said = transcript.text();
 		throw new Error(said.length > 0 ? `${said}\n${reason}` : reason);
 	}

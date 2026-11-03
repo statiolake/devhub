@@ -33,7 +33,7 @@ import {
 } from "../agent/conversation/hostScript.js";
 import {
 	memoryRecords,
-	RESUME_OFF,
+	AGENTS_OFF,
 } from "../agent/conversation/limitResumeTestKit.js";
 import type {
 	ByteStream,
@@ -163,7 +163,7 @@ function wired() {
 		report: (message) => reports.push(message),
 		clientVersion: "0.0.0-test",
 		profileTag: "0123456789ab",
-		resumeAfterLimit: () => RESUME_OFF,
+		settings: AGENTS_OFF,
 		limitResumes: memoryRecords(),
 	});
 	const adapter = agents();

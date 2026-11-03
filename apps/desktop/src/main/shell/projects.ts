@@ -42,10 +42,10 @@ export function expandHome(path: string): string {
  * the home directory when there is none. It is a starting value in an editable
  * field, never a decision taken on the person's behalf.
  */
-export function defaultProjectDirectory(config: Config | undefined): string {
-	const configured = config?.projects.directory;
+export function defaultProjectDirectory(config: Config): string {
+	const configured = config.projects.directory;
 	if (configured !== undefined) return resolve(expandHome(configured));
-	const source = config?.workspaceSources.find(
+	const source = config.workspaceSources.find(
 		(candidate) => candidate.type === "filesystem",
 	);
 	return source ? expandHome(source.path) : homedir();
@@ -61,11 +61,11 @@ export function defaultProjectDirectory(config: Config | undefined): string {
  * take with Return rather than a blank field to compose a path in.
  */
 export function cloneParentChoices(
-	config: Config | undefined,
+	config: Config,
 	derived: readonly string[],
 ): readonly string[] {
 	const fallback = defaultProjectDirectory(config);
-	const named = config?.projects.directory === undefined ? [] : [fallback];
+	const named = config.projects.directory === undefined ? [] : [fallback];
 	const choices = [...new Set([...named, ...derived])];
 	return choices.length > 0 ? choices : [fallback];
 }
