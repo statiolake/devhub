@@ -29,8 +29,47 @@ export function unimplementedMembers(): readonly string[] {
  * Events that describe the view itself rather than the window around it. The
  * rest — maximize, full screen, move, resize — are facts about the shell, and
  * a workbench is entitled to hear them because they are true of it too.
+ * They pass through the view's `ResponsivenessGate`.
  */
 const VIEW_EVENTS = new Set(["responsive", "unresponsive"]);
+
+/** After a thaw, a renderer catching up is not one that hangs, for this long. */
+export const RESUME_GRACE_MS = 10_000;
+
+/**
+ * Whether Electron's `unresponsive` reaches VS Code.
+ *
+ * A frozen workbench's renderer is stopped on purpose (SIGSTOP), and one just
+ * thawed is catching up on everything that queued meanwhile: neither is a
+ * hang. VS Code answers `unresponsive` with its "window is not responding"
+ * dialog and a sampling profiler, so the event is held back while frozen and
+ * for `RESUME_GRACE_MS` after; a `responsive` is passed on only to end an
+ * `unresponsive` that was.
+ */
+export class ResponsivenessGate {
+	private frozen = false;
+	private thawedAt = Number.NEGATIVE_INFINITY;
+	private told = false;
+
+	setFrozen(frozen: boolean, now: number): void {
+		if (this.frozen && !frozen) this.thawedAt = now;
+		this.frozen = frozen;
+	}
+
+	/** Whether this `unresponsive` is passed on. */
+	unresponsive(now: number): boolean {
+		if (this.frozen || now - this.thawedAt < RESUME_GRACE_MS) return false;
+		this.told = true;
+		return true;
+	}
+
+	/** Whether this `responsive` is passed on. */
+	responsive(): boolean {
+		const told = this.told;
+		this.told = false;
+		return told;
+	}
+}
 
 /**
  * Focus is neither the view's own nor the window's, so it is emitted here.
@@ -148,6 +187,9 @@ export class WorkbenchView {
 	private readonly lifetime = new EventEmitter();
 	/** This view's `focus`/`blur`, which are nobody else's either. */
 	private readonly focusEvents = new EventEmitter();
+	/** This view's `responsive`/`unresponsive`, as its gate lets them through. */
+	private readonly responsiveness = new EventEmitter();
+	private readonly gate = new ResponsivenessGate();
 	/**
 	 * Whether this workbench has the keyboard, as of the last time anything
 	 * that decides it moved.
@@ -199,6 +241,14 @@ export class WorkbenchView {
 		this.contents.once("destroyed", () => {
 			this.end();
 		});
+		this.contents.on("unresponsive", () => {
+			if (this.gate.unresponsive(Date.now())) {
+				this.responsiveness.emit("unresponsive");
+			}
+		});
+		this.contents.on("responsive", () => {
+			if (this.gate.responsive()) this.responsiveness.emit("responsive");
+		});
 		// A renderer that died is a third ending, and it does not come through
 		// the one above: a `WebContents` whose render process is gone is not
 		// destroyed. It keeps its id, answers `isDestroyed()` with `false`, and
@@ -247,6 +297,14 @@ export class WorkbenchView {
 		return this.viewId;
 	}
 
+	/**
+	 * Its processes were stopped (SIGSTOP) or continued: a frozen renderer is
+	 * not a hung one (`ResponsivenessGate`).
+	 */
+	setFrozen(frozen: boolean): void {
+		this.gate.setFrozen(frozen, Date.now());
+	}
+
 	get webContents(): Electron.WebContents {
 		return this.contents;
 	}
@@ -256,7 +314,7 @@ export class WorkbenchView {
 	private emitterFor(event: string): NodeJS.EventEmitter {
 		if (event === "closed") return this.contents;
 		if (FOCUS_EVENTS.has(event)) return this.focusEvents;
-		if (VIEW_EVENTS.has(event)) return this.contents;
+		if (VIEW_EVENTS.has(event)) return this.responsiveness;
 		if (LIFETIME_EVENTS.has(event)) return this.lifetime;
 		return this.shell.window;
 	}
@@ -460,6 +518,7 @@ export class WorkbenchView {
 		this.shellListeners.length = 0;
 		this.lifetime.removeAllListeners();
 		this.focusEvents.removeAllListeners();
+		this.responsiveness.removeAllListeners();
 		this.shell.detach(this);
 	}
 

@@ -97,9 +97,13 @@ vi.mock("../electron.js", () => ({
 	},
 }));
 
-const { WorkbenchView, asBrowserWindow, workbenchViewOf } = await import(
-	"./workbenchView.js"
-);
+const {
+	WorkbenchView,
+	asBrowserWindow,
+	workbenchViewOf,
+	ResponsivenessGate,
+	RESUME_GRACE_MS,
+} = await import("./workbenchView.js");
 type WorkbenchView = InstanceType<typeof WorkbenchView>;
 
 /** Only the part of the shell a view touches while being shown or hidden. */
@@ -904,5 +908,49 @@ describe("a view the workbench attaches to itself", () => {
 			"render-process-gone",
 		);
 		expect(() => window.contentView).toThrow(/destroyed/);
+	});
+});
+
+/**
+ * A frozen workbench is stopped on purpose, and one just thawed is catching
+ * up: neither is a hang, so VS Code never hears `unresponsive` for them and
+ * never puts up "the window is not responding".
+ */
+describe("a frozen workbench is not an unresponsive one", () => {
+	it("holds back unresponsive while frozen and for the grace after", () => {
+		const gate = new ResponsivenessGate();
+		gate.setFrozen(true, 0);
+		expect(gate.unresponsive(1_000)).toBe(false);
+		gate.setFrozen(false, 5_000);
+		expect(gate.unresponsive(5_000 + RESUME_GRACE_MS - 1)).toBe(false);
+		// Nothing was said, so the recovery is not said either.
+		expect(gate.responsive()).toBe(false);
+		expect(gate.unresponsive(5_000 + RESUME_GRACE_MS)).toBe(true);
+		expect(gate.responsive()).toBe(true);
+		expect(gate.responsive()).toBe(false);
+	});
+
+	it("passes a real hang on, of a workbench never frozen", () => {
+		const gate = new ResponsivenessGate();
+		expect(gate.unresponsive(0)).toBe(true);
+	});
+
+	it("is what the view's listeners hear", () => {
+		const shell = new FakeShell();
+		const view = new WorkbenchView(
+			shell as unknown as ConstructorParameters<typeof WorkbenchView>[0],
+			{},
+		);
+		const heard: string[] = [];
+		view.on("unresponsive", () => heard.push("unresponsive"));
+		view.on("responsive", () => heard.push("responsive"));
+		const contents = view.webContents as unknown as FakeWebContents;
+		view.setFrozen(true);
+		contents.emit("unresponsive");
+		contents.emit("responsive");
+		expect(heard).toEqual([]);
+		view.setFrozen(false);
+		contents.emit("unresponsive");
+		expect(heard).toEqual([]);
 	});
 });
