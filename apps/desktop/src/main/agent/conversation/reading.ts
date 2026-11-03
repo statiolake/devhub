@@ -12,6 +12,7 @@ import {
 	conversationActivity,
 	conversationStatus,
 	type ConversationFailureCode,
+	type PromptCache,
 } from "../../../model/conversation.js";
 import type {
 	AgentFailure,
@@ -24,6 +25,7 @@ import type { ConversationReading } from "./conversation.js";
 export interface ConversationObservation {
 	readonly status: AgentStatus;
 	readonly activity: string | undefined;
+	readonly promptCache?: PromptCache | undefined;
 	readonly failure: AgentFailure | undefined;
 }
 
@@ -34,6 +36,27 @@ const FAILURE_CODES: Readonly<
 	not_signed_in: "conversation_not_signed_in",
 	refused: "conversation_refused",
 };
+
+/**
+ * The cache with when DevHub will compact it, the same object while neither
+ * changes: the model tells an Agent's cache changed by identity.
+ */
+const withAutoCompact = new WeakMap<
+	PromptCache,
+	{ readonly at: number; readonly cache: PromptCache }
+>();
+
+function promptCacheOf(
+	cache: PromptCache | undefined,
+	autoCompactAt: number | undefined,
+): PromptCache | undefined {
+	if (cache === undefined || autoCompactAt === undefined) return cache;
+	const known = withAutoCompact.get(cache);
+	if (known?.at === autoCompactAt) return known.cache;
+	const merged = { ...cache, autoCompactAt };
+	withAutoCompact.set(cache, { at: autoCompactAt, cache: merged });
+	return merged;
+}
 
 export function observeConversation(
 	reading: ConversationReading,
@@ -61,6 +84,10 @@ export function observeConversation(
 	return {
 		status: conversationStatus(transcript),
 		activity: conversationActivity(transcript),
+		promptCache: promptCacheOf(
+			transcript.usage?.promptCache,
+			reading.autoCompactAt,
+		),
 		failure:
 			state.phase === "broken"
 				? {

@@ -28,6 +28,7 @@ const PAGES = [
 	"agents",
 	"pane",
 	"toasts",
+	"tooltip",
 	"picker",
 	"settings",
 	"taskManager",
@@ -107,6 +108,22 @@ describe("the pages, and what each of them may say", () => {
 	});
 
 	/**
+	 * The tooltip draws a row's facts as words and no links: the row's Issue
+	 * and pull request marks are the way to GitHub, and the box is not a
+	 * second one. So its page has no way to the browser at all — not on the
+	 * bridge it declares, and not in the preload that builds it.
+	 */
+	it("gives the tooltip page, which draws no links, no way to the browser", () => {
+		const contract = read("../ipc/contract.ts");
+		const tooltipBridge = /export interface TooltipBridge[\s\S]*?\n}/.exec(
+			contract,
+		)?.[0];
+		expect(tooltipBridge).toBeDefined();
+		expect(tooltipBridge).not.toContain("openExternalUrl");
+		expect(read("./tooltip.ts")).not.toContain("openExternalUrl");
+	});
+
+	/**
 	 * A conversation is attached by the page that draws it. Main sends every
 	 * event of every attached conversation to its attacher, so a second page
 	 * that could attach would be a second reader of every word, and a second
@@ -142,6 +159,7 @@ describe("the pages, and what each of them may say", () => {
 			agents: "agents/main.tsx",
 			pane: "pane/main.tsx",
 			toasts: "toasts/main.tsx",
+			tooltip: "tooltip/main.tsx",
 			picker: "picker/main.tsx",
 		} as const;
 		const bridges = {
@@ -149,6 +167,7 @@ describe("the pages, and what each of them may say", () => {
 			agents: "agents/client.tsx",
 			pane: "pane/client.tsx",
 			toasts: "toasts/client.tsx",
+			tooltip: "tooltip/client.tsx",
 			picker: "picker/client.tsx",
 		} as const;
 

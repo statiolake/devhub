@@ -77,7 +77,7 @@ URL and start working" flow can resolve which checkout to open.
 Scratch is **today's daily folder**, and it is an ordinary Workspace: git or
 not, with a workbench and Agents like any other. The one thing that is special
 about it is which Workspace it is. The sidebar draws it as its fixed entry 1,
-called "Scratch", with the real folder in its accessible name; `Cmd+Q Shift+J` and
+called "Scratch", with the real folder in its tooltip and its accessible name; `Cmd+Q Shift+J` and
 `Cmd+Q 1` select it.
 
 - **Which folder.** `[scratch] daily` in `settings.toml`, a path in the same

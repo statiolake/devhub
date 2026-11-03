@@ -79,6 +79,7 @@ function placementFor(toasts: InstanceType<typeof ToastsView>): LayoutChild {
 		attached: [],
 		toasts: toasts.contentSize(),
 		picker: "none",
+		tooltip: undefined,
 	});
 	const child = children.find((each) => each.identity.kind === "toasts");
 	if (!child) throw new Error("the notices are not in the child list");

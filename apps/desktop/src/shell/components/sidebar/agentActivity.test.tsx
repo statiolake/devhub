@@ -42,7 +42,13 @@ import { ON_SCRATCH, SCRATCH_ID, scratchWorkspace } from "./scratchFixture";
 window.devhub = {
   openModal: () => Promise.resolve(""),
   onMenuCommand: () => () => undefined,
+  // The Sidebar asks main for its tooltips now rather than drawing them
+  // (`RowTooltip.tsx`), so every render of it reaches these three.
+  onSidebarArea: () => () => undefined,
   onChordArmed: () => () => undefined,
+  showTooltip: () => undefined,
+  hideTooltip: () => undefined,
+  releaseTooltip: () => undefined,
 } as unknown as typeof window.devhub;
 
 afterEach(cleanup);
@@ -295,11 +301,81 @@ describe("what a row leads with when somebody named the Agent", () => {
     expect(name.split("\n")[0]).toBe("Investigator");
     expect(name).toContain("Reading the reconciler");
   });
+
+  /**
+   * The tooltip leads the way the row does, and carries the second thing too:
+   * on the rail it is the only place left to read what a named Agent is doing.
+   */
+  it("leads the tooltip with the name, and what it is doing after it", () => {
+    mountGivenName("Investigator", "Reading the reconciler");
+    expect(agentTooltip()).toEqual([
+      { icon: "statusWorking", text: "Investigator", tone: "working" },
+      { text: "Reading the reconciler", style: "muted" },
+    ]);
+  });
+
+  it("is the name alone in the tooltip while the Agent has said nothing", () => {
+    mountGivenName("Investigator", undefined, "idle");
+    expect(agentTooltip()).toEqual([
+      { icon: "statusIdle", text: "Investigator", tone: "idle" },
+    ]);
+  });
 });
 
-/** A screen reader can see neither the mark nor the row: it is told it all. */
-describe("what an Agent row says to a reader", () => {
-  it("is the whole list of facts in words", () => {
+/** The lines the Agent row hands the tooltip page.
+ *
+ * Off the row, which is what the tooltip is about and what the pointer is on
+ * in both states — and in the rail it is the only element that has a box to be
+ * beside, because there an Agent's select button holds nothing at all.
+ */
+function agentTooltip(): unknown {
+  return JSON.parse(
+    document.querySelector(".agent-row")?.getAttribute("data-tooltip-lines") ??
+      "[]",
+  );
+}
+
+/**
+ * An Agent's tooltip is one line, where a Workspace's is a list.
+ *
+ * A Workspace has facts a person cannot see on the row — the path, the branch,
+ * the Issue. An Agent has none: the status is the mark, the note is drawn on
+ * the row, and the Workspace is the row directly above it. What the box is for
+ * is the one thing the rail cuts off, which is the row's own leading text.
+ */
+describe("what an Agent's tooltip says", () => {
+  it("is the row's mark and the row's leading text, and nothing else", () => {
+    mount("Reading the reconciler");
+    expect(agentTooltip()).toEqual([
+      {
+        icon: "statusWorking",
+        text: "Reading the reconciler",
+        tone: "working",
+      },
+    ]);
+  });
+
+  it("falls back to the Agent's name the way the row does", () => {
+    mountNamed("Claude 1", undefined, "idle");
+    expect(agentTooltip()).toEqual([
+      { icon: "statusIdle", text: "Claude 1", tone: "idle" },
+    ]);
+  });
+
+  /** The unread mark is the row's mark, so it is the tooltip's mark too. */
+  it("wears the unread mark and its colour when the row does", () => {
+    mountIdle("waiting");
+    expect(agentTooltip()).toEqual([
+      { icon: "statusUnread", text: "Claude 1", tone: "waiting" },
+    ]);
+  });
+
+  /**
+   * And the reader keeps everything. The box is cut down because the person
+   * reading it can see the mark and the row; a screen reader can see neither,
+   * so the accessible name is still the whole list of facts in words.
+   */
+  it("leaves the row's accessible name whole", () => {
     mountNamed("Claude 1", "Reading the reconciler", "waiting");
     const name =
       document
@@ -421,6 +497,24 @@ describe("an Agent that would not stop", () => {
       closeDiagnosticLabel("close_agents_unknown"),
     );
     expect(agentLines().after).not.toBe("Stop failed");
+  });
+
+  it("says on hover that the stop is a retry, and says nothing on a first stop", () => {
+    mount(undefined, undefined, {
+      kind: "stop-failed",
+      diagnostic: "close_agents_unknown",
+    });
+    expect(screen.getByRole("button", { name: /^Stop / })).toHaveAttribute(
+      "data-tooltip",
+      "Retry stop",
+    );
+    cleanup();
+    mount(undefined);
+    // A first stop is the square's own meaning; a hover that read "Stop
+    // agent" back would be the label twice.
+    expect(screen.getByRole("button", { name: /^Stop / })).not.toHaveAttribute(
+      "data-tooltip",
+    );
   });
 
   it("says it in the row's accessible name too", () => {

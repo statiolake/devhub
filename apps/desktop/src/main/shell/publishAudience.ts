@@ -46,6 +46,7 @@ export interface Pages<Contents> {
 	readonly agents: { contents(): Contents | undefined };
 	readonly picker: { contents(): Contents | undefined };
 	readonly toasts: { contents(): Contents | undefined };
+	readonly tooltip: { contents(): Contents | undefined };
 	/**
 	 * Every Agent terminal's page — one per Agent terminal, shown or hidden.
 	 * Optional, so a window from before terminal panes (and every test fake
@@ -70,7 +71,11 @@ function panesOf<Contents>(pages: Pages<Contents>): readonly Contents[] {
  * It existed as `projectionAudience` by accident, because until now every page
  * that drew chrome also drew from the model. `toasts` broke that and nobody
  * noticed: it has `onTheme` on its bridge, it is not in the projection
- * audience, and it had therefore never been recoloured at runtime.
+ * audience, and it has therefore never been recoloured at runtime. Moving the
+ * tooltip out of the Sidebar's document would have made a second page with the
+ * same silent gap — the Sidebar *is* in the projection audience, so the
+ * tooltip it used to draw recoloured correctly, and one drawn on its own page
+ * would not have.
  *
  * So the rule is stated rather than coincidental, and the test on it is the
  * one that keeps it so: every page with `onTheme` is in here.
@@ -85,6 +90,7 @@ export function chromeAudience<Contents>(
 		pages.agents.contents(),
 		pages.picker.contents(),
 		pages.toasts.contents(),
+		pages.tooltip.contents(),
 		...panesOf(pages),
 	].filter((contents): contents is Contents => contents !== undefined);
 }
@@ -139,6 +145,7 @@ function ownedBy<Contents>(
 		contents === pages.agents.contents() ||
 		contents === pages.picker.contents() ||
 		contents === pages.toasts.contents() ||
+		contents === pages.tooltip.contents() ||
 		panesOf(pages).includes(contents)
 	);
 }

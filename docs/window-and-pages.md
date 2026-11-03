@@ -15,7 +15,29 @@ position in the list. **The list's order is the z-order**, lowest first:
 
     the window's own page → the Sidebar → every workbench (the one on screen
     last among them) → whatever those workbenches attached to themselves →
-    the Agents → every terminal pane → the notices → the questions
+    the Agents → every terminal pane → the notices → the questions → the
+    tooltip
+
+The tooltip is on top of everything, the questions included. Not because it
+may stand over a modal — it may not: a question coming up takes the tooltip
+down, and that is the window's own rule rather than the pointer's, because a
+question opened from the keyboard leaves the pointer exactly where it was. It
+is last because it hides nothing — the view is the size of the box it draws
+and is out of the child list altogether when there is no tooltip up, so there
+is nothing for it to be underneath.
+
+The pointer can enter it, though it draws no links: the facts that name pages
+on GitHub (the repository, the Issue, the pull request) are words in the box,
+and the row's Issue and pull request marks are the way there. A box that went
+the moment the pointer crossed into it would flicker under a pointer passing
+over it, so it stays up while the pointer is in it — arbitrated in **main**
+(`tooltipView.ts`), not in either page: the row and the box are different views, the Sidebar's leave is
+identical whether the pointer went into the tooltip or off to the editor, and
+the tooltip page never hears of the row. The Sidebar sends a _request_
+(`releaseTooltip`), main holds the box for a short grace, and the tooltip
+page's own report of where its pointer is decides. Everything that is not
+about the pointer — a scroll, a resize, the window losing focus, a modal
+opening — still takes it down at once.
 
 A context menu is not in the list at all. A row's right-click menu is a
 **native** menu (`main/shell/contextMenu.ts`): the Sidebar sends the items' ids
@@ -81,7 +103,7 @@ says so, because the next page is the one that will not know.
 
 ## The pages, and what each of them may say
 
-Eight entries, eight preloads, eight bridges. There is no `?window=` role and
+Nine entries, nine preloads, nine bridges. There is no `?window=` role and
 no runtime question about which page this is: **which page this is, is which
 file main loaded.** (An Agent terminal's page is loaded once per terminal;
 the fragment, `pane.html#<id>`, names which terminal — an instance, not a
@@ -90,10 +112,11 @@ role.)
 | Page                  | Entry           | What it draws                                                                                                   | What it may ask for                                                                                                                                                                                                                                                                            |
 | --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | the window's own page | `index.html`    | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split    | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout`                                                                                                                                 |
-| the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showContextMenu`                                                                                                 |
+| the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showContextMenu`, `showTooltip`, `hideTooltip`, `releaseTooltip`                              |
 | the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
 | an Agent's terminal   | `pane.html`     | an Agent's own terminal, on the right: a terminal surface and nothing else, no header                           | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`                                                                                                                                                                                                    |
 | the notices           | `toasts.html`   | what the application has to say, over whatever is on screen, and the notice center                              | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
+| the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; words only, no links                              | `tooltipText` in; `tooltipSize` and `tooltipPointer` out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                                                                  |
 | the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings              | `settings.html` | its own window                                                                                                  | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
 | Task Manager          | `task-manager.html` | its own window: what each Workspace, workbench and Agent costs ([task-manager.md](task-manager.md)) | `TASK_MANAGER_CHANNELS` in full, plus the failure contract every page has |
@@ -324,7 +347,7 @@ There are three kinds of thing main says, not two. A _projection_ describes the
 model and goes to every page that draws from it. A _failure_ is an event and
 goes to the one page that draws failures. A _palette_ is neither: it is how
 everything in the window is painted, and it goes to every page DevHub draws
-chrome on — which is all eight (every terminal pane among them, and the
+chrome on — which is all nine (every terminal pane among them, and the
 Settings and Task Manager windows, which are told by their own windows'
 `apply…Palette`).
 
@@ -332,7 +355,9 @@ That last one used to go out on the projection audience, which coincided with
 "every page that draws chrome" until the `toasts` page arrived: it has `onTheme`
 on its bridge, no model behind it, and had therefore never been recoloured at
 runtime. Nobody noticed, because a stale palette is only visible after a theme
-change. `chromeAudience`
+change. The tooltip would have been the second page with the same silent gap —
+the Sidebar _is_ in the projection audience, so the tooltip it used to draw
+recoloured correctly, and one on its own page would not have. `chromeAudience`
 states the rule instead of it being a coincidence, and the test on it is that
 every page with `onTheme` is in it.
 
@@ -991,7 +1016,7 @@ GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`, the
 Workspace's terminal view included) — `isDestinationSurface` in
 `historyKeys.ts`. The Sidebar is choosing where to go, not being somewhere, and
 the window's own page holds the title bar's arrows, so neither counts; nor do
-the modals, the notices, Settings or a Web Inspector. Main sees
+the modals, the notices, the tooltip, Settings or a Web Inspector. Main sees
 it all without the pages' help: keys in the chord layer's
 `before-input-event` (`ChordHost.interacted`, after the chords and the history
 keys have had theirs), presses and scrolls in each contents' `input-event`
@@ -1063,10 +1088,51 @@ uncovered (`sidebarRect`). The Sidebar declares no drag region in either, which
 also retires the opt-out list every new control had to remember and the
 "a scrollbar inside a drag rectangle moves the window" gotcha.
 
-The Sidebar has no hover tooltips at all: no `title=`, and no box of its own.
-What a row knows that it does not draw — the path, the branch, the Issue, the
-machine — is in its accessible name; the marks that lead to GitHub (the Issue's
-and the pull request's) are links, and the folder glyph is not.
+The same reasoning retires `title=` in the Sidebar: a native tooltip raised
+inside a view may be clipped by it, and the row that most needs one is on the
+collapsed rail. `RowTooltip.tsx` drew it in-page next — which made the clipping
+decidable, and the answer was that it is clipped, because the rail's view is
+40px wide with a title bar and 76px without. That version refused to draw one
+below a readable width at all, so the rail had no hover and an expanded row's
+sentence wrapped into a ribbon: one cause, two complaints.
+
+So the tooltip is a child of the _window_ whose rectangle is its own content,
+the way the `toasts` view already is. `RowTooltip.tsx` is a sender now. It
+keeps the three things only it can know — when (as soon as the pointer is on
+a row, `HOVER_DELAY_MS` being nothing now, and as soon as the keyboard
+reaches one), that there is one tooltip for the whole tree, and what it says — and
+sends an anchor in the _window's_ coordinates. That conversion is one addition:
+the row's box, plus the rectangle main tells the view it occupies
+(`sidebarAreaChanged`). Never `window.screenX`, and never the view's own box,
+which is stale for a while after main moves it.
+
+Where it then goes is `windowLayout.ts`'s `tooltipRect`: the side the row
+prefers, flipped to the other side of the anchor when that one has no room, and
+clamped to the window last. It flips rather than narrows — one rectangle with
+one width, because narrowing to fit is how the ribbon happened.
+
+What has a hover is what tells you something the Sidebar does not draw:
+
+- **A Workspace row** — on the rail as in the expanded column: its name, path,
+  repository, worktree, branch, Issue (number, title, `owner/name`, Projects),
+  pull request with its conversations and CI, the machine and the dev
+  container, a failed close's reason.
+- **An Agent row** — its leading text behind its status mark, what a named
+  Agent is doing, and its prompt cache (warm or cold, time left, hit rate,
+  the auto-compact due; see [agent-gui.md](agent-gui.md)).
+- **The usage limits** — every window per CLI as a bar, its reset (_Resets in
+  2h 10m · 16:40_), when it was read (_Updated_ / _Not refreshed_), and notes.
+- **The marks and controls that would otherwise be silent about it** — the
+  Issue and pull request marks, the unavailable and dev-container marks, the
+  Issue being read; New Agent when it is off or its profiles need attention
+  (_No enabled agent profiles_, _Agent profiles need attention_); × and stop
+  once they are retries (_Retry close_, _Retry stop_) or when × removes a
+  worktree (_Close worktree…_).
+
+What has none: a control whose look is its label (+, ×, stop, Assign issue,
+the picker), and the status marks — the pointer on any of them is the pointer
+on its row. The folder glyph at a Workspace row's start is an inert mark under
+the select button's hit area, not a link; a click on it selects the row.
 
 ## The title bar is one number, and it is main's
 
@@ -1095,8 +1161,8 @@ screen changes nothing here; macOS hides the lights and the bar stays drawn.
 
 ## What it costs
 
-One main process, one renderer per page (seven, of which Settings exists only
-while it is open, and the terminal pane once per terminal), and one per workbench — though several workbench views can
+One main process, one renderer per page (nine, of which Settings and Task Manager exist only
+while they are open, and the terminal pane once per terminal), and one per workbench — though several workbench views can
 share a renderer, which Chromium's same-site grouping decides.
 
 A workbench is a renderer, an extension host and its language servers and

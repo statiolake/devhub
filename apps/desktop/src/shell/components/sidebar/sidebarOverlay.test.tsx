@@ -38,6 +38,7 @@ import {
 import { chromeVariables } from "../../../main/shell/windowLayout";
 
 let previews: LayoutPreviewWire[] = [];
+let tooltips: string[] = [];
 /** What main says about the cursor when the page asks (`sidebarPointer`). */
 let cursor: SidebarPointerWire = { inside: false, active: true };
 let asked = 0;
@@ -45,6 +46,7 @@ let asked = 0;
 beforeEach(() => {
   vi.useFakeTimers();
   previews = [];
+  tooltips = [];
   cursor = { inside: false, active: true };
   asked = 0;
   window.devhub = {
@@ -59,7 +61,11 @@ beforeEach(() => {
       return Promise.resolve();
     },
     onMenuCommand: () => () => undefined,
+    onSidebarArea: () => () => undefined,
     onChordArmed: () => () => undefined,
+    showTooltip: () => tooltips.push("show"),
+    hideTooltip: () => tooltips.push("hide"),
+    releaseTooltip: () => tooltips.push("release"),
   } as unknown as typeof window.devhub;
 });
 
@@ -237,10 +243,10 @@ describe("the floating Sidebar", () => {
   });
 
   /**
-   * A leave in this document is not the last word: only main, reading the
-   * cursor, can say whether it is still on the card.
+   * The tooltip a row raised is a view of its own: the pointer on it has left
+   * this document, and only main can say it is still the overlay's.
    */
-  it("is held while main says the cursor is on the card, and goes once it is not", async () => {
+  it("is held while the cursor is on the tooltip, and goes once it leaves", async () => {
     const { pane } = mount(true);
     point(pane());
     cursor = { inside: true, active: true };
@@ -407,6 +413,12 @@ describe("the floating Sidebar", () => {
     const { pane } = mount(false);
     point(pane());
     expect(pane()).not.toHaveAttribute("data-tree");
+  });
+
+  it("takes down whatever tooltip was up as it opens", () => {
+    const { pane } = mount(true);
+    point(pane());
+    expect(tooltips).toContain("hide");
   });
 });
 

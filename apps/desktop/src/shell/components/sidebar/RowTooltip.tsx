@@ -1,0 +1,339 @@
+/**
+ * The Sidebar's tooltips — decided here, drawn somewhere else.
+ *
+ * # Why this page stopped drawing them
+ *
+ * They were sixteen `title` attributes first. A `title` is Chromium's own
+ * tooltip widget: a native popup the page does not own, positioned by the
+ * browser, and — this is the part that mattered — raised inside a
+ * `WebContentsView`. Whether such a popup may paint outside the view's bounds
+ * is not something this codebase gets to decide, and not something it can rely
+ * on either: it is Chromium's, per platform, and it changes.
+ *
+ * So this file replaced them with a `<div>` in the Sidebar's own document,
+ * which made the clipping decidable. And the answer was that it is clipped.
+ * The row that most needs a tooltip is the glyph on a collapsed rail, and that
+ * view is 44px wide with a title bar and 76px without — the first cut drew a
+ * three-line description into it as a 42px-wide column 809px tall that ran off
+ * the top of the view. The same failure `title` was replaced to avoid, drawn
+ * by DevHub instead of by Chromium.
+ *
+ * `MIN_READABLE_WIDTH` was the answer to that: below a readable width, draw
+ * nothing. It was honest, and it was the wrong shape — it accepted the
+ * premise that the tooltip has to fit inside the column. The rail then had no
+ * hover at all, and an expanded row's sentence wrapped into a narrow ribbon,
+ * which are one complaint and not two.
+ *
+ * # What it is now
+ *
+ * A sender. The tooltip is a child of the *window* whose rectangle is its own
+ * content (`main/shell/tooltipView.ts`), exactly as the notices are, so it may
+ * run out over the editor and there is no width at which it stops being
+ * readable. This page keeps the three things only it can know:
+ *
+ * - **When.** As soon as the pointer is on a row (`HOVER_DELAY_MS`, which is
+ *   nothing now), and as soon as the keyboard reaches one. A pointer that
+ *   passes over a row inside one event turn still raises nothing.
+ * - **One tooltip for the whole tree**, not one per row. Saying so here is
+ *   what makes it true rather than hoping every row hides its own when another
+ *   shows — and main cannot hold two either, so the rule is kept twice.
+ * - **What it says.** The row's description (`rowDescription.ts`), which is
+ *   also its accessible name: one composition, two readers, so they cannot
+ *   drift. Drawn one line per line, because the description's newlines are the
+ *   lines the expanded row would have drawn.
+ *
+ * # The anchor is in the window's coordinates
+ *
+ * Which is the one thing this component has to get right, and it is one
+ * addition: the row's box, plus the rectangle main told this view it occupies
+ * (`onSidebarArea`). Not `window.screenX`, which is the screen's and needs the
+ * window's own origin taken back off; not `documentElement`'s box, which is
+ * this view's and is stale for a while after main moves it. Where anything is,
+ * is `main/shell/windowLayout.ts`, and a page that needs a number from it is
+ * told the number.
+ *
+ * The anchor is clipped to the Sidebar's rectangle, because a row scrolled
+ * half out of the column has half a row on screen and a tooltip pointing at
+ * the invisible half points at nothing.
+ *
+ * Nothing here decides *where* the tooltip goes, and there is no longer a
+ * side to prefer: a tooltip is beside its row, in the rail and in the expanded
+ * column alike. The owner turns the anchor into a rectangle, flipping and
+ * clamping against a window this page cannot see.
+ */
+
+import { useCallback, useEffect, useRef } from "react";
+import { devhub } from "../../sidebar/client";
+import type { SidebarAreaWire, TooltipLineWire } from "../../../ipc/contract";
+import type { PromptCacheWire } from "../../../ipc/appShell";
+import { promptCacheFacts } from "./promptCacheFacts";
+import { tooltipLines } from "./rowDescription";
+
+/**
+ * How often a tooltip that counts something down is drawn again while it is
+ * up. Only the lines that changed are sent, so this is a second's clock, not a
+ * second's redraw.
+ */
+const LIVE_TICK_MS = 1000;
+
+/**
+ * How long the pointer is on a row before its tooltip is drawn: not at all.
+ *
+ * It was 300 ms, a rest the pointer had to make first, and the person found a
+ * tooltip that waits to be a tooltip that is not there. It is still a timer
+ * rather than a call, so that a row left inside the same turn of the event
+ * loop — an `over` and an `out` in one dispatch — raises nothing, and so that
+ * the floating Sidebar has opened before the row is asked (see `generation`).
+ * The flicker it used to guard is guarded where it is decided now: main holds
+ * a tooltip being left for `RELEASE_GRACE_MS` (`tooltipView.ts`).
+ */
+const HOVER_DELAY_MS = 0;
+
+/**
+ * What this element has to say, as the lines a tooltip draws.
+ *
+ * Two attributes, because there are two kinds of thing with a tooltip in the
+ * Sidebar and they are genuinely different. A control says one thing — *No
+ * enabled agent profiles*, *Retry close* — and carries it as `data-tooltip`, a
+ * plain string, which is all such a thing has ever needed. Only a control whose
+ * look does not already say it: a `+` is not told "Create agent", a `×` is not
+ * told "Close", and a status mark is not read back as "Terminal: Idle" — those
+ * have no `data-tooltip`, so the pointer on them is the pointer on their row. A row is a list of facts about
+ * something, composed by `rowDescription.ts`, and carries it as
+ * `data-tooltip-lines`: the same list the row's accessible name is made of,
+ * serialised onto the element that raises it.
+ *
+ * It is on the element rather than in a lookup because *which* element the
+ * pointer came to rest on is the whole question, and the answer is found by
+ * `closest()` on the DOM. A map from row id to lines would be the same facts
+ * kept in a second place, keyed by something the pointer does not carry.
+ *
+ * Bad JSON draws nothing rather than throwing: this runs on every pointer move
+ * over the column, and the one thing a tooltip must never do is take the
+ * Sidebar down with it. It cannot be bad in practice — the only writer is
+ * `JSON.stringify` three files away — which is exactly why an exception here
+ * would be unactionable noise.
+ */
+export function tooltipFor(
+  element: HTMLElement,
+  now: number = Date.now(),
+): readonly TooltipLineWire[] | undefined {
+  const rich = element.dataset["tooltipLines"];
+  if (rich !== undefined && rich !== "") {
+    const parsed: unknown = JSON.parse(rich);
+    const lines = Array.isArray(parsed) ? (parsed as TooltipLineWire[]) : [];
+    // An Agent's prompt cache is a countdown, so its line is composed at the
+    // moment it is drawn rather than when the row was: see `LIVE_TICK_MS`.
+    const cache = element.dataset["tooltipCache"];
+    const all =
+      cache === undefined || cache === ""
+        ? lines
+        : [
+            ...lines,
+            ...tooltipLines(
+              promptCacheFacts(JSON.parse(cache) as PromptCacheWire, now),
+            ),
+          ];
+    return all.length > 0 ? all : undefined;
+  }
+  const text = element.dataset["tooltip"];
+  return text === undefined || text === "" ? undefined : [{ text }];
+}
+
+export interface RowTooltipProps {
+  /**
+   * The floating Sidebar's count of openings and closings
+   * (`useSidebarOverlay.ts`). A row the pointer arrived on as the card opened
+   * or closed raises nothing: the card already shows that row in full, and a
+   * sentence about it beside the card is the rail's tooltip doubled up with
+   * the overlay. The next row the pointer goes to is asked as usual.
+   */
+  readonly generation?: () => number;
+}
+
+export function RowTooltip({ generation }: RowTooltipProps = {}) {
+  /**
+   * Where main has laid this view, which is the whole of what this page
+   * knows about where it is. Undefined until the first push, and a tooltip
+   * is simply not raised until then: a guessed origin would put the sentence
+   * somewhere that is not beside the row, which is worse than a tooltip that
+   * is a moment late.
+   */
+  const area = useRef<SidebarAreaWire | undefined>(undefined);
+  useEffect(() => devhub().onSidebarArea((next) => (area.current = next)), []);
+
+  const hide = useCallback(() => {
+    devhub().hideTooltip();
+  }, []);
+
+  /**
+   * The pointer left the row, which is not the same as the tooltip being over.
+   *
+   * The box is a different view and may be what the pointer left *for* — it
+   * holds the links to the pages the row's facts name — and a `pointerout` in
+   * this document looks exactly the same either way. So this is a request:
+   * main holds the tooltip for a grace and the tooltip page says whether the
+   * pointer arrived there. See `TooltipView.release`.
+   *
+   * Everything else here still hides at once, through `hide`. A scroll, a
+   * resize and the window losing focus are not questions about the pointer,
+   * and neither is the keyboard leaving a row.
+   */
+  const release = useCallback(() => {
+    devhub().releaseTooltip();
+  }, []);
+
+  /** What the tooltip up now says, and about which element. */
+  const shown = useRef<{ element: HTMLElement; text: string } | undefined>(
+    undefined,
+  );
+
+  const show = useCallback((element: HTMLElement) => {
+    const lines = tooltipFor(element);
+    if (lines === undefined) return;
+    shown.current = { element, text: JSON.stringify(lines) };
+    const sidebar = area.current;
+    if (!sidebar) return;
+    const own = element.getBoundingClientRect();
+    // Level with the *row*, whatever in it the pointer is on: an Issue mark
+    // or a stop button is a few pixels inside its row, and the box beside the
+    // column is about the row it stands level with. Across, it is the
+    // element's own box — main puts the tooltip past the Sidebar's edge
+    // whatever it is (`windowLayout.tooltipRect`).
+    const row = element.closest<HTMLElement>(".sidebar-row");
+    const level = row === null ? own : row.getBoundingClientRect();
+    const box = {
+      left: own.left,
+      width: own.width,
+      top: level.top,
+      height: level.height,
+    };
+    // This view's own pixels plus this view's origin in the window. The
+    // row's box is relative to the view; main's rectangle says where the
+    // view is; the sum is where the row is on the window.
+    const x = sidebar.x + box.left;
+    const y = sidebar.y + box.top;
+    // Clipped to the column, because a row scrolled half out of it has
+    // half a row on screen. `top` and `bottom` are clipped independently
+    // so that a row leaving by either edge shrinks rather than moves.
+    const top = Math.max(sidebar.y, Math.min(y, sidebar.y + sidebar.height));
+    const bottom = Math.max(
+      sidebar.y,
+      Math.min(y + box.height, sidebar.y + sidebar.height),
+    );
+    if (bottom <= top) return;
+    devhub().showTooltip({
+      lines,
+      anchor: {
+        x,
+        y: top,
+        width: Math.min(box.width, sidebar.width),
+        height: bottom - top,
+      },
+    });
+  }, []);
+
+  const anchor = useRef<HTMLElement | null>(null);
+  const resting = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    const cancelRest = () => {
+      if (resting.current === undefined) return;
+      clearTimeout(resting.current);
+      resting.current = undefined;
+    };
+    const anchorFor = (event: Event): HTMLElement | undefined => {
+      const target = event.target;
+      if (!(target instanceof Element)) return undefined;
+      const element = target.closest<HTMLElement>(
+        "[data-tooltip], [data-tooltip-lines]",
+      );
+      if (!element || element === anchor.current) return undefined;
+      return element;
+    };
+    // On the next turn, not this one. See `HOVER_DELAY_MS`.
+    const pointerEnter = (event: Event) => {
+      const element = anchorFor(event);
+      if (!element) return;
+      cancelRest();
+      anchor.current = element;
+      const arrivedIn = generation?.();
+      resting.current = setTimeout(() => {
+        resting.current = undefined;
+        if (anchor.current !== element) return;
+        if (generation !== undefined && generation() !== arrivedIn) return;
+        show(element);
+      }, HOVER_DELAY_MS);
+    };
+    // The keyboard chose the row; it is drawn at once.
+    const keyboardEnter = (event: Event) => {
+      const element = anchorFor(event);
+      if (!element) return;
+      cancelRest();
+      anchor.current = element;
+      show(element);
+    };
+    const left = (event: Event): boolean => {
+      const target = event.target;
+      if (!(target instanceof Element)) return false;
+      if (!anchor.current || !anchor.current.contains(target)) return false;
+      cancelRest();
+      anchor.current = null;
+      return true;
+    };
+    // The pointer may have left for the tooltip. Main decides; see `release`.
+    const pointerLeave = (event: Event) => {
+      if (left(event)) release();
+    };
+    // The keyboard cannot be in two views at once, so there is nothing to
+    // arbitrate: a row that lost focus is a row nobody is on.
+    const keyboardLeave = (event: Event) => {
+      if (left(event)) hide();
+    };
+    // Pointer and keyboard alike: a row reached with the arrows has the
+    // same question to answer as a row under the pointer.
+    document.addEventListener("pointerover", pointerEnter);
+    document.addEventListener("pointerout", pointerLeave);
+    document.addEventListener("focusin", keyboardEnter);
+    document.addEventListener("focusout", keyboardLeave);
+    // Anything that can move the row out from under the tooltip takes it
+    // down rather than leaving it pointing at nothing. It matters more now
+    // than it did: the tooltip is a separate view and cannot be scrolled
+    // or resized away by the document that raised it.
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    window.addEventListener("blur", hide);
+    // A countdown in a tooltip that is up is drawn again as it changes.
+    const tick = setInterval(() => {
+      const current = shown.current;
+      if (
+        current === undefined ||
+        anchor.current !== current.element ||
+        current.element.dataset["tooltipCache"] === undefined
+      )
+        return;
+      const lines = tooltipFor(current.element);
+      if (lines !== undefined && JSON.stringify(lines) !== current.text)
+        show(current.element);
+    }, LIVE_TICK_MS);
+    return () => {
+      clearInterval(tick);
+      cancelRest();
+      // A tooltip outlives this component otherwise. It is drawn by
+      // another view, so unmounting takes nothing off the screen —
+      // which is the one new way this could leave a sentence standing
+      // over the editor with nothing under it.
+      hide();
+      document.removeEventListener("pointerover", pointerEnter);
+      document.removeEventListener("pointerout", pointerLeave);
+      document.removeEventListener("focusin", keyboardEnter);
+      document.removeEventListener("focusout", keyboardLeave);
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+      window.removeEventListener("blur", hide);
+    };
+  }, [generation, hide, release, show]);
+
+  // Nothing is drawn here. That is the point of the file.
+  return null;
+}

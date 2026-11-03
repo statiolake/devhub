@@ -271,8 +271,9 @@
  * varied with how much DevHub happened to know about it. A list whose rows are
  * three different heights is a list you cannot scan down, and the two extra
  * lines were saying in words what the trailing marks say in marks. So the words
- * are the name and the branch, and the rest is the mark group at the trailing
- * edge.
+ * are the name and the branch, the rest is the mark group at the trailing edge,
+ * and the whole of what a row knows is in its tooltip where there is room for
+ * it.
  *
  * Every row is a `div` now — Scratch is a Workspace row — but a button pads
  * itself by `1px 6px` where a div does not, and the inset below is stated so
@@ -1886,7 +1887,8 @@ body.is-resizing-rows {
 }
 
 /* A Workspace's terminal activity: the Agents' status mark, never the part of
-   the line that gives way. */
+   the line that gives way. It has no hover of its own — the pointer on it is
+   the pointer on its row. */
 .row-terminal-activity {
   display: flex;
   flex: none;
@@ -2053,8 +2055,8 @@ body.is-resizing-rows {
 /* Claude's and Codex's rate limits, at the foot of the column: a slim row per
    CLI — name, bar, percentage, when it resets — in the column's quiet ink,
    coloured only near the limit (`usageLevel.ts`), and a caption under the bar
-   when another window than the shown one is the reason. See
-   `UsageLimits.tsx`. The rows are one grid, each row a subgrid of
+   when another window than the shown one is the reason; the detail in the
+   tooltip. See `UsageLimits.tsx`. The rows are one grid, each row a subgrid of
    it, so every bar has the same edges however wide the words beside it are.
    One line whatever the width: the bar keeps a sliver and the reset is what
    gives way, cut short before the percentage is. On the rail the words go and
@@ -2173,8 +2175,8 @@ body.is-resizing-rows {
  * The Issue, in the branch's place, when the row knows which Issue it is on.
  *
  * `{name} {icon}` then the trailing marks. Only the icon (and the Projects
- * lane's letter): the title is in the mark's accessible name, not on the
- * line. The select button stops growing (`.has-issue-title`) so the
+ * lane's letter): the title is in the mark's tooltip and accessible name, not
+ * on the line. The select button stops growing (`.has-issue-title`) so the
  * icon sits right after the name, and the icon's own trailing margin is what
  * pushes the marks to the row's end — the same place they are on a row with
  * no Issue. The name is still the one thing that gives way on a narrow row.
@@ -2241,7 +2243,7 @@ body.is-resizing-rows {
  * the name's button is what gives way), the pull request's mark with its
  * badges, the name, then the Issue's icon and the editor's mark. The
  * last two are dropped whole under 190px, rather than left to be cut in half;
- * the Issue is still in the row's accessible name.
+ * the Issue is still on the row's tooltip and one hover away on the name.
  */
 .workspace-row {
   container-name: workspace-row;

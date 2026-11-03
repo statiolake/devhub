@@ -1,0 +1,382 @@
+// @vitest-environment jsdom
+
+/**
+ * The page a tooltip is drawn on, and the one number it owes main.
+ *
+ * This view is exactly as big as the box it draws, because a native view takes
+ * every click inside its bounds whether or not anything is painted there. So
+ * the two assertions worth having are the two halves of that bargain: a
+ * sentence to draw is measured and reported, and nothing to draw is reported
+ * as a size of zero — which is what takes the view out of the window. A
+ * tooltip that went down and did not say so would be an invisible rectangle
+ * over the editor for the rest of the session.
+ */
+
+import "@testing-library/jest-dom/vitest";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { TooltipApp } from "./TooltipApp";
+import type { TooltipContentWire } from "../../ipc/contract";
+
+/** A row's facts, as `rowDescription.ts` composes them. */
+const FACTS: TooltipContentWire = {
+  lines: [
+    { text: "widget", style: "name" },
+    { text: "/projects/widget", style: "muted" },
+    { icon: "branch", text: "main", style: "muted" },
+  ],
+};
+
+/** Every report of where the pointer is, in order. */
+let pointer: boolean[] = [];
+/** Every failure this page raised, in order. */
+let raised: unknown[] = [];
+
+/** Every size this page reported, in order. */
+let reported: { width: number; height: number }[] = [];
+/** The listener main's push would reach. */
+let push: ((tooltip: TooltipContentWire | undefined) => void) | undefined;
+
+/**
+ * A box of a stated size. jsdom lays nothing out, so the element says how big
+ * it came out — which is the one number this page exists to produce.
+ */
+function sizeBoxes(width: number, height: number) {
+  Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () =>
+      ({
+        width,
+        height,
+        top: 0,
+        left: 0,
+        right: width,
+        bottom: height,
+      }) as DOMRect,
+  });
+}
+
+beforeEach(() => {
+  reported = [];
+  pointer = [];
+  raised = [];
+  push = undefined;
+  sizeBoxes(220, 34);
+  // No `ResizeObserver` in jsdom. The page's first measurement is taken
+  // directly rather than through the observer, so a stub that never fires is
+  // enough to pin what this test is about.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  window.devhub = {
+    raiseFailure: (error: unknown) => {
+      raised.push(error);
+    },
+    onTheme: () => () => undefined,
+    onTooltip: (
+      listener: (tooltip: TooltipContentWire | undefined) => void,
+    ) => {
+      push = listener;
+      return () => (push = undefined);
+    },
+    reportTooltipSize: (size: { width: number; height: number }) => {
+      reported.push(size);
+    },
+    reportTooltipPointer: (inside: boolean) => {
+      pointer.push(inside);
+    },
+  };
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  delete window.devhub;
+});
+
+/** Main says a tooltip is up, or says it is not. */
+function send(tooltip: TooltipContentWire | undefined) {
+  act(() => {
+    if (!push) throw new Error("the page never subscribed to the tooltip");
+    push(tooltip);
+  });
+}
+
+describe("the tooltip page", () => {
+  it("draws nothing at all until main says there is something to say", () => {
+    render(<TooltipApp />);
+    expect(document.querySelector(".tooltip-box")).toBeNull();
+  });
+
+  it("draws one line per fact, in the order it was given them", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    const box = document.querySelector(".tooltip-box");
+    expect(box).not.toBeNull();
+    expect(
+      [...box!.querySelectorAll(".tooltip-line-text")].map(
+        (line) => line.textContent,
+      ),
+    ).toEqual(["widget", "/projects/widget", "main"]);
+  });
+
+  /**
+   * The whole point of the shape: a fact is recognised by the mark in front of
+   * it rather than by a label word before it. The mark is a *name* on the
+   * wire, resolved here through the Sidebar's own `icons.tsx`, so both pages
+   * draw one set of drawings.
+   */
+  it("draws each fact behind the mark the row would have drawn", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    const marks = [...document.querySelectorAll(".tooltip-line")].map(
+      (line) => line.querySelector("svg")?.getAttribute("data-glyph") ?? null,
+    );
+    expect(marks).toEqual([null, null, "branch"]);
+  });
+
+  /**
+   * A measure drawn as a bar, with the words about time worked out here from
+   * this page's clock: a reset ahead is "in …", one already past makes the
+   * reading history, faded and said to be.
+   */
+  it("draws a meter line as a labelled bar with its reset, and a reading past its reset faded", () => {
+    const now = Date.now();
+    const minute = 60_000;
+    render(<TooltipApp />);
+    send({
+      lines: [
+        { text: "Claude", style: "name" },
+        {
+          kind: "meter",
+          label: "5-hour",
+          usedPercent: 86.4,
+          resetsAt: now + 130 * minute + 30_000,
+        },
+        {
+          kind: "meter",
+          label: "7-day",
+          usedPercent: 99,
+          resetsAt: now - minute,
+        },
+        { kind: "meter", label: "weekly" },
+      ],
+    });
+    const [ahead, past, unknown] = [
+      ...document.querySelectorAll<HTMLElement>(".tooltip-meter"),
+    ];
+    expect(ahead!.querySelector(".tooltip-meter-head")).toHaveTextContent(
+      "5-hour86%",
+    );
+    expect(ahead).toHaveAttribute("data-level", "near");
+    expect(ahead).not.toHaveAttribute("data-stale");
+    expect(
+      (ahead!.querySelector(".tooltip-meter-fill") as HTMLElement).style.width,
+    ).toBe("86.4%");
+    expect(ahead!.querySelector(".tooltip-meter-reset")).toHaveTextContent(
+      /^Resets in 2h 10m · /u,
+    );
+    expect(past).toHaveAttribute("data-stale", "true");
+    expect(past).toHaveAttribute("data-level", "calm");
+    expect(past!.querySelector(".tooltip-meter-reset")).toHaveTextContent(
+      /nothing reported since$/u,
+    );
+    expect(unknown).toHaveTextContent("weeklynot reported");
+    expect(unknown).toHaveTextContent("Reset time not reported");
+    expect(unknown).toHaveAttribute("data-level", "calm");
+  });
+
+  /** A mark this page has no drawing for is no mark, and never a failure. */
+  it("draws the fact without a mark when the mark is not one it has", () => {
+    render(<TooltipApp />);
+    send({ lines: [{ icon: "not-a-glyph", text: "still a fact" }] });
+    expect(screen.getByText("still a fact")).toBeInTheDocument();
+    expect(document.querySelector(".tooltip-line svg")).toBeNull();
+  });
+
+  /** The status colour rides on the line, because the row's mark is coloured. */
+  it("carries an Agent's status colour onto the line that says it", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        { text: "Codex 1", style: "name" },
+        { icon: "statusWaiting", text: "Waiting", tone: "waiting" },
+      ],
+    });
+    expect(
+      document.querySelectorAll(".tooltip-line")[1]?.getAttribute("data-tone"),
+    ).toBe("waiting");
+  });
+
+  /**
+   * A mark names itself on the element that draws it, which is what lets the
+   * stylesheet say what colour an open Issue is. The alternative was a colour
+   * composed with the fact and sent over the wire, which would have put the
+   * palette in two places and let the row and the box disagree about green.
+   */
+  it("names each mark on the element that draws it", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        { icon: "repository", text: "github.com/example/widget" },
+        { icon: "issueOpen", text: "#128 Tidy the rail" },
+      ],
+    });
+    expect(
+      [...document.querySelectorAll(".tooltip-line-mark")].map((mark) =>
+        mark.getAttribute("data-mark"),
+      ),
+    ).toEqual(["repository", "issueOpen"]);
+  });
+
+  /**
+   * And the stylesheet colours them, out of tokens that already exist.
+   *
+   * The assertion is against the file rather than a computed style because
+   * jsdom applies no stylesheet of ours; what is worth pinning is the thing a
+   * later edit could quietly lose — that every mark a Workspace's tooltip
+   * draws names an ink, and that the ink is one `tokens.css` declares.
+   */
+  it("gives every workspace mark a colour, from a token that exists", () => {
+    const css = readFileSync("src/shell/tooltip/tooltipPage.css", "utf8");
+    const tokens = readFileSync("src/shell/styles/tokens.css", "utf8");
+    for (const mark of [
+      "repository",
+      "branch",
+      "worktree",
+      "folder",
+      "remote",
+      "container",
+      "issueOpen",
+      "issueClosed",
+      "pullRequest",
+      "pullRequestMerged",
+      "pullRequestClosed",
+      "conversation",
+      "checksFailing",
+      "checksPending",
+      "checksPassing",
+    ]) {
+      const rule = new RegExp(
+        `\\[data-mark="${mark}"\\][^{}]*\\{[^}]*\\}|\\[data-mark="${mark}"\\],`,
+        "u",
+      );
+      expect(css, `${mark} has no colour rule`).toMatch(rule);
+    }
+    for (const token of [...css.matchAll(/color: var\((--[a-z-]+)\)/gu)].map(
+      (match) => match[1],
+    )) {
+      expect(tokens, `${token ?? ""} is not a token`).toContain(
+        `${token ?? ""}:`,
+      );
+    }
+  });
+
+  /**
+   * No shadow, and it is a fact about the *view* rather than about taste.
+   *
+   * This view is exactly the box's rectangle, and a shadow paints outside the
+   * box: it filled the four triangles the corner radius cuts away, so every
+   * tooltip wore a translucent square at each corner. Giving the view room for
+   * it would have meant a halo of dead pointer around every tooltip, because a
+   * native view takes every click inside its bounds. See `tooltipPage.css`.
+   */
+  it("casts no shadow, so the view's corners are empty", () => {
+    const css = readFileSync("src/shell/tooltip/tooltipPage.css", "utf8");
+    expect(css).not.toMatch(/^\s*box-shadow:/mu);
+  });
+
+  /** The row's accessible name is already this sentence; see `TooltipApp`. */
+  it("is not in the accessibility tree, because the row already says this", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    expect(document.querySelector(".tooltip-box")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+  });
+
+  it("measures the box and tells main how big it came out", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    expect(reported).toContainEqual({ width: 220, height: 34 });
+  });
+
+  /**
+   * The half that must not be forgotten: a view that stayed in the window
+   * with nothing in it is a hole in the editor, and zero is how it leaves.
+   */
+  it("reports a size of zero when the tooltip goes, so the view leaves", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    reported = [];
+    send(undefined);
+    expect(reported).toEqual([{ width: 0, height: 0 }]);
+    expect(document.querySelector(".tooltip-box")).toBeNull();
+  });
+
+  it("re-measures when the sentence changes, because a row is a new size", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    reported = [];
+    sizeBoxes(410, 68);
+    send({ lines: [{ text: "a much longer row entirely", style: "name" }] });
+    expect(reported).toContainEqual({ width: 410, height: 68 });
+  });
+
+  /**
+   * Three of a row's facts name a page on GitHub, and the box says them as
+   * words and nothing more: the Issue and pull request marks on the row are
+   * the way there, and a box that led there too was one more way out to hit
+   * by accident.
+   */
+  it("draws every fact as words, a page's address among them", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        { text: "widget", style: "name" },
+        {
+          icon: "repository",
+          text: "github.com/example/widget",
+          style: "muted",
+        },
+      ],
+    });
+    expect(document.querySelector("a")).toBeNull();
+    expect(document.querySelector(".tooltip-box")).toHaveTextContent(
+      "github.com/example/widget",
+    );
+  });
+
+  /**
+   * Half of an answer main assembles. The row is another view, so the pointer
+   * crossing into the box is a leave there and an enter here, and neither page
+   * can see the other's pointer. This page says only what it knows.
+   */
+  it("says when the pointer is in the box, and when it has left", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    const box = document.querySelector(".tooltip-box")!;
+    act(() => {
+      box.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+    });
+    expect(pointer).toEqual([true]);
+    act(() => {
+      box.dispatchEvent(new MouseEvent("pointerout", { bubbles: true }));
+    });
+    expect(pointer).toEqual([true, false]);
+  });
+
+  it("says a size once, not once per render", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    const first = reported.length;
+    send(FACTS);
+    expect(reported.length).toBe(first);
+  });
+});

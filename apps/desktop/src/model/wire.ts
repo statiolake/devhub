@@ -386,6 +386,9 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     controlState: agentControlStateWire(agent.controlState),
     unread: agent.unread,
     activity: agent.activity,
+    ...(agent.promptCache === undefined
+      ? {}
+      : { promptCache: agent.promptCache }),
     injection: agent.injection,
     automaticActions: agent.automaticActions,
     ...(agent.failure === undefined ? {} : { failure: agent.failure }),

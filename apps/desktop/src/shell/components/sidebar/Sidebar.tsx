@@ -31,6 +31,7 @@ import { UsageLimits } from "./UsageLimits";
 import { devhub } from "../../sidebar/client";
 import { isImeComposing } from "../../accessibility/ime";
 import { Glyph, type GlyphName } from "./icons";
+import { RowTooltip } from "./RowTooltip";
 import { agentMenuItems, openRowMenu, workspaceMenuItems } from "./rowMenu";
 import { StatusMark, unreadShows } from "./StatusMark";
 import { mergeExitingRows, useClosingExit } from "./closingExit";
@@ -45,11 +46,17 @@ import { useSidebarOverlay } from "./useSidebarOverlay";
 import {
   agentNote,
   agentRowFacts,
+  agentTooltipFacts,
   editorAttachmentFact,
   issueLabel,
+  issueMark,
+  issueProjectLine,
+  issueRepositoryName,
   checksBadge,
   hasUnresolvedConversations,
+  markLines,
   pullRequestFacts,
+  tooltipLines,
   describe,
   pullRequestGlyphName,
   unavailableText,
@@ -199,16 +206,25 @@ function WorkspaceRow({
   // it stops being able to answer. It covers the Agents as well as the
   // Workspace because they are going with it.
   const closing = workspace.close.kind === "running";
+  const closeFailed =
+    workspace.close.kind === "failed" ? workspace.close : undefined;
 
   // What the close button is about to do, read from the same rule main uses to
   // decide it (`closingDeletesWorktree`). A second copy of the rule here is how
   // a button ends up promising a close and performing a deletion.
   const deletesWorktree = closingDeletesWorktree(repository, workspace.root);
 
-  // What this row says, for whoever is not reading the row: the sentence a
-  // screen reader hears (`rowDescription`).
+  // What this row says, for whoever is not reading the row: the screen reader
+  // and, in the rail, the pointer. One composition (`rowDescription`), so the
+  // two cannot come to say different things.
+  // What this row says, for whoever is not reading the row. One list of facts
+  // (`rowDescription`) rendered twice: as the sentence a screen reader hears,
+  // and as the lines the tooltip page draws behind the row's own marks. Two
+  // compositions of the same facts is how a row comes to name its Issue to one
+  // reader and not the other, with neither able to tell.
+  const facts = workspaceRowFacts(workspace, repository);
   const issue = repository?.issue;
-  const description = describe(workspaceRowFacts(workspace, repository));
+  const description = describe(facts);
   const collapsed = snapshot.sidebar.collapsed;
   // What the Workspace's own terminals are doing — absent when idle and read,
   // which is drawn as nothing (there is no "finished" check for a terminal).
@@ -233,6 +249,19 @@ function WorkspaceRow({
       <div
         className={`sidebar-row workspace-row${identity.fixed ? " is-scratch" : ""}${selected ? " is-selected" : ""}${terminals !== undefined && unreadShows(terminals.status, terminals.unread) ? " is-unread" : ""}`}
         data-state={workspace.state.kind}
+        // The same facts, drawn. The expanded row shows two of them and the
+        // rail shows none, and this is where all of them are — which is why it
+        // is the same list and not a shorter version of it.
+        //
+        // On the row, because the row is what the tooltip is about and what
+        // the pointer is on: the select button's hit area is stretched over
+        // the whole row (`.sidebar-context-button::after`), so what a person
+        // is pointing at is the row whichever part of it they are over, and
+        // the box goes beside the row and not beside the button. A mark with a
+        // sentence of its own — an Issue, a pull request — is nearer the
+        // pointer than this and still wins, which is `closest()`
+        // doing exactly what it is for. Scratch has always stated it here.
+        data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
         onContextMenu={
           (workspace.editor.kind === "devContainer" || !identity.fixed) &&
           !closing
@@ -303,9 +332,10 @@ function WorkspaceRow({
               name — as its icon, and only its icon. The title used to follow
               it as a quiet note, and a title is a sentence: on a line about
               twenty characters wide it pushed the name and the marks around
-              and was faded out half-read anyway. So the words are in its
-              accessible name; the row says *that* it has an Issue and in which
-              state. The branch is what the
+              and was faded out half-read anyway. So the words live where there
+              is room for all of them, in this mark's tooltip (number, title,
+              repository, branch) and in its accessible name; the row says
+              *that* it has an Issue and in which state. The branch is what the
               Issue was read *from*, so once the Issue is known the Issue is
               still the better answer to "what is this". A button and not part
               of the select button, because a button cannot go inside a button;
@@ -316,6 +346,26 @@ function WorkspaceRow({
               className={`row-issue-title is-issue-${issue.state}`}
               type="button"
               aria-label={issueLabel(issue)}
+              data-tooltip-lines={JSON.stringify([
+                {
+                  icon: issue.state === "closed" ? "issueClosed" : "issueOpen",
+                  text: issueMark(issue),
+                },
+                ...(issueRepositoryName(repository, issue) === undefined
+                  ? []
+                  : [
+                      {
+                        icon: "repository",
+                        text: issueRepositoryName(repository, issue) as string,
+                      },
+                    ]),
+                ...(issueProjectLine(issue) === undefined
+                  ? []
+                  : [{ text: issueProjectLine(issue) as string }]),
+                ...(repository?.branch === undefined
+                  ? []
+                  : [{ icon: "branch", text: repository.branch }]),
+              ])}
               onClick={() => {
                 openExternalUrl(issue.url);
               }}
@@ -329,9 +379,9 @@ function WorkspaceRow({
               />
             </button>
           )}
-          {/* The trailing group: what this row is, as marks. Nothing here is
-              words — the numbers and the titles are in the marks' accessible
-              names. */}
+          {/* The trailing group: what this row is, as marks, each one its own
+              hover. Nothing here is words — the numbers and the titles are in
+              the tooltip, where there is room for all of them at once. */}
           {/* Not drawn in the rail at all, rather than drawn and hidden: the
               rail's rule is that the whole entry is the select control, and a
               link that is merely invisible is still a link the pointer can
@@ -367,6 +417,16 @@ function WorkspaceRow({
               className="row-action-button"
               type="button"
               aria-label={`Create agent in ${workspace.label}${agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
+              // Only what the button's look does not say: why it is off, or
+              // that the profiles behind it need attention. "Create agent"
+              // would be the plus sign read aloud.
+              data-tooltip={
+                agentProfilesAvailability === "degraded"
+                  ? "Agent profiles need attention"
+                  : agentProfiles.length === 0
+                    ? "No enabled agent profiles"
+                    : undefined
+              }
               disabled={
                 agentProfilesAvailability === "unavailable" ||
                 agentProfiles.length === 0
@@ -393,6 +453,15 @@ function WorkspaceRow({
                 deletesWorktree
                   ? `Close the worktree ${workspace.label}`
                   : `Close ${workspace.label}`
+              }
+              // Only when the × means more than "close": that the last close
+              // stopped, or that this one removes a worktree and asks first.
+              data-tooltip={
+                closeFailed
+                  ? "Retry close"
+                  : deletesWorktree
+                    ? "Close worktree…"
+                    : undefined
               }
               // One close, whichever state the row is in. The page used to
               // read `closing-failed` here and dispatch a different intent —
@@ -454,9 +523,11 @@ function WorkspaceRow({
              * The rule is `agentLeadingText`, which the window title reads too.
              */
             const leading = agentLeadingText(agent);
-            const agentDescription = describe(
-              agentRowFacts(agent, { label: workspace.label }),
-            );
+            const agentFacts = agentRowFacts(agent, {
+              label: workspace.label,
+              icon: identity.glyph,
+            });
+            const agentDescription = describe(agentFacts);
             /**
              * The Agent's own name, when the name is a name.
              *
@@ -496,6 +567,33 @@ function WorkspaceRow({
                 <div
                   className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}`}
                   data-control-state={agent.controlState.kind}
+                  // The one fact, for the rail — where the words are off and
+                  // the pointer is the only way to ask which Agent this is.
+                  // Not the accessible name: a reader has no mark to look at
+                  // and is told the status in words, and a person looking at
+                  // the box can see the mark and the row it belongs to. See
+                  // `agentTooltipFacts`.
+                  //
+                  // On the row and not on the select button, and on the rail
+                  // that is the difference between a tooltip and none. In the
+                  // rail an Agent's button holds nothing — its mark is the
+                  // sibling beside it and its words are off — so it is a
+                  // zero-by-zero box, and a tooltip anchored on it had no
+                  // rectangle to be beside: `RowTooltip` clips the anchor to
+                  // the column and drops what comes back empty, which is
+                  // exactly what a row with no height does. The row is what
+                  // the tooltip is about in either state, so the row is what
+                  // it is anchored on.
+                  data-tooltip-lines={JSON.stringify(
+                    tooltipLines(agentTooltipFacts(agent)),
+                  )}
+                  // The prompt cache's line is a countdown, composed when the
+                  // tooltip is drawn (`RowTooltip`), not when the row is.
+                  data-tooltip-cache={
+                    agent.promptCache === undefined
+                      ? undefined
+                      : JSON.stringify(agent.promptCache)
+                  }
                   onContextMenu={(event) => {
                     event.preventDefault();
                     onAgentMenu(agent, {
@@ -558,6 +656,7 @@ function WorkspaceRow({
                         className="row-action-button agent-row-action"
                         type="button"
                         aria-label={`Stop ${agent.displayName}`}
+                        data-tooltip={stopFailed ? "Retry stop" : undefined}
                         onClick={() =>
                           dispatch(
                             stopFailed
@@ -645,13 +744,18 @@ function WorkspaceGlyph({
  * group (see `.row-issue-title`). What is left is how the row is going out: the
  * pull request, always last so that it is one column down the Sidebar.
  *
- * The machine is not here: a Workspace on another machine wears the `remote`
- * silhouette in the leading column, and which machine it is, like which
- * worktree this is, is in the row's accessible name.
+ * What this is a checkout of is not here: it is the folder glyph at the row's
+ * leading edge (`WorkspaceGlyph`, an inert mark), and the repository is a line
+ * in the row's tooltip. The machine is not here for the same reason — a
+ * Workspace on another machine wears the `remote` silhouette in that one
+ * column — and which machine it is, like which worktree this is, is a line in
+ * the row's tooltip.
  *
  * They are marks and not words because there is one line now and a line is
- * about twenty characters wide. A number and a title beside them would crowd
- * out the name; each mark's accessible name carries them in full.
+ * about twenty characters wide. A number and a title beside them would be
+ * spending that line on what the tooltip says in full a moment later — and it
+ * is the tooltip that says it: each mark carries its own sentence, so hovering
+ * the Issue gives the Issue and hovering the row gives the row.
  */
 function WorkspaceMarks({
   repository,
@@ -675,11 +779,13 @@ function WorkspaceMarks({
           className="mac-spinner row-issue-spinner"
           role="status"
           aria-label={`Reading Issue #${String(repository.pending.number)}`}
+          data-tooltip={`Reading #${String(repository.pending.number)}`}
         />
       ) : null}
       {/* The row cannot say what it is working on, and this is why. It is a
-          mark rather than a sentence now, and it is still on the row: a
-          failure nobody can see is a failure nobody sees. It wears the danger ink at rest — the one
+          mark rather than a sentence now, and it is still on the row rather
+          than only in the tooltip: a failure nobody can see without hovering
+          is a failure nobody sees. It wears the danger ink at rest — the one
           thing in this group that is coloured before it is asked — because it
           is the one thing here that is not simply context. */}
       {repository?.unavailable ? (
@@ -687,6 +793,7 @@ function WorkspaceMarks({
           className="row-link-button row-mark-unavailable"
           role="img"
           aria-label={unavailableText(repository.unavailable)}
+          data-tooltip={unavailableText(repository.unavailable)}
         >
           <Glyph name="statusError" />
         </span>
@@ -700,7 +807,8 @@ function WorkspaceMarks({
         <span
           className="row-link-button row-mark-editor"
           role="img"
-          aria-label={editorFact}
+          aria-label={editorFact.spoken}
+          data-tooltip={editorFact.text}
         >
           <Glyph name="container" />
         </span>
@@ -712,6 +820,9 @@ function WorkspaceMarks({
           className={`row-link-button is-pr-${pullRequest.state}`}
           type="button"
           aria-label={describe(pullRequestFacts(pullRequest))}
+          data-tooltip-lines={JSON.stringify(
+            markLines(pullRequestFacts(pullRequest)),
+          )}
           onClick={() => {
             openExternalUrl(pullRequest.url);
           }}
@@ -720,8 +831,8 @@ function WorkspaceMarks({
           {/* Somebody is waiting on an answer in it. On the mark and not
               beside it, because it is about this pull request and nothing
               else on the row; coloured at rest, because a conversation you
-              cannot see is one nobody answers. The count is in the words
-              above. */}
+              have to hover to find out about is one nobody answers. The count
+              is in the words above. */}
           {hasUnresolvedConversations(pullRequest) ? (
             <Glyph name="conversation" className="row-mark-badge" />
           ) : null}
@@ -1378,6 +1489,12 @@ export function Sidebar({ snapshot }: SidebarProps) {
           onCommit={resize}
         />
       )}
+      {/* One tooltip for the whole tree, decided here and drawn on a child of
+          the window. See `RowTooltip.tsx` — this view is 44px wide on a
+          collapsed rail, so a tooltip drawn in it is clipped by it, which is
+          the exact failure `title` was replaced to avoid. Where it goes is the
+          owner's and takes no argument from here: beside the row, always. */}
+      <RowTooltip generation={overlay.generation} />
     </aside>
   );
 }

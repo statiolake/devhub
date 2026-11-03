@@ -42,6 +42,7 @@ export default defineConfig({
         sidebar: fileURLToPath(new URL("./sidebar.html", import.meta.url)),
         agents: fileURLToPath(new URL("./agents.html", import.meta.url)),
         pane: fileURLToPath(new URL("./pane.html", import.meta.url)),
+        tooltip: fileURLToPath(new URL("./tooltip.html", import.meta.url)),
         settings: fileURLToPath(new URL("./settings.html", import.meta.url)),
         "task-manager": fileURLToPath(
           new URL("./task-manager.html", import.meta.url),

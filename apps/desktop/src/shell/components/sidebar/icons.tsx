@@ -48,6 +48,8 @@ export type GlyphName =
   | "plus"
   | "close"
   | "trash"
+  | "repository"
+  | "worktree"
   | "remote"
   | "container"
   | "issueOpen"
@@ -57,6 +59,7 @@ export type GlyphName =
   | "pullRequestClosed"
   | "pullRequestMerged"
   | "conversation"
+  | "checksPassing"
   | "checksFailing"
   | "checksPending"
   | "openIssue"
@@ -66,7 +69,8 @@ export type GlyphName =
   | "statusIdle"
   | "statusError"
   | "statusUnknown"
-  | "statusUnread";
+  | "statusUnread"
+  | "branch";
 
 const GLYPHS: Record<GlyphName, ReactNode> = {
   /* Removing a worktree. A bin rather than an X, because the two things a row
@@ -75,6 +79,55 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
      mis-click you shrug at and one you cannot undo. */
   trash: (
     <path d="M2.86 4.57h10.28M6.29 4.57V3.43c0-.32.25-.57.57-.57h2.28c.32 0 .58.25.58.57v1.14M4 4.57l.57 7.72c.02.3.27.53.57.53h5.72c.3 0 .55-.23.57-.53l.57-7.72" />
+  ),
+
+  /* ------------------------------------------------- what a row is made of
+   *
+   * Three marks share the leading column, and a row is identified by which of
+   * them starts it: a plain folder, a repository, and a worktree of one. They
+   * have to be told apart at thirteen pixels, in one glance, in a column where
+   * they sit directly above one another — so they are three different
+   * silhouettes rather than one silhouette with a detail added to it.
+   *
+   * The repository used to be an open book, which is the word git itself uses
+   * and the mark GitHub draws. It is gone at the person's request, and the
+   * replacement had to satisfy the harder half of the old brief anyway: a book
+   * at this size is a rectangle with a seam down it, and a folder is a
+   * rectangle, so the two were carrying the whole distinction on one interior
+   * stroke.
+   */
+
+  /* A repository: a box, seen as a solid. It has the mass a folder has — this
+     is the same column, and a mark that reads as lighter than its neighbours
+     reads as less important than them — and it is the one closed convex
+     silhouette in the set, so the difference from a folder is the outline
+     itself rather than anything drawn inside it. The three interior edges meet
+     at the centre at 120°, which is what makes it read as a solid instantly
+     and not as a hexagon.
+
+     The alternative, kept here because it was close: a commit graph — a trunk
+     with two nodes and a branch leaving it. It says "repository" at least as
+     well, and it was dropped because at thirteen pixels it is mostly the same
+     strokes as `pullRequest` two lines further down the same row. */
+  repository: (
+    <>
+      <path d="M8 2.6 13.4 5.5v5L8 13.4 2.6 10.5v-5Z" />
+      <path d="M8 13.4V8M8 8 2.6 5.5M8 8l5.4-2.5" />
+    </>
+  ),
+
+  /* A worktree: the repository, checked out a second time. So it is two of the
+     same shape, one behind the other — the mark everything else uses for a
+     copy, which is exactly what a worktree is.
+
+     The one behind is drawn as three sides rather than a whole square, so the
+     two outlines never cross. A crossing is four line-ends meeting inside two
+     pixels, and at this size that is a blot. */
+  worktree: (
+    <>
+      <path d="M10 6V3.8c0-.66-.54-1.2-1.2-1.2H3.8c-.66 0-1.2.54-1.2 1.2v5c0 .66.54 1.2 1.2 1.2H6" />
+      <path d="M7.2 6h5c.66 0 1.2.54 1.2 1.2v5c0 .66-.54 1.2-1.2 1.2h-5A1.2 1.2 0 0 1 6 12.2v-5C6 6.54 6.54 6 7.2 6Z" />
+    </>
   ),
 
   /* A Workspace that is only a folder. The silhouette is the one the Sidebar
@@ -182,20 +235,26 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
      Agent that has stopped to ask you something, a reviewer who has — and a
      second bubble drawn differently would only invite the question of how the
      two differ. It is a name of its own so that the two can part if they ever
-     have to. The pull request mark's badge fills it (`.row-mark-badge` in
-     `shell.css`), because an outline at the badge's size is a smudge. */
+     have to. Drawn outlined in a tooltip line; the pull request mark's badge
+     fills it (`.row-mark-badge` in `shell.css`), because an outline at the
+     badge's size is a smudge. */
   conversation: (
     <path d="M4 3.5h8a1.75 1.75 0 0 1 1.75 1.75v3.5A1.75 1.75 0 0 1 12 10.5H7.2L4 13v-2.5A1.75 1.75 0 0 1 2.25 8.75v-3.5A1.75 1.75 0 0 1 4 3.5Z" />
   ),
 
-  /* A pull request's CI, in the two verdicts worth a badge: GitHub's own
-     marks for them — a cross, a dot — on the shared grid. The cross is
-     `close`'s, drawn again under a name of its own for the reason
-     `conversation` is: the same shape saying a fact about something else.
+  /* A pull request's CI, in the three verdicts GitHub's rollup comes to:
+     GitHub's own three marks for them — a check, a cross, a dot — on the
+     shared grid. The check is `statusIdle`'s and the cross is `close`'s,
+     drawn again under names of their own for the reason `conversation` is:
+     the same shape saying a fact about something else. A check that is
+     passing and an Agent that is idle both mean nothing is wrong here, and a
+     second check would only ask how the two differ.
 
-     As the pull request mark's badge they are drawn heavier (`.row-mark-badge`
-     in `shell.css`), because a stroke at the badge's size in the glyph's own
-     weight is under a pixel. The dot is filled: an outlined dot is a ring. */
+     Drawn outlined in a tooltip line. As the pull request mark's badge they
+     are drawn heavier (`.row-mark-badge` in `shell.css`), because a stroke at
+     the badge's size in the glyph's own weight is under a pixel. The dot is
+     filled either way: an outlined dot is a ring. */
+  checksPassing: <path d="M3.4 8.35 6.35 11.3 12.6 4.85" />,
   checksFailing: <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />,
   checksPending: <circle className="glyph-fill" cx="8" cy="8" r="4" />,
 
@@ -278,7 +337,34 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
    * shape: it is a bullet, the same one Mail puts against a message nobody has
    * opened. */
   statusUnread: <circle className="glyph-fill" cx="8" cy="8" r="3.1" />,
+
+  /* ----------------------------------------------- what a row is working on
+   *
+   * Drawn for the tooltip rather than for a row: the tooltip lists a row's
+   * facts one per line, each one recognised by the mark in front of it, and
+   * the branch is the one fact in that list the Sidebar had never had a mark
+   * for. GitHub's own `git-branch`, on the shared grid at the shared weight.
+   */
+  branch: (
+    <>
+      <path d="M4.5 3.5v9" />
+      <circle cx="4.5" cy="2.6" r="1.35" />
+      <circle cx="11.5" cy="2.6" r="1.35" />
+      <circle cx="4.5" cy="13.4" r="1.35" />
+      <path d="M11.5 3.95v1.3a2.5 2.5 0 0 1-2.5 2.5H7a2.5 2.5 0 0 0-2.5 2.5" />
+    </>
+  ),
 };
+
+/**
+ * Every mark there is, by name.
+ *
+ * Exported because the tooltip page is given a mark's *name* over the bridge
+ * and has to decide whether it is one — see `TooltipApp`. It is derived from
+ * the table rather than written out beside it, so a mark cannot be added and
+ * left unspellable on the wire.
+ */
+export const GLYPH_NAMES = Object.keys(GLYPHS) as readonly GlyphName[];
 
 export interface GlyphProps {
   readonly name: GlyphName;

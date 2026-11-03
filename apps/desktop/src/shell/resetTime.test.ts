@@ -6,7 +6,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { resetTime } from "./resetTime";
+import { resetsIn, resetTime } from "./resetTime";
 
 let zone: string | undefined;
 beforeAll(() => {
@@ -54,5 +54,15 @@ describe("resetTime", () => {
     expect(resetTime(tokyo(9, 27, 2, 6), now)).toBe("02:06");
     expect(resetTime(tokyo(9, 27, 2, 4), now)).toBe("9/27");
     expect(resetTime(tokyo(9, 26, 9, 0), now)).toBe("9/26");
+  });
+});
+
+describe("resetsIn", () => {
+  const now = tokyo(9, 27, 14, 0);
+  it("says how long in the largest two units", () => {
+    expect(resetsIn(now + 30_000, now)).toBe("in under a minute");
+    expect(resetsIn(tokyo(9, 27, 14, 12), now)).toBe("in 12m");
+    expect(resetsIn(tokyo(9, 27, 16, 10), now)).toBe("in 2h 10m");
+    expect(resetsIn(tokyo(9, 30, 18, 0), now)).toBe("in 3d 4h");
   });
 });

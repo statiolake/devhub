@@ -221,6 +221,8 @@ export interface ConversationReading {
 	readonly lost: HostLinkFailure | undefined;
 	/** What stopped the conversation for good, if something DevHub did not expect did. */
 	readonly crashed: Error | undefined;
+	/** When DevHub will compact the idle conversation to beat its cache's expiry, if it will. */
+	readonly autoCompactAt?: number | undefined;
 }
 
 /** An event as the page receives it: numbered, so a gap is visible. */
@@ -327,6 +329,7 @@ export class AgentConversation {
 			transcript: this.#transcript,
 			lost: this.#lost,
 			crashed: this.#crashed,
+			autoCompactAt: this.#cacheKeeper.dueAt(),
 		};
 	}
 

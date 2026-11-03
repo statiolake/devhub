@@ -2,13 +2,15 @@
 
 /**
  * The usage-limits readout at the foot of the Sidebar: nothing until a CLI has
- * reported, and a slim bar per CLI that has.
+ * reported, a slim bar per CLI that has, and the detail — a meter per window,
+ * and the CLI that has not reported — in the row tooltip's lines.
  */
 
 import "@testing-library/jest-dom/vitest";
 import { readFileSync } from "node:fs";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { TooltipLineWire } from "../../../ipc/contract";
 import { UsageLimits } from "./UsageLimits";
 
 afterEach(cleanup);
@@ -28,6 +30,12 @@ afterAll(() => {
 const NOW = Date.UTC(2026, 8, 25, 9, 0);
 const HOUR = 60 * 60 * 1000;
 
+function tooltipOf(element: HTMLElement): readonly TooltipLineWire[] {
+  return JSON.parse(
+    element.dataset["tooltipLines"] ?? "[]",
+  ) as TooltipLineWire[];
+}
+
 describe("the usage-limits readout", () => {
   it("draws nothing while neither CLI has reported", () => {
     const { container } = render(
@@ -39,7 +47,7 @@ describe("the usage-limits readout", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("draws a bar per CLI for its shortest window, coloured by its strictest window and captioned with it, and nothing for the other until it has reported", () => {
+  it("draws a bar per CLI for its shortest window, coloured by its strictest window and captioned with it, every window as a meter on hover, and that the other has not reported", () => {
     render(
       <UsageLimits
         limits={{
@@ -86,9 +94,29 @@ describe("the usage-limits readout", () => {
     expect(claude.querySelector(".sidebar-usage-caption")).toHaveTextContent(
       "7-day limit nearly reached",
     );
+    expect(tooltipOf(readout)).toEqual([
+      { text: "Claude", style: "name" },
+      {
+        kind: "meter",
+        label: "5-hour",
+        usedPercent: 12,
+        resetsAt: NOW + 2 * HOUR,
+      },
+      {
+        kind: "meter",
+        label: "7-day",
+        usedPercent: 97.6,
+        resetsAt: NOW + 50 * HOUR,
+      },
+      { text: "Codex", style: "name" },
+      {
+        text: "Not read yet",
+        style: "note",
+      },
+    ]);
   });
 
-  it("fades a row whose reader has not read for a while, and says since when", () => {
+  it("says on hover when each reader last read and why it could not since, and fades a row whose reader has not read for a while", () => {
     const MINUTE = 60_000;
     const window = {
       window: "5-hour",
@@ -135,9 +163,25 @@ describe("the usage-limits readout", () => {
     expect(readout).toHaveAccessibleName(
       "Usage limits: Claude 40% until 19:00, not refreshed since 17:35, Codex 40% until 19:00",
     );
+    expect(tooltipOf(readout)).toEqual([
+      { text: "Claude", style: "name" },
+      { text: "Updated 17:35 · 25 min ago", style: "muted" },
+      {
+        text: "Not refreshed since (tried 17:58): no reading: Claude could not fetch its limits just now (its usage endpoint rate-limited it or could not be reached)",
+        style: "note",
+      },
+      { kind: "meter", label: "5-hour", usedPercent: 40, resetsAt: NOW + HOUR },
+      { text: "Codex", style: "name" },
+      { text: "Updated 17:57 · 3 min ago", style: "muted" },
+      {
+        text: "Not refreshed since (tried 17:59): codex stopped (exit code 1)",
+        style: "note",
+      },
+      { kind: "meter", label: "5-hour", usedPercent: 40, resetsAt: NOW + HOUR },
+    ]);
   });
 
-  it("does not fade a row whose reader is reading", () => {
+  it("says only when it was updated while the reader reads", () => {
     render(
       <UsageLimits
         limits={{
@@ -156,9 +200,13 @@ describe("the usage-limits readout", () => {
     expect(readout.querySelector(".sidebar-usage-cli")).not.toHaveAttribute(
       "data-outdated",
     );
+    expect(tooltipOf(readout)).toContainEqual({
+      text: "Updated 17:59 · just now",
+      style: "muted",
+    });
   });
 
-  it("says quietly that a sign-in has no plan limits, and nothing of a CLI that was not read", () => {
+  it("says quietly that a sign-in has no plan limits, and why a CLI was not read", () => {
     render(
       <UsageLimits
         limits={{
@@ -179,6 +227,18 @@ describe("the usage-limits readout", () => {
     // No bar, and no colour: there is no limit to approach.
     expect(rows[0]!.querySelector(".sidebar-usage-track")).toBeNull();
     expect(rows[0]).not.toHaveAttribute("data-level");
+    expect(tooltipOf(readout)).toEqual([
+      { text: "Claude", style: "name" },
+      {
+        text: "No plan limits for this Claude sign-in: an API key or a cloud provider",
+        style: "note",
+      },
+      { text: "Codex", style: "name" },
+      {
+        text: "Not read: the first Codex profile's command is not on this Mac",
+        style: "note",
+      },
+    ]);
   });
 
   it("draws the windows when a CLI has any, whatever the reader's note", () => {
@@ -270,7 +330,7 @@ describe("the usage-limits readout", () => {
     );
   });
 
-  it("draws no reset on the row, reported or not", () => {
+  it("leaves the reset to the tooltip, reported or not", () => {
     render(
       <UsageLimits
         limits={{

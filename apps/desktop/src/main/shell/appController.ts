@@ -93,6 +93,7 @@ import {
 	type ModalRequest,
 	type RepositoryStatusWire,
 	type ContextMenuRequestWire,
+	type TooltipRequestWire,
 	type WorkspacePickerEvent,
 } from "../../ipc/contract.js";
 import {
@@ -4688,6 +4689,15 @@ export class AppController {
 		// given the number rather than asked for it, so there is no
 		// arrangement in which the two can disagree about where the seam is.
 		this.send(CHANNELS.workbenchAreaChanged, shell.workbenchArea());
+		// And the Sidebar is told its own, for one reason: a row has to be
+		// able to say where it is *in the window*, so that its tooltip is
+		// placed against the window rather than against the column it is in.
+		// Nothing about the Sidebar's own drawing depends on this — the
+		// column's width is the model's — which is why it is the rectangle and
+		// not just the origin: a row scrolled half out of the column has half
+		// an anchor, and a tooltip pointing at the invisible half points at
+		// nothing.
+		this.send(CHANNELS.sidebarAreaChanged, shell.sidebarArea());
 	}
 
 	/**
@@ -4800,17 +4810,17 @@ export class AppController {
 	/**
 	 * Tell every page DevHub draws chrome on what the Workbench now looks like.
 	 *
-	 * All six of them, and that is the point: a modal must never be a
+	 * All seven of them, and that is the point: a modal must never be a
 	 * different colour from the window it is standing on, and neither must a
-	 * notice. This used to go out on the *projection* audience,
+	 * notice or a tooltip. This used to go out on the *projection* audience,
 	 * which was every page that draws from the model — a set that happened to
 	 * coincide until `toasts` arrived with `onTheme` on its bridge and no
 	 * model behind it, and then silently did not.
 	 */
 	publishTheme(palette: ShellPalette): void {
 		// Every page DevHub draws chrome on, which is not the same set as
-		// every page that draws from the model — `toasts` has no model at all
-		// and is painted in the Workbench's colours like
+		// every page that draws from the model — `toasts` and `tooltip` have
+		// no model at all and are painted in the Workbench's colours like
 		// everything else. See `chromeAudience` in `publishAudience.ts`.
 		for (const contents of chromeAudience(shellWindow())) {
 			contents.send(CHANNELS.themeChanged, palette);
@@ -10567,14 +10577,32 @@ export class AppController {
 				shellWindow().toasts.setSize(size);
 			},
 		);
+		// The `tooltip` view is exactly as big as the box the page drew, for
+		// the same reason the notices are: a native view takes every click
+		// inside its bounds whether or not anything is painted there. See
+		// `tooltipView.ts`.
+		receive(
+			CHANNELS.tooltipSize,
+			(_event, size: { readonly width: number; readonly height: number }) => {
+				shellWindow().tooltip.setSize(size);
+			},
+		);
+		// The Sidebar asking for a tooltip over the window, about one of its
+		// own rows. It composes the sentence and knows where the pointer is
+		// resting; main owns where anything in the window goes. The anchor
+		// arrives in window coordinates — see `SidebarAreaWire` for how the
+		// page knows its own origin, which is main's number and not a
+		// measurement.
 		// A row's context menu (or a diagram's, from the Agents page), as a
 		// native menu over the window, so no view's bounds can clip it. The
 		// page's point plus the place main laid that page is where the click
-		// was.
+		// was. The tooltip goes first: it was about
+		// the row the pointer rested on, and the menu is what is being read now.
 		handle(
 			CHANNELS.showContextMenu,
 			(event, request: ContextMenuRequestWire) => {
 				const window = shellWindow();
+				window.tooltip.hide();
 				return popupContextMenu(
 					window.window,
 					request,
@@ -10582,6 +10610,24 @@ export class AppController {
 				);
 			},
 		);
+		receive(CHANNELS.showTooltip, (_event, request: TooltipRequestWire) => {
+			shellWindow().tooltip.show(request);
+		});
+		receive(CHANNELS.hideTooltip, () => {
+			shellWindow().tooltip.hide();
+		});
+		// The pointer left the row — which the Sidebar cannot tell from the
+		// pointer arriving in the tooltip, two pixels away in another view. It
+		// is a request; main holds the box for a grace and the tooltip page's
+		// own report of where the pointer is decides. See `tooltipView.ts`.
+		receive(CHANNELS.releaseTooltip, () => {
+			shellWindow().tooltip.release();
+		});
+		// The other half of that: the `tooltip` page saying whether the pointer
+		// is in the box it drew.
+		receive(CHANNELS.tooltipPointer, (_event, inside: boolean) => {
+			shellWindow().tooltip.pointerIs(inside);
+		});
 		// "Try Again" on a notice. The button is on the toasts page and what it
 		// restarts is the App Shell page's projection, so main is what joins
 		// them — the same shape as every other command a page carries out.
