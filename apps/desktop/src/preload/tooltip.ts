@@ -23,7 +23,7 @@ import {
 	type TooltipBridge,
 	type TooltipContentWire,
 } from "../ipc/contract.js";
-import { on, openExternalUrl, pageBridge } from "./bridge.js";
+import { on, openExternalUrl, pageBridge, writeClipboard } from "./bridge.js";
 
 const api: TooltipBridge = {
 	...pageBridge(),
@@ -42,6 +42,9 @@ const api: TooltipBridge = {
 	// The box's links: the repository, the Issue and the pull request a row's
 	// tooltip names. The page follows only GitHub pages (`githubPage.ts`).
 	openExternalUrl,
+	// The box's copy buttons, beside a row's paths. Through main, as every
+	// copy DevHub makes is: this view never holds focus.
+	writeClipboard,
 };
 
 contextBridge.exposeInMainWorld("devhub", api);

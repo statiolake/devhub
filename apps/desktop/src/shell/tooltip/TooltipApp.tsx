@@ -50,7 +50,7 @@
  * which is exactly what the per-page contract exists to make unspellable.
  */
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { devhub } from "./client";
 import { toAppError } from "../failure";
 import { isGitHubPage } from "../githubPage";
@@ -202,7 +202,59 @@ function FactLine({
           {line.text}
         </a>
       )}
+      {line.copy === undefined ? null : <CopyPath path={line.copy} />}
+      {/* Subdued words after the fact, on its line: where a Workspace is,
+          beside its name; what a worktree was cut from, beside its path. */}
+      {line.qualifier === undefined || line.qualifier === "" ? null : (
+        <span className="tooltip-line-qualifier">{line.qualifier}</span>
+      )}
+      {line.qualifierCopy === undefined ? null : (
+        <CopyPath path={line.qualifierCopy} />
+      )}
     </div>
+  );
+}
+
+/** How long the check stands on a copy button after the copy landed. */
+export const COPIED_MS = 1000;
+
+/**
+ * A quiet button beside a path that puts its absolute form on the clipboard.
+ *
+ * Low contrast at rest and stronger under the pointer, and no hover of its
+ * own — nothing small in DevHub's tooltips raises one. A click copies through
+ * main (`writeClipboard`); once the write lands the mark is a check for
+ * `COPIED_MS`, in place. A write that failed is raised, never confirmed. The
+ * box stays up while the pointer is in it (`tooltipView.ts`), so this can be
+ * reached.
+ */
+function CopyPath({ path }: { readonly path: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), COPIED_MS);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      type="button"
+      className="tooltip-copy"
+      // Out of the tab order: the box is out of the accessibility tree and
+      // never holds the keyboard.
+      tabIndex={-1}
+      data-copied={copied || undefined}
+      onClick={(event) => {
+        event.preventDefault();
+        void devhub()
+          .writeClipboard(path)
+          .then(
+            () => setCopied(true),
+            (error: unknown) => devhub().raiseFailure(toAppError(error)),
+          );
+      }}
+    >
+      <Glyph name={copied ? "statusIdle" : "copy"} />
+    </button>
   );
 }
 

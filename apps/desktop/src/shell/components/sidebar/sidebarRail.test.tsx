@@ -345,13 +345,13 @@ describe("what a rail entry does under the pointer", () => {
     // the folder glyph is inert and the marks have no hover of their own.
     expect(JSON.parse(row.getAttribute("data-tooltip-lines") ?? "[]")).toEqual([
       { text: "widget", style: "name" },
-      { text: "/projects/widget", style: "muted" },
       {
         icon: "repository",
         text: "github.com/example/widget",
         style: "muted",
         href: "https://github.com/example/widget",
       },
+      { text: "/projects/widget", style: "muted", copy: "/projects/widget" },
       { icon: "branch", text: "feature/128-tidy", style: "muted" },
       {
         icon: "issueOpen",
@@ -372,8 +372,8 @@ describe("what a rail entry does under the pointer", () => {
     expect(button.getAttribute("aria-label")).toBe(
       [
         "widget workspace",
-        "path /projects/widget",
         "repository github.com/example/widget",
+        "path /projects/widget",
         "branch feature/128-tidy",
         "Issue #128, open: Tidy the rail",
         "Pull request #131, draft: Tidy the rail",

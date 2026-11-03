@@ -242,6 +242,55 @@ body,
   font-weight: 600;
 }
 
+/* Where a Workspace is, beside its name in the heading: SSH, a dev
+   container. Subdued and in the body's weight, so the name stays the name. */
+.tooltip-line-qualifier {
+  min-width: 0;
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+/* A copy button beside a path: as quiet as the box's dimmest ink at rest,
+   the box's own ink under the pointer, and a check for a moment once the
+   copy landed. No chrome — it is a mark the pointer can press. */
+.tooltip-copy {
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--secondary);
+  opacity: 0.45;
+}
+
+.tooltip-copy:hover {
+  color: var(--primary);
+  opacity: 1;
+}
+
+.tooltip-copy[data-copied] {
+  color: var(--status-idle);
+  opacity: 1;
+}
+
+.tooltip-copy .sidebar-glyph {
+  display: block;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
 .tooltip-line.is-muted .tooltip-line-text {
   color: var(--secondary);
 }

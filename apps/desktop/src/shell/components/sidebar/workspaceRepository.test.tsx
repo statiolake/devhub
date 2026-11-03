@@ -792,14 +792,15 @@ describe("the mark a workspace row starts with", () => {
     const button = document.querySelector(
       "[data-tree-item-id='workspace:w-1']",
     );
-    const row = button?.closest("[data-tooltip-lines]");
-    expect(
-      JSON.parse(row?.getAttribute("data-tooltip-lines") ?? "[]"),
-    ).toContainEqual({
-      icon: "worktree",
-      text: "/projects/other",
+    // On the one path line, after the path and subdued: no second bare path.
+    expect(rowTip()).toContainEqual({
+      text: "/projects/widget",
       style: "muted",
+      copy: "/projects/widget",
+      qualifier: "(worktree of /projects/other)",
+      qualifierCopy: "/projects/other",
     });
+    expect(rowTip().filter((line) => line.icon === "worktree")).toEqual([]);
     expect(button?.getAttribute("aria-label")).toContain(
       "worktree of /projects/other",
     );
@@ -967,12 +968,10 @@ describe("a workspace row, continued", () => {
       const button = screen.getByRole("button", {
         name: "Close the worktree widget",
       });
-      // In the row's tooltip, not the ×'s: the × has no hover of its own.
+      // No hover of its own, and the row's tooltip does not describe what
+      // the × would do: the button's name says it.
       expect(button).not.toHaveAttribute("data-tooltip");
-      expect(tipFacts()).toContainEqual({
-        icon: "close",
-        text: "Close worktree…: removes this worktree, asking first",
-      });
+      expect(JSON.stringify(rowTip())).not.toContain("Close worktree");
     });
 
     it("says only 'close' where nothing is going to be deleted", () => {
@@ -1486,13 +1485,30 @@ describe("the hovers the Sidebar does not raise", () => {
       icon: "pullRequestDraft",
       text: "#210 Tidy the picker, at last",
     });
-    expect(facts).toContainEqual({
-      icon: "container",
-      text: "editor in dev container: Node",
+    // Where it is, beside the name; no line of its own.
+    expect(rowTip()[0]).toEqual({
+      text: "widget",
+      style: "name",
+      qualifier: "· dev container: Node",
     });
+    expect(facts.some((line) => line.icon === "container")).toBe(false);
+    expect(JSON.stringify(facts)).not.toContain("Close worktree");
+    // The repository, then the one path line: the folder written with `~`,
+    // and the checkout it is a worktree of on the same line, with `~` too.
+    // Each carries its absolute path for the copy button beside it.
+    const repositoryAt = facts.findIndex((line) => line.icon === "repository");
+    expect(rowTip()[repositoryAt + 1]).toEqual({
+      text: "~/src/widget-tooltips",
+      style: "muted",
+      copy: "/Users/me/src/widget-tooltips",
+      qualifier: "(worktree of ~/src/widget)",
+      qualifierCopy: "/Users/me/src/widget",
+    });
+    expect(facts.filter((line) => line.text.includes("/Users/me"))).toEqual([]);
+    // Projects wear a mark like every other fact line.
     expect(facts).toContainEqual({
-      icon: "close",
-      text: "Close worktree…: removes this worktree, asking first",
+      icon: "project",
+      text: "Projects: Roadmap — In progress",
     });
   });
 
@@ -1526,8 +1542,12 @@ function renderEverything() {
       workspaces: [
         {
           ...WORKING_ON.workspaces[0],
-          mainWorktree: "/projects/other",
-          worktree: "/projects/widget",
+          issue: {
+            ...WORKING_ON.workspaces[0]!.issue!,
+            projects: [{ project: "Roadmap", status: "In progress" }],
+          },
+          mainWorktree: "/Users/me/src/widget",
+          worktree: "/Users/me/src/widget-tooltips",
           repositoryUrl: "https://github.com/example/widget",
         },
       ],
@@ -1541,6 +1561,8 @@ function renderEverything() {
         ? workspace
         : {
             ...workspace,
+            root: "/Users/me/src/widget-tooltips",
+            displayRoot: "~/src/widget-tooltips",
             editor: { kind: "devContainer", label: "Node" },
             terminals: { status: "working" },
             agents: [

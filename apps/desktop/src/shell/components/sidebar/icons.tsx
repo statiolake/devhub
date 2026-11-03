@@ -70,7 +70,9 @@ export type GlyphName =
   | "statusError"
   | "statusUnknown"
   | "statusUnread"
-  | "branch";
+  | "branch"
+  | "project"
+  | "copy";
 
 const GLYPHS: Record<GlyphName, ReactNode> = {
   /* Removing a worktree. A bin rather than an X, because the two things a row
@@ -352,6 +354,24 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
       <circle cx="11.5" cy="2.6" r="1.35" />
       <circle cx="4.5" cy="13.4" r="1.35" />
       <path d="M11.5 3.95v1.3a2.5 2.5 0 0 1-2.5 2.5H7a2.5 2.5 0 0 0-2.5 2.5" />
+    </>
+  ),
+
+  /* A GitHub Project: a board, three lanes of cards in a frame. Drawn for the
+     tooltip's Projects line, on the shared box and stroke like the rest. */
+  /* Copy: the box's quiet button beside a path. Two sheets, one over the
+     other — the mark every copy button in DevHub wears. */
+  copy: (
+    <>
+      <path d="M6.7 5.6h5.6c.6 0 1.1.5 1.1 1.1v5.6c0 .6-.5 1.1-1.1 1.1H6.7c-.6 0-1.1-.5-1.1-1.1V6.7c0-.6.5-1.1 1.1-1.1Z" />
+      <path d="M10.4 5.6V3.7c0-.6-.5-1.1-1.1-1.1H3.7c-.6 0-1.1.5-1.1 1.1v5.6c0 .6.5 1.1 1.1 1.1h1.9" />
+    </>
+  ),
+
+  project: (
+    <>
+      <path d="M3.8 2.6h8.4c.66 0 1.2.54 1.2 1.2v8.4c0 .66-.54 1.2-1.2 1.2H3.8c-.66 0-1.2-.54-1.2-1.2V3.8c0-.66.54-1.2 1.2-1.2Z" />
+      <path d="M5.4 5.2v5.6M8 5.2v3.2M10.6 5.2v4.4" />
     </>
   ),
 };

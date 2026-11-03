@@ -232,12 +232,18 @@ describe("a Workspace row whose folder is on another machine", () => {
         ?.closest("[data-tooltip-lines]")
         ?.getAttribute("data-tooltip-lines") ?? "[]",
     ) as { icon?: string; text: string }[];
-    expect(lines).toContainEqual({ text: "/srv/api", style: "muted" });
-    expect(lines).toContainEqual({
-      icon: "remote",
-      text: "ssh:build.example.com",
-      style: "muted",
+    // The machine is a subdued qualifier on the heading, not a line.
+    expect(lines[0]).toEqual({
+      text: "api",
+      style: "name",
+      qualifier: "· SSH: build.example.com",
     });
+    expect(lines).toContainEqual({
+      text: "/srv/api",
+      style: "muted",
+      copy: "/srv/api",
+    });
+    expect(JSON.stringify(lines)).not.toContain("ssh:build.example.com");
   });
 
   it("is still a folder on this Mac when its editor is in a dev container", () => {
@@ -266,12 +272,18 @@ describe("a Workspace row whose folder is on another machine", () => {
         ?.closest("[data-tooltip-lines]")
         ?.getAttribute("data-tooltip-lines") ?? "[]",
     ) as { icon?: string; text: string }[];
-    expect(lines).toContainEqual({ text: "/projects/api", style: "muted" });
     expect(lines).toContainEqual({
-      icon: "container",
-      text: "editor in dev container: python",
+      text: "/projects/api",
       style: "muted",
+      copy: "/projects/api",
     });
+    // Beside the name, subdued; no line of its own.
+    expect(lines[0]).toMatchObject({
+      text: "api",
+      style: "name",
+      qualifier: "· dev container: python",
+    });
+    expect(lines.some((line) => line.icon === "container")).toBe(false);
   });
 
   it("wears no editor mark when the editor is on the Workspace's machine", () => {

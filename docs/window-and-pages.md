@@ -118,7 +118,7 @@ role.)
 | the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
 | an Agent's terminal   | `pane.html`     | an Agent's own terminal, on the right: a terminal surface and nothing else, no header                           | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`                                                                                                                                                                                                    |
 | the notices           | `toasts.html`   | what the application has to say, over whatever is on screen, and the notice center                              | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
-| the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; its GitHub pages are links                         | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` (GitHub pages only) out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                             |
+| the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; its GitHub pages are links                         | `tooltipText` in; `tooltipSize`, `tooltipPointer`, `openExternalUrl` (GitHub pages only) and `writeClipboard` (a row's paths) out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                             |
 | the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings              | `settings.html` | its own window                                                                                                  | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
 | Task Manager          | `task-manager.html` | its own window: what each Workspace, workbench and Agent costs ([task-manager.md](task-manager.md)) | `TASK_MANAGER_CHANNELS` in full, plus the failure contract every page has |
@@ -1115,14 +1115,20 @@ one width, because narrowing to fit is how the ribbon happened.
 
 What has a hover is a whole row, and the usage limits — nothing smaller:
 
-- **A Workspace row** — on the rail as in the expanded column: its name, path,
-  repository (a link to it on GitHub), worktree, branch, Issue (number and
-  title as a link to it, Projects, and _Issue in `owner/name`_ when it is
-  numbered in another repository), pull request (a link to it) with its
-  conversations and CI, _Reading #N_ while the Issue is being read,
-  _Unavailable: …_ when it could not be, the machine, the dev container
-  (_editor in dev container: name_), _Retry close: …_ with why the last close
-  stopped, and _Close worktree…_ when × removes the worktree. One line per fact.
+- **A Workspace row** — on the rail as in the expanded column: its name, with
+  where it is beside it as a subdued qualifier (_· SSH: host_, _· dev container:
+  name_) rather than lines of their own; the repository (a link to it on
+  GitHub); then **one** path line — the folder written with `~`, and for a
+  worktree what it was cut from on the same line, subdued and with `~` too
+  (_~/src/widget-tooltips (worktree of ~/src/widget)_) — each path with a quiet
+  copy button beside it that copies the absolute path through main
+  (`writeClipboard`) and shows a check for a second; the branch; the Issue
+  (number and title as a link to it, Projects behind their own mark, and
+  _Issue in `owner/name`_ when it is numbered in another repository); the pull
+  request (a link to it) with its conversations and CI; _Reading #N_ while the
+  Issue is being read; _Unavailable: …_ when it could not be; and _Retry close:
+  …_ with why the last close stopped. One line per fact. What × would do is
+  not described: its accessible name says it.
 - **An Agent row** — its leading text behind its status mark, what a named
   Agent is doing, _Retry stop: …_ with why once a stop failed, and its prompt
   cache (warm or cold, time left, hit rate, the auto-compact due; see

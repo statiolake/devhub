@@ -16,7 +16,6 @@ import {
 } from "../../../model/projectStatus";
 import { agentLeadingText } from "../../../model/domain";
 import { statusLabel } from "./status";
-import { closingDeletesWorktree } from "../../../model/worktrees";
 import { isGitHubPage } from "../../githubPage";
 import { unreadShows } from "./StatusMark";
 import {
@@ -67,6 +66,12 @@ export interface RowFact {
    * (`gitHubHref`); the spoken sentence has no use for it.
    */
   readonly href?: string;
+  /** Subdued words after the fact, on its line (`TooltipFactLineWire`). */
+  readonly qualifier?: string;
+  /** An absolute path the text names, for the box's copy button. */
+  readonly copy?: string;
+  /** An absolute path the qualifier names, for a copy button after it. */
+  readonly qualifierCopy?: string;
 }
 
 /** A URL as a tooltip link, when it is a GitHub page; nothing otherwise. */
@@ -91,6 +96,11 @@ export function tooltipLines(facts: readonly RowFact[]): TooltipLineWire[] {
     ...(fact.style === undefined ? {} : { style: fact.style }),
     ...(fact.tone === undefined ? {} : { tone: fact.tone }),
     ...(fact.href === undefined ? {} : { href: fact.href }),
+    ...(fact.qualifier === undefined ? {} : { qualifier: fact.qualifier }),
+    ...(fact.copy === undefined ? {} : { copy: fact.copy }),
+    ...(fact.qualifierCopy === undefined
+      ? {}
+      : { qualifierCopy: fact.qualifierCopy }),
   }));
 }
 
@@ -383,6 +393,28 @@ function issueRepositoryElsewhere(
     : name;
 }
 
+/**
+ * A path on the Workspace's machine, written the way its own path is.
+ *
+ * Which home directory is `~` is main's to know (`WorkspaceWire.displayRoot`),
+ * so it is read off the one answer main gave: where `displayRoot` is `~/…`,
+ * the home is `root` with that tail taken off, and a path under that home is
+ * written with `~` too. Anything else is written as it is.
+ */
+export function writtenLikeRoot(
+  workspace: Pick<WorkspaceSnapshot, "root" | "displayRoot">,
+  path: string,
+): string {
+  const { root, displayRoot } = workspace;
+  if (displayRoot !== "~" && !displayRoot.startsWith("~/")) return path;
+  const tail = displayRoot.slice(1);
+  if (!root.endsWith(tail)) return path;
+  const home = root.slice(0, root.length - tail.length);
+  if (home === "" || home === "/") return path;
+  if (path === home) return "~";
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
 /** The page a repository mark leads to, as it would be written down. */
 function repositoryPage(url: string): string {
   return url.replace(/^https:\/\//, "");
@@ -424,15 +456,57 @@ export function workspaceRowFacts(
     workspace.close.kind === "failed" ? workspace.close : undefined;
   const issue = repository?.issue;
   const pullRequest = repository?.pullRequest;
-  const deletesWorktree = closingDeletesWorktree(repository, workspace.root);
+  const editorFact = editorAttachmentFact(workspace.editor);
+  // The checkout this folder is a worktree of, when it is one and that is
+  // somewhere else.
+  const mainCheckout =
+    repository?.mainWorktree !== undefined &&
+    repository.worktree !== undefined &&
+    repository.worktree !== repository.mainWorktree &&
+    repository.mainWorktree !== workspace.root
+      ? repository.mainWorktree
+      : undefined;
+  // Where it is, when that is not simply a folder on this Mac: said beside
+  // the name in the heading, subdued, rather than as lines of their own.
+  const whereabouts = [
+    workspace.location.kind === "ssh"
+      ? `SSH: ${workspace.location.host}`
+      : undefined,
+    workspace.editor.kind === "devContainer"
+      ? workspace.editor.label === undefined
+        ? "dev container"
+        : `dev container: ${workspace.editor.label}`
+      : undefined,
+  ].filter((part): part is string => part !== undefined);
+  const spokenWhereabouts = [
+    workspace.location.kind === "ssh"
+      ? `on ${workspace.location.host}`
+      : undefined,
+    editorFact?.spoken,
+  ].filter((part): part is string => part !== undefined);
   return said([
     // What it is. The name, and it is the only fact in the list that is set as
     // one — everything under it qualifies it.
     {
       text: workspace.label,
-      spoken: `${workspace.label} workspace`,
+      spoken: [`${workspace.label} workspace`, ...spokenWhereabouts].join(", "),
       style: "name",
+      ...(whereabouts.length === 0
+        ? {}
+        : { qualifier: `· ${whereabouts.join(" · ")}` }),
     },
+    // What it is a checkout of, and the link to it: the folder glyph is an
+    // inert mark, so this line is the way to the repository on GitHub. First
+    // after the name, before the path.
+    repository?.repositoryUrl === undefined
+      ? undefined
+      : {
+          icon: "repository",
+          text: repositoryPage(repository.repositoryUrl),
+          spoken: `repository ${repositoryPage(repository.repositoryUrl)}`,
+          style: "muted",
+          ...gitHubHref(repository.repositoryUrl),
+        },
     // Where it is. The path is the one fact a row never draws and always has,
     // because two workspaces with the same folder name are told apart by
     // nothing else.
@@ -442,10 +516,26 @@ export function workspaceRowFacts(
     // home that is, is main's to know — a Workspace on a host is under that
     // machine's home — so the page reads the answer and never computes one. See
     // `WorkspaceWire.displayRoot`.
+    //
+    // One path line. A worktree says what it was cut from on the same line,
+    // subdued — "(worktree of ~/src/widget)" — written with `~` the way this
+    // folder's path is, so the box never holds two bare paths for a reader to
+    // tell apart. Each path carries its absolute form for the box's copy
+    // button beside it.
     {
       text: workspace.displayRoot,
-      spoken: `path ${workspace.displayRoot}`,
+      spoken:
+        mainCheckout === undefined
+          ? `path ${workspace.displayRoot}`
+          : `path ${workspace.displayRoot}, worktree of ${writtenLikeRoot(workspace, mainCheckout)}`,
       style: "muted",
+      copy: workspace.root,
+      ...(mainCheckout === undefined
+        ? {}
+        : {
+            qualifier: `(worktree of ${writtenLikeRoot(workspace, mainCheckout)})`,
+            qualifierCopy: mainCheckout,
+          }),
     },
     // A close that stopped. Said and not only drawn: the row's colour is what a
     // sighted reader gets, and this is the same statement for everyone else.
@@ -482,41 +572,6 @@ export function workspaceRowFacts(
             spoken: "terminal finished, unread",
             tone: "idle",
           },
-    // What it is a checkout of, and the link to it: the folder glyph is an
-    // inert mark, so this line is the way to the repository on GitHub.
-    repository?.repositoryUrl === undefined
-      ? undefined
-      : {
-          icon: "repository",
-          text: repositoryPage(repository.repositoryUrl),
-          spoken: `repository ${repositoryPage(repository.repositoryUrl)}`,
-          style: "muted",
-          ...gitHubHref(repository.repositoryUrl),
-        },
-    // That this checkout is a worktree, and of what. The row's own mark stopped
-    // saying it — every Workspace is a folder there — and it is worth saying
-    // once, here, where there is room for the repository it was cut from.
-    repository?.mainWorktree !== undefined &&
-    repository.worktree !== undefined &&
-    repository.worktree !== repository.mainWorktree
-      ? {
-          icon: "worktree",
-          text: repository.mainWorktree,
-          spoken: `worktree of ${repository.mainWorktree}`,
-          style: "muted",
-        }
-      : undefined,
-    // What the row's × does here, which is more than close: it removes this
-    // worktree's folder, asking first when anything in it would be lost. Was
-    // the ×'s own hover ("Close worktree…"); said once, here.
-    deletesWorktree && workspace.close.kind !== "running"
-      ? {
-          icon: "close",
-          text: "Close worktree…: removes this worktree, asking first",
-          spoken: "closing removes this worktree, asking first",
-          style: "muted",
-        }
-      : undefined,
     // What it is on.
     repository?.branch === undefined
       ? undefined
@@ -551,7 +606,11 @@ export function workspaceRowFacts(
         }
       : undefined,
     issue && issueProjectLine(issue) !== undefined
-      ? { text: issueProjectLine(issue) as string, style: "muted" }
+      ? {
+          icon: "project",
+          text: issueProjectLine(issue) as string,
+          style: "muted",
+        }
       : undefined,
     ...(pullRequest ? pullRequestFacts(pullRequest) : []),
     repository?.pending
@@ -570,22 +629,6 @@ export function workspaceRowFacts(
           style: "danger",
         }
       : undefined,
-    // Which machine all of it is happening on, when it is not this one.
-    workspace.location.kind === "ssh"
-      ? {
-          icon: "remote",
-          text: `ssh:${workspace.location.host}`,
-          spoken: `on ${workspace.location.host}`,
-          style: "muted",
-        }
-      : undefined,
-    // Where the editor is, when it is not on the Workspace's machine.
-    ((fact) =>
-      fact === undefined
-        ? undefined
-        : { icon: "container" as const, ...fact, style: "muted" as const })(
-      editorAttachmentFact(workspace.editor),
-    ),
   ]);
 }
 

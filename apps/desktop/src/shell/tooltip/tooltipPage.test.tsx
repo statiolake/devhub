@@ -16,7 +16,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { TooltipApp } from "./TooltipApp";
+import { COPIED_MS, TooltipApp } from "./TooltipApp";
 import type { TooltipContentWire } from "../../ipc/contract";
 
 /** A row's facts, as `rowDescription.ts` composes them. */
@@ -32,6 +32,10 @@ const FACTS: TooltipContentWire = {
 let opened: string[] = [];
 /** Every report of where the pointer is, in order. */
 let pointer: boolean[] = [];
+/** Every text this page put on the clipboard, in order. */
+let copied: string[] = [];
+/** What the next `writeClipboard` answers with. */
+let copying: Promise<void> = Promise.resolve();
 /** What the next `openExternalUrl` answers with. */
 let opening: Promise<void> = Promise.resolve();
 /** Every failure this page raised, in order. */
@@ -67,6 +71,8 @@ beforeEach(() => {
   pointer = [];
   raised = [];
   opening = Promise.resolve();
+  copied = [];
+  copying = Promise.resolve();
   push = undefined;
   sizeBoxes(220, 34);
   // No `ResizeObserver` in jsdom. The page's first measurement is taken
@@ -99,6 +105,10 @@ beforeEach(() => {
     openExternalUrl: (url: string) => {
       opened.push(url);
       return opening;
+    },
+    writeClipboard: (text: string) => {
+      copied.push(text);
+      return copying;
     },
   };
 });
@@ -361,6 +371,102 @@ describe("the tooltip page", () => {
     expect(link).toHaveAttribute("href", "https://github.com/example/widget");
     expect(link).toHaveTextContent("github.com/example/widget");
     expect(document.querySelectorAll("a")).toHaveLength(1);
+  });
+
+  /**
+   * The row's one path line: the folder written with `~`, a copy button that
+   * copies its absolute path, and — for a worktree — what it was cut from on
+   * the same line, subdued, with a copy button of its own.
+   */
+  it("draws a worktree's path as one line with a copy button for each path", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        { text: "api", style: "name", qualifier: "· SSH: build.example.com" },
+        {
+          text: "~/src/widget-tooltips",
+          style: "muted",
+          copy: "/Users/me/src/widget-tooltips",
+          qualifier: "(worktree of ~/src/widget)",
+          qualifierCopy: "/Users/me/src/widget",
+        },
+      ],
+    });
+    const [heading, path] = [...document.querySelectorAll(".tooltip-line")];
+    expect(heading?.textContent).toBe("api· SSH: build.example.com");
+    expect(heading?.querySelector(".tooltip-line-qualifier")).toHaveTextContent(
+      "· SSH: build.example.com",
+    );
+    expect(path?.textContent).toBe(
+      "~/src/widget-tooltips(worktree of ~/src/widget)",
+    );
+    const buttons = path?.querySelectorAll("button.tooltip-copy") ?? [];
+    expect(buttons).toHaveLength(2);
+    // Quiet: no hover of its own.
+    for (const button of buttons) {
+      expect(button).not.toHaveAttribute("title");
+      expect(button).not.toHaveAttribute("data-tooltip");
+    }
+  });
+
+  /** A click copies the absolute path, and the mark is a check for a second. */
+  it("copies the absolute path and shows a check for a moment", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<TooltipApp />);
+      send({
+        lines: [
+          {
+            text: "~/src/widget-tooltips",
+            copy: "/Users/me/src/widget-tooltips",
+            qualifier: "(worktree of ~/src/widget)",
+            qualifierCopy: "/Users/me/src/widget",
+          },
+        ],
+      });
+      const [own, main] = [...document.querySelectorAll("button.tooltip-copy")];
+      const glyph = (button: Element | undefined) =>
+        button?.querySelector("svg")?.getAttribute("data-glyph");
+      expect(glyph(own)).toBe("copy");
+      await act(async () => {
+        own!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+      expect(copied).toEqual(["/Users/me/src/widget-tooltips"]);
+      expect(own).toHaveAttribute("data-copied", "true");
+      expect(glyph(own)).toBe("statusIdle");
+      expect(glyph(main)).toBe("copy");
+      act(() => {
+        vi.advanceTimersByTime(COPIED_MS);
+      });
+      expect(own).not.toHaveAttribute("data-copied");
+      expect(glyph(own)).toBe("copy");
+      await act(async () => {
+        main!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+      expect(copied).toEqual([
+        "/Users/me/src/widget-tooltips",
+        "/Users/me/src/widget",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** A copy that failed is raised, and never confirmed. */
+  it("raises a copy that failed and shows no check", async () => {
+    copying = Promise.reject(new Error("no clipboard"));
+    render(<TooltipApp />);
+    send({ lines: [{ text: "~/src/widget", copy: "/Users/me/src/widget" }] });
+    const button = document.querySelector("button.tooltip-copy")!;
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(raised).toHaveLength(1);
+    expect(button).not.toHaveAttribute("data-copied");
   });
 
   /** Everything else is words. A fact that is not a place is not a link. */

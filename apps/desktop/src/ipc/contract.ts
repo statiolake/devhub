@@ -759,6 +759,21 @@ export interface TooltipFactLineWire {
 	 * place.
 	 */
 	readonly href?: string;
+	/**
+	 * A few subdued words after the fact, on the same line: where a Workspace
+	 * is — `· SSH: host`, `· dev container: name` — beside its name in the
+	 * tooltip's heading, or what a worktree was cut from —
+	 * `(worktree of ~/src/widget)` — beside its path. Drawn as given.
+	 */
+	readonly qualifier?: string;
+	/**
+	 * The absolute path this fact's text names, when it names one: the box
+	 * draws a quiet copy button beside it that puts this on the clipboard
+	 * (`TooltipBridge.writeClipboard`). The text is `~`-abbreviated; this is not.
+	 */
+	readonly copy?: string;
+	/** The same, for a path the `qualifier` names. */
+	readonly qualifierCopy?: string;
 }
 
 /**
@@ -1621,6 +1636,12 @@ export interface TooltipBridge extends PageBridge {
 	 * it is a click that reports nothing.
 	 */
 	openExternalUrl(url: string): Promise<void>;
+	/**
+	 * Put a path on the clipboard: the box's copy buttons, beside a row's
+	 * folder and the checkout a worktree was cut from. Through main, the way
+	 * every copy DevHub makes is, since this view never holds focus.
+	 */
+	writeClipboard(text: string): Promise<void>;
 }
 
 /** Everything DevHub stops to ask — `picker.html`. */
