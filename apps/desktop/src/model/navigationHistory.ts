@@ -20,7 +20,7 @@
  * - **A place is somewhere you were, not somewhere you passed.** The model
  *   records a place when the person *does* something there — a key, a click,
  *   a scroll inside it — or arrives there on purpose (a new Agent, an opened
- *   Workspace, `Cmd+Q E`), never because the selection passed over it
+ *   Workspace), never because the selection passed over it
  *   (`Cmd+Q N/P`, a Sidebar row). So the place on screen may be one history
  *   has no entry for (`here`, below): Back from it goes to the latest place
  *   recorded, which is the cursor's own entry, and Forward is what it was.

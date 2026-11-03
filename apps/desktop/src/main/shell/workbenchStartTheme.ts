@@ -11,7 +11,7 @@
  * arrive. So the settings that answer had been the person's own
  * `workbench.colorTheme` (or VS Code's default) when the theme service
  * started; the cached theme, which was DevHub's, did not match them and was
- * thrown away; and every reload, every wake from hibernation and every cold
+ * thrown away; and every reload, every start after a discard and every cold
  * start painted VS Code's default dark or light first and changed to the
  * right theme once the extensions were registered and the answer had come.
  *

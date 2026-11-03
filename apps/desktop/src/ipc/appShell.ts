@@ -491,12 +491,6 @@ export type AppErrorCodeWire =
 	 */
 	| "terminal_needs_agent_view"
 	/**
-	 * `Cmd+Q E` in an SSH Workspace's editor: its editor area is its VS Code
-	 * editor on the host and has no terminal view (`model/editorView.ts`).
-	 * Said, so the chord is not a key that silently did nothing.
-	 */
-	| "editor_has_no_terminal"
-	/**
 	 * `Cmd+Q Shift+T` could not bring back what was closed — its folder is
 	 * gone, its session cannot be resumed, its machine did not answer. The
 	 * detail says which and what became of the entry (`model/recentlyClosed.ts`).
@@ -591,8 +585,6 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 		"There is no Agent here to open a terminal for: a terminal belongs to an Agent. Start one with Cmd+Q C, then Cmd+Q V.",
 	terminal_needs_agent_view:
 		"The terminal is shown with its Agent. Switch to the Agent (Cmd+Q Cmd+J) or split (Cmd+Q Z), then Cmd+Q V.",
-	editor_has_no_terminal:
-		"An SSH Workspace's editor area is its VS Code editor on the host; it has no terminal view. Its Agents' terminals work as usual.",
 	closed_not_reopened: "DevHub could not bring back what was closed.",
 	send_to_agent_refused: "The selection was not put in the Agent's input box.",
 };
@@ -1171,12 +1163,6 @@ export interface WorkspaceWire {
 	readonly location: WorkspaceLocationWire;
 	/** Where its editor is attached. */
 	readonly editor: EditorAttachmentWire;
-	/**
-	 * What its editor area shows: its terminal (the default) or its VS Code
-	 * editor — `Cmd+Q E` switches. Always `editor` for an SSH Workspace, which
-	 * has no terminal view. See `model/editorView.ts`.
-	 */
-	readonly editorView: "terminal" | "editor";
 	/** The folder's path, whichever machine it is on. */
 	readonly root: string;
 	/**

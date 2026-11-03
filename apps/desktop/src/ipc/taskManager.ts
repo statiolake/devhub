@@ -4,7 +4,7 @@
  * The page asks for a snapshot while it is visible, about every two seconds,
  * and draws it; everything it can do to what it shows is one request here,
  * carried out by main through the same path the rest of DevHub uses (Sleep is
- * the workbench lifecycle's hibernation, Stop is an Agent's stop). See
+ * the workbench lifecycle's freeze, Stop is an Agent's stop). See
  * `docs/task-manager.md`.
  */
 
@@ -23,10 +23,11 @@ export const TASK_MANAGER_CHANNELS = {
 
 /** Where a Workspace's workbench is in its life, in the words a row shows. */
 export type WorkbenchStateWire =
-	| "awake"
+	| "running"
 	| "starting"
-	| "going to sleep"
-	| "sleeping"
+	| "frozen"
+	| "discarding"
+	| "discarded"
 	| "not started"
 	| "restarting"
 	| "failed";

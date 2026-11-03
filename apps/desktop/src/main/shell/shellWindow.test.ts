@@ -7,7 +7,7 @@
  * code makes visible anywhere.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 class FakeView {
 	visible = false;
@@ -735,41 +735,6 @@ describe("the shell window's workbench views", () => {
 		 * to. There is nothing kept between the asking and the landing, because
 		 * the move and its placement are one call.
 		 */
-		/**
-		 * How long a workbench has been off screen (`workbenchAbsence.ts`),
-		 * for hibernation, and only DevHub's own layout decides that: a split
-		 * keeps the editor on screen, and the window losing focus is not the
-		 * workbench going anywhere.
-		 */
-		describe("and how long it was away", () => {
-			let now = 0;
-			beforeEach(() => {
-				now = 1_000_000;
-				vi.spyOn(Date, "now").mockImplementation(() => now);
-			});
-			afterEach(() => {
-				vi.restoreAllMocks();
-			});
-
-			it("answers how long a folder's workbench has been away, for hibernation", () => {
-				show(shell, a);
-				showPage(shell);
-				now += 40 * 60_000;
-				expect(shell.editorAwayMs(keyOf(a), now)).toBe(40 * 60_000);
-				// b was never shown: away all the same.
-				expect(shell.editorAwayMs(keyOf(b), now)).toBeDefined();
-				showSplit(shell, a);
-				expect(shell.editorAwayMs(keyOf(a), now)).toBeUndefined();
-			});
-
-			it("is not away while DevHub is in the background", () => {
-				show(shell, a);
-				theWindow().emit("blur");
-				now += 60 * 60_000;
-				expect(shell.editorAwayMs(keyOf(a), now)).toBeUndefined();
-			});
-		});
-
 		describe("and the editor a move lands in", () => {
 			const runActions = (view: WorkbenchView): unknown[] =>
 				(

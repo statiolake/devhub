@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 
 /**
- * The asleep editor's placeholder: the one place an asleep (or never started)
- * workbench is woken from.
+ * The discarded editor's placeholder: the one place a discarded workbench is
+ * started again from.
  *
- * Nothing wakes it on its own any more. The whole editor area, dimmed, is one
- * control that holds the keyboard: Enter or a click wakes it, every other key
- * does nothing (DevHub's `Cmd+Q` chords are main's, taken before the page).
+ * Nothing starts it on its own. The whole editor area, dimmed, is one control
+ * that holds the keyboard: Enter or a click starts it, every other key does
+ * nothing (DevHub's `Cmd+Q` chords are main's, taken before the page).
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -18,37 +18,31 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Asleep, Waking } from "./SurfaceState";
+import { Discarded, Waking } from "./SurfaceState";
 
-function asleep(started = true) {
+function discarded() {
   const onWake = vi.fn();
-  render(
-    <Asleep frame="data:image/png;base64," started={started} onWake={onWake} />,
-  );
+  render(<Discarded frame="data:image/png;base64," onWake={onWake} />);
   return { onWake, area: screen.getByRole("button") };
 }
 
-describe("an asleep editor's placeholder", () => {
+describe("a discarded editor's placeholder", () => {
   afterEach(() => {
     cleanup();
   });
 
-  it("says it is asleep and how to wake it, across the whole area", () => {
-    const { area } = asleep();
-    expect(area).toHaveTextContent("Sleeping — press Enter to wake");
-    expect(area).toHaveAccessibleName("Sleeping — press Enter to wake");
-    expect(area).toHaveAttribute("data-started", "true");
-  });
-
-  it("says a never started one is not running, and how to start it", () => {
-    const { area } = asleep(false);
+  it("says it is not running and how to start it, across the whole area", () => {
+    const { area } = discarded();
     expect(area).toHaveTextContent(
+      "VS Code is not running — press Enter to start",
+    );
+    expect(area).toHaveAccessibleName(
       "VS Code is not running — press Enter to start",
     );
   });
 
   it("takes the keyboard when it appears, and again when the page gets it back", () => {
-    const { area } = asleep();
+    const { area } = discarded();
     expect(area).toHaveFocus();
     area.blur();
     expect(area).not.toHaveFocus();
@@ -58,27 +52,20 @@ describe("an asleep editor's placeholder", () => {
     expect(area).toHaveFocus();
   });
 
-  it("a never started one takes the keyboard too, and Enter starts it", () => {
-    const { onWake, area } = asleep(false);
-    expect(area).toHaveFocus();
+  it("starts on Enter", () => {
+    const { onWake, area } = discarded();
     fireEvent.keyDown(area, { key: "Enter" });
     expect(onWake).toHaveBeenCalledTimes(1);
   });
 
-  it("wakes on Enter", () => {
-    const { onWake, area } = asleep();
-    fireEvent.keyDown(area, { key: "Enter" });
-    expect(onWake).toHaveBeenCalledTimes(1);
-  });
-
-  it("wakes on a click anywhere on it", () => {
-    const { onWake, area } = asleep();
+  it("starts on a click anywhere on it", () => {
+    const { onWake, area } = discarded();
     fireEvent.click(area);
     expect(onWake).toHaveBeenCalledTimes(1);
   });
 
-  it("does not wake on any other key, a modified Enter, or Enter that ends a composition", () => {
-    const { onWake, area } = asleep();
+  it("does not start on any other key, a modified Enter, or Enter that ends a composition", () => {
+    const { onWake, area } = discarded();
     for (const key of [" ", "a", "Escape", "Tab", "ArrowDown", "e"]) {
       fireEvent.keyDown(area, { key });
     }

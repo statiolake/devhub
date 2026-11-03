@@ -18,7 +18,6 @@ import {
   retiredKeysIn,
   DEFAULT_THEME_DARK,
   DEFAULT_THEME_LIGHT,
-  defaultViewOf,
   type ValidationCode,
   profilePresentation,
 } from "./config.js";
@@ -60,18 +59,27 @@ describe("parsing", () => {
     expect(config).toEqual(defaultConfig());
   });
 
-  it("closes an away editor after 10 minutes and keeps at most 3 up unless told otherwise, 0 being off", () => {
-    expect(parseConfig(MINIMAL).general.workbench_hibernate_minutes).toBe(10);
-    expect(parseConfig(MINIMAL).general.workbench_awake_max).toBe(2);
-    const off = "version = 1\n[general]\nworkbench_hibernate_minutes = 0\n";
-    expect(parseConfig(off).general.workbench_hibernate_minutes).toBe(0);
+  it("discards an editor frozen for 60 minutes unless told otherwise, 0 being never", () => {
+    expect(parseConfig(MINIMAL).general.workbench_discard_minutes).toBe(60);
+    const off = "version = 1\n[general]\nworkbench_discard_minutes = 0\n";
+    expect(parseConfig(off).general.workbench_discard_minutes).toBe(0);
     expect(
       pathOf(() =>
-        parseConfig(
-          "version = 1\n[general]\nworkbench_hibernate_minutes = -1\n",
-        ),
+        parseConfig("version = 1\n[general]\nworkbench_discard_minutes = -1\n"),
       ),
-    ).toBe("general.workbench_hibernate_minutes");
+    ).toBe("general.workbench_discard_minutes");
+  });
+
+  it("knows no awake cap, hibernation time or default view any more", () => {
+    for (const key of [
+      "workbench_awake_max = 2",
+      "workbench_hibernate_minutes = 10",
+      'default_view = "editor"',
+    ]) {
+      expect(
+        codeOf(() => parseConfig(`version = 1\n[general]\n${key}\n`)),
+      ).toBe("unknown_key");
+    }
   });
 
   it("leaves a row at the font's own line box, because the multiplier lands above the text and not around it", () => {
@@ -660,46 +668,19 @@ describe("parsing", () => {
 
   describe("general.workbench", () => {
     it("is retired: loaded, ignored, said once, and dropped by the next save", () => {
-      // Every Workspace's editor area chooses for itself now (`Cmd+Q E`), so a
-      // file that still says which one DevHub is in is not refused over it.
+      // Every Workspace's editor area is its VS Code workbench now, so a file
+      // that still says which one DevHub is in is not refused over it.
       const text = 'version = 1\n[general]\nworkbench = "terminal"\n';
       const config = parseConfig(text);
       expect(configToToml(config)).not.toContain("workbench =");
       expect(retiredKeysIn(parseConfigText(text))).toEqual([
         {
           key: "general.workbench",
-          replacement: expect.stringContaining("Cmd+Q E") as unknown as string,
+          replacement: expect.stringContaining(
+            "its own VS Code workbench",
+          ) as unknown as string,
         },
       ]);
-    });
-  });
-
-  describe("general.default_view", () => {
-    it("is the terminal unless the file says otherwise", () => {
-      expect(defaultConfig().general.default_view).toBe("terminal");
-      expect(parseConfig(MINIMAL).general.default_view).toBe("terminal");
-      expect(defaultViewOf(parseConfig(MINIMAL))).toBe("terminal");
-    });
-
-    it("is read, kept and written back", () => {
-      const config = parseConfig(
-        'version = 1\n[general]\ndefault_view = "editor"\n',
-      );
-      expect(config.general.default_view).toBe("editor");
-      expect(defaultViewOf(config)).toBe("editor");
-      expect(configToToml(config)).toContain('default_view = "editor"');
-      expect(parseConfig(configToToml(config)).general.default_view).toBe(
-        "editor",
-      );
-    });
-
-    it("refuses anything but the two views, naming the key", () => {
-      const text = 'version = 1\n[general]\ndefault_view = "vscode"\n';
-      expect(codeOf(() => parseConfig(text))).toBe("invalid_default_view");
-      expect(pathOf(() => parseConfig(text))).toBe("general.default_view");
-      expect(
-        codeOf(() => parseConfig("version = 1\n[general]\ndefault_view = 1\n")),
-      ).toBe("invalid_type");
     });
   });
 

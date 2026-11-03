@@ -501,84 +501,23 @@ describe("store", () => {
     expect(load.state).toEqual(state);
   });
 
-  it("remembers which view each Workspace's editor area shows, through the file", async () => {
+  it("ignores an editor_view an older DevHub wrote, and writes none", async () => {
     const store = new JsonStateStore(path);
-    const model = populatedModel();
-    model.setEditorView(WS_B, "editor");
-    const state = stateFromSnapshot(model.snapshot());
-    // Both views are written, so a later `general.default_view` cannot change
-    // what a Workspace remembers.
-    expect(state.workspaces.map((one) => one.editor_view)).toEqual([
-      "terminal",
-      "editor",
-    ]);
-    await store.saveState(state);
-    const load = await store.loadState();
-    for (const fallback of ["terminal", "editor"] as const) {
-      const restored = hydrateModel(
-        load.state,
-        [codex],
-        today(),
-        fallback,
-      ).snapshot();
-      expect(restored.workspaces.map((one) => one.editorView)).toEqual([
-        "terminal",
-        "editor",
-      ]);
-    }
-  });
-
-  /** A file as an older DevHub wrote it: `editor_view` only for `"editor"`. */
-  async function olderFile(editorOn: readonly number[] = []) {
-    const store = new JsonStateStore(path);
-    const state = stateFromSnapshot(populatedModel().snapshot());
-    state.workspaces.forEach((one, index) => {
-      if (editorOn.includes(index)) one.editor_view = "editor";
-      else delete one.editor_view;
-    });
-    await store.saveState(state);
-    return (await store.loadState()).state;
-  }
-
-  it("reads a Workspace with no editor_view as general.default_view", async () => {
-    const old = await olderFile();
-    const views = (fallback?: "terminal" | "editor") =>
-      hydrateModel(old, [codex], today(), fallback)
-        .snapshot()
-        .workspaces.map((one) => one.editorView);
-    expect(views()).toEqual(["terminal", "terminal"]);
-    expect(views("terminal")).toEqual(["terminal", "terminal"]);
-    expect(views("editor")).toEqual(["editor", "editor"]);
-  });
-
-  it('keeps an older file\'s editor_view = "editor" whatever the default', async () => {
-    const old = await olderFile([1]);
-    const restored = hydrateModel(old, [codex], today(), "terminal");
-    expect(restored.snapshot().workspaces.map((one) => one.editorView)).toEqual(
-      ["terminal", "editor"],
-    );
-    // And the next save writes every view, so it is remembered from then on.
-    expect(
-      stateFromSnapshot(restored.snapshot()).workspaces.map(
-        (one) => one.editor_view,
-      ),
-    ).toEqual(["terminal", "editor"]);
-  });
-
-  it("reads an editor_view it does not know as no remembered view", async () => {
-    await olderFile();
+    await store.saveState(stateFromSnapshot(populatedModel().snapshot()));
     const raw = JSON.parse(await readFile(path, "utf8")) as {
       workspaces: Record<string, unknown>[];
     };
-    raw.workspaces[0]!["editor_view"] = "neovim";
+    raw.workspaces[0]!["editor_view"] = "terminal";
     await writeFile(path, JSON.stringify(raw));
     const restored = hydrateModel(
       (await new JsonStateStore(path).loadState()).state,
       [codex],
       today(),
-      "editor",
-    ).snapshot();
-    expect(restored.workspaces[0]!.editorView).toBe("editor");
+    );
+    expect(restored.snapshot().workspaces).toHaveLength(2);
+    expect(
+      JSON.stringify(stateFromSnapshot(restored.snapshot())),
+    ).not.toContain("editor_view");
   });
 
   it("reads back a name a person gave, from the file", async () => {

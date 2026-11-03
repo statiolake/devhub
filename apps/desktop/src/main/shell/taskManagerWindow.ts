@@ -14,7 +14,7 @@
  * somebody else's process.
  *
  * Everything else a row can do is the host's: Sleep is the workbench
- * lifecycle's own hibernation, Stop is an Agent's stop with its question, and
+ * lifecycle's own freeze, Stop is an Agent's stop with its question, and
  * Reveal is a selection like any other, with the main window brought forward.
  */
 

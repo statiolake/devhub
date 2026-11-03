@@ -111,21 +111,44 @@ export async function readUnsavedEditors(
 	return namesOf(reply, "names");
 }
 
+/** What a workbench says about itself before it is frozen or discarded. */
+export interface WorkbenchActivity {
+	/** What a freeze would interrupt: a debug session, a task, a busy terminal. */
+	readonly busy: readonly string[];
+	/** What a discard would lose: unsaved editors, only with hot exit off. */
+	readonly unsaved: readonly string[];
+	/** Its window has restored and its extensions are registered. */
+	readonly ready: boolean;
+}
+
 /**
- * Why a workbench must stay up although it is away: its unsaved editors, its
- * busy terminals, its debug session, as `devhubHibernate.contribution.ts` in
- * the overlay answers. Empty when it may be closed.
+ * Ask a workbench what freezing or discarding it would interrupt, and whether
+ * it has finished starting, as `devhubActivity.contribution.ts` in the
+ * overlay answers.
  */
-export async function readKeepAwake(
+export async function readWorkbenchActivity(
 	contents: WorkbenchContents,
 	timeoutMs: number = UNSAVED_READ_TIMEOUT_MS,
-): Promise<readonly string[]> {
+): Promise<WorkbenchActivity> {
 	const reply = await askWorkbench(
 		contents,
-		"vscode:devhubKeepAwake",
+		"vscode:devhubActivity",
 		timeoutMs,
 	);
-	return namesOf(reply, "reasons");
+	const ready =
+		typeof reply === "object" && reply !== null
+			? (reply as Record<string, unknown>).ready
+			: undefined;
+	if (typeof ready !== "boolean") {
+		throw new InvariantViolation(
+			`the workbench's reply has no boolean \`ready\`: ${JSON.stringify(reply)}`,
+		);
+	}
+	return {
+		busy: namesOf(reply, "busy"),
+		unsaved: namesOf(reply, "unsaved"),
+		ready,
+	};
 }
 
 /**

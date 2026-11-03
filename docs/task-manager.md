@@ -10,8 +10,8 @@ day, and no key is spent on it; a person who wants one binds it in
 `[keybindings]`.
 
 It exists to answer "why is my Mac slow" with facts — the first thing a
-memory-pressure-driven hibernation would need — and to act on the answer:
-put a workbench to sleep, stop an Agent, end a runaway process.
+memory-pressure-driven freeze would need — and to act on the answer:
+freeze a workbench, stop an Agent, end a runaway process.
 
 ## The window
 
@@ -200,10 +200,14 @@ sends that one process SIGTERM.
 
 ## Sleep
 
-Sleep is the workbench lifecycle's own hibernation
-(`main/shell/workbenchLifecycle.ts`): the next plan is asked to put that
-workbench to sleep (`LifecycleInput.sleep`), exactly as the minute check and
-the awake cap do, refused for the same reasons (it is on screen, it is not
-awake, it is closing, it is a far one), and then asked whether it would lose
-anything (`readKeepAwake`) before it unloads. Its editors come back when it is
-woken.
+Sleep is the workbench lifecycle's own freeze (`main/shell/workbenchPlan.ts`):
+the next plan is asked to freeze that workbench now (`LifecycleInput.freeze`),
+past what would otherwise keep a hidden one up (a task, a debug session, a
+busy terminal, network traffic) but never past the hard reasons — it is on
+screen, asked for, closing, still starting, sharing its renderer, or a far
+one. It is offered only for a running local workbench that is not on screen.
+Frozen, it resumes instantly when shown, asked for or connected to, and is
+discarded after `general.workbench_discard_minutes`. A workbench row shows its
+state: running, starting, frozen, discarding, discarded, not started,
+restarting or failed; watch a frozen one's memory there to see macOS compress
+and swap it.

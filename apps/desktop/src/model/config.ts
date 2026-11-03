@@ -34,7 +34,6 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { DEFAULT_NOTICE_SECONDS } from "./noticeCenter.js";
-import { DEFAULT_EDITOR_VIEW, type EditorView } from "./editorView.js";
 import {
   ACTION_TRIGGERS,
   BUILT_IN_ACTIONS,
@@ -391,40 +390,13 @@ export interface GeneralConfig {
    */
   readonly terminal_idle_seconds: number;
   /**
-   * Close a Workspace's workbench after its editor has been off screen this
-   * many minutes; it opens again when shown. `0` keeps every workbench up.
-   * See `main/shell/workbenchLifecycle.ts`.
+   * Discard a workbench that has been frozen this many minutes: close it, as
+   * VS Code closes a window on quit, to free what it held. It starts again
+   * when somebody asks for it. `0` never discards. A workbench that is not
+   * on screen is frozen at once (SIGSTOP) unless it is in use; see
+   * `main/shell/workbenchPlan.ts`.
    */
-  readonly workbench_hibernate_minutes: number;
-  /**
-   * At most this many workbenches stay up, Scratch counted, remote ones
-   * not. Checked on every Workspace switch: past it, the least recently
-   * shown ones sleep at once. `0` is no cap.
-   */
-  readonly workbench_awake_max: number;
-  /**
-   * What the editor area of a Workspace with no remembered view shows: its
-   * terminal (`terminal`, DevHub's default) or its VS Code editor (`editor`).
-   * See `model/editorView.ts` and `docs/terminal-mode.md`. A new Workspace,
-   * and one from a state file that does not say, starts in it; from then on
-   * the Workspace remembers its own view, so a change applies to Workspaces
-   * made after it, at once, and leaves the others as they are.
-   */
-  readonly default_view: string;
-}
-
-/**
- * The only values `general.default_view` takes: one list for the validator
- * and the Settings popup, as `APPEARANCE_MODES` is.
- */
-export const DEFAULT_VIEWS: readonly EditorView[] = ["terminal", "editor"];
-
-/** `general.default_view` as the model wants it; anything else is the default. */
-export function defaultViewOf(config: Config): EditorView {
-  const value = config.general.default_view;
-  return value === "editor" || value === "terminal"
-    ? value
-    : DEFAULT_EDITOR_VIEW;
+  readonly workbench_discard_minutes: number;
 }
 
 export interface RuntimeConfig {
@@ -791,10 +763,8 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
 
 /** See `GeneralConfig.terminal_idle_seconds`. */
 export const DEFAULT_TERMINAL_IDLE_SECONDS = 5;
-/** See `GeneralConfig.workbench_hibernate_minutes`. */
-export const DEFAULT_WORKBENCH_HIBERNATE_MINUTES = 10;
-/** See `GeneralConfig.workbench_awake_max`. */
-export const DEFAULT_WORKBENCH_AWAKE_MAX = 2;
+/** See `GeneralConfig.workbench_discard_minutes`. */
+export const DEFAULT_WORKBENCH_DISCARD_MINUTES = 60;
 
 export function defaultConfig(): Config {
   return {
@@ -805,9 +775,7 @@ export function defaultConfig(): Config {
       notify_sound: true,
       notice_seconds: DEFAULT_NOTICE_SECONDS,
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
-      workbench_hibernate_minutes: DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
-      workbench_awake_max: DEFAULT_WORKBENCH_AWAKE_MAX,
-      default_view: DEFAULT_EDITOR_VIEW,
+      workbench_discard_minutes: DEFAULT_WORKBENCH_DISCARD_MINUTES,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -845,7 +813,6 @@ export type ValidationCode =
   | "invalid_socket_name"
   | "forbidden_tmux_argument"
   | "invalid_appearance"
-  | "invalid_default_view"
   | "invalid_mac_option_is_meta"
   | "invalid_keybinding"
   | "unknown_command"
@@ -961,7 +928,7 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.color_scheme":
     "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
   "general.workbench":
-    'every Workspace\'s editor area shows its terminal now, and Cmd+Q E switches that Workspace to its VS Code editor and back; a VS Code editor is started the first time it is shown; `general.default_view = "editor"` makes VS Code what a new Workspace shows',
+    "every Workspace's editor area is its own VS Code workbench now",
   "runtimes.herdr":
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
@@ -1426,11 +1393,6 @@ function validateAgentProfiles(
 export function validateConfig(config: Config): void {
   if (config.version !== CONFIG_SCHEMA_VERSION) {
     fail("unsupported_version", "version");
-  }
-  if (
-    !(DEFAULT_VIEWS as readonly string[]).includes(config.general.default_view)
-  ) {
-    fail("invalid_default_view", "general.default_view");
   }
   validateRuntimes(config.runtimes);
   validateAppearance(config.appearance);
@@ -2043,9 +2005,7 @@ export function interpretConfig(document: unknown): Config {
       "notify_sound",
       "notice_seconds",
       "terminal_idle_seconds",
-      "workbench_hibernate_minutes",
-      "workbench_awake_max",
-      "default_view",
+      "workbench_discard_minutes",
     ],
     "general",
   );
@@ -2162,21 +2122,10 @@ export function interpretConfig(document: unknown): Config {
         "terminal_idle_seconds",
         DEFAULT_TERMINAL_IDLE_SECONDS,
       ),
-      workbench_hibernate_minutes: generalDuration(
+      workbench_discard_minutes: generalDuration(
         generalTable,
-        "workbench_hibernate_minutes",
-        DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
-      ),
-      workbench_awake_max: generalDuration(
-        generalTable,
-        "workbench_awake_max",
-        DEFAULT_WORKBENCH_AWAKE_MAX,
-      ),
-      default_view: optionalString(
-        generalTable,
-        "default_view",
-        "general",
-        DEFAULT_EDITOR_VIEW,
+        "workbench_discard_minutes",
+        DEFAULT_WORKBENCH_DISCARD_MINUTES,
       ),
     },
     runtimes: {
@@ -2388,9 +2337,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       notify_sound: config.general.notify_sound,
       notice_seconds: config.general.notice_seconds,
       terminal_idle_seconds: config.general.terminal_idle_seconds,
-      workbench_hibernate_minutes: config.general.workbench_hibernate_minutes,
-      workbench_awake_max: config.general.workbench_awake_max,
-      default_view: config.general.default_view,
+      workbench_discard_minutes: config.general.workbench_discard_minutes,
     },
     runtimes: {
       shell: config.runtimes.shell,

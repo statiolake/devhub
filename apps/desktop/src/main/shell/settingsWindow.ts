@@ -211,9 +211,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			notifySound: config.general.notify_sound,
 			noticeSeconds: config.general.notice_seconds,
 			terminalIdleSeconds: config.general.terminal_idle_seconds,
-			workbenchHibernateMinutes: config.general.workbench_hibernate_minutes,
-			workbenchAwakeMax: config.general.workbench_awake_max,
-			defaultView: config.general.default_view,
+			workbenchDiscardMinutes: config.general.workbench_discard_minutes,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -356,9 +354,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			notify_sound: wire.general.notifySound,
 			notice_seconds: wire.general.noticeSeconds,
 			terminal_idle_seconds: wire.general.terminalIdleSeconds,
-			workbench_hibernate_minutes: wire.general.workbenchHibernateMinutes,
-			workbench_awake_max: wire.general.workbenchAwakeMax,
-			default_view: wire.general.defaultView,
+			workbench_discard_minutes: wire.general.workbenchDiscardMinutes,
 		},
 		runtimes: {
 			shell: wire.runtimes.shell,

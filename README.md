@@ -120,13 +120,14 @@ in every sense the workbench itself can observe, laid into DevHub's single
 window as a `WebContentsView`. Extensions, settings, the integrated terminal
 and the extension host are the real ones, on disk, with no "remote" semantics
 anywhere.
-A Workspace's editor area shows its own tmux session (`ws-…`) until you ask
-for the workbench: `Cmd+Q E` switches that Workspace to its VS Code editor —
-started the first time, then put to sleep and woken like any other — and back,
-and each Workspace remembers which it shows (`[general] default_view =
-"editor"` makes VS Code what a new Workspace starts with). Files DevHub is asked to open go
-to whichever is shown: the workbench, or a Neovim DevHub runs in that session.
-See [`docs/terminal-mode.md`](docs/terminal-mode.md).
+A Workspace's editor area is its workbench. The one on screen starts at
+launch and the other local ones after it, one at a time in the background; one
+that is not on screen is frozen (its processes stopped, so the Mac compresses
+or swaps them out first) unless it is in use, thawed instantly when shown,
+asked for or connected to, and discarded after a long while frozen. Files
+DevHub is asked to open go to the Workspace's workbench. See
+[`docs/terminal-mode.md`](docs/terminal-mode.md) and
+[`docs/window-and-pages.md`](docs/window-and-pages.md), "What it costs".
 
 **Agents** — an Agent is a tmux session, with no runtime in between. It lives
 on DevHub's own tmux socket, carries DevHub's own markers, and is attached by
@@ -202,7 +203,7 @@ immediately.
 press it twice to quit. Everything else is forwarded to VS Code.
 
 Main's console — every `[devhub] …` line, including each workbench lifecycle
-transition and why a hibernation or wake was skipped — is also appended to
+transition and why a hidden one stays up or a discard was called off — is also appended to
 `<userData>/logs/devhub-main.log` (timestamped; past 5 MB it becomes
 `devhub-main.log.1`, one kept). `DevHub: Open Log` in the command palette
 (`Cmd+Q :`) opens it in the app macOS uses for `.log` files (Console).
@@ -321,22 +322,14 @@ terminal_idle_seconds = 5   # a Workspace row wears the Agents' working mark whi
                             # nothing for this long while you are elsewhere — until
                             # you look at that pane. 0: only exiting counts. No ✓.
                             # Settings > General. See src/main/terminal/paneActivity.ts.
-workbench_hibernate_minutes = 10  # close a Workspace's editor (renderer, extension
-                            # host, language servers) after this long off screen;
-                            # it reopens where it was when woken (Enter on its
-                            # "Sleeping" placeholder, Cmd+Q E, opening it), unsaved
-                            # editors included (hot exit); nothing wakes it on its
-                            # own. Agents and tmux stay. Not with a
-                            # busy terminal or a debug session; never SSH or dev
-                            # container editors. 0: off.
-workbench_awake_max = 2     # at most this many such editors open; past it, the
-                            # ones shown least recently close at once, on the
-                            # switch. Going to one (Cmd+Q N/P) never wakes it.
-                            # 0: no cap.
-default_view = "terminal"   # what a new Workspace's editor area shows: "terminal"
-                            # (its ws- tmux session) or "editor" (its VS Code
-                            # editor, started when asked for). Cmd+Q E switches one;
-                            # each Workspace remembers its own. SSH: always VS Code.
+workbench_discard_minutes = 60  # a Workspace's editor that is not on screen is
+                            # frozen at once (SIGSTOP) unless it is debugging,
+                            # running a task or a terminal command, or talking
+                            # over the network; this long frozen, it is closed
+                            # (renderer, extension host, language servers) and
+                            # reopens where it was, unsaved editors included (hot
+                            # exit), on Enter. Agents and tmux stay. Never SSH or
+                            # dev container editors. 0: never closed.
 
 [appearance]
 theme_dark = "Dark 2026"    # the VS Code colour theme DevHub wears in the dark

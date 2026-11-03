@@ -1605,20 +1605,20 @@ body.is-resizing-rows {
    one control — Enter or a click wakes it. Quiet on purpose: a sleeping
    editor is a state of the area, not a warning. It fades in on the motion
    tokens rather than snapping, so a pass with Cmd+Q N/P reads as a glance. */
-.surface-asleep {
+.surface-discarded {
   position: relative;
   width: 100%;
   height: 100%;
   overflow: hidden;
   outline: none;
-  animation: surface-asleep-in var(--motion-slow) var(--ease-standard);
+  animation: surface-discarded-in var(--motion-slow) var(--ease-standard);
 }
 
-.surface-asleep[data-waking="true"] {
+.surface-discarded[data-waking="true"] {
   animation: none;
 }
 
-.surface-asleep img {
+.surface-discarded img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -1626,18 +1626,18 @@ body.is-resizing-rows {
   filter: grayscale(1);
 }
 
-.surface-asleep-scrim {
+.surface-discarded-scrim {
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, var(--canvas) 72%, transparent);
   transition: background-color var(--motion-base) var(--ease-standard);
 }
 
-.surface-asleep:hover .surface-asleep-scrim {
+.surface-discarded:hover .surface-discarded-scrim {
   background: color-mix(in srgb, var(--canvas) 64%, transparent);
 }
 
-.surface-asleep-message {
+.surface-discarded-message {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1650,32 +1650,34 @@ body.is-resizing-rows {
   text-align: center;
 }
 
-.surface-asleep-title {
+.surface-discarded-title {
   color: var(--primary);
   font-weight: 600;
 }
 
-.surface-asleep-hint {
+.surface-discarded-hint {
   white-space: pre;
 }
 
-.surface-asleep:focus-visible .surface-asleep-message .surface-asleep-title {
+.surface-discarded:focus-visible
+  .surface-discarded-message
+  .surface-discarded-title {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
-@keyframes surface-asleep-in {
+@keyframes surface-discarded-in {
   from {
     opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .surface-asleep {
+  .surface-discarded {
     animation: none;
   }
 
-  .surface-asleep-scrim {
+  .surface-discarded-scrim {
     transition: none;
   }
 }

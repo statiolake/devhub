@@ -890,7 +890,7 @@ index 74be4cac..7d2d2240 100644
 +import './contrib/devhubWordBoundaries/browser/devhubWordBoundaries.contribution.js';
 +
 +// DevHub: what closing an away workbench would lose (overlay only, docs/window-and-pages.md)
-+import './contrib/devhubHibernate/electron-browser/devhubHibernate.contribution.js';
++import './contrib/devhubActivity/electron-browser/devhubActivity.contribution.js';
 +
 +// DevHub: the settings DevHub decides, held in memory — the colour theme (overlay only, docs/window-and-pages.md)
 +import './contrib/devhubManagedSettings/electron-browser/devhubManagedSettings.contribution.js';

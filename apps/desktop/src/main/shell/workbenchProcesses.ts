@@ -42,8 +42,9 @@ import {
 	type ListeningSocket,
 } from "../diagnostics/listenQueues.js";
 import {
-	PS_ARGUMENTS,
-	parseProcessTable,
+	PS_ARGS_ARGUMENTS,
+	PS_STAT_ARGUMENTS,
+	parseProcessTables,
 	type ProcessRow,
 } from "../diagnostics/processTable.js";
 import {
@@ -101,7 +102,15 @@ export function systemProcessDeps(
 		(await run(file, [...args], { maxBuffer: 16 * 1024 * 1024 })).stdout;
 	return {
 		platform: process.platform,
-		processes: async () => parseProcessTable(await output("ps", PS_ARGUMENTS)),
+		// Two runs, each text column last: macOS cuts a `comm` that is not,
+		// and tmux is told apart by its executable (`parseProcessTables`).
+		processes: async () => {
+			const [stat, args] = await Promise.all([
+				output("ps", PS_STAT_ARGUMENTS),
+				output("ps", PS_ARGS_ARGUMENTS),
+			]);
+			return parseProcessTables(stat, args);
+		},
 		electronPids,
 		run: output,
 		readText: (path) => readFile(path, "utf8").catch(() => undefined),

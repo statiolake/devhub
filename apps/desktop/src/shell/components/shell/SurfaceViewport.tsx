@@ -32,7 +32,7 @@ import {
 import { useShellPage } from "../../ShellPageContext";
 import { devhub } from "../../client";
 import { closeDiagnosticLabel, closeFailureLabel } from "./diagnosticLabel";
-import { Asleep, Failure, Waiting, Waking } from "./SurfaceState";
+import { Discarded, Failure, Waiting, Waking } from "./SurfaceState";
 import { useEditorPlaceholders } from "./workbenchDialogs";
 import {
   TERMINAL_MAX_SHARE,
@@ -451,19 +451,12 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     // draw under it. The workbenches stay built and running behind both: this
     // is an Agent covering a workbench, not a workbench going away.
     surfaceState = "agent";
-  } else if (workspace?.editorView === "terminal") {
-    // The editor area shows the Workspace's own terminal, a view main lays
-    // over this rectangle (`docs/terminal-mode.md`). Whatever its workbench is
-    // doing — asleep, never started — is not what is on screen.
-    surfaceState = "editor-terminal";
-    editorKey = layout.editorKey;
-    announce = false;
   } else if (placeholders.has(layout.editorKey)) {
-    // The workbench is starting, being rebuilt in this same slot, asleep, or
-    // waking. The selection has not moved and must not: what changed is that
-    // there is nothing to show yet, which is a state of this area rather than
-    // a reason to leave it. One that slept shows the frame it left, and waits
-    // for Enter or a click: nothing wakes it on its own.
+    // The workbench is starting, being rebuilt in this same slot, discarded,
+    // or starting again. The selection has not moved and must not: what
+    // changed is that there is nothing to show yet, which is a state of this
+    // area rather than a reason to leave it. A discarded one shows the frame
+    // it left, and waits for Enter or a click: nothing starts it on its own.
     const placeholder = placeholders.get(layout.editorKey);
     const surfaceKey = layout.editorKey;
     editorKey = surfaceKey;
@@ -471,8 +464,8 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
       placeholder?.kind === "starting" ||
       (placeholder?.kind === "waking" && placeholder.frame === "")
     ) {
-      // The first `Cmd+Q E` on a Workspace, or one woken with no frame to
-      // show: there is nothing yet but the wait.
+      // Its first start, or one started again with no frame to show: there
+      // is nothing yet but the wait.
       surfaceState = "editor-starting";
       body = <Waiting label="Starting VS Code…" />;
     } else if (placeholder === undefined || placeholder.kind === "restarting") {
@@ -482,14 +475,13 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
       surfaceState = "editor-starting";
       body = <Waking frame={placeholder.frame} />;
     } else {
-      surfaceState = "editor-asleep";
+      surfaceState = "editor-discarded";
       body = (
-        <Asleep
+        <Discarded
           // A different Workspace's is a different control: it takes the
           // keyboard again.
           key={surfaceKey}
           frame={placeholder.frame}
-          started={placeholder.started}
           onWake={() => {
             void devhub().wakeEditor(surfaceKey);
           }}

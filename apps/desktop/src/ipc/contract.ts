@@ -2181,20 +2181,17 @@ export interface EditorPlaceholderEvent {
 }
 
 /**
- * `starting`: opening for the first time, the first `Cmd+Q E` on a Workspace
- * included. `restarting`: being rebuilt after a failure. `asleep`: hibernated
- * (`started`) or never started, with the frame it left as a data URL ("" when
- * none could be taken); it waits for Enter or a click (`wakeEditor`), nothing
- * wakes it on its own. `waking`: asleep and opening again, the frame still up.
+ * `starting`: being started (at launch, in the background, or because it was
+ * shown or asked for). `restarting`: being rebuilt after a failure.
+ * `discarded`: closed after being frozen a while, with the frame it left as a
+ * data URL ("" when none could be taken); it waits for Enter or a click
+ * (`wakeEditor`). `waking`: discarded and starting again, the frame still up.
+ * A frozen workbench has none: it is thawed the moment it is shown.
  */
 export type EditorPlaceholderWire =
 	| { readonly kind: "starting" }
 	| { readonly kind: "restarting" }
-	| {
-			readonly kind: "asleep";
-			readonly frame: string;
-			readonly started: boolean;
-	  }
+	| { readonly kind: "discarded"; readonly frame: string }
 	| { readonly kind: "waking"; readonly frame: string };
 
 /**

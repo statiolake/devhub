@@ -1,3 +1,12 @@
+/**
+ * The lifecycle driving the planner: facts in, effects out, over a fake
+ * executor whose views come and go only through the effects and whose clock
+ * moves only when a test says so. The rules themselves are tested on fact
+ * fixtures in `workbenchPlan.test.ts`; this is the bookkeeping around them —
+ * that the events become the facts the rules read, and that the phases
+ * follow the effects, so nothing is asked twice.
+ */
+
 import { describe, expect, it } from "vitest";
 import {
 	EditorSupervisor,
@@ -5,94 +14,67 @@ import {
 	RESTART_BACKOFF_MS,
 } from "./editorSupervisor.js";
 import {
-	HIBERNATE_CHECK_MS,
 	OPEN_SETTLE_MS,
 	WorkbenchLifecycle,
-	placeholderOf,
 	type EditorPlaceholder,
 	type LifecycleEffect,
+	type ProbeAnswer,
 	type WakeReason,
 	type WorkbenchPhase,
 } from "./workbenchLifecycle.js";
+import { QUIET_MS, SETTLE_PROBE_MS } from "./workbenchPlan.js";
+
+const HOUR = 60 * 60_000;
+const QUIET: ProbeAnswer = { busy: [], ready: true, cpuPercent: 1 };
 
 interface Workspace {
-	sleepable: boolean;
+	freezable: boolean;
 	closing: boolean;
 	wanted: boolean;
 }
 
-/**
- * The executor, as `AppController.reconcileWorkbenches` is, over a fake
- * window: views come and go only through the effects, and the clock only
- * moves when a test says so. An open does not finish by itself — `load`
- * finishes it — so a test can stand in the middle of one.
- */
-function harness(
-	options: { awakeMax?: number; hibernateAfterMs?: number } = {},
-) {
+function harness(options: { discardAfterMs?: number } = {}) {
 	const logs: string[] = [];
 	const life = new WorkbenchLifecycle(new EditorSupervisor(), (line) => {
 		logs.push(line);
 	});
 	const workspaces = new Map<string, Workspace>();
 	const views = new Set<string>();
-	/** Opens in flight, as the executor's `workbenchOpens` holds them. */
 	const loading = new Set<string>();
-	/** What each surface was last told, by surface key. */
-	const surfaces = new Map<string, EditorPlaceholder>();
-	/** A relocated Workspace keeps its slot: folder → surface key. */
-	const surfaceOf = new Map<string, string>();
-	const leftAt = new Map<string, number>();
+	const requests = new Set<string>();
 	const placeholders = new Map<string, EditorPlaceholder>();
-	const told: { surfaceKey: string; placeholder?: EditorPlaceholder }[] = [];
 	const effects: LifecycleEffect[] = [];
-	let now = 0;
+	/** Probes asked for and not yet answered. */
+	const probes = new Set<string>();
+	let now = 1_000;
 	let selected: string | undefined;
-	let awakeMax = options.awakeMax ?? 3;
 
 	const plan = (
-		tick = false,
-		ask?: { readonly folder: string; readonly why: WakeReason },
-		sleep?: string,
+		extra: { ask?: { folder: string; why: WakeReason }; freeze?: string } = {},
 	) => {
-		for (const [folder] of workspaces) {
-			if (folder !== selected && !leftAt.has(folder)) leftAt.set(folder, now);
-		}
 		const done = life.plan({
 			now,
 			wanted: [...workspaces]
 				.filter(([, one]) => one.wanted)
 				.map(([folder, one]) => ({
 					folder,
-					surfaceKey: surfaceOf.get(folder) ?? `surface:${folder}`,
-					sleepable: one.sleepable,
+					surfaceKey: `surface:${folder}`,
+					freezable: one.freezable,
 					closing: one.closing,
-					awayMs:
-						folder === selected || !views.has(folder)
-							? undefined
-							: now - (leftAt.get(folder) ?? now),
 				})),
 			selected,
 			views: [...views],
 			loading: [...loading],
-			awakeMax,
-			hibernateAfterMs: options.hibernateAfterMs ?? 10 * 60_000,
-			tick,
-			...(ask === undefined ? {} : { ask }),
-			...(sleep === undefined ? {} : { sleep }),
+			discardAfterMs: options.discardAfterMs ?? HOUR,
+			requests: [...requests],
+			...extra,
 		});
 		for (const effect of done) {
 			if (effect.kind === "dispose") views.delete(effect.folder);
 			if (effect.kind === "open") loading.add(effect.folder);
+			if (effect.kind === "probe") probes.add(effect.folder);
 			if (effect.kind === "placeholder") {
-				if (effect.placeholder) {
-					surfaces.set(effect.surfaceKey, effect.placeholder);
-				} else surfaces.delete(effect.surfaceKey);
 				const folder = effect.surfaceKey.slice("surface:".length);
-				told.push({
-					surfaceKey: effect.surfaceKey,
-					...(effect.placeholder ? { placeholder: effect.placeholder } : {}),
-				});
 				if (effect.placeholder) placeholders.set(folder, effect.placeholder);
 				else placeholders.delete(folder);
 			}
@@ -104,31 +86,17 @@ function harness(
 	const app = {
 		life,
 		logs,
-		views,
-		placeholders,
-		surfaces,
-		told,
 		effects,
+		placeholders,
+		probes,
 		plan,
-		/** The cap moved, then one plan. */
-		planWith(change: { awakeMax: number }) {
-			awakeMax = change.awakeMax;
-			return plan();
-		},
 		get now() {
 			return now;
 		},
-		get selected() {
-			return selected;
-		},
-		isWanted(folder: string) {
-			return workspaces.get(folder)?.wanted === true;
-		},
-		/** Workspaces, all sleepable but `ssh…` ones (SSH, dev containers). */
 		add(...folders: string[]) {
 			for (const folder of folders) {
 				workspaces.set(folder, {
-					sleepable: !folder.startsWith("ssh"),
+					freezable: !folder.startsWith("ssh"),
 					closing: false,
 					wanted: true,
 				});
@@ -136,88 +104,51 @@ function harness(
 			return plan();
 		},
 		set(folder: string, change: Partial<Workspace>) {
-			const one = workspaces.get(folder);
-			if (one) Object.assign(one, change);
+			Object.assign(workspaces.get(folder)!, change);
 			return plan();
 		},
-		remove(folder: string) {
-			workspaces.delete(folder);
-			return plan();
-		},
-		/** The same Workspace, its folder moved (Locate…): the same slot. */
-		relocate(from: string, to: string) {
-			const one = workspaces.get(from);
-			if (!one) return plan();
-			surfaceOf.set(to, surfaceOf.get(from) ?? `surface:${from}`);
-			workspaces.delete(from);
-			workspaces.set(to, one);
-			if (selected === from) selected = to;
-			return plan();
-		},
-		/**
-		 * The selection moves there — navigation, which wakes nothing — and,
-		 * with `ask`, somebody asks for its editor as they go (`Cmd+Q E`, an
-		 * explicit open, Enter on the placeholder).
-		 */
-		select(folder: string | undefined, ask?: WakeReason) {
-			if (selected !== undefined && selected !== folder) {
-				leftAt.set(selected, now);
-			}
+		select(folder: string | undefined) {
 			selected = folder;
-			if (folder !== undefined) leftAt.delete(folder);
-			// One call: the selection and the ask that comes with it.
-			return plan(
-				false,
-				ask !== undefined && folder !== undefined
-					? { folder, why: ask }
-					: undefined,
-			);
+			return plan();
+		},
+		ask(folder: string, why: WakeReason = "asked") {
+			return plan({ ask: { folder, why } });
+		},
+		request(folder: string) {
+			requests.add(folder);
+			return plan();
+		},
+		release(folder: string) {
+			requests.delete(folder);
+			return plan();
+		},
+		freeze(folder: string) {
+			return plan({ freeze: folder });
 		},
 		advance(ms: number) {
-			const until = now + ms;
-			for (;;) {
-				const deadline = life.nextDeadline();
-				if (deadline === undefined || deadline > until) break;
-				now = Math.max(now, deadline);
-				plan();
-			}
-			now = until;
+			now += ms;
+			return plan();
 		},
-		tick() {
-			now += HIBERNATE_CHECK_MS;
-			return plan(true);
-		},
-		/** The open finished and its view loaded. */
 		load(folder: string) {
 			loading.delete(folder);
 			views.add(folder);
 			life.loaded(folder, now);
 			return plan();
 		},
-		/** Bring every opening workbench up. */
-		loadAll() {
-			for (const [folder] of workspaces) {
-				if (life.phase(folder).kind === "opening") app.load(folder);
+		/** Answer the folder's probe; answer it quiet until it has settled. */
+		answer(folder: string, answer: ProbeAnswer = QUIET) {
+			probes.delete(folder);
+			life.probed(folder, answer, now);
+			return plan();
+		},
+		/** Load, then answer probes a second apart until it has settled. */
+		settle(folder: string) {
+			if (life.phase(folder).kind === "starting") app.load(folder);
+			for (let i = 0; i <= QUIET_MS / SETTLE_PROBE_MS + 1; i += 1) {
+				if (probes.has(folder)) app.answer(folder);
+				now += SETTLE_PROBE_MS;
+				plan();
 			}
-		},
-		/**
-		 * The open finished with its view, and the page had loaded before
-		 * anyone listened: no loaded event, ever.
-		 */
-		arriveUnheard(folder: string) {
-			loading.delete(folder);
-			views.add(folder);
-			return plan();
-		},
-		/** The open finished with its view, whose page is still loading. */
-		arriveLoading(folder: string) {
-			views.add(folder);
-			return plan();
-		},
-		/** The open's effect never ran (the executor threw before it). */
-		lose(folder: string) {
-			loading.delete(folder);
-			return plan();
 		},
 		fail(folder: string, reason = "The workbench process ended.") {
 			loading.delete(folder);
@@ -225,1194 +156,279 @@ function harness(
 			life.failed(folder, reason, now);
 			return plan();
 		},
-		/** Enter or a click on the selected one's placeholder. */
-		wake(folder: string, why: WakeReason = "asked") {
-			return plan(false, { folder, why });
-		},
-		/** The Task Manager's Sleep: one plan, asked to put it to sleep. */
-		askToSleep(folder: string) {
-			return plan(false, undefined, folder);
-		},
-		/** The hibernate effect, carried out: unloaded, or kept awake. */
-		sleep(folder: string, frame = `frame:${folder}`) {
-			if (!life.mayHibernate(folder)) {
-				life.hibernateSkipped(folder, "shown again", now);
-			} else {
-				life.hibernated(folder, frame);
-			}
-			return plan();
-		},
-		refuse(folder: string, reason = "terminal zsh") {
-			life.hibernateSkipped(folder, reason, now);
-			return plan();
-		},
-		/** Carry out every pending hibernate effect, all agreeing. */
-		sleepAll() {
-			for (const [folder] of workspaces) {
-				if (life.phase(folder).kind === "hibernating") app.sleep(folder);
-			}
-		},
 		kind(folder: string): WorkbenchPhase["kind"] {
 			return life.phase(folder).kind;
-		},
-		kinds() {
-			return Object.fromEntries(
-				[...workspaces.keys()].map((folder) => [folder, app.kind(folder)]),
-			);
 		},
 	};
 	return app;
 }
 
-const opens = (effects: readonly LifecycleEffect[]) =>
-	effects.flatMap((effect) =>
-		effect.kind === "open" ? [`${effect.folder} ${effect.cause}`] : [],
-	);
-const hibernations = (effects: readonly LifecycleEffect[]) =>
-	effects.flatMap((effect) =>
-		effect.kind === "hibernate" ? [`${effect.folder} ${effect.why}`] : [],
-	);
+const of = (
+	effects: readonly LifecycleEffect[],
+	kind: LifecycleEffect["kind"],
+) => effects.flatMap((effect) => (effect.kind === kind ? [effect.folder] : []));
 
-/** a, b, c awake with a shown last; then d added and shown, cap 3. */
-function fourAwake() {
-	const app = harness({ awakeMax: 4 });
-	app.add("a", "b", "c", "d");
-	app.loadAll();
-	for (const folder of ["d", "c", "b", "a"]) {
-		app.advance(1_000);
-		app.select(folder);
-	}
-	return app;
-}
-
-describe("opening workbenches", () => {
-	it("opens every wanted workbench once, the selected one first", () => {
+describe("launch", () => {
+	it("starts the shown workbench first, then the others one at a time", () => {
 		const app = harness();
 		app.select("b");
-		const effects = app.add("scratch", "a", "b");
-		expect(opens(effects)).toEqual(["b start", "scratch start", "a start"]);
-		expect(opens(app.plan())).toEqual([]);
-		expect(app.kinds()).toEqual({
-			scratch: "opening",
-			a: "opening",
-			b: "opening",
-		});
-		app.loadAll();
-		expect(app.kinds()).toEqual({ scratch: "awake", a: "awake", b: "awake" });
-		// A first open stands "starting" in its slot until it has loaded.
-		expect(app.told.map((one) => one.placeholder?.kind)).toEqual([
-			"starting",
-			"starting",
-			"starting",
-			undefined,
-			undefined,
-			undefined,
-		]);
+		expect(of(app.add("a", "b", "c"), "open")).toEqual(["b"]);
+		expect(of(app.plan(), "open")).toEqual([]);
+		app.settle("b");
+		expect(app.kind("a")).toBe("starting");
+		expect(app.kind("c")).toBe("absent");
+		app.settle("a");
+		expect(app.kind("c")).toBe("starting");
 	});
 
-	it("takes down the workbench of a Workspace that left, and forgets it", () => {
+	it("freezes a background one once it has settled, unless it was shown meanwhile", () => {
 		const app = harness();
-		app.add("a", "b");
-		app.loadAll();
-		const effects = app.remove("b");
-		expect(effects).toContainEqual({ kind: "dispose", folder: "b" });
-		expect(app.views.has("b")).toBe(false);
-		expect(app.kind("b")).toBe("absent");
-	});
-
-	it("adopts a workbench VS Code opened on its own", () => {
-		const app = harness();
-		app.views.add("a");
-		const effects = app.add("a");
-		expect(opens(effects)).toEqual([]);
-		expect(app.kind("a")).toBe("awake");
-	});
-
-	it("does not reopen a closing Workspace whose view went with the close", () => {
-		const app = harness();
-		app.add("a");
-		app.load("a");
-		app.set("a", { closing: true });
-		app.views.delete("a");
-		app.life.disposed("a");
-		expect(opens(app.plan())).toEqual([]);
-		// The close failed after the view step: it is wanted again.
-		expect(opens(app.set("a", { closing: false }))).toEqual(["a start"]);
-	});
-
-	it("starts past the cap asleep rather than opening one to close it", () => {
-		const app = harness({ awakeMax: 2 });
-		app.select("d");
-		const effects = app.add("ssh", "scratch", "a", "b", "c", "d");
-		// d is selected and opens; SSH never counts; Scratch fills the cap like
-		// any local one, and starts first only because it is first in the list.
-		expect(opens(effects)).toEqual(["d start", "ssh start", "scratch start"]);
-		expect(app.kinds()).toMatchObject({
-			a: "asleep",
-			b: "asleep",
-			c: "asleep",
-		});
-		expect(app.placeholders.get("b")).toEqual({
-			kind: "asleep",
-			frame: "",
-			started: false,
-		});
-		// Shown, it waits; asked for, it starts — it never ran, so a start.
-		expect(opens(app.select("b"))).toEqual([]);
-		expect(opens(app.wake("b"))).toEqual(["b start"]);
-	});
-
-	it("an open ending with the folder no longer wanted is simply forgotten", () => {
-		const app = harness();
-		app.add("a");
-		app.remove("a");
-		app.life.abandoned("a");
-		expect(app.kind("a")).toBe("absent");
-		// Its view arriving anyway is disposed, not kept.
-		app.views.add("a");
-		expect(app.plan()).toContainEqual({ kind: "dispose", folder: "a" });
-	});
-});
-
-describe("waking", () => {
-	function oneAsleep() {
-		const app = harness();
-		app.add("a", "b");
-		app.loadAll();
 		app.select("a");
-		app.select("b");
-		// Put a to sleep by hand, the way the minute check would.
-		app.advance(11 * 60_000);
-		expect(hibernations(app.tick())).toEqual(["a away"]);
-		app.sleep("a");
-		expect(app.kind("a")).toBe("asleep");
-		return app;
-	}
-
-	it("never wakes on its own: shown, it stays asleep with its placeholder, however long", () => {
-		const app = oneAsleep();
-		expect(opens(app.select("a"))).toEqual([]);
-		expect(app.kind("a")).toBe("asleep");
-		expect(app.placeholders.get("a")).toEqual({
-			kind: "asleep",
-			frame: "frame:a",
-			started: true,
-		});
-		// No deadline to wake it by, and time passing does nothing.
-		expect(app.life.nextDeadline()).toBeUndefined();
-		app.advance(60 * 60_000);
-		app.tick();
-		expect(app.kind("a")).toBe("asleep");
-		expect(opens(app.effects)).not.toContain("a wake");
+		app.add("a", "b", "c");
+		app.settle("a");
+		app.settle("b");
+		// b settled hidden: frozen on the quiet probe that settled it.
+		expect(app.kind("b")).toBe("frozen");
+		// c is starting in the background; the person goes to it.
+		expect(app.kind("c")).toBe("starting");
+		app.select("c");
+		app.settle("c");
+		expect(app.kind("c")).toBe("running");
 	});
 
-	it("wakes when asked (Enter, a click), behind the starting spinner, until it loads", () => {
-		const app = oneAsleep();
-		app.select("a");
-		expect(opens(app.wake("a", "asked"))).toEqual(["a wake"]);
-		expect(app.placeholders.get("a")).toEqual({
-			kind: "waking",
-			frame: "frame:a",
-		});
-		app.load("a");
-		expect(app.placeholders.has("a")).toBe(false);
-		expect(app.kind("a")).toBe("awake");
-	});
-
-	it("wakes on Cmd+Q E or an explicit open, landing there", () => {
-		for (const why of ["shown", "opened", "needed"] as const) {
-			const app = oneAsleep();
-			expect(opens(app.select("a", why))).toEqual(["a wake"]);
-		}
-	});
-
-	it("does not wake one stepped through with Cmd+Q N/P, however long it is looked at", () => {
-		const app = oneAsleep();
-		app.select("a");
-		app.advance(300);
-		app.select("b");
-		app.select("a");
-		app.advance(10_000);
-		expect(app.kind("a")).toBe("asleep");
-		expect(opens(app.effects)).not.toContain("a wake");
-	});
-
-	it("an ask is used by the plan it comes with, and only for the editor shown", () => {
-		const app = oneAsleep();
-		// Asked for while b is shown: nothing, and nothing kept for later.
-		expect(opens(app.wake("a"))).toEqual([]);
-		expect(app.logs).toContain(
-			"[devhub] workbench 'a' ask (asked) unused: not shown",
-		);
-		// A selection arriving afterwards is only a selection.
-		expect(opens(app.select("a"))).toEqual([]);
-		// The selection and the ask together open it.
-		app.select("b");
-		expect(opens(app.select("a", "shown"))).toEqual(["a wake"]);
-		// And it is spent: asleep again later, being shown wakes nothing.
-		app.load("a");
-		app.select("b");
-		app.advance(11 * 60_000);
-		app.tick();
-		app.sleep("a");
-		expect(opens(app.select("a"))).toEqual([]);
-	});
-
-	it("asking for an awake or opening one changes nothing", () => {
-		const app = oneAsleep();
-		expect(opens(app.wake("b"))).toEqual([]);
-		app.select("a", "asked");
-		expect(opens(app.wake("a"))).toEqual([]);
-		expect(app.kind("a")).toBe("opening");
-	});
-});
-
-describe("the cap on awake workbenches", () => {
-	it("puts the least recently shown to sleep the moment a switch goes over it", () => {
-		const app = fourAwake();
-		app.effects.length = 0;
-		// Lowering the cap is the same fact as waking a fifth: over it.
-		const effects = harnessCap(app, 3);
-		expect(hibernations(effects)).toEqual(["d cap"]);
-		expect(app.kind("d")).toBe("hibernating");
-		app.sleep("d");
-		expect(app.kind("d")).toBe("asleep");
-		expect(app.views.has("d")).toBe(false);
-		expect(app.placeholders.get("d")).toEqual({
-			kind: "asleep",
-			frame: "frame:d",
-			started: true,
-		});
-		expect(hibernations(app.plan())).toEqual([]);
-	});
-
-	it("evaluates it on the switch that wakes one, putting exactly one other to sleep", () => {
+	it("starts a workbench the person goes to ahead of its turn", () => {
 		const app = harness();
+		app.select("a");
 		app.add("a", "b", "c", "d");
-		// d starts asleep: the cap was full at launch.
-		app.loadAll();
-		for (const folder of ["c", "b", "a"]) {
-			app.advance(1_000);
-			app.select(folder);
-		}
-		expect(app.kind("d")).toBe("asleep");
-		app.advance(1_000);
-		const effects = app.select("d", "asked");
-		// It never ran: its first start.
-		expect(opens(effects)).toEqual(["d start"]);
-		// Four up or opening: c, shown longest ago, goes now — not d (opening
-		// and shown), not a or b.
-		expect(hibernations(effects)).toEqual(["c cap"]);
+		app.settle("a");
+		expect(app.kind("b")).toBe("starting");
+		expect(of(app.select("d"), "open")).toEqual(["d"]);
+		expect(app.kind("c")).toBe("absent");
 	});
 
-	it("never the shown one, an opening one, a closing one or one that never sleeps", () => {
-		const app = harness({ awakeMax: 10 });
-		app.add("ssh", "a", "b", "c");
-		for (const folder of ["ssh", "a", "b"]) app.load(folder);
+	it("never preloads a remote workbench, and starts it when shown", () => {
+		const app = harness();
 		app.select("a");
-		app.set("b", { closing: true });
-		// a, b up and c opening: three over a cap of one, and not one may go.
-		expect(hibernations(harnessCap(app, 1))).toEqual([]);
-		expect(app.logs.at(-1)).toBe(
-			"[devhub] workbench cap: 3 awake, cap 1, none more may sleep ('a' is shown, 'b' is closing, 'c' is opening)",
-		);
-		// c up and away: it is the one.
-		expect(hibernations(app.load("c"))).toEqual(["c cap"]);
+		app.add("a", "ssh-host");
+		app.settle("a");
+		app.advance(HOUR);
+		expect(app.kind("ssh-host")).toBe("absent");
+		expect(of(app.select("ssh-host"), "open")).toEqual(["ssh-host"]);
 	});
+});
 
-	it("asks the next one when the first says it must stay up, and leaves that one be until the minute check", () => {
-		const app = fourAwake();
-		expect(hibernations(harnessCap(app, 3))).toEqual(["d cap"]);
-		const next = app.refuse("d", "terminal zsh");
-		expect(app.kind("d")).toBe("awake");
-		expect(hibernations(next)).toEqual(["c cap"]);
-		app.sleep("c");
-		// Back over the cap (a fifth woken): d is still excused, b is next.
-		const again = harnessCap(app, 2);
-		expect(hibernations(again)).toEqual(["b cap"]);
-		expect(app.logs).toContain(
-			"[devhub] workbench 'd' hibernating -> awake: stays awake: terminal zsh",
-		);
-		app.refuse("b", "debug session");
-		expect(app.kind("b")).toBe("awake");
-		// Nothing else may go: said once, not on every plan.
-		app.plan();
-		app.plan();
-		expect(
-			app.logs.filter((line) => line.startsWith("[devhub] workbench cap:")),
-		).toHaveLength(1);
-		// The minute check asks the refusers again.
-		expect(hibernations(app.tick())).toEqual(["d cap"]);
-	});
-
-	it("counts Scratch like any local Workspace, and puts it to sleep", () => {
-		const app = harness({ awakeMax: 2 });
-		app.select("scratch");
-		app.add("scratch", "a", "ssh");
-		app.loadAll();
-		app.advance(1_000);
-		// Scratch, a and SSH up: two counted, at the cap.
-		expect(hibernations(app.select("a"))).toEqual([]);
-		app.add("b");
-		app.advance(1_000);
-		// b started by being asked for: three counted, and Scratch, shown
-		// least recently, is the one that goes.
-		const effects = app.select("b", "opened");
-		expect(opens(effects)).toEqual(["b start"]);
-		expect(hibernations(effects)).toEqual(["scratch cap"]);
-		app.sleep("scratch");
-		expect(app.kind("scratch")).toBe("asleep");
-		expect(app.kind("ssh")).toBe("awake");
-		// Selected again, it waits; an empty window asked for, it wakes.
-		expect(opens(app.select("scratch"))).toEqual([]);
-		expect(opens(app.select("scratch", "needed"))).toEqual(["scratch wake"]);
-	});
-
-	it("has no cap at 0", () => {
-		const app = fourAwake();
-		expect(hibernations(harnessCap(app, 0))).toEqual([]);
-	});
-
-	it("does not thrash when Cmd+Q N/P steps through more Workspaces than the cap", () => {
-		const folders = ["a", "b", "c", "d", "e", "f", "g"];
+describe("freezing and thawing", () => {
+	function twoRunning() {
 		const app = harness();
-		app.add(...folders);
-		app.loadAll();
-		app.effects.length = 0;
-		// Round and round, passing, 300 ms on each: a key repeat, or a person
-		// looking for one row.
-		for (let lap = 0; lap < 5; lap += 1) {
-			for (const folder of folders) {
-				app.select(folder);
-				app.advance(300);
-			}
-		}
-		expect(opens(app.effects)).toEqual([]);
-		expect(hibernations(app.effects)).toEqual([]);
-		// Stopping on one asleep wakes nothing either; Enter there is the one
-		// start, and it puts one other to sleep: the least recently shown.
-		app.select("e");
-		app.advance(5_000);
-		expect(opens(app.effects)).toEqual([]);
-		app.wake("e");
-		expect(opens(app.effects)).toEqual(["e start"]);
-		expect(hibernations(app.effects)).toHaveLength(1);
-	});
-});
-
-describe("time-based sleep", () => {
-	it("is the minute check's, for one away the configured time", () => {
-		const app = harness({ awakeMax: 0, hibernateAfterMs: 10 * 60_000 });
-		app.add("a", "b", "scratch", "ssh");
-		app.loadAll();
-		app.select("b");
-		app.advance(10 * 60_000);
-		// A switch is not the check.
-		expect(hibernations(app.select("b"))).toEqual([]);
-		// Scratch sleeps like any local Workspace; SSH does not.
-		expect(hibernations(app.tick())).toEqual(["a away", "scratch away"]);
-	});
-
-	it("is off at 0", () => {
-		const app = harness({ awakeMax: 0, hibernateAfterMs: 0 });
+		app.select("a");
 		app.add("a", "b");
-		app.loadAll();
+		app.settle("a");
 		app.select("b");
-		app.advance(60 * 60_000);
-		expect(hibernations(app.tick())).toEqual([]);
-	});
-});
-
-describe("sleep, when a person asks for it", () => {
-	it("hibernates an awake one that is not on screen, now, as the clock would", () => {
-		const app = harness({ awakeMax: 0, hibernateAfterMs: 0 });
-		app.add("a", "b");
-		app.loadAll();
-		app.select("b");
-		expect(hibernations(app.askToSleep("a"))).toEqual(["a asked"]);
-		expect(app.kind("a")).toBe("hibernating");
-		const effects = app.sleep("a");
-		expect(effects).toContainEqual({ kind: "dispose", folder: "a" });
-		expect(app.kind("a")).toBe("asleep");
-		// Asked once is once: the next plan asks nothing.
-		expect(hibernations(app.plan())).toEqual([]);
-	});
-
-	it("is refused for the one on screen, one that never sleeps, or one not awake", () => {
-		const app = harness({ awakeMax: 0, hibernateAfterMs: 0 });
-		app.add("a", "b", "ssh");
-		app.loadAll();
-		app.select("b");
-		expect(hibernations(app.askToSleep("b"))).toEqual([]);
-		expect(hibernations(app.askToSleep("ssh"))).toEqual([]);
-		app.askToSleep("a");
-		app.sleep("a");
-		expect(hibernations(app.askToSleep("a"))).toEqual([]);
-		expect(app.logs.filter((line) => line.includes("asked to sleep"))).toEqual([
-			"[devhub] workbench 'b' asked to sleep, not hibernating: is shown",
-			"[devhub] workbench 'ssh' asked to sleep, not hibernating: never sleeps",
-			"[devhub] workbench 'a' asked to sleep, not hibernating: is asleep",
-		]);
-	});
-});
-
-describe("overlaps", () => {
-	it("a workbench shown while it hibernates is not unloaded", () => {
-		const app = fourAwake();
-		harnessCap(app, 3);
-		app.select("d");
-		expect(app.life.mayHibernate("d")).toBe(false);
-		app.sleep("d");
-		expect(app.kind("d")).toBe("awake");
-	});
-
-	it("one shown after its unload began is asleep like any other, and wakes when asked", () => {
-		const app = fourAwake();
-		harnessCap(app, 3);
-		app.select("d");
-		// The unload was already past the point of asking.
-		app.life.hibernated("d", "frame:d");
-		const effects = app.plan();
-		expect(effects).toContainEqual({ kind: "dispose", folder: "d" });
-		expect(opens(effects)).toEqual([]);
-		expect(app.kind("d")).toBe("asleep");
-		expect(opens(app.wake("d"))).toEqual(["d wake"]);
-	});
-
-	it("never hibernates one that is opening or waking", () => {
-		const app = harness({ awakeMax: 10 });
-		app.select("b");
-		app.add("a", "b");
-		expect(hibernations(harnessCap(app, 1))).toEqual([]);
-		expect(app.kinds()).toEqual({ a: "opening", b: "opening" });
-		// b loads, and is shown.
-		expect(hibernations(app.load("b"))).toEqual([]);
-		// a loads, away: now it may.
-		expect(hibernations(app.load("a"))).toEqual(["a cap"]);
-	});
-
-	it("a crash while asleep is no crash; one while waking restarts it", () => {
-		const app = fourAwake();
-		harnessCap(app, 3);
-		app.sleep("d");
-		app.fail("d");
-		expect(app.kind("d")).toBe("asleep");
-		app.select("d", "asked");
-		app.fail("d", "renderer gone");
-		expect(app.kind("d")).toBe("restart-waiting");
-		expect(app.placeholders.get("d")).toEqual({ kind: "restarting" });
-		app.advance(RESTART_BACKOFF_MS);
-		expect(app.kind("d")).toBe("opening");
-		expect(opens(app.effects)).toContain("d restart");
-		expect(app.placeholders.get("d")).toEqual({ kind: "restarting" });
-		app.load("d");
-		expect(app.placeholders.has("d")).toBe(false);
-	});
-
-	it("a crash while hibernating is the sleep it was going to", () => {
-		const app = fourAwake();
-		harnessCap(app, 3);
-		app.fail("d");
-		expect(app.kind("d")).toBe("asleep");
-		expect(app.life.phase("d")).toEqual({
-			kind: "asleep",
-			frame: "",
-			started: true,
-		});
-		// The unload's answer, arriving after, only brings the frame it took.
-		app.life.hibernateSkipped("d", "late", app.now);
-		app.life.hibernated("d", "frame:d");
-		expect(app.life.phase("d")).toEqual({
-			kind: "asleep",
-			frame: "frame:d",
-			started: true,
-		});
-	});
-
-	it("a restart waiting out its backoff is not hibernated, by the cap or the clock", () => {
-		const app = fourAwake();
-		app.fail("d");
-		expect(app.kind("d")).toBe("restart-waiting");
-		// a shown; b and c go, d (least recently shown of all) does not.
-		expect(hibernations(harnessCap(app, 1))).toEqual(["c cap", "b cap"]);
-		app.sleepAll();
-		app.advance(RESTART_BACKOFF_MS);
-		expect(app.kind("d")).toBe("opening");
-		// Opening, it may not go either.
-		expect(hibernations(app.tick())).toEqual([]);
-		app.load("d");
-		// Up again, away and over the cap: now it is the one to go.
-		expect(app.kind("d")).toBe("hibernating");
-	});
-
-	it("an open that gave up waiting, then arrived, is adopted rather than opened twice", () => {
-		const app = harness();
-		app.add("a");
-		app.fail("a", "did not open within 30 seconds");
-		app.views.add("a");
-		expect(opens(app.plan())).toEqual([]);
-		expect(app.kind("a")).toBe("awake");
-	});
-});
-
-describe("giving up", () => {
-	function exhausted() {
-		const app = harness();
-		app.add("a");
-		for (let attempt = 0; attempt < MAX_EDITOR_RESTARTS; attempt += 1) {
-			app.fail("a");
-			app.advance(60_000);
-		}
-		app.effects.length = 0;
-		app.fail("a");
+		app.settle("b");
 		return app;
 	}
 
-	it("stops after the ceiling and reports it once", () => {
-		const app = exhausted();
-		expect(app.kind("a")).toBe("gave-up");
-		expect(
-			app.effects.filter((effect) => effect.kind === "report-gave-up"),
-		).toEqual([
-			{
-				kind: "report-gave-up",
-				folder: "a",
-				reason: "The workbench process ended.",
-				attempt: MAX_EDITOR_RESTARTS + 1,
-			},
-		]);
-		for (let i = 0; i < 30; i += 1) app.plan();
-		expect(
-			app.effects.filter((effect) => effect.kind === "report-gave-up"),
-		).toHaveLength(1);
-		expect(opens(app.effects)).toEqual([]);
-		// Nothing stands in: the Workspace's own unavailable state does.
-		expect(app.placeholders.has("a")).toBe(false);
+	it("probes a workbench as it is hidden, and freezes it on a quiet answer", () => {
+		const app = twoRunning();
+		expect(app.kind("a")).toBe("running");
+		app.select("a");
+		expect(app.probes.has("b")).toBe(true);
+		expect(app.kind("b")).toBe("running");
+		expect(of(app.answer("b"), "freeze")).toEqual(["b"]);
+		expect(app.kind("b")).toBe("frozen");
 	});
 
-	it("is parked while the Workspace is unavailable, and forgotten when a person brings it back", () => {
-		const app = exhausted();
-		app.set("a", { wanted: false });
-		expect(app.kind("a")).toBe("parked");
-		expect(opens(app.plan())).toEqual([]);
-		expect(opens(app.set("a", { wanted: true }))).toEqual(["a start"]);
-		// The count starts again: the next failure waits the shortest time.
+	it("does not freeze one whose probe lands after it was shown again", () => {
+		const app = twoRunning();
+		app.select("a");
+		app.select("b");
+		expect(of(app.answer("b"), "freeze")).toEqual([]);
+		expect(app.kind("b")).toBe("running");
+	});
+
+	it("keeps a busy one up, and looks again later", () => {
+		const app = twoRunning();
+		app.select("a");
+		app.answer("b", { ...QUIET, busy: ["debug session"] });
+		expect(app.kind("b")).toBe("running");
+		expect(app.logs.some((l) => l.includes("stays up: debug session"))).toBe(
+			true,
+		);
+		const deadline = app.life.nextDeadline()!;
+		app.advance(deadline - app.now);
+		expect(app.probes.has("b")).toBe(true);
+		expect(of(app.answer("b"), "freeze")).toEqual(["b"]);
+	});
+
+	it("thaws at once when shown, and when a request needs it", () => {
+		const app = twoRunning();
+		app.select("a");
+		app.answer("b");
+		expect(of(app.select("b"), "thaw")).toEqual(["b"]);
+		expect(app.kind("b")).toBe("running");
+		app.select("a");
+		app.answer("b");
+		expect(app.kind("b")).toBe("frozen");
+		expect(of(app.request("b"), "thaw")).toEqual(["b"]);
+		// Kept up while the request waits; looked at again when it is done.
+		expect(app.kind("b")).toBe("running");
+		app.release("b");
+		expect(app.probes.has("b")).toBe(true);
+	});
+
+	it("thaws for a connection, and keeps it up for the grace", () => {
+		const app = twoRunning();
+		app.select("a");
+		app.answer("b");
+		app.life.connectionArrived("b", app.now);
+		expect(of(app.plan(), "thaw")).toEqual(["b"]);
+		expect(of(app.plan(), "probe")).toEqual([]);
+		expect(app.kind("b")).toBe("running");
+	});
+
+	it("the Task Manager's Sleep freezes a busy hidden one, never the shown", () => {
+		const app = twoRunning();
+		app.select("a");
+		app.answer("b", { ...QUIET, busy: ["task build"] });
+		expect(of(app.freeze("b"), "freeze")).toEqual(["b"]);
+		expect(of(app.freeze("a"), "freeze")).toEqual([]);
+		expect(app.logs.at(-1)).toContain("asked to freeze, not frozen: shown");
+	});
+
+	it("a freeze that could not be carried out leaves it running", () => {
+		const app = twoRunning();
+		app.select("a");
+		app.answer("b");
+		app.life.freezeFailed("b", "no processes", app.now);
+		expect(app.kind("b")).toBe("running");
+		expect(of(app.plan(), "freeze")).toEqual([]);
+	});
+});
+
+describe("discarding", () => {
+	function frozenB() {
+		const app = harness({ discardAfterMs: HOUR });
+		app.select("a");
+		app.add("a", "b");
+		app.settle("a");
+		app.settle("b");
+		expect(app.kind("b")).toBe("frozen");
+		return app;
+	}
+
+	it("discards after the discard time, and shows the not-running placeholder", () => {
+		const app = frozenB();
+		expect(of(app.advance(HOUR), "discard")).toEqual(["b"]);
+		expect(app.life.mayDiscard("b")).toBe(true);
+		app.life.discarded("b", "frame:b");
+		expect(of(app.plan(), "dispose")).toEqual(["b"]);
+		expect(app.placeholders.get("b")).toEqual({
+			kind: "discarded",
+			frame: "frame:b",
+		});
+		// Shown, it waits; Enter starts it.
+		expect(of(app.select("b"), "open")).toEqual([]);
+		expect(of(app.ask("b"), "open")).toEqual(["b"]);
+		expect(app.placeholders.get("b")).toEqual({
+			kind: "waking",
+			frame: "frame:b",
+		});
+	});
+
+	it("is called off when the workbench is shown or asked for meanwhile", () => {
+		const app = frozenB();
+		app.advance(HOUR);
+		app.request("b");
+		expect(app.life.mayDiscard("b")).toBe(false);
+		app.life.discardSkipped("b", "asked for", app.now);
+		expect(app.kind("b")).toBe("running");
+	});
+
+	it("a request that arrives once it is discarded starts it again", () => {
+		const app = frozenB();
+		app.advance(HOUR);
+		app.life.discarded("b", "");
+		app.plan();
+		expect(of(app.request("b"), "open")).toEqual(["b"]);
+	});
+
+	it("never discards with a discard time of 0", () => {
+		const app = harness({ discardAfterMs: 0 });
+		app.select("a");
+		app.add("a", "b");
+		app.settle("a");
+		app.settle("b");
+		app.advance(100 * HOUR);
+		expect(app.kind("b")).toBe("frozen");
+	});
+});
+
+describe("closing and going", () => {
+	it("thaws a frozen workbench whose Workspace is closing", () => {
+		const app = harness();
+		app.select("a");
+		app.add("a", "b");
+		app.settle("a");
+		app.settle("b");
+		expect(of(app.set("b", { closing: true }), "thaw")).toEqual(["b"]);
+	});
+
+	it("thaws a frozen one whose Workspace went, so its processes can end", () => {
+		const app = harness();
+		app.select("a");
+		app.add("a", "b");
+		app.settle("a");
+		app.settle("b");
+		const effects = app.set("b", { wanted: false });
+		expect(of(effects, "thaw")).toEqual(["b"]);
+		expect(of(effects, "dispose")).toEqual(["b"]);
+	});
+});
+
+describe("failures", () => {
+	it("restarts after a backoff, and settles an open nobody reported", () => {
+		const app = harness();
+		app.select("a");
+		app.add("a");
 		app.fail("a");
 		expect(app.life.phase("a")).toEqual({
 			kind: "restart-waiting",
 			until: app.now + RESTART_BACKOFF_MS,
 		});
-	});
-});
-
-describe("the placeholder is the phase", () => {
-	it("maps each phase to what the slot shows", () => {
-		expect(placeholderOf({ kind: "absent" })).toBeUndefined();
-		expect(
-			placeholderOf({ kind: "opening", cause: "start", frame: "" }),
-		).toEqual({ kind: "starting" });
-		expect(
-			placeholderOf({ kind: "opening", cause: "restart", frame: "" }),
-		).toEqual({ kind: "restarting" });
-		expect(
-			placeholderOf({ kind: "opening", cause: "wake", frame: "f" }),
-		).toEqual({ kind: "waking", frame: "f" });
-		expect(placeholderOf({ kind: "awake" })).toBeUndefined();
-		expect(
-			placeholderOf({ kind: "hibernating", why: "cap", shown: false }),
-		).toBeUndefined();
-		expect(
-			placeholderOf({ kind: "asleep", frame: "f", started: true }),
-		).toEqual({ kind: "asleep", frame: "f", started: true });
-		expect(
-			placeholderOf({ kind: "asleep", frame: "", started: false }),
-		).toEqual({ kind: "asleep", frame: "", started: false });
-		expect(placeholderOf({ kind: "restart-waiting", until: 1 })).toEqual({
-			kind: "restarting",
-		});
-		expect(
-			placeholderOf({ kind: "gave-up", reason: "", attempt: 6 }),
-		).toBeUndefined();
-		expect(placeholderOf({ kind: "parked" })).toBeUndefined();
-	});
-
-	it("is said when it changes and only then, and taken down when the Workspace goes", () => {
-		const app = fourAwake();
-		harnessCap(app, 3);
-		app.sleep("d");
-		app.plan();
-		app.plan();
-		app.select("d");
-		app.wake("d");
-		app.load("d");
-		expect(app.told.filter((one) => one.surfaceKey === "surface:d")).toEqual([
-			// Its first start, from `fourAwake`.
-			{ surfaceKey: "surface:d", placeholder: { kind: "starting" } },
-			{ surfaceKey: "surface:d" },
-			{
-				surfaceKey: "surface:d",
-				placeholder: { kind: "asleep", frame: "frame:d", started: true },
-			},
-			{
-				surfaceKey: "surface:d",
-				placeholder: { kind: "waking", frame: "frame:d" },
-			},
-			{ surfaceKey: "surface:d" },
-		]);
-		// One asleep that leaves the model takes its placeholder with it.
-		app.sleepAll();
-		expect(app.placeholders.get("c")).toEqual({
-			kind: "asleep",
-			frame: "frame:c",
-			started: true,
-		});
-		app.remove("c");
-		expect(app.placeholders.size).toBe(0);
-		expect(app.told.at(-1)).toEqual({ surfaceKey: "surface:c" });
-	});
-
-	it("never outlives its state, whatever the order of events", () => {
-		// A seeded walk through every event there is; at every step the slot
-		// says exactly what the phase says.
-		let seed = 7;
-		const random = (n: number) => {
-			seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
-			return seed % n;
-		};
-		const folders = ["a", "b", "c", "d", "e"];
-		const app = harness({ awakeMax: 2, hibernateAfterMs: 120_000 });
-		app.add(...folders);
-		const visited = new Set<string>();
-		for (let step = 0; step < 2_000; step += 1) {
-			const folder = folders[random(folders.length)] ?? "a";
-			switch (random(9)) {
-				case 0:
-					app.select(folder, random(2) === 0 ? "asked" : undefined);
-					break;
-				case 1:
-					if (app.kind(folder) === "opening") app.load(folder);
-					break;
-				case 2:
-					app.fail(folder);
-					break;
-				case 3:
-					if (app.kind(folder) === "hibernating") app.sleep(folder);
-					break;
-				case 4:
-					if (app.kind(folder) === "hibernating") app.refuse(folder);
-					break;
-				case 5:
-					app.advance(random(1_500));
-					break;
-				case 6:
-					app.tick();
-					break;
-				case 7:
-					app.wake(folder);
-					break;
-				case 8:
-					app.set(folder, { wanted: random(6) !== 0 });
-					break;
-			}
-			for (const one of folders) {
-				expect(app.placeholders.get(one)).toEqual(app.life.placeholder(one));
-				visited.add(app.kind(one));
-			}
-		}
-		// The walk went everywhere there is to go.
-		expect([...visited].sort()).toEqual([
-			"absent",
-			"asleep",
-			"awake",
-			"gave-up",
-			"hibernating",
-			"opening",
-			"parked",
-			"restart-waiting",
-		]);
-	});
-});
-
-describe("a selected one that was asked for always comes up", () => {
-	/** a, b, c, d awake, cap 3: d asleep, a shown. */
-	function dAsleep() {
-		const app = fourAwake();
-		harnessCap(app, 3);
-		app.sleep("d");
-		expect(app.kind("d")).toBe("asleep");
-		return app;
-	}
-
-	it("is up when its page finished loading before anyone listened (no loaded event)", () => {
-		const app = dAsleep();
-		expect(opens(app.select("d", "asked"))).toEqual(["d wake"]);
-		app.arriveUnheard("d");
-		expect(app.kind("d")).toBe("awake");
-		expect(app.placeholders.get("d")).toBeUndefined();
-		expect(app.logs).toContain(
-			"[devhub] workbench 'd' opening -> awake: adopted: its load was not heard",
-		);
-	});
-
-	it("is opened again when its open's effect never ran, rather than left opening", () => {
-		const app = dAsleep();
-		app.select("d", "asked");
-		app.lose("d");
-		expect(app.kind("d")).toBe("restart-waiting");
-		app.advance(RESTART_BACKOFF_MS);
-		expect(app.kind("d")).toBe("opening");
-		app.load("d");
-		expect(app.kind("d")).toBe("awake");
-	});
-
-	it("is settled when its load is never heard at all, within OPEN_SETTLE_MS", () => {
-		const app = dAsleep();
-		app.select("d", "asked");
-		app.arriveLoading("d");
-		expect(app.kind("d")).toBe("opening");
-		expect(app.life.nextDeadline()).toBeDefined();
+		expect(of(app.advance(RESTART_BACKOFF_MS), "open")).toEqual(["a"]);
+		expect(app.placeholders.get("a")).toEqual({ kind: "restarting" });
 		app.advance(OPEN_SETTLE_MS);
-		expect(app.kind("d")).toBe("awake");
+		expect(app.kind("a")).toBe("restart-waiting");
 	});
 
-	it("an opening one with nothing coming does not hold a place under the cap", () => {
-		const app = harness({ awakeMax: 2 });
+	it("gives up after the ceiling, reports once, and parks until wanted again", () => {
+		const app = harness();
+		app.select("a");
+		app.add("a");
+		for (let attempt = 0; attempt <= MAX_EDITOR_RESTARTS; attempt += 1) {
+			app.fail("a");
+			app.advance(60_000);
+		}
+		expect(app.kind("a")).toBe("gave-up");
+		expect(of(app.effects, "report-gave-up")).toEqual(["a"]);
+		app.set("a", { wanted: false });
+		expect(app.kind("a")).toBe("parked");
+		expect(of(app.set("a", { wanted: true }), "open")).toEqual(["a"]);
+	});
+});
+
+describe("placeholders", () => {
+	it("are what each slot was last told, for a page that starts listening late", () => {
+		const app = harness();
+		app.select("a");
 		app.add("a", "b");
-		app.select("a");
-		app.arriveUnheard("a");
-		app.arriveUnheard("b");
-		app.add("c");
-		// Both settled: c is past the cap, not two phantom opens.
-		expect(app.kinds()).toEqual({ a: "awake", b: "awake", c: "asleep" });
-	});
-
-	it("closing an asleep Workspace leaves the count as it was", () => {
-		const app = harness({ awakeMax: 2 });
-		app.add("a", "b", "c", "d");
-		app.loadAll();
-		for (const folder of ["a", "b", "c", "d"]) {
-			app.advance(1_000);
-			app.select(folder, "asked");
-			app.loadAll();
-			app.sleepAll();
-		}
-		expect(app.kind("a")).toBe("asleep");
-		// Close a, asleep: its close runs, takes its (absent) view, and it goes.
-		app.set("a", { closing: true });
-		app.life.disposed("a");
-		app.remove("a");
-		for (const folder of ["b", "c", "d", "b", "d", "c"]) {
-			app.advance(1_000);
-			app.select(folder, "asked");
-			expect(["opening", "awake"]).toContain(app.kind(folder));
-			app.loadAll();
-			app.sleepAll();
-			const up = ["b", "c", "d"].filter((one) =>
-				["awake", "opening", "hibernating"].includes(app.kind(one)),
-			);
-			expect(up.length).toBeLessThanOrEqual(2);
-			expect(app.kind(folder)).toBe("awake");
-		}
-	});
-
-	it("a relocated Workspace that starts asleep keeps its slot's placeholder", () => {
-		const app = harness({ awakeMax: 2 });
-		app.add("a", "b", "c");
-		app.loadAll();
-		app.select("a");
-		app.select("b");
-		app.sleepAll();
-		expect(app.kind("c")).toBe("asleep");
-		expect(app.surfaces.get("surface:c")?.kind).toBe("asleep");
-		// Locate…: the same Workspace at c2, still past the cap.
-		app.relocate("c", "c2");
-		expect(app.kind("c2")).toBe("asleep");
-		expect(app.surfaces.get("surface:c")?.kind).toBe("asleep");
-		app.select("c2", "asked");
-		// It never ran: a first start, in the same slot.
-		expect(app.surfaces.get("surface:c")?.kind).toBe("starting");
-		app.load("c2");
-		expect(app.surfaces.get("surface:c")).toBeUndefined();
-	});
-
-	it("says why a selected one is not up yet", () => {
-		const app = dAsleep();
-		app.select("d");
-		expect(app.logs).toContain(
-			"[devhub] workbench 'd' selected, not up: asleep, waiting to be asked to wake",
-		);
-	});
-
-	it("whatever happens, a selected one asked for is never left asleep, and an open always has a deadline", () => {
-		for (const start of [3, 11, 29, 41, 97]) {
-			let seed = start;
-			const random = (n: number) => {
-				seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31;
-				return seed % n;
-			};
-			const folders = ["a", "b", "c", "d", "ssh-e"];
-			const app = harness({ awakeMax: 2, hibernateAfterMs: 120_000 });
-			app.add(...folders);
-			let moved = 0;
-			for (let step = 0; step < 1_500; step += 1) {
-				const pick = folders[random(folders.length)] ?? "a";
-				const folder = moved > 0 && random(3) === 0 ? `${pick}-moved` : pick;
-				switch (random(16)) {
-					case 0:
-						app.select(folder, random(2) === 0 ? "asked" : undefined);
-						break;
-					case 1:
-						if (app.kind(folder) === "opening") app.load(folder);
-						break;
-					case 2:
-						if (app.kind(folder) === "opening") app.arriveUnheard(folder);
-						break;
-					case 3:
-						if (app.kind(folder) === "opening") app.lose(folder);
-						break;
-					case 4:
-						app.fail(folder);
-						break;
-					case 5:
-						if (app.kind(folder) === "hibernating") app.sleep(folder);
-						break;
-					case 6:
-						if (app.kind(folder) === "hibernating") app.refuse(folder);
-						break;
-					case 7:
-						app.advance(random(2_000));
-						break;
-					case 8:
-						app.tick();
-						break;
-					case 9:
-						app.wake(folder);
-						break;
-					case 10:
-						// Unavailable, and back.
-						app.set(folder, { wanted: random(4) !== 0 });
-						break;
-					case 11:
-						// A close: running, its view taken down, then gone.
-						app.set(folder, { closing: true });
-						app.life.disposed(folder);
-						app.views.delete(folder);
-						if (random(3) !== 0) app.remove(folder);
-						else app.set(folder, { closing: false });
-						break;
-					case 12:
-						// Added back (or for the first time).
-						app.add(folder);
-						break;
-					case 13:
-						app.relocate(pick, `${pick}-moved`);
-						moved += 1;
-						break;
-					case 14:
-						app.planWith({ awakeMax: random(4) });
-						break;
-					case 15:
-						app.wake(folder, "needed");
-						break;
-				}
-				for (const one of [...folders, ...folders.map((f) => `${f}-moved`)]) {
-					const kind = app.kind(one);
-					if (kind === "opening" || kind === "restart-waiting") {
-						expect(app.life.nextDeadline()).toBeDefined();
-					}
-				}
-				// Asked for, the shown one is up or on its way: never asleep.
-				const shown = app.selected;
-				if (shown !== undefined && app.isWanted(shown) && random(2) === 0) {
-					app.wake(shown);
-					expect(app.kind(shown)).not.toBe("asleep");
-				}
-			}
-		}
-	});
-});
-
-describe("logging", () => {
-	it("says every transition and every skip, one line each", () => {
-		const app = fourAwake();
-		harnessCap(app, 3);
-		app.refuse("d", "unsaved main.ts");
-		expect(app.logs).toEqual(
-			expect.arrayContaining([
-				"[devhub] workbench 'a' absent -> opening (start)",
-				"[devhub] workbench 'a' opening -> awake",
-				"[devhub] workbench 'd' awake -> hibernating: 4 awake, cap 3",
-				"[devhub] workbench 'd' hibernating -> awake: stays awake: unsaved main.ts",
-			]),
-		);
-	});
-
-	it("says an ask, and a selected one waiting for one", () => {
-		const app = fourAwake();
-		harnessCap(app, 3);
-		app.sleep("d");
-		app.select("d");
-		app.wake("d");
-		expect(app.logs).toEqual(
-			expect.arrayContaining([
-				"[devhub] workbench 'd' selected, not up: asleep, waiting to be asked to wake",
-				"[devhub] workbench 'd' asked for (asked)",
-				"[devhub] workbench 'd' asleep -> opening (wake)",
-			]),
-		);
-	});
-});
-
-/** The cap moved to `max` with more than that awake: one plan. */
-function harnessCap(app: ReturnType<typeof harness>, max: number) {
-	return app.planWith({ awakeMax: max });
-}
-
-describe("lazy start: a workbench only for an editor somebody asked for", () => {
-	// The executor marks every Workspace `lazy`: nothing is opened for an
-	// editor nobody asked for — `Cmd+Q E`, an explicit open, Enter on its
-	// placeholder, DevHub's start for the one it shows
-	// (`docs/terminal-mode.md`). Being shown is not asking.
-	const life = () => {
-		const logs: string[] = [];
-		const lifecycle = new WorkbenchLifecycle(new EditorSupervisor(), (line) => {
-			logs.push(line);
-		});
-		// The ask the next plan comes with (`LifecycleInput.ask`).
-		let ask: { folder: string; why: WakeReason } | undefined;
-		const wake = (folder: string, why: WakeReason) => {
-			ask = { folder, why };
-		};
-		const plan = (
-			selected: string | undefined,
-			views: readonly string[] = [],
-			now = 0,
-			awakeMax = 2,
-		) => {
-			const asked = ask;
-			ask = undefined;
-			return lifecycle.plan({
-				now,
-				wanted: ["scratch", "a", "b", "c"].map((folder) => ({
-					folder,
-					surfaceKey: `workspace-editor:${folder}`,
-					sleepable: true,
-					closing: false,
-					awayMs: folder === selected ? undefined : 1,
-					lazy: true,
-				})),
-				selected,
-				views,
-				awakeMax,
-				hibernateAfterMs: 600_000,
-				...(asked === undefined ? {} : { ask: asked }),
-			});
-		};
-		return { lifecycle, plan, logs, wake };
-	};
-	const opens = (effects: readonly LifecycleEffect[]) =>
-		effects.filter((effect) => effect.kind === "open");
-
-	it("opens nothing at all while no editor is shown, on the minute check too", () => {
-		const { lifecycle, plan } = life();
-		expect(opens(plan(undefined))).toEqual([]);
-		expect(lifecycle.foldersIn("asleep")).toEqual(["scratch", "a", "b", "c"]);
-		expect(opens(plan(undefined))).toEqual([]);
-		expect(
-			opens(
-				lifecycle.plan({
-					now: HIBERNATE_CHECK_MS,
-					wanted: [],
-					selected: undefined,
-					views: [],
-					awakeMax: 2,
-					hibernateAfterMs: 600_000,
-					tick: true,
-				}),
-			),
-		).toEqual([]);
-	});
-
-	it("does not start the one shown until it is asked for, then starts it alone behind a spinner", () => {
-		const { lifecycle, plan, wake } = life();
-		plan(undefined);
-		// Shown (a Sidebar row, Cmd+Q N/P, an Agent opened beside it): it says
-		// it is not running and waits.
-		expect(opens(plan("a"))).toEqual([]);
-		expect(lifecycle.placeholder("a")).toEqual({
-			kind: "asleep",
-			frame: "",
-			started: false,
-		});
-		wake("a", "asked");
-		expect(opens(plan("a"))).toEqual([
-			{ kind: "open", folder: "a", cause: "start" },
+		expect(app.life.standing()).toEqual([
+			{ surfaceKey: "surface:a", placeholder: { kind: "starting" } },
+			{ surfaceKey: "surface:b", placeholder: { kind: "starting" } },
 		]);
-		expect(lifecycle.placeholder("a")).toEqual({ kind: "starting" });
-		lifecycle.loaded("a", 1);
-		expect(lifecycle.phase("a")).toEqual({ kind: "awake" });
-		expect(lifecycle.placeholder("a")).toBeUndefined();
-		expect(lifecycle.phase("b")).toEqual({
-			kind: "asleep",
-			frame: "",
-			started: false,
-		});
-	});
-
-	it("starts the editor shown at the very first plan when the launch asks for it", () => {
-		const { plan, wake } = life();
-		wake("b", "launch");
-		expect(opens(plan("b"))).toEqual([
-			{ kind: "open", folder: "b", cause: "start" },
+		app.load("a");
+		expect(app.life.standing().map((one) => one.surfaceKey)).toEqual([
+			"surface:b",
 		]);
-	});
-
-	it("does not start an Agent's Workspace opened beside it, nor one passed with Cmd+Q N/P", () => {
-		const { lifecycle, plan } = life();
-		// A flow that opens a Workspace for an Agent asks nothing: with the
-		// editor beside the Agent, the editor is selected and still waits.
-		expect(opens(plan("c"))).toEqual([]);
-		expect(opens(plan("a"))).toEqual([]);
-		expect(opens(plan("c"))).toEqual([]);
-		expect(lifecycle.foldersIn("asleep").sort()).toEqual([
-			"a",
-			"b",
-			"c",
-			"scratch",
-		]);
-	});
-
-	it("with general.default_view = editor, starts only the Workspace shown at launch, and each other one when it is asked for", () => {
-		// Every Workspace is in its editor view, so the selected one's editor is
-		// on screen: the launch asks for it alone. The rest are asleep, never
-		// opened, until somebody asks — going to them is not asking.
-		const { lifecycle, plan, wake } = life();
-		wake("scratch", "launch");
-		expect(opens(plan("scratch"))).toEqual([
-			{ kind: "open", folder: "scratch", cause: "start" },
-		]);
-		expect(lifecycle.foldersIn("asleep")).toEqual(["a", "b", "c"]);
-		lifecycle.loaded("scratch", 0);
-		expect(opens(plan("scratch", ["scratch"]))).toEqual([]);
-		expect(opens(plan("c", ["scratch"]))).toEqual([]);
-		wake("c", "opened");
-		expect(opens(plan("c", ["scratch"]))).toEqual([
-			{ kind: "open", folder: "c", cause: "start" },
-		]);
-		expect(lifecycle.foldersIn("asleep")).toEqual(["a", "b"]);
-	});
-
-	it("keeps every standing placeholder for a page that was not listening when it was said", () => {
-		// The launch's first plan puts each Workspace it does not start down
-		// as not started, before the window's own page has loaded. The effect
-		// is said once (only changes are said), so the page asks for what
-		// stands when it starts listening — and gets the not started ones.
-		const { lifecycle, plan, wake } = life();
-		wake("scratch", "launch");
-		const first = plan("scratch");
-		const said = first.filter((effect) => effect.kind === "placeholder");
-		expect(said.map((effect) => effect.surfaceKey).sort()).toEqual([
-			"workspace-editor:a",
-			"workspace-editor:b",
-			"workspace-editor:c",
-			"workspace-editor:scratch",
-		]);
-		// Nothing changes on the next plan, so nothing is said again.
-		expect(
-			plan("scratch").filter((effect) => effect.kind === "placeholder"),
-		).toEqual([]);
-		const notStarted = { kind: "asleep", frame: "", started: false };
-		expect(lifecycle.standing()).toEqual([
-			{
-				surfaceKey: "workspace-editor:scratch",
-				placeholder: { kind: "starting" },
-			},
-			{ surfaceKey: "workspace-editor:a", placeholder: notStarted },
-			{ surfaceKey: "workspace-editor:b", placeholder: notStarted },
-			{ surfaceKey: "workspace-editor:c", placeholder: notStarted },
-		]);
-		// Navigated to (prefix+n, a Sidebar row): still not started, still
-		// standing; Enter on it starts it behind the spinner.
-		lifecycle.loaded("scratch", 0);
-		plan("b", ["scratch"]);
-		expect(lifecycle.standing()).toContainEqual({
-			surfaceKey: "workspace-editor:b",
-			placeholder: notStarted,
-		});
-		expect(lifecycle.standing().map((one) => one.surfaceKey)).not.toContain(
-			"workspace-editor:scratch",
-		);
-		wake("b", "asked");
-		expect(opens(plan("b", ["scratch"]))).toEqual([
-			{ kind: "open", folder: "b", cause: "start" },
-		]);
-		expect(lifecycle.standing()).toContainEqual({
-			surfaceKey: "workspace-editor:b",
-			placeholder: { kind: "starting" },
-		});
-	});
-
-	it("a slept one stands as asleep with its frame, and Enter wakes it", () => {
-		const { lifecycle, plan, wake } = life();
-		wake("a", "shown");
-		plan("a");
-		lifecycle.loaded("a", 0);
-		plan("b", ["a"]);
-		// The minute check puts it to sleep, away long enough.
-		const ticked = lifecycle.plan({
-			now: 700_000,
-			wanted: ["scratch", "a", "b", "c"].map((folder) => ({
-				folder,
-				surfaceKey: `workspace-editor:${folder}`,
-				sleepable: true,
-				closing: false,
-				awayMs: folder === "b" ? undefined : 700_000,
-				lazy: true,
-			})),
-			selected: "b",
-			views: ["a"],
-			awakeMax: 2,
-			hibernateAfterMs: 600_000,
-			tick: true,
-		});
-		expect(ticked).toContainEqual({
-			kind: "hibernate",
-			folder: "a",
-			why: "away",
-		});
-		lifecycle.hibernated("a", "data:frame");
-		plan("a", ["a"]);
-		expect(lifecycle.standing()).toContainEqual({
-			surfaceKey: "workspace-editor:a",
-			placeholder: { kind: "asleep", frame: "data:frame", started: true },
-		});
-		wake("a", "asked");
-		expect(opens(plan("a"))).toEqual([
-			{ kind: "open", folder: "a", cause: "wake" },
-		]);
-		expect(lifecycle.standing()).toContainEqual({
-			surfaceKey: "workspace-editor:a",
-			placeholder: { kind: "waking", frame: "data:frame" },
-		});
-	});
-
-	it("then lives under the cap like any other: going back to the terminal lets it sleep", () => {
-		const { lifecycle, plan, wake } = life();
-		wake("a", "shown");
-		plan("a");
-		lifecycle.loaded("a", 0);
-		wake("b", "shown");
-		plan("b", ["a"]);
-		lifecycle.loaded("b", 0);
-		// Two awake, cap 2: a third asked for puts the least recently shown to
-		// sleep.
-		wake("c", "shown");
-		const third = plan("c", ["a", "b"], 10, 2);
-		expect(opens(third)).toEqual([
-			{ kind: "open", folder: "c", cause: "start" },
-		]);
-		expect(third.filter((effect) => effect.kind === "hibernate")).toHaveLength(
-			1,
-		);
 	});
 });

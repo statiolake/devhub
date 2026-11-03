@@ -74,16 +74,15 @@ describe("the editor's placeholder", () => {
     replays = 0;
   });
 
-  it("hears what was decided before it listened: a Workspace never started at launch", async () => {
-    // Main puts every Workspace it does not start down as not started in its
-    // first plan, before the window's own page has loaded. It says a
-    // placeholder only when it changes, so unless the page asks, that one is
-    // never said again and the editor area stays empty with nothing to press
-    // Enter on.
+  it("hears what was decided before it listened: a Workspace waiting to start at launch", async () => {
+    // Main puts every Workspace down as starting in its first plan, before
+    // the window's own page has loaded. It says a placeholder only when it
+    // changes, so unless the page asks, that one is never said again and the
+    // editor area stays empty.
     standing = [
       {
         surfaceKey: SURFACE,
-        placeholder: { kind: "asleep", frame: "", started: false },
+        placeholder: { kind: "starting" },
       },
     ];
     render(<Probe surfaceKey={SURFACE} />);
@@ -91,7 +90,7 @@ describe("the editor's placeholder", () => {
       await Promise.resolve();
     });
     expect(replays).toBe(1);
-    expect(screen.getByTestId("state")).toHaveTextContent(/^asleep$/);
+    expect(screen.getByTestId("state")).toHaveTextContent(/^starting$/);
   });
 
   it("asks once, not on every render", () => {
@@ -126,13 +125,13 @@ describe("the editor's placeholder", () => {
     expect(screen.getByTestId("state")).toHaveTextContent("restarting");
   });
 
-  it("is the last thing said: asleep, waking, then the workbench", () => {
+  it("is the last thing said: discarded, waking, then the workbench", () => {
     render(<Probe surfaceKey={SURFACE} />);
     announce({
       surfaceKey: SURFACE,
-      placeholder: { kind: "asleep", frame: "data:x", started: true },
+      placeholder: { kind: "discarded", frame: "data:x" },
     });
-    expect(screen.getByTestId("state")).toHaveTextContent("asleep data:x");
+    expect(screen.getByTestId("state")).toHaveTextContent("discarded data:x");
     announce({
       surfaceKey: SURFACE,
       placeholder: { kind: "waking", frame: "data:x" },

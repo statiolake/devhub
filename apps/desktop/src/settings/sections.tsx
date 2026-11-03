@@ -228,59 +228,22 @@ export function GeneralSection({
 
       <Group
         heading="Editors"
-        note="A Workspace's editor area shows its terminal or its VS Code editor; Cmd+Q E switches between them, and each Workspace remembers which it shows. A VS Code editor is started the first time it is shown. One that has been off screen for a while is closed to free its memory, and opens again where it was when you show it, unsaved changes included. Its Agents and terminal sessions keep running. An editor with a running terminal command or a debug session stays open, and so do SSH and dev container editors. Closing and the limit apply to VS Code editors only."
+        note="Each Workspace's editor area is its own VS Code editor. Every local editor starts at launch, the one on screen first and the others one at a time in the background. An editor that is not on screen is frozen at once: its processes are paused, so the Mac can compress or swap out their memory, and it resumes instantly, as it was, when you show it again or something connects to it. An editor that is debugging, running a task, running a command in one of its terminals, or talking over the network is not frozen. SSH and dev container editors are never frozen. Agents and terminal sessions keep running throughout."
       >
         <Row
-          label="Default view"
-          help="What a new Workspace's editor area shows: its terminal, or its VS Code editor (started when the Workspace is first shown, not at launch). Workspaces you have already used keep the view they remember; SSH Workspaces always show VS Code. Default Terminal."
-        >
-          <Popup
-            label="Default view"
-            value={config.general.defaultView}
-            options={[
-              ["terminal", "Terminal"],
-              ["editor", "VS Code"],
-            ]}
-            onChange={(defaultView) => {
-              update({
-                ...config,
-                general: { ...config.general, defaultView },
-              });
-            }}
-          />
-        </Row>
-        <Row
-          label="Close after (minutes)"
-          help="How long an editor may be off screen before it is closed. 0 keeps every editor open. Default 10."
+          label="Discard after (minutes)"
+          help="How long an editor may stay frozen before it is closed to free its memory entirely. It reopens where it was, unsaved changes included, when you press Enter on it. 0 never closes one. Default 60."
         >
           <NumberField
-            label="Close after (minutes)"
-            value={config.general.workbenchHibernateMinutes}
+            label="Discard after (minutes)"
+            value={config.general.workbenchDiscardMinutes}
             min={0}
             max={10_080}
             unit="min"
-            onCommit={(workbenchHibernateMinutes) => {
+            onCommit={(workbenchDiscardMinutes) => {
               update({
                 ...config,
-                general: { ...config.general, workbenchHibernateMinutes },
-              });
-            }}
-          />
-        </Row>
-        <Row
-          label="Open at most"
-          help="Opening one more editor closes the one shown least recently. 0 is no limit. Default 2."
-        >
-          <NumberField
-            label="Open at most"
-            value={config.general.workbenchAwakeMax}
-            min={0}
-            max={100}
-            unit="editors"
-            onCommit={(workbenchAwakeMax) => {
-              update({
-                ...config,
-                general: { ...config.general, workbenchAwakeMax },
+                general: { ...config.general, workbenchDiscardMinutes },
               });
             }}
           />

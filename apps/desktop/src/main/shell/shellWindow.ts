@@ -52,7 +52,6 @@ import { shellThemeIfInstalled } from "./shellTheme.js";
 import { scrimColor, type ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import type { Landing } from "./chords.js";
-import { WorkbenchAbsence } from "./workbenchAbsence.js";
 
 /**
  * The one window's construction options.
@@ -165,8 +164,6 @@ export class ShellWindow {
 	readonly titleBar: TitleBarMode;
 
 	private readonly views: WorkbenchView[] = [];
-	/** How long each workbench was off screen; see `workbenchAbsence.ts`. */
-	private readonly absence = new WorkbenchAbsence<WorkbenchView>();
 	/**
 	 * Which folder each workbench is showing — the one table there is.
 	 *
@@ -888,12 +885,6 @@ export class ShellWindow {
 			if (view && !view.isDestroyed()) return view;
 		}
 		return undefined;
-	}
-
-	/** How long a folder's workbench has been off screen, as of the last layout. */
-	editorAwayMs(editorKey: string, now: number): number | undefined {
-		const view = this.viewForEditorKey(editorKey);
-		return view === undefined ? undefined : this.absence.awayMs(view, now);
 	}
 
 	/** Every folder that has a workbench, in the order they were built. */
@@ -1671,16 +1662,6 @@ export class ShellWindow {
 			this.onScreen = onScreen;
 			this.titleChanged();
 		}
-
-		// How long each workbench has been off screen, for hibernation
-		// (`workbenchAbsence.ts`).
-		const shownView =
-			onScreen === undefined ? undefined : this.viewForEditorKey(onScreen);
-		this.absence.observe(
-			this.views.filter((candidate) => !candidate.isDestroyed()),
-			(candidate) => candidate === shownView,
-			Date.now(),
-		);
 
 		// Where the keys go is a function of the same input, and it moves with
 		// it — not only with the arrangement. A workbench that was chosen

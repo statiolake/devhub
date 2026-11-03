@@ -119,11 +119,11 @@ export function Waiting({ label }: { readonly label: string }) {
 }
 
 /**
- * An asleep workbench, or one that was never started: the frame it left (if
- * any) under a quiet scrim across the whole editor area, and one line saying
- * how to bring it back.
+ * A discarded workbench: closed after it had been frozen a while, to free
+ * its memory. The frame it left (if any) under a quiet scrim across the whole
+ * editor area, and one line saying how to bring it back.
  *
- * Nothing wakes it on its own (`workbenchLifecycle.ts`): only Enter here, or a
+ * Nothing starts it on its own (`workbenchPlan.ts`): only Enter here, or a
  * click anywhere on it, calls `onWake`. Every other key does nothing — and
  * DevHub's `Cmd+Q` chords still work, since main takes those before any page
  * sees them. The whole area is the one control, so it takes the keyboard when
@@ -131,14 +131,11 @@ export function Waiting({ label }: { readonly label: string }) {
  * this page while no workbench stands in the slot, and they must land here
  * rather than on `body`.
  */
-export function Asleep({
+export function Discarded({
   frame,
-  started,
   onWake,
 }: {
   readonly frame: string;
-  /** It ran and was put to sleep; not, it was never started. */
-  readonly started: boolean;
   readonly onWake: () => void;
 }) {
   const area = useRef<HTMLDivElement | null>(null);
@@ -152,13 +149,12 @@ export function Asleep({
       window.removeEventListener("focus", take);
     };
   }, []);
-  const title = started ? "Sleeping" : "VS Code is not running";
-  const hint = started ? "press Enter to wake" : "press Enter to start";
+  const title = "VS Code is not running";
+  const hint = "press Enter to start";
   return (
     <div
       ref={area}
-      className="surface-asleep"
-      data-started={started ? "true" : "false"}
+      className="surface-discarded"
       role="button"
       tabIndex={0}
       aria-label={`${title} — ${hint}`}
@@ -171,10 +167,10 @@ export function Asleep({
       }}
     >
       {frame === "" ? null : <img src={frame} alt="" />}
-      <div className="surface-asleep-scrim" aria-hidden="true" />
-      <p className="surface-asleep-message" aria-hidden="true">
-        <span className="surface-asleep-title">{title}</span>
-        <span className="surface-asleep-hint"> — {hint}</span>
+      <div className="surface-discarded-scrim" aria-hidden="true" />
+      <p className="surface-discarded-message" aria-hidden="true">
+        <span className="surface-discarded-title">{title}</span>
+        <span className="surface-discarded-hint"> — {hint}</span>
       </p>
     </div>
   );
@@ -186,10 +182,10 @@ export function Asleep({
  */
 export function Waking({ frame }: { readonly frame: string }) {
   return (
-    <div className="surface-asleep" data-waking="true" role="status">
+    <div className="surface-discarded" data-waking="true" role="status">
       {frame === "" ? null : <img src={frame} alt="" />}
-      <div className="surface-asleep-scrim" aria-hidden="true" />
-      <div className="surface-asleep-message">
+      <div className="surface-discarded-scrim" aria-hidden="true" />
+      <div className="surface-discarded-message">
         <Waiting label="Starting VS Code…" />
       </div>
     </div>

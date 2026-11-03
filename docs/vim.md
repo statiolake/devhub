@@ -408,7 +408,7 @@ VS Code's editors — the tabs of the editor groups — are Vim's buffers (a fil
 an untitled file, a diff, Settings, an extension's page …). Each has a
 **buffer number**, given when the editor is first seen (opened, or restored
 with the layout) and never reused, as in Vim: the same file opened again — in
-another group, after it was closed, after a reload or hibernation (the list is
+another group, after it was closed, after a reload or a discard (the list is
 in workspace storage, `devhubVim.buffers`) — is the same buffer with the same
 number. Two editors are one buffer when they are the same kind of editor on
 the same resources (`devhubVim/browser/vimBufferKey.ts`).
@@ -587,7 +587,7 @@ hidden groups to keep the others' editors in.)
 N no other tab page's layout has, so two pages never share one). Empty, it is
 not modified: leaving the page, `:q`, `:tabc` close it without asking, and it
 goes away with the page. A page's working set keeps it as VS Code keeps any
-untitled editor, so going back to the page, a reload and hibernation open it
+untitled editor, so going back to the page, a reload and a discard open it
 again, empty (with `files.hotExit` off it is not kept, and the page comes back
 with no editor). Once it has text it is a modified editor like any other
 (below).
@@ -690,7 +690,7 @@ live layout, and closing another page (`:tabc N`, `:tabo`) never drops one.
 `editor.workingSets`), and so is the list (`devhubVim.tabPages`: the order,
 the current page, what each page shows); the current page's layout is the
 editor part's own restored state. A workbench that DevHub closes for
-hibernation and opens again comes back with its tab pages, as after a reload.
+a discard and opens again comes back with its tab pages, as after a reload.
 
 **How long a switch takes**: every switch writes one line to the console
 (Help: Toggle Developer Tools, Console):

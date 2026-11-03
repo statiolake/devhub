@@ -1,276 +1,128 @@
 /**
- * Every Workspace's workbench, from first open to sleep and back, in one state.
+ * Every Workspace's workbench, from its start to frozen, discarded and back:
+ * the facts, and the driver that acts on them.
  *
- * A workbench is a `WebContentsView` running VS Code for one folder. DevHub
- * opens one per Workspace, rebuilds one that falls over, and closes one that
- * has been away for a while — `general.workbench_hibernate_minutes` off screen,
- * or the least recently shown past `general.workbench_awake_max` — the way VS
- * Code unloads a window on quit: storage written, extensions shut down,
- * unsaved editors backed up by hot exit (`UnloadReason.QUIT`), its view
- * destroyed, which ends its renderer, extension host and language servers.
- * Showing its editor again opens it through the ordinary open path, and VS
- * Code restores its editors, layout and backups for that folder. Its Agents,
- * tmux sessions and row stay through all of it.
+ * A workbench is a `WebContentsView` running VS Code for one folder, with
+ * its own extension host(s) and language servers. What it should be doing is
+ * decided by one pure function, `decide` (`workbenchPlan.ts`), from facts
+ * this module holds and nothing else holds: its phase, whether it is shown,
+ * asked for or closing, when it was last shown, whether it has settled, the
+ * renderer's last answer about what a freeze would interrupt (`Probe`), when
+ * its sockets last talked, and when a connection last arrived for it.
  *
- * This module is the one owner of where each folder is in that life. It holds
- * one phase per folder and nothing else holds any part of it: the controller
- * (`AppController`, the executor) reports what happened — an open settled, a
- * view finished loading or died, an unload finished — and asks `plan` what to
- * do; `plan` reads the phases, the projection and the selection, moves the
- * phases, and answers with effects to carry out. It reads no clock and runs no
- * timer: every call is given `now`, and `nextDeadline` says when it next
- * needs a `plan` (a restart's backoff, an open nobody settled).
+ * The controller (`AppController`, the executor) reports what happened — an
+ * open settled, a view finished loading or died, a probe answered, traffic,
+ * a connection, an unload finished — and asks `plan` what to do. `plan`
+ * reads the projection and the selection, updates the facts, asks `decide`,
+ * moves each phase to match what it answers (so a second plan before anything
+ * happens asks for nothing twice), and returns the effects to carry out:
+ * open, probe, freeze, thaw, discard, dispose, report giving up, and the
+ * placeholder for each slot. It reads no clock and runs no timer: every call
+ * is given `now`, and `nextDeadline` says when it next needs a `plan`.
  *
- * ```text
- * absent          ─ wanted ─────────────▶ opening(start), or asleep (never
- *                                          started) past the cap, or lazy and
- *                                          not asked for
- * opening         ─ loaded ─────────────▶ awake
- *                 ─ nothing coming ─────▶ awake if its view is there, else failed
- * opening, awake  ─ failed ─────────────▶ restart-waiting, or gave-up
- * awake           ─ away / over the cap ▶ hibernating
- * hibernating     ─ unloaded, or died ──▶ asleep
- *                 ─ refused, shown ─────▶ awake
- * asleep          ─ selected and asked ─▶ opening(wake), or opening(start)
- *                                          if it never started
- * restart-waiting ─ backoff over ───────▶ opening(restart)
- * gave-up         ─ unwanted ───────────▶ parked  ─ wanted again ▶ absent
- * any but parked  ─ unwanted ───────────▶ absent (forgotten)
- * ```
+ * Failures are bookkeeping, not policy, and stay here: an open nobody
+ * settled, a view that died (`EditorSupervisor`: restart after a backoff that
+ * doubles, give up after `MAX_EDITOR_RESTARTS`, parked until a person brings
+ * the folder back with Retry or Locate…).
  *
- * The rules, each in one place:
+ * The placeholder is the phase (`placeholderOf`), re-sent whenever it
+ * changes, so it cannot outlive the state it describes.
  *
- * - **Only `plan` opens.** A folder is opened when it is wanted and absent
- *   (and not lazy), when its restart's backoff is over, and — the only way out
- *   of asleep — when it is the selected editor *and somebody asked for it*
- *   (`wake`). Revealing is never opening, and neither is selecting.
- * - **Nothing wakes on its own.** Showing an asleep editor — `Cmd+Q N/P`, a
- *   Sidebar row, an Agent opening beside it — shows its placeholder ("Sleeping
- *   — press Enter to wake", or "not started" for one that never ran) and
- *   nothing more. Only an explicit act asks (`WakeReason`): Enter or a click on
- *   that placeholder, `Cmd+Q E`, opening the Workspace (`Cmd+Q F`), a request
- *   that needs the workbench, and DevHub's own start for the editor it shows.
- *   An ask comes with the plan it is for (`LifecycleInput.ask`), made by the
- *   act once its selection is in place, and is used only if that plan has its
- *   folder selected — there is nothing kept between plans and no timer.
- * - **The cap is a fact about the state, checked on every `plan`.** More than
- *   `awakeMax` sleepable workbenches up or opening, and the least recently
- *   shown awake ones go to sleep at once — never the selected one, never one
- *   opening, waking or closing, never one that has just refused (it said why;
- *   it is asked again on the minute check). Only a deliberate wake raises the
- *   count, and selecting never wakes, so stepping through many Workspaces moves
- *   nothing; each wake puts at most one other to sleep. A folder that would
- *   start past the cap, not selected, starts asleep instead of being opened to
- *   be closed.
- * - **Time-based sleep is the minute check** (`tick`): away at least
- *   `hibernateAfterMs`.
- * - **A failure is counted once** (`EditorSupervisor`): restart after a
- *   backoff that doubles, give up after `MAX_EDITOR_RESTARTS`, and the verdict
- *   is parked until a person brings the folder back (Retry, Locate…). A view
- *   ending while it hibernates is the sleep it was going to.
- * - **The placeholder is the phase.** What stands in the editor's slot —
- *   "Restarting…", "Sleeping" with the frame it left, "Starting…" — is derived from
- *   the phase (`placeholderOf`) and re-sent whenever it changes, so it cannot
- *   outlive the state it describes.
- *
- * Scratch is a Workspace like any other here: it sleeps and counts toward the
- * cap. SSH and dev container workbenches never sleep: their input says
- * `sleepable: false` and nothing here hibernates or counts them.
- *
- * Every transition, every ask, and every skipped hibernation is one log line,
- * `[devhub] workbench '<folder>' …`.
+ * Every transition is one log line, `[devhub] workbench '<folder>' …`.
  */
 
-import type { EditorPlaceholderWire } from "../../ipc/contract.js";
 import type { WorkbenchStateWire } from "../../ipc/taskManager.js";
 import { EditorSupervisor } from "./editorSupervisor.js";
+import {
+	QUIET_MS,
+	awakeReasons,
+	decide,
+	nextDecision,
+	placeholderOf,
+	workbenchStateOf,
+	type EditorPlaceholder,
+	type OpenCause,
+	type PlanFacts,
+	type Probe,
+	type WorkbenchFacts,
+	type WorkbenchPhase,
+} from "./workbenchPlan.js";
 
-/** Checked this often: time-based sleep, and the cap's retry of a refusal. */
-export const HIBERNATE_CHECK_MS = 60_000;
+export {
+	placeholderOf,
+	workbenchStateOf,
+	type EditorPlaceholder,
+	type OpenCause,
+	type WorkbenchPhase,
+};
 
-/** The selected editor still opening after this is said once in the log. */
-const SLOW_OPEN_NOTE_MS = 10_000;
+/** A renderer and its window's utilities below this are quiet. */
+export const CPU_QUIET_PERCENT = 10;
 
 /**
- * Who asked for an asleep (or never started) editor to open — the only way
- * one does:
+ * Who asked for a workbench, which starts a discarded one (an absent one
+ * starts by being shown, or by its turn):
  *
  * - `asked`: Enter or a click on its placeholder.
- * - `shown`: `Cmd+Q E` switching the editor area to it.
  * - `opened`: the Workspace was opened (`Cmd+Q F`, a folder from the command
  *   line, VS Code's own open) — not as a side effect of starting an Agent.
- * - `needed`: a request routed to its workbench (an empty window, a file).
- * - `launch`: DevHub starting, for the editor it shows first.
  */
-export type WakeReason = "asked" | "shown" | "opened" | "needed" | "launch";
+export type WakeReason = "asked" | "opened";
 
 /**
  * An open whose load has not been heard by then is settled anyway: up if its
  * view is there (shown as it is), failed if not. Three times the open's own
  * deadline (`EDITOR_OPEN_TIMEOUT_MS`), so it only ever catches a load nobody
- * reported, and longer than the minute check, which it must not race.
+ * reported.
  */
 export const OPEN_SETTLE_MS = 90_000;
-
-/**
- * Why a workbench is going to sleep: away for long enough, past the awake
- * cap, or a person asked (the Task Manager's Sleep).
- */
-export type HibernateWhy = "away" | "cap" | "asked";
-
-/** Why a workbench is being opened, which is what its slot says meanwhile. */
-export type OpenCause = "start" | "restart" | "wake";
-
-/** Where one folder's workbench is. A folder with no record is `absent`. */
-export type WorkbenchPhase =
-	| { readonly kind: "absent" }
-	/** An open in flight, or a view that has not finished loading. */
-	| {
-			readonly kind: "opening";
-			readonly cause: OpenCause;
-			/** A waking one's frame from before it slept. */
-			readonly frame: string;
-	  }
-	| { readonly kind: "awake" }
-	/** Being asked whether it may sleep, or unloading. */
-	| {
-			readonly kind: "hibernating";
-			readonly why: HibernateWhy;
-			/** It was the selected editor again since this began. */
-			readonly shown: boolean;
-	  }
-	/**
-	 * No view; `frame` is what it showed when it went, a data URL or "".
-	 * `started`: it ran and was put to sleep, rather than never having been
-	 * opened (lazy, or past the cap).
-	 */
-	| {
-			readonly kind: "asleep";
-			readonly frame: string;
-			readonly started: boolean;
-	  }
-	/** Failed; opened again at `until`. */
-	| { readonly kind: "restart-waiting"; readonly until: number }
-	/** Failed too often, still wanted until the report makes it unavailable. */
-	| {
-			readonly kind: "gave-up";
-			readonly reason: string;
-			readonly attempt: number;
-	  }
-	/** Given up on and no longer wanted; wanted again is a person asking. */
-	| { readonly kind: "parked" };
-
-/** What the editor's slot shows instead of a workbench. */
-export type EditorPlaceholder = EditorPlaceholderWire;
-
-/** The placeholder a phase stands for; nothing where the workbench is itself. */
-export function placeholderOf(
-	phase: WorkbenchPhase,
-): EditorPlaceholder | undefined {
-	switch (phase.kind) {
-		case "opening":
-			return phase.cause === "restart"
-				? { kind: "restarting" }
-				: phase.cause === "wake"
-					? { kind: "waking", frame: phase.frame }
-					: { kind: "starting" };
-		case "restart-waiting":
-			return { kind: "restarting" };
-		case "asleep":
-			return { kind: "asleep", frame: phase.frame, started: phase.started };
-		case "absent":
-		case "awake":
-		case "hibernating":
-		case "gave-up":
-		case "parked":
-			return undefined;
-	}
-}
-
-/**
- * A phase in the Task Manager's words; nothing for `absent`, which has no
- * workbench to speak of.
- */
-export function workbenchStateOf(
-	phase: WorkbenchPhase,
-): WorkbenchStateWire | undefined {
-	switch (phase.kind) {
-		case "absent":
-			return undefined;
-		case "opening":
-			return phase.cause === "restart" ? "restarting" : "starting";
-		case "awake":
-			return "awake";
-		case "hibernating":
-			return "going to sleep";
-		case "asleep":
-			return phase.started ? "sleeping" : "not started";
-		case "restart-waiting":
-			return "restarting";
-		case "gave-up":
-		case "parked":
-			return "failed";
-	}
-}
 
 /** One Workspace that wants a workbench, as `plan` needs it. */
 export interface WantedWorkbench {
 	readonly folder: string;
 	/** The page's name for its editor slot (`workspace-editor:<id>`). */
 	readonly surfaceKey: string;
-	/** Not SSH or a dev container. */
-	readonly sleepable: boolean;
+	/** Local: not SSH or a dev container, which are never frozen or discarded. */
+	readonly freezable: boolean;
 	/** Its close is running: its view goes at the close's view step. */
 	readonly closing: boolean;
-	/** Off screen this long, or nothing while it is shown (or has no view). */
-	readonly awayMs: number | undefined;
-	/**
-	 * Started only when asked for: absent, it is asleep without ever having
-	 * been opened until it is the selected editor and something asks for it
-	 * (`wake`). Every Workspace is, in DevHub: no workbench is started for one
-	 * nobody asked to see (`docs/terminal-mode.md`). Absent is the eager
-	 * start: opened as soon as it is wanted.
-	 */
-	readonly lazy?: boolean;
 }
 
 export interface LifecycleInput {
 	readonly now: number;
-	/** Every Workspace that wants a workbench, in the projection's order. */
+	/** Every Workspace that wants a workbench, in the Sidebar's order. */
 	readonly wanted: readonly WantedWorkbench[];
-	/** The folder of the editor the selection shows, if any. */
+	/** The folder of the editor on screen, if any. */
 	readonly selected: string | undefined;
 	/** Folders with a live view now. */
 	readonly views: readonly string[];
 	/**
 	 * Folders whose open is still in flight, or whose view's page is still
-	 * loading. An opening folder in neither is settled by this plan — up if
-	 * its view is there (its load was not heard), failed if not (its open
-	 * ended without one) — so `opening` cannot outlive what it waits for.
-	 * Absent, every opening folder is taken to be loading.
+	 * loading. A starting folder in neither is settled by this plan — up if
+	 * its view is there (its load was not heard), failed if not — so
+	 * `starting` cannot outlive what it waits for. Absent, every starting
+	 * folder is taken to be loading.
 	 */
 	readonly loading?: readonly string[];
-	/** `general.workbench_awake_max`; 0 for no cap. */
-	readonly awakeMax: number;
-	/** `general.workbench_hibernate_minutes`, in ms; 0 for never. */
-	readonly hibernateAfterMs: number;
-	/** The minute check: time-based sleep, and the cap asks refusals again. */
-	readonly tick?: boolean;
-	/**
-	 * Somebody asked, with this plan, for this folder's workbench
-	 * (`WakeReason`): opened if it is asleep or was never started — the one
-	 * way an asleep editor opens — provided it is the selected editor in this
-	 * same plan. The act that asks makes its selection first; an ask whose
-	 * folder is not selected does nothing.
-	 */
+	/** `general.workbench_discard_minutes`, in ms; 0 for never. */
+	readonly discardAfterMs: number;
+	/** Somebody asked, with this plan, for this folder's workbench. */
 	readonly ask?: { readonly folder: string; readonly why: WakeReason };
 	/**
-	 * Somebody asked, with this plan, for this folder's workbench to sleep
-	 * now (the Task Manager's Sleep): the same hibernation time and the cap
-	 * use, refused for the same reasons — it is shown, not awake, closing, or
-	 * never sleeps.
+	 * Folders a DevHub request is waiting on (`AppController.workbenchFor`):
+	 * a file routed to it, a command, its close. Each is kept running —
+	 * thawed, started, never frozen — while its request waits.
 	 */
-	readonly sleep?: string;
+	readonly requests?: readonly string[];
+	/**
+	 * Folders DevHub is talking to and must not freeze meanwhile — a close
+	 * asking about unsaved work. Thawed if frozen; never started for this.
+	 */
+	readonly holds?: readonly string[];
+	/** A person asked for this one to be frozen now (the Task Manager's Sleep). */
+	readonly freeze?: string;
+	/** Folders whose renderer process also draws another live workbench. */
+	readonly sharedRenderers?: readonly string[];
 }
 
 /** What the executor carries out, in this order. */
@@ -288,34 +140,57 @@ export type LifecycleEffect =
 			readonly reason: string;
 			readonly attempt: number;
 	  }
+	| { readonly kind: "thaw"; readonly folder: string }
 	| {
 			readonly kind: "open";
 			readonly folder: string;
 			readonly cause: OpenCause;
+			readonly background: boolean;
 	  }
-	| {
-			readonly kind: "hibernate";
-			readonly folder: string;
-			readonly why: HibernateWhy;
-	  };
+	| { readonly kind: "probe"; readonly folder: string }
+	| { readonly kind: "freeze"; readonly folder: string }
+	| { readonly kind: "discard"; readonly folder: string };
+
+/** What a probe brings back: the renderer's answer, and main's CPU reading. */
+export interface ProbeAnswer {
+	/** A debug session, a running task, a terminal with a program in front. */
+	readonly busy: readonly string[];
+	/** Its window restored and its extensions registered. */
+	readonly ready: boolean;
+	/** Its renderer's and window utilities' CPU, summed. */
+	readonly cpuPercent: number;
+}
 
 interface WorkbenchRecord {
 	phase: WorkbenchPhase;
 	surfaceKey: string;
-	/** The cap does not ask again before this; it said why it stays. */
-	excusedUntil: number;
 	/** Its gave-up verdict has been handed to the executor. */
 	reported: boolean;
-	/** When it last went `opening`. */
-	openingSince: number;
+	lastShownAt: number | undefined;
+	hiddenSince: number | undefined;
+	settled: boolean;
+	/** Since when every probe found it ready and quiet. */
+	quietSince: number | undefined;
+	probe: Probe | undefined;
+	probing: boolean;
+	trafficAt: number | undefined;
+	connectionAt: number | undefined;
+	/** As the last plan saw it, for the executor's last-moment checks. */
+	shown: boolean;
+	asked: boolean;
+	held: boolean;
 }
 
 const ORDER: Record<LifecycleEffect["kind"], number> = {
 	placeholder: 0,
-	dispose: 1,
-	"report-gave-up": 2,
-	open: 3,
-	hibernate: 4,
+	// Before its view is destroyed: a stopped renderer cannot end.
+	thaw: 1,
+	dispose: 2,
+	"report-gave-up": 3,
+	open: 4,
+	probe: 5,
+	freeze: 6,
+	discard: 7,
 };
 
 export class WorkbenchLifecycle {
@@ -329,11 +204,10 @@ export class WorkbenchLifecycle {
 			readonly placeholder: EditorPlaceholder;
 		}
 	>();
-	private selected: string | undefined;
-	/** The last thing said about the cap, so it is said once. */
-	private capNote = "";
-	/** The last thing said about a selected one not woken, so it is said once. */
-	private selectedNote = "";
+	/** The facts the last plan decided on, for `nextDeadline`. */
+	private lastFacts: PlanFacts | undefined;
+	/** The last thing said about why each hidden one stays up, said once. */
+	private readonly awakeNotes = new Map<string, string>();
 
 	constructor(
 		private readonly supervisor = new EditorSupervisor(),
@@ -344,6 +218,11 @@ export class WorkbenchLifecycle {
 
 	phase(folder: string): WorkbenchPhase {
 		return this.records.get(folder)?.phase ?? { kind: "absent" };
+	}
+
+	/** The Task Manager's word for one folder's workbench. */
+	state(folder: string): WorkbenchStateWire {
+		return workbenchStateOf(this.phase(folder));
 	}
 
 	/** Every folder in a phase, for the executor's questions. */
@@ -361,10 +240,6 @@ export class WorkbenchLifecycle {
 	 * Every placeholder standing now, as the `placeholder` effects last said
 	 * it: what a page that was not listening then — the window's own page
 	 * still loading at launch, or reloaded — must be told when it starts to.
-	 *
-	 * The effects say only what changed, so a page that missed one would
-	 * never hear it again: a Workspace that was put down as not started at
-	 * launch showed an empty editor area, with nothing to press Enter on.
 	 */
 	standing(): {
 		readonly surfaceKey: string;
@@ -378,15 +253,32 @@ export class WorkbenchLifecycle {
 
 	/** When `plan` must run again even if nothing else happens. */
 	nextDeadline(): number | undefined {
-		const deadlines = [...this.records.values()].flatMap(
-			({ phase, openingSince }) =>
-				phase.kind === "restart-waiting"
-					? [phase.until]
-					: phase.kind === "opening"
-						? [openingSince + OPEN_SETTLE_MS]
-						: [],
+		const deadlines = [...this.records.values()].flatMap(({ phase }) =>
+			phase.kind === "restart-waiting"
+				? [phase.until]
+				: phase.kind === "starting"
+					? [phase.since + OPEN_SETTLE_MS]
+					: [],
 		);
+		const decision =
+			this.lastFacts === undefined ? undefined : nextDecision(this.lastFacts);
+		if (decision !== undefined) deadlines.push(decision);
 		return deadlines.length === 0 ? undefined : Math.min(...deadlines);
+	}
+
+	/**
+	 * Whether a discard may still go ahead: nobody has shown or asked for it
+	 * since it began. Asked by the executor at the last moment before the
+	 * unload, from the facts as the latest plan left them.
+	 */
+	mayDiscard(folder: string): boolean {
+		const record = this.records.get(folder);
+		return (
+			record?.phase.kind === "discarding" &&
+			!record.shown &&
+			!record.asked &&
+			!record.held
+		);
 	}
 
 	//#region events
@@ -394,10 +286,10 @@ export class WorkbenchLifecycle {
 	/** Its view finished loading (again). */
 	loaded(folder: string, now: number): void {
 		const record = this.records.get(folder);
-		if (record?.phase.kind === "opening") {
-			this.move(folder, record, { kind: "awake" });
+		if (record?.phase.kind === "starting") {
+			this.move(folder, record, { kind: "running", since: now });
 		}
-		if (record?.phase.kind === "awake") this.supervisor.loaded(folder, now);
+		if (record?.phase.kind === "running") this.supervisor.loaded(folder, now);
 	}
 
 	/**
@@ -408,17 +300,16 @@ export class WorkbenchLifecycle {
 		const record = this.records.get(folder);
 		if (!record) return;
 		const { phase } = record;
-		if (phase.kind === "hibernating") {
-			// It was going anyway; whatever it was asked, it is asleep now.
-			this.move(
-				folder,
-				record,
-				{ kind: "asleep", frame: "", started: true },
-				reason,
-			);
+		if (phase.kind === "discarding") {
+			// It was going anyway; whatever was asked, it is gone now.
+			this.move(folder, record, { kind: "discarded", frame: "" }, reason);
 			return;
 		}
-		if (phase.kind !== "opening" && phase.kind !== "awake") {
+		if (
+			phase.kind !== "starting" &&
+			phase.kind !== "running" &&
+			phase.kind !== "frozen"
+		) {
 			this.say(folder, `failure ignored while ${phase.kind}: ${reason}`);
 			return;
 		}
@@ -438,7 +329,7 @@ export class WorkbenchLifecycle {
 	/** An open that ended with the folder no longer wanted. */
 	abandoned(folder: string): void {
 		const record = this.records.get(folder);
-		if (record?.phase.kind === "opening") {
+		if (record?.phase.kind === "starting") {
 			this.move(folder, record, { kind: "absent" }, "no longer wanted");
 		}
 	}
@@ -448,35 +339,89 @@ export class WorkbenchLifecycle {
 		const record = this.records.get(folder);
 		if (!record) return;
 		const kind = record.phase.kind;
-		if (kind === "opening" || kind === "awake" || kind === "hibernating") {
+		if (
+			kind === "starting" ||
+			kind === "running" ||
+			kind === "frozen" ||
+			kind === "discarding"
+		) {
 			this.move(folder, record, { kind: "absent" }, "taken down");
 		}
 	}
 
-	/** Whether a hibernation may still go ahead: not shown since it began. */
-	mayHibernate(folder: string): boolean {
-		const phase = this.phase(folder);
-		return phase.kind === "hibernating" && !phase.shown;
+	/** A probe answered. */
+	probed(folder: string, answer: ProbeAnswer, now: number): void {
+		const record = this.records.get(folder);
+		if (!record) return;
+		record.probing = false;
+		if (record.phase.kind !== "running") return;
+		record.probe = { at: now, busy: answer.busy };
+		const quiet = answer.ready && answer.cpuPercent < CPU_QUIET_PERCENT;
+		record.quietSince = quiet ? (record.quietSince ?? now) : undefined;
+		if (
+			!record.settled &&
+			record.quietSince !== undefined &&
+			now - record.quietSince >= QUIET_MS
+		) {
+			record.settled = true;
+			this.say(folder, "settled");
+		}
+	}
+
+	/** A probe got no answer: it counts as a reason to stay up, for now. */
+	probeFailed(folder: string, reason: string, now: number): void {
+		const record = this.records.get(folder);
+		if (!record) return;
+		record.probing = false;
+		if (record.phase.kind !== "running") return;
+		record.probe = { at: now, busy: [reason] };
+	}
+
+	/** Its sockets carried traffic. */
+	traffic(folder: string, at: number): void {
+		const record = this.records.get(folder);
+		if (record) record.trafficAt = at;
+	}
+
+	/** A connection is waiting on a socket one of its frozen processes listens on. */
+	connectionArrived(folder: string, now: number): void {
+		const record = this.records.get(folder);
+		if (!record) return;
+		record.connectionAt = now;
+		this.say(folder, "a connection arrived");
+	}
+
+	/** The freeze could not be carried out; it stays running for now. */
+	freezeFailed(folder: string, reason: string, now: number): void {
+		const record = this.records.get(folder);
+		if (record?.phase.kind !== "frozen") return;
+		record.probe = { at: now, busy: [reason] };
+		this.move(folder, record, { kind: "running", since: now }, reason);
 	}
 
 	/** The unload went through; the view is for `plan` to dispose. */
-	hibernated(folder: string, frame: string): void {
+	discarded(folder: string, frame: string): void {
 		const record = this.records.get(folder);
-		if (record?.phase.kind === "asleep" && record.phase.frame === "") {
+		if (record?.phase.kind === "discarded" && record.phase.frame === "") {
 			// Its view ended during the unload, before this said it was done.
-			record.phase = { kind: "asleep", frame, started: true };
+			record.phase = { kind: "discarded", frame };
 			return;
 		}
-		if (record?.phase.kind !== "hibernating") return;
-		this.move(folder, record, { kind: "asleep", frame, started: true });
+		if (record?.phase.kind !== "discarding") return;
+		this.move(folder, record, { kind: "discarded", frame });
 	}
 
-	/** It stays up, and why; the cap leaves it be until the minute check. */
-	hibernateSkipped(folder: string, reason: string, now: number): void {
+	/** It stays up (thawed), and why. */
+	discardSkipped(folder: string, reason: string, now: number): void {
 		const record = this.records.get(folder);
-		if (record?.phase.kind !== "hibernating") return;
-		record.excusedUntil = now + HIBERNATE_CHECK_MS;
-		this.move(folder, record, { kind: "awake" }, `stays awake: ${reason}`);
+		if (record?.phase.kind !== "discarding") return;
+		record.probe = { at: now, busy: [reason] };
+		this.move(
+			folder,
+			record,
+			{ kind: "running", since: now },
+			`not discarded: ${reason}`,
+		);
 	}
 
 	//#endregion
@@ -488,25 +433,22 @@ export class WorkbenchLifecycle {
 	 */
 	plan(input: LifecycleInput): LifecycleEffect[] {
 		const effects: LifecycleEffect[] = [];
+		const { now } = input;
 		const wanted = new Map(input.wanted.map((one) => [one.folder, one]));
 		const views = new Set(input.views);
 		const selected =
 			input.selected !== undefined && wanted.has(input.selected)
 				? input.selected
 				: undefined;
-		this.selected = selected;
-		// An ask is for this plan only, and only for the selected editor.
-		const ask = input.ask;
-		const asked = ask !== undefined && ask.folder === selected;
-		if (ask !== undefined) {
-			this.say(
-				ask.folder,
-				asked ? `asked for (${ask.why})` : `ask (${ask.why}) unused: not shown`,
-			);
+		const asked = new Set(input.requests ?? []);
+		const held = new Set(input.holds ?? []);
+		if (input.ask !== undefined) {
+			asked.add(input.ask.folder);
+			this.say(input.ask.folder, `asked for (${input.ask.why})`);
 		}
-
 		const loading =
 			input.loading === undefined ? undefined : new Set(input.loading);
+
 		// Not wanted: a closed Workspace, or one whose folder is gone. A verdict
 		// is kept (parked); everything else is forgotten.
 		for (const [folder, record] of this.records) {
@@ -517,19 +459,23 @@ export class WorkbenchLifecycle {
 				}
 				continue;
 			}
+			// A frozen one that goes is thawed first, so its processes can end.
+			if (record.phase.kind === "frozen")
+				effects.push({ kind: "thaw", folder });
 			this.move(folder, record, { kind: "absent" }, "no longer wanted");
 			this.records.delete(folder);
 			this.supervisor.forget(folder);
+			this.awakeNotes.delete(folder);
 		}
 
 		// A view where there should be none: its Workspace has gone, or it has
-		// just been unloaded to sleep. Taken down before anything else, so a
-		// folder woken in this same plan opens a fresh one.
+		// just been discarded. Taken down first, so a folder started again in
+		// this same plan opens a fresh one.
 		for (const folder of input.views) {
 			const kind = this.phase(folder).kind;
 			if (
 				!wanted.has(folder) ||
-				kind === "asleep" ||
+				kind === "discarded" ||
 				kind === "parked" ||
 				kind === "gave-up"
 			) {
@@ -538,27 +484,111 @@ export class WorkbenchLifecycle {
 			}
 		}
 
-		// The selected one first: it is the one somebody is waiting for.
-		const order = [...input.wanted].sort(
-			(a, b) => Number(b.folder === selected) - Number(a.folder === selected),
-		);
-		for (const one of order) {
-			const isSelected = one.folder === selected;
-			this.step(
-				one,
-				isSelected,
-				isSelected && asked,
-				views,
-				loading,
-				input,
-				effects,
+		for (const one of input.wanted) {
+			const record = this.bookkeep(one, views, loading, now, effects);
+			const shown = one.folder === selected;
+			if (shown) {
+				record.lastShownAt = now;
+				record.hiddenSince = undefined;
+			} else if (
+				record.lastShownAt !== undefined &&
+				record.hiddenSince === undefined
+			) {
+				record.hiddenSince = now;
+			}
+			record.shown = shown;
+			record.asked = asked.has(one.folder);
+			record.held = held.has(one.folder);
+		}
+
+		const shared = new Set(input.sharedRenderers ?? []);
+		const facts: PlanFacts = {
+			now,
+			discardAfterMs: input.discardAfterMs,
+			workbenches: input.wanted.map((one) =>
+				this.factsOf(one, input.freeze === one.folder, shared.has(one.folder)),
+			),
+		};
+		const actions = decide(facts);
+		if (
+			input.freeze !== undefined &&
+			!actions.some(
+				(action) => action.kind === "freeze" && action.folder === input.freeze,
+			)
+		) {
+			const one = facts.workbenches.find((f) => f.folder === input.freeze);
+			this.say(
+				input.freeze,
+				`asked to freeze, not frozen: ${
+					one === undefined
+						? "not wanted"
+						: one.phase.kind !== "running"
+							? `is ${one.phase.kind}`
+							: awakeReasons(one, now).join(", ")
+				}`,
 			);
 		}
-		this.noteSelected(selected, input.now);
-
-		this.hibernateAway(input, effects);
-		this.hibernateAsked(input, effects);
-		this.cap(input, effects);
+		for (const action of actions) {
+			const record = this.records.get(action.folder);
+			if (!record) continue;
+			switch (action.kind) {
+				case "start":
+					this.open(
+						action.folder,
+						record,
+						action.cause,
+						now,
+						effects,
+						action.background,
+					);
+					break;
+				case "probe":
+					record.probing = true;
+					effects.push({ kind: "probe", folder: action.folder });
+					break;
+				case "freeze":
+					this.move(
+						action.folder,
+						record,
+						{ kind: "frozen", since: now },
+						action.why,
+					);
+					effects.push({ kind: "freeze", folder: action.folder });
+					break;
+				case "thaw":
+					// What it was doing before it froze says nothing about what
+					// it is doing once it runs again: the next freeze probes anew.
+					record.probe = undefined;
+					this.move(
+						action.folder,
+						record,
+						{ kind: "running", since: now },
+						action.why,
+					);
+					effects.push({ kind: "thaw", folder: action.folder });
+					break;
+				case "discard": {
+					const since =
+						record.phase.kind === "frozen" ? record.phase.since : now;
+					this.move(
+						action.folder,
+						record,
+						{ kind: "discarding" },
+						`frozen since ${String(since)}`,
+					);
+					effects.push({ kind: "discard", folder: action.folder });
+					break;
+				}
+			}
+		}
+		// Moved by the actions: decided again only when something changes.
+		this.lastFacts = {
+			...facts,
+			workbenches: input.wanted.map((one) =>
+				this.factsOf(one, false, shared.has(one.folder)),
+			),
+		};
+		this.noteAwake(this.lastFacts);
 
 		for (const [folder, record] of this.records) {
 			if (record.phase.kind === "gave-up" && !record.reported) {
@@ -575,25 +605,69 @@ export class WorkbenchLifecycle {
 		return effects.sort((a, b) => ORDER[a.kind] - ORDER[b.kind]);
 	}
 
-	/** One wanted folder's own transitions. */
-	private step(
+	private factsOf(
 		one: WantedWorkbench,
-		isSelected: boolean,
-		asked: boolean,
+		freezeAsked: boolean,
+		rendererShared: boolean,
+	): WorkbenchFacts {
+		const record = this.records.get(one.folder)!;
+		return {
+			folder: one.folder,
+			phase: record.phase,
+			freezable: one.freezable,
+			shown: record.shown,
+			asked: record.asked,
+			held: record.held,
+			closing: one.closing,
+			lastShownAt: record.lastShownAt,
+			hiddenSince: record.hiddenSince,
+			settled: record.settled,
+			probe: record.probe,
+			probing: record.probing,
+			trafficAt: record.trafficAt,
+			connectionAt: record.connectionAt,
+			rendererShared,
+			freezeAsked,
+		};
+	}
+
+	private open(
+		folder: string,
+		record: WorkbenchRecord,
+		cause: OpenCause,
+		now: number,
+		effects: LifecycleEffect[],
+		background = false,
+	): void {
+		const frame = record.phase.kind === "discarded" ? record.phase.frame : "";
+		record.settled = false;
+		record.quietSince = undefined;
+		record.probe = undefined;
+		record.probing = false;
+		this.move(
+			folder,
+			record,
+			{ kind: "starting", cause, frame, since: now },
+			background ? "in the background" : undefined,
+		);
+		effects.push({ kind: "open", folder, cause, background });
+	}
+
+	/**
+	 * One wanted folder's record, made if new, with what its view's comings
+	 * and goings have settled: an adopted view, a restart whose backoff is
+	 * over, an open nothing more is coming for.
+	 */
+	private bookkeep(
+		one: WantedWorkbench,
 		views: ReadonlySet<string>,
 		loading: ReadonlySet<string> | undefined,
-		input: LifecycleInput,
+		now: number,
 		effects: LifecycleEffect[],
-	): void {
+	): WorkbenchRecord {
 		const { folder } = one;
-		const { now } = input;
 		let record = this.records.get(folder);
 		if (record) record.surfaceKey = one.surfaceKey;
-		const open = (target: WorkbenchRecord, cause: OpenCause, frame = "") => {
-			target.openingSince = now;
-			this.move(folder, target, { kind: "opening", cause, frame });
-			effects.push({ kind: "open", folder, cause });
-		};
 		if (record?.phase.kind === "parked") {
 			// Wanted again after giving up: a person asked (Retry, Locate…).
 			this.supervisor.forget(folder);
@@ -605,9 +679,18 @@ export class WorkbenchLifecycle {
 			record = {
 				phase: { kind: "absent" },
 				surfaceKey: one.surfaceKey,
-				excusedUntil: 0,
 				reported: false,
-				openingSince: 0,
+				lastShownAt: undefined,
+				hiddenSince: undefined,
+				settled: false,
+				quietSince: undefined,
+				probe: undefined,
+				probing: false,
+				trafficAt: undefined,
+				connectionAt: undefined,
+				shown: false,
+				asked: false,
+				held: false,
 			};
 			this.records.set(folder, record);
 		}
@@ -616,76 +699,41 @@ export class WorkbenchLifecycle {
 			case "absent":
 				if (views.has(folder)) {
 					// VS Code opened it on its own (a reload, a reopen).
-					this.move(folder, record, { kind: "awake" }, "adopted");
-				} else if (one.closing) {
-					// Its view went with the close; nothing reopens it meanwhile.
-				} else if (one.lazy === true && !asked) {
-					this.move(
-						folder,
-						record,
-						{ kind: "asleep", frame: "", started: false },
-						isSelected
-							? "not started: shown, not asked for"
-							: "not started: not shown yet",
-					);
-				} else if (
-					!isSelected &&
-					one.sleepable &&
-					input.awakeMax > 0 &&
-					this.awakeCount(input) >= input.awakeMax
-				) {
-					this.move(
-						folder,
-						record,
-						{ kind: "asleep", frame: "", started: false },
-						`not started: ${String(input.awakeMax)} already awake`,
-					);
-				} else {
-					open(record, "start");
+					this.move(folder, record, { kind: "running", since: now }, "adopted");
 				}
-				return;
-			case "awake":
+				break;
+			case "running":
 				if (!views.has(folder) && !one.closing) {
-					open(record, "start");
+					this.open(folder, record, "start", now, effects);
 				}
-				return;
+				break;
 			case "restart-waiting":
 				if (views.has(folder)) {
 					// The open it gave up waiting for arrived after all.
-					this.move(folder, record, { kind: "awake" }, "adopted, late");
+					this.move(
+						folder,
+						record,
+						{ kind: "running", since: now },
+						"adopted, late",
+					);
 				} else if (now >= phase.until) {
-					open(record, "restart");
+					this.open(folder, record, "restart", now, effects);
 				}
-				return;
-			case "hibernating":
-				if (isSelected && !phase.shown) {
-					this.say(folder, "shown again while hibernating");
-					record.phase = { ...phase, shown: true };
-				}
-				return;
-			case "asleep":
-				// Shown or not, it stays asleep until somebody asks: being
-				// selected is not being asked for (`docs/window-and-pages.md`).
-				if (!asked) return;
-				if (phase.started) open(record, "wake", phase.frame);
-				else open(record, "start");
-				return;
-			case "opening": {
+				break;
+			case "starting": {
 				// Nothing more is coming for it: the loaded event was missed (a
 				// page that finished before anyone listened), or the open's
-				// effect never ran. Left alone it would say "Starting…" for ever and
-				// count against the cap without ever being one it could put to
-				// sleep.
+				// effect never ran.
 				const waiting =
 					loading === undefined || loading.has(folder)
-						? now - record.openingSince < OPEN_SETTLE_MS
+						? now - phase.since < OPEN_SETTLE_MS
 						: false;
-				if (waiting) return;
+				if (waiting) break;
 				if (views.has(folder)) {
 					this.move(
 						folder,
 						record,
-						{ kind: "awake" },
+						{ kind: "running", since: now },
 						loading?.has(folder) === false
 							? "adopted: its load was not heard"
 							: `adopted: still loading after ${String(OPEN_SETTLE_MS)} ms`,
@@ -700,151 +748,29 @@ export class WorkbenchLifecycle {
 						now,
 					);
 				}
-				return;
+				break;
 			}
+			case "frozen":
+			case "discarding":
+			case "discarded":
 			case "gave-up":
 			case "parked":
-				return;
+				break;
 		}
+		return record;
 	}
 
-	/**
-	 * The selected editor is asleep or still opening at the end of a
-	 * plan: one line saying why it is not up yet, said when that changes.
-	 */
-	private noteSelected(selected: string | undefined, now: number): void {
-		const phase = selected === undefined ? undefined : this.phase(selected);
-		let note = "";
-		if (selected !== undefined && phase !== undefined) {
-			const record = this.records.get(selected);
-			if (phase.kind === "asleep") {
-				note = phase.started
-					? "asleep, waiting to be asked to wake"
-					: "not started, waiting to be asked to start";
-			} else if (
-				phase.kind === "opening" &&
-				record !== undefined &&
-				now - record.openingSince >= SLOW_OPEN_NOTE_MS
-			) {
-				note = `still opening (${phase.cause}) since ${String(record.openingSince)}`;
-			}
-			if (note !== "")
-				note = `[devhub] workbench '${selected}' selected, not up: ${note}`;
+	/** Why each hidden, running one is not frozen, said when it changes. */
+	private noteAwake(facts: PlanFacts): void {
+		for (const one of facts.workbenches) {
+			const note =
+				one.phase.kind === "running" && !one.shown && one.freezable
+					? awakeReasons(one, facts.now).join(", ")
+					: "";
+			if (note === (this.awakeNotes.get(one.folder) ?? "")) continue;
+			this.awakeNotes.set(one.folder, note);
+			if (note !== "") this.say(one.folder, `hidden, stays up: ${note}`);
 		}
-		if (note !== "" && note !== this.selectedNote) this.log(note);
-		this.selectedNote = note;
-	}
-
-	/** The sleepable workbenches up or on their way up. */
-	private awakeCount(input: LifecycleInput): number {
-		return input.wanted.filter((one) => {
-			const kind = this.phase(one.folder).kind;
-			return one.sleepable && (kind === "awake" || kind === "opening");
-		}).length;
-	}
-
-	/** Whether this one may be put to sleep now, or why not. */
-	private refusal(one: WantedWorkbench): string | undefined {
-		const phase = this.phase(one.folder);
-		if (!one.sleepable) return "never sleeps";
-		if (phase.kind !== "awake") return `is ${phase.kind}`;
-		if (one.folder === this.selected || one.awayMs === undefined)
-			return "is shown";
-		if (one.closing) return "is closing";
-		return undefined;
-	}
-
-	private hibernateAway(input: LifecycleInput, effects: LifecycleEffect[]) {
-		const after = input.hibernateAfterMs;
-		if (input.tick !== true || !(after > 0)) return;
-		for (const one of input.wanted) {
-			if (!one.sleepable || (one.awayMs ?? 0) < after) continue;
-			const phase = this.phase(one.folder);
-			if (phase.kind === "asleep" || phase.kind === "hibernating") continue;
-			const refused = this.refusal(one);
-			if (refused !== undefined) {
-				this.say(one.folder, `away, not hibernating: ${refused}`);
-				continue;
-			}
-			this.startHibernating(one.folder, "away", effects);
-		}
-	}
-
-	/** A person asked for one to sleep: it does, unless it may not. */
-	private hibernateAsked(input: LifecycleInput, effects: LifecycleEffect[]) {
-		const one = input.wanted.find((wanted) => wanted.folder === input.sleep);
-		if (one === undefined) return;
-		const refused = this.refusal(one);
-		if (refused !== undefined) {
-			this.say(one.folder, `asked to sleep, not hibernating: ${refused}`);
-			return;
-		}
-		this.startHibernating(one.folder, "asked", effects);
-	}
-
-	/** Over `awakeMax`: the least recently shown go to sleep, now. */
-	private cap(input: LifecycleInput, effects: LifecycleEffect[]): void {
-		const max = input.awakeMax;
-		const count = this.awakeCount(input);
-		if (!(max > 0) || count <= max) {
-			this.capNote = "";
-			return;
-		}
-		const tick = input.tick === true;
-		const candidates = input.wanted
-			.filter(
-				(one) =>
-					this.refusal(one) === undefined &&
-					(tick ||
-						(this.records.get(one.folder)?.excusedUntil ?? 0) <= input.now),
-			)
-			.sort((a, b) => (b.awayMs ?? 0) - (a.awayMs ?? 0));
-		const chosen = candidates.slice(0, count - max);
-		for (const one of chosen) {
-			this.startHibernating(
-				one.folder,
-				"cap",
-				effects,
-				`${String(count)} awake, cap ${String(max)}`,
-			);
-		}
-		const left = count - chosen.length;
-		if (left <= max) {
-			this.capNote = "";
-			return;
-		}
-		const why = input.wanted
-			.filter((one) => one.sleepable)
-			.flatMap((one) => {
-				if (chosen.includes(one)) return [];
-				const refused =
-					this.refusal(one) ??
-					((this.records.get(one.folder)?.excusedUntil ?? 0) > input.now
-						? "refused a moment ago"
-						: undefined);
-				return refused === undefined ? [] : [`'${one.folder}' ${refused}`];
-			})
-			.join(", ");
-		const note = `[devhub] workbench cap: ${String(left)} awake, cap ${String(max)}, none more may sleep (${why})`;
-		if (note !== this.capNote) this.log(note);
-		this.capNote = note;
-	}
-
-	private startHibernating(
-		folder: string,
-		why: HibernateWhy,
-		effects: LifecycleEffect[],
-		detail?: string,
-	): void {
-		const record = this.records.get(folder);
-		if (!record) return;
-		this.move(
-			folder,
-			record,
-			{ kind: "hibernating", why, shown: false },
-			detail ?? why,
-		);
-		effects.push({ kind: "hibernate", folder, why });
 	}
 
 	/** Every placeholder that is not what its surface was last told. */
@@ -912,7 +838,7 @@ export class WorkbenchLifecycle {
 		if (to.kind !== "gave-up") record.reported = false;
 		this.say(
 			folder,
-			`${from} -> ${to.kind}${to.kind === "opening" ? ` (${to.cause})` : ""}${
+			`${from} -> ${to.kind}${to.kind === "starting" ? ` (${to.cause})` : ""}${
 				detail === undefined ? "" : `: ${detail}`
 			}`,
 		);

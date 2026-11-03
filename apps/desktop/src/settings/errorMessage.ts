@@ -100,8 +100,6 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return "An agent profile runs Codex, Claude, Cursor, or something else DevHub reads no status from.";
     case "invalid_appearance":
       return "A font size is 9 to 24, a line height 1 to 2, an inset 0 to 64, and a sidebar density Compact or Comfortable.";
-    case "invalid_default_view":
-      return "A Workspace's editor area shows its terminal (`terminal`) or its VS Code editor (`editor`).";
     case "invalid_mac_option_is_meta":
       return 'Option is Meta in DevHub\'s terminals with `true`, the left Option only with `"left"`, or never with `false`.';
     case "invalid_string":

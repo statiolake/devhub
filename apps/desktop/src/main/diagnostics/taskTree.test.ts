@@ -43,7 +43,7 @@ const input: TaskTreeInput = {
 			label: "widget",
 			detail: "~/src/widget",
 			workbench: {
-				state: "awake",
+				state: "running",
 				sleepable: true,
 				renderers: [120],
 				utilities: [{ pid: 121, label: "Extension host" }],
@@ -155,7 +155,7 @@ describe("attributing processes", () => {
 
 	it("says what a workbench is doing, and what it offers", () => {
 		const workbench = find(tree.rows, "workbench:w1");
-		expect(workbench.state).toBe("awake");
+		expect(workbench.state).toBe("running");
 		expect(workbench.actions).toEqual(["sleep", "reveal"]);
 		expect(find(tree.rows, "agent:a1").actions).toEqual(["stop", "reveal"]);
 	});
@@ -277,7 +277,7 @@ describe("the text snapshot", () => {
 		);
 		expect(text).toContain("Footprint     In RAM     CPU Procs  Name\n");
 		expect(text).toContain("  widget ~/src/widget\n");
-		expect(text).toContain("VS Code (awake)");
+		expect(text).toContain("VS Code (running)");
 		expect(text).toMatch(/ {6}rust-analyzer \[122\]\n/u);
 		// Heaviest first: the Workspace with rust-analyzer before DevHub.
 		expect(text.indexOf("widget")).toBeLessThan(text.indexOf("DevHub\n"));
@@ -321,7 +321,7 @@ describe("a GUI Agent, a file watcher, and what is not DevHub's cost", () => {
 				id: "w1",
 				label: "widget",
 				workbench: {
-					state: "awake",
+					state: "running",
 					sleepable: false,
 					renderers: [120],
 					utilities: utilities.get(3) ?? [],

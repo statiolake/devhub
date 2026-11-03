@@ -217,9 +217,6 @@ import {
 import { activeProfile } from "../../model/profile.js";
 import {
 	colorThemeNamesOf,
-	DEFAULT_WORKBENCH_AWAKE_MAX,
-	DEFAULT_WORKBENCH_HIBERNATE_MINUTES,
-	defaultViewOf,
 	profilePresentation,
 	type AgentsConfig,
 	type Config,
@@ -291,13 +288,20 @@ import { appearanceMode } from "./appearanceMode.js";
 import { mainLogPath } from "../diagnostics/mainLog.js";
 import { editorElement, shellTitleFor } from "./shellTitle.js";
 import {
-	HIBERNATE_CHECK_MS,
 	WorkbenchLifecycle,
 	type EditorPlaceholder,
 	type LifecycleEffect,
 	type WakeReason,
-	workbenchStateOf,
 } from "./workbenchLifecycle.js";
+import {
+	SocketTrafficSampler,
+	WorkbenchFreezer,
+	WorkbenchSensors,
+	systemProcessDeps,
+	windowUtilitiesOf,
+	type WorkbenchPids,
+} from "./workbenchProcesses.js";
+import { UtilityProcess } from "code-oss-dev/out/vs/platform/utilityProcess/electron-main/utilityProcess.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
@@ -308,8 +312,8 @@ import {
 } from "./editorInspection.js";
 import {
 	discardUnsavedEditors,
-	readKeepAwake,
 	readUnsavedEditors,
+	readWorkbenchActivity,
 	type WorkbenchContents,
 } from "./workbenchUnsaved.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
@@ -565,14 +569,7 @@ import {
 import type { Landing } from "./chords.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
 import { resolveExecutable } from "./runtimes.js";
-import {
-	hasTerminalView,
-	opensInNeovim,
-	type EditorView,
-} from "../../model/editorView.js";
-import { EditorTerminalExits } from "./editorTerminalExits.js";
 import { listenForCloseRequests } from "./workbenchCloseRequests.js";
-import { WORKSPACE_TERMINAL_SURFACE_PREFIX } from "../../ipc/terminal.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
 	COMMANDS,
@@ -825,6 +822,11 @@ interface PendingRequest {
 	readonly timer: ReturnType<typeof setTimeout>;
 }
 
+/** How DevHub reads and signals its workbenches' processes. */
+const WORKBENCH_PROCESS_DEPS = systemProcessDeps(() =>
+	electron.app.getAppMetrics().map((metric) => metric.pid),
+);
+
 export class AppController {
 	private readonly coordinator: AppCoordinator;
 	private cursor = 0;
@@ -873,8 +875,36 @@ export class AppController {
 	/** A plan is being carried out; one asked for meanwhile runs right after. */
 	private reconciling = false;
 	private reconcileAgain = false;
-	/** The launch's one ask, for the editor the restored window shows. */
-	private launchWakeAsked = false;
+	/** Every workbench's processes, frozen and thawed. See `workbenchProcesses.ts`. */
+	private readonly freezer = new WorkbenchFreezer(WORKBENCH_PROCESS_DEPS);
+	/** The polls the planner needs from outside VS Code: connections, traffic. */
+	private readonly workbenchSensors = new WorkbenchSensors(
+		this.freezer,
+		new SocketTrafficSampler(WORKBENCH_PROCESS_DEPS),
+		{
+			running: () =>
+				this.workbenches.foldersIn("running").flatMap((folder) => {
+					const workspace = this.workspaceForEditorKey(folder);
+					const view = this.liveWorkbench(folder);
+					return workspace?.location.kind === "local" &&
+						workspace.editor.kind === "host" &&
+						view !== undefined
+						? [{ folder, pids: this.workbenchPids(view) }]
+						: [];
+				}),
+			connectionArrived: (folder) => {
+				this.workbenches.connectionArrived(folder, Date.now());
+				this.reconcileWorkbenches();
+			},
+			traffic: (folders, at) => {
+				for (const folder of folders) this.workbenches.traffic(folder, at);
+				this.reconcileWorkbenches();
+			},
+			log: (line) => {
+				console.warn(line);
+			},
+		},
+	);
 
 	/**
 	 * The one place anything waits for VS Code's main process to be usable.
@@ -911,49 +941,6 @@ export class AppController {
 	/** Page requests still waiting on a deferred chain, by operation identity. */
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
-	/**
-	 * The terminal view: what the editor area's shell exiting does — the
-	 * Workspace's close button, else its terminal started over
-	 * (`editorTerminalExits.ts`).
-	 */
-	private readonly editorTerminalExits = new EditorTerminalExits({
-		standing: (id) => {
-			const workspace = this.workspaceByRawId(id);
-			if (workspace === undefined) return "gone";
-			return this.coordinator.closeUnderway(workspace.id) ? "closing" : "open";
-		},
-		closable: (id) => {
-			const workspace = this.workspaceByRawId(id);
-			return (
-				workspace !== undefined &&
-				workspace.id !== this.coordinator.model.scratchWorkspaceId
-			);
-		},
-		asking: () =>
-			shellWindow()
-				.picker.openModals()
-				.some(
-					(modal) =>
-						modal.request.kind === "close-confirmation" ||
-						modal.request.kind === "worktree-close",
-				),
-		sessionAlive: async (id) => {
-			const workspace = this.workspaceByRawId(id);
-			const wiring = this.terminalsWiring;
-			if (workspace === undefined || wiring === undefined) return false;
-			return wiring.service.surfaces.sessionExists(
-				workspaceTarget(
-					runtimeIdFor(workspace.location),
-					workspace.id,
-					workspace.root,
-				),
-			);
-		},
-		close: (id) => this.closeWorkspaceOrWorktree(id),
-		restart: (id) => shellWindow().restartEditorTerminal(id),
-		log: (line) => console.warn(line),
-	});
-
 	/** The Workspace `id` names, if it is a Workspace id and one is open. */
 	private workspaceByRawId(id: string): Workspace | undefined {
 		try {
@@ -1354,9 +1341,6 @@ export class AppController {
 	 */
 	async startRuntimes(userDataPath: string): Promise<void> {
 		this.userDataPath = userDataPath;
-		setInterval(() => {
-			this.reconcileWorkbenches({ tick: true });
-		}, HIBERNATE_CHECK_MS);
 		const config = this.config;
 		// On a state file that has never existed, the configured socket *is* the
 		// effective one: there are no sessions to migrate, so adopting it is the
@@ -1415,21 +1399,6 @@ export class AppController {
 			// apart. See `remoteCliBinDirectory`.
 			controlSocketPath: controlSocketPath(userDataPath),
 			model: () => this.coordinator.model,
-			// The editor area's terminal view: its session ending under the
-			// person is the Workspace's close button (`editorTerminalExits.ts`)
-			// — while that view is what the editor area shows. Behind the
-			// Workspace's VS Code editor, nobody watched it end, so it is only
-			// started over, ready for the next `Cmd+Q E`.
-			onSurfaceEnded: (surfaceKey) => {
-				if (!surfaceKey.startsWith(WORKSPACE_TERMINAL_SURFACE_PREFIX)) return;
-				const id = surfaceKey.slice(WORKSPACE_TERMINAL_SURFACE_PREFIX.length);
-				const workspace = this.workspaceByRawId(id);
-				if (workspace !== undefined && workspace.editorView !== "terminal") {
-					shellWindow().restartEditorTerminal(id);
-					return;
-				}
-				void this.editorTerminalExits.ended(id);
-			},
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
 		this.managedNeovims = this.createManagedNeovims(userDataPath);
@@ -1905,8 +1874,9 @@ export class AppController {
 		const chordHost: ChordHost = {
 			snapshot: () => this.chordSnapshot(),
 			selectContext: (context, presentation, focus) => {
-				// Going somewhere is not waking it: an asleep editor shows its
-				// placeholder until somebody asks (`workbenchLifecycle.ts`).
+				// Going somewhere shows it: a frozen workbench is thawed, one not
+				// started yet starts, a discarded one shows its placeholder until
+				// somebody asks (`workbenchPlan.ts`).
 				this.arrive(
 					intentFromWire({
 						type: "select_context",
@@ -1933,32 +1903,6 @@ export class AppController {
 			},
 			terminalNeedsAgentView: () => {
 				this.publishError(errorWireAt("terminal_needs_agent_view"));
-			},
-			editorHasNoTerminal: () => {
-				this.publishError(errorWireAt("editor_has_no_terminal"));
-			},
-			showEditorView: (workspaceId, view, presentation) => {
-				const id = workspaceId as WorkspaceId;
-				// The view first, then the move: the arrangement the move
-				// publishes is the one with the view shown, so the keyboard lands
-				// in it (the terminal's xterm, or the workbench — which takes it
-				// once it has started, `ShellWindow.setLayoutState`).
-				this.dispatchOwn({ type: "set_editor_view", workspaceId: id, view });
-				this.arrive(
-					intentFromWire({
-						type: "select_context",
-						context: { kind: "workspace", workspaceId },
-						...(presentation === "beside" ? { split: true } : {}),
-					}),
-					view === "editor" ? "editor" : undefined,
-				);
-				// `Cmd+Q E` is asking for the editor: asleep or never started,
-				// it opens now. And it is somewhere the person went on purpose.
-				const folder = this.coordinator.model.workspace(id)?.key;
-				if (view === "editor" && folder !== undefined) {
-					this.askForWorkbench(folder, "shown");
-				}
-				this.noteInteraction();
 			},
 			closeTerminal: (terminalId) => {
 				void this.closePaneTerminal(terminalId).catch(report);
@@ -4156,8 +4100,12 @@ export class AppController {
 	 * than killing the work. Agents get a bounded chance to shut down.
 	 */
 	async shutdown(): Promise<void> {
+		// Every frozen workbench runs again, so that VS Code's quit can unload
+		// it and its processes can end: a stopped process ends on nothing but
+		// SIGKILL.
+		this.freezer.thawAll();
+		this.workbenchSensors.dispose();
 		// From here a terminal ending is DevHub going, not a person's exit.
-		this.editorTerminalExits.dispose();
 		this.stopWatchingConfig?.();
 		this.stopHearingReconnections?.();
 		// The flag is written first, and on purpose: it records that the person
@@ -4192,12 +4140,12 @@ export class AppController {
 	 */
 	taskManagerSnapshot(): Promise<TaskSnapshotWire> {
 		const shell = shellWindow();
-		const now = Date.now();
 		const { scratch, rows } = sidebarWorkspaces(this.snapshot());
 		return takeTaskReading({
 			workspaces: () =>
 				[scratch, ...rows].map((workspace) => {
-					const state = workbenchStateOf(this.workbenches.phase(workspace.key));
+					const phase = this.workbenches.phase(workspace.key);
+					const state = this.workbenches.state(workspace.key);
 					const view = shell.viewForEditorKey(workspace.key);
 					return {
 						id: workspace.id,
@@ -4215,7 +4163,7 @@ export class AppController {
 										),
 									}),
 						})),
-						...(state === undefined
+						...(phase.kind === "absent" && view === undefined
 							? {}
 							: {
 									workbench: {
@@ -4223,10 +4171,10 @@ export class AppController {
 										// What the lifecycle would refuse anyway, not offered:
 										// a far one, or the one on screen.
 										sleepable:
-											state === "awake" &&
+											phase.kind === "running" &&
 											workspace.location.kind === "local" &&
 											workspace.editor.kind === "host" &&
-											shell.editorAwayMs(workspace.key, now) !== undefined,
+											this.selectedEditorKey() !== workspace.key,
 										renderers:
 											view && isLiveWorkbench(view)
 												? [view.webContents.getOSProcessId()]
@@ -4261,16 +4209,17 @@ export class AppController {
 	}
 
 	/**
-	 * The Task Manager's Sleep: the next plan is asked to hibernate this
-	 * Workspace's workbench, the way the minute check and the cap do, and
-	 * refuses it for the same reasons (`WorkbenchLifecycle.plan`'s `sleep`).
+	 * The Task Manager's Sleep: the next plan is asked to freeze this
+	 * Workspace's workbench now, past what would otherwise keep it up (a
+	 * task, traffic) but never the one on screen, one still starting, or a
+	 * remote one (`AWAKE_RULES`' hard reasons).
 	 */
 	sleepWorkbenchFromTaskManager(workspaceId: string): void {
 		const folder = this.coordinator.model.workspace(
 			workspaceId as WorkspaceId,
 		)?.key;
 		if (folder === undefined) return;
-		this.workbenchSleep = folder;
+		this.workbenchFreeze = folder;
 		this.reconcileWorkbenches();
 	}
 
@@ -4587,19 +4536,11 @@ export class AppController {
 			layout.kind === "workbench" || layout.kind === "split"
 				? this.editorKeyForSurfaceKey(layout.editorKey)
 				: undefined;
-		// What the editor area shows: the Workspace's terminal, or its VS
-		// Code editor (`model/editorView.ts`).
-		const showsTerminal =
-			editorKey !== undefined &&
-			this.workspaceForEditorKey(editorKey)?.editorView === "terminal";
 		// Its phase, as the page draws it: anything standing in for the
 		// workbench means the workbench itself is not what is in the area.
-		// Not for the terminal, which is there whatever the workbench is doing.
 		const restarting =
 			editorKey !== undefined &&
-			!showsTerminal &&
 			this.workbenches.placeholder(editorKey) !== undefined;
-		const view = showsTerminal ? { view: "terminal" as const } : {};
 		// Nothing is drawn in the content area until the model is ready, and a
 		// workbench being rebuilt is a state of the area rather than a reason
 		// to leave it — in both cases the page has the rectangle and no
@@ -4618,9 +4559,8 @@ export class AppController {
 									editorKey,
 									ratio: snapshot.splitRatio,
 									...hidden,
-									...view,
 								}
-							: { kind: "editor", editorKey, ...hidden, ...view };
+							: { kind: "editor", editorKey, ...hidden };
 		// Both panes of a split are drawn; which of them holds the keyboard is
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
@@ -4647,12 +4587,6 @@ export class AppController {
 		// back to its Agent finds its scrollback where it was.
 		shell.syncTerminalViews(
 			model.agentTerminals().map((one) => one.terminalId),
-		);
-		// The editor area's terminal view: a view for every Workspace whose
-		// terminal has been shown so far, on its own tmux session, in the
-		// place its workbench goes.
-		shell.syncEditorTerminalViews(
-			this.editorTerminalViews(showsTerminal ? editorKey : undefined),
 		);
 		const paneFocus = model.paneFocus;
 		const keyboard: KeyboardHalf = this.keyboardInSidebar
@@ -4698,31 +4632,6 @@ export class AppController {
 		// an anchor, and a tooltip pointing at the invisible half points at
 		// nothing.
 		this.send(CHANNELS.sidebarAreaChanged, shell.sidebarArea());
-	}
-
-	/**
-	 * The terminal view: the Workspaces whose editor-area terminal has been on
-	 * screen, by editor key. Each keeps its view — attached, hidden — once it
-	 * has been shown, the way an Agent terminal's does; one whose Workspace
-	 * has gone, or cannot have one, is dropped. See `docs/terminal-mode.md`.
-	 */
-	private readonly editorTerminalsShown = new Set<string>();
-
-	private editorTerminalViews(
-		onScreen: string | undefined,
-	): readonly { readonly editorKey: string; readonly workspaceId: string }[] {
-		if (onScreen !== undefined) this.editorTerminalsShown.add(onScreen);
-		const entries: { editorKey: string; workspaceId: string }[] = [];
-		for (const workspace of this.coordinator.model.workspaces) {
-			if (!this.editorTerminalsShown.has(workspace.key)) continue;
-			if (!hasTerminalView(workspace)) continue;
-			entries.push({ editorKey: workspace.key, workspaceId: workspace.id });
-		}
-		const kept = new Set(entries.map((entry) => entry.editorKey));
-		for (const key of [...this.editorTerminalsShown]) {
-			if (!kept.has(key)) this.editorTerminalsShown.delete(key);
-		}
-		return entries;
 	}
 
 	/**
@@ -5890,10 +5799,14 @@ export class AppController {
 	): Promise<UnsavedEditorsInspection> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
 		if (workspace === undefined) return { kind: "clean" };
-		const codeWindow = await this.editorWindowFor(workspace.key);
-		return editorInspection(editorRuntimeState(codeWindow), () =>
-			readUnsavedEditors(workbenchContentsOf(codeWindow)),
-		);
+		// Asked of a workbench that runs: a frozen one is thawed for it, and
+		// one that is not running has nothing unsaved to say.
+		return this.holdWorkbench(workspace.key, "thaw", async () => {
+			const codeWindow = await this.editorWindowFor(workspace.key);
+			return editorInspection(editorRuntimeState(codeWindow), () =>
+				readUnsavedEditors(workbenchContentsOf(codeWindow)),
+			);
+		});
 	}
 
 	/**
@@ -6430,6 +6343,8 @@ export class AppController {
 		const key = this.coordinator.model.workspace(workspaceId)?.key;
 		if (key === undefined) return;
 		const viewId = this.editorViewId(key);
+		// A stopped renderer cannot end: continued before it is destroyed.
+		this.thawWorkbench(key);
 		shellWindow().unbindEditorKey(key);
 		if (viewId !== undefined) shellWindow().getViewById(viewId)?.destroy();
 		// Taken down on purpose: the lifecycle's `absent`, opened again only
@@ -6513,13 +6428,9 @@ export class AppController {
 
 	/**
 	 * The live workbench for a folder, once the open the lifecycle has in
-	 * flight for it (if any) has settled — or nothing.
-	 *
-	 * Never an open of its own: whether a folder gets a workbench is the
-	 * lifecycle's plan (`reconcileWorkbenches`), which runs first so that a
-	 * Workspace just asked for has had its open started. A folder that is
-	 * asleep is woken by that plan when somebody asked (`wake`), never by
-	 * this; one nobody asked for has none.
+	 * flight for it (if any) has settled — or nothing. For revealing the one
+	 * on screen, which the plan starts or thaws for being shown; a request
+	 * that goes on to use a workbench goes through `holdWorkbench`.
 	 */
 	private async workbenchReady(
 		folder: string,
@@ -7019,8 +6930,8 @@ export class AppController {
 	 * jump.
 	 *
 	 * Nothing, for the layouts with no workbench on screen: a Workspace that
-	 * cannot be shown, an Agent filling the content area on its own, and a
-	 * Workspace whose editor area shows its terminal. In none of them is a
+	 * cannot be shown, and an Agent filling the content area on its own. In
+	 * neither is a
 	 * workbench closed or forgotten — it is only that no workbench is the
 	 * thing on screen, so there is none to reveal.
 	 */
@@ -7029,45 +6940,22 @@ export class AppController {
 		if (layout.kind === "unavailable" || layout.kind === "agent") {
 			return undefined;
 		}
-		const surfaceKey = surfaceKeyName(layout.editor);
-		// The editor area shows the Workspace's terminal: its workbench is not
-		// on screen, so the lifecycle does not start or wake it for this.
-		const folder = this.editorKeyForSurfaceKey(surfaceKey);
-		return folder !== undefined &&
-			this.workspaceForEditorKey(folder)?.editorView === "terminal"
+		return surfaceKeyName(layout.editor);
+	}
+
+	/** The folder of the workbench on screen, if one is. */
+	private selectedEditorKey(): string | undefined {
+		const surfaceKey = this.selectedEditorSurfaceKey();
+		return surfaceKey === undefined
 			? undefined
-			: surfaceKey;
+			: this.editorKeyForSurfaceKey(surfaceKey);
 	}
 
 	/**
-	 * Carry out the workbench lifecycle's plan: the one executor.
-	 *
-	 * Every workspace DevHub knows about wants a workbench — Scratch is one of
-	 * them — unless its folder is gone (`unavailable`: asking is what used to
-	 * put VS Code's "path does not exist" box on screen). Which of them have
-	 * one, which are asleep, restarting or given up on, is the lifecycle's
-	 * (`workbenchLifecycle.ts`): this reads the projection, the selection and
-	 * the window, asks it for a plan, and does what the plan says — open,
-	 * dispose, hibernate, report, and tell the page what stands in each slot.
-	 *
-	 * Run on every projection change (a Workspace added or gone, a selection
-	 * moved, which is when the awake cap is checked), on every lifecycle event
-	 * (an open settled, a view loaded or died, an unload finished), at the
-	 * lifecycle's own deadlines (a backoff over, an open nobody settled) and on the
-	 * minute check (`tick`, for time-based sleep). Asking twice is harmless:
-	 * the plan has already moved each phase, so it asks for nothing twice.
-	 *
-	 * Nothing here is awaited: a workbench that is slow to start must not hold
-	 * up the window. No readiness check either — an open that starts before VS
-	 * Code's services exist waits inside `openEditorView` for exactly as long
-	 * as it has to. See `mainServices.ts`.
-	 */
-	/**
-	 * Somebody asked for this folder's workbench (`WakeReason`), with its
-	 * selection already made: the plan this runs opens it if it is asleep or
-	 * was never started, and only if it is the selected editor. The ask is
-	 * that one plan's (`LifecycleInput.ask`) — held here only across a plan
-	 * already running, which runs once more for it.
+	 * Somebody asked for this folder's workbench (`WakeReason`): the plan this
+	 * runs starts it if it is discarded or not started yet. The ask is that
+	 * one plan's (`LifecycleInput.ask`) — held here only across a plan already
+	 * running, which runs once more for it.
 	 */
 	private askForWorkbench(folder: string, why: WakeReason): void {
 		this.workbenchAsk = { folder, why };
@@ -7077,12 +6965,77 @@ export class AppController {
 	/** The ask the next plan comes with; see `askForWorkbench`. */
 	private workbenchAsk: { folder: string; why: WakeReason } | undefined;
 
-	/** The folder the next plan is asked to put to sleep (`sleepWorkbench`). */
-	private workbenchSleep: string | undefined;
+	/** The folder the next plan is asked to freeze (the Task Manager's Sleep). */
+	private workbenchFreeze: string | undefined;
 
-	private reconcileWorkbenches(
-		options: { readonly tick?: boolean } = {},
-	): void {
+	/**
+	 * DevHub's requests waiting on a workbench, by folder: `start` ones need it
+	 * running (`LifecycleInput.requests`), `thaw` ones need it not frozen
+	 * (`LifecycleInput.holds`). See `holdWorkbench`.
+	 */
+	private readonly workbenchHolds = {
+		start: new Map<string, number>(),
+		thaw: new Map<string, number>(),
+	};
+
+	/**
+	 * The one way DevHub talks to a workbench: as a request the lifecycle
+	 * knows of, for as long as `work` runs.
+	 *
+	 * The request is a fact of the plan that follows at once: a frozen
+	 * workbench is thawed there and then (synchronously, before `work`), and
+	 * with `start` a discarded or not yet started one is started — ahead of
+	 * any background start — and waited for. Nothing can freeze it while the
+	 * request stands; when it is done, the plan decides again from what is true
+	 * then. `thaw` is for what only makes sense of a workbench that runs —
+	 * asking a close's questions — and starts nothing.
+	 */
+	private async holdWorkbench<T>(
+		folder: string,
+		how: "start" | "thaw",
+		work: () => Promise<T>,
+	): Promise<T> {
+		const holds = this.workbenchHolds[how];
+		holds.set(folder, (holds.get(folder) ?? 0) + 1);
+		try {
+			this.reconcileWorkbenches();
+			if (how === "start") {
+				await this.workbenchOpens.get(folder)?.catch(() => undefined);
+			}
+			return await work();
+		} finally {
+			const left = (holds.get(folder) ?? 1) - 1;
+			if (left > 0) holds.set(folder, left);
+			else holds.delete(folder);
+			this.reconcileWorkbenches();
+		}
+	}
+
+	/**
+	 * Carry out the workbench lifecycle's plan: the one executor.
+	 *
+	 * Every workspace DevHub knows about wants a workbench — Scratch is one of
+	 * them — unless its folder is gone (`unavailable`: asking is what used to
+	 * put VS Code's "path does not exist" box on screen). What each should be
+	 * doing is the planner's (`workbenchPlan.ts`, through
+	 * `workbenchLifecycle.ts`): this reads the projection, the selection, the
+	 * window and DevHub's own requests, asks for a plan, and does what it says
+	 * — open, probe, freeze, thaw, discard, dispose, report, and tell the page
+	 * what stands in each slot.
+	 *
+	 * Run on every projection change (a Workspace added or gone, a selection
+	 * moved), on every lifecycle event (an open settled, a view loaded or died,
+	 * a probe answered, traffic, a connection, an unload finished), and at the
+	 * lifecycle's own deadlines. Asking twice is harmless: the plan has already
+	 * moved each phase, so it asks for nothing twice.
+	 *
+	 * Nothing here is awaited: a workbench that is slow to start must not hold
+	 * up the window. Freezing and thawing are signals, sent synchronously as
+	 * the plan is carried out, so what was decided from the facts is what
+	 * happens. An open that starts before VS Code's services exist waits inside
+	 * `openEditorView` for exactly as long as it has to (`mainServices.ts`).
+	 */
+	private reconcileWorkbenches(): void {
 		if (isQuitting()) return;
 		const shell = shellWindowIfCreated();
 		if (!shell) return;
@@ -7095,23 +7048,21 @@ export class AppController {
 		}
 		this.reconciling = true;
 		try {
-			let tick = options.tick === true;
 			do {
 				this.reconcileAgain = false;
-				this.carryOut(this.planWorkbenches(shell, tick));
-				tick = false;
+				this.carryOut(this.planWorkbenches(shell));
 			} while (this.reconcileAgain);
 		} finally {
 			this.reconciling = false;
 			// Even after a throw: a backoff with no timer behind it is a
-			// restart that waits for the minute check.
+			// restart that never comes.
 			this.scheduleWorkbenchDeadline();
+			this.workbenchSensors.update();
 		}
 	}
 
 	private planWorkbenches(
 		shell: NonNullable<ReturnType<typeof shellWindowIfCreated>>,
-		tick: boolean,
 	): LifecycleEffect[] {
 		const now = Date.now();
 		// A view the table names whose renderer is gone without an event having
@@ -7124,52 +7075,41 @@ export class AppController {
 			this.workbenches.failed(folder, "The workbench process ended.", now);
 		}
 		const model = this.coordinator.model;
-		const selectedKey = this.selectedEditorSurfaceKey();
-		const selected =
-			selectedKey === undefined
-				? undefined
-				: this.editorKeyForSurfaceKey(selectedKey);
-		// DevHub starting is the one start nobody asks for in so many words:
-		// the editor the restored window shows (if it shows one) is started,
-		// as before. Never started yet, by definition — nothing has slept.
-		let ask = this.workbenchAsk;
+		const selected = this.selectedEditorKey();
+		const ask = this.workbenchAsk;
 		this.workbenchAsk = undefined;
-		const sleep = this.workbenchSleep;
-		this.workbenchSleep = undefined;
-		if (!this.launchWakeAsked) {
-			this.launchWakeAsked = true;
-			if (ask === undefined && selected !== undefined) {
-				ask = { folder: selected, why: "launch" };
-			}
+		const freeze = this.workbenchFreeze;
+		this.workbenchFreeze = undefined;
+		const minutes = this.config.general.workbench_discard_minutes;
+		// Two workbench views in one renderer process (Chromium's grouping):
+		// stopping it for one would stop the other.
+		const renderers = new Map<number, string[]>();
+		for (const [folder, viewId] of shell.editorBindings()) {
+			const view = shell.getViewById(viewId);
+			if (!view || !isLiveWorkbench(view)) continue;
+			const pid = view.webContents.getOSProcessId();
+			renderers.set(pid, [...(renderers.get(pid) ?? []), folder]);
 		}
-		const general = this.config?.general;
-		const minutes =
-			general?.workbench_hibernate_minutes ??
-			DEFAULT_WORKBENCH_HIBERNATE_MINUTES;
 		return this.workbenches.plan({
 			now,
 			// Every Workspace whose folder is there (asking for one that is gone
-			// is what put VS Code's "path does not exist" box on screen), each
-			// started only when somebody asks for it (`ask`): until then a
-			// Workspace's workbench is asleep without ever having been opened
-			// (`lazy`, `docs/terminal-mode.md`).
+			// is what put VS Code's "path does not exist" box on screen), in
+			// the model's order — the background starts' order after recency.
 			wanted: model.workspaces
 				.filter((workspace) => workspace.state.kind !== "unavailable")
 				.map((workspace) => ({
 					folder: workspace.key,
 					surfaceKey: `workspace-editor:${workspace.id}`,
-					// Not SSH or a dev container: their weight is on the far
-					// machine, and reconnecting costs.
-					sleepable:
+					// Not SSH or a dev container: out of freezing, discarding and
+					// background starts for now (`docs/window-and-pages.md`).
+					freezable:
 						workspace.location.kind === "local" &&
 						workspace.editor.kind === "host",
 					closing: workspace.close.kind === "running",
-					awayMs: shell.editorAwayMs(workspace.key, now),
-					lazy: true,
 				})),
 			selected,
 			views: shell.editorBindings().map(([folder]) => folder),
-			// What an opening folder is still waiting for: its open, or its
+			// What a starting folder is still waiting for: its open, or its
 			// page. One waiting for neither is settled by the plan.
 			loading: [
 				...this.workbenchOpens.keys(),
@@ -7182,11 +7122,14 @@ export class AppController {
 						: [];
 				}),
 			],
-			awakeMax: general?.workbench_awake_max ?? DEFAULT_WORKBENCH_AWAKE_MAX,
-			hibernateAfterMs: minutes > 0 ? minutes * 60_000 : 0,
-			tick,
+			discardAfterMs: minutes > 0 ? minutes * 60_000 : 0,
+			requests: [...this.workbenchHolds.start.keys()],
+			holds: [...this.workbenchHolds.thaw.keys()],
+			sharedRenderers: [...renderers.values()]
+				.filter((folders) => folders.length > 1)
+				.flat(),
 			...(ask === undefined ? {} : { ask }),
-			...(sleep === undefined ? {} : { sleep }),
+			...(freeze === undefined ? {} : { freeze }),
 		});
 	}
 
@@ -7195,7 +7138,7 @@ export class AppController {
 		for (const effect of effects) {
 			// The plan has already moved every phase these effects carry out, so
 			// one that throws must not take the rest with it: an `open` skipped
-			// is a folder left opening with nothing coming.
+			// is a folder left starting with nothing coming.
 			try {
 				this.carryOutOne(effect);
 			} catch (error: unknown) {
@@ -7225,6 +7168,9 @@ export class AppController {
 			case "placeholder":
 				this.sendEditorPlaceholder(effect.surfaceKey, effect.placeholder);
 				break;
+			case "thaw":
+				this.thawWorkbench(effect.folder);
+				break;
 			case "dispose": {
 				const shell = shellWindow();
 				const viewId = this.editorViewId(effect.folder);
@@ -7236,10 +7182,16 @@ export class AppController {
 				this.reportEditorGaveUp(effect.folder, effect.reason, effect.attempt);
 				break;
 			case "open":
-				this.openWorkbench(effect.folder);
+				this.openWorkbench(effect.folder, effect.background);
 				break;
-			case "hibernate":
-				void this.hibernateWorkbench(effect.folder);
+			case "probe":
+				void this.probeWorkbench(effect.folder);
+				break;
+			case "freeze":
+				this.freezeWorkbench(effect.folder);
+				break;
+			case "discard":
+				void this.discardWorkbench(effect.folder);
 				break;
 		}
 	}
@@ -7270,7 +7222,7 @@ export class AppController {
 	 * (`workbenchReady`); the phase is what says the open is in flight, so a
 	 * second plan never starts a second one.
 	 */
-	private openWorkbench(folder: string): void {
+	private openWorkbench(folder: string, background: boolean): void {
 		const attempt = withDeadline(
 			this.openEditorView(folder),
 			EDITOR_OPEN_TIMEOUT_MS,
@@ -7284,6 +7236,11 @@ export class AppController {
 				this.workbenchOpens.delete(folder);
 			}
 			if (failure === undefined) {
+				if (background) {
+					console.log(
+						`[devhub] workbench '${folder}' opened in the background`,
+					);
+				}
 				this.reconcileWorkbenches();
 				// A view no longer puts itself on screen when it is created, so
 				// its arrival is a moment to ask the arrangement again.
@@ -7316,20 +7273,103 @@ export class AppController {
 		);
 	}
 
+	/** The processes main knows to be this workbench's. */
+	private workbenchPids(view: WorkbenchView): WorkbenchPids {
+		return {
+			renderer: view.webContents.getOSProcessId(),
+			// VS Code names each window's utility processes for it:
+			// `extension-host [<window id>]`, `file-watcher [<window id>]`,
+			// and a workbench's window id is its view's id.
+			windowUtilities: windowUtilitiesOf(UtilityProcess.getAll(), view.id),
+		};
+	}
+
 	/**
-	 * The `hibernate` effect: close one workbench if it may be, keeping the
-	 * frame it shows for the page to stand in for it.
-	 *
-	 * Each way it may not is one log line and an answer to the lifecycle,
-	 * which keeps it awake (and out of the cap's way until the minute check):
-	 * DevHub is quitting, the editor is not running, it was shown again, it
-	 * says it would lose something (`readKeepAwake`: a process in one of its
-	 * own terminals, a debug session, unsaved editors with hot exit off — no
-	 * answer is a reason too), or the unload was vetoed.
+	 * The `probe` effect: what a freeze would interrupt, whether it has
+	 * finished starting, and how busy its processes are.
 	 */
-	private async hibernateWorkbench(folder: string): Promise<void> {
+	private async probeWorkbench(folder: string): Promise<void> {
+		const view = this.liveWorkbench(folder);
+		try {
+			if (view === undefined) throw new Error("it has no view");
+			const activity = await readWorkbenchActivity(view.webContents);
+			const pids = this.workbenchPids(view);
+			const own = new Set([
+				...(pids.renderer === undefined ? [] : [pids.renderer]),
+				...pids.windowUtilities,
+			]);
+			const cpuPercent = electron.app
+				.getAppMetrics()
+				.filter((metric) => own.has(metric.pid))
+				.reduce((sum, metric) => sum + metric.cpu.percentCPUUsage, 0);
+			this.workbenches.probed(
+				folder,
+				{ busy: activity.busy, ready: activity.ready, cpuPercent },
+				Date.now(),
+			);
+		} catch (error: unknown) {
+			this.workbenches.probeFailed(
+				folder,
+				`no answer (${describeFailure(error)})`,
+				Date.now(),
+			);
+		}
+		this.reconcileWorkbenches();
+	}
+
+	/**
+	 * The `freeze` effect: SIGSTOP on its renderer and window utilities now,
+	 * then on everything under them (`WorkbenchFreezer`). The plan decided it
+	 * from the facts as they are this moment, and it happens in the same
+	 * moment.
+	 */
+	private freezeWorkbench(folder: string): void {
+		const view = this.liveWorkbench(folder);
+		try {
+			if (view === undefined) throw new Error("it has no view");
+			view.setFrozen(true);
+			void this.freezer
+				.freeze(folder, this.workbenchPids(view))
+				.catch((error: unknown) => {
+					console.warn(
+						`[devhub] workbench '${folder}' frozen only in part: ${describeFailure(error)}`,
+					);
+				});
+		} catch (error: unknown) {
+			view?.setFrozen(false);
+			this.workbenches.freezeFailed(
+				folder,
+				`could not freeze: ${describeFailure(error)}`,
+				Date.now(),
+			);
+			this.reconcileAgain = true;
+		}
+	}
+
+	/** The `thaw` effect: SIGCONT, extension hosts and their children first. */
+	private thawWorkbench(folder: string): void {
+		this.freezer.thaw(folder);
+		this.liveWorkbench(folder)?.setFrozen(false);
+	}
+
+	/**
+	 * The `discard` effect: close one frozen workbench, keeping the frame it
+	 * shows for the page to stand in for it.
+	 *
+	 * It is thawed first, since a window that is to unload has to run. Each
+	 * way it may not go is one log line and an answer to the lifecycle, which
+	 * keeps it running (and so, hidden, frozen again soon): DevHub is
+	 * quitting, the editor is not running, somebody showed or asked for it
+	 * meanwhile (`mayDiscard`, asked at the last moment), it says it would
+	 * lose unsaved editors (hot exit off; no answer is a reason too), or the
+	 * unload was vetoed. Otherwise it is unloaded as VS Code unloads every
+	 * window on Cmd+Q (`UnloadReason.QUIT`: unsaved editors backed up, storage
+	 * written, extensions deactivated), and its view destroyed by the plan.
+	 */
+	private async discardWorkbench(folder: string): Promise<void> {
+		this.thawWorkbench(folder);
 		const skip = (reason: string) => {
-			this.workbenches.hibernateSkipped(folder, reason, Date.now());
+			this.workbenches.discardSkipped(folder, reason, Date.now());
 			this.reconcileWorkbenches();
 		};
 		const workspace = this.workspaceForEditorKey(folder);
@@ -7345,23 +7385,22 @@ export class AppController {
 				skip(`its editor is ${running}`);
 				return;
 			}
-			// Asking takes a moment, in which the person may have come back.
-			if (!this.workbenches.mayHibernate(folder)) {
-				skip("shown again");
-				return;
-			}
-			const reasons = await readKeepAwake(
+			const { unsaved } = await readWorkbenchActivity(
 				workbenchContentsOf(codeWindow),
-			).catch((): readonly string[] => ["no answer"]);
-			if (reasons.length > 0) {
-				skip(reasons.join(", "));
+			).catch(() => ({ unsaved: ["no answer"] }));
+			if (unsaved.length > 0) {
+				skip(`it would lose ${unsaved.join(", ")}`);
 				return;
 			}
-			if (!this.workbenches.mayHibernate(folder)) {
-				skip("shown again");
+			if (!this.workbenches.mayDiscard(folder)) {
+				skip("shown or asked for again");
 				return;
 			}
 			const frame = await this.captureFrame(folder);
+			if (!this.workbenches.mayDiscard(folder)) {
+				skip("shown or asked for again");
+				return;
+			}
 			// QUIT, as on Cmd+Q in VS Code: unsaved editors are backed up (hot
 			// exit) and come back on reopening, rather than asked about.
 			const vetoed = await withDeadline<boolean>(
@@ -7376,12 +7415,12 @@ export class AppController {
 				skip("its unload was vetoed");
 				return;
 			}
-			// Unloaded is gone, even if it was shown again meanwhile: that
-			// showing opens it anew. The plan disposes the view.
-			this.workbenches.hibernated(folder, frame);
+			// Unloaded is gone, even if it was asked for meanwhile: that ask
+			// starts it anew. The plan disposes the view.
+			this.workbenches.discarded(folder, frame);
 			this.reconcileWorkbenches();
 		} catch (error: unknown) {
-			skip(`could not sleep: ${describeFailure(error)}`);
+			skip(`could not discard: ${describeFailure(error)}`);
 		}
 	}
 
@@ -7442,17 +7481,19 @@ export class AppController {
 		const key = this.coordinator.model.workspace(workspaceId)?.key;
 		if (key === undefined) return undefined;
 		const services = await this.services();
-		const codeWindow = await this.editorWindowFor(key);
-		return closeEditor(editorRuntimeState(codeWindow), {
-			discardUnsaved: () =>
-				discardUnsavedEditors(
-					workbenchContentsOf(codeWindow),
-					CLOSE_STEP_TIMEOUT_MS,
-				),
-			unload: () =>
-				services
-					.lifecycle()
-					.unload(workbenchOf(codeWindow), UnloadReason.CLOSE),
+		return this.holdWorkbench(key, "thaw", async () => {
+			const codeWindow = await this.editorWindowFor(key);
+			return closeEditor(editorRuntimeState(codeWindow), {
+				discardUnsaved: () =>
+					discardUnsavedEditors(
+						workbenchContentsOf(codeWindow),
+						CLOSE_STEP_TIMEOUT_MS,
+					),
+				unload: () =>
+					services
+						.lifecycle()
+						.unload(workbenchOf(codeWindow), UnloadReason.CLOSE),
+			});
 		});
 	}
 
@@ -7460,7 +7501,7 @@ export class AppController {
 	private async closeManagedNeovim(
 		workspace: Workspace | undefined,
 	): Promise<void> {
-		if (workspace === undefined || !hasTerminalView(workspace)) return;
+		if (workspace === undefined || workspace.location.kind !== "local") return;
 		await this.managedNeovims?.close({
 			machine: "local",
 			workspaceId: workspace.id,
@@ -7500,13 +7541,13 @@ export class AppController {
 	 * that already exists rather than making a second.
 	 */
 	noteLocation(location: WorkspaceLocation): void {
-		// A workbench DevHub is building itself — the lifecycle opening one for
-		// every Workspace, today's Scratch at midnight among them, or waking
-		// one — is not a request to open anything: the Workspace is already in
+		// A workbench DevHub is building itself — the lifecycle starting one
+		// for every Workspace, today's Scratch at midnight among them, or a
+		// discarded one again — is not a request to open anything: the Workspace is already in
 		// the model, and "opening" it again would select it, moving the person
 		// off whatever they were in. Only a place VS Code asked for on its own
 		// is news.
-		if (this.workbenches.phase(locationKey(location)).kind === "opening") {
+		if (this.workbenches.phase(locationKey(location)).kind === "starting") {
 			return;
 		}
 		// A refusal is drawn where it happens; here it only ends the open.
@@ -7528,17 +7569,7 @@ export class AppController {
 				relocatedOnSameMachine(location, location.path),
 			),
 		});
-		// VS Code asked for this folder's workbench, so that is what its
-		// editor area shows (`docs/terminal-mode.md`).
-		const workspace = this.workspaceForEditorKey(locationKey(location));
-		if (workspace !== undefined && workspace.editorView !== "editor") {
-			this.dispatchOwn({
-				type: "set_editor_view",
-				workspaceId: workspace.id,
-				view: "editor",
-			});
-		}
-		// And it asked for it to be open: an asleep one opens.
+		// VS Code asked for it to be open: a discarded one starts again.
 		this.askForWorkbench(locationKey(location), "opened");
 	}
 
@@ -7804,7 +7835,9 @@ export class AppController {
 				workspaceId,
 				containerId: up.containerId,
 			});
-			const view = await this.workbenchReady(workspace.key);
+			const view = await this.holdWorkbench(workspace.key, "start", () =>
+				Promise.resolve(this.liveWorkbench(workspace.key)),
+			);
 			if (view) shellWindow().assertArrangement();
 			return;
 		}
@@ -7827,7 +7860,9 @@ export class AppController {
 					containerId: up.containerId,
 				});
 			}
-			const view = await this.workbenchReady(workspace.key);
+			const view = await this.holdWorkbench(workspace.key, "start", () =>
+				Promise.resolve(this.liveWorkbench(workspace.key)),
+			);
 			if (view) shellWindow().assertArrangement();
 			return;
 		}
@@ -7865,7 +7900,9 @@ export class AppController {
 				containerId: up.containerId,
 			});
 		}
-		const view = await this.workbenchReady(workspace.key);
+		const view = await this.holdWorkbench(workspace.key, "start", () =>
+			Promise.resolve(this.liveWorkbench(workspace.key)),
+		);
 		if (view) shellWindow().assertArrangement();
 		// The editor has left the container it was in: that container goes the
 		// way its definition says, if DevHub was the one that started it.
@@ -8034,8 +8071,6 @@ export class AppController {
 			);
 		}
 		await this.attachEditor(workspaceId, workspace.editor);
-		// Asked from the row, for the editor: shown, so it is the one opened.
-		await this.setEditorView(workspaceId, "editor");
 	}
 
 	/**
@@ -8062,7 +8097,6 @@ export class AppController {
 	/** Reopen a Workspace's editor on its own machine: the row's way out. */
 	async reopenEditorLocally(workspaceId: WorkspaceId): Promise<void> {
 		await this.attachEditor(workspaceId, EDITOR_ON_HOST);
-		await this.setEditorView(workspaceId, "editor");
 	}
 
 	/**
@@ -8170,46 +8204,17 @@ export class AppController {
 	}
 
 	/**
-	 * What a Workspace's editor area shows: its terminal or its VS Code
-	 * editor (`docs/terminal-mode.md`). The selection does not move; the
-	 * lifecycle's plan follows, which is what starts or wakes a workbench
-	 * shown for the first time.
-	 */
-	private async setEditorView(
-		workspaceId: WorkspaceId,
-		view: EditorView,
-	): Promise<void> {
-		const workspace = this.coordinator.model.workspace(workspaceId);
-		if (workspace === undefined || workspace.editorView === view) return;
-		await this.dispatchAwaiting({
-			type: "set_editor_view",
-			workspaceId,
-			view,
-		});
-	}
-
-	/** `setEditorView`, for the Workspace a workbench key names. */
-	private async showEditorViewOf(
-		folder: string,
-		view: EditorView,
-	): Promise<void> {
-		const workspace = this.workspaceForEditorKey(folder);
-		if (workspace !== undefined) await this.setEditorView(workspace.id, view);
-	}
-
-	/**
 	 * The workbench of the folder just selected, for a request that goes on to
-	 * use it: asleep, the lifecycle's plan wakes it (this asks, `needed`), and
-	 * this waits for that open. Never an open of its own — the plan is the one executor.
+	 * use it: started, or thawed, by the plan its request is a fact of
+	 * (`holdWorkbench`), and waited for. Never an open of its own — the plan is
+	 * the one executor.
 	 */
 	private async selectedWorkbench(folder: string): Promise<ICodeWindow> {
-		// A request that goes on to use the workbench is a request to show
-		// it: the editor area switches to it, which is what makes it the
-		// selected editor the plan opens or wakes.
-		await this.showEditorViewOf(folder, "editor");
-		this.askForWorkbench(folder, "needed");
+		const window = await this.holdWorkbench(folder, "start", () =>
+			this.workbenchWindow(folder),
+		);
 		await this.syncEditorView();
-		return await this.workbenchWindow(folder);
+		return window;
 	}
 
 	/**
@@ -8494,10 +8499,8 @@ export class AppController {
 
 	/**
 	 * Carry out where an open was routed: select what it lands in — beside
-	 * the Agent that asked, when it was one — and hand the file to the editor
-	 * that Workspace's editor area is showing: its managed Neovim while it
-	 * shows its terminal, its workbench while it shows its VS Code editor
-	 * (`docs/terminal-mode.md`). The sentence it answers with says where, and
+	 * the Agent that asked, when it was one — and hand the file to that
+	 * Workspace's workbench. The sentence it answers with says where, and
 	 * why.
 	 */
 	private async openRouted(
@@ -8508,26 +8511,6 @@ export class AppController {
 		waitMarkerPath: string | undefined,
 		before: NavigationSelection,
 	): Promise<string> {
-		if (
-			opensInNeovim(
-				destination.kind === "scratch"
-					? this.scratchWorkspace()
-					: this.workspaceAt(
-							destination.workspace.root,
-							runtimeMachine(destination.workspace.machine),
-						),
-				machine,
-			)
-		) {
-			return this.openInManagedNeovim(
-				destination,
-				machine,
-				target,
-				position,
-				waitMarkerPath,
-				before,
-			);
-		}
 		if (destination.kind === "scratch") {
 			openFileInWorkbench(
 				await this.scratchWorkbench(),
@@ -8593,86 +8576,6 @@ export class AppController {
 			? `, beside the Agent ${besideAgent.displayName}`
 			: "";
 		return `${target.path}${at(position)} is open in the workspace at ${root}${beside}: ${because(destination.reason)}`;
-	}
-
-	/**
-	 * `openRouted` for a Workspace showing its terminal: the same Workspace,
-	 * selected the same way — beside the Agent that asked, for a conversation link — with the
-	 * editor area in front and the keyboard in it, and the file opened in that
-	 * Workspace's managed Neovim (`editor/managedNeovim.ts`), started in a new
-	 * window of its tmux session if it is not running.
-	 */
-	private async openInManagedNeovim(
-		destination: OpenDestination,
-		machine: RuntimeId,
-		target: ResolvedPath,
-		position: FileSelection | undefined,
-		waitMarkerPath: string | undefined,
-		before: NavigationSelection,
-	): Promise<string> {
-		const neovims = this.managedNeovims;
-		if (!neovims) throw new Error("the terminal runtime is not running");
-		const workspace =
-			destination.kind === "scratch"
-				? this.scratchWorkspace()
-				: this.workspaceAt(
-						destination.workspace.root,
-						runtimeMachine(destination.workspace.machine),
-					);
-		if (!opensInNeovim(workspace, machine)) {
-			throw new Error(
-				`${workspace.root} has no terminal view on this Mac to open ${target.path} in.`,
-			);
-		}
-		const besideAgent =
-			destination.kind !== "scratch" && destination.reason === "origin-agent"
-				? this.runningAgent(destination.agentId)
-				: undefined;
-		this.keyboardInSidebar = false;
-		if (destination.kind === "scratch") {
-			await this.dispatchAwaiting({ type: "new_window" });
-		} else {
-			if (besideAgent) {
-				await this.dispatchAwaiting({
-					type: "select_context",
-					context: { kind: "agent", agentId: besideAgent.id },
-					presentation: "beside",
-				});
-			}
-			await this.dispatchAwaiting({
-				type: "select_context",
-				context: { kind: "workspace", workspaceId: workspace.id },
-				presentation: besideAgent ? "beside" : "full",
-			});
-		}
-		// The keyboard goes to the editor area, out of an Agent's terminal if
-		// it was in one: the jump is handing the person something to type in.
-		if (this.coordinator.model.paneFocus !== undefined) {
-			this.dispatchOwn({ type: "focus_pane", target: { kind: "content" } });
-		}
-		// Laid out first, so the editor area is attached while Neovim starts.
-		this.placeKeyboardOnSurface();
-		const { started } = await neovims.open(
-			{ machine: "local", workspaceId: workspace.id, root: workspace.root },
-			{
-				path: target.path,
-				...(position === undefined
-					? {}
-					: { line: position.line, column: position.column }),
-				...(waitMarkerPath === undefined ? {} : { waitMarkerPath }),
-			},
-		);
-		this.rememberWaitReturn(waitMarkerPath, before);
-		this.bringToFront();
-		const where =
-			destination.kind === "scratch"
-				? `Scratch (${workspace.root})`
-				: `the workspace at ${workspace.root}`;
-		const beside = besideAgent
-			? `, beside the Agent ${besideAgent.displayName}`
-			: "";
-		const editor = started ? "a new Neovim" : "its Neovim";
-		return `${target.path}${at(position)} is open in ${editor} in ${where}${beside}: ${because(destination.reason)}`;
 	}
 
 	/**
@@ -9524,9 +9427,6 @@ export class AppController {
 	 * and a Settings save left the Agent actions and the profile's socket.
 	 */
 	private settingsAccepted(config: Config): void {
-		// `general.default_view`, for the Workspaces made from now on; the ones
-		// open keep the view they remember (`model/editorView.ts`).
-		this.coordinator.model.setDefaultEditorView(defaultViewOf(config));
 		// A new `[scratch] daily` names a different folder for today, and that
 		// folder is Scratch from now on; the old one stays as an ordinary row.
 		// Not caught here: a failure goes to the main process's root.
@@ -10789,12 +10689,7 @@ export async function createAppController(
 	let model: AppModel;
 	let projectionFailure: string | undefined;
 	try {
-		model = hydrateModel(
-			state,
-			profiles,
-			today.workspace,
-			defaultViewOf(config),
-		);
+		model = hydrateModel(state, profiles, today.workspace);
 	} catch (error) {
 		// Two different things used to arrive here and both started the app
 		// empty in silence, which is every workspace gone and a working-looking
@@ -10807,7 +10702,7 @@ export async function createAppController(
 		// attached: starting empty would move it somewhere it cannot be found.
 		if (!(error instanceof StateError)) throw error;
 		projectionFailure = error.describe(stateStore.path);
-		model = new AppModel(today.workspace, defaultViewOf(config));
+		model = new AppModel(today.workspace);
 	}
 	if (today.failure !== undefined) {
 		model.markWorkspaceUnavailable(

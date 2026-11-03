@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
 	discardUnsavedEditors,
-	readKeepAwake,
+	readWorkbenchActivity,
 	readUnsavedEditors,
 	type WorkbenchContents,
 } from "./workbenchUnsaved.js";
@@ -49,15 +49,24 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-describe("asking a workbench why it must stay up", () => {
-	it("answers with the reasons on its own channel", async () => {
+describe("asking a workbench what freezing or discarding it would interrupt", () => {
+	it("answers on its own channel", async () => {
 		const workbench = contents((channel) =>
-			channel === "vscode:devhubKeepAwake"
-				? { reasons: ["main.ts", "terminal zsh"] }
+			channel === "vscode:devhubActivity"
+				? { busy: ["terminal zsh"], unsaved: ["main.ts"], ready: true }
 				: undefined,
 		);
-		expect(await readKeepAwake(workbench)).toEqual(["main.ts", "terminal zsh"]);
+		expect(await readWorkbenchActivity(workbench)).toEqual({
+			busy: ["terminal zsh"],
+			unsaved: ["main.ts"],
+			ready: true,
+		});
 		expect(workbench.ipcListeners()).toBe(0);
+	});
+
+	it("refuses an answer of another shape", async () => {
+		const workbench = contents(() => ({ busy: [], unsaved: [] }));
+		await expect(readWorkbenchActivity(workbench)).rejects.toThrow(/ready/u);
 	});
 });
 

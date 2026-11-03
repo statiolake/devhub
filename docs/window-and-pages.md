@@ -386,7 +386,7 @@ made opaque, the foreground — what the window splash used to carry), its accen
 better — never the system `AccentColor`), and an Agent
 pane's colours with `[appearance] terminal_theme = "vscode"` — the default —
 come from the same theme, before any workbench exists, while every one is
-asleep, and from a cold start. A pane's terminal colours are those VS Code's
+frozen or discarded, and from a cold start. A pane's terminal colours are those VS Code's
 own terminal would have under the theme: `terminal.*` and the sixteen
 `terminal.ansi*`, the editor's background where the theme sets no
 `terminal.background`. They go out on the appearance projection like an edited
@@ -435,8 +435,8 @@ the theme it cached last time (`colorThemeData`, token colours and all) is the
 one to show until the theme's file is read: only if it is the theme the
 settings name. When the values were only asked for by the overlay's
 contribution, the settings at that moment were the person's own (or VS Code's
-default), DevHub's cached theme was thrown away, and every reload, every wake
-from hibernation and every cold start painted VS Code's default dark or light
+default), DevHub's cached theme was thrown away, and every reload, every start
+after a discard and every cold start painted VS Code's default dark or light
 and switched once the extensions were registered. So the theme is now handed
 over with the window configuration, which the renderer has before any of the
 workbench is loaded:
@@ -880,7 +880,7 @@ accounts for a `tm-` session by its Agent's terminal.
 _Move the terminal to the editor_ or _Stop, and close the terminal_. Moving
 `move-window`s every window of the `tm-` session into the Workspace's own
 `ws-` session — the one every editor DevHub terminal tab attaches to, made
-first if it is not there, so a hibernated or closed editor finds them when it
+first if it is not there, so a discarded or closed editor finds them when it
 next attaches — with every process running on; the emptied `tm-` session
 ends, then the Agent stops (`confirm_stop_agent` with `moveTerminal`, the
 `stop_agent` effect's `moveTerminal`). A move that fails stops nothing.
@@ -1007,7 +1007,7 @@ selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
 | a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                              | yes, at the first one |
 | a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                        | yes, at the first one |
-| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F` …), `Cmd+Q E`, Enter or a click on an asleep editor's placeholder | yes                   |
+| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F` …), Enter or a click on a discarded editor's placeholder | yes                   |
 | `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, a Sidebar row, `Cmd+Q Shift+J`, a selection repaired after a close                                                    | no                    |
 | Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                | no                    |
 
@@ -1166,97 +1166,198 @@ while they are open, and the terminal pane once per terminal), and one per workb
 share a renderer, which Chromium's same-site grouping decides.
 
 A workbench is a renderer, an extension host and its language servers and
-watchers, so one per Workspace adds up. Each folder's workbench is in one
-lifecycle phase at a time, owned by `workbenchLifecycle.ts` and nothing else:
-_absent_, _opening_ (an open in flight or a view not yet loaded; cause start,
-restart or wake), _awake_, _hibernating_, _asleep_ (put to sleep, or never
-started), _restart-waiting_ (failed, backing off), _gave-up_ and _parked_
-(given up on and unavailable until Retry or Locate…). Events — an open
-settled, a view loaded or died, an unload finished, somebody asking for an
-editor (`wake`) — move the phase; `AppController.reconcileWorkbenches`, the one executor, asks
-its `plan` (phases + projection + selection + window) on every projection
-change, every event, the lifecycle's own deadlines and the minute check, and
-carries out the effects: open, dispose, hibernate, report giving up, and the
-placeholder for each slot. Revealing never opens: `syncEditorView` waits for
-an open already in flight and asks the arrangement again.
+watchers, so one per Workspace adds up. DevHub keeps them the way Chrome and
+Edge keep tabs: **frozen** when not on screen — every one of its processes
+stopped with SIGSTOP, so it touches no memory and macOS compresses and swaps
+its pages first, and continued with SIGCONT instantly, its state intact, its
+connections still open — and **discarded** (closed) only after it has been
+frozen a long while. Restarting a workbench is what used to hurt: a CPU spike,
+seconds of waiting, and every server an extension hosted (vscode-review-relay's
+loopback API, say) gone with it. Freezing costs none of that.
 
-**A workbench away longer than `general.workbench_hibernate_minutes`
-(default 10; `0` is off) is closed** on the minute check, measured by the
-main's `workbenchAbsence.ts`, from DevHub's own layout (a split is on screen; a
-workbench never shown is away from launch). **Past
-`general.workbench_awake_max`** (default 2; `0` is no cap) — awake or opening,
-Scratch counted like any local one, SSH and dev container ones never counted
-or closed — the least
-recently shown awake ones are closed at once, on the switch that went over:
-never the shown one, one opening or waking, one closing, or one that has just
-refused (asked again on the minute check); a folder that would start past the
-cap, not selected, starts asleep. Selecting never wakes, so stepping through
-any number of Workspaces moves nothing; only an asked-for wake (below) raises
-the count, and each puts at most one other to sleep. Before
-closing, main asks the workbench what that would lose (`vscode:devhubKeepAwake`,
-answered by the overlay's `devhubHibernate.contribution.ts`): a process in one
-of its own terminals (a task, or a shell with children; DevHub's terminal is
-tmux and never counts), a debug session, and unsaved editors only with
-`files.hotExit` off. Any answer, or none, keeps it up, and the cap tries the
-next one. Otherwise its frame is captured (`capturePage`) and it is unloaded
-as VS Code unloads every window on Cmd+Q (`UnloadReason.QUIT`: the backup
-tracker backs up unsaved editors instead of asking, storage is written,
-extensions deactivate), and its view destroyed. Woken, it opens through the
-ordinary open path, whose `registerFolderBackup` hands it the same backup
-folder, so VS Code restores its editors, layout and unsaved changes. Nothing
-else is touched: the row, its Agents, their tmux sessions, GUI conversations
-and repository status.
+### States and transitions
 
-**Nothing wakes an asleep editor on its own.** Showing one — however long it
-is looked at — shows its placeholder and nothing else; there is no delayed
-wake. It opens only when somebody asks for it (a `WakeReason`). The act that
-asks makes its selection first and then hands the ask to the very plan that
-follows (`LifecycleInput.ask`, `AppController.askForWorkbench`); that plan
-opens it if it is the selected editor, and nothing is kept for later — no
-timer bridges an ask and a selection:
+Each folder's workbench is in one phase at a time (`WorkbenchPhase` in
+`workbenchPlan.ts`):
 
-| How the editor came to be shown                                                                                                                                                                                                                                    | Asleep / never started editor                                   |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
-| Enter or a click on its placeholder (`asked`)                                                                                                                                                                                                                      | wakes / starts                                                  |
-| `Cmd+Q E` to VS Code, the palette's or `devhub --tell run toggle_editor` (`shown`)                                                                                                                                                                                 | wakes / starts                                                  |
-| opening the Workspace: `Cmd+Q F` / Add Workspace… (a folder, a branch's worktree, or one already open), New / Clone Project, `devhub <folder>`, VS Code's own open (`opened`)                                                                                      | wakes / starts when its editor area shows VS Code               |
-| a request that needs the workbench: an empty window, a file for Scratch or a container, Reopen in Container (`needed`)                                                                                                                                             | wakes / starts                                                  |
-| DevHub starting, for the Workspace the restored window shows (`launch`)                                                                                                                                                                                            | starts (nothing has slept yet)                                  |
-| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, a Sidebar row (click or keys), Back/Forward, `Cmd+Q Shift+J`                                                                                                                                                         | placeholder, waits                                              |
-| a flow that opens a Workspace for an Agent: the picker's "with an Agent", `Cmd+Q I` (Assign an Issue, unless "just the editor"), New Agent in a new folder, Reopen Closed (Workspace or Agent), resuming a session in its worktree, `devhub --tell workspace open` | placeholder, waits — the Agent opens, the editor does not start |
+| Phase                                            | What it is                                                                 |
+| ------------------------------------------------ | -------------------------------------------------------------------------- |
+| _absent_                                         | not started in this run                                                    |
+| _starting_ (cause start, restart or wake)        | an open in flight, or a view whose page has not loaded                     |
+| _running_                                        | its view loaded; _settled_ once it has finished starting                   |
+| _frozen_                                         | every process of it stopped (SIGSTOP)                                      |
+| _discarding_                                     | thawed, being unloaded                                                     |
+| _discarded_                                      | closed; its placeholder shows the frame it left                            |
+| _restart-waiting_, _gave-up_, _parked_           | failed: backing off, given up on, unavailable until Retry or Locate…       |
 
-With `general.default_view = "editor"` a Workspace opened for an Agent shows
-the not-started placeholder rather than its terminal: the view it was given is
-kept (switching it to the terminal would be remembered as a choice nobody
-made), and VS Code is one Enter away.
+```text
+absent     ─ shown / asked / requested ─────────────────────▶ starting
+           ─ its turn in the background, nothing else starting ▶ starting
+starting   ─ loaded ──────────────────────────────────────────▶ running
+running    ─ hidden, settled, nothing keeps it (fresh probe) ─▶ frozen
+frozen     ─ shown / asked / requested / held / a connection ─▶ running
+           ─ frozen workbench_discard_minutes ───────────────▶ discarding ─▶ discarded
+discarded  ─ asked (Enter, a click) / requested ─────────────▶ starting (wake)
+```
 
-The placeholder (`Asleep` in `SurfaceState.tsx`) covers the whole editor area:
-the frame it left, grey under a quiet scrim of `--canvas`, and one centred
-line — "Sleeping — press Enter to wake", or "VS Code is not running — press
-Enter to start" for one that never ran. It fades in on `--motion-slow` /
-`--ease-standard` (none under reduced motion). The whole area is one control:
-it takes DOM focus when it appears and whenever the page gets the keyboard back
-(main puts the keys in the window's page while no workbench stands in the
-slot), Enter or a click calls `wakeEditor`, and every other key does nothing —
-DevHub's `Cmd+Q` chords still work, since main takes them before any page.
-Woken, it shows the "Starting VS Code…" spinner over the dim frame until the
-view has loaded, and the keyboard goes into the workbench when it arrives.
+### The planner and its driver
+
+What every workbench should be doing is decided by one pure function,
+`decide` (`workbenchPlan.ts`), from facts and nothing else; it reads no clock
+and keeps nothing. The facts per workbench (`WorkbenchFacts`): its phase,
+local or not, shown, asked for (an ask, or a DevHub request waiting on it),
+held (DevHub talking to it, thaw only), closing, when it was last shown and
+when it was hidden, settled, the renderer's last answer about what a freeze
+would interrupt (`Probe`), when its sockets last carried traffic, when a
+connection last arrived for it, and whether its renderer process also draws
+another workbench. `WorkbenchLifecycle` (`workbenchLifecycle.ts`) holds the
+facts, turns events into them — an open settled, a view loaded or died, a
+probe answered, traffic, a connection, an unload finished — and, on every
+`plan`, asks `decide`, moves each phase to match its answer (so a second plan
+asks nothing twice) and hands the effects to the one executor,
+`AppController.reconcileWorkbenches`: open, probe, freeze, thaw, discard,
+dispose, report giving up, and the placeholder for each slot. The executor
+runs a plan on every projection change, every event and every action that
+completes, and at `nextDeadline` (a probe due again, traffic or a grace
+running out, a discard due, a backoff over) — one timer, no others.
+
+The rules (tested on fact fixtures in `workbenchPlan.test.ts`, races
+included):
+
+- **Shown, asked for or requested wins.** The shown workbench is never frozen,
+  a frozen one that is shown, asked for, requested, held or closing is thawed
+  at once, and an absent one that is shown or requested starts at once —
+  ahead of any background start.
+- **One background start at a time.** At launch the shown workbench starts
+  first. Each other _local_ one starts in the background only when nothing is
+  starting and every started one has **settled**: its window has reached
+  VS Code's last lifecycle phase (Eventually), its installed extensions are
+  registered, and its renderer's and window utilities' CPU (from
+  `app.getAppMetrics()`) has stayed under 10 % for three seconds — or it has
+  run 60 s, whatever it says (`SETTLE_TIMEOUT_MS`). Which goes next is decided
+  then and there: most recently shown, then the model's order. Nothing is
+  queued, so a workbench the person goes to before its turn simply starts,
+  and the background waits for it.
+- **Freeze aggressively.** A running local workbench that is not on screen is
+  frozen as soon as it has settled and nothing keeps it awake. The keep-awake
+  reasons are one table, `AWAKE_RULES`: shown, asked for, held by DevHub,
+  closing, not local, still starting, sharing its renderer (hard — a person's
+  Sleep does not override them); network traffic on its sockets in the last
+  30 s, a connection that arrived in the last 30 s, and busy (soft). Busy is
+  what the renderer says when it is probed: a debug session, a running task,
+  an integrated terminal with a program in front of its shell. A DevHub
+  terminal is tmux and never counts — it runs under the shared pty host,
+  which is never stopped. A freeze always follows a probe taken after the
+  workbench was hidden (and since its last thaw), so a probe answered after
+  the person came back freezes nothing: the decision is made from the facts
+  as they are when the answer lands. A busy one is probed again every 15 s.
+- **Discard after a while.** Frozen for `general.workbench_discard_minutes`
+  (default 60, `0` never), it is thawed and closed as VS Code unloads every
+  window on Cmd+Q (`UnloadReason.QUIT`: unsaved editors backed up by hot exit,
+  storage written, extensions deactivated) and its view destroyed. Asked at
+  the last moment before the unload (`mayDiscard`): shown, asked for or held
+  meanwhile calls it off, and so do unsaved editors with `files.hotExit` off.
+  Started again, it opens through the ordinary open path, whose
+  `registerFolderBackup` hands it the same backup folder, so VS Code restores
+  its editors, layout and unsaved changes.
+
+**Everything that talks to a workbench goes through the lifecycle**
+(`AppController.holdWorkbench`): a file routed to it, a reattach, Scratch's
+empty window, a container's file, a close asking about unsaved work. The
+request is a fact of the plan that follows at once — a frozen workbench is
+thawed then and there, before the request's first message — and with `start`
+a discarded or not yet started one is started and waited for; nothing freezes
+it while the request stands. A close's questions (`thaw`) never start a
+workbench just to ask it.
+
+### Freezing, thawing, and a connection
+
+The processes of a workbench (`freezeTargets.ts`): its renderer
+(`webContents.getOSProcessId()`), the utility processes VS Code started for
+its window alone — named `<name> [<window id>]` in `UtilityProcess.getAll()`:
+its extension host(s) and its file watcher — and everything under them. Never
+Electron's other processes (main, GPU, network, VS Code's shared process and
+pty host, DevHub's pages), never anything under the pty host (the integrated
+terminals' shells and the tmux clients DevHub's terminal tabs are), never tmux
+wherever it turns up. `WorkbenchFreezer` (`workbenchProcesses.ts`) stops the
+renderer and the window's utilities at once, from what main knows, then the
+rest of the tree once one `ps` has answered (a thaw meanwhile wins). Thawing
+is synchronous and in reverse: the language servers and extension hosts
+first, the renderer last, so the renderer resumes to an extension host that
+already answers. Every frozen workbench is thawed when DevHub quits (a
+stopped process ends on nothing but SIGKILL), and on Node's `exit`.
+
+A stopped process cannot `accept()`, but the kernel still completes the
+handshake of a TCP connection to its listening socket and queues it. So while
+anything is frozen, `WorkbenchSensors` reads every listen queue twice a second,
+one reading for all frozen pids (`listenQueues.ts`): on macOS `netstat -Lan -p
+tcp` (`qlen`), joined on the local address with the owners `lsof` read when
+the workbench was frozen (a stopped process opens no socket, so they hold); on
+Linux `/proc/net/tcp{,6}`'s backlog joined on the inode with
+`/proc/<pid>/fd`. A connection waiting thaws the workbench in the next plan,
+with no delay of its own — the latency is the poll, 0.25 s on average and
+0.5 s at worst, plus one `netstat` — and keeps it up for a 30 s grace, so a
+CLI like vscode-review-relay's just works. Only TCP; a Unix-domain socket
+does not thaw a workbench.
+
+Traffic is sampled every 10 s while a local workbench runs
+(`socketTraffic.ts`): on macOS `nettop -P -L 1 -x -n -J bytes_in,bytes_out`,
+traffic being a per-process total that moved between two readings; on Linux
+`ss -Htinp`'s `lastsnd`/`lastrcv`. Socket traffic on the workbench's tree in
+the last 30 s keeps it from being frozen, so a workbench whose ports are
+talking does not churn between frozen and thawed.
+
+A frozen renderer is not a hung one. A workbench view holds Electron's
+`unresponsive` back from VS Code while frozen and for 10 s after a thaw
+(`ResponsivenessGate` in `workbenchView.ts`), so the "window is not
+responding" dialog and its sampling profiler never start for one; the patch
+`0014-rpc-protocol-ignores-a-stopped-clock.patch` makes VS Code's
+renderer↔extension-host responsiveness check (`RPCProtocol`) start its
+countdown again when its own check ran long after it was due — its process
+was stopped — rather than declare the other side unresponsive across the
+freeze.
+
+**Remote workbenches are excluded from freezing and discarding for now.** An
+SSH or dev container workbench's extension host is on the far machine, and
+stopping the local renderer alone would stall its connection's heartbeat. They
+start when shown or asked for (never in the background), and stay up.
+
+### Placeholders, the Task Manager, the log
+
+The placeholder (`Discarded` in `SurfaceState.tsx`) is a discarded workbench's
+whole editor area: the frame it left, grey under a quiet scrim of `--canvas`,
+and one centred line — "VS Code is not running — press Enter to start". It
+fades in on `--motion-slow` / `--ease-standard` (none under reduced motion).
+The whole area is one control: it takes DOM focus when it appears and whenever
+the page gets the keyboard back (main puts the keys in the window's page while
+no workbench stands in the slot), Enter or a click calls `wakeEditor` (an ask,
+`asked`), and every other key does nothing — DevHub's `Cmd+Q` chords still
+work, since main takes them before any page. Started, it shows the "Starting
+VS Code…" spinner over the dim frame until the view has loaded, and the
+keyboard goes into the workbench when it arrives. A frozen workbench needs no
+placeholder: it is thawed the moment it is shown, and its view still holds its
+last frame.
 
 What the slot shows is the phase (`placeholderOf`), sent to the page whenever
 it changes (`editorPlaceholder`), so it cannot outlive its state: "Restarting
-the editor…" while restart-waiting or reopening after a failure, the captured
-frame under the "Sleeping" or "not running" line while asleep, and "Starting
-VS Code…" while starting or waking (the view `hidden` in the arrangement, a
-split keeping its Agent); the frame lives in memory only. Only a change is
-sent, so the page, once it listens, asks for every placeholder standing
-(`replayEditorPlaceholders`, `WorkbenchLifecycle.standing`): the Workspaces put
-down as not started at launch are decided before the window's page has loaded,
-and without it they showed an empty editor area with nothing to press Enter on. A workbench that dies unasked is opened again
-after a backoff that doubles from 250 ms (`editorSupervisor.ts`), and after
-five failures in a row it is given up on and its Workspace made unavailable;
-one that dies while hibernating is simply asleep. Every transition, every ask,
-and every skipped hibernation is a line `[devhub] workbench '<folder>' …` in
-main's log (`<userData>/logs/devhub-main.log`, `DevHub: Open Log`).
+the editor…" while restart-waiting or reopening after a failure, the frame
+under the "not running" line while discarded, and "Starting VS Code…" while
+not started yet or starting (the view `hidden` in the arrangement, a split
+keeping its Agent); the frame lives in memory only. Only a change is sent, so
+the page, once it listens, asks for every placeholder standing
+(`replayEditorPlaceholders`, `WorkbenchLifecycle.standing`). A workbench that
+dies unasked is opened again after a backoff that doubles from 250 ms
+(`editorSupervisor.ts`), and after five failures in a row it is given up on
+and its Workspace made unavailable; one that dies while discarding is simply
+discarded.
+
+The Task Manager shows each workbench's phase (running, starting, frozen,
+discarding, discarded, not started, restarting, failed), and its Sleep is a
+freeze now (`LifecycleInput.freeze`): past the soft reasons, never past the
+hard ones. Every transition, every ask, every probe that keeps a hidden one
+up (said once per reason) and every discard called off is a line
+`[devhub] workbench '<folder>' …` in main's log
+(`<userData>/logs/devhub-main.log`, `DevHub: Open Log`).
 
 Time to the first editor, measured on an isolated instance from the process's
 own start to the first workbench's `did-finish-load`, six runs each, before

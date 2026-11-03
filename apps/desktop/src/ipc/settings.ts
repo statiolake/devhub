@@ -105,15 +105,8 @@ export interface SettingsGeneralWire {
 	readonly noticeSeconds: number;
 	/** `general.terminal_idle_seconds`. */
 	readonly terminalIdleSeconds: number;
-	/** `general.workbench_hibernate_minutes`. */
-	readonly workbenchHibernateMinutes: number;
-	/** `general.workbench_awake_max`. */
-	readonly workbenchAwakeMax: number;
-	/**
-	 * `general.default_view`: `terminal` or `editor` — what a Workspace with
-	 * no remembered view shows. See `model/config.ts`.
-	 */
-	readonly defaultView: string;
+	/** `general.workbench_discard_minutes`. */
+	readonly workbenchDiscardMinutes: number;
 }
 
 export interface SettingsRuntimeConfigWire {
@@ -381,7 +374,6 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_socket_name"
 	| "forbidden_tmux_argument"
 	| "invalid_appearance"
-	| "invalid_default_view"
 	| "invalid_mac_option_is_meta"
 	| "invalid_keybinding"
 	| "unknown_command"

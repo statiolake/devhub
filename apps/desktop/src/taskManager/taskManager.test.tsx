@@ -84,7 +84,7 @@ const SNAPSHOT: TaskSnapshotWire = {
       children: [
         row("workbench:w1", "VS Code", 2000, 50, {
           kind: "workbench",
-          state: "awake",
+          state: "running",
           workspaceId: "w1",
           actions: ["sleep", "reveal"],
           children: [ANALYZER, row("pid:120", "Renderer", 200, 2)],

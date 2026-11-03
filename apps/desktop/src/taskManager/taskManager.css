@@ -406,14 +406,21 @@ body {
   line-height: 15px;
 }
 
-.tm-state[data-state="awake"] {
+.tm-state[data-state="running"] {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--primary);
 }
 
+/* Frozen and discarded are quiet on purpose: costing nothing is the point. */
+.tm-state[data-state="frozen"],
+.tm-state[data-state="discarded"] {
+  background: var(--wash);
+  color: var(--secondary);
+}
+
 .tm-state[data-state="starting"],
 .tm-state[data-state="restarting"],
-.tm-state[data-state="going to sleep"] {
+.tm-state[data-state="discarding"] {
   background: color-mix(in srgb, var(--waiting) 16%, transparent);
   color: var(--primary);
 }
