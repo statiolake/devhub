@@ -1,0 +1,8 @@
+ESTAB 0      0      127.0.0.1:43210 127.0.0.1:8080 users:(("node",pid=1234,fd=21))
+	 cubic wscale:7,7 rto:204 rtt:0.03/0.015 ato:40 mss:32768 cwnd:10 bytes_sent:512 bytes_acked:513 bytes_received:900 segs_out:9 segs_in:8 send 87381Mbps lastsnd:1520 lastrcv:840 lastack:840 pacing_rate 174762Mbps
+ESTAB 0      0      10.0.0.2:51000 140.82.112.3:443 users:(("code",pid=1234,fd=40),("code",pid=1240,fd=40))
+	 cubic wscale:7,7 rto:240 rtt:38/2 bytes_sent:1200 bytes_received:4800 lastsnd:91000 lastrcv:62000 lastack:62000
+TIME-WAIT 0      0      127.0.0.1:44000 127.0.0.1:8080
+	 cubic lastsnd:1 lastrcv:1
+ESTAB 0      0      127.0.0.1:8080 127.0.0.1:43210 users:(("python3",pid=777,fd=4))
+	 cubic wscale:7,7 bytes_received:512 lastsnd:30001 lastrcv:29999 lastack:29999
