@@ -117,6 +117,15 @@ export const CONTROL_PATH_LIMIT = 100;
  */
 const CONTROL_TOKEN_LENGTH = 40;
 
+/**
+ * What the master adds to the path while it binds.
+ *
+ * `ControlMaster` listens on `<path>.<16 random characters>` and renames that
+ * into place (OpenSSH's `muxserver_listen`), so the socket that must fit is
+ * seventeen bytes longer than the one named.
+ */
+const CONTROL_BIND_SUFFIX = `.${"X".repeat(16)}`;
+
 /** How long the multiplexed connection outlives the last command on it. */
 const CONTROL_PERSIST = "10m";
 
@@ -265,9 +274,9 @@ export interface SshRuntimeOptions {
  *
  * `<userData>/ssh/%C` is the first choice, because every other resource DevHub
  * keys on the profile and a second DevHub must not adopt the first one's
- * connection. On macOS that is around a hundred characters under
- * `~/Library/Application Support/…`, which is under the limit but not
- * comfortably, so `~/.devhub/ssh/%C` is the named fallback — short on any
+ * connection. On macOS that is well over a hundred characters under
+ * `~/Library/Application Support/…` once the master's bind suffix is counted,
+ * so `~/.devhub/ssh/<profile>/%C` is the named fallback — short on any
  * machine. If even that does not fit, this throws and says both numbers,
  * because the alternative is `ssh` failing on every command with a message
  * about a listener nobody asked for.
@@ -307,9 +316,15 @@ function profileTag(userDataDirectory: string): string {
 		.slice(0, 8);
 }
 
-/** The path OpenSSH will actually bind, with `%C` at its expanded length. */
+/**
+ * The longest path OpenSSH will actually bind: `%C` at its expanded length,
+ * plus the temporary suffix the master binds under first.
+ */
 export function controlPathOf(directory: string): string {
-	return join(directory, "C".repeat(CONTROL_TOKEN_LENGTH));
+	return join(
+		directory,
+		"C".repeat(CONTROL_TOKEN_LENGTH) + CONTROL_BIND_SUFFIX,
+	);
 }
 
 function fitsControlPath(directory: string): boolean {

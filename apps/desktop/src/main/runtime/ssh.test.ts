@@ -326,6 +326,19 @@ describe("the ssh DevHub runs", () => {
 		expect(controlPathOf(short).length).toBeLessThanOrEqual(CONTROL_PATH_LIMIT);
 	});
 
+	it("counts the suffix the master binds under, so macOS's userData falls back", () => {
+		// `ControlMaster` binds `<path>.<16 random>` first; the preferred
+		// directory fitted without it and failed with `unix_listener: path
+		// "…/DevHub/editor/ssh/<%C>.yfy96P8ctpT8TAqI" too long`.
+		const userData = "/Users/dicen/Library/Application Support/DevHub/editor";
+		expect(controlPathOf(join(userData, "ssh")).length).toBe(
+			`${userData}/ssh/`.length + 40 + 17,
+		);
+		expect(chooseControlDirectory(userData, "/Users/dicen")).toMatch(
+			/^\/Users\/dicen\/\.devhub\/ssh\/[0-9a-f]{8}$/u,
+		);
+	});
+
 	it("falls back to a short path that is still this profile's", () => {
 		// `%C` hashes the connection and nothing about DevHub, so the shared
 		// `~/.devhub/ssh` would give two profiles the same socket name and the
