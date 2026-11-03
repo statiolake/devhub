@@ -92,16 +92,15 @@ const HOVER_DELAY_MS = 0;
 /**
  * What this element has to say, as the lines a tooltip draws.
  *
- * Two attributes, because there are two kinds of thing with a tooltip in the
- * Sidebar and they are genuinely different. A control says one thing — *No
- * enabled agent profiles*, *Retry close* — and carries it as `data-tooltip`, a
- * plain string, which is all such a thing has ever needed. Only a control whose
- * look does not already say it: a `+` is not told "Create agent", a `×` is not
- * told "Close", and a status mark is not read back as "Terminal: Idle" — those
- * have no `data-tooltip`, so the pointer on them is the pointer on their row. A row is a list of facts about
- * something, composed by `rowDescription.ts`, and carries it as
- * `data-tooltip-lines`: the same list the row's accessible name is made of,
- * serialised onto the element that raises it.
+ * A row — and the usage limits — is a list of facts about something, composed
+ * by `rowDescription.ts`, and carries it as `data-tooltip-lines`: the same
+ * list the row's accessible name is made of, serialised onto the element that
+ * raises it. Nothing smaller in the Sidebar carries one: no mark, glyph or
+ * button inside a row has a hover of its own, so the pointer on any of them is
+ * the pointer on its row, and what they would have said — *Retry close*,
+ * *Close worktree…*, *Retry stop*, the Issue, the pull request, the dev
+ * container — is a line in the row's. `data-tooltip`, a plain string, is still
+ * read, for a one-line element; the Sidebar draws none today.
  *
  * It is on the element rather than in a lookup because *which* element the
  * pointer came to rest on is the whole question, and the answer is found by

@@ -499,22 +499,32 @@ describe("an Agent that would not stop", () => {
     expect(agentLines().after).not.toBe("Stop failed");
   });
 
-  it("says on hover that the stop is a retry, and says nothing on a first stop", () => {
+  it("says in the row's tooltip that the stop is a retry, and nothing on a first stop", () => {
+    const tip = () =>
+      JSON.parse(
+        document
+          .querySelector(".agent-row")
+          ?.getAttribute("data-tooltip-lines") ?? "[]",
+      ) as { icon?: string; text: string; style?: string }[];
     mount(undefined, undefined, {
       kind: "stop-failed",
       diagnostic: "close_agents_unknown",
     });
-    expect(screen.getByRole("button", { name: /^Stop / })).toHaveAttribute(
-      "data-tooltip",
-      "Retry stop",
-    );
-    cleanup();
-    mount(undefined);
-    // A first stop is the square's own meaning; a hover that read "Stop
-    // agent" back would be the label twice.
+    // The stop button has no hover of its own; the row's tooltip says it.
     expect(screen.getByRole("button", { name: /^Stop / })).not.toHaveAttribute(
       "data-tooltip",
     );
+    expect(tip()).toContainEqual({
+      icon: "statusError",
+      text: `Retry stop: ${closeDiagnosticLabel("close_agents_unknown")}`,
+      style: "danger",
+    });
+    cleanup();
+    mount(undefined);
+    expect(screen.getByRole("button", { name: /^Stop / })).not.toHaveAttribute(
+      "data-tooltip",
+    );
+    expect(JSON.stringify(tip())).not.toContain("Retry stop");
   });
 
   it("says it in the row's accessible name too", () => {

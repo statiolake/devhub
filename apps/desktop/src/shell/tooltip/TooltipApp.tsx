@@ -36,6 +36,8 @@
  * - `devhub:tooltip-pointer` — whether the pointer is in the box. Half of an
  *   answer main assembles: the Sidebar's leave is the other half, and neither
  *   page can see the other's pointer. See `main/shell/tooltipView.ts`.
+ * - `devhub:open-external-url` — a line that names a page on GitHub was
+ *   clicked: the repository, the Issue or the pull request of the row.
  * - `devhub:raise-failure` — what began *here*, one way. Drawn nowhere here:
  *   this page has no room for a failure and no business reporting one, so it
  *   goes to the page that draws them like every other page's does.
@@ -50,6 +52,8 @@
 
 import { useCallback } from "react";
 import { devhub } from "./client";
+import { toAppError } from "../failure";
+import { isGitHubPage } from "../githubPage";
 import { useTooltipLines } from "./tooltipText";
 import { useTooltipSize } from "./tooltipSize";
 import {
@@ -79,9 +83,36 @@ function glyphName(icon: string | undefined): GlyphName | undefined {
     : undefined;
 }
 
+/**
+ * One of the box's links, followed.
+ *
+ * `preventDefault` because this document is never navigating anywhere: it is
+ * one box drawn in a view the size of itself, and replacing it with GitHub's
+ * page would put a website inside a tooltip. The URL leaves through main, the
+ * way every link DevHub draws does, and only when it is a GitHub page — the
+ * three places a row's facts name — whatever the line arrived carrying.
+ */
+function useFollow(): (
+  href: string,
+  event: { preventDefault(): void },
+) => void {
+  return useCallback((href, event) => {
+    event.preventDefault();
+    if (!isGitHubPage(href)) return;
+    void devhub()
+      .openExternalUrl(href)
+      // What began here is raised and never drawn here: this page has one box
+      // in it and no room for a failure, so it goes to the page that draws
+      // them. A click that quietly did nothing is the failure this catch
+      // exists to prevent.
+      .catch((error: unknown) => devhub().raiseFailure(toAppError(error)));
+  }, []);
+}
+
 export function TooltipApp() {
   const lines = useTooltipLines(devhub);
   const measure = useTooltipSize(lines);
+  const follow = useFollow();
   // Where the pointer is, as a fact for main. The box is a view of its own, so
   // the pointer crossing into it from a row is a leave in the Sidebar and an
   // enter here, and only main sees both. It is reported on the box rather than
@@ -117,15 +148,23 @@ export function TooltipApp() {
         line.kind === "meter" ? (
           <MeterLine key={index} line={line} now={Date.now()} />
         ) : (
-          <FactLine key={index} line={line} />
+          <FactLine key={index} line={line} follow={follow} />
         ),
       )}
     </div>
   );
 }
 
-function FactLine({ line }: { readonly line: TooltipFactLineWire }) {
+function FactLine({
+  line,
+  follow,
+}: {
+  readonly line: TooltipFactLineWire;
+  readonly follow: (href: string, event: { preventDefault(): void }) => void;
+}) {
   const icon = glyphName(line.icon);
+  const href =
+    line.href !== undefined && isGitHubPage(line.href) ? line.href : undefined;
   return (
     <div
       className={`tooltip-line${line.style ? ` is-${line.style}` : ""}`}
@@ -145,10 +184,24 @@ function FactLine({ line }: { readonly line: TooltipFactLineWire }) {
           <Glyph name={icon} />
         </span>
       ) : null}
-      {/* Words, every one of them — a fact that names a page included. The
-          row's Issue and pull request marks are the way to GitHub; the box
-          only says what they are. */}
-      <span className="tooltip-line-text">{line.text}</span>
+      {/* A fact that names a page is the link to it — the repository, the
+          Issue, the pull request. The row's own marks have no hover of their
+          own, so this box is where they are followed. Everything else is
+          words. */}
+      {href === undefined ? (
+        <span className="tooltip-line-text">{line.text}</span>
+      ) : (
+        <a
+          className="tooltip-line-text tooltip-line-link"
+          href={href}
+          // Out of the tab order, because the box is out of the
+          // accessibility tree; this view never holds the keyboard anyway.
+          tabIndex={-1}
+          onClick={(event) => follow(href, event)}
+        >
+          {line.text}
+        </a>
+      )}
     </div>
   );
 }

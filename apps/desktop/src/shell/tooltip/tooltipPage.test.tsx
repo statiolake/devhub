@@ -28,8 +28,12 @@ const FACTS: TooltipContentWire = {
   ],
 };
 
+/** Every link this page asked main to open, in order. */
+let opened: string[] = [];
 /** Every report of where the pointer is, in order. */
 let pointer: boolean[] = [];
+/** What the next `openExternalUrl` answers with. */
+let opening: Promise<void> = Promise.resolve();
 /** Every failure this page raised, in order. */
 let raised: unknown[] = [];
 
@@ -59,8 +63,10 @@ function sizeBoxes(width: number, height: number) {
 
 beforeEach(() => {
   reported = [];
+  opened = [];
   pointer = [];
   raised = [];
+  opening = Promise.resolve();
   push = undefined;
   sizeBoxes(220, 34);
   // No `ResizeObserver` in jsdom. The page's first measurement is taken
@@ -89,6 +95,10 @@ beforeEach(() => {
     },
     reportTooltipPointer: (inside: boolean) => {
       pointer.push(inside);
+    },
+    openExternalUrl: (url: string) => {
+      opened.push(url);
+      return opening;
     },
   };
 });
@@ -330,12 +340,11 @@ describe("the tooltip page", () => {
   });
 
   /**
-   * Three of a row's facts name a page on GitHub, and the box says them as
-   * words and nothing more: the Issue and pull request marks on the row are
-   * the way there, and a box that led there too was one more way out to hit
-   * by accident.
+   * Three of a row's facts name a page on GitHub — the repository, the Issue,
+   * the pull request — and the box is where they are followed: the row's
+   * marks have no hover of their own and the folder glyph is inert.
    */
-  it("draws every fact as words, a page's address among them", () => {
+  it("draws a fact that names a GitHub page as the link to it", () => {
     render(<TooltipApp />);
     send({
       lines: [
@@ -344,13 +353,95 @@ describe("the tooltip page", () => {
           icon: "repository",
           text: "github.com/example/widget",
           style: "muted",
+          href: "https://github.com/example/widget",
         },
       ],
     });
+    const link = document.querySelector("a.tooltip-line-link");
+    expect(link).toHaveAttribute("href", "https://github.com/example/widget");
+    expect(link).toHaveTextContent("github.com/example/widget");
+    expect(document.querySelectorAll("a")).toHaveLength(1);
+  });
+
+  /** Everything else is words. A fact that is not a place is not a link. */
+  it("draws a fact that names no page as plain words", () => {
+    render(<TooltipApp />);
+    send(FACTS);
     expect(document.querySelector("a")).toBeNull();
-    expect(document.querySelector(".tooltip-box")).toHaveTextContent(
-      "github.com/example/widget",
-    );
+  });
+
+  /**
+   * Only a GitHub page over https is a link, whatever a line arrives
+   * carrying: the three places a row's facts name are all on github.com.
+   */
+  it.each([
+    "http://github.com/example/widget",
+    "https://example.com/i/128",
+    "https://github.com.example.com/x",
+    "https://user@github.com/x",
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "not a url",
+  ])("draws %s as words and never opens it", (href) => {
+    render(<TooltipApp />);
+    send({ lines: [{ text: "#128 Fix it", href }] });
+    expect(document.querySelector("a")).toBeNull();
+    act(() => {
+      document
+        .querySelector(".tooltip-line-text")!
+        .dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+    });
+    expect(opened).toEqual([]);
+  });
+
+  /**
+   * The click goes out through main — not through the navigation backstop,
+   * which catches what a page did not mean to do and would swallow a refusal
+   * nobody is awaiting. And this document never navigates: replacing it would
+   * put a website in a tooltip.
+   */
+  it("sends a clicked link to the browser instead of navigating to it", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        {
+          text: "#128 Fix it",
+          href: "https://github.com/example/widget/issues/128",
+        },
+      ],
+    });
+    const link = document.querySelector("a.tooltip-line-link");
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    act(() => {
+      link!.dispatchEvent(click);
+    });
+    expect(opened).toEqual(["https://github.com/example/widget/issues/128"]);
+    expect(click.defaultPrevented).toBe(true);
+  });
+
+  /** A click that quietly did nothing is the failure the catch prevents. */
+  it("raises a link that could not be opened rather than dropping it", async () => {
+    opening = Promise.reject(new Error("no browser"));
+    render(<TooltipApp />);
+    send({
+      lines: [
+        {
+          text: "#7 Rework",
+          href: "https://github.com/example/widget/pull/7",
+        },
+      ],
+    });
+    await act(async () => {
+      document
+        .querySelector("a.tooltip-line-link")!
+        .dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      await Promise.resolve();
+    });
+    expect(raised).toHaveLength(1);
   });
 
   /**

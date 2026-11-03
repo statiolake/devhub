@@ -218,6 +218,22 @@ body,
   min-width: 0;
 }
 
+/* A place you can go is underlined, at rest: in a box that is mostly plain
+   facts, the underline is the one thing that says which lines are links
+   before the pointer finds out. Hover only brightens the ink. `color:
+   inherit` so the line keeps the ink its `style` gave it. */
+.tooltip-line-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+}
+
+.tooltip-line-link:hover {
+  color: var(--primary);
+  text-decoration-color: currentColor;
+}
+
 /* What the thing is called. The one line in the box set as a name — everything
    under it qualifies it, which is the same relation the row draws between its
    label and everything trailing it. */

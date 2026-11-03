@@ -200,24 +200,28 @@ describe("a Workspace row whose folder is on another machine", () => {
    * The + looks the same whether it can be pressed or why it cannot, so the
    * hover is where the reason is: the one thing about it a person cannot see.
    */
-  it("says on hover why New Agent is off, or that its profiles need attention", () => {
+  it("says why New Agent is off, or that its profiles need attention, in its name and not on hover", () => {
     mount(REMOTE, undefined, {
       sequence: 1,
       availability: "available",
       profiles: [],
     });
-    const off = screen.getByRole("button", { name: /Create agent in api/u });
+    const off = screen.getByRole("button", {
+      name: "Create agent in api, unavailable: no enabled agent profiles",
+    });
     expect(off).toBeDisabled();
-    expect(off).toHaveAttribute("data-tooltip", "No enabled agent profiles");
+    expect(off).not.toHaveAttribute("data-tooltip");
     cleanup();
     mount(REMOTE, undefined, {
       sequence: 1,
       availability: "degraded",
       profiles: [{ id: "codex", displayName: "Codex" }],
     });
-    expect(
-      screen.getByRole("button", { name: /Create agent in api/u }),
-    ).toHaveAttribute("data-tooltip", "Agent profiles need attention");
+    const degraded = screen.getByRole("button", {
+      name: "Create agent in api, agent profiles need attention",
+    });
+    expect(degraded).toBeEnabled();
+    expect(degraded).not.toHaveAttribute("data-tooltip");
   });
 
   it("says the path and the machine in the row's own facts", () => {
@@ -249,10 +253,8 @@ describe("a Workspace row whose folder is on another machine", () => {
       "data-glyph",
       "container",
     );
-    expect(mark).toHaveAttribute(
-      "data-tooltip",
-      "editor in dev container: python",
-    );
+    // Which container is the row's tooltip's to say; the mark has no hover.
+    expect(mark).not.toHaveAttribute("data-tooltip");
     expect(document.querySelectorAll('[data-glyph="remote"]')).toHaveLength(0);
   });
 

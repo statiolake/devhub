@@ -16,6 +16,8 @@ import {
 } from "../../../model/projectStatus";
 import { agentLeadingText } from "../../../model/domain";
 import { statusLabel } from "./status";
+import { closingDeletesWorktree } from "../../../model/worktrees";
+import { isGitHubPage } from "../../githubPage";
 import { unreadShows } from "./StatusMark";
 import {
   agentFailureLabel,
@@ -59,6 +61,17 @@ export interface RowFact {
   readonly spoken?: string;
   readonly style?: TooltipFactLineWire["style"];
   readonly tone?: TooltipFactLineWire["tone"];
+  /**
+   * The GitHub page this fact names, for the tooltip to link: the repository,
+   * the Issue, the pull request. Only ever a `https://github.com/` page
+   * (`gitHubHref`); the spoken sentence has no use for it.
+   */
+  readonly href?: string;
+}
+
+/** A URL as a tooltip link, when it is a GitHub page; nothing otherwise. */
+function gitHubHref(url: string): { readonly href?: string } {
+  return isGitHubPage(url) ? { href: url } : {};
 }
 
 function said(facts: readonly (RowFact | undefined)[]): RowFact[] {
@@ -77,18 +90,7 @@ export function tooltipLines(facts: readonly RowFact[]): TooltipLineWire[] {
     text: fact.text,
     ...(fact.style === undefined ? {} : { style: fact.style }),
     ...(fact.tone === undefined ? {} : { tone: fact.tone }),
-  }));
-}
-
-/**
- * The same facts, as a mark's own hover: each behind its mark, and nothing
- * else. The row's styling is the row's — the mark the pointer is on is already
- * the link, and the box beside it is only saying what it is.
- */
-export function markLines(facts: readonly RowFact[]): TooltipLineWire[] {
-  return facts.map((fact) => ({
-    ...(fact.icon === undefined ? {} : { icon: fact.icon }),
-    text: fact.text,
+    ...(fact.href === undefined ? {} : { href: fact.href }),
   }));
 }
 
@@ -340,6 +342,7 @@ export function pullRequestFacts(
       text: pullRequestMark(pullRequest),
       spoken: pullRequestLabel(pullRequest),
       style: "muted",
+      ...gitHubHref(pullRequest.url),
     },
     conversations === undefined
       ? undefined
@@ -361,6 +364,23 @@ export function unavailableText(
   return unavailable.number === undefined
     ? unavailable.reason
     : `#${String(unavailable.number)} · ${unavailable.reason}`;
+}
+
+/**
+ * The repository the Issue is numbered in, as `owner/name`, when it is not the
+ * checkout's own repository; undefined when it is, or when nothing says.
+ */
+function issueRepositoryElsewhere(
+  repository: WorkspaceRepositoryWire | undefined,
+  issue: NonNullable<WorkspaceRepositoryWire["issue"]>,
+): string | undefined {
+  const name = issueRepositoryName(repository, issue);
+  if (name === undefined) return undefined;
+  const own = repository?.repositoryUrl;
+  return own !== undefined &&
+    repositoryPage(own).toLowerCase() === `github.com/${name}`.toLowerCase()
+    ? undefined
+    : name;
 }
 
 /** The page a repository mark leads to, as it would be written down. */
@@ -404,6 +424,7 @@ export function workspaceRowFacts(
     workspace.close.kind === "failed" ? workspace.close : undefined;
   const issue = repository?.issue;
   const pullRequest = repository?.pullRequest;
+  const deletesWorktree = closingDeletesWorktree(repository, workspace.root);
   return said([
     // What it is. The name, and it is the only fact in the list that is set as
     // one — everything under it qualifies it.
@@ -428,14 +449,17 @@ export function workspaceRowFacts(
     },
     // A close that stopped. Said and not only drawn: the row's colour is what a
     // sighted reader gets, and this is the same statement for everyone else.
+    //
+    // Labelled with what the row's × does about it now, which used to be the
+    // ×'s own hover and is the row's to say: the × has none.
     closeFailed
       ? {
           icon: "statusError",
-          text: closeFailureLabel(
+          text: `Retry close: ${closeFailureLabel(
             closeFailed.step,
             closeFailed.diagnostic,
             closeFailed.detail,
-          ),
+          )}`,
           spoken: `close failed: ${closeFailureLabel(closeFailed.step, closeFailed.diagnostic, closeFailed.detail)}`,
           style: "danger",
         }
@@ -458,8 +482,8 @@ export function workspaceRowFacts(
             spoken: "terminal finished, unread",
             tone: "idle",
           },
-    // What it is a checkout of. Words only: the row's Issue and pull request
-    // marks are its ways to GitHub, and the box is not another.
+    // What it is a checkout of, and the link to it: the folder glyph is an
+    // inert mark, so this line is the way to the repository on GitHub.
     repository?.repositoryUrl === undefined
       ? undefined
       : {
@@ -467,6 +491,7 @@ export function workspaceRowFacts(
           text: repositoryPage(repository.repositoryUrl),
           spoken: `repository ${repositoryPage(repository.repositoryUrl)}`,
           style: "muted",
+          ...gitHubHref(repository.repositoryUrl),
         },
     // That this checkout is a worktree, and of what. The row's own mark stopped
     // saying it — every Workspace is a folder there — and it is worth saying
@@ -478,6 +503,17 @@ export function workspaceRowFacts(
           icon: "worktree",
           text: repository.mainWorktree,
           spoken: `worktree of ${repository.mainWorktree}`,
+          style: "muted",
+        }
+      : undefined,
+    // What the row's × does here, which is more than close: it removes this
+    // worktree's folder, asking first when anything in it would be lost. Was
+    // the ×'s own hover ("Close worktree…"); said once, here.
+    deletesWorktree && workspace.close.kind !== "running"
+      ? {
+          icon: "close",
+          text: "Close worktree…: removes this worktree, asking first",
+          spoken: "closing removes this worktree, asking first",
           style: "muted",
         }
       : undefined,
@@ -501,6 +537,17 @@ export function workspaceRowFacts(
           text: issueMark(issue),
           spoken: issueLabel(issue),
           style: "muted",
+          ...gitHubHref(issue.url),
+        }
+      : undefined,
+    // Which repository the Issue is numbered in, when that is not the
+    // checkout's own — an upstream's Issues, say. The same repository twice
+    // would be one fact on two lines.
+    issue && issueRepositoryElsewhere(repository, issue) !== undefined
+      ? {
+          icon: "repository",
+          text: `Issue in ${issueRepositoryElsewhere(repository, issue) as string}`,
+          style: "muted",
         }
       : undefined,
     issue && issueProjectLine(issue) !== undefined
@@ -518,7 +565,8 @@ export function workspaceRowFacts(
     repository?.unavailable
       ? {
           icon: "statusError",
-          text: unavailableText(repository.unavailable),
+          text: `Unavailable: ${unavailableText(repository.unavailable)}`,
+          spoken: `issue unavailable: ${unavailableText(repository.unavailable)}`,
           style: "danger",
         }
       : undefined,
@@ -663,6 +711,15 @@ export function agentTooltipFacts(agent: AgentSnapshot): RowFact[] {
     },
     agent.named === true && agent.activity !== undefined
       ? { text: agent.activity, style: "muted" }
+      : undefined,
+    // A stop that failed, and what the row's × does about it now. It was the
+    // ×'s own hover ("Retry stop"); the × has none, so the row says it.
+    agent.controlState.kind === "stop-failed"
+      ? {
+          icon: "statusError",
+          text: `Retry stop: ${closeDiagnosticLabel(agent.controlState.diagnostic)}`,
+          style: "danger",
+        }
       : undefined,
   ]);
 }

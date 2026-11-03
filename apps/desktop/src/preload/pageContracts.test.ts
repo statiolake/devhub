@@ -108,19 +108,24 @@ describe("the pages, and what each of them may say", () => {
 	});
 
 	/**
-	 * The tooltip draws a row's facts as words and no links: the row's Issue
-	 * and pull request marks are the way to GitHub, and the box is not a
-	 * second one. So its page has no way to the browser at all — not on the
-	 * bridge it declares, and not in the preload that builds it.
+	 * The other direction of the same rule: a member a page's *bridge* declares
+	 * must be in that page's preload, or the page spells a name its
+	 * `window.devhub` does not have.
+	 *
+	 * `openExternalUrl` on the tooltip is the case worth pinning. The row's
+	 * tooltip is where its repository, Issue and pull request are followed —
+	 * the marks on the row have no hover and the folder glyph is inert — so a
+	 * page that could spell the call but whose preload never exposed it would
+	 * have links that silently do nothing.
 	 */
-	it("gives the tooltip page, which draws no links, no way to the browser", () => {
+	it("exposes a link to the browser on the tooltip page, which draws links", () => {
 		const contract = read("../ipc/contract.ts");
 		const tooltipBridge = /export interface TooltipBridge[\s\S]*?\n}/.exec(
 			contract,
 		)?.[0];
 		expect(tooltipBridge).toBeDefined();
-		expect(tooltipBridge).not.toContain("openExternalUrl");
-		expect(read("./tooltip.ts")).not.toContain("openExternalUrl");
+		expect(tooltipBridge).toContain("openExternalUrl");
+		expect(read("./tooltip.ts")).toContain("openExternalUrl");
 	});
 
 	/**

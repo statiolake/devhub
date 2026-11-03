@@ -341,6 +341,8 @@ describe("what a rail entry does under the pointer", () => {
     mount(true, REPOSITORY);
     const button = selectButton("workspace:w-1");
     const row = rowTooltip(button);
+    // The repository, the Issue and the pull request are the box's links:
+    // the folder glyph is inert and the marks have no hover of their own.
     expect(JSON.parse(row.getAttribute("data-tooltip-lines") ?? "[]")).toEqual([
       { text: "widget", style: "name" },
       { text: "/projects/widget", style: "muted" },
@@ -348,17 +350,20 @@ describe("what a rail entry does under the pointer", () => {
         icon: "repository",
         text: "github.com/example/widget",
         style: "muted",
+        href: "https://github.com/example/widget",
       },
       { icon: "branch", text: "feature/128-tidy", style: "muted" },
       {
         icon: "issueOpen",
         text: "#128 Tidy the rail",
         style: "muted",
+        href: "https://github.com/example/widget/issues/128",
       },
       {
         icon: "pullRequestDraft",
         text: "#131 Tidy the rail",
         style: "muted",
+        href: "https://github.com/example/widget/pull/131",
       },
     ]);
     // The spoken sentence stays on the control that is spoken: the facts are

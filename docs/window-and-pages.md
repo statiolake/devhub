@@ -26,11 +26,13 @@ is last because it hides nothing — the view is the size of the box it draws
 and is out of the child list altogether when there is no tooltip up, so there
 is nothing for it to be underneath.
 
-The pointer can enter it, though it draws no links: the facts that name pages
-on GitHub (the repository, the Issue, the pull request) are words in the box,
-and the row's Issue and pull request marks are the way there. A box that went
-the moment the pointer crossed into it would flicker under a pointer passing
-over it, so it stays up while the pointer is in it — arbitrated in **main**
+The pointer can enter it, because it draws links: the facts that name pages on
+GitHub (the repository, the Issue, the pull request) are links in the box, and
+a click on one goes to the browser through the tooltip page's
+`openExternalUrl` — only for an `https://github.com/` page
+(`shell/githubPage.ts`, checked when the line is composed and again before it
+is followed). A box that went the moment the pointer crossed into it could
+never be clicked, so it stays up while the pointer is in it — arbitrated in **main**
 (`tooltipView.ts`), not in either page: the row and the box are different views, the Sidebar's leave is
 identical whether the pointer went into the tooltip or off to the editor, and
 the tooltip page never hears of the row. The Sidebar sends a _request_
@@ -116,7 +118,7 @@ role.)
 | the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
 | an Agent's terminal   | `pane.html`     | an Agent's own terminal, on the right: a terminal surface and nothing else, no header                           | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`                                                                                                                                                                                                    |
 | the notices           | `toasts.html`   | what the application has to say, over whatever is on screen, and the notice center                              | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
-| the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; words only, no links                              | `tooltipText` in; `tooltipSize` and `tooltipPointer` out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                                                                  |
+| the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; its GitHub pages are links                         | `tooltipText` in; `tooltipSize`, `tooltipPointer` and `openExternalUrl` (GitHub pages only) out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                             |
 | the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings              | `settings.html` | its own window                                                                                                  | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
 | Task Manager          | `task-manager.html` | its own window: what each Workspace, workbench and Agent costs ([task-manager.md](task-manager.md)) | `TASK_MANAGER_CHANNELS` in full, plus the failure contract every page has |
@@ -1111,28 +1113,33 @@ prefers, flipped to the other side of the anchor when that one has no room, and
 clamped to the window last. It flips rather than narrows — one rectangle with
 one width, because narrowing to fit is how the ribbon happened.
 
-What has a hover is what tells you something the Sidebar does not draw:
+What has a hover is a whole row, and the usage limits — nothing smaller:
 
 - **A Workspace row** — on the rail as in the expanded column: its name, path,
-  repository, worktree, branch, Issue (number, title, `owner/name`, Projects),
-  pull request with its conversations and CI, the machine and the dev
-  container, a failed close's reason.
+  repository (a link to it on GitHub), worktree, branch, Issue (number and
+  title as a link to it, Projects, and _Issue in `owner/name`_ when it is
+  numbered in another repository), pull request (a link to it) with its
+  conversations and CI, _Reading #N_ while the Issue is being read,
+  _Unavailable: …_ when it could not be, the machine, the dev container
+  (_editor in dev container: name_), _Retry close: …_ with why the last close
+  stopped, and _Close worktree…_ when × removes the worktree. One line per fact.
 - **An Agent row** — its leading text behind its status mark, what a named
-  Agent is doing, and its prompt cache (warm or cold, time left, hit rate,
-  the auto-compact due; see [agent-gui.md](agent-gui.md)).
+  Agent is doing, _Retry stop: …_ with why once a stop failed, and its prompt
+  cache (warm or cold, time left, hit rate, the auto-compact due; see
+  [agent-gui.md](agent-gui.md)).
 - **The usage limits** — every window per CLI as a bar, its reset (_Resets in
   2h 10m · 16:40_), when it was read (_Updated_ / _Not refreshed_), and notes.
-- **The marks and controls that would otherwise be silent about it** — the
-  Issue and pull request marks, the unavailable and dev-container marks, the
-  Issue being read; New Agent when it is off or its profiles need attention
-  (_No enabled agent profiles_, _Agent profiles need attention_); × and stop
-  once they are retries (_Retry close_, _Retry stop_) or when × removes a
-  worktree (_Close worktree…_).
 
-What has none: a control whose look is its label (+, ×, stop, Assign issue,
-the picker), and the status marks — the pointer on any of them is the pointer
-on its row. The folder glyph at a Workspace row's start is an inert mark under
-the select button's hit area, not a link; a click on it selects the row.
+What has none: every mark, glyph and button inside a row — the Issue and pull
+request marks, the unavailable and dev-container marks, the reading spinner,
+the status marks, +, × and stop — and the controls outside rows (Assign issue,
+the picker). The pointer on anything inside a row is the pointer on the row,
+and raises the row's tooltip. New Agent's reason for being off or needing
+attention is in its accessible name (_Create agent in widget, unavailable: no
+enabled agent profiles_ / _…, agent profiles need attention_) and on no hover.
+The folder glyph at a Workspace row's start is an inert mark under the select
+button's hit area, not a link; a click on it selects the row, and the
+repository is followed from the row's tooltip.
 
 ## The title bar is one number, and it is main's
 

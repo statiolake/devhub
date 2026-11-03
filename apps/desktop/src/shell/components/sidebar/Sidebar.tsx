@@ -49,12 +49,8 @@ import {
   agentTooltipFacts,
   editorAttachmentFact,
   issueLabel,
-  issueMark,
-  issueProjectLine,
-  issueRepositoryName,
   checksBadge,
   hasUnresolvedConversations,
-  markLines,
   pullRequestFacts,
   tooltipLines,
   describe,
@@ -206,8 +202,6 @@ function WorkspaceRow({
   // it stops being able to answer. It covers the Agents as well as the
   // Workspace because they are going with it.
   const closing = workspace.close.kind === "running";
-  const closeFailed =
-    workspace.close.kind === "failed" ? workspace.close : undefined;
 
   // What the close button is about to do, read from the same rule main uses to
   // decide it (`closingDeletesWorktree`). A second copy of the rule here is how
@@ -257,10 +251,12 @@ function WorkspaceRow({
         // the pointer is on: the select button's hit area is stretched over
         // the whole row (`.sidebar-context-button::after`), so what a person
         // is pointing at is the row whichever part of it they are over, and
-        // the box goes beside the row and not beside the button. A mark with a
-        // sentence of its own — an Issue, a pull request — is nearer the
-        // pointer than this and still wins, which is `closest()`
-        // doing exactly what it is for. Scratch has always stated it here.
+        // the box goes beside the row and not beside the button. Nothing inside
+        // the row has a tooltip of its own — not the Issue or pull request
+        // mark, not the unavailable or dev-container mark, not +, × or the
+        // spinner — so the pointer on any of them is the pointer on the row,
+        // and what they would have said is a line here. Scratch has always
+        // stated it here.
         data-tooltip-lines={JSON.stringify(tooltipLines(facts))}
         onContextMenu={
           (workspace.editor.kind === "devContainer" || !identity.fixed) &&
@@ -333,8 +329,8 @@ function WorkspaceRow({
               it as a quiet note, and a title is a sentence: on a line about
               twenty characters wide it pushed the name and the marks around
               and was faded out half-read anyway. So the words live where there
-              is room for all of them, in this mark's tooltip (number, title,
-              repository, branch) and in its accessible name; the row says
+              is room for all of them, in the row's tooltip (number, title,
+              repository, Projects) and in this mark's accessible name; the row says
               *that* it has an Issue and in which state. The branch is what the
               Issue was read *from*, so once the Issue is known the Issue is
               still the better answer to "what is this". A button and not part
@@ -346,26 +342,6 @@ function WorkspaceRow({
               className={`row-issue-title is-issue-${issue.state}`}
               type="button"
               aria-label={issueLabel(issue)}
-              data-tooltip-lines={JSON.stringify([
-                {
-                  icon: issue.state === "closed" ? "issueClosed" : "issueOpen",
-                  text: issueMark(issue),
-                },
-                ...(issueRepositoryName(repository, issue) === undefined
-                  ? []
-                  : [
-                      {
-                        icon: "repository",
-                        text: issueRepositoryName(repository, issue) as string,
-                      },
-                    ]),
-                ...(issueProjectLine(issue) === undefined
-                  ? []
-                  : [{ text: issueProjectLine(issue) as string }]),
-                ...(repository?.branch === undefined
-                  ? []
-                  : [{ icon: "branch", text: repository.branch }]),
-              ])}
               onClick={() => {
                 openExternalUrl(issue.url);
               }}
@@ -379,8 +355,8 @@ function WorkspaceRow({
               />
             </button>
           )}
-          {/* The trailing group: what this row is, as marks, each one its own
-              hover. Nothing here is words — the numbers and the titles are in
+          {/* The trailing group: what this row is, as marks, none with a
+              hover of its own. Nothing here is words — the numbers and the titles are in
               the tooltip, where there is room for all of them at once. */}
           {/* Not drawn in the rail at all, rather than drawn and hidden: the
               rail's rule is that the whole entry is the select control, and a
@@ -416,17 +392,10 @@ function WorkspaceRow({
             <button
               className="row-action-button"
               type="button"
-              aria-label={`Create agent in ${workspace.label}${agentProfilesAvailability === "unavailable" || agentProfiles.length === 0 ? ", unavailable" : ""}`}
-              // Only what the button's look does not say: why it is off, or
-              // that the profiles behind it need attention. "Create agent"
-              // would be the plus sign read aloud.
-              data-tooltip={
-                agentProfilesAvailability === "degraded"
-                  ? "Agent profiles need attention"
-                  : agentProfiles.length === 0
-                    ? "No enabled agent profiles"
-                    : undefined
-              }
+              // Why it is off, or that the profiles behind it need
+              // attention, is in its name and nowhere on hover: the button
+              // has no tooltip of its own (no small control in a row does).
+              aria-label={`Create agent in ${workspace.label}${createAgentCaveat(agentProfilesAvailability, agentProfiles.length)}`}
               disabled={
                 agentProfilesAvailability === "unavailable" ||
                 agentProfiles.length === 0
@@ -454,15 +423,9 @@ function WorkspaceRow({
                   ? `Close the worktree ${workspace.label}`
                   : `Close ${workspace.label}`
               }
-              // Only when the × means more than "close": that the last close
-              // stopped, or that this one removes a worktree and asks first.
-              data-tooltip={
-                closeFailed
-                  ? "Retry close"
-                  : deletesWorktree
-                    ? "Close worktree…"
-                    : undefined
-              }
+              // No hover of its own. That the last close stopped, or that
+              // this one removes a worktree and asks first, is a line in the
+              // row's tooltip ("Retry close: …", "Close worktree…").
               // One close, whichever state the row is in. The page used to
               // read `closing-failed` here and dispatch a different intent —
               // a rule the sidebar knew and the surface pane did not, which is
@@ -656,7 +619,6 @@ function WorkspaceRow({
                         className="row-action-button agent-row-action"
                         type="button"
                         aria-label={`Stop ${agent.displayName}`}
-                        data-tooltip={stopFailed ? "Retry stop" : undefined}
                         onClick={() =>
                           dispatch(
                             stopFailed
@@ -677,6 +639,27 @@ function WorkspaceRow({
       )}
     </li>
   );
+}
+
+/**
+ * What New Agent's accessible name adds to "Create agent in …": that it is
+ * off, and why, or that the profiles behind it need attention. This used to
+ * be the button's hover; no small control in a row has one now, and the
+ * button's look already says it is off.
+ */
+function createAgentCaveat(
+  availability: AgentProfilesAvailabilityWire,
+  enabledProfiles: number,
+): string {
+  const reason =
+    availability === "degraded"
+      ? "agent profiles need attention"
+      : enabledProfiles === 0
+        ? "no enabled agent profiles"
+        : undefined;
+  if (availability === "unavailable" || enabledProfiles === 0)
+    return reason === undefined ? ", unavailable" : `, unavailable: ${reason}`;
+  return reason === undefined ? "" : `, ${reason}`;
 }
 
 /**
@@ -754,8 +737,10 @@ function WorkspaceGlyph({
  * They are marks and not words because there is one line now and a line is
  * about twenty characters wide. A number and a title beside them would be
  * spending that line on what the tooltip says in full a moment later — and it
- * is the tooltip that says it: each mark carries its own sentence, so hovering
- * the Issue gives the Issue and hovering the row gives the row.
+ * is the row's tooltip that says it. No mark has a hover of its own: the
+ * pointer on any of them is the pointer on the row, and the row's tooltip has
+ * a line for each — and the links to the repository, the Issue and the pull
+ * request.
  */
 function WorkspaceMarks({
   repository,
@@ -779,7 +764,6 @@ function WorkspaceMarks({
           className="mac-spinner row-issue-spinner"
           role="status"
           aria-label={`Reading Issue #${String(repository.pending.number)}`}
-          data-tooltip={`Reading #${String(repository.pending.number)}`}
         />
       ) : null}
       {/* The row cannot say what it is working on, and this is why. It is a
@@ -793,7 +777,6 @@ function WorkspaceMarks({
           className="row-link-button row-mark-unavailable"
           role="img"
           aria-label={unavailableText(repository.unavailable)}
-          data-tooltip={unavailableText(repository.unavailable)}
         >
           <Glyph name="statusError" />
         </span>
@@ -808,7 +791,6 @@ function WorkspaceMarks({
           className="row-link-button row-mark-editor"
           role="img"
           aria-label={editorFact.spoken}
-          data-tooltip={editorFact.text}
         >
           <Glyph name="container" />
         </span>
@@ -820,9 +802,6 @@ function WorkspaceMarks({
           className={`row-link-button is-pr-${pullRequest.state}`}
           type="button"
           aria-label={describe(pullRequestFacts(pullRequest))}
-          data-tooltip-lines={JSON.stringify(
-            markLines(pullRequestFacts(pullRequest)),
-          )}
           onClick={() => {
             openExternalUrl(pullRequest.url);
           }}

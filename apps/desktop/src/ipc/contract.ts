@@ -746,12 +746,19 @@ export interface TooltipFactLineWire {
 	 * Sidebar is coloured.
 	 */
 	readonly tone?: AgentStatusWire;
-	/*
-	 * No `href`. Three of a row's facts name a page on GitHub — the repository,
-	 * the Issue, the pull request — and the box says them as words only. The
-	 * Issue and pull request marks on the row are the way to GitHub; a box
-	 * that also led there was a second, easier-to-hit way out nobody asked for.
+	/**
+	 * Where this fact leads, when the fact is a place.
+	 *
+	 * Three of a row's facts name a page on GitHub — the repository, the Issue,
+	 * the pull request — and the row's tooltip is where they are followed: the
+	 * row's own marks carry no hover and the folder glyph is inert, so the box
+	 * a person is reading is the thing they act on. Composed with the rest of
+	 * the facts (`shell/components/sidebar/rowDescription.ts`) and only ever an
+	 * `https://github.com/` page (`shell/githubPage.ts`), which the tooltip page
+	 * checks again before it follows one. Absent on every fact that is not a
+	 * place.
 	 */
+	readonly href?: string;
 }
 
 /**
@@ -1604,6 +1611,16 @@ export interface TooltipBridge extends PageBridge {
 	 * this page has, not a request it is waiting on.
 	 */
 	reportTooltipPointer(inside: boolean): void;
+	/**
+	 * Follow one of the box's links.
+	 *
+	 * A tooltip line that names a page on GitHub (`TooltipFactLineWire.href`)
+	 * is drawn as a link, and a click on it goes to the person's browser. It is
+	 * not left to the navigation backstop in `externalLinks.ts`: that one
+	 * catches what a page did not mean to do, and a refusal disappearing into
+	 * it is a click that reports nothing.
+	 */
+	openExternalUrl(url: string): Promise<void>;
 }
 
 /** Everything DevHub stops to ask — `picker.html`. */

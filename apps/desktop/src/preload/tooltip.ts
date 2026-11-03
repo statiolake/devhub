@@ -8,9 +8,9 @@
  * contract said in the page's own words.
  *
  * It is no longer *quite* the smallest: a box the pointer may enter says when
- * it has. That is about the box itself — where the pointer is in it — and is
- * not a thing the Sidebar could have said instead. It draws no links, so it
- * has no way to the browser.
+ * it has, and a line that names a page on GitHub may be followed. Both are
+ * about the box itself — where the pointer is in it, and what was clicked in
+ * it — and neither is a thing the Sidebar could have said instead.
  *
  * `onTooltip` carries the lines and nothing else. The anchor travels from the
  * Sidebar to main and stops there — it is what `windowLayout.ts` turns into a
@@ -23,7 +23,7 @@ import {
 	type TooltipBridge,
 	type TooltipContentWire,
 } from "../ipc/contract.js";
-import { on, pageBridge } from "./bridge.js";
+import { on, openExternalUrl, pageBridge } from "./bridge.js";
 
 const api: TooltipBridge = {
 	...pageBridge(),
@@ -39,6 +39,9 @@ const api: TooltipBridge = {
 	reportTooltipPointer: (inside) => {
 		ipcRenderer.send(CHANNELS.tooltipPointer, inside);
 	},
+	// The box's links: the repository, the Issue and the pull request a row's
+	// tooltip names. The page follows only GitHub pages (`githubPage.ts`).
+	openExternalUrl,
 };
 
 contextBridge.exposeInMainWorld("devhub", api);
