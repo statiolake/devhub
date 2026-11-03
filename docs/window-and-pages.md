@@ -81,7 +81,7 @@ says so, because the next page is the one that will not know.
 
 ## The pages, and what each of them may say
 
-Seven entries, seven preloads, seven bridges. There is no `?window=` role and
+Eight entries, eight preloads, eight bridges. There is no `?window=` role and
 no runtime question about which page this is: **which page this is, is which
 file main loaded.** (An Agent terminal's page is loaded once per terminal;
 the fragment, `pane.html#<id>`, names which terminal — an instance, not a
@@ -96,6 +96,7 @@ role.)
 | the notices           | `toasts.html`   | what the application has to say, over whatever is on screen, and the notice center                              | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
 | the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
 | Settings              | `settings.html` | its own window                                                                                                  | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
+| Task Manager          | `task-manager.html` | its own window: what each Workspace, workbench and Agent costs ([task-manager.md](task-manager.md)) | `TASK_MANAGER_CHANNELS` in full, plus the failure contract every page has |
 
 Every one of them also has `raiseFailure` and `onTheme`, which is what "a
 DevHub page" means.
@@ -323,7 +324,9 @@ There are three kinds of thing main says, not two. A _projection_ describes the
 model and goes to every page that draws from it. A _failure_ is an event and
 goes to the one page that draws failures. A _palette_ is neither: it is how
 everything in the window is painted, and it goes to every page DevHub draws
-chrome on — which is all seven (every terminal pane among them).
+chrome on — which is all eight (every terminal pane among them, and the
+Settings and Task Manager windows, which are told by their own windows'
+`apply…Palette`).
 
 That last one used to go out on the projection audience, which coincided with
 "every page that draws chrome" until the `toasts` page arrived: it has `onTheme`
@@ -888,7 +891,8 @@ picker. Every command there has an id, a label, a category (`Navigate`, `View`,
 `Category: Label` with the chords actually in effect at its right end, so a
 rebound key reads as the person's own. A command may be palette only — no
 default key — when it already has a gesture elsewhere or is rare:
-`focus_sidebar`, `open_log` and `open_recently_closed` are today
+`focus_sidebar`, `open_log`, `open_recently_closed`, `preview_color_theme`
+and `open_task_manager` are today
 (`PALETTE_ONLY_COMMANDS`).
 `navigate_back` and `navigate_forward` are `Cmd+Q H` / `Cmd+Q L` (Vim's left and
 right): `Cmd+[` / `Cmd+]` still work unprefixed on DevHub's own pages, but over a

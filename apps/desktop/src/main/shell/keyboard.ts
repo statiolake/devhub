@@ -196,6 +196,8 @@ export interface ChordHost {
 	openLog(): void;
 	/** Theme: Preview…: wear themes for the session only. */
 	previewColorTheme(): void;
+	/** The Task Manager window, or away with it when it is in front. */
+	openTaskManager(): void;
 	/** Every command, by name — `Cmd+Q :`. */
 	openCommandPalette(): void;
 }
@@ -344,6 +346,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "preview-color-theme":
 			host.previewColorTheme();
+			return;
+		case "open-task-manager":
+			host.openTaskManager();
 			return;
 		case "open-command-palette":
 			host.openCommandPalette();

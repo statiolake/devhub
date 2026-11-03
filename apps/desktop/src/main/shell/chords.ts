@@ -243,6 +243,7 @@ export type ChordEffect =
 	/** Main's log file (`diagnostics/mainLog.ts`), in the Mac's viewer. */
 	| { readonly kind: "open-log" }
 	| { readonly kind: "preview-color-theme" }
+	| { readonly kind: "open-task-manager" }
 	/** Every command, by name: the registry as a picker. */
 	| { readonly kind: "open-command-palette" }
 	/** Back or Forward through the places the window has shown. */
@@ -489,6 +490,9 @@ export function resolveChord(
 
 		case "preview_color_theme":
 			return { kind: "preview-color-theme" };
+
+		case "open_task_manager":
+			return { kind: "open-task-manager" };
 
 		case "show_chord_help":
 			return { kind: "open-chord-help" };

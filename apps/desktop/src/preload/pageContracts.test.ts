@@ -30,11 +30,13 @@ const PAGES = [
 	"toasts",
 	"picker",
 	"settings",
+	"taskManager",
 ] as const;
 
 /** Which HTML entry each page is served from, where it is not its own name. */
 const ENTRY: Partial<Record<(typeof PAGES)[number], string>> = {
 	shell: "index",
+	taskManager: "task-manager",
 };
 
 const entryOf = (page: string) => ENTRY[page as (typeof PAGES)[number]] ?? page;

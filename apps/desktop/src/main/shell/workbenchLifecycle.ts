@@ -82,6 +82,7 @@
  */
 
 import type { EditorPlaceholderWire } from "../../ipc/contract.js";
+import type { WorkbenchStateWire } from "../../ipc/taskManager.js";
 import { EditorSupervisor } from "./editorSupervisor.js";
 
 /** Checked this often: time-based sleep, and the cap's retry of a refusal. */
@@ -111,6 +112,12 @@ export type WakeReason = "asked" | "shown" | "opened" | "needed" | "launch";
  */
 export const OPEN_SETTLE_MS = 90_000;
 
+/**
+ * Why a workbench is going to sleep: away for long enough, past the awake
+ * cap, or a person asked (the Task Manager's Sleep).
+ */
+export type HibernateWhy = "away" | "cap" | "asked";
+
 /** Why a workbench is being opened, which is what its slot says meanwhile. */
 export type OpenCause = "start" | "restart" | "wake";
 
@@ -128,7 +135,7 @@ export type WorkbenchPhase =
 	/** Being asked whether it may sleep, or unloading. */
 	| {
 			readonly kind: "hibernating";
-			readonly why: "away" | "cap";
+			readonly why: HibernateWhy;
 			/** It was the selected editor again since this began. */
 			readonly shown: boolean;
 	  }
@@ -177,6 +184,32 @@ export function placeholderOf(
 		case "gave-up":
 		case "parked":
 			return undefined;
+	}
+}
+
+/**
+ * A phase in the Task Manager's words; nothing for `absent`, which has no
+ * workbench to speak of.
+ */
+export function workbenchStateOf(
+	phase: WorkbenchPhase,
+): WorkbenchStateWire | undefined {
+	switch (phase.kind) {
+		case "absent":
+			return undefined;
+		case "opening":
+			return phase.cause === "restart" ? "restarting" : "starting";
+		case "awake":
+			return "awake";
+		case "hibernating":
+			return "going to sleep";
+		case "asleep":
+			return phase.started ? "sleeping" : "not started";
+		case "restart-waiting":
+			return "restarting";
+		case "gave-up":
+		case "parked":
+			return "failed";
 	}
 }
 
@@ -231,6 +264,13 @@ export interface LifecycleInput {
 	 * folder is not selected does nothing.
 	 */
 	readonly ask?: { readonly folder: string; readonly why: WakeReason };
+	/**
+	 * Somebody asked, with this plan, for this folder's workbench to sleep
+	 * now (the Task Manager's Sleep): the same hibernation time and the cap
+	 * use, refused for the same reasons — it is shown, not awake, closing, or
+	 * never sleeps.
+	 */
+	readonly sleep?: string;
 }
 
 /** What the executor carries out, in this order. */
@@ -256,7 +296,7 @@ export type LifecycleEffect =
 	| {
 			readonly kind: "hibernate";
 			readonly folder: string;
-			readonly why: "away" | "cap";
+			readonly why: HibernateWhy;
 	  };
 
 interface WorkbenchRecord {
@@ -517,6 +557,7 @@ export class WorkbenchLifecycle {
 		this.noteSelected(selected, input.now);
 
 		this.hibernateAway(input, effects);
+		this.hibernateAsked(input, effects);
 		this.cap(input, effects);
 
 		for (const [folder, record] of this.records) {
@@ -729,6 +770,18 @@ export class WorkbenchLifecycle {
 		}
 	}
 
+	/** A person asked for one to sleep: it does, unless it may not. */
+	private hibernateAsked(input: LifecycleInput, effects: LifecycleEffect[]) {
+		const one = input.wanted.find((wanted) => wanted.folder === input.sleep);
+		if (one === undefined) return;
+		const refused = this.refusal(one);
+		if (refused !== undefined) {
+			this.say(one.folder, `asked to sleep, not hibernating: ${refused}`);
+			return;
+		}
+		this.startHibernating(one.folder, "asked", effects);
+	}
+
 	/** Over `awakeMax`: the least recently shown go to sleep, now. */
 	private cap(input: LifecycleInput, effects: LifecycleEffect[]): void {
 		const max = input.awakeMax;
@@ -779,7 +832,7 @@ export class WorkbenchLifecycle {
 
 	private startHibernating(
 		folder: string,
-		why: "away" | "cap",
+		why: HibernateWhy,
 		effects: LifecycleEffect[],
 		detail?: string,
 	): void {

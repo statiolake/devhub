@@ -51,6 +51,11 @@ import {
 	installSettingsWindow,
 	logDirectoryFor,
 } from "./settingsWindow.js";
+import {
+	applyTaskManagerPalette,
+	installTaskManagerWindow,
+} from "./taskManagerWindow.js";
+import { commandOf } from "./taskManagerReading.js";
 import { refreshMenu } from "./menu.js";
 import { startControlServer } from "../cli/controlServer.js";
 import { controlSocketPath } from "../cli/protocol.js";
@@ -306,6 +311,7 @@ export async function bootstrapShell(
 		const next = shellTheme().palette();
 		shellWindowIfCreated()?.applyPalette(next);
 		applySettingsWindowPalette(next);
+		applyTaskManagerPalette(next);
 		controller.publishTheme(next);
 		// The Agent panes' colours are part of the appearance, so every pane
 		// learns them the way it learns an edited setting.
@@ -509,6 +515,24 @@ export async function bootstrapShell(
 				controller.openThemePreview();
 			},
 		}),
+	});
+
+	installTaskManagerWindow({
+		preloadPath: join(preloadDirectory, "taskManager.js"),
+		snapshot: () => controller.taskManagerSnapshot(),
+		commandOf,
+		sleepWorkbench: (workspaceId) => {
+			controller.sleepWorkbenchFromTaskManager(workspaceId);
+		},
+		stopAgent: (agentId) => {
+			controller.stopAgentFromTaskManager(agentId);
+		},
+		reveal: (target) => {
+			controller.revealFromTaskManager(target);
+		},
+		signal: (pid) => {
+			process.kill(pid, "SIGTERM");
+		},
 	});
 
 	controller.installChords();

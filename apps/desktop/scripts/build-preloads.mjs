@@ -4,7 +4,7 @@
  * VS Code enables the Chromium sandbox for every renderer, and a sandboxed
  * preload is one CommonJS file with no module resolver behind it — so each of
  * these is a bundle, not a tsc emit, and each has to be *whole*. That is why
- * this is seven builds rather than one build with seven entries: a multi-entry
+ * this is one build per page rather than one build with an entry each: a multi-entry
  * build hoists what the entries share into a chunk, and a chunk is a `require`
  * a sandboxed preload cannot answer. The pages share `preload/bridge.ts` as
  * source and never as a file.
@@ -24,6 +24,7 @@ const PAGES = [
   "toasts",
   "picker",
   "settings",
+  "taskManager",
 ];
 const root = fileURLToPath(new URL("..", import.meta.url));
 

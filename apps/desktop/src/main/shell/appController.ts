@@ -305,6 +305,7 @@ import {
 	type EditorPlaceholder,
 	type LifecycleEffect,
 	type WakeReason,
+	workbenchStateOf,
 } from "./workbenchLifecycle.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import type { WorkbenchView } from "./workbenchView.js";
@@ -605,6 +606,25 @@ import {
 	settingsWindowContents,
 	settingsWindowIsFocused,
 } from "./settingsWindow.js";
+import {
+	openTaskManagerWindow,
+	taskManagerWindowContents,
+	taskManagerWindowIsFocused,
+} from "./taskManagerWindow.js";
+import { takeTaskReading } from "./taskManagerReading.js";
+import type {
+	TaskRevealWire,
+	TaskSnapshotWire,
+} from "../../ipc/taskManager.js";
+
+/** What the Task Manager calls each of the shell window's pages. */
+const PAGE_NAMES: Readonly<Record<string, string>> = {
+	shell: "Window page",
+	sidebar: "Sidebar page",
+	agents: "Agents page",
+	toasts: "Notices page",
+	picker: "Questions page",
+};
 
 /** `apps/desktop/out/main/shell` -> `apps/desktop`. */
 const APP_ROOT = join(
@@ -1887,7 +1907,9 @@ export class AppController {
 	private openDeveloperTools(): void {
 		const contents = settingsWindowIsFocused()
 			? settingsWindowContents()
-			: shellWindow().focusTarget();
+			: taskManagerWindowIsFocused()
+				? taskManagerWindowContents()
+				: shellWindow().focusTarget();
 		if (!contents || contents.isDestroyed()) return;
 		contents.openDevTools({ mode: "detach" });
 	}
@@ -2114,6 +2136,9 @@ export class AppController {
 			},
 			previewColorTheme: () => {
 				this.openThemePreview();
+			},
+			openTaskManager: () => {
+				openTaskManagerWindow();
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
 			openCommandPalette: () => {
@@ -4186,6 +4211,120 @@ export class AppController {
 		// The managed Neovims too: they run on in tmux, and the next DevHub
 		// adopts them by their sockets.
 		this.managedNeovims?.dispose();
+	}
+
+	//#endregion
+
+	//#region the Task Manager
+
+	/**
+	 * One Task Manager reading (`taskManagerReading.ts`): the model's
+	 * Workspaces and Agents in the Sidebar's order, each workbench's phase and
+	 * renderer, DevHub's own pages, and this Mac's tmux.
+	 */
+	taskManagerSnapshot(): Promise<TaskSnapshotWire> {
+		const shell = shellWindow();
+		const now = Date.now();
+		const { scratch, rows } = sidebarWorkspaces(this.snapshot());
+		return takeTaskReading({
+			workspaces: () =>
+				[scratch, ...rows].map((workspace) => {
+					const state = workbenchStateOf(this.workbenches.phase(workspace.key));
+					const view = shell.viewForEditorKey(workspace.key);
+					return {
+						id: workspace.id,
+						label: workspace.label,
+						detail: workspace.displayRoot,
+						agents: workspace.agents.map((agent) => ({
+							id: agent.id,
+							label: agent.displayName,
+							detail: `${agent.profileKind} · ${agent.presentation === "gui" ? "GUI" : "terminal"}`,
+							...(agent.terminal === undefined
+								? {}
+								: {
+										terminalSession: agentTerminalSessionName(
+											agent.terminal.id,
+										),
+									}),
+						})),
+						...(state === undefined
+							? {}
+							: {
+									workbench: {
+										state,
+										// What the lifecycle would refuse anyway, not offered:
+										// a far one, or the one on screen.
+										sleepable:
+											state === "awake" &&
+											workspace.location.kind === "local" &&
+											workspace.editor.kind === "host" &&
+											shell.editorAwayMs(workspace.key, now) !== undefined,
+										renderers:
+											view && isLiveWorkbench(view)
+												? [view.webContents.getOSProcessId()]
+												: [],
+										viewId: view?.id ?? -1,
+									},
+								}),
+					};
+				}),
+			pages: () => [
+				...this.chromePages().map((page) => ({
+					pid: page.contents.getOSProcessId(),
+					name: PAGE_NAMES[page.name] ?? page.name,
+				})),
+				...shell.paneTerminalContents().map((contents) => ({
+					pid: contents.getOSProcessId(),
+					name: "Agent terminal page",
+				})),
+				...[
+					{ contents: settingsWindowContents(), name: "Settings" },
+					{ contents: taskManagerWindowContents(), name: "Task Manager" },
+				].flatMap(({ contents, name }) =>
+					contents ? [{ pid: contents.getOSProcessId(), name }] : [],
+				),
+			],
+			tmux: async () => {
+				const wiring = this.terminalsWiring;
+				if (!wiring) return { serverPid: undefined, panes: [], clients: [] };
+				return (await wiring.local()).processPanes();
+			},
+		});
+	}
+
+	/**
+	 * The Task Manager's Sleep: the next plan is asked to hibernate this
+	 * Workspace's workbench, the way the minute check and the cap do, and
+	 * refuses it for the same reasons (`WorkbenchLifecycle.plan`'s `sleep`).
+	 */
+	sleepWorkbenchFromTaskManager(workspaceId: string): void {
+		const folder = this.coordinator.model.workspace(
+			workspaceId as WorkspaceId,
+		)?.key;
+		if (folder === undefined) return;
+		this.workbenchSleep = folder;
+		this.reconcileWorkbenches();
+	}
+
+	/** The Task Manager's Stop: the Agent's own stop, with its question. */
+	stopAgentFromTaskManager(agentId: string): void {
+		this.bringToFront();
+		this.requestCloseAgent(agentId);
+	}
+
+	/** The Task Manager's Reveal: select it, and bring the window forward. */
+	revealFromTaskManager(target: TaskRevealWire): void {
+		this.arrive(
+			intentFromWire({
+				type: "select_context",
+				context:
+					target.kind === "agent"
+						? { kind: "agent", agentId: target.agentId }
+						: { kind: "workspace", workspaceId: target.workspaceId },
+			}),
+			undefined,
+		);
+		this.bringToFront();
 	}
 
 	//#endregion
@@ -6983,6 +7122,9 @@ export class AppController {
 	/** The ask the next plan comes with; see `askForWorkbench`. */
 	private workbenchAsk: { folder: string; why: WakeReason } | undefined;
 
+	/** The folder the next plan is asked to put to sleep (`sleepWorkbench`). */
+	private workbenchSleep: string | undefined;
+
 	private reconcileWorkbenches(
 		options: { readonly tick?: boolean } = {},
 	): void {
@@ -7037,6 +7179,8 @@ export class AppController {
 		// as before. Never started yet, by definition — nothing has slept.
 		let ask = this.workbenchAsk;
 		this.workbenchAsk = undefined;
+		const sleep = this.workbenchSleep;
+		this.workbenchSleep = undefined;
 		if (!this.launchWakeAsked) {
 			this.launchWakeAsked = true;
 			if (ask === undefined && selected !== undefined) {
@@ -7087,6 +7231,7 @@ export class AppController {
 			hibernateAfterMs: minutes > 0 ? minutes * 60_000 : 0,
 			tick,
 			...(ask === undefined ? {} : { ask }),
+			...(sleep === undefined ? {} : { sleep }),
 		});
 	}
 
@@ -8693,6 +8838,53 @@ export class AppController {
 	}
 
 	/**
+	 * DevHub's own pages in the shell window, by name, with whether each is
+	 * drawn: what `--metrics` and the Task Manager name renderers by.
+	 */
+	private chromePages(): readonly {
+		readonly contents: Electron.WebContents;
+		readonly name: string;
+		readonly present: boolean;
+	}[] {
+		const shell = shellWindow();
+		return [
+			{
+				contents: shell.window.webContents,
+				name: "shell",
+				present: true,
+			},
+			{
+				contents: shell.sidebar.contents(),
+				name: "sidebar",
+				present: shell.sidebar.isVisible(),
+			},
+			{
+				contents: shell.agents.contents(),
+				name: "agents",
+				present: shell.agents.isVisible(),
+			},
+			{
+				contents: shell.toasts.contents(),
+				name: "toasts",
+				present: shell.toasts.isPresent(),
+			},
+			{
+				contents: shell.picker.contents(),
+				name: "picker",
+				present: shell.picker.isPresent(),
+			},
+		].filter(
+			(
+				page,
+			): page is {
+				contents: Electron.WebContents;
+				name: string;
+				present: boolean;
+			} => page.contents !== undefined,
+		);
+	}
+
+	/**
 	 * `devhub --metrics`.
 	 *
 	 * The reading is taken here because this is the only object that has both
@@ -8726,48 +8918,12 @@ export class AppController {
 		// both are always in the list and only one of them is always drawn.
 		// Reading it back is how `--metrics` answers "exactly one of the
 		// Agents and a workbench is on the content area" without a screenshot.
-		const chrome = [
-			{
-				contents: shell.window.webContents,
-				name: "shell",
-				present: true,
-			},
-			{
-				contents: shell.sidebar.contents(),
-				name: "sidebar",
-				present: shell.sidebar.isVisible(),
-			},
-			{
-				contents: shell.agents.contents(),
-				name: "agents",
-				present: shell.agents.isVisible(),
-			},
-			{
-				contents: shell.toasts.contents(),
-				name: "toasts",
-				present: shell.toasts.isPresent(),
-			},
-			{
-				contents: shell.picker.contents(),
-				name: "picker",
-				present: shell.picker.isPresent(),
-			},
-		]
-			.filter(
-				(
-					page,
-				): page is {
-					contents: Electron.WebContents;
-					name: string;
-					present: boolean;
-				} => page.contents !== undefined,
-			)
-			.map((page) => ({
-				pid: page.contents.getOSProcessId(),
-				id: page.contents.id,
-				surfaceKey: `chrome:${page.name}`,
-				onScreen: page.present,
-			}));
+		const chrome = this.chromePages().map((page) => ({
+			pid: page.contents.getOSProcessId(),
+			id: page.contents.id,
+			surfaceKey: `chrome:${page.name}`,
+			onScreen: page.present,
+		}));
 		const views = [...workbenches, ...chrome];
 		const cpu = process.cpuUsage();
 		// A terminal DevHub cannot reach has no clients to report, which is a

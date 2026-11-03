@@ -22,5 +22,11 @@
     "noUncheckedSideEffectImports": false,
     "noEmit": true
   },
-  "include": ["src/shell", "src/settings", "src/ipc", "vite.config.ts"]
+  "include": [
+    "src/shell",
+    "src/settings",
+    "src/taskManager",
+    "src/ipc",
+    "vite.config.ts"
+  ]
 }

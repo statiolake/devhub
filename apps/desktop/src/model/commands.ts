@@ -72,6 +72,7 @@
  * | `Cmd+Q Shift+,`             | `open_settings`           |
  * | (palette only)              | `open_log`                |
  * | (palette only)              | `preview_color_theme`     |
+ * | (palette only)              | `open_task_manager`       |
  * | `Cmd+Q ?`                   | `show_chord_help`         |
  * | `Cmd+Q :`                   | `open_command_palette`    |
  * | `Cmd+Q H` / `L`              | `navigate_back` / `navigate_forward` |
@@ -336,12 +337,14 @@
  * cannot be on a key and missing from the palette. A command may also be
  * *palette only* — no default key — when it already has a gesture somewhere
  * else and a chord for it would take a key some other command wants — or is
- * rare enough not to be worth a key. Three are today, and
+ * rare enough not to be worth a key. Five are today, and
  * `PALETTE_ONLY_COMMANDS` names them so that a command cannot lose its key by
  * accident: `focus_sidebar`, whose `S` was taken for a while and is left
  * unbound now (a click on a row is its other gesture), `open_log`, which
- * is for the moment something went wrong, and `open_recently_closed`, the
- * picker over what `Cmd+Q Shift+T` reopens one at a time. (Back and Forward were
+ * is for the moment something went wrong, `open_recently_closed`, the
+ * picker over what `Cmd+Q Shift+T` reopens one at a time,
+ * `preview_color_theme`, and `open_task_manager`, which is for the moment
+ * the Mac is slow. (Back and Forward were
  * once palette only too; they are `Cmd+Q H` / `L` now, see below.)
  * `:` is matched as the
  * character, so it is Shift+; on a US layout and the unshifted key beside L on
@@ -434,6 +437,7 @@ export type CommandId =
   | "open_settings"
   | "open_log"
   | "preview_color_theme"
+  | "open_task_manager"
   | "show_chord_help"
   | "open_command_palette"
   | "navigate_back"
@@ -811,6 +815,16 @@ export const COMMANDS: readonly CommandDefinition[] = [
     defaultKeys: [],
   },
   {
+    // What each Workspace, workbench and Agent costs, in a window of its
+    // own (`docs/task-manager.md`). Palette only: see
+    // `PALETTE_ONLY_COMMANDS`.
+    id: "open_task_manager",
+    label: "Task Manager",
+    needs: "nothing",
+    category: "DevHub",
+    defaultKeys: [],
+  },
+  {
     id: "show_chord_help",
     label: "Keyboard shortcuts",
     needs: "nothing",
@@ -861,6 +875,7 @@ export const PALETTE_ONLY_COMMANDS: ReadonlySet<CommandId> = new Set([
   "open_log",
   "open_recently_closed",
   "preview_color_theme",
+  "open_task_manager",
 ]);
 
 const BY_ID = new Map<string, CommandDefinition>(

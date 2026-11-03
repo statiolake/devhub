@@ -838,6 +838,122 @@ export function parsePaneActivity(
 	return { marker: "owned", panes, terminals: [...terminals.values()] };
 }
 
+/** What `processPanes` asks each pane, in the order it is read back. */
+const PROCESS_PANE_RECORD = "process-pane";
+const PROCESS_PANE_FIELDS = [
+	PROCESS_PANE_RECORD,
+	"#{session_name}",
+	`#{${CONTEXT_OPTION}}`,
+	`#{${WORKSPACE_ID_OPTION}}`,
+	`#{${AGENT_ID_OPTION}}`,
+	"#{pane_id}",
+	"#{pane_pid}",
+	"#{pid}",
+	// Last, as everywhere else: the one value that may hold a newline.
+	`#{${ROOT_OPTION}}`,
+];
+const PROCESS_CLIENT_RECORD = "process-client";
+const PROCESS_CLIENT_FIELDS = [
+	PROCESS_CLIENT_RECORD,
+	"#{client_pid}",
+	"#{client_session}",
+];
+
+/** One pane DevHub marked, with the process tmux runs in it. */
+export interface ProcessPane {
+	/** `workspace` (a `ws-` session), `agent`, `terminal` (`tm-`), `global`. */
+	readonly context: string;
+	readonly workspaceId: string | undefined;
+	/** The Agent of an `agent` or `terminal` session. */
+	readonly agentId: string | undefined;
+	readonly sessionName: string;
+	readonly paneId: string;
+	readonly pid: number;
+}
+
+/** One client attached to the server, and the session it shows. */
+export interface ProcessClient {
+	readonly pid: number;
+	readonly session: string;
+}
+
+/** Who runs what on one server: what the Task Manager attributes by. */
+export interface ProcessPanes {
+	/** The server's own pid; absent when there is no server. */
+	readonly serverPid: number | undefined;
+	readonly panes: readonly ProcessPane[];
+	readonly clients: readonly ProcessClient[];
+}
+
+/**
+ * Read what `processPanes` answered: the marker, one record per pane, then
+ * one per client.
+ *
+ * Only the panes of sessions DevHub marked are returned, as everywhere: a
+ * session DevHub did not write is not DevHub's to name. Clients are every
+ * client on the server — the server is DevHub's, so its clients are too.
+ */
+export function parseProcessPanes(
+	stdout: Buffer,
+	contextHome: string,
+): { readonly marker: MarkerState } & ProcessPanes {
+	const records = splitRecords(stdout);
+	const first = records[0]?.split(FIELD_SEPARATOR);
+	if (first === undefined || first[0] !== MARKER_RECORD) {
+		throw shapeFailure("no marker where the marker record should be");
+	}
+	if (first[1] !== PROTOCOL_VALUE) {
+		return { marker: "wrong", serverPid: undefined, panes: [], clients: [] };
+	}
+	if (records.length - 1 > MAX_PANES * 2) {
+		throw shapeFailure("more panes or clients than DevHub will read");
+	}
+	let serverPid: number | undefined;
+	const panes: ProcessPane[] = [];
+	const clients: ProcessClient[] = [];
+	for (const record of records.slice(1)) {
+		const fields = record.split(FIELD_SEPARATOR);
+		const at = (index: number): string => fields[index] ?? "";
+		if (
+			fields[0] === PROCESS_CLIENT_RECORD &&
+			fields.length === PROCESS_CLIENT_FIELDS.length
+		) {
+			const pid = parseNumericPrefix(at(1));
+			if (pid > 0) clients.push({ pid, session: at(2) });
+			continue;
+		}
+		if (
+			fields[0] !== PROCESS_PANE_RECORD ||
+			fields.length !== PROCESS_PANE_FIELDS.length
+		) {
+			throw shapeFailure("a record of the wrong width");
+		}
+		const server = parseNumericPrefix(at(7));
+		if (server > 0) serverPid = server;
+		const marking: SessionMarking = {
+			name: at(1),
+			context: markerValue(at(2)),
+			workspaceId: markerValue(at(3)),
+			agentId: agentIdMarker(markerValue(at(4))),
+			root: markerValue(at(8)),
+		};
+		if (!isMarked(marking, contextHome) || marking.context === undefined) {
+			continue;
+		}
+		const pid = parseNumericPrefix(at(6));
+		if (pid <= 0) continue;
+		panes.push({
+			context: marking.context,
+			workspaceId: marking.workspaceId,
+			agentId: marking.agentId === NO_AGENT ? undefined : marking.agentId,
+			sessionName: marking.name,
+			paneId: at(5),
+			pid,
+		});
+	}
+	return { marker: "owned", serverPid, panes, clients };
+}
+
 /** One Agent terminal's session, as the once-a-second reading names it. */
 export interface TerminalSessionSample {
 	readonly terminalId: string;
@@ -2740,6 +2856,54 @@ export class TmuxTerminalRuntime {
 			);
 			if (marker === "wrong") throw portFailure("conflict");
 			return { panes, terminals };
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * Every marked pane's process, every client's, and the server's own pid,
+	 * in one tmux client — what the Task Manager attributes processes by.
+	 *
+	 * No server is nothing on it, not a failure.
+	 */
+	async processPanes(cancel = new CancellationToken()): Promise<ProcessPanes> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			const output = await this.runTmux(
+				socket,
+				[
+					"display-message",
+					"-p",
+					PANE_MARKER_FORMAT,
+					";",
+					"list-panes",
+					"-a",
+					"-F",
+					PROCESS_PANE_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR,
+					";",
+					"list-clients",
+					"-F",
+					PROCESS_CLIENT_FIELDS.join(FIELD_SEPARATOR) + RECORD_SEPARATOR,
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) {
+				if (output.noServer || output.stdout.byteLength === 0) {
+					return { serverPid: undefined, panes: [], clients: [] };
+				}
+				throw output.refusal();
+			}
+			const { marker, ...panes } = parseProcessPanes(
+				output.stdout,
+				this.contextHome,
+			);
+			if (marker === "wrong") throw portFailure("conflict");
+			return panes;
 		} finally {
 			release();
 		}

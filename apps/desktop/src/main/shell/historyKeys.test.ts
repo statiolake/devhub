@@ -95,6 +95,7 @@ describe("where input makes a place for Back and Forward", () => {
 			"picker.html",
 			"toasts.html",
 			"settings.html",
+			"task-manager.html",
 		]) {
 			expect(isDestinationSurface(`${SHELL_ORIGIN}/${page}`)).toBe(false);
 		}

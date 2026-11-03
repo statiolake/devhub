@@ -2614,6 +2614,35 @@ describe.skipIf(TMUX === undefined)(
       ).rejects.toBeDefined();
     });
 
+    it("names every marked pane's process and the server's, for the Task Manager", async () => {
+      const { test, ws, panes, target } = await editorWithTwoWindows("procs");
+      await test.runtime.launchTerminal(target);
+      const read = await test.runtime.processPanes();
+      const pid = (name: string) =>
+        Number(
+          tmux(test.socket, [
+            "display-message",
+            "-p",
+            "-t",
+            name,
+            "#{pane_pid}",
+          ]).trim(),
+        );
+      expect(read.serverPid).toBe(
+        Number(tmux(test.socket, ["display-message", "-p", "#{pid}"]).trim()),
+      );
+      expect(
+        read.panes
+          .filter((pane) => pane.context === "workspace")
+          .map((pane) => [pane.sessionName, pane.paneId, pane.pid]),
+      ).toEqual(panes.map((pane) => [ws, pane, pid(pane)]));
+      expect(
+        read.panes
+          .filter((pane) => pane.context === "terminal")
+          .map((pane) => pane.sessionName),
+      ).toEqual([`tm-${TERMINAL}`]);
+    });
+
     it("moves the terminal's windows to the editor's session, running", async () => {
       const { test, ws, panes, target } = await editorWithTwoWindows("move");
       await test.runtime.launchTerminal(target);
@@ -2695,7 +2724,9 @@ describe.skipIf(TMUX === undefined)(
 
       theme = { DEVHUB_THEME: "Light 2026;", DEVHUB_FZF_COLORS: "fg:#000000" };
       await test.runtime.publishThemeEnvironment();
-      expect(globalEnvironment(test.socket, "DEVHUB_THEME")).toBe("Light 2026;");
+      expect(globalEnvironment(test.socket, "DEVHUB_THEME")).toBe(
+        "Light 2026;",
+      );
       expect(globalEnvironment(test.socket, "DEVHUB_FZF_COLORS")).toBe(
         "fg:#000000",
       );

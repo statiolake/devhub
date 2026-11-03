@@ -122,6 +122,7 @@ describe("the registry itself", () => {
       "open_log",
       "open_recently_closed",
       "preview_color_theme",
+      "open_task_manager",
     ]);
     expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
   });

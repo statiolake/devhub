@@ -1,0 +1,490 @@
+/*
+ * The Task Manager window.
+ *
+ * Dense and calm: one row rhythm, numbers right-aligned in tabular figures
+ * with their unit, and colour only where it means something — the pressure
+ * level, a workbench's state, and the accent on the rows that weigh the most.
+ * Every colour is a token (`tokens.css`), so the window wears the theme the
+ * rest of DevHub wears, dark or light.
+ */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--primary);
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.tm-window {
+  --tm-row: 24px;
+  --tm-indent: 16px;
+  --tm-columns: minmax(0, 1fr) 132px 64px 52px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------- toolbar */
+
+/* The window is `hiddenInset`: the strip clears the traffic lights and is
+   the drag region, as Settings' is. */
+.tm-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  height: 38px;
+  padding: 0 var(--space-3) 0 80px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chrome);
+  -webkit-app-region: drag;
+}
+
+.tm-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tm-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  -webkit-app-region: no-drag;
+}
+
+.tm-segmented {
+  display: flex;
+  padding: 1px;
+  border-radius: var(--radius-control);
+  background: var(--wash);
+}
+
+.tm-segmented button {
+  min-width: 64px;
+  padding: 2px var(--space-2);
+  border: 0;
+  border-radius: calc(var(--radius-control) - 1px);
+  background: none;
+  color: var(--secondary);
+  font: inherit;
+}
+
+.tm-segmented button[aria-checked="true"] {
+  background: var(--raised);
+  box-shadow: var(--elevation-1-shadow, 0 0 0 0.5px var(--line));
+  color: var(--primary);
+}
+
+.tm-segmented button:focus-visible,
+.tm-table:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* -------------------------------------------------------------- header */
+
+.tm-header {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.tm-meter-block {
+  flex: 1 1 220px;
+  min-width: 160px;
+}
+
+.tm-meter-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+
+.tm-key,
+.tm-facts dt {
+  color: var(--secondary);
+  font-size: 11px;
+}
+
+.tm-figure {
+  font-weight: 500;
+}
+
+.tm-of {
+  color: var(--secondary);
+  font-weight: 400;
+}
+
+/* Used memory, with DevHub's share of it laid over the start. */
+.tm-meter {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--wash);
+}
+
+.tm-meter > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+}
+
+.tm-meter-used {
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.tm-meter[data-pressure="warning"] .tm-meter-used {
+  background: color-mix(in srgb, var(--waiting) 45%, transparent);
+}
+
+.tm-meter[data-pressure="critical"] .tm-meter-used {
+  background: color-mix(in srgb, var(--danger) 50%, transparent);
+}
+
+.tm-meter-devhub,
+.tm-swatch {
+  background: var(--accent);
+}
+
+.tm-facts {
+  display: flex;
+  gap: var(--space-5);
+  margin: 0;
+}
+
+.tm-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tm-facts dd {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tm-facts dt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tm-swatch,
+.tm-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.tm-pressure .tm-dot {
+  background: var(--secondary);
+}
+
+.tm-pressure[data-pressure="warning"] {
+  color: var(--waiting);
+}
+
+.tm-pressure[data-pressure="warning"] .tm-dot {
+  background: var(--waiting);
+}
+
+.tm-pressure[data-pressure="critical"] {
+  color: var(--danger);
+}
+
+.tm-pressure[data-pressure="critical"] .tm-dot {
+  background: var(--danger);
+}
+
+.tm-pressure[data-pressure="unknown"] .tm-dot {
+  background: var(--tertiary);
+}
+
+/* --------------------------------------------------------------- table */
+
+.tm-loading {
+  padding: var(--space-6);
+  text-align: center;
+}
+
+.tm-table {
+  flex: 1;
+  overflow: auto;
+  outline: none;
+}
+
+.tm-row {
+  display: grid;
+  grid-template-columns: var(--tm-columns);
+  align-items: stretch;
+  height: var(--tm-row);
+  padding: 0 var(--space-3) 0 var(--space-2);
+}
+
+.tm-row > * {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.tm-columns {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 22px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--canvas);
+  color: var(--secondary);
+  font-size: 11px;
+}
+
+.tm-columns [aria-sort="descending"] {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.tm-row:not(.tm-columns):hover {
+  background: var(--wash);
+}
+
+.tm-row[aria-selected="true"] {
+  background: var(--selection);
+}
+
+/* A top-level row starts a group: a hairline above it, its name in weight. */
+.tm-row[data-depth="0"]:not(.tm-columns) {
+  border-top: 1px solid var(--line-soft);
+}
+
+.tm-row[data-depth="0"] .tm-label {
+  font-weight: 600;
+}
+
+.tm-name {
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* The indent is a run of guides, one per level, as the Sidebar's tree draws
+   its connector: a hairline down the middle of each step. */
+.tm-guide {
+  position: relative;
+  flex: none;
+  align-self: stretch;
+  width: var(--tm-indent);
+}
+
+.tm-guide::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 7px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.tm-disclosure {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--tertiary);
+}
+
+.tm-disclosure:disabled {
+  visibility: hidden;
+}
+
+.tm-disclosure svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--motion-fast) var(--ease-standard);
+}
+
+.tm-disclosure[data-open] svg {
+  transform: rotate(90deg);
+}
+
+.tm-label {
+  flex: none;
+  overflow: hidden;
+  max-width: 60%;
+  text-overflow: ellipsis;
+}
+
+.tm-pid,
+.tm-detail {
+  overflow: hidden;
+  color: var(--tertiary);
+  text-overflow: ellipsis;
+}
+
+.tm-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tm-pid {
+  flex: none;
+}
+
+.tm-state {
+  flex: none;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--wash);
+  color: var(--secondary);
+  font-size: 10.5px;
+  line-height: 15px;
+}
+
+.tm-state[data-state="awake"] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--primary);
+}
+
+.tm-state[data-state="starting"],
+.tm-state[data-state="restarting"],
+.tm-state[data-state="going to sleep"] {
+  background: color-mix(in srgb, var(--waiting) 16%, transparent);
+  color: var(--primary);
+}
+
+.tm-state[data-state="failed"] {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+/* Quiet until reached: a row's actions show under the pointer or with the
+   row selected, at the trailing edge of its name. */
+.tm-actions {
+  display: none;
+  flex: none;
+  gap: 2px;
+  margin-left: auto;
+  padding-left: var(--space-2);
+}
+
+.tm-row:hover .tm-actions,
+.tm-row[aria-selected="true"] .tm-actions {
+  display: flex;
+}
+
+.tm-action {
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--wash-strong);
+  color: var(--primary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.tm-action:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.tm-action[data-action="kill"]:hover,
+.tm-action[data-action="stop"]:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.tm-num {
+  justify-content: flex-end;
+  color: var(--secondary);
+  text-align: right;
+}
+
+.tm-memory {
+  gap: var(--space-2);
+}
+
+.tm-memory .tm-figure {
+  flex: none;
+  min-width: 56px;
+  color: var(--primary);
+  font-weight: 400;
+}
+
+/* The row's share of DevHub's memory: a short track ahead of its figure, the
+   heaviest rows' filled in the accent. */
+.tm-bar {
+  display: flex;
+  flex: 1 1 auto;
+  max-width: 56px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--wash);
+}
+
+.tm-bar > span {
+  display: block;
+  height: 100%;
+  min-width: 1px;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--primary) 28%, transparent);
+}
+
+.tm-row[data-heavy] .tm-bar > span {
+  background: var(--accent);
+}
+
+.tm-row[data-heavy] .tm-memory .tm-figure {
+  font-weight: 600;
+}
+
+.tm-cpu[data-busy] {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.tm-columns .tm-num {
+  color: inherit;
+}
+
+/* -------------------------------------------------------------- footer */
+
+.tm-message {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--line);
+  background: var(--chrome);
+  color: var(--danger);
+}

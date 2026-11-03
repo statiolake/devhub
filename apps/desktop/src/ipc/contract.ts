@@ -1606,6 +1606,17 @@ export interface SettingsPageBridge extends PageBridge {
 }
 
 /**
+ * The Task Manager window's failure contract — `task-manager.html`.
+ *
+ * What it *does* is on `window.devhubTaskManager` (`ipc/taskManager.ts`);
+ * this is what every page has, with a failure that began there drawn there,
+ * as Settings does.
+ */
+export interface TaskManagerPageBridge extends PageBridge {
+	onNativeError(listener: (error: AppError) => void): () => void;
+}
+
+/**
  * Channel names, for every page there is.
  *
  * Requests are `invoke`/`handle`, except the three that answer nothing and

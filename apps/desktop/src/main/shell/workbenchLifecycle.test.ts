@@ -53,6 +53,7 @@ function harness(
 	const plan = (
 		tick = false,
 		ask?: { readonly folder: string; readonly why: WakeReason },
+		sleep?: string,
 	) => {
 		for (const [folder] of workspaces) {
 			if (folder !== selected && !leftAt.has(folder)) leftAt.set(folder, now);
@@ -78,6 +79,7 @@ function harness(
 			hibernateAfterMs: options.hibernateAfterMs ?? 10 * 60_000,
 			tick,
 			...(ask === undefined ? {} : { ask }),
+			...(sleep === undefined ? {} : { sleep }),
 		});
 		for (const effect of done) {
 			if (effect.kind === "dispose") views.delete(effect.folder);
@@ -226,6 +228,10 @@ function harness(
 		/** Enter or a click on the selected one's placeholder. */
 		wake(folder: string, why: WakeReason = "asked") {
 			return plan(false, { folder, why });
+		},
+		/** The Task Manager's Sleep: one plan, asked to put it to sleep. */
+		askToSleep(folder: string) {
+			return plan(false, undefined, folder);
 		},
 		/** The hibernate effect, carried out: unloaded, or kept awake. */
 		sleep(folder: string, frame = `frame:${folder}`) {
@@ -614,6 +620,39 @@ describe("time-based sleep", () => {
 		app.select("b");
 		app.advance(60 * 60_000);
 		expect(hibernations(app.tick())).toEqual([]);
+	});
+});
+
+describe("sleep, when a person asks for it", () => {
+	it("hibernates an awake one that is not on screen, now, as the clock would", () => {
+		const app = harness({ awakeMax: 0, hibernateAfterMs: 0 });
+		app.add("a", "b");
+		app.loadAll();
+		app.select("b");
+		expect(hibernations(app.askToSleep("a"))).toEqual(["a asked"]);
+		expect(app.kind("a")).toBe("hibernating");
+		const effects = app.sleep("a");
+		expect(effects).toContainEqual({ kind: "dispose", folder: "a" });
+		expect(app.kind("a")).toBe("asleep");
+		// Asked once is once: the next plan asks nothing.
+		expect(hibernations(app.plan())).toEqual([]);
+	});
+
+	it("is refused for the one on screen, one that never sleeps, or one not awake", () => {
+		const app = harness({ awakeMax: 0, hibernateAfterMs: 0 });
+		app.add("a", "b", "ssh");
+		app.loadAll();
+		app.select("b");
+		expect(hibernations(app.askToSleep("b"))).toEqual([]);
+		expect(hibernations(app.askToSleep("ssh"))).toEqual([]);
+		app.askToSleep("a");
+		app.sleep("a");
+		expect(hibernations(app.askToSleep("a"))).toEqual([]);
+		expect(app.logs.filter((line) => line.includes("asked to sleep"))).toEqual([
+			"[devhub] workbench 'b' asked to sleep, not hibernating: is shown",
+			"[devhub] workbench 'ssh' asked to sleep, not hibernating: never sleeps",
+			"[devhub] workbench 'a' asked to sleep, not hibernating: is asleep",
+		]);
 	});
 });
 

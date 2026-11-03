@@ -36,6 +36,7 @@
 export type ShellWindowKind =
 	| "shell"
 	| "settings"
+	| "taskManager"
 	| "toasts"
 	| "picker"
 	| "sidebar"
@@ -45,7 +46,8 @@ export type ShellWindowKind =
 export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
 	shell: "DevHub",
 	settings: "DevHub Settings",
-	// Every one of these but `shell` and `settings` is a view inside the shell
+	taskManager: "DevHub Task Manager",
+	// Every one of these but `shell`, `settings` and `taskManager` is a view inside the shell
 	// window rather than a window of its own, so nothing displays them. They
 	// are here so a page can set a title unconditionally instead of branching
 	// on whether it is the kind of page that has one.
