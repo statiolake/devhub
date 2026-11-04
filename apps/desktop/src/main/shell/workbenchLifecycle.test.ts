@@ -22,7 +22,7 @@ import {
 	type WakeReason,
 	type WorkbenchPhase,
 } from "./workbenchLifecycle.js";
-import { QUIET_MS, SETTLE_PROBE_MS } from "./workbenchPlan.js";
+import { FREEZE_GRACE_MS, QUIET_MS, SETTLE_PROBE_MS } from "./workbenchPlan.js";
 
 const HOUR = 60 * 60_000;
 const QUIET: ProbeAnswer = { busy: [], ready: true, cpuPercent: 1 };
@@ -129,6 +129,11 @@ function harness(options: { discardAfterMs?: number } = {}) {
 			now += ms;
 			return plan();
 		},
+		/** Show `other`, and let the grace after hiding the previous run out. */
+		hideFor(other: string) {
+			app.select(other);
+			return app.advance(FREEZE_GRACE_MS);
+		},
 		load(folder: string) {
 			loading.delete(folder);
 			views.add(folder);
@@ -228,10 +233,15 @@ describe("freezing and thawing", () => {
 		return app;
 	}
 
-	it("probes a workbench as it is hidden, and freezes it on a quiet answer", () => {
+	it("probes a workbench once the grace after hiding it is over, and freezes it on a quiet answer", () => {
 		const app = twoRunning();
 		expect(app.kind("a")).toBe("running");
 		app.select("a");
+		expect(app.probes.has("b")).toBe(false);
+		app.advance(FREEZE_GRACE_MS - 1);
+		expect(app.probes.has("b")).toBe(false);
+		expect(app.life.nextDeadline()).toBe(app.now + 1);
+		app.advance(1);
 		expect(app.probes.has("b")).toBe(true);
 		expect(app.kind("b")).toBe("running");
 		expect(of(app.answer("b"), "freeze")).toEqual(["b"]);
@@ -240,7 +250,7 @@ describe("freezing and thawing", () => {
 
 	it("does not freeze one whose probe lands after it was shown again", () => {
 		const app = twoRunning();
-		app.select("a");
+		app.hideFor("a");
 		app.select("b");
 		expect(of(app.answer("b"), "freeze")).toEqual([]);
 		expect(app.kind("b")).toBe("running");
@@ -248,7 +258,7 @@ describe("freezing and thawing", () => {
 
 	it("keeps a busy one up, and looks again later", () => {
 		const app = twoRunning();
-		app.select("a");
+		app.hideFor("a");
 		app.answer("b", { ...QUIET, busy: ["debug session"] });
 		expect(app.kind("b")).toBe("running");
 		expect(app.logs.some((l) => l.includes("stays up: debug session"))).toBe(
@@ -262,11 +272,11 @@ describe("freezing and thawing", () => {
 
 	it("thaws at once when shown, and when a request needs it", () => {
 		const app = twoRunning();
-		app.select("a");
+		app.hideFor("a");
 		app.answer("b");
 		expect(of(app.select("b"), "thaw")).toEqual(["b"]);
 		expect(app.kind("b")).toBe("running");
-		app.select("a");
+		app.hideFor("a");
 		app.answer("b");
 		expect(app.kind("b")).toBe("frozen");
 		expect(of(app.request("b"), "thaw")).toEqual(["b"]);
@@ -278,7 +288,7 @@ describe("freezing and thawing", () => {
 
 	it("thaws for a connection, and keeps it up for the grace", () => {
 		const app = twoRunning();
-		app.select("a");
+		app.hideFor("a");
 		app.answer("b");
 		app.life.connectionArrived("b", app.now);
 		expect(of(app.plan(), "thaw")).toEqual(["b"]);

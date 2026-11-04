@@ -16,7 +16,7 @@
  * absent     ─ shown / asked / requested ───────▶ starting (foreground)
  *            ─ its turn, nothing else starting ─▶ starting (background)
  * starting   ─ loaded ──────────────────────────▶ running (lifecycle event)
- * running    ─ hidden, settled, nothing keeps it ▶ (probe) ─▶ frozen
+ * running    ─ hidden 3 s, settled, nothing keeps it ▶ (probe) ─▶ frozen
  * frozen     ─ shown / asked / requested / a connection waits ─▶ running
  *            ─ frozen `discardAfterMs` ─────────▶ discarding ─▶ discarded
  * discarded  ─ asked / requested ───────────────▶ starting (wake)
@@ -35,11 +35,14 @@
  *   `SETTLE_TIMEOUT_MS` gone by). Which one goes next is decided now, from
  *   recency and then the Sidebar's order — nothing is queued.
  * - **Freeze aggressively.** A running workbench that is not shown is frozen
- *   as soon as it has settled and nothing keeps it awake (`AWAKE_RULES`). The
- *   signals the renderer alone knows (a debug session, a running task, a busy
- *   terminal) come from a probe taken after it was hidden, so a freeze always
- *   follows a fresh probe; the decision is still made here, from the facts as
- *   they are when the probe's answer lands.
+ *   as soon as it has settled and nothing keeps it awake (`AWAKE_RULES`) —
+ *   but one that was just hidden only `FREEZE_GRACE_MS` after it was hidden.
+ *   The signals the renderer alone knows (a debug session, a running task, a
+ *   busy terminal) come from a probe taken after that grace, so a freeze
+ *   always follows a fresh probe and sees what was started just before the
+ *   hiding (VS Code says a terminal is busy only about 2 s after its command
+ *   starts); the decision is still made here, from the facts as they are when
+ *   the probe's answer lands. Shown again within the grace, nothing happens.
  * - **Discard after a while.** Frozen for `discardAfterMs` (0: never), it is
  *   closed, and stays so until somebody asks for it.
  *
@@ -54,6 +57,13 @@ import type { WorkbenchStateWire } from "../../ipc/taskManager.js";
 export const NETWORK_ACTIVE_MS = 30_000;
 /** A workbench thawed for a connection stays up at least this long. */
 export const CONNECTION_GRACE_MS = 30_000;
+/**
+ * A workbench that stopped being shown is not frozen (or probed for it) until
+ * this long after it was hidden, so in-use signals that arrive late — a
+ * terminal reported busy about 2 s into its command, traffic — are seen by
+ * the probe that decides. A person's Sleep skips it.
+ */
+export const FREEZE_GRACE_MS = 3_000;
 /**
  * A probe this old is asked again: a busy workbench is looked at this often,
  * and a freeze never follows an answer older than this.
@@ -192,6 +202,12 @@ export const AWAKE_RULES: readonly {
 			f.trafficAt !== undefined && now - f.trafficAt < NETWORK_ACTIVE_MS,
 	},
 	{
+		reason: "just hidden",
+		hard: false,
+		holds: (f, now) =>
+			f.hiddenSince !== undefined && now - f.hiddenSince < FREEZE_GRACE_MS,
+	},
+	{
 		reason: "a connection just arrived",
 		hard: false,
 		holds: (f, now) =>
@@ -212,13 +228,15 @@ export function awakeReasons(facts: WorkbenchFacts, now: number): string[] {
 	);
 }
 
-/** A probe taken since it was hidden, and not too old to act on. */
+/**
+ * A probe taken after the grace that followed its hiding (any, if it was
+ * never shown), and not too old to act on.
+ */
 export function probeIsFresh(facts: WorkbenchFacts, now: number): boolean {
-	const { probe } = facts;
+	const { probe, hiddenSince } = facts;
+	const since = hiddenSince === undefined ? 0 : hiddenSince + FREEZE_GRACE_MS;
 	return (
-		probe !== undefined &&
-		probe.at >= (facts.hiddenSince ?? 0) &&
-		now - probe.at < PROBE_FRESH_MS
+		probe !== undefined && probe.at >= since && now - probe.at < PROBE_FRESH_MS
 	);
 }
 
@@ -357,6 +375,9 @@ export function nextDecision(facts: PlanFacts): number | undefined {
 				times.push(phase.since + SETTLE_TIMEOUT_MS);
 			} else if (!one.shown) {
 				if (one.probe !== undefined) times.push(one.probe.at + PROBE_FRESH_MS);
+				if (one.hiddenSince !== undefined) {
+					times.push(one.hiddenSince + FREEZE_GRACE_MS);
+				}
 				if (one.trafficAt !== undefined) {
 					times.push(one.trafficAt + NETWORK_ACTIVE_MS);
 				}

@@ -1227,7 +1227,7 @@ Each folder's workbench is in one phase at a time (`WorkbenchPhase` in
 absent     ─ shown / asked / requested ─────────────────────▶ starting
            ─ its turn in the background, nothing else starting ▶ starting
 starting   ─ loaded ──────────────────────────────────────────▶ running
-running    ─ hidden, settled, nothing keeps it (fresh probe) ─▶ frozen
+running    ─ hidden 3 s, settled, nothing keeps it (fresh probe) ▶ frozen
 frozen     ─ shown / asked / requested / held / a connection ─▶ running
            ─ frozen workbench_discard_minutes ───────────────▶ discarding ─▶ discarded
 discarded  ─ asked (Enter, a click) / requested ─────────────▶ starting (wake)
@@ -1275,15 +1275,26 @@ included):
   frozen as soon as it has settled and nothing keeps it awake. The keep-awake
   reasons are one table, `AWAKE_RULES`: shown, asked for, held by DevHub,
   closing, not local, still starting, sharing its renderer (hard — a person's
-  Sleep does not override them); network traffic on its sockets in the last
-  30 s, a connection that arrived in the last 30 s, and busy (soft). Busy is
+  Sleep does not override them); hidden less than 3 s ago
+  (`FREEZE_GRACE_MS`), network traffic on its sockets in the last 30 s, a
+  connection that arrived in the last 30 s, and busy (soft). Busy is
   what the renderer says when it is probed: a debug session, a running task,
   an integrated terminal with a program in front of its shell. A DevHub
   terminal is tmux and never counts — it runs under the shared pty host,
-  which is never stopped. A freeze always follows a probe taken after the
-  workbench was hidden (and since its last thaw), so a probe answered after
-  the person came back freezes nothing: the decision is made from the facts
-  as they are when the answer lands. A busy one is probed again every 15 s.
+  which is never stopped. **The grace after hiding:** a workbench that has
+  just stopped being shown is neither probed nor frozen until 3 s after it
+  was hidden — the planner's deadline, not a timer of its own — and a freeze
+  always follows a probe taken after that grace (and since its last thaw).
+  VS Code reports a terminal busy only about 2 s after its command starts
+  (`ChildProcessMonitor`: a 1 s debounce after input, then `ps`), and a
+  frozen workbench is never probed again, so without the grace a command
+  started just before switching away was frozen while it ran — an
+  output-heavy one then stalls on the pty's flow control. Shown again within
+  the grace, nothing was asked and nothing happens. A workbench preloaded in
+  the background and never shown has no grace: it freezes once it has
+  settled, on the probe that settled it. A probe answered after the person
+  came back freezes nothing: the decision is made from the facts as they are
+  when the answer lands. A busy one is probed again every 15 s.
 - **Discard after a while.** Frozen for `general.workbench_discard_minutes`
   (default 60, `0` never), it is thawed and closed as VS Code unloads every
   window on Cmd+Q (`UnloadReason.QUIT`: unsaved editors backed up by hot exit,
@@ -1386,8 +1397,8 @@ discarded.
 
 The Task Manager shows each workbench's phase (running, starting, frozen,
 discarding, discarded, not started, restarting, failed), and its Sleep is a
-freeze now (`LifecycleInput.freeze`): past the soft reasons, never past the
-hard ones. Every transition, every ask, every probe that keeps a hidden one
+freeze now (`LifecycleInput.freeze`): past the soft reasons — the grace
+after hiding included — never past the hard ones. Every transition, every ask, every probe that keeps a hidden one
 up (said once per reason) and every discard called off is a line
 `[devhub] workbench '<folder>' …` in main's log
 (`<userData>/logs/devhub-main.log`, `DevHub: Open Log`).

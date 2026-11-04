@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
 	AWAKE_RULES,
 	CONNECTION_GRACE_MS,
+	FREEZE_GRACE_MS,
 	NETWORK_ACTIVE_MS,
 	PROBE_FRESH_MS,
 	SETTLE_PROBE_MS,
@@ -191,6 +192,119 @@ describe("freezing", () => {
 			"still starting",
 			"shares its renderer",
 		]);
+	});
+});
+
+describe("the grace after hiding", () => {
+	const hiddenAt = NOW - 10_000;
+	const at = (ms: number) => hiddenAt + ms;
+	/** Shown until `hiddenAt`, its last probe from while it was shown. */
+	const justHidden = (overrides: Partial<WorkbenchFacts> = {}) =>
+		wb("a", {
+			lastShownAt: hiddenAt,
+			hiddenSince: hiddenAt,
+			probe: { at: hiddenAt - 500, busy: [] },
+			...overrides,
+		});
+
+	it("neither probes nor freezes before the grace is over", () => {
+		for (const ms of [0, 1_000, 1_500, FREEZE_GRACE_MS - 1]) {
+			expect(kinds(plan([justHidden()], HOUR, at(ms)))).toEqual([]);
+			// Not even with a probe from within the grace that says idle.
+			expect(
+				kinds(
+					plan([justHidden({ probe: { at: at(ms), busy: [] } })], HOUR, at(ms)),
+				),
+			).toEqual([]);
+		}
+		expect(nextDecision(plan([justHidden()], HOUR, at(1_000)))).toBe(
+			at(FREEZE_GRACE_MS),
+		);
+		expect(awakeReasons(justHidden(), at(1_000))).toEqual(["just hidden"]);
+	});
+
+	it("at the grace's end it probes, and a probe from within it does not count", () => {
+		expect(kinds(plan([justHidden()], HOUR, at(FREEZE_GRACE_MS)))).toEqual([
+			"probe a",
+		]);
+		expect(
+			kinds(
+				plan(
+					[justHidden({ probe: { at: at(2_000), busy: [] } })],
+					HOUR,
+					at(FREEZE_GRACE_MS),
+				),
+			),
+		).toEqual(["probe a"]);
+	});
+
+	it("a probe after the grace that finds a busy terminal keeps it up", () => {
+		expect(
+			kinds(
+				plan(
+					[
+						justHidden({
+							probe: { at: at(FREEZE_GRACE_MS + 50), busy: ["terminal sleep"] },
+						}),
+					],
+					HOUR,
+					at(FREEZE_GRACE_MS + 60),
+				),
+			),
+		).toEqual([]);
+	});
+
+	it("a probe after the grace that finds nothing freezes it", () => {
+		expect(
+			decide(
+				plan(
+					[justHidden({ probe: { at: at(FREEZE_GRACE_MS + 50), busy: [] } })],
+					HOUR,
+					at(FREEZE_GRACE_MS + 60),
+				),
+			),
+		).toEqual([{ kind: "freeze", folder: "a", why: "hidden" }]);
+	});
+
+	it("shown again within the grace, it is never frozen", () => {
+		const back = justHidden({
+			shown: true,
+			lastShownAt: at(2_000),
+			hiddenSince: undefined,
+		});
+		for (const ms of [2_000, FREEZE_GRACE_MS, FREEZE_GRACE_MS + 60, 60_000]) {
+			expect(kinds(plan([back], HOUR, at(ms)))).toEqual([]);
+			expect(
+				kinds(
+					plan([{ ...back, probe: { at: at(ms), busy: [] } }], HOUR, at(ms)),
+				),
+			).toEqual([]);
+		}
+		expect(nextDecision(plan([back], HOUR, at(2_000)))).toBeUndefined();
+	});
+
+	it("a person's Sleep skips the grace", () => {
+		expect(
+			decide(plan([justHidden({ freezeAsked: true })], HOUR, at(500))),
+		).toEqual([{ kind: "freeze", folder: "a", why: "asked" }]);
+	});
+
+	it("a background workbench never shown has no grace", () => {
+		expect(
+			kinds(
+				plan(
+					[
+						justHidden({
+							lastShownAt: undefined,
+							hiddenSince: undefined,
+							probe: { at: at(-500), busy: [] },
+						}),
+					],
+					HOUR,
+					at(0),
+				),
+			),
+		).toEqual(["freeze a"]);
 	});
 });
 
@@ -465,17 +579,16 @@ describe("the races", () => {
 		).toEqual([]);
 	});
 
-	it("a probe taken before it was hidden again does not count", () => {
-		expect(
-			kinds(
-				plan([
-					wb("a", {
-						hiddenSince: NOW - 100,
-						probe: { at: NOW - 200, busy: [] },
-					}),
-				]),
-			),
-		).toEqual(["probe a"]);
+	it("a probe taken before it was hidden again, or within the grace, does not count", () => {
+		for (const at of [NOW - 6_000, NOW - 4_000]) {
+			expect(
+				kinds(
+					plan([
+						wb("a", { hiddenSince: NOW - 5_000, probe: { at, busy: [] } }),
+					]),
+				),
+			).toEqual(["probe a"]);
+		}
 	});
 
 	it("a connection arriving while frozen thaws it before any discard", () => {
