@@ -462,6 +462,31 @@ function firstLine(text: string): string {
 const CODEX_SIGN_IN =
 	"Sign in with `codex login` in a terminal on this Agent's machine, then try again.";
 
+/**
+ * The line the host puts in the journal between the server a `/resume`
+ * stopped and the one it started for `thread` (`resumeSession`).
+ */
+export function resumeMark(thread: string): string {
+	return JSON.stringify({ type: "devhub_resume", session: thread });
+}
+
+/**
+ * What to do about app-server refusing a thread another Codex process has
+ * open, said after its refusal; nothing for any other refusal.
+ *
+ * Codex keeps one writer per thread, across processes: the one that opened it
+ * holds an OS lock on `$CODEX_HOME/thread-writer-locks/<thread>.lock` until it
+ * unloads the thread or exits, and every other is refused with "thread …
+ * already has an active writer" (`codex-rs/rollout/src/writer_lock.rs`).
+ * The lock goes with the process, so nothing on disk is to be removed: the
+ * process that has the thread open is to be closed.
+ */
+export function openElsewhere(message: string): string {
+	return message.includes("already has an active writer")
+		? ". Another Codex process has this thread open: another Agent, `codex` in a terminal, or the Codex app. Close it there, then try again. (`codex resume` of a thread open elsewhere only shows it, read-only, and does not free it.)"
+		: "";
+}
+
 export class CodexAdapter implements ProtocolAdapter {
 	private current: Transcript = EMPTY_TRANSCRIPT;
 	/** An earlier call threw; the bookkeeping may be half-updated. */
@@ -477,6 +502,14 @@ export class CodexAdapter implements ProtocolAdapter {
 	private starts = 0;
 	/** app-server was started again and its thread is not open yet: the thread DevHub draws is resumed, not drawn again. */
 	private reopening = false;
+	/**
+	 * app-server was started again to go on with another thread (`/resume`)
+	 * and has not opened it yet: that thread, and the one it leaves, which
+	 * the new server opens instead if it refuses the other.
+	 */
+	private resuming:
+		| { readonly to: string; readonly from: string | undefined }
+		| undefined;
 
 	// What DevHub said (from `sent`), and the counters `encode` draws ids from.
 	private nextRpcId = 0;
@@ -714,31 +747,41 @@ export class CodexAdapter implements ProtocolAdapter {
 		return { kind: "write", lines };
 	}
 
+	/**
+	 * `/resume`: app-server started again, its handshake opening `session`
+	 * (`openThread`), with `resumeMark` between the two servers.
+	 *
+	 * Not `thread/resume` on the server already running, as it once was. A
+	 * thread app-server has open stays open there after the server goes on
+	 * with another one: the connection is still subscribed to it, so it is
+	 * never unloaded, and app-server keeps holding its writer lock
+	 * (`$CODEX_HOME/thread-writer-locks/<thread>.lock`, an OS file lock) for
+	 * as long as the process lives. Every other Codex process — another
+	 * Agent reopening the thread left, `codex resume` in a terminal — was then
+	 * refused it ("thread … already has an active writer"), or shown it
+	 * read-only, until this Agent was stopped. A server started again holds
+	 * only the thread it opens.
+	 */
 	resumeSession(session: string, history: readonly string[]): RewindPlan {
 		if (history.length > 0) {
 			throw new Error(
 				"Codex hands back a thread's past itself: a resume takes no history",
 			);
 		}
-		const lines = this.lines(() => {
-			const { state, requests } = this.current;
-			if (
-				this.broken ||
-				state.phase !== "ready" ||
-				state.turn !== "none" ||
-				requests.length > 0
-			) {
-				throw new Error(
-					"the Codex conversation is not idle, so it cannot go on with another thread now",
-				);
-			}
-			this.call("thread/resume", {
-				threadId: session,
-				cwd: this.options.cwd,
-				...this.instructions(),
-			} satisfies ThreadResumeParams);
-		});
-		return { kind: "write", lines };
+		this.refuseIfSpent();
+		const { state, requests } = this.current;
+		if (
+			this.broken ||
+			this.mainThread === undefined ||
+			state.phase !== "ready" ||
+			state.turn !== "none" ||
+			requests.length > 0
+		) {
+			throw new Error(
+				"the Codex conversation is not idle, so it cannot go on with another thread now",
+			);
+		}
+		return { kind: "restart", session: [], mark: [resumeMark(session)] };
 	}
 
 	restart(): RewindPlan & { readonly kind: "restart" } {
@@ -1027,7 +1070,9 @@ export class CodexAdapter implements ProtocolAdapter {
 			this.sentMethods.has("thread/resume");
 		this.sentMethods.add(message.method);
 		if (message.id === undefined) return;
-		if (message.method === "thread/resume" && threadOpen) {
+		// Not a switch: the thread drawn, opened again on a server that
+		// refused the one a `/resume` started it for.
+		if (message.method === "thread/resume" && threadOpen && !this.reopening) {
 			this.switches.add(rpcKey(message.id));
 			this.setState({ phase: "ready", turn: "rewinding" });
 		}
@@ -1117,7 +1162,9 @@ export class CodexAdapter implements ProtocolAdapter {
 		}
 		switch (message.kind) {
 			case "restart":
-				return this.takeRestart();
+				return this.takeRestart(undefined);
+			case "resume":
+				return this.takeRestart(message.thread);
 			case "response": {
 				const method = this.replyTo(message.id, line);
 				if (method === undefined) return;
@@ -1202,20 +1249,25 @@ export class CodexAdapter implements ProtocolAdapter {
 	}
 
 	/**
-	 * The host stopped app-server and started it again on the same thread:
-	 * the conversation stays, and nothing the server that was stopped had
-	 * going goes on (`restarted`). What DevHub kept about that server goes
-	 * with it — its requests, the calls DevHub made of it, the handshake — and
-	 * the new one is greeted afresh, as a reply, so a replay does not greet it
-	 * twice; the handshake then resumes the thread already drawn.
+	 * The host stopped app-server and started it again: the conversation
+	 * stays, and nothing the server that was stopped had going goes on
+	 * (`restarted`). What DevHub kept about that server goes with it — its
+	 * requests, the calls DevHub made of it, the handshake — and the new one
+	 * is greeted afresh, as a reply, so a replay does not greet it twice.
+	 *
+	 * The handshake then resumes the thread already drawn (Restart session),
+	 * or — `thread`, a `/resume` — the other thread, which is drawn in place
+	 * of this one once the new server hands it back.
 	 */
-	private takeRestart(): void {
+	private takeRestart(thread: string | undefined): void {
 		this.broken = false;
 		this.emit({ type: "restarted" });
-		this.notice("info", RESTARTED, undefined);
+		if (thread === undefined) this.notice("info", RESTARTED, undefined);
 		this.processEnded();
 		this.starts += 1;
-		this.reopening = true;
+		this.reopening = thread === undefined;
+		this.resuming =
+			thread === undefined ? undefined : { to: thread, from: this.mainThread };
 		this.sending.clear();
 		this.open.clear();
 		this.responded.clear();
@@ -1287,7 +1339,12 @@ export class CodexAdapter implements ProtocolAdapter {
 			case "thread/start":
 			case "thread/resume": {
 				const opened = threadOpenedResponse(this.reader, result);
-				if (this.switches.delete(rpcKey(id))) this.leaveThread(opened);
+				// A switch on the same server is a journal's from before
+				// `/resume` started the server again (`resumeSession`).
+				const switched =
+					this.switches.delete(rpcKey(id)) || this.resuming !== undefined;
+				this.resuming = undefined;
+				if (switched) this.leaveThread(opened);
 				return this.onThreadOpened(opened);
 			}
 			case "model/list": {
@@ -1355,10 +1412,29 @@ export class CodexAdapter implements ProtocolAdapter {
 		if (method === "thread/resume" && this.switches.delete(rpcKey(id!))) {
 			this.notice(
 				"error",
-				`${this.codexName} did not go on with that thread: ${message}`,
+				`${this.codexName} did not go on with that thread: ${message}${openElsewhere(message)}`,
 				raw,
 			);
 			return this.setState({ phase: "ready", turn: this.turnState() });
+		}
+		if (method === "thread/resume" && this.resuming !== undefined) {
+			// The server started for the other thread refused it: it goes on
+			// with the thread already drawn, as a restart's would.
+			const { from } = this.resuming;
+			this.resuming = undefined;
+			this.notice(
+				"error",
+				`${this.codexName} did not go on with that thread: ${message}${openElsewhere(message)}`,
+				raw,
+			);
+			if (from !== undefined) {
+				this.reopening = true;
+				return this.call("thread/resume", {
+					threadId: from,
+					cwd: this.options.cwd,
+					...this.instructions(),
+				} satisfies ThreadResumeParams);
+			}
 		}
 		switch (method) {
 			case "initialize":
@@ -1369,7 +1445,7 @@ export class CodexAdapter implements ProtocolAdapter {
 					phase: "broken",
 					failure: {
 						code: "refused",
-						detail: `${method} failed: ${message} (${code})`,
+						detail: `${method} failed: ${message} (${code})${openElsewhere(message)}`,
 					},
 				});
 			case "account/read":
@@ -1453,8 +1529,10 @@ export class CodexAdapter implements ProtocolAdapter {
 	private openThread(): void {
 		const { cwd } = this.options;
 		const instructions = this.instructions();
-		// A server started again goes on with the thread already open.
-		const resumeThreadId = this.mainThread ?? this.options.resumeThreadId;
+		// A server started again goes on with the thread already open, or
+		// the one a `/resume` started it for.
+		const resumeThreadId =
+			this.resuming?.to ?? this.mainThread ?? this.options.resumeThreadId;
 		if (
 			this.sentMethods.has("thread/start") ||
 			this.sentMethods.has("thread/resume")

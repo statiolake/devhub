@@ -295,7 +295,13 @@ export type Message =
 	 * put this line (`RESTART_MARK`) between the two servers' output — not
 	 * something app-server printed.
 	 */
-	| { readonly kind: "restart" };
+	| { readonly kind: "restart" }
+	/**
+	 * The host stopped app-server and started it again to go on with another
+	 * thread (`/resume`), and put this line (`resumeMark`) between the two
+	 * servers' output: the thread the new server is to open.
+	 */
+	| { readonly kind: "resume"; readonly thread: string };
 
 /** One line off app-server's stdout. */
 export function decodeLine(r: Reader, line: string): Message {
@@ -310,6 +316,8 @@ export function decodeLine(r: Reader, line: string): Message {
 	}
 	const o = r.fields(value, "message");
 	if (o["type"] === "devhub_restart") return { kind: "restart" };
+	if (o["type"] === "devhub_resume")
+		return { kind: "resume", thread: r.string(o, "session", "devhub_resume") };
 	if ("method" in o) {
 		const method = r.string(o, "method", "message");
 		const params = o["params"];

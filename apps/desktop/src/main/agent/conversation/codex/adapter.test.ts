@@ -28,7 +28,12 @@ import {
 	type AdapterStep,
 	type ConversationCommand,
 } from "../protocolAdapter.js";
-import { CodexAdapter, type CodexAdapterOptions } from "./adapter.js";
+import {
+	CodexAdapter,
+	openElsewhere,
+	resumeMark,
+	type CodexAdapterOptions,
+} from "./adapter.js";
 import { appServerArgs } from "./argv.js";
 
 const MAIN = "00000000-0000-7000-8000-00000000000a";
@@ -2827,21 +2832,25 @@ describe("a captured greeting on the owner's signed-in app-server", () => {
 
 describe("going on with another thread (/resume)", () => {
 	const OTHER = "00000000-0000-7000-8000-0000000000b2";
-	/** The handshake's thread/start answer, as the answer to a resume of `OTHER` with one past turn. */
-	function resumedAnswer(id: number): object {
+	/** The handshake's thread/start answer, as the answer to a resume of `thread` with one past turn. */
+	function resumedAnswer(
+		id: number,
+		thread = OTHER,
+		text = "elsewhere",
+	): object {
 		const start = JSON.parse(fixture("handshake.handwritten.ndjson")[2]!) as {
 			result: { thread: { id: string; turns: unknown[] } };
 		};
-		start.result.thread.id = OTHER;
+		start.result.thread.id = thread;
 		start.result.thread.turns = [
 			{
-				id: "other-turn",
+				id: `${thread}-turn`,
 				items: [
 					{
 						type: "userMessage",
-						id: "other-user",
+						id: `${thread}-user`,
 						clientId: null,
-						content: [{ type: "text", text: "elsewhere", text_elements: [] }],
+						content: [{ type: "text", text, text_elements: [] }],
 					},
 				],
 				itemsView: "full",
@@ -2855,14 +2864,179 @@ describe("going on with another thread (/resume)", () => {
 		return { id, result: start.result };
 	}
 
-	function resume(harness: Harness): void {
-		const plan = harness.adapter.resumeSession(OTHER, []);
-		if (plan.kind !== "write") throw new Error(`a ${plan.kind} for a resume`);
-		for (const line of plan.lines)
-			(harness as unknown as { write(line: string): void }).write(line);
+	/** A turn on the main thread, over. */
+	function oneTurn(harness: Harness): void {
+		harness.command({
+			kind: "send",
+			text: "here",
+			images: [],
+			origin: "person",
+		});
+		const turn = (status: string, durationMs: number | null) => ({
+			id: "t-1",
+			items: [],
+			itemsView: "full",
+			status,
+			error: null,
+			startedAt: null,
+			completedAt: null,
+			durationMs,
+		});
+		harness.receive({
+			id: (harness.lastWrite() as { id: number }).id,
+			result: { turn: turn("inProgress", null) },
+		});
+		harness.receive({
+			method: "turn/started",
+			params: { threadId: MAIN, turn: turn("inProgress", null) },
+		});
+		harness.receive({
+			method: "turn/completed",
+			params: { threadId: MAIN, turn: turn("completed", 1) },
+		});
 	}
 
-	it("resumes the other thread on the same app-server, and draws it in place of this one", () => {
+	/**
+	 * `/resume` carried out as the conversation does: the host stops
+	 * app-server and starts it again with the plan's mark between the two,
+	 * and the new server answers the handshake up to the thread it is asked
+	 * to open, which is handed back.
+	 */
+	function resume(harness: Harness): { id: number; params: unknown } {
+		const plan = harness.adapter.resumeSession(OTHER, []);
+		expect(plan).toEqual({
+			kind: "restart",
+			session: [],
+			mark: [resumeMark(OTHER)],
+		});
+		if (plan.kind !== "restart") throw new Error("not a restart");
+		const before = harness.written.length;
+		for (const line of plan.mark) harness.receive(line);
+		const handshake = fixture("handshake.handwritten.ndjson").map(
+			(line) => JSON.parse(line) as { id?: number },
+		);
+		const [initialize] = harness.writesSince(before) as { id: number }[];
+		harness.receive({ ...handshake[0], id: initialize!.id });
+		const account = harness.lastWrite() as { id: number; method: string };
+		expect(account.method).toBe("account/read");
+		harness.receive({ ...handshake[1], id: account.id });
+		return harness.lastWrite() as { id: number; params: unknown };
+	}
+
+	it("starts app-server again on the other thread, and draws it in place of this one", () => {
+		const harness = ready();
+		oneTurn(harness);
+		const asked = resume(harness);
+		expect(asked).toEqual({
+			id: asked.id,
+			method: "thread/resume",
+			params: { threadId: OTHER, cwd: CWD },
+		});
+		expect(harness.transcript.state).toEqual({
+			phase: "ready",
+			turn: "rewinding",
+		});
+		harness.receive(resumedAnswer(asked.id));
+		// Not "Session restarted": the person went on with another thread.
+		expect(outline(harness.transcript)).toEqual([
+			"user(person): elsewhere",
+			"turn-end completed 5ms",
+		]);
+		expect(harness.transcript.session.sessionId).toBe(OTHER);
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+
+		// The next turn is on the other thread.
+		harness.command({
+			kind: "send",
+			text: "go on",
+			images: [],
+			origin: "person",
+		});
+		expect(harness.lastWrite()).toMatchObject({
+			method: "turn/start",
+			params: { threadId: OTHER },
+		});
+	});
+
+	it("never asks the running server for the other thread, which would keep this one open there", () => {
+		// app-server keeps a thread it has open, and that thread's writer lock,
+		// after the connection goes on with another: the thread left could not
+		// be reopened by any other Codex process until this Agent stopped.
+		const harness = ready();
+		const before = harness.written.length;
+		harness.adapter.resumeSession(OTHER, []);
+		expect(harness.written.length).toBe(before);
+	});
+
+	it("says so and goes on with this thread on the new server when it refuses the other", () => {
+		const harness = ready();
+		oneTurn(harness);
+		const drawn = outline(harness.transcript);
+		const asked = resume(harness);
+		harness.receive({
+			id: asked.id,
+			error: { code: -32600, message: "no rollout found" },
+		});
+		const again = harness.lastWrite() as { id: number };
+		expect(again).toEqual({
+			id: again.id,
+			method: "thread/resume",
+			params: { threadId: MAIN, cwd: CWD },
+		});
+		harness.receive(resumedAnswer(again.id, MAIN, "here"));
+		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
+		expect(harness.transcript.session.sessionId).toBe(MAIN);
+		// What was drawn stays, and is not drawn a second time.
+		expect(outline(harness.transcript)).toEqual([
+			...drawn,
+			"notice(error): codex 0.156.1 did not go on with that thread: no rollout found",
+		]);
+	});
+
+	it("says what to do about a thread another Codex process has open", () => {
+		const harness = ready();
+		const asked = resume(harness);
+		harness.receive({
+			id: asked.id,
+			error: {
+				code: -32600,
+				message: `thread ${OTHER} already has an active writer`,
+			},
+		});
+		expect(outline(harness.transcript).at(-1)).toBe(
+			`notice(error): codex 0.156.1 did not go on with that thread: thread ${OTHER} already has an active writer${openElsewhere("already has an active writer")}`,
+		);
+		expect(openElsewhere("already has an active writer")).toMatch(
+			/Another Codex process has this thread open/,
+		);
+		expect(openElsewhere("no rollout found")).toBe("");
+	});
+
+	it("replays a journal from before, whose /resume asked the running server", () => {
+		// An earlier DevHub's journal: `thread/resume` written to the server
+		// that had the first thread open, and its answer.
+		const harness = ready();
+		oneTurn(harness);
+		const id = 40;
+		(harness as unknown as { write(line: string): void }).write(
+			JSON.stringify({
+				id,
+				method: "thread/resume",
+				params: { threadId: OTHER, cwd: CWD },
+			}),
+		);
+		harness.receive(resumedAnswer(id));
+		expect(outline(harness.transcript)).toEqual([
+			"user(person): elsewhere",
+			"turn-end completed 5ms",
+		]);
+		expect(harness.transcript.session.sessionId).toBe(OTHER);
+	});
+
+	it("is refused while a turn runs, and before a thread is open", () => {
+		const opening = new Harness();
+		opening.start();
+		expect(() => opening.adapter.resumeSession(OTHER, [])).toThrow(/not idle/);
 		const harness = ready();
 		harness.command({
 			kind: "send",
@@ -2885,85 +3059,7 @@ describe("going on with another thread (/resume)", () => {
 				},
 			},
 		});
-		harness.receive({
-			method: "turn/started",
-			params: {
-				threadId: MAIN,
-				turn: {
-					id: "t-1",
-					items: [],
-					itemsView: "full",
-					status: "inProgress",
-					error: null,
-					startedAt: null,
-					completedAt: null,
-					durationMs: null,
-				},
-			},
-		});
-		harness.receive({
-			method: "turn/completed",
-			params: {
-				threadId: MAIN,
-				turn: {
-					id: "t-1",
-					items: [],
-					itemsView: "full",
-					status: "completed",
-					error: null,
-					startedAt: null,
-					completedAt: null,
-					durationMs: 1,
-				},
-			},
-		});
-		const before = harness.written.length;
-		resume(harness);
-		const [asked] = harness.writesSince(before) as { id: number }[];
-		expect(asked).toEqual({
-			id: asked!.id,
-			method: "thread/resume",
-			params: { threadId: OTHER, cwd: CWD },
-		});
-		expect(harness.transcript.state).toEqual({
-			phase: "ready",
-			turn: "rewinding",
-		});
-		harness.receive(resumedAnswer(asked!.id));
-		expect(outline(harness.transcript)).toEqual([
-			"user(person): elsewhere",
-			"turn-end completed 5ms",
-		]);
-		expect(harness.transcript.session.sessionId).toBe(OTHER);
-		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
-
-		// The next turn is on the other thread.
-		harness.command({
-			kind: "send",
-			text: "go on",
-			images: [],
-			origin: "person",
-		});
-		expect(harness.lastWrite()).toMatchObject({
-			method: "turn/start",
-			params: { threadId: OTHER },
-		});
-	});
-
-	it("says so and stays on this thread when app-server refuses the other", () => {
-		const harness = ready();
-		const before = harness.written.length;
-		resume(harness);
-		const [asked] = harness.writesSince(before) as { id: number }[];
-		harness.receive({
-			id: asked!.id,
-			error: { code: -32600, message: "no rollout found" },
-		});
-		expect(harness.transcript.state).toEqual({ phase: "ready", turn: "none" });
-		expect(harness.transcript.session.sessionId).toBe(MAIN);
-		expect(outline(harness.transcript)).toEqual([
-			"notice(error): codex 0.156.1 did not go on with that thread: no rollout found",
-		]);
+		expect(() => harness.adapter.resumeSession(OTHER, [])).toThrow(/not idle/);
 	});
 
 	it("offers /resume as DevHub's own picker", () => {

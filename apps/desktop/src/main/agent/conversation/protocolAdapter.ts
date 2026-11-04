@@ -154,8 +154,9 @@ export interface ProtocolAdapter {
 	rewind(message: EntryId): RewindPlan;
 	/**
 	 * How to go on with another session of the CLI instead of this one
-	 * (`/resume`), the way a rewind is carried out: a request written (Codex's
-	 * `thread/resume`), or the CLI started again on that session (Claude).
+	 * (`/resume`), the way a restart is carried out: the CLI started again on
+	 * that session (Claude's `--resume`, Codex's handshake `thread/resume`),
+	 * so that no process holds on to the session left.
 	 * `history` is the session's past as `devhub_history` lines, for a protocol
 	 * whose CLI prints none of it (`claudeHistory`); a protocol that is handed
 	 * its past takes none. Changes nothing, like `encode`. The adapter emits

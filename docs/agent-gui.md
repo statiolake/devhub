@@ -906,11 +906,11 @@ to Agent…_, `devhub.sendSelectionToAgent`) or with `Cmd+Alt+K`
 
 What is written depends on who reads it:
 
-| Agent | Reference | |
-| --- | --- | --- |
-| GUI (Claude or Codex) | `[src/a.ts:12-20](src/a.ts#L12-L20)` | the conversation's own file link (above); after the draft if there is one |
-| Claude Code in a terminal | `@src/a.ts#L12-20` | its `@` mention, which attaches the file with that range — the form its editor integrations insert; a path with a space is `@"my dir/a.ts#L12-20"` |
-| Codex, or any other CLI, in a terminal | `src/a.ts:12-20` | a plain path: Codex's `@` is a file search that inserts the path as text |
+| Agent                                  | Reference                            |                                                                                                                                                    |
+| -------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GUI (Claude or Codex)                  | `[src/a.ts:12-20](src/a.ts#L12-L20)` | the conversation's own file link (above); after the draft if there is one                                                                          |
+| Claude Code in a terminal              | `@src/a.ts#L12-20`                   | its `@` mention, which attaches the file with that range — the form its editor integrations insert; a path with a space is `@"my dir/a.ts#L12-20"` |
+| Codex, or any other CLI, in a terminal | `src/a.ts:12-20`                     | a plain path: Codex's `@` is a file search that inserts the path as text                                                                           |
 
 For example, lines 12–14 of `src/a.ts` sent to a terminal Claude:
 
@@ -956,9 +956,12 @@ selection on screen and then leaves visual mode, so a leader key can send it:
 ```jsonc
 // keybindings.json: <Space>a sends the visual selection (or, in normal mode,
 // the cursor's line) to an Agent
-{ "key": "space a", "command": "devhubVim.run",
+{
+  "key": "space a",
+  "command": "devhubVim.run",
   "args": { "command": "devhub.sendSelectionToAgent" },
-  "when": "devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'" }
+  "when": "devhubVim.active && devhubVim.acceptsMotion && devhubVim.mode != 'operatorPending'",
+}
 ```
 
 `V` sends whole lines: a selection that ends at the start of a line does not
@@ -1045,15 +1048,15 @@ not draw, is its code — with one quiet line under it saying why, when it
 failed. While the source is shown the drawing stays drawn, so going back is
 the same picture (the same slide).
 
-| Fence | Drawn as |
-| --- | --- |
-| ` ```svg `, ` ```xml ` of one `<svg>` | the image it is |
-| ` ```mermaid ` | a Mermaid diagram |
-| ` ```marp `, or ` ```markdown ` / ` ```md ` with `marp: true` | slides |
-| ` ```markdown `, ` ```md ` | the Markdown, rendered |
-| ` ```diff `, ` ```patch ` | the change, file by file |
-| ` ```vega-lite `, ` ```vegalite ` (a JSON spec) | a chart |
-| ` ```html ` | the page, in a sandboxed frame |
+| Fence                                                         | Drawn as                       |
+| ------------------------------------------------------------- | ------------------------------ |
+| ` ```svg `, ` ```xml ` of one `<svg>`                         | the image it is                |
+| ` ```mermaid `                                                | a Mermaid diagram              |
+| ` ```marp `, or ` ```markdown ` / ` ```md ` with `marp: true` | slides                         |
+| ` ```markdown `, ` ```md `                                    | the Markdown, rendered         |
+| ` ```diff `, ` ```patch `                                     | the change, file by file       |
+| ` ```vega-lite `, ` ```vegalite ` (a JSON spec)               | a chart                        |
+| ` ```html `                                                   | the page, in a sandboxed frame |
 
 Every kind can also be a file the answer embeds (below).
 
@@ -1083,15 +1086,15 @@ the Agent's directory (inside an embedded Markdown file, to that file's
 folder), absolute, or `~/…` (`resolvePaths`) — and drawn as the kind its
 name and contents say, through the same mechanism as a fence of that kind:
 
-| File | Drawn as |
-| --- | --- |
-| `.png` `.jpg` `.jpeg` `.gif` `.webp` `.avif` | the picture (copies as a PNG) |
-| `.svg` | the image |
-| `.md` `.markdown` | the Markdown, or slides when it says `marp: true` |
-| `.mmd` `.mermaid` | a Mermaid diagram |
-| `.diff` `.patch` | the change |
-| `.html` `.htm` | the page, in the sandboxed frame |
-| `.vl.json` `.vega-lite.json` | a Vega-Lite chart |
+| File                                         | Drawn as                                          |
+| -------------------------------------------- | ------------------------------------------------- |
+| `.png` `.jpg` `.jpeg` `.gif` `.webp` `.avif` | the picture (copies as a PNG)                     |
+| `.svg`                                       | the image                                         |
+| `.md` `.markdown`                            | the Markdown, or slides when it says `marp: true` |
+| `.mmd` `.mermaid`                            | a Mermaid diagram                                 |
+| `.diff` `.patch`                             | the change                                        |
+| `.html` `.htm`                               | the page, in the sandboxed frame                  |
+| `.vl.json` `.vega-lite.json`                 | a Vega-Lite chart                                 |
 
 The header names the file instead of the language, as a button that opens it
 in the editor; the toggle, the copy and the menu are the kind's. An image of
@@ -1763,14 +1766,34 @@ open.
   cannot be read back is refused and the running one goes on. The adapter
   drops what the conversation held (`session-switched`), draws the past, and
   greets the new CLI.
-- **Codex**: `thread/resume` for the other thread on the same app-server. Its
-  answer replaces the conversation with that thread's turns, and the next
-  turn starts on it. A refusal is a notice, and the conversation stays where
-  it was.
+- **Codex**: the host starts app-server again, and the new server's
+  handshake opens the other thread (`thread/resume`), with
+  `{"type":"devhub_resume","session":<thread id>}` in the journal between the
+  two servers. Its answer replaces the conversation with that thread's turns,
+  and the next turn starts on it. A refusal is a notice, and the new server
+  goes on with the thread the conversation was on. It is not `thread/resume`
+  on the server already running, as it once was: app-server keeps a thread
+  it has open loaded after its client goes on with another one, and with it
+  the thread's writer lock, so the thread left could not be reopened by any
+  other Codex process — another Agent, `codex resume` in a terminal — while
+  this Agent ran (below).
 
 Either way it is in the journal, so a restart of DevHub replays to the same
 conversation. The Agent's recorded profile still names what it was launched
 with; the conversation's session is the one Continue in terminal resumes.
+
+**One Codex process writes a thread.** Codex (0.166) keeps one writer per
+thread across processes: the process that opens a thread holds an OS lock on
+`$CODEX_HOME/thread-writer-locks/<thread id>.lock` until it unloads the thread
+or exits (`codex-rs/rollout/src/writer_lock.rs`), and every other process is
+refused the thread with _thread … already has an active writer_. The lock
+goes with its process — a lock file left behind holds nothing — so nothing on
+disk is ever removed for it. A Codex terminal falls back to showing such a
+thread read-only, so its `exit` frees nothing. A GUI Agent's app-server holds
+only the thread it is on (and that thread's subagents), and Stop ends it
+(the hang-up tmux sends, which a stdio app-server does not catch). A GUI
+Agent refused a thread another process holds says so, and what to do: close
+it there, then **Try again**.
 
 ## Restarting the session
 
