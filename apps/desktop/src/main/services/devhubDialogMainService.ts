@@ -84,6 +84,19 @@ export class DevHubDialogMainService extends DialogMainService {
 		const surfaceKey = view
 			? appController().editorSurfaceKeyForView(view.id)
 			: undefined;
+		if (
+			surfaceKey !== undefined &&
+			appController().workbenchQuestionsUnattended(surfaceKey)
+		) {
+			// A command line is closing this workbench (`devhub --tell
+			// workspace close`) and nobody is there to answer: its own cancel,
+			// so a refused unload stops the close and nothing goes on screen.
+			return Promise.resolve({
+				response:
+					options.cancelId ?? Math.max(0, (options.buttons?.length ?? 1) - 1),
+				checkboxChecked: false,
+			});
+		}
 		if (view && surfaceKey !== undefined) {
 			return askWorkbenchDialog(options, surfaceKey, view);
 		}

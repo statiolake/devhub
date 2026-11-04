@@ -53,6 +53,24 @@ export type TellCommand =
 			readonly worktree?: string;
 	  }
 	| {
+			/**
+			 * The window's Close Workspace, every question its sheets ask given
+			 * as a flag (`tell/windowActs.ts`, `closeAsTheWindowDoes`).
+			 */
+			readonly verb: "workspace-close";
+			readonly workspace: string;
+			/** A worktree Workspace's folder: kept, or removed. */
+			readonly worktree?: "keep" | "remove";
+			/** Busy agents stop with it. */
+			readonly agents?: "stop";
+			/** Running terminals end with it. */
+			readonly terminals?: "close";
+			/** Unsaved editors' changes are thrown away. */
+			readonly discardUnsaved: boolean;
+	  }
+	/** One Workspace with its Issue, pull request, review and CI facts. */
+	| { readonly verb: "workspace-status"; readonly workspace: string }
+	| {
 			readonly verb: "agents";
 			readonly workspace?: string;
 			/** Only the agents carrying every one of these (`--meta KEY=VALUE`). */
@@ -236,7 +254,14 @@ says which flags, and their values.
 
 workspaces
   workspaces                       list open workspaces: id, name, path,
-                                   machine, branch, worktree, Issue
+                                   machine, branch, worktree, Issue, pull
+                                   request, unresolved review conversations,
+                                   CI (--json: the row tooltip's facts under
+                                   "github", null when unknown, and fetchedAt)
+  workspace status <w>             one workspace in detail: branch, worktree,
+                                   Issue (number, title, state, url), pull
+                                   request (and draft), unresolved
+                                   conversations, CI counts, and as of when
   workspace open <path> [--worktree <branch>]
                                    open a folder as a workspace (Cmd+Q f);
                                    with --worktree, open (making it if needed)
@@ -245,6 +270,20 @@ workspaces
                                    number, like 123-fix-login. Without it,
                                    <path> itself: nothing here reads a
                                    setting
+  workspace close <w> [--worktree keep|remove] [--agents stop]
+                      [--terminals close] [--discard-unsaved]
+                                   Close Workspace, as the window does. Each
+                                   question its sheets would ask is a flag,
+                                   required when it applies: --worktree for a
+                                   worktree workspace (remove deletes the
+                                   folder), --agents stop for busy agents,
+                                   --terminals close for running terminals,
+                                   --discard-unsaved for unsaved editors
+                                   (named). Missing one: nothing is closed,
+                                   and the open ones are listed. Not Scratch,
+                                   not your own workspace. If it was selected,
+                                   the window selects the next row, as when a
+                                   person closes it; nothing else moves
 
 agents
   profiles                         the agent profiles, as the agent picker
@@ -398,8 +437,9 @@ session id from 'sessions' (or a unique prefix of one).
 No --tell command puts a picker or a sheet up in the window, and none but
 'focus' (and an explicit --focus) changes what the window selects or shows,
 moves its keyboard or brings it to the front: what a command makes appears
-in the Sidebar, unselected. Where the window would ask, the command takes
-the answer as an argument.
+in the Sidebar, unselected (a closed workspace that was selected is the one
+exception: its row is gone, and the window selects the next). Where the
+window would ask, the command takes the answer as an argument.
 
 The few defaults left are fixed, never read from settings: agent read
 --last 20, agent wait --until any --timeout 300, sessions --limit 20, and
@@ -592,8 +632,13 @@ function parseVerb(args: readonly string[]): TellCommand {
 			positionals(readFlags(args.slice(1), NO_FLAGS), []);
 			return { verb: "skill" };
 		case "workspace": {
+			if (sub === "status") {
+				const [workspace] = positionals(readFlags(rest, NO_FLAGS), ["<w>"]);
+				return { verb: "workspace-status", workspace: workspace! };
+			}
+			if (sub === "close") return parseWorkspaceClose(rest);
 			if (sub !== "open")
-				throw new Refusal("workspace takes one subcommand: open.");
+				throw new Refusal("workspace takes: open, close, status.");
 			const flags = readFlags(rest, { values: ["--worktree"], switches: [] });
 			const [path] = positionals(flags, ["<path>"]);
 			const worktree = one(flags, "--worktree");
@@ -716,6 +761,37 @@ function parseVerb(args: readonly string[]): TellCommand {
 				`${JSON.stringify(head)} is not a --tell subcommand. Run 'devhub --tell help'.`,
 			);
 	}
+}
+
+/** One of `allowed`, or refused naming them. */
+function oneOf<T extends string>(
+	flags: Flags,
+	name: string,
+	allowed: readonly T[],
+): T | undefined {
+	const value = one(flags, name);
+	if (value === undefined) return undefined;
+	if (!(allowed as readonly string[]).includes(value))
+		throw new Refusal(`${name} takes ${allowed.join(" or ")}.`);
+	return value as T;
+}
+
+function parseWorkspaceClose(rest: readonly string[]): TellCommand {
+	const flags = readFlags(rest, {
+		values: ["--worktree", "--agents", "--terminals"],
+		switches: ["--discard-unsaved"],
+	});
+	const [workspace] = positionals(flags, ["<w>"]);
+	return {
+		verb: "workspace-close",
+		workspace: workspace!,
+		discardUnsaved: flags.switches.has("--discard-unsaved"),
+		...defined({
+			worktree: oneOf(flags, "--worktree", ["keep", "remove"] as const),
+			agents: oneOf(flags, "--agents", ["stop"] as const),
+			terminals: oneOf(flags, "--terminals", ["close"] as const),
+		}),
+	};
 }
 
 function parseAgent(
@@ -1136,6 +1212,36 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				path: absolute(record, "path"),
 				...optionalText(record, "worktree"),
 			};
+		case "workspace-status":
+			return {
+				verb: "workspace-status",
+				workspace: text(record, "workspace"),
+			};
+		case "workspace-close": {
+			if (typeof record["discardUnsaved"] !== "boolean")
+				throw new Error("a tell command's discardUnsaved must be a boolean");
+			const only = <T extends string>(key: string, allowed: readonly T[]) => {
+				const value = record[key];
+				if (value === undefined) return {};
+				if (!(allowed as readonly unknown[]).includes(value))
+					throw new Error(
+						`a tell command's ${key} must be ${allowed.join(" or ")}`,
+					);
+				return { [key]: value as T };
+			};
+			return {
+				verb: "workspace-close",
+				workspace: text(record, "workspace"),
+				discardUnsaved: record["discardUnsaved"],
+				...(only("worktree", ["keep", "remove"] as const) as {
+					worktree?: "keep" | "remove";
+				}),
+				...(only("agents", ["stop"] as const) as { agents?: "stop" }),
+				...(only("terminals", ["close"] as const) as {
+					terminals?: "close";
+				}),
+			};
+		}
 		case "agents":
 			return {
 				verb: "agents",

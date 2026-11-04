@@ -18,6 +18,7 @@ import type {
 	Usage,
 } from "../../../model/conversation.js";
 import type { PastSession } from "../../agent/conversation/resume.js";
+import type { WorkspaceRepositoryWire } from "../../../ipc/contract.js";
 import {
 	TELL_USAGE,
 	type AgentWaitUntil,
@@ -86,7 +87,150 @@ export interface TellWorkspace {
 	/** The dev container the editor is attached to, when it is. */
 	readonly container: string | undefined;
 	readonly agents: readonly TellAgent[];
+	/** Its Issue, pull request, review and CI, as the Sidebar row's tooltip has them. */
+	readonly review: TellReview;
 }
+
+/**
+ * What a Workspace's branch is about on GitHub: the facts the Sidebar row's
+ * tooltip shows (`rowDescription.ts`), from the same projection
+ * (`RepositoryStatusWire`) and nothing fetched for the command line. A
+ * stable shape: every field is there, null when DevHub does not know it.
+ */
+export interface TellReview {
+	/** The Issue the branch names, as GitHub last answered. */
+	readonly issue: {
+		readonly number: number;
+		readonly title: string;
+		readonly url: string;
+		readonly state: "open" | "closed";
+	} | null;
+	/** The pull request out from the branch (the live one, if several). */
+	readonly pullRequest: {
+		readonly number: number;
+		readonly title: string;
+		readonly url: string;
+		readonly state: "open" | "closed" | "merged";
+		readonly draft: boolean;
+	} | null;
+	/**
+	 * Its review conversations nobody has resolved. `uncounted`: threads past
+	 * the page the count was read from (nought under a hundred), so
+	 * `unresolved` is then a lower bound. Null without a pull request.
+	 */
+	readonly conversations: {
+		readonly unresolved: number;
+		readonly uncounted: number;
+	} | null;
+	/**
+	 * Its CI on the head commit: GitHub's rollup verdict, and how many of
+	 * `total` checks fail and have not finished. `passedOrSkipped` is the rest:
+	 * DevHub does not count passed apart from skipped or neutral. Null when
+	 * nothing has reported on that commit (or there is no pull request).
+	 */
+	readonly checks: {
+		readonly state: "passing" | "failing" | "pending";
+		readonly total: number;
+		readonly failing: number;
+		readonly pending: number;
+		readonly passedOrSkipped: number;
+	} | null;
+	/** The branch names this Issue, and GitHub has not answered about it yet. */
+	readonly pendingIssue: number | null;
+	/** Why DevHub cannot say what the branch is about (GitHub's or git's words). */
+	readonly unavailable: string | null;
+	/** When DevHub last finished a look at this Workspace (git and GitHub). */
+	readonly fetchedAt: string | null;
+	/** Why the last look was incomplete, if it was: what is shown may be older. */
+	readonly stale: string | null;
+}
+
+/** `TellReview` from the Sidebar's projection of one Workspace. */
+export function tellReview(
+	repository: WorkspaceRepositoryWire | undefined,
+	fetchedAt: string | undefined,
+	stale: string | undefined,
+): TellReview {
+	const issue = repository?.issue;
+	const pullRequest = repository?.pullRequest;
+	const checks = pullRequest?.checks;
+	return {
+		issue:
+			issue === undefined
+				? null
+				: {
+						number: issue.number,
+						title: issue.title,
+						url: issue.url,
+						state: issue.state,
+					},
+		pullRequest:
+			pullRequest === undefined
+				? null
+				: {
+						number: pullRequest.number,
+						title: pullRequest.title,
+						url: pullRequest.url,
+						state: pullRequest.state === "draft" ? "open" : pullRequest.state,
+						draft: pullRequest.state === "draft",
+					},
+		conversations:
+			pullRequest === undefined ? null : { ...pullRequest.conversations },
+		checks:
+			checks === undefined
+				? null
+				: {
+						state: checks.state,
+						total: checks.total,
+						failing: checks.failing,
+						pending: checks.pending,
+						passedOrSkipped: Math.max(
+							0,
+							checks.total - checks.failing - checks.pending,
+						),
+					},
+		pendingIssue: repository?.pending?.number ?? null,
+		unavailable: repository?.unavailable?.reason ?? null,
+		fetchedAt: fetchedAt ?? null,
+		stale: stale ?? null,
+	};
+}
+
+/** `workspace close`'s answers to the window's questions, as flags. */
+export interface TellCloseAnswers {
+	/** The worktree folder: kept, or removed (the window's two answers). */
+	readonly worktree: "keep" | "remove" | undefined;
+	/** Busy agents: stopped with the close. */
+	readonly agents: "stop" | undefined;
+	/** Running terminals: ended with the close. */
+	readonly terminals: "close" | undefined;
+	/** Unsaved editors: their changes discarded. */
+	readonly discardUnsaved: boolean;
+}
+
+/** One question the window would ask about a close, as the flag that answers it. */
+export interface TellCloseQuestion {
+	readonly flag: string;
+	/** Its values; empty for a switch. */
+	readonly values: readonly string[];
+	readonly why: string;
+}
+
+/** What `workspace close` came to. */
+export type TellClosed =
+	| {
+			readonly kind: "closed";
+			/** `none`: not a worktree; `kept` or `removed`: its folder. */
+			readonly worktree: "none" | "kept" | "removed";
+			readonly busyTerminalProcesses: number;
+			/** The unsaved editors whose changes were discarded. */
+			readonly discarded: readonly string[];
+	  }
+	| {
+			/** Nothing was done: these are open. */
+			readonly kind: "questions";
+			readonly questions: readonly TellCloseQuestion[];
+	  };
 
 /** One GUI Agent's conversation, as far as a command line reaches into it. */
 export interface TellConversation {
@@ -295,6 +439,16 @@ export interface TellPorts {
 	stopAgent(agentId: string): Promise<TellStopped>;
 	/** Restart Session, as the row menu does (`restart_agent`), likewise. */
 	restartAgent(agentId: string): Promise<{ readonly busy: boolean }>;
+	/**
+	 * Close Workspace, as the window does (`tell/windowActs.ts`): every
+	 * question its sheets ask answered by `answers`, or nothing done and the
+	 * open ones answered back. Never draws a sheet or moves the selection
+	 * itself; the model's own rule picks the next row when it was selected.
+	 */
+	closeWorkspace(
+		workspaceId: string,
+		answers: TellCloseAnswers,
+	): Promise<TellClosed>;
 	/** The agent picker's earlier sessions of a profile, for a Workspace. */
 	pastSessions(
 		workspaceId: string,
@@ -641,6 +795,10 @@ export class TellService {
 				return this.listWorkspaces();
 			case "workspace-open":
 				return this.openWorkspace(command.path, command.worktree, caller);
+			case "workspace-close":
+				return this.closeWorkspace(command);
+			case "workspace-status":
+				return this.workspaceStatus(command.workspace);
 			case "agents":
 				return this.listAgents(command.workspace, command.meta);
 			case "profiles":
@@ -939,7 +1097,7 @@ export class TellService {
 				workspace.worktreeOf === undefined
 					? undefined
 					: `worktree of ${workspace.worktreeOf}`,
-				workspace.issue,
+				...reviewFacts(workspace),
 				workspace.container === undefined
 					? undefined
 					: `container ${workspace.container}`,
@@ -950,11 +1108,117 @@ export class TellService {
 		return {
 			message:
 				lines.length === 0 ? "No workspaces are open." : lines.join("\n"),
+			data: { workspaces: workspaces.map(workspaceRow) },
+		};
+	}
+
+	/** `workspace status W`: one Workspace, its branch's GitHub facts in full. */
+	private workspaceStatus(name: string): TellAnswer {
+		const workspace = this.workspace(name);
+		const { review } = workspace;
+		const lines = [
+			`${workspace.scratch ? "Scratch" : workspace.name} (${workspace.id})  ${workspace.root}${workspace.machine === "local" ? "" : `  on ${workspace.machine}`}${workspace.selected ? "  [selected]" : ""}`,
+			`branch: ${workspace.branch ?? "none (not a repository, or not read yet)"}`,
+			...(workspace.worktreeOf === undefined
+				? []
+				: [`worktree of: ${workspace.worktreeOf}`]),
+			review.issue !== null
+				? `Issue #${String(review.issue.number)} (${review.issue.state}): ${review.issue.title}  ${review.issue.url}`
+				: review.pendingIssue !== null
+					? `Issue #${String(review.pendingIssue)}: GitHub has not answered yet`
+					: "Issue: none",
+			review.pullRequest === null
+				? "pull request: none"
+				: `pull request #${String(review.pullRequest.number)} (${review.pullRequest.draft ? "draft" : review.pullRequest.state}): ${review.pullRequest.title}  ${review.pullRequest.url}`,
+			...(review.conversations === null
+				? []
+				: [`review: ${conversationsText(review.conversations)}`]),
+			...(review.pullRequest === null
+				? []
+				: [
+						review.checks === null
+							? "CI: nothing has reported on its head commit"
+							: `CI: ${review.checks.state} - ${String(review.checks.failing)} failing, ${String(review.checks.pending)} pending, ${String(review.checks.passedOrSkipped)} passed or skipped, of ${String(review.checks.total)}`,
+					]),
+			...(review.unavailable === null
+				? []
+				: [`unknown: ${review.unavailable}`]),
+			`as of: ${review.fetchedAt ?? "DevHub has not finished a look at it yet"}${review.stale === null ? "" : ` (the last look was incomplete: ${review.stale})`}`,
+		];
+		return { message: lines.join("\n"), data: workspaceRow(workspace) };
+	}
+
+	/**
+	 * `workspace close W`: Close Workspace, with every question the window
+	 * would ask answered by a flag. Not your own: that would stop you.
+	 */
+	private async closeWorkspace(
+		command: Extract<TellCommand, { verb: "workspace-close" }>,
+	): Promise<TellAnswer> {
+		const workspace = this.workspace(command.workspace);
+		if (workspace.scratch)
+			throw new Error(
+				"Scratch cannot be closed: it is today's folder, and the window has no close for it.",
+			);
+		const caller = this.caller;
+		if (caller !== undefined && caller.paneless !== true) {
+			const own =
+				caller.workspaceId ??
+				this.ports.workspaces().find((each) => each.scratch)?.id;
+			if (own === workspace.id)
+				throw new Error(
+					`you run in ${workspace.name} (${workspace.id}): closing it would stop you${caller.agentId === undefined ? " (this terminal)" : ""}. Ask the person, or an agent in another workspace, to close it.`,
+				);
+		}
+		const closed = await this.ports.closeWorkspace(workspace.id, {
+			worktree: command.worktree,
+			agents: command.agents,
+			terminals: command.terminals,
+			discardUnsaved: command.discardUnsaved,
+		});
+		if (closed.kind === "questions")
+			throw new Error(
+				[
+					`${workspace.name} (${workspace.id}) was not closed: the window would ask ${closed.questions.length === 1 ? "this" : "these"}, so pass the answer${closed.questions.length === 1 ? "" : "s"}:`,
+					...closed.questions.map(
+						(question) =>
+							`  ${question.flag}${question.values.length === 0 ? "" : ` ${question.values.join("|")}`}  - ${question.why}`,
+					),
+				].join("\n"),
+			);
+		const after = this.ports.workspaces();
+		const next = after.find((each) => each.selected);
+		const agents = workspace.agents.map((agent) => agent.id);
+		const facts = [
+			agents.length === 0
+				? undefined
+				: `stopped ${String(agents.length)} agent${agents.length === 1 ? "" : "s"} (${workspace.agents.map((agent) => agent.name).join(", ")})`,
+			closed.busyTerminalProcesses === 0
+				? undefined
+				: `ended ${String(closed.busyTerminalProcesses)} running terminal process${closed.busyTerminalProcesses === 1 ? "" : "es"}`,
+			closed.discarded.length === 0
+				? undefined
+				: `discarded unsaved changes in ${closed.discarded.join(", ")}`,
+			closed.worktree === "removed"
+				? `removed the worktree ${workspace.root}`
+				: closed.worktree === "kept"
+					? `kept the worktree ${workspace.root} on disk`
+					: undefined,
+		].filter((fact) => fact !== undefined);
+		const selection = workspace.selected
+			? ` It was selected, so the window selected the next row, as when a person closes it: ${next === undefined ? "none" : `${next.scratch ? "Scratch" : next.name} (${next.id})`}.`
+			: "";
+		return {
+			message: `Closed ${workspace.name} (${workspace.id})${facts.length === 0 ? "" : `: ${facts.join("; ")}`}.${selection}`,
 			data: {
-				workspaces: workspaces.map(({ agents, ...workspace }) => ({
-					...workspace,
-					agents: agents.map((agent) => agent.id),
-				})),
+				workspaceId: workspace.id,
+				closed: true,
+				worktree: closed.worktree,
+				stoppedAgents: agents,
+				busyTerminalProcesses: closed.busyTerminalProcesses,
+				discarded: closed.discarded,
+				wasSelected: workspace.selected,
+				selected: workspace.selected && next !== undefined ? next.id : null,
 			},
 		};
 	}
@@ -2175,6 +2439,51 @@ function newsLine(news: {
 /** `agent status`, as lines of text. */
 /** `--action none`: start the agent and tell it nothing. */
 export const NO_ACTION = "none";
+
+/** A Workspace as `workspaces --json` and `workspace status --json` give it: one schema. */
+function workspaceRow({ agents, review, ...workspace }: TellWorkspace) {
+	return {
+		...workspace,
+		agents: agents.map((agent) => agent.id),
+		/** `issue` above is the URL the branch's number makes; this is GitHub's answer. */
+		github: review,
+	};
+}
+
+function conversationsText(conversations: {
+	readonly unresolved: number;
+	readonly uncounted: number;
+}): string {
+	const { unresolved, uncounted } = conversations;
+	const count = uncounted > 0 ? `${String(unresolved)}+` : String(unresolved);
+	return `${count} unresolved conversation${unresolved === 1 && uncounted === 0 ? "" : "s"}`;
+}
+
+/** The row's GitHub facts, short, for the `workspaces` list. */
+function reviewFacts(
+	workspace: TellWorkspace,
+): readonly (string | undefined)[] {
+	const { review } = workspace;
+	const pr = review.pullRequest;
+	return [
+		review.issue !== null
+			? `Issue #${String(review.issue.number)} ${review.issue.state}`
+			: review.pendingIssue !== null
+				? `Issue #${String(review.pendingIssue)} (asking GitHub)`
+				: workspace.issue,
+		pr === null
+			? undefined
+			: `PR #${String(pr.number)} ${pr.draft ? "draft" : pr.state}`,
+		review.conversations === null || review.conversations.unresolved === 0
+			? undefined
+			: conversationsText(review.conversations),
+		review.checks === null
+			? undefined
+			: review.checks.state === "passing"
+				? "CI passing"
+				: `CI ${review.checks.state} (${String(review.checks.state === "failing" ? review.checks.failing : review.checks.pending)} of ${String(review.checks.total)})`,
+	];
+}
 
 /** Every missing or wrong choice of one command, refused together and before anything runs. */
 function refuseMissing(missing: readonly string[]): void {

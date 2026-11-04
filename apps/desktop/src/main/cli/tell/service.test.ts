@@ -19,7 +19,10 @@ import {
 	callerFromOrigin,
 	tellCaller,
 	questionAnswer,
+	tellReview,
 	TellService,
+	type TellCloseAnswers,
+	type TellClosed,
 	type IssueAssignRequest,
 	type TellCaller,
 	type TellAgent,
@@ -68,6 +71,7 @@ function workspace(overrides: Partial<TellWorkspace> = {}): TellWorkspace {
 		issue: undefined,
 		container: undefined,
 		agents: [agent()],
+		review: tellReview(undefined, undefined, undefined),
 		...overrides,
 	};
 }
@@ -400,6 +404,31 @@ class FakePorts implements TellPorts {
 		return this.stopped instanceof Error
 			? Promise.reject(this.stopped)
 			: Promise.resolve(this.stopped);
+	}
+	/** What Close Workspace answers; a close that went removes the row. */
+	closed: TellClosed | Error = {
+		kind: "closed",
+		worktree: "none",
+		busyTerminalProcesses: 0,
+		discarded: [],
+	};
+	closeWorkspace(workspaceId: string, answers: TellCloseAnswers) {
+		this.calls.push(`close ${workspaceId} ${JSON.stringify(answers)}`);
+		if (this.closed instanceof Error) return Promise.reject(this.closed);
+		if (this.closed.kind === "closed") {
+			// The model's rule: the next row takes the selection.
+			const wasSelected = this.spaces.find(
+				(one) => one.id === workspaceId,
+			)?.selected;
+			this.spaces = this.spaces
+				.filter((one) => one.id !== workspaceId)
+				.map((one, index) =>
+					wasSelected === true && index === 0
+						? { ...one, selected: true }
+						: one,
+				);
+		}
+		return Promise.resolve(this.closed);
 	}
 	restarted: { busy: boolean } | Error = { busy: false };
 	restartAgent(agentId: string) {
@@ -1280,6 +1309,336 @@ describe("agent stop and agent restart", () => {
 		await expect(
 			viaSocket(service, ["agent", "stop", "nobody"], coordinator),
 		).rejects.toThrow(/no agent is called/);
+	});
+});
+
+describe("workspace close", () => {
+	const answered = (answers: Partial<TellCloseAnswers> = {}) =>
+		JSON.stringify({
+			worktree: undefined,
+			agents: undefined,
+			terminals: undefined,
+			discardUnsaved: false,
+			...answers,
+		});
+
+	it("closes through the window's close with every flag passed, and says what happened", async () => {
+		const { service, ports } = setup();
+		ports.closed = {
+			kind: "closed",
+			worktree: "removed",
+			busyTerminalProcesses: 2,
+			discarded: ["main.ts"],
+		};
+		const answer = await viaSocket(
+			service,
+			[
+				"workspace",
+				"close",
+				"app",
+				"--worktree",
+				"remove",
+				"--agents",
+				"stop",
+				"--terminals",
+				"close",
+				"--discard-unsaved",
+			],
+			coordinator,
+		);
+		expect(ports.calls).toEqual([
+			`close w1 ${JSON.stringify({ worktree: "remove", agents: "stop", terminals: "close", discardUnsaved: true })}`,
+		]);
+		expect(answer.message).toBe(
+			"Closed app (w1): stopped 1 agent (Claude 1); ended 2 running terminal processes; discarded unsaved changes in main.ts; removed the worktree /src/app. It was selected, so the window selected the next row, as when a person closes it: Scratch (scratch-id).",
+		);
+		expect(answer.data).toEqual({
+			workspaceId: "w1",
+			closed: true,
+			worktree: "removed",
+			stoppedAgents: ["aaaa1111-0000"],
+			busyTerminalProcesses: 2,
+			discarded: ["main.ts"],
+			wasSelected: true,
+			selected: "scratch-id",
+		});
+		// Focus, selection and the window are the close's own business: no
+		// focus call, nothing else.
+		expect(ports.calls.some((call) => call.startsWith("focus"))).toBe(false);
+	});
+
+	it("says nothing about the selection when the closed one was not selected", async () => {
+		const { service, ports } = setup();
+		ports.spaces = [
+			...ports.spaces,
+			workspace({
+				id: "w2",
+				name: "other",
+				root: "/src/other",
+				selected: false,
+				agents: [],
+			}),
+		];
+		const answer = await viaSocket(
+			service,
+			["workspace", "close", "w2"],
+			coordinator,
+		);
+		expect(answer.message).toBe("Closed other (w2).");
+		expect(answer.data).toMatchObject({ wasSelected: false, selected: null });
+		expect(ports.spaces.find((one) => one.id === "w1")?.selected).toBe(true);
+	});
+
+	it("refuses with every open question and its values, having closed nothing", async () => {
+		const { service, ports } = setup();
+		ports.closed = {
+			kind: "questions",
+			questions: [
+				{
+					flag: "--worktree",
+					values: ["keep", "remove"],
+					why: "app is a worktree",
+				},
+				{ flag: "--agents", values: ["stop"], why: "busy agents: 1" },
+				{ flag: "--terminals", values: ["close"], why: "terminals running" },
+				{
+					flag: "--discard-unsaved",
+					values: [],
+					why: "unsaved editors: a.ts, b.ts",
+				},
+			],
+		};
+		const before = ports.spaces;
+		await expect(
+			viaSocket(service, ["workspace", "close", "w1"], coordinator),
+		).rejects.toThrow(
+			[
+				"app (w1) was not closed: the window would ask these, so pass the answers:",
+				"  --worktree keep|remove  - app is a worktree",
+				"  --agents stop  - busy agents: 1",
+				"  --terminals close  - terminals running",
+				"  --discard-unsaved  - unsaved editors: a.ts, b.ts",
+			].join("\n"),
+		);
+		expect(ports.spaces).toBe(before);
+		expect(ports.calls).toEqual([`close w1 ${answered()}`]);
+	});
+
+	it("refuses closing the caller's own workspace, and Scratch, before asking the window", async () => {
+		const { service, ports } = setup();
+		await expect(
+			viaSocket(
+				service,
+				["workspace", "close", "w1", "--agents", "stop"],
+				self,
+			),
+		).rejects.toThrow(/you run in app \(w1\): closing it would stop you/);
+		await expect(
+			viaSocket(
+				service,
+				["workspace", "close", "w1"],
+				callerFromOrigin("local\tw1\tnone"),
+			),
+		).rejects.toThrow(/would stop you \(this terminal\)/);
+		await expect(
+			viaSocket(service, ["workspace", "close", "scratch"], undefined),
+		).rejects.toThrow(/Scratch cannot be closed/);
+		expect(ports.calls).toEqual([]);
+	});
+
+	it("passes the window's refusal on in its words", async () => {
+		const { service, ports } = setup();
+		ports.closed = new Error(
+			"the close stopped at its worktree step (cleanup_failed: fatal: contains modified files); the workspace is still open",
+		);
+		await expect(
+			viaSocket(
+				service,
+				["workspace", "close", "w1", "--worktree", "keep"],
+				coordinator,
+			),
+		).rejects.toThrow(/stopped at its worktree step/);
+	});
+
+	it("takes only the values the window's answers have", () => {
+		for (const [argv, refusal] of [
+			[
+				["workspace", "close", "w1", "--worktree", "stash"],
+				"--worktree takes keep or remove.",
+			],
+			[
+				["workspace", "close", "w1", "--agents", "keep"],
+				"--agents takes stop.",
+			],
+			[
+				["workspace", "close", "w1", "--terminals", "detach"],
+				"--terminals takes close.",
+			],
+			[["workspace", "close"], "missing <w>."],
+			[
+				["workspace", "close", "w1", "--force"],
+				"--force is not an option here.",
+			],
+		] as const)
+			expect(parseTellArguments(argv)).toEqual({
+				kind: "invalid",
+				message: refusal,
+			});
+	});
+});
+
+describe("workspace PR and review facts", () => {
+	const repository = {
+		workspaceId: "w1",
+		branch: "12-fix",
+		issue: {
+			url: "https://github.com/o/r/issues/12",
+			number: 12,
+			title: "Fix login",
+			state: "open" as const,
+		},
+		pullRequest: {
+			number: 34,
+			url: "https://github.com/o/r/pull/34",
+			title: "Fix the login",
+			state: "draft" as const,
+			conversations: { unresolved: 3, uncounted: 0 },
+			checks: { state: "failing" as const, total: 10, failing: 2, pending: 1 },
+		},
+	};
+	const github = {
+		issue: {
+			number: 12,
+			title: "Fix login",
+			url: "https://github.com/o/r/issues/12",
+			state: "open",
+		},
+		pullRequest: {
+			number: 34,
+			title: "Fix the login",
+			url: "https://github.com/o/r/pull/34",
+			state: "open",
+			draft: true,
+		},
+		conversations: { unresolved: 3, uncounted: 0 },
+		checks: {
+			state: "failing",
+			total: 10,
+			failing: 2,
+			pending: 1,
+			passedOrSkipped: 7,
+		},
+		pendingIssue: null,
+		unavailable: null,
+		fetchedAt: "2026-11-04T10:00:00.000Z",
+		stale: null,
+	};
+
+	function withFacts() {
+		const fresh = setup();
+		fresh.ports.spaces = fresh.ports.spaces.map((space) =>
+			space.id === "w1"
+				? {
+						...space,
+						issue: "https://github.com/o/r/issues/12",
+						review: tellReview(
+							repository,
+							"2026-11-04T10:00:00.000Z",
+							undefined,
+						),
+					}
+				: space,
+		);
+		return fresh;
+	}
+
+	it("are null where nothing is known, in a stable shape", () => {
+		expect(tellReview(undefined, undefined, undefined)).toEqual({
+			issue: null,
+			pullRequest: null,
+			conversations: null,
+			checks: null,
+			pendingIssue: null,
+			unavailable: null,
+			fetchedAt: null,
+			stale: null,
+		});
+		expect(
+			tellReview(
+				{ workspaceId: "w1", branch: "12-fix", pending: { number: 12 } },
+				undefined,
+				"gh is not installed",
+			),
+		).toMatchObject({ pendingIssue: 12, stale: "gh is not installed" });
+		expect(
+			tellReview(
+				{
+					workspaceId: "w1",
+					pullRequest: {
+						...repository.pullRequest,
+						state: "merged",
+						checks: undefined,
+					},
+				},
+				undefined,
+				undefined,
+			),
+		).toMatchObject({
+			pullRequest: { state: "merged", draft: false },
+			checks: null,
+		});
+	});
+
+	it("are in workspaces --json under github, and in its text", async () => {
+		const { service } = withFacts();
+		const answer = await viaSocket(
+			service,
+			["--json", "workspaces"],
+			undefined,
+		);
+		expect(answer.data).toMatchObject({
+			workspaces: [
+				{
+					id: "w1",
+					branch: "12-fix",
+					issue: "https://github.com/o/r/issues/12",
+					github,
+				},
+				{ scratch: true, github: { issue: null, pullRequest: null } },
+			],
+		});
+		expect(answer.message).toContain(
+			"* w1  app  /src/app  (branch 12-fix, Issue #12 open, PR #34 draft, 3 unresolved conversations, CI failing (2 of 10), 1 agent)",
+		);
+	});
+
+	it("are in workspace status, in detail and as the same row", async () => {
+		const { service } = withFacts();
+		const answer = await viaSocket(
+			service,
+			["workspace", "status", "app"],
+			undefined,
+		);
+		expect(answer.message).toBe(
+			[
+				"app (w1)  /src/app  [selected]",
+				"branch: 12-fix",
+				"Issue #12 (open): Fix login  https://github.com/o/r/issues/12",
+				"pull request #34 (draft): Fix the login  https://github.com/o/r/pull/34",
+				"review: 3 unresolved conversations",
+				"CI: failing - 2 failing, 1 pending, 7 passed or skipped, of 10",
+				"as of: 2026-11-04T10:00:00.000Z",
+			].join("\n"),
+		);
+		expect(answer.data).toMatchObject({
+			id: "w1",
+			agents: ["aaaa1111-0000"],
+			github,
+		});
+		const list = await viaSocket(service, ["workspaces"], undefined);
+		expect((list.data as { workspaces: unknown[] }).workspaces[0]).toEqual(
+			answer.data,
+		);
 	});
 });
 

@@ -30,6 +30,7 @@ const parents: unknown[] = [];
 const overWorkbench: string[] = [];
 /** Which surface key each view has, or none. */
 const surfaceKeys = new Map<number, string>();
+const unattended = new Set<string>();
 
 vi.mock(
 	"code-oss-dev/out/vs/platform/dialogs/electron-main/dialogMainService.js",
@@ -62,6 +63,7 @@ vi.mock("../shell/workbenchDialogs.js", () => ({
 vi.mock("../shell/appController.js", () => ({
 	appController: () => ({
 		editorSurfaceKeyForView: (id: number) => surfaceKeys.get(id),
+		workbenchQuestionsUnattended: (key: string) => unattended.has(key),
 	}),
 }));
 vi.mock("../shell/workbenchView.js", () => ({
@@ -96,6 +98,7 @@ const service = () =>
 const asWindow = (view: FakeView) => view as unknown as Electron.BrowserWindow;
 
 beforeEach(() => {
+	unattended.clear();
 	parents.length = 0;
 	overWorkbench.length = 0;
 	surfaceKeys.clear();
@@ -107,6 +110,25 @@ describe("a dialog about a workbench", () => {
 		surfaceKeys.set(view.id, "editor:a");
 		await service().showMessageBox({ message: "save?" }, asWindow(view));
 		expect(overWorkbench).toEqual(["editor:a"]);
+		expect(parents).toEqual([]);
+	});
+
+	it("is cancelled, not drawn, while a command line closes its workspace", async () => {
+		// `devhub --tell workspace close`: nobody is there to answer, and no
+		// --tell command puts anything on screen.
+		const view = fakeView(1000009);
+		surfaceKeys.set(view.id, "workspace-editor:w1");
+		unattended.add("workspace-editor:w1");
+		const answer = await service().showMessageBox(
+			{
+				message: "save?",
+				buttons: ["Save", "Don't Save", "Cancel"],
+				cancelId: 2,
+			},
+			asWindow(view),
+		);
+		expect(answer).toEqual({ response: 2, checkboxChecked: false });
+		expect(overWorkbench).toEqual([]);
 		expect(parents).toEqual([]);
 	});
 

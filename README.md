@@ -262,8 +262,10 @@ reader, `external`. Inside DevHub `--as` is refused: the caller is its agent.
 
 ```sh
 devhub --tell skill                                   # the /devhub SKILL.md, for agents DevHub did not start
-devhub --tell workspaces                              # open workspaces: id, folder, branch, Issue, agents
+devhub --tell workspaces                              # open workspaces: id, folder, branch, worktree, Issue, PR, unresolved conversations, CI, agents
+devhub --tell workspace status W                      # one workspace's Issue, PR (draft), unresolved conversations, CI counts, as of when (--json: under "github", null when unknown)
 devhub --tell workspace open ~/src/app [--worktree 123-fix-login]   # Cmd+Q f
+devhub --tell workspace close W [--worktree keep|remove] [--agents stop] [--terminals close] [--discard-unsaved]   # Close Workspace; each question the window would ask is a required flag when it applies
 devhub --tell profiles                                # agent profiles: id, name, kind, --gui/--tui, the window's default, available (and why not)
 devhub --tell agents [--workspace W] [--meta K=V]...  # id, name, kind, status and for how long, open requests, unread, context, meta
 devhub --tell agent status A                          # one agent in detail (--json: a stable schema)
@@ -320,6 +322,17 @@ the path, or with `--worktree` that branch's worktree: no setting is read.
 The defaults left are fixed numbers (`agent read --last 20`, `agent wait
 --timeout 300`, `sessions --limit 20`) and the caller's own workspace for
 `sessions` and `agent resume`. The window keeps its settings-based defaults.
+
+**`workspace close`** is the window's Close Workspace by the same intents,
+with its sheets' questions as flags, each required only when it applies:
+`--worktree keep|remove` for a worktree DevHub deletes on close (`remove`
+on a dirty one is the sheet's Delete the worktree), `--agents stop` for
+busy agents, `--terminals close` for running terminals, `--discard-unsaved`
+for unsaved editors (named in the refusal). A call missing one closes
+nothing and lists every open question with its values. Scratch and the
+caller's own workspace are refused. Nothing is drawn and nothing is
+focused; if the closed workspace was selected, the window selects the next
+row by its own rule, as when a person closes it.
 
 **No `--tell` command takes the window.** Only `focus` (and an explicit
 `--focus`, as on `terminal open`) changes the selected Workspace or Agent,

@@ -55,8 +55,51 @@ describe("devhub --tell's arguments", () => {
 		expect(
 			told("workspace", "open", ".", "--worktree", "12-fix-login"),
 		).toEqual({ verb: "workspace-open", path: ".", worktree: "12-fix-login" });
-		expect(refusal("workspace", "close", ".")).toContain("open");
+		expect(refusal("workspace", "remove", ".")).toBe(
+			"workspace takes: open, close, status.",
+		);
 		expect(refusal("workspace", "open")).toContain("<path>");
+	});
+
+	it("reads workspace close and status, and takes them back off the socket", () => {
+		const close = told(
+			"workspace",
+			"close",
+			"app",
+			"--worktree=remove",
+			"--agents",
+			"stop",
+			"--terminals",
+			"close",
+			"--discard-unsaved",
+		);
+		expect(close).toEqual({
+			verb: "workspace-close",
+			workspace: "app",
+			worktree: "remove",
+			agents: "stop",
+			terminals: "close",
+			discardUnsaved: true,
+		});
+		expect(tellCommandFrom(JSON.parse(JSON.stringify(close)))).toEqual(close);
+		expect(told("workspace", "close", "w1")).toEqual({
+			verb: "workspace-close",
+			workspace: "w1",
+			discardUnsaved: false,
+		});
+		expect(() =>
+			tellCommandFrom({
+				verb: "workspace-close",
+				workspace: "w1",
+				discardUnsaved: false,
+				worktree: "stash",
+			}),
+		).toThrow(/worktree must be keep or remove/);
+		expect(told("workspace", "status", "w1")).toEqual({
+			verb: "workspace-status",
+			workspace: "w1",
+		});
+		expect(refusal("workspace", "status")).toBe("missing <w>.");
 	});
 
 	it("reads agent new without a workspace, for the asking pane's", () => {

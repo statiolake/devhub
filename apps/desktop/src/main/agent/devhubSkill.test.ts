@@ -146,7 +146,7 @@ describe("the /devhub skill's examples", () => {
 	/** Every example line, `devhub --tell ...`, with its comment and [optional] parts gone. */
 	const examples = devhubSkillText("/x/devhub")
 		.split("\n")
-		.filter((line) => /^ {4}devhub --tell /u.test(line))
+		.filter((line) => /^ {4,}devhub --tell /u.test(line))
 		.map((line) =>
 			line
 				.replace(/\s+# .*$/u, "")
@@ -201,5 +201,29 @@ describe("the /devhub skill's examples", () => {
 				expect(command.start).toBeDefined();
 			}
 		}
+	});
+
+	it("close a workspace in the full form, every question's flag named", () => {
+		const closes = examples
+			.map((example) =>
+				parseTellArguments(
+					shellWords(example).slice("devhub --tell".split(" ").length),
+				),
+			)
+			.flatMap((parsed) =>
+				parsed.kind === "tell" && parsed.command.verb === "workspace-close"
+					? [parsed.command]
+					: [],
+			);
+		expect(closes).toEqual([
+			{
+				verb: "workspace-close",
+				workspace: "W",
+				worktree: "keep",
+				agents: "stop",
+				terminals: "close",
+				discardUnsaved: true,
+			},
+		]);
 	});
 });

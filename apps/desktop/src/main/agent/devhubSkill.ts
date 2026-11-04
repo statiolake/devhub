@@ -175,7 +175,8 @@ goes there.
 
 ## Look around
 
-    devhub --tell workspaces                # id, name, folder, branch, Issue, agents
+    devhub --tell workspaces                # id, name, folder, branch, worktree, Issue, PR, unresolved conversations, CI, agents
+    devhub --tell --json workspace status W # one workspace: Issue, PR (draft), unresolved conversations, CI counts, fetchedAt (null: unknown)
     devhub --tell agents [--workspace W]    # id, name, kind, status, unread, open requests, meta
     devhub --tell profiles                  # agent profiles: id, kind, --gui/--tui, available
     devhub --tell issue actions             # Issue actions: id, label, wording (and none)
@@ -287,6 +288,14 @@ happens between two calls is missed - always read before waiting again.
   \`agent restart A\` starts its CLI again on the same session (stuck, or
   after a configuration change). Either one stops a running turn; you cannot
   stop or restart yourself. Prefer \`agent interrupt A\` to stop just a turn.
+- Close a workspace (as the window's Close Workspace; never your own):
+
+      devhub --tell workspace close W --worktree keep --agents stop --terminals close --discard-unsaved
+
+  Each flag answers one question the window would ask and is required when
+  it applies (\`--worktree remove\` deletes a worktree's folder). Run it
+  without them first: it closes nothing and lists the open questions; ask
+  the person before stopping their agents or discarding unsaved work.
 - \`sessions [--workspace W]\` lists earlier sessions; \`agent resume ID
   [--name N]\` goes on with one in a new GUI agent.
 - **Tag the agents you start**: \`--meta parent=YOUR_ID --meta role=reviewer\`

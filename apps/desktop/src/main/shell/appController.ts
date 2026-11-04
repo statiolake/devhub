@@ -179,6 +179,7 @@ import {
 	type ContainerTarget,
 	type EditorAttachment,
 	type UnsavedEditorsInspection,
+	type CloseInspectionInputs,
 	type Workspace,
 	type WorkspaceId,
 	type WorkspaceLocation,
@@ -539,16 +540,20 @@ import { launchCommandFor } from "../cli/launch.js";
 import type { TellCommand } from "../cli/tell/command.js";
 import {
 	tellCaller,
+	tellReview,
 	TellMemory,
 	TellService,
 	type IssueAssignRequest,
 	type TellAnswer,
+	type TellCloseAnswers,
+	type TellClosed,
 	type TellPorts,
 	type TellWorkspace,
 } from "../cli/tell/service.js";
 import {
 	restartAsTheMenuDoes,
 	stopAsTheRowDoes,
+	closeAsTheWindowDoes,
 } from "../cli/tell/windowActs.js";
 import {
 	installKeyboard,
@@ -5822,8 +5827,24 @@ export class AppController {
 		token: OperationToken,
 		workspaceId: WorkspaceId,
 	): Promise<void> {
+		const inspection = await this.closeInspection(workspaceId);
+		this.accept({
+			type: "workspace_inspection_completed",
+			token,
+			workspaceId,
+			inspection,
+		});
+	}
+
+	/**
+	 * What a close of this Workspace would ask about: the close sheet's rows.
+	 * The coordinator's inspection and `--tell workspace close` both read it.
+	 */
+	private async closeInspection(
+		workspaceId: WorkspaceId,
+	): Promise<CloseInspectionInputs> {
 		const workspace = this.coordinator.model.workspace(workspaceId);
-		const inspection = await inspectWorkspaceResources(
+		return inspectWorkspaceResources(
 			workspaceId,
 			// Only the Agents that stopping would interrupt: an idle one is not a
 			// reason to ask anything, and the close stops it on the way out. The
@@ -5832,12 +5853,6 @@ export class AppController {
 			agentsInspection(workspace?.agents ?? []),
 			await this.inspectEditors(workspaceId),
 		);
-		this.accept({
-			type: "workspace_inspection_completed",
-			token,
-			workspaceId,
-			inspection,
-		});
 	}
 
 	/**
@@ -9303,6 +9318,8 @@ export class AppController {
 				restartAsTheMenuDoes(this.cliAgent(agentId), (intent) =>
 					this.dispatchAwaiting(intent),
 				),
+			closeWorkspace: (workspaceId, answers) =>
+				this.closeWorkspaceFromCli(workspaceId, answers),
 			pastSessions: async (workspaceId, profileId) => {
 				// The agent picker's listing (`listAgentSessions`), for this place.
 				const place = workspacePlaceOf(this.cliWorkspace(workspaceId));
@@ -9355,6 +9372,73 @@ export class AppController {
 		};
 	}
 
+	/**
+	 * `--tell workspace close`: Close Workspace by the window's own intents
+	 * (`closeAsTheWindowDoes`), with the folder question decided by the same
+	 * predicate `closeWorkspaceOrWorktree` reads. Nothing is drawn: no sheet
+	 * is raised for the confirmation, and a question the workbench raises
+	 * while it unloads is answered with its own cancel (the close then stops
+	 * at its editor step, as a vetoed one does) instead of going on screen.
+	 */
+	private async closeWorkspaceFromCli(
+		workspaceId: string,
+		answers: TellCloseAnswers,
+	): Promise<TellClosed> {
+		const workspace = this.cliWorkspace(workspaceId);
+		const id = workspace.id;
+		const repository = this.lastRepositoryStatus.workspaces.find(
+			(entry) => entry.workspaceId === id,
+		);
+		const surfaceKey = `workspace-editor:${id}`;
+		this.unattendedWorkbenches.add(surfaceKey);
+		try {
+			return await closeAsTheWindowDoes(
+				{
+					id,
+					label:
+						this.snapshot()?.workspaces.find((one) => one.id === id)?.label ??
+						workspace.root,
+					scratch: id === this.coordinator.model.scratchWorkspaceId,
+					closing: workspace.close.kind === "running",
+					worktree: closingDeletesWorktree(repository, workspace.root)
+						? {
+								root: workspace.root,
+								branch: repository?.branch,
+								dirty: repository?.dirty,
+							}
+						: undefined,
+				},
+				answers,
+				{
+					dispatch: (intent) => this.dispatchAwaiting(intent),
+					inspect: () => this.closeInspection(id),
+					failure: () => {
+						const still = this.coordinator.model.workspace(id);
+						if (still === undefined) return undefined;
+						const close = still.close;
+						return close.kind === "failed"
+							? `the close stopped at its ${close.step} step (${close.diagnostic}${close.detail === undefined ? "" : `: ${close.detail}`}); the workspace is still open, and what was done before that step stays done.`
+							: "the workspace is still open: the close did not finish.";
+					},
+				},
+			);
+		} finally {
+			this.unattendedWorkbenches.delete(surfaceKey);
+		}
+	}
+
+	/**
+	 * The workbenches a command line is closing, by surface key: a question
+	 * one of them raises is nobody's to answer, so it is cancelled rather
+	 * than drawn (`DevHubDialogMainService`).
+	 */
+	private readonly unattendedWorkbenches = new Set<string>();
+
+	/** Whether a workbench's question is to be cancelled, not drawn. */
+	workbenchQuestionsUnattended(surfaceKey: string): boolean {
+		return this.unattendedWorkbenches.has(surfaceKey);
+	}
+
 	/** The model's Agent a CLI named by its id. */
 	private cliAgent(id: string): Agent {
 		const agent = this.coordinator.model.agent(parseAgentId(id));
@@ -9386,6 +9470,7 @@ export class AppController {
 			context.kind === "workspace"
 				? context.workspaceId
 				: this.coordinator.model.workspaceForAgent(context.agentId)?.id;
+		const rounds = this.repositoryStatus.rounds();
 		return snapshot.workspaces.map((workspace) => {
 			const repository = this.lastRepositoryStatus.workspaces.find(
 				(entry) => entry.workspaceId === workspace.id,
@@ -9417,6 +9502,13 @@ export class AppController {
 						? undefined
 						: `https://github.com/${issueRepository.owner}/${issueRepository.repository}/issues/${String(number)}`,
 				container: containerLabel(workspace.editor),
+				// The row tooltip's facts, from the same projection it draws.
+				review: tellReview(
+					repository,
+					rounds.find((round) => round.workspaceId === workspace.id)
+						?.lastRepositoryRound.at,
+					this.lastRepositoryStatus.diagnostic,
+				),
 				agents: workspace.agents.map((agent) => ({
 					id: agent.id,
 					name: agent.displayName,
