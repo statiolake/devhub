@@ -28,6 +28,11 @@ export class ChromeView {
 				sandbox: false,
 				contextIsolation: true,
 				nodeIntegration: false,
+				// The keyboard is placed by `ShellWindow.focusSurface` alone.
+				// Electron's default focuses a view natively on every load, so a
+				// pane made in the background (an Agent's terminal added from
+				// the CLI) would take the keyboard and the IME from the person.
+				focusOnNavigation: false,
 			},
 		});
 		// Drawn from the first frame at the window's own colour rather than at
