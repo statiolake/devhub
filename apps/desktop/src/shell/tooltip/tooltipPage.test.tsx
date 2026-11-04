@@ -17,6 +17,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { COPIED_MS, TooltipApp } from "./TooltipApp";
+import { upToDevicePixel } from "./tooltipSize";
 import type { TooltipContentWire } from "../../ipc/contract";
 
 /** A row's facts, as `rowDescription.ts` composes them. */
@@ -41,6 +42,8 @@ let opening: Promise<void> = Promise.resolve();
 /** Every failure this page raised, in order. */
 let raised: unknown[] = [];
 
+/** Every `ResizeObserver` callback the page made, in order. */
+let resized: (() => void)[] = [];
 /** Every size this page reported, in order. */
 let reported: { width: number; height: number }[] = [];
 /** The listener main's push would reach. */
@@ -76,11 +79,15 @@ beforeEach(() => {
   push = undefined;
   sizeBoxes(220, 34);
   // No `ResizeObserver` in jsdom. The page's first measurement is taken
-  // directly rather than through the observer, so a stub that never fires is
-  // enough to pin what this test is about.
+  // directly rather than through the observer; the stub keeps the callbacks
+  // so a test can say "the box resized" the way the browser would.
+  resized = [];
   vi.stubGlobal(
     "ResizeObserver",
     class {
+      constructor(callback: () => void) {
+        resized.push(callback);
+      }
       observe() {}
       disconnect() {}
     },
@@ -393,12 +400,12 @@ describe("the tooltip page", () => {
       ],
     });
     const [heading, path] = [...document.querySelectorAll(".tooltip-line")];
-    expect(heading?.textContent).toBe("api· SSH: build.example.com");
+    expect(heading?.textContent).toBe("api · SSH: build.example.com");
     expect(heading?.querySelector(".tooltip-line-qualifier")).toHaveTextContent(
       "· SSH: build.example.com",
     );
     expect(path?.textContent).toBe(
-      "~/src/widget-tooltips(worktree of ~/src/widget)",
+      "~/src/widget-tooltips (worktree of ~/src/widget)",
     );
     const buttons = path?.querySelectorAll("button.tooltip-copy") ?? [];
     expect(buttons).toHaveLength(2);
@@ -407,6 +414,200 @@ describe("the tooltip page", () => {
       expect(button).not.toHaveAttribute("title");
       expect(button).not.toHaveAttribute("data-tooltip");
     }
+  });
+
+  /**
+   * The copy button is a character of the text, not a column beside it: it
+   * follows the path's last character in the same run of words, held to it so
+   * a wrap can never leave it alone at the start of a line, and a worktree's
+   * second path has its own right after it — inside the bracket.
+   */
+  it("puts each path's copy button inline, right after the path's last character", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        {
+          text: "~/src/widget-tooltips",
+          style: "muted",
+          copy: "/Users/me/src/widget-tooltips",
+          qualifier: "(worktree of ~/src/widget)",
+          qualifierCopy: "/Users/me/src/widget",
+          qualifierCopyAfter: "~/src/widget",
+        },
+      ],
+    });
+    const line = document.querySelector(".tooltip-line")!;
+    const [own, main] = [...line.querySelectorAll("button.tooltip-copy")];
+    // Inside the path's own text, after a text node that ends the path.
+    const text = line.querySelector(".tooltip-line-text")!;
+    expect(text.textContent).toBe("~/src/widget-tooltips");
+    expect(text.contains(own!)).toBe(true);
+    expect(own!.previousSibling?.nodeType).toBe(Node.TEXT_NODE);
+    expect(own!.previousSibling?.textContent).toBe("s");
+    expect(own!.nextSibling).toBeNull();
+    expect(own!.parentElement).toHaveClass("tooltip-copy-join");
+    expect(own!.parentElement!.previousSibling?.textContent).toBe(
+      "~/src/widget-tooltip",
+    );
+    // The second path's button is in the qualifier, after "~/src/widget" and
+    // before the bracket that closes it, which is held with it.
+    const qualifier = line.querySelector(".tooltip-line-qualifier")!;
+    expect(qualifier.contains(main!)).toBe(true);
+    expect(main!.previousSibling?.textContent).toBe("t");
+    expect(main!.nextSibling?.textContent).toBe(")");
+    expect(main!.parentElement).toHaveClass("tooltip-copy-join");
+    expect(main!.parentElement!.previousSibling?.textContent).toBe(
+      "(worktree of ~/src/widge",
+    );
+    // One run of words after the mark: no flex column of its own.
+    expect(own!.closest(".tooltip-line-body")).toBe(
+      main!.closest(".tooltip-line-body"),
+    );
+  });
+
+  it("puts the button after the whole qualifier when it does not say where the path is", () => {
+    render(<TooltipApp />);
+    send({
+      lines: [
+        {
+          text: "~/a",
+          copy: "/Users/me/a",
+          qualifier: "(worktree of ~/b)",
+          qualifierCopy: "/Users/me/b",
+        },
+      ],
+    });
+    const main = document.querySelectorAll("button.tooltip-copy")[1]!;
+    expect(main.previousSibling?.textContent).toBe(")");
+    expect(main.nextSibling).toBeNull();
+  });
+
+  /**
+   * What makes it inline is the stylesheet: an inline box sized in `em`,
+   * aligned on the text, held to the last character by `nowrap`, and nothing
+   * that would make it a flex column. And the qualifier wraps — held on one
+   * line, a long path in it ran out of the box, which was a scrollbar.
+   */
+  it("styles the copy button as an inline character of the text", () => {
+    const css = readFileSync("src/shell/tooltip/tooltipPage.css", "utf8");
+    const rule = (selector: string) => {
+      const at = css.indexOf(`\n${selector} {`);
+      expect(at, selector).toBeGreaterThanOrEqual(0);
+      return css.slice(at, css.indexOf("}", at));
+    };
+    const copy = rule(".tooltip-copy");
+    expect(copy).toMatch(/display: inline(-flex)?;/u);
+    expect(copy).toMatch(/width: [\d.]+em;/u);
+    expect(copy).toMatch(/height: [\d.]+em;/u);
+    expect(copy).toMatch(/vertical-align: /u);
+    expect(copy).not.toMatch(/align-self|flex:/u);
+    expect(rule(".tooltip-copy-join")).toMatch(/white-space: nowrap;/u);
+    expect(rule(".tooltip-line-qualifier")).not.toMatch(/nowrap/u);
+    expect(rule(".tooltip-copy .sidebar-glyph")).toMatch(/width: 1em;/u);
+  });
+
+  /**
+   * The document never scrolls: the view is the box's size, rounded up, so a
+   * scrollbar could only ever be for the fraction rounding absorbs. And a box
+   * too tall for the window is capped and cut at its edge under a fade,
+   * rather than overflowing its view.
+   */
+  it("never gives the document a scrollbar", () => {
+    const css = readFileSync("src/shell/tooltip/tooltipPage.css", "utf8");
+    expect(css).toMatch(/:root,\nbody \{[^}]*overflow: hidden;/u);
+    const box = css.slice(css.indexOf("\n.tooltip-box {"));
+    const rule = box.slice(0, box.indexOf("}"));
+    expect(rule).toMatch(/display: block;/u);
+    expect(rule).toMatch(/overflow: hidden;/u);
+    expect(css).toMatch(/\.tooltip-box\[data-capped\] \{\n\s*mask-image:/u);
+  });
+
+  it("marks a box whose content is taller than its room as cut short", () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get: () => 900,
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get: () => 200,
+    });
+    try {
+      render(<TooltipApp />);
+      send({ ...FACTS, room: { width: 300, height: 200 } });
+      expect(document.querySelector(".tooltip-box")).toHaveAttribute(
+        "data-capped",
+      );
+    } finally {
+      delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+      delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+    }
+  });
+
+  it("does not mark a box that fits", () => {
+    render(<TooltipApp />);
+    send(FACTS);
+    expect(document.querySelector(".tooltip-box")).not.toHaveAttribute(
+      "data-capped",
+    );
+  });
+
+  it("wraps and caps the box to the room main gives it", () => {
+    render(<TooltipApp />);
+    send({ ...FACTS, room: { width: 300, height: 200 } });
+    const box = document.querySelector<HTMLElement>(".tooltip-box")!;
+    expect(box.style.maxHeight).toBe("200px");
+    expect(box.style.maxWidth).toBe("min(var(--tooltip-max-width), 300px)");
+  });
+
+  /** Rounded up to a whole device pixel, never to the nearest. */
+  it("rounds the size up in device pixels", () => {
+    vi.stubGlobal("devicePixelRatio", 2);
+    sizeBoxes(100.42, 57.1);
+    render(<TooltipApp />);
+    send(FACTS);
+    expect(reported.at(-1)).toEqual({ width: 100.5, height: 57.5 });
+  });
+
+  it("rounds the size up to whole pixels at a ratio of one", () => {
+    vi.stubGlobal("devicePixelRatio", 1);
+    sizeBoxes(100.42, 57.1);
+    render(<TooltipApp />);
+    send(FACTS);
+    expect(reported.at(-1)).toEqual({ width: 101, height: 58 });
+    expect(upToDevicePixel(220.0000001, 1)).toBe(220);
+    expect(upToDevicePixel(96.6041, 1.5)).toBeCloseTo(96 + 2 / 3);
+  });
+
+  /**
+   * The size follows the box, whatever changed it: the copy button turning
+   * into its check, and the box resizing under the page (fonts landing, a
+   * wrap moving). The last report is always the box as it is now.
+   */
+  it("re-measures after a state change in the box and after it resizes", async () => {
+    render(<TooltipApp />);
+    send({ lines: [{ text: "~/src/widget", copy: "/Users/me/src/widget" }] });
+    expect(reported.at(-1)).toEqual({ width: 220, height: 34 });
+    sizeBoxes(232, 34);
+    await act(async () => {
+      document
+        .querySelector("button.tooltip-copy")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    // The check is drawn, and the mutation it is re-measured on lands.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.querySelector("button.tooltip-copy")).toHaveAttribute(
+      "data-copied",
+      "true",
+    );
+    expect(reported.at(-1)).toEqual({ width: 232, height: 34 });
+    sizeBoxes(232, 51);
+    act(() => {
+      for (const callback of resized) callback();
+    });
+    expect(reported.at(-1)).toEqual({ width: 232, height: 51 });
   });
 
   /** A click copies the absolute path, and the mark is a check for a second. */

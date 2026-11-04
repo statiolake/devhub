@@ -768,12 +768,20 @@ export interface TooltipFactLineWire {
 	readonly qualifier?: string;
 	/**
 	 * The absolute path this fact's text names, when it names one: the box
-	 * draws a quiet copy button beside it that puts this on the clipboard
-	 * (`TooltipBridge.writeClipboard`). The text is `~`-abbreviated; this is not.
+	 * draws a quiet copy button inline right after it that puts this on the
+	 * clipboard (`TooltipBridge.writeClipboard`). The text is `~`-abbreviated;
+	 * this is not.
 	 */
 	readonly copy?: string;
 	/** The same, for a path the `qualifier` names. */
 	readonly qualifierCopy?: string;
+	/**
+	 * Where in the `qualifier` that path is written — the words the copy button
+	 * for `qualifierCopy` follows, so it sits right after the path it copies
+	 * (`(worktree of ~/src/widget⧉)`) rather than after the closing bracket.
+	 * Absent, or not found in the qualifier: after the whole qualifier.
+	 */
+	readonly qualifierCopyAfter?: string;
 }
 
 /**
@@ -808,6 +816,14 @@ export type GlyphNameWire = string;
 /** What the tooltip page is given to draw: the facts, and nothing else. */
 export interface TooltipContentWire {
 	readonly lines: readonly TooltipLineWire[];
+	/**
+	 * The most room the box may take, in the page's own CSS pixels: the
+	 * window's content area less the margin `tooltipRect` keeps, divided by the
+	 * page's zoom. The box wraps to this width and stops at this height rather
+	 * than growing past the window and being cut off by its own view. Absent:
+	 * no limit beyond the stylesheet's own.
+	 */
+	readonly room?: { readonly width: number; readonly height: number };
 }
 
 /**

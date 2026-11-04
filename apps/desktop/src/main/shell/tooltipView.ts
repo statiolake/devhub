@@ -70,11 +70,22 @@
  * Escape, so `ToastsView` has to hand focus back when it leaves holding it.
  */
 
-import { CHANNELS, type TooltipLineWire } from "../../ipc/contract.js";
+import {
+	CHANNELS,
+	type TooltipContentWire,
+	type TooltipLineWire,
+} from "../../ipc/contract.js";
 import { LayerView } from "./layerView.js";
-import type { LayoutRect, TooltipPlacement } from "./windowLayout.js";
+import {
+	tooltipRoom,
+	type LayoutRect,
+	type TooltipPlacement,
+} from "./windowLayout.js";
 
-/** How big the page says its box is, in the page's own pixels. */
+/**
+ * How big the page says its box is, in the page's own CSS pixels — already
+ * rounded up to whole device pixels. `setSize` turns it into the view's.
+ */
 export interface TooltipSize {
 	readonly width: number;
 	readonly height: number;
@@ -160,7 +171,7 @@ export class TooltipView {
 		// and the sentence that is going up is the one to keep.
 		this.settle();
 		this.request = request;
-		this.send({ lines: request.lines });
+		this.send({ lines: request.lines, ...this.room() });
 		this.host?.tooltipChanged();
 	}
 
@@ -232,10 +243,50 @@ export class TooltipView {
 		this.releasing = undefined;
 	}
 
-	/** The page measured its box. Zero means it is drawing nothing. */
+	/**
+	 * The page measured its box. Zero means it is drawing nothing.
+	 *
+	 * The page measures in its own CSS pixels and a view is placed in the
+	 * window's, which differ by the page's zoom. So the size is scaled by it
+	 * and rounded **up**: a view a fraction of a pixel smaller than its box is
+	 * a box that overflows its own document, and that overflow is a scrollbar.
+	 * A fraction of a pixel too large is a sliver of the window under the
+	 * box's border, which nobody can see.
+	 */
 	setSize(size: TooltipSize): void {
-		this.size = size;
+		const zoom = this.zoom();
+		this.size = {
+			width: upToWhole(size.width * zoom),
+			height: upToWhole(size.height * zoom),
+		};
 		this.host?.tooltipChanged();
+	}
+
+	/** The page's zoom: its CSS pixels per window pixel. */
+	private zoom(): number {
+		const zoom = this.contents()?.getZoomFactor() ?? 1;
+		return Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+	}
+
+	/**
+	 * The most the box may be, in the page's own pixels: the window less the
+	 * margins `tooltipRect` keeps. The page wraps and caps to it, so what it
+	 * measures is what fits and the clamp in `tooltipRect` never has to cut a
+	 * box short — which is what put a scrollbar in a tooltip taller than the
+	 * window.
+	 */
+	private room(): { room?: { width: number; height: number } } {
+		const window = this.host?.window;
+		if (!window || window.isDestroyed()) return {};
+		const [width = 0, height = 0] = window.getContentSize();
+		const room = tooltipRoom({ width, height });
+		const zoom = this.zoom();
+		return {
+			room: {
+				width: Math.floor(room.width / zoom),
+				height: Math.floor(room.height / zoom),
+			},
+		};
 	}
 
 	/**
@@ -278,11 +329,18 @@ export class TooltipView {
 		return this.layer.isShown();
 	}
 
-	private send(
-		content: { readonly lines: readonly TooltipLineWire[] } | undefined,
-	): void {
+	private send(content: TooltipContentWire | undefined): void {
 		const contents = this.contents();
 		if (!contents) return;
 		contents.send(CHANNELS.tooltipText, content);
 	}
+}
+
+/**
+ * Up to a whole pixel, forgiving the float noise a product picks up: 220 × 1
+ * that came out 220.0000001 is 220, not 221.
+ */
+function upToWhole(value: number): number {
+	if (!(value > 0)) return 0;
+	return Math.ceil(value - 1e-6);
 }

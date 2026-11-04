@@ -72,6 +72,8 @@ export interface RowFact {
   readonly copy?: string;
   /** An absolute path the qualifier names, for a copy button after it. */
   readonly qualifierCopy?: string;
+  /** How that path is written in the qualifier: the button follows it. */
+  readonly qualifierCopyAfter?: string;
 }
 
 /** A URL as a tooltip link, when it is a GitHub page; nothing otherwise. */
@@ -101,6 +103,9 @@ export function tooltipLines(facts: readonly RowFact[]): TooltipLineWire[] {
     ...(fact.qualifierCopy === undefined
       ? {}
       : { qualifierCopy: fact.qualifierCopy }),
+    ...(fact.qualifierCopyAfter === undefined
+      ? {}
+      : { qualifierCopyAfter: fact.qualifierCopyAfter }),
   }));
 }
 
@@ -521,7 +526,7 @@ export function workspaceRowFacts(
     // subdued — "(worktree of ~/src/widget)" — written with `~` the way this
     // folder's path is, so the box never holds two bare paths for a reader to
     // tell apart. Each path carries its absolute form for the box's copy
-    // button beside it.
+    // button, drawn inline right after the path it copies.
     {
       text: workspace.displayRoot,
       spoken:
@@ -535,6 +540,9 @@ export function workspaceRowFacts(
         : {
             qualifier: `(worktree of ${writtenLikeRoot(workspace, mainCheckout)})`,
             qualifierCopy: mainCheckout,
+            // The copy button sits right after the path it copies, inside the
+            // bracket, rather than after the bracket.
+            qualifierCopyAfter: writtenLikeRoot(workspace, mainCheckout),
           }),
     },
     // A close that stopped. Said and not only drawn: the row's colour is what a

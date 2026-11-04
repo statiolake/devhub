@@ -799,6 +799,7 @@ describe("the mark a workspace row starts with", () => {
       copy: "/projects/widget",
       qualifier: "(worktree of /projects/other)",
       qualifierCopy: "/projects/other",
+      qualifierCopyAfter: "/projects/other",
     });
     expect(rowTip().filter((line) => line.icon === "worktree")).toEqual([]);
     expect(button?.getAttribute("aria-label")).toContain(
@@ -1503,6 +1504,7 @@ describe("the hovers the Sidebar does not raise", () => {
       copy: "/Users/me/src/widget-tooltips",
       qualifier: "(worktree of ~/src/widget)",
       qualifierCopy: "/Users/me/src/widget",
+      qualifierCopyAfter: "~/src/widget",
     });
     expect(facts.filter((line) => line.text.includes("/Users/me"))).toEqual([]);
     // Projects wear a mark like every other fact line.

@@ -1,19 +1,19 @@
 /**
- * The facts this page is drawing, as main last said them.
+ * What this page is drawing, as main last said it.
  *
- * A list of lines or nothing, and nothing is the whole of "no tooltip is up".
- * The page does not decide when a tooltip appears or goes — the Sidebar decides
- * that, because it is the one that knows where the pointer is, and main is what
- * joins the two. This is only the receiving end.
+ * The facts and the room they may take, or nothing — and nothing is the whole
+ * of "no tooltip is up". The page does not decide when a tooltip appears or
+ * goes — the Sidebar decides that, because it is the one that knows where the
+ * pointer is, and main is what joins the two. This is only the receiving end.
  */
 
 import { useEffect, useState } from "react";
-import type { TooltipBridge, TooltipLineWire } from "../../ipc/contract";
+import type { TooltipBridge, TooltipContentWire } from "../../ipc/contract";
 
-export function useTooltipLines(
+export function useTooltipContent(
   bridge: () => TooltipBridge,
-): readonly TooltipLineWire[] | undefined {
-  const [lines, setLines] = useState<readonly TooltipLineWire[] | undefined>(
+): TooltipContentWire | undefined {
+  const [content, setContent] = useState<TooltipContentWire | undefined>(
     undefined,
   );
   useEffect(() => {
@@ -22,8 +22,8 @@ export function useTooltipLines(
     // accessor for `window.devhub` and never changes — depending on it would
     // be a resubscribe per render dressed up as a dependency.
     return bridge().onTooltip((next) => {
-      setLines(next?.lines);
+      setContent(next);
     });
   }, [bridge]);
-  return lines;
+  return content;
 }

@@ -50,11 +50,11 @@
  * which is exactly what the per-page contract exists to make unspellable.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { devhub } from "./client";
 import { toAppError } from "../failure";
 import { isGitHubPage } from "../githubPage";
-import { useTooltipLines } from "./tooltipText";
+import { useTooltipContent } from "./tooltipText";
 import { useTooltipSize } from "./tooltipSize";
 import {
   Glyph,
@@ -110,8 +110,8 @@ function useFollow(): (
 }
 
 export function TooltipApp() {
-  const lines = useTooltipLines(devhub);
-  const measure = useTooltipSize(lines);
+  const content = useTooltipContent(devhub);
+  const measure = useTooltipSize(content);
   const follow = useFollow();
   // Where the pointer is, as a fact for main. The box is a view of its own, so
   // the pointer crossing into it from a row is a leave in the Sidebar and an
@@ -125,7 +125,8 @@ export function TooltipApp() {
   // window altogether — reported by `useTooltipSize`, which watches the
   // element going away rather than waiting for an observer that cannot fire
   // on a detached node.
-  if (lines === undefined) return null;
+  if (content === undefined) return null;
+  const { lines, room } = content;
   return (
     // Not `role="tooltip"`, and hidden from the accessibility tree outright:
     // the row's own accessible name is these same facts in words
@@ -138,6 +139,18 @@ export function TooltipApp() {
       className="tooltip-box"
       aria-hidden="true"
       ref={measure}
+      // The most the box may be, from main: the window less its margins. The
+      // box wraps to this width and stops at this height, so what is measured
+      // is what fits and the view is never cut short of its own box. See
+      // `TooltipContentWire.room`.
+      style={
+        room === undefined
+          ? undefined
+          : {
+              maxWidth: `min(var(--tooltip-max-width), ${room.width}px)`,
+              maxHeight: `${room.height}px`,
+            }
+      }
       onPointerEnter={() => pointer(true)}
       onPointerLeave={() => pointer(false)}
     >
@@ -184,33 +197,52 @@ function FactLine({
           <Glyph name={icon} />
         </span>
       ) : null}
-      {/* A fact that names a page is the link to it — the repository, the
-          Issue, the pull request. The row's own marks have no hover of their
-          own, so this box is where they are followed. Everything else is
-          words. */}
-      {href === undefined ? (
-        <span className="tooltip-line-text">{line.text}</span>
-      ) : (
-        <a
-          className="tooltip-line-text tooltip-line-link"
-          href={href}
-          // Out of the tab order, because the box is out of the
-          // accessibility tree; this view never holds the keyboard anyway.
-          tabIndex={-1}
-          onClick={(event) => follow(href, event)}
-        >
-          {line.text}
-        </a>
-      )}
-      {line.copy === undefined ? null : <CopyPath path={line.copy} />}
-      {/* Subdued words after the fact, on its line: where a Workspace is,
-          beside its name; what a worktree was cut from, beside its path. */}
-      {line.qualifier === undefined || line.qualifier === "" ? null : (
-        <span className="tooltip-line-qualifier">{line.qualifier}</span>
-      )}
-      {line.qualifierCopy === undefined ? null : (
-        <CopyPath path={line.qualifierCopy} />
-      )}
+      {/* Everything after the mark is one run of text, so a path's copy
+          button flows in it like a character: it follows the path, wraps
+          with it, and the qualifier carries on after it on the same line.
+          The mark keeps its column; the words do not have columns. */}
+      <span className="tooltip-line-body">
+        {/* A fact that names a page is the link to it — the repository, the
+            Issue, the pull request. The row's own marks have no hover of
+            their own, so this box is where they are followed. Everything
+            else is words. */}
+        {href === undefined ? (
+          <span className="tooltip-line-text">
+            {withCopy(line.text, line.copy, line.text)}
+          </span>
+        ) : (
+          <a
+            className="tooltip-line-text tooltip-line-link"
+            href={href}
+            // Out of the tab order, because the box is out of the
+            // accessibility tree; this view never holds the keyboard anyway.
+            tabIndex={-1}
+            onClick={(event) => follow(href, event)}
+          >
+            {line.text}
+          </a>
+        )}
+        {/* A link's copy button is outside the link, so a click on it copies
+            rather than follows. Nothing sends both today. */}
+        {href !== undefined && line.copy !== undefined ? (
+          <CopyPath path={line.copy} />
+        ) : null}
+        {/* Subdued words after the fact, on its line: where a Workspace is,
+            beside its name; what a worktree was cut from, beside its path —
+            with that path's own button right after the path. */}
+        {line.qualifier === undefined || line.qualifier === "" ? null : (
+          <>
+            {" "}
+            <span className="tooltip-line-qualifier">
+              {withCopy(
+                line.qualifier,
+                line.qualifierCopy,
+                line.qualifierCopyAfter,
+              )}
+            </span>
+          </>
+        )}
+      </span>
     </div>
   );
 }
@@ -219,7 +251,51 @@ function FactLine({
 export const COPIED_MS = 1000;
 
 /**
- * A quiet button beside a path that puts its absolute form on the clipboard.
+ * Words with a path's copy button in them, right after the path.
+ *
+ * The button is an inline element in the text, like an emoji: it follows the
+ * last character of the path and wraps with it. What keeps the two together
+ * is a `nowrap` run holding the path's last character, the button and
+ * whatever closes the words straight after it with no space (the bracket of
+ * `(worktree of ~/src/widget)`), so the button can never begin a line on its
+ * own and a bracket can never be left behind it. Only that much is held
+ * together: a path is one long word, and holding all of it would push it past
+ * the box's edge instead of letting it wrap.
+ *
+ * `after` is how the path is written in `text`; the button follows its last
+ * occurrence. Absent or not found, it follows the whole text.
+ */
+function withCopy(
+  text: string,
+  copy: string | undefined,
+  after: string | undefined,
+): ReactNode {
+  if (copy === undefined) return text;
+  const at = after === undefined || after === "" ? -1 : text.lastIndexOf(after);
+  const end = at < 0 ? text.length : at + after!.length;
+  const rest = text.slice(end);
+  // Held with the button only when it closes the words — no space in it.
+  const held = /\s/u.test(rest) ? "" : rest;
+  const free = held === "" ? rest : "";
+  const chars = Array.from(text.slice(0, end));
+  const last = chars.pop() ?? "";
+  return (
+    <>
+      {chars.join("")}
+      <span className="tooltip-copy-join">
+        {last}
+        <CopyPath path={copy} />
+        {held}
+      </span>
+      {free}
+    </>
+  );
+}
+
+/**
+ * A quiet button in the words of a path that puts its absolute form on the
+ * clipboard. Inline and sized in `em`, so it is the size of the text it sits
+ * in and wraps with it (`withCopy`).
  *
  * Low contrast at rest and stronger under the pointer, and no hover of its
  * own — nothing small in DevHub's tooltips raises one. A click copies through

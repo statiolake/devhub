@@ -48,6 +48,7 @@ class FakeView {
 	readonly webContents = {
 		id: nextId(),
 		isDestroyed: () => this.destroyed,
+		getZoomFactor: () => 1,
 		close: () => {
 			this.destroyed = true;
 			for (const listener of this.listeners.get("destroyed") ?? []) listener();

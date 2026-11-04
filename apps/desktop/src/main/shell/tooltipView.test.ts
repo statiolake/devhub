@@ -24,6 +24,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 class FakeWebContents {
 	readonly sent: unknown[] = [];
+	zoom = 1;
+	getZoomFactor(): number {
+		return this.zoom;
+	}
 	on(): this {
 		return this;
 	}
@@ -172,6 +176,41 @@ describe("the tooltip layer", () => {
 		expect(bounds!.x + bounds!.width).toBeGreaterThan(76);
 	});
 
+	/**
+	 * The page is told how much room there is, so a box too big for the
+	 * window wraps and caps itself rather than being cut short by its view —
+	 * which is a scrollbar in the view's document. In the page's pixels.
+	 */
+	it("tells the page the room the window has for the box", () => {
+		show();
+		expect(view().webContents.sent.at(-1)).toEqual({
+			lines: [{ text: "widget", style: "name" }],
+			room: { width: 992, height: 792 },
+		});
+		view().webContents.zoom = 1.25;
+		show();
+		expect(view().webContents.sent.at(-1)).toMatchObject({
+			room: { width: 793, height: 633 },
+		});
+	});
+
+	/**
+	 * The view is never smaller than the box it draws: the page's measurement
+	 * is in its own pixels, already rounded up to a device pixel, and is
+	 * scaled by its zoom and rounded up again — never to the nearest.
+	 */
+	it("is at least as big as the page's box, at any zoom", () => {
+		show();
+		tooltip.setSize({ width: 220.5, height: 34.25 });
+		expect(view().bounds).toMatchObject({ width: 221, height: 35 });
+		view().webContents.zoom = 1.1;
+		tooltip.setSize({ width: 200, height: 40 });
+		expect(view().bounds).toMatchObject({ width: 220, height: 44 });
+		view().webContents.zoom = 1.25;
+		tooltip.setSize({ width: 101.2, height: 57.1 });
+		expect(view().bounds).toMatchObject({ width: 127, height: 72 });
+	});
+
 	it("is parked, never taken out of the window, when the tooltip goes down", () => {
 		show();
 		tooltip.setSize({ width: 220, height: 34 });
@@ -208,7 +247,7 @@ describe("the tooltip layer", () => {
 		});
 		expect(tooltip.isPresent()).toBe(true);
 		expect(view().bounds?.y).toBe(300);
-		expect(view().webContents.sent.at(-1)).toEqual({
+		expect(view().webContents.sent.at(-1)).toMatchObject({
 			lines: [{ text: "another row entirely", style: "name" }],
 		});
 	});

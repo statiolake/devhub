@@ -724,6 +724,23 @@ function clamp(value: number, low: number, high: number): number {
 }
 
 /**
+ * The most room a tooltip may take in this window: all of it, less the margin
+ * `tooltipRect` keeps from each edge.
+ *
+ * Told to the page with the facts (`TooltipContentWire.room`), so a box that
+ * would not fit wraps to this width and stops at this height *on the page*.
+ * Clamping only here, after the page measured, would make the view smaller
+ * than what it draws, and the difference is the scrollbar the view's own
+ * document shows for it.
+ */
+export function tooltipRoom(windowSize: LayoutSize): LayoutSize {
+	return {
+		width: Math.max(0, windowSize.width - 2 * TOOLTIP_MARGIN),
+		height: Math.max(0, windowSize.height - 2 * TOOLTIP_MARGIN),
+	};
+}
+
+/**
  * Where a tooltip goes: beside the row it is about, inside the window.
  *
  * This is the placement that used to be done inside the Sidebar's own

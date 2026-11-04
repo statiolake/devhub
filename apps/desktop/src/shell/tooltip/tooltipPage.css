@@ -21,11 +21,29 @@
  * what is behind the layer. See `styles/windowBackground.test.ts`.
  */
 
+/*
+ * The document never scrolls. This view is exactly as big as the box
+ * (`tooltipSize.ts` rounds up, main rounds up again), and the box wraps and
+ * caps itself to the room main gives it, so nothing in it reaches past the
+ * view. `hidden` is the backstop for the fraction of a pixel that rounding is
+ * there to absorb, and not what keeps real content in: a document that could
+ * scroll is one that shows a scrollbar for a 0.4px overflow.
+ *
+ * `#root` is a block formatting context and the box is a block in it, so the
+ * document is the box's height and not a line box around it — an inline-block
+ * box sits on a line that is as tall as the root font's strut wherever the box
+ * is shorter than it.
+ */
 :root,
-body,
-#root {
-  overflow: visible;
+body {
+  overflow: hidden;
   height: auto;
+  margin: 0;
+  background: transparent;
+}
+
+#root {
+  display: flow-root;
   margin: 0;
   background: transparent;
 }
@@ -83,10 +101,16 @@ body,
 .tooltip-box {
   --tooltip-max-width: 480px;
 
-  display: inline-block;
+  display: block;
   box-sizing: border-box;
   width: max-content;
   max-width: var(--tooltip-max-width);
+  /* A box taller than the window is capped: `TooltipApp` sets `max-height`
+     from the room main sent, and what is past it is cut at the box's edge
+     under a fade (`[data-capped]`, below) — said, not hidden, and never a
+     scrollbar, which in a tooltip reads as broken. Ordinary content never
+     reaches the cap. */
+  overflow: hidden;
   padding: 4px 7px;
   /* `--line-strong`, not `--separator`: the box floats over whatever the
      window has under it — a workbench, a terminal, the Sidebar — and a
@@ -99,6 +123,13 @@ body,
   font-size: 11px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+/* Cut short at the room main gave it: the last lines fade out at the box's
+   edge, so the cut reads as one rather than as a line that ends early. Set
+   by `tooltipSize.ts` when the content is taller than the box. */
+.tooltip-box[data-capped] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
 }
 
 /*
@@ -214,8 +245,20 @@ body,
   stroke: none;
 }
 
+.tooltip-line-body {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
 .tooltip-line-text {
   min-width: 0;
+}
+
+/* A path's last character, its copy button and whatever closes the words
+   right after it, held on one line so the button never starts a line alone.
+   See `withCopy` in `TooltipApp.tsx`. */
+.tooltip-copy-join {
+  white-space: nowrap;
 }
 
 /* A place you can go is underlined, at rest: in a box that is mostly plain
@@ -243,31 +286,37 @@ body,
 }
 
 /* Where a Workspace is, beside its name in the heading: SSH, a dev
-   container. Subdued and in the body's weight, so the name stays the name. */
+   container; what a worktree was cut from, beside its path. Subdued and in
+   the body's weight, so the name stays the name. It wraps like the words it
+   follows — a qualifier held on one line is one that runs out of the box. */
 .tooltip-line-qualifier {
-  min-width: 0;
   color: var(--secondary);
   font-size: 11px;
   font-weight: 400;
-  white-space: nowrap;
 }
 
-/* A copy button beside a path: as quiet as the box's dimmest ink at rest,
-   the box's own ink under the pointer, and a check for a moment once the
-   copy landed. No chrome — it is a mark the pointer can press. */
+/* A copy button in a path's words: as quiet as the box's dimmest ink at
+   rest, the box's own ink under the pointer, and a check for a moment once
+   the copy landed. No chrome — it is a mark the pointer can press.
+
+   Inline, like a character of the text: sized in `em` so it is the size of
+   the words it sits in, a small gap after the path, and centred on the
+   x-height rather than sat on the baseline. Its box is no taller than the
+   line's, so it never makes a line taller than the text alone would. */
 .tooltip-copy {
   display: inline-flex;
-  width: 13px;
-  height: 13px;
-  flex: none;
-  align-self: center;
+  width: 1.1em;
+  height: 1.1em;
   align-items: center;
   justify-content: center;
+  margin: 0 0 0 0.25em;
   padding: 0;
   border: 0;
   background: none;
   color: var(--secondary);
+  line-height: 1;
   opacity: 0.45;
+  vertical-align: -0.2em;
 }
 
 .tooltip-copy:hover {
@@ -282,8 +331,8 @@ body,
 
 .tooltip-copy .sidebar-glyph {
   display: block;
-  width: 12px;
-  height: 12px;
+  width: 1em;
+  height: 1em;
   fill: none;
   stroke: currentcolor;
   stroke-linecap: round;

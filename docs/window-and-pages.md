@@ -1113,6 +1113,22 @@ prefers, flipped to the other side of the anchor when that one has no room, and
 clamped to the window last. It flips rather than narrows — one rectangle with
 one width, because narrowing to fit is how the ribbon happened.
 
+The view is exactly the box's size, and never a fraction of a pixel less: a
+view smaller than its box is a document that overflows, and that overflow is a
+scrollbar in the hover. So the page measures the box's border box on every
+change — a `ResizeObserver` on it, a `MutationObserver` on what is in it (the
+copy button's check, new words), and once its fonts are ready — and rounds
+**up** to a device pixel (`tooltipSize.ts`); main scales that by the page's
+zoom and rounds up again (`TooltipView.setSize`). Nothing in the box may
+overflow it: every line wraps, the qualifier included (held on one line, a long
+worktree path ran past the box's edge, which was the scrollbar the hover
+showed). Main also tells the page the room the window has (`tooltipRoom`, sent
+as `TooltipContentWire.room`); the box wraps to that width and stops at that
+height — what is past it cut at the box's edge under a fade, never a
+scrollbar — so `tooltipRect`'s clamp never has to cut a box short. The page's
+`html` and `body` are `overflow: hidden` as the backstop for rounding, not as
+what keeps content in.
+
 What has a hover is a whole row, and the usage limits — nothing smaller:
 
 - **A Workspace row** — on the rail as in the expanded column: its name, with
@@ -1121,8 +1137,12 @@ What has a hover is a whole row, and the usage limits — nothing smaller:
   GitHub); then **one** path line — the folder written with `~`, and for a
   worktree what it was cut from on the same line, subdued and with `~` too
   (_~/src/widget-tooltips (worktree of ~/src/widget)_) — each path with a quiet
-  copy button beside it that copies the absolute path through main
-  (`writeClipboard`) and shows a check for a second; the branch; the Issue
+  copy button **inline right after it**, in the text like a character: sized
+  in `em`, it follows the path's last character (held to it with `nowrap`, so a
+  wrap never leaves it alone at the start of a line) and wraps with the words,
+  the worktree's inside the bracket (`qualifierCopyAfter`). It copies the
+  absolute path through main (`writeClipboard`) and shows a check for a
+  second; the branch; the Issue
   (number and title as a link to it, Projects behind their own mark, and
   _Issue in `owner/name`_ when it is numbered in another repository); the pull
   request (a link to it) with its conversations and CI; _Reading #N_ while the

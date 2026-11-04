@@ -19,6 +19,22 @@
  * Nothing to say is a size of zero, and it is the one thing this page has to
  * be sure to say: a tooltip that went down and did not report it would be an
  * invisible rectangle over the editor for the rest of the session.
+ *
+ * # Why the number is rounded up, and re-taken on every change
+ *
+ * A view that is a fraction of a pixel smaller than its box is a box that
+ * overflows its own document, and a document that overflows shows a
+ * scrollbar — which is what a Sidebar hover showed. So the box's border box is
+ * read exactly (`getBoundingClientRect`, fractions and all) and rounded *up* to
+ * the next whole device pixel; main scales that by the zoom and rounds up
+ * again to a whole window pixel (`TooltipView.setSize`). Rounding to the
+ * nearest, anywhere on that path, is a box half a pixel too big for its view.
+ *
+ * And it is taken again whenever the box could have changed: a
+ * `ResizeObserver` on the box (fonts landing, glyphs laid out, a wrap moving),
+ * a `MutationObserver` on everything in it (the copy button's check, a link's
+ * state, new words), and once the document's fonts are ready. The report
+ * itself is deduplicated, so re-measuring costs one read.
  */
 
 import { useCallback, useEffect, useRef } from "react";
@@ -32,6 +48,19 @@ function same(
 }
 
 /**
+ * A length, up to the next whole device pixel, in CSS pixels.
+ *
+ * The forgiveness is for float noise: a box that is 220 CSS pixels at a
+ * ratio of 1.1 reads back as 220.00000003, which is not a reason to be a
+ * pixel bigger than it.
+ */
+export function upToDevicePixel(length: number, ratio: number): number {
+  const scale = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+  if (!(length > 0)) return 0;
+  return Math.ceil(length * scale - 1e-3) / scale;
+}
+
+/**
  * A ref for the tooltip's box, which reports its size whenever it changes.
  *
  * `drawn` is a dependency because the element itself goes away when there is
@@ -41,9 +70,9 @@ function same(
  * *changes* the size — a different row is a different sentence — so
  * re-measuring on it is not an optimisation, it is the measurement.
  *
- * It is `unknown` rather than the lines themselves because this hook has no
- * business reading them: what it needs is a value that changes when the box
- * does, and the page has one — the array it just rendered.
+ * It is `unknown` rather than the content itself because this hook has no
+ * business reading it: what it needs is a value that changes when the box
+ * does, and the page has one — the content it just rendered.
  */
 export function useTooltipSize(
   /** What is being drawn. Its identity is what says the box is a new size. */
@@ -53,7 +82,11 @@ export function useTooltipSize(
   const sent = useRef({ width: 0, height: 0 });
 
   const report = useCallback((width: number, height: number) => {
-    const size = { width: Math.ceil(width), height: Math.ceil(height) };
+    const ratio = window.devicePixelRatio;
+    const size = {
+      width: upToDevicePixel(width, ratio),
+      height: upToDevicePixel(height, ratio),
+    };
     if (same(size, sent.current)) return;
     sent.current = size;
     devhub().reportTooltipSize(size);
@@ -69,15 +102,37 @@ export function useTooltipSize(
       report(0, 0);
       return;
     }
-    const observer = new ResizeObserver(() => {
+    let live = true;
+    const take = () => {
+      if (!live || !node.isConnected) return;
+      // Content taller than the room main gave the box is cut at its edge
+      // under a fade (`tooltipPage.css`). Written only when it changes: this
+      // attribute is inside what the mutation observer below watches.
+      const capped = node.scrollHeight > node.clientHeight + 1;
+      if (node.hasAttribute("data-capped") !== capped) {
+        node.toggleAttribute("data-capped", capped);
+      }
       const box = node.getBoundingClientRect();
       report(box.width, box.height);
+    };
+    const resized = new ResizeObserver(take);
+    resized.observe(node);
+    // A change inside the box that does not move its border box is still
+    // re-measured: whether it moved is the measurement's to say.
+    const changed = new MutationObserver(take);
+    changed.observe(node, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
     });
-    observer.observe(node);
-    const box = node.getBoundingClientRect();
-    report(box.width, box.height);
+    // Fonts that arrive after the first layout re-wrap the words.
+    void document.fonts?.ready.then(take);
+    take();
     return () => {
-      observer.disconnect();
+      live = false;
+      resized.disconnect();
+      changed.disconnect();
     };
   }, [drawn, report]);
 
