@@ -280,6 +280,7 @@ devhub --tell agent send A TEXT|-                     # held until its turn ends
 devhub --tell agent interrupt A
 devhub --tell agent requests A                        # open questions (and permission prompts, read-only)
 devhub --tell agent answer A REQUEST --option N... | --text T
+devhub --tell agent answer A REQUEST --q 1 --option N... [--text T] --q 2 ...   # every question of a request at once
 devhub --tell agent wait A [--until idle|waiting|any] [--timeout S]
 devhub --tell agent wait --any|--all [A...] [--workspace W] [--until ...] [--timeout S]
 devhub --tell agent stop A | agent restart A          # Stop Agent, Restart Session (no sheet: the command is the decision)
@@ -356,7 +357,10 @@ characters, 32 pairs an agent. They are in `agents --json` / `agent status
 Two things are deliberately not reachable from a command line. A **permission
 prompt** (may this tool call run?) is the person's, in DevHub: `agent requests`
 lists it as "answer in DevHub" and `agent answer` refuses it. Only questions —
-Claude's AskUserQuestion, Codex's requestUserInput — can be answered, and the
+Claude's AskUserQuestion, Codex's requestUserInput — can be answered, every
+question of one request in one call (`--q` by index, id or header, each with
+its own `--option`s and `--text`; `agent requests` lists them so, and a
+question left out is refused), and the
 answer carries a note, "answered via devhub CLI by <agent>", that Claude keeps
 in the target's transcript. An agent cannot answer its own question.
 

@@ -26,6 +26,14 @@ import {
 
 export type AgentWaitUntil = "idle" | "waiting" | "any";
 
+/** The answer to one question of a request: `--q <question> --option <n>... --text <t>`. */
+export interface AnswerPart {
+	/** Its 1-based index in 'agent requests', its id, or its header. */
+	readonly question: string;
+	readonly options: readonly number[];
+	readonly text?: string;
+}
+
 /** One `--meta KEY=VALUE`, checked (`checkMetaKey`, `checkMetaValue`). */
 export interface AgentMetaPair {
 	readonly key: string;
@@ -118,10 +126,20 @@ export type TellCommand =
 			readonly verb: "agent-answer";
 			readonly agent: string;
 			readonly request: string;
-			/** One-based option numbers, for a request with one question. */
+			/**
+			 * One-based option numbers without `--q`: numbered across the
+			 * request's questions in order (1…n for the usual single one).
+			 */
 			readonly options: readonly number[];
-			/** Free text, for a question that takes an answer of its own. */
+			/** Free text without `--q`, for a request with one question. */
 			readonly text?: string;
+			/**
+			 * `--q <question> [--option <n>]... [--text <t>]`, once per question:
+			 * the question by its index in 'agent requests' (1-based), its id or
+			 * its header; its options numbered within it. Every question of the
+			 * request is answered, in one call.
+			 */
+			readonly questions?: readonly AnswerPart[];
 	  }
 	| {
 			readonly verb: "agent-wait";
@@ -272,6 +290,15 @@ agents
                                    answered in DevHub only)
   agent answer <a> <request> [--option <n>]... [--text <t>]
                                    answer an AskUserQuestion-style question
+  agent answer <a> <request> --q <question> [--option <n>]... [--text <t>]
+                           [--q <question> ...]...
+                                   answer a request of several questions in
+                                   one call: --q names each (its index in
+                                   'agent requests', its id or its header),
+                                   then its options (numbered within it;
+                                   several for a multi-select one) and/or
+                                   its own words (--text, where it takes
+                                   Other). Every question must be answered
   agent wait <a> [--until idle|waiting|any] [--timeout <seconds>]
                                    return when the agent is idle, waiting on
                                    somebody, or either (default: any)
@@ -803,27 +830,81 @@ function parseAgent(
 			};
 		}
 		case "answer": {
-			const flags = readFlags(rest, {
-				values: ["--option", "--text"],
-				switches: ["--allow", "--deny"],
-			});
-			if (flags.switches.has("--allow") || flags.switches.has("--deny"))
+			const [agent, request, ...words] = rest;
+			if (words.includes("--allow") || words.includes("--deny"))
 				throw new Refusal(
 					"permission prompts are answered in DevHub, by the person, and never from the command line.",
 				);
-			const [agent, request] = positionals(flags, ["<agent>", "<request>"]);
-			const options = (flags.values.get("--option") ?? []).map((value) =>
-				count(value, "--option", 1, 100),
-			);
-			const text = one(flags, "--text");
-			if (options.length === 0 && text === undefined)
-				throw new Refusal("agent answer needs --option <n> or --text <t>.");
+			if (agent === undefined || request === undefined)
+				throw new Refusal(
+					`missing ${agent === undefined ? "<agent> <request>" : "<request>"}.`,
+				);
+			// Read in order: an --option or --text belongs to the --q before it.
+			const loose: { options: number[]; text?: string } = { options: [] };
+			const parts: { question: string; options: number[]; text?: string }[] =
+				[];
+			for (let index = 0; index < words.length; index += 1) {
+				const word = words[index]!;
+				const equals = word.indexOf("=");
+				const name =
+					word.startsWith("--") && equals > 2 ? word.slice(0, equals) : word;
+				if (name !== "--q" && name !== "--option" && name !== "--text")
+					throw new Refusal(`${word} is not an option here.`);
+				const value =
+					equals > 2 && word.startsWith("--")
+						? word.slice(equals + 1)
+						: words[++index];
+				if (value === undefined) throw new Refusal(`${name} needs a value.`);
+				const into = parts.at(-1) ?? loose;
+				if (name === "--q") {
+					if (
+						parts.length === 0 &&
+						(loose.options.length > 0 || loose.text !== undefined)
+					)
+						throw new Refusal(
+							"with --q, every --option and --text goes after the --q of its question.",
+						);
+					parts.push({ question: value, options: [] });
+				} else if (name === "--option") {
+					into.options.push(count(value, "--option", 1, 100));
+				} else {
+					if (into.text !== undefined)
+						throw new Refusal(
+							parts.length === 0
+								? "--text is given more than once."
+								: `--text is given more than once for --q ${parts.at(-1)!.question}.`,
+						);
+					into.text = value;
+				}
+			}
+			if (parts.length > 0) {
+				for (const part of parts)
+					if (part.options.length === 0 && part.text === undefined)
+						throw new Refusal(
+							`--q ${part.question} needs --option <n> or --text <t> after it.`,
+						);
+				return {
+					verb: "agent-answer",
+					agent,
+					request,
+					options: [],
+					questions: parts.map((part) => ({
+						question: part.question,
+						options: part.options,
+						...(part.text === undefined ? {} : { text: part.text }),
+					})),
+				};
+			}
+			if (loose.options.length === 0 && loose.text === undefined)
+				throw new Refusal(
+					"agent answer needs --option <n> or --text <t> (or --q <question> before each question's).",
+				);
 			return {
 				verb: "agent-answer",
-				agent: agent!,
-				request: request!,
-				options,
-				...(text === undefined ? {} : { text }),
+				agent,
+				request,
+				options: loose.options,
+				...(loose.text === undefined ? {} : { text: loose.text }),
 			};
 		}
 		case "wait": {
@@ -1003,6 +1084,34 @@ function integer(
 	return value;
 }
 
+function answerParts(value: unknown): { questions?: readonly AnswerPart[] } {
+	if (value === undefined) return {};
+	if (!Array.isArray(value) || value.length === 0)
+		throw new Error("a tell command's questions must be a non-empty list");
+	return {
+		questions: value.map((each: unknown): AnswerPart => {
+			if (typeof each !== "object" || each === null)
+				throw new Error("a tell command's questions must be objects");
+			const part = each as Record<string, unknown>;
+			const options = part["options"];
+			if (!Array.isArray(options))
+				throw new Error("a tell command's question options must be a list");
+			const text = part["text"];
+			if (text !== undefined && typeof text !== "string")
+				throw new Error("a tell command's question text must be a string");
+			return {
+				question: textOf(part, "question"),
+				options: options.map((option) => integer(option, "option", 1, 100)),
+				...(text === undefined ? {} : { text }),
+			};
+		}),
+	};
+}
+
+function textOf(record: Record<string, unknown>, key: string): string {
+	return text(record, key);
+}
+
 function until(record: Record<string, unknown>): AgentWaitUntil {
 	const value = record["until"];
 	if (value !== "idle" && value !== "waiting" && value !== "any")
@@ -1171,6 +1280,7 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				agent: text(record, "agent"),
 				request: text(record, "request"),
 				options: options.map((option) => integer(option, "option", 1, 100)),
+				...answerParts(record["questions"]),
 				...(record["text"] === undefined
 					? {}
 					: typeof record["text"] === "string"

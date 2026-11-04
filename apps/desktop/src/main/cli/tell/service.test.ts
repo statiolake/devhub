@@ -6,6 +6,7 @@ import { parseTellArguments } from "./command.js";
 import type {
 	EntryId,
 	PendingRequest,
+	Question,
 	RequestAnswer,
 	RequestId,
 	TranscriptEntry,
@@ -2529,5 +2530,264 @@ describe("callers DevHub did not start", () => {
 				}),
 			),
 		).toThrow(/--as takes a name/u);
+	});
+});
+
+describe("a request of several questions, answered in one call", () => {
+	const option = (label: string) => ({
+		label,
+		description: "",
+		preview: undefined,
+	});
+	const ask = (
+		id: string,
+		header: string,
+		labels: readonly string[],
+		more: Partial<Question> = {},
+	): Question => ({
+		id,
+		header,
+		text: `${header}?`,
+		options: labels.map(option),
+		multiSelect: false,
+		allowsOther: true,
+		...more,
+	});
+	const four: Question[] = [
+		ask("q-db", "Database", ["Postgres", "SQLite"]),
+		ask("q-lang", "Language", ["TypeScript", "Go", "Rust"], {
+			multiSelect: true,
+		}),
+		ask("q-ci", "CI", ["GitHub Actions", "None"], { allowsOther: false }),
+		ask("q-name", "Name", []),
+	];
+	const asking = (questions: readonly Question[]): PendingRequest => ({
+		id: "req-9" as RequestId,
+		entry: undefined,
+		subject: { kind: "question", questions },
+		choices: [],
+	});
+	const answerLine = (...words: string[]) => [
+		"agent",
+		"answer",
+		"aaaa",
+		"req-9",
+		...words,
+	];
+
+	it("answers two questions, each with its own --q", async () => {
+		const { service, conversation } = setup();
+		conversation.pending = [asking(four.slice(0, 2))];
+		await viaSocket(
+			service,
+			answerLine(
+				"--q",
+				"1",
+				"--option",
+				"2",
+				"--q",
+				"Language",
+				"--option",
+				"1",
+				"--option",
+				"3",
+			),
+			coordinator,
+		);
+		expect(conversation.answered).toEqual([
+			{
+				request: "req-9",
+				answer: {
+					kind: "answers",
+					values: { "q-db": "SQLite", "q-lang": ["TypeScript", "Rust"] },
+					notes: {
+						"q-db": "answered via devhub CLI by Coordinator (bbbb2222-0000)",
+						"q-lang": "answered via devhub CLI by Coordinator (bbbb2222-0000)",
+					},
+				},
+			},
+		]);
+	});
+
+	it("answers four, with a multi-select plus Other and words for the one with no options", async () => {
+		const { service, conversation } = setup();
+		conversation.pending = [asking(four)];
+		await viaSocket(
+			service,
+			answerLine(
+				"--q",
+				"q-db",
+				"--text",
+				"MySQL, as it is today",
+				"--q",
+				"2",
+				"--option",
+				"2",
+				"--text",
+				"Zig",
+				"--q",
+				"ci",
+				"--option",
+				"1",
+				"--q",
+				"4",
+				"--text",
+				"widget",
+			),
+			coordinator,
+		);
+		expect(conversation.answered[0]!.answer).toMatchObject({
+			values: {
+				"q-db": "MySQL, as it is today",
+				"q-lang": ["Go", "Zig"],
+				"q-ci": "GitHub Actions",
+				"q-name": "widget",
+			},
+		});
+	});
+
+	it("names the question left out, and the one that cannot take words, and sends nothing", async () => {
+		const { service, conversation } = setup();
+		conversation.pending = [asking(four)];
+		await expect(
+			viaSocket(
+				service,
+				answerLine("--q", "1", "--option", "1", "--q", "2", "--option", "1"),
+				coordinator,
+			),
+		).rejects.toThrow(
+			'every question must be answered; question 3 ("CI"), question 4 ("Name") have no --q.',
+		);
+		await expect(
+			viaSocket(
+				service,
+				answerLine(
+					"--q",
+					"1",
+					"--option",
+					"1",
+					"--q",
+					"2",
+					"--option",
+					"1",
+					"--q",
+					"3",
+					"--text",
+					"Jenkins",
+					"--q",
+					"4",
+					"--text",
+					"w",
+				),
+				coordinator,
+			),
+		).rejects.toThrow(
+			'question 3 ("CI") takes one of its options, not words of its own.',
+		);
+		await expect(
+			viaSocket(
+				service,
+				answerLine(
+					"--q",
+					"1",
+					"--option",
+					"1",
+					"--option",
+					"2",
+					"--q",
+					"2",
+					"--option",
+					"1",
+					"--q",
+					"3",
+					"--option",
+					"1",
+					"--q",
+					"4",
+					"--text",
+					"w",
+				),
+				coordinator,
+			),
+		).rejects.toThrow('question 1 ("Database") takes one answer');
+		await expect(
+			viaSocket(service, answerLine("--q", "7", "--option", "1"), coordinator),
+		).rejects.toThrow(/--q 7 is none of this request's questions/u);
+		expect(conversation.answered).toEqual([]);
+		expect(
+			parseTellArguments(
+				answerLine("--option", "1", "--q", "1", "--option", "1"),
+			),
+		).toEqual({
+			kind: "invalid",
+			message:
+				"with --q, every --option and --text goes after the --q of its question.",
+		});
+		expect(parseTellArguments(answerLine("--q", "1"))).toEqual({
+			kind: "invalid",
+			message: "--q 1 needs --option <n> or --text <t> after it.",
+		});
+	});
+
+	it("lists each question with what --q takes, its options and whether it takes several", async () => {
+		const { service, conversation } = setup();
+		conversation.pending = [asking(four.slice(0, 3)), permission];
+		const listed = await viaSocket(
+			service,
+			["agent", "requests", "aaaa"],
+			coordinator,
+		);
+		expect(listed.message).toBe(
+			[
+				"req-9  questions (3, answer every one)",
+				"  --q 1  Database: Database?  [one answer, or --text]",
+				"    1. Postgres",
+				"    2. SQLite",
+				"  --q 2  Language: Language?  [multiSelect: several --option, or --text]",
+				"    1. TypeScript",
+				"    2. Go",
+				"    3. Rust",
+				"  --q 3  CI: CI?  [one answer]",
+				"    1. GitHub Actions",
+				"    2. None",
+				"  answer: agent answer <a> req-9 --q 1 --option <n> --q 2 --option <n> --q 3 --option <n>",
+				"",
+				"req-2  a permission prompt: Bash: rm -rf build\n  (answer in DevHub)",
+			].join("\n"),
+		);
+		const data = listed.data as {
+			requests: {
+				questions?: { index: number; id: string; multiSelect: boolean }[];
+			}[];
+		};
+		expect(
+			data.requests[0]!.questions!.map((one) => [
+				one.index,
+				one.id,
+				one.multiSelect,
+			]),
+		).toEqual([
+			[1, "q-db", false],
+			[2, "q-lang", true],
+			[3, "q-ci", false],
+		]);
+	});
+
+	it("still answers the single-question form, and never a permission prompt", async () => {
+		const { service, conversation } = setup();
+		await viaSocket(
+			service,
+			["agent", "answer", "aaaa", "req-1", "--option", "1"],
+			coordinator,
+		);
+		expect(conversation.answered).toHaveLength(1);
+		await expect(
+			viaSocket(
+				service,
+				["agent", "answer", "aaaa", "req-2", "--q", "1", "--option", "1"],
+				coordinator,
+			),
+		).rejects.toThrow(/only questions can be answered/u);
+		expect(conversation.answered).toHaveLength(1);
 	});
 });

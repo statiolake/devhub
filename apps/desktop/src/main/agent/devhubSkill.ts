@@ -246,6 +246,14 @@ idle; reading, interrupting and answering need a GUI agent.
     devhub --tell agent requests A
     devhub --tell agent answer A REQUEST_ID --option 2
     devhub --tell agent answer A REQUEST_ID --text "Use PostgreSQL"
+    devhub --tell agent answer A REQUEST_ID --q 1 --option 2 --q 2 --option 1 --option 3 --q 3 --text "Use PostgreSQL"
+
+One request can carry several questions (Claude asks up to four at once):
+\`agent requests\` lists each as \`--q N\` with its options numbered within it
+and whether it takes several (\`multiSelect\`) or words of its own
+(\`--text\`). Answer them all in one call, \`--q\` then that question's
+\`--option\`s and/or \`--text\`; a question left out is refused and nothing
+is sent.
 
 Only questions (AskUserQuestion-style) can be answered here. Permission
 prompts (may a tool run) are listed as "answer in DevHub": they are the

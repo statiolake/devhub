@@ -21,6 +21,7 @@ import type { PastSession } from "../../agent/conversation/resume.js";
 import {
 	TELL_USAGE,
 	type AgentWaitUntil,
+	type AnswerPart,
 	type TellCommand,
 } from "./command.js";
 
@@ -1442,12 +1443,20 @@ export class TellService {
 			throw new Error(
 				`request ${command.request} is ${requestKind(request)}, and only questions can be answered from the command line. The person answers it in DevHub.`,
 			);
-		const answer = questionAnswer(
-			request.subject.questions,
-			command.options,
-			command.text,
-			answeredBy(caller, this.ports.workspaces()),
-		);
+		const note = answeredBy(caller, this.ports.workspaces());
+		const answer =
+			command.questions === undefined
+				? questionAnswer(
+						request.subject.questions,
+						command.options,
+						command.text,
+						note,
+					)
+				: questionAnswerByPart(
+						request.subject.questions,
+						command.questions,
+						note,
+					);
 		await conversation.answer(request.id, answer);
 		return {
 			message: `Answered ${agent.name}'s question.`,
@@ -2546,6 +2555,9 @@ export function requestView(request: PendingRequest): {
 	readonly kind: string;
 	readonly answerable: boolean;
 	readonly questions?: readonly {
+		/** 1-based: what `--q` takes, as does `id` and `header`. */
+		readonly index: number;
+		readonly id: string;
 		readonly header: string;
 		readonly text: string;
 		readonly multiSelect: boolean;
@@ -2575,7 +2587,9 @@ export function requestView(request: PendingRequest): {
 			text: `${request.id}  ${requestKind(request)}: ${clip(what)}\n  (answer in DevHub)`,
 		};
 	}
-	const questions = subject.questions.map((question) => ({
+	const questions = subject.questions.map((question, index) => ({
+		index: index + 1,
+		id: question.id,
 		header: question.header,
 		text: question.text,
 		multiSelect: question.multiSelect,
@@ -2592,15 +2606,20 @@ export function requestView(request: PendingRequest): {
 		answerable: true,
 		questions,
 		text: [
-			`${request.id}  question`,
-			...questions.flatMap((question, index) => [
-				`  ${subject.questions.length > 1 ? `[${String(index + 1)}] ` : ""}${question.header}: ${question.text}${question.multiSelect ? " (several)" : ""}`,
+			`${request.id}  question${questions.length > 1 ? `s (${String(questions.length)}, answer every one)` : ""}`,
+			...questions.flatMap((question) => [
+				`  --q ${String(question.index)}  ${question.header}: ${question.text}  [${question.multiSelect ? "multiSelect: several --option" : "one answer"}${question.allowsOther ? ", or --text" : ""}]`,
 				...question.options.map(
 					(option) =>
 						`    ${String(option.n)}. ${option.label}${option.description ? ` — ${option.description}` : ""}`,
 				),
-				...(question.allowsOther ? ["    (or --text <your own answer>)"] : []),
 			]),
+			`  answer: agent answer <a> ${request.id} ${questions
+				.map(
+					(question) =>
+						`--q ${String(question.index)} ${question.allowsOther && question.options.length === 0 ? "--text <t>" : "--option <n>"}`,
+				)
+				.join(" ")}`,
 		].join("\n"),
 	};
 }
@@ -2644,6 +2663,73 @@ export function questionAnswer(
 		values[question.id] = question.multiSelect ? given : given[0]!;
 		notes[question.id] = note;
 	}
+	return { kind: "answers", values, notes };
+}
+
+/**
+ * The answer to a request of one or more questions, each given by its own
+ * `--q`: its options numbered within it, its own words where it takes them.
+ * Every question has to be answered, once; anything else is refused before
+ * anything is sent, naming the question.
+ */
+export function questionAnswerByPart(
+	questions: readonly Question[],
+	parts: readonly AnswerPart[],
+	note: string,
+): RequestAnswer {
+	const name = (index: number) =>
+		`question ${String(index + 1)} ("${questions[index]!.header}")`;
+	const find = (given: string): number => {
+		const byIndex = /^\d+$/u.test(given) ? Number(given) - 1 : -1;
+		if (byIndex >= 0 && byIndex < questions.length) return byIndex;
+		const byId = questions.findIndex((question) => question.id === given);
+		if (byId >= 0) return byId;
+		const byHeader = questions.findIndex(
+			(question) => question.header.toLowerCase() === given.toLowerCase(),
+		);
+		if (byHeader >= 0) return byHeader;
+		throw new Error(
+			`--q ${given} is none of this request's questions: ${questions.map((_, index) => name(index)).join(", ")}.`,
+		);
+	};
+	const answered = new Map<number, AnswerPart>();
+	for (const part of parts) {
+		const index = find(part.question);
+		if (answered.has(index))
+			throw new Error(`${name(index)} is answered twice.`);
+		answered.set(index, part);
+	}
+	const missing = questions
+		.map((_, index) => index)
+		.filter((index) => !answered.has(index));
+	if (missing.length > 0)
+		throw new Error(
+			`every question must be answered; ${missing.map(name).join(", ")} ${missing.length === 1 ? "has" : "have"} no --q. See 'agent requests'.`,
+		);
+	const values: Record<string, string | readonly string[]> = {};
+	const notes: Record<string, string> = {};
+	questions.forEach((question, index) => {
+		const part = answered.get(index)!;
+		const bad = part.options.find((n) => n > question.options.length);
+		if (bad !== undefined)
+			throw new Error(
+				`${name(index)} has ${String(question.options.length)} options; there is no ${String(bad)}.`,
+			);
+		if (part.text !== undefined && !question.allowsOther)
+			throw new Error(
+				`${name(index)} takes one of its options, not words of its own.`,
+			);
+		const given = [
+			...new Set(part.options.map((n) => question.options[n - 1]!.label)),
+			...(part.text === undefined ? [] : [part.text]),
+		];
+		if (!question.multiSelect && given.length > 1)
+			throw new Error(
+				`${name(index)} takes one answer: one --option, or --text.`,
+			);
+		values[question.id] = question.multiSelect ? given : given[0]!;
+		notes[question.id] = note;
+	});
 	return { kind: "answers", values, notes };
 }
 
