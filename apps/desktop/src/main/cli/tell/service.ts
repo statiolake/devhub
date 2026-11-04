@@ -368,6 +368,12 @@ export interface TellPorts {
 	): Promise<string | undefined>;
 	/** The /devhub skill's SKILL.md, for this DevHub's launcher, and the launcher. */
 	skill(): { readonly text: string; readonly cli: string };
+	/** The /devhub-orchestrator skill's SKILL.md, the launcher it names, and where it is. */
+	orchestratorSkill(): {
+		readonly text: string;
+		readonly cli: string;
+		readonly skillFile: string;
+	};
 	/** The enabled Issue actions, in Assign Issue's order. */
 	issueActions(): readonly TellIssueAction[];
 	/** Open (or select) the folder; answers the workspace's id. */
@@ -861,7 +867,10 @@ export class TellService {
 			case "help":
 				return { message: TELL_USAGE, data: { usage: TELL_USAGE } };
 			case "skill": {
-				const skill = this.ports.skill();
+				const skill =
+					command.orchestrator === true
+						? this.ports.orchestratorSkill()
+						: this.ports.skill();
 				return { message: skill.text, data: skill };
 			}
 			case "workspaces":

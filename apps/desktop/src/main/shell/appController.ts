@@ -543,6 +543,13 @@ import {
 	writeDevhubSkill,
 	type DevhubSkill,
 } from "../agent/devhubSkill.js";
+import {
+	isOrchestratorAgent,
+	orchestratorSkillAnswer,
+	orchestratorSkillPaths,
+	writeOrchestratorSkill,
+	type OrchestratorSkill,
+} from "../orchestrator/orchestratorSkill.js";
 import { launcherScript } from "../cli/install.js";
 import { launchCommandFor } from "../cli/launch.js";
 import type { TellCommand } from "../cli/tell/command.js";
@@ -1433,6 +1440,7 @@ export class AppController {
 			managedNeovims.publishTheme(theme),
 		);
 		const skill = this.writeAgentSkill(userDataPath);
+		const orchestratorSkill = this.writeOrchestratorSkill(userDataPath);
 		this.startOrchestratorService(userDataPath);
 		this.agentWiring = wireAgents({
 			// This Mac's skill is written at startup; another machine's is
@@ -1446,6 +1454,12 @@ export class AppController {
 								() => undefined,
 							)
 						)?.skill,
+			// The orchestrator alone, and only here: its root is a folder on
+			// this Mac (`orchestrator start`).
+			orchestratorSkill: (machine, agentId) =>
+				machine === "local" && this.isOrchestratorAgent(agentId)
+					? orchestratorSkill
+					: undefined,
 			runtimeFor: (machine) => terminalRuntimes.for(runtimeById(machine)),
 			model: () => this.coordinator.model,
 			machineOf: (workspaceId) => this.machineOf(workspaceId),
@@ -1715,6 +1729,26 @@ export class AppController {
 		} catch (error) {
 			console.error(
 				`[devhub] could not write the /devhub agent skill: ${failureText(error)}`,
+			);
+			return undefined;
+		}
+	}
+
+	/**
+	 * The `/devhub-orchestrator` skill, rewritten for this run beside
+	 * `/devhub` and naming the same launcher (`orchestrator/orchestratorSkill.ts`).
+	 * One that cannot be written is said and skipped.
+	 */
+	private writeOrchestratorSkill(
+		userDataPath: string,
+	): OrchestratorSkill | undefined {
+		const skill = orchestratorSkillPaths(userDataPath);
+		try {
+			writeOrchestratorSkill(skill, devhubSkillPaths(userDataPath).cli);
+			return skill;
+		} catch (error) {
+			console.error(
+				`[devhub] could not write the /devhub-orchestrator skill: ${failureText(error)}`,
 			);
 			return undefined;
 		}
@@ -9021,6 +9055,26 @@ export class AppController {
 	/** The board, the escalations and the events, once user data is known. */
 	private orchestrator: OrchestratorService | undefined;
 	private orchestratorSyncing = false;
+	/**
+	 * While `startOrchestrator` makes its agent: the workspace, and the agents
+	 * there were before, so the new one is launched with the orchestrator's
+	 * skill before the row has been assigned to it.
+	 */
+	private orchestratorStarting:
+		| { readonly workspaceId: string; readonly before: ReadonlySet<string> }
+		| undefined;
+
+	/** Whether `agentId` is (or is being started as) the orchestrator agent. */
+	private isOrchestratorAgent(agentId: string): boolean {
+		return isOrchestratorAgent(agentId, {
+			assigned: this.orchestrator?.orchestratorAgentId,
+			starting: this.orchestratorStarting,
+			agentsIn: (workspaceId) =>
+				this.coordinator.model.workspaces
+					.find((workspace) => workspace.id === workspaceId)
+					?.agents.map((agent) => agent.id) ?? [],
+		});
+	}
 
 	private startOrchestratorService(userDataPath: string): void {
 		const { store, refused } = EscalationStore.load(
@@ -9176,15 +9230,23 @@ export class AppController {
 			requestedLocation({ kind: "local", path: root }),
 		);
 		const ports = this.tellPorts();
-		const agentId = await ports.createAgent(
+		this.orchestratorStarting = {
 			workspaceId,
-			request.profile,
-			request.presentation,
-		);
-		await ports.setAgentMeta(agentId, "role", "orchestrator");
-		service.assign(agentId, request.prompt);
-		this.syncOrchestrator();
-		return agentId;
+			before: this.modelAgentIds(),
+		};
+		try {
+			const agentId = await ports.createAgent(
+				workspaceId,
+				request.profile,
+				request.presentation,
+			);
+			await ports.setAgentMeta(agentId, "role", "orchestrator");
+			service.assign(agentId, request.prompt);
+			this.syncOrchestrator();
+			return agentId;
+		} finally {
+			this.orchestratorStarting = undefined;
+		}
 	}
 
 	/**
@@ -9265,6 +9327,12 @@ export class AppController {
 				if (this.userDataPath === undefined)
 					throw new Error("DevHub has not finished starting.");
 				return devhubSkillAnswer(this.userDataPath);
+			},
+			// What `writeOrchestratorSkill` wrote, for `skill --orchestrator`.
+			orchestratorSkill: () => {
+				if (this.userDataPath === undefined)
+					throw new Error("DevHub has not finished starting.");
+				return orchestratorSkillAnswer(this.userDataPath);
 			},
 			// The agent picker's own list (`agentProfiles`), so a row there and a
 			// line here cannot disagree about a profile's default mode.

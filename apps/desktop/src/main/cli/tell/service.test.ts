@@ -326,6 +326,13 @@ class FakePorts implements TellPorts {
 			cli: "/x/bin/devhub",
 		};
 	}
+	orchestratorSkill() {
+		return {
+			text: "---\nname: devhub-orchestrator\n---\n# /devhub-orchestrator\n",
+			cli: "/x/bin/devhub",
+			skillFile: "/x/orchestrator-skill/SKILL.md",
+		};
+	}
 	resetAgentName(agentId: string) {
 		this.calls.push(`reset-name ${agentId}`);
 		return Promise.resolve();
@@ -2834,6 +2841,30 @@ describe("callers DevHub did not start", () => {
 				cli: "/x/bin/devhub",
 			});
 		}
+	});
+
+	it("prints the /devhub-orchestrator skill with skill --orchestrator", async () => {
+		const { service } = setup();
+		for (const caller of [outside, desktop, coordinator]) {
+			const answer = await viaSocket(
+				service,
+				["skill", "--orchestrator"],
+				caller,
+			);
+			expect(answer.message).toBe(
+				"---\nname: devhub-orchestrator\n---\n# /devhub-orchestrator\n",
+			);
+			expect(answer.data).toEqual({
+				text: "---\nname: devhub-orchestrator\n---\n# /devhub-orchestrator\n",
+				cli: "/x/bin/devhub",
+				skillFile: "/x/orchestrator-skill/SKILL.md",
+			});
+		}
+		expect(parseTellArguments(["skill", "--orchestrator"])).toMatchObject({
+			kind: "tell",
+			command: { verb: "skill", orchestrator: true },
+		});
+		expect(parseTellArguments(["skill", "--orchestra"]).kind).toBe("invalid");
 	});
 
 	it("are one reader per --as label, all unlabelled ones being 'external'", async () => {

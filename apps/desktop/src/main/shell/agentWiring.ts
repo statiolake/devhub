@@ -54,6 +54,11 @@ import {
 	type DevhubSkill,
 } from "../agent/devhubSkill.js";
 import {
+	codexOrchestratorInstructions,
+	withOrchestratorSkill,
+	type OrchestratorSkill,
+} from "../orchestrator/orchestratorSkill.js";
+import {
 	claudeHistory,
 	codexStructuredArgs,
 	listPastSessions,
@@ -126,6 +131,16 @@ export interface AgentWiringOptions {
 	readonly devhubSkill?: (
 		machine: RuntimeId,
 	) => Promise<DevhubSkill | undefined>;
+	/**
+	 * The `/devhub-orchestrator` skill when `agentId` on `machine` is the
+	 * orchestrator agent (or the one being started as it), and nothing for
+	 * every other Agent (`orchestrator/orchestratorSkill.ts`). Asked at each
+	 * launch, restart and thread start, so it follows the Orchestrator row.
+	 */
+	readonly orchestratorSkill?: (
+		machine: RuntimeId,
+		agentId: AgentId,
+	) => OrchestratorSkill | undefined;
 	/**
 	 * What a listing of earlier sessions knows beyond the CLI's store: the
 	 * repository the folder is in, for its other worktrees' sessions, and the
@@ -275,7 +290,10 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					new AgentConversation(
 						openedLater(async () => {
 							skill = await options.devhubSkill?.(machine);
-							const skilled = withDevhubSkill(profile, skill);
+							const skilled = withOrchestratorSkill(
+								withDevhubSkill(profile, skill),
+								options.orchestratorSkill?.(machine, agentId),
+							);
 							return hostOn(
 								new HostLink(
 									options.machineRuntime(machine),
@@ -288,7 +306,18 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 							bootId,
 							cwd: root,
 							clientVersion: options.clientVersion,
-							developerInstructions: () => codexGuiInstructions(skill),
+							developerInstructions: () => {
+								const orchestrator = options.orchestratorSkill?.(
+									machine,
+									agentId,
+								);
+								return codexGuiInstructions(
+									skill,
+									orchestrator === undefined
+										? []
+										: [codexOrchestratorInstructions(orchestrator)],
+								);
+							},
 						}),
 						publish,
 						{
@@ -568,9 +597,9 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 						"the Workspace this Agent belongs to is no longer open",
 					);
 				}
-				const skilled = withDevhubSkill(
-					profile,
-					await options.devhubSkill?.(machine),
+				const skilled = withOrchestratorSkill(
+					withDevhubSkill(profile, await options.devhubSkill?.(machine)),
+					options.orchestratorSkill?.(machine, agentId),
 				);
 				const cli = terminalCommand(profile, skilled.args);
 				// The one place the two presentations differ at launch: a GUI
@@ -894,16 +923,19 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		// resumed launch puts one (`withSession`), so a profile's own
 		// `--continue`, or the session it was first launched on, is never a
 		// second session for the CLI to choose between.
-		const skilled = withDevhubSkill(
-			{
-				kind: profile.kind,
-				args: withSession(
-					profile.kind,
-					profile.args,
-					resumeArgs(profile.kind, session),
-				),
-			},
-			await options.devhubSkill?.(machine),
+		const skilled = withOrchestratorSkill(
+			withDevhubSkill(
+				{
+					kind: profile.kind,
+					args: withSession(
+						profile.kind,
+						profile.args,
+						resumeArgs(profile.kind, session),
+					),
+				},
+				await options.devhubSkill?.(machine),
+			),
+			options.orchestratorSkill?.(machine, agentId),
 		);
 		await sessions.respawn({
 			machine,

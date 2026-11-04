@@ -109,12 +109,17 @@ export function codexDevhubInstructions(skill: DevhubSkill): string {
 
 /**
  * Everything a Codex GUI Agent's thread is told: the `/devhub` skill's
- * pointer once the skill is written on the Agent's machine, and always how to
- * link files.
+ * pointer once the skill is written on the Agent's machine, any further
+ * skill's pointer this Agent alone has (the orchestrator's,
+ * `orchestrator/orchestratorSkill.ts`), and always how to link files.
  */
-export function codexGuiInstructions(skill: DevhubSkill | undefined): string {
+export function codexGuiInstructions(
+	skill: DevhubSkill | undefined,
+	more: readonly string[] = [],
+): string {
 	return [
 		...(skill === undefined ? [] : [codexDevhubInstructions(skill)]),
+		...more,
 		GUI_AGENT_INSTRUCTIONS,
 	].join("\n\n");
 }

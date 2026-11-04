@@ -42,8 +42,11 @@ export interface AgentMetaPair {
 
 export type TellCommand =
 	| { readonly verb: "help" }
-	/** The /devhub skill's text, for an agent DevHub did not start. */
-	| { readonly verb: "skill" }
+	/**
+	 * The /devhub skill's text, for an agent DevHub did not start; with
+	 * `orchestrator`, the /devhub-orchestrator skill's instead.
+	 */
+	| { readonly verb: "skill"; readonly orchestrator?: true }
 	| { readonly verb: "workspaces" }
 	| {
 			readonly verb: "workspace-open";
@@ -295,6 +298,11 @@ usage: devhub --tell [--json] [--as <name>] <subcommand> [arguments]
                                    DevHub's devhub command: an agent DevHub
                                    did not start (Claude Desktop, another
                                    tool) can read this to learn the CLI
+  skill --orchestrator             the /devhub-orchestrator skill (SKILL.md)
+                                   DevHub gives the orchestrator agent only:
+                                   how to interview the person and write
+                                   their make-progress skill (for an
+                                   orchestrator DevHub did not start)
 
 Commands that start or create something take every choice as an argument:
 the flags marked (required) have no default, so what you get never depends
@@ -712,9 +720,16 @@ function parseVerb(args: readonly string[]): TellCommand {
 		case "workspaces":
 			positionals(readFlags(args.slice(1), NO_FLAGS), []);
 			return { verb: "workspaces" };
-		case "skill":
-			positionals(readFlags(args.slice(1), NO_FLAGS), []);
-			return { verb: "skill" };
+		case "skill": {
+			const flags = readFlags(args.slice(1), {
+				values: [],
+				switches: ["--orchestrator"],
+			});
+			positionals(flags, []);
+			return flags.switches.has("--orchestrator")
+				? { verb: "skill", orchestrator: true }
+				: { verb: "skill" };
+		}
 		case "workspace": {
 			if (sub === "status") {
 				const [workspace] = positionals(readFlags(rest, NO_FLAGS), ["<w>"]);
@@ -1444,10 +1459,13 @@ export function tellCommandFrom(value: unknown): TellCommand {
 	const record = value as Record<string, unknown>;
 	switch (record["verb"]) {
 		case "help":
-		case "skill":
 		case "workspaces":
 		case "commands":
 			return { verb: record["verb"] };
+		case "skill":
+			return record["orchestrator"] === true
+				? { verb: "skill", orchestrator: true }
+				: { verb: "skill" };
 		case "workspace-open":
 			return {
 				verb: "workspace-open",

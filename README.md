@@ -262,6 +262,7 @@ reader, `external`. Inside DevHub `--as` is refused: the caller is its agent.
 
 ```sh
 devhub --tell skill                                   # the /devhub SKILL.md, for agents DevHub did not start
+devhub --tell skill --orchestrator                    # the /devhub-orchestrator SKILL.md (writing make-progress), for an orchestrator DevHub did not start
 devhub --tell workspaces                              # open workspaces: id, folder, branch, worktree, Issue, PR, unresolved conversations, CI, agents
 devhub --tell workspace status W                      # one workspace's Issue, PR (draft), unresolved conversations, CI counts, as of when (--json: under "github", null when unknown)
 devhub --tell workspace open ~/src/app [--worktree 123-fix-login]   # Cmd+Q f

@@ -194,6 +194,48 @@ devhub --tell focus orchestrator                    # the only one that changes 
 unselected, starts the agent there unfocused, marks it `role=orchestrator`,
 and sends it `init` (or `--prompt`). One orchestrator at a time.
 
+## `/devhub-orchestrator`: writing the person's make-progress skill
+
+What the orchestrator does on each event is the person's own skill in
+`root` (say `/make-progress`, invoked by `event_prompt = "/make-progress
+{EVENT_JSON}"`). DevHub does not ship one — workflows differ — but it gives
+the orchestrator agent, and no other agent, a skill for **writing** one:
+`/devhub-orchestrator` (`main/orchestrator/orchestratorSkill.ts`).
+
+- **What it says** (in Japanese): what a delivery carries (`init`, one message
+  per delivery that may batch several events, `{EVENT}` and `{EVENT_JSON}`,
+  held mid-turn and while paused, the `events` filter), the event types by
+  family, what each lane asks of the orchestrator (要回答 waits, 対応中 is
+  relayed to the agent and closed, 不明 is kept empty), the escalation
+  principles and template below, how to keep work moving (no idle agent
+  without a reason, `agent read --since`, permission prompts are the
+  person's, no `focus` unasked), the CLI it uses, and an interview: the
+  team's lanes, existing skills, review and "done", what it may decide alone
+  (and where decisions are recorded), events, timers, naming and meta.
+  Then it drafts make-progress — a dispatcher on `type`, a playbook per
+  event, the 不明 rule, escalation rules, a reconcile on `init` — shows it,
+  and writes it to `<root>/.claude/skills/<name>/SKILL.md` (plus an
+  `AGENTS.md` pointer for Codex). It never writes `settings.toml`: it gives
+  the person the `[orchestrator]` lines to add, or to set in Settings.
+- **Where it is**: rewritten on every start at
+  `<userData>/devhub/orchestrator-skill/.claude/skills/devhub-orchestrator/SKILL.md`
+  (`~/Library/Application Support/DevHub/…` on a Mac), beside `/devhub`'s
+  `agent-skill`, naming the same `devhub` launcher.
+- **How it is given**: when the agent being launched, restarted or starting a
+  thread is the orchestrator — the one the row is assigned to, or the new
+  agent `orchestrator start` (and the window's Start) is making — Claude gets
+  a second `--add-dir=<userData>/devhub/orchestrator-skill`, and a Codex GUI
+  thread one more paragraph in `developerInstructions` pointing at the
+  SKILL.md. Every other agent gets only `/devhub` (`isOrchestratorAgent`,
+  `orchestratorSkill` in `shell/agentWiring.ts`).
+- **From outside DevHub**: `devhub --tell skill --orchestrator` prints it
+  (`--json`: `{ text, cli, skillFile }`) for an orchestrator DevHub did not
+  start (Claude Desktop).
+
+To get a make-progress skill, start the orchestrator and ask it:
+「/devhub-orchestrator で make-progress を作りたい」. It interviews, drafts,
+writes the skill into `root`, and tells you the settings lines.
+
 ## A recommended escalation template
 
 Not enforced — a starting point for the orchestrator's own skill. Escalate
