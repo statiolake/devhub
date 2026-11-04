@@ -68,6 +68,7 @@ export interface ControlHandlers {
 		command: TellCommand,
 		origin: string | undefined,
 		machine?: string | undefined,
+		as?: string | undefined,
 	): Promise<{ readonly message: string; readonly data: unknown }>;
 	installCli(): Promise<string>;
 	/**
@@ -334,6 +335,7 @@ export async function answerControlRequest(
 					request.command,
 					request.origin,
 					request.machine,
+					request.as,
 				);
 				return { ok: true, message: answer.message, data: answer.data };
 			}

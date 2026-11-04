@@ -500,16 +500,10 @@ import {
 	gitHubItemUrl,
 	issueNumberFromBranch,
 	parseGitHubItemUrl,
-	wipBranchForIssue,
 } from "../../model/github.js";
 import { requestId } from "../../model/conversation.js";
 import type { GitHubItem } from "../../model/github.js";
-import {
-	assignmentPresentation,
-	issuePromptDelivery,
-	onlyClone,
-	toDomainProfile,
-} from "./issueAssignment.js";
+import { issuePromptDelivery, toDomainProfile } from "./issueAssignment.js";
 import {
 	renderAgentAction,
 	smartButtonValues,
@@ -533,6 +527,7 @@ import {
 import { popupContextMenu } from "./contextMenu.js";
 import { installMenu, refreshMenu } from "./menu.js";
 import {
+	devhubSkillAnswer,
 	devhubSkillPaths,
 	devhubSkillText,
 	writeDevhubSkill,
@@ -8936,10 +8931,15 @@ export class AppController {
 		command: TellCommand,
 		origin: string | undefined,
 		machine?: string | undefined,
+		as?: string | undefined,
 	): Promise<TellAnswer> {
-		return new TellService(this.tellPorts(), undefined, this.tellMemory).run(
-			command,
-			tellCaller(origin, machine),
+		const service = new TellService(
+			this.tellPorts(),
+			undefined,
+			this.tellMemory,
+		);
+		return Promise.resolve().then(() =>
+			service.run(command, tellCaller(origin, machine, as)),
 		);
 	}
 
@@ -8953,6 +8953,12 @@ export class AppController {
 				.find((agent) => !before.has(agent.id))?.id;
 		return {
 			workspaces: () => this.tellWorkspaces(),
+			// What `writeAgentSkill` wrote for this run, word for word.
+			skill: () => {
+				if (this.userDataPath === undefined)
+					throw new Error("DevHub has not finished starting.");
+				return devhubSkillAnswer(this.userDataPath);
+			},
 			// The agent picker's own list (`agentProfiles`), so a row there and a
 			// line here cannot disagree about a profile's default mode.
 			profiles: () =>
@@ -9382,43 +9388,21 @@ export class AppController {
 		readonly workspaceId: string;
 		readonly agentId: string | undefined;
 	}> {
+		// Everything is named (`tell/service.ts` refuses a call that leaves a
+		// choice open): no clone is searched for, no branch derived, no profile,
+		// mode or action taken from the settings or the first of a list. What
+		// the command line gets must not move when the settings do.
 		const config = this.config;
 		const item = parseGitHubItemUrl(request.url);
 		if (!item)
 			throw new Error("That is not a GitHub Issue or pull request URL.");
-		let clone: WorkspacePlaceWire;
-		if (request.repo !== undefined) {
-			clone = { kind: "local", path: request.repo };
-		} else {
-			const found = await findClones(
-				config,
-				(place) => this.gitCommand(runtimeFor(workspaceLocation(place))),
-				item,
-				this.coordinator.model.workspaces.map(
-					(workspace) => workspace.location,
-				),
-			);
-			clone = onlyClone(found, `${item.owner}/${item.repository}`);
-		}
-		let branch = request.branch;
-		if (branch === undefined) {
-			const existing = await this.assignmentBranch(request.url, clone);
-			branch =
-				existing.reachable && existing.branch !== undefined
-					? existing.branch
-					: item.kind === "pull"
-						? undefined
-						: wipBranchForIssue(item.number);
-			if (branch === undefined)
-				throw new Error(
-					`the branch of ${request.url} cannot be reached from ${clone.path}.`,
-				);
-		}
+		const clone: WorkspacePlaceWire = { kind: "local", path: request.repo };
 		const folder = await this.prepareIssueFolder({
 			issueUrl: request.url,
 			place: clone,
-			branch,
-			inRoot: request.place === "root",
+			...(request.branch === undefined
+				? {}
+				: { branch: request.branch, inRoot: request.place === "root" }),
 		});
 		if (request.editorOnly) {
 			await this.assignIssue({
@@ -9438,17 +9422,21 @@ export class AppController {
 			throw new Error(
 				`there is no agent profile called '${String(request.profile)}'.`,
 			);
-		const actions = config.agentActions.filter(
-			(action) => action.enabled && action.trigger === "issue",
-		);
+		if (request.presentation === undefined)
+			throw new Error("--gui or --tui is required.");
 		const action =
 			request.action === undefined
-				? actions[0]
-				: actions.find((candidate) => candidate.id === request.action);
+				? undefined
+				: config.agentActions.find(
+						(candidate) =>
+							candidate.enabled &&
+							candidate.trigger === "issue" &&
+							candidate.id === request.action,
+					);
 		if (request.action !== undefined && action === undefined)
-			throw new Error(
-				`there is no Issue action called '${request.action}'. Configured: ${actions.map((each) => each.id).join(", ") || "none"}.`,
-			);
+			throw new Error(`there is no Issue action called '${request.action}'.`);
+		if (action !== undefined && request.start === undefined)
+			throw new Error("--send or --draft is required.");
 		const before = this.modelAgentIds();
 		await this.assignIssue(
 			{
@@ -9457,13 +9445,7 @@ export class AppController {
 				profileId: profile.id,
 				...(action === undefined ? {} : { actionId: action.id }),
 				split: false,
-				// What the agent picker's row for this profile says, and what
-				// `agent new` gets: see `issueAssignment.ts`.
-				presentation: assignmentPresentation(
-					request.presentation,
-					profile,
-					config.agents,
-				),
+				presentation: request.presentation,
 			},
 			{
 				...(request.start === undefined ? {} : { start: request.start }),

@@ -34,6 +34,8 @@ export interface AgentMetaPair {
 
 export type TellCommand =
 	| { readonly verb: "help" }
+	/** The /devhub skill's text, for an agent DevHub did not start. */
+	| { readonly verb: "skill" }
 	| { readonly verb: "workspaces" }
 	| {
 			readonly verb: "workspace-open";
@@ -80,13 +82,17 @@ export type TellCommand =
 	| {
 			readonly verb: "issue-assign";
 			readonly url: string;
-			/** A clone of the repository: its absolute path. Absent: the first DevHub finds. */
+			/**
+			 * A clone of the repository: its absolute path. Required — absent is
+			 * refused by the app (`tell/service.ts`) with the reason, not filled in.
+			 */
 			readonly repo?: string;
+			/** Required unless `place` is `root` (then: the clone as it is). */
 			readonly branch?: string;
-			/** Where the branch is checked out: a new worktree (default) or the clone itself. */
+			/** `--root`: the clone itself; otherwise a worktree of `branch`. */
 			readonly place: "worktree" | "root";
 			readonly profile?: string;
-			/** One of the configured `agent_actions`, by id. Absent: the first enabled one. */
+			/** One of the configured Issue actions, by id, or `none`. Required unless --editor-only. */
 			readonly action?: string;
 			readonly prompt?: string;
 			readonly editorOnly: boolean;
@@ -190,9 +196,25 @@ export const MAX_SESSIONS_LIMIT = 200;
 
 export const TELL_USAGE = `devhub --tell — ask the running DevHub to do what its window does.
 
-usage: devhub --tell [--json] <subcommand> [arguments]
+usage: devhub --tell [--json] [--as <name>] <subcommand> [arguments]
 
-  --json  print the answer as JSON (for scripts and agents) instead of text
+  --json       print the answer as JSON (for scripts and agents) instead of text
+  --as <name>  for a caller DevHub did not start (Claude Desktop, a script):
+               the name it is known by - what it has read for 'agent wait
+               --any', and who answered in 'answered via devhub CLI by
+               <name>'. Without it every such caller is one, "external".
+               Refused inside DevHub, where the caller is its agent
+
+  skill                            the /devhub skill (SKILL.md) for this
+                                   DevHub's devhub command: an agent DevHub
+                                   did not start (Claude Desktop, another
+                                   tool) can read this to learn the CLI
+
+Commands that start or create something take every choice as an argument:
+the flags marked (required) have no default, so what you get never depends
+on the person's settings or on which item is listed first. Run 'profiles'
+and 'issue actions' for the values. A call missing one changes nothing and
+says which flags, and their values.
 
 workspaces
   workspaces                       list open workspaces: id, name, path,
@@ -202,13 +224,16 @@ workspaces
                                    with --worktree, open (making it if needed)
                                    the worktree of <branch> in the clone at
                                    <path>; the branch must name an Issue
-                                   number, like 123-fix-login
+                                   number, like 123-fix-login. Without it,
+                                   <path> itself: nothing here reads a
+                                   setting
 
 agents
   profiles                         the agent profiles, as the agent picker
-                                   offers them: id, name, kind, default mode
-                                   (GUI or TUI, what --gui/--tui override),
-                                   and whether it can start here (and why not)
+                                   offers them: id, name, kind, the modes it
+                                   has (--gui/--tui), the window's default
+                                   one, and whether it can start here (and
+                                   why not)
   agents [--workspace <w>] [--meta KEY=VALUE]...
                                    list agents: id, name, kind, status (and
                                    for how long), unread entries, open
@@ -222,14 +247,11 @@ agents
                                    permission prompts, entries you have not
                                    read and the cursor, context use, prompt
                                    cache, and why it stopped or broke
-  agent new [--workspace <w>] [--profile <p>] [--name <n>] [--gui|--tui]
-            [--prompt <text>|-] [--meta KEY=VALUE]...
+  agent new --workspace <w> --profile <p> --gui|--tui      (all required)
+            [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
                                    start an agent (Cmd+Q c) and, with
-                                   --prompt, tell it something once it is up;
-                                   without --workspace, in the workspace of
-                                   the terminal or agent asking; without
-                                   --profile, the first profile; without
-                                   --gui/--tui, the profile's default mode
+                                   --prompt, tell it something once it is up
+                                   (without: an idle agent)
   agent rename <a> <name>          the row menu's Rename...: the name the
   agent rename <a> --clear         Sidebar, the pane and the resume lists
                                    show (--clear: back to DevHub's label)
@@ -278,29 +300,35 @@ agents
                                    worktree (default: your workspace, 20)
   agent resume <session> [--workspace <w>] [--profile <p>] [--name <n>]
                                    go on with one in a new GUI agent, as the
-                                   picker does: another worktree's session
-                                   opens (or checks out again) that worktree.
+                                   picker does. Where it opens is the
+                                   session's own: its folder, or its
+                                   worktree (opened, or checked out again).
+                                   --workspace is where it is looked up
+                                   (default: yours, a fact of where you run,
+                                   not a setting). --profile is required only
+                                   when two profiles run the session's CLI.
                                    Always GUI: there is no --tui here
 
 issues
   issue actions                    the Issue actions Assign Issue offers: id,
-                                   label, the profile and mode an assignment
-                                   uses without --profile/--gui/--tui, whether
-                                   it drafts or sends, and its wording
-  issue assign <url> [--repo <path>] [--branch <name>] [--root]
-               [--profile <p>] [--action <id>] [--prompt <text>|-]
-               [--editor-only] [--gui|--tui] [--send|--draft]
-               [--meta KEY=VALUE]...
+                                   label, whether the window drafts or sends
+                                   it, and its wording
+  issue assign <url> --repo <path> --branch <name>|--root
+               --profile <p> --gui|--tui --action <id>|none --send|--draft
+               [--prompt <text>|-] [--meta KEY=VALUE]...  (all but [] required)
+  issue assign <url> --repo <path> --branch <name>|--root --editor-only
                                    hand an Issue or pull request to a new
-                                   agent (Cmd+Q i), in a worktree of
-                                   <branch> (default: the Issue's own
-                                   feature/<n>-wip). Defaults: the only
-                                   clone found (several: --repo is needed),
-                                   the first profile in its default mode,
-                                   the first Issue action. The action's
-                                   wording is put into the agent's input box
-                                   unsent (--draft, the default) or sent as
-                                   its first message (--send)
+                                   agent (Cmd+Q i): in the clone at --repo, in
+                                   a worktree of --branch (made if need be;
+                                   for a pull request, its own branch), or
+                                   with --root in the clone itself (--branch
+                                   too: switched to it; alone: as it is).
+                                   --action none tells the agent nothing;
+                                   otherwise --draft puts the action's
+                                   wording into its input box unsent, --send
+                                   sends it as its first message (no review
+                                   sheet). --editor-only opens the editor and
+                                   starts no agent
 
 terminal (your own: one per agent, beside your pane; hidden with the editor alone)
   terminal open [--command <cmd>] [--focus]
@@ -339,16 +367,32 @@ folder on the machine devhub runs on: on an SSH host, the host's.
 session id from 'sessions' (or a unique prefix of one).
 
 No --tell command puts a picker or a sheet up in the window. Where the
-window would ask and nothing given decides it, the command is refused, with
-the values there are and the flag that takes one.`;
+window would ask, the command takes the answer as an argument.
+
+The few defaults left are fixed, never read from settings: agent read
+--last 20, agent wait --until any --timeout 300, sessions --limit 20, and
+your own workspace where sessions and agent resume look sessions up - which
+is where you run, not a setting.`;
 
 export type TellParse =
 	| {
 			readonly kind: "tell";
 			readonly command: TellCommand;
 			readonly json: boolean;
+			/** `--as NAME`: an outside caller's label (`TellCaller.label`). */
+			readonly as?: string;
 	  }
 	| { readonly kind: "invalid"; readonly message: string };
+
+/** An `--as` label: a letter or digit, then up to 63 of [A-Za-z0-9_.@-]. */
+const CALLER_LABEL = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}$/u;
+
+/** Why `label` cannot be an `--as` label; undefined when it can. */
+export function callerLabelProblem(label: string): string | undefined {
+	return CALLER_LABEL.test(label)
+		? undefined
+		: `--as takes a name: a letter or digit, then up to 63 letters, digits, '_', '.', '@' or '-'; not ${JSON.stringify(label)}.`;
+}
 
 /** A value read from stdin, standing in for a `-` where text was asked for. */
 export const STDIN_TEXT = "-";
@@ -469,12 +513,31 @@ const NO_FLAGS: FlagSpec = { values: [], switches: [] };
 export function parseTellArguments(argv: readonly string[]): TellParse {
 	let args = [...argv];
 	let json = false;
-	while (args[0] === "--json") {
-		json = true;
-		args = args.slice(1);
-	}
+	let as: string | undefined;
 	try {
-		return { kind: "tell", command: parseVerb(args), json };
+		for (;;) {
+			if (args[0] === "--json") {
+				json = true;
+				args = args.slice(1);
+				continue;
+			}
+			if (args[0] === "--as" || args[0]?.startsWith("--as=") === true) {
+				const value = args[0] === "--as" ? args[1] : args[0].slice(5);
+				if (value === undefined) throw new Refusal("--as needs a value.");
+				const problem = callerLabelProblem(value);
+				if (problem !== undefined) throw new Refusal(problem);
+				as = value;
+				args = args.slice(args[0] === "--as" ? 2 : 1);
+				continue;
+			}
+			break;
+		}
+		return {
+			kind: "tell",
+			command: parseVerb(args),
+			json,
+			...(as === undefined ? {} : { as }),
+		};
 	} catch (error) {
 		if (error instanceof Refusal)
 			return { kind: "invalid", message: error.message };
@@ -493,6 +556,9 @@ function parseVerb(args: readonly string[]): TellCommand {
 		case "workspaces":
 			positionals(readFlags(args.slice(1), NO_FLAGS), []);
 			return { verb: "workspaces" };
+		case "skill":
+			positionals(readFlags(args.slice(1), NO_FLAGS), []);
+			return { verb: "skill" };
 		case "workspace": {
 			if (sub !== "open")
 				throw new Refusal("workspace takes one subcommand: open.");
@@ -946,6 +1012,7 @@ export function tellCommandFrom(value: unknown): TellCommand {
 	const record = value as Record<string, unknown>;
 	switch (record["verb"]) {
 		case "help":
+		case "skill":
 		case "workspaces":
 		case "commands":
 			return { verb: record["verb"] };

@@ -1,19 +1,14 @@
 /**
- * The decisions assigning an Issue makes that are not a person's answer —
- * written once, so the window's sheet, the Sidebar's button and
- * `devhub --tell issue assign` cannot make them differently.
+ * The decisions assigning an Issue makes that are not a person's answer,
+ * written once.
  *
- * - **GUI or terminal.** One source: `profilePresentation`, the profile's own
- *   `presentation` or else `[agents] default_presentation`. It is what the
- *   agent picker's row says (`agentProfilesWire` over `toDomainProfile`), what
- *   `agent new` gets, and what `issue assign` gets unless `--gui`/`--tui`
- *   says otherwise. `issue assign` used to read the profile's own key alone
- *   and fall back to the terminal, so a configuration that left the choice to
- *   `default_presentation = "gui"` — the usual one — started a GUI Agent from
- *   the sheet and a terminal one from the command line.
- * - **Which clone.** The only one found, or the one named. Several, with none
- *   named, is the sheet's "Which …" question, and the order they were found in
- *   is no answer to it.
+ * - **GUI or terminal, in the window.** One source: `profilePresentation`,
+ *   the profile's own `presentation` or else `[agents] default_presentation`
+ *   — what the agent picker's row says (`agentProfilesWire` over
+ *   `toDomainProfile`), for the Assign Issue sheet, the Sidebar's button and
+ *   New Agent alike. `devhub --tell` never asks it: a command line names
+ *   `--gui` or `--tui` every time, so what an agent gets does not move with
+ *   the person's settings (`tell/service.ts`).
  * - **How the first message goes out.** An action that drafts puts its
  *   wording in the new Agent's input box and draws nothing over the window;
  *   one that sends shows its review sheet only when it asks for one and the
@@ -29,12 +24,7 @@ import {
 	type AgentsConfig,
 	type ConfiguredAgentProfile,
 } from "../../model/config.js";
-import {
-	AgentProfile,
-	agentProfileId,
-	type AgentPresentation,
-} from "../../model/domain.js";
-import { placeLabel, type WorkspacePlaceWire } from "../../ipc/contract.js";
+import { AgentProfile, agentProfileId } from "../../model/domain.js";
 
 /** A configured profile as the model runs it, its default presentation decided. */
 export function toDomainProfile(
@@ -50,35 +40,6 @@ export function toDomainProfile(
 		new Map(Object.entries(profile.env)),
 		profilePresentation(profile, agents),
 	);
-}
-
-/** GUI or terminal for an assignment: what was asked for, or the profile's default. */
-export function assignmentPresentation(
-	requested: AgentPresentation | undefined,
-	profile: Pick<ConfiguredAgentProfile, "kind" | "presentation">,
-	agents: AgentsConfig,
-): AgentPresentation {
-	return requested ?? profilePresentation(profile, agents);
-}
-
-/**
- * The clone a command-line assignment works in when none was named: the only
- * one there is. Refused, with what there is and the flag, otherwise.
- */
-export function onlyClone(
-	found: readonly { readonly place: WorkspacePlaceWire }[],
-	repository: string,
-): WorkspacePlaceWire {
-	const [first, ...others] = found;
-	if (first === undefined)
-		throw new Error(
-			`DevHub found no clone of ${repository}. Clone it, or pass --repo <path>.`,
-		);
-	if (others.length > 0)
-		throw new Error(
-			`this machine has ${String(found.length)} clones of ${repository}; choose one with --repo <path>:\n${found.map((one) => `  ${placeLabel(one.place)}`).join("\n")}`,
-		);
-	return first.place;
 }
 
 /** What happens to an Issue action's wording once the Agent is started. */

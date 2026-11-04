@@ -12,12 +12,7 @@ import {
 } from "../../model/config.js";
 import { agentProfilesWire } from "../../model/wire.js";
 import { DEFAULT_ACTION_ID } from "../../model/agentActions.js";
-import {
-	assignmentPresentation,
-	issuePromptDelivery,
-	onlyClone,
-	toDomainProfile,
-} from "./issueAssignment.js";
+import { issuePromptDelivery, toDomainProfile } from "./issueAssignment.js";
 
 function profile(
 	kind: ConfiguredAgentProfile["kind"],
@@ -41,7 +36,7 @@ function agents(defaultPresentation: "gui" | "tui"): AgentsConfig {
 	};
 }
 
-describe("GUI or terminal, for an Issue's agent", () => {
+describe("GUI or terminal, in the window", () => {
 	const cases = [
 		profile("claude"),
 		profile("codex"),
@@ -51,77 +46,32 @@ describe("GUI or terminal, for an Issue's agent", () => {
 		profile("custom"),
 	];
 
-	it("is the agent picker's row, agent new's default and issue assign's, for every profile", () => {
+	it("is the agent picker's row and New Agent's default alike, for every profile", () => {
 		for (const fallback of ["gui", "tui"] as const) {
 			for (const configured of cases) {
-				const settings = agents(fallback);
-				const domain = toDomainProfile(configured, settings);
-				// The row the sheet and the Sidebar's Assign issue choose from.
+				const domain = toDomainProfile(configured, agents(fallback));
+				// The row Assign Issue (sheet and Sidebar button) chooses from.
 				const row = agentProfilesWire([domain], 1).profiles[0]!.presentation;
-				// What `create_agent` falls back to with no presentation: agent new.
-				const agentNew = domain.presentation;
-				// What `--tell issue assign` without --gui/--tui asks for.
-				const cli = assignmentPresentation(undefined, configured, settings);
-				expect({ id: configured.id, fallback, row, agentNew, cli }).toEqual({
+				// What `create_agent` falls back to with no presentation.
+				expect({ id: configured.id, fallback, row }).toEqual({
 					id: configured.id,
 					fallback,
-					row: agentNew,
-					agentNew,
-					cli: agentNew,
+					row: domain.presentation,
 				});
 			}
 		}
 	});
 
-	// The report: settings.toml says `default_presentation = "gui"` and the
-	// profiles say nothing, and the command line started a terminal agent.
+	// The report's settings: `default_presentation = "gui"` and profiles that
+	// say nothing. The window starts GUI agents; a kind with no GUI and a
+	// profile that says otherwise keep their own.
 	it("follows [agents] default_presentation when the profile says nothing", () => {
-		expect(
-			assignmentPresentation(undefined, profile("claude"), agents("gui")),
-		).toBe("gui");
-		expect(
-			assignmentPresentation(undefined, profile("codex"), agents("gui")),
-		).toBe("gui");
-		// A kind with no GUI is a terminal whatever the default says.
-		expect(
-			assignmentPresentation(undefined, profile("cursor"), agents("gui")),
-		).toBe("tui");
-		// A profile's own word wins over the default.
-		expect(
-			assignmentPresentation(
-				undefined,
-				profile("claude", "tui"),
-				agents("gui"),
-			),
-		).toBe("tui");
-	});
-
-	it("is what --gui or --tui asks for, when one does", () => {
-		expect(
-			assignmentPresentation("tui", profile("claude"), agents("gui")),
-		).toBe("tui");
-		expect(
-			assignmentPresentation("gui", profile("claude"), agents("tui")),
-		).toBe("gui");
-	});
-});
-
-describe("the clone of a command-line assignment", () => {
-	const one = { place: { kind: "local" as const, path: "/src/widget" } };
-	const two = { place: { kind: "local" as const, path: "/work/widget" } };
-
-	it("is the only one found", () => {
-		expect(onlyClone([one], "o/widget")).toEqual(one.place);
-	});
-
-	it("is a question when there are several, answered by --repo", () => {
-		expect(() => onlyClone([one, two], "o/widget")).toThrow(
-			"this machine has 2 clones of o/widget; choose one with --repo <path>:\n  /src/widget\n  /work/widget",
-		);
-	});
-
-	it("is a clone to make when there is none", () => {
-		expect(() => onlyClone([], "o/widget")).toThrow(/--repo <path>/u);
+		const mode = (configured: ConfiguredAgentProfile) =>
+			toDomainProfile(configured, agents("gui")).presentation;
+		expect(mode(profile("claude"))).toBe("gui");
+		expect(mode(profile("codex"))).toBe("gui");
+		expect(mode(profile("cursor"))).toBe("tui");
+		expect(mode(profile("claude", "tui"))).toBe("tui");
 	});
 });
 

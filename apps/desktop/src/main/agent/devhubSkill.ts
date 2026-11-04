@@ -71,6 +71,19 @@ export function writeDevhubSkill(skill: DevhubSkill, launcher: string): void {
 }
 
 /**
+ * `devhub --tell skill`: the SKILL.md `writeDevhubSkill` writes under
+ * `userDataPath`, and the launcher it names — for an agent DevHub did not
+ * start, which has no skill directory handed to it.
+ */
+export function devhubSkillAnswer(userDataPath: string): {
+	readonly text: string;
+	readonly cli: string;
+} {
+	const skill = devhubSkillPaths(userDataPath);
+	return { text: devhubSkillText(skill.cli), cli: skill.cli };
+}
+
+/**
  * The profile an Agent on this machine is launched with: the person's own
  * arguments, then the one that makes `/devhub` a skill. Codex is told in its
  * thread instead (`codexDevhubInstructions`), so its argv is left alone.
@@ -123,6 +136,15 @@ quotes (the path may contain spaces), e.g. \`"${cli}" --tell agents\`. Everythin
 does is something the person could do in DevHub's window; you are doing it for
 them.
 
+**If DevHub did not start you** (Claude Desktop, another tool running shell
+commands - you read this through \`devhub --tell skill\`): everything below
+works the same, with three differences. Name yourself with \`--as NAME\` right
+after \`--tell\` (\`devhub --tell --as claude-desktop agents\`): it is who
+answered a question, and what you have read for \`agent wait --any\`; without
+it every outside caller is one reader, "external". You have no workspace of
+your own, so pass \`--workspace\` wherever it is taken. And you have no
+terminal: the \`terminal\` commands are an agent's own and are refused.
+
 **When asked via /devhub, delegate - do not do the work yourself.** "/devhub
 handle this Issue" means: start another agent on it and report back. Do not
 start editing the Issue's code in your own session.
@@ -140,53 +162,60 @@ Add \`--json\` right after \`--tell\` for machine-readable output (recommended
 when you parse results): \`devhub --tell --json agents\`.
 Full reference: \`devhub --tell help\`.
 
+**Pass every choice explicitly.** Commands that start something have no
+defaults: \`agent new\` needs \`--workspace\`, \`--profile\` and \`--gui\` or
+\`--tui\`; \`issue assign\` needs \`--repo\`, \`--branch\` or \`--root\`,
+\`--profile\`, \`--gui\` or \`--tui\`, \`--action\` and \`--send\` or
+\`--draft\`. Run \`profiles\` and \`issue actions\` first to see the values
+(and \`workspaces\` for W). A call missing one does nothing and says which
+flags, and their values. No \`--tell\` command opens a picker in the window.
+
 ## Look around
 
     devhub --tell workspaces                # id, name, folder, branch, Issue, agents
     devhub --tell agents [--workspace W]    # id, name, kind, status, unread, open requests, meta
-    devhub --tell profiles                  # agent profiles: id, kind, default GUI/TUI, available
-    devhub --tell issue actions             # Issue actions: id, label, draft/send, wording
+    devhub --tell profiles                  # agent profiles: id, kind, --gui/--tui, available
+    devhub --tell issue actions             # Issue actions: id, label, wording (and none)
 
 W is a workspace id, its folder path, its name, or \`scratch\`. Folder paths
-are paths on the machine you run on (on an SSH host, the host's); without
-\`--workspace\`, \`agent new\` uses your own workspace. Agents are
+are paths on the machine you run on (on an SSH host, the host's). Agents are
 named by id (a unique prefix of 4+ characters works) or by their name.
 Status is one of working, background, waiting (needs somebody), idle, error.
 
 ## Open a workspace and start an agent there
 
     devhub --tell workspace open ~/src/app
-    devhub --tell agent new --workspace ~/src/app [--profile claude] [--name "API fix"] --prompt "Fix the failing test in api/"
+    devhub --tell agent new --workspace ~/src/app --profile claude --gui --name "API fix" --prompt "Fix the failing test in api/"
 
 \`workspace open\` answers the workspace id. Profiles are the person's
-configured agent profiles; leave \`--profile\` out to use the first one, and
-\`--gui\`/\`--tui\` out for the profile's default mode (what \`profiles\`
-shows). No \`--tell\` command opens a picker in the window: where a choice is
-open (two clones of a repository, say), it is refused with the values and the
-flag to pass. \`agent rename A NAME\` (\`--clear\` to drop it) names an
-agent, yourself included.
-\`--prompt\` is typed into the new agent once it is ready. For long prompts
-use \`--prompt -\` and pipe the text in on stdin.
+configured agent profiles (\`profiles\`); use GUI (\`--gui\`) for agents you
+will read and answer, as only a GUI agent's transcript can be read.
+\`--prompt\` is typed into the new agent once it is ready (without it the
+agent waits idle). For long prompts use \`--prompt -\` and pipe the text in
+on stdin. \`agent rename A NAME\` (\`agent rename A --clear\` drops it)
+names an agent, yourself included.
 
 ## Hand a GitHub Issue (or PR) to a new agent
 
-    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --branch 123-fix-login-timeout
+    devhub --tell issue actions
+    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login-timeout --profile claude --gui --action issue_assignment --draft
 
 - Read the Issue first (title/body, e.g. with \`gh issue view\`) and choose a
   short descriptive branch name: \`<number>-<a-few-words>\`, lowercase, words
   joined by \`-\`, e.g. \`123-fix-login-timeout\`. Keep the Issue number first;
-  DevHub links a workspace to its Issue by it. Without \`--branch\` DevHub uses
-  \`feature/<number>-wip\`. For a pull request leave \`--branch\` out: its own
-  branch is used.
-- DevHub finds a clone of the repository (\`--repo <path>\` picks one), makes
-  a worktree for the branch (\`--root\` checks it out in the clone instead),
-  opens it as a workspace and starts an agent with the person's Issue action.
+  DevHub links a workspace to its Issue by it. For a pull request pass its own
+  branch (\`gh pr view N --json headRefName\`).
+- \`--repo\` is the clone to work in (find it with \`workspaces\`, or ask the
+  person). \`--branch\` makes (or opens) a worktree of the branch;
+  \`--root\` works in the clone itself instead (with \`--branch\`: switched
+  to it; alone: as it is).
+- \`--action\` is one of \`issue actions\` (or \`none\`: the agent is told
+  nothing). \`--draft\` puts its wording into the new agent's input box
+  unsent - the person reads it and sends it; \`--send\` sends it at once.
+  Use \`--draft\` unless the person asked for the agent to start working.
 - \`--prompt "..."\` adds your own instructions for the new agent (scope,
-  constraints, what the person said). \`--profile\` and \`--action\` pick the
-  agent profile and Issue action; \`--editor-only\` opens the editor without
-  an agent. The action's wording is put into the new agent's input box unsent
-  (\`--draft\`, the default): the person reads it and sends it. Pass
-  \`--send\` only when the person asked for the agent to start working.
+  constraints, what the person said). \`--editor-only\` (with \`--repo\` and
+  \`--branch\`/\`--root\` only) opens the editor without an agent.
 
 Then tell the person which agent took it (id, workspace, branch).
 
@@ -228,7 +257,7 @@ When the person asks you to run or coordinate several DevHub agents, loop:
     devhub --tell --json agents                    # or: agent status A (one agent in detail)
     devhub --tell --json agent wait --any [A B ...] [--workspace W] --timeout 600
     devhub --tell --json agent read A --since SINCE # the wait's since (null: --last 20)
-    devhub --tell agent answer A REQ --option N     # questions only
+    devhub --tell agent answer A REQ --option 1     # questions only
     devhub --tell agent send A "next step ..."
     # ... and wait --any again
 
@@ -249,8 +278,8 @@ happens between two calls is missed - always read before waiting again.
   stop or restart yourself. Prefer \`agent interrupt A\` to stop just a turn.
 - \`sessions [--workspace W]\` lists earlier sessions; \`agent resume ID
   [--name N]\` goes on with one in a new GUI agent.
-- **Tag the agents you start**: \`agent new ... --meta parent=YOUR_ID --meta
-  role=reviewer\` (also on \`issue assign\`), then find them again with
+- **Tag the agents you start**: \`--meta parent=YOUR_ID --meta role=reviewer\`
+  on \`agent new\` and \`issue assign\`, then find them again with
   \`agents --meta parent=YOUR_ID\`. \`agent meta A [set KEY VALUE | unset
   KEY]\` reads or changes an agent's pairs; they show in its row's tooltip.
   Your own id is in \`DEVHUB_ORIGIN\` (its last field).
@@ -333,7 +362,7 @@ right", 「メインセッションの ssh してる端末を右に持ってき�
 into your terminal; its process (the ssh, the server, ...) keeps running:
 
     devhub --tell --json terminal panes           # your workspace's editor terminals' panes
-    devhub --tell --json terminal bring %N [--focus]
+    devhub --tell --json terminal bring %7 [--focus]
 
 \`panes\` gives each pane's \`pane\` (\`%N\`), \`session\`, \`windowIndex\` /
 \`windowName\`, \`command\`, \`argv\` (what runs in front, e.g. \`ssh prod\`),
@@ -347,8 +376,8 @@ workspace's editor terminals can be brought — never an agent's pane.
 ## Other
 
     devhub --tell commands            # DevHub's command palette, by id
-    devhub --tell run <command-id>    # run one (DevHub still asks the person where it would)
-    devhub --tell focus A|W           # select an agent or workspace in DevHub
+    devhub --tell run next_agent      # run one by id (one that would open a picker is refused)
+    devhub --tell focus A             # select an agent (or a workspace W) in DevHub
     devhub --tell notify "Agent X finished the migration"
 
 If a command fails, its message says why; fix the arguments rather than

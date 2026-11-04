@@ -620,6 +620,22 @@ describe("devhub --tell on the command line", () => {
 		});
 	});
 
+	it("carries an outside caller's --as label, and no origin it does not have", () => {
+		expect(
+			requestFor(
+				parseArguments(["--tell", "--as", "claude-desktop", "skill"]),
+				"/",
+				"/home/d",
+				undefined,
+				callerContext({}),
+			),
+		).toEqual({
+			kind: "tell",
+			command: { verb: "skill" },
+			as: "claude-desktop",
+		});
+	});
+
 	it("makes a workspace spelled as a relative path absolute, and nothing else", () => {
 		expect(expandWorkspacePath(".", "/srv/app", "/home/d")).toBe("/srv/app");
 		expect(expandWorkspacePath("../lib", "/srv/app", "/home/d")).toBe(

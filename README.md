@@ -211,7 +211,14 @@ transition and why a hidden one stays up or a discard was called off — is also
 ## The `devhub` command
 
 `DevHub: Install 'devhub' command in PATH` writes a launcher that talks to the
-running app over a unix socket in its user-data directory. Everything the
+running app over a unix socket in its user-data directory: `/usr/local/bin/devhub`,
+or `~/.local/bin/devhub` when `/usr/local/bin` is not writable (a profile's own
+DevHub installs `devhub-<profile>`). Run the command again after moving or
+updating DevHub. DevHub also rewrites one on every start for its own agents, at
+`devhub/agent-skill/bin/devhub` in its user-data directory
+(`devhub --tell --json skill` prints its path as `cli`). A tool DevHub did not
+start (Claude Desktop, a script) can run either by its full path, and needs
+neither on its PATH. Everything the
 command does happens inside the app: there is one instance, one extensions
 directory and one editor, and a second process doing any of this behind the
 first one's back is the state the single-instance design exists to prevent.
@@ -243,19 +250,31 @@ not know is refused with a sentence — it is never quietly treated as a path.
 through the same code the window uses. Text by default; `--tell --json` prints
 data for scripts and agents. `devhub --tell help` lists everything.
 
+**From outside DevHub.** `devhub --tell skill` prints the `/devhub` skill
+(SKILL.md, for this DevHub's `devhub`; `--json` gives `{ text, cli }`): an agent
+DevHub did not start (Claude Desktop, another tool) can read this to learn the
+CLI. Such a caller has no workspace, agent or terminal of its own: it passes
+`--workspace` where one is taken, the `terminal` commands refuse it, and
+`agent wait --any` with no ids waits on every GUI agent. `--as NAME` (right
+after `--tell`) names it — what it has read for `wait --any`, and who
+"answered via devhub CLI by NAME"; without it every outside caller is one
+reader, `external`. Inside DevHub `--as` is refused: the caller is its agent.
+
 ```sh
+devhub --tell skill                                   # the /devhub SKILL.md, for agents DevHub did not start
 devhub --tell workspaces                              # open workspaces: id, folder, branch, Issue, agents
 devhub --tell workspace open ~/src/app [--worktree 123-fix-login]   # Cmd+Q f
-devhub --tell profiles                                # agent profiles: id, name, kind, default GUI/TUI, available (and why not)
+devhub --tell profiles                                # agent profiles: id, name, kind, --gui/--tui, the window's default, available (and why not)
 devhub --tell agents [--workspace W] [--meta K=V]...  # id, name, kind, status and for how long, open requests, unread, context, meta
 devhub --tell agent status A                          # one agent in detail (--json: a stable schema)
-devhub --tell agent new --workspace W [--profile P] [--name N] [--gui|--tui] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
+devhub --tell agent new --workspace W --profile P --gui|--tui [--name N] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
 devhub --tell agent rename A NAME | agent rename A --clear   # the row menu's Rename… (--clear: DevHub's label again)
 devhub --tell agent meta A [set KEY VALUE | unset KEY]      # an agent's own key/value pairs
-devhub --tell issue actions                           # Issue actions: id, label, profile/mode used, draft or send, wording
-devhub --tell issue assign <url> [--branch 123-fix-login-timeout] [--repo PATH] [--root]
-              [--profile P] [--action ID] [--prompt TEXT|-] [--editor-only]
-              [--gui|--tui] [--send|--draft] [--meta K=V]...   # Cmd+Q i
+devhub --tell issue actions                           # Issue actions: id, label, draft or send in the window, wording (and none)
+devhub --tell issue assign <url> --repo PATH --branch 123-fix-login-timeout|--root
+              --profile P --gui|--tui --action ID|none --send|--draft
+              [--prompt TEXT|-] [--meta K=V]...                # Cmd+Q i
+devhub --tell issue assign <url> --repo PATH --branch NAME|--root --editor-only
 devhub --tell agent read A [--last N] [--since CURSOR]   # a GUI agent's transcript, with a cursor
 devhub --tell agent send A TEXT|-                     # held until its turn ends, like the composer
 devhub --tell agent interrupt A
@@ -280,28 +299,42 @@ on the workspace's machine, drawn with its pane (right of it, or under it
 beside the editor; never with the editor alone, and `visible` says so) — and
 print the handle (`tmux` binary, `-S` socket, session, pane) an agent drives it with
 (`send-keys -l`, `capture-pane -p`). See `docs/window-and-pages.md`. `issue assign` does what the Assign Issue
-sheet does — the clone DevHub finds (or `--repo`), a worktree of the
-branch (or `--root`), the first profile in its default mode, the first Issue
-action — except that the branch is the caller's to name rather than
-`feature/<n>-wip`.
+sheet does, with every answer given: the clone (`--repo`), a worktree of
+`--branch` or the clone itself (`--root`; with `--branch`, switched to it),
+the profile and its mode, the Issue action (or `none`) and whether its
+wording is drafted or sent.
+
+**No defaults on the command line.** A `--tell` command that starts or
+creates something takes every choice as a required argument — `agent new`:
+`--workspace`, `--profile`, `--gui|--tui`; `issue assign`: `--repo`,
+`--branch|--root`, `--profile`, `--gui|--tui`, `--action`, `--send|--draft`
+— because it is called by agents, and what an agent gets must not move with
+the person's settings or with which item is listed first. A call missing one
+does nothing and names each missing flag with its values, from the same data
+as `profiles` and `issue actions` (`--profile is required: claude, codex
+(see devhub --tell profiles)`). `agent resume` opens the session where it
+ran (its folder, or its worktree), so it needs `--profile` only when two
+profiles run that session's CLI, and is always GUI. `workspace open` opens
+the path, or with `--worktree` that branch's worktree: no setting is read.
+The defaults left are fixed numbers (`agent read --last 20`, `agent wait
+--timeout 300`, `sessions --limit 20`) and the caller's own workspace for
+`sessions` and `agent resume`. The window keeps its settings-based defaults.
 
 **No `--tell` command puts a picker or a sheet up in the window.** Where the
-window would ask and the arguments do not decide it — two clones of the
-Issue's repository and no `--repo`, say — the command is refused with the
-values there are and the flag that takes one; a palette command that would
-open a picker or ask (`run add_agent`, `run close_workspace`) is refused
-naming the `--tell` command to use. GUI or TUI has one default everywhere:
-the profile's `presentation`, else `[agents] default_presentation` — what the
-agent picker's row shows, `agent new` and `issue assign` without
-`--gui`/`--tui` (`agent resume` is always GUI).
+window would ask, the command takes the answer as an argument; a palette
+command that would open a picker or ask (`run add_agent`,
+`run close_workspace`) is refused naming the `--tell` command to use. In the
+window GUI or TUI has one default: the profile's `presentation`, else
+`[agents] default_presentation` — what the agent picker's row shows for New
+Agent and Assign Issue alike.
 
 **Draft or send.** An Issue action's `start` says what its wording does once
 the agent is up: `"draft"` (the default, and what the shipped action does)
 puts it into the agent's input box unsent — a GUI agent's composer, a
 terminal agent's prompt — for the person to read and send; `"send"` sends it
 as the agent's first message, behind the review sheet when
-`confirm_before_send` asks for one (never for `--tell`). `issue assign
---send|--draft` overrides it for one call.
+`confirm_before_send` asks for one. That is the window's; `issue assign`
+says `--send` or `--draft` every time, and draws no sheet.
 
 **Metadata.** `agent meta`, and `--meta KEY=VALUE` on `agent new` and
 `issue assign`, keep an agent's own pairs — `role=reviewer`, `issue=123`,

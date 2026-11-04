@@ -145,6 +145,7 @@ export type Command =
 			readonly kind: "tell";
 			readonly command: TellCommand;
 			readonly json: boolean;
+			readonly as?: string;
 	  };
 
 /**
@@ -168,7 +169,12 @@ export function parseArguments(argv: readonly string[]): Command {
 		const told = parseTellArguments(argv.slice(1));
 		return told.kind === "invalid"
 			? { kind: "invalid", message: `--tell: ${told.message}` }
-			: { kind: "tell", command: told.command, json: told.json };
+			: {
+					kind: "tell",
+					command: told.command,
+					json: told.json,
+					...(told.as === undefined ? {} : { as: told.as }),
+				};
 	}
 	const args = splitAssignments(argv);
 	// `devhub` on its own is not a mistake, it is the smallest thing the
@@ -474,6 +480,7 @@ export function requestFor(
 				command: expandTellPaths(command.command, cwd, home),
 				...(caller.origin === undefined ? {} : { origin: caller.origin }),
 				...(caller.machine === undefined ? {} : { machine: caller.machine }),
+				...(command.as === undefined ? {} : { as: command.as }),
 			};
 	}
 }

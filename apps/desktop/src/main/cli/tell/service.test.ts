@@ -13,6 +13,7 @@ import type {
 } from "../../../model/conversation.js";
 import {
 	answeredBy,
+	callerKey,
 	paneWhere,
 	callerFromOrigin,
 	tellCaller,
@@ -253,6 +254,12 @@ class FakePorts implements TellPorts {
 	];
 	issueActions() {
 		return this.actions;
+	}
+	skill() {
+		return {
+			text: "---\nname: devhub\n---\n# /devhub\n",
+			cli: "/x/bin/devhub",
+		};
 	}
 	resetAgentName(agentId: string) {
 		this.calls.push(`reset-name ${agentId}`);
@@ -531,8 +538,14 @@ describe("devhub --tell, in the app", () => {
 		expect(tellCaller("ssh:box\tw1\tnone", "ssh:other")).toEqual(
 			callerFromOrigin("ssh:box\tw1\tnone"),
 		);
-		expect(tellCaller(undefined, undefined)).toBeUndefined();
-		expect(tellCaller(undefined, "")).toBeUndefined();
+		// No pane and no machine: a process DevHub did not start, on this Mac.
+		expect(tellCaller(undefined, undefined)).toEqual({
+			machine: "local",
+			workspaceId: undefined,
+			agentId: undefined,
+			paneless: true,
+		});
+		expect(tellCaller(undefined, "")).toEqual(tellCaller(undefined, undefined));
 	});
 
 	it("reads a folder as a folder on the caller's machine", async () => {
@@ -568,19 +581,42 @@ describe("devhub --tell, in the app", () => {
 		).rejects.toThrow(/no open workspace/);
 	});
 
-	it("starts an agent in the asking pane's workspace when none is named", async () => {
+	it("needs --workspace, --profile and --gui|--tui, and starts nothing without them", async () => {
 		const { service, ports } = setup();
-		await service.run(
-			{ verb: "agent-new" },
-			callerFromOrigin("local\tw1\taaaa1111-0000"),
-		);
-		expect(ports.calls[0]).toMatch(/^create w1 /);
+		// Even from inside a workspace: where an agent starts is not inferred.
 		await expect(
-			service.run({ verb: "agent-new" }, tellCaller(undefined, "ssh:box")),
-		).rejects.toThrow(/needs --workspace/);
-		await expect(service.run({ verb: "agent-new" }, undefined)).rejects.toThrow(
-			/needs --workspace/,
+			service.run(
+				{ verb: "agent-new" },
+				callerFromOrigin("local\tw1\taaaa1111-0000"),
+			),
+		).rejects.toThrow(
+			[
+				"--workspace is required: app (w1), scratch (scratch-id) (see devhub --tell workspaces)",
+				"--profile is required: claude, codex, cursor (see devhub --tell profiles)",
+				"--gui or --tui is required: --gui, --tui (see devhub --tell profiles)",
+			].join("\n"),
 		);
+		await expect(
+			service.run(
+				{ verb: "agent-new", workspace: "w1", profile: "claude" },
+				coordinator,
+			),
+		).rejects.toThrow(
+			"--gui or --tui is required: claude has --tui, --gui (see devhub --tell profiles)",
+		);
+		await expect(
+			service.run(
+				{
+					verb: "agent-new",
+					workspace: "w1",
+					profile: "cursor",
+					presentation: "gui",
+				},
+				coordinator,
+			),
+		).rejects.toThrow("cursor runs a cursor CLI, which has no GUI: --tui");
+		expect(ports.calls).toEqual([]);
+		expect(ports.queued).toEqual([]);
 	});
 
 	it("opens a workspace on the caller's machine", async () => {
@@ -618,16 +654,22 @@ describe("devhub --tell, in the app", () => {
 		});
 	});
 
-	it("uses the first profile, and refuses one that is not configured", async () => {
+	it("refuses a profile that is not configured, naming the ones there are", async () => {
 		const { service, ports } = setup();
-		await service.run({ verb: "agent-new", workspace: "w1" }, undefined);
-		expect(ports.calls).toEqual(["create w1 claude -"]);
 		await expect(
 			service.run(
-				{ verb: "agent-new", workspace: "w1", profile: "gpt" },
+				{
+					verb: "agent-new",
+					workspace: "w1",
+					profile: "gpt",
+					presentation: "gui",
+				},
 				undefined,
 			),
-		).rejects.toThrow(/Configured profiles: claude, codex/);
+		).rejects.toThrow(
+			"there is no agent profile called 'gpt': claude, codex, cursor (see devhub --tell profiles)",
+		);
+		expect(ports.calls).toEqual([]);
 	});
 
 	it("hands an Issue on with the branch it was given, and the extra prompt", async () => {
@@ -636,15 +678,21 @@ describe("devhub --tell, in the app", () => {
 			{
 				verb: "issue-assign",
 				url: "https://github.com/o/r/issues/123",
+				repo: "/src/r",
 				branch: "123-fix-login-timeout",
 				place: "worktree",
 				editorOnly: false,
+				profile: "claude",
+				presentation: "gui",
+				action: "issue_assignment",
+				start: "draft",
 				prompt: "only the backend",
 			},
 			coordinator,
 		);
 		expect(ports.calls[0]).toContain('"branch":"123-fix-login-timeout"');
 		expect(ports.calls[0]).toContain('"profile":"claude"');
+		expect(ports.calls[0]).toContain('"repo":"/src/r"');
 		expect(ports.queued).toEqual([["issue-agent", "only the backend"]]);
 		expect(answer.message).toContain("Agent issue-agent is taking");
 	});
@@ -889,9 +937,15 @@ describe("an answer from option numbers", () => {
 	});
 
 	it("says who answered when nobody can be named", () => {
-		expect(answeredBy(undefined, [])).toBe(
+		expect(answeredBy(callerFromOrigin("local\tw1\tnone"), [])).toBe(
 			"answered via devhub CLI by a terminal outside any agent",
 		);
+		expect(answeredBy(undefined, [])).toBe(
+			"answered via devhub CLI by external",
+		);
+		expect(
+			answeredBy(tellCaller(undefined, undefined, "claude-desktop"), []),
+		).toBe("answered via devhub CLI by claude-desktop");
 	});
 });
 
@@ -1908,6 +1962,27 @@ describe("no command line answers a permission prompt", () => {
 	});
 });
 
+/** `issue assign` with every choice named. */
+const FULL_ASSIGN = [
+	"issue",
+	"assign",
+	"https://github.com/o/r/issues/7",
+	"--repo",
+	"/src/r",
+	"--branch",
+	"7-fix",
+	"--profile",
+	"claude",
+	"--tui",
+	"--action",
+	"issue_assignment",
+	"--send",
+	"--meta",
+	"parent=bbbb2222-0000",
+	"--meta",
+	"role=implementer",
+];
+
 describe("no --tell call opens a picker", () => {
 	it("refuses a palette command that would put a picker or a question up, naming the command to use", async () => {
 		const { service, ports } = setup();
@@ -1970,41 +2045,39 @@ describe("no --tell call opens a picker", () => {
 		for (const id of asking) expect(ids).toContain(id);
 	});
 
-	it("passes --send/--draft, and asks for --repo rather than choosing a clone", async () => {
+	it("passes every choice of issue assign through, and none it was not given", async () => {
 		const { service, ports } = setup();
-		await viaSocket(
-			service,
-			[
-				"issue",
-				"assign",
-				"https://github.com/o/r/issues/7",
-				"--send",
-				"--tui",
-				"--meta",
-				"parent=bbbb2222-0000",
-				"--meta",
-				"role=implementer",
-			],
-			coordinator,
-		);
+		await viaSocket(service, FULL_ASSIGN, coordinator);
 		const assigned = JSON.parse(
 			ports.calls[0]!.slice("assign ".length),
 		) as IssueAssignRequest;
-		expect(assigned.start).toBe("send");
-		expect(assigned.presentation).toBe("tui");
+		expect(assigned).toMatchObject({
+			repo: "/src/r",
+			branch: "7-fix",
+			place: "worktree",
+			profile: "claude",
+			presentation: "tui",
+			action: "issue_assignment",
+			start: "send",
+		});
 		expect(ports.calls.slice(1)).toEqual([
 			"meta issue-agent parent bbbb2222-0000",
 			"meta issue-agent role implementer",
 		]);
-		// Neither said: the action's own start, the profile's own mode.
+		// --action none: no action, and so nothing to draft or send.
 		ports.calls = [];
-		await viaSocket(
-			service,
-			["issue", "assign", "https://github.com/o/r/issues/7"],
-			coordinator,
+		const none = FULL_ASSIGN.slice(0, 10).concat(["--action", "none"]);
+		await viaSocket(service, none, coordinator);
+		const bare = JSON.parse(
+			ports.calls[0]!.slice("assign ".length),
+		) as IssueAssignRequest;
+		expect(bare.action).toBeUndefined();
+		expect(bare.start).toBeUndefined();
+		await expect(
+			viaSocket(service, [...none, "--draft"], coordinator),
+		).rejects.toThrow(
+			"--send/--draft is about the action's wording, and --action none has none",
 		);
-		expect(ports.calls[0]).not.toContain('"start"');
-		expect(ports.calls[0]).not.toContain('"presentation"');
 		expect(
 			parseTellArguments(["issue", "assign", "u", "--send", "--draft"]),
 		).toEqual({
@@ -2013,17 +2086,117 @@ describe("no --tell call opens a picker", () => {
 		});
 	});
 
-	it("says which values a refused choice can take, and the flag", async () => {
-		const { service } = setup();
+	it("refuses an issue assign that leaves any choice open, naming every flag and its values, and does nothing", async () => {
+		const { service, ports } = setup();
 		await expect(
 			viaSocket(
 				service,
-				["agent", "new", "--workspace", "w1", "--profile", "gpt"],
+				["issue", "assign", "https://github.com/o/r/issues/7"],
 				coordinator,
 			),
 		).rejects.toThrow(
-			"there is no agent profile called 'gpt'. Configured profiles: claude, codex, cursor.",
+			[
+				"--repo <path> is required: the clone to work in (the window asks which when there are several)",
+				"--branch <name> or --root is required: --branch NAME works in a worktree of NAME (made if need be), --root in the clone itself (with --branch, switched to NAME; without, as it is)",
+				"--profile is required: claude, codex, cursor (see devhub --tell profiles)",
+				"--gui or --tui is required: --gui, --tui (see devhub --tell profiles)",
+				"--action is required: issue_assignment, review, none (see devhub --tell issue actions; none tells the agent nothing)",
+				"--send or --draft is required: --draft puts the action's wording into the agent's input box unsent, --send sends it as its first message",
+			].join("\n"),
 		);
+		// Each one missing on its own is named on its own.
+		const without = (flag: string, values = 1) => {
+			const at = FULL_ASSIGN.indexOf(flag);
+			return [
+				...FULL_ASSIGN.slice(0, at),
+				...FULL_ASSIGN.slice(at + 1 + values),
+			];
+		};
+		for (const [line, said] of [
+			[without("--repo"), /^--repo <path> is required/u],
+			[without("--branch"), /^--branch <name> or --root is required/u],
+			[without("--profile"), /^--profile is required: claude, codex, cursor/u],
+			[
+				without("--tui", 0),
+				/^--gui or --tui is required: claude has --tui, --gui/u,
+			],
+			[
+				without("--action"),
+				/^--action is required: issue_assignment, review, none/u,
+			],
+			[without("--send", 0), /^--send or --draft is required/u],
+		] as const) {
+			await expect(viaSocket(service, line, coordinator)).rejects.toThrow(said);
+		}
+		await expect(
+			viaSocket(
+				service,
+				[...without("--action"), "--action", "nope"],
+				coordinator,
+			),
+		).rejects.toThrow(
+			"there is no Issue action called 'nope': issue_assignment, review, none (see devhub --tell issue actions)",
+		);
+		// Nothing at all was done by any of those.
+		expect(ports.calls).toEqual([]);
+		// --root alone is a choice: the clone as it is.
+		await viaSocket(service, [...without("--branch"), "--root"], coordinator);
+		expect(ports.calls).toHaveLength(3);
+		expect(ports.calls[0]).toContain('"place":"root"');
+		expect(ports.calls[0]).not.toContain('"branch"');
+		expect(ports.queued).toEqual([]);
+	});
+
+	it("takes --editor-only with only the clone and the branch, and refuses the agent's flags with it", async () => {
+		const { service, ports } = setup();
+		const base = [
+			"issue",
+			"assign",
+			"https://github.com/o/r/issues/7",
+			"--repo",
+			"/src/r",
+			"--branch",
+			"7-fix",
+			"--editor-only",
+		];
+		await viaSocket(service, base, coordinator);
+		expect(ports.calls).toHaveLength(1);
+		await expect(
+			viaSocket(
+				service,
+				[...base, "--profile", "claude", "--gui"],
+				coordinator,
+			),
+		).rejects.toThrow(
+			"--profile, --gui/--tui are about the agent, and --editor-only starts none",
+		);
+		expect(ports.calls).toHaveLength(1);
+	});
+
+	it("needs --profile for a session two profiles could go on with", async () => {
+		const { service, ports } = setup();
+		ports.past.set("claude", PAST["claude"]!);
+		const profiles = ports.profiles.bind(ports);
+		ports.profiles = () => [
+			...profiles(),
+			{
+				id: "claude-fast",
+				name: "Claude (fast)",
+				kind: "claude",
+				presentation: "gui",
+				presentations: ["tui", "gui"],
+			},
+		];
+		await expect(
+			viaSocket(
+				service,
+				["agent", "resume", "c1aa-0001", "--workspace", "w1"],
+				coordinator,
+			),
+		).rejects.toThrow(
+			"--profile is required: session c1aa-0001 is a claude session, and claude, claude-fast all run claude (see devhub --tell profiles)",
+		);
+		expect(ports.calls.filter((call) => call.startsWith("resume"))).toEqual([]);
 	});
 });
 
@@ -2032,9 +2205,9 @@ describe("profiles and issue actions", () => {
 		const { service, ports } = setup();
 		const answer = await viaSocket(service, ["profiles"], coordinator);
 		expect(answer.message.split("\n")).toEqual([
-			"* claude  Claude  claude  GUI (--tui for TUI)  available",
-			"  codex  Codex  codex  GUI (--tui for TUI)  available",
-			"  cursor  Cursor  cursor  TUI only  unavailable: DevHub could not find cursor-agent on this Mac.",
+			"claude  Claude  claude  --tui --gui (window default: GUI)  available",
+			"codex  Codex  codex  --tui --gui (window default: GUI)  available",
+			"cursor  Cursor  cursor  --tui (window default: TUI)  unavailable: DevHub could not find cursor-agent on this Mac.",
 		]);
 		expect(answer.data).toEqual({
 			profiles: [
@@ -2044,7 +2217,6 @@ describe("profiles and issue actions", () => {
 					kind: "claude",
 					presentation: "gui",
 					presentations: ["tui", "gui"],
-					default: true,
 					available: true,
 					unavailable: null,
 				},
@@ -2054,7 +2226,6 @@ describe("profiles and issue actions", () => {
 					kind: "codex",
 					presentation: "gui",
 					presentations: ["tui", "gui"],
-					default: false,
 					available: true,
 					unavailable: null,
 				},
@@ -2064,7 +2235,6 @@ describe("profiles and issue actions", () => {
 					kind: "cursor",
 					presentation: "tui",
 					presentations: ["tui"],
-					default: false,
 					available: false,
 					unavailable: "DevHub could not find cursor-agent on this Mac.",
 				},
@@ -2074,12 +2244,13 @@ describe("profiles and issue actions", () => {
 		expect(ports.calls).toContain("profile-problem claude -");
 	});
 
-	it("lists the Issue actions with the profile and mode an assignment uses, and draft or send", async () => {
+	it("lists the Issue actions --action takes, what the window does with each, and none", async () => {
 		const { service } = setup();
 		const answer = await viaSocket(service, ["issue", "actions"], coordinator);
 		expect(answer.message.split("\n")).toEqual([
-			"* issue_assignment  Work on the Issue  draft  claude/gui  — このIssueを読み、実装をしてください。",
-			"  review  Review it  send  claude/gui  — Review {{ISSUE_URL}} and leave comments.",
+			"issue_assignment  Work on the Issue  (window: draft)  — このIssueを読み、実装をしてください。",
+			"review  Review it  (window: send)  — Review {{ISSUE_URL}} and leave comments.",
+			"none  (start the agent and tell it nothing)",
 		]);
 		expect(
 			(answer.data as { actions: { id: string; start: string }[] }).actions.map(
@@ -2179,11 +2350,21 @@ describe("agent rename and agent meta", () => {
 		const { service, ports } = setup();
 		await viaSocket(
 			service,
-			["agent", "new", "--workspace", "w1", "--meta", "parent=bbbb2222-0000"],
+			[
+				"agent",
+				"new",
+				"--workspace",
+				"w1",
+				"--profile",
+				"claude",
+				"--gui",
+				"--meta",
+				"parent=bbbb2222-0000",
+			],
 			coordinator,
 		);
 		expect(ports.calls).toEqual([
-			"create w1 claude -",
+			"create w1 claude gui",
 			"meta new-agent parent bbbb2222-0000",
 		]);
 		for (const [line, message] of [
@@ -2202,5 +2383,137 @@ describe("agent rename and agent meta", () => {
 			expect(parsed.kind).toBe("invalid");
 			if (parsed.kind === "invalid") expect(parsed.message).toMatch(message);
 		}
+	});
+});
+
+describe("callers DevHub did not start", () => {
+	const outside = tellCaller(undefined, undefined);
+	const desktop = tellCaller(undefined, undefined, "claude-desktop");
+
+	it("prints the /devhub skill for this DevHub's devhub command, from anywhere", async () => {
+		const { service } = setup();
+		for (const caller of [outside, desktop, coordinator]) {
+			const answer = await viaSocket(service, ["skill"], caller);
+			expect(answer.message).toBe("---\nname: devhub\n---\n# /devhub\n");
+			expect(answer.data).toEqual({
+				text: "---\nname: devhub\n---\n# /devhub\n",
+				cli: "/x/bin/devhub",
+			});
+		}
+	});
+
+	it("are one reader per --as label, all unlabelled ones being 'external'", async () => {
+		expect(callerKey(outside)).toBe("outside:external");
+		expect(callerKey(tellCaller(undefined, "ssh:box"))).toBe(
+			"outside:external",
+		);
+		expect(callerKey(desktop)).toBe("outside:claude-desktop");
+		expect(callerKey(tellCaller(undefined, "ssh:box", "claude-desktop"))).toBe(
+			"outside:claude-desktop",
+		);
+		const { service } = setup();
+		// What one has read is not what the other has.
+		const first = await viaSocket(service, ["agent", "wait", "--any"], desktop);
+		expect(first.data).toMatchObject({ reached: true });
+		await viaSocket(service, ["agent", "requests", "aaaa"], desktop);
+		const again = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--timeout", "2"],
+			desktop,
+		);
+		expect(again.data).toMatchObject({ reached: false });
+		const other = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--timeout", "2"],
+			outside,
+		);
+		expect(other.data).toMatchObject({ reached: true });
+	});
+
+	it("wait on every GUI agent with no ids, there being no self to leave out", async () => {
+		const { service } = setup();
+		const waited = await viaSocket(
+			service,
+			["agent", "wait", "--all", "--timeout", "1"],
+			outside,
+		);
+		const agents = (
+			waited.data as { agents: { agentId: string }[] }
+		).agents.map((one) => one.agentId);
+		// The coordinator is an agent like any other to an outside caller.
+		expect(agents).toContain("bbbb2222-0000");
+		expect(agents).toContain("aaaa1111-0000");
+	});
+
+	it("are refused the terminal commands, which are an agent's own", async () => {
+		const { service } = setup();
+		for (const line of [
+			["terminal", "open"],
+			["terminal", "status"],
+			["terminal", "close"],
+			["terminal", "panes"],
+			["terminal", "bring", "%7"],
+		]) {
+			await expect(viaSocket(service, line, desktop)).rejects.toThrow(
+				"terminal commands work only from inside a DevHub agent",
+			);
+		}
+	});
+
+	it("still cannot answer a permission prompt, and answer a question as their label", async () => {
+		const { service, conversation } = setup();
+		await expect(
+			viaSocket(
+				service,
+				["agent", "answer", "aaaa", "req-2", "--option", "1"],
+				desktop,
+			),
+		).rejects.toThrow();
+		expect(conversation.answered.map((one) => one.request)).not.toContain(
+			"req-2",
+		);
+		await viaSocket(
+			service,
+			["agent", "answer", "aaaa", "req-1", "--option", "1"],
+			desktop,
+		);
+		expect(JSON.stringify(conversation.answered)).toContain(
+			"answered via devhub CLI by claude-desktop",
+		);
+	});
+
+	it("take --as only outside DevHub, and a label that is a name", () => {
+		expect(() =>
+			tellCaller("local\tw1\taaaa1111-0000", undefined, "me"),
+		).toThrow(/--as is for callers DevHub did not start/u);
+		expect(
+			parseTellArguments(["--as", "claude-desktop", "--json", "agents"]),
+		).toEqual({
+			kind: "tell",
+			command: { verb: "agents" },
+			json: true,
+			as: "claude-desktop",
+		});
+		expect(parseTellArguments(["--as", "has space", "agents"]).kind).toBe(
+			"invalid",
+		);
+		// And across the socket, checked again on the app's side.
+		const request = parseControlRequest(
+			JSON.stringify({
+				kind: "tell",
+				command: { verb: "agents" },
+				as: "claude-desktop",
+			}),
+		);
+		expect(request).toMatchObject({ kind: "tell", as: "claude-desktop" });
+		expect(() =>
+			parseControlRequest(
+				JSON.stringify({
+					kind: "tell",
+					command: { verb: "agents" },
+					as: "a b",
+				}),
+			),
+		).toThrow(/--as takes a name/u);
 	});
 });

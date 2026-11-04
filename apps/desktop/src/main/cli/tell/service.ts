@@ -103,10 +103,11 @@ export interface TellConversation {
 }
 
 export interface IssueAssignRequest {
-	/** Overrides the action's `start` for this call. */
+	/** How the action's wording goes out; absent only with no action. */
 	readonly start: "draft" | "send" | undefined;
 	readonly url: string;
-	readonly repo: string | undefined;
+	/** The clone, always named: the command line never picks one. */
+	readonly repo: string;
 	readonly branch: string | undefined;
 	readonly place: "worktree" | "root";
 	readonly profile: string | undefined;
@@ -214,7 +215,9 @@ export interface TellPorts {
 		profileId: string,
 		workspaceId: string | undefined,
 	): Promise<string | undefined>;
-	/** The enabled Issue actions, in Assign Issue's order: the first is the default. */
+	/** The /devhub skill's SKILL.md, for this DevHub's launcher, and the launcher. */
+	skill(): { readonly text: string; readonly cli: string };
+	/** The enabled Issue actions, in Assign Issue's order. */
 	issueActions(): readonly TellIssueAction[];
 	/** Open (or select) the folder; answers the workspace's id. */
 	openWorkspace(
@@ -312,9 +315,18 @@ export interface TellCaller {
 	readonly machine: string;
 	readonly agentId: string | undefined;
 	readonly workspaceId: string | undefined;
-	/** Known only by `DEVHUB_MACHINE`: not a DevHub pane, so no workspace or agent. */
+	/**
+	 * Not a DevHub pane: a process DevHub did not start (Claude Desktop, a
+	 * script, a login shell), known at most by `DEVHUB_MACHINE`. It has no
+	 * workspace and no agent, and is credited by its `--as` label.
+	 */
 	readonly paneless?: true;
+	/** `--as NAME`: what an outside caller is called, here and in answers. */
+	readonly label?: string;
 }
+
+/** What an outside caller with no `--as` is, in `TellMemory` and in answers. */
+export const OUTSIDE_LABEL = "external";
 
 export interface TellAnswer {
 	readonly message: string;
@@ -366,15 +378,25 @@ export function callerFromOrigin(
 export function tellCaller(
 	origin: string | undefined,
 	machine: string | undefined,
-): TellCaller | undefined {
+	label?: string,
+): TellCaller {
 	const fromOrigin = callerFromOrigin(origin);
-	if (fromOrigin !== undefined) return fromOrigin;
-	if (machine === undefined || machine.length === 0) return undefined;
+	if (fromOrigin !== undefined) {
+		// A DevHub pane is already somebody: its agent, or its terminal.
+		if (label !== undefined)
+			throw new Error(
+				`--as is for callers DevHub did not start; this one runs in DevHub (${fromOrigin.agentId === undefined ? "a terminal" : `agent ${fromOrigin.agentId}`}), and is called that.`,
+			);
+		return fromOrigin;
+	}
+	// Everybody else: a process DevHub did not start. Its paths are this
+	// Mac's unless the shim on a host said otherwise.
 	return {
-		machine,
+		machine: machine === undefined || machine.length === 0 ? "local" : machine,
 		agentId: undefined,
 		workspaceId: undefined,
 		paneless: true,
+		...(label === undefined ? {} : { label }),
 	};
 }
 
@@ -479,9 +501,12 @@ export class TellMemory {
 
 /** Who `TellMemory` keeps a caller's reading under: its Agent, or its terminal. */
 export function callerKey(caller: TellCaller | undefined): string {
-	if (caller === undefined) return "unknown";
+	if (caller === undefined || caller.paneless === true)
+		// One reader per label, wherever it runs: `--as reviewer-bot` twice is
+		// the same reader, and every unlabelled outside caller shares one.
+		return `outside:${caller?.label ?? OUTSIDE_LABEL}`;
 	if (caller.agentId !== undefined) return `agent:${caller.agentId}`;
-	return `${caller.paneless === true ? "shell" : "pane"}:${caller.machine}:${caller.workspaceId ?? "scratch"}`;
+	return `pane:${caller.machine}:${caller.workspaceId ?? "scratch"}`;
 }
 
 /** Output a reader is owed: what the Agent did, not what it was told. */
@@ -607,6 +632,10 @@ export class TellService {
 		switch (command.verb) {
 			case "help":
 				return { message: TELL_USAGE, data: { usage: TELL_USAGE } };
+			case "skill": {
+				const skill = this.ports.skill();
+				return { message: skill.text, data: skill };
+			}
 			case "workspaces":
 				return this.listWorkspaces();
 			case "workspace-open":
@@ -874,16 +903,12 @@ export class TellService {
 		);
 	}
 
-	private profile(id: string | undefined): string {
+	/** A profile that has to be one of `profiles`. */
+	private profile(id: string): string {
 		const profiles = this.ports.profiles();
-		if (id === undefined) {
-			const first = profiles[0];
-			if (!first) throw new Error("no agent profiles are configured.");
-			return first.id;
-		}
 		if (!profiles.some((profile) => profile.id === id))
 			throw new Error(
-				`there is no agent profile called '${id}'. Configured profiles: ${profiles.map((profile) => profile.id).join(", ") || "none"}.`,
+				`there is no agent profile called '${id}': ${profiles.map((profile) => profile.id).join(", ") || "none"} (see devhub --tell profiles)`,
 			);
 		return id;
 	}
@@ -1032,7 +1057,7 @@ export class TellService {
 		const where =
 			this.caller?.paneless === true ? undefined : this.caller?.workspaceId;
 		const rows = await Promise.all(
-			profiles.map(async (profile, index) => {
+			profiles.map(async (profile) => {
 				const problem = await this.ports
 					.profileProblem(profile.id, where)
 					.catch((error: unknown) =>
@@ -1040,7 +1065,6 @@ export class TellService {
 					);
 				return {
 					...profile,
-					default: index === 0,
 					available: problem === undefined,
 					unavailable: problem ?? null,
 				};
@@ -1053,10 +1077,10 @@ export class TellService {
 					: rows
 							.map((row) =>
 								[
-									`${row.default ? "*" : " "} ${row.id}`,
+									row.id,
 									row.name,
 									row.kind,
-									`${row.presentation.toUpperCase()}${row.presentations.length > 1 ? ` (--${row.presentation === "gui" ? "tui" : "gui"} for ${row.presentation === "gui" ? "TUI" : "GUI"})` : " only"}`,
+									`${row.presentations.map((one) => `--${one}`).join(" ")} (window default: ${row.presentation.toUpperCase()})`,
 									row.unavailable === null
 										? "available"
 										: `unavailable: ${row.unavailable}`,
@@ -1067,31 +1091,21 @@ export class TellService {
 		};
 	}
 
-	/**
-	 * Assign Issue's actions, each with what an assignment that names nothing
-	 * else uses: the first profile, in its default mode.
-	 */
+	/** Assign Issue's actions: what `--action` takes, and what each says. */
 	private listIssueActions(): TellAnswer {
-		const actions = this.ports.issueActions();
-		const profile = this.ports.profiles()[0];
-		const rows = actions.map((action, index) => ({
+		const rows = this.ports.issueActions().map((action) => ({
 			...action,
-			default: index === 0,
-			profile: profile?.id ?? null,
-			presentation: profile?.presentation ?? null,
 			summary: promptSummary(action.template),
 		}));
 		return {
-			message:
-				rows.length === 0
-					? "No Issue actions are configured: 'issue assign' starts the agent and tells it nothing."
-					: rows
-							.map(
-								(row) =>
-									`${row.default ? "*" : " "} ${row.id}  ${row.label}  ${row.start}  ${row.profile ?? "-"}/${row.presentation ?? "-"}  — ${row.summary}`,
-							)
-							.join("\n"),
-			data: { actions: rows },
+			message: [
+				...rows.map(
+					(row) =>
+						`${row.id}  ${row.label}  (window: ${row.start})  — ${row.summary}`,
+				),
+				`${NO_ACTION}  (start the agent and tell it nothing)`,
+			].join("\n"),
+			data: { actions: rows, none: NO_ACTION },
 		};
 	}
 
@@ -1154,13 +1168,22 @@ export class TellService {
 	private async newAgent(
 		command: Extract<TellCommand, { verb: "agent-new" }>,
 	): Promise<TellAnswer> {
-		const workspace = this.workspace(
-			this.workspaceOrCallers(command.workspace),
-		);
-		const profile = this.profile(command.profile);
+		// Every choice named: nothing here falls back on a setting or on the
+		// first of a list, because an agent calling this must get the same
+		// thing whatever the person's settings say. Checked before anything is
+		// done, so a refusal changes nothing.
+		const missing: string[] = [];
+		if (command.workspace === undefined)
+			missing.push(
+				`--workspace is required: ${this.workspaceChoices()} (see devhub --tell workspaces)`,
+			);
+		const profile = this.requiredProfile(command.profile, missing);
+		this.requiredMode(profile, command.presentation, missing);
+		refuseMissing(missing);
+		const workspace = this.workspace(command.workspace!);
 		const agentId = await this.ports.createAgent(
 			workspace.id,
-			profile,
+			profile!.id,
 			command.presentation,
 		);
 		if (command.name !== undefined)
@@ -1169,31 +1192,77 @@ export class TellService {
 		if (command.prompt !== undefined)
 			this.ports.queueText(agentId, command.prompt);
 		return {
-			message: `Agent ${agentId} (${profile}) is starting in ${workspace.root}${command.prompt === undefined ? "" : "; it is told the prompt once it is ready"}.`,
-			data: { agentId, workspaceId: workspace.id, profile },
+			message: `Agent ${agentId} (${profile!.id}, ${command.presentation!.toUpperCase()}) is starting in ${workspace.root}${command.prompt === undefined ? "" : "; it is told the prompt once it is ready"}.`,
+			data: { agentId, workspaceId: workspace.id, profile: profile!.id },
 		};
 	}
 
 	private async assignIssue(
 		command: Extract<TellCommand, { verb: "issue-assign" }>,
 	): Promise<TellAnswer> {
-		if (command.editorOnly && command.meta !== undefined)
-			throw new Error(
-				"--meta is about the agent, and --editor-only starts none.",
+		// As `agent new`: every choice the window would make from settings or
+		// from the first row is an argument, all checked before anything runs.
+		const missing: string[] = [];
+		if (command.repo === undefined)
+			missing.push(
+				"--repo <path> is required: the clone to work in (the window asks which when there are several)",
 			);
-		const profile = command.editorOnly
-			? undefined
-			: this.profile(command.profile);
+		if (command.branch === undefined && command.place !== "root")
+			missing.push(
+				"--branch <name> or --root is required: --branch NAME works in a worktree of NAME (made if need be), --root in the clone itself (with --branch, switched to NAME; without, as it is)",
+			);
+		let profile: TellProfile | undefined;
+		let action: string | undefined;
+		if (command.editorOnly) {
+			const extra = [
+				command.profile === undefined ? undefined : "--profile",
+				command.action === undefined ? undefined : "--action",
+				command.presentation === undefined ? undefined : "--gui/--tui",
+				command.start === undefined ? undefined : "--send/--draft",
+				command.meta === undefined ? undefined : "--meta",
+				command.prompt === undefined ? undefined : "--prompt",
+			].filter((flag) => flag !== undefined);
+			if (extra.length > 0)
+				missing.push(
+					`${extra.join(", ")} ${extra.length === 1 ? "is" : "are"} about the agent, and --editor-only starts none`,
+				);
+		} else {
+			profile = this.requiredProfile(command.profile, missing);
+			this.requiredMode(profile, command.presentation, missing);
+			const actions = this.ports.issueActions();
+			const choices = [...actions.map((one) => one.id), NO_ACTION].join(", ");
+			if (command.action === undefined)
+				missing.push(
+					`--action is required: ${choices} (see devhub --tell issue actions; ${NO_ACTION} tells the agent nothing)`,
+				);
+			else if (
+				command.action !== NO_ACTION &&
+				!actions.some((one) => one.id === command.action)
+			)
+				missing.push(
+					`there is no Issue action called '${command.action}': ${choices} (see devhub --tell issue actions)`,
+				);
+			else if (command.action !== NO_ACTION) action = command.action;
+			if (command.action !== NO_ACTION && command.start === undefined)
+				missing.push(
+					"--send or --draft is required: --draft puts the action's wording into the agent's input box unsent, --send sends it as its first message",
+				);
+			if (command.action === NO_ACTION && command.start !== undefined)
+				missing.push(
+					`--send/--draft is about the action's wording, and --action ${NO_ACTION} has none`,
+				);
+		}
+		refuseMissing(missing);
 		const assigned = await this.ports.assignIssue({
 			url: command.url,
-			repo: command.repo,
+			repo: command.repo!,
 			branch: command.branch,
 			place: command.place,
-			profile,
-			action: command.action,
+			profile: profile?.id,
+			action,
 			editorOnly: command.editorOnly,
 			presentation: command.presentation,
-			start: command.start,
+			start: action === undefined ? undefined : command.start,
 		});
 		if (assigned.agentId !== undefined)
 			await this.tag(assigned.agentId, command.meta);
@@ -1209,6 +1278,59 @@ export class TellService {
 					: `Agent ${assigned.agentId} is taking ${command.url} in ${workspace?.root ?? "its workspace"}.`,
 			data: { ...assigned, root: workspace?.root },
 		};
+	}
+
+	/** The workspaces a `--workspace` can name, for a refusal. */
+	private workspaceChoices(): string {
+		const all = this.ports.workspaces();
+		return all.length === 0
+			? "none is open (devhub --tell workspace open <path>)"
+			: all
+					.map((one) =>
+						one.scratch ? `scratch (${one.id})` : `${one.name} (${one.id})`,
+					)
+					.join(", ");
+	}
+
+	/** `--profile`, which must be given and be one of `profiles`; else a line in `missing`. */
+	private requiredProfile(
+		id: string | undefined,
+		missing: string[],
+	): TellProfile | undefined {
+		const profiles = this.ports.profiles();
+		const names = profiles.map((one) => one.id).join(", ") || "none";
+		if (id === undefined) {
+			missing.push(
+				`--profile is required: ${names} (see devhub --tell profiles)`,
+			);
+			return undefined;
+		}
+		const profile = profiles.find((one) => one.id === id);
+		if (profile === undefined)
+			missing.push(
+				`there is no agent profile called '${id}': ${names} (see devhub --tell profiles)`,
+			);
+		return profile;
+	}
+
+	/** `--gui` or `--tui`, which must be given and be one the profile has. */
+	private requiredMode(
+		profile: TellProfile | undefined,
+		mode: "gui" | "tui" | undefined,
+		missing: string[],
+	): void {
+		const offered = profile?.presentations ?? ["gui", "tui"];
+		const flags = offered.map((one) => `--${one}`).join(", ");
+		if (mode === undefined) {
+			missing.push(
+				`--gui or --tui is required: ${profile === undefined ? "" : `${profile.id} has `}${flags} (see devhub --tell profiles)`,
+			);
+			return;
+		}
+		if (profile !== undefined && !offered.includes(mode))
+			missing.push(
+				`${profile.id} runs a ${profile.kind} CLI, which has no ${mode.toUpperCase()}: ${flags}`,
+			);
 	}
 
 	// --- one agent ----------------------------------------------------------
@@ -1873,6 +1995,21 @@ export class TellService {
 				`${JSON.stringify(command.session)} is the start of more than one session's id: ${matches.map(({ session }) => session.id).join(", ")}.`,
 			);
 		const { profile, session } = matches[0]!;
+		// Two profiles of one kind both list the session (the listing shows it
+		// once, under the first): which one goes on with it is the caller's.
+		if (command.profile === undefined) {
+			const kind = this.ports
+				.profiles()
+				.find((one) => one.id === profile)?.kind;
+			const same = this.ports
+				.profiles()
+				.filter((one) => one.kind === kind)
+				.map((one) => one.id);
+			if (same.length > 1)
+				throw new Error(
+					`--profile is required: session ${session.id} is a ${kind ?? "?"} session, and ${same.join(", ")} all run ${kind ?? "it"} (see devhub --tell profiles)`,
+				);
+		}
 		if (!session.resumableHere && session.worktree === undefined)
 			throw new Error(
 				`session ${session.id} ran in ${session.cwd ?? "another folder"}, and its CLI resumes it only there: open that folder as a workspace and resume it from there.`,
@@ -2023,6 +2160,15 @@ function newsLine(news: {
 }
 
 /** `agent status`, as lines of text. */
+/** `--action none`: start the agent and tell it nothing. */
+export const NO_ACTION = "none";
+
+/** Every missing or wrong choice of one command, refused together and before anything runs. */
+function refuseMissing(missing: readonly string[]): void {
+	if (missing.length === 0) return;
+	throw new Error(missing.join("\n"));
+}
+
 /** `role=reviewer parent=ab12`, or nothing for an agent with no metadata. */
 function metaWords(meta: Readonly<Record<string, string>>): string | undefined {
 	const entries = Object.entries(meta);
@@ -2502,6 +2648,8 @@ export function answeredBy(
 			? `${agent.name} (${agent.id})`
 			: caller?.agentId !== undefined
 				? caller.agentId
-				: "a terminal outside any agent";
+				: caller === undefined || caller.paneless === true
+					? (caller?.label ?? OUTSIDE_LABEL)
+					: "a terminal outside any agent";
 	return `answered via devhub CLI by ${who}`;
 }

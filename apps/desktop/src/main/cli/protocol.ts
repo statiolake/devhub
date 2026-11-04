@@ -17,7 +17,11 @@
 
 import { join } from "node:path";
 import type { PortsConfiguration } from "../runtime/portForward.js";
-import { tellCommandFrom, type TellCommand } from "./tell/command.js";
+import {
+	callerLabelProblem,
+	tellCommandFrom,
+	type TellCommand,
+} from "./tell/command.js";
 
 /** Where the running app listens. One per user-data directory, so a scratch
  * run and a real one never meet. */
@@ -234,6 +238,8 @@ export type ControlRequest =
 			 * origin says so: an Agent's own shell, a script on the host.
 			 */
 			readonly machine?: string;
+			/** `--as NAME`: what a caller DevHub did not start is called. */
+			readonly as?: string;
 	  }
 	| {
 			/** An Agent for the workspace the current directory belongs to. */
@@ -531,6 +537,9 @@ export function parseControlRequest(line: string): ControlRequest {
 				...(record["machine"] === undefined
 					? {}
 					: { machine: requireString(record["machine"], "machine") }),
+				...(record["as"] === undefined
+					? {}
+					: { as: requireCallerLabel(record["as"]) }),
 			};
 		case "add-agent":
 			return {
@@ -646,6 +655,13 @@ function requireString(value: unknown, field: string): string {
 		throw new Error(`${field} must be a non-empty string`);
 	}
 	return value;
+}
+
+function requireCallerLabel(value: unknown): string {
+	const label = requireString(value, "as");
+	const problem = callerLabelProblem(label);
+	if (problem !== undefined) throw new Error(problem);
+	return label;
 }
 
 function requireAbsolute(value: unknown, field: string): string {
