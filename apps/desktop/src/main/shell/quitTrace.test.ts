@@ -16,6 +16,10 @@ function fakeApp() {
 		exit(code?: number) {
 			calls.push(`exit ${String(code)}`);
 		},
+		readyListeners: [] as (() => void)[],
+		once(_event: "ready", listener: () => void) {
+			this.readyListeners.push(listener);
+		},
 	};
 }
 
@@ -69,6 +73,28 @@ describe("installQuitTrace", () => {
 		installQuitTrace(app, new EventEmitter(), (line) => lines.push(line));
 		app.quit();
 		expect(lines).toHaveLength(1);
+	});
+});
+
+describe("installQuitTrace after Electron is up", () => {
+	it("puts its signal answers back, so they are installed after Electron's own", async () => {
+		const app = fakeApp();
+		const signals = new EventEmitter();
+		const added: string[] = [];
+		signals.on("newListener", (event: string) => added.push(event));
+		installQuitTrace(app, signals, () => undefined);
+		expect(added).toEqual(["SIGHUP", "SIGINT", "SIGTERM"]);
+		for (const ready of app.readyListeners) ready();
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		expect(added).toEqual([
+			"SIGHUP",
+			"SIGINT",
+			"SIGTERM",
+			"SIGHUP",
+			"SIGINT",
+			"SIGTERM",
+		]);
+		expect(signals.listenerCount("SIGHUP")).toBe(1);
 	});
 });
 

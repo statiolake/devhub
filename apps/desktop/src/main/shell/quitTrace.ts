@@ -37,11 +37,16 @@
 export interface QuittableApp {
 	quit(): void;
 	exit(exitCode?: number): void;
+	once(event: "ready", listener: () => void): unknown;
 }
 
 /** The part of `process` this listens on. */
 export interface SignalSource {
 	on(
+		signal: NodeJS.Signals,
+		listener: (signal: NodeJS.Signals) => void,
+	): unknown;
+	removeListener(
 		signal: NodeJS.Signals,
 		listener: (signal: NodeJS.Signals) => void,
 	): unknown;
@@ -88,19 +93,42 @@ export function installQuitTrace(
 		exit(exitCode);
 	};
 
-	signals.on("SIGHUP", () => {
-		log(
-			"[devhub] SIGHUP received — ignored: DevHub has no terminal to hang up. " +
-				"If a workbench is frozen, this is the kernel's orphaned-process-group SIGHUP " +
-				"(see processGroupAnchor.ts), and every frozen workbench was just sent SIGCONT with it.",
-		);
+	const answers: [NodeJS.Signals, () => void][] = [
+		[
+			"SIGHUP",
+			() => {
+				log(
+					"[devhub] SIGHUP received — ignored: DevHub has no terminal to hang up. " +
+						"If a workbench is frozen, this is the kernel's orphaned-process-group SIGHUP " +
+						"(see processGroupAnchor.ts), and every frozen workbench was just sent SIGCONT with it.",
+				);
+			},
+		],
+		...(["SIGINT", "SIGTERM"] as const).map(
+			(signal): [NodeJS.Signals, () => void] => [
+				signal,
+				() => {
+					log(`[devhub] quit: ${signal} received — quitting`);
+					app.quit();
+				},
+			],
+		),
+	];
+	const answer = () => {
+		for (const [signal, listener] of answers) {
+			signals.removeListener(signal, listener);
+			signals.on(signal, listener);
+		}
+	};
+	answer();
+	// Again once Electron is up. Electron installs its own SIGHUP / SIGINT /
+	// SIGTERM handlers ("quit gracefully") while it starts, after this module
+	// has run, and the process has one handler per signal: the last one
+	// installed. Taking the listeners off and putting them back makes Node
+	// install its handler again, after Electron's.
+	app.once("ready", () => {
+		setTimeout(answer, 0);
 	});
-	for (const signal of ["SIGINT", "SIGTERM"] as const) {
-		signals.on(signal, () => {
-			log(`[devhub] quit: ${signal} received — quitting`);
-			app.quit();
-		});
-	}
 }
 
 /** For tests: forget that the trace was installed. */
