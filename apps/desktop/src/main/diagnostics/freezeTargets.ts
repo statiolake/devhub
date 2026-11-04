@@ -57,10 +57,14 @@ export function freezeTargets(input: FreezeTargetInput): number[] {
 		siblings.push(row);
 		childrenOf.set(row.ppid, siblings);
 	}
-	const own = new Set<number>([
-		...(input.renderer === undefined ? [] : [input.renderer]),
-		...input.windowUtilities,
-	]);
+	// Only real pids: a renderer with no process up is 0, and on macOS pid 0
+	// is `kernel_task`, the root every walk down from it reaches everything.
+	const own = new Set<number>(
+		[
+			...(input.renderer === undefined ? [] : [input.renderer]),
+			...input.windowUtilities,
+		].filter((pid) => pid > 0),
+	);
 	// An Electron process that is not this workbench's own is a wall.
 	const walls = new Set(input.electron.filter((pid) => !own.has(pid)));
 	const order: number[] = [];

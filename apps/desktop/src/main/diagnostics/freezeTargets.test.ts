@@ -82,6 +82,26 @@ describe("a workbench's freeze targets", () => {
 		).toEqual([121]);
 	});
 
+	it("never start from pid 0, the root of every process", () => {
+		// `getOSProcessId()` is 0 for contents with no process up; on macOS
+		// `ps` lists `kernel_task` as 0, the parent of launchd.
+		const rooted = parseProcessTable(
+			[
+				"    0     0 1 0.0 kernel_task kernel_task",
+				"    1     0 1 0.0 /sbin/launchd /sbin/launchd",
+				"  121     1 1 0.0 /x/Plugin /x/Plugin",
+			].join("\n"),
+		);
+		expect(
+			freezeTargets({
+				processes: rooted,
+				renderer: 0,
+				windowUtilities: [121],
+				electron: [121],
+			}),
+		).toEqual([121]);
+	});
+
 	it("are nothing for a workbench whose processes are gone", () => {
 		expect(
 			freezeTargets({

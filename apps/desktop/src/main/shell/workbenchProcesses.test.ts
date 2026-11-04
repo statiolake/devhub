@@ -122,6 +122,23 @@ describe("freezing real processes", () => {
 		expect(freezer.isFrozen("a")).toBe(false);
 	});
 
+	it("never signals a process group: a pid of 0 is nothing to stop", () => {
+		// `getOSProcessId()` is 0 for contents with no process, and
+		// `kill(0, "SIGSTOP")` would stop DevHub's whole process group.
+		const signalled: number[] = [];
+		const freezer = new WorkbenchFreezer({
+			...deps,
+			kill: (pid) => {
+				signalled.push(pid);
+			},
+		});
+		expect(() =>
+			freezer.freeze("a", { renderer: 0, windowUtilities: [] }),
+		).toThrow();
+		expect(signalled).toEqual([]);
+		expect(freezer.isFrozen("a")).toBe(false);
+	});
+
 	it("sees a connection waiting on a frozen listening socket", async () => {
 		const { pid, port } = await server();
 		const freezer = new WorkbenchFreezer(deps);

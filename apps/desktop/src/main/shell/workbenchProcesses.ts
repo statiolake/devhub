@@ -160,10 +160,14 @@ export class WorkbenchFreezer {
 	 * of it to stop.
 	 */
 	freeze(folder: string, known: WorkbenchPids): Promise<void> {
+		// Only real pids. `getOSProcessId()` answers 0 for contents with no
+		// process up, and `kill(0, …)` is not "nothing": it signals the whole
+		// process group — DevHub's main with every renderer and helper in it,
+		// stopped by the one process that could have continued them.
 		const first = [
 			...(known.renderer === undefined ? [] : [known.renderer]),
 			...known.windowUtilities,
-		];
+		].filter((pid) => pid > 0);
 		if (first.length === 0) {
 			throw new Error("it has no processes to stop");
 		}
