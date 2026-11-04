@@ -119,4 +119,19 @@ describe("the settings file", () => {
 		expect(offenders(/\brequireConfig\b|\bcurrentConfig\b/, [])).toEqual([]);
 		expect(offenders(/:\s*Config\s*\|\s*undefined/, [])).toEqual([]);
 	});
+
+	it("is planned on as soon as it is accepted", () => {
+		// `general.workbench_discard_minutes` is read by a workbench plan, and
+		// the discard deadline is set by one. Accepted settings that plan
+		// nothing left a frozen workbench on the old deadline — an hour, by
+		// default — until something else happened to plan.
+		const controller = sources().find(
+			({ path }) => path === "main/shell/appController.ts",
+		);
+		const body = controller?.code.match(
+			/\n\tprivate settingsAccepted\(config: Config\): void \{\n([\s\S]*?)\n\t\}\n/,
+		)?.[1];
+		expect(body).toBeDefined();
+		expect(body).toMatch(/\bthis\.reconcileWorkbenches\(\)/);
+	});
 });

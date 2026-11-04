@@ -9454,6 +9454,10 @@ export class AppController {
 		// `[agents] auto_compact_*` is read when a conversation changes; an
 		// idle one would not notice the setting turned on until too late.
 		this.agentWiring?.conversations.registry.reconsiderCacheKeeping();
+		// `general.workbench_discard_minutes` is read by a plan, and its
+		// deadline set by one: without a plan now, a frozen workbench kept the
+		// old discard deadline until something else happened to plan.
+		this.reconcileWorkbenches();
 	}
 
 	//#endregion
