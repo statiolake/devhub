@@ -18,7 +18,19 @@
  * DevHub, and no command line can make it for them.
  */
 
+import {
+	metaKeyProblem,
+	metaValueProblem,
+	parseMetaPair,
+} from "../../../model/agentMeta.js";
+
 export type AgentWaitUntil = "idle" | "waiting" | "any";
+
+/** One `--meta KEY=VALUE`, checked (`checkMetaKey`, `checkMetaValue`). */
+export interface AgentMetaPair {
+	readonly key: string;
+	readonly value: string;
+}
 
 export type TellCommand =
 	| { readonly verb: "help" }
@@ -30,7 +42,31 @@ export type TellCommand =
 			/** A branch to open a worktree of, made if it is not there yet. */
 			readonly worktree?: string;
 	  }
-	| { readonly verb: "agents"; readonly workspace?: string }
+	| {
+			readonly verb: "agents";
+			readonly workspace?: string;
+			/** Only the agents carrying every one of these (`--meta KEY=VALUE`). */
+			readonly meta?: readonly AgentMetaPair[];
+	  }
+	/** The agent profiles, as the agent picker offers them. */
+	| { readonly verb: "profiles" }
+	/** The Issue actions, as Assign Issue offers them. */
+	| { readonly verb: "issue-actions" }
+	| {
+			/** The window's Rename…: a name, or `clear` back to DevHub's label. */
+			readonly verb: "agent-rename";
+			readonly agent: string;
+			/** Absent: `--clear`. */
+			readonly name?: string;
+	  }
+	| {
+			/** An agent's own key/value pairs: list, set one, or unset one. */
+			readonly verb: "agent-meta";
+			readonly agent: string;
+			readonly op: "list" | "set" | "unset";
+			readonly key?: string;
+			readonly value?: string;
+	  }
 	| {
 			readonly verb: "agent-new";
 			/** Absent: the workspace of the pane that asked (`DEVHUB_ORIGIN`). */
@@ -39,6 +75,7 @@ export type TellCommand =
 			readonly name?: string;
 			readonly prompt?: string;
 			readonly presentation?: "gui" | "tui";
+			readonly meta?: readonly AgentMetaPair[];
 	  }
 	| {
 			readonly verb: "issue-assign";
@@ -54,6 +91,9 @@ export type TellCommand =
 			readonly prompt?: string;
 			readonly editorOnly: boolean;
 			readonly presentation?: "gui" | "tui";
+			/** The action's wording drafted or sent, for this call (`ActionStart`). */
+			readonly start?: "draft" | "send";
+			readonly meta?: readonly AgentMetaPair[];
 	  }
 	| {
 			readonly verb: "agent-read";
@@ -165,10 +205,17 @@ workspaces
                                    number, like 123-fix-login
 
 agents
-  agents [--workspace <w>]         list agents: id, name, kind, status (and
+  profiles                         the agent profiles, as the agent picker
+                                   offers them: id, name, kind, default mode
+                                   (GUI or TUI, what --gui/--tui override),
+                                   and whether it can start here (and why not)
+  agents [--workspace <w>] [--meta KEY=VALUE]...
+                                   list agents: id, name, kind, status (and
                                    for how long), unread entries, open
-                                   requests, context, activity; --json has
-                                   each one's full 'agent status' as state
+                                   requests, context, activity, metadata;
+                                   --json has each one's full 'agent status'
+                                   as state. --meta keeps only the agents
+                                   carrying every pair given
   agent status <a>                 one agent in detail: kind, profile,
                                    workspace, status and since when, turn,
                                    last activity, open questions and
@@ -176,10 +223,22 @@ agents
                                    read and the cursor, context use, prompt
                                    cache, and why it stopped or broke
   agent new [--workspace <w>] [--profile <p>] [--name <n>] [--gui|--tui]
-            [--prompt <text>|-]    start an agent (Cmd+Q c) and, with
+            [--prompt <text>|-] [--meta KEY=VALUE]...
+                                   start an agent (Cmd+Q c) and, with
                                    --prompt, tell it something once it is up;
                                    without --workspace, in the workspace of
-                                   the terminal or agent asking
+                                   the terminal or agent asking; without
+                                   --profile, the first profile; without
+                                   --gui/--tui, the profile's default mode
+  agent rename <a> <name>          the row menu's Rename...: the name the
+  agent rename <a> --clear         Sidebar, the pane and the resume lists
+                                   show (--clear: back to DevHub's label)
+  agent meta <a>                   an agent's own KEY=VALUE metadata (yours
+  agent meta <a> set <key> <value> or other agents': role=reviewer,
+  agent meta <a> unset <key>       parent=<id>, ...); kept across restarts,
+                                   shown in the row's tooltip. A key is a
+                                   letter then up to 31 of [A-Za-z0-9_.-]; a
+                                   value is one line of up to 256 characters
   agent read <a> [--last <n>] [--since <cursor>]
                                    the transcript of a GUI agent, as text;
                                    prints a cursor to pass as --since
@@ -220,16 +279,28 @@ agents
   agent resume <session> [--workspace <w>] [--profile <p>] [--name <n>]
                                    go on with one in a new GUI agent, as the
                                    picker does: another worktree's session
-                                   opens (or checks out again) that worktree
+                                   opens (or checks out again) that worktree.
+                                   Always GUI: there is no --tui here
 
 issues
+  issue actions                    the Issue actions Assign Issue offers: id,
+                                   label, the profile and mode an assignment
+                                   uses without --profile/--gui/--tui, whether
+                                   it drafts or sends, and its wording
   issue assign <url> [--repo <path>] [--branch <name>] [--root]
                [--profile <p>] [--action <id>] [--prompt <text>|-]
-               [--editor-only] [--gui|--tui]
+               [--editor-only] [--gui|--tui] [--send|--draft]
+               [--meta KEY=VALUE]...
                                    hand an Issue or pull request to a new
                                    agent (Cmd+Q i), in a worktree of
                                    <branch> (default: the Issue's own
-                                   feature/<n>-wip)
+                                   feature/<n>-wip). Defaults: the only
+                                   clone found (several: --repo is needed),
+                                   the first profile in its default mode,
+                                   the first Issue action. The action's
+                                   wording is put into the agent's input box
+                                   unsent (--draft, the default) or sent as
+                                   its first message (--send)
 
 terminal (your own: one per agent, beside your pane; hidden with the editor alone)
   terminal open [--command <cmd>] [--focus]
@@ -256,15 +327,20 @@ terminal (your own: one per agent, beside your pane; hidden with the editor alon
 app
   commands                         list the command palette's commands
   run <command-id>                 run one of them, exactly as the palette
-                                   does (it asks first wherever the window
-                                   would)
+                                   does. A command that would put a picker
+                                   or a question up in the window is refused,
+                                   naming the --tell command to use instead
   focus <agent|workspace>          select it in DevHub
   notify <text>                    show a notification in DevHub
 
 <w> is a workspace id, its folder, its name, or "scratch". A folder is a
 folder on the machine devhub runs on: on an SSH host, the host's.
 <a> is an agent id (or a unique prefix of one) or its name. <session> is a
-session id from 'sessions' (or a unique prefix of one).`;
+session id from 'sessions' (or a unique prefix of one).
+
+No --tell command puts a picker or a sheet up in the window. Where the
+window would ask and nothing given decides it, the command is refused, with
+the values there are and the flag that takes one.`;
 
 export type TellParse =
 	| {
@@ -357,6 +433,30 @@ function presentation(flags: Flags): "gui" | "tui" | undefined {
 	return gui ? "gui" : tui ? "tui" : undefined;
 }
 
+/** `--send` or `--draft`: how an Issue action's wording reaches the agent. */
+function start(flags: Flags): "draft" | "send" | undefined {
+	const send = flags.switches.has("--send");
+	const draft = flags.switches.has("--draft");
+	if (send && draft)
+		throw new Refusal("--send and --draft ask for different things.");
+	return send ? "send" : draft ? "draft" : undefined;
+}
+
+/** Every `--meta KEY=VALUE`, checked; a key given twice is refused. */
+function metaPairs(flags: Flags): readonly AgentMetaPair[] | undefined {
+	const given = flags.values.get("--meta");
+	if (given === undefined) return undefined;
+	const pairs: AgentMetaPair[] = [];
+	for (const text of given) {
+		const pair = parseMetaPair(text);
+		if (typeof pair === "string") throw new Refusal(pair);
+		if (pairs.some((one) => one.key === pair.key))
+			throw new Refusal(`--meta ${pair.key} is given more than once.`);
+		pairs.push(pair);
+	}
+	return pairs;
+}
+
 const NO_FLAGS: FlagSpec = { values: [], switches: [] };
 
 /**
@@ -407,16 +507,21 @@ function parseVerb(args: readonly string[]): TellCommand {
 		}
 		case "agents": {
 			const flags = readFlags(args.slice(1), {
-				values: ["--workspace"],
+				values: ["--workspace", "--meta"],
 				switches: [],
 			});
 			positionals(flags, []);
-			const workspace = one(flags, "--workspace");
 			return {
 				verb: "agents",
-				...(workspace === undefined ? {} : { workspace }),
+				...defined({
+					workspace: one(flags, "--workspace"),
+					meta: metaPairs(flags),
+				}),
 			};
 		}
+		case "profiles":
+			positionals(readFlags(args.slice(1), NO_FLAGS), []);
+			return { verb: "profiles" };
 		case "agent":
 			return parseAgent(sub, rest);
 		case "sessions": {
@@ -439,8 +544,11 @@ function parseVerb(args: readonly string[]): TellCommand {
 			};
 		}
 		case "issue": {
-			if (sub !== "assign")
-				throw new Refusal("issue takes one subcommand: assign.");
+			if (sub === "actions") {
+				positionals(readFlags(rest, NO_FLAGS), []);
+				return { verb: "issue-actions" };
+			}
+			if (sub !== "assign") throw new Refusal("issue takes: assign, actions.");
 			const flags = readFlags(rest, {
 				values: [
 					"--repo",
@@ -449,8 +557,17 @@ function parseVerb(args: readonly string[]): TellCommand {
 					"--action",
 					"--prompt",
 					"--prompt-extra",
+					"--meta",
 				],
-				switches: ["--root", "--worktree", "--editor-only", "--gui", "--tui"],
+				switches: [
+					"--root",
+					"--worktree",
+					"--editor-only",
+					"--gui",
+					"--tui",
+					"--send",
+					"--draft",
+				],
 			});
 			const [url] = positionals(flags, ["<url>"]);
 			if (flags.switches.has("--root") && flags.switches.has("--worktree"))
@@ -463,6 +580,8 @@ function parseVerb(args: readonly string[]): TellCommand {
 				action: one(flags, "--action"),
 				prompt,
 				presentation: presentation(flags),
+				start: start(flags),
+				meta: metaPairs(flags),
 			};
 			return {
 				verb: "issue-assign",
@@ -508,7 +627,7 @@ function parseAgent(
 	switch (sub) {
 		case "new": {
 			const flags = readFlags(rest, {
-				values: ["--workspace", "--profile", "--name", "--prompt"],
+				values: ["--workspace", "--profile", "--name", "--prompt", "--meta"],
 				switches: ["--gui", "--tui"],
 			});
 			positionals(flags, []);
@@ -520,8 +639,50 @@ function parseAgent(
 					name: one(flags, "--name"),
 					prompt: one(flags, "--prompt"),
 					presentation: presentation(flags),
+					meta: metaPairs(flags),
 				}),
 			};
+		}
+		case "rename": {
+			const flags = readFlags(rest, { values: [], switches: ["--clear"] });
+			const clear = flags.switches.has("--clear");
+			if (clear) {
+				const [agent] = positionals(flags, ["<agent>"]);
+				return { verb: "agent-rename", agent: agent! };
+			}
+			// The words are the name, whatever they look like.
+			const [agent, ...words] = flags.positional;
+			if (agent === undefined) throw new Refusal("missing <agent>.");
+			const name = words.join(" ").trim();
+			if (name.length === 0)
+				throw new Refusal(
+					"missing <name> (or --clear for the name DevHub gives it).",
+				);
+			return { verb: "agent-rename", agent, name };
+		}
+		case "meta": {
+			// `agent meta <a> [set KEY VALUE... | unset KEY]`: positional, so a
+			// value may be several words.
+			const [agent, op, key, ...words] = rest;
+			if (agent === undefined) throw new Refusal("missing <agent>.");
+			if (op === undefined) return { verb: "agent-meta", agent, op: "list" };
+			if (op !== "set" && op !== "unset")
+				throw new Refusal(
+					"agent meta takes: <agent>, <agent> set KEY VALUE, <agent> unset KEY.",
+				);
+			if (key === undefined) throw new Refusal("missing KEY.");
+			const keyProblem = metaKeyProblem(key);
+			if (keyProblem !== undefined) throw new Refusal(keyProblem);
+			if (op === "unset") {
+				if (words.length > 0)
+					throw new Refusal(`unexpected ${JSON.stringify(words[0])}.`);
+				return { verb: "agent-meta", agent, op, key };
+			}
+			if (words.length === 0) throw new Refusal("missing VALUE.");
+			const value = words.join(" ");
+			const valueProblem = metaValueProblem(value);
+			if (valueProblem !== undefined) throw new Refusal(valueProblem);
+			return { verb: "agent-meta", agent, op, key, value };
 		}
 		case "read": {
 			const flags = readFlags(rest, {
@@ -629,7 +790,7 @@ function parseAgent(
 		}
 		default:
 			throw new Refusal(
-				"agent takes: new, read, send, interrupt, requests, answer, wait, status, stop, restart, resume.",
+				"agent takes: new, read, send, interrupt, requests, answer, wait, status, stop, restart, resume, rename, meta.",
 			);
 	}
 }
@@ -716,6 +877,36 @@ function optionalPresentation(record: Record<string, unknown>): {
 	return { presentation: value };
 }
 
+function optionalStart(record: Record<string, unknown>): {
+	start?: "draft" | "send";
+} {
+	const value = record["start"];
+	if (value === undefined) return {};
+	if (value !== "draft" && value !== "send")
+		throw new Error("a tell command's start must be draft or send");
+	return { start: value };
+}
+
+function optionalMeta(record: Record<string, unknown>): {
+	meta?: readonly AgentMetaPair[];
+} {
+	const value = record["meta"];
+	if (value === undefined) return {};
+	if (!Array.isArray(value))
+		throw new Error("a tell command's meta must be a list");
+	const pairs = value.map((each: unknown): AgentMetaPair => {
+		if (typeof each !== "object" || each === null)
+			throw new Error("a tell command's meta must be key/value pairs");
+		const { key, value: text } = each as Record<string, unknown>;
+		if (typeof key !== "string" || typeof text !== "string")
+			throw new Error("a tell command's meta must be key/value pairs");
+		const problem = metaKeyProblem(key) ?? metaValueProblem(text);
+		if (problem !== undefined) throw new Error(problem);
+		return { key, value: text };
+	});
+	return { meta: pairs };
+}
+
 function absolute(record: Record<string, unknown>, key: string): string {
 	const value = text(record, key);
 	if (!value.startsWith("/"))
@@ -765,7 +956,44 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				...optionalText(record, "worktree"),
 			};
 		case "agents":
-			return { verb: "agents", ...optionalText(record, "workspace") };
+			return {
+				verb: "agents",
+				...optionalText(record, "workspace"),
+				...optionalMeta(record),
+			};
+		case "profiles":
+		case "issue-actions":
+			return { verb: record["verb"] };
+		case "agent-rename":
+			return {
+				verb: "agent-rename",
+				agent: text(record, "agent"),
+				...optionalText(record, "name"),
+			};
+		case "agent-meta": {
+			const op = record["op"];
+			if (op !== "list" && op !== "set" && op !== "unset")
+				throw new Error("a tell command's op must be list, set or unset");
+			if (op === "list")
+				return { verb: "agent-meta", agent: text(record, "agent"), op };
+			const key = text(record, "key");
+			const keyProblem = metaKeyProblem(key);
+			if (keyProblem !== undefined) throw new Error(keyProblem);
+			if (op === "unset")
+				return { verb: "agent-meta", agent: text(record, "agent"), op, key };
+			const value = record["value"];
+			if (typeof value !== "string")
+				throw new Error("a tell command's value must be a string");
+			const valueProblem = metaValueProblem(value);
+			if (valueProblem !== undefined) throw new Error(valueProblem);
+			return {
+				verb: "agent-meta",
+				agent: text(record, "agent"),
+				op,
+				key,
+				value,
+			};
+		}
 		case "agent-new":
 			return {
 				verb: "agent-new",
@@ -774,6 +1002,7 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				...optionalText(record, "name"),
 				...optionalText(record, "prompt"),
 				...optionalPresentation(record),
+				...optionalMeta(record),
 			};
 		case "issue-assign": {
 			const place = record["place"];
@@ -794,6 +1023,8 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				...optionalText(record, "action"),
 				...optionalText(record, "prompt"),
 				...optionalPresentation(record),
+				...optionalStart(record),
+				...optionalMeta(record),
 			};
 		}
 		case "agent-read":

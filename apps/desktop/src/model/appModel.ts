@@ -179,6 +179,8 @@ export interface AgentSnapshot {
    * made up does not. See `Agent.named`.
    */
   readonly named: boolean;
+  /** Its own key/value pairs (`agentMeta.ts`). */
+  readonly meta: Readonly<Record<string, string>>;
   readonly ordinal: number;
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
@@ -1076,6 +1078,13 @@ export class AppModel {
 
   resetAgentName(id: AgentId): void {
     if (this.requireAgent(id).resetName()) {
+      this.bumpRevision();
+    }
+  }
+
+  /** One of an Agent's own pairs set, or removed with no value. */
+  setAgentMeta(id: AgentId, key: string, value: string | undefined): void {
+    if (this.requireAgent(id).setMeta(key, value)) {
       this.bumpRevision();
     }
   }
@@ -2176,6 +2185,7 @@ export class AppModel {
         profileDisplayName: agent.profile.displayName,
         displayName: agentLabelFor(agent, workspace.agents),
         named: agent.named,
+        meta: agent.meta,
         ordinal: agent.ordinal,
         status: agent.status,
         runtimeHealth: agent.runtimeHealth,

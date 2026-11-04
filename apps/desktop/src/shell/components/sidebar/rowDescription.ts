@@ -763,6 +763,11 @@ export function agentTooltipFacts(agent: AgentSnapshot): RowFact[] {
     agent.named === true && agent.activity !== undefined
       ? { text: agent.activity, style: "muted" }
       : undefined,
+    // Its own key/value pairs (`model/agentMeta.ts`), quietly, one a line:
+    // somebody's notes about the Agent, never the row's business.
+    ...Object.entries(agent.meta ?? {}).map(
+      ([key, value]): RowFact => ({ text: `${key}: ${value}`, style: "muted" }),
+    ),
     // A stop that failed, and what the row's × does about it now. It was the
     // ×'s own hover ("Retry stop"); the × has none, so the row says it.
     agent.controlState.kind === "stop-failed"

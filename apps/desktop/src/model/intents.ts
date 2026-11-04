@@ -456,6 +456,14 @@ export type UserIntent =
       readonly agentId: AgentId;
       readonly displayName: string;
     }
+  | { readonly type: "reset_agent_name"; readonly agentId: AgentId }
+  | {
+      readonly type: "set_agent_meta";
+      readonly agentId: AgentId;
+      readonly key: string;
+      /** Absent: the key is removed. */
+      readonly value?: string;
+    }
   /** Tick or untick an action as automatic for an Agent (`automaticActions.ts`). */
   | {
       readonly type: "set_automatic_action";

@@ -16,6 +16,7 @@
  * the first.
  */
 
+import { isSmartButtonTrigger } from "../../model/agentActions.js";
 import { randomUUID } from "node:crypto";
 import { electron } from "../electron.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
@@ -256,6 +257,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			displayName: action.display_name,
 			template: action.template,
 			confirmBeforeSend: action.confirm_before_send,
+			start: action.start,
 			button: action.button,
 			enabled: action.enabled,
 		})),
@@ -402,6 +404,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			display_name: action.displayName,
 			template: action.template,
 			confirm_before_send: action.confirmBeforeSend,
+			start: isSmartButtonTrigger(action.trigger) ? "send" : action.start,
 			button: action.button,
 			enabled: action.enabled,
 			order: index,

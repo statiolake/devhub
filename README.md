@@ -246,11 +246,16 @@ data for scripts and agents. `devhub --tell help` lists everything.
 ```sh
 devhub --tell workspaces                              # open workspaces: id, folder, branch, Issue, agents
 devhub --tell workspace open ~/src/app [--worktree 123-fix-login]   # Cmd+Q f
-devhub --tell agents [--workspace W]                  # id, name, kind, status and for how long, open requests, unread, context
+devhub --tell profiles                                # agent profiles: id, name, kind, default GUI/TUI, available (and why not)
+devhub --tell agents [--workspace W] [--meta K=V]...  # id, name, kind, status and for how long, open requests, unread, context, meta
 devhub --tell agent status A                          # one agent in detail (--json: a stable schema)
-devhub --tell agent new --workspace W [--profile P] [--name N] [--gui|--tui] [--prompt TEXT|-]   # Cmd+Q c
+devhub --tell agent new --workspace W [--profile P] [--name N] [--gui|--tui] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
+devhub --tell agent rename A NAME | agent rename A --clear   # the row menu's Rename… (--clear: DevHub's label again)
+devhub --tell agent meta A [set KEY VALUE | unset KEY]      # an agent's own key/value pairs
+devhub --tell issue actions                           # Issue actions: id, label, profile/mode used, draft or send, wording
 devhub --tell issue assign <url> [--branch 123-fix-login-timeout] [--repo PATH] [--root]
-              [--profile P] [--action ID] [--prompt TEXT|-] [--editor-only]   # Cmd+Q i
+              [--profile P] [--action ID] [--prompt TEXT|-] [--editor-only]
+              [--gui|--tui] [--send|--draft] [--meta K=V]...   # Cmd+Q i
 devhub --tell agent read A [--last N] [--since CURSOR]   # a GUI agent's transcript, with a cursor
 devhub --tell agent send A TEXT|-                     # held until its turn ends, like the composer
 devhub --tell agent interrupt A
@@ -275,17 +280,42 @@ on the workspace's machine, drawn with its pane (right of it, or under it
 beside the editor; never with the editor alone, and `visible` says so) — and
 print the handle (`tmux` binary, `-S` socket, session, pane) an agent drives it with
 (`send-keys -l`, `capture-pane -p`). See `docs/window-and-pages.md`. `issue assign` does what the Assign Issue
-sheet does — the first clone DevHub finds (or `--repo`), a worktree of the
-branch (or `--root`), the first Issue action — except that the branch is the
-caller's to name rather than `feature/<n>-wip`.
+sheet does — the clone DevHub finds (or `--repo`), a worktree of the
+branch (or `--root`), the first profile in its default mode, the first Issue
+action — except that the branch is the caller's to name rather than
+`feature/<n>-wip`.
+
+**No `--tell` command puts a picker or a sheet up in the window.** Where the
+window would ask and the arguments do not decide it — two clones of the
+Issue's repository and no `--repo`, say — the command is refused with the
+values there are and the flag that takes one; a palette command that would
+open a picker or ask (`run add_agent`, `run close_workspace`) is refused
+naming the `--tell` command to use. GUI or TUI has one default everywhere:
+the profile's `presentation`, else `[agents] default_presentation` — what the
+agent picker's row shows, `agent new` and `issue assign` without
+`--gui`/`--tui` (`agent resume` is always GUI).
+
+**Draft or send.** An Issue action's `start` says what its wording does once
+the agent is up: `"draft"` (the default, and what the shipped action does)
+puts it into the agent's input box unsent — a GUI agent's composer, a
+terminal agent's prompt — for the person to read and send; `"send"` sends it
+as the agent's first message, behind the review sheet when
+`confirm_before_send` asks for one (never for `--tell`). `issue assign
+--send|--draft` overrides it for one call.
+
+**Metadata.** `agent meta`, and `--meta KEY=VALUE` on `agent new` and
+`issue assign`, keep an agent's own pairs — `role=reviewer`, `issue=123`,
+`parent=<agent id>` — with it in `state.json` across restarts. A key is a
+letter and up to 31 of `A-Z a-z 0-9 _ . -`, a value one line of up to 256
+characters, 32 pairs an agent. They are in `agents --json` / `agent status
+--json`, filter `agents --meta`, and show quietly in the Agent row's tooltip.
 
 Two things are deliberately not reachable from a command line. A **permission
 prompt** (may this tool call run?) is the person's, in DevHub: `agent requests`
 lists it as "answer in DevHub" and `agent answer` refuses it. Only questions —
 Claude's AskUserQuestion, Codex's requestUserInput — can be answered, and the
 answer carries a note, "answered via devhub CLI by <agent>", that Claude keeps
-in the target's transcript. An agent cannot answer its own question. Palette
-commands that ask first in the window (close, restart) still ask first.
+in the target's transcript. An agent cannot answer its own question.
 
 **Orchestrating.** One ordinary agent can drive the others with these
 commands; there is no special orchestrator. `agent status` gives one agent's
@@ -484,6 +514,11 @@ button = false                      # not drawn as a Smart Button (default true)
                                     # still in the Agent actions sheet
 confirm_before_send = true          # review the wording first (default false for
                                     # Smart Buttons, true for issue and your own)
+
+[agent_actions.issue.issue_assignment]  # the Issue flow's action
+start = "draft"                     # "draft" (default): into the new agent's input
+                                    # box, unsent; "send": its first message
+                                    # (reviewed first if confirm_before_send)
 
 [agent_actions.unresolved_review_comments.answer_reviewers]
 display_name = "Answer the reviewers"

@@ -219,9 +219,7 @@ import { activeProfile } from "../../model/profile.js";
 import {
 	colorThemeNamesOf,
 	profilePresentation,
-	type AgentsConfig,
 	type Config,
-	type ConfiguredAgentProfile,
 } from "../../model/config.js";
 import {
 	applySnapshot,
@@ -507,8 +505,15 @@ import {
 import { requestId } from "../../model/conversation.js";
 import type { GitHubItem } from "../../model/github.js";
 import {
+	assignmentPresentation,
+	issuePromptDelivery,
+	onlyClone,
+	toDomainProfile,
+} from "./issueAssignment.js";
+import {
 	renderAgentAction,
 	smartButtonValues,
+	type ActionStart,
 } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
 import { AutomaticActions } from "../../model/automaticActions.js";
@@ -5567,16 +5572,19 @@ export class AppController {
 	 * instruction like "commit what is here" is right every time and can be
 	 * turned off; anything a person wants to glance at first stays on, which is
 	 * the default because a sheet nobody wanted costs a keystroke and a sentence
-	 * nobody read costs a turn of somebody's agent.
+	 * nobody read costs a turn of somebody's agent. The one caller that says
+	 * otherwise is `devhub --tell`: a command line is the decision, and a sheet
+	 * drawn over the person's window for it would be a question nobody there
+	 * asked (`review: false`).
 	 */
 	private sayToAgent(
 		agentId: ReturnType<typeof parseAgentId>,
 		kind: AgentProfileKind,
 		action: ConfiguredAgentAction,
 		values: Readonly<Record<string, string>>,
+		review: boolean = action.confirm_before_send,
 	): void {
 		const text = renderAgentAction(action, values, kind);
-		const review = action.confirm_before_send;
 		const injectionId = agents()?.queueInjection(agentId, text, review);
 		if (injectionId === undefined || !review) return;
 		// The sheet goes up *now*, over an Agent that is still starting behind
@@ -5615,6 +5623,7 @@ export class AppController {
 		before: ReadonlySet<string>,
 		item: GitHubItem,
 		actionId: string | undefined,
+		how: IssuePromptHow = {},
 	): void {
 		const started = this.coordinator.model.workspaces
 			.flatMap((workspace) => workspace.agents)
@@ -5628,15 +5637,42 @@ export class AppController {
 			(candidate) => candidate.id === actionId && candidate.enabled,
 		);
 		if (action === undefined) return;
-		this.sayToAgent(started.id, started.profile.kind, action, {
-			// One pair of names for either kind. A person's actions are their own
-			// wording, written before pull requests were accepted at all, and a
-			// second pair meaning the same thing would make every template that
-			// wanted to work for both say everything twice. `{{ISSUE_URL}}` is
-			// the URL of the thing that was assigned, whichever it was.
+		// One pair of names for either kind. A person's actions are their own
+		// wording, written before pull requests were accepted at all, and a
+		// second pair meaning the same thing would make every template that
+		// wanted to work for both say everything twice. `{{ISSUE_URL}}` is
+		// the URL of the thing that was assigned, whichever it was.
+		const values = {
 			ISSUE_URL: gitHubItemUrl(item),
 			ISSUE_NO: String(item.number),
-		});
+		};
+		const delivery = issuePromptDelivery(action, how);
+		if (delivery.kind === "draft") {
+			// Into the new Agent's input box, sent by nobody: the composer (or
+			// the prompt) is where it is read and sent, so no review sheet is
+			// drawn over it — the sheet would be a second place to read the same
+			// words before the same keystroke.
+			const text = renderAgentAction(action, values, started.profile.kind);
+			const agentId = started.id;
+			void this.sendToAgent
+				.draft(agentId, text, true)
+				.catch((error: unknown) => {
+					this.publishError(
+						withDetail(
+							errorWireAt("send_to_agent_refused"),
+							`The Issue's message was not put into ${started.displayName}'s input box: ${failureText(error)}`,
+						),
+					);
+				});
+			return;
+		}
+		this.sayToAgent(
+			started.id,
+			started.profile.kind,
+			action,
+			values,
+			delivery.review,
+		);
 	}
 
 	/**
@@ -8917,11 +8953,39 @@ export class AppController {
 				.find((agent) => !before.has(agent.id))?.id;
 		return {
 			workspaces: () => this.tellWorkspaces(),
+			// The agent picker's own list (`agentProfiles`), so a row there and a
+			// line here cannot disagree about a profile's default mode.
 			profiles: () =>
-				this.config.agentProfiles.map((profile) => ({
+				this.agentProfiles().profiles.map((profile) => ({
 					id: profile.id,
+					name: profile.displayName,
 					kind: profile.kind,
+					presentation: profile.presentation,
+					presentations: [...profile.presentations],
 				})),
+			profileProblem: async (profileId, workspaceId) => {
+				const location =
+					workspaceId === undefined
+						? workspaceLocation({ kind: "local", path: homedir() })
+						: this.cliWorkspace(workspaceId).location;
+				const resolved = await this.profileOn(
+					location,
+					profileId,
+					[],
+					undefined,
+				);
+				return resolved.kind === "failed" ? resolved.detail : undefined;
+			},
+			// The rows of Assign Issue's first question, in its order.
+			issueActions: () =>
+				this.config.agentActions
+					.filter((action) => action.enabled && action.trigger === "issue")
+					.map((action) => ({
+						id: action.id,
+						label: action.display_name,
+						template: action.template,
+						start: action.start,
+					})),
 			openWorkspace: async (path, machine, worktree) => {
 				const place: WorkspacePlaceWire = machine.startsWith("ssh:")
 					? { kind: "ssh", host: machine.slice("ssh:".length), path }
@@ -8965,11 +9029,26 @@ export class AppController {
 					throw new Error("DevHub did not start the agent.");
 				return created;
 			},
+			// The rename sheet's intent, and the model's own way back to its label.
 			renameAgent: async (agentId, name) => {
 				await this.dispatchAwaiting({
 					type: "rename_agent",
 					agentId: parseAgentId(agentId),
 					displayName: name,
+				});
+			},
+			resetAgentName: async (agentId) => {
+				await this.dispatchAwaiting({
+					type: "reset_agent_name",
+					agentId: parseAgentId(agentId),
+				});
+			},
+			setAgentMeta: async (agentId, key, value) => {
+				await this.dispatchAwaiting({
+					type: "set_agent_meta",
+					agentId: parseAgentId(agentId),
+					key,
+					...(value === undefined ? {} : { value }),
 				});
 			},
 			queueText: (agentId, text) => {
@@ -9287,6 +9366,7 @@ export class AppController {
 							? undefined
 							: { code: agent.failure.code, detail: agent.failure.detail },
 					promptCache: agent.promptCache,
+					meta: agent.meta ?? {},
 				})),
 			};
 		});
@@ -9318,12 +9398,7 @@ export class AppController {
 					(workspace) => workspace.location,
 				),
 			);
-			const first = found[0];
-			if (first === undefined)
-				throw new Error(
-					`DevHub found no clone of ${item.owner}/${item.repository}. Clone it, or pass --repo <path>.`,
-				);
-			clone = first.place;
+			clone = onlyClone(found, `${item.owner}/${item.repository}`);
 		}
 		let branch = request.branch;
 		if (branch === undefined) {
@@ -9375,14 +9450,26 @@ export class AppController {
 				`there is no Issue action called '${request.action}'. Configured: ${actions.map((each) => each.id).join(", ") || "none"}.`,
 			);
 		const before = this.modelAgentIds();
-		await this.assignIssue({
-			issueUrl: request.url,
-			place: folder,
-			profileId: profile.id,
-			...(action === undefined ? {} : { actionId: action.id }),
-			split: false,
-			presentation: request.presentation ?? profile.presentation ?? "tui",
-		});
+		await this.assignIssue(
+			{
+				issueUrl: request.url,
+				place: folder,
+				profileId: profile.id,
+				...(action === undefined ? {} : { actionId: action.id }),
+				split: false,
+				// What the agent picker's row for this profile says, and what
+				// `agent new` gets: see `issueAssignment.ts`.
+				presentation: assignmentPresentation(
+					request.presentation,
+					profile,
+					config.agents,
+				),
+			},
+			{
+				...(request.start === undefined ? {} : { start: request.start }),
+				review: false,
+			},
+		);
 		const agent = this.coordinator.model.workspaces
 			.flatMap((workspace) => workspace.agents)
 			.find((candidate) => !before.has(candidate.id));
@@ -9739,7 +9826,10 @@ export class AppController {
 	 * nothing, which is the point: a record would have claimed the Issue while
 	 * `master` was checked out.
 	 */
-	private async assignIssue(request: IssueAssignment): Promise<AppOutcomeWire> {
+	private async assignIssue(
+		request: IssueAssignment,
+		how: IssuePromptHow = {},
+	): Promise<AppOutcomeWire> {
 		const item = parseGitHubItemUrl(request.issueUrl);
 		if (!item) {
 			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
@@ -9774,7 +9864,7 @@ export class AppController {
 				? {}
 				: { resume: sessionId(request.resume) }),
 		});
-		this.queueIssuePrompt(agentsBefore, item, request.actionId);
+		this.queueIssuePrompt(agentsBefore, item, request.actionId, how);
 		await this.syncEditorView();
 		return outcomeWire(
 			settled,
@@ -10688,19 +10778,15 @@ function at(position: ControlPosition | undefined): string {
 		: ` at line ${position.line}, column ${position.column},`;
 }
 
-function toDomainProfile(
-	profile: ConfiguredAgentProfile,
-	agents: AgentsConfig,
-): AgentProfile {
-	return AgentProfile.create(
-		agentProfileId(profile.id),
-		profile.display_name,
-		profile.kind,
-		profile.command,
-		profile.args,
-		new Map(Object.entries(profile.env)),
-		profilePresentation(profile, agents),
-	);
+/**
+ * How the Issue flow's first message goes out, where the caller decides it
+ * rather than the action: `start` overrides the action's `ActionStart` for one
+ * assignment (`issue assign --send|--draft`), and `review` its
+ * `confirm_before_send` (false from `devhub --tell`, which draws no sheet).
+ */
+interface IssuePromptHow {
+	readonly start?: ActionStart;
+	readonly review?: boolean;
 }
 
 let current: AppController | undefined;

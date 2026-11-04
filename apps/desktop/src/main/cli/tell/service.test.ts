@@ -26,6 +26,8 @@ import {
 	type TellTerminal,
 	type TellEditorPane,
 	type TellPastSession,
+	type TellIssueAction,
+	type TellProfile,
 	type TellStopped,
 	type TellTerminalPane,
 	type TellWorkspace,
@@ -45,6 +47,7 @@ function agent(overrides: Partial<TellAgent> = {}): TellAgent {
 		controlState: "running",
 		failure: undefined,
 		promptCache: undefined,
+		meta: {},
 		...overrides,
 	};
 }
@@ -202,11 +205,72 @@ class FakePorts implements TellPorts {
 	workspaces() {
 		return this.spaces;
 	}
-	profiles() {
+	profiles(): TellProfile[] {
 		return [
-			{ id: "claude", kind: "claude" },
-			{ id: "codex", kind: "codex" },
+			{
+				id: "claude",
+				name: "Claude",
+				kind: "claude",
+				presentation: "gui",
+				presentations: ["tui", "gui"],
+			},
+			{
+				id: "codex",
+				name: "Codex",
+				kind: "codex",
+				presentation: "gui",
+				presentations: ["tui", "gui"],
+			},
+			{
+				id: "cursor",
+				name: "Cursor",
+				kind: "cursor",
+				presentation: "tui",
+				presentations: ["tui"],
+			},
 		];
+	}
+	missing = new Map<string, string>([
+		["cursor", "DevHub could not find cursor-agent on this Mac."],
+	]);
+	profileProblem(profileId: string, workspaceId: string | undefined) {
+		this.calls.push(`profile-problem ${profileId} ${workspaceId ?? "-"}`);
+		return Promise.resolve(this.missing.get(profileId));
+	}
+	actions: TellIssueAction[] = [
+		{
+			id: "issue_assignment",
+			label: "Work on the Issue",
+			template: "このIssueを読み、実装をしてください。\n{{ISSUE_URL}}\n",
+			start: "draft",
+		},
+		{
+			id: "review",
+			label: "Review it",
+			template: "\nReview {{ISSUE_URL}} and leave comments.",
+			start: "send",
+		},
+	];
+	issueActions() {
+		return this.actions;
+	}
+	resetAgentName(agentId: string) {
+		this.calls.push(`reset-name ${agentId}`);
+		return Promise.resolve();
+	}
+	setAgentMeta(agentId: string, key: string, value: string | undefined) {
+		this.calls.push(`meta ${agentId} ${key} ${value ?? "<unset>"}`);
+		this.spaces = this.spaces.map((space) => ({
+			...space,
+			agents: space.agents.map((one) => {
+				if (one.id !== agentId) return one;
+				const meta: Record<string, string> = { ...one.meta };
+				if (value === undefined) delete meta[key];
+				else meta[key] = value;
+				return { ...one, meta };
+			}),
+		}));
+		return Promise.resolve();
 	}
 	openWorkspace(path: string, machine: string, worktree?: string) {
 		this.calls.push(`open ${path} ${machine} ${worktree ?? "-"}`);
@@ -1514,6 +1578,7 @@ describe("agent status", () => {
 			kind: "claude",
 			profile: "claude",
 			presentation: "gui",
+			meta: {},
 			workspace: { id: "w1", name: "app", root: "/src/app" },
 			status: "waiting",
 			statusSince: "1970-01-01T00:01:30.000Z",
@@ -1840,5 +1905,302 @@ describe("no command line answers a permission prompt", () => {
 				),
 			).map((command) => command.id),
 		).toEqual([]);
+	});
+});
+
+describe("no --tell call opens a picker", () => {
+	it("refuses a palette command that would put a picker or a question up, naming the command to use", async () => {
+		const { service, ports } = setup();
+		const commands = ports.commands.bind(ports);
+		ports.commands = () => [
+			...commands(),
+			...COMMANDS.filter((command) =>
+				[
+					"add_agent",
+					"open_issue_picker",
+					"rename_agent",
+					"close_workspace",
+				].includes(command.id),
+			).map((command) => ({
+				id: command.id,
+				label: command.label,
+				category: command.category,
+				available: true,
+			})),
+		];
+		await expect(
+			viaSocket(service, ["run", "add_agent"], coordinator),
+		).rejects.toThrow(
+			/picker or a question up in DevHub's window.*'agent new/u,
+		);
+		await expect(
+			viaSocket(service, ["run", "open_issue_picker"], coordinator),
+		).rejects.toThrow(/'issue assign <url>'/u);
+		await expect(
+			viaSocket(service, ["run", "rename_agent"], coordinator),
+		).rejects.toThrow(/'agent rename <a> <name>'/u);
+		await expect(
+			viaSocket(service, ["run", "close_workspace"], coordinator),
+		).rejects.toThrow(/picker or a question/u);
+		expect(ports.calls.filter((call) => call.startsWith("run "))).toEqual([]);
+		// One that asks nothing still runs.
+		await viaSocket(service, ["run", "next_agent"], coordinator);
+		expect(ports.calls).toContain("run next_agent");
+	});
+
+	it("knows every palette command that asks in the window", () => {
+		// The commands whose chord opens a sheet or a confirmation: a new one
+		// of those has to be added to the refusals, or `run` would open it.
+		const asking = [
+			"add_workspace",
+			"add_agent",
+			"open_issue_picker",
+			"open_tab_picker",
+			"send_agent_action",
+			"rename_agent",
+			"close_selection",
+			"close_workspace",
+			"restart_agent",
+			"open_recently_closed",
+			"preview_color_theme",
+			"show_chord_help",
+			"open_command_palette",
+		];
+		const ids = COMMANDS.map((command) => command.id as string);
+		for (const id of asking) expect(ids).toContain(id);
+	});
+
+	it("passes --send/--draft, and asks for --repo rather than choosing a clone", async () => {
+		const { service, ports } = setup();
+		await viaSocket(
+			service,
+			[
+				"issue",
+				"assign",
+				"https://github.com/o/r/issues/7",
+				"--send",
+				"--tui",
+				"--meta",
+				"parent=bbbb2222-0000",
+				"--meta",
+				"role=implementer",
+			],
+			coordinator,
+		);
+		const assigned = JSON.parse(
+			ports.calls[0]!.slice("assign ".length),
+		) as IssueAssignRequest;
+		expect(assigned.start).toBe("send");
+		expect(assigned.presentation).toBe("tui");
+		expect(ports.calls.slice(1)).toEqual([
+			"meta issue-agent parent bbbb2222-0000",
+			"meta issue-agent role implementer",
+		]);
+		// Neither said: the action's own start, the profile's own mode.
+		ports.calls = [];
+		await viaSocket(
+			service,
+			["issue", "assign", "https://github.com/o/r/issues/7"],
+			coordinator,
+		);
+		expect(ports.calls[0]).not.toContain('"start"');
+		expect(ports.calls[0]).not.toContain('"presentation"');
+		expect(
+			parseTellArguments(["issue", "assign", "u", "--send", "--draft"]),
+		).toEqual({
+			kind: "invalid",
+			message: "--send and --draft ask for different things.",
+		});
+	});
+
+	it("says which values a refused choice can take, and the flag", async () => {
+		const { service } = setup();
+		await expect(
+			viaSocket(
+				service,
+				["agent", "new", "--workspace", "w1", "--profile", "gpt"],
+				coordinator,
+			),
+		).rejects.toThrow(
+			"there is no agent profile called 'gpt'. Configured profiles: claude, codex, cursor.",
+		);
+	});
+});
+
+describe("profiles and issue actions", () => {
+	it("lists the profiles the agent picker offers, with the default mode and why one cannot start", async () => {
+		const { service, ports } = setup();
+		const answer = await viaSocket(service, ["profiles"], coordinator);
+		expect(answer.message.split("\n")).toEqual([
+			"* claude  Claude  claude  GUI (--tui for TUI)  available",
+			"  codex  Codex  codex  GUI (--tui for TUI)  available",
+			"  cursor  Cursor  cursor  TUI only  unavailable: DevHub could not find cursor-agent on this Mac.",
+		]);
+		expect(answer.data).toEqual({
+			profiles: [
+				{
+					id: "claude",
+					name: "Claude",
+					kind: "claude",
+					presentation: "gui",
+					presentations: ["tui", "gui"],
+					default: true,
+					available: true,
+					unavailable: null,
+				},
+				{
+					id: "codex",
+					name: "Codex",
+					kind: "codex",
+					presentation: "gui",
+					presentations: ["tui", "gui"],
+					default: false,
+					available: true,
+					unavailable: null,
+				},
+				{
+					id: "cursor",
+					name: "Cursor",
+					kind: "cursor",
+					presentation: "tui",
+					presentations: ["tui"],
+					default: false,
+					available: false,
+					unavailable: "DevHub could not find cursor-agent on this Mac.",
+				},
+			],
+		});
+		// Asked on the machine of the caller's workspace (Scratch has none).
+		expect(ports.calls).toContain("profile-problem claude -");
+	});
+
+	it("lists the Issue actions with the profile and mode an assignment uses, and draft or send", async () => {
+		const { service } = setup();
+		const answer = await viaSocket(service, ["issue", "actions"], coordinator);
+		expect(answer.message.split("\n")).toEqual([
+			"* issue_assignment  Work on the Issue  draft  claude/gui  — このIssueを読み、実装をしてください。",
+			"  review  Review it  send  claude/gui  — Review {{ISSUE_URL}} and leave comments.",
+		]);
+		expect(
+			(answer.data as { actions: { id: string; start: string }[] }).actions.map(
+				(action) => [action.id, action.start],
+			),
+		).toEqual([
+			["issue_assignment", "draft"],
+			["review", "send"],
+		]);
+	});
+});
+
+describe("agent rename and agent meta", () => {
+	it("renames through the window's intent, and --clear goes back to DevHub's label", async () => {
+		const { service, ports } = setup();
+		await viaSocket(
+			service,
+			["agent", "rename", "aaaa", "API", "fix"],
+			coordinator,
+		);
+		await viaSocket(
+			service,
+			["agent", "rename", "aaaa", "--clear"],
+			coordinator,
+		);
+		expect(ports.calls).toEqual([
+			"rename aaaa1111-0000 API fix",
+			"reset-name aaaa1111-0000",
+		]);
+		// An agent may rename itself.
+		await viaSocket(
+			service,
+			["agent", "rename", "bbbb2222-0000", "Lead"],
+			coordinator,
+		);
+		expect(ports.calls).toContain("rename bbbb2222-0000 Lead");
+		expect(parseTellArguments(["agent", "rename", "aaaa"])).toEqual({
+			kind: "invalid",
+			message: "missing <name> (or --clear for the name DevHub gives it).",
+		});
+	});
+
+	it("sets, lists, unsets and filters by an agent's own pairs", async () => {
+		const { service, ports } = setup();
+		await viaSocket(
+			service,
+			["agent", "meta", "aaaa", "set", "role", "code", "reviewer"],
+			coordinator,
+		);
+		await viaSocket(
+			service,
+			["agent", "meta", "aaaa", "set", "issue", "123"],
+			coordinator,
+		);
+		const listed = await viaSocket(
+			service,
+			["agent", "meta", "aaaa"],
+			coordinator,
+		);
+		expect(listed.message).toBe("role=code reviewer\nissue=123");
+		expect(listed.data).toEqual({
+			agentId: "aaaa1111-0000",
+			meta: { role: "code reviewer", issue: "123" },
+		});
+		const filtered = await viaSocket(
+			service,
+			["--json", "agents", "--meta", "issue=123"],
+			coordinator,
+		);
+		const rows = (
+			filtered.data as { agents: { id: string; state: { meta: object } }[] }
+		).agents;
+		expect(rows.map((row) => row.id)).toEqual(["aaaa1111-0000"]);
+		expect(rows[0]!.state.meta).toEqual({
+			role: "code reviewer",
+			issue: "123",
+		});
+		const status = await viaSocket(
+			service,
+			["agent", "status", "aaaa"],
+			coordinator,
+		);
+		expect(status.message).toContain("meta      role=code reviewer issue=123");
+		await viaSocket(
+			service,
+			["agent", "meta", "aaaa", "unset", "issue"],
+			coordinator,
+		);
+		expect(
+			(await viaSocket(service, ["agents", "--meta", "issue=123"], coordinator))
+				.message,
+		).toBe("No agent carries issue=123.");
+		expect(ports.calls).toContain("meta aaaa1111-0000 issue <unset>");
+	});
+
+	it("tags a new agent with --meta, and refuses a key or value it cannot keep", async () => {
+		const { service, ports } = setup();
+		await viaSocket(
+			service,
+			["agent", "new", "--workspace", "w1", "--meta", "parent=bbbb2222-0000"],
+			coordinator,
+		);
+		expect(ports.calls).toEqual([
+			"create w1 claude -",
+			"meta new-agent parent bbbb2222-0000",
+		]);
+		for (const [line, message] of [
+			[["agent", "meta", "a", "set", "9lives", "x"], /is not a metadata key/u],
+			[["agent", "new", "--meta", "role"], /--meta takes KEY=VALUE/u],
+			[
+				["agent", "new", "--meta", "a=1", "--meta", "a=2"],
+				/given more than once/u,
+			],
+			[
+				["agent", "meta", "a", "set", "k", "x".repeat(257)],
+				/at most 256 characters/u,
+			],
+		] as const) {
+			const parsed = parseTellArguments(line);
+			expect(parsed.kind).toBe("invalid");
+			if (parsed.kind === "invalid") expect(parsed.message).toMatch(message);
+		}
 	});
 });

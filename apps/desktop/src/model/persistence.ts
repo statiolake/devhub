@@ -21,6 +21,7 @@
  * nothing points at any more.
  */
 
+import { NO_META, withMeta, type AgentMeta } from "./agentMeta.js";
 import { constants } from "node:fs";
 import {
   copyFile,
@@ -473,6 +474,13 @@ export interface AgentStateRecord {
    * then shown the way a label is: after what the Agent is doing.
    */
   named?: boolean;
+  /**
+   * Its own key/value pairs (`agentMeta.ts`). No version bump: absent is
+   * none, which is what every older file means, and a pair that does not
+   * read as one is left out rather than refusing the file — it is somebody's
+   * note about an Agent, not something the Agent needs to run.
+   */
+  meta?: Record<string, string>;
   status: AgentStatus;
   /**
    * Why this Agent is owed a look, or absent if it has been read.
@@ -1456,6 +1464,7 @@ export function hydrateModel(
           ordinal: agentRecord.ordinal,
           temporaryName: agentRecord.temporary_name,
           named: agentRecord.named === true,
+          ...(agentRecord.meta === undefined ? {} : { meta: agentRecord.meta }),
           status,
           unread: unreadFrom(agentRecord.unread),
           runtimeHealth,
@@ -1628,6 +1637,9 @@ export function stateFromSnapshot(
         ordinal: agent.ordinal,
         temporary_name: agent.displayName,
         ...(agent.named ? { named: true } : {}),
+        ...(Object.keys(agent.meta).length === 0
+          ? {}
+          : { meta: { ...agent.meta } }),
         status: agent.status,
         unread: agent.unread,
         runtime_health: agent.runtimeHealth,
@@ -2042,6 +2054,24 @@ function decodeWorkspaceLocation(
   }
 }
 
+/** An Agent's `meta`: every pair that reads as one, up to the limit; the rest left out. */
+function decodeMetaLeniently(
+  value: unknown,
+): Record<string, string> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return undefined;
+  let meta: AgentMeta = NO_META;
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry !== "string") continue;
+    try {
+      meta = withMeta(meta, key, entry);
+    } catch {
+      // Not a pair DevHub would have written: left out, as the comment says.
+    }
+  }
+  return Object.keys(meta).length === 0 ? undefined : { ...meta };
+}
+
 function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {
   const object = decodeObject(where, value);
   const at = (key: string): string => `${where}.${key}`;
@@ -2082,6 +2112,7 @@ function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {
     named: decodeOptional(object["named"], (entry) =>
       decodeBoolean(at("named"), entry),
     ),
+    meta: decodeMetaLeniently(object["meta"]),
     status: decodeMember(at("status"), object["status"], AGENT_STATUSES),
     unread: decodeOptional(object["unread"], (entry) =>
       decodeUnread(at("unread"), entry),

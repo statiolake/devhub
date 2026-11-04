@@ -1,3 +1,4 @@
+import { checkedMeta, NO_META, withMeta, type AgentMeta } from "./agentMeta.js";
 import type { PromptCache } from "./conversation.js";
 import { TerminalPanes } from "./terminalActivity.js";
 
@@ -46,6 +47,7 @@ export enum DomainErrorCode {
   InvalidTerminalZoom = "INVALID_TERMINAL_ZOOM",
   InvalidSmartButtonsOffset = "INVALID_SMART_BUTTONS_OFFSET",
   InvalidEditorAttachment = "INVALID_EDITOR_ATTACHMENT",
+  InvalidMetadata = "INVALID_METADATA",
 }
 
 /**
@@ -1366,6 +1368,8 @@ export interface AgentRestoreRecord {
    * Absent is not: a name is only a person's when something said it was.
    */
   readonly named?: boolean;
+  /** Its own key/value pairs (`agentMeta.ts`); absent is none. */
+  readonly meta?: AgentMeta;
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
   readonly controlState: AgentControlState;
@@ -1388,7 +1392,14 @@ export function agentRestoreRecord(
   ) {
     throw invalid(DomainErrorCode.InvalidDisplayName);
   }
-  return record;
+  if (record.meta === undefined) return record;
+  let meta: AgentMeta;
+  try {
+    meta = checkedMeta(record.meta);
+  } catch {
+    throw invalid(DomainErrorCode.InvalidMetadata);
+  }
+  return { ...record, meta };
 }
 
 /** Agent resource owned by exactly one Workspace. */
@@ -1426,6 +1437,12 @@ export class Agent {
    * after a restart would be acting on a word nobody has said since.
    */
   private automaticActionsValue: readonly string[] = [];
+  /**
+   * Its own key/value pairs: what a person or an agent said about it that
+   * DevHub has no field for (`agentMeta.ts`). Part of `AgentRestoreRecord`,
+   * unlike `activity`: it is something somebody said, and stays said.
+   */
+  private metaValue: AgentMeta = NO_META;
 
   /**
    * The refusal this Agent's pane is still showing, or nothing.
@@ -1499,7 +1516,7 @@ export class Agent {
 
   static restore(record: AgentRestoreRecord): Agent {
     const validated = agentRestoreRecord(record);
-    return new Agent(
+    const agent = new Agent(
       validated.id,
       validated.workspaceId,
       validated.profile,
@@ -1512,6 +1529,8 @@ export class Agent {
       validated.controlState,
       validated.unread,
     );
+    if (validated.meta !== undefined) agent.metaValue = validated.meta;
+    return agent;
   }
 
   clone(): Agent {
@@ -1532,6 +1551,7 @@ export class Agent {
     copy.promptCacheValue = this.promptCacheValue;
     copy.injectionValue = this.injectionValue;
     copy.automaticActionsValue = this.automaticActionsValue;
+    copy.metaValue = this.metaValue;
     copy.failureValue = this.failureValue;
     return copy;
   }
@@ -1549,6 +1569,24 @@ export class Agent {
   /** Whether a person gave it its name. See `namedValue`. */
   get named(): boolean {
     return this.namedValue;
+  }
+
+  /** Its own key/value pairs. See `metaValue`. */
+  get meta(): AgentMeta {
+    return this.metaValue;
+  }
+
+  /** Set one pair, or remove it with no value; whether anything changed. */
+  setMeta(key: string, value: string | undefined): boolean {
+    let next: AgentMeta;
+    try {
+      next = withMeta(this.metaValue, key, value);
+    } catch {
+      throw invalid(DomainErrorCode.InvalidMetadata);
+    }
+    if (next === this.metaValue) return false;
+    this.metaValue = next;
+    return true;
   }
 
   get status(): AgentStatus {

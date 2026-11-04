@@ -203,6 +203,27 @@ export function smartButtonValues(
 }
 
 /**
+ * How an Issue action's wording reaches the new Agent: put into its composer
+ * (or typed at its prompt, with no Return) for somebody to read and send —
+ * `draft` — or sent as its first message — `send`.
+ *
+ * `draft` is what an Issue action does unless it says otherwise, the one
+ * DevHub ships included: assigning an Issue is starting an Agent *on* it, and
+ * the person (or the agent that assigned it) decides when the Agent starts
+ * working. `send` is for wording somebody trusts to go out unread; it is the
+ * one case `confirm_before_send` is about. A Smart Button is pressed to send,
+ * so it has no `start` at all and always sends.
+ */
+export type ActionStart = "draft" | "send";
+
+export const ACTION_STARTS: readonly ActionStart[] = ["draft", "send"];
+
+/** What an action does without a `start` of its own: see `ActionStart`. */
+export function defaultActionStart(trigger: AgentActionTrigger): ActionStart {
+  return trigger === "issue" ? "draft" : "send";
+}
+
+/**
  * The action DevHub ships for the Issue flow, and the id it ships it under.
  */
 export const DEFAULT_ACTION_ID = "issue_assignment";

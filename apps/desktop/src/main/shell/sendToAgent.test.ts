@@ -312,3 +312,24 @@ describe("refusals", () => {
 		expect(test.offered).toEqual([]);
 	});
 });
+
+describe("drafting an Issue's message into a new Agent", () => {
+	it("puts it in a GUI Agent's composer and sends nothing", async () => {
+		const test = harness({});
+		await test.send.draft(GUI, "Read #7 and implement it.", true);
+		expect(test.drafts).toEqual([[GUI, "Read #7 and implement it."]]);
+		expect(test.pasted).toEqual([]);
+	});
+
+	it("waits for a terminal Agent's prompt, then pastes it with no Return", async () => {
+		const test = harness({
+			agents: [agent(CREATED, { presentation: "tui", status: "unknown" })],
+			statuses: ["working", ...Array<AgentStatus>(6).fill("idle")],
+		});
+		await test.send.draft(CREATED, "Read #7 and implement it.", true);
+		expect(test.pasted).toEqual([[CREATED, "Read #7 and implement it."]]);
+		expect(test.drafts).toEqual([]);
+		// Not before its prompt had settled.
+		expect(vi.mocked(test.ports.sleep).mock.calls.length).toBe(4);
+	});
+});

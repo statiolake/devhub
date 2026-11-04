@@ -272,6 +272,63 @@ describe("parsing", () => {
     });
   });
 
+  // Assigning an Issue starts an Agent *on* it; the person decides when it
+  // starts working. So an Issue action drafts unless it says to send, and a
+  // Smart Button, which is pressed to send, has no such key at all.
+  it("drafts an Issue action's wording unless it says start = send", () => {
+    const issue = (config: Config, id: string) =>
+      config.agentActions.find((one) => one.id === id);
+    expect(issue(defaultConfig(), "issue_assignment")?.start).toBe("draft");
+    expect(
+      defaultConfig()
+        .agentActions.filter((one) => one.trigger !== "issue")
+        .map((one) => one.start),
+    ).toEqual(Array(7).fill("send"));
+    const source = [
+      `version = ${String(CONFIG_SCHEMA_VERSION)}`,
+      "",
+      // The user's own file: the shipped action with its wording restated
+      // and no `start`, which is a draft.
+      "[agent_actions.issue.issue_assignment]",
+      'display_name = "Work on the Issue"',
+      'template = "このIssueを読み、実装をしてください。\\n{{ISSUE_URL}}\\n"',
+      "confirm_before_send = true",
+      "order = 0",
+      "",
+      "[agent_actions.issue.implement_now]",
+      'display_name = "Implement it now"',
+      'template = "{{ISSUE_URL}}"',
+      'start = "send"',
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    expect(issue(config, "issue_assignment")?.start).toBe("draft");
+    expect(issue(config, "implement_now")?.start).toBe("send");
+    // Written back as it was read, and only where it means something.
+    const written = configToToml(config);
+    expect(written).toContain('start = "send"');
+    expect(parseConfig(written)).toEqual(config);
+    expect(written).not.toMatch(/\[agent_actions\.commit[^[]*start =/u);
+  });
+
+  it("refuses a start that is not draft or send, and a start on a Smart Button", () => {
+    const head = `version = ${String(CONFIG_SCHEMA_VERSION)}\n`;
+    expect(
+      codeOf(() =>
+        parseConfig(
+          `${head}[agent_actions.issue.issue_assignment]\nstart = "now"\n`,
+        ),
+      ),
+    ).toBe("invalid_string");
+    expect(
+      codeOf(() =>
+        parseConfig(
+          `${head}[agent_actions.commit.commit_changes]\nstart = "draft"\n`,
+        ),
+      ),
+    ).toBe("unknown_key");
+  });
+
   // Every file DevHub has ever written says `true` for every action, because
   // that is what the default was and DevHub writes the whole table. A new
   // default nobody gets is not a default.

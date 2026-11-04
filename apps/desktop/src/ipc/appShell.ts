@@ -152,6 +152,8 @@ export interface AgentWire {
 	 * DevHub's label.
 	 */
 	readonly named?: true;
+	/** Its own key/value pairs (`model/agentMeta.ts`); absent when it has none. */
+	readonly meta?: Readonly<Record<string, string>>;
 	readonly id: string;
 	readonly ordinal: number;
 	readonly profileId: string;
@@ -767,6 +769,18 @@ export type AppIntentWire =
 			readonly agentId: string;
 			readonly displayName: string;
 			readonly type: "rename_agent";
+	  }
+	/** Back to DevHub's own label for it: the name nobody gave it. */
+	| {
+			readonly agentId: string;
+			readonly type: "reset_agent_name";
+	  }
+	/** One of its own key/value pairs (`model/agentMeta.ts`); no value unsets it. */
+	| {
+			readonly agentId: string;
+			readonly key: string;
+			readonly value?: string;
+			readonly type: "set_agent_meta";
 	  }
 	| {
 			readonly agentId: string;

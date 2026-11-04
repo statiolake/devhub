@@ -7,6 +7,7 @@
  * contract has exactly one place to be wrong.
  */
 
+import { metaKeyProblem, metaValueProblem } from "./agentMeta.js";
 import {
   agentId as parseAgentId,
   agentProfileId as parseAgentProfileId,
@@ -380,6 +381,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     presentation: agent.presentation,
     displayName: agent.displayName,
     ...(agent.named ? { named: true } : {}),
+    ...(Object.keys(agent.meta).length === 0 ? {} : { meta: agent.meta }),
     ordinal: agent.ordinal,
     status: agent.status,
     runtimeHealth: agent.runtimeHealth,
@@ -1217,6 +1219,28 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
         type: "rename_agent",
         agentId: tryParse(() => parseAgentId(wire.agentId)),
         displayName,
+      };
+    }
+    case "reset_agent_name":
+      return {
+        type: "reset_agent_name",
+        agentId: tryParse(() => parseAgentId(wire.agentId)),
+      };
+    case "set_agent_meta": {
+      const { key, value } = wire;
+      if (
+        typeof key !== "string" ||
+        metaKeyProblem(key) !== undefined ||
+        (value !== undefined &&
+          (typeof value !== "string" || metaValueProblem(value) !== undefined))
+      ) {
+        invalid();
+      }
+      return {
+        type: "set_agent_meta",
+        agentId: tryParse(() => parseAgentId(wire.agentId)),
+        key,
+        ...(value === undefined ? {} : { value }),
       };
     }
     case "set_automatic_action": {

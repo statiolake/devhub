@@ -186,6 +186,53 @@ describe("projection", () => {
     expect(agent.named).toBe(true);
   });
 
+  // An Agent's own key/value pairs (`agentMeta.ts`) are something somebody
+  // said about it, and stay said across a restart.
+  it("round-trips an Agent's metadata, and leaves out a pair it cannot keep", async () => {
+    const model = populatedModel();
+    model.setAgentMeta(AG_A, "role", "reviewer");
+    model.setAgentMeta(AG_A, "parent", "550e8400-e29b-41d4-a716-4466554400ff");
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[0].agents[0].meta).toEqual({
+      role: "reviewer",
+      parent: "550e8400-e29b-41d4-a716-4466554400ff",
+    });
+    // Through the file: what is written is what is read, and a pair DevHub
+    // would not have written is dropped rather than the file refused.
+    const directory = makeScratchDir("state");
+    const path = join(directory, "state.json");
+    const store = new JsonStateStore(path);
+    await store.saveState(state);
+    expect(
+      hydrateModel((await store.loadState()).state, [codex], today()).snapshot()
+        .workspaces[0].agents[0].meta,
+    ).toEqual({
+      role: "reviewer",
+      parent: "550e8400-e29b-41d4-a716-4466554400ff",
+    });
+    const document = JSON.parse(await readFile(path, "utf8")) as {
+      workspaces: { agents: Record<string, unknown>[] }[];
+    };
+    document.workspaces[0]!.agents[0]!["meta"] = {
+      role: "reviewer",
+      "9bad": "x",
+      note: 7,
+    };
+    await writeFile(path, JSON.stringify(document), { mode: 0o600 });
+    const load = await store.loadState();
+    expect(load.metadata.origin).toBe("primary");
+    expect(
+      hydrateModel(load.state, [codex], today()).snapshot().workspaces[0]
+        .agents[0].meta,
+    ).toEqual({ role: "reviewer" });
+    removeScratchDir(directory);
+    // And none is written as nothing at all.
+    expect(
+      "meta" in
+        stateFromSnapshot(populatedModel().snapshot()).workspaces[0].agents[0],
+    ).toBe(false);
+  });
+
   it("writes an Agent DevHub labelled as not named, and loads it so", () => {
     const state = stateFromSnapshot(populatedModel().snapshot());
     expect("named" in state.workspaces[0].agents[0]).toBe(false);

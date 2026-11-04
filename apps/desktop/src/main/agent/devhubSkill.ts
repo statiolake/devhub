@@ -143,7 +143,9 @@ Full reference: \`devhub --tell help\`.
 ## Look around
 
     devhub --tell workspaces                # id, name, folder, branch, Issue, agents
-    devhub --tell agents [--workspace W]    # id, name, kind, status, unread, open requests
+    devhub --tell agents [--workspace W]    # id, name, kind, status, unread, open requests, meta
+    devhub --tell profiles                  # agent profiles: id, kind, default GUI/TUI, available
+    devhub --tell issue actions             # Issue actions: id, label, draft/send, wording
 
 W is a workspace id, its folder path, its name, or \`scratch\`. Folder paths
 are paths on the machine you run on (on an SSH host, the host's); without
@@ -157,7 +159,12 @@ Status is one of working, background, waiting (needs somebody), idle, error.
     devhub --tell agent new --workspace ~/src/app [--profile claude] [--name "API fix"] --prompt "Fix the failing test in api/"
 
 \`workspace open\` answers the workspace id. Profiles are the person's
-configured agent profiles; leave \`--profile\` out to use the first one.
+configured agent profiles; leave \`--profile\` out to use the first one, and
+\`--gui\`/\`--tui\` out for the profile's default mode (what \`profiles\`
+shows). No \`--tell\` command opens a picker in the window: where a choice is
+open (two clones of a repository, say), it is refused with the values and the
+flag to pass. \`agent rename A NAME\` (\`--clear\` to drop it) names an
+agent, yourself included.
 \`--prompt\` is typed into the new agent once it is ready. For long prompts
 use \`--prompt -\` and pipe the text in on stdin.
 
@@ -177,7 +184,9 @@ use \`--prompt -\` and pipe the text in on stdin.
 - \`--prompt "..."\` adds your own instructions for the new agent (scope,
   constraints, what the person said). \`--profile\` and \`--action\` pick the
   agent profile and Issue action; \`--editor-only\` opens the editor without
-  an agent.
+  an agent. The action's wording is put into the new agent's input box unsent
+  (\`--draft\`, the default): the person reads it and sends it. Pass
+  \`--send\` only when the person asked for the agent to start working.
 
 Then tell the person which agent took it (id, workspace, branch).
 
@@ -240,6 +249,11 @@ happens between two calls is missed - always read before waiting again.
   stop or restart yourself. Prefer \`agent interrupt A\` to stop just a turn.
 - \`sessions [--workspace W]\` lists earlier sessions; \`agent resume ID
   [--name N]\` goes on with one in a new GUI agent.
+- **Tag the agents you start**: \`agent new ... --meta parent=YOUR_ID --meta
+  role=reviewer\` (also on \`issue assign\`), then find them again with
+  \`agents --meta parent=YOUR_ID\`. \`agent meta A [set KEY VALUE | unset
+  KEY]\` reads or changes an agent's pairs; they show in its row's tooltip.
+  Your own id is in \`DEVHUB_ORIGIN\` (its last field).
 
 ## Your terminal
 

@@ -65,6 +65,7 @@ function agent(controlState: AgentControlState): AgentSnapshot {
     profileKind: "claude",
     profileDisplayName: "Claude",
     displayName: "claude 1",
+    meta: {},
     ordinal: 1,
     status: "idle",
     runtimeHealth: "healthy",
@@ -739,6 +740,36 @@ describe("an Agent's terminal, across the wire", () => {
     expect(agent?.terminalShare).toBeUndefined();
     expect(wire.visibleTerminal).toBeUndefined();
     expect(wire.paneFocus).toBeUndefined();
+  });
+
+  it("takes an Agent's metadata and its way back to DevHub's label, and refuses a pair it could not keep", () => {
+    const meta = (key: unknown, value?: unknown) =>
+      intentFromWire({
+        type: "set_agent_meta",
+        agentId: AG,
+        key,
+        ...(value === undefined ? {} : { value }),
+      } as AppIntentWire);
+    expect(meta("role", "reviewer")).toEqual({
+      type: "set_agent_meta",
+      agentId: AG,
+      key: "role",
+      value: "reviewer",
+    });
+    expect(meta("role")).toEqual({
+      type: "set_agent_meta",
+      agentId: AG,
+      key: "role",
+    });
+    expect(() => meta("has space", "x")).toThrow(InvalidIntent);
+    expect(() => meta("role", "two\nlines")).toThrow(InvalidIntent);
+    expect(() => meta("role", 7)).toThrow(InvalidIntent);
+    expect(
+      intentFromWire({
+        type: "reset_agent_name",
+        agentId: AG,
+      } as AppIntentWire),
+    ).toEqual({ type: "reset_agent_name", agentId: AG });
   });
 
   it("takes the divider's resize, and refuses a share it could not be", () => {

@@ -780,6 +780,12 @@ export class AppCoordinator {
       case "rename_agent":
         this.model.renameAgent(intent.agentId, intent.displayName);
         return this.transitionOutcome(beforeRevision, id);
+      case "reset_agent_name":
+        this.model.resetAgentName(intent.agentId);
+        return this.transitionOutcome(beforeRevision, id);
+      case "set_agent_meta":
+        this.model.setAgentMeta(intent.agentId, intent.key, intent.value);
+        return this.transitionOutcome(beforeRevision, id);
       case "set_automatic_action":
         this.model.setAgentAutomaticAction(
           intent.agentId,

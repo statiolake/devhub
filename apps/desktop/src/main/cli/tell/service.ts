@@ -44,6 +44,29 @@ export interface TellAgent {
 		| undefined;
 	/** Its prompt cache, for a GUI Claude Agent that has reported one. */
 	readonly promptCache: PromptCache | undefined;
+	/** Its own key/value pairs (`model/agentMeta.ts`). */
+	readonly meta: Readonly<Record<string, string>>;
+}
+
+/** An agent profile, as the agent picker offers it. */
+export interface TellProfile {
+	readonly id: string;
+	readonly name: string;
+	/** `claude`, `codex`, `cursor` or `custom`. */
+	readonly kind: string;
+	/** What a launch is without --gui/--tui: `profilePresentation`. */
+	readonly presentation: "gui" | "tui";
+	/** Every mode its kind has. */
+	readonly presentations: readonly ("gui" | "tui")[];
+}
+
+/** An Issue action, as Assign Issue offers it. */
+export interface TellIssueAction {
+	readonly id: string;
+	readonly label: string;
+	readonly template: string;
+	/** Drafted into the new agent's input box, or sent (`ActionStart`). */
+	readonly start: "draft" | "send";
 }
 
 export interface TellWorkspace {
@@ -80,6 +103,8 @@ export interface TellConversation {
 }
 
 export interface IssueAssignRequest {
+	/** Overrides the action's `start` for this call. */
+	readonly start: "draft" | "send" | undefined;
 	readonly url: string;
 	readonly repo: string | undefined;
 	readonly branch: string | undefined;
@@ -179,7 +204,18 @@ export interface TellStopped {
 
 export interface TellPorts {
 	workspaces(): readonly TellWorkspace[];
-	profiles(): readonly { readonly id: string; readonly kind: string }[];
+	/** The agent profiles, in the agent picker's order: the first is the default. */
+	profiles(): readonly TellProfile[];
+	/**
+	 * Why `profileId` cannot start an agent in `workspaceId` (or on this Mac,
+	 * without one) — its program is not found there — or undefined when it can.
+	 */
+	profileProblem(
+		profileId: string,
+		workspaceId: string | undefined,
+	): Promise<string | undefined>;
+	/** The enabled Issue actions, in Assign Issue's order: the first is the default. */
+	issueActions(): readonly TellIssueAction[];
 	/** Open (or select) the folder; answers the workspace's id. */
 	openWorkspace(
 		path: string,
@@ -193,6 +229,14 @@ export interface TellPorts {
 		presentation: "gui" | "tui" | undefined,
 	): Promise<string>;
 	renameAgent(agentId: string, name: string): Promise<void>;
+	/** Back to the label DevHub gives it (`reset_agent_name`). */
+	resetAgentName(agentId: string): Promise<void>;
+	/** Set (or, with undefined, remove) one of an agent's own pairs. */
+	setAgentMeta(
+		agentId: string,
+		key: string,
+		value: string | undefined,
+	): Promise<void>;
 	/**
 	 * Queue words for an Agent: sent once it is idle, through the same queue
 	 * DevHub's own injections go through. The one way to reach a terminal Agent.
@@ -491,6 +535,8 @@ export interface TellAgentStatus {
 	readonly kind: string;
 	readonly profile: string;
 	readonly presentation: "gui" | "tui";
+	/** Its own key/value pairs; `{}` when it has none. */
+	readonly meta: Readonly<Record<string, string>>;
 	readonly workspace: {
 		readonly id: string;
 		readonly name: string;
@@ -566,7 +612,15 @@ export class TellService {
 			case "workspace-open":
 				return this.openWorkspace(command.path, command.worktree, caller);
 			case "agents":
-				return this.listAgents(command.workspace);
+				return this.listAgents(command.workspace, command.meta);
+			case "profiles":
+				return this.listProfiles();
+			case "issue-actions":
+				return this.listIssueActions();
+			case "agent-rename":
+				return this.rename(command.agent, command.name);
+			case "agent-meta":
+				return this.meta(command);
 			case "agent-new":
 				return this.newAgent(command);
 			case "issue-assign":
@@ -905,22 +959,29 @@ export class TellService {
 		}
 	}
 
-	private async listAgents(workspace: string | undefined): Promise<TellAnswer> {
+	private async listAgents(
+		workspace: string | undefined,
+		meta: readonly { readonly key: string; readonly value: string }[] = [],
+	): Promise<TellAnswer> {
 		const workspaces =
 			workspace === undefined
 				? this.ports.workspaces()
 				: [this.workspace(workspace)];
 		const rows = await Promise.all(
 			workspaces.flatMap((each) =>
-				each.agents.map(async (agent) => {
-					const state = await this.statusOf(agent, each);
-					return {
-						...agent,
-						workspace: each.scratch ? "Scratch" : each.name,
-						requests: state.requests?.open.length,
-						state,
-					};
-				}),
+				each.agents
+					.filter((agent) =>
+						meta.every((pair) => agent.meta[pair.key] === pair.value),
+					)
+					.map(async (agent) => {
+						const state = await this.statusOf(agent, each);
+						return {
+							...agent,
+							workspace: each.scratch ? "Scratch" : each.name,
+							requests: state.requests?.open.length,
+							state,
+						};
+					}),
 			),
 		);
 		const now = this.clock.now();
@@ -942,15 +1003,152 @@ export class TellService {
 					: `ctx ${String(state.context.percent)}%`,
 				state.failure === null ? undefined : "failed",
 				`in ${row.workspace}`,
+				metaWords(row.meta),
 				row.activity === undefined ? undefined : `— ${row.activity}`,
 			]
 				.filter((part) => part !== undefined)
 				.join("  "),
 		);
 		return {
-			message: lines.length === 0 ? "No agents are running." : lines.join("\n"),
+			message:
+				lines.length > 0
+					? lines.join("\n")
+					: meta.length > 0
+						? `No agent carries ${meta.map((pair) => `${pair.key}=${pair.value}`).join(" ")}.`
+						: "No agents are running.",
 			data: { agents: rows },
 		};
+	}
+
+	// --- profiles and Issue actions --------------------------------------
+
+	/**
+	 * The agent picker's profiles, in its order, with the mode each starts in
+	 * unless told otherwise and whether its program is there to start —
+	 * asked on the machine of the workspace the caller is in.
+	 */
+	private async listProfiles(): Promise<TellAnswer> {
+		const profiles = this.ports.profiles();
+		const where =
+			this.caller?.paneless === true ? undefined : this.caller?.workspaceId;
+		const rows = await Promise.all(
+			profiles.map(async (profile, index) => {
+				const problem = await this.ports
+					.profileProblem(profile.id, where)
+					.catch((error: unknown) =>
+						error instanceof Error ? error.message : String(error),
+					);
+				return {
+					...profile,
+					default: index === 0,
+					available: problem === undefined,
+					unavailable: problem ?? null,
+				};
+			}),
+		);
+		return {
+			message:
+				rows.length === 0
+					? "No agent profiles are configured."
+					: rows
+							.map((row) =>
+								[
+									`${row.default ? "*" : " "} ${row.id}`,
+									row.name,
+									row.kind,
+									`${row.presentation.toUpperCase()}${row.presentations.length > 1 ? ` (--${row.presentation === "gui" ? "tui" : "gui"} for ${row.presentation === "gui" ? "TUI" : "GUI"})` : " only"}`,
+									row.unavailable === null
+										? "available"
+										: `unavailable: ${row.unavailable}`,
+								].join("  "),
+							)
+							.join("\n"),
+			data: { profiles: rows },
+		};
+	}
+
+	/**
+	 * Assign Issue's actions, each with what an assignment that names nothing
+	 * else uses: the first profile, in its default mode.
+	 */
+	private listIssueActions(): TellAnswer {
+		const actions = this.ports.issueActions();
+		const profile = this.ports.profiles()[0];
+		const rows = actions.map((action, index) => ({
+			...action,
+			default: index === 0,
+			profile: profile?.id ?? null,
+			presentation: profile?.presentation ?? null,
+			summary: promptSummary(action.template),
+		}));
+		return {
+			message:
+				rows.length === 0
+					? "No Issue actions are configured: 'issue assign' starts the agent and tells it nothing."
+					: rows
+							.map(
+								(row) =>
+									`${row.default ? "*" : " "} ${row.id}  ${row.label}  ${row.start}  ${row.profile ?? "-"}/${row.presentation ?? "-"}  — ${row.summary}`,
+							)
+							.join("\n"),
+			data: { actions: rows },
+		};
+	}
+
+	// --- rename and metadata ---------------------------------------------
+
+	private async rename(
+		name: string,
+		to: string | undefined,
+	): Promise<TellAnswer> {
+		const agent = this.agent(name);
+		if (to === undefined) await this.ports.resetAgentName(agent.id);
+		else await this.ports.renameAgent(agent.id, to);
+		const now = this.ports
+			.workspaces()
+			.flatMap((workspace) => workspace.agents)
+			.find((one) => one.id === agent.id);
+		return {
+			message:
+				to === undefined
+					? `${agent.id} is called ${now?.name ?? "by DevHub's label"} again.`
+					: `${agent.id} is called ${to}.`,
+			data: { agentId: agent.id, name: now?.name ?? to ?? null },
+		};
+	}
+
+	private async meta(
+		command: Extract<TellCommand, { verb: "agent-meta" }>,
+	): Promise<TellAnswer> {
+		const agent = this.agent(command.agent);
+		if (command.op !== "list" && command.key !== undefined)
+			await this.ports.setAgentMeta(
+				agent.id,
+				command.key,
+				command.op === "set" ? command.value : undefined,
+			);
+		const meta =
+			this.ports
+				.workspaces()
+				.flatMap((workspace) => workspace.agents)
+				.find((one) => one.id === agent.id)?.meta ?? {};
+		const entries = Object.entries(meta);
+		return {
+			message:
+				entries.length === 0
+					? `${agent.name} has no metadata.`
+					: entries.map(([key, value]) => `${key}=${value}`).join("\n"),
+			data: { agentId: agent.id, meta },
+		};
+	}
+
+	/** Every `--meta` pair onto a new agent, in order. */
+	private async tag(
+		agentId: string,
+		meta: readonly { readonly key: string; readonly value: string }[] = [],
+	): Promise<void> {
+		for (const pair of meta)
+			await this.ports.setAgentMeta(agentId, pair.key, pair.value);
 	}
 
 	private async newAgent(
@@ -967,6 +1165,7 @@ export class TellService {
 		);
 		if (command.name !== undefined)
 			await this.ports.renameAgent(agentId, command.name);
+		await this.tag(agentId, command.meta);
 		if (command.prompt !== undefined)
 			this.ports.queueText(agentId, command.prompt);
 		return {
@@ -978,6 +1177,10 @@ export class TellService {
 	private async assignIssue(
 		command: Extract<TellCommand, { verb: "issue-assign" }>,
 	): Promise<TellAnswer> {
+		if (command.editorOnly && command.meta !== undefined)
+			throw new Error(
+				"--meta is about the agent, and --editor-only starts none.",
+			);
 		const profile = command.editorOnly
 			? undefined
 			: this.profile(command.profile);
@@ -990,7 +1193,10 @@ export class TellService {
 			action: command.action,
 			editorOnly: command.editorOnly,
 			presentation: command.presentation,
+			start: command.start,
 		});
+		if (assigned.agentId !== undefined)
+			await this.tag(assigned.agentId, command.meta);
 		if (command.prompt !== undefined && assigned.agentId !== undefined)
 			this.ports.queueText(assigned.agentId, command.prompt);
 		const workspace = this.ports
@@ -1403,6 +1609,7 @@ export class TellService {
 			kind: agent.kind,
 			profile: agent.profileId,
 			presentation: agent.presentation,
+			meta: agent.meta,
 			workspace: {
 				id: workspace.id,
 				name: workspace.scratch ? "Scratch" : workspace.name,
@@ -1714,6 +1921,11 @@ export class TellService {
 			throw new Error(
 				`there is no command ${JSON.stringify(id)}. Run 'devhub --tell commands'.`,
 			);
+		const instead = ASKS_IN_THE_WINDOW[id];
+		if (instead !== undefined)
+			throw new Error(
+				`${known.category}: ${known.label} puts a picker or a question up in DevHub's window, which a command line does not do. ${instead}`,
+			);
 		const ran = this.ports.runCommand(id);
 		return {
 			message: ran
@@ -1811,6 +2023,48 @@ function newsLine(news: {
 }
 
 /** `agent status`, as lines of text. */
+/** `role=reviewer parent=ab12`, or nothing for an agent with no metadata. */
+function metaWords(meta: Readonly<Record<string, string>>): string | undefined {
+	const entries = Object.entries(meta);
+	return entries.length === 0
+		? undefined
+		: entries.map(([key, value]) => `${key}=${value}`).join(" ");
+}
+
+/** A template's first line that says something, for a listing. */
+function promptSummary(template: string): string {
+	const line =
+		template
+			.split("\n")
+			.map((each) => each.trim())
+			.find((each) => each.length > 0) ?? "";
+	return [...line].length > 80 ? `${[...line].slice(0, 79).join("")}…` : line;
+}
+
+/**
+ * The palette commands that put a picker or a question up in the window, and
+ * what to run instead. `run` refuses them: a command line never leaves a
+ * sheet over the person's window that nobody there asked for.
+ */
+const ASKS_IN_THE_WINDOW: Readonly<Record<string, string>> = {
+	add_workspace: "Use 'workspace open <path>'.",
+	add_agent:
+		"Use 'agent new [--profile <p>] [--gui|--tui]' ('profiles' lists them).",
+	open_issue_picker:
+		"Use 'issue assign <url>' ('issue actions' lists the actions).",
+	open_tab_picker: "Use 'focus <agent|workspace>'.",
+	send_agent_action: "Use 'agent send <a> <text>'.",
+	rename_agent: "Use 'agent rename <a> <name>'.",
+	close_selection:
+		"Use 'agent stop <a>' for an agent, or 'terminal close' for your terminal.",
+	close_workspace: "Close a workspace in DevHub.",
+	restart_agent: "Use 'agent restart <a>'.",
+	open_recently_closed: "Use 'run reopen_closed' for the newest one.",
+	preview_color_theme: "Choose a theme in DevHub.",
+	show_chord_help: "Run 'commands' for the list.",
+	open_command_palette: "Run 'commands' and 'run <command-id>'.",
+};
+
 function statusLines(state: TellAgentStatus, now: number): string[] {
 	const since =
 		state.statusSince === null
@@ -1820,6 +2074,9 @@ function statusLines(state: TellAgentStatus, now: number): string[] {
 	return [
 		`${state.name} (${state.agentId})  ${state.kind}/${state.presentation}, profile ${state.profile}, in ${state.workspace.name} (${state.workspace.root})`,
 		`status    ${state.status}${since}${state.turn === null ? "" : `, turn ${state.turn}`}${state.control === "running" ? "" : `, ${state.control}`}`,
+		...(Object.keys(state.meta).length === 0
+			? []
+			: [`meta      ${metaWords(state.meta) ?? ""}`]),
 		`activity  ${state.activity ?? "-"}${state.lastActivityAt === null ? "" : ` (last change ${span(now - Date.parse(state.lastActivityAt))} ago)`}`,
 		...(state.requests === null
 			? []
