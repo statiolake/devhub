@@ -491,6 +491,34 @@ describe("the DevHub control socket", () => {
 		expect(answer.message).toContain("only questions");
 	});
 
+	it("carries the orchestration commands to the app", async () => {
+		for (const command of [
+			{ verb: "agent-stop", agent: "a" },
+			{ verb: "agent-restart", agent: "a" },
+			{ verb: "agent-status", agent: "a" },
+			{
+				verb: "agent-wait-many",
+				mode: "any",
+				agents: [],
+				until: "any",
+				timeoutSeconds: 5,
+			},
+			{ verb: "sessions", limit: 20 },
+			{ verb: "agent-resume", session: "abcd" },
+		])
+			expect(
+				await ask(socketPath, `${JSON.stringify({ kind: "tell", command })}\n`),
+			).toMatchObject({ ok: true });
+		expect(calls).toEqual([
+			"tell agent-stop",
+			"tell agent-restart",
+			"tell agent-status",
+			"tell agent-wait-many",
+			"tell sessions",
+			"tell agent-resume",
+		]);
+	});
+
 	it("refuses a tell command that is not one", async () => {
 		const answer = await ask(
 			socketPath,

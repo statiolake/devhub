@@ -170,6 +170,7 @@ import {
 	workspaceId as parseWorkspaceId,
 	workspaceLocation,
 	sessionId,
+	type Agent,
 	type AgentId,
 	type AgentProfileKind,
 	type AgentReconciliation,
@@ -537,12 +538,17 @@ import { launchCommandFor } from "../cli/launch.js";
 import type { TellCommand } from "../cli/tell/command.js";
 import {
 	tellCaller,
+	TellMemory,
 	TellService,
 	type IssueAssignRequest,
 	type TellAnswer,
 	type TellPorts,
 	type TellWorkspace,
 } from "../cli/tell/service.js";
+import {
+	restartAsTheMenuDoes,
+	stopAsTheRowDoes,
+} from "../cli/tell/windowActs.js";
 import {
 	installKeyboard,
 	setArmingObserver,
@@ -5188,6 +5194,10 @@ export class AppController {
 				if (latest) {
 					this.send(CHANNELS.snapshotChanged, latest);
 					this.projectionChanged();
+					this.tellMemory.observe(
+						latest.workspaces.flatMap((workspace) => workspace.agents),
+						Date.now(),
+					);
 				}
 				for (const effect of effects) {
 					// Effects are performed with nobody waiting on them, so the
@@ -8891,11 +8901,14 @@ export class AppController {
 		origin: string | undefined,
 		machine?: string | undefined,
 	): Promise<TellAnswer> {
-		return new TellService(this.tellPorts()).run(
+		return new TellService(this.tellPorts(), undefined, this.tellMemory).run(
 			command,
 			tellCaller(origin, machine),
 		);
 	}
+
+	/** What `--tell` keeps between calls: who has read what, since when. */
+	private readonly tellMemory = new TellMemory();
 
 	private tellPorts(): TellPorts {
 		const newAgent = (before: ReadonlySet<string>): string | undefined =>
@@ -8985,6 +8998,13 @@ export class AppController {
 						const state = conversation.snapshot().transcript.state;
 						return state.phase === "ready" ? state.turn : state.phase;
 					},
+					failure: () => {
+						const state = conversation.snapshot().transcript.state;
+						return state.phase === "broken"
+							? `${state.failure.code}: ${state.failure.detail}`
+							: undefined;
+					},
+					usage: () => conversation.snapshot().transcript.usage,
 					submit: (text) => conversation.submit(text, []),
 					interrupt: () => conversation.command({ kind: "interrupt" }),
 					answer: (request, answer) =>
@@ -9131,7 +9151,76 @@ export class AppController {
 			},
 			bringPane: (agentId, pane, focus) =>
 				this.bringPane(parseAgentId(agentId), pane, focus),
+			// The row's Stop Agent and the menu's Restart Session, with the
+			// sheet's question taken as answered: see `tell/windowActs.ts`.
+			stopAgent: (agentId) =>
+				stopAsTheRowDoes(this.cliAgent(agentId), (intent) =>
+					this.dispatchAwaiting(intent),
+				),
+			restartAgent: (agentId) =>
+				restartAsTheMenuDoes(this.cliAgent(agentId), (intent) =>
+					this.dispatchAwaiting(intent),
+				),
+			pastSessions: async (workspaceId, profileId) => {
+				// The agent picker's listing (`listAgentSessions`), for this place.
+				const place = workspacePlaceOf(this.cliWorkspace(workspaceId));
+				const { runtime, profile } = await this.sessionsProfile(
+					place,
+					profileId,
+				);
+				return listPastSessions(
+					runtime,
+					profile,
+					place.path,
+					"here",
+					await this.listingContext(runtime, place.path, profile.kind),
+				);
+			},
+			resumeSession: async (workspaceId, profileId, session) => {
+				const workspace = this.cliWorkspace(workspaceId);
+				const before = this.modelAgentIds();
+				// The agent picker's two ways on (`AgentProfilePicker`): another
+				// worktree's session in that worktree, the rest here — always in
+				// DevHub's conversation view, which is what can be read from here.
+				if (session.worktree !== undefined) {
+					await this.resumeSessionElsewhere({
+						place: workspacePlaceOf(workspace),
+						profileId,
+						session: session.id,
+						worktree: session.worktree,
+						...(session.cwd === undefined ? {} : { cwd: session.cwd }),
+						presentation: "gui",
+					});
+				} else {
+					await this.dispatchAwaiting({
+						type: "create_agent",
+						workspaceId: workspace.id,
+						profileId: agentProfileId(profileId),
+						presentation: "full",
+						agentPresentation: agentPresentation("gui"),
+						resume: sessionId(session.id),
+					});
+				}
+				const created = newAgent(before);
+				if (created === undefined)
+					throw new Error("DevHub did not start the agent.");
+				return created;
+			},
 		};
+	}
+
+	/** The model's Agent a CLI named by its id. */
+	private cliAgent(id: string): Agent {
+		const agent = this.coordinator.model.agent(parseAgentId(id));
+		if (!agent) throw new Error(`there is no agent ${id}`);
+		return agent;
+	}
+
+	/** The model's Workspace a CLI named by its id. */
+	private cliWorkspace(id: string): Workspace {
+		const workspace = this.coordinator.model.workspace(this.workspaceIdOf(id));
+		if (!workspace) throw new Error(`no workspace ${id} is open`);
+		return workspace;
 	}
 
 	/** The model's own id for a Workspace the CLI named by its string. */
@@ -9192,6 +9281,12 @@ export class AppController {
 					status: agent.status,
 					unread: agent.unread,
 					activity: agent.activity,
+					controlState: agent.controlState.kind,
+					failure:
+						agent.failure === undefined
+							? undefined
+							: { code: agent.failure.code, detail: agent.failure.detail },
+					promptCache: agent.promptCache,
 				})),
 			};
 		});

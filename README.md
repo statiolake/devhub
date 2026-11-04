@@ -246,7 +246,8 @@ data for scripts and agents. `devhub --tell help` lists everything.
 ```sh
 devhub --tell workspaces                              # open workspaces: id, folder, branch, Issue, agents
 devhub --tell workspace open ~/src/app [--worktree 123-fix-login]   # Cmd+Q f
-devhub --tell agents [--workspace W]                  # id, name, kind, status, unread, open requests
+devhub --tell agents [--workspace W]                  # id, name, kind, status and for how long, open requests, unread, context
+devhub --tell agent status A                          # one agent in detail (--json: a stable schema)
 devhub --tell agent new --workspace W [--profile P] [--name N] [--gui|--tui] [--prompt TEXT|-]   # Cmd+Q c
 devhub --tell issue assign <url> [--branch 123-fix-login-timeout] [--repo PATH] [--root]
               [--profile P] [--action ID] [--prompt TEXT|-] [--editor-only]   # Cmd+Q i
@@ -256,6 +257,10 @@ devhub --tell agent interrupt A
 devhub --tell agent requests A                        # open questions (and permission prompts, read-only)
 devhub --tell agent answer A REQUEST --option N... | --text T
 devhub --tell agent wait A [--until idle|waiting|any] [--timeout S]
+devhub --tell agent wait --any|--all [A...] [--workspace W] [--until ...] [--timeout S]
+devhub --tell agent stop A | agent restart A          # Stop Agent, Restart Session (no sheet: the command is the decision)
+devhub --tell sessions [--workspace W] [--profile P] [--limit N]   # earlier sessions, as the agent picker lists them
+devhub --tell agent resume SESSION [--workspace W] [--profile P] [--name N]   # one of them, in a new GUI agent
 devhub --tell commands | run <command-id>             # the command palette
 devhub --tell focus A|W | notify TEXT
 devhub --tell terminal open [--command C] [--focus]  # your own terminal, beside your pane (Cmd+Q v)
@@ -281,6 +286,31 @@ Claude's AskUserQuestion, Codex's requestUserInput — can be answered, and the
 answer carries a note, "answered via devhub CLI by <agent>", that Claude keeps
 in the target's transcript. An agent cannot answer its own question. Palette
 commands that ask first in the window (close, restart) still ask first.
+
+**Orchestrating.** One ordinary agent can drive the others with these
+commands; there is no special orchestrator. `agent status` gives one agent's
+state in one call: kind, profile, workspace, status and since when (as DevHub
+saw it), the turn, last activity, open questions and permission prompts
+(these as "answer in DevHub" only), entries the caller has not read and the
+cursor, context use, the prompt cache, and why it exited or broke;
+`agents --json` carries the same as each row's `state`. `agent wait --any`
+returns as soon as one of the agents (by default every GUI agent but the
+caller, or those of `--workspace`) has something the caller has not read: its
+turn over with output after the caller's last `agent read`, or a request not
+yet shown by `read` or `requests`, or a new failure — with which, why, the
+cursor, and the `--since` to read from. The app keeps, per caller (an agent,
+or the terminal it runs in), what `agent read` last showed it; that reading is
+the one acknowledgement, so whatever happens between `wait`, `read` and
+`send` is reported by the next wait rather than missed. `agent wait --all`
+waits until every one is in the state (terminal agents too). `agent stop` and
+`agent restart` are the row's Stop Agent (Retry Stop after a failed one) and
+the menu's Restart Session: the window's confirmation is not shown — a busy
+agent's turn stops, and an open terminal goes to the editor, the sheet's
+first choice — but what the window refuses is refused, and an agent cannot
+stop or restart itself. `sessions` lists what the agent picker offers to
+resume (id, profile, when, title or agent name, branch or worktree), and
+`agent resume` goes on with one the picker's way: here, or in its own
+worktree, opened or checked out again.
 
 **The `/devhub` skill.** Every agent DevHub starts on this Mac gets `/devhub`,
 a skill that teaches it this command: open a workspace and an agent, hand an

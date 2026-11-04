@@ -493,6 +493,9 @@ function expandTellPaths(
 				: { ...command, repo: expandPath(command.repo, cwd, home) };
 		case "agents":
 		case "agent-new":
+		case "agent-wait-many":
+		case "sessions":
+		case "agent-resume":
 			return command.workspace === undefined
 				? command
 				: {

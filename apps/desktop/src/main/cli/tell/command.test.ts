@@ -358,3 +358,147 @@ describe("devhub --tell terminal", () => {
 		expect(TELL_USAGE).not.toContain("--split");
 	});
 });
+
+describe("devhub --tell's orchestration commands", () => {
+	it("reads stop, restart and status of one agent", () => {
+		expect(told("agent", "stop", "A1")).toEqual({
+			verb: "agent-stop",
+			agent: "A1",
+		});
+		expect(told("agent", "restart", "A1")).toEqual({
+			verb: "agent-restart",
+			agent: "A1",
+		});
+		expect(told("agent", "status", "A1")).toEqual({
+			verb: "agent-status",
+			agent: "A1",
+		});
+		expect(refusal("agent", "stop")).toMatch(/<agent>/);
+		expect(refusal("agent", "stop", "A1", "B2")).toMatch(/unexpected/);
+		// No sheet to answer and nothing to force: the command is the decision.
+		expect(refusal("agent", "stop", "A1", "--force")).toMatch(/not an option/);
+	});
+
+	it("reads wait --any and --all over named agents, or all of a workspace", () => {
+		expect(told("agent", "wait", "--any", "A1", "B2")).toEqual({
+			verb: "agent-wait-many",
+			mode: "any",
+			agents: ["A1", "B2"],
+			until: "any",
+			timeoutSeconds: DEFAULT_WAIT_SECONDS,
+		});
+		expect(
+			told(
+				"agent",
+				"wait",
+				"--all",
+				"--workspace",
+				"scratch",
+				"--until",
+				"idle",
+				"--timeout",
+				"30",
+			),
+		).toEqual({
+			verb: "agent-wait-many",
+			mode: "all",
+			agents: [],
+			workspace: "scratch",
+			until: "idle",
+			timeoutSeconds: 30,
+		});
+		// One agent, as before.
+		expect(told("agent", "wait", "A1")).toMatchObject({ verb: "agent-wait" });
+		expect(refusal("agent", "wait", "--any", "--all")).toMatch(/different/);
+		expect(refusal("agent", "wait", "A1", "--workspace", "w")).toMatch(
+			/--any or --all/,
+		);
+		expect(refusal("agent", "wait", "--any", "--timeout", "601")).toMatch(
+			/from 1 to 600/,
+		);
+	});
+
+	it("reads sessions and agent resume", () => {
+		expect(told("sessions")).toEqual({ verb: "sessions", limit: 20 });
+		expect(
+			told(
+				"sessions",
+				"--workspace",
+				".",
+				"--profile",
+				"codex",
+				"--limit",
+				"5",
+			),
+		).toEqual({
+			verb: "sessions",
+			workspace: ".",
+			profile: "codex",
+			limit: 5,
+		});
+		expect(
+			told("agent", "resume", "7f3a", "--workspace", "w1", "--name", "API"),
+		).toEqual({
+			verb: "agent-resume",
+			session: "7f3a",
+			workspace: "w1",
+			name: "API",
+		});
+		expect(refusal("agent", "resume")).toMatch(/<session>/);
+		expect(refusal("sessions", "--limit", "0")).toMatch(/from 1/);
+	});
+
+	it("takes them back off the socket exactly as parsed, and nothing else", () => {
+		for (const command of [
+			told("agent", "stop", "A1"),
+			told("agent", "restart", "A1"),
+			told("agent", "status", "A1"),
+			told("agent", "wait", "--any"),
+			told("agent", "wait", "--any", "A1", "B2", "--until", "waiting"),
+			told("agent", "wait", "--all", "--workspace", "/src/app"),
+			told("sessions", "--profile", "claude", "--limit", "3"),
+			told("agent", "resume", "abcd-1234", "--profile", "codex"),
+		]) {
+			expect(tellCommandFrom(JSON.parse(JSON.stringify(command)))).toEqual(
+				command,
+			);
+		}
+		expect(() =>
+			tellCommandFrom({
+				verb: "agent-wait-many",
+				mode: "some",
+				agents: [],
+				until: "any",
+				timeoutSeconds: 5,
+			}),
+		).toThrow(/mode/);
+		expect(() =>
+			tellCommandFrom({
+				verb: "agent-wait-many",
+				mode: "any",
+				agents: [3],
+				until: "any",
+				timeoutSeconds: 5,
+			}),
+		).toThrow(/agents/);
+		expect(() => tellCommandFrom({ verb: "sessions", limit: 0 })).toThrow(
+			/limit/,
+		);
+		expect(() =>
+			tellCommandFrom({ verb: "agent-resume", session: "" }),
+		).toThrow(/session/);
+	});
+
+	it("is in the help", () => {
+		for (const line of [
+			"agent status <a>",
+			"agent wait --any [<a>...]",
+			"agent wait --all [<a>...]",
+			"agent stop <a>",
+			"agent restart <a>",
+			"sessions [--workspace <w>] [--profile <p>] [--limit <n>]",
+			"agent resume <session>",
+		])
+			expect(TELL_USAGE).toContain(line);
+	});
+});

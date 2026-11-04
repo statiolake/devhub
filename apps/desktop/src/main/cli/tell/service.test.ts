@@ -1,10 +1,15 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { COMMANDS } from "../../../model/commands.js";
+import { parseControlRequest } from "../protocol.js";
+import { parseTellArguments } from "./command.js";
 import type {
 	EntryId,
 	PendingRequest,
 	RequestAnswer,
 	RequestId,
 	TranscriptEntry,
+	Usage,
 } from "../../../model/conversation.js";
 import {
 	answeredBy,
@@ -14,11 +19,14 @@ import {
 	questionAnswer,
 	TellService,
 	type IssueAssignRequest,
+	type TellCaller,
 	type TellAgent,
 	type TellConversation,
 	type TellPorts,
 	type TellTerminal,
 	type TellEditorPane,
+	type TellPastSession,
+	type TellStopped,
 	type TellTerminalPane,
 	type TellWorkspace,
 } from "./service.js";
@@ -34,6 +42,9 @@ function agent(overrides: Partial<TellAgent> = {}): TellAgent {
 		status: "working",
 		unread: undefined,
 		activity: undefined,
+		controlState: "running",
+		failure: undefined,
+		promptCache: undefined,
 		...overrides,
 	};
 }
@@ -132,6 +143,14 @@ class FakeConversation implements TellConversation {
 	}
 	turn() {
 		return this.state;
+	}
+	broken: string | undefined = undefined;
+	failure() {
+		return this.broken;
+	}
+	reported: Usage | undefined = undefined;
+	usage() {
+		return this.reported;
 	}
 	submit(text: string) {
 		this.submitted.push(text);
@@ -292,6 +311,42 @@ class FakePorts implements TellPorts {
 		this.terminals.set(agentId, [...(panes ?? []), moved]);
 		return Promise.resolve({ created: panes === undefined });
 	}
+	/** What Stop answers, or the refusal it throws (the window's own words). */
+	stopped: TellStopped | Error = {
+		busy: false,
+		movedTerminal: false,
+		retried: false,
+	};
+	stopAgent(agentId: string) {
+		this.calls.push(`stop ${agentId}`);
+		return this.stopped instanceof Error
+			? Promise.reject(this.stopped)
+			: Promise.resolve(this.stopped);
+	}
+	restarted: { busy: boolean } | Error = { busy: false };
+	restartAgent(agentId: string) {
+		this.calls.push(`restart ${agentId}`);
+		return this.restarted instanceof Error
+			? Promise.reject(this.restarted)
+			: Promise.resolve(this.restarted);
+	}
+	/** Each profile's earlier sessions, or why they could not be read. */
+	past = new Map<string, readonly TellPastSession[] | Error>();
+	pastSessions(workspaceId: string, profileId: string) {
+		this.calls.push(`sessions ${workspaceId} ${profileId}`);
+		const listed = this.past.get(profileId) ?? [];
+		return listed instanceof Error
+			? Promise.reject(listed)
+			: Promise.resolve(listed);
+	}
+	resumeSession(
+		workspaceId: string,
+		profileId: string,
+		session: TellPastSession,
+	) {
+		this.calls.push(`resume ${workspaceId} ${profileId} ${session.id}`);
+		return Promise.resolve("resumed-agent");
+	}
 }
 
 function pane(
@@ -350,6 +405,10 @@ function setup() {
 		ports,
 		service,
 		conversation: ports.conversations.get("aaaa1111-0000")!,
+		advance: (ms: number) => {
+			now += ms;
+		},
+		now: () => now,
 	};
 }
 
@@ -385,9 +444,9 @@ describe("devhub --tell, in the app", () => {
 		const { service } = setup();
 		const all = await service.run({ verb: "agents" }, undefined);
 		expect(all.message).toContain(
-			"aaaa1111-0000  Claude 1  claude/gui  working  2 request(s)  in app",
+			"aaaa1111-0000  Claude 1  claude/gui  working for 0s  2 request(s)  2 new  in app",
 		);
-		expect(all.message).toContain("Shell  shell/tui  idle");
+		expect(all.message).toContain("Shell  shell/tui  idle for 0s  in Scratch");
 		const scratch = await service.run(
 			{ verb: "agents", workspace: "scratch" },
 			undefined,
@@ -959,5 +1018,827 @@ describe("where a tmux pane is in its window", () => {
 			"top-right",
 			"bottom",
 		]);
+	});
+});
+
+// --- orchestrating other agents -----------------------------------------------
+
+/**
+ * A command line, the way it reaches the app: parsed as the CLI parses it,
+ * sent as a `tell` control request, and taken back off the socket.
+ */
+function viaSocket(
+	service: TellService,
+	argv: readonly string[],
+	caller: TellCaller | undefined,
+) {
+	const parsed = parseTellArguments(argv);
+	if (parsed.kind !== "tell") throw new Error(parsed.message);
+	const request = parseControlRequest(
+		JSON.stringify({ kind: "tell", command: parsed.command }),
+	);
+	if (request.kind !== "tell") throw new Error("not a tell request");
+	return service.run(request.command, caller);
+}
+
+function said(text: string): TranscriptEntry {
+	return {
+		kind: "assistant",
+		id: text as EntryId,
+		parent: null,
+		blocks: [{ kind: "text", markdown: text }],
+		streaming: false,
+	};
+}
+
+function told(text: string): TranscriptEntry {
+	return {
+		kind: "user",
+		id: text as EntryId,
+		parent: null,
+		text,
+		images: [],
+		origin: "person",
+		rewindable: true,
+	};
+}
+
+/** The Agent `id`'s row, changed. */
+function withAgent(
+	ports: FakePorts,
+	id: string,
+	change: Partial<TellAgent>,
+): void {
+	ports.spaces = ports.spaces.map((space) => ({
+		...space,
+		agents: space.agents.map((one) =>
+			one.id === id ? { ...one, ...change } : one,
+		),
+	}));
+}
+
+const self = callerFromOrigin("local\tw1\taaaa1111-0000");
+
+describe("agent stop and agent restart", () => {
+	it("stop the agent the window's way, and say what happened", async () => {
+		const { service, ports } = setup();
+		ports.stopped = { busy: true, movedTerminal: true, retried: false };
+		const answer = await viaSocket(
+			service,
+			["agent", "stop", "Claude 1"],
+			coordinator,
+		);
+		expect(ports.calls).toEqual(["stop aaaa1111-0000"]);
+		expect(answer.message).toBe(
+			"Stopped Claude 1 (aaaa1111-0000); it was working, and what it was doing stopped with it; its terminal went to the workspace's editor terminal, still running.",
+		);
+		expect(answer.data).toEqual({
+			agentId: "aaaa1111-0000",
+			stopped: true,
+			busy: true,
+			movedTerminal: true,
+			retried: false,
+		});
+		ports.stopped = { busy: false, movedTerminal: false, retried: true };
+		expect(
+			(await viaSocket(service, ["agent", "stop", "aaaa"], undefined)).message,
+		).toBe(
+			"Stopped (a retry of the Stop that had failed) Claude 1 (aaaa1111-0000).",
+		);
+	});
+
+	it("restart its session the window's way", async () => {
+		const { service, ports } = setup();
+		ports.restarted = { busy: true };
+		const answer = await viaSocket(
+			service,
+			["agent", "restart", "aaaa"],
+			coordinator,
+		);
+		expect(ports.calls).toEqual(["restart aaaa1111-0000"]);
+		expect(answer.message).toBe(
+			"Restarted Claude 1's session (aaaa1111-0000); it was working, and its turn stopped with it.",
+		);
+	});
+
+	it("refuse an agent stopping or restarting itself, before asking the window", async () => {
+		const { service, ports } = setup();
+		await expect(
+			viaSocket(service, ["agent", "stop", "aaaa"], self),
+		).rejects.toThrow(/cannot stop itself/);
+		await expect(
+			viaSocket(service, ["agent", "restart", "Claude 1"], self),
+		).rejects.toThrow(/cannot restart itself/);
+		expect(ports.calls).toEqual([]);
+	});
+
+	it("refuse what the window refuses, in its words", async () => {
+		const { service, ports } = setup();
+		ports.stopped = new Error("Claude 1 is already stopping.");
+		await expect(
+			viaSocket(service, ["agent", "stop", "aaaa"], coordinator),
+		).rejects.toThrow("Claude 1 is already stopping.");
+		ports.restarted = new Error(
+			"“Shell” runs a shell CLI, which has no session DevHub can resume, so there is no session to restart.",
+		);
+		await expect(
+			viaSocket(service, ["agent", "restart", "Shell"], coordinator),
+		).rejects.toThrow(/no session to restart/);
+		await expect(
+			viaSocket(service, ["agent", "stop", "nobody"], coordinator),
+		).rejects.toThrow(/no agent is called/);
+	});
+});
+
+describe("agent wait --any", () => {
+	it("answers at once with a request the caller has not seen, and not again once it has", async () => {
+		const { service } = setup();
+		// Claude 1's turn runs, holding a question and a permission prompt.
+		const first = await viaSocket(
+			service,
+			["agent", "wait", "--any"],
+			coordinator,
+		);
+		expect(first.data).toMatchObject({
+			reached: true,
+			agents: ["aaaa1111-0000"],
+			ready: [
+				{
+					agentId: "aaaa1111-0000",
+					reasons: ["request"],
+					requests: [
+						{ id: "req-1", kind: "question", answerable: true },
+						{ id: "req-2", kind: "tool", answerable: false },
+					],
+				},
+			],
+		});
+		expect(first.message).toContain("question req-1");
+		expect(first.message).toContain(
+			"permission prompt req-2 (answer in DevHub: tell the person)",
+		);
+		// Seen: a wait does not keep coming back for a prompt the person is to answer.
+		await viaSocket(service, ["agent", "requests", "aaaa"], coordinator);
+		const later = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--timeout", "2"],
+			coordinator,
+		);
+		expect(later.data).toMatchObject({ reached: false, ready: [] });
+		expect(later.message).toContain("after 2s");
+	});
+
+	it("reports output only once the turn is over, and only what the caller has not read", async () => {
+		const { service, conversation } = setup();
+		conversation.pending = [];
+		// Streaming in a turn that runs is not news yet.
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: false });
+		conversation.state = "none";
+		const done = await viaSocket(
+			service,
+			["agent", "wait", "--any"],
+			coordinator,
+		);
+		expect(done.data).toMatchObject({
+			ready: [{ reasons: ["output"], unread: 2, since: null, cursor: "e3" }],
+		});
+		expect(done.message).toContain(
+			"Read: devhub --tell agent read aaaa1111-0000 --last 20",
+		);
+		// Read: nothing is owed any more.
+		await viaSocket(service, ["agent", "read", "aaaa"], coordinator);
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: false });
+		// What the orchestrator itself sent is not news.
+		conversation.log = [...conversation.log, told("e4")];
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: false });
+	});
+
+	it("misses nothing that happens between two calls", async () => {
+		const { service, conversation } = setup();
+		conversation.pending = [];
+		conversation.state = "none";
+		await viaSocket(service, ["agent", "read", "aaaa"], coordinator);
+		// Between the read and the next wait — while the orchestrator was busy
+		// with something else — the agent ran a whole turn and went idle
+		// again. No wait saw it working; the next one still reports it.
+		conversation.log = [...conversation.log, told("e4")];
+		conversation.state = "running";
+		conversation.log = [...conversation.log, said("e5")];
+		conversation.state = "none";
+		conversation.log = [...conversation.log, said("e6")];
+		const next = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--timeout", "1"],
+			coordinator,
+		);
+		expect(next.data).toMatchObject({
+			reached: true,
+			ready: [{ reasons: ["output"], unread: 2, since: "e3", cursor: "e6" }],
+		});
+		// It stays news until it is read, however many waits come first...
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: true });
+		// ...and another caller has its own reading.
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "aaaa", "--timeout", "1"],
+					callerFromOrigin("local\tw1\tnone"),
+				)
+			).data,
+		).toMatchObject({ ready: [{ since: null, unread: 4 }] });
+		// Read from the cursor the wait gave: everything since, then quiet.
+		const read = await viaSocket(
+			service,
+			["agent", "read", "aaaa", "--since", "e3"],
+			coordinator,
+		);
+		expect(read.data).toMatchObject({ cursor: "e6" });
+		expect(
+			(read.data as { entries: { id: string }[] }).entries.map(
+				(entry) => entry.id,
+			),
+		).toEqual(["e4", "e5", "e6"]);
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: false });
+	});
+
+	it("waits until an agent has news, polling, within the timeout", async () => {
+		const { service, conversation, now } = setup();
+		conversation.pending = [];
+		await viaSocket(service, ["agent", "read", "aaaa"], coordinator);
+		let polls = 0;
+		const entries = conversation.entries.bind(conversation);
+		conversation.entries = () => {
+			polls += 1;
+			if (polls === 3) {
+				conversation.state = "none";
+				conversation.log = [...conversation.log, said("e9")];
+			}
+			return entries();
+		};
+		const answer = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--timeout", "60"],
+			coordinator,
+		);
+		expect(answer.data).toMatchObject({
+			reached: true,
+			ready: [{ cursor: "e9" }],
+		});
+		expect(now()).toBe(1000);
+	});
+
+	it("tells a failure the caller has not seen", async () => {
+		const { service, ports, conversation } = setup();
+		conversation.pending = [];
+		await viaSocket(service, ["agent", "read", "aaaa"], coordinator);
+		withAgent(ports, "aaaa1111-0000", {
+			status: "error",
+			failure: { code: "conversation_failed", detail: undefined },
+		});
+		const answer = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--until", "idle", "--timeout", "1"],
+			coordinator,
+		);
+		expect(answer.data).toMatchObject({
+			ready: [{ reasons: ["failure"], failure: "conversation_failed" }],
+		});
+	});
+
+	it("is about the others: never the caller, nor a terminal agent", async () => {
+		const { service, ports } = setup();
+		const callerConversation = new FakeConversation();
+		callerConversation.pending = [question];
+		ports.conversations.set("bbbb2222-0000", callerConversation);
+		const answer = await viaSocket(
+			service,
+			["agent", "wait", "--any"],
+			coordinator,
+		);
+		expect(answer.data).toMatchObject({ agents: ["aaaa1111-0000"] });
+		await expect(
+			viaSocket(
+				service,
+				["agent", "wait", "--any", "Coordinator"],
+				coordinator,
+			),
+		).rejects.toThrow(/cannot wait on itself/);
+		await expect(
+			viaSocket(service, ["agent", "wait", "--any", "Shell"], coordinator),
+		).rejects.toThrow(/terminal agent.*--all/);
+		await expect(
+			viaSocket(
+				service,
+				["agent", "wait", "--any", "--workspace", "scratch"],
+				coordinator,
+			),
+		).rejects.toThrow(/no other GUI agent in scratch/);
+		await expect(
+			viaSocket(
+				service,
+				["agent", "wait", "--any", "aaaa", "--workspace", "w1"],
+				coordinator,
+			),
+		).rejects.toThrow(/not both/);
+	});
+
+	it("says when one of them is gone", async () => {
+		const { service, ports, conversation } = setup();
+		conversation.pending = [];
+		ports.spaces = ports.spaces.map((space) => ({
+			...space,
+			agents: space.agents.filter((one) => one.id !== "aaaa1111-0000"),
+		}));
+		const answer = await service
+			.run(
+				{
+					verb: "agent-wait-many",
+					mode: "any",
+					agents: [],
+					until: "any",
+					timeoutSeconds: 5,
+				},
+				coordinator,
+			)
+			.catch((error: unknown) => error as Error);
+		// Gone before the wait began: there is nobody to wait on.
+		expect(answer).toBeInstanceOf(Error);
+		const fresh = setup();
+		fresh.conversation.pending = [];
+		let polls = 0;
+		const original = fresh.ports.workspaces.bind(fresh.ports);
+		fresh.ports.workspaces = () => {
+			polls += 1;
+			const spaces = original();
+			return polls < 3
+				? spaces
+				: spaces.map((space) => ({
+						...space,
+						agents: space.agents.filter((one) => one.id !== "aaaa1111-0000"),
+					}));
+		};
+		const gone = await viaSocket(
+			fresh.service,
+			["agent", "wait", "--any", "aaaa"],
+			coordinator,
+		);
+		expect(gone.data).toMatchObject({
+			reached: true,
+			gone: [{ agentId: "aaaa1111-0000" }],
+		});
+		expect(gone.message).toBe("Claude 1 (aaaa1111-0000) is gone.");
+	});
+});
+
+describe("agent wait --all", () => {
+	it("returns once every one is in the state, terminal agents included", async () => {
+		const { service, ports } = setup();
+		let polls = 0;
+		const original = ports.workspaces.bind(ports);
+		ports.workspaces = () => {
+			polls += 1;
+			const spaces = original();
+			return polls < 4
+				? spaces
+				: spaces.map((space) => ({
+						...space,
+						agents: space.agents.map((one) => ({ ...one, status: "idle" })),
+					}));
+		};
+		const answer = await viaSocket(
+			service,
+			["agent", "wait", "--all", "aaaa", "Shell", "--until", "idle"],
+			coordinator,
+		);
+		expect(answer.data).toMatchObject({
+			reached: true,
+			agents: [
+				{ agentId: "aaaa1111-0000", status: "idle", reached: true },
+				{ agentId: "cccc3333-0000", status: "idle", reached: true },
+			],
+		});
+	});
+
+	it("says which are not there yet at the timeout", async () => {
+		const { service } = setup();
+		const answer = await viaSocket(
+			service,
+			["agent", "wait", "--all", "--until", "idle", "--timeout", "3"],
+			coordinator,
+		);
+		expect(answer.data).toMatchObject({ reached: false });
+		expect(answer.message).toContain("Not all there (until idle) after 3s:");
+		expect(answer.message).toContain("- Claude 1 (aaaa1111-0000) is working");
+		expect(answer.message).toContain("  Shell (cccc3333-0000) is idle");
+	});
+});
+
+describe("agent status", () => {
+	it("gives one agent's state in one call, with a stable --json shape", async () => {
+		const { service, ports, conversation, advance } = setup();
+		conversation.reported = {
+			inputTokens: undefined,
+			outputTokens: undefined,
+			cachedInputTokens: undefined,
+			contextTokens: 50_000,
+			contextWindow: 200_000,
+			costUsd: undefined,
+			rateLimits: undefined,
+		};
+		withAgent(ports, "aaaa1111-0000", {
+			activity: "Running tests",
+			promptCache: {
+				ttlSeconds: 300,
+				ttlKnown: true,
+				expiresAt: 400_000,
+				hitRatio: 0.9,
+				requests: 3,
+				misses: 1,
+				recacheTokens: 1000,
+			},
+		});
+		await viaSocket(service, ["agents"], coordinator);
+		advance(90_000);
+		withAgent(ports, "aaaa1111-0000", { status: "waiting" });
+		await viaSocket(service, ["agents"], coordinator);
+		advance(30_000);
+		const answer = await viaSocket(
+			service,
+			["--json", "agent", "status", "aaaa"],
+			coordinator,
+		);
+		expect(answer.data).toEqual({
+			agentId: "aaaa1111-0000",
+			name: "Claude 1",
+			kind: "claude",
+			profile: "claude",
+			presentation: "gui",
+			workspace: { id: "w1", name: "app", root: "/src/app" },
+			status: "waiting",
+			statusSince: "1970-01-01T00:01:30.000Z",
+			lastActivityAt: "1970-01-01T00:01:30.000Z",
+			activity: "Running tests",
+			turn: "running",
+			control: "running",
+			failure: null,
+			requests: {
+				questions: 1,
+				permissions: 1,
+				open: [
+					expect.objectContaining({ id: "req-1", answerable: true }),
+					expect.objectContaining({
+						id: "req-2",
+						kind: "tool",
+						answerable: false,
+						text: expect.stringContaining("(answer in DevHub)"),
+					}),
+				],
+			},
+			unread: { entries: 2, since: null, cursor: "e3" },
+			context: { tokens: 50_000, window: 200_000, percent: 25 },
+			promptCache: {
+				ttlSeconds: 300,
+				expiresAt: "1970-01-01T00:06:40.000Z",
+				cold: false,
+				hitRatio: 0.9,
+				misses: 1,
+				autoCompactAt: null,
+			},
+		});
+		expect(answer.message.split("\n")).toEqual([
+			"Claude 1 (aaaa1111-0000)  claude/gui, profile claude, in app (/src/app)",
+			"status    waiting for 30s (since 1970-01-01T00:01:30.000Z), turn running",
+			"activity  Running tests (last change 30s ago)",
+			"requests  question req-1, tool req-2 (answer in DevHub)",
+			"unread    2 entries you have not read; cursor e3",
+			"context   50000 / 200000 tokens (25%)",
+			"cache     warm until 1970-01-01T00:06:40.000Z (TTL 300s), hit 90%, 1 miss(es)",
+		]);
+	});
+
+	it("says why it broke, and has nothing to say of a terminal agent's transcript", async () => {
+		const { service, conversation } = setup();
+		conversation.state = "broken";
+		conversation.broken = "protocol_mismatch: line 3";
+		const broken = await viaSocket(
+			service,
+			["agent", "status", "aaaa"],
+			undefined,
+		);
+		expect(broken.data).toMatchObject({
+			turn: "broken",
+			failure: "broken: protocol_mismatch: line 3",
+		});
+		expect(broken.message).toContain("failure   broken: protocol_mismatch");
+		const shell = await viaSocket(
+			service,
+			["agent", "status", "Shell"],
+			undefined,
+		);
+		expect(shell.data).toMatchObject({
+			presentation: "tui",
+			turn: null,
+			requests: null,
+			unread: null,
+			context: null,
+			promptCache: null,
+		});
+	});
+
+	it("is each row's state in agents --json", async () => {
+		const { service } = setup();
+		const answer = await viaSocket(service, ["--json", "agents"], undefined);
+		const rows = (answer.data as { agents: { id: string; state: unknown }[] })
+			.agents;
+		expect(rows.map((row) => row.id)).toEqual([
+			"aaaa1111-0000",
+			"bbbb2222-0000",
+			"cccc3333-0000",
+		]);
+		expect(rows[0]!.state).toEqual(
+			(await viaSocket(service, ["agent", "status", "aaaa"], undefined)).data,
+		);
+	});
+});
+
+const PAST: Record<string, TellPastSession[]> = {
+	claude: [
+		{
+			id: "c1aa-0001",
+			title: "Fix the login timeout",
+			updatedAt: 8 * 3_600_000,
+			cwd: "/src/app",
+			branch: "12-fix",
+			resumableHere: true,
+		},
+		{
+			id: "c2bb-0002",
+			title: "",
+			agentName: "API",
+			updatedAt: 5 * 3_600_000,
+			cwd: "/src/app-13-api",
+			branch: "13-api",
+			resumableHere: false,
+			worktree: { root: "/src/app-13-api", branch: "13-api", present: false },
+		},
+		{
+			id: "c3cc-0003",
+			title: "Elsewhere",
+			updatedAt: undefined,
+			cwd: "/tmp/other",
+			branch: undefined,
+			resumableHere: false,
+		},
+	],
+	codex: [
+		{
+			id: "x1dd-0001",
+			title: "Refactor the store",
+			updatedAt: 9 * 3_600_000,
+			cwd: "/src/app",
+			branch: undefined,
+			resumableHere: true,
+		},
+	],
+};
+
+describe("sessions and agent resume", () => {
+	function withSessions() {
+		const made = setup();
+		made.advance(10 * 3_600_000);
+		made.ports.past.set("claude", PAST["claude"]!);
+		made.ports.past.set("codex", PAST["codex"]!);
+		return made;
+	}
+
+	it("lists the picker's earlier sessions, newest first across profiles", async () => {
+		const { service, ports } = withSessions();
+		const answer = await viaSocket(
+			service,
+			["sessions", "--workspace", "w1", "--limit", "3"],
+			coordinator,
+		);
+		expect(ports.calls).toEqual(["sessions w1 claude", "sessions w1 codex"]);
+		expect(answer.message.split("\n")).toEqual([
+			'x1dd-0001  codex  1h ago  "Refactor the store"',
+			'c1aa-0001  claude  2h ago  "Fix the login timeout"  branch 12-fix',
+			'c2bb-0002  claude  5h ago  ""  (API)  worktree /src/app-13-api (13-api), gone: checked out again on resume',
+			"(1 more: --limit)",
+		]);
+		expect(answer.data).toMatchObject({
+			workspaceId: "w1",
+			more: 1,
+			sessions: [
+				{ id: "x1dd-0001", profile: "codex", resumable: true },
+				{ id: "c1aa-0001", branch: "12-fix", worktree: null },
+				{
+					id: "c2bb-0002",
+					agentName: "API",
+					worktree: { root: "/src/app-13-api", present: false },
+					resumable: true,
+				},
+			],
+		});
+	});
+
+	it("defaults to the caller's workspace, takes one profile, and says what could not be read", async () => {
+		const { service, ports } = withSessions();
+		ports.past.set("codex", new Error("codex is not installed"));
+		const answer = await viaSocket(service, ["sessions"], self);
+		expect(ports.calls[0]).toBe("sessions w1 claude");
+		expect(answer.message).toContain(
+			"(codex's sessions could not be read: codex is not installed)",
+		);
+		expect(answer.message).toContain("not resumable here (ran in /tmp/other)");
+		ports.calls = [];
+		await viaSocket(service, ["sessions", "--profile", "claude"], self);
+		expect(ports.calls).toEqual(["sessions w1 claude"]);
+		await expect(
+			viaSocket(service, ["sessions", "--profile", "nope"], self),
+		).rejects.toThrow(/no agent profile called 'nope'/);
+		await expect(viaSocket(service, ["sessions"], undefined)).rejects.toThrow(
+			/needs --workspace/,
+		);
+	});
+
+	it("resumes one in a new GUI agent, the picker's way, by id or a prefix", async () => {
+		const { service, ports } = withSessions();
+		const answer = await viaSocket(
+			service,
+			["agent", "resume", "c2bb", "--workspace", "w1", "--name", "API again"],
+			coordinator,
+		);
+		expect(ports.calls).toEqual([
+			"sessions w1 claude",
+			"sessions w1 codex",
+			"resume w1 claude c2bb-0002",
+			"rename resumed-agent API again",
+		]);
+		expect(answer.message).toBe(
+			'Agent resumed-agent (claude) is going on with "API" (c2bb-0002) in /src/app-13-api.',
+		);
+		ports.calls = [];
+		await viaSocket(service, ["agent", "resume", "x1dd-0001"], self);
+		expect(ports.calls.at(-1)).toBe("resume w1 codex x1dd-0001");
+	});
+
+	it("refuses a session it cannot go on with here, and one it cannot tell apart", async () => {
+		const { service, ports } = withSessions();
+		await expect(
+			viaSocket(service, ["agent", "resume", "c3cc-0003"], self),
+		).rejects.toThrow(/ran in \/tmp\/other.*only there/);
+		ports.past.set("codex", [
+			...PAST["codex"]!,
+			{ ...PAST["codex"]![0]!, id: "x1dd-0002" },
+		]);
+		await expect(
+			viaSocket(service, ["agent", "resume", "x1dd"], self),
+		).rejects.toThrow(/more than one session/);
+		await expect(
+			viaSocket(service, ["agent", "resume", "zzzz"], self),
+		).rejects.toThrow(/no earlier session/);
+		expect(ports.calls.filter((call) => call.startsWith("resume"))).toEqual([]);
+	});
+});
+
+describe("no command line answers a permission prompt", () => {
+	/** Every verb with a way into another agent, aimed at Claude 1's permission prompt. */
+	const LINES: readonly (readonly string[])[] = [
+		["agent", "answer", "aaaa", "req-2", "--option", "1"],
+		["agent", "answer", "aaaa", "req-2", "--text", "allow"],
+		["agent", "answer", "aaaa", "req-2", "--allow"],
+		["agent", "answer", "aaaa", "req-2", "--deny"],
+		["agent", "send", "aaaa", "yes, allow it"],
+		["agent", "interrupt", "aaaa"],
+		["agent", "read", "aaaa"],
+		["agent", "requests", "aaaa"],
+		["agent", "status", "aaaa"],
+		["agent", "wait", "aaaa", "--timeout", "1"],
+		["agent", "wait", "--any", "--timeout", "1"],
+		["agent", "wait", "--any", "aaaa", "--until", "waiting", "--timeout", "1"],
+		["agent", "wait", "--all", "--timeout", "1"],
+		["agent", "stop", "aaaa"],
+		["agent", "restart", "aaaa"],
+		["sessions", "--workspace", "w1"],
+		["agent", "resume", "c1aa-0001", "--workspace", "w1"],
+		["agents"],
+		["commands"],
+		["run", "next_agent"],
+		["focus", "aaaa"],
+		["notify", "allow req-2"],
+	];
+
+	it("through answer, run, or any of the orchestration commands", async () => {
+		const { service, ports, conversation } = setup();
+		ports.past.set("claude", PAST["claude"]!);
+		for (const line of LINES) {
+			try {
+				await viaSocket(service, line, coordinator);
+			} catch {
+				// A refusal is what some of these are for.
+			}
+		}
+		expect(conversation.answered).toEqual([]);
+		expect(conversation.pending.map((request) => request.id)).toContain(
+			"req-2",
+		);
+		// What the CLI refuses before anything is sent.
+		expect(
+			parseTellArguments(["agent", "answer", "a", "r", "--allow"]),
+		).toEqual({
+			kind: "invalid",
+			message:
+				"permission prompts are answered in DevHub, by the person, and never from the command line.",
+		});
+	});
+
+	it("refuses every kind of request that is not a question", async () => {
+		const { service, conversation } = setup();
+		const subjects: PendingRequest["subject"][] = [
+			permission.subject,
+			{
+				kind: "command",
+				command: "rm -rf /",
+				cwd: undefined,
+				reason: undefined,
+			},
+			{ kind: "file-change", files: [], reason: undefined },
+		] as PendingRequest["subject"][];
+		for (const [index, subject] of subjects.entries()) {
+			const id = `perm-${String(index)}` as RequestId;
+			conversation.pending = [{ ...permission, id, subject }];
+			await expect(
+				viaSocket(
+					service,
+					["agent", "answer", "aaaa", id, "--option", "1"],
+					coordinator,
+				),
+			).rejects.toThrow(/only questions can be answered/);
+		}
+		expect(conversation.answered).toEqual([]);
+	});
+
+	it("has one call that answers anything, behind the questions-only check", () => {
+		const source = readFileSync(
+			new URL("./service.ts", import.meta.url),
+			"utf8",
+		);
+		// `this.answer(` is the verb's own method; any other `.answer(` reaches an agent.
+		const calls = source.match(/(?<!this)\.answer\(/gu) ?? [];
+		expect(calls).toHaveLength(1);
+		const guard = source.indexOf('request.subject.kind !== "question"');
+		expect(guard).toBeGreaterThan(0);
+		expect(guard).toBeLessThan(source.indexOf("conversation.answer("));
+	});
+
+	it("has no palette command that answers a request", () => {
+		expect(
+			COMMANDS.filter((command) =>
+				/answer|approv|allow|permission|deny|accept|grant/iu.test(
+					`${command.id} ${command.label}`,
+				),
+			).map((command) => command.id),
+		).toEqual([]);
 	});
 });

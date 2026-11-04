@@ -11,10 +11,11 @@
  *
  * Every operation here is one the person can already do in DevHub's own
  * window — open a folder, start an Agent, hand an Issue to an Agent, write to
- * an Agent, answer the question it asked — and it goes through the same path
- * the window's does (see `tell/service.ts`). The one thing deliberately left
- * out is a permission prompt: whether a tool call may run is the person's
- * decision, in DevHub, and no command line can make it for them.
+ * an Agent, answer the question it asked, stop or restart an Agent, resume
+ * an earlier session — and it goes through the same path the window's does
+ * (see `tell/service.ts`). The one thing deliberately left out is a
+ * permission prompt: whether a tool call may run is the person's decision, in
+ * DevHub, and no command line can make it for them.
  */
 
 export type AgentWaitUntil = "idle" | "waiting" | "any";
@@ -83,6 +84,39 @@ export type TellCommand =
 			readonly timeoutSeconds: number;
 	  }
 	| {
+			/**
+			 * `agent wait --any|--all [<a>...]`: several Agents at once. `any`
+			 * answers the first with something the caller has not read
+			 * (`TellMemory`); `all` answers once every one is in the state.
+			 */
+			readonly verb: "agent-wait-many";
+			readonly mode: "any" | "all";
+			/** Empty: every Agent but the caller (of `workspace`, when given). */
+			readonly agents: readonly string[];
+			readonly workspace?: string;
+			readonly until: AgentWaitUntil;
+			readonly timeoutSeconds: number;
+	  }
+	| { readonly verb: "agent-status"; readonly agent: string }
+	/** The window's Stop Agent and Restart Session, without their sheets. */
+	| { readonly verb: "agent-stop"; readonly agent: string }
+	| { readonly verb: "agent-restart"; readonly agent: string }
+	| {
+			/** The earlier sessions the agent picker offers to resume. */
+			readonly verb: "sessions";
+			readonly workspace?: string;
+			readonly profile?: string;
+			readonly limit: number;
+	  }
+	| {
+			/** One of them, gone on with in a new GUI Agent. */
+			readonly verb: "agent-resume";
+			readonly session: string;
+			readonly workspace?: string;
+			readonly profile?: string;
+			readonly name?: string;
+	  }
+	| {
 			/** The asking Agent's own terminal, opened or shown. */
 			readonly verb: "terminal-open";
 			/** Typed into its shell when this starts it (not when it was running). */
@@ -111,6 +145,8 @@ export type TellVerb = TellCommand["verb"];
 /** The longest `agent wait` there is: a request stays open no longer. */
 export const MAX_WAIT_SECONDS = 600;
 export const DEFAULT_WAIT_SECONDS = 300;
+export const DEFAULT_SESSIONS_LIMIT = 20;
+export const MAX_SESSIONS_LIMIT = 200;
 
 export const TELL_USAGE = `devhub --tell — ask the running DevHub to do what its window does.
 
@@ -129,8 +165,16 @@ workspaces
                                    number, like 123-fix-login
 
 agents
-  agents [--workspace <w>]         list agents: id, name, kind, status,
-                                   unread, open requests, activity
+  agents [--workspace <w>]         list agents: id, name, kind, status (and
+                                   for how long), unread entries, open
+                                   requests, context, activity; --json has
+                                   each one's full 'agent status' as state
+  agent status <a>                 one agent in detail: kind, profile,
+                                   workspace, status and since when, turn,
+                                   last activity, open questions and
+                                   permission prompts, entries you have not
+                                   read and the cursor, context use, prompt
+                                   cache, and why it stopped or broke
   agent new [--workspace <w>] [--profile <p>] [--name <n>] [--gui|--tui]
             [--prompt <text>|-]    start an agent (Cmd+Q c) and, with
                                    --prompt, tell it something once it is up;
@@ -150,6 +194,33 @@ agents
   agent wait <a> [--until idle|waiting|any] [--timeout <seconds>]
                                    return when the agent is idle, waiting on
                                    somebody, or either (default: any)
+  agent wait --any [<a>...] [--workspace <w>] [--until ...] [--timeout ...]
+                                   return as soon as one GUI agent has news
+                                   for you: idle with entries you have not
+                                   read, or a request you have not seen;
+                                   prints which, why, and the --since to read
+                                   from. Without <a>: every GUI agent but you.
+                                   What you have not read stays news until
+                                   'agent read' (or 'agent requests', for a
+                                   request), so nothing between two waits is
+                                   missed
+  agent wait --all [<a>...] [--workspace <w>] [--until ...] [--timeout ...]
+                                   return once every one is in the state
+  agent stop <a>                   Stop Agent, as its row does; the window's
+                                   question is not asked (this is the
+                                   decision): a busy agent's turn stops with
+                                   it, and its terminal moves to the editor
+  agent restart <a>                Restart Session, as the row menu does
+                                   (an agent cannot stop or restart itself)
+  sessions [--workspace <w>] [--profile <p>] [--limit <n>]
+                                   earlier Claude/Codex sessions to resume, as
+                                   the agent picker lists them: id, profile,
+                                   when, title or agent name, branch or
+                                   worktree (default: your workspace, 20)
+  agent resume <session> [--workspace <w>] [--profile <p>] [--name <n>]
+                                   go on with one in a new GUI agent, as the
+                                   picker does: another worktree's session
+                                   opens (or checks out again) that worktree
 
 issues
   issue assign <url> [--repo <path>] [--branch <name>] [--root]
@@ -192,7 +263,8 @@ app
 
 <w> is a workspace id, its folder, its name, or "scratch". A folder is a
 folder on the machine devhub runs on: on an SSH host, the host's.
-<a> is an agent id (or a unique prefix of one) or its name.`;
+<a> is an agent id (or a unique prefix of one) or its name. <session> is a
+session id from 'sessions' (or a unique prefix of one).`;
 
 export type TellParse =
 	| {
@@ -347,6 +419,25 @@ function parseVerb(args: readonly string[]): TellCommand {
 		}
 		case "agent":
 			return parseAgent(sub, rest);
+		case "sessions": {
+			const flags = readFlags(args.slice(1), {
+				values: ["--workspace", "--profile", "--limit"],
+				switches: [],
+			});
+			positionals(flags, []);
+			const limit = one(flags, "--limit");
+			return {
+				verb: "sessions",
+				limit:
+					limit === undefined
+						? DEFAULT_SESSIONS_LIMIT
+						: count(limit, "--limit", 1, MAX_SESSIONS_LIMIT),
+				...defined({
+					workspace: one(flags, "--workspace"),
+					profile: one(flags, "--profile"),
+				}),
+			};
+		}
 		case "issue": {
 			if (sub !== "assign")
 				throw new Refusal("issue takes one subcommand: assign.");
@@ -456,11 +547,28 @@ function parseAgent(
 			return { verb: "agent-send", agent, text: words.join(" ") };
 		}
 		case "interrupt":
-		case "requests": {
+		case "requests":
+		case "status":
+		case "stop":
+		case "restart": {
 			const [agent] = positionals(readFlags(rest, NO_FLAGS), ["<agent>"]);
-			return sub === "interrupt"
-				? { verb: "agent-interrupt", agent: agent! }
-				: { verb: "agent-requests", agent: agent! };
+			return { verb: `agent-${sub}`, agent: agent! } as const;
+		}
+		case "resume": {
+			const flags = readFlags(rest, {
+				values: ["--workspace", "--profile", "--name"],
+				switches: [],
+			});
+			const [session] = positionals(flags, ["<session>"]);
+			return {
+				verb: "agent-resume",
+				session: session!,
+				...defined({
+					workspace: one(flags, "--workspace"),
+					profile: one(flags, "--profile"),
+					name: one(flags, "--name"),
+				}),
+			};
 		}
 		case "answer": {
 			const flags = readFlags(rest, {
@@ -488,27 +596,40 @@ function parseAgent(
 		}
 		case "wait": {
 			const flags = readFlags(rest, {
-				values: ["--until", "--timeout"],
-				switches: [],
+				values: ["--until", "--timeout", "--workspace"],
+				switches: ["--any", "--all"],
 			});
-			const [agent] = positionals(flags, ["<agent>"]);
 			const until = one(flags, "--until") ?? "any";
 			if (until !== "idle" && until !== "waiting" && until !== "any")
 				throw new Refusal("--until takes idle, waiting or any.");
 			const timeout = one(flags, "--timeout");
+			const timeoutSeconds =
+				timeout === undefined
+					? DEFAULT_WAIT_SECONDS
+					: count(timeout, "--timeout", 1, MAX_WAIT_SECONDS);
+			const any = flags.switches.has("--any");
+			const all = flags.switches.has("--all");
+			if (any && all)
+				throw new Refusal("--any and --all ask for different things.");
+			const workspace = one(flags, "--workspace");
+			if (!any && !all) {
+				if (workspace !== undefined)
+					throw new Refusal("--workspace goes with --any or --all.");
+				const [agent] = positionals(flags, ["<agent>"]);
+				return { verb: "agent-wait", agent: agent!, until, timeoutSeconds };
+			}
 			return {
-				verb: "agent-wait",
-				agent: agent!,
+				verb: "agent-wait-many",
+				mode: any ? "any" : "all",
+				agents: [...flags.positional],
 				until,
-				timeoutSeconds:
-					timeout === undefined
-						? DEFAULT_WAIT_SECONDS
-						: count(timeout, "--timeout", 1, MAX_WAIT_SECONDS),
+				timeoutSeconds,
+				...(workspace === undefined ? {} : { workspace }),
 			};
 		}
 		default:
 			throw new Refusal(
-				"agent takes: new, read, send, interrupt, requests, answer, wait.",
+				"agent takes: new, read, send, interrupt, requests, answer, wait, status, stop, restart, resume.",
 			);
 	}
 }
@@ -620,6 +741,13 @@ function integer(
 	return value;
 }
 
+function until(record: Record<string, unknown>): AgentWaitUntil {
+	const value = record["until"];
+	if (value !== "idle" && value !== "waiting" && value !== "any")
+		throw new Error("a tell command's until must be idle, waiting or any");
+	return value;
+}
+
 /** Accept exactly what `parseTellArguments` can produce. */
 export function tellCommandFrom(value: unknown): TellCommand {
 	if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -685,7 +813,52 @@ export function tellCommandFrom(value: unknown): TellCommand {
 			};
 		case "agent-interrupt":
 		case "agent-requests":
+		case "agent-status":
+		case "agent-stop":
+		case "agent-restart":
 			return { verb: record["verb"], agent: text(record, "agent") };
+		case "agent-wait-many": {
+			const mode = record["mode"];
+			if (mode !== "any" && mode !== "all")
+				throw new Error("a tell command's mode must be any or all");
+			const agents = record["agents"];
+			if (!Array.isArray(agents))
+				throw new Error("a tell command's agents must be a list");
+			return {
+				verb: "agent-wait-many",
+				mode,
+				agents: agents.map((each: unknown) => {
+					if (typeof each !== "string" || each.length === 0)
+						throw new Error(
+							"a tell command's agents must be non-empty strings",
+						);
+					return each;
+				}),
+				until: until(record),
+				timeoutSeconds: integer(
+					record["timeoutSeconds"],
+					"timeoutSeconds",
+					1,
+					MAX_WAIT_SECONDS,
+				),
+				...optionalText(record, "workspace"),
+			};
+		}
+		case "sessions":
+			return {
+				verb: "sessions",
+				limit: integer(record["limit"], "limit", 1, MAX_SESSIONS_LIMIT),
+				...optionalText(record, "workspace"),
+				...optionalText(record, "profile"),
+			};
+		case "agent-resume":
+			return {
+				verb: "agent-resume",
+				session: text(record, "session"),
+				...optionalText(record, "workspace"),
+				...optionalText(record, "profile"),
+				...optionalText(record, "name"),
+			};
 		case "agent-answer": {
 			const options = record["options"];
 			if (!Array.isArray(options))
@@ -705,13 +878,10 @@ export function tellCommandFrom(value: unknown): TellCommand {
 			};
 		}
 		case "agent-wait": {
-			const until = record["until"];
-			if (until !== "idle" && until !== "waiting" && until !== "any")
-				throw new Error("a tell command's until must be idle, waiting or any");
 			return {
 				verb: "agent-wait",
 				agent: text(record, "agent"),
-				until,
+				until: until(record),
 				timeoutSeconds: integer(
 					record["timeoutSeconds"],
 					"timeoutSeconds",

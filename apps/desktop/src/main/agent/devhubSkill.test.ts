@@ -58,6 +58,21 @@ describe("the /devhub skill", () => {
 		expect(text).toContain("answer in DevHub");
 	});
 
+	it("says how to orchestrate other agents, leaving permission prompts to the person", () => {
+		const text = devhubSkillText(skill.cli);
+		expect(text).toContain("## Orchestrating other agents");
+		expect(text).toContain("agent wait --any");
+		expect(text).toContain("agent read A --since SINCE");
+		expect(text).toContain("questions only");
+		expect(text).toContain("agent stop A");
+		expect(text).toContain("agent restart A");
+		expect(text).toContain("agent resume ID");
+		expect(text).toContain("devhub --tell notify");
+		expect(text).toContain("Never try to approve it.");
+		// Orchestrating is not a reason to start DevHub agents for subagent work.
+		expect(text).toContain("**A subagent is not a DevHub agent.**");
+	});
+
 	it("says how to open, drive and close the agent's own terminal, and find a pane the person split", () => {
 		const text = devhubSkillText(skill.cli);
 		expect(text).toContain("## Your terminal");

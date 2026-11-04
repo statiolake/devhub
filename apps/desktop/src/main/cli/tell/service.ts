@@ -11,11 +11,18 @@
 
 import type {
 	PendingRequest,
+	PromptCache,
 	Question,
 	RequestAnswer,
 	TranscriptEntry,
+	Usage,
 } from "../../../model/conversation.js";
-import { TELL_USAGE, type TellCommand } from "./command.js";
+import type { PastSession } from "../../agent/conversation/resume.js";
+import {
+	TELL_USAGE,
+	type AgentWaitUntil,
+	type TellCommand,
+} from "./command.js";
 
 export interface TellAgent {
 	readonly id: string;
@@ -29,6 +36,14 @@ export interface TellAgent {
 	readonly status: string;
 	readonly unread: string | undefined;
 	readonly activity: string | undefined;
+	/** `running`, `stopping`, or `stop-failed` (its Stop did not finish). */
+	readonly controlState: string;
+	/** The refusal its pane is still showing: why it exited or broke. */
+	readonly failure:
+		| { readonly code: string; readonly detail: string | undefined }
+		| undefined;
+	/** Its prompt cache, for a GUI Claude Agent that has reported one. */
+	readonly promptCache: PromptCache | undefined;
 }
 
 export interface TellWorkspace {
@@ -55,6 +70,9 @@ export interface TellConversation {
 	requests(): readonly PendingRequest[];
 	/** `none`, `running`, `rewinding`, `connecting` or `broken`. */
 	turn(): string;
+	/** Why it is `broken`, in the failing side's words; else undefined. */
+	failure(): string | undefined;
+	usage(): Usage | undefined;
 	/** The person's words, held while a turn runs — the composer's own path. */
 	submit(text: string): Promise<void>;
 	interrupt(): Promise<void>;
@@ -146,6 +164,19 @@ export interface TellTerminal {
 		| undefined;
 }
 
+/** One earlier session, as the agent picker lists it. */
+export type TellPastSession = PastSession;
+
+/** What an `agent stop` did. */
+export interface TellStopped {
+	/** It was not idle: the window would have asked, and its turn stopped with it. */
+	readonly busy: boolean;
+	/** It had a terminal, which went to the Workspace's editor (the sheet's first choice). */
+	readonly movedTerminal: boolean;
+	/** Its earlier Stop had failed: this was the row's Retry Stop. */
+	readonly retried: boolean;
+}
+
 export interface TellPorts {
 	workspaces(): readonly TellWorkspace[];
 	profiles(): readonly { readonly id: string; readonly kind: string }[];
@@ -208,6 +239,28 @@ export interface TellPorts {
 		pane: string,
 		focus: boolean,
 	): Promise<{ readonly created: boolean }>;
+	/**
+	 * Stop Agent, as its row does (`stop_agent`, or `retry_stop_agent` after a
+	 * failed one), with the confirmation the window would draw taken as given:
+	 * the command is the decision. Refused where the window refuses.
+	 */
+	stopAgent(agentId: string): Promise<TellStopped>;
+	/** Restart Session, as the row menu does (`restart_agent`), likewise. */
+	restartAgent(agentId: string): Promise<{ readonly busy: boolean }>;
+	/** The agent picker's earlier sessions of a profile, for a Workspace. */
+	pastSessions(
+		workspaceId: string,
+		profileId: string,
+	): Promise<readonly TellPastSession[]>;
+	/**
+	 * Go on with one in a new GUI Agent, as the picker does: here, or in its
+	 * own worktree (opened, or checked out again). Answers the new Agent's id.
+	 */
+	resumeSession(
+		workspaceId: string,
+		profileId: string,
+		session: TellPastSession,
+	): Promise<string>;
 }
 
 /** Which Agent is asking, from its pane's `DEVHUB_ORIGIN`. */
@@ -238,6 +291,8 @@ const REAL_CLOCK: TellClock = {
 };
 
 const WAIT_POLL_MS = 500;
+/** The CLIs whose sessions DevHub lists and resumes (`resume.ts`). */
+const RESUMABLE_KINDS: ReadonlySet<string> = new Set(["claude", "codex"]);
 const DEFAULT_READ_LAST = 20;
 /** The longest a transcript line gets in text: a tool's output is a summary. */
 const LINE_LIMIT = 2000;
@@ -279,6 +334,214 @@ export function tellCaller(
 	};
 }
 
+/** What one caller has read of one Agent: the acknowledgement `wait --any` reads. */
+export interface TellSeen {
+	/** The last entry `agent read` showed it. */
+	readonly cursor: string | undefined;
+	/** The open requests it has been shown (`agent read`, `agent requests`). */
+	readonly requests: ReadonlySet<string>;
+	/** The failure it was shown, as `failureKey` words it. */
+	readonly failure: string | undefined;
+}
+
+/**
+ * What the app keeps between two `--tell` calls; one per app, in memory.
+ *
+ * - **What each caller has read of each Agent** (`TellSeen`). An orchestrator
+ *   loops `wait --any` → `read --since` → `answer`/`send` → `wait --any`, and
+ *   something can happen between any two of those calls. So `wait --any` does
+ *   not report a change of state, which could come and go between two waits;
+ *   it reports what the caller has *not read yet* — output after the last
+ *   entry its `agent read` showed it, a request it has not been shown, a
+ *   failure it has not been shown — and that stays reported until it is read.
+ *   Reading is the one acknowledgement. A caller is its Agent, or the
+ *   terminal it runs in.
+ * - **Since when each Agent has been in its status**, and when its status or
+ *   its activity last changed, as DevHub saw it: the app observes every
+ *   snapshot (`observe`), so these are the app's clock, not the CLI's.
+ */
+export class TellMemory {
+	readonly #seen = new Map<string, Map<string, TellSeen>>();
+	readonly #times = new Map<
+		string,
+		{
+			status: string;
+			since: number;
+			activity: string | undefined;
+			activityAt: number;
+		}
+	>();
+
+	observe(
+		agents: readonly {
+			readonly id: string;
+			readonly status: string;
+			readonly activity: string | undefined;
+		}[],
+		now: number,
+	): void {
+		const live = new Set<string>();
+		for (const agent of agents) {
+			live.add(agent.id);
+			const known = this.#times.get(agent.id);
+			if (known === undefined) {
+				this.#times.set(agent.id, {
+					status: agent.status,
+					since: now,
+					activity: agent.activity,
+					activityAt: now,
+				});
+				continue;
+			}
+			if (known.status !== agent.status) {
+				known.status = agent.status;
+				known.since = now;
+				known.activityAt = now;
+			}
+			if (known.activity !== agent.activity) {
+				known.activity = agent.activity;
+				known.activityAt = now;
+			}
+		}
+		for (const id of [...this.#times.keys()])
+			if (!live.has(id)) this.#times.delete(id);
+		for (const seen of this.#seen.values())
+			for (const id of [...seen.keys()]) if (!live.has(id)) seen.delete(id);
+	}
+
+	/** Since when `agentId` has been in its status, and its last change. */
+	times(
+		agentId: string,
+	): { readonly since: number; readonly activityAt: number } | undefined {
+		return this.#times.get(agentId);
+	}
+
+	seen(caller: string, agentId: string): TellSeen | undefined {
+		return this.#seen.get(caller)?.get(agentId);
+	}
+
+	/** `caller` has been shown this of `agentId`; what is left out stays as it was. */
+	mark(caller: string, agentId: string, seen: Partial<TellSeen>): void {
+		const byAgent = this.#seen.get(caller) ?? new Map<string, TellSeen>();
+		this.#seen.set(caller, byAgent);
+		const before = byAgent.get(agentId);
+		byAgent.set(agentId, {
+			cursor: "cursor" in seen ? seen.cursor : before?.cursor,
+			requests: seen.requests ?? before?.requests ?? new Set(),
+			failure: "failure" in seen ? seen.failure : before?.failure,
+		});
+	}
+}
+
+/** Who `TellMemory` keeps a caller's reading under: its Agent, or its terminal. */
+export function callerKey(caller: TellCaller | undefined): string {
+	if (caller === undefined) return "unknown";
+	if (caller.agentId !== undefined) return `agent:${caller.agentId}`;
+	return `${caller.paneless === true ? "shell" : "pane"}:${caller.machine}:${caller.workspaceId ?? "scratch"}`;
+}
+
+/** Output a reader is owed: what the Agent did, not what it was told. */
+function isOutput(entry: TranscriptEntry): boolean {
+	return entry.kind !== "user" && entry.kind !== "answer";
+}
+
+/** The entries after `cursor`; a cursor that is gone (a rewind, a compaction) leaves them all. */
+function entriesAfter(
+	entries: readonly TranscriptEntry[],
+	cursor: string | undefined,
+): readonly TranscriptEntry[] {
+	if (cursor === undefined) return entries;
+	const at = entries.findIndex((entry) => entry.id === cursor);
+	return at < 0 ? entries : entries.slice(at + 1);
+}
+
+/** An Agent's failure as one key, so "the same failure" is one comparison. */
+function failureKey(
+	agent: TellAgent,
+	conversation: TellConversation | undefined,
+): string | undefined {
+	const broken = conversation?.failure();
+	if (broken !== undefined) return `broken: ${broken}`;
+	if (agent.failure === undefined) return undefined;
+	return `${agent.failure.code}${agent.failure.detail === undefined ? "" : `: ${agent.failure.detail}`}`;
+}
+
+function iso(ms: number | undefined): string | null {
+	return ms === undefined ? null : new Date(ms).toISOString();
+}
+
+/** `45s`, `12m`, `3h`, `2d`: how long, for a line of text. */
+function span(ms: number): string {
+	const seconds = Math.max(0, Math.round(ms / 1000));
+	if (seconds < 120) return `${String(seconds)}s`;
+	if (seconds < 3600) return `${String(Math.round(seconds / 60))}m`;
+	if (seconds < 172800) return `${String(Math.round(seconds / 3600))}h`;
+	return `${String(Math.round(seconds / 86400))}d`;
+}
+
+/**
+ * One Agent as `agent status --json` writes it, and `agents --json` as each
+ * row's `state`. A stable shape: every key is always there, `null` where
+ * there is nothing to say (a terminal Agent has no transcript; a CLI that
+ * reports no context has none).
+ */
+export interface TellAgentStatus {
+	readonly agentId: string;
+	readonly name: string;
+	readonly kind: string;
+	readonly profile: string;
+	readonly presentation: "gui" | "tui";
+	readonly workspace: {
+		readonly id: string;
+		readonly name: string;
+		readonly root: string;
+	};
+	/** working, background, waiting, idle, error, unknown. */
+	readonly status: string;
+	/** Since when it has been in `status`, as DevHub saw it. */
+	readonly statusSince: string | null;
+	/** When its status or its activity last changed, as DevHub saw it. */
+	readonly lastActivityAt: string | null;
+	readonly activity: string | null;
+	/** A GUI Agent's turn: none, running, rewinding, connecting, broken. */
+	readonly turn: string | null;
+	/** running, stopping, stop-failed. */
+	readonly control: string;
+	/** Why it exited or broke, when it did. */
+	readonly failure: string | null;
+	readonly requests: {
+		readonly questions: number;
+		/** Answered in DevHub, by the person, only. */
+		readonly permissions: number;
+		readonly open: readonly {
+			readonly id: string;
+			readonly kind: string;
+			readonly answerable: boolean;
+			readonly text: string;
+		}[];
+	} | null;
+	/** Output entries after what the caller last read, and where to read from. */
+	readonly unread: {
+		readonly entries: number;
+		/** Pass to `agent read --since`; null: read with --last. */
+		readonly since: string | null;
+		readonly cursor: string | null;
+	} | null;
+	readonly context: {
+		readonly tokens: number;
+		readonly window: number | null;
+		readonly percent: number | null;
+	} | null;
+	readonly promptCache: {
+		readonly ttlSeconds: number;
+		readonly expiresAt: string | null;
+		readonly cold: boolean | null;
+		readonly hitRatio: number | null;
+		readonly misses: number;
+		readonly autoCompactAt: string | null;
+	} | null;
+}
+
 export class TellService {
 	/** The caller of the command being run, for the names it uses. */
 	private caller: TellCaller | undefined;
@@ -286,6 +549,7 @@ export class TellService {
 	constructor(
 		private readonly ports: TellPorts,
 		private readonly clock: TellClock = REAL_CLOCK,
+		private readonly memory: TellMemory = new TellMemory(),
 	) {}
 
 	async run(
@@ -293,6 +557,7 @@ export class TellService {
 		caller: TellCaller | undefined,
 	): Promise<TellAnswer> {
 		this.caller = caller;
+		this.observe();
 		switch (command.verb) {
 			case "help":
 				return { message: TELL_USAGE, data: { usage: TELL_USAGE } };
@@ -318,6 +583,20 @@ export class TellService {
 				return this.answer(command, caller);
 			case "agent-wait":
 				return this.wait(command.agent, command.until, command.timeoutSeconds);
+			case "agent-wait-many":
+				return command.mode === "any"
+					? this.waitAny(command)
+					: this.waitAll(command);
+			case "agent-status":
+				return this.status(command.agent);
+			case "agent-stop":
+				return this.stop(command.agent);
+			case "agent-restart":
+				return this.restart(command.agent);
+			case "sessions":
+				return this.sessions(command);
+			case "agent-resume":
+				return this.resume(command);
 			case "commands":
 				return this.listCommands();
 			case "run":
@@ -480,7 +759,7 @@ export class TellService {
 		if (this.caller !== undefined && this.caller.paneless !== true)
 			return this.caller.workspaceId ?? "scratch";
 		throw new Error(
-			"agent new needs --workspace <w> here: this devhub is not running in a DevHub terminal or agent, so there is no workspace to default to.",
+			"this needs --workspace <w> here: this devhub is not running in a DevHub terminal or agent, so there is no workspace to default to.",
 		);
 	}
 
@@ -633,21 +912,35 @@ export class TellService {
 				: [this.workspace(workspace)];
 		const rows = await Promise.all(
 			workspaces.flatMap((each) =>
-				each.agents.map(async (agent) => ({
-					...agent,
-					workspace: each.scratch ? "Scratch" : each.name,
-					requests: await this.requestCount(agent),
-				})),
+				each.agents.map(async (agent) => {
+					const state = await this.statusOf(agent, each);
+					return {
+						...agent,
+						workspace: each.scratch ? "Scratch" : each.name,
+						requests: state.requests?.open.length,
+						state,
+					};
+				}),
 			),
 		);
-		const lines = rows.map((row) =>
+		const now = this.clock.now();
+		const lines = rows.map(({ state, ...row }) =>
 			[
 				row.id,
 				row.name,
 				`${row.kind}/${row.presentation}`,
-				row.status,
+				state.statusSince === null
+					? row.status
+					: `${row.status} for ${span(now - Date.parse(state.statusSince))}`,
 				row.unread === undefined ? undefined : "unread",
 				row.requests ? `${String(row.requests)} request(s)` : undefined,
+				state.unread?.entries
+					? `${String(state.unread.entries)} new`
+					: undefined,
+				state.context?.percent === null || state.context === null
+					? undefined
+					: `ctx ${String(state.context.percent)}%`,
+				state.failure === null ? undefined : "failed",
 				`in ${row.workspace}`,
 				row.activity === undefined ? undefined : `— ${row.activity}`,
 			]
@@ -733,6 +1026,12 @@ export class TellService {
 		const cursor = entries.at(-1)?.id ?? since ?? "";
 		const lines = shown.map(entryLine).filter((line) => line !== undefined);
 		const requests = conversation.requests().length;
+		// Read to the end: what `wait --any` owes this caller is what came after.
+		this.memory.mark(callerKey(this.caller), agent.id, {
+			cursor: entries.at(-1)?.id ?? since,
+			requests: new Set(conversation.requests().map((request) => request.id)),
+			failure: failureKey(agent, conversation),
+		});
 		return {
 			message: [
 				...lines,
@@ -784,6 +1083,9 @@ export class TellService {
 		const agent = this.agent(name);
 		const conversation = await this.guiConversation(agent);
 		const requests = conversation.requests().map(requestView);
+		this.memory.mark(callerKey(this.caller), agent.id, {
+			requests: new Set(requests.map((request) => request.id)),
+		});
 		return {
 			message:
 				requests.length === 0
@@ -842,15 +1144,7 @@ export class TellService {
 					message: `Agent ${id} is gone.`,
 					data: { agentId: id, status: "gone", reached: true },
 				};
-			const requests = (await this.requestCount(agent)) ?? 0;
-			const waiting = agent.status === "waiting" || requests > 0;
-			const idle = agent.status === "idle" || agent.status === "error";
-			const reached =
-				until === "idle"
-					? idle
-					: until === "waiting"
-						? waiting
-						: idle || waiting;
+			const { reached, requests } = await this.reached(agent, until);
 			if (reached || this.clock.now() >= deadline)
 				return {
 					message: `${agent.name} is ${agent.status}${requests > 0 ? ` with ${String(requests)} open request(s)` : ""}${reached ? "" : ` (still, after ${String(timeoutSeconds)}s)`}.`,
@@ -858,6 +1152,545 @@ export class TellService {
 				};
 			await this.clock.sleep(WAIT_POLL_MS);
 		}
+	}
+
+	/** Whether `agent` is in the state `until` names: `agent wait`'s one rule. */
+	private async reached(
+		agent: TellAgent,
+		until: AgentWaitUntil,
+	): Promise<{ readonly reached: boolean; readonly requests: number }> {
+		const requests = (await this.requestCount(agent)) ?? 0;
+		const waiting = agent.status === "waiting" || requests > 0;
+		const idle = agent.status === "idle" || agent.status === "error";
+		return {
+			reached:
+				until === "idle"
+					? idle
+					: until === "waiting"
+						? waiting
+						: idle || waiting,
+			requests,
+		};
+	}
+
+	// --- several agents ---------------------------------------------------
+
+	/** Every Agent DevHub has, by id, as it is now. */
+	private liveAgents(): Map<string, TellAgent> {
+		return new Map(
+			this.ports
+				.workspaces()
+				.flatMap((workspace) => workspace.agents)
+				.map((agent) => [agent.id, agent]),
+		);
+	}
+
+	/**
+	 * The Agents a `wait --any|--all` is about: the ones named, or every one
+	 * but the caller (of `--workspace`, when given). `--any` follows
+	 * transcripts, so it takes GUI Agents only.
+	 */
+	private waitTargets(
+		command: Extract<TellCommand, { verb: "agent-wait-many" }>,
+	): readonly TellAgent[] {
+		const self = this.caller?.agentId;
+		const gui = command.mode === "any";
+		if (command.agents.length > 0) {
+			if (command.workspace !== undefined)
+				throw new Error(
+					"name the agents or give --workspace, not both: --workspace stands for every agent in it.",
+				);
+			const named = new Map<string, TellAgent>();
+			for (const name of command.agents) {
+				const agent = this.agent(name);
+				if (agent.id === self)
+					throw new Error("an agent cannot wait on itself.");
+				if (gui && agent.presentation !== "gui")
+					throw new Error(
+						`${agent.name} is a terminal agent, and wait --any follows GUI agents' transcripts. Wait on it alone with 'agent wait ${agent.id}', or with --all.`,
+					);
+				named.set(agent.id, agent);
+			}
+			return [...named.values()];
+		}
+		const pool =
+			command.workspace === undefined
+				? this.ports.workspaces().flatMap((workspace) => workspace.agents)
+				: this.workspace(command.workspace).agents;
+		const targets = pool.filter(
+			(agent) => agent.id !== self && (!gui || agent.presentation === "gui"),
+		);
+		if (targets.length === 0)
+			throw new Error(
+				`there is no other ${gui ? "GUI " : ""}agent${command.workspace === undefined ? "" : ` in ${command.workspace}`} to wait on.`,
+			);
+		return targets;
+	}
+
+	/**
+	 * What `agent` has for this caller that it has not read (`TellMemory`):
+	 * output after its last read while the turn is over, a request it has not
+	 * been shown, a failure it has not been shown. Nothing: undefined.
+	 */
+	private async news(agent: TellAgent, until: AgentWaitUntil) {
+		let conversation: TellConversation | undefined;
+		try {
+			conversation = await this.ports.conversation(agent.id);
+		} catch {
+			conversation = undefined;
+		}
+		if (conversation === undefined) return undefined;
+		const seen = this.memory.seen(callerKey(this.caller), agent.id);
+		const entries = conversation.entries();
+		const unread = entriesAfter(entries, seen?.cursor).filter(isOutput);
+		const requests = conversation
+			.requests()
+			.filter((request) => seen?.requests.has(request.id) !== true);
+		const failure = failureKey(agent, conversation);
+		const newFailure = failure !== undefined && failure !== seen?.failure;
+		// The conversation's own turn, not the Sidebar's status: that is read
+		// a round later, and output streamed in the meantime is not the end.
+		const turn = conversation.turn();
+		const over = turn === "none" || turn === "broken";
+		const reasons = [
+			...(until !== "waiting" && over && unread.length > 0 ? ["output"] : []),
+			...(until !== "idle" && requests.length > 0 ? ["request"] : []),
+			...(until !== "waiting" && newFailure ? ["failure"] : []),
+		];
+		if (reasons.length === 0) return undefined;
+		return {
+			agentId: agent.id,
+			name: agent.name,
+			status: agent.status,
+			turn,
+			reasons,
+			unread: unread.length,
+			since: seen?.cursor ?? null,
+			cursor: entries.at(-1)?.id ?? null,
+			requests: requests.map(requestView).map(({ id, kind, answerable }) => ({
+				id,
+				kind,
+				answerable,
+			})),
+			failure: newFailure ? failure : null,
+		};
+	}
+
+	private async waitAny(
+		command: Extract<TellCommand, { verb: "agent-wait-many" }>,
+	): Promise<TellAnswer> {
+		const targets = this.waitTargets(command);
+		const deadline = this.clock.now() + command.timeoutSeconds * 1000;
+		for (;;) {
+			this.observe();
+			const live = this.liveAgents();
+			const ready: NonNullable<Awaited<ReturnType<TellService["news"]>>>[] = [];
+			const gone: { agentId: string; name: string }[] = [];
+			for (const target of targets) {
+				const agent = live.get(target.id);
+				if (agent === undefined) {
+					gone.push({ agentId: target.id, name: target.name });
+					continue;
+				}
+				const news = await this.news(agent, command.until);
+				if (news !== undefined) ready.push(news);
+			}
+			const reached = ready.length > 0 || gone.length > 0;
+			if (reached || this.clock.now() >= deadline) {
+				const lines = [
+					...ready.map((one) => newsLine(one)),
+					...gone.map((one) => `${one.name} (${one.agentId}) is gone.`),
+				];
+				return {
+					message: reached
+						? lines.join("\n")
+						: `None of ${String(targets.length)} agent(s) had anything new for you (until ${command.until}) after ${String(command.timeoutSeconds)}s.`,
+					data: {
+						reached,
+						mode: "any",
+						until: command.until,
+						ready,
+						gone,
+						agents: targets.map((target) => target.id),
+					},
+				};
+			}
+			await this.clock.sleep(WAIT_POLL_MS);
+		}
+	}
+
+	private async waitAll(
+		command: Extract<TellCommand, { verb: "agent-wait-many" }>,
+	): Promise<TellAnswer> {
+		const targets = this.waitTargets(command);
+		const deadline = this.clock.now() + command.timeoutSeconds * 1000;
+		for (;;) {
+			const live = this.liveAgents();
+			const states = await Promise.all(
+				targets.map(async (target) => {
+					const agent = live.get(target.id);
+					if (agent === undefined)
+						return {
+							agentId: target.id,
+							name: target.name,
+							status: "gone",
+							requests: 0,
+							reached: true,
+						};
+					return {
+						agentId: agent.id,
+						name: agent.name,
+						status: agent.status,
+						...(await this.reached(agent, command.until)),
+					};
+				}),
+			);
+			const reached = states.every((state) => state.reached);
+			if (reached || this.clock.now() >= deadline)
+				return {
+					message: [
+						...(reached
+							? []
+							: [
+									`Not all there (until ${command.until}) after ${String(command.timeoutSeconds)}s:`,
+								]),
+						...states.map(
+							(state) =>
+								`${state.reached ? " " : "-"} ${state.name} (${state.agentId}) is ${state.status}${state.requests > 0 ? ` with ${String(state.requests)} open request(s)` : ""}`,
+						),
+					].join("\n"),
+					data: { reached, mode: "all", until: command.until, agents: states },
+				};
+			await this.clock.sleep(WAIT_POLL_MS);
+		}
+	}
+
+	// --- status -----------------------------------------------------------
+
+	private observe(): void {
+		this.memory.observe(
+			this.ports.workspaces().flatMap((workspace) => workspace.agents),
+			this.clock.now(),
+		);
+	}
+
+	/** One Agent, as `agent status` and `agents --json` give it. */
+	private async statusOf(
+		agent: TellAgent,
+		workspace: TellWorkspace,
+	): Promise<TellAgentStatus> {
+		let conversation: TellConversation | undefined;
+		try {
+			conversation =
+				agent.presentation === "gui"
+					? await this.ports.conversation(agent.id)
+					: undefined;
+		} catch {
+			conversation = undefined;
+		}
+		const now = this.clock.now();
+		const times = this.memory.times(agent.id);
+		const requests = conversation?.requests().map(requestView);
+		const entries = conversation?.entries();
+		const seen = this.memory.seen(callerKey(this.caller), agent.id);
+		const usage = conversation?.usage();
+		const cache = agent.promptCache ?? usage?.promptCache;
+		const tokens = usage?.contextTokens;
+		const window = usage?.contextWindow;
+		return {
+			agentId: agent.id,
+			name: agent.name,
+			kind: agent.kind,
+			profile: agent.profileId,
+			presentation: agent.presentation,
+			workspace: {
+				id: workspace.id,
+				name: workspace.scratch ? "Scratch" : workspace.name,
+				root: workspace.root,
+			},
+			status: agent.status,
+			statusSince: iso(times?.since),
+			lastActivityAt: iso(times?.activityAt),
+			activity: agent.activity ?? null,
+			turn: conversation?.turn() ?? null,
+			control: agent.controlState,
+			failure: failureKey(agent, conversation) ?? null,
+			requests:
+				requests === undefined
+					? null
+					: {
+							questions: requests.filter((one) => one.answerable).length,
+							permissions: requests.filter((one) => !one.answerable).length,
+							open: requests.map(({ id, kind, answerable, text }) => ({
+								id,
+								kind,
+								answerable,
+								text,
+							})),
+						},
+			unread:
+				entries === undefined
+					? null
+					: {
+							entries: entriesAfter(entries, seen?.cursor).filter(isOutput)
+								.length,
+							since: seen?.cursor ?? null,
+							cursor: entries.at(-1)?.id ?? null,
+						},
+			context:
+				tokens === undefined
+					? null
+					: {
+							tokens,
+							window: window ?? null,
+							percent:
+								window === undefined || window === 0
+									? null
+									: Math.round((tokens / window) * 100),
+						},
+			promptCache:
+				cache === undefined
+					? null
+					: {
+							ttlSeconds: cache.ttlSeconds,
+							expiresAt: iso(cache.expiresAt),
+							cold:
+								cache.expiresAt === undefined ? null : cache.expiresAt <= now,
+							hitRatio: cache.hitRatio ?? null,
+							misses: cache.misses,
+							autoCompactAt: iso(cache.autoCompactAt),
+						},
+		};
+	}
+
+	private workspaceOf(agent: TellAgent): TellWorkspace {
+		const workspace = this.ports
+			.workspaces()
+			.find((each) => each.agents.some((one) => one.id === agent.id));
+		if (workspace === undefined)
+			throw new Error(`the agent ${agent.id} is in no open workspace.`);
+		return workspace;
+	}
+
+	private async status(name: string): Promise<TellAnswer> {
+		const agent = this.agent(name);
+		const state = await this.statusOf(agent, this.workspaceOf(agent));
+		return {
+			message: statusLines(state, this.clock.now()).join("\n"),
+			data: state,
+		};
+	}
+
+	// --- stop and restart ---------------------------------------------------
+
+	/** What an Agent may do to others and not to itself. */
+	private notSelf(agent: TellAgent, act: string): void {
+		if (this.caller?.agentId !== undefined && this.caller.agentId === agent.id)
+			throw new Error(
+				`an agent cannot ${act} itself. Ask the person, or another agent, to.`,
+			);
+	}
+
+	private async stop(name: string): Promise<TellAnswer> {
+		const agent = this.agent(name);
+		this.notSelf(agent, "stop");
+		const stopped = await this.ports.stopAgent(agent.id);
+		return {
+			message: [
+				`${stopped.retried ? "Stopped (a retry of the Stop that had failed)" : "Stopped"} ${agent.name} (${agent.id})`,
+				stopped.busy
+					? `; it was ${agent.status}, and what it was doing stopped with it`
+					: "",
+				stopped.movedTerminal
+					? "; its terminal went to the workspace's editor terminal, still running"
+					: "",
+				".",
+			].join(""),
+			data: { agentId: agent.id, stopped: true, ...stopped },
+		};
+	}
+
+	private async restart(name: string): Promise<TellAnswer> {
+		const agent = this.agent(name);
+		this.notSelf(agent, "restart");
+		const { busy } = await this.ports.restartAgent(agent.id);
+		return {
+			message: `Restarted ${agent.name}'s session (${agent.id})${busy ? `; it was ${agent.status}, and its turn stopped with it` : ""}.`,
+			data: { agentId: agent.id, restarted: true, busy },
+		};
+	}
+
+	// --- earlier sessions -------------------------------------------------
+
+	/**
+	 * The agent picker's earlier sessions in `workspace`: every resumable
+	 * profile's (or `profileId`'s), newest first, one row per session of a
+	 * CLI. A profile whose listing failed is said, as the picker says it.
+	 */
+	private async pastSessions(
+		workspace: TellWorkspace,
+		profileId: string | undefined,
+	): Promise<{
+		readonly sessions: readonly {
+			readonly profile: string;
+			readonly session: TellPastSession;
+		}[];
+		readonly failures: readonly {
+			readonly profile: string;
+			readonly reason: string;
+		}[];
+	}> {
+		const profiles = this.ports
+			.profiles()
+			.filter((profile) => profileId === undefined || profile.id === profileId);
+		if (profileId !== undefined) this.profile(profileId);
+		const resumable = profiles.filter((profile) =>
+			RESUMABLE_KINDS.has(profile.kind),
+		);
+		if (resumable.length === 0)
+			throw new Error(
+				profileId === undefined
+					? "no agent profile runs Claude or Codex, the CLIs whose sessions DevHub resumes."
+					: `the profile '${profileId}' runs a ${profiles[0]?.kind ?? "?"} CLI, whose sessions DevHub cannot resume.`,
+			);
+		const listed = await Promise.allSettled(
+			resumable.map((profile) =>
+				this.ports.pastSessions(workspace.id, profile.id),
+			),
+		);
+		const offered = new Set<string>();
+		const sessions: { profile: string; session: TellPastSession }[] = [];
+		const failures: { profile: string; reason: string }[] = [];
+		listed.forEach((result, index) => {
+			const profile = resumable[index]!;
+			if (result.status === "rejected") {
+				failures.push({
+					profile: profile.id,
+					reason:
+						result.reason instanceof Error
+							? result.reason.message
+							: String(result.reason),
+				});
+				return;
+			}
+			for (const session of result.value) {
+				const same = `${profile.kind}\u0000${session.id}`;
+				if (offered.has(same)) continue;
+				offered.add(same);
+				sessions.push({ profile: profile.id, session });
+			}
+		});
+		if (sessions.length === 0 && failures.length > 0)
+			throw new Error(
+				failures.map((one) => `${one.profile}: ${one.reason}`).join("; "),
+			);
+		// Newest first across profiles; stable, so a CLI's own order stays.
+		sessions.sort(
+			(a, b) =>
+				(b.session.updatedAt ?? Number.NEGATIVE_INFINITY) -
+					(a.session.updatedAt ?? Number.NEGATIVE_INFINITY) || 0,
+		);
+		return { sessions, failures };
+	}
+
+	private async sessions(
+		command: Extract<TellCommand, { verb: "sessions" }>,
+	): Promise<TellAnswer> {
+		const workspace = this.workspace(
+			this.workspaceOrCallers(command.workspace),
+		);
+		const { sessions, failures } = await this.pastSessions(
+			workspace,
+			command.profile,
+		);
+		const shown = sessions.slice(0, command.limit);
+		const now = this.clock.now();
+		return {
+			message: [
+				...(shown.length === 0
+					? [`No earlier sessions in ${workspace.root}.`]
+					: shown.map(({ profile, session }) =>
+							sessionLine(profile, session, now),
+						)),
+				...failures.map(
+					(one) =>
+						`(${one.profile}'s sessions could not be read: ${one.reason})`,
+				),
+				...(sessions.length > shown.length
+					? [`(${String(sessions.length - shown.length)} more: --limit)`]
+					: []),
+			].join("\n"),
+			data: {
+				workspaceId: workspace.id,
+				sessions: shown.map(({ profile, session }) => ({
+					id: session.id,
+					profile,
+					title: session.title,
+					agentName: session.agentName ?? null,
+					updatedAt: iso(session.updatedAt),
+					cwd: session.cwd ?? null,
+					branch: session.worktree?.branch ?? session.branch ?? null,
+					worktree: session.worktree ?? null,
+					resumable: session.resumableHere || session.worktree !== undefined,
+				})),
+				more: sessions.length - shown.length,
+				failures,
+			},
+		};
+	}
+
+	private async resume(
+		command: Extract<TellCommand, { verb: "agent-resume" }>,
+	): Promise<TellAnswer> {
+		const workspace = this.workspace(
+			this.workspaceOrCallers(command.workspace),
+		);
+		const { sessions } = await this.pastSessions(workspace, command.profile);
+		const exact = sessions.filter(
+			({ session }) => session.id === command.session,
+		);
+		const matches =
+			exact.length > 0
+				? exact
+				: sessions.filter(
+						({ session }) =>
+							command.session.length >= 4 &&
+							session.id.startsWith(command.session),
+					);
+		if (matches.length === 0)
+			throw new Error(
+				`there is no earlier session ${JSON.stringify(command.session)} in ${workspace.root}. Run 'devhub --tell sessions --workspace ${workspace.id}'.`,
+			);
+		if (new Set(matches.map(({ session }) => session.id)).size > 1)
+			throw new Error(
+				`${JSON.stringify(command.session)} is the start of more than one session's id: ${matches.map(({ session }) => session.id).join(", ")}.`,
+			);
+		const { profile, session } = matches[0]!;
+		if (!session.resumableHere && session.worktree === undefined)
+			throw new Error(
+				`session ${session.id} ran in ${session.cwd ?? "another folder"}, and its CLI resumes it only there: open that folder as a workspace and resume it from there.`,
+			);
+		const agentId = await this.ports.resumeSession(
+			workspace.id,
+			profile,
+			session,
+		);
+		if (command.name !== undefined)
+			await this.ports.renameAgent(agentId, command.name);
+		const placed = this.ports
+			.workspaces()
+			.find((each) => each.agents.some((one) => one.id === agentId));
+		const root = placed?.root ?? session.worktree?.root ?? workspace.root;
+		return {
+			message: `Agent ${agentId} (${profile}) is going on with ${JSON.stringify(sessionTitle(session))} (${session.id}) in ${root}.`,
+			data: {
+				agentId,
+				session: session.id,
+				profile,
+				workspaceId: placed?.id ?? null,
+				root,
+			},
+		};
 	}
 
 	// --- the app ------------------------------------------------------------
@@ -914,6 +1747,113 @@ export class TellService {
 }
 
 // --- words ------------------------------------------------------------------
+
+/** A session's name in a line: its title, or the agent's name it ran under. */
+function sessionTitle(session: TellPastSession): string {
+	return session.title.length > 0 ? session.title : (session.agentName ?? "");
+}
+
+function sessionLine(
+	profile: string,
+	session: TellPastSession,
+	now: number,
+): string {
+	const worktree = session.worktree;
+	return [
+		session.id,
+		profile,
+		session.updatedAt === undefined
+			? "-"
+			: `${span(now - session.updatedAt)} ago`,
+		JSON.stringify(clip(session.title).slice(0, 80)),
+		session.agentName === undefined ? undefined : `(${session.agentName})`,
+		worktree !== undefined
+			? `worktree ${worktree.root}${worktree.branch === undefined ? "" : ` (${worktree.branch})`}${worktree.present ? "" : ", gone: checked out again on resume"}`
+			: session.branch === undefined
+				? undefined
+				: `branch ${session.branch}`,
+		session.resumableHere || worktree !== undefined
+			? undefined
+			: `not resumable here (ran in ${session.cwd ?? "another folder"})`,
+	]
+		.filter((part) => part !== undefined)
+		.join("  ");
+}
+
+/** One `wait --any` answer, as a line: who, why, and how to read it. */
+function newsLine(news: {
+	readonly agentId: string;
+	readonly name: string;
+	readonly status: string;
+	readonly reasons: readonly string[];
+	readonly unread: number;
+	readonly since: string | null;
+	readonly cursor: string | null;
+	readonly requests: readonly {
+		readonly id: string;
+		readonly kind: string;
+		readonly answerable: boolean;
+	}[];
+	readonly failure: string | null;
+}): string {
+	const why = [
+		news.reasons.includes("output")
+			? `${String(news.unread)} new entr${news.unread === 1 ? "y" : "ies"}, turn over`
+			: undefined,
+		...news.requests.map((request) =>
+			request.answerable
+				? `question ${request.id}`
+				: `${request.kind === "tool" || request.kind === "command" || request.kind === "file-change" ? "permission prompt" : request.kind} ${request.id} (answer in DevHub: tell the person)`,
+		),
+		news.failure === null ? undefined : `failed: ${news.failure}`,
+	].filter((part) => part !== undefined);
+	return `${news.name} (${news.agentId}) is ${news.status}: ${why.join("; ")}; cursor ${news.cursor ?? "-"}. Read: devhub --tell agent read ${news.agentId} ${news.since === null ? "--last 20" : `--since ${news.since}`}`;
+}
+
+/** `agent status`, as lines of text. */
+function statusLines(state: TellAgentStatus, now: number): string[] {
+	const since =
+		state.statusSince === null
+			? ""
+			: ` for ${span(now - Date.parse(state.statusSince))} (since ${state.statusSince})`;
+	const cache = state.promptCache;
+	return [
+		`${state.name} (${state.agentId})  ${state.kind}/${state.presentation}, profile ${state.profile}, in ${state.workspace.name} (${state.workspace.root})`,
+		`status    ${state.status}${since}${state.turn === null ? "" : `, turn ${state.turn}`}${state.control === "running" ? "" : `, ${state.control}`}`,
+		`activity  ${state.activity ?? "-"}${state.lastActivityAt === null ? "" : ` (last change ${span(now - Date.parse(state.lastActivityAt))} ago)`}`,
+		...(state.requests === null
+			? []
+			: [
+					`requests  ${
+						state.requests.open.length === 0
+							? "none"
+							: state.requests.open
+									.map((request) =>
+										request.answerable
+											? `question ${request.id}`
+											: `${request.kind} ${request.id} (answer in DevHub)`,
+									)
+									.join(", ")
+					}`,
+				]),
+		...(state.unread === null
+			? []
+			: [
+					`unread    ${String(state.unread.entries)} entr${state.unread.entries === 1 ? "y" : "ies"} you have not read; cursor ${state.unread.cursor ?? "-"}${state.unread.since === null ? "" : `, --since ${state.unread.since}`}`,
+				]),
+		...(state.context === null
+			? []
+			: [
+					`context   ${String(state.context.tokens)}${state.context.window === null ? "" : ` / ${String(state.context.window)}`} tokens${state.context.percent === null ? "" : ` (${String(state.context.percent)}%)`}`,
+				]),
+		...(cache === null
+			? []
+			: [
+					`cache     ${cache.cold === null ? "no cached prefix" : cache.cold ? "cold" : `warm until ${cache.expiresAt ?? "-"}`} (TTL ${String(cache.ttlSeconds)}s)${cache.hitRatio === null ? "" : `, hit ${String(Math.round(cache.hitRatio * 100))}%`}, ${String(cache.misses)} miss(es)${cache.autoCompactAt === null ? "" : `, compacted at ${cache.autoCompactAt}`}`,
+				]),
+		...(state.failure === null ? [] : [`failure   ${state.failure}`]),
+	];
+}
 
 /**
  * One tmux pane of the terminal as `--json` writes it, with what a person

@@ -109,7 +109,7 @@ export function codexGuiInstructions(skill: DevhubSkill | undefined): string {
 export function devhubSkillText(cli: string): string {
 	return `---
 name: devhub
-description: Drive DevHub, the app this agent runs in - open workspaces, start agents, hand GitHub Issues to new agents with a good branch name, monitor, message and answer other agents, and open your own terminal (on the right of your pane) and drive it with tmux. Use when the user says /devhub, explicitly asks for another agent or workspace in DevHub, or asks to prepare / open / use a terminal ("open a terminal", "the terminal on the right", "右のターミナル"). Not for subagents: "use a subagent" / "サブエージェント" / parallel helpers mean your own CLI's subagents, not DevHub agents.
+description: Drive DevHub, the app this agent runs in - open workspaces, start agents, hand GitHub Issues to new agents with a good branch name, monitor, message, answer, stop, restart and resume other agents (orchestrate several from one session), and open your own terminal (on the right of your pane) and drive it with tmux. Use when the user says /devhub, explicitly asks for another agent or workspace in DevHub, or asks to prepare / open / use a terminal ("open a terminal", "the terminal on the right", "右のターミナル"). Not for subagents: "use a subagent" / "サブエージェント" / parallel helpers mean your own CLI's subagents, not DevHub agents.
 ---
 
 # /devhub - drive DevHub from here
@@ -211,6 +211,35 @@ prompts (may a tool run) are listed as "answer in DevHub": they are the
 person's decision - tell the person, never try to get around it. When unsure
 what the person would want, ask the person instead of answering. Your answer
 is recorded in that agent's transcript as answered via devhub CLI by you.
+
+## Orchestrating other agents
+
+When the person asks you to run or coordinate several DevHub agents, loop:
+
+    devhub --tell --json agents                    # or: agent status A (one agent in detail)
+    devhub --tell --json agent wait --any [A B ...] [--workspace W] --timeout 600
+    devhub --tell --json agent read A --since SINCE # the wait's since (null: --last 20)
+    devhub --tell agent answer A REQ --option N     # questions only
+    devhub --tell agent send A "next step ..."
+    # ... and wait --any again
+
+\`wait --any\` returns as soon as one of them (default: every GUI agent but
+you) has something you have not read: its turn is over with new output, or a
+request you have not seen. It names which, why, and the \`--since\` to read
+from. What you have not read stays reported until you \`agent read\` it (a
+request: until you read or list it with \`agent requests\`), so nothing that
+happens between two calls is missed - always read before waiting again.
+\`agent wait --all ...\` waits until every one is idle (or waiting).
+
+- **Permission prompts are the person's.** When a wait reports one ("answer
+  in DevHub"), tell the person - \`devhub --tell notify "A needs your
+  permission: ..."\` - and go on with the others. Never try to approve it.
+- \`agent stop A\` stops an agent that is done or going wrong;
+  \`agent restart A\` starts its CLI again on the same session (stuck, or
+  after a configuration change). Either one stops a running turn; you cannot
+  stop or restart yourself. Prefer \`agent interrupt A\` to stop just a turn.
+- \`sessions [--workspace W]\` lists earlier sessions; \`agent resume ID
+  [--name N]\` goes on with one in a new GUI agent.
 
 ## Your terminal
 
