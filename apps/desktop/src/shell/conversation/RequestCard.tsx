@@ -400,6 +400,10 @@ function QuestionFields({
   readonly keys: MessageKeys<HTMLTextAreaElement>;
 }) {
   const [focused, setFocused] = useState<string | undefined>(undefined);
+  // With one answer, Other is a choice like the options: written in, it is the
+  // one chosen, and an option picked after it is chosen instead.
+  const otherChosen =
+    other.trim() !== "" && (question.multiSelect || picked.length === 0);
   return (
     <QuestionLayout
       Frame="fieldset"
@@ -434,11 +438,11 @@ function QuestionFields({
         question.allowsOther ? (
           <div
             className="conversation-question-other-row"
-            data-filled={other.trim() === "" ? undefined : true}
+            data-filled={otherChosen ? true : undefined}
             data-kind={question.multiSelect ? "checkbox" : "radio"}
           >
             <span className="conversation-question-mark" aria-hidden="true">
-              {other.trim() === "" ? "" : "✓"}
+              {otherChosen ? "✓" : ""}
             </span>
             <textarea
               className="conversation-question-other"
@@ -447,6 +451,9 @@ function QuestionFields({
               rows={1}
               value={other}
               onChange={(event) => setOther(event.target.value)}
+              onFocus={() => {
+                if (other.trim() !== "") setOther(other);
+              }}
               {...keys}
             />
           </div>
@@ -547,8 +554,11 @@ function QuestionForm({
     for (const question of questions) {
       const typed = other[question.id]?.trim();
       const chosen = picked[question.id] ?? [];
-      const all = typed ? [...chosen, typed] : chosen;
-      values[question.id] = question.multiSelect ? all : (all[0] ?? "");
+      values[question.id] = question.multiSelect
+        ? typed
+          ? [...chosen, typed]
+          : chosen
+        : (chosen[0] ?? typed ?? "");
     }
     send({ kind: "answers", values });
   };
@@ -571,9 +581,12 @@ function QuestionForm({
           picked={picked[question.id] ?? []}
           pick={(label, on) => pick(question, label, on)}
           other={other[question.id] ?? ""}
-          setOther={(text) =>
-            setOther((before) => ({ ...before, [question.id]: text }))
-          }
+          setOther={(text) => {
+            setOther((before) => ({ ...before, [question.id]: text }));
+            if (!question.multiSelect && text.trim() !== "") {
+              setPicked((before) => ({ ...before, [question.id]: [] }));
+            }
+          }}
           keys={keys}
         />
       ))}

@@ -202,6 +202,34 @@ describe("a question whose options carry previews", () => {
     );
   });
 
+  it("makes Other and the options one choice when only one answer is taken", async () => {
+    const { actions } = draw(asked([LAYOUT]));
+    const tabs = screen.getByRole("radio", { name: /Tabs/ });
+    const field = screen.getByRole("textbox", { name: "Layout: other" });
+    const row = field.closest(".conversation-question-other-row")!;
+    fireEvent.click(tabs);
+    fireEvent.change(field, { target: { value: "Grid" } });
+    // Writing in Other chooses it, so the option is no longer checked too.
+    expect(tabs).not.toBeChecked();
+    expect(row).toHaveAttribute("data-filled");
+    // Picking an option again chooses it instead; what was written stays.
+    fireEvent.click(tabs);
+    expect(tabs).toBeChecked();
+    expect(row).not.toHaveAttribute("data-filled");
+    expect(field).toHaveValue("Grid");
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() =>
+      expect(actions.answer).toHaveBeenCalledWith("q1", {
+        kind: "answers",
+        values: { "Which layout?": "Tabs" },
+      }),
+    );
+    // Going back into Other with words in it chooses it again.
+    fireEvent.focus(field);
+    expect(tabs).not.toBeChecked();
+    expect(row).toHaveAttribute("data-filled");
+  });
+
   it("still answers with the option picked", async () => {
     const { actions } = draw(asked([LAYOUT]));
     fireEvent.click(screen.getByRole("radio", { name: /Tabs/ }));
