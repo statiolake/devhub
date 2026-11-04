@@ -496,6 +496,11 @@ export class AppCoordinator {
     }
   >();
   /** The presentations an agent-creation request asked for, until it lands. */
+  /**
+   * The operations asked for with `focus: "none"`: what they make is not
+   * selected (`IntentFocus`). Cleared when the operation ends either way.
+   */
+  private readonly unfocused = new Set<OperationId>();
   private readonly requestedPresentations = new Map<
     OperationId,
     {
@@ -723,6 +728,7 @@ export class AppCoordinator {
         this.model.zoomTerminal(intent.base, intent.direction);
         return this.transitionOutcome(beforeRevision, id);
       case "open_folder":
+        if (intent.focus === "none") this.unfocused.add(id);
         return this.beginWorkspaceResolution(intent.location, id);
       case "new_window": {
         if (intent.path !== undefined) {
@@ -753,6 +759,7 @@ export class AppCoordinator {
           id,
         );
       case "create_agent":
+        if (intent.focus === "none") this.unfocused.add(id);
         return this.beginProfileResolution(
           intent.workspaceId,
           intent.profileId,
@@ -1535,6 +1542,7 @@ export class AppCoordinator {
     const id = token.operationId;
     this.resolvedLocations.delete(id);
     this.requestedPresentations.delete(id);
+    this.unfocused.delete(id);
     this.resolvedProfiles.delete(id);
     this.launchProfiles.delete(id);
     this.replacedByLaunch.delete(id);
@@ -1614,10 +1622,11 @@ export class AppCoordinator {
     );
     if (existing) {
       const beforeRevision = this.model.snapshot().revision;
-      this.model.selectContext({
-        kind: "workspace",
-        workspaceId: existing.id,
-      });
+      if (!this.unfocused.delete(token.operationId))
+        this.model.selectContext({
+          kind: "workspace",
+          workspaceId: existing.id,
+        });
       const snapshot = this.snapshot();
       if (snapshot.revision !== beforeRevision) {
         this.emit({ kind: "snapshot", snapshot });
@@ -1640,8 +1649,10 @@ export class AppCoordinator {
     );
     // Opening a folder is choosing it, new or not — the branch above says the
     // same of one that was open already. Nothing else selects it: a workbench
-    // DevHub builds for a Workspace does not report itself back.
-    this.model.selectContext({ kind: "workspace", workspaceId });
+    // DevHub builds for a Workspace does not report itself back. Unless the
+    // command line asked: then it is in the Sidebar, and nothing moves.
+    if (!this.unfocused.delete(token.operationId))
+      this.model.selectContext({ kind: "workspace", workspaceId });
     const snapshot = this.snapshot();
     this.emit({ kind: "snapshot", snapshot });
     this.emit({ kind: "operation_completed", token });
@@ -1828,6 +1839,9 @@ export class AppCoordinator {
       throw agentRefusal(result.code, result.detail);
     }
 
+    const focus = this.unfocused.delete(token.operationId)
+      ? ("none" as const)
+      : undefined;
     try {
       this.model.addAgent(
         workspaceId,
@@ -1835,6 +1849,7 @@ export class AppCoordinator {
         profile,
         expected.agentPresentation,
         presentation,
+        focus,
       );
     } catch (raw) {
       const error = refusal(raw);
@@ -1850,7 +1865,8 @@ export class AppCoordinator {
       });
       throw error;
     }
-    this.model.selectContext({ kind: "agent", agentId }, presentation);
+    if (focus !== "none")
+      this.model.selectContext({ kind: "agent", agentId }, presentation);
     const snapshot = this.snapshot();
     this.emit({ kind: "snapshot", snapshot });
     this.emit({ kind: "operation_completed", token });

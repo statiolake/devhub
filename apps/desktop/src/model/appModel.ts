@@ -8,6 +8,7 @@
  * already seen.
  */
 
+import type { IntentFocus } from "./intents.js";
 import {
   Agent,
   AgentProfile,
@@ -1007,6 +1008,7 @@ export class AppModel {
     profile: AgentProfile,
     agentPresentation: AgentPresentation,
     presentation: SurfacePresentation = "full",
+    focus?: IntentFocus,
   ): void {
     if (this.agent(id)) {
       fail(DomainErrorCode.DuplicateAgent);
@@ -1024,12 +1026,15 @@ export class AppModel {
       Agent.create(id, owner, profile, ordinal, agentPresentation),
     );
     this.nextAgentOrdinals.set(key, ordinal + 1);
-    this.selectionValue = {
-      context: { kind: "agent", agentId: id },
-      presentation,
-    };
-    // A new Agent is somewhere the person went on purpose.
-    this.recordSelection();
+    // A new Agent is somewhere the person went on purpose — unless it was
+    // started from the command line (`IntentFocus`), which goes nowhere.
+    if (focus !== "none") {
+      this.selectionValue = {
+        context: { kind: "agent", agentId: id },
+        presentation,
+      };
+      this.recordSelection();
+    }
     this.bumpRevision();
   }
 

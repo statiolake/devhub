@@ -355,9 +355,11 @@ terminal (your own: one per agent, beside your pane; hidden with the editor alon
 app
   commands                         list the command palette's commands
   run <command-id>                 run one of them, exactly as the palette
-                                   does. A command that would put a picker
-                                   or a question up in the window is refused,
-                                   naming the --tell command to use instead
+                                   does - only those that move nothing in
+                                   the window (refresh_repositories,
+                                   mark_agent_unread); one that would ask or
+                                   go somewhere is refused, naming the --tell
+                                   command to use instead
   focus <agent|workspace>          select it in DevHub
   notify <text>                    show a notification in DevHub
 
@@ -366,8 +368,11 @@ folder on the machine devhub runs on: on an SSH host, the host's.
 <a> is an agent id (or a unique prefix of one) or its name. <session> is a
 session id from 'sessions' (or a unique prefix of one).
 
-No --tell command puts a picker or a sheet up in the window. Where the
-window would ask, the command takes the answer as an argument.
+No --tell command puts a picker or a sheet up in the window, and none but
+'focus' (and an explicit --focus) changes what the window selects or shows,
+moves its keyboard or brings it to the front: what a command makes appears
+in the Sidebar, unselected. Where the window would ask, the command takes
+the answer as an argument.
 
 The few defaults left are fixed, never read from settings: agent read
 --last 20, agent wait --until any --timeout 300, sessions --limit 20, and

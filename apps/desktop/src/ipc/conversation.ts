@@ -151,7 +151,7 @@ export interface ConversationAttachment {
 }
 
 /** Words for the composer, after what is in it: put there, never sent. */
-export type ConversationInsertListener = (text: string) => void;
+export type ConversationInsertListener = (text: string, focus: boolean) => void;
 
 export type ConversationEventListener = (
 	revision: number,

@@ -320,6 +320,16 @@ The defaults left are fixed numbers (`agent read --last 20`, `agent wait
 --timeout 300`, `sessions --limit 20`) and the caller's own workspace for
 `sessions` and `agent resume`. The window keeps its settings-based defaults.
 
+**No `--tell` command takes the window.** Only `focus` (and an explicit
+`--focus`, as on `terminal open`) changes the selected Workspace or Agent,
+what is shown, where the keyboard is, or brings DevHub to the front: what
+`workspace open`, `agent new`, `issue assign` or `agent resume` make appears in
+the Sidebar unselected, its workbench starting in the background, and a
+GUI agent's drafted message waits in its composer without taking the
+keyboard (`open_folder` / `create_agent` with `focus: "none"`). `run` runs
+only the palette commands that move nothing (`refresh_repositories`,
+`mark_agent_unread`). A person is doing something else.
+
 **No `--tell` command puts a picker or a sheet up in the window.** Where the
 window would ask, the command takes the answer as an argument; a palette
 command that would open a picker or ask (`run add_agent`,

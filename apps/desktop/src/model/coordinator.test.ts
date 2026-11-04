@@ -2607,3 +2607,66 @@ describe("a launch that resumes a session", () => {
     expect(() => request(7)).toThrow(InvalidIntent);
   });
 });
+
+/**
+ * `devhub --tell` makes things without going there: `focus: "none"` on
+ * `open_folder` and `create_agent` leaves the selection — and so what the
+ * window shows and where the keyboard is — where the person left it.
+ */
+describe("making things from the command line, without going there", () => {
+  const selected = (driver: Driver) => driver.coordinator.snapshot().selection;
+
+  it("opens a folder into the Sidebar without selecting it", () => {
+    const driver = new Driver();
+    const before = selected(driver);
+    driver.dispatch({
+      type: "open_folder",
+      location: requestedLocation({ kind: "local", path: "/dev/project" }),
+      focus: "none",
+    });
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces).toHaveLength(2);
+    expect(selected(driver)).toEqual(before);
+    // An open one asked for again quietly is not selected either.
+    driver.dispatch({
+      type: "open_folder",
+      location: requestedLocation({ kind: "local", path: "/dev/project" }),
+      focus: "none",
+    });
+    driver.settle();
+    expect(selected(driver)).toEqual(before);
+    // The window's own open still goes there.
+    driver.openFolder("/dev/project");
+    expect(selected(driver).context).toEqual({
+      kind: "workspace",
+      workspaceId: WS_A,
+    });
+  });
+
+  it("starts an agent without selecting it, while the window's start selects", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    const before = selected(driver);
+    driver.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+      focus: "none",
+    });
+    driver.settle();
+    expect(driver.coordinator.snapshot().workspaces[1].agents).toHaveLength(1);
+    expect(selected(driver)).toEqual(before);
+    // The window's own start goes to the Agent it made.
+    const window = new Driver();
+    window.openFolder("/dev/project");
+    window.dispatch({
+      type: "create_agent",
+      workspaceId: WS_A,
+      profileId: agentProfileId("codex"),
+      presentation: "full",
+    });
+    window.settle();
+    expect(selected(window).context.kind).toBe("agent");
+  });
+});

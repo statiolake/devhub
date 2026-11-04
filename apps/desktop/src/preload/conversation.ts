@@ -26,8 +26,8 @@ const inserts = new Map<string, ConversationInsertListener>();
 
 ipcRenderer.on(
 	CONVERSATION_CHANNELS.insert,
-	(_event, agentId: string, text: string) => {
-		inserts.get(agentId)?.(text);
+	(_event, agentId: string, text: string, focus: unknown) => {
+		inserts.get(agentId)?.(text, focus !== false);
 	},
 );
 

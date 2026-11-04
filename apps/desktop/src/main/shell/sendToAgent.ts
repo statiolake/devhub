@@ -92,8 +92,12 @@ export interface SendToAgentPorts {
 	) => Promise<AgentId>;
 	/** The Agent as the model has it now. */
 	readonly agent: (agentId: AgentId) => SendTargetAgent | undefined;
-	/** Into a GUI Agent's composer, after its draft, focused. */
-	readonly insertDraft: (agentId: AgentId, text: string) => void;
+	/** Into a GUI Agent's composer, after its draft; focused unless `focus` is false. */
+	readonly insertDraft: (
+		agentId: AgentId,
+		text: string,
+		focus: boolean,
+	) => void;
 	/** Into a terminal Agent's prompt, as a paste with no Return. */
 	readonly paste: (agentId: AgentId, text: string) => Promise<void>;
 	readonly sleep: (ms: number) => Promise<void>;
@@ -260,12 +264,13 @@ export class SendToAgent {
 		text: string,
 		starting: boolean,
 		known?: SendTargetAgent,
+		focus: boolean = true,
 	): Promise<void> {
 		const agent = known ?? this.ports.agent(agentId);
 		if (agent === undefined)
 			throw new SendRefused("The Agent is no longer there.");
 		if (agent.presentation === "gui") {
-			this.ports.insertDraft(agentId, text);
+			this.ports.insertDraft(agentId, text, focus);
 			return;
 		}
 		const ready = starting ? await this.promptOf(agentId) : agent;

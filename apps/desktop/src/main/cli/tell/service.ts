@@ -2063,6 +2063,10 @@ export class TellService {
 			throw new Error(
 				`${known.category}: ${known.label} puts a picker or a question up in DevHub's window, which a command line does not do. ${instead}`,
 			);
+		if (!FOCUS_FREE_COMMANDS.has(id))
+			throw new Error(
+				`${known.category}: ${known.label} changes what DevHub's window shows or where its keyboard is, and a command line never does: the person is doing something else. 'focus <agent|workspace>' is the one command that goes somewhere; 'run' takes only ${[...FOCUS_FREE_COMMANDS].join(", ")}.`,
+			);
 		const ran = this.ports.runCommand(id);
 		return {
 			message: ran
@@ -2192,6 +2196,17 @@ function promptSummary(template: string): string {
  * what to run instead. `run` refuses them: a command line never leaves a
  * sheet over the person's window that nobody there asked for.
  */
+/**
+ * The palette commands `run` runs: those that change neither the selection,
+ * nor what the window shows, nor the keyboard, nor which window is in front.
+ * Every other one moves something the person is using, and only `focus`
+ * (or an explicit `--focus`) may do that from a command line.
+ */
+const FOCUS_FREE_COMMANDS: ReadonlySet<string> = new Set([
+	"refresh_repositories",
+	"mark_agent_unread",
+]);
+
 const ASKS_IN_THE_WINDOW: Readonly<Record<string, string>> = {
 	add_workspace: "Use 'workspace open <path>'.",
 	add_agent:

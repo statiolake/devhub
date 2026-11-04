@@ -314,6 +314,12 @@ class FakePorts implements TellPorts {
 				category: "Navigate",
 				available: true,
 			},
+			{
+				id: "refresh_repositories",
+				label: "Refresh repositories",
+				category: "Workspace",
+				available: true,
+			},
 		];
 	}
 	runCommand(id: string) {
@@ -884,8 +890,16 @@ describe("devhub --tell, in the app", () => {
 		expect(
 			(await service.run({ verb: "commands" }, undefined)).message,
 		).toContain("next_agent  Navigate: Next agent");
-		await service.run({ verb: "run", command: "next_agent" }, undefined);
-		expect(ports.calls).toEqual(["run next_agent"]);
+		await service.run(
+			{ verb: "run", command: "refresh_repositories" },
+			undefined,
+		);
+		expect(ports.calls).toEqual(["run refresh_repositories"]);
+		// One that moves the window's selection is not a command line's to run.
+		await expect(
+			service.run({ verb: "run", command: "next_agent" }, undefined),
+		).rejects.toThrow(/changes what DevHub's window shows/u);
+		expect(ports.calls).toEqual(["run refresh_repositories"]);
 		await expect(
 			service.run({ verb: "run", command: "format_disk" }, undefined),
 		).rejects.toThrow(/no command/);
@@ -2018,9 +2032,9 @@ describe("no --tell call opens a picker", () => {
 			viaSocket(service, ["run", "close_workspace"], coordinator),
 		).rejects.toThrow(/picker or a question/u);
 		expect(ports.calls.filter((call) => call.startsWith("run "))).toEqual([]);
-		// One that asks nothing still runs.
-		await viaSocket(service, ["run", "next_agent"], coordinator);
-		expect(ports.calls).toContain("run next_agent");
+		// One that neither asks nor moves anything still runs.
+		await viaSocket(service, ["run", "refresh_repositories"], coordinator);
+		expect(ports.calls).toContain("run refresh_repositories");
 	});
 
 	it("knows every palette command that asks in the window", () => {

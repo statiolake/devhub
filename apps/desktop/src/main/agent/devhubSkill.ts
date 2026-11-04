@@ -168,7 +168,10 @@ defaults: \`agent new\` needs \`--workspace\`, \`--profile\` and \`--gui\` or
 \`--profile\`, \`--gui\` or \`--tui\`, \`--action\` and \`--send\` or
 \`--draft\`. Run \`profiles\` and \`issue actions\` first to see the values
 (and \`workspaces\` for W). A call missing one does nothing and says which
-flags, and their values. No \`--tell\` command opens a picker in the window.
+flags, and their values. No \`--tell\` command opens a picker in the window
+or takes the person's screen: what you start appears in the Sidebar,
+unselected, and only \`focus\` (when the person asked to be shown something)
+goes there.
 
 ## Look around
 

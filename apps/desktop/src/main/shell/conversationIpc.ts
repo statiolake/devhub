@@ -14,6 +14,7 @@ import {
 	type EmbedFileWire,
 } from "../../ipc/conversation.js";
 import {
+	appendToDraft,
 	attachedImages,
 	entryId,
 	pendingId,
@@ -105,7 +106,11 @@ export interface ConversationIpc {
 	 * attached; otherwise held and handed out with the attachment, which is
 	 * how an Agent that has only just been started gets them.
 	 */
-	insert(agentId: AgentId, text: string): void;
+	insert(
+		agentId: AgentId,
+		text: string,
+		options?: { readonly focus: boolean },
+	): void;
 }
 
 export function registerConversationIpc(
@@ -355,10 +360,20 @@ export function registerConversationIpc(
 	});
 
 	return {
-		insert(agentId, text) {
+		insert(agentId, text, how = { focus: true }) {
 			const page = options.agentsPage();
 			if (attached.has(agentId) && page !== undefined && !page.isDestroyed()) {
-				page.send(CONVERSATION_CHANNELS.insert, agentId, text);
+				page.send(CONVERSATION_CHANNELS.insert, agentId, text, how.focus);
+				return;
+			}
+			// Words that must not move the keyboard wait as the Agent's kept
+			// draft, which the composer takes back without focusing; held words
+			// are handed out with the attachment and focus, as Send to Agent's do.
+			if (!how.focus) {
+				options.drafts.set(
+					agentId,
+					appendToDraft(options.drafts.get(agentId), text),
+				);
 				return;
 			}
 			held.set(agentId, [...(held.get(agentId) ?? []), text]);

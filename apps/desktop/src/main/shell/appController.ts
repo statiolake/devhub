@@ -198,6 +198,7 @@ import {
 	type IntentOutcome,
 	type OperationToken,
 	type ProviderEvent,
+	type IntentFocus,
 	type UserIntent,
 	type WorktreeDisposition,
 } from "../../model/intents.js";
@@ -1031,10 +1032,10 @@ export class AppController {
 			return created;
 		},
 		agent: (agentId) => this.sendTargetAgent(agentId),
-		insertDraft: (agentId, text) => {
+		insertDraft: (agentId, text, focus) => {
 			if (this.conversationIpc === undefined)
 				throw new SendRefused("DevHub's Agents are not running yet.");
-			this.conversationIpc.insert(agentId, text);
+			this.conversationIpc.insert(agentId, text, { focus });
 		},
 		paste: async (agentId, text) => {
 			if (this.agentWiring === undefined)
@@ -3269,6 +3270,7 @@ export class AppController {
 	 */
 	private async resumeSessionElsewhere(
 		request: ResumeElsewhereWire,
+		focus?: IntentFocus,
 	): Promise<AppOutcomeWire> {
 		if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(request.session)) {
 			throw workspaceFailure(`${request.session} is not a session id.`);
@@ -3292,18 +3294,25 @@ export class AppController {
 			);
 		}
 		const opening = requestedLocation(target);
-		await this.openFolder(opening, undefined, "below-selection", "for-agent");
+		let workspaceId: WorkspaceId;
+		if (focus === "none") {
+			workspaceId = await this.openFolderUnfocused(opening, "below-selection");
+		} else {
+			await this.openFolder(opening, undefined, "below-selection", "for-agent");
+			workspaceId = this.openedWorkspaceId(opening);
+		}
 		const settled = await this.dispatchAwaiting({
 			type: "create_agent",
-			workspaceId: this.openedWorkspaceId(opening),
+			workspaceId,
 			profileId: agentProfileId(request.profileId),
 			presentation: request.split === true ? "beside" : "full",
 			...(request.presentation === undefined
 				? {}
 				: { agentPresentation: agentPresentation(request.presentation) }),
 			resume: sessionId(request.session),
+			...(focus === undefined ? {} : { focus }),
 		});
-		await this.syncEditorView();
+		if (focus !== "none") await this.syncEditorView();
 		return outcomeWire(
 			settled,
 			this.coordinator.readiness,
@@ -5650,7 +5659,7 @@ export class AppController {
 			const text = renderAgentAction(action, values, started.profile.kind);
 			const agentId = started.id;
 			void this.sendToAgent
-				.draft(agentId, text, true)
+				.draft(agentId, text, true, undefined, how.focus !== "none")
 				.catch((error: unknown) => {
 					this.publishError(
 						withDetail(
@@ -7690,6 +7699,54 @@ export class AppController {
 	}
 
 	/**
+	 * Open a folder for `devhub --tell`: the Workspace is made (or found) and
+	 * appears in the Sidebar, and nothing else happens — no selection, so
+	 * nothing shown, no keyboard moved and no workbench asked for (it starts
+	 * in the background, as any Workspace not on screen does). Answers which
+	 * Workspace it is: a new one, or the open one whose folder this is.
+	 */
+	private async openFolderUnfocused(
+		location: RequestedWorkspaceLocation,
+		placement: WorkspacePlacement = "automatic",
+	): Promise<WorkspaceId> {
+		const anchor =
+			placement === "below-selection" ? this.placementAnchor() : undefined;
+		const before = new Set(
+			this.coordinator.model.workspaces.map((workspace) => workspace.id),
+		);
+		await this.dispatchAwaiting({
+			type: "open_folder",
+			location,
+			focus: "none",
+		});
+		const sameMachine = (workspace: Workspace): boolean =>
+			workspace.location.kind === location.kind &&
+			(workspace.location.kind !== "ssh" ||
+				(location.kind === "ssh" && workspace.location.host === location.host));
+		const made = this.coordinator.model.workspaces.find(
+			(workspace) => !before.has(workspace.id) && sameMachine(workspace),
+		);
+		if (made !== undefined) {
+			if (anchor !== undefined) this.placeBelow(made.id, anchor);
+			return made.id;
+		}
+		const real = await runtimeFor(workspaceLocation(location))
+			.realpath(location.path)
+			.catch(() => location.path);
+		const strip = (path: string) =>
+			path.length > 1 ? path.replace(/\/+$/u, "") : path;
+		const open = this.coordinator.model.workspaces.find(
+			(workspace) =>
+				sameMachine(workspace) &&
+				(strip(workspace.root) === strip(real) ||
+					strip(workspace.root) === strip(location.path)),
+		);
+		if (open === undefined)
+			throw new Error(`opening ${location.path} made no workspace`);
+		return open.id;
+	}
+
+	/**
 	 * A Workspace somebody opened on purpose: its editor starts or wakes now
 	 * if it is what the Workspace shows (the lifecycle ignores the ask when
 	 * the editor area shows the terminal), and it is a place in the history.
@@ -9014,10 +9071,9 @@ export class AppController {
 						),
 					};
 				}
-				const location = requestedLocation(target);
-				// An Agent asking (`devhub --tell workspace open`), not a person.
-				await this.openFolder(location, undefined, "automatic", "for-agent");
-				return this.openedWorkspaceId(location);
+				// An Agent asking (`devhub --tell workspace open`), not a person: in
+				// the Sidebar, and nothing selected, shown or focused.
+				return this.openFolderUnfocused(requestedLocation(target));
 			},
 			createAgent: async (workspaceId, profileId, presentation) => {
 				const before = this.modelAgentIds();
@@ -9026,6 +9082,7 @@ export class AppController {
 					workspaceId: this.workspaceIdOf(workspaceId),
 					profileId: agentProfileId(profileId),
 					presentation: "full",
+					focus: "none",
 					...(presentation === undefined
 						? {}
 						: { agentPresentation: agentPresentation(presentation) }),
@@ -9268,14 +9325,17 @@ export class AppController {
 				// worktree's session in that worktree, the rest here — always in
 				// DevHub's conversation view, which is what can be read from here.
 				if (session.worktree !== undefined) {
-					await this.resumeSessionElsewhere({
-						place: workspacePlaceOf(workspace),
-						profileId,
-						session: session.id,
-						worktree: session.worktree,
-						...(session.cwd === undefined ? {} : { cwd: session.cwd }),
-						presentation: "gui",
-					});
+					await this.resumeSessionElsewhere(
+						{
+							place: workspacePlaceOf(workspace),
+							profileId,
+							session: session.id,
+							worktree: session.worktree,
+							...(session.cwd === undefined ? {} : { cwd: session.cwd }),
+							presentation: "gui",
+						},
+						"none",
+					);
 				} else {
 					await this.dispatchAwaiting({
 						type: "create_agent",
@@ -9284,6 +9344,7 @@ export class AppController {
 						presentation: "full",
 						agentPresentation: agentPresentation("gui"),
 						resume: sessionId(session.id),
+						focus: "none",
 					});
 				}
 				const created = newAgent(before);
@@ -9405,13 +9466,9 @@ export class AppController {
 				: { branch: request.branch, inRoot: request.place === "root" }),
 		});
 		if (request.editorOnly) {
-			await this.assignIssue({
-				issueUrl: request.url,
-				place: folder,
-				editorOnly: true,
-			});
+			// The folder in the Sidebar, as `workspace open` puts it there.
 			return {
-				workspaceId: this.openedWorkspaceId(requestedLocation(folder)),
+				workspaceId: await this.openFolderUnfocused(requestedLocation(folder)),
 				agentId: undefined,
 			};
 		}
@@ -9450,6 +9507,7 @@ export class AppController {
 			{
 				...(request.start === undefined ? {} : { start: request.start }),
 				review: false,
+				focus: "none",
 			},
 		);
 		const agent = this.coordinator.model.workspaces
@@ -9457,7 +9515,8 @@ export class AppController {
 			.find((candidate) => !before.has(candidate.id));
 		return {
 			workspaceId:
-				agent?.workspaceId ?? this.openedWorkspaceId(requestedLocation(folder)),
+				agent?.workspaceId ??
+				(await this.openFolderUnfocused(requestedLocation(folder))),
 			agentId: agent?.id,
 		};
 	}
@@ -9822,13 +9881,19 @@ export class AppController {
 			// with its editor, and no agent is started or told anything.
 			return this.openFolder(opening);
 		}
-		await this.openFolder(opening, undefined, "automatic", "for-agent");
+		const quiet = how.focus === "none";
+		let workspaceId: WorkspaceId;
+		if (quiet) {
+			workspaceId = await this.openFolderUnfocused(opening);
+		} else {
+			await this.openFolder(opening, undefined, "automatic", "for-agent");
+			workspaceId = this.openedWorkspaceId(opening);
+		}
 		// Not `openFolder(opening, withAgent)`: this flow has more to do around
 		// the creation than that shortcut can express — the Agent goes beside the
 		// editor when the person asked for that, it may resume a session, and the
 		// Issue's prompt is queued against whichever Agent it produced — but
 		// *which workspace opening produced* is the same fact, read the same way.
-		const workspaceId = this.openedWorkspaceId(opening);
 		const agentsBefore = new Set(
 			this.coordinator.model.workspaces.flatMap((workspace) =>
 				workspace.agents.map((agent) => agent.id),
@@ -9845,9 +9910,10 @@ export class AppController {
 			...(request.resume === undefined
 				? {}
 				: { resume: sessionId(request.resume) }),
+			...(quiet ? { focus: "none" as const } : {}),
 		});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId, how);
-		await this.syncEditorView();
+		if (!quiet) await this.syncEditorView();
 		return outcomeWire(
 			settled,
 			this.coordinator.readiness,
@@ -10769,6 +10835,8 @@ function at(position: ControlPosition | undefined): string {
 interface IssuePromptHow {
 	readonly start?: ActionStart;
 	readonly review?: boolean;
+	/** `"none"` from `devhub --tell`: nothing is selected, shown or focused. */
+	readonly focus?: IntentFocus;
 }
 
 let current: AppController | undefined;

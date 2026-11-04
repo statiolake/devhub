@@ -263,7 +263,7 @@ describe("words put in the composer from outside", () => {
   it("are the ones main held for the attachment, then each one it sends, numbered once each", async () => {
     await attached(5, "", ["held"]);
     expect(texts()).toEqual(["held"]);
-    act(() => insertListener?.("later"));
+    act(() => insertListener?.("later", true));
     expect(texts()).toEqual(["held", "later"]);
     expect((insertions.at(-1) ?? []).map((each) => each.id)).toEqual([1, 2]);
   });
@@ -279,7 +279,7 @@ describe("words put in the composer from outside", () => {
         hidden={false}
       />,
     );
-    act(() => insertListener?.("early"));
+    act(() => insertListener?.("early", true));
     expect(texts()).toEqual([]);
     await act(async () => {
       answerAttach({

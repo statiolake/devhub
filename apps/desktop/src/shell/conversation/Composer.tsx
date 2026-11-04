@@ -54,6 +54,7 @@
  * anything typed. See `dictation.ts`.
  */
 
+import { appendToDraft } from "../../model/conversation";
 import {
   useCallback,
   useEffect,
@@ -381,21 +382,14 @@ const NO_INSERTIONS: readonly ComposerInsertion[] = [];
 export interface ComposerInsertion {
   readonly id: number;
   readonly text: string;
+  /**
+   * Put the keyboard in the composer with it. False for words DevHub drafts
+   * on its own (`devhub --tell`), which never move the person's keyboard.
+   */
+  readonly focus?: boolean;
 }
 
-/**
- * `insertion` after what is already in the composer, on a paragraph of its
- * own; alone when the composer is empty.
- */
-export function appendToDraft(draft: string, insertion: string): string {
-  if (draft.trim() === "") return insertion;
-  const separator = draft.endsWith("\n\n")
-    ? ""
-    : draft.endsWith("\n")
-      ? "\n"
-      : "\n\n";
-  return `${draft}${separator}${insertion}`;
-}
+export { appendToDraft };
 
 export function Composer({
   transcript,
@@ -581,7 +575,7 @@ export function Composer({
     );
     setRecalled(undefined);
     const input = inputRef.current;
-    if (input) {
+    if (input && fresh.some((each) => each.focus !== false)) {
       input.focus();
       requestAnimationFrame(() => {
         const end = input.value.length;

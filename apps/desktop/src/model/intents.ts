@@ -47,6 +47,17 @@ import type { TerminalZoomDirection } from "./terminalZoom.js";
 import type { WorkspaceTerminalObservation } from "./terminalActivity.js";
 
 /** Native application lifecycle readiness owned by the coordinator. */
+/**
+ * Whether an intent that makes something also goes there.
+ *
+ * Absent is the window's way: opening a folder selects its Workspace, and
+ * creating an Agent selects it, because a person who asked for one is going
+ * to it. `"none"` is the command line's (`devhub --tell`): the thing is made
+ * and appears in the Sidebar, and the selection — and so what is shown and
+ * where the keyboard is — stays where the person left it.
+ */
+export type IntentFocus = "none";
+
 export type AppReadiness = "starting" | "ready" | "unavailable";
 
 declare const brand: unique symbol;
@@ -343,6 +354,8 @@ export type UserIntent =
   | {
       readonly type: "open_folder";
       readonly location: RequestedWorkspaceLocation;
+      /** `"none"`: open it without selecting it (`IntentFocus`). */
+      readonly focus?: IntentFocus;
     }
   | { readonly type: "new_window"; readonly path?: RequestedPath }
   | { readonly type: "retry_workspace"; readonly workspaceId: WorkspaceId }
@@ -405,6 +418,8 @@ export type UserIntent =
        * CLI is told, so this is the id alone.
        */
       readonly resume?: string;
+      /** `"none"`: start it without selecting it (`IntentFocus`). */
+      readonly focus?: IntentFocus;
     }
   /**
    * Carry an Agent's session on in the other presentation: a GUI Agent's in a

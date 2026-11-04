@@ -276,11 +276,13 @@ function useConversation(
   useEffect(() => {
     const bridge = devhub();
     let insertions = 0;
-    const insert = (texts: readonly string[]) => {
+    const insert = (
+      texts: readonly { readonly text: string; readonly focus: boolean }[],
+    ) => {
       if (texts.length === 0) return;
       setInserted((current) => [
         ...current,
-        ...texts.map((text) => ({ id: ++insertions, text })),
+        ...texts.map(({ text, focus }) => ({ id: ++insertions, text, focus })),
       ]);
     };
     let current: { transcript: Transcript; revision: number } | undefined;
@@ -294,7 +296,7 @@ function useConversation(
       });
     };
     const early: [number, ConversationEvent][] = [];
-    const earlyInserts: string[] = [];
+    const earlyInserts: { text: string; focus: boolean }[] = [];
     const fold = (revision: number, event: ConversationEvent) => {
       if (broken) return;
       if (current === undefined) {
@@ -322,17 +324,20 @@ function useConversation(
     };
     let attached = true;
     bridge.conversation
-      .attach(agentId, fold, (text) => {
+      .attach(agentId, fold, (text, focus) => {
         // After the ones main held for the attachment, which were earlier.
-        if (current === undefined) earlyInserts.push(text);
-        else if (attached) insert([text]);
+        if (current === undefined) earlyInserts.push({ text, focus });
+        else if (attached) insert([{ text, focus }]);
       })
       .then((attachment) => {
         if (!attached) return;
         current = attachment;
         setTranscript(attachment.transcript);
         setDraft(attachment.draft);
-        insert([...attachment.inserted, ...earlyInserts.splice(0)]);
+        insert([
+          ...attachment.inserted.map((text) => ({ text, focus: true })),
+          ...earlyInserts.splice(0),
+        ]);
         for (const [revision, event] of early.splice(0)) fold(revision, event);
       })
       .catch((error: unknown) => {
