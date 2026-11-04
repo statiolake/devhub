@@ -208,6 +208,16 @@ export interface SettingsConfigWire {
 		readonly presentation: "gui" | "tui" | undefined;
 		readonly eventPrompt: string;
 		readonly initPrompt: string | undefined;
+		/** Event type patterns (`github.*`, `!agent.started`). */
+		readonly events: readonly string[];
+		/** `[orchestrator.github]`. */
+		readonly githubProjects: readonly string[];
+		readonly githubInterval: string;
+		/** `[[orchestrator.timers]]`. */
+		readonly timers: readonly {
+			readonly name: string;
+			readonly interval: string;
+		}[];
 	};
 	/**
 	 * `[agents]`: how an Agent is shown when neither its launch nor its

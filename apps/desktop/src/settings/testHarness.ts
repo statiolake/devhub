@@ -23,6 +23,7 @@ import {
   DEFAULT_ACTION_TEMPLATE,
 } from "../model/agentActions";
 import type { SettingsClient } from "./client";
+import { DEFAULT_ORCHESTRATOR_EVENTS } from "../model/orchestratorSettings";
 
 const PALETTE: SettingsTerminalPaletteWire = {
   background: "#FFFFFF",
@@ -50,12 +51,16 @@ export function testConfig(
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },
     orchestrator: {
-      root: undefined,
+      root: "~/orchestrator",
       profile: undefined,
       presentation: undefined,
       eventPrompt:
         "このイベントが発生したのでハンドリングしてください。{EVENT}",
       initPrompt: undefined,
+      events: [...DEFAULT_ORCHESTRATOR_EVENTS],
+      githubProjects: [],
+      githubInterval: "90s",
+      timers: [],
     },
     terminal: { macOptionIsMeta: false },
     agents: {

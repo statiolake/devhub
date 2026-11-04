@@ -1,0 +1,130 @@
+import { describe, expect, it } from "vitest";
+import {
+  CONFIG_SCHEMA_VERSION,
+  configDocument,
+  defaultConfig,
+  interpretConfig as interpretDocument,
+} from "./config.js";
+
+const interpretConfig = (document: Record<string, unknown>) =>
+  interpretDocument({ version: CONFIG_SCHEMA_VERSION, ...document });
+import {
+  DEFAULT_ORCHESTRATOR,
+  DEFAULT_ORCHESTRATOR_EVENTS,
+  eventAllowed,
+  eventPatternProblem,
+  formatInterval,
+  orchestratorProblem,
+  parseInterval,
+  parseProjectRef,
+  renderEventPrompt,
+} from "./orchestratorSettings.js";
+
+describe("[orchestrator] settings", () => {
+  it("defaults root to ~/orchestrator, and does not write the default back", () => {
+    expect(DEFAULT_ORCHESTRATOR.root).toBe("~/orchestrator");
+    expect(interpretConfig({}).orchestrator.root).toBe("~/orchestrator");
+    expect(
+      interpretConfig({ orchestrator: { root: "~/workspace/work/x" } })
+        .orchestrator.root,
+    ).toBe("~/workspace/work/x");
+    expect(configDocument(defaultConfig())["orchestrator"]).toEqual({
+      event_prompt: DEFAULT_ORCHESTRATOR.event_prompt,
+    });
+  });
+
+  it("reads events, [orchestrator.github] and [[orchestrator.timers]]", () => {
+    const config = interpretConfig({
+      orchestrator: {
+        events: ["github.*", "!github.checks", "agent.turn_ended"],
+        github: { projects: ["my-org/7"], interval: "2m" },
+        timers: [{ name: "tick", interval: "5m" }],
+      },
+    });
+    expect(config.orchestrator.events).toEqual([
+      "github.*",
+      "!github.checks",
+      "agent.turn_ended",
+    ]);
+    expect(config.orchestrator.github).toEqual({
+      projects: ["my-org/7"],
+      interval: "2m",
+    });
+    expect(config.orchestrator.timers).toEqual([
+      { name: "tick", interval: "5m" },
+    ]);
+    expect(orchestratorProblem(config.orchestrator)).toBeUndefined();
+    // And writes them back as tables.
+    expect(configDocument(config)["orchestrator"]).toMatchObject({
+      events: ["github.*", "!github.checks", "agent.turn_ended"],
+      github: { projects: ["my-org/7"], interval: "2m" },
+      timers: [{ name: "tick", interval: "5m" }],
+    });
+    expect(interpretConfig({}).orchestrator.events).toEqual(
+      DEFAULT_ORCHESTRATOR_EVENTS,
+    );
+  });
+
+  it("refuses what does not read, by the key it is about", () => {
+    const with_ = (patch: Partial<typeof DEFAULT_ORCHESTRATOR>) =>
+      orchestratorProblem({ ...DEFAULT_ORCHESTRATOR, ...patch });
+    expect(with_({ events: ["GitHub!"] })).toBe("events");
+    expect(with_({ github: { projects: ["my-org"], interval: "90s" } })).toBe(
+      "github.projects",
+    );
+    expect(with_({ github: { projects: [], interval: "5s" } })).toBe(
+      "github.interval",
+    );
+    expect(
+      with_({
+        timers: [
+          { name: "tick", interval: "5m" },
+          { name: "tick", interval: "1h" },
+        ],
+      }),
+    ).toBe("timers[1].name");
+    expect(with_({ timers: [{ name: "t", interval: "5" }] })).toBe(
+      "timers[0].interval",
+    );
+  });
+
+  it("filters by the last matching pattern, and always lets init through", () => {
+    const patterns = ["github.*", "!github.checks", "agent.turn_ended"];
+    expect(eventAllowed("github.assigned", patterns)).toBe(true);
+    expect(eventAllowed("github.checks", patterns)).toBe(false);
+    expect(eventAllowed("agent.turn_ended", patterns)).toBe(true);
+    expect(eventAllowed("agent.started", patterns)).toBe(false);
+    expect(eventAllowed("init", [])).toBe(true);
+    expect(eventAllowed("custom.deploy", ["*"])).toBe(true);
+    expect(eventPatternProblem("timer.*")).toBe(false);
+    expect(eventPatternProblem("!agent.started")).toBe(false);
+    expect(eventPatternProblem("a b")).toBe(true);
+    // The default leaves out the chatter.
+    expect(eventAllowed("agent.started", DEFAULT_ORCHESTRATOR_EVENTS)).toBe(
+      false,
+    );
+    expect(eventAllowed("github.pr_merged", DEFAULT_ORCHESTRATOR_EVENTS)).toBe(
+      true,
+    );
+  });
+
+  it("reads intervals and project references", () => {
+    expect(parseInterval("90s")).toBe(90_000);
+    expect(parseInterval("1h30m")).toBe(5_400_000);
+    expect(parseInterval("5")).toBeUndefined();
+    expect(formatInterval(5_400_000)).toBe("1h30m");
+    expect(parseProjectRef("my-org/7")).toEqual({ owner: "my-org", number: 7 });
+    expect(parseProjectRef("my-org/0")).toBeUndefined();
+  });
+
+  it("renders {EVENT} and {EVENT_JSON}, and appends the event when neither is there", () => {
+    expect(renderEventPrompt("/go {EVENT}", "E", "[1]")).toBe("/go E");
+    expect(renderEventPrompt("{EVENT}\n{EVENT_JSON}", "E", "[1]")).toBe(
+      "E\n[1]",
+    );
+    expect(renderEventPrompt("/go {EVENT_JSON}", "E", '[{"type":"x"}]')).toBe(
+      '/go [{"type":"x"}]',
+    );
+    expect(renderEventPrompt("handle it", "E")).toBe("handle it\n\nE");
+  });
+});

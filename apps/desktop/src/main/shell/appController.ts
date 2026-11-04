@@ -349,7 +349,7 @@ import {
 	OrchestratorService,
 	type LiveAgent,
 } from "../orchestrator/orchestratorService.js";
-import { statSync } from "node:fs";
+import { ensureOrchestratorRoot } from "../orchestrator/root.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import {
 	MICROPHONE_SETTINGS_URL,
@@ -9114,8 +9114,6 @@ export class AppController {
 	/** Why the window's Start cannot start one now; undefined when it can. */
 	private orchestratorStartProblem(): string | undefined {
 		const settings = this.config.orchestrator;
-		if (settings.root === undefined)
-			return "Set the orchestrator's folder first: Settings ▸ General ▸ Orchestrator (orchestrator.root).";
 		const profiles = this.agentProfiles().profiles;
 		if (profiles.length === 0) return "There is no agent profile to start.";
 		if (
@@ -9135,10 +9133,13 @@ export class AppController {
 		const profile =
 			profiles.find((one) => one.id === settings.profile) ?? profiles[0]!;
 		await this.startOrchestrator({
-			root: settings.root!,
+			root: settings.root,
 			profile: profile.id,
 			presentation: settings.presentation ?? profile.presentation,
 			prompt: undefined,
+			// The window's Start makes the folder (the default ~/orchestrator
+			// included); a command line's --root has to exist already.
+			createRoot: true,
 		});
 	}
 
@@ -9153,6 +9154,7 @@ export class AppController {
 		readonly profile: string;
 		readonly presentation: "gui" | "tui";
 		readonly prompt: string | undefined;
+		readonly createRoot?: boolean;
 	}): Promise<string> {
 		const service = this.requireOrchestrator();
 		const running = service.orchestratorAgentId;
@@ -9160,22 +9162,9 @@ export class AppController {
 			throw new Error(
 				`an orchestrator is already running (${running}). Stop it first: devhub --tell orchestrator stop.`,
 			);
-		const root =
-			request.root === "~"
-				? homedir()
-				: request.root.startsWith("~/")
-					? join(homedir(), request.root.slice(2))
-					: request.root;
-		let isFolder = false;
-		try {
-			isFolder = statSync(root).isDirectory();
-		} catch {
-			isFolder = false;
-		}
-		if (!isFolder)
-			throw new Error(
-				`the orchestrator's folder ${root} is not a folder on this Mac. Make it, or set orchestrator.root to one.`,
-			);
+		const root = ensureOrchestratorRoot(request.root, {
+			create: request.createRoot === true,
+		});
 		const workspaceId = await this.openFolderUnfocused(
 			requestedLocation({ kind: "local", path: root }),
 		);

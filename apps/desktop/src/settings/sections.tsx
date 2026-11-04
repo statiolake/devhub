@@ -61,9 +61,21 @@ import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import { scratchDailyProblem } from "../model/scratchDay";
 import {
   DEFAULT_EVENT_PROMPT,
+  DEFAULT_GITHUB_INTERVAL,
+  DEFAULT_ORCHESTRATOR_EVENTS,
+  DEFAULT_ORCHESTRATOR_ROOT,
+  MIN_GITHUB_INTERVAL_MS,
+  MIN_TIMER_INTERVAL_MS,
+  ORCHESTRATOR_EVENTS_RULE,
+  ORCHESTRATOR_GITHUB_RULE,
   ORCHESTRATOR_PROMPT_RULE,
   ORCHESTRATOR_ROOT_RULE,
+  ORCHESTRATOR_TIMER_RULE,
+  eventPatternProblem,
+  intervalProblem,
+  isTimerName,
   orchestratorRootProblem,
+  projectRefProblem,
   promptProblem,
 } from "../model/orchestratorSettings";
 import { resumeMessageProblem } from "../model/conversation";
@@ -506,12 +518,16 @@ export function GeneralSection({
       >
         <Row
           label="Folder"
-          help="Where the orchestrator agent runs, so the skills and instructions in that folder (.claude/skills, CLAUDE.md, AGENTS.md) are its own. An absolute path, or one starting with ~/."
+          help="Where the orchestrator agent runs, so the skills and instructions in that folder (.claude/skills, CLAUDE.md, AGENTS.md) are its own. An absolute path, or one starting with ~/. Left empty, it is ~/orchestrator, which Start makes if it is missing."
         >
           <TextField
             label="Orchestrator folder"
-            value={config.orchestrator.root ?? ""}
-            placeholder="Not set"
+            value={
+              config.orchestrator.root === DEFAULT_ORCHESTRATOR_ROOT
+                ? ""
+                : (config.orchestrator.root ?? "")
+            }
+            placeholder={DEFAULT_ORCHESTRATOR_ROOT}
             mono
             validate={(next) =>
               next !== "" && orchestratorRootProblem(next)
@@ -523,7 +539,7 @@ export function GeneralSection({
                 ...config,
                 orchestrator: {
                   ...config.orchestrator,
-                  root: next === "" ? undefined : next,
+                  root: next === "" ? DEFAULT_ORCHESTRATOR_ROOT : next,
                 },
               });
             }}
@@ -575,7 +591,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Event message"
-          help="Sent to the orchestrator for each event (an answered escalation, an agent nobody accounts for, …). {EVENT} is replaced by the event, e.g. /make-progress {EVENT}."
+          help="Sent to the orchestrator for each event (an answered escalation, an agent nobody accounts for, …). {EVENT} is replaced by the event (several waiting events arrive together, as one list), {EVENT_JSON} by the same as JSON, e.g. /make-progress {EVENT}."
         >
           <TextField
             label="Orchestrator event message"
@@ -611,6 +627,120 @@ export function GeneralSection({
                 orchestrator: {
                   ...config.orchestrator,
                   initPrompt: next === "" ? undefined : next,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Events"
+          help="Which events reach the orchestrator, by type, comma-separated: github.*, agent.turn_ended, timer.*, … ; !type takes one back out. Fewer events, fewer tokens. Left empty, DevHub's default set."
+        >
+          <TextField
+            label="Orchestrator events"
+            value={
+              sameList(config.orchestrator.events, DEFAULT_ORCHESTRATOR_EVENTS)
+                ? ""
+                : config.orchestrator.events.join(", ")
+            }
+            placeholder={DEFAULT_ORCHESTRATOR_EVENTS.join(", ")}
+            mono
+            validate={(next) =>
+              splitList(next).some(eventPatternProblem)
+                ? ORCHESTRATOR_EVENTS_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              const events = splitList(next);
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  events:
+                    events.length === 0
+                      ? [...DEFAULT_ORCHESTRATOR_EVENTS]
+                      : events,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="GitHub Projects"
+          help="The Projects boards whose lanes are watched for github.lane_changed, as OWNER/NUMBER, comma-separated. DevHub only reads them."
+        >
+          <TextField
+            label="Orchestrator GitHub projects"
+            value={config.orchestrator.githubProjects.join(", ")}
+            placeholder="my-org/7"
+            mono
+            validate={(next) =>
+              splitList(next).some(projectRefProblem)
+                ? ORCHESTRATOR_GITHUB_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  githubProjects: splitList(next),
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="GitHub interval"
+          help="How often GitHub is asked for events while an orchestrator runs: one query a round, backing off as the rate limit runs low."
+        >
+          <TextField
+            label="Orchestrator GitHub interval"
+            value={
+              config.orchestrator.githubInterval === DEFAULT_GITHUB_INTERVAL
+                ? ""
+                : config.orchestrator.githubInterval
+            }
+            placeholder={DEFAULT_GITHUB_INTERVAL}
+            mono
+            validate={(next) =>
+              next !== "" && intervalProblem(next, MIN_GITHUB_INTERVAL_MS)
+                ? ORCHESTRATOR_GITHUB_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  githubInterval: next === "" ? DEFAULT_GITHUB_INTERVAL : next,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Timers"
+          help="Fixed timers, each sent as timer.elapsed with its name: name=interval, comma-separated (tick=5m, sweep=1h). devhub --tell orchestrator timer changes them for the session."
+        >
+          <TextField
+            label="Orchestrator timers"
+            value={config.orchestrator.timers
+              .map((timer) => `${timer.name}=${timer.interval}`)
+              .join(", ")}
+            placeholder="tick=5m"
+            mono
+            validate={(next) =>
+              parseTimers(next) === undefined
+                ? ORCHESTRATOR_TIMER_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  timers: parseTimers(next) ?? [],
                 },
               });
             }}
@@ -2347,4 +2477,37 @@ export function KeyboardSection({
       </Group>
     </Form>
   );
+}
+
+/** `a, b ,c` as `["a", "b", "c"]`. */
+function splitList(text: string): string[] {
+  return text
+    .split(",")
+    .map((one) => one.trim())
+    .filter((one) => one.length > 0);
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((one, index) => one === b[index]);
+}
+
+/** `tick=5m, sweep=1h` as timers; undefined when one does not read. */
+function parseTimers(
+  text: string,
+): { readonly name: string; readonly interval: string }[] | undefined {
+  const timers: { name: string; interval: string }[] = [];
+  for (const part of splitList(text)) {
+    const [name, interval, ...more] = part.split("=").map((one) => one.trim());
+    if (
+      name === undefined ||
+      interval === undefined ||
+      more.length > 0 ||
+      !isTimerName(name) ||
+      timers.some((one) => one.name === name) ||
+      intervalProblem(interval, MIN_TIMER_INTERVAL_MS)
+    )
+      return undefined;
+    timers.push({ name, interval });
+  }
+  return timers;
 }

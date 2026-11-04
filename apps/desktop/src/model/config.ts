@@ -56,9 +56,14 @@ import {
 import { DEFAULT_SCRATCH_DAILY, scratchDailyProblem } from "./scratchDay.js";
 import {
   DEFAULT_ORCHESTRATOR,
+  DEFAULT_ORCHESTRATOR_EVENTS,
+  ORCHESTRATOR_GITHUB_KEYS,
   ORCHESTRATOR_KEYS,
+  ORCHESTRATOR_TIMER_KEYS,
+  orchestratorDocument,
   orchestratorProblem,
   type OrchestratorConfig,
+  type OrchestratorTimerConfig,
 } from "./orchestratorSettings.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
@@ -2049,6 +2054,29 @@ export function interpretConfig(document: unknown): Config {
     if (typeof value !== "string") fail("invalid_type", `orchestrator.${key}`);
     return value;
   };
+  const orchestratorGitHub = requireTable(
+    orchestratorTable["github"] ?? {},
+    "orchestrator.github",
+  );
+  checkKeys(
+    orchestratorGitHub,
+    ORCHESTRATOR_GITHUB_KEYS,
+    "orchestrator.github",
+  );
+  const orchestratorTimersValue = orchestratorTable["timers"] ?? [];
+  if (!Array.isArray(orchestratorTimersValue))
+    fail("invalid_type", "orchestrator.timers");
+  const orchestratorTimers: OrchestratorTimerConfig[] = (
+    orchestratorTimersValue as unknown[]
+  ).map((entry, index) => {
+    const path = `orchestrator.timers[${String(index)}]`;
+    const timer = requireTable(entry, path);
+    checkKeys(timer, ORCHESTRATOR_TIMER_KEYS, path);
+    return {
+      name: requiredString(timer, "name", path),
+      interval: requiredString(timer, "interval", path),
+    };
+  });
   const projectDirectory = projectsTable["directory"];
   if (projectDirectory !== undefined && typeof projectDirectory !== "string") {
     fail("invalid_type", "projects.directory");
@@ -2282,7 +2310,7 @@ export function interpretConfig(document: unknown): Config {
     },
     projects: { directory: projectDirectory },
     orchestrator: {
-      root: orchestratorText("root"),
+      root: orchestratorText("root") ?? DEFAULT_ORCHESTRATOR.root,
       profile: orchestratorText("profile"),
       presentation: orchestratorText("presentation") as
         | "gui"
@@ -2291,6 +2319,27 @@ export function interpretConfig(document: unknown): Config {
       event_prompt:
         orchestratorText("event_prompt") ?? DEFAULT_ORCHESTRATOR.event_prompt,
       init_prompt: orchestratorText("init_prompt"),
+      events: optionalStringArray(
+        orchestratorTable,
+        "events",
+        "orchestrator",
+        DEFAULT_ORCHESTRATOR_EVENTS,
+      ),
+      github: {
+        projects: optionalStringArray(
+          orchestratorGitHub,
+          "projects",
+          "orchestrator.github",
+          [],
+        ),
+        interval: optionalString(
+          orchestratorGitHub,
+          "interval",
+          "orchestrator.github",
+          DEFAULT_ORCHESTRATOR.github.interval,
+        ),
+      },
+      timers: orchestratorTimers,
     },
     agents: {
       default_presentation: optionalString(
@@ -2446,11 +2495,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     ...(config.projects.directory === undefined
       ? {}
       : { projects: { directory: config.projects.directory } }),
-    orchestrator: Object.fromEntries(
-      Object.entries(config.orchestrator).filter(
-        ([, value]) => value !== undefined,
-      ),
-    ),
+    orchestrator: orchestratorDocument(config.orchestrator),
     agents: {
       default_presentation: config.agents.default_presentation,
       resume_after_limit: config.agents.resume_after_limit,

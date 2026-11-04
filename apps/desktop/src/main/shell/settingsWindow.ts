@@ -48,6 +48,7 @@ import {
 import { SHELL_ORIGIN } from "./shellPageProtocol.js";
 import type { RunningSettings } from "./runningSettings.js";
 import { shellThemeIfInstalled } from "./shellTheme.js";
+import { DEFAULT_ORCHESTRATOR_ROOT } from "../../model/orchestratorSettings.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 
 /** Where the log folder button opens, given the app's user-data directory. */
@@ -248,6 +249,10 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			presentation: config.orchestrator.presentation,
 			eventPrompt: config.orchestrator.event_prompt,
 			initPrompt: config.orchestrator.init_prompt,
+			events: config.orchestrator.events,
+			githubProjects: config.orchestrator.github.projects,
+			githubInterval: config.orchestrator.github.interval,
+			timers: config.orchestrator.timers,
 		},
 		agents: {
 			defaultPresentation: config.agents.default_presentation,
@@ -394,11 +399,17 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		scratch: { daily: wire.scratch.daily },
 		projects: { directory: wire.projects.directory },
 		orchestrator: {
-			root: wire.orchestrator.root,
+			root: wire.orchestrator.root ?? DEFAULT_ORCHESTRATOR_ROOT,
 			profile: wire.orchestrator.profile,
 			presentation: wire.orchestrator.presentation,
 			event_prompt: wire.orchestrator.eventPrompt,
 			init_prompt: wire.orchestrator.initPrompt,
+			events: wire.orchestrator.events,
+			github: {
+				projects: wire.orchestrator.githubProjects,
+				interval: wire.orchestrator.githubInterval,
+			},
+			timers: wire.orchestrator.timers,
 		},
 		agents: {
 			default_presentation: wire.agents.defaultPresentation,

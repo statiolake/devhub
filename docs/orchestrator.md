@@ -35,7 +35,8 @@ the person's own, in skills and instructions in the orchestrator's folder.
 - `root` opens as an ordinary Workspace row (nothing selected), so the
   orchestrator's skills and instructions are an editor click away.
 - With no orchestrator, the right half says so and offers **Start
-  Orchestrator**, from `[orchestrator]` below.
+  Orchestrator**, from `[orchestrator]` below (in `~/orchestrator` unless
+  `root` says otherwise; the folder is made if it is missing).
 - A restart opens on Scratch rather than on this row: the row is not written
   into `state.json`, so an older DevHub can still read the file.
 
@@ -157,12 +158,16 @@ reported until it is read, so nothing between two waits is missed.
 
 ```toml
 [orchestrator]
-root = "~/orchestrator"          # the folder it runs in: its skills are this folder's
+root = "~/orchestrator"          # the folder it runs in (this is the default): its skills are this folder's
 profile = "claude"               # the window's Start; absent: the window's default
 presentation = "gui"             # gui | tui; absent: the profile's default
 event_prompt = "このイベントが発生したのでハンドリングしてください。{EVENT}"
 # init_prompt = "/start-orchestrating {EVENT}"   # absent: event_prompt with init
 ```
+
+`root` defaults to `~/orchestrator`. The window's **Start** makes the folder
+(and its parents) when it is missing; `orchestrator start --root` on a command
+line never does, and refuses a folder that is not there.
 
 `event_prompt` can invoke a skill: `"/make-progress {EVENT}"`. They are in
 Settings ▸ General ▸ Orchestrator and validated with every other setting.

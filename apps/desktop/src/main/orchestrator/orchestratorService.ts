@@ -298,7 +298,7 @@ export class OrchestratorService {
 				? {}
 				: { orchestratorAgentId: orchestrator }),
 			start: {
-				...(settings.root === undefined ? {} : { root: settings.root }),
+				root: settings.root,
 				...(settings.profile === undefined
 					? {}
 					: { profile: settings.profile }),
