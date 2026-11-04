@@ -272,6 +272,9 @@ def check_inputs() -> None:
 		# The Task Manager's footprints. A bundle without it shows the resident
 		# set, which hides what is compressed or swapped out.
 		(DESKTOP_DIR / "out" / "native" / "devhub-footprint", "pnpm --filter @devhub/desktop build"),
+		# Holds DevHub's process group un-orphaned while workbenches are frozen.
+		# A bundle without it never freezes a workbench.
+		(DESKTOP_DIR / "out" / "native" / "devhub-pgrp-anchor", "pnpm --filter @devhub/desktop build"),
 		(BRIDGE_DIR / "dist" / "extension.js", "pnpm --filter @devhub/bridge build"),
 		# Without this the packaged app has no `ssh-remote` resolver, and every
 		# SSH Workspace opens a workbench that waits for an authority nothing

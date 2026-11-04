@@ -10,8 +10,11 @@
 import { electron } from "./electron.js";
 import { installBrowserWindowShim } from "./shell/browserWindowShim.js";
 import { letAgentsPageDictate } from "./voice/microphonePermission.js";
+import { installQuitTrace } from "./shell/quitTrace.js";
 
 installBrowserWindowShim();
+// Before anything can quit: every way out says who asked (`quitTrace.ts`).
+installQuitTrace(electron.app, process);
 
 // Registered here so it runs before `main.ts`'s own `ready` listener, and so
 // before VS Code installs its permission handlers on the default session:

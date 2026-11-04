@@ -14,6 +14,7 @@
  * happens to be current.
  */
 
+import { processGroupAnchor } from "./processGroupAnchor.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
@@ -5254,6 +5255,7 @@ export class AppController {
 			case "noop":
 				return;
 			case "detach":
+				console.log(`[devhub] quit: detach (${effect.reason})`);
 				electron.app.quit();
 				return;
 			case "persist_state":
@@ -7405,6 +7407,11 @@ export class AppController {
 		const view = this.liveWorkbench(folder);
 		try {
 			if (view === undefined) throw new Error("it has no view");
+			// Stopped processes in an orphaned process group are what the kernel
+			// hangs up, DevHub's main with them: see `processGroupAnchor.ts`.
+			if (!processGroupAnchor().anchored()) {
+				throw new Error("DevHub's process group is not anchored");
+			}
 			view.setFrozen(true);
 			void this.freezer
 				.freeze(folder, this.workbenchPids(view))

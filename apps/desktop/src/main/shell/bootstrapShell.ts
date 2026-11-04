@@ -58,6 +58,7 @@ import {
 import { commandOf } from "./taskManagerReading.js";
 import { refreshMenu } from "./menu.js";
 import { startControlServer } from "../cli/controlServer.js";
+import { processGroupAnchor } from "./processGroupAnchor.js";
 import { controlSocketPath } from "../cli/protocol.js";
 import { installLauncher } from "../cli/install.js";
 import {
@@ -149,6 +150,9 @@ export async function bootstrapShell(
 	cliArgs: NativeParsedArgs,
 	extensionRoots: ExtensionRoots,
 ): Promise<void> {
+	// First, so that it holds before the first background workbench is frozen:
+	// a freeze waits for it (`processGroupAnchor.ts`).
+	processGroupAnchor();
 	// The terminal launcher for this machine, written before any window exists
 	// because the local `Runtime` does not install one — it hands back the path
 	// this line wrote. See `terminal/launcher.ts` and `runtime/local.ts`.
@@ -443,6 +447,9 @@ export async function bootstrapShell(
 	electron.app.on("before-quit", (event) => {
 		if (quitting) return;
 		quitting = true;
+		// Whoever asked has said so already (`quitTrace.ts`); this is the one
+		// shutdown, starting.
+		console.log("[devhub] quit: before-quit — shutting down");
 		// From here the shell window is allowed to close: until now it answered
 		// a close by hiding.
 		beginQuit();

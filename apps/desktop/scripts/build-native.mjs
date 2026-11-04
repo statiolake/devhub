@@ -9,7 +9,11 @@
  *   while a chord is armed (`src/main/native/inputSource.c`, see
  *   `src/main/shell/inputSourceHelper.ts`).
  *
- * Both are macOS APIs (Carbon, libproc), so there is nothing to build anywhere
+ * - `devhub-pgrp-anchor`, which holds DevHub's process group un-orphaned
+ *   while workbenches are frozen (`src/main/native/processGroupAnchor.c`, see
+ *   `src/main/shell/processGroupAnchor.ts`). Plain POSIX: built everywhere.
+ *
+ * The first two are macOS APIs (Carbon, libproc), so there is nothing to build anywhere
  * but macOS. Elsewhere — the Linux containers DevHub is developed and tested
  * in (scripts/test-local.sh) — the build says so and leaves `out/native`
  * without them; a running app then fails the input source helper's requests
@@ -23,6 +27,35 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
+mkdirSync(`${root}/out/native`, { recursive: true });
+
+// `devhub-pgrp-anchor`, which keeps DevHub's process group from being
+// orphaned while a workbench is frozen (`src/main/native/processGroupAnchor.c`,
+// see `src/main/shell/processGroupAnchor.ts`). Plain POSIX, so it is built
+// everywhere: without it no workbench is frozen. Off macOS a machine with no
+// C compiler says so and goes on, as the macOS-only helpers do there.
+try {
+  execFileSync(
+    process.platform === "darwin" ? "clang" : "cc",
+    [
+      "-O2",
+      "-Wall",
+      "-Wextra",
+      "-Werror",
+      ...(process.platform === "darwin" ? ["-mmacosx-version-min=12.0"] : []),
+      "-o",
+      "out/native/devhub-pgrp-anchor",
+      "src/main/native/processGroupAnchor.c",
+    ],
+    { cwd: root, stdio: "inherit" },
+  );
+} catch (error) {
+  if (process.platform === "darwin") throw error;
+  console.log(
+    `build:native: devhub-pgrp-anchor not built (${error.message}); workbenches will not be frozen`,
+  );
+}
+
 if (process.platform !== "darwin") {
   console.log(
     `build:native: devhub-input-source and devhub-footprint are macOS-only; not built on ${process.platform}`,
@@ -30,7 +63,6 @@ if (process.platform !== "darwin") {
   process.exit(0);
 }
 
-mkdirSync(`${root}/out/native`, { recursive: true });
 const flags = [
   "-O2",
   "-Wall",
