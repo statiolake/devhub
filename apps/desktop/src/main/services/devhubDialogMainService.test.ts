@@ -135,6 +135,26 @@ describe("a dialog about a workbench", () => {
 		expect(overWorkbench).toEqual([]);
 	});
 
+	it("is declined, not asked, when the workbench died while still bound", async () => {
+		// A renderer gone ends the view at once, but the Workspace still names
+		// it until the supervisor hears — and upstream's own listener asks in
+		// between. Asked over the workbench it stood as a modal that took the
+		// keyboard; answered "Reopen" (button 0) upstream opened a second window
+		// for the folder. The answer is the button that does nothing.
+		const view = fakeView(1000006, true);
+		surfaceKeys.set(view.id, "editor:gone");
+		const answer = await service().showMessageBox(
+			{
+				message: "The window terminated unexpectedly (reason: 'clean-exit')",
+				buttons: ["&&Reopen", "&&Close"],
+			},
+			asWindow(view),
+		);
+		expect(answer).toEqual({ response: 1, checkboxChecked: false });
+		expect(overWorkbench).toEqual([]);
+		expect(parents).toEqual([]);
+	});
+
 	it("takes a file picker to the one real window too", async () => {
 		// A picker is genuinely the application asking, and it is the same rule
 		// about parents: a view must not be one.

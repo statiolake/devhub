@@ -54,29 +54,38 @@ export class DevHubDialogMainService extends DialogMainService {
 		window?: Electron.BrowserWindow,
 	): Promise<Electron.MessageBoxReturnValue> {
 		const view = workbenchViewOf(window);
+		if (view?.isDestroyed()) {
+			// A question about a workbench that is no longer there — asked first,
+			// before its surface key: a renderer that died (crashed, killed, or
+			// exited cleanly) ends the view at once, but the Workspace still
+			// names it until the supervisor has heard, and upstream's own
+			// `render-process-gone` listener runs in between. The only question
+			// upstream asks then is "the window terminated unexpectedly — reopen
+			// it?", which DevHub has already answered: `editorSupervisor.ts`
+			// reopens the workbench, and when it stops reopening it says so on
+			// the Workspace's own row with the person's way out attached. Asked
+			// over the workbench, it stood as a modal over a workspace that might
+			// not even be on screen, and took the keyboard from whatever the
+			// person was typing in; answered "Reopen", it made upstream open a
+			// second window for the folder beside DevHub's own restart.
+			//
+			// So it is answered with the button that does nothing — the dialog's
+			// own cancel, else its last button ("Close", or "Keep Waiting" for
+			// the not-responding one), as a workbench dialog's cancel is.
+			console.log(
+				`[devhub] dialog: '${options.message}' is about a workbench that has gone — the Workspace's row is where that is said`,
+			);
+			return Promise.resolve({
+				response:
+					options.cancelId ?? Math.max(0, (options.buttons?.length ?? 1) - 1),
+				checkboxChecked: false,
+			});
+		}
 		const surfaceKey = view
 			? appController().editorSurfaceKeyForView(view.id)
 			: undefined;
 		if (view && surfaceKey !== undefined) {
 			return askWorkbenchDialog(options, surfaceKey, view);
-		}
-		if (view?.isDestroyed()) {
-			// A question about a workbench that is no longer there. It is drawn
-			// over the workbench it is about, and there is no longer one to draw
-			// it over; the only such question upstream asks is "the window
-			// terminated unexpectedly — reopen it?", which DevHub has already
-			// answered by the time it is asked. `editorSupervisor.ts` reopens
-			// the workbench, and when it stops reopening it says so on the
-			// Workspace's own row with the person's way out attached. Asking
-			// again, as a sheet over the whole application, about a window
-			// nobody ever saw, would be a second answer to that.
-			console.log(
-				`[devhub] dialog: '${options.message}' is about a workbench that has gone — the Workspace's row is where that is said`,
-			);
-			return Promise.resolve({
-				response: options.cancelId ?? 0,
-				checkboxChecked: false,
-			});
 		}
 		return super.showMessageBox(options, parentWindow(window));
 	}
