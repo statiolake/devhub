@@ -180,6 +180,12 @@ from the shared per-projection hooks in `shell/model/pageModel.ts` so that "the
 snapshot" means the same subscription and the same revision ordering
 everywhere it appears.
 
+**The Orchestrator row is the Agents page too.** Selecting it lays the
+Agents view over the whole content area, as a full Agent does, and the page
+draws the board in the left part of its own rectangle beside the orchestrator
+agent's pane from the same pool — so it adds no view, no z-order and no
+keyboard rule. See [`orchestrator.md`](orchestrator.md).
+
 ## A close asks once, then acts
 
 Closing a Workspace asks every question it has before it does anything, and

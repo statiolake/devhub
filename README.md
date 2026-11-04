@@ -378,7 +378,11 @@ answer carries a note, "answered via devhub CLI by <agent>", that Claude keeps
 in the target's transcript. An agent cannot answer its own question.
 
 **Orchestrating.** One ordinary agent can drive the others with these
-commands; there is no special orchestrator. `agent status` gives one agent's
+commands. The Sidebar's **Orchestrator** row (above Scratch) gives one such
+agent a screen of its own — a board of escalations the person answers, the
+agents nobody accounts for, and events DevHub sends it — with `devhub --tell
+escalation`, `board` and `orchestrator` to drive it; see
+[`docs/orchestrator.md`](docs/orchestrator.md). `agent status` gives one agent's
 state in one call: kind, profile, workspace, status and since when (as DevHub
 saw it), the turn, last activity, open questions and permission prompts
 (these as "answer in DevHub" only), entries the caller has not read and the

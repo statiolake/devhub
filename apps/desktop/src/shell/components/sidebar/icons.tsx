@@ -72,7 +72,8 @@ export type GlyphName =
   | "statusUnread"
   | "branch"
   | "project"
-  | "copy";
+  | "copy"
+  | "orchestrator";
 
 const GLYPHS: Record<GlyphName, ReactNode> = {
   /* Removing a worktree. A bin rather than an X, because the two things a row
@@ -166,6 +167,18 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
   terminal: <path d="M2.5 4.5 6.5 8l-4 3.5M8.75 11.5h4.75" />,
 
   plus: <path d="M8 3.25v9.5M3.25 8h9.5" />,
+
+  /* The Orchestrator row: one node with three spokes to the agents it
+     coordinates. A hub, not a person: it is a role an agent has. */
+  orchestrator: (
+    <>
+      <circle cx="8" cy="8.4" r="1.9" />
+      <circle cx="8" cy="2.9" r="1.15" />
+      <circle cx="3.1" cy="11.6" r="1.15" />
+      <circle cx="12.9" cy="11.6" r="1.15" />
+      <path d="M8 4.05V6.5M4.1 11 6.4 9.5M11.9 11 9.6 9.5" />
+    </>
+  ),
 
   close: <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />,
 

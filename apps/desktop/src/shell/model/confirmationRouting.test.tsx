@@ -21,6 +21,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+import { EMPTY_BOARD } from "../../ipc/contract";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -72,6 +73,8 @@ function bridge(dispatch: () => Promise<AppOutcome>) {
     getWindowTitle: async () => "DevHub",
     onWindowTitle: () => () => undefined,
     getRepositoryStatus: async () => ({ sequence: 0, workspaces: [] }),
+    getOrchestratorBoard: async () => EMPTY_BOARD,
+    onOrchestratorBoard: () => () => undefined,
     onRepositoryStatus: () => () => undefined,
     getUsageLimits: async () => ({ clis: [] }),
     onUsageLimits: () => () => undefined,

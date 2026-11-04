@@ -54,6 +54,8 @@
 import { AgentsProvider } from "./AgentsContext";
 import { useAgents } from "./AgentsContext";
 import { AgentPane } from "./AgentPane";
+import { OrchestratorBoard, OrchestratorStart } from "./OrchestratorScreen";
+import "./orchestrator.css";
 
 export function AgentsApp() {
   return (
@@ -72,7 +74,7 @@ export function AgentsApp() {
  * can see.
  */
 function Panes() {
-  const { state, appearance } = useAgents();
+  const { state, appearance, board } = useAgents();
   if (state.status !== "ready") return null;
   const layout = state.snapshot.layout;
   // Which Agent is on screen is the projection's answer, read the one way it
@@ -80,16 +82,31 @@ function Panes() {
   // "what is in the content area". Asking the selection separately would be a
   // second reading of the same fact, free to disagree with the first.
   const activeKey =
-    layout.kind === "agent" || layout.kind === "split"
+    layout.kind === "agent" ||
+    layout.kind === "split" ||
+    layout.kind === "orchestrator"
       ? layout.agentKey
       : undefined;
+  // The Orchestrator row: the board on the left, the orchestrator agent's own
+  // pane (from the same pool) on the right. The pane stays the second child
+  // either way, so selecting the row moves no pane out of the pool.
+  const orchestrator = layout.kind === "orchestrator";
   return (
-    <div className="app-shell agents-page">
-      <AgentPane
-        snapshot={state.snapshot}
-        appearance={appearance}
-        activeKey={activeKey}
-      />
+    <div
+      className="app-shell agents-page"
+      data-orchestrator={orchestrator ? "true" : undefined}
+    >
+      {orchestrator ? <OrchestratorBoard snapshot={state.snapshot} /> : null}
+      <div className="agents-main">
+        <AgentPane
+          snapshot={state.snapshot}
+          appearance={appearance}
+          activeKey={activeKey}
+        />
+        {orchestrator && activeKey === undefined ? (
+          <OrchestratorStart board={board} />
+        ) : null}
+      </div>
     </div>
   );
 }

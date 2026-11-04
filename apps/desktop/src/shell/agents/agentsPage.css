@@ -20,7 +20,20 @@
   background: var(--surface);
 }
 
-.agents-page > .agent-pane {
+/* A row: the Orchestrator screen's board, when it is there, then the pane. */
+.app-shell.agents-page {
+  display: flex;
+  flex-direction: row;
+}
+
+.agents-main {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+}
+
+.agents-main > .agent-pane {
   width: 100%;
   height: 100%;
 }

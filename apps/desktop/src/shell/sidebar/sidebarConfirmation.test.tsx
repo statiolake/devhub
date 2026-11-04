@@ -21,6 +21,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+import { EMPTY_BOARD } from "../../ipc/contract";
 import {
   cleanup,
   fireEvent,
@@ -138,6 +139,8 @@ function mount() {
     getAppearance: async () => APPEARANCE,
     onAppearance: () => () => undefined,
     getRepositoryStatus: async () => ({ sequence: 0, workspaces: [] }),
+    getOrchestratorBoard: async () => EMPTY_BOARD,
+    onOrchestratorBoard: () => () => undefined,
     onRepositoryStatus: () => () => undefined,
     getUsageLimits: async () => ({ clis: [] }),
     onUsageLimits: () => () => undefined,

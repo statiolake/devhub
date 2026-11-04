@@ -92,7 +92,7 @@ function mount(count: number) {
 function marks(container: HTMLElement): string[] {
   return [
     ...container.querySelectorAll<HTMLElement>(
-      "[role=treeitem][aria-level='1'] .row-head > .row-glyph",
+      "[role=treeitem][aria-level='1']:not([data-orchestrator]) .row-head > .row-glyph",
     ),
   ].map(
     (slot) =>

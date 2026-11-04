@@ -117,10 +117,12 @@ function tooltipOf(button: HTMLElement): string[] {
 const treeItems = () =>
   screen
     .getByRole("tree", { name: "Open workspaces" })
-    .querySelectorAll<HTMLElement>("[role=treeitem][aria-level='1']");
+    .querySelectorAll<HTMLElement>(
+      "[role=treeitem][aria-level='1']:not([data-orchestrator])",
+    );
 
 describe("the Scratch row", () => {
-  it("is the tree's first row, named Scratch, with the terminal mark", () => {
+  it("is the tree's first workspace row, named Scratch, with the terminal mark", () => {
     mount(snapshot());
     const first = treeItems()[0];
     expect(first.querySelector(".row-label")).toHaveTextContent(/^Scratch$/);

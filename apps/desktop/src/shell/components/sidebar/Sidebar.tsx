@@ -19,13 +19,17 @@ import {
   type WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
-import type { WorkspaceRepositoryWire } from "../../../ipc/contract";
+import {
+  EMPTY_BOARD,
+  type WorkspaceRepositoryWire,
+} from "../../../ipc/contract";
 import { closingDeletesWorktree } from "../../../model/worktrees";
 import { agentLeadingText } from "../../../model/domain";
 import {
   useChordArmed,
   useSidebar,
   useSidebarDispatch,
+  type SidebarValue,
 } from "../../sidebar/SidebarContext";
 import { UsageLimits } from "./UsageLimits";
 import { devhub } from "../../sidebar/client";
@@ -202,6 +206,11 @@ function WorkspaceRow({
   // it stops being able to answer. It covers the Agents as well as the
   // Workspace because they are going with it.
   const closing = workspace.close.kind === "running";
+  // The orchestrator agent is drawn on its own row, above Scratch, and not
+  // here as well.
+  const rowAgents = workspace.agents.filter(
+    (agent) => agent.id !== snapshot.orchestratorAgentId,
+  );
 
   // What the close button is about to do, read from the same rule main uses to
   // decide it (`closingDeletesWorktree`). A second copy of the rule here is how
@@ -238,7 +247,7 @@ function WorkspaceRow({
       aria-busy={closing || undefined}
       // A Workspace is always open. The attribute states that, and there is
       // nothing that can change it.
-      aria-expanded={workspace.agents.length > 0 ? true : undefined}
+      aria-expanded={rowAgents.length > 0 ? true : undefined}
     >
       <div
         className={`sidebar-row workspace-row${identity.fixed ? " is-scratch" : ""}${selected ? " is-selected" : ""}${terminals !== undefined && unreadShows(terminals.status, terminals.unread) ? " is-unread" : ""}`}
@@ -441,13 +450,13 @@ function WorkspaceRow({
           )}
         </div>
       </div>
-      {workspace.agents.length > 0 && (
+      {rowAgents.length > 0 && (
         <ul
           className="agent-tree"
           role="group"
           aria-label={`${workspace.label} agents`}
         >
-          {workspace.agents.map((agent) => {
+          {rowAgents.map((agent) => {
             const agentSelected = selectedAgentId === agent.id;
             const control = agent.controlState;
             const stopFailed = control.kind === "stop-failed";
@@ -918,6 +927,117 @@ function SidebarResizeHandle({
  * and the tree's own arrow-key walk skips it for the same reason — it carries
  * no `data-tree-item-id`.
  */
+/**
+ * The Orchestrator row, above Scratch: the board, and the agent that
+ * coordinates the others (`docs/orchestrator.md`).
+ *
+ * It leads with its own mark and ends with what the board has for the person:
+ * the number of escalations waiting for an answer, as the one filled badge in
+ * the Sidebar, and — quieter — how many agents nobody accounts for (不明).
+ * The orchestrator agent's own status mark sits before them, so its row says
+ * what it is doing the way an Agent row does.
+ */
+function OrchestratorRow({
+  snapshot,
+  collapsed,
+}: {
+  readonly snapshot: AppSnapshot;
+  readonly collapsed: boolean;
+}) {
+  // A Sidebar mounted without a board (a test, a page between loads) has
+  // nothing on it: the empty board.
+  const board = (useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD;
+  const selectRow = useSelectRow();
+  const selected = snapshot.selection.context.kind === "orchestrator";
+  const agent = snapshot.workspaces
+    .flatMap((workspace) => workspace.agents)
+    .find((one) => one.id === snapshot.orchestratorAgentId);
+  const waiting = board.needsAnswer.length;
+  const unaccounted = agent === undefined ? 0 : board.unaccounted.length;
+  const facts = [
+    "Orchestrator",
+    agent === undefined
+      ? "no orchestrator running"
+      : `${agent.displayName}, ${agent.status}`,
+    `${String(waiting)} waiting for your answer`,
+    ...(board.inProgress.length > 0
+      ? [`${String(board.inProgress.length)} in progress`]
+      : []),
+    ...(unaccounted > 0 ? [`${String(unaccounted)} unaccounted for`] : []),
+    ...(board.paused ? ["events paused"] : []),
+  ];
+  return (
+    <li
+      className="sidebar-tree-item"
+      role="treeitem"
+      aria-level={1}
+      aria-selected={selected}
+      data-orchestrator="true"
+    >
+      <div
+        className={`sidebar-row orchestrator-row${selected ? " is-selected" : ""}${agent !== undefined && unreadShows(agent.status, agent.unread) ? " is-unread" : ""}`}
+        data-tooltip-lines={JSON.stringify(
+          tooltipLines(facts.map((text) => ({ text }))),
+        )}
+      >
+        <div className="row-head">
+          {collapsed ? null : <WorkspaceGlyph glyphName="orchestrator" />}
+          <button
+            className="sidebar-context-button"
+            type="button"
+            data-tree-item-id="orchestrator"
+            tabIndex={selected ? 0 : -1}
+            aria-current={selected ? "page" : undefined}
+            aria-label={facts.join(", ")}
+            onClick={(event) =>
+              selectRow(event, {
+                type: "select_context",
+                context: { kind: "orchestrator" },
+              })
+            }
+          >
+            {collapsed ? <WorkspaceGlyph glyphName="orchestrator" /> : null}
+            <span className="row-text">
+              <span className="row-label">Orchestrator</span>
+              {agent?.activity === undefined || collapsed ? null : (
+                <span className="row-name">{agent.activity}</span>
+              )}
+            </span>
+          </button>
+          {collapsed ? null : (
+            <span className="row-marks orchestrator-marks">
+              {agent === undefined ? null : (
+                <span className="orchestrator-status">
+                  <StatusMark status={agent.status} unread={agent.unread} />
+                </span>
+              )}
+              {unaccounted > 0 ? (
+                <span
+                  className="orchestrator-unaccounted"
+                  data-count={unaccounted}
+                  aria-hidden="true"
+                >
+                  {unaccounted}
+                </span>
+              ) : null}
+              {waiting > 0 ? (
+                <span className="orchestrator-badge" aria-hidden="true">
+                  {waiting}
+                </span>
+              ) : null}
+            </span>
+          )}
+          {collapsed && waiting > 0 ? (
+            <span className="orchestrator-badge is-rail" aria-hidden="true">
+              {waiting}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    </li>
+  );
+}
+
 function ClosingGhostRow({ label }: { label: string }) {
   return (
     <li className="sidebar-tree-item is-exiting" aria-hidden="true">
@@ -1364,6 +1484,9 @@ export function Sidebar({ snapshot }: SidebarProps) {
             }
           }}
         >
+          {/* The Orchestrator first, above Scratch: the board and the agent
+                that coordinates the others. Walked like any row. */}
+          <OrchestratorRow snapshot={snapshot} collapsed={drawnCollapsed} />
           {/* Scratch first, as the tree's first row: it is a Workspace, so it
                 is walked, selected and focused the way every Workspace is. */}
           <WorkspaceRow

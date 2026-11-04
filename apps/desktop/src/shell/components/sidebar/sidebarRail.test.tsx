@@ -182,7 +182,8 @@ describe("the collapsed rail", () => {
   it("keeps the tree, so the keyboard is unchanged", () => {
     mount(true);
     const tree = screen.getByRole("tree", { name: "Open workspaces" });
-    expect(tree.querySelectorAll("[data-tree-item-id]")).toHaveLength(3);
+    // The workspaces' rows and the Orchestrator's, above them.
+    expect(tree.querySelectorAll("[data-tree-item-id]")).toHaveLength(4);
     // The roving tab stop is still on the selected row.
     expect(
       screen.getByRole("button", { name: /widget workspace/ }),

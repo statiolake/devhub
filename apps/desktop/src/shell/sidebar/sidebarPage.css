@@ -169,3 +169,81 @@
     background: transparent;
   }
 }
+
+/*
+ * ------------------------------------------------------- the Orchestrator row
+ *
+ * Above Scratch. Its trailing marks are the board's two counts: escalations
+ * waiting for the person, as the one filled badge in the Sidebar (it is the
+ * one count here that is a request to you), and the agents nobody accounts
+ * for (不明), as a quiet outlined count beside it — news, not a request.
+ */
+.orchestrator-row {
+  /* A hairline under it, so the row reads as above the tree, not in it. */
+  margin-bottom: var(--sidebar-row-gap);
+}
+
+.orchestrator-marks {
+  gap: 5px;
+  padding-right: var(--space-1);
+}
+
+.orchestrator-status {
+  display: flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+}
+
+.orchestrator-status .sidebar-glyph {
+  width: 12px;
+  height: 12px;
+}
+
+.orchestrator-badge,
+.orchestrator-unaccounted {
+  display: inline-flex;
+  min-width: 17px;
+  height: 16px;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.orchestrator-badge {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.orchestrator-unaccounted {
+  border: 1px solid var(--line-strong);
+  color: var(--secondary);
+  font-weight: 500;
+}
+
+/* On the rail the badge rides the glyph's corner, as a Dock badge does. */
+.orchestrator-badge.is-rail {
+  position: absolute;
+  top: 1px;
+  left: calc(var(--sidebar-rail-entry, 28px) - 6px);
+  min-width: 14px;
+  height: 13px;
+  padding: 0 3px;
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.orchestrator-row .row-label {
+  font-weight: 510;
+}
+
+.orchestrator-row.is-selected .row-label {
+  font-weight: 590;
+}

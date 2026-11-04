@@ -1,0 +1,607 @@
+/*
+ * The Orchestrator screen: the board on the left, the orchestrator agent's
+ * pane on the right (`OrchestratorScreen.tsx`).
+ *
+ * Dense and calm, in the Sidebar's and the Task Manager's vocabulary: one
+ * row rhythm, the chrome's ground, hairlines, tabular figures, and colour
+ * only where it means something — the lane's own mark, and the accent on
+ * what waits for the person. Every colour is a token (`tokens.css`).
+ */
+
+/* Reading one is wider: a thread is prose and code, the board is a list. */
+.orchestrator-board[data-reading] {
+  width: clamp(420px, 52%, 820px);
+}
+
+.orchestrator-board {
+  --board-pad: var(--space-3);
+  display: flex;
+  width: clamp(360px, 42%, 640px);
+  min-width: 0;
+  height: 100%;
+  flex: none;
+  flex-direction: column;
+  box-sizing: border-box;
+  border-right: 1px solid var(--line);
+  background: var(--chrome);
+  color: var(--primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------- header */
+
+.orchestrator-board-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 38px;
+  box-sizing: border-box;
+  padding: 0 var(--board-pad);
+  border-bottom: 1px solid var(--line);
+}
+
+.orchestrator-board-title {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.orchestrator-board-title h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.orchestrator-board-counts {
+  overflow: hidden;
+  color: var(--tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestrator-board-tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.orchestrator-pause,
+.orchestrator-history {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--secondary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.orchestrator-pause:hover:not(:disabled),
+.orchestrator-history:hover {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.orchestrator-pause:disabled {
+  color: var(--disabled-ink);
+}
+
+.orchestrator-history[aria-pressed="true"] {
+  background: var(--wash-strong);
+  color: var(--primary);
+}
+
+/* A small switch, the Mac's: on is the accent, paused is the waiting ink. */
+.orchestrator-pause-track {
+  position: relative;
+  width: 22px;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: background-color var(--motion-fast) var(--ease-standard);
+}
+
+.orchestrator-pause-knob {
+  position: absolute;
+  top: 1px;
+  left: 11px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+  transition: left var(--motion-fast) var(--ease-standard);
+}
+
+.orchestrator-pause[aria-checked="false"] .orchestrator-pause-track {
+  background: var(--line-strong);
+}
+
+.orchestrator-pause[aria-checked="false"] .orchestrator-pause-knob {
+  left: 1px;
+  background: var(--surface);
+}
+
+.orchestrator-pause[aria-checked="false"] {
+  color: var(--waiting);
+}
+
+/* ------------------------------------------------------------- lanes */
+
+.orchestrator-lanes {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: var(--space-2) 0 var(--space-4);
+  overflow-y: auto;
+}
+
+.orchestrator-lane {
+  --lane-ink: var(--secondary);
+  padding: 0 var(--space-2);
+}
+
+.orchestrator-lane + .orchestrator-lane {
+  margin-top: var(--space-3);
+}
+
+.orchestrator-lane[data-tone="ask"] {
+  --lane-ink: var(--accent);
+}
+
+.orchestrator-lane[data-tone="progress"] {
+  --lane-ink: var(--status-working);
+}
+
+.orchestrator-lane[data-tone="unaccounted"] {
+  --lane-ink: var(--status-waiting);
+}
+
+.orchestrator-lane[data-tone="closed"] {
+  --lane-ink: var(--tertiary);
+}
+
+.orchestrator-lane-heading {
+  display: flex;
+  height: 24px;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 0 var(--space-2);
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.orchestrator-lane-mark {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lane-ink);
+}
+
+.orchestrator-lane-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--wash);
+  color: var(--secondary);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 16px;
+  text-align: center;
+}
+
+.orchestrator-lane[data-tone="ask"] .orchestrator-lane-count:not(:empty) {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--primary);
+}
+
+.orchestrator-lane-empty {
+  margin: 0;
+  padding: 2px var(--space-2) 4px 22px;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+
+.orchestrator-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One escalation: a row with a second line, like a Sidebar row with its
+   branch. The lane's ink is a two-pixel rule at its leading edge. */
+.orchestrator-card {
+  position: relative;
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 2px;
+  box-sizing: border-box;
+  padding: 6px var(--space-2) 6px 14px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.orchestrator-card::before {
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--lane-ink);
+  content: "";
+  opacity: 0.7;
+}
+
+.orchestrator-card:hover {
+  background: var(--wash);
+}
+
+.orchestrator-card:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.orchestrator-card-head {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.orchestrator-card-id {
+  flex: none;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+
+.orchestrator-card-title {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestrator-card-workspace {
+  overflow: hidden;
+  flex: 0 1 auto;
+  color: var(--tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestrator-card-age {
+  flex: none;
+  color: var(--tertiary);
+  font-size: 11px;
+}
+
+.orchestrator-lane[data-tone="ask"] .orchestrator-card-age {
+  color: var(--secondary);
+}
+
+.orchestrator-card-preview {
+  overflow: hidden;
+  color: var(--secondary);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestrator-card-preview:empty,
+.orchestrator-card-meta:empty {
+  display: none;
+}
+
+.orchestrator-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.orchestrator-chip {
+  display: inline-flex;
+  height: 17px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--wash);
+  color: var(--secondary);
+  font: inherit;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.orchestrator-chip.is-agent {
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  background: transparent;
+}
+
+.orchestrator-chip.is-followup {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--primary);
+}
+
+.orchestrator-chip.is-link {
+  height: 20px;
+  padding: 0 8px;
+}
+
+.orchestrator-chip.is-link:hover:not(:disabled) {
+  background: var(--wash-strong);
+  color: var(--primary);
+}
+
+.orchestrator-chip .sidebar-glyph {
+  width: 11px;
+  height: 11px;
+}
+
+.orchestrator-chip-sub {
+  color: var(--tertiary);
+}
+
+.orchestrator-unaccounted-row {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+.orchestrator-unaccounted-mark {
+  display: flex;
+  align-self: center;
+  color: var(--status-idle);
+}
+
+.orchestrator-unaccounted-mark .sidebar-glyph {
+  width: 12px;
+  height: 12px;
+}
+
+/* ------------------------------------------------------------- reading */
+
+.orchestrator-reading {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.orchestrator-reading-head {
+  flex: none;
+  padding: var(--space-2) var(--board-pad) var(--space-2);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--chrome);
+}
+
+.orchestrator-back {
+  height: 20px;
+  margin: 0 0 4px -6px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--secondary);
+  font: inherit;
+  font-size: 11px;
+}
+
+.orchestrator-back:hover {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.orchestrator-reading-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.orchestrator-reading-title h2 {
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.orchestrator-state {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--wash);
+  color: var(--secondary);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.orchestrator-state[data-state="needs_answer"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.orchestrator-state[data-state="in_progress"] {
+  background: color-mix(in srgb, var(--status-working) 22%, transparent);
+  color: var(--primary);
+}
+
+.orchestrator-reading-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* The thread: the conversation's renderer, at the board's measure. */
+.orchestrator-thread {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: var(--space-3) var(--board-pad) var(--space-3);
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.orchestrator-entry + .orchestrator-entry {
+  margin-top: var(--space-4);
+}
+
+.orchestrator-entry-byline {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.orchestrator-entry-time {
+  color: var(--tertiary);
+  font-weight: 400;
+}
+
+/* The person's answer, as the conversation draws the person's messages. */
+.orchestrator-entry[data-role="human"] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.orchestrator-entry[data-role="human"] .orchestrator-entry-body {
+  max-width: 88%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border-radius: 1.1em 1.1em 0.35em 1.1em;
+  background: var(--wash-strong);
+}
+
+.orchestrator-closed-note {
+  margin-top: var(--space-3);
+  color: var(--tertiary);
+  font-size: 11px;
+  text-align: center;
+}
+
+/* The composer: the conversation's own box, at the board's width. */
+.orchestrator-composer.conversation-composer {
+  max-width: none;
+  padding: var(--space-2) var(--board-pad) var(--space-3);
+  border-top: 1px solid var(--line-soft);
+  margin: 0;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.orchestrator-composer .conversation-composer-input {
+  max-height: 220px;
+}
+
+.orchestrator-composer-hint {
+  color: var(--tertiary);
+  font-size: 10.5px;
+}
+
+.orchestrator-composer .conversation-composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.orchestrator-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+}
+
+.orchestrator-option {
+  min-height: 24px;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.orchestrator-option:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------- no orchestrator */
+
+.orchestrator-start {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: var(--surface);
+  inset: 0;
+}
+
+.orchestrator-start-card {
+  max-width: 420px;
+  color: var(--secondary);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.orchestrator-start-card h2 {
+  margin: 0 0 var(--space-2);
+  color: var(--primary);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.orchestrator-start-card dl {
+  display: grid;
+  margin: var(--space-3) 0;
+  gap: 2px var(--space-3);
+  grid-template-columns: auto 1fr;
+}
+
+.orchestrator-start-card dt {
+  color: var(--tertiary);
+}
+
+.orchestrator-start-card dd {
+  margin: 0;
+  color: var(--primary);
+}
+
+.orchestrator-start-problem {
+  color: var(--danger);
+}

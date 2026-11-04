@@ -145,11 +145,16 @@ export class OrchestratorService {
 	/** The person's answer, from the window. Moves it to in_progress. */
 	answer(id: number, markdown: string): Escalation {
 		const answered = this.ports.store.answer(id, markdown, this.#now());
+		const names = new Map(this.ports.agents().map((one) => [one.id, one.name]));
 		this.events.dispatch({
 			kind: "escalation_answered",
 			escalationId: answered.id,
 			title: answered.title,
-			agents: answered.agents,
+			// Named as the person sees them, with the id to address them by.
+			agents: answered.agents.map((id) => {
+				const name = names.get(id);
+				return name === undefined ? id : `${name} (${id})`;
+			}),
 		});
 		return answered;
 	}

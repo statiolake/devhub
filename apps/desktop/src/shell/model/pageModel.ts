@@ -38,9 +38,12 @@ import type {
   ProjectionBridge,
   RepositoryStatusBridge,
   RepositoryStatusWire,
+  OrchestratorBoardBridge,
+  OrchestratorBoardWire,
   UsageLimitsBridge,
   UsageLimitsWire,
 } from "../../ipc/contract";
+import { EMPTY_BOARD } from "../../ipc/contract";
 import { subscribeToUnhandled, toAppError } from "../failure";
 
 /**
@@ -312,6 +315,32 @@ export function useUsageLimits(
     };
   }, [attempt, bridge, raiseFailure]);
   return limits;
+}
+
+/** The Orchestrator board, kept current (`OrchestratorBoardWire`). */
+export function useOrchestratorBoard(
+  bridge: OrchestratorBoardBridge,
+  raiseFailure: (error: unknown) => void,
+  attempt: number,
+): OrchestratorBoardWire {
+  const [board, setBoard] = useState<OrchestratorBoardWire>(EMPTY_BOARD);
+  useEffect(() => {
+    let active = true;
+    // The newest wins: a read answered after a push is older than the push.
+    const apply = (next: OrchestratorBoardWire) => {
+      if (active)
+        setBoard((current) =>
+          next.revision >= current.revision ? next : current,
+        );
+    };
+    const dispose = bridge.onOrchestratorBoard(apply);
+    void bridge.getOrchestratorBoard().then(apply, raiseFailure);
+    return () => {
+      active = false;
+      dispose();
+    };
+  }, [attempt, bridge, raiseFailure]);
+  return board;
 }
 
 const PROFILES_UNAVAILABLE: AgentProfiles = {

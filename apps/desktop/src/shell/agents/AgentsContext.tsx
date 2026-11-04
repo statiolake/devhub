@@ -29,10 +29,15 @@ import type {
   AppLoadState,
   AppOutcome,
 } from "../../ipc/appShell";
-import type { AgentActionWire, RepositoryStatusWire } from "../../ipc/contract";
+import type {
+  AgentActionWire,
+  OrchestratorBoardWire,
+  RepositoryStatusWire,
+} from "../../ipc/contract";
 import { devhub } from "./client";
 import {
   useAppearance,
+  useOrchestratorBoard,
   useProjection,
   useRaiseFailure,
   useRepositoryStatus,
@@ -57,6 +62,8 @@ export interface AgentsValue {
   ) => Promise<AppOutcome>;
   /** Hand a failure to main. What arrived is never raised again. */
   readonly reportFailure: (error: unknown) => void;
+  /** The Orchestrator board, for the Orchestrator screen. */
+  readonly board: OrchestratorBoardWire;
 }
 
 export const AgentsContext = createContext<AgentsValue | null>(null);
@@ -92,6 +99,7 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
   );
   const appearance = useAppearance(bridge, reportFailure, attempt);
   const repositoryStatus = useRepositoryStatus(bridge, reportFailure, attempt);
+  const board = useOrchestratorBoard(bridge, reportFailure, attempt);
 
   // Subscribed before the first read, so an edit cannot land in the gap.
   const [agentActions, setAgentActions] = useState<readonly AgentActionWire[]>(
@@ -133,10 +141,12 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
       agentActions,
       runAgentAction,
       reportFailure,
+      board,
     }),
     [
       agentActions,
       appearance,
+      board,
       dispatch,
       reportFailure,
       repositoryStatus,
