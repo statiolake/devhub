@@ -31,6 +31,7 @@ import {
 	previewLayout,
 	projectionBridge,
 	repositoryStatusBridge,
+	orchestratorBoardBridge,
 	usageLimitsBridge,
 } from "./bridge.js";
 
@@ -39,6 +40,7 @@ const api: SidebarBridge = {
 	...projectionBridge(),
 	...appearanceBridge(),
 	...repositoryStatusBridge(),
+	...orchestratorBoardBridge(),
 	...usageLimitsBridge(),
 	...agentProfilesBridge(),
 

@@ -542,6 +542,12 @@ export type UserIntent =
    */
   | { readonly type: "window_focus_changed"; readonly focused: boolean }
   /**
+   * The Orchestrator row's agent is now `agentId` (absent: none). Raised by
+   * main, which keeps the assignment (`main/orchestrator/`), and by nothing
+   * else.
+   */
+  | { readonly type: "orchestrator_assigned"; readonly agentId?: AgentId }
+  /**
    * One round's reading of the Workspace terminals on one machine
    * (`terminalActivity.ts`). Raised by main's terminal-activity loop and by
    * nothing else; every Workspace on that machine is in `workspaces`.

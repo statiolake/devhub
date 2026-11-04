@@ -20,6 +20,7 @@ import {
 	appearanceBridge,
 	openExternalUrl,
 	openModal,
+	orchestratorBoardBridge,
 	pageBridge,
 	projectionBridge,
 	repositoryStatusBridge,
@@ -36,6 +37,17 @@ const api: AgentsBridge = {
 	...appearanceBridge(),
 	...repositoryStatusBridge(),
 	...agentActionsBridge(),
+	...orchestratorBoardBridge(),
+	answerEscalation: (id: number, markdown: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.answerEscalation,
+			id,
+			markdown,
+		) as Promise<void>,
+	startOrchestrator: () =>
+		ipcRenderer.invoke(CHANNELS.startOrchestrator) as Promise<void>,
+	setOrchestratorPaused: (paused: boolean) =>
+		ipcRenderer.invoke(CHANNELS.setOrchestratorPaused, paused) as Promise<void>,
 
 	openModal,
 	openExternalUrl,

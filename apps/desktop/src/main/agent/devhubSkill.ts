@@ -304,6 +304,25 @@ happens between two calls is missed - always read before waiting again.
   KEY]\` reads or changes an agent's pairs; they show in its row's tooltip.
   Your own id is in \`DEVHUB_ORIGIN\` (its last field).
 
+## The Orchestrator row: escalations for the person
+
+If you are the orchestrator (the agent on DevHub's Orchestrator row), the
+person reads a board of escalations and answers them in DevHub - only there;
+no command answers one. Raise one when work cannot go on without the
+person's decision or permission (finish read-only investigation first):
+
+    devhub --tell escalation new --title T --body - [--agent A] [--link URL] [--option TEXT]  # repeatable; body on stdin
+    devhub --tell escalation ask 12 --body -        # a follow-up on the same ticket
+    devhub --tell escalation show 12                # the thread, the person's answers too
+    devhub --tell escalation close 12 [--note TEXT] # the answer is used up
+    devhub --tell --json board                      # needs_answer, in_progress, unaccounted
+
+The body is Markdown drawn like a chat answer (code, math, mermaid, svg).
+\`agent wait --any\` also wakes you on an answer you have not shown, and on
+an idle agent no open escalation names (unaccounted; \`board\` acknowledges
+it). DevHub also sends you each such event as a message (\`[event: ...]\`).
+See docs/orchestrator.md in DevHub for a recommended escalation template.
+
 ## Your terminal
 
 You have one terminal of your own: a tmux session on your workspace's machine,

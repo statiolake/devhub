@@ -220,7 +220,57 @@ export type TellCommand =
 	| { readonly verb: "commands" }
 	| { readonly verb: "run"; readonly command: string }
 	| { readonly verb: "focus"; readonly target: string }
-	| { readonly verb: "notify"; readonly text: string };
+	| { readonly verb: "notify"; readonly text: string }
+	// --- the Orchestrator row (`docs/orchestrator.md`) ----------------------
+	| {
+			/** The orchestrator raises one. There is no command that answers one. */
+			readonly verb: "escalation-new";
+			readonly title: string;
+			readonly body: string;
+			readonly agents: readonly string[];
+			readonly links: readonly string[];
+			readonly options: readonly string[];
+			readonly workspace?: string;
+	  }
+	| {
+			/** A follow-up question on the same ticket: back to needs_answer. */
+			readonly verb: "escalation-ask";
+			readonly id: number;
+			readonly body: string;
+			readonly options: readonly string[];
+	  }
+	| { readonly verb: "escalation-show"; readonly id: number }
+	| {
+			readonly verb: "escalation-list";
+			readonly state?: "needs_answer" | "in_progress" | "closed";
+	  }
+	| {
+			readonly verb: "escalation-close";
+			readonly id: number;
+			readonly note?: string;
+	  }
+	| {
+			readonly verb: "escalation-link";
+			readonly id: number;
+			readonly agent: string;
+	  }
+	/** The three lanes, 不明 included. */
+	| { readonly verb: "board" }
+	| {
+			readonly verb: "orchestrator-start";
+			/** Required: the folder it runs in (the window reads orchestrator.root). */
+			readonly root?: string;
+			readonly profile?: string;
+			readonly presentation?: "gui" | "tui";
+			/** Sent in place of the init event's message. */
+			readonly prompt?: string;
+	  }
+	| { readonly verb: "orchestrator-status" }
+	| { readonly verb: "orchestrator-stop" }
+	| { readonly verb: "orchestrator-restart" }
+	/** Hold the orchestrator's events; resume delivers them, in order. */
+	| { readonly verb: "orchestrator-pause" }
+	| { readonly verb: "orchestrator-resume" };
 
 export type TellVerb = TellCommand["verb"];
 
@@ -426,7 +476,9 @@ app
                                    mark_agent_unread); one that would ask or
                                    go somewhere is refused, naming the --tell
                                    command to use instead
-  focus <agent|workspace>          select it in DevHub
+  focus <agent|workspace|orchestrator>
+                                   select it in DevHub ('orchestrator': the
+                                   Orchestrator screen)
   notify <text>                    show a notification in DevHub
 
 <w> is a workspace id, its folder, its name, or "scratch". A folder is a
@@ -440,6 +492,38 @@ moves its keyboard or brings it to the front: what a command makes appears
 in the Sidebar, unselected (a closed workspace that was selected is the one
 exception: its row is gone, and the window selects the next). Where the
 window would ask, the command takes the answer as an argument.
+
+orchestrator (the Orchestrator row: the board, escalations, events)
+  board                            the three lanes as data: needs_answer
+                                   (oldest first), in_progress (how long
+                                   since the answer), and unaccounted (idle
+                                   agents no open escalation names)
+  escalation new --title <t> --body <text>|- [--agent <a>]...
+                 [--link <url>]... [--option <text>]... [--workspace <w>]
+                                   raise one for the person (Markdown: code,
+                                   math, mermaid, svg - as the chat renders)
+  escalation ask <id> --body <text>|- [--option <text>]...
+                                   a follow-up question on the same ticket;
+                                   back to needs_answer
+  escalation show <id>             the thread, the person's answers included
+                                   (this is what acknowledges an answer for
+                                   'agent wait --any')
+  escalation list [--state needs_answer|in_progress|closed]
+  escalation close <id> [--note <text>]
+                                   the answer is used up: close it
+  escalation link <id> --agent <a> another agent it is about
+                                   (the person answers in DevHub only: no
+                                   command writes an answer)
+  orchestrator start --root <path> --profile <p> --gui|--tui [--prompt <text>|-]
+                                   (all but [] required) open <path> as a
+                                   workspace, start the orchestrator agent in
+                                   it unfocused, and send it the init event
+                                   (or --prompt). Refused while one runs
+  orchestrator status              its agent, state, lane counts, and whether
+                                   its events are paused
+  orchestrator stop | restart      Stop Agent / Restart Session on it
+  orchestrator pause | resume      hold its events / deliver the held ones,
+                                   in order
 
 The few defaults left are fixed, never read from settings: agent read
 --last 20, agent wait --until any --timeout 300, sessions --limit 20, and
@@ -751,6 +835,13 @@ function parseVerb(args: readonly string[]): TellCommand {
 			]);
 			return { verb: "focus", target: target! };
 		}
+		case "board":
+			positionals(readFlags(args.slice(1), NO_FLAGS), []);
+			return { verb: "board" };
+		case "escalation":
+			return parseEscalation(sub, rest);
+		case "orchestrator":
+			return parseOrchestrator(sub, rest);
 		case "notify": {
 			const words = args.slice(1);
 			if (words.length === 0) throw new Refusal("missing <text>.");
@@ -774,6 +865,144 @@ function oneOf<T extends string>(
 	if (!(allowed as readonly string[]).includes(value))
 		throw new Refusal(`${name} takes ${allowed.join(" or ")}.`);
 	return value as T;
+}
+
+/** `#12`, `12` or `E12`. */
+function escalationId(text: string | undefined): number {
+	const match = /^(?:#|e|E)?(\d{1,9})$/u.exec((text ?? "").trim());
+	const id = match === null ? 0 : Number(match[1]);
+	if (id < 1)
+		throw new Refusal(
+			`${JSON.stringify(text ?? "")} is not an escalation id (like 12 or #12).`,
+		);
+	return id;
+}
+
+function parseEscalation(
+	sub: string | undefined,
+	rest: readonly string[],
+): TellCommand {
+	switch (sub) {
+		case "new": {
+			const flags = readFlags(rest, {
+				values: [
+					"--title",
+					"--body",
+					"--agent",
+					"--link",
+					"--option",
+					"--workspace",
+				],
+				switches: [],
+			});
+			positionals(flags, []);
+			const title = one(flags, "--title");
+			const body = one(flags, "--body");
+			if (title === undefined) throw new Refusal("--title is required.");
+			if (body === undefined)
+				throw new Refusal("--body is required (Markdown, or - for stdin).");
+			return {
+				verb: "escalation-new",
+				title,
+				body,
+				agents: flags.values.get("--agent") ?? [],
+				links: flags.values.get("--link") ?? [],
+				options: flags.values.get("--option") ?? [],
+				...defined({ workspace: one(flags, "--workspace") }),
+			};
+		}
+		case "ask": {
+			const flags = readFlags(rest, {
+				values: ["--body", "--option"],
+				switches: [],
+			});
+			const [id] = positionals(flags, ["<id>"]);
+			const body = one(flags, "--body");
+			if (body === undefined)
+				throw new Refusal("--body is required (Markdown, or - for stdin).");
+			return {
+				verb: "escalation-ask",
+				id: escalationId(id),
+				body,
+				options: flags.values.get("--option") ?? [],
+			};
+		}
+		case "show": {
+			const [id] = positionals(readFlags(rest, NO_FLAGS), ["<id>"]);
+			return { verb: "escalation-show", id: escalationId(id) };
+		}
+		case "list": {
+			const flags = readFlags(rest, { values: ["--state"], switches: [] });
+			positionals(flags, []);
+			return {
+				verb: "escalation-list",
+				...defined({
+					state: oneOf(flags, "--state", [
+						"needs_answer",
+						"in_progress",
+						"closed",
+					] as const),
+				}),
+			};
+		}
+		case "close": {
+			const flags = readFlags(rest, { values: ["--note"], switches: [] });
+			const [id] = positionals(flags, ["<id>"]);
+			return {
+				verb: "escalation-close",
+				id: escalationId(id),
+				...defined({ note: one(flags, "--note") }),
+			};
+		}
+		case "link": {
+			const flags = readFlags(rest, { values: ["--agent"], switches: [] });
+			const [id] = positionals(flags, ["<id>"]);
+			const agent = one(flags, "--agent");
+			if (agent === undefined) throw new Refusal("--agent is required.");
+			return { verb: "escalation-link", id: escalationId(id), agent };
+		}
+		case "answer":
+			throw new Refusal(
+				"an escalation is answered by the person, in DevHub's window, and by no command.",
+			);
+		default:
+			throw new Refusal("escalation takes: new, ask, show, list, close, link.");
+	}
+}
+
+function parseOrchestrator(
+	sub: string | undefined,
+	rest: readonly string[],
+): TellCommand {
+	switch (sub) {
+		case "start": {
+			const flags = readFlags(rest, {
+				values: ["--root", "--profile", "--prompt"],
+				switches: ["--gui", "--tui"],
+			});
+			positionals(flags, []);
+			return {
+				verb: "orchestrator-start",
+				...defined({
+					root: one(flags, "--root"),
+					profile: one(flags, "--profile"),
+					presentation: presentation(flags),
+					prompt: one(flags, "--prompt"),
+				}),
+			};
+		}
+		case "status":
+		case "stop":
+		case "restart":
+		case "pause":
+		case "resume":
+			positionals(readFlags(rest, NO_FLAGS), []);
+			return { verb: `orchestrator-${sub}` };
+		default:
+			throw new Refusal(
+				"orchestrator takes: start, status, stop, restart, pause, resume.",
+			);
+	}
 }
 
 function parseWorkspaceClose(rest: readonly string[]): TellCommand {
@@ -1184,6 +1413,19 @@ function answerParts(value: unknown): { questions?: readonly AnswerPart[] } {
 	};
 }
 
+function textList(
+	record: Record<string, unknown>,
+	key: string,
+): readonly string[] {
+	const value = record[key];
+	if (
+		!Array.isArray(value) ||
+		value.some((one) => typeof one !== "string" || one.length === 0)
+	)
+		throw new Error(`a tell command's ${key} must be a list of strings`);
+	return value as string[];
+}
+
 function textOf(record: Record<string, unknown>, key: string): string {
 	return text(record, key);
 }
@@ -1433,6 +1675,73 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				focus: record["focus"],
 			};
 		}
+		case "board":
+		case "orchestrator-status":
+		case "orchestrator-stop":
+		case "orchestrator-restart":
+		case "orchestrator-pause":
+		case "orchestrator-resume":
+			return { verb: record["verb"] };
+		case "escalation-new":
+			return {
+				verb: "escalation-new",
+				title: text(record, "title"),
+				body: text(record, "body"),
+				agents: textList(record, "agents"),
+				links: textList(record, "links"),
+				options: textList(record, "options"),
+				...optionalText(record, "workspace"),
+			};
+		case "escalation-ask":
+			return {
+				verb: "escalation-ask",
+				id: integer(record["id"], "id", 1, 999_999_999),
+				body: text(record, "body"),
+				options: textList(record, "options"),
+			};
+		case "escalation-show":
+			return {
+				verb: "escalation-show",
+				id: integer(record["id"], "id", 1, 999_999_999),
+			};
+		case "escalation-list": {
+			const state = record["state"];
+			if (
+				state !== undefined &&
+				state !== "needs_answer" &&
+				state !== "in_progress" &&
+				state !== "closed"
+			)
+				throw new Error(
+					"a tell command's state must be needs_answer, in_progress or closed",
+				);
+			return {
+				verb: "escalation-list",
+				...(state === undefined ? {} : { state }),
+			};
+		}
+		case "escalation-close":
+			return {
+				verb: "escalation-close",
+				id: integer(record["id"], "id", 1, 999_999_999),
+				...optionalText(record, "note"),
+			};
+		case "escalation-link":
+			return {
+				verb: "escalation-link",
+				id: integer(record["id"], "id", 1, 999_999_999),
+				agent: text(record, "agent"),
+			};
+		case "orchestrator-start":
+			return {
+				verb: "orchestrator-start",
+				...(record["root"] === undefined
+					? {}
+					: { root: absolute(record, "root") }),
+				...optionalText(record, "profile"),
+				...optionalText(record, "prompt"),
+				...optionalPresentation(record),
+			};
 		case "run":
 			return { verb: "run", command: text(record, "command") };
 		case "focus":

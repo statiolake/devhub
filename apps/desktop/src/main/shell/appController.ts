@@ -92,6 +92,7 @@ import {
 	type ResumeElsewhereWire,
 	type ModalRequest,
 	type RepositoryStatusWire,
+	EMPTY_BOARD,
 	type ContextMenuRequestWire,
 	type TooltipRequestWire,
 	type WorkspacePickerEvent,
@@ -343,6 +344,12 @@ import {
 import { cliWithWindowTerminal } from "../services/windowTerminal.js";
 import { OperationDeadline } from "../terminal/command.js";
 import { wireAgents, type AgentWiring } from "./agentWiring.js";
+import { EscalationStore } from "../orchestrator/escalationStore.js";
+import {
+	OrchestratorService,
+	type LiveAgent,
+} from "../orchestrator/orchestratorService.js";
+import { statSync } from "node:fs";
 import { registerConversationIpc } from "./conversationIpc.js";
 import {
 	MICROPHONE_SETTINGS_URL,
@@ -1425,6 +1432,7 @@ export class AppController {
 			managedNeovims.publishTheme(theme),
 		);
 		const skill = this.writeAgentSkill(userDataPath);
+		this.startOrchestratorService(userDataPath);
 		this.agentWiring = wireAgents({
 			// This Mac's skill is written at startup; another machine's is
 			// written there with its `devhub` command, when its terminal
@@ -4458,6 +4466,7 @@ export class AppController {
 	 */
 	private projectionChanged(): void {
 		refreshMenu();
+		this.syncOrchestrator();
 		// An Agent nobody has read yet is the window asking to be looked at,
 		// and it is a fact about the projection like the menu and the title —
 		// so it is answered here, where everything that follows the projection
@@ -9000,6 +9009,188 @@ export class AppController {
 		return `${agent?.displayName ?? "The agent"} is running in the workspace at ${root}.`;
 	}
 
+	// --- the Orchestrator row (`docs/orchestrator.md`) -------------------------
+
+	/** The board, the escalations and the events, once user data is known. */
+	private orchestrator: OrchestratorService | undefined;
+	private orchestratorSyncing = false;
+
+	private startOrchestratorService(userDataPath: string): void {
+		const { store, refused } = EscalationStore.load(
+			join(userDataPath, "devhub", "escalations.json"),
+		);
+		if (refused !== undefined) {
+			console.error(`[devhub] ${refused}`);
+			this.publishError(errorWire(new Error(refused)));
+		}
+		this.orchestrator = new OrchestratorService({
+			store,
+			agents: () => this.liveAgents(),
+			settings: () => this.config.orchestrator,
+			startProblem: () => this.orchestratorStartProblem(),
+			deliver: (agentId, text) => {
+				const queued = agents()?.queueInjection(
+					parseAgentId(agentId),
+					text,
+					false,
+				);
+				if (queued === undefined)
+					console.error(
+						"[devhub] an orchestrator event could not be queued: the agents are not running yet",
+					);
+			},
+			publish: (board) => {
+				this.send(CHANNELS.orchestratorBoardChanged, board);
+			},
+			setTimer: (ms, run) => {
+				const timer = setTimeout(run, ms);
+				return { cancel: () => clearTimeout(timer) };
+			},
+			log: (line) => console.log(line),
+		});
+		this.syncOrchestrator();
+	}
+
+	private requireOrchestrator(): OrchestratorService {
+		if (this.orchestrator === undefined)
+			throw new Error("DevHub has not finished starting.");
+		return this.orchestrator;
+	}
+
+	/** Every agent, as the board reads it. */
+	private liveAgents(): readonly LiveAgent[] {
+		const snapshot = this.coordinator.snapshot();
+		return snapshot.workspaces.flatMap((workspace) =>
+			workspace.agents.map((agent) => ({
+				id: agent.id,
+				name: agent.displayName,
+				workspaceId: workspace.id,
+				workspaceLabel: this.coordinator.model.workspace(workspace.id)
+					? workspace.id === snapshot.scratchWorkspaceId
+						? "Scratch"
+						: workspace.label
+					: workspace.label,
+				status: agent.status,
+				stopping: agent.controlState.kind !== "running",
+			})),
+		);
+	}
+
+	/**
+	 * The model's Orchestrator row follows the store: the agent it names, while
+	 * that agent is there. An orchestrator that has gone (stopped, exited) is
+	 * released, so the row offers to start one again.
+	 */
+	private syncOrchestrator(): void {
+		const service = this.orchestrator;
+		if (service === undefined) return;
+		const model = this.coordinator.model;
+		const stored = service.orchestratorAgentId;
+		const wanted = stored === undefined ? undefined : parseAgentId(stored);
+		if (model.orchestratorAgentId !== wanted && !this.orchestratorSyncing) {
+			// After the projection that showed the difference has gone out:
+			// this runs inside one, and a dispatch from here would re-enter it.
+			this.orchestratorSyncing = true;
+			queueMicrotask(() => {
+				this.orchestratorSyncing = false;
+				const now = service.orchestratorAgentId;
+				const agentId = now === undefined ? undefined : parseAgentId(now);
+				if (this.coordinator.model.orchestratorAgentId === agentId) return;
+				if (now === undefined && stored !== undefined) service.release();
+				this.coordinator.dispatchUser({
+					intentId: parseIntentId(randomUUID()),
+					operationId: this.freshOperationId(),
+					intent: {
+						type: "orchestrator_assigned",
+						...(agentId === undefined ? {} : { agentId }),
+					},
+				});
+				this.drain();
+			});
+		}
+		service.observe();
+	}
+
+	/** Why the window's Start cannot start one now; undefined when it can. */
+	private orchestratorStartProblem(): string | undefined {
+		const settings = this.config.orchestrator;
+		if (settings.root === undefined)
+			return "Set the orchestrator's folder first: Settings ▸ General ▸ Orchestrator (orchestrator.root).";
+		const profiles = this.agentProfiles().profiles;
+		if (profiles.length === 0) return "There is no agent profile to start.";
+		if (
+			settings.profile !== undefined &&
+			!profiles.some((profile) => profile.id === settings.profile)
+		)
+			return `orchestrator.profile names '${settings.profile}', which is not an agent profile.`;
+		return undefined;
+	}
+
+	/** The Start button: `[orchestrator]` with the window's defaults under it. */
+	private async startOrchestratorFromWindow(): Promise<void> {
+		const problem = this.orchestratorStartProblem();
+		if (problem !== undefined) throw new Error(problem);
+		const settings = this.config.orchestrator;
+		const profiles = this.agentProfiles().profiles;
+		const profile =
+			profiles.find((one) => one.id === settings.profile) ?? profiles[0]!;
+		await this.startOrchestrator({
+			root: settings.root!,
+			profile: profile.id,
+			presentation: settings.presentation ?? profile.presentation,
+			prompt: undefined,
+		});
+	}
+
+	/**
+	 * Start the orchestrator: `root` opened as a Workspace (in the Sidebar,
+	 * nothing selected), an agent of `profile` started in it unfocused, marked
+	 * `role=orchestrator`, assigned to the row, and told it has started
+	 * (`init`, or `prompt` when one is given). Refused while one is running.
+	 */
+	private async startOrchestrator(request: {
+		readonly root: string;
+		readonly profile: string;
+		readonly presentation: "gui" | "tui";
+		readonly prompt: string | undefined;
+	}): Promise<string> {
+		const service = this.requireOrchestrator();
+		const running = service.orchestratorAgentId;
+		if (running !== undefined)
+			throw new Error(
+				`an orchestrator is already running (${running}). Stop it first: devhub --tell orchestrator stop.`,
+			);
+		const root =
+			request.root === "~"
+				? homedir()
+				: request.root.startsWith("~/")
+					? join(homedir(), request.root.slice(2))
+					: request.root;
+		let isFolder = false;
+		try {
+			isFolder = statSync(root).isDirectory();
+		} catch {
+			isFolder = false;
+		}
+		if (!isFolder)
+			throw new Error(
+				`the orchestrator's folder ${root} is not a folder on this Mac. Make it, or set orchestrator.root to one.`,
+			);
+		const workspaceId = await this.openFolderUnfocused(
+			requestedLocation({ kind: "local", path: root }),
+		);
+		const ports = this.tellPorts();
+		const agentId = await ports.createAgent(
+			workspaceId,
+			request.profile,
+			request.presentation,
+		);
+		await ports.setAgentMeta(agentId, "role", "orchestrator");
+		service.assign(agentId, request.prompt);
+		this.syncOrchestrator();
+		return agentId;
+	}
+
 	/**
 	 * `devhub --tell`: see `cli/tell/service.ts`. Every port below is a call the
 	 * window itself makes, so an operation asked for on a command line is the
@@ -9029,8 +9220,50 @@ export class AppController {
 			this.coordinator.model.workspaces
 				.flatMap((workspace) => workspace.agents)
 				.find((agent) => !before.has(agent.id))?.id;
+		const orchestrator = () => this.requireOrchestrator();
 		return {
 			workspaces: () => this.tellWorkspaces(),
+			// No answer here, on purpose: the person answers in the window
+			// (`CHANNELS.answerEscalation`), and only there.
+			orchestrator: {
+				board: () => orchestrator().wire(),
+				escalations: () => orchestrator().allWires(),
+				raise: (request) =>
+					orchestrator().toWire(
+						orchestrator().raise({
+							title: request.title,
+							markdown: request.markdown,
+							options: request.options,
+							agents: request.agents,
+							links: request.links,
+							...(request.workspaceId === undefined
+								? {}
+								: { workspaceId: request.workspaceId }),
+						}),
+					),
+				ask: (id, markdown, options) =>
+					orchestrator().toWire(orchestrator().ask(id, markdown, options)),
+				close: (id, note) =>
+					orchestrator().toWire(orchestrator().close(id, note)),
+				link: (id, agentId) =>
+					orchestrator().toWire(orchestrator().link(id, agentId)),
+				configuredRoot: () => this.config.orchestrator.root,
+				start: (request) => this.startOrchestrator(request),
+				pause: () => {
+					orchestrator().events.pause();
+				},
+				resume: () => orchestrator().events.resume(),
+				// `focus orchestrator`: the one command here that takes the window.
+				focus: async () => {
+					await this.dispatchAwaiting(
+						intentFromWire({
+							type: "select_context",
+							context: { kind: "orchestrator" },
+						}),
+					);
+					this.bringToFront();
+				},
+			},
 			// What `writeAgentSkill` wrote for this run, word for word.
 			skill: () => {
 				if (this.userDataPath === undefined)
@@ -10609,6 +10842,38 @@ export class AppController {
 		});
 
 		handle(CHANNELS.getRepositoryStatus, () => this.lastRepositoryStatus);
+		handle(
+			CHANNELS.getOrchestratorBoard,
+			() => this.orchestrator?.wire() ?? EMPTY_BOARD,
+		);
+		// The person's answer to an escalation: the window's, and only the
+		// window's. No `--tell` port reaches `OrchestratorService.answer`.
+		handle(
+			CHANNELS.answerEscalation,
+			(_event, id: unknown, markdown: unknown) => {
+				try {
+					if (typeof id !== "number" || typeof markdown !== "string")
+						throw new Error("an answer names an escalation and has words");
+					this.requireOrchestrator().answer(id, markdown);
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
+		handle(CHANNELS.startOrchestrator, async () => {
+			try {
+				await this.startOrchestratorFromWindow();
+			} catch (error: unknown) {
+				throw namedFailure(error);
+			}
+		});
+		handle(CHANNELS.setOrchestratorPaused, (_event, paused: unknown) => {
+			if (typeof paused !== "boolean")
+				throw namedFailure(new Error("paused is true or false"));
+			const events = this.requireOrchestrator().events;
+			if (paused) events.pause();
+			else events.resume();
+		});
 		handle(CHANNELS.getUsageLimits, () => this.usageLimits.wire());
 
 		// Destructive. `force` says the page already asked and was told to go

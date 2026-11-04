@@ -37,6 +37,9 @@ import {
 	type TellTerminalPane,
 	type TellWorkspace,
 } from "./service.js";
+import { EscalationStore } from "../../orchestrator/escalationStore.js";
+import { OrchestratorService } from "../../orchestrator/orchestratorService.js";
+import { DEFAULT_ORCHESTRATOR } from "../../../model/orchestratorSettings.js";
 
 function agent(overrides: Partial<TellAgent> = {}): TellAgent {
 	return {
@@ -205,6 +208,63 @@ class FakePorts implements TellPorts {
 			],
 		}),
 	];
+	/** The clock the board reads; tests move it with `advance`. */
+	clock = { now: 0 };
+	/** What the orchestrator was sent, as `[agentId, text]`. */
+	delivered: [string, string][] = [];
+	readonly service = new OrchestratorService({
+		store: EscalationStore.inMemory(),
+		agents: () =>
+			this.spaces.flatMap((space) =>
+				space.agents.map((one) => ({
+					id: one.id,
+					name: one.name,
+					workspaceId: space.id,
+					workspaceLabel: space.name,
+					status: one.status,
+					stopping: one.controlState !== "running",
+				})),
+			),
+		settings: () => DEFAULT_ORCHESTRATOR,
+		startProblem: () => undefined,
+		deliver: (agentId, text) => {
+			this.delivered.push([agentId, text]);
+		},
+		publish: () => undefined,
+		now: () => this.clock.now,
+	});
+	focusedOrchestrator = false;
+	readonly orchestrator: TellPorts["orchestrator"] = {
+		board: () => this.service.wire(),
+		escalations: () => this.service.allWires(),
+		raise: (request) =>
+			this.service.toWire(
+				this.service.raise({
+					...request,
+					...(request.workspaceId === undefined
+						? {}
+						: { workspaceId: request.workspaceId }),
+				}),
+			),
+		ask: (id, markdown, options) =>
+			this.service.toWire(this.service.ask(id, markdown, options)),
+		close: (id, note) => this.service.toWire(this.service.close(id, note)),
+		link: (id, agentId) => this.service.toWire(this.service.link(id, agentId)),
+		configuredRoot: () => "/Users/me/orchestrator",
+		start: (request) => {
+			this.calls.push(`orchestrator-start ${request.root} ${request.profile}`);
+			this.service.assign("bbbb2222-0000", request.prompt);
+			return Promise.resolve("bbbb2222-0000");
+		},
+		pause: () => {
+			this.service.events.pause();
+		},
+		resume: () => this.service.events.resume(),
+		focus: () => {
+			this.focusedOrchestrator = true;
+			return Promise.resolve();
+		},
+	};
 	constructor() {
 		this.conversations.set("aaaa1111-0000", new FakeConversation());
 	}
@@ -3148,5 +3208,287 @@ describe("a request of several questions, answered in one call", () => {
 			),
 		).rejects.toThrow(/only questions can be answered/u);
 		expect(conversation.answered).toHaveLength(1);
+	});
+});
+
+describe("the Orchestrator row from the command line", () => {
+	const ORCHESTRATOR = "bbbb2222-0000";
+
+	function orchestrated() {
+		const world = setup();
+		world.conversation.pending = [];
+		world.ports.service.assign(ORCHESTRATOR);
+		return world;
+	}
+
+	it("raises, asks again, shows, lists and closes an escalation", async () => {
+		const { service, ports } = orchestrated();
+		const made = await viaSocket(
+			service,
+			[
+				"escalation",
+				"new",
+				"--title",
+				"本番DBのマイグレーション",
+				"--body",
+				"実行してよいですか?",
+				"--agent",
+				"Claude 1",
+				"--option",
+				"実行する",
+				"--link",
+				"https://github.com/acme/app/pull/7",
+			],
+			coordinator,
+		);
+		expect(made.data).toMatchObject({
+			id: 1,
+			state: "needs_answer",
+			agents: [{ agentId: "aaaa1111-0000", name: "Claude 1" }],
+			entries: [{ role: "orchestrator", options: ["実行する"] }],
+		});
+		ports.service.answer(1, "実行してよい");
+		const again = await viaSocket(
+			service,
+			["escalation", "ask", "#1", "--body", "staging も?"],
+			coordinator,
+		);
+		expect(again.data).toMatchObject({ state: "needs_answer" });
+		const shown = await viaSocket(
+			service,
+			["escalation", "show", "1"],
+			coordinator,
+		);
+		expect(shown.message).toContain("the person (answer)");
+		expect(shown.message).toContain("実行してよい");
+		const listed = await viaSocket(
+			service,
+			["escalation", "list"],
+			coordinator,
+		);
+		expect(listed.message).toContain("#1  needs_answer");
+		await viaSocket(
+			service,
+			["escalation", "close", "1", "--note", "done"],
+			coordinator,
+		);
+		expect(
+			(
+				await viaSocket(
+					service,
+					["escalation", "list", "--state", "closed"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ escalations: [{ id: 1, state: "closed" }] });
+	});
+
+	it("has no way to answer one: not a command, not a port", () => {
+		expect(
+			parseTellArguments(["escalation", "answer", "1", "--body", "yes"]),
+		).toEqual({
+			kind: "invalid",
+			message:
+				"an escalation is answered by the person, in DevHub's window, and by no command.",
+		});
+		const ports = new FakePorts();
+		expect(Object.keys(ports.orchestrator).sort()).toEqual(
+			[
+				"ask",
+				"board",
+				"close",
+				"configuredRoot",
+				"escalations",
+				"focus",
+				"link",
+				"pause",
+				"raise",
+				"resume",
+				"start",
+			].sort(),
+		);
+		// Nothing a tell command can carry reaches a human entry.
+		const source = readFileSync(
+			new URL("./service.ts", import.meta.url),
+			"utf8",
+		);
+		expect(source).not.toMatch(/\.answer\(\s*command\.id/u);
+		expect(source).not.toMatch(/role:\s*"human"/u);
+	});
+
+	it("wakes the orchestrator's wait --any on an answer, until it is shown", async () => {
+		const { service, ports } = orchestrated();
+		ports.service.raise({ title: "決めて", markdown: "A or B?" });
+		const quiet = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--until", "idle", "--timeout", "1"],
+			coordinator,
+		);
+		expect(quiet.data).toMatchObject({ reached: false, answered: [] });
+		ports.service.answer(1, "A");
+		const woken = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--until", "idle"],
+			coordinator,
+		);
+		expect(woken.data).toMatchObject({
+			reached: true,
+			answered: [{ id: 1, title: "決めて" }],
+		});
+		await viaSocket(service, ["escalation", "show", "1"], coordinator);
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--until", "idle", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: false, answered: [] });
+	});
+
+	it("wakes it when an agent enters 不明, until the board is read", async () => {
+		const { service, ports } = orchestrated();
+		// Shell is idle from the first reading on; after the grace it is unaccounted.
+		ports.service.observe();
+		ports.clock.now += 61_000;
+		ports.service.observe();
+		const woken = await viaSocket(
+			service,
+			["agent", "wait", "--any", "--until", "idle"],
+			coordinator,
+		);
+		expect(woken.data).toMatchObject({
+			reached: true,
+			unaccounted: [{ agentId: "cccc3333-0000", name: "Shell" }],
+		});
+		// The event went to the orchestrator too, once.
+		expect(
+			ports.delivered.filter(([, text]) =>
+				text.includes("[event: unaccounted]"),
+			),
+		).toHaveLength(1);
+		const board = await viaSocket(service, ["board"], coordinator);
+		expect(board.message).toContain("unaccounted (1):");
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--until", "idle", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: false, unaccounted: [] });
+		// An escalation that names it accounts for it.
+		await viaSocket(
+			service,
+			["escalation", "new", "--title", "t", "--body", "b", "--agent", "Shell"],
+			coordinator,
+		);
+		expect(ports.service.unaccounted()).toEqual([]);
+	});
+
+	it("does not wake an agent that is not the orchestrator on these", async () => {
+		const { service, ports } = orchestrated();
+		ports.service.raise({ title: "t", markdown: "b" });
+		ports.service.answer(1, "a");
+		const other = callerFromOrigin("local\tw1\taaaa1111-0000");
+		const answer = await viaSocket(
+			service,
+			[
+				"agent",
+				"wait",
+				"--any",
+				"--until",
+				"idle",
+				"--timeout",
+				"1",
+				"Coordinator",
+			],
+			other,
+		);
+		expect(answer.data).toMatchObject({ answered: [] });
+	});
+
+	it("starts one with every choice named, and only one", async () => {
+		const { service, ports } = setup();
+		await expect(
+			viaSocket(
+				service,
+				["orchestrator", "start", "--profile", "claude"],
+				coordinator,
+			),
+		).rejects.toThrow(
+			/--root <path> is required.*\/Users\/me\/orchestrator[\s\S]*--gui or --tui/u,
+		);
+		expect(ports.calls).toEqual([]);
+		await viaSocket(
+			service,
+			[
+				"orchestrator",
+				"start",
+				"--root",
+				"/srv/o",
+				"--profile",
+				"claude",
+				"--gui",
+			],
+			undefined,
+		);
+		expect(ports.calls).toEqual(["orchestrator-start /srv/o claude"]);
+		expect(ports.delivered[0]?.[1]).toBe(
+			"このイベントが発生したのでハンドリングしてください。[event: init] The orchestrator has started.\nBoard: devhub --tell board",
+		);
+		await expect(
+			viaSocket(
+				service,
+				[
+					"orchestrator",
+					"start",
+					"--root",
+					"/srv/o",
+					"--profile",
+					"claude",
+					"--gui",
+				],
+				undefined,
+			),
+		).rejects.toThrow(/already running/u);
+		const status = await viaSocket(
+			service,
+			["orchestrator", "status"],
+			undefined,
+		);
+		expect(status.data).toMatchObject({ agentId: ORCHESTRATOR });
+	});
+
+	it("pauses events and delivers the held ones in order on resume", async () => {
+		const { service, ports } = orchestrated();
+		ports.delivered = [];
+		await viaSocket(service, ["orchestrator", "pause"], undefined);
+		ports.service.raise({ title: "one", markdown: "x" });
+		ports.service.raise({ title: "two", markdown: "x" });
+		ports.service.answer(1, "a");
+		ports.service.answer(2, "b");
+		expect(ports.delivered).toEqual([]);
+		expect(ports.service.wire()).toMatchObject({ paused: true, held: 2 });
+		const resumed = await viaSocket(
+			service,
+			["orchestrator", "resume"],
+			undefined,
+		);
+		expect(resumed.data).toMatchObject({ delivered: 2 });
+		expect(ports.delivered.map(([, text]) => /#(\d)/u.exec(text)?.[1])).toEqual(
+			["1", "2"],
+		);
+	});
+
+	it("focuses the Orchestrator screen only on 'focus orchestrator'", async () => {
+		const { service, ports } = orchestrated();
+		await viaSocket(service, ["board"], undefined);
+		await viaSocket(service, ["orchestrator", "status"], undefined);
+		expect(ports.focusedOrchestrator).toBe(false);
+		await viaSocket(service, ["focus", "orchestrator"], undefined);
+		expect(ports.focusedOrchestrator).toBe(true);
 	});
 });

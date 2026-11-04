@@ -838,6 +838,9 @@ export class AppCoordinator {
       case "window_focus_changed":
         this.model.setWindowFocused(intent.focused);
         return this.transitionOutcome(beforeRevision, id);
+      case "orchestrator_assigned":
+        this.model.setOrchestratorAgent(intent.agentId);
+        return this.transitionOutcome(beforeRevision, id);
       case "terminal_activity_observed": {
         this.model.observeTerminalActivity(intent.workspaces);
         // Not persisted: the reading is live tmux state, rebuilt by the first

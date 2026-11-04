@@ -498,6 +498,17 @@ function expandTellPaths(
 			return command.repo === undefined
 				? command
 				: { ...command, repo: expandPath(command.repo, cwd, home) };
+		case "orchestrator-start":
+			return command.root === undefined
+				? command
+				: { ...command, root: expandPath(command.root, cwd, home) };
+		case "escalation-new":
+			return command.workspace === undefined
+				? command
+				: {
+						...command,
+						workspace: expandWorkspacePath(command.workspace, cwd, home),
+					};
 		case "agents":
 		case "agent-new":
 		case "agent-wait-many":
@@ -548,9 +559,13 @@ export function withStdinText(
 			return command.text === STDIN_TEXT ? { ...command, text } : command;
 		case "agent-new":
 		case "issue-assign":
+		case "orchestrator-start":
 			return command.prompt === STDIN_TEXT
 				? { ...command, prompt: text }
 				: command;
+		case "escalation-new":
+		case "escalation-ask":
+			return command.body === STDIN_TEXT ? { ...command, body: text } : command;
 		default:
 			return command;
 	}
@@ -562,7 +577,11 @@ function readsStdin(command: TellCommand): boolean {
 			return command.text === STDIN_TEXT;
 		case "agent-new":
 		case "issue-assign":
+		case "orchestrator-start":
 			return command.prompt === STDIN_TEXT;
+		case "escalation-new":
+		case "escalation-ask":
+			return command.body === STDIN_TEXT;
 		default:
 			return false;
 	}

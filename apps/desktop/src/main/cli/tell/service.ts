@@ -18,7 +18,11 @@ import type {
 	Usage,
 } from "../../../model/conversation.js";
 import type { PastSession } from "../../agent/conversation/resume.js";
-import type { WorkspaceRepositoryWire } from "../../../ipc/contract.js";
+import type {
+	EscalationWire,
+	OrchestratorBoardWire,
+	WorkspaceRepositoryWire,
+} from "../../../ipc/contract.js";
 import {
 	TELL_USAGE,
 	type AgentWaitUntil,
@@ -350,6 +354,8 @@ export interface TellStopped {
 
 export interface TellPorts {
 	workspaces(): readonly TellWorkspace[];
+	/** The Orchestrator row: board, escalations, events. */
+	readonly orchestrator: TellOrchestratorPorts;
 	/** The agent profiles, in the agent picker's order: the first is the default. */
 	profiles(): readonly TellProfile[];
 	/**
@@ -463,6 +469,48 @@ export interface TellPorts {
 		profileId: string,
 		session: TellPastSession,
 	): Promise<string>;
+}
+
+/** A new escalation, as `escalation new` asks for one. */
+export interface TellNewEscalation {
+	readonly title: string;
+	readonly markdown: string;
+	readonly options: readonly string[];
+	readonly agents: readonly string[];
+	readonly links: readonly string[];
+	readonly workspaceId: string | undefined;
+}
+
+/**
+ * The Orchestrator row, as far as a command line reaches into it.
+ *
+ * **There is no answer here.** The person answers an escalation in DevHub's
+ * window and nowhere else (`OrchestratorActionsBridge.answerEscalation`); a
+ * port that wrote one would let an agent decide for the person. The tests
+ * hold this shape to that (`service.test.ts`).
+ */
+export interface TellOrchestratorPorts {
+	/** The board, as the Orchestrator screen draws it. */
+	board(): OrchestratorBoardWire;
+	/** Every escalation, closed ones included. */
+	escalations(): readonly EscalationWire[];
+	raise(request: TellNewEscalation): EscalationWire;
+	ask(id: number, markdown: string, options: readonly string[]): EscalationWire;
+	close(id: number, note: string | undefined): EscalationWire;
+	link(id: number, agentId: string): EscalationWire;
+	/** `[orchestrator] root`, for a refusal that names it. */
+	configuredRoot(): string | undefined;
+	start(request: {
+		readonly root: string;
+		readonly profile: string;
+		readonly presentation: "gui" | "tui";
+		readonly prompt: string | undefined;
+	}): Promise<string>;
+	pause(): void;
+	/** How many held events went out. */
+	resume(): number;
+	/** Show the Orchestrator screen: the one focus this family has. */
+	focus(): Promise<void>;
 }
 
 /** Which Agent is asking, from its pane's `DEVHUB_ORIGIN`. */
@@ -635,6 +683,31 @@ export class TellMemory {
 		agentId: string,
 	): { readonly since: number; readonly activityAt: number } | undefined {
 		return this.#times.get(agentId);
+	}
+
+	readonly #escalations = new Map<string, Map<number, number>>();
+	readonly #unaccounted = new Map<string, Set<string>>();
+
+	/** How many entries of escalation `id` the caller has been shown (`escalation show`). */
+	escalationSeen(caller: string, id: number): number | undefined {
+		return this.#escalations.get(caller)?.get(id);
+	}
+
+	markEscalation(caller: string, id: number, entries: number): void {
+		const byId = this.#escalations.get(caller) ?? new Map<number, number>();
+		this.#escalations.set(caller, byId);
+		byId.set(id, entries);
+	}
+
+	/** Whether the caller has been shown this stretch of 不明 (`board`). */
+	unaccountedSeen(caller: string, key: string): boolean {
+		return this.#unaccounted.get(caller)?.has(key) === true;
+	}
+
+	markUnaccounted(caller: string, keys: readonly string[]): void {
+		const seen = this.#unaccounted.get(caller) ?? new Set<string>();
+		this.#unaccounted.set(caller, seen);
+		for (const key of keys) seen.add(key);
 	}
 
 	seen(caller: string, agentId: string): TellSeen | undefined {
@@ -858,7 +931,338 @@ export class TellService {
 				return this.editorPanes();
 			case "terminal-bring":
 				return this.bring(command.pane, command.focus);
+			case "board":
+				return this.board();
+			case "escalation-new":
+				return this.raise(command);
+			case "escalation-ask":
+				return this.askAgain(command);
+			case "escalation-show":
+				return this.showEscalation(command.id);
+			case "escalation-list":
+				return this.listEscalations(command.state);
+			case "escalation-close":
+				return this.closeEscalation(command.id, command.note);
+			case "escalation-link":
+				return this.linkEscalation(command.id, command.agent);
+			case "orchestrator-start":
+				return this.startOrchestrator(command);
+			case "orchestrator-status":
+				return this.orchestratorStatus();
+			case "orchestrator-stop":
+				return this.stop(this.orchestratorAgent("stop").id);
+			case "orchestrator-restart":
+				return this.restart(this.orchestratorAgent("restart").id);
+			case "orchestrator-pause":
+				this.ports.orchestrator.pause();
+				return {
+					message:
+						"The orchestrator's events are paused: each is held, and 'orchestrator resume' delivers them in order.",
+					data: { paused: true },
+				};
+			case "orchestrator-resume": {
+				const delivered = this.ports.orchestrator.resume();
+				return {
+					message: `The orchestrator's events are delivered again${delivered === 0 ? "" : `; ${String(delivered)} held event(s) went out, in order`}.`,
+					data: { paused: false, delivered },
+				};
+			}
 		}
+	}
+
+	// --- the Orchestrator row -----------------------------------------------
+
+	private orchestratorAgent(act: string): TellAgent {
+		const id = this.ports.orchestrator.board().orchestratorAgentId;
+		if (id === undefined)
+			throw new Error(
+				`there is no orchestrator to ${act}. 'devhub --tell orchestrator start' starts one.`,
+			);
+		return this.agent(id);
+	}
+
+	/** Whether the caller is the orchestrator agent itself. */
+	private callerIsOrchestrator(): boolean {
+		const id = this.caller?.agentId;
+		return (
+			id !== undefined &&
+			id === this.ports.orchestrator.board().orchestratorAgentId
+		);
+	}
+
+	private escalation(id: number): EscalationWire {
+		const found = this.ports.orchestrator
+			.escalations()
+			.find((one) => one.id === id);
+		if (found === undefined)
+			throw new Error(
+				`there is no escalation #${String(id)}. Run 'devhub --tell escalation list'.`,
+			);
+		return found;
+	}
+
+	private board(): TellAnswer {
+		const board = this.ports.orchestrator.board();
+		const now = this.clock.now();
+		// Reading the board is what acknowledges 不明 for 'agent wait --any'.
+		this.memory.markUnaccounted(
+			callerKey(this.caller),
+			board.unaccounted.map(unaccountedKey),
+		);
+		const lines = [
+			`orchestrator: ${board.orchestratorAgentId ?? "none"}${board.paused ? `  (events paused, ${String(board.held)} held)` : ""}`,
+			`needs answer (${String(board.needsAnswer.length)}):`,
+			...board.needsAnswer.map(
+				(one) =>
+					`  #${String(one.id)}  ${one.title}  waiting ${span(now - one.stateSince)}${agentsText(one)}`,
+			),
+			`in progress (${String(board.inProgress.length)}):`,
+			...board.inProgress.map(
+				(one) =>
+					`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}`,
+			),
+			`unaccounted (${String(board.unaccounted.length)}):`,
+			...board.unaccounted.map(
+				(one) =>
+					`  ${one.name} (${one.agentId})  ${one.workspaceLabel}  idle ${span(now - one.idleSince)}`,
+			),
+			...(board.unaccounted.length === 0
+				? []
+				: [
+						"Unaccounted agents are idle with no open escalation about them: give each its next task, or raise an escalation.",
+					]),
+		];
+		return {
+			message: lines.join("\n"),
+			data: {
+				orchestratorAgentId: board.orchestratorAgentId ?? null,
+				paused: board.paused,
+				held: board.held,
+				needsAnswer: board.needsAnswer,
+				inProgress: board.inProgress,
+				unaccounted: board.unaccounted,
+				graceMs: board.graceMs,
+			},
+		};
+	}
+
+	private raise(
+		command: Extract<TellCommand, { verb: "escalation-new" }>,
+	): TellAnswer {
+		const agents = command.agents.map((name) => this.agent(name).id);
+		const workspaceId =
+			command.workspace === undefined
+				? undefined
+				: this.workspace(command.workspace).id;
+		const made = this.ports.orchestrator.raise({
+			title: command.title,
+			markdown: command.body,
+			options: command.options,
+			agents,
+			links: command.links,
+			workspaceId,
+		});
+		this.memory.markEscalation(
+			callerKey(this.caller),
+			made.id,
+			made.entries.length,
+		);
+		return {
+			message: `Raised #${String(made.id)} 「${made.title}」: it waits for the person's answer (needs_answer).`,
+			data: made,
+		};
+	}
+
+	private askAgain(
+		command: Extract<TellCommand, { verb: "escalation-ask" }>,
+	): TellAnswer {
+		const asked = this.ports.orchestrator.ask(
+			command.id,
+			command.body,
+			command.options,
+		);
+		this.memory.markEscalation(
+			callerKey(this.caller),
+			asked.id,
+			asked.entries.length,
+		);
+		return {
+			message: `Asked again on #${String(asked.id)}: it waits for the person's answer (needs_answer).`,
+			data: asked,
+		};
+	}
+
+	private showEscalation(id: number): TellAnswer {
+		const one = this.escalation(id);
+		// Being shown the thread is reading the answer: 'agent wait --any'
+		// stops reporting it.
+		this.memory.markEscalation(callerKey(this.caller), id, one.entries.length);
+		const lines = [
+			`#${String(one.id)} ${one.title}  [${one.state}]`,
+			...(one.agents.length === 0
+				? []
+				: [
+						`agents: ${one.agents.map((agent) => `${agent.name ?? "(gone)"} (${agent.agentId})`).join(", ")}`,
+					]),
+			...(one.links.length === 0 ? [] : [`links: ${one.links.join(" ")}`]),
+			...one.entries.flatMap((entry) => [
+				"",
+				`--- ${entry.role === "human" ? "the person (answer)" : "orchestrator"}, ${new Date(entry.at).toISOString()}`,
+				entry.markdown,
+				...(entry.options === undefined
+					? []
+					: [
+							`options: ${entry.options.map((option) => JSON.stringify(option)).join(", ")}`,
+						]),
+			]),
+			...(one.closed === undefined
+				? []
+				: [
+						"",
+						`--- closed ${new Date(one.closed.at).toISOString()}${one.closed.note === undefined ? "" : `: ${one.closed.note}`}`,
+					]),
+		];
+		return { message: lines.join("\n"), data: one };
+	}
+
+	private listEscalations(
+		state: "needs_answer" | "in_progress" | "closed" | undefined,
+	): TellAnswer {
+		const all = this.ports.orchestrator
+			.escalations()
+			.filter((one) =>
+				state === undefined ? one.state !== "closed" : one.state === state,
+			);
+		const now = this.clock.now();
+		return {
+			message:
+				all.length === 0
+					? `No ${state ?? "open"} escalations.`
+					: all
+							.map(
+								(one) =>
+									`#${String(one.id)}  ${one.state}  ${span(now - one.stateSince)}  ${one.title}${agentsText(one)}`,
+							)
+							.join("\n"),
+			data: { escalations: all },
+		};
+	}
+
+	private closeEscalation(id: number, note: string | undefined): TellAnswer {
+		const closed = this.ports.orchestrator.close(id, note);
+		return {
+			message: `Closed #${String(closed.id)} 「${closed.title}」.`,
+			data: closed,
+		};
+	}
+
+	private linkEscalation(id: number, name: string): TellAnswer {
+		const agent = this.agent(name);
+		const linked = this.ports.orchestrator.link(id, agent.id);
+		return {
+			message: `#${String(linked.id)} is about ${agent.name} (${agent.id}) too.`,
+			data: linked,
+		};
+	}
+
+	private async startOrchestrator(
+		command: Extract<TellCommand, { verb: "orchestrator-start" }>,
+	): Promise<TellAnswer> {
+		const missing: string[] = [];
+		if (command.root === undefined) {
+			const configured = this.ports.orchestrator.configuredRoot();
+			missing.push(
+				`--root <path> is required: the folder the orchestrator runs in${configured === undefined ? "" : ` (orchestrator.root is ${configured})`}`,
+			);
+		}
+		const profile = this.requiredProfile(command.profile, missing);
+		this.requiredMode(profile, command.presentation, missing);
+		const running = this.ports.orchestrator.board().orchestratorAgentId;
+		if (running !== undefined)
+			missing.push(
+				`an orchestrator is already running (${running}): one at a time. 'orchestrator stop' first`,
+			);
+		refuseMissing(missing);
+		const agentId = await this.ports.orchestrator.start({
+			root: command.root!,
+			profile: profile!.id,
+			presentation: command.presentation!,
+			prompt: command.prompt,
+		});
+		return {
+			message: `The orchestrator ${agentId} (${profile!.id}, ${command.presentation!.toUpperCase()}) is starting in ${command.root!}; it is sent ${command.prompt === undefined ? "the init event" : "--prompt"} once it is ready. 'devhub --tell focus orchestrator' shows it.`,
+			data: { agentId, root: command.root, profile: profile!.id },
+		};
+	}
+
+	private orchestratorStatus(): TellAnswer {
+		const board = this.ports.orchestrator.board();
+		const agent =
+			board.orchestratorAgentId === undefined
+				? undefined
+				: this.liveAgents().get(board.orchestratorAgentId);
+		const counts = {
+			needsAnswer: board.needsAnswer.length,
+			inProgress: board.inProgress.length,
+			unaccounted: board.unaccounted.length,
+		};
+		return {
+			message: [
+				agent === undefined
+					? "No orchestrator is running."
+					: `orchestrator: ${agent.name} (${agent.id}), ${agent.status}${agent.presentation === "gui" ? "" : ", terminal"}`,
+				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, unaccounted ${String(counts.unaccounted)}`,
+				`events: ${board.paused ? `paused (${String(board.held)} held)` : "delivered"}`,
+			].join("\n"),
+			data: {
+				agentId: agent?.id ?? null,
+				status: agent?.status ?? null,
+				presentation: agent?.presentation ?? null,
+				counts,
+				paused: board.paused,
+				held: board.held,
+				root: this.ports.orchestrator.configuredRoot() ?? null,
+			},
+		};
+	}
+
+	/**
+	 * What the board has for the orchestrator that it has not been shown:
+	 * answers it has not read (`escalation show`), and agents in 不明 it has
+	 * not been shown (`board`). Only the orchestrator is woken by these.
+	 */
+	private boardNews(): {
+		readonly answered: readonly {
+			readonly id: number;
+			readonly title: string;
+		}[];
+		readonly unaccounted: readonly {
+			readonly agentId: string;
+			readonly name: string;
+			readonly idleSince: number;
+		}[];
+	} {
+		if (!this.callerIsOrchestrator()) return { answered: [], unaccounted: [] };
+		const caller = callerKey(this.caller);
+		const board = this.ports.orchestrator.board();
+		return {
+			answered: board.inProgress
+				.filter((one) =>
+					one.entries
+						.slice(this.memory.escalationSeen(caller, one.id) ?? 0)
+						.some((entry) => entry.role === "human"),
+				)
+				.map((one) => ({ id: one.id, title: one.title })),
+			unaccounted: board.unaccounted
+				.filter(
+					(one) => !this.memory.unaccountedSeen(caller, unaccountedKey(one)),
+				)
+				.map((one) => ({
+					agentId: one.agentId,
+					name: one.name,
+					idleSince: one.idleSince,
+				})),
+		};
 	}
 
 	// --- terminals --------------------------------------------------------
@@ -1821,7 +2225,9 @@ export class TellService {
 		const targets = pool.filter(
 			(agent) => agent.id !== self && (!gui || agent.presentation === "gui"),
 		);
-		if (targets.length === 0)
+		// The orchestrator waits on its board too, so it may wait with no
+		// other agent to wait on.
+		if (targets.length === 0 && !(gui && this.callerIsOrchestrator()))
 			throw new Error(
 				`there is no other ${gui ? "GUI " : ""}agent${command.workspace === undefined ? "" : ` in ${command.workspace}`} to wait on.`,
 			);
@@ -1896,11 +2302,31 @@ export class TellService {
 				const news = await this.news(agent, command.until);
 				if (news !== undefined) ready.push(news);
 			}
-			const reached = ready.length > 0 || gone.length > 0;
+			// The orchestrator's own news: an answer it has not read, an
+			// agent in 不明 it has not been shown. Until 'idle' does not ask
+			// about questions, and these are not questions, so every until
+			// but 'waiting' takes them.
+			const board =
+				command.until === "waiting"
+					? { answered: [], unaccounted: [] }
+					: this.boardNews();
+			const reached =
+				ready.length > 0 ||
+				gone.length > 0 ||
+				board.answered.length > 0 ||
+				board.unaccounted.length > 0;
 			if (reached || this.clock.now() >= deadline) {
 				const lines = [
 					...ready.map((one) => newsLine(one)),
 					...gone.map((one) => `${one.name} (${one.agentId}) is gone.`),
+					...board.answered.map(
+						(one) =>
+							`Escalation #${String(one.id)} 「${one.title}」 was answered by the person: read it with 'devhub --tell escalation show ${String(one.id)}'.`,
+					),
+					...board.unaccounted.map(
+						(one) =>
+							`${one.name} (${one.agentId}) is unaccounted for: idle since ${new Date(one.idleSince).toISOString()} with no open escalation. Give it its next task or raise an escalation ('devhub --tell board' acknowledges it).`,
+					),
 				];
 				return {
 					message: reached
@@ -1912,6 +2338,8 @@ export class TellService {
 						until: command.until,
 						ready,
 						gone,
+						answered: board.answered,
+						unaccounted: board.unaccounted,
 						agents: targets.map((target) => target.id),
 					},
 				};
@@ -2350,6 +2778,13 @@ export class TellService {
 	}
 
 	private async focus(target: string): Promise<TellAnswer> {
+		if (target === "orchestrator") {
+			await this.ports.orchestrator.focus();
+			return {
+				message: "Showing the Orchestrator screen.",
+				data: { orchestrator: true },
+			};
+		}
 		let agent: TellAgent | undefined;
 		try {
 			agent = this.agent(target);
@@ -2373,6 +2808,20 @@ export class TellService {
 }
 
 // --- words ------------------------------------------------------------------
+
+/** One stretch of an agent in 不明: it is new again each time it goes idle. */
+function unaccountedKey(one: {
+	readonly agentId: string;
+	readonly idleSince: number;
+}): string {
+	return `${one.agentId}@${String(one.idleSince)}`;
+}
+
+function agentsText(one: EscalationWire): string {
+	return one.agents.length === 0
+		? ""
+		: `  (${one.agents.map((agent) => agent.name ?? agent.agentId).join(", ")})`;
+}
 
 /** A session's name in a line: its title, or the agent's name it ran under. */
 function sessionTitle(session: TellPastSession): string {

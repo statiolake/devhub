@@ -515,6 +515,114 @@ export interface RepositoryStatusWire {
 	readonly diagnostic?: string;
 }
 
+/** One entry of an escalation's thread. See `model/escalations.ts`. */
+export interface EscalationEntryWire {
+	readonly role: "orchestrator" | "human";
+	readonly markdown: string;
+	/** ms since the epoch. */
+	readonly at: number;
+	readonly options?: readonly string[];
+}
+
+/** An agent an escalation is about, as the board names it. */
+export interface BoardAgentRefWire {
+	readonly agentId: string;
+	/** Its name now; absent when DevHub has no such agent any more. */
+	readonly name?: string;
+	readonly workspaceLabel?: string;
+	/** Its Sidebar status, while it is there. */
+	readonly status?: string;
+}
+
+export interface EscalationWire {
+	readonly id: number;
+	readonly title: string;
+	readonly state: "needs_answer" | "in_progress" | "closed";
+	readonly entries: readonly EscalationEntryWire[];
+	readonly agents: readonly BoardAgentRefWire[];
+	readonly workspaceId?: string;
+	readonly links: readonly string[];
+	readonly createdAt: number;
+	readonly updatedAt: number;
+	/** Since when it has been in `state`: the last entry, or the close. */
+	readonly stateSince: number;
+	readonly closed?: { readonly at: number; readonly note?: string };
+}
+
+/** One agent in 不明: idle, with no open escalation naming it. */
+export interface UnaccountedAgentWire {
+	readonly agentId: string;
+	readonly name: string;
+	readonly workspaceId: string;
+	readonly workspaceLabel: string;
+	readonly idleSince: number;
+}
+
+/**
+ * The Orchestrator screen's board: the three lanes, the orchestrator, and
+ * whether its events are paused. Pushed whenever any of it moves.
+ */
+export interface OrchestratorBoardWire {
+	readonly revision: number;
+	/** The orchestrator agent, while one is assigned. */
+	readonly orchestratorAgentId?: string;
+	/**
+	 * Whether the window can start one, and from what: `[orchestrator]` as
+	 * DevHub runs on it. `problem` is why it cannot, in a sentence.
+	 */
+	readonly start: {
+		readonly root?: string;
+		readonly profile?: string;
+		readonly presentation?: "gui" | "tui";
+		readonly problem?: string;
+	};
+	/** Events are held, not delivered; `held` of them so far. */
+	readonly paused: boolean;
+	readonly held: number;
+	/** Oldest question first. */
+	readonly needsAnswer: readonly EscalationWire[];
+	/** Answered longest ago first. */
+	readonly inProgress: readonly EscalationWire[];
+	/** Most recently closed first; the last few only. */
+	readonly closed: readonly EscalationWire[];
+	readonly unaccounted: readonly UnaccountedAgentWire[];
+	/** How long an idle agent goes unaccounted for before it is listed. */
+	readonly graceMs: number;
+}
+
+export const EMPTY_BOARD: OrchestratorBoardWire = {
+	revision: 0,
+	start: {},
+	paused: false,
+	held: 0,
+	needsAnswer: [],
+	inProgress: [],
+	closed: [],
+	unaccounted: [],
+	graceMs: 60_000,
+};
+
+/** The board, read and kept current. The Sidebar's row and the Agents page. */
+export interface OrchestratorBoardBridge {
+	getOrchestratorBoard(): Promise<OrchestratorBoardWire>;
+	onOrchestratorBoard(
+		listener: (board: OrchestratorBoardWire) => void,
+	): () => void;
+}
+
+/** What the Orchestrator screen does that no other page may. */
+export interface OrchestratorActionsBridge {
+	/**
+	 * The person's answer to an escalation. **The only way an answer is
+	 * written**: no `devhub --tell` command reaches it.
+	 */
+	answerEscalation(id: number, markdown: string): Promise<void>;
+	/** Start the orchestrator from `[orchestrator]`, as the board's button does. */
+	startOrchestrator(): Promise<void>;
+	/** Hold the orchestrator's events (true), or deliver them again (false). */
+	setOrchestratorPaused(paused: boolean): Promise<void>;
+}
+
 /**
  * What the page has put in the content area.
  *
@@ -1269,7 +1377,8 @@ export interface SidebarBridge
 		AppearanceBridge,
 		RepositoryStatusBridge,
 		UsageLimitsBridge,
-		AgentProfilesBridge {
+		AgentProfilesBridge,
+		OrchestratorBoardBridge {
 	/**
 	 * The menu commands whose subject is drawn here, and no others.
 	 *
@@ -1404,7 +1513,9 @@ export interface AgentsBridge
 		ProjectionBridge,
 		AppearanceBridge,
 		RepositoryStatusBridge,
-		AgentActionsBridge {
+		AgentActionsBridge,
+		OrchestratorBoardBridge,
+		OrchestratorActionsBridge {
 	/** Put a modal on screen — an injection to review. */
 	openModal(request: ModalRequest): Promise<string>;
 	openExternalUrl(url: string): Promise<void>;
@@ -1919,6 +2030,10 @@ export const CHANNELS = {
 	assignIssue: "devhub:assign-issue",
 	getRepositoryStatus: "devhub:get-repository-status",
 	getUsageLimits: "devhub:get-usage-limits",
+	getOrchestratorBoard: "devhub:get-orchestrator-board",
+	answerEscalation: "devhub:answer-escalation",
+	startOrchestrator: "devhub:start-orchestrator",
+	setOrchestratorPaused: "devhub:set-orchestrator-paused",
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	listSshHosts: "devhub:list-ssh-hosts",
@@ -2021,6 +2136,8 @@ export const CHANNELS = {
 	repositoryStatusChanged: "devhub:repository-status-changed",
 	/** Claude's and Codex's rate limits, when a GUI Agent reports a change. */
 	usageLimitsChanged: "devhub:usage-limits-changed",
+	/** The Orchestrator board moved: an escalation, 不明, the pause. */
+	orchestratorBoardChanged: "devhub:orchestrator-board-changed",
 } as const;
 
 /**

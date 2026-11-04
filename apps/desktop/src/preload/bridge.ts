@@ -36,6 +36,7 @@ import {
 	type PageBridge,
 	type ProjectionBridge,
 	type RepositoryStatusBridge,
+	type OrchestratorBoardBridge,
 	type UsageLimitsBridge,
 	type SshHostWire,
 	type WorkspaceOpeningBridge,
@@ -53,7 +54,11 @@ import type {
 	AppSnapshot,
 	ReplayWire,
 } from "../ipc/appShell.js";
-import type { RepositoryStatusWire, UsageLimitsWire } from "../ipc/contract.js";
+import type {
+	OrchestratorBoardWire,
+	RepositoryStatusWire,
+	UsageLimitsWire,
+} from "../ipc/contract.js";
 
 /** One push channel, one listener, one way to stop listening. */
 export function on<T>(
@@ -107,6 +112,17 @@ export function usageLimitsBridge(): UsageLimitsBridge {
 			ipcRenderer.invoke(CHANNELS.getUsageLimits) as Promise<UsageLimitsWire>,
 		onUsageLimits: (listener) =>
 			on<UsageLimitsWire>(CHANNELS.usageLimitsChanged, listener),
+	};
+}
+
+export function orchestratorBoardBridge(): OrchestratorBoardBridge {
+	return {
+		getOrchestratorBoard: () =>
+			ipcRenderer.invoke(
+				CHANNELS.getOrchestratorBoard,
+			) as Promise<OrchestratorBoardWire>,
+		onOrchestratorBoard: (listener) =>
+			on<OrchestratorBoardWire>(CHANNELS.orchestratorBoardChanged, listener),
 	};
 }
 
