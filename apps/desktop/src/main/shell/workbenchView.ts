@@ -209,7 +209,21 @@ export class WorkbenchView {
 		options: Electron.BrowserWindowConstructorOptions,
 	) {
 		this.view = new electron.WebContentsView({
-			webPreferences: options.webPreferences,
+			webPreferences: {
+				...options.webPreferences,
+				// Electron focuses a WebContents whenever it navigates
+				// (`focusOnNavigation`, true by default), and that is a native
+				// focus no JavaScript `focus()` call shows. A workbench started
+				// in the background — preloaded at launch, or started again after
+				// a failure or a discard — took the keyboard from whatever the
+				// person was typing in the moment its `loadURL` began (measured:
+				// 40 ms after the view was created, before its page had loaded),
+				// and an IME composition in an Agent's composer went with it.
+				// Where the keys go is `ShellWindow.focusSurface`'s answer alone,
+				// and it already places them in a workbench that arrives on
+				// screen (`layout`'s keyboard answer changing).
+				focusOnNavigation: false,
+			},
 		});
 		this.contents = this.view.webContents;
 		this.viewId = VIEW_ID_BASE + this.contents.id;

@@ -52,6 +52,11 @@ class FakeWebContents {
 }
 
 class FakeWebContentsView {
+	/** What each view was built with, newest last. */
+	static readonly built: { webPreferences?: Record<string, unknown> }[] = [];
+	constructor(options: { webPreferences?: Record<string, unknown> }) {
+		FakeWebContentsView.built.push(options);
+	}
 	webContents: FakeWebContents = new FakeWebContents(this);
 	/** What Electron does to the property when the contents are destroyed. */
 	forget(): void {
@@ -609,6 +614,24 @@ describe("a workbench view's focus", () => {
 		announced.length = 0;
 		view.on("focus", () => events.push("focus"));
 		view.on("blur", () => events.push("blur"));
+	});
+
+	it("never takes the keyboard by loading, whatever VS Code asked for", () => {
+		// A workbench preloaded in the background, or started again after a
+		// discard, navigates while the person types somewhere else. Electron
+		// focuses a WebContents on navigation unless told not to, natively, so
+		// the keys and an IME composition in an Agent's composer went into a
+		// workbench nobody could see. The keyboard is `focusSurface`'s alone.
+		const asShell = shell as unknown as ConstructorParameters<
+			typeof WorkbenchView
+		>[0];
+		new WorkbenchView(asShell, {
+			webPreferences: { preload: "/p.js", focusOnNavigation: true },
+		});
+		expect(FakeWebContentsView.built.at(-1)?.webPreferences).toEqual({
+			preload: "/p.js",
+			focusOnNavigation: false,
+		});
 	});
 
 	it("has no focus before anything has revealed it", () => {
