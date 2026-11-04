@@ -106,6 +106,8 @@ function titleParts(facts: ShellTitleFacts): ShellTitleParts {
 				workspace: found.workspace.label,
 			};
 		}
+		case "orchestrator":
+			return { element: undefined, workspace: "Orchestrator" };
 	}
 }
 

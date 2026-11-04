@@ -276,6 +276,10 @@ function layoutWire(layout: SurfaceLayout): LayoutWire {
         editorKey: surfaceKeyName(layout.editor),
         agentKey: surfaceKeyName(layout.agent),
       };
+    case "orchestrator":
+      return layout.agent === undefined
+        ? { kind: "orchestrator" }
+        : { kind: "orchestrator", agentKey: surfaceKeyName(layout.agent) };
     case "unavailable":
       return { kind: "unavailable" };
   }
@@ -289,6 +293,8 @@ function contextWire(
       return { kind: "workspace", workspaceId: context.workspaceId };
     case "agent":
       return { kind: "agent", agentId: context.agentId };
+    case "orchestrator":
+      return { kind: "orchestrator" };
   }
 }
 
@@ -538,6 +544,9 @@ export function snapshotWire(
     layout: layoutWire(snapshot.layout),
     workspaces,
     scratchWorkspaceId: snapshot.scratchWorkspaceId,
+    ...(snapshot.orchestratorAgentId === undefined
+      ? {}
+      : { orchestratorAgentId: snapshot.orchestratorAgentId }),
     sidebar: {
       width: snapshot.sidebar.width,
       collapsed: snapshot.sidebar.collapsed,
@@ -1093,6 +1102,12 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
               agentId: tryParse(() => parseAgentId(context.agentId)),
             },
             presentation,
+          };
+        case "orchestrator":
+          return {
+            type: "select_context",
+            context: { kind: "orchestrator" },
+            presentation: "full",
           };
       }
       break;

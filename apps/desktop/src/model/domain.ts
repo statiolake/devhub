@@ -2153,7 +2153,14 @@ export class Workspace {
  */
 export type NavigationContext =
   | { readonly kind: "workspace"; readonly workspaceId: WorkspaceId }
-  | { readonly kind: "agent"; readonly agentId: AgentId };
+  | { readonly kind: "agent"; readonly agentId: AgentId }
+  /**
+   * The Orchestrator row, above Scratch: the board, and the orchestrator
+   * agent beside it when one is assigned (`docs/orchestrator.md`). One of it,
+   * so it carries nothing; which agent it shows is the model's
+   * `orchestratorAgentId`.
+   */
+  | { readonly kind: "orchestrator" };
 
 export function sameContext(
   left: NavigationContext,
@@ -2168,7 +2175,7 @@ export function sameContext(
   if (left.kind === "agent" && right.kind === "agent") {
     return left.agentId === right.agentId;
   }
-  return false;
+  return left.kind === "orchestrator" && right.kind === "orchestrator";
 }
 
 /**
@@ -2218,6 +2225,11 @@ export type SurfaceLayout =
       readonly editor: SurfaceKey;
       readonly agent: SurfaceKey;
     }
+  /**
+   * The orchestrator screen: the board, and the orchestrator agent beside
+   * it — `undefined` while none is assigned, which is the board alone.
+   */
+  | { readonly kind: "orchestrator"; readonly agent: SurfaceKey | undefined }
   | { readonly kind: "unavailable" };
 
 /**

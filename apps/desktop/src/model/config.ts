@@ -54,6 +54,12 @@ import {
   dateTemplateBracketsBalance,
 } from "./dateTemplate.js";
 import { DEFAULT_SCRATCH_DAILY, scratchDailyProblem } from "./scratchDay.js";
+import {
+  DEFAULT_ORCHESTRATOR,
+  ORCHESTRATOR_KEYS,
+  orchestratorProblem,
+  type OrchestratorConfig,
+} from "./orchestratorSettings.js";
 import { isValidFontFamily } from "./fontFamily.js";
 import {
   DEFAULT_MAC_OPTION_IS_META,
@@ -576,6 +582,8 @@ export interface Config {
   readonly scratch: ScratchConfig;
   /** Where a new project or a clone goes by default. */
   readonly projects: ProjectsConfig;
+  /** `[orchestrator]`: see `model/orchestratorSettings.ts`. */
+  readonly orchestrator: OrchestratorConfig;
   /** `[agents]`: what holds for every profile unless the profile says otherwise. */
   readonly agents: AgentsConfig;
   readonly agentProfiles: readonly ConfiguredAgentProfile[];
@@ -794,6 +802,7 @@ export function defaultConfig(): Config {
     workspaceSources: defaultWorkspaceSources(),
     scratch: { daily: DEFAULT_SCRATCH_DAILY },
     projects: { directory: undefined },
+    orchestrator: DEFAULT_ORCHESTRATOR,
     agents: {
       default_presentation: "tui",
       resume_after_limit: true,
@@ -834,6 +843,7 @@ export type ValidationCode =
   | "invalid_scratch_daily"
   | "invalid_project_directory"
   | "invalid_resume_message"
+  | "invalid_orchestrator"
   | "ambiguous_date_token"
   | "invalid_exclusion"
   | "invalid_command"
@@ -1421,6 +1431,10 @@ export function validateConfig(config: Config): void {
   ) {
     fail("invalid_project_directory", "projects.directory");
   }
+  const orchestratorKey = orchestratorProblem(config.orchestrator);
+  if (orchestratorKey !== undefined) {
+    fail("invalid_orchestrator", `orchestrator.${orchestratorKey}`);
+  }
   if (
     !(AGENT_PRESENTATIONS as readonly string[]).includes(
       config.agents.default_presentation,
@@ -1447,6 +1461,7 @@ const TOP_LEVEL_KEYS = [
   "workspace_sources",
   "scratch",
   "projects",
+  "orchestrator",
   "agents",
   "agent_profiles",
   "agent_actions",
@@ -2023,6 +2038,17 @@ export function interpretConfig(document: unknown): Config {
   checkKeys(scratchTable, ["daily"], "scratch");
   const projectsTable = requireTable(table["projects"] ?? {}, "projects");
   checkKeys(projectsTable, ["directory"], "projects");
+  const orchestratorTable = requireTable(
+    table["orchestrator"] ?? {},
+    "orchestrator",
+  );
+  checkKeys(orchestratorTable, ORCHESTRATOR_KEYS, "orchestrator");
+  const orchestratorText = (key: string): string | undefined => {
+    const value = orchestratorTable[key];
+    if (value === undefined) return undefined;
+    if (typeof value !== "string") fail("invalid_type", `orchestrator.${key}`);
+    return value;
+  };
   const projectDirectory = projectsTable["directory"];
   if (projectDirectory !== undefined && typeof projectDirectory !== "string") {
     fail("invalid_type", "projects.directory");
@@ -2255,6 +2281,17 @@ export function interpretConfig(document: unknown): Config {
       ),
     },
     projects: { directory: projectDirectory },
+    orchestrator: {
+      root: orchestratorText("root"),
+      profile: orchestratorText("profile"),
+      presentation: orchestratorText("presentation") as
+        | "gui"
+        | "tui"
+        | undefined,
+      event_prompt:
+        orchestratorText("event_prompt") ?? DEFAULT_ORCHESTRATOR.event_prompt,
+      init_prompt: orchestratorText("init_prompt"),
+    },
     agents: {
       default_presentation: optionalString(
         agentsTable,
@@ -2409,6 +2446,11 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     ...(config.projects.directory === undefined
       ? {}
       : { projects: { directory: config.projects.directory } }),
+    orchestrator: Object.fromEntries(
+      Object.entries(config.orchestrator).filter(
+        ([, value]) => value !== undefined,
+      ),
+    ),
     agents: {
       default_presentation: config.agents.default_presentation,
       resume_after_limit: config.agents.resume_after_limit,
@@ -2510,6 +2552,7 @@ export type ConfigScopeKey =
   | "workspaceSources"
   | "scratch"
   | "projects"
+  | "orchestrator"
   | "agents"
   | "agentProfiles"
   | "agentActions";

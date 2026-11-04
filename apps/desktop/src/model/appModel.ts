@@ -273,6 +273,8 @@ export interface AppSnapshot {
    * Scratch, and of what `Cmd+Q Shift+J` and entry 0 select.
    */
   readonly scratchWorkspaceId: WorkspaceId;
+  /** The agent the Orchestrator row shows, while one is assigned. */
+  readonly orchestratorAgentId: AgentId | undefined;
   /** What the content area holds for that selection. */
   readonly layout: SurfaceLayout;
   readonly workspaces: readonly WorkspaceSnapshot[];
@@ -471,6 +473,12 @@ export class AppModel {
    */
   private scratchReturn: NavigationSelection | undefined;
   /**
+   * The agent the Orchestrator row shows, when one is assigned. Main owns
+   * the assignment (`main/orchestrator/`, kept in `escalations.json`) and
+   * tells the model; an id whose agent has gone reads as none.
+   */
+  private orchestratorAgentValue: AgentId | undefined;
+  /**
    * Each Agent's own terminal, while its session is up. See
    * `model/agentTerminal.ts`.
    */
@@ -528,6 +536,22 @@ export class AppModel {
     return this.scratchId;
   }
 
+  /** The orchestrator agent, while it is there. */
+  get orchestratorAgentId(): AgentId | undefined {
+    const id = this.orchestratorAgentValue;
+    return id !== undefined && this.agent(id) !== undefined ? id : undefined;
+  }
+
+  /** Assign (or, with undefined, release) the Orchestrator row's agent. */
+  setOrchestratorAgent(id: AgentId | undefined): void {
+    if (id !== undefined && this.agent(id) === undefined)
+      fail(DomainErrorCode.UnknownAgent);
+    if (id === this.orchestratorAgentValue) return;
+    this.orchestratorAgentValue = id;
+    this.readVisibleAgent();
+    this.bumpRevision();
+  }
+
   /**
    * Today's daily folder becomes Scratch.
    *
@@ -560,6 +584,7 @@ export class AppModel {
       revision: this.revision,
       selection: this.selectionValue,
       scratchWorkspaceId: this.scratchId,
+      orchestratorAgentId: this.orchestratorAgentId,
       layout: this.resolveLayout(this.selectionValue),
       workspaces: this.workspaceSnapshots(),
       sidebar: {
@@ -1161,10 +1186,14 @@ export class AppModel {
       return undefined;
     }
     const layout = this.resolveLayout(this.selectionValue);
-    if (layout.kind !== "agent" && layout.kind !== "split") {
+    if (
+      layout.kind !== "agent" &&
+      layout.kind !== "split" &&
+      layout.kind !== "orchestrator"
+    ) {
       return undefined;
     }
-    return layout.agent.kind === "agent" ? layout.agent.agentId : undefined;
+    return layout.agent?.kind === "agent" ? layout.agent.agentId : undefined;
   }
 
   /**
@@ -1374,6 +1403,14 @@ export class AppModel {
     context: NavigationContext,
     presentation: SurfacePresentation = "full",
   ): void {
+    // The orchestrator agent is shown on its own row: selecting it is
+    // selecting that row, however it was asked for.
+    if (
+      context.kind === "agent" &&
+      context.agentId === this.orchestratorAgentId
+    ) {
+      context = { kind: "orchestrator" };
+    }
     this.ensureContextExists(context);
     const next: NavigationSelection = {
       context,
@@ -1456,6 +1493,7 @@ export class AppModel {
   /** Whether this context has an other half to be shown beside. */
   private canPresentBeside(context: NavigationContext): boolean {
     if (context.kind === "agent") return true;
+    if (context.kind === "orchestrator") return false;
     return this.pairedAgentIn(context.workspaceId) !== undefined;
   }
 
@@ -1494,6 +1532,7 @@ export class AppModel {
   selectedWorkspaceId(): WorkspaceId | undefined {
     const context = this.selectionValue.context;
     if (context.kind === "workspace") return context.workspaceId;
+    if (context.kind === "orchestrator") return undefined;
     return this.agent(context.agentId)?.workspaceId;
   }
 
@@ -1510,6 +1549,7 @@ export class AppModel {
     if (context.kind === "agent") {
       return this.agent(context.agentId) ? context.agentId : undefined;
     }
+    if (context.kind === "orchestrator") return undefined;
     if (this.selectionValue.presentation !== "beside") return undefined;
     return this.pairedAgentIn(context.workspaceId);
   }
@@ -1808,6 +1848,14 @@ export class AppModel {
    */
   resolveLayout(selection: NavigationSelection): SurfaceLayout {
     const context = selection.context;
+    if (context.kind === "orchestrator") {
+      const agent = this.orchestratorAgentId;
+      return {
+        kind: "orchestrator",
+        agent:
+          agent === undefined ? undefined : { kind: "agent", agentId: agent },
+      };
+    }
     if (context.kind === "workspace") {
       const workspace = this.workspace(context.workspaceId);
       if (!workspace || !showable(workspace)) {
@@ -1919,11 +1967,16 @@ export class AppModel {
    */
   private repairSelection(before: readonly NavigationContext[]): void {
     const selected = this.selectionValue.context;
-    if (this.contextExists(selected)) return;
-    const at = tabPosition(before, selected);
+    if (this.contextExists(selected) || selected.kind === "orchestrator")
+      return;
+    const rows = before.filter(
+      (tab): tab is Exclude<NavigationContext, { kind: "orchestrator" }> =>
+        tab.kind !== "orchestrator",
+    );
+    const at = tabPosition(rows, selected);
     const successor =
-      before.slice(at + 1).find((tab) => this.contextExists(tab)) ??
-      before
+      rows.slice(at + 1).find((tab) => this.contextExists(tab)) ??
+      rows
         .slice(0, at)
         .reverse()
         .find((tab) => this.contextExists(tab));
@@ -2106,6 +2159,7 @@ export class AppModel {
 
   /** Whether this context still names something. `selectContext`'s gate, asked. */
   private contextExists(context: NavigationContext): boolean {
+    if (context.kind === "orchestrator") return true;
     if (context.kind === "workspace") {
       return this.workspace(context.workspaceId) !== undefined;
     }
@@ -2161,6 +2215,7 @@ export class AppModel {
   /** The Workspace whose split this context is a half of, if it still is. */
   private splitWorkspace(context: NavigationContext): WorkspaceId | undefined {
     if (context.kind === "workspace") return context.workspaceId;
+    if (context.kind === "orchestrator") return undefined;
     return this.agent(context.agentId)?.workspaceId;
   }
 

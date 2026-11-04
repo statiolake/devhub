@@ -4569,7 +4569,7 @@ export class AppController {
 		const surface: SurfaceArrangement =
 			snapshot.readiness !== "ready"
 				? { kind: "none" }
-				: layout.kind === "agent"
+				: layout.kind === "agent" || layout.kind === "orchestrator"
 					? { kind: "agent" }
 					: editorKey === undefined
 						? { kind: "none" }
@@ -7002,7 +7002,11 @@ export class AppController {
 	 */
 	private selectedEditorSurfaceKey(): string | undefined {
 		const layout = this.coordinator.snapshot().layout;
-		if (layout.kind === "unavailable" || layout.kind === "agent") {
+		if (
+			layout.kind === "unavailable" ||
+			layout.kind === "agent" ||
+			layout.kind === "orchestrator"
+		) {
 			return undefined;
 		}
 		return surfaceKeyName(layout.editor);
@@ -7799,7 +7803,9 @@ export class AppController {
 		const workspace =
 			context.kind === "workspace"
 				? model.workspace(context.workspaceId)
-				: model.workspaceForAgent(context.agentId);
+				: context.kind === "agent"
+					? model.workspaceForAgent(context.agentId)
+					: undefined;
 		if (workspace === undefined || workspace.id === model.scratchWorkspaceId) {
 			return undefined;
 		}
@@ -9469,7 +9475,9 @@ export class AppController {
 		const selected =
 			context.kind === "workspace"
 				? context.workspaceId
-				: this.coordinator.model.workspaceForAgent(context.agentId)?.id;
+				: context.kind === "agent"
+					? this.coordinator.model.workspaceForAgent(context.agentId)?.id
+					: undefined;
 		const rounds = this.repositoryStatus.rounds();
 		return snapshot.workspaces.map((workspace) => {
 			const repository = this.lastRepositoryStatus.workspaces.find(

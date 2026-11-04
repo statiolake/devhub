@@ -28,6 +28,10 @@ import {
 } from "../ipc/settings";
 import { FONT_FAMILY_RULE } from "../model/fontFamily";
 import {
+  ORCHESTRATOR_PROMPT_RULE,
+  ORCHESTRATOR_ROOT_RULE,
+} from "../model/orchestratorSettings";
+import {
   DUPLICATE_RULE,
   ENVIRONMENT_NAME_RULE,
   EXCLUDE_NAME_RULE,
@@ -76,6 +80,8 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return PROJECT_DIRECTORY_RULE;
     case "invalid_resume_message":
       return RESUME_MESSAGE_RULE;
+    case "invalid_orchestrator":
+      return `${ORCHESTRATOR_ROOT_RULE} orchestrator.presentation is gui or tui, and orchestrator.profile a profile's id. ${ORCHESTRATOR_PROMPT_RULE}`;
     case "ambiguous_date_token":
       return DATE_TOKEN_RULE;
     case "invalid_exclusion":

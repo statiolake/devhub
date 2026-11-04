@@ -242,6 +242,13 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		workspaceSources: config.workspaceSources.map(toWireSource),
 		scratch: { daily: config.scratch.daily },
 		projects: { directory: config.projects.directory },
+		orchestrator: {
+			root: config.orchestrator.root,
+			profile: config.orchestrator.profile,
+			presentation: config.orchestrator.presentation,
+			eventPrompt: config.orchestrator.event_prompt,
+			initPrompt: config.orchestrator.init_prompt,
+		},
 		agents: {
 			defaultPresentation: config.agents.default_presentation,
 			resumeAfterLimit: config.agents.resume_after_limit,
@@ -386,6 +393,13 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		workspaceSources: wire.workspaceSources.map(fromWireSource),
 		scratch: { daily: wire.scratch.daily },
 		projects: { directory: wire.projects.directory },
+		orchestrator: {
+			root: wire.orchestrator.root,
+			profile: wire.orchestrator.profile,
+			presentation: wire.orchestrator.presentation,
+			event_prompt: wire.orchestrator.eventPrompt,
+			init_prompt: wire.orchestrator.initPrompt,
+		},
 		agents: {
 			default_presentation: wire.agents.defaultPresentation,
 			resume_after_limit: wire.agents.resumeAfterLimit,

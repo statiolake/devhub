@@ -59,6 +59,13 @@ import {
 } from "../model/commands";
 import { FONT_FAMILY_RULE, isValidFontFamily } from "../model/fontFamily";
 import { scratchDailyProblem } from "../model/scratchDay";
+import {
+  DEFAULT_EVENT_PROMPT,
+  ORCHESTRATOR_PROMPT_RULE,
+  ORCHESTRATOR_ROOT_RULE,
+  orchestratorRootProblem,
+  promptProblem,
+} from "../model/orchestratorSettings";
 import { resumeMessageProblem } from "../model/conversation";
 import {
   defaultTerminalPalettes,
@@ -487,6 +494,124 @@ export function GeneralSection({
               update({
                 ...config,
                 projects: { directory: next === "" ? undefined : next },
+              });
+            }}
+          />
+        </Row>
+      </Group>
+
+      <Group
+        heading="Orchestrator"
+        note="The Orchestrator row, above Scratch, holds one agent that coordinates the others with devhub --tell and raises escalations for you to answer. DevHub gives it the board and the events; what it does is up to the skills and instructions in its folder."
+      >
+        <Row
+          label="Folder"
+          help="Where the orchestrator agent runs, so the skills and instructions in that folder (.claude/skills, CLAUDE.md, AGENTS.md) are its own. An absolute path, or one starting with ~/."
+        >
+          <TextField
+            label="Orchestrator folder"
+            value={config.orchestrator.root ?? ""}
+            placeholder="Not set"
+            mono
+            validate={(next) =>
+              next !== "" && orchestratorRootProblem(next)
+                ? ORCHESTRATOR_ROOT_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  root: next === "" ? undefined : next,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Profile"
+          help="The agent profile the Orchestrator row starts. devhub --tell orchestrator start always names its own."
+        >
+          <Popup
+            label="Orchestrator profile"
+            value={config.orchestrator.profile ?? ""}
+            options={[
+              ["", "The window's default"],
+              ...config.agentProfiles.map(
+                (profile) => [profile.id, profile.displayName] as const,
+              ),
+            ]}
+            onChange={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  profile: next === "" ? undefined : next,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row label="Shown as" help="A GUI conversation, or a terminal.">
+          <Popup
+            label="Orchestrator presentation"
+            value={config.orchestrator.presentation ?? ""}
+            options={[
+              ["", "The profile's default"],
+              ["gui", "GUI"],
+              ["tui", "Terminal"],
+            ]}
+            onChange={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  presentation: next === "" ? undefined : next,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Event message"
+          help="Sent to the orchestrator for each event (an answered escalation, an agent nobody accounts for, …). {EVENT} is replaced by the event, e.g. /make-progress {EVENT}."
+        >
+          <TextField
+            label="Orchestrator event message"
+            value={config.orchestrator.eventPrompt}
+            placeholder={DEFAULT_EVENT_PROMPT}
+            validate={(next) =>
+              promptProblem(next) ? ORCHESTRATOR_PROMPT_RULE : undefined
+            }
+            onCommit={(eventPrompt) => {
+              update({
+                ...config,
+                orchestrator: { ...config.orchestrator, eventPrompt },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Start message"
+          help="Sent when the orchestrator starts. Left empty, it is the event message with the init event."
+        >
+          <TextField
+            label="Orchestrator start message"
+            value={config.orchestrator.initPrompt ?? ""}
+            placeholder="The event message, for init"
+            validate={(next) =>
+              next !== "" && promptProblem(next)
+                ? ORCHESTRATOR_PROMPT_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  initPrompt: next === "" ? undefined : next,
+                },
               });
             }}
           />

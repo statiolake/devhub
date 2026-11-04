@@ -1718,9 +1718,13 @@ function navigationRecord(
   snapshot: import("./appModel.js").AppSnapshot,
 ): NavigationState {
   const context = snapshot.selection.context;
+  // The Orchestrator row is not written down either: a file an older DevHub
+  // cannot read would cost the whole arrangement, and a restart opening on
+  // Scratch costs one click.
   if (
-    context.kind === "workspace" &&
-    context.workspaceId === snapshot.scratchWorkspaceId
+    context.kind === "orchestrator" ||
+    (context.kind === "workspace" &&
+      context.workspaceId === snapshot.scratchWorkspaceId)
   ) {
     return {};
   }
@@ -1728,7 +1732,10 @@ function navigationRecord(
 }
 
 function contextRecord(
-  context: import("./domain.js").NavigationContext,
+  context: Exclude<
+    import("./domain.js").NavigationContext,
+    { kind: "orchestrator" }
+  >,
 ): NavigationContextRecord {
   switch (context.kind) {
     case "workspace":

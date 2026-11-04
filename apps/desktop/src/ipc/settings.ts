@@ -201,6 +201,14 @@ export interface SettingsConfigWire {
 	readonly scratch: { readonly daily: string };
 	/** `[projects]`: where new projects go; absent means derived from the sources. */
 	readonly projects: { readonly directory: string | undefined };
+	/** `[orchestrator]`: see `model/orchestratorSettings.ts`. */
+	readonly orchestrator: {
+		readonly root: string | undefined;
+		readonly profile: string | undefined;
+		readonly presentation: "gui" | "tui" | undefined;
+		readonly eventPrompt: string;
+		readonly initPrompt: string | undefined;
+	};
 	/**
 	 * `[agents]`: how an Agent is shown when neither its launch nor its
 	 * profile says, and whether (and with what words) a GUI Agent a usage
@@ -390,6 +398,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_scratch_daily"
 	| "invalid_project_directory"
 	| "invalid_resume_message"
+	| "invalid_orchestrator"
 	| "ambiguous_date_token"
 	| "invalid_exclusion"
 	| "invalid_command"
@@ -478,6 +487,7 @@ export type SettingsScopeKeyWire =
 	| "workspaceSources"
 	| "scratch"
 	| "projects"
+	| "orchestrator"
 	| "agents"
 	| "agentProfiles"
 	| "agentActions";

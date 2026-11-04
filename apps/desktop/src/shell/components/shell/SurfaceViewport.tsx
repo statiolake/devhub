@@ -446,7 +446,7 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
         }}
       />
     );
-  } else if (layout.kind === "agent") {
+  } else if (layout.kind === "agent" || layout.kind === "orchestrator") {
     // The Agents' view covers this rectangle entirely, so there is nothing to
     // draw under it. The workbenches stay built and running behind both: this
     // is an Agent covering a workbench, not a workbench going away.

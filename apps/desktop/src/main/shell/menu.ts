@@ -68,7 +68,8 @@ function selectedWorkspace(
 	const workspace = snapshot.workspaces.find((candidate) =>
 		context.kind === "workspace"
 			? candidate.id === context.workspaceId
-			: candidate.agents.some((agent) => agent.id === context.agentId),
+			: context.kind === "agent" &&
+				candidate.agents.some((agent) => agent.id === context.agentId),
 	);
 	if (!workspace || workspace.id === snapshot.scratchWorkspaceId) {
 		return undefined;

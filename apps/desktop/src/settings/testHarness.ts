@@ -49,6 +49,14 @@ export function testConfig(
     },
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },
+    orchestrator: {
+      root: undefined,
+      profile: undefined,
+      presentation: undefined,
+      eventPrompt:
+        "このイベントが発生したのでハンドリングしてください。{EVENT}",
+      initPrompt: undefined,
+    },
     terminal: { macOptionIsMeta: false },
     agents: {
       defaultPresentation: "tui",

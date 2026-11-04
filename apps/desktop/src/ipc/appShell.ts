@@ -865,6 +865,11 @@ export interface AppSnapshotWire {
 	 * this Workspace.
 	 */
 	readonly scratchWorkspaceId: string;
+	/**
+	 * The agent the Orchestrator row shows, while one is assigned. It is
+	 * drawn on that row, not under its Workspace.
+	 */
+	readonly orchestratorAgentId?: string;
 	readonly sidebar: SidebarWire;
 	/** Where the divider sits when the layout is a split, as a fraction. */
 	readonly splitRatio: number;
@@ -944,6 +949,11 @@ export type LayoutWire =
 			readonly editorKey: string;
 			readonly agentKey: string;
 	  }
+	/**
+	 * The Orchestrator row: the board, and the orchestrator agent's pane
+	 * beside it — absent while none is assigned. See `docs/orchestrator.md`.
+	 */
+	| { readonly kind: "orchestrator"; readonly agentKey?: string }
 	| { readonly kind: "unavailable" };
 
 /** See `SurfacePresentation` in the domain: how much of the area it takes. */
@@ -1027,7 +1037,9 @@ export type ConfirmationPurposeWire =
 	| { readonly agentId: string; readonly kind: "agent_restart" };
 export type ContextWire =
 	| { readonly kind: "workspace"; readonly workspaceId: string }
-	| { readonly agentId: string; readonly kind: "agent" };
+	| { readonly agentId: string; readonly kind: "agent" }
+	/** The Orchestrator row, above Scratch. */
+	| { readonly kind: "orchestrator" };
 export type EditorHostWire =
 	| { readonly status: "starting" }
 	| { readonly status: "ready" }
@@ -1283,6 +1295,8 @@ export function contextKey(context: NavigationContext): string {
 			return `workspace:${context.workspaceId}`;
 		case "agent":
 			return `agent:${context.agentId}`;
+		case "orchestrator":
+			return "orchestrator";
 	}
 }
 export function isContextSelected(

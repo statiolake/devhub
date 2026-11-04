@@ -53,6 +53,7 @@ import type {
 } from "../../ipc/appShell.js";
 import {
 	sidebarWorkspaces,
+	type TabOf,
 	tabOrder,
 	tabPosition,
 } from "../../ipc/appShell.js";
@@ -254,9 +255,9 @@ function scratchContext(snapshot: AppSnapshotWire): NavigationContext {
 /** Scratch, then the workspaces in sidebar order. What a digit names (0 is Scratch). */
 function sidebarEntries(
 	snapshot: AppSnapshotWire,
-): readonly NavigationContext[] {
+): readonly TabOf<string, string>[] {
 	return orderedWorkspaces(snapshot).map(
-		(workspace): NavigationContext => ({
+		(workspace): TabOf<string, string> => ({
 			kind: "workspace",
 			workspaceId: workspace.id,
 		}),
@@ -276,7 +277,7 @@ function everyAgent(snapshot: AppSnapshotWire): readonly AgentWire[] {
 }
 
 /** Every row of the tree, of both kinds, in the order it is drawn. */
-function everyTab(snapshot: AppSnapshotWire): readonly NavigationContext[] {
+function everyTab(snapshot: AppSnapshotWire): readonly TabOf<string, string>[] {
 	return tabOrder(orderedWorkspaces(snapshot));
 }
 
@@ -288,7 +289,8 @@ function selectedWorkspace(
 	return snapshot.workspaces.find((workspace) =>
 		context.kind === "workspace"
 			? workspace.id === context.workspaceId
-			: workspace.agents.some((agent) => agent.id === context.agentId),
+			: context.kind === "agent" &&
+				workspace.agents.some((agent) => agent.id === context.agentId),
 	);
 }
 
@@ -339,12 +341,19 @@ function wrap(index: number, length: number): number {
  * so a ring with nothing wanted in it is a no-op rather than a loop.
  */
 function step(
-	ring: readonly NavigationContext[],
+	ring: readonly TabOf<string, string>[],
 	from: NavigationContext,
 	direction: 1 | -1,
 	wanted: (index: number) => boolean = () => true,
 ): ChordEffect | undefined {
-	const current = tabPosition(ring, from);
+	// From the Orchestrator row, which is in no ring: as if from just before
+	// the first entry (forward) or just after the last (back).
+	const current =
+		from.kind === "orchestrator"
+			? direction === 1
+				? -1
+				: ring.length
+			: tabPosition(ring, from);
 	for (let offset = 1; offset <= ring.length; offset += 1) {
 		const index = wrap(current + direction * offset, ring.length);
 		if (wanted(index)) {
@@ -674,8 +683,9 @@ export function resolveChord(
 			const direction = commandId === "move_entry_up" ? -1 : 1;
 			const context = snapshot.selection.context;
 			if (
-				context.kind === "workspace" &&
-				context.workspaceId === snapshot.scratchWorkspaceId
+				context.kind === "orchestrator" ||
+				(context.kind === "workspace" &&
+					context.workspaceId === snapshot.scratchWorkspaceId)
 			) {
 				return undefined;
 			}
