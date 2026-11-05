@@ -149,6 +149,7 @@ import type {
 } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
 import { isDevhubLink } from "../../model/devhubLink.js";
+import { escalationState } from "../../model/escalations.js";
 import { fileSelection } from "../agent/conversation/pathLinks.js";
 import {
 	routeAgentOpen,
@@ -9523,6 +9524,10 @@ export class AppController {
 			console.error(`[devhub] ${refused}`);
 			this.publishError(errorWire(new Error(refused)));
 		}
+		// An escalation started or stopped waiting: github.unattended may move.
+		store.onChange(() => {
+			this.githubEvents.reconsider();
+		});
 		this.orchestrator = new OrchestratorService({
 			store,
 			agents: () => this.liveAgents(),
@@ -9762,6 +9767,17 @@ export class AppController {
 		},
 		where: (url) => this.githubWhere(url),
 		links: () => this.githubLinks(),
+		// An Issue a 待機中 escalation is about is being handled.
+		escalations: () =>
+			(this.orchestrator?.open() ?? []).map((one) => ({
+				id: one.id,
+				state: escalationState(one),
+				links: one.links,
+				agents: one.agents,
+				...(one.workspaceId === undefined
+					? {}
+					: { workspaceId: one.workspaceId }),
+			})),
 		// `<userData>/devhub/orchestrator-github.json`, once the profile is known.
 		snapshots: {
 			load: () => this.githubSnapshots?.load(),
@@ -9813,6 +9829,8 @@ export class AppController {
 					workspace.id === snapshot.scratchWorkspaceId
 						? "scratch"
 						: workspaceToken(workspace.label, workspace.id),
+				id: workspace.id,
+				label: workspace.label,
 				issueUrls: [
 					...(number === undefined || repo === undefined
 						? []

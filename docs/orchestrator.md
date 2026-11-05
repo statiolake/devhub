@@ -522,7 +522,8 @@ bob が承認 ／ [github.pr_ready] ready for review になった https://…/pu
   escalation has left 待機中 or waits anew; an
   `escalation.waiting_reminder` none of whose escalations still waits; a
   `github.unattended`
-  whose Issue was closed, or has had an agent linked to it, since.
+  whose Issue was closed, has had an agent linked to it, or has a 待機中
+  escalation about it, since.
 - **Never said twice.** What the last delivery said about a subject is not
   delivered again (`repeat`) unless something about that subject has been
   heard since — the same CI result on the same commit. Events that add news each time (`init`,
@@ -658,13 +659,26 @@ status`) has the PR or Issue open, its Workspace and agent go on the
     URL, or by number (`123`, `#123`) in its Workspace's repository. The
     orchestrator is never the linked agent. A Workspace whose branch no
     repository round has read yet links nothing: should it be on the Issue,
-    the stale check at delivery drops what is still waiting. **Once per
+    the stale check at delivery drops what is still waiting. **Not while an
+    escalation waits on it**: an Issue a **待機中** escalation is about is
+    being handled — it waits on a known condition — and is not said
+    (`coveringEscalation`, the one definition; `orchestrator events` notes
+    `waiting in esc=12`). The escalation is about the Issue when one of its
+    links is the Issue's URL, or a `devhub:workspace/` or `devhub:agent/`
+    link to a Workspace whose branch names it or an agent linked to it; when
+    its `workspaceId` is a Workspace whose branch names it; or when one of
+    its agents is linked to it by the rules above, live or not. Only 待機中
+    counts (`COVERING_STATES`, one constant); 要回答 and 対応中 do not. An
+    escalation change is looked at at once, not at the next poll: once it
+    leaves 待機中 (resumed, asked again, answered, closed) an Issue nothing
+    else attends is unattended again — a new episode, said. **Once per
     episode**: an Issue
-    said is not said again until it has been attended (an agent linked) or
-    closed, and then is unattended again; a start or restart of the
+    said is not said again until it has been attended (an agent linked, or
+    a waiting escalation) or closed, and then is unattended again; a start or restart of the
     orchestrator says every one again, so right after `init` it hears the
     whole list — any assignment missed before included. Stale-dropped when,
-    by delivery, it was closed or an agent got linked. The current list is
+    by delivery, it was closed, an agent got linked or an escalation started
+    waiting on it. The current list is
     `devhub --tell board` (`--json`: `unattendedIssues`, null when GitHub is
     not polled); `orchestrator status` counts, per board, its items, those
     assigned to the viewer, and the unattended ones.

@@ -46,9 +46,10 @@
  * **`github.unattended`** is a state, not a diff (`unattended.ts`): on every
  * successful poll — the baseline too, which is the point: an assignment
  * missed while nobody watched is said on the first poll — and whenever the
- * Workspaces or Agents move (`reconsider`), each open Issue assigned to the
- * viewer with no live agent linked to it is said once, and again only once
- * it has had an agent and lost it (or was closed and reopened). A start or
+ * Workspaces, Agents or escalations move (`reconsider`), each open Issue
+ * assigned to the viewer with no live agent linked to it, and no 待機中
+ * escalation about it, is said once, and again only once it has had an agent
+ * (or a waiting escalation) and lost it (or was closed and reopened). A start or
  * restart says every one again: the new orchestrator has heard none.
  *
  * **Pause, restart.** While the orchestrator's events are paused the source
@@ -77,7 +78,11 @@ import {
 	usableSnapshot,
 	type SnapshotStore,
 } from "./githubSnapshot.js";
-import { unattendedVerdict, type LinkWorkspace } from "./unattended.js";
+import {
+	unattendedVerdict,
+	type LinkEscalation,
+	type LinkWorkspace,
+} from "./unattended.js";
 
 // --- the snapshot ----------------------------------------------------------------
 
@@ -825,6 +830,11 @@ export interface GitHubSourcePorts {
 	 * check (`unattended.ts`). Absent: no `github.unattended` at all.
 	 */
 	readonly links?: () => readonly LinkWorkspace[];
+	/**
+	 * The open escalations, for `github.unattended`'s cover check: an Issue
+	 * a 待機中 one is about is not unattended. Absent: none.
+	 */
+	readonly escalations?: () => readonly LinkEscalation[];
 	/** How it stands (`state()`) moved. */
 	readonly changed?: () => void;
 	readonly now?: () => number;
@@ -901,7 +911,8 @@ export class GitHubEventSource {
 	#unattended = new Map<string, UnattendedIssue>();
 	/**
 	 * Why the last look said nothing of something: the baseline, an Issue of
-	 * the viewer's that has an agent, is closed, or was said already.
+	 * the viewer's that has an agent, waits in an escalation, is closed, or was
+	 * said already.
 	 */
 	#notes: string[] = [];
 
@@ -1078,7 +1089,7 @@ export class GitHubEventSource {
 	}
 
 	/**
-	 * The Workspaces or Agents moved: look at `github.unattended` again, off
+	 * The Workspaces, Agents or escalations moved: look at `github.unattended` again, off
 	 * what was last read (no poll). Nothing while idle.
 	 */
 	reconsider(): void {
@@ -1089,13 +1100,14 @@ export class GitHubEventSource {
 	/**
 	 * Whether the Issue a pending `github.unattended` is about still is, by
 	 * what was last read and the agents now: not closed, still assigned, still
-	 * without an agent.
+	 * without an agent, and no escalation started waiting on it.
 	 */
 	stillUnattended(item: EventItem): boolean {
 		const viewer = this.#viewer;
 		const links = this.ports.links;
 		if (viewer === undefined || links === undefined) return false;
 		const workspaces = links();
+		const escalations = this.ports.escalations?.() ?? [];
 		for (const state of this.#boards.values())
 			for (const entry of state.complete ?? [])
 				if (
@@ -1104,7 +1116,8 @@ export class GitHubEventSource {
 					same(entry.item.repo, item.repo)
 				)
 					return (
-						unattendedVerdict(entry, viewer, workspaces).unattended === true
+						unattendedVerdict(entry, viewer, workspaces, escalations)
+							.unattended === true
 					);
 		return false;
 	}
@@ -1119,6 +1132,7 @@ export class GitHubEventSource {
 		const links = this.ports.links;
 		if (viewer === undefined || links === undefined) return false;
 		const workspaces = links();
+		const escalations = this.ports.escalations?.() ?? [];
 		const now = new Map<string, UnattendedIssue>();
 		const notes: string[] = baselines.map(
 			(ref) =>
@@ -1127,7 +1141,12 @@ export class GitHubEventSource {
 		for (const [ref, state] of this.#boards)
 			for (const entry of state.complete ?? []) {
 				if (now.has(entry.id)) continue;
-				const verdict = unattendedVerdict(entry, viewer, workspaces);
+				const verdict = unattendedVerdict(
+					entry,
+					viewer,
+					workspaces,
+					escalations,
+				);
 				if (verdict.unattended) {
 					now.set(entry.id, {
 						item: entry.item,
@@ -1136,9 +1155,17 @@ export class GitHubEventSource {
 					});
 					continue;
 				}
-				if (verdict.why === "closed" || verdict.why === "has an agent")
+				const why =
+					verdict.why === "closed"
+						? "closed"
+						: verdict.why === "has an agent"
+							? `linked to agent=${verdict.agent === undefined ? "?" : verdict.agent.id.slice(0, 8)}${verdict.ws === undefined ? "" : ` in ws=${verdict.ws}`}`
+							: verdict.why === "waiting in an escalation"
+								? `waiting in esc=${String(verdict.escalation ?? "?")}`
+								: undefined;
+				if (why !== undefined)
 					notes.push(
-						`#${String(entry.item.number)} (${entry.item.repo}): no github.unattended, ${verdict.why === "closed" ? "closed" : `linked to agent=${verdict.agent === undefined ? "?" : verdict.agent.id.slice(0, 8)}${verdict.ws === undefined ? "" : ` in ws=${verdict.ws}`}`}`,
+						`#${String(entry.item.number)} (${entry.item.repo}): no github.unattended, ${why}`,
 					);
 			}
 		// Attended (or gone) now: the next stretch unattended is said again.

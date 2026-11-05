@@ -245,7 +245,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | ボード | \`escalation.stalled\` | 対応中のエスカレーションの関係エージェントが 1 分以上誰も動いていない (全員 idle / 待ち / 停止 / 消えた、または紐付けなし: \`agents=none\`)。1 回の停滞につき 1 回。未読の回答があるうちは来ず、回答 (\`escalation_answered\`) が届いた時点 (本文が切られていたときは \`escalation show\` で読んだ時点) から数え始める | esc, agents |
 | GitHub | \`github.assigned\` | 自分にアサインされた | ws, agent, URL |
 | GitHub | \`github.lane_changed\` | 自分の Issue / PR の Project レーンが動いた (from → to) | ws, URL |
-| GitHub | \`github.unattended\` | 自分にアサインされた open な Issue に、紐づく DevHub エージェントがいない (状態で判定。下記) | lane, URL |
+| GitHub | \`github.unattended\` | 自分にアサインされた open な Issue に、紐づく DevHub エージェントも、それを待つ待機中のエスカレーションもない (状態で判定。下記) | lane, URL |
 | GitHub | \`github.pr_opened\` | 自分の Issue に紐づく PR、または自分の PR ができた | ws, agent, URL |
 | GitHub | \`github.pr_ready\` | PR が draft から ready になった | ws, agent, URL |
 | GitHub | \`github.pr_approved\` / \`github.changes_requested\` | 自分の PR が他の人に承認された / 変更を要求された | ws, agent, URL |
@@ -286,8 +286,17 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
 ワークスペースのブランチがその Issue を指し (\`123-fix-login\`、Issue アサインが作る
 ブランチ)、そこに停止中でないエージェントがいること、またはエージェントの meta
 \`issue=\` がその Issue (URL か、同じリポジトリの番号 \`123\` / \`#123\`) を指すこと。
-同じ Issue は「放置されている間」に 1 回だけ。エージェントが付いて、また外れたら
-もう一度来る。届く前にエージェントが付いた / クローズされた ものは落とされる。
+**待機中のエスカレーションが対象にしている Issue は来ない** (既知の条件を待って
+対応中だから。\`orchestrator events\` の末尾に \`waiting in esc=12\` と出る)。
+対象にしている、とは: リンクにその Issue の URL がある (または、その Issue の
+ワークスペースやエージェントへの \`devhub:\` リンク)、\`workspaceId\` のワークスペースの
+ブランチがその Issue を指す、関係エージェントの誰かが上の規則でその Issue に紐づく
+(停止中でもよい)、のどれか。要回答 / 対応中のエスカレーションでは外れない。
+待機中でなくなった (resume / ask / 回答 / close) ときにまだエージェントがいなければ、
+すぐにまた来る。
+同じ Issue は「放置されている間」に 1 回だけ。エージェント (か待機中のエスカレーション)
+が付いて、また外れたらもう一度来る。届く前にエージェントが付いた / 待機中の
+エスカレーションができた / クローズされた ものは落とされる。
 起動直後の \`init\` のあとに、取りこぼしたアサインも含めて今の一覧が届く。
 いつでも \`devhub --tell --json board\` の \`unattendedIssues\` で今の一覧を取れる
 (\`orchestrator status\` には Project ごとの 件数 / 自分にアサイン / 放置 が出る。
@@ -541,6 +550,8 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     github.unattended を受けたら Issue をアサインするか（issue assign）、エスカレする。
     issue assign には meta issue=N, parent=自分 を付ける (付けると紐づいたと分かる)。
     着手すべきでない (他の人の作業待ちなど) ならエスカレーションで人に聞く。
+    既知の条件待ちなら、その Issue の URL を --link に付けた待機中のエスカレーション
+    (escalation new … --wait TEXT、または escalation wait) にする。待機中の間は来ない。
 
     ## github.changes_requested / github.review_comment
     その PR のエージェントに対応を依頼。いなければ agent resume か issue assign。

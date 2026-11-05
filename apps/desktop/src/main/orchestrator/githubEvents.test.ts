@@ -16,7 +16,12 @@ import {
 	nextDelay,
 	parseReading,
 } from "./githubEvents.js";
-import { linkedAgent, type LinkWorkspace } from "./unattended.js";
+import {
+	coveringEscalation,
+	linkedAgent,
+	type LinkEscalation,
+	type LinkWorkspace,
+} from "./unattended.js";
 
 // --- fixtures: GitHub's answers, as JSON ---------------------------------------
 
@@ -228,6 +233,7 @@ function world(
 	answers: Answer[],
 	where = new Map<string, string>(),
 	links?: () => readonly LinkWorkspace[],
+	escalations?: () => readonly LinkEscalation[],
 ) {
 	const events: OrchestratorEvent[] = [];
 	const asked: { query: string; variables: Record<string, unknown> }[] = [];
@@ -248,6 +254,7 @@ function world(
 				? { ws: where.get(link)!, agent: { id: "a1", name: "Claude" } }
 				: undefined,
 		...(links === undefined ? {} : { links }),
+		...(escalations === undefined ? {} : { escalations }),
 		setTimer: (_ms, run) => {
 			pending.push(run);
 			return { cancel: () => undefined };
@@ -1098,6 +1105,8 @@ function space(
 ): LinkWorkspace {
 	return {
 		ws: `ws${String(number ?? 0)}`,
+		id: `id-ws${String(number ?? 0)}`,
+		label: `space ${String(number ?? 0)}`,
 		issueUrls: number === undefined ? [] : [url(number, "issues")],
 		repo: "acme/app",
 		agents:
@@ -1183,7 +1192,12 @@ describe("github.unattended", () => {
 		// has read yet: neither links #200, and neither holds it back.
 		const run = world([{ cards: MINE.map(issueCard) }], new Map(), () => [
 			space(123),
-			{ ws: "scratch", issueUrls: [], agents: space(undefined).agents },
+			{
+				ws: "scratch",
+				id: "scratch",
+				issueUrls: [],
+				agents: space(undefined).agents,
+			},
 			{ ...space(undefined), ws: "fresh" },
 		]);
 		await run.ticks(1);
@@ -1385,6 +1399,137 @@ describe("github.unattended", () => {
 		expect(delivered).toEqual([
 			`[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない ${url(200, "issues")}`,
 			`[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない ${url(200, "issues")}`,
+		]);
+	});
+});
+
+describe("github.unattended and waiting escalations", () => {
+	const MINE: IssueCard[] = [
+		{ item: "i3", id: "I3", number: 200, status: "Todo", assignees: [ME] },
+	];
+	/** #200's Workspace, its agent stopped: not linked, by itself. */
+	const STOPPED = () => [space(123), space(200, { live: false })];
+	const esc = (over: Partial<LinkEscalation> = {}): LinkEscalation => ({
+		id: 12,
+		state: "waiting",
+		links: [],
+		agents: [],
+		...over,
+	});
+
+	for (const [how, one] of [
+		["its link is the Issue's URL", esc({ links: [`${url(200, "issues")}/`] })],
+		[
+			"its devhub: link names the Issue's Workspace",
+			esc({ links: ["devhub:workspace/space%20200"] }),
+		],
+		[
+			"its devhub: link names an agent on the Issue",
+			esc({ links: ["devhub:agent/agent-200"] }),
+		],
+		[
+			"its workspaceId is the Issue's Workspace",
+			esc({ workspaceId: "id-ws200" }),
+		],
+		[
+			"one of its agents is on the Issue, stopped",
+			esc({ agents: ["agent-200"] }),
+		],
+	] as const)
+		it(`is not said while a 待機中 escalation covers it: ${how}`, async () => {
+			const run = world(
+				[{ cards: MINE.map(issueCard) }],
+				new Map(),
+				STOPPED,
+				() => [one],
+			);
+			await run.ticks(1);
+			expect(unattended(run.events)).toEqual([]);
+			expect(run.source.state().notes.join("\n")).toMatch(
+				/#200 \(acme\/app\): no github.unattended, waiting in esc=12/u,
+			);
+		});
+
+	it("covers by an agent's meta issue=, even with the agent stopped", () => {
+		const issue = { repo: "acme/app", number: 200, url: url(200, "issues") };
+		const spaces = [space(undefined, { live: false, meta: { issue: "#200" } })];
+		expect(
+			coveringEscalation(issue, [esc({ agents: ["agent-0"] })], spaces)?.id,
+		).toBe(12);
+		expect(
+			coveringEscalation(
+				issue,
+				[esc({ agents: ["agent-0"], links: [url(201, "issues")] })],
+				[space(undefined)],
+			),
+		).toBeUndefined();
+	});
+
+	it("does not exclude for an escalation that is not 待機中", async () => {
+		for (const state of ["needs_answer", "in_progress", "closed"] as const) {
+			const run = world(
+				[{ cards: MINE.map(issueCard) }],
+				new Map(),
+				STOPPED,
+				() => [esc({ state, agents: ["agent-200"] })],
+			);
+			await run.ticks(1);
+			expect(unattended(run.events)).toEqual([200]);
+		}
+	});
+
+	it("says it once the escalation leaves 待機中, on reconsider", async () => {
+		let escalations = [esc({ workspaceId: "id-ws200" })];
+		const run = world(
+			[{ cards: MINE.map(issueCard) }],
+			new Map(),
+			STOPPED,
+			() => escalations,
+		);
+		await run.ticks(1);
+		expect(unattended(run.events)).toEqual([]);
+		escalations = [esc({ workspaceId: "id-ws200", state: "in_progress" })];
+		run.source.reconsider();
+		expect(unattended(run.events)).toEqual([200]);
+		// Waiting again, then resumed again: a new episode, said again.
+		escalations = [esc({ workspaceId: "id-ws200" })];
+		run.source.reconsider();
+		expect(run.source.state().unattended).toEqual([]);
+		escalations = [];
+		run.source.reconsider();
+		expect(unattended(run.events)).toEqual([200, 200]);
+	});
+
+	it("is dropped as stale when an escalation starts waiting on it before delivery", async () => {
+		let escalations: LinkEscalation[] = [];
+		const run = world(
+			[{ cards: MINE.map(issueCard) }],
+			new Map(),
+			STOPPED,
+			() => escalations,
+		);
+		const delivered: string[] = [];
+		const dispatcher = new EventDispatcher({
+			orchestrator: () => "orch",
+			settings: () => ({
+				event_prompt: "{EVENT}",
+				init_prompt: undefined,
+				events: ["github.*"],
+			}),
+			deliver: (_agent, text) => delivered.push(text),
+			relevant: (event) =>
+				event.type !== "github.unattended" ||
+				run.source.stillUnattended(event.item),
+		});
+		dispatcher.pause();
+		await run.ticks(1);
+		for (const event of run.events) dispatcher.dispatch(event);
+		expect(dispatcher.held()).toHaveLength(1);
+		escalations = [esc({ links: [url(200, "issues")] })];
+		void dispatcher.resume();
+		expect(delivered).toEqual([]);
+		expect(dispatcher.recent(10).map((entry) => entry.fate)).toEqual([
+			"dropped-stale",
 		]);
 	});
 });
