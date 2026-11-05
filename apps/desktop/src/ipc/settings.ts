@@ -210,6 +210,8 @@ export interface SettingsConfigWire {
 		readonly initPrompt: string | undefined;
 		/** Event type patterns (`github.*`, `!agent.started`). */
 		readonly events: readonly string[];
+		/** Percents at which `usage.threshold` fires (`80, 95`); empty: never. */
+		readonly usageThresholds: readonly number[];
 		/** `[orchestrator.github]`. */
 		readonly githubProjects: readonly string[];
 		readonly githubInterval: string;

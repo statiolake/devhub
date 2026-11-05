@@ -33,6 +33,7 @@ import {
   ORCHESTRATOR_PROMPT_RULE,
   ORCHESTRATOR_ROOT_RULE,
   ORCHESTRATOR_TIMER_RULE,
+  ORCHESTRATOR_USAGE_THRESHOLDS_RULE,
 } from "../model/orchestratorSettings";
 import {
   DUPLICATE_RULE,
@@ -84,7 +85,7 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
     case "invalid_resume_message":
       return RESUME_MESSAGE_RULE;
     case "invalid_orchestrator":
-      return `${ORCHESTRATOR_ROOT_RULE} orchestrator.presentation is gui or tui, and orchestrator.profile a profile's id. ${ORCHESTRATOR_PROMPT_RULE} ${ORCHESTRATOR_EVENTS_RULE} ${ORCHESTRATOR_GITHUB_RULE} ${ORCHESTRATOR_TIMER_RULE}`;
+      return `${ORCHESTRATOR_ROOT_RULE} orchestrator.presentation is gui or tui, and orchestrator.profile a profile's id. ${ORCHESTRATOR_PROMPT_RULE} ${ORCHESTRATOR_EVENTS_RULE} ${ORCHESTRATOR_USAGE_THRESHOLDS_RULE} ${ORCHESTRATOR_GITHUB_RULE} ${ORCHESTRATOR_TIMER_RULE}`;
     case "ambiguous_date_token":
       return DATE_TOKEN_RULE;
     case "invalid_exclusion":

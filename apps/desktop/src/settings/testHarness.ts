@@ -58,6 +58,7 @@ export function testConfig(
         "このイベントが発生したのでハンドリングしてください。{EVENT}",
       initPrompt: undefined,
       events: [...DEFAULT_ORCHESTRATOR_EVENTS],
+      usageThresholds: [80, 95],
       githubProjects: [],
       githubInterval: "90s",
       timers: [],

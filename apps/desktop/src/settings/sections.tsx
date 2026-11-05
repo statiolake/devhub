@@ -71,12 +71,14 @@ import {
   ORCHESTRATOR_PROMPT_RULE,
   ORCHESTRATOR_ROOT_RULE,
   ORCHESTRATOR_TIMER_RULE,
+  ORCHESTRATOR_USAGE_THRESHOLDS_RULE,
   eventPatternProblem,
   intervalProblem,
   isTimerName,
   orchestratorRootProblem,
   projectRefProblem,
   promptProblem,
+  usageThresholdsProblem,
 } from "../model/orchestratorSettings";
 import { resumeMessageProblem } from "../model/conversation";
 import {
@@ -660,6 +662,31 @@ export function GeneralSection({
                     events.length === 0
                       ? [...DEFAULT_ORCHESTRATOR_EVENTS]
                       : events,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Usage thresholds"
+          help="The usage percents of a plan window (Claude's 5-hour, 7-day, …) at which usage.threshold is sent, comma-separated: once per threshold per window, again after it resets. Left empty, never."
+        >
+          <TextField
+            label="Orchestrator usage thresholds"
+            value={config.orchestrator.usageThresholds.join(", ")}
+            placeholder="none"
+            mono
+            validate={(next) =>
+              parseThresholds(next) === undefined
+                ? ORCHESTRATOR_USAGE_THRESHOLDS_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  usageThresholds: parseThresholds(next) ?? [],
                 },
               });
             }}
@@ -2489,6 +2516,14 @@ function splitList(text: string): string[] {
 
 function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((one, index) => one === b[index]);
+}
+
+/** `80, 95` as usage thresholds; undefined when one does not read. */
+function parseThresholds(text: string): number[] | undefined {
+  const parts = splitList(text);
+  if (parts.some((one) => !/^\d{1,3}$/u.test(one))) return undefined;
+  const thresholds = parts.map(Number);
+  return usageThresholdsProblem(thresholds) ? undefined : thresholds;
 }
 
 /** `tick=5m, sweep=1h` as timers; undefined when one does not read. */

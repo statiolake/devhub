@@ -250,6 +250,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			eventPrompt: config.orchestrator.event_prompt,
 			initPrompt: config.orchestrator.init_prompt,
 			events: config.orchestrator.events,
+			usageThresholds: config.orchestrator.usage_thresholds,
 			githubProjects: config.orchestrator.github.projects,
 			githubInterval: config.orchestrator.github.interval,
 			timers: config.orchestrator.timers,
@@ -405,6 +406,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			event_prompt: wire.orchestrator.eventPrompt,
 			init_prompt: wire.orchestrator.initPrompt,
 			events: wire.orchestrator.events,
+			usage_thresholds: wire.orchestrator.usageThresholds,
 			github: {
 				projects: wire.orchestrator.githubProjects,
 				interval: wire.orchestrator.githubInterval,

@@ -1097,6 +1097,20 @@ function optionalStringArray(
   return value as string[];
 }
 
+function optionalNumberArray(
+  table: Record<string, unknown>,
+  key: string,
+  path: string,
+  fallback: readonly number[],
+): number[] {
+  const value = table[key];
+  if (value === undefined) return [...fallback];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "number")) {
+    fail("invalid_type", `${path}.${key}`);
+  }
+  return value as number[];
+}
+
 const PALETTE_KEYS = [
   "background",
   "foreground",
@@ -2324,6 +2338,12 @@ export function interpretConfig(document: unknown): Config {
         "events",
         "orchestrator",
         DEFAULT_ORCHESTRATOR_EVENTS,
+      ),
+      usage_thresholds: optionalNumberArray(
+        orchestratorTable,
+        "usage_thresholds",
+        "orchestrator",
+        DEFAULT_ORCHESTRATOR.usage_thresholds,
       ),
       github: {
         projects: optionalStringArray(

@@ -293,6 +293,7 @@ devhub --tell session meta SESSION [set KEY VALUE | unset KEY]   # a stopped ses
 devhub --tell agent resume SESSION [--workspace W] [--profile P] [--name N]   # one of them, in a new GUI agent (its meta and name given back)
 devhub --tell commands | run <command-id>             # the command palette
 devhub --tell focus A|W | notify TEXT
+devhub --tell usage [--json]                          # each CLI's plan limits as the Sidebar shows them: per window % and reset, or no plan limits; last read and why not since (never reads itself)
 devhub --tell orchestrator events [--last N] [--json]  # the orchestrator's recent events, one line each: delivered, pending, filtered, coalesced
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-   # a custom event, through the same filter and coalescing
 devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # its timers (timer.elapsed), changed for this session

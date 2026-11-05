@@ -97,6 +97,7 @@ import {
 	EMPTY_BOARD,
 	type ContextMenuRequestWire,
 	type TooltipRequestWire,
+	type UsageLimitsWire,
 	type WorkspacePickerEvent,
 } from "../../ipc/contract.js";
 import {
@@ -393,6 +394,10 @@ import {
 	usageReadingListener,
 } from "./usageLimits.js";
 import { spawnLineProcess, startUsageReaders } from "./usageReaders.js";
+import {
+	UsageThresholdWatch,
+	usageWindowOf,
+} from "../orchestrator/usageThresholds.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
 import {
@@ -1623,7 +1628,7 @@ export class AppController {
 			usageLimitsListener(
 				this.usageLimits,
 				(agentId) => this.coordinator.model.agent(agentId)?.profile.kind,
-				(limits) => this.send(CHANNELS.usageLimitsChanged, limits),
+				(limits) => this.usageLimitsChanged(limits),
 			),
 		);
 		// Everything restored from the state file describes the previous run,
@@ -4904,6 +4909,20 @@ export class AppController {
 	/** The Sidebar's usage-limits readout. See `usageLimits.ts`. */
 	private readonly usageLimits = new UsageLimits();
 
+	/** `usage.threshold`, read off the readout as it changes. */
+	private readonly usageThresholds = new UsageThresholdWatch({
+		thresholds: () => this.config.orchestrator.usage_thresholds,
+		dispatch: (event) => {
+			this.orchestrator?.events.dispatch(event);
+		},
+	});
+
+	/** The readout moved: the Sidebar, and the orchestrator's thresholds. */
+	private usageLimitsChanged(limits: UsageLimitsWire): void {
+		this.send(CHANNELS.usageLimitsChanged, limits);
+		this.usageThresholds.observe(limits);
+	}
+
 	/** The background readers of each CLI's plan limits, once started. */
 	private usageReaders: { stop(): void } | undefined;
 
@@ -4922,7 +4941,7 @@ export class AppController {
 			clientVersion: electron.app.getVersion(),
 			spawn: spawnLineProcess,
 			...usageReadingListener(this.usageLimits, (limits) =>
-				this.send(CHANNELS.usageLimitsChanged, limits),
+				this.usageLimitsChanged(limits),
 			),
 			report: (failure) => {
 				this.publishError(errorWire(failure));
@@ -9403,6 +9422,8 @@ export class AppController {
 			agents: () => this.liveAgents(),
 			settings: () => this.config.orchestrator,
 			startProblem: () => this.orchestratorStartProblem(),
+			usageWindow: (cli, window) =>
+				usageWindowOf(this.usageLimits.wire(), cli, window),
 			deliver: (agentId, text) => {
 				const queued = agents()?.queueInjection(
 					parseAgentId(agentId),
@@ -10108,6 +10129,7 @@ export class AppController {
 								: "file",
 					),
 			sessionAgent: (session) => this.agentRunningSession(session),
+			usage: () => this.usageLimits.report(),
 			notify: (text) => {
 				const { Notification } = electron;
 				if (!Notification.isSupported())

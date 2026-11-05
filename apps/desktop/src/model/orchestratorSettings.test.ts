@@ -20,6 +20,7 @@ import {
   parseProjectRef,
   projectUrl,
   renderEventPrompt,
+  usageThresholdsProblem,
 } from "./orchestratorSettings.js";
 
 describe("[orchestrator] settings", () => {
@@ -88,6 +89,36 @@ describe("[orchestrator] settings", () => {
     expect(with_({ timers: [{ name: "t", interval: "5" }] })).toBe(
       "timers[0].interval",
     );
+  });
+
+  it("reads usage_thresholds, defaults it to 80 and 95, and refuses what is not a percent", () => {
+    expect(interpretConfig({}).orchestrator.usage_thresholds).toEqual([80, 95]);
+    expect(DEFAULT_ORCHESTRATOR_EVENTS).toContain("usage.threshold");
+    expect(
+      interpretConfig({ orchestrator: { usage_thresholds: [50, 90] } })
+        .orchestrator.usage_thresholds,
+    ).toEqual([50, 90]);
+    expect(
+      interpretConfig({ orchestrator: { usage_thresholds: [] } }).orchestrator
+        .usage_thresholds,
+    ).toEqual([]);
+    for (const bad of [[0], [101], [80.5], [80, 80]])
+      expect(() =>
+        interpretConfig({ orchestrator: { usage_thresholds: bad } }),
+      ).toThrow();
+    expect(() =>
+      interpretConfig({ orchestrator: { usage_thresholds: ["80"] } }),
+    ).toThrow();
+    expect(
+      orchestratorProblem({ ...DEFAULT_ORCHESTRATOR, usage_thresholds: [120] }),
+    ).toBe("usage_thresholds");
+    expect(usageThresholdsProblem([95, 80])).toBe(false);
+    expect(
+      configDocument({
+        ...defaultConfig(),
+        orchestrator: { ...DEFAULT_ORCHESTRATOR, usage_thresholds: [70] },
+      })["orchestrator"],
+    ).toMatchObject({ usage_thresholds: [70] });
   });
 
   it("filters by the last matching pattern, and always lets init through", () => {

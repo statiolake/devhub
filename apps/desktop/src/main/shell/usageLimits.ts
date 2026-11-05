@@ -71,8 +71,24 @@ export type UsageReaderStatus = NonNullable<
 	UsageLimitsWire["clis"][number]["reader"]
 >;
 
+/**
+ * The readout with, per window, when its reading was last taken or confirmed
+ * (`seenAt`, epoch ms): what `devhub --tell usage` says, with its age.
+ */
+export interface UsageReport {
+	readonly clis: readonly (Omit<UsageLimitsWire["clis"][number], "windows"> & {
+		readonly windows?: readonly (NonNullable<
+			UsageLimitsWire["clis"][number]["windows"]
+		>[number] & { readonly seenAt?: number })[];
+	})[];
+}
+
 export class UsageLimits {
 	readonly #latest = new Map<LimitedCli, Map<string, RateLimit>>();
+	/** When each window's latest reading was taken or confirmed, by `cli/window`. */
+	readonly #seenAt = new Map<string, number>();
+
+	constructor(private readonly now: () => number = Date.now) {}
 	readonly #notes = new Map<LimitedCli, UsageNoteWire>();
 	readonly #readers = new Map<LimitedCli, UsageReaderStatus>();
 
@@ -112,6 +128,7 @@ export class UsageLimits {
 		this.#latest.set(cli, windows);
 		const current = windows.get(reading.window);
 		if (current !== undefined && !supersedes(reading, current)) return false;
+		this.#seenAt.set(`${cli}/${reading.window}`, this.now());
 		if (
 			current !== undefined &&
 			current.usedPercent === reading.usedPercent &&
@@ -121,6 +138,23 @@ export class UsageLimits {
 		}
 		windows.set(reading.window, reading);
 		return true;
+	}
+
+	/** The wire, each window with when it was last seen. */
+	report(): UsageReport {
+		return {
+			clis: this.wire().clis.map((one) =>
+				one.windows === undefined
+					? one
+					: {
+							...one,
+							windows: one.windows.map((window) => {
+								const seenAt = this.#seenAt.get(`${one.cli}/${window.window}`);
+								return seenAt === undefined ? window : { ...window, seenAt };
+							}),
+						},
+			),
+		};
 	}
 
 	wire(): UsageLimitsWire {

@@ -61,6 +61,10 @@ import {
 	type OrchestratorEvent,
 } from "./events.js";
 import { OrchestratorTimers } from "./timers.js";
+import {
+	usageThresholdRelevant,
+	type UsageWindowNow,
+} from "./usageThresholds.js";
 
 /** One agent as the service reads it off the projection. */
 export interface LiveAgent {
@@ -103,6 +107,14 @@ export interface OrchestratorServicePorts {
 	readonly personCursor?: (
 		agentId: string,
 	) => Promise<string | undefined> | string | undefined;
+	/**
+	 * A plan window as the usage readout has it now, for a pending
+	 * `usage.threshold` (`usageThresholds.ts`). Absent: not checked.
+	 */
+	readonly usageWindow?: (
+		cli: string,
+		window: string,
+	) => UsageWindowNow | undefined;
 	readonly now?: () => number;
 	readonly setTimer?: (ms: number, run: () => void) => { cancel(): void };
 	readonly log?: (line: string) => void;
@@ -238,6 +250,12 @@ export class OrchestratorService {
 					.find((escalation) => escalation.id === event.escalationId);
 				return one !== undefined && one.closed === undefined;
 			}
+			case "usage.threshold":
+				return usageThresholdRelevant(
+					event,
+					this.ports.usageWindow?.(event.cli, event.window),
+					this.#now(),
+				);
 			default:
 				return true;
 		}

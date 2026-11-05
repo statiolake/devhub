@@ -203,7 +203,7 @@ describe("the /devhub-orchestrator skill's event table", () => {
 
 	it("names no type DevHub does not send", () => {
 		const named = [
-			...text.matchAll(/`((?:github|workspace|agent|timer)\.[a-z_]+)`/gu),
+			...text.matchAll(/`((?:github|workspace|agent|timer|usage)\.[a-z_]+)`/gu),
 		].map((match) => match[1]!);
 		expect(named.length).toBeGreaterThan(20);
 		for (const type of named)

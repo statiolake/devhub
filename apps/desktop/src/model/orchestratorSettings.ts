@@ -38,6 +38,12 @@ export interface OrchestratorConfig {
    * matching types back out. `init` always goes. See `eventAllowed`.
    */
   readonly events: readonly string[];
+  /**
+   * The percents of a usage window (Claude's 5-hour, Codex's weekly, …) at
+   * which `usage.threshold` fires, as the window's use crosses each upward:
+   * once per threshold per window period. Empty: never.
+   */
+  readonly usage_thresholds: readonly number[];
   /** `[orchestrator.github]`: the GitHub event source. */
   readonly github: OrchestratorGitHubConfig;
   /** `[[orchestrator.timers]]`: fixed timers, each a `timer.elapsed`. */
@@ -83,9 +89,13 @@ export const DEFAULT_ORCHESTRATOR_EVENTS: readonly string[] = [
   "agent.asked",
   "agent.exited",
   "agent.failed",
+  "usage.threshold",
   "timer.*",
   "custom.*",
 ];
+
+/** `[orchestrator] usage_thresholds` when it is not set. */
+export const DEFAULT_USAGE_THRESHOLDS: readonly number[] = [80, 95];
 
 export const DEFAULT_GITHUB_INTERVAL = "90s";
 /** The fastest DevHub polls GitHub for events, whatever the settings say. */
@@ -106,6 +116,7 @@ export const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   event_prompt: DEFAULT_EVENT_PROMPT,
   init_prompt: undefined,
   events: DEFAULT_ORCHESTRATOR_EVENTS,
+  usage_thresholds: DEFAULT_USAGE_THRESHOLDS,
   github: { projects: [], interval: DEFAULT_GITHUB_INTERVAL },
   timers: [],
 };
@@ -117,6 +128,7 @@ export const ORCHESTRATOR_KEYS = [
   "event_prompt",
   "init_prompt",
   "events",
+  "usage_thresholds",
   "github",
   "timers",
 ] as const;
@@ -142,6 +154,8 @@ export function orchestratorProblem(
   if (config.init_prompt !== undefined && promptProblem(config.init_prompt))
     return "init_prompt";
   if (config.events.some(eventPatternProblem)) return "events";
+  if (usageThresholdsProblem(config.usage_thresholds))
+    return "usage_thresholds";
   if (config.github.projects.some((one) => projectRefProblem(one)))
     return "github.projects";
   if (intervalProblem(config.github.interval, MIN_GITHUB_INTERVAL_MS))
@@ -305,6 +319,20 @@ export const ORCHESTRATOR_GITHUB_RULE = `orchestrator.github.projects lists Proj
 
 export const ORCHESTRATOR_TIMER_RULE = `Each [[orchestrator.timers]] has a name (letters, digits, - and _; each once) and an interval like 5m or 1h, at least ${String(MIN_TIMER_INTERVAL_MS / 1000)}s.`;
 
+/**
+ * `usage_thresholds`: whole percents from 1 to 100, each once. Their order
+ * does not matter; empty is allowed (no `usage.threshold` at all).
+ */
+export function usageThresholdsProblem(thresholds: readonly number[]): boolean {
+  return (
+    thresholds.some((one) => !Number.isInteger(one) || one < 1 || one > 100) ||
+    new Set(thresholds).size !== thresholds.length
+  );
+}
+
+export const ORCHESTRATOR_USAGE_THRESHOLDS_RULE =
+  "orchestrator.usage_thresholds lists whole percents from 1 to 100, each once (80, 95): usage.threshold fires as a usage window crosses each.";
+
 /** `root` is an absolute path, `~`, or one starting with `~/`. */
 export function orchestratorRootProblem(root: string): boolean {
   return (
@@ -368,6 +396,13 @@ export function orchestratorDocument(
     )
   )
     document["events"] = [...config.events];
+  if (
+    config.usage_thresholds.length !== DEFAULT_USAGE_THRESHOLDS.length ||
+    config.usage_thresholds.some(
+      (one, index) => one !== DEFAULT_USAGE_THRESHOLDS[index],
+    )
+  )
+    document["usage_thresholds"] = [...config.usage_thresholds];
   const github: Record<string, TomlValue> = {};
   if (config.github.projects.length > 0)
     github["projects"] = [...config.github.projects];

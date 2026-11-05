@@ -38,6 +38,10 @@
  * Every event, whatever came of it (coalesced, dropped-stale, repeat …), is
  * kept in a short log (`log`) for `devhub --tell orchestrator events`.
  *
+ * A plan window's use crossing a threshold (`usageThresholds.ts`) is one
+ * line per CLI and window, the latest crossing; it is dropped as stale once
+ * the window has reset below it.
+ *
  * Adding an event is a variant here, its line in `eventLine`, and a
  * `dispatch` where it happens. See `docs/orchestrator.md`, "Events".
  */
@@ -234,6 +238,23 @@ export type OrchestratorEvent =
 			readonly name: string;
 			readonly interval: string;
 	  }
+	/**
+	 * A plan window's use crossed `threshold` upward (`[orchestrator]
+	 * usage_thresholds`; `usageThresholds.ts`): once per threshold per window
+	 * period.
+	 */
+	| {
+			readonly type: "usage.threshold";
+			/** `claude`, `codex`. */
+			readonly cli: string;
+			/** `5-hour`, `7-day`: the window, as the readout names it. */
+			readonly window: string;
+			readonly threshold: number;
+			/** 0–100, as read. */
+			readonly usedPercent: number;
+			/** Epoch ms; absent when the CLI does not say. */
+			readonly resetsAt?: number;
+	  }
 	| { readonly type: `custom.${string}`; readonly text: string };
 
 export type OrchestratorEventType = OrchestratorEvent["type"];
@@ -270,6 +291,7 @@ export const EVENT_TYPES = [
 	"agent.exited",
 	"agent.failed",
 	"timer.elapsed",
+	"usage.threshold",
 	"custom.*",
 ] as const;
 
@@ -332,6 +354,29 @@ function span(ms: number): string {
 	if (minutes < 60) return `${String(minutes)}m`;
 	const hours = Math.floor(minutes / 60);
 	return `${String(hours)}h${minutes % 60 === 0 ? "" : `${String(minutes % 60)}m`}`;
+}
+
+/**
+ * A time as a line says it, in this Mac's time zone: `19:20` within the next
+ * day, `11-08 10:00` beyond (`joiner` between the two: `T` where a space would
+ * split a `key=value`).
+ */
+export function clockAt(ms: number, now: number, joiner = " "): string {
+	const at = new Date(ms);
+	const two = (n: number) => String(n).padStart(2, "0");
+	const clock = `${two(at.getHours())}:${two(at.getMinutes())}`;
+	if (Math.abs(ms - now) < 20 * 3_600_000) return clock;
+	return `${two(at.getMonth() + 1)}-${two(at.getDate())}${joiner}${clock}`;
+}
+
+/** `5-hour` → `5時間枠`, `7-day` → `7日枠`; another name as it is, `枠` after. */
+export function windowWords(window: string): string {
+	const match = /^(\d+)-(minute|hour|day)$/u.exec(window);
+	if (match === null) return `${window} 枠`;
+	const unit = { minute: "分", hour: "時間", day: "日" }[
+		match[2] as "minute" | "hour" | "day"
+	];
+	return `${match[1]!}${unit}枠`;
 }
 
 function people(logins: readonly string[]): string {
@@ -563,6 +608,18 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 			};
 		case "timer.elapsed":
 			return { head: [event.name] };
+		case "usage.threshold":
+			return {
+				head: [
+					`cli=${event.cli}`,
+					`window=${event.window}`,
+					`pct=${String(Math.floor(event.usedPercent))}`,
+					...(event.resetsAt === undefined
+						? []
+						: [`resets=${clockAt(event.resetsAt, now, "T")}`]),
+				],
+				summary: `${windowWords(event.window)}が${String(event.threshold)}%を超えました`,
+			};
 		default:
 			return { head: [], summary: excerpt(event.text, 200) };
 	}
@@ -634,6 +691,8 @@ export function subjectOf(event: OrchestratorEvent): string {
 			return `ws ${event.ws}`;
 		case "timer.elapsed":
 			return `timer ${event.name}`;
+		case "usage.threshold":
+			return `usage ${event.cli} ${event.window}`;
 		default:
 			return `${event.type} ${event.text}`;
 	}

@@ -258,6 +258,11 @@ export type TellCommand =
 			readonly focus: boolean;
 	  }
 	| { readonly verb: "commands" }
+	/**
+	 * Each CLI's plan limits, as the Sidebar has them: never a read of its
+	 * own. `--json` after the verb, as well as before it.
+	 */
+	| { readonly verb: "usage"; readonly json?: true }
 	| { readonly verb: "run"; readonly command: string }
 	| { readonly verb: "focus"; readonly target: string }
 	/**
@@ -587,6 +592,14 @@ terminal (your own: one per agent, beside your pane; hidden with the editor alon
                                    An editor terminal left with no pane ends
 
 app
+  usage                            each CLI's plan limits, as the Sidebar
+                                   shows them: per window (5-hour, 7-day, ...)
+                                   the percent used and when it resets, or
+                                   no plan limits; when DevHub last read them
+                                   and why it could not since. Never reads
+                                   them itself: the latest known, with its
+                                   age (--json: a stable schema, nulls for
+                                   what is not known)
   commands                         list the command palette's commands
   run <command-id>                 run one of them, exactly as the palette
                                    does - only those that move nothing in
@@ -1043,6 +1056,16 @@ function parseVerb(args: readonly string[]): TellCommand {
 		case "board":
 			positionals(readFlags(args.slice(1), NO_FLAGS), []);
 			return { verb: "board" };
+		case "usage": {
+			const flags = readFlags(args.slice(1), {
+				values: [],
+				switches: ["--json"],
+			});
+			positionals(flags, []);
+			return flags.switches.has("--json")
+				? { verb: "usage", json: true }
+				: { verb: "usage" };
+		}
 		case "escalation":
 			return parseEscalation(sub, rest);
 		case "orchestrator":
@@ -1833,6 +1856,8 @@ export function tellCommandFrom(value: unknown): TellCommand {
 		case "workspaces":
 		case "commands":
 			return { verb: record["verb"] };
+		case "usage":
+			return { verb: "usage" };
 		case "skill":
 			return record["orchestrator"] === true
 				? { verb: "skill", orchestrator: true }

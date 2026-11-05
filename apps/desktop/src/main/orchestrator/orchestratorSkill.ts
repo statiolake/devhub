@@ -179,7 +179,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 - **1 回の配信 = 1 メッセージ**。ユーザーからのメッセージとして届く。
   ターン中・ポーズ中にたまったイベントは、次の配信で**まとめて 1 通**で届く。
 - **配信は履歴ではない。いま対応が要るものの一覧で、対象ごとに 1 行**
-  (PR / Issue、エージェント、Workspace、エスカレーション、タイマー、カスタムの種類+本文)。
+  (PR / Issue、エージェント、Workspace、エスカレーション、タイマー、CLI の使用量枠、カスタムの種類+本文)。
   同じ対象の新しいイベントはその行に畳まれる: レビューコメントは件数を合算、
   レーンは最初の from → 最後の to (戻って同じなら行ごと消える)、CI やレビューは最新の状態、
   マージ / クローズはその PR の他の行を置き換える、turn_ended は最新 (since は最初の未読から)、
@@ -187,7 +187,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   (行頭の \`[type]\` が最新のもの)。
 - 届ける直前に、もう対応の要らないものは落とされる: 不明 でなくなったエージェント、
   また作業中になったエージェントの turn_ended、回答済みの質問、クローズ済みの
-  エスカレーションへの回答。前回届けたのと同じことは、その対象に変化がない限り再送されない。
+  エスカレーションへの回答、リセット済みの使用量枠の \`usage.threshold\`。前回届けたのと同じことは、その対象に変化がない限り再送されない。
 - 1 通は最大 50 行。超えた分は最後の行 \`…ほか N 件 (devhub --tell orchestrator events で確認)\`
   に数だけ出る (\`orchestrator events\` には畳まれた / 落とされたものも残る)。
 - 各行の形式: \`[type]\` + 次の CLI にそのまま使える \`key=value\` + \`—\` + 短い要約。
@@ -202,6 +202,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する
       [unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 12m
       [timer.elapsed] sweep
+      [usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました
 
 - \`ws=\` は \`workspace status\` などに、\`agent=\` (id の先頭 8 文字) は \`agent ...\` に、
   \`since=\` は \`agent read A --since\` に、\`req=\` は \`agent answer A REQ\` に、
@@ -238,6 +239,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | エージェント | \`agent.asked\` | 質問 (AskUserQuestion) を出した (見出し) | agent, req |
 | エージェント | \`agent.permission_requested\` | 権限確認 (FYI。承認できるのは人だけ。既定では来ない) | agent, req |
 | エージェント | \`agent.started\` / \`agent.exited\` / \`agent.failed\` | 起動 (既定では来ない) / 終了 / 失敗 (理由つき) | agent, ws |
+| 使用量 | \`usage.threshold\` | CLI のプラン枠 (5 時間 / 7 日など) の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた。枠ごと・しきい値ごとに 1 周期 1 回。届く前に枠がリセットされていれば落とされる | cli, window, pct, resets |
 | タイマー | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | カスタム | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |
 
@@ -345,6 +347,8 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
   \`notify\` かエスカレーションで知らせ、決して自分で回避しない。
   \`agent answer\` は質問 (AskUserQuestion) にだけ使う。
 - 人の画面を奪わない。\`--tell\` は画面を動かさない。\`focus\` は頼まれたときだけ。
+- 使用率が高いときは新しいエージェントを増やさない・重い作業はリセット後に回す・
+  \`devhub --tell usage\` で確認 (\`usage.threshold\` が合図。\`init\` のときにも一度見る)。
 
 ## 6. make-progress から使う CLI (抜粋)
 
@@ -383,6 +387,8 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     devhub --tell orchestrator timer set sweep 30m
     devhub --tell orchestrator timer clear sweep
     devhub --tell notify "A が権限確認で止まっています"
+    devhub --tell usage
+    devhub --tell --json usage
 
 \`orchestrator timer set / clear\` はこのセッションだけ有効 (既定は
 \`[[orchestrator.timers]]\`)。\`emit\` は既定のフィルタと畳み込みをそのまま通る。

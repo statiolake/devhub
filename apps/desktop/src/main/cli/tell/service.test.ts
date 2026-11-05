@@ -38,6 +38,7 @@ import {
 	type TellWorkspace,
 } from "./service.js";
 import { EscalationStore } from "../../orchestrator/escalationStore.js";
+import type { UsageReport } from "../../shell/usageLimits.js";
 import { OrchestratorService } from "../../orchestrator/orchestratorService.js";
 import { DEFAULT_ORCHESTRATOR } from "../../../model/orchestratorSettings.js";
 
@@ -431,6 +432,12 @@ class FakePorts implements TellPorts {
 	}
 	notify(text: string) {
 		this.calls.push(`notify ${text}`);
+	}
+	/** What `usage` reads: the Sidebar's readout. */
+	usageReport: UsageReport = { clis: [] };
+	usage(): UsageReport {
+		this.calls.push("usage");
+		return this.usageReport;
 	}
 	/** Each Agent's terminal session, by Agent id, with its tmux panes. */
 	terminals = new Map<string, TellTerminalPane[]>();
@@ -4270,5 +4277,47 @@ describe("devhub: links from the command line", () => {
 		).rejects.toThrow(/no open workspace holds/u);
 		// Nothing was raised by a refusal.
 		expect(ports.service.escalations()).toHaveLength(1);
+	});
+});
+
+describe("devhub --tell usage", () => {
+	it("answers the readout as text and JSON, and reads nothing else", async () => {
+		const { ports, service, advance } = setup();
+		const resetsAt = 5 * 3_600_000;
+		advance(60_000);
+		ports.usageReport = {
+			clis: [
+				{
+					cli: "claude",
+					reader: { readAt: 0 },
+					windows: [
+						{
+							window: "5-hour",
+							durationMinutes: 300,
+							usedPercent: 16,
+							resetsAt,
+							seenAt: 0,
+						},
+					],
+				},
+				{ cli: "codex", note: "no_plan_limits", reader: { readAt: 30_000 } },
+			],
+		};
+		const answer = await viaSocket(service, ["usage", "--json"], coordinator);
+		expect(ports.calls).toEqual(["usage"]);
+		expect(answer.message.split("\n")).toHaveLength(2);
+		expect(answer.message).toMatch(/^claude: 5-hour 16% resets /u);
+		expect(answer.data).toMatchObject({
+			schema: 1,
+			clis: [
+				{
+					cli: "claude",
+					plan: "limits",
+					ageSeconds: 60,
+					windows: [{ window: "5-hour", usedPercent: 16, ageSeconds: 60 }],
+				},
+				{ cli: "codex", plan: "no_plan_limits", windows: [], problem: null },
+			],
+		});
 	});
 });

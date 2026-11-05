@@ -24,6 +24,8 @@ import type {
 	OrchestratorBoardWire,
 	WorkspaceRepositoryWire,
 } from "../../../ipc/contract.js";
+import type { UsageReport } from "../../shell/usageLimits.js";
+import { usageJson, usageText } from "./usage.js";
 import {
 	DEVHUB_LINK_FORMS,
 	formatDevhubLink,
@@ -439,6 +441,11 @@ export interface TellPorts {
 	/** The agent running `session` (an id, or a unique prefix of one), if one is. */
 	sessionAgent?(session: string): Promise<string | undefined>;
 	notify(text: string): void;
+	/**
+	 * The Sidebar's usage readout as it stands, each window with when it was
+	 * last seen (`usageLimits.ts`). Reads nothing from a CLI.
+	 */
+	usage(): UsageReport;
 	/** An Agent's own terminal, read live. */
 	agentTerminal(agentId: string): Promise<TellTerminal>;
 	/**
@@ -1038,6 +1045,14 @@ export class TellService {
 				return this.editorPanes();
 			case "terminal-bring":
 				return this.bring(command.pane, command.focus);
+			case "usage": {
+				const now = this.clock.now();
+				const report = this.ports.usage();
+				return {
+					message: usageText(report, now),
+					data: usageJson(report, now),
+				};
+			}
 			case "board":
 				return this.board();
 			case "escalation-new":

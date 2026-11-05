@@ -208,3 +208,26 @@ describe("the usage-limits readout", () => {
 		).toThrow(/only Claude and Codex have a GUI/u);
 	});
 });
+
+describe("the usage report", () => {
+	it("says when each window's reading was last taken or confirmed", () => {
+		let now = 1000;
+		const limits = new UsageLimits(() => now);
+		const window = (usedPercent: number) => ({
+			window: "5-hour",
+			durationMinutes: 300,
+			usedPercent,
+			resetsAt: 9_000_000,
+		});
+		limits.observe("claude", window(10));
+		now = 5000;
+		// The same reading again confirms it; an older one does not.
+		limits.observe("claude", window(10));
+		now = 9000;
+		limits.observe("claude", window(5));
+		expect(limits.report().clis[0]!.windows).toEqual([
+			{ ...window(10), seenAt: 5000 },
+		]);
+		expect(limits.report().clis[1]).toEqual({ cli: "codex" });
+	});
+});
