@@ -90,21 +90,13 @@ import {
 } from "./ConversationContext";
 import { ImageView } from "./EntryParts";
 import { SkillBackdrop } from "./skillTokens";
-import {
-  DICTATION_KEY,
-  placeDictation,
-  type DictationAnchor,
-  isDictationKey,
-  LANGUAGE_LABELS,
-  nextLanguage,
-  hasDictated,
-  saveLanguage,
-  savedLanguage,
-} from "./dictation";
 import { DictationWaveform } from "./DictationWaveform";
-import { MicIcon, SendIcon, StopIcon } from "./icons";
-import { useDictation, type Dictation } from "./useDictation";
-import type { VoiceLanguage } from "../../ipc/voice";
+import {
+  DictationControls,
+  DictationTentative,
+  useFieldDictation,
+} from "./FieldDictation";
+import { SendIcon, StopIcon } from "./icons";
 import { pressFocusesField } from "./fieldClick";
 import { SEND_KEY, useMessageKeys } from "./messageKeys";
 import { canSendNow as takesHeldMessage } from "./QueuedMessages";
@@ -459,53 +451,15 @@ export function Composer({
   }, [draftFlush, draft.flush]);
 
   const refusal = inputRefusal(transcript.state);
-  const [language, setLanguage] = useState<VoiceLanguage>(() =>
-    savedLanguage(storage()),
-  );
-  const dictationAnchor = useRef<DictationAnchor | undefined>(undefined);
-  const dictation = useDictation({
-    voice,
-    language,
-    reportFailure,
-    // The words go where the caret was when the recording started, phrase
-    // after phrase, moved along by whatever is typed meanwhile.
-    onBegin: () => {
-      const input = inputRef.current;
-      const current = input?.value ?? text;
-      dictationAnchor.current = {
-        start: input?.selectionStart ?? current.length,
-        end: input?.selectionEnd ?? current.length,
-        text: current,
-      };
-    },
-    onWords: (words) => {
-      const input = inputRef.current;
-      setText((current) => {
-        const anchor = dictationAnchor.current ?? {
-          start: current.length,
-          end: current.length,
-          text: current,
-        };
-        // The caret follows the words only if it was where they go: someone
-        // typing elsewhere keeps their caret.
-        const following =
-          input === null ||
-          document.activeElement !== input ||
-          (input.selectionStart === input.selectionEnd &&
-            input.selectionEnd === anchor.end &&
-            current === anchor.text);
-        const next = placeDictation(current, anchor, words);
-        dictationAnchor.current = next.anchor;
-        if (following)
-          requestAnimationFrame(() => {
-            input?.focus();
-            input?.setSelectionRange(next.caret, next.caret);
-          });
-        return next.text;
-      });
-      setRecalled(undefined);
-    },
-  });
+  const { dictation, language, cycleLanguage, onKey, onFieldFocus } =
+    useFieldDictation({
+      voice,
+      reportFailure,
+      field: inputRef,
+      text,
+      setText,
+      onWords: () => setRecalled(undefined),
+    });
   const running =
     transcript.state.phase === "ready" && transcript.state.turn === "running";
   // The CLI can take a message now (a running turn takes it in), and a
@@ -678,17 +632,8 @@ export function Composer({
   const ownKeys = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const plain =
       !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey;
-    if (voice !== undefined && isDictationKey(event)) {
-      event.preventDefault();
-      dictation.toggle();
-      return;
-    }
-    if (event.key === "Escape" && dictation.cancel()) {
-      // The recording is thrown away; the turn is not interrupted by the same key.
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
+    // A recording thrown away on Esc does not interrupt the turn as well.
+    if (onKey(event)) return;
     if (offered.length > 0) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
@@ -775,12 +720,7 @@ export function Composer({
                 caret: event.target.selectionStart,
               });
             }}
-            onFocus={() => {
-              // Someone who dictates is likely to again: the recogniser is
-              // loaded while they type, not when they press.
-              if (voice !== undefined && hasDictated(storage()))
-                dictation.warm();
-            }}
+            onFocus={onFieldFocus}
             onSelect={(event) => {
               const field = event.currentTarget;
               setPlace({ text: field.value, caret: field.selectionStart });
@@ -803,17 +743,7 @@ export function Composer({
             }}
           />
         </div>
-        {dictation.tentative !== "" &&
-        (dictation.phase === "recording" ||
-          dictation.phase === "transcribing") ? (
-          <div
-            className="conversation-dictation-tentative"
-            aria-live="polite"
-            title="Still being recognised — goes in when you pause"
-          >
-            {dictation.tentative}
-          </div>
-        ) : null}
+        <DictationTentative dictation={dictation} />
         <div className="conversation-composer-toolbar">
           <SettingPickers
             session={transcript.session}
@@ -826,11 +756,7 @@ export function Composer({
                 dictation={dictation}
                 language={language}
                 disabled={refusal !== undefined}
-                cycleLanguage={() => {
-                  const next = nextLanguage(language);
-                  setLanguage(next);
-                  saveLanguage(storage(), next);
-                }}
+                cycleLanguage={cycleLanguage}
               />
             ) : null}
             {running ? (
@@ -868,102 +794,5 @@ export function Composer({
         readout={<ContextUsage usage={transcript.usage} />}
       />
     </div>
-  );
-}
-
-/** `localStorage`, where the page has one it may use. */
-function storage(): Storage | undefined {
-  try {
-    return window.localStorage;
-  } catch {
-    return undefined;
-  }
-}
-
-/** What a press still waits on, as its tooltip says it; a press gives up (or stops). */
-const WAITING_TITLES = {
-  microphone: "Starting the microphone… — press again to give up",
-  recogniser:
-    "Starting speech recognition… — what you say is kept meanwhile; press to stop",
-} as const;
-
-const DICTATION_TITLES = {
-  idle: `Dictate (${DICTATION_KEY})`,
-  starting: "Opening the microphone… — press again to give up",
-  recording: `Stop dictating (${DICTATION_KEY}) — Esc discards what is not in yet`,
-  transcribing: "Finishing the last words on this Mac…",
-} as const;
-
-/**
- * The microphone and the language it listens for. The button is the state:
- * red from the frame after the press, pulsing while the microphone opens (a
- * second press gives up), with a halo of the level while it records (the
- * box behind the words draws what it hears, `DictationWaveform`), waiting
- * while it transcribes. In a build with no recogniser it is drawn
- * unavailable, and a press says why.
- */
-function DictationControls({
-  dictation,
-  language,
-  disabled,
-  cycleLanguage,
-}: {
-  readonly dictation: Dictation;
-  readonly language: VoiceLanguage;
-  readonly disabled: boolean;
-  readonly cycleLanguage: () => void;
-}) {
-  const { phase, waitingFor } = dictation;
-  const recording = phase === "recording";
-  const unavailable = phase === "unavailable";
-  return (
-    <>
-      {phase !== "unavailable" ? (
-        <button
-          type="button"
-          className="conversation-dictation-language"
-          aria-label={`Dictation language: ${LANGUAGE_LABELS[language]}`}
-          title="The language dictation listens for — click to change"
-          disabled={phase !== "idle"}
-          onClick={cycleLanguage}
-        >
-          {LANGUAGE_LABELS[language]}
-        </button>
-      ) : null}
-      <button
-        type="button"
-        className="conversation-dictation"
-        data-phase={phase}
-        aria-label={
-          recording
-            ? "Stop dictating"
-            : phase === "starting"
-              ? "Cancel dictation"
-              : "Dictate"
-        }
-        aria-pressed={recording || phase === "starting"}
-        // Unavailable is drawn so, and still pressed: the press says why.
-        aria-disabled={unavailable || undefined}
-        data-waiting={waitingFor}
-        aria-busy={waitingFor !== undefined || undefined}
-        title={
-          unavailable
-            ? dictation.reason
-            : waitingFor !== undefined
-              ? WAITING_TITLES[waitingFor]
-              : DICTATION_TITLES[phase]
-        }
-        disabled={disabled || phase === "transcribing"}
-        onClick={dictation.toggle}
-        onPointerEnter={dictation.warm}
-        onFocus={dictation.warm}
-      >
-        {waitingFor !== undefined ? (
-          <span className="conversation-dictation-spinner" aria-hidden="true" />
-        ) : (
-          <MicIcon />
-        )}
-      </button>
-    </>
   );
 }

@@ -642,6 +642,33 @@ describe("dictating in the composer", () => {
     await screen.findByRole("button", { name: "Stop dictating" });
     expect(voice.begin).toHaveBeenCalledWith("en");
   });
+
+  it("takes a press on the microphone or the waveform for neither a press on the field nor a stop", async () => {
+    const voice = fakeVoice();
+    draw(READY, fakeActions({ voice }));
+    fireEvent.change(composer(), { target: { value: "これを今" } });
+    composer().focus();
+    composer().setSelectionRange(3, 3);
+    // The microphone is a control: its press is its own, the caret stays.
+    expect(
+      fireEvent.mouseDown(screen.getByRole("button", { name: "Dictate" })),
+    ).toBe(true);
+    expect(composer().selectionStart).toBe(3);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate" }));
+    await screen.findByRole("button", { name: "Stop dictating" });
+    // The waveform takes no pointer: a press there is on the box, which
+    // gives the field the keyboard and leaves the recording running.
+    const wave = document.querySelector(".conversation-dictation-wave")!;
+    fireEvent.mouseDown(wave.parentElement!);
+    expect(document.activeElement).toBe(composer());
+    expect(
+      screen.getByRole("button", { name: "Stop dictating" }),
+    ).toHaveAttribute("data-phase", "recording");
+    expect(voice.cancel).not.toHaveBeenCalled();
+    hear(4800);
+    fireEvent.click(screen.getByRole("button", { name: "Stop dictating" }));
+    await waitFor(() => expect(composer().value).toBe("これを直して今"));
+  });
 });
 
 describe("streaming the recording", () => {

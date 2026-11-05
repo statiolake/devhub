@@ -35,6 +35,13 @@ import type { AgentStatus, AppSnapshot } from "../../ipc/appShell";
 import { pressFocusesField } from "../conversation/fieldClick";
 import { useMessageKeys, SEND_KEY } from "../conversation/messageKeys";
 import { SendIcon } from "../conversation/icons";
+import { DictationWaveform } from "../conversation/DictationWaveform";
+import {
+  DictationControls,
+  DictationTentative,
+  useFieldDictation,
+} from "../conversation/FieldDictation";
+import type { VoiceApi } from "../../ipc/voice";
 import { StatusMark } from "../components/sidebar/StatusMark";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
@@ -1083,7 +1090,9 @@ function linkLabel(link: string): string {
  * The person's answer: free Markdown, with the question's options as quick
  * replies. ⌘Return sends, as in the conversation's composer. The field is
  * the box: Send sits beside it, and a press anywhere else in the composer
- * lands in it.
+ * lands in it. The conversation's microphone sits beside Send
+ * (`FieldDictation.tsx`): what is said goes in at the caret, to be read and
+ * sent like anything typed.
  */
 function AnswerComposer({
   escalation,
@@ -1098,10 +1107,13 @@ function AnswerComposer({
     () => memory.drafts.get(escalation.id) ?? "",
   );
   const setText = useCallback(
-    (value: string) => {
-      setTextState(value);
-      if (value === "") memory.drafts.delete(escalation.id);
-      else memory.drafts.set(escalation.id, value);
+    (value: string | ((current: string) => string)) => {
+      setTextState((current) => {
+        const next = typeof value === "string" ? value : value(current);
+        if (next === "") memory.drafts.delete(escalation.id);
+        else memory.drafts.set(escalation.id, next);
+        return next;
+      });
     },
     [escalation.id],
   );
@@ -1109,6 +1121,16 @@ function AnswerComposer({
   // Why the last send did not go; the draft stays, and so does the view.
   const [failed, setFailed] = useState<string | undefined>(undefined);
   const input = useRef<HTMLTextAreaElement>(null);
+  // The Agents page's dictation, as every conversation's composer has it.
+  const voice = useMemo(() => devhub().voice as VoiceApi | undefined, []);
+  const { dictation, language, cycleLanguage, onKey, onFieldFocus } =
+    useFieldDictation({
+      voice,
+      reportFailure,
+      field: input,
+      text,
+      setText,
+    });
   const last = escalation.entries.at(-1);
   const options =
     escalation.state === "needs_answer" && last?.role === "orchestrator"
@@ -1137,9 +1159,15 @@ function AnswerComposer({
     },
     [escalation.id, reportFailure, sending, onAnswered, setText],
   );
-  const keys = useMessageKeys(() => {
-    send(text);
-  });
+  const keys = useMessageKeys(
+    () => {
+      send(text);
+    },
+    (event) => {
+      // Esc that throws a recording away does not leave the view as well.
+      onKey(event);
+    },
+  );
   // Grow with what is written, up to a third of the pane.
   useEffect(() => {
     const field = input.current;
@@ -1178,7 +1206,13 @@ function AnswerComposer({
           The answer did not go out: {failed}
         </p>
       )}
-      <div className="conversation-composer-box">
+      <div
+        className="conversation-composer-box"
+        data-dictating={dictation.analyser !== undefined || undefined}
+      >
+        {dictation.analyser !== undefined ? (
+          <DictationWaveform analyser={dictation.analyser} />
+        ) : null}
         <div className="conversation-composer-field">
           <textarea
             ref={input}
@@ -1196,10 +1230,20 @@ function AnswerComposer({
             onChange={(event) => {
               setText(event.target.value);
             }}
+            onFocus={onFieldFocus}
             {...keys}
           />
+          <DictationTentative dictation={dictation} />
         </div>
         <div className="conversation-composer-actions">
+          {voice !== undefined ? (
+            <DictationControls
+              dictation={dictation}
+              language={language}
+              disabled={false}
+              cycleLanguage={cycleLanguage}
+            />
+          ) : null}
           <button
             type="button"
             className="conversation-send"
