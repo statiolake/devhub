@@ -1,5 +1,5 @@
 /**
- * An ASCII-capable input source for as long as a chord is armed.
+ * An ASCII-capable input source as soon as a chord arms.
  *
  * # Why this exists
  *
@@ -14,32 +14,18 @@
  *
  * So the prefix is the one moment DevHub can act, and what it does is take the
  * input method out of the way: when the chord arms, an ASCII-capable input
- * source is selected; when the chord is over, the one that was there before is
- * selected again. Nothing about the second stroke has to be guessed from a
+ * source is selected. Nothing about the second stroke has to be guessed from a
  * physical key, because it arrives as a character like any other.
  *
- * # When a chord is over
+ * # Nothing is put back
  *
- * Whenever the router stops being armed, for whatever reason — the chord ran,
- * it was cancelled by a key that completes nothing, the table changed, or DevHub stopped being the active application. The router
- * says so (`ArmingListener`) and this does not ask why: every exit restores the
- * same way, so no exit can be the one that forgets to.
- *
- * # Only what DevHub put there
- *
- * The previous source is selected again only if the source is still the one
- * DevHub selected. Somebody who switched input source in the meantime — from
- * the menu bar, with their own shortcut — chose that, and putting theirs back
- * over it would be DevHub fighting them. That check and the select are one
- * step on the far side (`InputSourcePort.restore`), so nothing can change the
- * source between the two.
- *
- * # One request at a time
- *
- * Every request to the port waits for the one before it. A chord can be over
- * before the switch it armed has been answered, and the next can arm before
- * that restore has been; run out of order, a restore would land after the
- * next switch and put the input method back in the middle of a chord.
+ * The source stays ASCII-capable after the chord. Selecting the previous one
+ * again when the chord was over turned the input method back on at moments
+ * the person had not asked for — after a chord that moved focus somewhere
+ * else, or when DevHub stopped being the active application mid-chord — and
+ * the person turns their input method on themselves when they want it, as
+ * they would after any other shortcut. A select is idempotent and the only
+ * request there is, so there is no ordering between requests to keep either.
  *
  * # When it cannot
  *
@@ -60,33 +46,13 @@
  * so this is left as it is rather than papered over.
  */
 
-/** DevHub selected an ASCII-capable source, and this is what to undo. */
-export interface InputSourceSwitch {
-	/** The source that was selected before DevHub's. */
-	readonly previous: string;
-	/** The ASCII-capable source DevHub selected. */
-	readonly selected: string;
-}
-
-/**
- * The macOS input source, as DevHub is allowed to touch it.
- *
- * Both operations are a check and a change done as one step, and both reject
- * when they could not be done at all.
- */
+/** The macOS input source, as DevHub is allowed to touch it. */
 export interface InputSourcePort {
 	/**
 	 * Select an ASCII-capable source, unless the current one is one already.
-	 *
-	 * Answers what was switched, or nothing when nothing needed to be.
+	 * Rejects when it could not be done at all.
 	 */
-	selectAscii(): Promise<InputSourceSwitch | undefined>;
-	/**
-	 * Select `previous` again — only if `selected` is still the current source.
-	 *
-	 * Answers `kept` when it was not, and so nothing was changed.
-	 */
-	restore(change: InputSourceSwitch): Promise<"restored" | "kept">;
+	selectAscii(): Promise<void>;
 }
 
 /** What the router says about the prefix. See `KeyRouter`. */
@@ -97,14 +63,7 @@ export interface ArmingListener {
 	disarmed(): void;
 }
 
-export class ChordInputSource implements ArmingListener {
-	/**
-	 * The switch made for the chord armed now, answered or still on its way;
-	 * nothing when no chord is armed.
-	 */
-	private held: Promise<InputSourceSwitch | undefined> | undefined;
-	/** The last request made of the port. Every request waits for it. */
-	private tail: Promise<unknown> = Promise.resolve();
+export class ChordInputSource {
 	private failed = false;
 
 	constructor(
@@ -114,40 +73,13 @@ export class ChordInputSource implements ArmingListener {
 	) {}
 
 	armed(): void {
-		if (this.failed || this.held !== undefined) return;
-		this.held = this.enqueue(() => this.port.selectAscii());
-	}
-
-	disarmed(): void {
-		const held = this.held;
-		if (held === undefined) return;
-		this.held = undefined;
-		void this.enqueue(async () => {
-			const change = await held;
-			if (change !== undefined) await this.port.restore(change);
+		if (this.failed) return;
+		this.port.selectAscii().catch((failure: unknown) => {
+			// Not a recovery: the port is not asked again, and the reason goes
+			// to the one place failures are drawn.
+			if (this.failed) return;
+			this.failed = true;
+			this.report(failure);
 		});
-	}
-
-	/**
-	 * Run one request after the last, and say its failure — the first one.
-	 *
-	 * A failed request resolves to nothing, which is what a caller waiting on
-	 * it can do with it: there is no switch to undo when none was made.
-	 */
-	private enqueue<T>(request: () => Promise<T>): Promise<T | undefined> {
-		const next = this.tail.then(async () => {
-			if (this.failed) return undefined;
-			try {
-				return await request();
-			} catch (failure) {
-				// Not a recovery: the port is not asked again, and the reason goes
-				// to the one place failures are drawn.
-				this.failed = true;
-				this.report(failure);
-				return undefined;
-			}
-		});
-		this.tail = next;
-		return next;
 	}
 }

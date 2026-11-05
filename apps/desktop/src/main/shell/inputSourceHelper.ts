@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
-import type { InputSourcePort, InputSourceSwitch } from "./chordInputSource.js";
+import type { InputSourcePort } from "./chordInputSource.js";
 
 export const INPUT_SOURCE_HELPER = "devhub-input-source";
 
@@ -66,22 +66,11 @@ export class InputSourceHelper implements InputSourcePort {
 		});
 	}
 
-	async selectAscii(): Promise<InputSourceSwitch | undefined> {
-		const [kind, ...rest] = await this.request("ascii");
-		if (kind === "unchanged" && rest.length === 1) return undefined;
-		if (kind === "switched" && rest.length === 2) {
-			return { previous: rest[0], selected: rest[1] };
-		}
-		throw this.malformed("ascii", [kind, ...rest]);
-	}
-
-	async restore(change: InputSourceSwitch): Promise<"restored" | "kept"> {
-		const reply = await this.request(
-			`restore\t${change.previous}\t${change.selected}`,
-		);
-		if (reply[0] === "restored" && reply.length === 1) return "restored";
-		if (reply[0] === "kept" && reply.length === 2) return "kept";
-		throw this.malformed("restore", reply);
+	async selectAscii(): Promise<void> {
+		const reply = await this.request("ascii");
+		if (reply[0] === "unchanged" && reply.length === 2) return;
+		if (reply[0] === "switched" && reply.length === 3) return;
+		throw this.malformed("ascii", reply);
 	}
 
 	private request(line: string): Promise<readonly string[]> {

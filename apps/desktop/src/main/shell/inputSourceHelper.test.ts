@@ -47,38 +47,22 @@ async function failureOf(promise: Promise<unknown>): Promise<NamedFailure> {
 }
 
 describe("the input source helper", () => {
-	it("reads a switch and what it switched from", async () => {
-		const port = new InputSourceHelper(
+	it("reads a switch, and a source that was ASCII-capable already", async () => {
+		const switched = new InputSourceHelper(
 			helper(`    ascii) printf 'switched\\tjp\\tabc\\n' ;;`),
 		);
-		await expect(port.selectAscii()).resolves.toEqual({
-			previous: "jp",
-			selected: "abc",
-		});
-	});
-
-	it("reads a source that was ASCII-capable already as no switch", async () => {
-		const port = new InputSourceHelper(
+		await expect(switched.selectAscii()).resolves.toBeUndefined();
+		const unchanged = new InputSourceHelper(
 			helper(`    ascii) printf 'unchanged\\tabc\\n' ;;`),
 		);
-		await expect(port.selectAscii()).resolves.toBeUndefined();
+		await expect(unchanged.selectAscii()).resolves.toBeUndefined();
 	});
 
-	it("sends the restore with both sources, and reads either answer", async () => {
+	it("refuses an answer outside the protocol", async () => {
 		const port = new InputSourceHelper(
-			helper(
-				[
-					`    "restore	jp	abc") printf 'restored\\n' ;;`,
-					`    "restore	jp	other") printf 'kept\\tus\\n' ;;`,
-				].join("\n"),
-			),
+			helper(`    ascii) printf 'restored\\n' ;;`),
 		);
-		await expect(
-			port.restore({ previous: "jp", selected: "abc" }),
-		).resolves.toBe("restored");
-		await expect(
-			port.restore({ previous: "jp", selected: "other" }),
-		).resolves.toBe("kept");
+		await expect(port.selectAscii()).rejects.toThrow(/answered "ascii"/u);
 	});
 
 	it("fails a request the helper says it could not do", async () => {
@@ -95,9 +79,7 @@ describe("the input source helper", () => {
 		const first = await failureOf(port.selectAscii());
 		expect(first.wire.code).toBe("input_source_unavailable");
 		expect(first.wire.detail).toContain("could not be started");
-		await expect(
-			port.restore({ previous: "jp", selected: "abc" }),
-		).rejects.toBe(first);
+		await expect(port.selectAscii()).rejects.toBe(first);
 	});
 
 	it("fails the request in flight, and every later one, when the helper stops", async () => {

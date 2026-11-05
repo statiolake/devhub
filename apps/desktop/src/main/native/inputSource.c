@@ -4,11 +4,10 @@
  * DevHub's chords are a prefix (Cmd+Q) followed by a plain key. With an input
  * method such as Japanese active, Chromium hands that plain key to the input
  * method before any of DevHub's code sees it, and a key the input method
- * consumes never reaches Electron's `before-input-event` at all. So while a
- * chord is armed DevHub selects an ASCII-capable input source, and selects the
- * previous one again when the chord is over. See
- * `apps/desktop/src/main/shell/chordInputSource.ts`, which decides when; this
- * program only does what it is told, one line at a time.
+ * consumes never reaches Electron's `before-input-event` at all. So when a
+ * chord arms DevHub selects an ASCII-capable input source, and leaves it
+ * selected. See `apps/desktop/src/main/shell/chordInputSource.ts`, which
+ * decides when; this program only does what it is told, one line at a time.
  *
  * It is a process of its own because the Text Input Sources API is Carbon's
  * and Electron's main process has no way to call it. It is started once and
@@ -23,23 +22,19 @@
  *     -> unchanged <TAB> <current id>            it was ASCII-capable already
  *     -> switched <TAB> <previous id> <TAB> <selected id>
  *
- *   restore <TAB> <previous id> <TAB> <selected id>
- *     -> restored                                 <selected> was still current
- *     -> kept <TAB> <current id>                  somebody chose another since
- *
  *   anything that fails
  *     -> error <TAB> <what failed>
  *
- * Both requests are one check-and-select each, done here rather than as two
- * round trips, so nothing can change the source between the look and the act.
+ * The request is one check-and-select, done here rather than as two round
+ * trips, so nothing can change the source between the look and the act.
  *
  * # The run loop
  *
  * HIToolbox learns that another process changed the input source through a
  * notification delivered on the run loop. A program that blocked in `read`
- * would keep answering with the source it saw last, and would then "restore"
- * over a choice the person had made in the meantime. So stdin is read from the
- * main run loop, and the notifications are delivered between requests.
+ * would keep answering with the source it saw last, and would take a source
+ * the person had switched to since for the one it saw. So stdin is read from
+ * the main run loop, and the notifications are delivered between requests.
  */
 
 #include <Carbon/Carbon.h>
@@ -77,26 +72,6 @@ static int source_id(TISInputSourceRef source, char *out, size_t capacity) {
 static int is_ascii_capable(TISInputSourceRef source) {
 	CFBooleanRef capable = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsASCIICapable);
 	return capable != NULL && CFBooleanGetValue(capable);
-}
-
-/* The enabled keyboard input source with this ID, retained, or NULL. */
-static TISInputSourceRef source_named(const char *wanted) {
-	CFStringRef id = CFStringCreateWithCString(NULL, wanted, kCFStringEncodingUTF8);
-	if (id == NULL) return NULL;
-	const void *keys[] = {kTISPropertyInputSourceID};
-	const void *values[] = {id};
-	CFDictionaryRef filter = CFDictionaryCreate(
-		NULL, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-	CFRelease(id);
-	CFArrayRef found = TISCreateInputSourceList(filter, false);
-	CFRelease(filter);
-	if (found == NULL) return NULL;
-	TISInputSourceRef source = NULL;
-	if (CFArrayGetCount(found) > 0) {
-		source = (TISInputSourceRef)CFRetain(CFArrayGetValueAtIndex(found, 0));
-	}
-	CFRelease(found);
-	return source;
 }
 
 static void select_ascii(void) {
@@ -142,41 +117,6 @@ static void select_ascii(void) {
 	reply(line);
 }
 
-static void restore(const char *previous, const char *selected) {
-	TISInputSourceRef current = TISCopyCurrentKeyboardInputSource();
-	if (current == NULL) {
-		reply_error("macOS reported no current keyboard input source");
-		return;
-	}
-	char now[ID_CAPACITY];
-	int named = source_id(current, now, sizeof now);
-	CFRelease(current);
-	if (!named) {
-		reply_error("the current keyboard input source has no ID");
-		return;
-	}
-	char line[LINE_CAPACITY];
-	if (strcmp(now, selected) != 0) {
-		snprintf(line, sizeof line, "kept\t%s", now);
-		reply(line);
-		return;
-	}
-	TISInputSourceRef source = source_named(previous);
-	if (source == NULL) {
-		snprintf(line, sizeof line, "no enabled keyboard input source is named %s", previous);
-		reply_error(line);
-		return;
-	}
-	OSStatus status = TISSelectInputSource(source);
-	CFRelease(source);
-	if (status != noErr) {
-		snprintf(line, sizeof line, "TISSelectInputSource(%s) failed with OSStatus %d", previous, (int)status);
-		reply_error(line);
-		return;
-	}
-	reply("restored");
-}
-
 static void handle(char *line) {
 	char *fields[3] = {line, NULL, NULL};
 	int count = 1;
@@ -190,8 +130,6 @@ static void handle(char *line) {
 	}
 	if (count == 1 && strcmp(fields[0], "ascii") == 0) {
 		select_ascii();
-	} else if (count == 3 && strcmp(fields[0], "restore") == 0) {
-		restore(fields[1], fields[2]);
 	} else {
 		reply_error("unknown request");
 	}

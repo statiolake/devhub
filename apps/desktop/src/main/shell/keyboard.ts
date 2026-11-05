@@ -206,7 +206,6 @@ const router = new KeyRouter(defaultChordLayout(), {
 		armingObserver?.(true);
 	},
 	disarmed: () => {
-		inputSource?.disarmed();
 		armingObserver?.(false);
 	},
 });

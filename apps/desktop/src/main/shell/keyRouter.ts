@@ -99,9 +99,7 @@ export class KeyRouter {
 	 * front.
 	 *
 	 * The chord belonged to the application, and the application has been left:
-	 * a key pressed in another app is not DevHub's to complete it with, and the
-	 * input source put in place for the chord is given back now rather than
-	 * left in another application's hands.
+	 * a key pressed in another app is not DevHub's to complete it with.
 	 */
 	leave(): void {
 		this.disarm();
