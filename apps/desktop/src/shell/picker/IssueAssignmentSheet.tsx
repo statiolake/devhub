@@ -239,8 +239,6 @@ interface Work {
   readonly item: GitHubItem;
   /** Which of the person's actions the agent is being started for. */
   readonly actionId: string | undefined;
-  /** Its title, once GitHub has said: the name the agent question suggests. */
-  readonly title?: string;
 }
 
 /**
@@ -472,9 +470,6 @@ function branchStep(
     // (`issueBranchPlan`); this holds the sheet to the same rule whatever main
     // sent, so "is on neither this machine…" is only ever said of a pull
     // request's head.
-    // Kept before the plan can be dropped below: the name it suggests.
-    const titled: Work =
-      plan.title === undefined ? work : { ...work, title: plan.title };
     if (!plan.reachable && plan.checkedOutAt === undefined) {
       // A pull request is work on its head branch and nothing else: no
       // `feature/<n>-wip` is offered for one. A head that cannot be had stops
@@ -522,7 +517,7 @@ function branchStep(
               answer.id === ROOT_NEW_BRANCH ||
               answer.id === ROOT_EXISTING_BRANCH,
           };
-    return prepareFolder(services, input, titled, choice, origin);
+    return prepareFolder(services, input, work, choice, origin);
   };
 }
 
@@ -806,9 +801,6 @@ function agentStep(
       (controls) => (
         <FolderAgentPicker
           title={`Agent for ${itemLabel(item)}`}
-          // Empty unless the person types one: DevHub's own label otherwise.
-          // The Issue's title is the suggestion, the shape of a good name.
-          nameField={{ placeholder: work.title ?? itemLabel(item) }}
           place={folder}
           step={controls.step}
           failure={controls.failure}
@@ -837,7 +829,6 @@ function agentStep(
         split: agent.split,
         presentation: agent.presentation,
         ...(agent.resume === undefined ? {} : { resume: agent.resume }),
-        ...(agent.name === undefined ? {} : { name: agent.name }),
       }),
     );
     return undefined;

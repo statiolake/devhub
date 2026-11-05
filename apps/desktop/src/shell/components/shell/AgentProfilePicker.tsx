@@ -75,11 +75,6 @@ export interface AgentChoice {
   readonly presentation: AgentPresentationWire;
   /** The earlier session the Agent resumes; absent starts afresh. */
   readonly resume?: string;
-  /**
-   * The name typed into the "名前" field, trimmed; absent when it was left
-   * empty, which keeps DevHub's own label.
-   */
-  readonly name?: string;
 }
 
 export interface AgentProfilePickerProps {
@@ -106,14 +101,6 @@ export interface AgentProfilePickerProps {
    * unchanged.
    */
   readonly onOpenEditor?: () => void;
-  /**
-   * Offers a "名前" field between the search and the list: the name the new
-   * Agent is given as it starts, as Rename… would. Empty to begin with, the
-   * placeholder an example — Assign Issue's is the Issue's title — and left
-   * empty, the Agent is named as it always is. Return in it takes the row the
-   * arrows are on, as it does in the search field.
-   */
-  readonly nameField?: { readonly placeholder: string };
   /**
    * Offers the sessions of the repository's other worktrees: one taken is
    * resumed in its own worktree, and this is called once that has been asked
@@ -151,13 +138,10 @@ export function AgentProfilePicker({
   hint,
   sessionsIn,
   onOpenEditor,
-  nameField,
   onResumedElsewhere,
   onChoose,
   onCancel,
 }: AgentProfilePickerProps) {
-  const [name, setName] = useState("");
-  const given = nameField === undefined ? "" : name.trim();
   const {
     agentProfiles,
     listAgentSessions,
@@ -295,23 +279,6 @@ export function AgentProfilePicker({
         </>
       }
       onActiveChange={onActiveChange}
-      {...(nameField === undefined
-        ? {}
-        : {
-            toolbar: (
-              <label className="picker-name-field">
-                <span>名前</span>
-                <input
-                  className="mac-field"
-                  type="text"
-                  aria-label="名前"
-                  placeholder={nameField.placeholder}
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </label>
-            ),
-          })}
       // Beside the list only when there is a session to point at.
       {...(sessionCount === 0
         ? {}
@@ -360,7 +327,6 @@ export function AgentProfilePicker({
           ...(target.session === undefined
             ? {}
             : { resume: target.session.id }),
-          ...(given.length === 0 ? {} : { name: given }),
         });
       }}
       onCancel={onCancel}

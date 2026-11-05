@@ -312,8 +312,9 @@ print the handle (`tmux` binary, `-S` socket, session, pane) an agent drives it 
 sheet does, with every answer given: the clone (`--repo`), a worktree of
 `--branch` or the clone itself (`--root`; with `--branch`, switched to it),
 the profile and its mode, and the Issue action (or `none`), whose wording
-is sent as the agent's first message with no review sheet. `--name` names the agent from the start, as
-`agent new --name` and the sheet's 名前 field do (left out: DevHub's label).
+is sent as the agent's first message with no review sheet. `--name` names
+the agent from the start, as `agent new --name` does (left out: DevHub's
+label); the sheet does not ask for a name.
 Both fetch `origin` once, first — before the Issue's branch is looked for,
 a pull request's head is found or a new branch's base is chosen — and every
 later step reads what that fetch left. A fetch that fails stops the

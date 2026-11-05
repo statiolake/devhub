@@ -158,8 +158,6 @@ export interface AssignmentBranchWire {
 	 * head is gone is stopped before the branch question with that reason.
 	 */
 	readonly pullRequestState?: "open" | "closed" | "merged";
-	/** The Issue's or pull request's title, when GitHub said. */
-	readonly title?: string;
 }
 
 /**
@@ -247,7 +245,8 @@ export interface IssueAgentAssignment extends IssueAssignmentBase {
 	/**
 	 * The name to give the agent as it starts, as Rename… would: kept with
 	 * its session and shown wherever a given name is. Absent keeps DevHub's
-	 * own label.
+	 * own label. Only `devhub --tell issue assign --name` gives one; the
+	 * Assign Issue sheet does not ask.
 	 */
 	readonly name?: string;
 	/**

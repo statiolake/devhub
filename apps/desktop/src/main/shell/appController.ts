@@ -11350,11 +11350,9 @@ export class AppController {
 				head.branch,
 				sameRepository ? undefined : `${head.owner}/${head.repository}`,
 			);
-			return {
-				...whereabouts,
-				...(head.state === undefined ? {} : { pullRequestState: head.state }),
-				...(head.title === undefined ? {} : { title: head.title }),
-			};
+			return head.state === undefined
+				? whereabouts
+				: { ...whereabouts, pullRequestState: head.state };
 		}
 		// GitHub's own record first — the branch its Create a branch button made
 		// — and only then the convention, which is a guess about a name and is
@@ -11363,23 +11361,18 @@ export class AppController {
 		// Both answers are looked for in refs the flow's first fetch brought up
 		// to date, the linked one included: a branch GitHub's button made a
 		// minute ago is on `origin`, and now in this clone's refs too.
-		const titled = linked.title === undefined ? {} : { title: linked.title };
 		const branch =
-			linked.branch ??
-			(await this.branchNamedFor(git, directory, item, cancel));
-		if (branch === undefined) return { reachable: false, ...titled };
+			linked ?? (await this.branchNamedFor(git, directory, item, cancel));
+		if (branch === undefined) return { reachable: false };
 		// An Issue's branch that this clone cannot reach is no branch at all for
 		// this question: a link to one that was deleted, or that lives in some
 		// other copy, or a name nobody pushed. Unlike a pull request's head it is
 		// nobody's work to protect, so the Issue is offered as not started — and
 		// the new branch is made from the default branch — rather than offered
 		// a branch that `git worktree add` can never check out.
-		return {
-			...issueBranchPlan(
-				await this.branchWhereabouts(git, directory, branch, undefined),
-			),
-			...titled,
-		};
+		return issueBranchPlan(
+			await this.branchWhereabouts(git, directory, branch, undefined),
+		);
 	}
 
 	/**

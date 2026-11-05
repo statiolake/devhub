@@ -706,7 +706,7 @@ describe("the branch an Issue is linked to", () => {
 				{ owner: "example", repository: "widget", number: 128 },
 				"token",
 			),
-		).toEqual({ branch: "128-add-the-picker" });
+		).toBe("128-add-the-picker");
 	});
 
 	it("is nothing at all for an Issue nobody has started", async () => {
@@ -720,26 +720,7 @@ describe("the branch an Issue is linked to", () => {
 				{ owner: "example", repository: "widget", number: 128 },
 				"token",
 			),
-		).toEqual({});
-	});
-
-	it("comes with the Issue's title, for the agent's suggested name", async () => {
-		answers({
-			data: {
-				repository: {
-					issue: {
-						title: "Add the picker",
-						linkedBranches: { nodes: [{ ref: { name: "128-picker" } }] },
-					},
-				},
-			},
-		});
-		expect(
-			await readIssueLinkedBranch(
-				{ owner: "example", repository: "widget", number: 128 },
-				"token",
-			),
-		).toEqual({ branch: "128-picker", title: "Add the picker" });
+		).toBeUndefined();
 	});
 });
 

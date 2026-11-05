@@ -1063,34 +1063,9 @@ describe("assigning an Issue", () => {
     );
   });
 
-  it("names the agent from the 名前 field, suggesting the Issue's title", async () => {
-    const { assignIssue } = mount({
-      assignmentBranch: vi
-        .fn()
-        .mockResolvedValue({ reachable: false, title: "Add the picker" }),
-    } as unknown as Partial<PickerValue>);
-
-    await answer("Assign Issue", ISSUE);
-    await choose(
-      /Where to work on example\/widget#128/u,
-      /Create feature\/128-wip in a new worktree/u,
-    );
-    await screen.findByRole("dialog", { name: /Agent for/u });
-    const field = screen.getByRole("textbox", { name: "名前" });
-    // Empty to begin with: the title is only the example.
-    expect(field).toHaveValue("");
-    expect(field).toHaveAttribute("placeholder", "Add the picker");
-    fireEvent.change(field, { target: { value: "  picker work  " } });
-    fireEvent.keyDown(field, { key: "Enter" });
-
-    await vi.waitFor(() => {
-      expect(assignIssue).toHaveBeenCalledWith(
-        expect.objectContaining({ profileId: "claude", name: "picker work" }),
-      );
-    });
-  });
-
-  it("keeps DevHub's own naming when the 名前 field is left empty", async () => {
+  // Naming the agent at launch is the command line's (`issue assign --name`):
+  // the agent question asks only for the agent.
+  it("asks no name for the agent, which keeps DevHub's own label", async () => {
     const { assignIssue } = mount();
 
     await answer("Assign Issue", ISSUE);
@@ -1099,11 +1074,7 @@ describe("assigning an Issue", () => {
       /Create feature\/128-wip in a new worktree/u,
     );
     await screen.findByRole("dialog", { name: /Agent for/u });
-    // Without a title from GitHub, the Issue's own label is the example.
-    expect(screen.getByRole("textbox", { name: "名前" })).toHaveAttribute(
-      "placeholder",
-      "example/widget#128",
-    );
+    expect(screen.queryByRole("textbox", { name: "名前" })).toBeNull();
     await answer(/Agent for example\/widget#128/u);
 
     await vi.waitFor(() => {
