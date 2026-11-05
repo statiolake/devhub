@@ -875,6 +875,42 @@ describe("an Issue's branch that exists nowhere", () => {
 	});
 });
 
+describe("a default branch that moved from master to main on the remote", () => {
+	async function movedToMain(): Promise<void> {
+		await masterOrigin();
+		const origin = join(parent, "origin.git");
+		await runGit(command, ["branch", "main", "master"], { cwd: origin });
+		await runGit(command, ["symbolic-ref", "HEAD", "refs/heads/main"], {
+			cwd: origin,
+		});
+		await runGit(command, ["branch", "-D", "master"], { cwd: origin });
+		// The clone still says origin/HEAD -> origin/master, which a pruning
+		// fetch has taken away: `symbolic-ref` keeps naming it.
+		await runGit(command, ["fetch", "--prune", "origin"], { cwd: repository });
+	}
+
+	it("starts the Issue's branch from origin/main, not the dangling origin/master", async () => {
+		await movedToMain();
+		const path = await ensureWorktree(
+			command,
+			repository,
+			{ kind: "issue", number: 3 },
+			"feature/3-wip",
+		);
+		const made = await runGit(command, ["rev-parse", "HEAD"], { cwd: path });
+		const wanted = await runGit(command, ["rev-parse", "origin/main"], {
+			cwd: repository,
+		});
+		expect(made.trim()).toBe(wanted.trim());
+		const head = await runGit(
+			command,
+			["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+			{ cwd: repository },
+		);
+		expect(head.trim()).toBe("origin/main");
+	});
+});
+
 describe("a merged pull request whose head was deleted (master-only repo, #3)", () => {
 	it("is refused rather than invented, in a worktree or the root", async () => {
 		await masterOrigin();

@@ -1349,6 +1349,31 @@ async function baseRef(
 		)) !== undefined;
 	if (hasOrigin) {
 		const fetched = await fetchOrigin(command, directory, options);
+		// The remote's own answer first, when it can be asked: a local
+		// `origin/HEAD` is only what the clone was told when it was made, and a
+		// repository whose default moved from `master` to `main` keeps pointing
+		// at `origin/master` — gone after a pruning fetch, or still there but
+		// no longer where work starts. This is the only place DevHub talks to
+		// the remote for an answer rather than for objects, so it is not
+		// attempted at all when the network has just been shown not to work.
+		if (fetched) {
+			const shown = await runGit(command, ["remote", "show", "origin"], {
+				cwd: directory,
+				timeoutMs: NETWORK_TIMEOUT_MS,
+			}).catch(() => "");
+			const named = /^\s*HEAD branch:\s*(\S+)\s*$/mu.exec(shown)?.[1];
+			if (
+				named &&
+				named !== "(unknown)" &&
+				(await refExists(command, directory, `origin/${named}`))
+			) {
+				// Keep the clone's own idea of the default in step with it.
+				await runGit(command, ["remote", "set-head", "origin", named], {
+					cwd: directory,
+				}).catch(() => undefined);
+				return `origin/${named}`;
+			}
+		}
 		const head = await runGit(
 			command,
 			["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
@@ -1357,24 +1382,30 @@ async function baseRef(
 			(value) => value.trim(),
 			() => "",
 		);
-		if (head.length > 0) return head;
-		// A clone made with `--single-branch`, or one whose `origin/HEAD` was
-		// never set, has to be asked directly. This is the only place DevHub
-		// talks to the remote for an answer rather than for objects — so it is
-		// not attempted at all when the network has just been shown not to work.
-		if (fetched) {
-			const shown = await runGit(command, ["remote", "show", "origin"], {
-				cwd: directory,
-				timeoutMs: NETWORK_TIMEOUT_MS,
-			});
-			const named = /^\s*HEAD branch:\s*(\S+)\s*$/mu.exec(shown)?.[1];
-			if (named && named !== "(unknown)") return `origin/${named}`;
-		}
+		// `symbolic-ref` names the target even when it no longer exists.
+		if (head.length > 0 && (await refExists(command, directory, head)))
+			return head;
 	}
 	const local = await readRepository(command, directory);
 	if (local?.branch) return local.branch;
 	throw workspaceFailure(
 		"DevHub could not tell which branch a new branch should start from: this repository has no origin and no branch checked out.",
+	);
+}
+
+/** Whether `ref` names a commit in this repository. */
+async function refExists(
+	command: GitCommand,
+	directory: string,
+	ref: string,
+): Promise<boolean> {
+	return runGit(
+		command,
+		["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+		{ cwd: directory },
+	).then(
+		() => true,
+		() => false,
 	);
 }
 
