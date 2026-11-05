@@ -272,27 +272,18 @@ describe("parsing", () => {
     });
   });
 
-  // Assigning an Issue starts an Agent *on* it; the person decides when it
-  // starts working. So an Issue action drafts unless it says to send, and a
-  // Smart Button, which is pressed to send, has no such key at all.
-  it("drafts an Issue action's wording unless it says start = send", () => {
-    const issue = (config: Config, id: string) =>
-      config.agentActions.find((one) => one.id === id);
-    expect(issue(defaultConfig(), "issue_assignment")?.start).toBe("draft");
-    expect(
-      defaultConfig()
-        .agentActions.filter((one) => one.trigger !== "issue")
-        .map((one) => one.start),
-    ).toEqual(Array(7).fill("send"));
+  // `start = "draft" | "send"` was DevHub's own key for a while, and DevHub
+  // wrote it into every file it saved: an Issue action now always sends, so
+  // the key is retired — it loads, is named, and the next save drops it.
+  it("loads an Issue action's retired start, names it, and drops it on save", () => {
     const source = [
       `version = ${String(CONFIG_SCHEMA_VERSION)}`,
       "",
-      // The user's own file: the shipped action with its wording restated
-      // and no `start`, which is a draft.
       "[agent_actions.issue.issue_assignment]",
       'display_name = "Work on the Issue"',
       'template = "このIssueを読み、実装をしてください。\\n{{ISSUE_URL}}\\n"',
       "confirm_before_send = true",
+      'start = "draft"',
       "order = 0",
       "",
       "[agent_actions.issue.implement_now]",
@@ -302,24 +293,23 @@ describe("parsing", () => {
       "",
     ].join("\n");
     const config = parseConfig(source);
-    expect(issue(config, "issue_assignment")?.start).toBe("draft");
-    expect(issue(config, "implement_now")?.start).toBe("send");
-    // Written back as it was read, and only where it means something.
-    const written = configToToml(config);
-    expect(written).toContain('start = "send"');
-    expect(parseConfig(written)).toEqual(config);
-    expect(written).not.toMatch(/\[agent_actions\.commit[^[]*start =/u);
+    expect(config).toEqual(parseConfig(source.replace(/^start = .*\n/gmu, "")));
+    expect(retiredKeysIn(parseConfigText(source))).toEqual([
+      {
+        key: "agent_actions.issue.issue_assignment.start",
+        replacement: expect.stringContaining("confirm_before_send"),
+      },
+      {
+        key: "agent_actions.issue.implement_now.start",
+        replacement: expect.stringContaining("confirm_before_send"),
+      },
+    ]);
+    expect(configOntoDocument(source, config)).not.toContain("start =");
+    expect(configToToml(config)).not.toContain("start =");
   });
 
-  it("refuses a start that is not draft or send, and a start on a Smart Button", () => {
+  it("refuses a start on a Smart Button, which never had one", () => {
     const head = `version = ${String(CONFIG_SCHEMA_VERSION)}\n`;
-    expect(
-      codeOf(() =>
-        parseConfig(
-          `${head}[agent_actions.issue.issue_assignment]\nstart = "now"\n`,
-        ),
-      ),
-    ).toBe("invalid_string");
     expect(
       codeOf(() =>
         parseConfig(

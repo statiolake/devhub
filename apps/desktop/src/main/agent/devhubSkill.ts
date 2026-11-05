@@ -170,10 +170,9 @@ Full reference: \`devhub --tell help\`.
 **Pass every choice explicitly.** Commands that start something have no
 defaults: \`agent new\` needs \`--workspace\`, \`--profile\` and \`--gui\` or
 \`--tui\`; \`issue assign\` needs \`--repo\`, \`--branch\` or \`--root\`,
-\`--profile\`, \`--gui\` or \`--tui\`, \`--action\` and \`--send\` or
-\`--draft\`. Run \`profiles\` and \`issue actions\` first to see the values
-(and \`workspaces\` for W). A call missing one does nothing and says which
-flags, and their values. No \`--tell\` command opens a picker in the window
+\`--profile\`, \`--gui\` or \`--tui\` and \`--action\`. Run \`profiles\`
+and \`issue actions\` first to see the values (and \`workspaces\` for W). A
+call missing one does nothing and says which flags, and their values. No \`--tell\` command opens a picker in the window
 or takes the person's screen: what you start appears in the Sidebar,
 unselected, and only \`focus\` (when the person asked to be shown something)
 goes there.
@@ -207,7 +206,7 @@ names an agent, yourself included.
 ## Hand a GitHub Issue (or PR) to a new agent
 
     devhub --tell issue actions
-    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login-timeout --profile claude --gui --action issue_assignment --draft --name "123 login fix"
+    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login-timeout --profile claude --gui --action issue_assignment --name "123 login fix"
 
 - Read the Issue first (title/body, e.g. with \`gh issue view\`) and choose a
   short descriptive branch name: \`<number>-<a-few-words>\`, lowercase, words
@@ -219,9 +218,7 @@ names an agent, yourself included.
   \`--root\` works in the clone itself instead (with \`--branch\`: switched
   to it; alone: as it is).
 - \`--action\` is one of \`issue actions\` (or \`none\`: the agent is told
-  nothing). \`--draft\` puts its wording into the new agent's input box
-  unsent - the person reads it and sends it; \`--send\` sends it at once.
-  Use \`--draft\` unless the person asked for the agent to start working.
+  nothing); its wording is sent as the new agent's first message.
 - \`--prompt "..."\` adds your own instructions for the new agent (scope,
   constraints, what the person said). \`--editor-only\` (with \`--repo\` and
   \`--branch\`/\`--root\` only) opens the editor without an agent.

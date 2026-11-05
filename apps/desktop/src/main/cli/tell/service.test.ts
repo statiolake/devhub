@@ -348,13 +348,11 @@ class FakePorts implements TellPorts {
 			id: "issue_assignment",
 			label: "Work on the Issue",
 			template: "このIssueを読み、実装をしてください。\n{{ISSUE_URL}}\n",
-			start: "draft",
 		},
 		{
 			id: "review",
 			label: "Review it",
 			template: "\nReview {{ISSUE_URL}} and leave comments.",
-			start: "send",
 		},
 	];
 	issueActions() {
@@ -902,7 +900,6 @@ describe("devhub --tell, in the app", () => {
 				profile: "claude",
 				presentation: "gui",
 				action: "issue_assignment",
-				start: "draft",
 				prompt: "only the backend",
 			},
 			coordinator,
@@ -3123,7 +3120,6 @@ const FULL_ASSIGN = [
 	"--tui",
 	"--action",
 	"issue_assignment",
-	"--send",
 	"--meta",
 	"parent=bbbb2222-0000",
 	"--meta",
@@ -3205,13 +3201,12 @@ describe("no --tell call opens a picker", () => {
 			profile: "claude",
 			presentation: "tui",
 			action: "issue_assignment",
-			start: "send",
 		});
 		expect(ports.calls.slice(1)).toEqual([
 			"meta issue-agent parent bbbb2222-0000",
 			"meta issue-agent role implementer",
 		]);
-		// --action none: no action, and so nothing to draft or send.
+		// --action none: no action, and so nothing to send.
 		ports.calls = [];
 		const none = FULL_ASSIGN.slice(0, 10).concat(["--action", "none"]);
 		await viaSocket(service, none, coordinator);
@@ -3219,18 +3214,6 @@ describe("no --tell call opens a picker", () => {
 			ports.calls[0]!.slice("assign ".length),
 		) as IssueAssignRequest;
 		expect(bare.action).toBeUndefined();
-		expect(bare.start).toBeUndefined();
-		await expect(
-			viaSocket(service, [...none, "--draft"], coordinator),
-		).rejects.toThrow(
-			"--send/--draft is about the action's wording, and --action none has none",
-		);
-		expect(
-			parseTellArguments(["issue", "assign", "u", "--send", "--draft"]),
-		).toEqual({
-			kind: "invalid",
-			message: "--send and --draft ask for different things.",
-		});
 	});
 
 	it("refuses an issue assign that leaves any choice open, naming every flag and its values, and does nothing", async () => {
@@ -3248,7 +3231,6 @@ describe("no --tell call opens a picker", () => {
 				"--profile is required: claude, codex, cursor (see devhub --tell profiles)",
 				"--gui or --tui is required: --gui, --tui (see devhub --tell profiles)",
 				"--action is required: issue_assignment, review, none (see devhub --tell issue actions; none tells the agent nothing)",
-				"--send or --draft is required: --draft puts the action's wording into the agent's input box unsent, --send sends it as its first message",
 			].join("\n"),
 		);
 		// Each one missing on its own is named on its own.
@@ -3271,7 +3253,6 @@ describe("no --tell call opens a picker", () => {
 				without("--action"),
 				/^--action is required: issue_assignment, review, none/u,
 			],
-			[without("--send", 0), /^--send or --draft is required/u],
 		] as const) {
 			await expect(viaSocket(service, line, coordinator)).rejects.toThrow(said);
 		}
@@ -3471,22 +3452,19 @@ describe("profiles and issue actions", () => {
 		expect(ports.calls).toContain("profile-problem claude -");
 	});
 
-	it("lists the Issue actions --action takes, what the window does with each, and none", async () => {
+	it("lists the Issue actions --action takes, and none", async () => {
 		const { service } = setup();
 		const answer = await viaSocket(service, ["issue", "actions"], coordinator);
 		expect(answer.message.split("\n")).toEqual([
-			"issue_assignment  Work on the Issue  (window: draft)  — このIssueを読み、実装をしてください。",
-			"review  Review it  (window: send)  — Review {{ISSUE_URL}} and leave comments.",
+			"issue_assignment  Work on the Issue  — このIssueを読み、実装をしてください。",
+			"review  Review it  — Review {{ISSUE_URL}} and leave comments.",
 			"none  (start the agent and tell it nothing)",
 		]);
 		expect(
-			(answer.data as { actions: { id: string; start: string }[] }).actions.map(
-				(action) => [action.id, action.start],
+			(answer.data as { actions: { id: string }[] }).actions.map(
+				(action) => action.id,
 			),
-		).toEqual([
-			["issue_assignment", "draft"],
-			["review", "send"],
-		]);
+		).toEqual(["issue_assignment", "review"]);
 	});
 });
 

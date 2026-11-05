@@ -12,7 +12,7 @@ import {
 } from "../../model/config.js";
 import { agentProfilesWire } from "../../model/wire.js";
 import { DEFAULT_ACTION_ID } from "../../model/agentActions.js";
-import { issuePromptDelivery, toDomainProfile } from "./issueAssignment.js";
+import { issuePromptReview, toDomainProfile } from "./issueAssignment.js";
 
 function profile(
 	kind: ConfiguredAgentProfile["kind"],
@@ -80,35 +80,11 @@ describe("the first message of an Issue's agent", () => {
 		(action) => action.id === DEFAULT_ACTION_ID,
 	)!;
 
-	// The quick pick at the agent's start: the review sheet, drawn over the
-	// window for the default action. A draft is read in the input box itself.
-	it("is drafted, with no sheet, for the action DevHub ships", () => {
-		expect(shipped.start).toBe("draft");
-		expect(issuePromptDelivery(shipped)).toEqual({ kind: "draft" });
-		expect(issuePromptDelivery(shipped, { review: false })).toEqual({
-			kind: "draft",
-		});
-	});
-
-	it("is sent behind the review sheet only when the action asks and the window is the caller", () => {
-		const send = { ...shipped, start: "send" as const };
-		expect(issuePromptDelivery(send)).toEqual({ kind: "send", review: true });
-		expect(
-			issuePromptDelivery({ ...send, confirm_before_send: false }),
-		).toEqual({ kind: "send", review: false });
+	it("is reviewed only when the action asks and the window is the caller", () => {
+		expect(issuePromptReview(shipped)).toBe(shipped.confirm_before_send);
+		expect(issuePromptReview({ confirm_before_send: true })).toBe(true);
+		expect(issuePromptReview({ confirm_before_send: false })).toBe(false);
 		// `devhub --tell`: the command is the decision.
-		expect(issuePromptDelivery(send, { review: false })).toEqual({
-			kind: "send",
-			review: false,
-		});
-	});
-
-	it("follows --send and --draft over the action", () => {
-		expect(
-			issuePromptDelivery(shipped, { start: "send", review: false }),
-		).toEqual({ kind: "send", review: false });
-		expect(
-			issuePromptDelivery({ ...shipped, start: "send" }, { start: "draft" }),
-		).toEqual({ kind: "draft" });
+		expect(issuePromptReview(shipped, { review: false })).toBe(false);
 	});
 });

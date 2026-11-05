@@ -103,7 +103,6 @@ export function testConfig(
         displayName: DEFAULT_ACTION_NAME,
         template: DEFAULT_ACTION_TEMPLATE,
         confirmBeforeSend: true,
-        start: "draft",
         trigger: "issue",
         button: false,
         enabled: true,

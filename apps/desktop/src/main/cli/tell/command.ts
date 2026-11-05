@@ -144,8 +144,6 @@ export type TellCommand =
 			readonly prompt?: string;
 			readonly editorOnly: boolean;
 			readonly presentation?: "gui" | "tui";
-			/** The action's wording drafted or sent, for this call (`ActionStart`). */
-			readonly start?: "draft" | "send";
 			readonly meta?: readonly AgentMetaPair[];
 			/** The agent's name from the start, as `agent new --name`. */
 			readonly name?: string;
@@ -594,10 +592,9 @@ agents
 
 issues
   issue actions                    the Issue actions Assign Issue offers: id,
-                                   label, whether the window drafts or sends
-                                   it, and its wording
+                                   label and its wording
   issue assign <url> --repo <path> --branch <name>|--root
-               --profile <p> --gui|--tui --action <id>|none --send|--draft
+               --profile <p> --gui|--tui --action <id>|none
                [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
                [--offline]                           (all but [] required)
   issue assign <url> --repo <path> --branch <name>|--root --editor-only
@@ -609,10 +606,9 @@ issues
                                    with --root in the clone itself (--branch
                                    too: switched to it; alone: as it is).
                                    --action none tells the agent nothing;
-                                   otherwise --draft puts the action's
-                                   wording into its input box unsent, --send
-                                   sends it as its first message (no review
-                                   sheet). --editor-only opens the editor and
+                                   otherwise the action's wording is sent as
+                                   its first message (no review sheet).
+                                   --editor-only opens the editor and
                                    starts no agent. --name gives the agent
                                    its name from the start, as 'agent new
                                    --name' (default: DevHub's label).
@@ -873,15 +869,6 @@ function presentation(flags: Flags): "gui" | "tui" | undefined {
 	return gui ? "gui" : tui ? "tui" : undefined;
 }
 
-/** `--send` or `--draft`: how an Issue action's wording reaches the agent. */
-function start(flags: Flags): "draft" | "send" | undefined {
-	const send = flags.switches.has("--send");
-	const draft = flags.switches.has("--draft");
-	if (send && draft)
-		throw new Refusal("--send and --draft ask for different things.");
-	return send ? "send" : draft ? "draft" : undefined;
-}
-
 /** Every `--meta KEY=VALUE`, checked; a key given twice is refused. */
 function metaPairs(flags: Flags): readonly AgentMetaPair[] | undefined {
 	const given = flags.values.get("--meta");
@@ -1102,8 +1089,6 @@ function parseVerb(args: readonly string[]): TellCommand {
 					"--editor-only",
 					"--gui",
 					"--tui",
-					"--send",
-					"--draft",
 					"--offline",
 				],
 			});
@@ -1118,7 +1103,6 @@ function parseVerb(args: readonly string[]): TellCommand {
 				action: one(flags, "--action"),
 				prompt,
 				presentation: presentation(flags),
-				start: start(flags),
 				meta: metaPairs(flags),
 				name: one(flags, "--name"),
 			};

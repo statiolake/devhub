@@ -35,13 +35,10 @@ import {
 import { dirname, join } from "node:path";
 import { DEFAULT_NOTICE_SECONDS } from "./noticeCenter.js";
 import {
-  ACTION_STARTS,
   ACTION_TRIGGERS,
   BUILT_IN_ACTIONS,
-  defaultActionStart,
   isSmartButtonTrigger,
   triggerOf,
-  type ActionStart,
   type AgentActionTrigger,
 } from "./agentActions.js";
 import {
@@ -286,12 +283,6 @@ export interface ConfiguredAgentAction {
    * that intent starts in (`main/agent/injection.ts`).
    */
   readonly confirm_before_send: boolean;
-  /**
-   * Whether the wording is drafted into the new Agent's composer or sent: see
-   * `ActionStart`. Only the Issue flow has it (`issue_actions`' `start`); a
-   * Smart Button's is always `send` and never written or read.
-   */
-  readonly start: ActionStart;
   /**
    * Whether a Smart Button is drawn for it while its trigger's condition holds.
    *
@@ -774,7 +765,6 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
       display_name: action.displayName,
       template: action.template,
       confirm_before_send: action.confirmBeforeSend,
-      start: defaultActionStart(action.trigger),
       button: isSmartButtonTrigger(action.trigger),
       enabled: true,
       // Position within its own trigger, which is what `order` means
@@ -948,8 +938,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * that "I set that and nothing happened" has an answer, quiet enough that it
  * is not a failure. The next save drops it from the document, because a save
  * states the whole config and this is no longer part of it.
+ *
+ * A `*` segment stands for any one key: an action's own id, for instance.
  */
 const RETIRED_KEYS: Readonly<Record<string, string>> = {
+  "agent_actions.issue.*.start":
+    "an Issue action always sends its wording as the new Agent's first message; `confirm_before_send` decides whether the window shows it for review first",
   "appearance.color_scheme":
     "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
   "general.workbench":
@@ -968,18 +962,34 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
  */
 export function retiredKeysIn(document: unknown): RetiredKeyNotice[] {
   const notices: RetiredKeyNotice[] = [];
-  for (const [key, replacement] of Object.entries(RETIRED_KEYS)) {
-    let cursor: unknown = document;
-    for (const segment of key.split(".")) {
-      if (!isPlainObject(cursor)) {
-        cursor = undefined;
-        break;
+  for (const [pattern, replacement] of Object.entries(RETIRED_KEYS)) {
+    const segments = pattern.split(".");
+    const visit = (cursor: unknown, depth: number, path: readonly string[]) => {
+      if (depth === segments.length) {
+        if (cursor !== undefined)
+          notices.push({ key: path.join("."), replacement });
+        return;
       }
-      cursor = cursor[segment];
-    }
-    if (cursor !== undefined) notices.push({ key, replacement });
+      if (!isPlainObject(cursor)) return;
+      const segment = segments[depth];
+      const keys = segment === "*" ? Object.keys(cursor) : [segment];
+      for (const key of keys) visit(cursor[key], depth + 1, [...path, key]);
+    };
+    visit(document, 0, []);
   }
   return notices;
+}
+
+/** The retired key `path` is, if it is one: see `RETIRED_KEYS`. */
+function isRetiredKey(path: string): boolean {
+  const segments = path.split(".");
+  return Object.keys(RETIRED_KEYS).some((pattern) => {
+    const wanted = pattern.split(".");
+    return (
+      wanted.length === segments.length &&
+      wanted.every((one, index) => one === "*" || one === segments[index])
+    );
+  });
 }
 
 function checkKeys(
@@ -994,7 +1004,7 @@ function checkKeys(
     // because a notice belongs where somebody will read it and this validator
     // has nowhere to put one. Both read `RETIRED_KEYS`, so there is still one
     // answer to "is this key retired".
-    if (RETIRED_KEYS[path] !== undefined) continue;
+    if (isRetiredKey(path)) continue;
     fail("unknown_key", path);
   }
 }
@@ -1603,7 +1613,7 @@ function agentActionsToTable(
       confirm_before_send: action.confirm_before_send,
       ...(isSmartButtonTrigger(action.trigger)
         ? { button: action.button }
-        : { start: action.start }),
+        : {}),
       enabled: action.enabled,
       // The position within its trigger, which is the only thing `order` ever
       // means. Writing the index in this flat list instead would make a file
@@ -1846,7 +1856,6 @@ function legacyAgentAction(
       prefix,
       shipped?.confirmBeforeSend ?? true,
     ),
-    start: defaultActionStart(trigger),
     button: isSmartButtonTrigger(trigger),
     enabled: true,
     // After whatever DevHub ships under the same trigger, in the array's own
@@ -1872,7 +1881,7 @@ function agentActionFromTable(
       "display_name",
       "template",
       "confirm_before_send",
-      ...(smart ? ["button"] : ["start"]),
+      ...(smart ? ["button"] : []),
       "enabled",
       "order",
     ],
@@ -1907,7 +1916,6 @@ function agentActionFromTable(
       prefix,
       shipped?.confirmBeforeSend ?? true,
     ),
-    start: smart ? "send" : actionStartFrom(table, prefix, trigger),
     button: smart && optionalBoolean(table, "button", prefix, true),
     enabled: optionalBoolean(table, "enabled", prefix, true),
     // An action DevHub ships keeps its shipped position; one somebody wrote
@@ -1924,24 +1932,6 @@ function agentActionFromTable(
           ).length,
     ),
   };
-}
-
-/** An Issue action's `start`: absent is `draft`, anything else is refused. */
-function actionStartFrom(
-  table: Record<string, unknown>,
-  prefix: string,
-  trigger: AgentActionTrigger,
-): ActionStart {
-  const value = optionalString(
-    table,
-    "start",
-    prefix,
-    defaultActionStart(trigger),
-  );
-  if (!(ACTION_STARTS as readonly string[]).includes(value)) {
-    fail("invalid_string", `${prefix}.start`);
-  }
-  return value as ActionStart;
 }
 
 function agentProfileFromTable(

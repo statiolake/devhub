@@ -157,11 +157,6 @@ export interface SettingsAgentActionWire {
 	/** Whether the wording is shown for review before it is sent. */
 	readonly confirmBeforeSend: boolean;
 	/**
-	 * An Issue action's wording drafted into the new Agent's composer, or sent
-	 * (`ActionStart`). Always `send` for a Smart Button.
-	 */
-	readonly start: "draft" | "send";
-	/**
 	 * Whether a Smart Button is drawn for it while its condition holds. Always
 	 * false for an Issue action, which has no button.
 	 */

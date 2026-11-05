@@ -198,7 +198,6 @@ describe("the /devhub skill's examples", () => {
 				expect(command.profile).toBeDefined();
 				expect(command.presentation).toBeDefined();
 				expect(command.action).toBeDefined();
-				expect(command.start).toBeDefined();
 			}
 		}
 	});

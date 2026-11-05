@@ -9,16 +9,12 @@
  *   New Agent alike. `devhub --tell` never asks it: a command line names
  *   `--gui` or `--tui` every time, so what an agent gets does not move with
  *   the person's settings (`tell/service.ts`).
- * - **How the first message goes out.** An action that drafts puts its
- *   wording in the new Agent's input box and draws nothing over the window;
- *   one that sends shows its review sheet only when it asks for one and the
- *   caller is the window (a command line is the decision: `review: false`).
+ * - **How the first message goes out.** Always sent, as the new Agent's
+ *   first message; behind the review sheet only when the action asks for one
+ *   (`confirm_before_send`) and the caller is the window — a command line is
+ *   the decision (`review: false`).
  */
 
-import type {
-	ActionStart,
-	AgentActionTrigger,
-} from "../../model/agentActions.js";
 import {
 	profilePresentation,
 	type AgentsConfig,
@@ -42,24 +38,14 @@ export function toDomainProfile(
 	);
 }
 
-/** What happens to an Issue action's wording once the Agent is started. */
-export type IssuePromptDelivery =
-	| { readonly kind: "draft" }
-	| { readonly kind: "send"; readonly review: boolean };
-
 /**
- * How the first message goes out: the action's `start` unless the caller
- * overrides it for this one assignment, and — when it is sent — its review
- * sheet unless the caller says there is to be none.
+ * Whether an Issue action's first message is shown for review before it is
+ * sent: the action's `confirm_before_send`, unless the caller says there is to
+ * be no sheet.
  */
-export function issuePromptDelivery(
-	action: {
-		readonly trigger: AgentActionTrigger;
-		readonly start: ActionStart;
-		readonly confirm_before_send: boolean;
-	},
-	how: { readonly start?: ActionStart; readonly review?: boolean } = {},
-): IssuePromptDelivery {
-	if ((how.start ?? action.start) === "draft") return { kind: "draft" };
-	return { kind: "send", review: how.review ?? action.confirm_before_send };
+export function issuePromptReview(
+	action: { readonly confirm_before_send: boolean },
+	how: { readonly review?: boolean } = {},
+): boolean {
+	return how.review ?? action.confirm_before_send;
 }

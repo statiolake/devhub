@@ -84,8 +84,6 @@ export interface TellIssueAction {
 	readonly id: string;
 	readonly label: string;
 	readonly template: string;
-	/** Drafted into the new agent's input box, or sent (`ActionStart`). */
-	readonly start: "draft" | "send";
 }
 
 export interface TellWorkspace {
@@ -267,8 +265,6 @@ export interface TellConversation {
 }
 
 export interface IssueAssignRequest {
-	/** How the action's wording goes out; absent only with no action. */
-	readonly start: "draft" | "send" | undefined;
 	readonly url: string;
 	/** The clone, always named: the command line never picks one. */
 	readonly repo: string;
@@ -2066,10 +2062,7 @@ export class TellService {
 		}));
 		return {
 			message: [
-				...rows.map(
-					(row) =>
-						`${row.id}  ${row.label}  (window: ${row.start})  — ${row.summary}`,
-				),
+				...rows.map((row) => `${row.id}  ${row.label}  — ${row.summary}`),
 				`${NO_ACTION}  (start the agent and tell it nothing)`,
 			].join("\n"),
 			data: { actions: rows, none: NO_ACTION },
@@ -2185,7 +2178,6 @@ export class TellService {
 				command.profile === undefined ? undefined : "--profile",
 				command.action === undefined ? undefined : "--action",
 				command.presentation === undefined ? undefined : "--gui/--tui",
-				command.start === undefined ? undefined : "--send/--draft",
 				command.meta === undefined ? undefined : "--meta",
 				command.prompt === undefined ? undefined : "--prompt",
 				command.name === undefined ? undefined : "--name",
@@ -2211,14 +2203,6 @@ export class TellService {
 					`there is no Issue action called '${command.action}': ${choices} (see devhub --tell issue actions)`,
 				);
 			else if (command.action !== NO_ACTION) action = command.action;
-			if (command.action !== NO_ACTION && command.start === undefined)
-				missing.push(
-					"--send or --draft is required: --draft puts the action's wording into the agent's input box unsent, --send sends it as its first message",
-				);
-			if (command.action === NO_ACTION && command.start !== undefined)
-				missing.push(
-					`--send/--draft is about the action's wording, and --action ${NO_ACTION} has none`,
-				);
 		}
 		if (command.name !== undefined && command.name.trim().length === 0)
 			missing.push("--name needs a name: leave it out for DevHub's own label");
@@ -2232,7 +2216,6 @@ export class TellService {
 			action,
 			editorOnly: command.editorOnly,
 			presentation: command.presentation,
-			start: action === undefined ? undefined : command.start,
 			...(command.name === undefined ? {} : { name: command.name.trim() }),
 			offline: command.offline === true,
 		});

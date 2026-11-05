@@ -273,9 +273,9 @@ devhub --tell agent status A                          # one agent in detail (--j
 devhub --tell agent new --workspace W --profile P --gui|--tui [--name N] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
 devhub --tell agent rename A NAME | agent rename A --clear   # the row menu's Rename… (--clear: DevHub's label again)
 devhub --tell agent meta A [set KEY VALUE | unset KEY]      # an agent's own key/value pairs
-devhub --tell issue actions                           # Issue actions: id, label, draft or send in the window, wording (and none)
+devhub --tell issue actions                           # Issue actions: id, label, wording (and none)
 devhub --tell issue assign <url> --repo PATH --branch 123-fix-login-timeout|--root
-              --profile P --gui|--tui --action ID|none --send|--draft
+              --profile P --gui|--tui --action ID|none
               [--name N] [--prompt TEXT|-] [--meta K=V]... [--offline]   # Cmd+Q i
 devhub --tell issue assign <url> --repo PATH --branch NAME|--root --editor-only [--offline]
 devhub --tell agent read A [--last N] [--since CURSOR] [--full]   # a GUI agent's transcript, with a cursor; long entries clipped and marked
@@ -311,8 +311,8 @@ print the handle (`tmux` binary, `-S` socket, session, pane) an agent drives it 
 (`send-keys -l`, `capture-pane -p`). See `docs/window-and-pages.md`. `issue assign` does what the Assign Issue
 sheet does, with every answer given: the clone (`--repo`), a worktree of
 `--branch` or the clone itself (`--root`; with `--branch`, switched to it),
-the profile and its mode, the Issue action (or `none`) and whether its
-wording is drafted or sent. `--name` names the agent from the start, as
+the profile and its mode, and the Issue action (or `none`), whose wording
+is sent as the agent's first message with no review sheet. `--name` names the agent from the start, as
 `agent new --name` and the sheet's 名前 field do (left out: DevHub's label).
 Both fetch `origin` once, first — before the Issue's branch is looked for,
 a pull request's head is found or a new branch's base is chosen — and every
@@ -323,10 +323,10 @@ machine, and the command line takes it only with `--offline`.
 **No defaults on the command line.** A `--tell` command that starts or
 creates something takes every choice as a required argument — `agent new`:
 `--workspace`, `--profile`, `--gui|--tui`; `issue assign`: `--repo`,
-`--branch|--root`, `--profile`, `--gui|--tui`, `--action`, `--send|--draft`
-— because it is called by agents, and what an agent gets must not move with
-the person's settings or with which item is listed first. A call missing one
-does nothing and names each missing flag with its values, from the same data
+`--branch|--root`, `--profile`, `--gui|--tui`, `--action` — because it is
+called by agents, and what an agent gets must not move with the person's
+settings or with which item is listed first. A call missing one does
+nothing and names each missing flag with its values, from the same data
 as `profiles` and `issue actions` (`--profile is required: claude, codex
 (see devhub --tell profiles)`). `agent resume` opens the session where it
 ran (its folder, or its worktree), so it needs `--profile` only when two
@@ -354,9 +354,8 @@ row by its own rule, as when a person closes it.
 `--focus`, as on `terminal open`) changes the selected Workspace or Agent,
 what is shown, where the keyboard is, or brings DevHub to the front: what
 `workspace open`, `agent new`, `issue assign` or `agent resume` make appears in
-the Sidebar unselected, its workbench starting in the background, and a
-GUI agent's drafted message waits in its composer without taking the
-keyboard (`open_folder` / `create_agent` with `focus: "none"`). `run` runs
+the Sidebar unselected, its workbench starting in the background
+(`open_folder` / `create_agent` with `focus: "none"`). `run` runs
 only the palette commands that move nothing (`refresh_repositories`,
 `mark_agent_unread`). A person is doing something else.
 
@@ -367,14 +366,6 @@ command that would open a picker or ask (`run add_agent`,
 window GUI or TUI has one default: the profile's `presentation`, else
 `[agents] default_presentation` — what the agent picker's row shows for New
 Agent and Assign Issue alike.
-
-**Draft or send.** An Issue action's `start` says what its wording does once
-the agent is up: `"draft"` (the default, and what the shipped action does)
-puts it into the agent's input box unsent — a GUI agent's composer, a
-terminal agent's prompt — for the person to read and send; `"send"` sends it
-as the agent's first message, behind the review sheet when
-`confirm_before_send` asks for one. That is the window's; `issue assign`
-says `--send` or `--draft` every time, and draws no sheet.
 
 **Metadata.** `agent meta`, and `--meta KEY=VALUE` on `agent new` and
 `issue assign`, keep an agent's own pairs — `role=reviewer`, `issue=123`,
@@ -619,10 +610,9 @@ button = false                      # not drawn as a Smart Button (default true)
 confirm_before_send = true          # review the wording first (default false for
                                     # Smart Buttons, true for issue and your own)
 
-[agent_actions.issue.issue_assignment]  # the Issue flow's action
-start = "draft"                     # "draft" (default): into the new agent's input
-                                    # box, unsent; "send": its first message
-                                    # (reviewed first if confirm_before_send)
+[agent_actions.issue.issue_assignment]  # the Issue flow's action: its wording
+confirm_before_send = false         # is the new agent's first message; true
+                                    # (default) shows it for review first
 
 [agent_actions.unresolved_review_comments.answer_reviewers]
 display_name = "Answer the reviewers"

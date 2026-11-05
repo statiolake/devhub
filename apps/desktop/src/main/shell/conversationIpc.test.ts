@@ -29,7 +29,6 @@ function fakePage() {
 }
 
 function harness() {
-	let saved = "half a thought";
 	const handlers = new Map<
 		string,
 		(event: { sender: unknown }, ...args: unknown[]) => unknown
@@ -54,12 +53,7 @@ function harness() {
 	const options: ConversationIpcOptions = {
 		ipcMain,
 		conversations,
-		drafts: {
-			get: () => saved,
-			set: (_agent: string, text: string) => {
-				saved = text;
-			},
-		} as unknown as AgentDrafts,
+		drafts: { get: () => "half a thought" } as unknown as AgentDrafts,
 		agentsPage: () => page as unknown as WebContents,
 		continueIn: unused,
 		restart: unused,
@@ -99,26 +93,6 @@ describe("words for a GUI Agent's composer", () => {
 		const { ipc, page, invoke } = harness();
 		await invoke(CONVERSATION_CHANNELS.attach, AGENT);
 		ipc.insert(AGENT, "now");
-		expect(page.sent).toEqual([
-			[CONVERSATION_CHANNELS.insert, AGENT, "now", true],
-		]);
-	});
-
-	// From `devhub --tell`: never the keyboard. Told to an attached page as
-	// such; otherwise kept as the draft, which the composer takes back without
-	// focusing anything.
-	it("move no keyboard when the command line put them there", async () => {
-		const { ipc, page, invoke } = harness();
-		ipc.insert(AGENT, "from the CLI", { focus: false });
-		expect(page.sent).toEqual([]);
-		const attachment = await invoke(CONVERSATION_CHANNELS.attach, AGENT);
-		expect(attachment).toMatchObject({
-			draft: "half a thought\n\nfrom the CLI",
-			inserted: [],
-		});
-		ipc.insert(AGENT, "again", { focus: false });
-		expect(page.sent).toEqual([
-			[CONVERSATION_CHANNELS.insert, AGENT, "again", false],
-		]);
+		expect(page.sent).toEqual([[CONVERSATION_CHANNELS.insert, AGENT, "now"]]);
 	});
 });

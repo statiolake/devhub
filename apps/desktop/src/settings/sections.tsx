@@ -2061,7 +2061,6 @@ export function ActionsSection({
           displayName: "New action",
           template: `{{${ACTION_VARIABLES[trigger][0] ?? "BRANCH"}}}\n`,
           confirmBeforeSend: true,
-          start: isSmartButtonTrigger(trigger) ? "send" : "draft",
           button: isSmartButtonTrigger(trigger),
           enabled: true,
         });
@@ -2129,11 +2128,6 @@ export function ActionsSection({
                     button:
                       isSmartButtonTrigger(next) &&
                       (!isSmartButtonTrigger(action.trigger) || action.button),
-                    start: isSmartButtonTrigger(next)
-                      ? "send"
-                      : isSmartButtonTrigger(action.trigger)
-                        ? "draft"
-                        : action.start,
                   });
                 }}
               />
@@ -2142,19 +2136,6 @@ export function ActionsSection({
                 property of the sentence. Off means the wording goes straight to
                 the agent the moment its prompt settles; on means it is put on
                 screen first and nothing is sent until it is confirmed. */}
-            {/* An Issue action is drafted into the new Agent's composer
-                unless it says to send: see `ActionStart`. A Smart Button is
-                pressed to send, so it has no such choice. */}
-            {isSmartButtonTrigger(action.trigger) ? null : (
-              <SwitchRow
-                label="Send at once"
-                help="Off puts the message into the new Agent's composer to read and send yourself. On sends it as the Agent's first message."
-                checked={action.start === "send"}
-                onChange={(send) => {
-                  replace({ ...action, start: send ? "send" : "draft" });
-                }}
-              />
-            )}
             <SwitchRow
               label="Review before sending"
               help="Show this message in an editable sheet and send it only once you confirm it."

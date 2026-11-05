@@ -92,12 +92,8 @@ export interface SendToAgentPorts {
 	) => Promise<AgentId>;
 	/** The Agent as the model has it now. */
 	readonly agent: (agentId: AgentId) => SendTargetAgent | undefined;
-	/** Into a GUI Agent's composer, after its draft; focused unless `focus` is false. */
-	readonly insertDraft: (
-		agentId: AgentId,
-		text: string,
-		focus: boolean,
-	) => void;
+	/** Into a GUI Agent's composer, after its draft, focused. */
+	readonly insertDraft: (agentId: AgentId, text: string) => void;
 	/** Into a terminal Agent's prompt, as a paste with no Return. */
 	readonly paste: (agentId: AgentId, text: string) => Promise<void>;
 	readonly sleep: (ms: number) => Promise<void>;
@@ -250,33 +246,14 @@ export class SendToAgent {
 			throw new SendRefused(
 				"Nothing is selected, and the document is not a file to refer to.",
 			);
-		await this.draft(agentId, text, choice.kind === "new", agent);
-	}
-
-	/**
-	 * `text` into an Agent's input box, sent by nobody: a GUI Agent's composer
-	 * after its draft, a terminal Agent's prompt as a paste with no Return —
-	 * waited for first when the Agent has only just been started. The Issue
-	 * flow's `draft` actions arrive this way too (`ActionStart`).
-	 */
-	async draft(
-		agentId: AgentId,
-		text: string,
-		starting: boolean,
-		known?: SendTargetAgent,
-		focus: boolean = true,
-	): Promise<void> {
-		const agent = known ?? this.ports.agent(agentId);
-		if (agent === undefined)
-			throw new SendRefused("The Agent is no longer there.");
 		if (agent.presentation === "gui") {
-			this.ports.insertDraft(agentId, text, focus);
+			this.ports.insertDraft(agentId, text);
 			return;
 		}
-		const ready = starting ? await this.promptOf(agentId) : agent;
+		const ready = choice.kind === "new" ? await this.promptOf(agentId) : agent;
 		if (ready.status === "waiting")
 			throw new SendRefused(
-				`${ready.displayName} is asking a question; answer it, then send the text again. Nothing was typed: the keys would have answered it.`,
+				`${ready.displayName} is asking a question; answer it, then send the selection again. Nothing was typed: the keys would have answered it.`,
 			);
 		await this.ports.paste(agentId, text);
 	}

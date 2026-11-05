@@ -552,11 +552,10 @@ import {
 } from "../../model/github.js";
 import { requestId } from "../../model/conversation.js";
 import type { GitHubItem } from "../../model/github.js";
-import { issuePromptDelivery, toDomainProfile } from "./issueAssignment.js";
+import { issuePromptReview, toDomainProfile } from "./issueAssignment.js";
 import {
 	renderAgentAction,
 	smartButtonValues,
-	type ActionStart,
 } from "../../model/agentActions.js";
 import type { ConfiguredAgentAction } from "../../model/config.js";
 import { AutomaticActions } from "../../model/automaticActions.js";
@@ -1084,10 +1083,10 @@ export class AppController {
 			return created;
 		},
 		agent: (agentId) => this.sendTargetAgent(agentId),
-		insertDraft: (agentId, text, focus) => {
+		insertDraft: (agentId, text) => {
 			if (this.conversationIpc === undefined)
 				throw new SendRefused("DevHub's Agents are not running yet.");
-			this.conversationIpc.insert(agentId, text, { focus });
+			this.conversationIpc.insert(agentId, text);
 		},
 		paste: async (agentId, text) => {
 			if (this.agentWiring === undefined)
@@ -5864,32 +5863,12 @@ export class AppController {
 			ISSUE_URL: gitHubItemUrl(item),
 			ISSUE_NO: String(item.number),
 		};
-		const delivery = issuePromptDelivery(action, how);
-		if (delivery.kind === "draft") {
-			// Into the new Agent's input box, sent by nobody: the composer (or
-			// the prompt) is where it is read and sent, so no review sheet is
-			// drawn over it — the sheet would be a second place to read the same
-			// words before the same keystroke.
-			const text = renderAgentAction(action, values, started.profile.kind);
-			const agentId = started.id;
-			void this.sendToAgent
-				.draft(agentId, text, true, undefined, how.focus !== "none")
-				.catch((error: unknown) => {
-					this.publishError(
-						withDetail(
-							errorWireAt("send_to_agent_refused"),
-							`The Issue's message was not put into ${started.displayName}'s input box: ${failureText(error)}`,
-						),
-					);
-				});
-			return;
-		}
 		this.sayToAgent(
 			started.id,
 			started.profile.kind,
 			action,
 			values,
-			delivery.review,
+			issuePromptReview(action, how),
 		);
 	}
 
@@ -10206,7 +10185,6 @@ export class AppController {
 						id: action.id,
 						label: action.display_name,
 						template: action.template,
-						start: action.start,
 					})),
 			openWorkspace: async (path, machine, worktree) => {
 				const place: WorkspacePlaceWire = machine.startsWith("ssh:")
@@ -10826,8 +10804,6 @@ export class AppController {
 					);
 		if (request.action !== undefined && action === undefined)
 			throw new Error(`there is no Issue action called '${request.action}'.`);
-		if (action !== undefined && request.start === undefined)
-			throw new Error("--send or --draft is required.");
 		const before = this.modelAgentIds();
 		await this.assignIssue(
 			{
@@ -10840,7 +10816,6 @@ export class AppController {
 				...(request.name === undefined ? {} : { name: request.name }),
 			},
 			{
-				...(request.start === undefined ? {} : { start: request.start }),
 				review: false,
 				focus: "none",
 			},
@@ -12374,12 +12349,10 @@ function at(position: ControlPosition | undefined): string {
 
 /**
  * How the Issue flow's first message goes out, where the caller decides it
- * rather than the action: `start` overrides the action's `ActionStart` for one
- * assignment (`issue assign --send|--draft`), and `review` its
- * `confirm_before_send` (false from `devhub --tell`, which draws no sheet).
+ * rather than the action: `review` overrides its `confirm_before_send` (false
+ * from `devhub --tell`, which draws no sheet).
  */
 interface IssuePromptHow {
-	readonly start?: ActionStart;
 	readonly review?: boolean;
 	/** `"none"` from `devhub --tell`: nothing is selected, shown or focused. */
 	readonly focus?: IntentFocus;
