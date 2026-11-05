@@ -104,6 +104,7 @@ describe("the orchestrator's timers", () => {
 				event_prompt: "{EVENT}",
 				init_prompt: undefined,
 				events: ["timer.*"],
+				delivery_interval: "5m",
 			}),
 			deliver: () => undefined,
 			busy: () => true,

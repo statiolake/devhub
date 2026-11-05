@@ -183,7 +183,7 @@ goes there.
 ## Look around
 
     devhub --tell workspaces                # id, name, folder, branch, worktree, Issue, PR, unresolved conversations, CI, agents
-    devhub --tell --json workspace status W # one workspace: Issue, PR (draft), unresolved conversations, CI counts, fetchedAt (null: unknown)
+    devhub --tell --json workspace status W # one workspace: Issue (lanes), PR (draft, review decision), unresolved conversations, CI counts, fetchedAt (null: unknown)
     devhub --tell agents [--workspace W]    # id, name, kind, status, unread, open requests, meta
     devhub --tell profiles                  # agent profiles: id, kind, --gui/--tui, available
     devhub --tell issue actions             # Issue actions: id, label, wording (and none)

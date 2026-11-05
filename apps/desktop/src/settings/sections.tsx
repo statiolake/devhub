@@ -68,9 +68,11 @@ import {
   MIN_TIMER_INTERVAL_MS,
   ORCHESTRATOR_EVENTS_RULE,
   ORCHESTRATOR_GITHUB_RULE,
-  ORCHESTRATOR_WAIT_REMINDER_RULE,
-  DEFAULT_WAIT_REMINDER_INTERVAL,
-  MIN_WAIT_REMINDER_INTERVAL_MS,
+  ORCHESTRATOR_DELIVERY_RULE,
+  DEFAULT_DELIVERY_INTERVAL,
+  DEFAULT_REMINDER_INTERVAL,
+  MIN_DELIVERY_INTERVAL_MS,
+  MIN_REMINDER_INTERVAL_MS,
   ORCHESTRATOR_PROMPT_RULE,
   ORCHESTRATOR_ROOT_RULE,
   ORCHESTRATOR_TIMER_RULE,
@@ -596,7 +598,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Event message"
-          help="Sent to the orchestrator for each event (an answered escalation, an agent nobody accounts for, …). {EVENT} is replaced by the event (several waiting events arrive together, as one list), {EVENT_JSON} by the same as JSON, e.g. /make-progress {EVENT}."
+          help="Sent to the orchestrator with each batch of events (an unsettled Issue or agent, a wait's time, …), one line per subject. {EVENT} is replaced by the lines, {EVENT_JSON} by the same as JSON, e.g. /make-progress {EVENT}. The person's answers are not wrapped in it: they go as they were typed."
         >
           <TextField
             label="Orchestrator event message"
@@ -639,7 +641,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Events"
-          help="Which events reach the orchestrator, by type, comma-separated: github.*, agent.turn_ended, timer.*, … ; !type takes one back out. Fewer events, fewer tokens. Left empty, DevHub's default set."
+          help="Which events reach the orchestrator, by type, comma-separated: unsettled, github.*, timer.*, … ; !type takes one back out. Left empty, all of them."
         >
           <TextField
             label="Orchestrator events"
@@ -696,23 +698,21 @@ export function GeneralSection({
           />
         </Row>
         <Row
-          label="Waiting reminder"
-          help="How often the orchestrator is reminded of every 待機中 escalation and its trigger (escalation.waiting_reminder), as one message. Not sent when none waits."
+          label="Delivery interval"
+          help="The most often a batch of events goes to the orchestrator, one line per subject. The person's answers and messages are not batched: they go at once."
         >
           <TextField
-            label="Orchestrator waiting reminder interval"
+            label="Orchestrator delivery interval"
             value={
-              config.orchestrator.waitReminderInterval ===
-              DEFAULT_WAIT_REMINDER_INTERVAL
+              config.orchestrator.deliveryInterval === DEFAULT_DELIVERY_INTERVAL
                 ? ""
-                : config.orchestrator.waitReminderInterval
+                : config.orchestrator.deliveryInterval
             }
-            placeholder={DEFAULT_WAIT_REMINDER_INTERVAL}
+            placeholder={DEFAULT_DELIVERY_INTERVAL}
             mono
             validate={(next) =>
-              next !== "" &&
-              intervalProblem(next, MIN_WAIT_REMINDER_INTERVAL_MS)
-                ? ORCHESTRATOR_WAIT_REMINDER_RULE
+              next !== "" && intervalProblem(next, MIN_DELIVERY_INTERVAL_MS)
+                ? ORCHESTRATOR_DELIVERY_RULE
                 : undefined
             }
             onCommit={(next) => {
@@ -720,8 +720,38 @@ export function GeneralSection({
                 ...config,
                 orchestrator: {
                   ...config.orchestrator,
-                  waitReminderInterval:
-                    next === "" ? DEFAULT_WAIT_REMINDER_INTERVAL : next,
+                  deliveryInterval:
+                    next === "" ? DEFAULT_DELIVERY_INTERVAL : next,
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Unsettled reminder"
+          help="How often an unsettled subject (an Issue or a managed agent nothing settles) is said again while it stays so."
+        >
+          <TextField
+            label="Orchestrator unsettled reminder"
+            value={
+              config.orchestrator.reminderInterval === DEFAULT_REMINDER_INTERVAL
+                ? ""
+                : config.orchestrator.reminderInterval
+            }
+            placeholder={DEFAULT_REMINDER_INTERVAL}
+            mono
+            validate={(next) =>
+              next !== "" && intervalProblem(next, MIN_REMINDER_INTERVAL_MS)
+                ? ORCHESTRATOR_DELIVERY_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  reminderInterval:
+                    next === "" ? DEFAULT_REMINDER_INTERVAL : next,
                 },
               });
             }}
@@ -729,7 +759,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="GitHub Projects"
-          help="The Projects boards watched for GitHub events (github.lane_changed, github.unattended, …), as OWNER/NUMBER, comma-separated. DevHub only reads them."
+          help="The Projects boards whose open Issues assigned to you are the orchestrator's to settle (unsettled), as OWNER/NUMBER, comma-separated. DevHub only reads them."
         >
           <TextField
             label="Orchestrator GitHub projects"

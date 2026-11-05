@@ -59,6 +59,8 @@ import {
   ORCHESTRATOR_TIMER_KEYS,
   orchestratorDocument,
   orchestratorProblem,
+  RETIRED_EVENT_TYPES,
+  retiredEventPattern,
   type OrchestratorConfig,
   type OrchestratorTimerConfig,
 } from "./orchestratorSettings.js";
@@ -946,6 +948,8 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
     "an Issue action always sends its wording as the new Agent's first message; `confirm_before_send` decides whether the window shows it for review first",
   "appearance.color_scheme":
     "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
+  "orchestrator.wait_reminder_interval":
+    "there is no 待機中 reminder any more: a waiting escalation comes back by its `--at` time (`escalation.wait_due`) or when what it waits on changes (`waiting.changed`); `orchestrator.reminder_interval` is how often an `unsettled` subject is said again",
   "general.workbench":
     "every Workspace's editor area is its own VS Code workbench now",
   "runtimes.herdr":
@@ -977,6 +981,22 @@ export function retiredKeysIn(document: unknown): RetiredKeyNotice[] {
     };
     visit(document, 0, []);
   }
+  // `[orchestrator] events` patterns naming an event type that is gone.
+  const orchestrator = isPlainObject(document)
+    ? document["orchestrator"]
+    : undefined;
+  const events = isPlainObject(orchestrator)
+    ? orchestrator["events"]
+    : undefined;
+  if (Array.isArray(events))
+    for (const pattern of events)
+      if (typeof pattern === "string" && retiredEventPattern(pattern))
+        notices.push({
+          key: `orchestrator.events ${JSON.stringify(pattern)}`,
+          replacement:
+            RETIRED_EVENT_TYPES[pattern.replace(/^!/u, "")] ??
+            "that event type is gone",
+        });
   return notices;
 }
 
@@ -2323,23 +2343,30 @@ export function interpretConfig(document: unknown): Config {
       event_prompt:
         orchestratorText("event_prompt") ?? DEFAULT_ORCHESTRATOR.event_prompt,
       init_prompt: orchestratorText("init_prompt"),
+      // A pattern naming a retired type is left out (`retiredKeysIn` says so).
       events: optionalStringArray(
         orchestratorTable,
         "events",
         "orchestrator",
         DEFAULT_ORCHESTRATOR_EVENTS,
-      ),
+      ).filter((pattern) => !retiredEventPattern(pattern)),
       usage_thresholds: optionalNumberArray(
         orchestratorTable,
         "usage_thresholds",
         "orchestrator",
         DEFAULT_ORCHESTRATOR.usage_thresholds,
       ),
-      wait_reminder_interval: optionalString(
+      delivery_interval: optionalString(
         orchestratorTable,
-        "wait_reminder_interval",
+        "delivery_interval",
         "orchestrator",
-        DEFAULT_ORCHESTRATOR.wait_reminder_interval,
+        DEFAULT_ORCHESTRATOR.delivery_interval,
+      ),
+      reminder_interval: optionalString(
+        orchestratorTable,
+        "reminder_interval",
+        "orchestrator",
+        DEFAULT_ORCHESTRATOR.reminder_interval,
       ),
       github: {
         projects: optionalStringArray(

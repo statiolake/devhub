@@ -16,12 +16,6 @@ import {
 	nextDelay,
 	parseReading,
 } from "./githubEvents.js";
-import {
-	coveringEscalation,
-	linkedAgent,
-	type LinkEscalation,
-	type LinkWorkspace,
-} from "./unattended.js";
 
 // --- fixtures: GitHub's answers, as JSON ---------------------------------------
 
@@ -229,12 +223,7 @@ function answer(state: Answer) {
 }
 
 /** A source answering from `answers`, one per tick, and what it asked. */
-function world(
-	answers: Answer[],
-	where = new Map<string, string>(),
-	links?: () => readonly LinkWorkspace[],
-	escalations?: () => readonly LinkEscalation[],
-) {
+function world(answers: Answer[], where = new Map<string, string>()) {
 	const events: OrchestratorEvent[] = [];
 	const asked: { query: string; variables: Record<string, unknown> }[] = [];
 	let now = Date.parse("2026-11-05T00:00:00Z");
@@ -253,8 +242,6 @@ function world(
 			link !== undefined && where.has(link)
 				? { ws: where.get(link)!, agent: { id: "a1", name: "Claude" } }
 				: undefined,
-		...(links === undefined ? {} : { links }),
-		...(escalations === undefined ? {} : { escalations }),
 		setTimer: (_ms, run) => {
 			pending.push(run);
 			return { cancel: () => undefined };
@@ -323,51 +310,6 @@ describe("the GitHub source", () => {
 		expect(events).toEqual([]);
 	});
 
-	it("says assigned and a lane change of my Issue, nothing for an unassignment", async () => {
-		const { events, ticks } = world(
-			[
-				{ cards: BASE.map(issueCard) },
-				{
-					cards: [
-						// request-review: In Review, and the assignee removed.
-						issueCard({ ...BASE[0]!, status: "In Review", assignees: [] }),
-						issueCard({ ...BASE[1]!, assignees: ["bob", ME] }),
-					],
-				},
-			],
-			new Map([[url(123, "issues"), "api-refactor"]]),
-		);
-		await ticks(2);
-		expect(events).toEqual([
-			{
-				type: "github.lane_changed",
-				item: {
-					repo: "acme/app",
-					number: 123,
-					title: "API整理",
-					url: url(123, "issues"),
-				},
-				kind: "issue",
-				project: "acme/7",
-				from: "In Progress",
-				to: "In Review",
-				ws: "api-refactor",
-				agent: { id: "a1", name: "Claude" },
-			},
-			{
-				type: "github.assigned",
-				item: {
-					repo: "acme/app",
-					number: 200,
-					title: "Issue 200",
-					url: url(200, "issues"),
-				},
-				kind: "issue",
-				login: ME,
-			},
-		]);
-	});
-
 	it("leaves other people's cards alone", async () => {
 		const { events, ticks } = world([
 			{ cards: BASE.map(issueCard) },
@@ -382,28 +324,55 @@ describe("the GitHub source", () => {
 		expect(events).toEqual([]);
 	});
 
-	it("says a pull request opened for my Issue, and reads its details from then on", async () => {
+	it("gives the boards' Issues with the pull request that closes each, its review, conversations and checks", async () => {
 		const linked = [{ id: "P1", number: 130, isDraft: true }];
-		const { events, ticks, asked } = world([
+		const cards = [issueCard({ ...BASE[0]!, linked }), issueCard(BASE[1]!)];
+		const { events, ticks, asked, source } = world([
 			{ cards: BASE.map(issueCard) },
-			{ cards: [issueCard({ ...BASE[0]!, linked }), issueCard(BASE[1]!)] },
+			{ cards },
 			{
-				cards: [issueCard({ ...BASE[0]!, linked }), issueCard(BASE[1]!)],
-				pulls: [{ id: "P1", number: 130, isDraft: true }],
-			},
-			{
-				cards: [issueCard({ ...BASE[0]!, linked }), issueCard(BASE[1]!)],
-				pulls: [{ id: "P1", number: 130, isDraft: false }],
+				cards,
+				pulls: [
+					{
+						id: "P1",
+						number: 130,
+						reviewDecision: "APPROVED",
+						threads: [false, true, false],
+						checks: "FAILURE",
+					},
+				],
 			},
 		]);
-		await ticks(4);
-		expect(events.map((event) => event.type)).toEqual([
-			"github.pr_opened",
-			"github.pr_ready",
-		]);
-		expect(events[0]).toMatchObject({ draft: true, issue: 123 });
-		expect(asked[1]?.variables["pulls"]).toEqual([]);
+		expect(source.issues()).toBeUndefined();
+		await ticks(3);
+		expect(events).toEqual([]);
 		expect(asked[2]?.variables["pulls"]).toEqual(["P1"]);
+		expect(source.issues()).toEqual([
+			{
+				item: {
+					repo: "acme/app",
+					number: 123,
+					title: "API整理",
+					url: "https://github.com/acme/app/issues/123",
+				},
+				open: true,
+				assignedToMe: true,
+				project: "acme/7",
+				lane: "In Progress",
+				pull: {
+					number: 130,
+					url: "https://github.com/acme/app/pull/130",
+					state: "open",
+					review: "approved",
+					unresolved: 2,
+					checks: "failing",
+				},
+			},
+			expect.objectContaining({
+				item: expect.objectContaining({ number: 200 }) as unknown,
+				assignedToMe: false,
+			}),
+		]);
 	});
 
 	/** Ticks: the board with my PR P1 linked, then each details answer in turn. */
@@ -417,54 +386,6 @@ describe("the GitHub source", () => {
 		await run.ticks(1 + steps.length);
 		return run.events;
 	}
-
-	it("says approvals, changes requested and review comments on my pull request, one line per kind", async () => {
-		const events = await onMyPull(
-			{ id: "P1", number: 130 },
-			{
-				id: "P1",
-				number: 130,
-				reviews: [
-					{ author: "alice", state: "COMMENTED", at: "2026-11-05T00:01:00Z" },
-					{ author: "alice", state: "COMMENTED", at: "2026-11-05T00:02:00Z" },
-					{
-						author: "bob",
-						state: "CHANGES_REQUESTED",
-						at: "2026-11-05T00:03:00Z",
-					},
-				],
-				threads: [false, false, true],
-			},
-			{
-				id: "P1",
-				number: 130,
-				reviews: [
-					{ author: "alice", state: "COMMENTED", at: "2026-11-05T00:01:00Z" },
-					{ author: "alice", state: "COMMENTED", at: "2026-11-05T00:02:00Z" },
-					{
-						author: "bob",
-						state: "CHANGES_REQUESTED",
-						at: "2026-11-05T00:03:00Z",
-					},
-					{ author: "bob", state: "APPROVED", at: "2026-11-05T00:09:00Z" },
-				],
-				threads: [false, false, true],
-			},
-		);
-		expect(events).toEqual([
-			expect.objectContaining({
-				type: "github.changes_requested",
-				by: ["bob"],
-			}),
-			expect.objectContaining({
-				type: "github.review_comment",
-				count: 3,
-				authors: ["alice"],
-				unresolved: 2,
-			}),
-			expect.objectContaining({ type: "github.pr_approved", by: ["bob"] }),
-		]);
-	});
 
 	describe("leaves the viewer's own activity out", () => {
 		const at = (minute: number) =>
@@ -506,58 +427,6 @@ describe("the GitHub source", () => {
 					},
 				),
 			).toEqual([]);
-		});
-
-		it("counts only the other person's when mine came in the same tick", async () => {
-			const events = await onDavesPull(
-				{ reviews: [{ author: "alice", state: "COMMENTED", at: at(1) }] },
-				{
-					reviews: [
-						{ author: "alice", state: "COMMENTED", at: at(1) },
-						{ author: "bob", state: "COMMENTED", at: at(3) },
-						{ author: ME, state: "COMMENTED", at: at(4) },
-					],
-					threads: [false, false, false],
-				},
-				// Later looks do not say either again.
-				{
-					reviews: [
-						{ author: "alice", state: "COMMENTED", at: at(1) },
-						{ author: "bob", state: "COMMENTED", at: at(3) },
-						{ author: ME, state: "COMMENTED", at: at(4) },
-					],
-					threads: [false, false, false],
-				},
-			);
-			expect(events).toEqual([
-				expect.objectContaining({
-					type: "github.review_comment",
-					count: 1,
-					authors: ["bob"],
-				}),
-			]);
-		});
-
-		it("is not hidden by my review being submitted in the same tick as theirs", async () => {
-			// My pending review is in the count but has no time yet.
-			const events = await onDavesPull(
-				{
-					reviews: [{ author: ME, state: "PENDING", at: "" }],
-				},
-				{
-					reviews: [
-						{ author: "bob", state: "COMMENTED", at: at(5) },
-						{ author: ME, state: "COMMENTED", at: at(6) },
-					],
-				},
-			);
-			expect(events).toEqual([
-				expect.objectContaining({
-					type: "github.review_comment",
-					count: 1,
-					authors: ["bob"],
-				}),
-			]);
 		});
 
 		it("does not say approved or changes requested for my own review", async () => {
@@ -604,26 +473,7 @@ describe("the GitHub source", () => {
 		});
 	});
 
-	it("says CI passed or failed once per head commit", async () => {
-		const events = await onMyPull(
-			{ id: "P1", number: 130, checks: "PENDING" },
-			{ id: "P1", number: 130, checks: "FAILURE", failing: 2, total: 5 },
-			{ id: "P1", number: 130, checks: "FAILURE", failing: 2, total: 5 },
-			{ id: "P1", number: 130, oid: "c2", checks: "PENDING" },
-			{ id: "P1", number: 130, oid: "c2", checks: "SUCCESS" },
-		);
-		expect(events).toEqual([
-			expect.objectContaining({
-				type: "github.checks",
-				result: "failed",
-				failing: 2,
-				total: 5,
-			}),
-			expect.objectContaining({ type: "github.checks", result: "passed" }),
-		]);
-	});
-
-	it("says merged and closed, and stops asking", async () => {
+	it("stops asking about a merged pull request, and says it merged in the Issue's facts", async () => {
 		const merged = world([
 			{
 				cards: [
@@ -655,15 +505,9 @@ describe("the GitHub source", () => {
 			},
 		]);
 		await merged.ticks(4);
-		expect(merged.events.map((event) => event.type)).toEqual([
-			"github.pr_merged",
-		]);
+		expect(merged.events).toEqual([]);
 		expect(merged.asked[3]?.variables["pulls"]).toEqual([]);
-		const closed = await onMyPull(
-			{ id: "P1", number: 130 },
-			{ id: "P1", number: 130, state: "CLOSED" },
-		);
-		expect(closed.map((event) => event.type)).toEqual(["github.pr_closed"]);
+		expect(merged.source.issues()?.[0]?.pull?.state).toBe("merged");
 	});
 
 	it("says my review requested on a pull request on the board, and the author's reply after my review", async () => {
@@ -731,21 +575,16 @@ describe("the GitHub source", () => {
 		]);
 	});
 
-	it("reads a board bigger than a page a page a tick, and diffs it whole", async () => {
-		const { events, ticks, asked } = world([
+	it("reads a board bigger than a page a page a tick, and gives it whole", async () => {
+		const { ticks, asked, source } = world([
 			{ cards: [issueCard(BASE[0]!)], next: "c1" },
 			{ cards: [issueCard(BASE[1]!)] },
-			{ cards: [issueCard(BASE[0]!)], next: "c1" },
-			{ cards: [issueCard({ ...BASE[1]!, assignees: [ME] })] },
 		]);
-		await ticks(4);
-		expect(asked.map((one) => one.variables["a0"])).toEqual([
-			null,
-			"c1",
-			null,
-			"c1",
-		]);
-		expect(events.map((event) => event.type)).toEqual(["github.assigned"]);
+		await ticks(1);
+		expect(source.issues()).toBeUndefined();
+		await ticks(1);
+		expect(asked.map((one) => one.variables["a0"])).toEqual([null, "c1"]);
+		expect(source.issues()?.map((one) => one.item.number)).toEqual([123, 200]);
 	});
 
 	it("keeps going with what GitHub answered beside its complaints", () => {
@@ -775,8 +614,8 @@ describe("the GitHub source", () => {
 		expect(run.pending).toHaveLength(1);
 		await run.ticks(1);
 		run.source.follow(false);
+		expect(run.source.issues()).toBeUndefined();
 		run.source.follow(true);
-		// After a restart the next reading is a baseline again.
 		await run.ticks(1);
 		expect(run.events).toEqual([]);
 	});
@@ -801,6 +640,15 @@ function memoryStore(): SnapshotStore & { stored: GitHubSnapshot | undefined } {
 	};
 	return store;
 }
+
+/** The board with carol's pull request P9 on it (linked to #200). */
+const ON_BOARD = [
+	issueCard(BASE[0]!),
+	issueCard({
+		...BASE[1]!,
+		linked: [{ id: "P9", number: 9, author: "carol" }],
+	}),
+];
 
 /** A source with a store, a clock, and settings that can move. */
 function durable(
@@ -879,15 +727,13 @@ describe("GitHub polling and the pause", () => {
 		expect(run.source.state().watched).toBe(0);
 	});
 
-	it("polls once on resume, and the net change goes out in the resume's one message", async () => {
+	it("polls once on resume, and what it says goes out in the resume's one message", async () => {
 		const run = durable([
-			{ cards: BASE.map(issueCard) },
-			// Meanwhile: I was put on #200, and #123 went to review and on to done.
+			{ cards: ON_BOARD },
+			// Meanwhile: carol asked me for a review.
 			{
-				cards: [
-					issueCard({ ...BASE[0]!, status: "Done" }),
-					issueCard({ ...BASE[1]!, assignees: [ME] }),
-				],
+				cards: ON_BOARD,
+				requested: [{ id: "P9", number: 9, author: "carol" }],
 			},
 		]);
 		await run.run();
@@ -898,6 +744,7 @@ describe("GitHub polling and the pause", () => {
 				event_prompt: "{EVENT}",
 				init_prompt: undefined,
 				events: ["*"],
+				delivery_interval: "5m",
 			}),
 			deliver: (_agent, text) => sent.push(text),
 			paused: (paused) => {
@@ -909,15 +756,10 @@ describe("GitHub polling and the pause", () => {
 		dispatcher.pause();
 		await run.run(3);
 		expect(run.asked).toHaveLength(1);
-		expect(await dispatcher.resume()).toBe(2);
+		expect(await dispatcher.resume()).toBe(1);
 		expect(run.asked).toHaveLength(2);
 		expect(sent).toHaveLength(1);
-		expect(sent[0]!.split("\n")).toEqual([
-			expect.stringMatching(
-				/^\[github\.lane_changed\] #123.*In Progress → Done/u,
-			),
-			expect.stringMatching(/^\[github\.assigned\] #200/u),
-		]);
+		expect(sent[0]).toMatch(/^\[github\.review_requested\] PR #9/u);
 		expect(run.source.state().mode).toBe("active");
 	});
 
@@ -941,12 +783,10 @@ describe("GitHub polling and the pause", () => {
 
 	it("is a baseline again after a pause longer than the staleness limit", async () => {
 		const run = durable([
-			{ cards: BASE.map(issueCard) },
+			{ cards: ON_BOARD },
 			{
-				cards: [
-					issueCard(BASE[0]!),
-					issueCard({ ...BASE[1]!, assignees: [ME] }),
-				],
+				cards: ON_BOARD,
+				requested: [{ id: "P9", number: 9, author: "carol" }],
 			},
 		]);
 		await run.run();
@@ -961,7 +801,8 @@ describe("GitHub polling and the pause", () => {
 
 describe("the stored snapshot", () => {
 	const changed: Answer = {
-		cards: [issueCard(BASE[0]!), issueCard({ ...BASE[1]!, assignees: [ME] })],
+		cards: ON_BOARD,
+		requested: [{ id: "P9", number: 9, author: "carol" }],
 	};
 
 	it("round-trips through the file, debounced and atomically", () => {
@@ -1002,20 +843,20 @@ describe("the stored snapshot", () => {
 
 	it("diffs the first poll after a restart against it", async () => {
 		const store = memoryStore();
-		const before = durable([{ cards: BASE.map(issueCard) }], { store });
+		const before = durable([{ cards: ON_BOARD }], { store });
 		await before.run();
 		before.source.stop();
 		expect(store.stored?.viewer).toBe(ME);
 		const after = durable([changed], { store, now: before.clock.now });
 		await after.run();
 		expect(after.events.map((event) => event.type)).toEqual([
-			"github.assigned",
+			"github.review_requested",
 		]);
 	});
 
 	it("is a baseline when the projects changed", async () => {
 		const store = memoryStore();
-		const before = durable([{ cards: BASE.map(issueCard) }], { store });
+		const before = durable([{ cards: ON_BOARD }], { store });
 		await before.run();
 		before.source.stop();
 		const after = durable([changed], {
@@ -1029,7 +870,7 @@ describe("the stored snapshot", () => {
 
 	it("is a baseline when it is stale", async () => {
 		const store = memoryStore();
-		const before = durable([{ cards: BASE.map(issueCard) }], { store });
+		const before = durable([{ cards: ON_BOARD }], { store });
 		await before.run();
 		before.source.stop();
 		const after = durable([changed], {
@@ -1042,7 +883,7 @@ describe("the stored snapshot", () => {
 
 	it("is a baseline when the viewer is someone else", async () => {
 		const store = memoryStore();
-		const before = durable([{ cards: BASE.map(issueCard) }], { store });
+		const before = durable([{ cards: ON_BOARD }], { store });
 		await before.run();
 		before.source.stop();
 		store.stored = { ...store.stored!, viewer: "someone-else" };
@@ -1093,486 +934,5 @@ describe("the GitHub interval", () => {
 		expect((state.nextAt ?? 0) - (state.lastAt ?? 0)).toBeGreaterThan(
 			30 * 60_000,
 		);
-	});
-});
-
-// --- github.unattended -----------------------------------------------------------
-
-/** A Workspace on `branch`'s Issue, with an agent (live unless said). */
-function space(
-	number: number | undefined,
-	agent: { live?: boolean; meta?: Record<string, string> } | null = {},
-): LinkWorkspace {
-	return {
-		ws: `ws${String(number ?? 0)}`,
-		id: `id-ws${String(number ?? 0)}`,
-		label: `space ${String(number ?? 0)}`,
-		issueUrls: number === undefined ? [] : [url(number, "issues")],
-		repo: "acme/app",
-		agents:
-			agent === null
-				? []
-				: [
-						{
-							id: `agent-${String(number ?? 0)}`,
-							name: "Claude",
-							live: agent.live ?? true,
-							meta: agent.meta ?? {},
-						},
-					],
-	};
-}
-
-function unattended(events: readonly OrchestratorEvent[]): number[] {
-	return events.flatMap((event) =>
-		event.type === "github.unattended" ? [event.item.number] : [],
-	);
-}
-
-describe("github.unattended", () => {
-	const MINE: IssueCard[] = [
-		{
-			item: "i1",
-			id: "I1",
-			number: 123,
-			status: "In Progress",
-			assignees: [ME],
-		},
-		{
-			item: "i3",
-			id: "I3",
-			number: 200,
-			title: "検索の改善",
-			status: "Todo",
-			assignees: [ME],
-		},
-		{ item: "i2", id: "I2", number: 300, status: "Todo", assignees: ["bob"] },
-	];
-
-	it("says an unattended Issue of mine on the baseline poll, not one with an agent", async () => {
-		const run = world([{ cards: MINE.map(issueCard) }], new Map(), () => [
-			space(123),
-		]);
-		await run.ticks(1);
-		expect(run.events).toEqual([
-			{
-				type: "github.unattended",
-				item: {
-					repo: "acme/app",
-					number: 200,
-					title: "検索の改善",
-					url: url(200, "issues"),
-				},
-				project: "acme/7",
-				lane: "Todo",
-			},
-		]);
-		const state = run.source.state();
-		expect(state.boards).toEqual([
-			{
-				ref: "acme/7",
-				title: "Team",
-				read: true,
-				items: 3,
-				assigned: 2,
-				unattended: 1,
-			},
-		]);
-		expect(state.unattended.map((one) => one.item.number)).toEqual([200]);
-		expect(state.notes.join("\n")).toMatch(
-			/acme\/7: first full pass, a baseline/u,
-		);
-		expect(state.notes.join("\n")).toMatch(
-			/#123 .*linked to agent=agent-12 in ws=ws123/u,
-		);
-	});
-
-	it("does not wait for a Workspace that is not a repository, nor one whose branch is unread", async () => {
-		// Scratch (a plain folder) with a live agent, and a Workspace no round
-		// has read yet: neither links #200, and neither holds it back.
-		const run = world([{ cards: MINE.map(issueCard) }], new Map(), () => [
-			space(123),
-			{
-				ws: "scratch",
-				id: "scratch",
-				issueUrls: [],
-				agents: space(undefined).agents,
-			},
-			{ ...space(undefined), ws: "fresh" },
-		]);
-		await run.ticks(1);
-		expect(unattended(run.events)).toEqual([200]);
-	});
-
-	it("says an Issue assigned to me after the baseline", async () => {
-		const later: IssueCard[] = [
-			MINE[0]!,
-			MINE[1]!,
-			{ ...MINE[2]!, assignees: ["bob", ME] },
-		];
-		const run = world(
-			[{ cards: MINE.map(issueCard) }, { cards: later.map(issueCard) }],
-			new Map(),
-			() => [space(123)],
-		);
-		await run.ticks(2);
-		expect(unattended(run.events)).toEqual([200, 300]);
-		expect(run.events.map((event) => event.type)).toContain("github.assigned");
-	});
-
-	it("says an Issue of mine added to the board after the baseline", async () => {
-		const added: IssueCard = {
-			item: "i9",
-			id: "I9",
-			number: 900,
-			status: "Todo",
-			assignees: [ME],
-		};
-		const run = world(
-			[
-				{ cards: MINE.map(issueCard) },
-				{ cards: [...MINE, added].map(issueCard) },
-			],
-			new Map(),
-			() => [space(123)],
-		);
-		await run.ticks(2);
-		expect(unattended(run.events)).toEqual([200, 900]);
-	});
-
-	it("is not said again while nothing changed", async () => {
-		const run = world(
-			[{ cards: MINE.map(issueCard) }, { cards: MINE.map(issueCard) }],
-			new Map(),
-			() => [space(123)],
-		);
-		await run.ticks(2);
-		run.source.reconsider();
-		expect(unattended(run.events)).toEqual([200]);
-		expect(run.source.state().notes.join("\n")).toMatch(
-			/#200 .*said already for this stretch/u,
-		);
-	});
-
-	it("re-arms once an agent is linked, and says it again when it is gone", async () => {
-		let spaces = [space(123)];
-		const run = world(
-			[{ cards: MINE.map(issueCard) }],
-			new Map(),
-			() => spaces,
-		);
-		await run.ticks(1);
-		expect(unattended(run.events)).toEqual([200]);
-		// An agent on its branch: attended.
-		spaces = [space(123), space(200)];
-		run.source.reconsider();
-		expect(run.source.state().unattended).toEqual([]);
-		// Still attended: nothing.
-		run.source.reconsider();
-		expect(unattended(run.events)).toEqual([200]);
-		// The agent stopping: unattended again, said again.
-		spaces = [space(123), space(200, { live: false })];
-		run.source.reconsider();
-		expect(unattended(run.events)).toEqual([200, 200]);
-	});
-
-	it("does not say a closed Issue, whatever its lane; the lane is information", async () => {
-		const run = world(
-			[
-				{
-					cards: [
-						issueCard({
-							item: "i4",
-							id: "I4",
-							number: 400,
-							status: "Todo",
-							assignees: [ME],
-							state: "CLOSED",
-						}),
-						issueCard({
-							item: "i5",
-							id: "I5",
-							number: 500,
-							status: "Done",
-							assignees: [ME],
-						}),
-						issueCard({
-							item: "i6",
-							id: "I6",
-							number: 600,
-							status: null,
-							assignees: [ME],
-						}),
-					],
-				},
-			],
-			new Map(),
-			() => [],
-		);
-		await run.ticks(1);
-		// Open in Done is still open: said, with its lane; closed is not.
-		expect(
-			run.events.map(
-				(event) =>
-					event.type === "github.unattended" && [event.item.number, event.lane],
-			),
-		).toEqual([
-			[500, "Done"],
-			[600, null],
-		]);
-		expect(run.source.state().notes.join("\n")).toMatch(/#400 .*closed/u);
-	});
-
-	it("is not said without a link check (no Workspaces port)", async () => {
-		const run = world([{ cards: MINE.map(issueCard) }]);
-		await run.ticks(1);
-		expect(run.events).toEqual([]);
-	});
-
-	it("is dropped as stale when, by delivery, an agent got linked or it was closed", async () => {
-		let spaces: LinkWorkspace[] = [];
-		const run = world(
-			[
-				{ cards: MINE.map(issueCard) },
-				{
-					cards: MINE.map((card) =>
-						issueCard(
-							card.number === 123 ? { ...card, state: "CLOSED" } : card,
-						),
-					),
-				},
-			],
-			new Map(),
-			() => spaces,
-		);
-		const delivered: string[] = [];
-		const dispatcher = new EventDispatcher({
-			orchestrator: () => "orch",
-			settings: () => ({
-				event_prompt: "{EVENT}",
-				init_prompt: undefined,
-				events: ["github.*"],
-			}),
-			deliver: (_agent, text) => delivered.push(text),
-			relevant: (event) =>
-				event.type !== "github.unattended" ||
-				run.source.stillUnattended(event.item),
-		});
-		dispatcher.pause();
-		await run.ticks(1);
-		for (const event of run.events) dispatcher.dispatch(event);
-		expect(dispatcher.held()).toHaveLength(2);
-		// #200 gets an agent; #123 is closed on the next poll.
-		spaces = [space(200)];
-		await run.ticks(1);
-		void dispatcher.resume();
-		expect(delivered).toEqual([]);
-		expect(dispatcher.recent(10).map((entry) => entry.fate)).toEqual([
-			"dropped-stale",
-			"dropped-stale",
-		]);
-	});
-
-	it("is delivered again after a re-arm, not taken for a repeat", async () => {
-		let spaces: LinkWorkspace[] = [space(123)];
-		const run = world(
-			[{ cards: MINE.map(issueCard) }],
-			new Map(),
-			() => spaces,
-		);
-		const delivered: string[] = [];
-		const dispatcher = new EventDispatcher({
-			orchestrator: () => "orch",
-			settings: () => ({
-				event_prompt: "{EVENT}",
-				init_prompt: undefined,
-				events: ["github.*"],
-			}),
-			deliver: (_agent, text) => delivered.push(text),
-		});
-		await run.ticks(1);
-		spaces = [space(123), space(200)];
-		run.source.reconsider();
-		spaces = [space(123)];
-		run.source.reconsider();
-		for (const event of run.events) dispatcher.dispatch(event);
-		expect(delivered).toEqual([
-			`[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない ${url(200, "issues")}`,
-			`[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない ${url(200, "issues")}`,
-		]);
-	});
-});
-
-describe("github.unattended and waiting escalations", () => {
-	const MINE: IssueCard[] = [
-		{ item: "i3", id: "I3", number: 200, status: "Todo", assignees: [ME] },
-	];
-	/** #200's Workspace, its agent stopped: not linked, by itself. */
-	const STOPPED = () => [space(123), space(200, { live: false })];
-	const esc = (over: Partial<LinkEscalation> = {}): LinkEscalation => ({
-		id: 12,
-		state: "waiting",
-		links: [],
-		agents: [],
-		...over,
-	});
-
-	for (const [how, one] of [
-		["its link is the Issue's URL", esc({ links: [`${url(200, "issues")}/`] })],
-		[
-			"its devhub: link names the Issue's Workspace",
-			esc({ links: ["devhub:workspace/space%20200"] }),
-		],
-		[
-			"its devhub: link names an agent on the Issue",
-			esc({ links: ["devhub:agent/agent-200"] }),
-		],
-		[
-			"its workspaceId is the Issue's Workspace",
-			esc({ workspaceId: "id-ws200" }),
-		],
-		[
-			"one of its agents is on the Issue, stopped",
-			esc({ agents: ["agent-200"] }),
-		],
-	] as const)
-		it(`is not said while a 待機中 escalation covers it: ${how}`, async () => {
-			const run = world(
-				[{ cards: MINE.map(issueCard) }],
-				new Map(),
-				STOPPED,
-				() => [one],
-			);
-			await run.ticks(1);
-			expect(unattended(run.events)).toEqual([]);
-			expect(run.source.state().notes.join("\n")).toMatch(
-				/#200 \(acme\/app\): no github.unattended, waiting in esc=12/u,
-			);
-		});
-
-	it("covers by an agent's meta issue=, even with the agent stopped", () => {
-		const issue = { repo: "acme/app", number: 200, url: url(200, "issues") };
-		const spaces = [space(undefined, { live: false, meta: { issue: "#200" } })];
-		expect(
-			coveringEscalation(issue, [esc({ agents: ["agent-0"] })], spaces)?.id,
-		).toBe(12);
-		expect(
-			coveringEscalation(
-				issue,
-				[esc({ agents: ["agent-0"], links: [url(201, "issues")] })],
-				[space(undefined)],
-			),
-		).toBeUndefined();
-	});
-
-	it("does not exclude for an escalation that is not 待機中", async () => {
-		for (const state of ["needs_answer", "in_progress", "closed"] as const) {
-			const run = world(
-				[{ cards: MINE.map(issueCard) }],
-				new Map(),
-				STOPPED,
-				() => [esc({ state, agents: ["agent-200"] })],
-			);
-			await run.ticks(1);
-			expect(unattended(run.events)).toEqual([200]);
-		}
-	});
-
-	it("says it once the escalation leaves 待機中, on reconsider", async () => {
-		let escalations = [esc({ workspaceId: "id-ws200" })];
-		const run = world(
-			[{ cards: MINE.map(issueCard) }],
-			new Map(),
-			STOPPED,
-			() => escalations,
-		);
-		await run.ticks(1);
-		expect(unattended(run.events)).toEqual([]);
-		escalations = [esc({ workspaceId: "id-ws200", state: "in_progress" })];
-		run.source.reconsider();
-		expect(unattended(run.events)).toEqual([200]);
-		// Waiting again, then resumed again: a new episode, said again.
-		escalations = [esc({ workspaceId: "id-ws200" })];
-		run.source.reconsider();
-		expect(run.source.state().unattended).toEqual([]);
-		escalations = [];
-		run.source.reconsider();
-		expect(unattended(run.events)).toEqual([200, 200]);
-	});
-
-	it("is dropped as stale when an escalation starts waiting on it before delivery", async () => {
-		let escalations: LinkEscalation[] = [];
-		const run = world(
-			[{ cards: MINE.map(issueCard) }],
-			new Map(),
-			STOPPED,
-			() => escalations,
-		);
-		const delivered: string[] = [];
-		const dispatcher = new EventDispatcher({
-			orchestrator: () => "orch",
-			settings: () => ({
-				event_prompt: "{EVENT}",
-				init_prompt: undefined,
-				events: ["github.*"],
-			}),
-			deliver: (_agent, text) => delivered.push(text),
-			relevant: (event) =>
-				event.type !== "github.unattended" ||
-				run.source.stillUnattended(event.item),
-		});
-		dispatcher.pause();
-		await run.ticks(1);
-		for (const event of run.events) dispatcher.dispatch(event);
-		expect(dispatcher.held()).toHaveLength(1);
-		escalations = [esc({ links: [url(200, "issues")] })];
-		void dispatcher.resume();
-		expect(delivered).toEqual([]);
-		expect(dispatcher.recent(10).map((entry) => entry.fate)).toEqual([
-			"dropped-stale",
-		]);
-	});
-});
-
-describe("linkedAgent", () => {
-	const issue = { repo: "acme/app", number: 200, url: url(200, "issues") };
-
-	it("links a Workspace on the Issue's branch with a live agent", () => {
-		expect(linkedAgent(issue, [space(200)])).toEqual({
-			ws: "ws200",
-			agent: { id: "agent-200", name: "Claude" },
-		});
-		expect(linkedAgent(issue, [space(200, { live: false })])).toBeUndefined();
-		expect(linkedAgent(issue, [space(200, null)])).toBeUndefined();
-		expect(linkedAgent(issue, [space(201)])).toBeUndefined();
-		// Case, a trailing slash: the same Issue.
-		expect(
-			linkedAgent(issue, [
-				{
-					...space(undefined),
-					issueUrls: ["https://github.com/ACME/app/issues/200/"],
-				},
-			]),
-		).toBeDefined();
-	});
-
-	it("links an agent whose meta issue= names it, by URL or by number in its repository", () => {
-		const meta = (value: string, repo?: string): LinkWorkspace => ({
-			...space(undefined, { meta: { issue: value } }),
-			...(repo === undefined ? {} : { repo }),
-		});
-		expect(linkedAgent(issue, [meta("200")])).toBeDefined();
-		expect(linkedAgent(issue, [meta("#200")])).toBeDefined();
-		expect(linkedAgent(issue, [meta(url(200, "issues"))])).toBeDefined();
-		expect(linkedAgent(issue, [meta("201")])).toBeUndefined();
-		expect(linkedAgent(issue, [meta("200", "other/repo")])).toBeUndefined();
-		expect(
-			linkedAgent(issue, [
-				{
-					...meta("200"),
-					agents: [{ id: "x", live: false, meta: { issue: "200" } }],
-				},
-			]),
-		).toBeUndefined();
 	});
 });

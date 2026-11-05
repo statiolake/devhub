@@ -2056,6 +2056,10 @@ body.is-resizing-rows {
   height: 11px;
 }
 
+.row-agent-mark.is-unsettled {
+  color: var(--status-waiting, var(--secondary));
+}
+
 .sidebar[data-collapsed="true"] .row-agent-marks {
   display: none;
 }

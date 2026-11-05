@@ -391,6 +391,8 @@ export interface WorkspaceRepositoryWire {
 			readonly unresolved: number;
 			readonly uncounted: number;
 		};
+		/** GitHub's review decision; absent when it has none. */
+		readonly review?: "approved" | "changes_requested" | "review_required";
 		/**
 		 * What its CI says about its head commit: GitHub's own verdict, and how
 		 * many of `total` checks are failing and how many have not finished.
@@ -536,6 +538,32 @@ export interface RepositoryStatusWire {
 	readonly diagnostic?: string;
 }
 
+/** One subject that breaks the invariant, as the board carries it. */
+export interface UnsettledWire {
+	readonly kind: "issue" | "agent";
+	/** `issue <url>` or `agent <id>`. */
+	readonly key: string;
+	/** Its words, as `unsettled` says them (without the `[type]`). */
+	readonly line: string;
+	/** Since when it has been unsettled (ms since the epoch). */
+	readonly since: number;
+	/** When it was last said; absent while in its grace. */
+	readonly toldAt?: number;
+	/** `agent keep`: left as it is, and why. */
+	readonly kept?: { readonly note: string; readonly at: number };
+}
+
+/** An agent's standing for its row: see `OrchestratorBoardWire.agentStates`. */
+export interface AgentOrchestrationWire {
+	readonly waiting?: {
+		readonly escalationId: number;
+		readonly trigger: string;
+	};
+	/** Managed, and unsettled past the grace (its facts). */
+	readonly unsettled?: string;
+	readonly kept?: { readonly note: string; readonly at: number };
+}
+
 /** One entry of an escalation's thread. See `model/escalations.ts`. */
 export interface EscalationEntryWire {
 	readonly role: "orchestrator" | "human";
@@ -589,7 +617,7 @@ export interface EscalationWire {
 	readonly rankNote?: string;
 	/**
 	 * 停滞: 対応中, and none of its agents has worked since then, for longer
-	 * than the grace (`escalation.stalled`). Absent otherwise.
+	 * than the grace (marked on the board). Absent otherwise.
 	 */
 	readonly stalledSince?: number;
 }
@@ -645,32 +673,27 @@ export interface OrchestratorBoardWire {
 			readonly ref: string;
 			readonly title?: string;
 			/**
-			 * Its last full pass, counted: every card, those assigned to the
-			 * viewer, and their open Issues no live agent is linked to
-			 * (`github.unattended`). Absent before the first full pass.
+			 * Its last full pass, counted: every card, and those assigned to
+			 * the viewer. Absent before the first full pass.
 			 */
 			readonly items?: number;
 			readonly assigned?: number;
-			readonly unattended?: number;
 		}[];
-		/** The Issues `github.unattended` is about now, as of the last look. */
-		readonly unattended?: readonly {
-			readonly repo: string;
-			readonly number: number;
-			readonly title?: string;
-			readonly url?: string;
-			/** The board (`OWNER/NUMBER`) it is on. */
-			readonly project: string;
-			readonly lane: string | null;
-		}[];
-		/**
-		 * Why the last look said nothing of some cards (a baseline, an Issue
-		 * with an agent, a closed one, one said already): for
-		 * `orchestrator events`.
-		 */
-		readonly notes?: readonly string[];
 		readonly problem?: string;
 	};
+	/**
+	 * The subjects that break the invariant now (`main/orchestrator/
+	 * invariant.ts`): open Issues of mine nothing settles, managed agents
+	 * nothing settles. Each with its facts as an `unsettled` line has them.
+	 */
+	readonly unsettled: readonly UnsettledWire[];
+	/**
+	 * What the escalations and the invariant say of each agent, for its row:
+	 * one of a 待機中 escalation's agents (and what it waits on), unsettled
+	 * past the grace, or kept as it is by the orchestrator (and why). Absent
+	 * for an agent with none of these.
+	 */
+	readonly agentStates: Readonly<Record<string, AgentOrchestrationWire>>;
 	/** Oldest question first. */
 	readonly needsAnswer: readonly EscalationWire[];
 	/** Answered longest ago first. */
@@ -689,6 +712,8 @@ export const EMPTY_BOARD: OrchestratorBoardWire = {
 	paused: false,
 	held: 0,
 	github: { state: "idle" },
+	unsettled: [],
+	agentStates: {},
 	needsAnswer: [],
 	inProgress: [],
 	waiting: [],

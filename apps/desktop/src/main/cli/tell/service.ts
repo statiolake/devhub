@@ -27,6 +27,7 @@ import type {
 import type { UsageReport } from "../../shell/usageLimits.js";
 import { usageJson, usageText } from "./usage.js";
 import { ORCHESTRATOR_CANNOT_CLOSE } from "./windowActs.js";
+import { ISSUE_LINK_KEY } from "../../orchestrator/invariant.js";
 import {
 	DEVHUB_LINK_FORMS,
 	formatDevhubLink,
@@ -123,6 +124,11 @@ export interface TellReview {
 		readonly title: string;
 		readonly url: string;
 		readonly state: "open" | "closed";
+		/** The Projects boards it is on and its lane (Status) on each. */
+		readonly projects: readonly {
+			readonly project: string;
+			readonly lane: string | null;
+		}[];
 	} | null;
 	/** The pull request out from the branch (the live one, if several). */
 	readonly pullRequest: {
@@ -131,6 +137,12 @@ export interface TellReview {
 		readonly url: string;
 		readonly state: "open" | "closed" | "merged";
 		readonly draft: boolean;
+		/** GitHub's review decision; `none` when it has none. */
+		readonly review:
+			| "approved"
+			| "changes_requested"
+			| "review_required"
+			| "none";
 	} | null;
 	/**
 	 * Its review conversations nobody has resolved. `uncounted`: threads past
@@ -182,6 +194,10 @@ export function tellReview(
 						title: issue.title,
 						url: issue.url,
 						state: issue.state,
+						projects: (issue.projects ?? []).map((one) => ({
+							project: one.project,
+							lane: one.status ?? null,
+						})),
 					},
 		pullRequest:
 			pullRequest === undefined
@@ -192,6 +208,7 @@ export function tellReview(
 						url: pullRequest.url,
 						state: pullRequest.state === "draft" ? "open" : pullRequest.state,
 						draft: pullRequest.state === "draft",
+						review: pullRequest.review ?? "none",
 					},
 		conversations:
 			pullRequest === undefined ? null : { ...pullRequest.conversations },
@@ -617,7 +634,7 @@ export interface TellOrchestratorPorts {
 	/**
 	 * The orchestrator has been shown escalation `id`'s first `entries`
 	 * entries (`escalation show`): an answer among them is read, and 停滞
-	 * (`escalation.stalled`) may start counting.
+	 * (on the board) may start counting.
 	 */
 	acknowledge?(id: number, entries: number): void;
 	/** `[orchestrator] root`, for a refusal that names it. */
@@ -642,6 +659,27 @@ export interface TellOrchestratorPorts {
 	clearTimer(name: string): boolean;
 	/** Show the Orchestrator screen: the one focus this family has. */
 	focus(): Promise<void>;
+	/** How an agent stands against the invariant (`orchestrator/invariant.ts`). */
+	standing(agentId: string): TellStanding | undefined;
+	/** `agent keep A --note`: leave an unsettled agent as it is, for `note`. */
+	keep(
+		agentId: string,
+		note: string,
+	): { readonly note: string; readonly at: number };
+	/** `agent keep A --clear`: whether it was being kept. */
+	unkeep(agentId: string): boolean;
+}
+
+/** An agent's standing against the invariant, as `agent status` reads it. */
+export interface TellStanding {
+	readonly settled: boolean;
+	/** Its facts, as an `unsettled` line says them (managed agents). */
+	readonly facts?: readonly string[];
+	readonly waiting?: {
+		readonly escalationId: number;
+		readonly trigger: string;
+	};
+	readonly kept?: { readonly note: string; readonly at: number };
 }
 
 /** One event in the orchestrator's log (`orchestrator events`). */
@@ -652,7 +690,7 @@ export interface TellEventEntry {
 	readonly type: string;
 	/**
 	 * delivered, pending, filtered, coalesced (into `into`), dropped-stale,
-	 * repeat, overflow, dropped, self.
+	 * overflow, dropped.
 	 */
 	readonly fate: string;
 	/** What `{EVENT}` holds for it. */
@@ -937,6 +975,21 @@ export interface TellAgentStatus {
 	readonly meta: Readonly<Record<string, string>>;
 	/** Under the orchestrator's management (`agent manage`, `--managed`). */
 	readonly managed: boolean;
+	/**
+	 * How it stands against the invariant: settled or not, its facts as an
+	 * `unsettled` line says them, the 待機中 escalation it is one of the
+	 * agents of, and `agent keep`'s note. Null while no orchestrator service
+	 * reads it.
+	 */
+	readonly invariant: {
+		readonly settled: boolean;
+		readonly facts: string | null;
+		readonly waiting: {
+			readonly escalationId: number;
+			readonly trigger: string;
+		} | null;
+		readonly kept: { readonly note: string; readonly at: string } | null;
+	} | null;
 	readonly workspace: {
 		readonly id: string;
 		readonly name: string;
@@ -1034,6 +1087,8 @@ export class TellService {
 				return this.meta(command);
 			case "agent-manage":
 				return this.manage(command.agent, command.managed);
+			case "agent-keep":
+				return this.keep(command.agent, command.note);
 			case "agent-new":
 				return this.newAgent(command);
 			case "issue-assign":
@@ -1249,7 +1304,7 @@ export class TellService {
 				const wait = one.entries.at(-1);
 				return `  #${String(one.id)}  ${one.title}  waiting on: ${wait?.markdown ?? ""}${wait?.dueAt === undefined ? "" : `  [${new Date(wait.dueAt).toISOString()}, ${dueWords(wait.dueAt, now)}]`}`;
 			}),
-			...unattendedLines(board),
+			...unsettledLines(board, now),
 		];
 		return {
 			message: lines.join("\n"),
@@ -1261,8 +1316,7 @@ export class TellService {
 				inProgress: board.inProgress,
 				waiting: board.waiting,
 				graceMs: board.graceMs,
-				// null: GitHub is not polled, so nobody knows.
-				unattendedIssues: board.github.unattended ?? null,
+				unsettled: board.unsettled,
 			},
 		};
 	}
@@ -1461,10 +1515,8 @@ export class TellService {
 
 	private orchestratorEvents(last: number): TellAnswer {
 		const entries = this.ports.orchestrator.events(last);
-		// Why the last GitHub look said nothing of some cards.
-		const notes = this.ports.orchestrator.board().github.notes ?? [];
 		return {
-			message: [
+			message:
 				entries.length === 0
 					? "No events yet."
 					: entries
@@ -1473,14 +1525,7 @@ export class TellService {
 									`${String(entry.seq).padStart(4)} ${new Date(entry.at).toISOString().slice(11, 19)} ${entry.fate.padEnd(9)} ${entry.line}${entry.into === undefined ? "" : ` (→ ${String(entry.into)})`}`,
 							)
 							.join("\n"),
-				...(notes.length === 0
-					? []
-					: [
-							"GitHub, the last look: not said, and why",
-							...notes.map((note) => `  ${note}`),
-						]),
-			].join("\n"),
-			data: { events: entries, githubNotes: notes },
+			data: { events: entries },
 		};
 	}
 
@@ -1827,13 +1872,13 @@ export class TellService {
 				? []
 				: [`worktree of: ${workspace.worktreeOf}`]),
 			review.issue !== null
-				? `Issue #${String(review.issue.number)} (${review.issue.state}): ${review.issue.title}  ${review.issue.url}`
+				? `Issue #${String(review.issue.number)} (${review.issue.state}): ${review.issue.title}  ${review.issue.url}${review.issue.projects.length === 0 ? "" : `\nlane: ${review.issue.projects.map((one) => `${one.lane ?? "none"} (${one.project})`).join(", ")}`}`
 				: review.pendingIssue !== null
 					? `Issue #${String(review.pendingIssue)}: GitHub has not answered yet`
 					: "Issue: none",
 			review.pullRequest === null
 				? "pull request: none"
-				: `pull request #${String(review.pullRequest.number)} (${review.pullRequest.draft ? "draft" : review.pullRequest.state}): ${review.pullRequest.title}  ${review.pullRequest.url}`,
+				: `pull request #${String(review.pullRequest.number)} (${review.pullRequest.draft ? "draft" : review.pullRequest.state}): ${review.pullRequest.title}  ${review.pullRequest.url}\nreview decision: ${review.pullRequest.review}`,
 			...(review.conversations === null
 				? []
 				: [`review: ${conversationsText(review.conversations)}`]),
@@ -2103,6 +2148,7 @@ export class TellService {
 	private async meta(
 		command: Extract<TellCommand, { verb: "agent-meta" }>,
 	): Promise<TellAnswer> {
+		if (command.op !== "list") refuseLinkKey(command.key);
 		const agent = this.agent(command.agent);
 		if (command.op !== "list" && command.key !== undefined)
 			await this.ports.setAgentMeta(
@@ -2144,6 +2190,31 @@ export class TellService {
 		};
 	}
 
+	/**
+	 * `agent keep A --note TEXT`: an unsettled managed agent left as it is,
+	 * for the reason given, until its facts change; `--clear` ends it.
+	 */
+	private keep(name: string, note: string | undefined): TellAnswer {
+		const agent = this.agent(name);
+		if (note === undefined) {
+			const was = this.ports.orchestrator.unkeep(agent.id);
+			return {
+				message: was
+					? `${agent.name} (${agent.id}) is no longer kept: it is said again while it is unsettled.`
+					: `${agent.name} (${agent.id}) was not kept.`,
+				data: { agentId: agent.id, kept: null },
+			};
+		}
+		const kept = this.ports.orchestrator.keep(agent.id, note);
+		return {
+			message: `${agent.name} (${agent.id}) is kept as it is (${note}): not said again until its facts change.`,
+			data: {
+				agentId: agent.id,
+				kept: { note: kept.note, at: new Date(kept.at).toISOString() },
+			},
+		};
+	}
+
 	/** `--managed|--unmanaged`, which must be given; else a line in `missing`. */
 	private requiredManaged(
 		managed: boolean | undefined,
@@ -2171,6 +2242,7 @@ export class TellService {
 		// first of a list, because an agent calling this must get the same
 		// thing whatever the person's settings say. Checked before anything is
 		// done, so a refusal changes nothing.
+		for (const pair of command.meta ?? []) refuseLinkKey(pair.key);
 		const missing: string[] = [];
 		if (command.workspace === undefined)
 			missing.push(
@@ -2209,6 +2281,7 @@ export class TellService {
 	): Promise<TellAnswer> {
 		// As `agent new`: every choice the window would make from settings or
 		// from the first row is an argument, all checked before anything runs.
+		for (const pair of command.meta ?? []) refuseLinkKey(pair.key);
 		const missing: string[] = [];
 		if (command.repo === undefined)
 			missing.push(
@@ -2862,6 +2935,7 @@ export class TellService {
 							misses: cache.misses,
 							autoCompactAt: iso(cache.autoCompactAt),
 						},
+			invariant: invariantOf(this.ports.orchestrator.standing(agent.id)),
 		};
 	}
 
@@ -3369,6 +3443,7 @@ export class TellService {
 			command.session,
 			command.profile,
 		);
+		if (command.op !== "list") refuseLinkKey(command.key);
 		if (command.op !== "list" && session.liveAgentId !== undefined)
 			throw new Error(
 				`session ${session.id} is agent ${session.liveAgentId}'s, running now: use 'agent meta ${session.liveAgentId}'.`,
@@ -3875,6 +3950,25 @@ function statusLines(state: TellAgentStatus, now: number): string[] {
 		...(state.managed
 			? ["managed   yes: under the orchestrator's management"]
 			: []),
+		...(state.invariant === null
+			? []
+			: [
+					...(state.invariant.facts === null
+						? []
+						: [
+								`invariant ${state.invariant.settled ? "settled" : "unsettled"}: ${state.invariant.facts}`,
+							]),
+					...(state.invariant.waiting === null
+						? []
+						: [
+								`waiting   in esc=${String(state.invariant.waiting.escalationId)}: ${state.invariant.waiting.trigger}`,
+							]),
+					...(state.invariant.kept === null
+						? []
+						: [
+								`kept      ${state.invariant.kept.note} (since ${state.invariant.kept.at})`,
+							]),
+				]),
 		...(Object.keys(state.meta).length === 0
 			? []
 			: [`meta      ${metaWords(state.meta) ?? ""}`]),
@@ -4491,7 +4585,7 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 
 /**
  * Each board's last full pass, counted: `acme/7 (Team): 42 items, 5 assigned
- * to me, 2 unattended`; `not read yet` before the first.
+ * to me`; `not read yet` before the first.
  */
 function githubBoardLines(board: OrchestratorBoardWire): string[] {
 	if (board.github.state === "idle") return [];
@@ -4500,27 +4594,48 @@ function githubBoardLines(board: OrchestratorBoardWire): string[] {
 			`  ${one.ref}${one.title === undefined ? "" : ` (${one.title})`}: ${
 				one.items === undefined
 					? "not read yet"
-					: `${String(one.items)} items, ${String(one.assigned ?? 0)} assigned to me, ${String(one.unattended ?? 0)} unattended`
+					: `${String(one.items)} items, ${String(one.assigned ?? 0)} assigned to me`
 			}`,
 	);
 }
 
-/** `board`'s GitHub part: the Issues of mine no agent is on (`github.unattended`). */
-function unattendedLines(board: OrchestratorBoardWire): string[] {
-	const list = board.github.unattended;
-	if (list === undefined) return [];
+/** `board`'s invariant part: every subject unsettled now, with its facts. */
+function unsettledLines(board: OrchestratorBoardWire, now: number): string[] {
+	const list = board.unsettled;
 	return [
-		`unattended Issues (${String(list.length)}, assigned to me, open, no agent):`,
+		`unsettled (${String(list.length)}):`,
 		...list.map(
 			(one) =>
-				`  #${String(one.number)}  ${one.title ?? ""}  ${one.repo}  lane=${one.lane ?? "(none)"}${one.url === undefined ? "" : `  ${one.url}`}`,
+				`  ${one.line}  [${span(now - one.since)}${one.toldAt === undefined ? ", in its grace" : ""}${one.kept === undefined ? "" : `, kept: ${one.kept.note}`}]`,
 		),
-		...(list.length === 0
-			? []
-			: [
-					"Give each an agent ('issue assign … --meta issue=N'), or raise an escalation.",
-				]),
 	];
+}
+
+/** The meta key DevHub keeps the Issue linkage under: never set by hand. */
+function refuseLinkKey(key: string | undefined): void {
+	if (key === ISSUE_LINK_KEY)
+		throw new Error(
+			`${ISSUE_LINK_KEY}= is the Issue linkage DevHub writes when 'issue assign' starts an agent on an Issue: it is not set by hand. Start the agent with 'issue assign <url>' to link it.`,
+		);
+}
+
+/** `agent status`'s `invariant`, from the service's standing. */
+function invariantOf(
+	standing: TellStanding | undefined,
+): TellAgentStatus["invariant"] {
+	if (standing === undefined) return null;
+	return {
+		settled: standing.settled,
+		facts: standing.facts === undefined ? null : standing.facts.join(" "),
+		waiting: standing.waiting ?? null,
+		kept:
+			standing.kept === undefined
+				? null
+				: {
+						note: standing.kept.note,
+						at: new Date(standing.kept.at).toISOString(),
+					},
+	};
 }
 
 /** The ranking a command gives, as the port takes it. */

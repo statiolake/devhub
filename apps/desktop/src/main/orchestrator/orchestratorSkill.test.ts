@@ -157,17 +157,16 @@ describe("the /devhub-orchestrator skill", () => {
 		for (const word of [
 			"要回答",
 			"対応中",
-			"escalation.stalled",
+			"待機中",
 			"{EVENT}",
 			"{EVENT_JSON}",
 			"init",
 			"escalation_answered",
-			"github.lane_changed",
-			"github.pr_merged",
-			"workspace.issue_assigned",
-			"agent.turn_ended",
-			"agent.asked",
-			"agent.permission_requested",
+			"unsettled",
+			"waiting.changed",
+			"github.review_requested",
+			"delivery_interval",
+			"agent keep",
 			"timer.elapsed",
 			"custom.",
 			"orchestrator events",
@@ -204,7 +203,7 @@ describe("the /devhub-orchestrator skill's event table", () => {
 		const named = [
 			...text.matchAll(/`((?:github|workspace|agent|timer|usage)\.[a-z_]+)`/gu),
 		].map((match) => match[1]!);
-		expect(named.length).toBeGreaterThan(20);
+		expect(named.length).toBeGreaterThanOrEqual(5);
 		for (const type of named)
 			expect({
 				type,
@@ -214,7 +213,7 @@ describe("the /devhub-orchestrator skill's event table", () => {
 
 	it("shows lines in the format DevHub writes them", () => {
 		expect(text).toContain(
-			"[agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」",
+			"[unsettled] agent=c3d4e5f6 (調査) ws=docs status=working issue=none pr=none esc=none",
 		);
 	});
 });

@@ -30,27 +30,19 @@
  * backs off from it (`nextDelay`): slower as `remaining` falls, paused until
  * `resetAt` when it is low, doubling after a failure.
  *
- * **Events** come of diffing each reading against the last (`diffBoard`,
- * `diffPullRequests`, `diffRequested`). Each board's first full pass and each
- * pull request's first details are a baseline and say nothing.
+ * **What it gives.** The boards' Issues as last read (`issues`), with the
+ * pull request that closes each and its review decision, unresolved
+ * conversations and checks: what the invariant (`invariant.ts`) reads its
+ * population and its facts off. And two events no state shows: someone
+ * asks the viewer for a review on a watched board (`github.review_requested`,
+ * `diffRequested`), and the author of a pull request the viewer reviewed
+ * answers or pushes (`github.reply`, `diffPullRequest`). Each board's first
+ * full pass and each pull request's first details are a baseline and say
+ * nothing.
  *
  * **The viewer's own activity is never an event.** Their agents post with the
- * same GitHub identity, so a review, comment or push of theirs saying
- * `github.review_comment`, `github.pr_approved`, `github.changes_requested`
- * or `github.reply` back to them would be an echo: it is left out, and the
- * counts are of others' activity only — nothing at all when only the viewer's
- * is new. New review threads carry no author in the query, so they count
- * only in a look with no review by the author or the viewer; a push counts as
- * the viewer's when its head commit's author (or committer) is.
- *
- * **`github.unattended`** is a state, not a diff (`unattended.ts`): on every
- * successful poll — the baseline too, which is the point: an assignment
- * missed while nobody watched is said on the first poll — and whenever the
- * Workspaces, Agents or escalations move (`reconsider`), each open Issue
- * assigned to the viewer with no live agent linked to it, and no 待機中
- * escalation about it, is said once, and again only once it has had an agent
- * (or a waiting escalation) and lost it (or was closed and reopened). A start or
- * restart says every one again: the new orchestrator has heard none.
+ * same GitHub identity: a push counts as the viewer's when its head commit's
+ * author (or committer) is.
  *
  * **Pause, restart.** While the orchestrator's events are paused the source
  * is `suspended`: it does not poll at all, and keeps what it last read. A
@@ -78,11 +70,7 @@ import {
 	usableSnapshot,
 	type SnapshotStore,
 } from "./githubSnapshot.js";
-import {
-	unattendedVerdict,
-	type LinkEscalation,
-	type LinkWorkspace,
-} from "./unattended.js";
+import type { IssueFacts, PullFacts } from "./invariant.js";
 
 // --- the snapshot ----------------------------------------------------------------
 
@@ -512,81 +500,23 @@ export function relates(entry: BoardEntry, viewer: string): boolean {
 }
 
 /**
- * A board's full pass against its last one. `watched` is every card id that
- * has related to the viewer this session (and is added to here).
+ * A board's full pass: what relates to the viewer is watched from here
+ * (`watched`, every card id that has related to the viewer this session),
+ * and the pull requests linked to their Issues.
  */
-export function diffBoard(
-	project: string,
-	before: readonly BoardEntry[],
+export function watchBoard(
 	after: readonly BoardEntry[],
-	context: {
-		readonly viewer: string;
-		readonly watched: Set<string>;
-		readonly where: WhereLookup;
-	},
-): OrchestratorEvent[] {
-	const { viewer, watched, where } = context;
-	const events: OrchestratorEvent[] = [];
-	const earlier = new Map(before.map((entry) => [entry.itemId, entry]));
+	viewer: string,
+	watched: Set<string>,
+): void {
 	for (const entry of after) {
-		const was = earlier.get(entry.itemId);
-		const related = relates(entry, viewer) || watched.has(entry.id);
 		if (relates(entry, viewer)) watched.add(entry.id);
-		if (!related) continue;
-		const at = placed(where, entry.item.url);
-		const mineNow = entry.assignees.some((one) => same(one, viewer));
-		const mineBefore = was?.assignees.some((one) => same(one, viewer)) ?? false;
-		if (mineNow && !mineBefore)
-			events.push({
-				type: "github.assigned",
-				item: entry.item,
-				kind: entry.kind,
-				login: viewer,
-				...at,
-			});
-		if (was !== undefined && was.status !== entry.status)
-			events.push({
-				type: "github.lane_changed",
-				item: entry.item,
-				kind: entry.kind,
-				project,
-				from: was.status,
-				to: entry.status,
-				...at,
-			});
-		// A pull request that is the viewer's, new on the board.
 		if (
-			was === undefined &&
-			entry.kind === "pr" &&
-			entry.state === "OPEN" &&
-			same(entry.author, viewer)
+			entry.kind === "issue" &&
+			(relates(entry, viewer) || watched.has(entry.id))
 		)
-			events.push({
-				type: "github.pr_opened",
-				pr: entry.item,
-				...(entry.author === undefined ? {} : { author: entry.author }),
-				draft: entry.draft,
-				...at,
-			});
-		// Pull requests newly linked to the viewer's Issue.
-		if (entry.kind === "issue") {
-			const known = new Set(was?.linked.map((pull) => pull.id) ?? []);
-			for (const pull of entry.linked) {
-				watched.add(pull.id);
-				if (was === undefined || known.has(pull.id) || pull.state !== "OPEN")
-					continue;
-				events.push({
-					type: "github.pr_opened",
-					pr: pull.item,
-					...(pull.author === undefined ? {} : { author: pull.author }),
-					draft: pull.draft,
-					issue: entry.item.number,
-					...placed(where, pull.item.url),
-				});
-			}
-		}
+			for (const pull of entry.linked) watched.add(pull.id);
 	}
-	return events;
 }
 
 /** The review requests against the last ones: new ones on watched boards. */
@@ -631,134 +561,78 @@ function newer<T extends { readonly at: string }>(
 	return byTime.slice(Math.max(0, byTime.length - fresh));
 }
 
-/** A watched pull request's details against its last ones. */
+/**
+ * A watched pull request's details against its last ones: new activity by
+ * its author on one the viewer reviewed (`github.reply`), the viewer's own
+ * left out.
+ */
 export function diffPullRequest(
 	before: PullDetails,
 	after: PullDetails,
 	context: {
 		readonly viewer: string;
-		/** It is the viewer's: theirs, or linked to their Issue. */
-		readonly mine: boolean;
 		readonly where: WhereLookup;
 	},
 ): OrchestratorEvent[] {
-	const { viewer, mine, where } = context;
-	const events: OrchestratorEvent[] = [];
-	const pr = after.item;
-	const at = placed(where, pr.url);
+	const { viewer, where } = context;
 	const author = after.author;
+	if (after.state !== "OPEN" || before.state !== "OPEN") return [];
 	const reviewedByMe =
 		!same(author, viewer) &&
 		after.latestReviews.some((review) => same(review.author, viewer));
-	if (before.state === "OPEN" && after.state === "MERGED") {
-		events.push({ type: "github.pr_merged", pr, ...at });
-		return events;
-	}
-	if (before.state === "OPEN" && after.state === "CLOSED") {
-		events.push({ type: "github.pr_closed", pr, ...at });
-		return events;
-	}
-	if (after.state !== "OPEN") return events;
-	if (before.draft && !after.draft)
-		events.push({
-			type: "github.pr_ready",
-			pr,
-			...(author === undefined ? {} : { author }),
-			...at,
-		});
+	if (!reviewedByMe || author === undefined) return [];
 	const reviews = newer(
 		after.reviews,
 		before.reviews,
 		before.reviewCount,
 		after.reviewCount,
 	);
-	// The viewer's own activity is never news: their agents post as them.
-	const byViewer = (who: string | undefined) => same(who, viewer);
-	if (mine) {
-		// Reviews by others: not the author's (replies in their own threads),
-		// not the viewer's.
-		const others = reviews.filter(
-			(review) =>
-				!same(review.author, author ?? "") && !byViewer(review.author),
-		);
-		// The review threads have no author here (it would cost a nested
-		// connection a pull request): a new thread is counted only when no
-		// review in the window was the author's or the viewer's, who could
-		// have opened it.
-		const ownReviews = reviews.length > others.length;
-		const by = (state: string) => [
-			...new Set(
-				others
-					.filter((review) => review.state === state)
-					.map((review) => review.author),
-			),
-		];
-		const approved = by("APPROVED");
-		if (approved.length > 0)
-			events.push({ type: "github.pr_approved", pr, by: approved, ...at });
-		const changes = by("CHANGES_REQUESTED");
-		if (changes.length > 0)
-			events.push({
-				type: "github.changes_requested",
-				pr,
-				by: changes,
-				...at,
-			});
-		const commented = others.filter((review) => review.state === "COMMENTED");
-		const count = ownReviews
-			? commented.length
-			: Math.max(commented.length, Math.max(0, after.threads - before.threads));
-		if (count > 0)
-			events.push({
-				type: "github.review_comment",
-				pr,
-				count,
-				authors: [...new Set(commented.map((review) => review.author))],
-				unresolved: after.unresolved,
-				...at,
-			});
-		const finished = (state: string | null) =>
-			state === "SUCCESS" || state === "FAILURE" || state === "ERROR";
-		if (
-			finished(after.checks) &&
-			(after.checks !== before.checks || after.headOid !== before.headOid)
-		)
-			events.push({
-				type: "github.checks",
-				pr,
-				result: after.checks === "SUCCESS" ? "passed" : "failed",
-				...(after.checks === "SUCCESS"
-					? {}
-					: { failing: after.checksFailing, total: after.checksTotal }),
-				...(after.headOid === null ? {} : { head: after.headOid }),
-				...at,
-			});
+	const replies =
+		reviews.filter((review) => same(review.author, author)).length +
+		newer(
+			after.comments,
+			before.comments,
+			before.commentCount,
+			after.commentCount,
+		).filter((comment) => same(comment.author, author)).length;
+	const commits =
+		after.headOid !== null &&
+		before.headOid !== null &&
+		after.headOid !== before.headOid &&
+		!same(after.headAuthor, viewer);
+	if (replies === 0 && !commits) return [];
+	return [
+		{
+			type: "github.reply",
+			pr: after.item,
+			author,
+			comments: replies,
+			commits,
+			...placed(where, after.item.url),
+		},
+	];
+}
+
+/** A pull request's review decision, as a line says it. */
+export function reviewWord(decision: string | null): PullFacts["review"] {
+	switch (decision) {
+		case "APPROVED":
+			return "approved";
+		case "CHANGES_REQUESTED":
+			return "changes_requested";
+		case "REVIEW_REQUIRED":
+			return "review_required";
+		default:
+			return "none";
 	}
-	if (reviewedByMe && author !== undefined) {
-		const replies =
-			reviews.filter((review) => same(review.author, author)).length +
-			newer(
-				after.comments,
-				before.comments,
-				before.commentCount,
-				after.commentCount,
-			).filter((comment) => same(comment.author, author)).length;
-		const commits =
-			after.headOid !== null &&
-			before.headOid !== null &&
-			after.headOid !== before.headOid &&
-			!byViewer(after.headAuthor);
-		if (replies > 0 || commits)
-			events.push({
-				type: "github.reply",
-				pr,
-				author,
-				comments: replies,
-				commits,
-				...at,
-			});
-	}
-	return events;
+}
+
+/** A checks rollup, as a line says it. */
+function checksWord(rollup: string | null): PullFacts["checks"] {
+	if (rollup === null) return "none";
+	if (rollup === "SUCCESS") return "passing";
+	if (FAILING.has(rollup)) return "failing";
+	return "pending";
 }
 
 // --- the interval ----------------------------------------------------------------
@@ -825,16 +699,8 @@ export interface GitHubSourcePorts {
 	readonly setTimer: (ms: number, run: () => void) => { cancel(): void };
 	/** Where the last reading is kept across restarts; absent: nowhere. */
 	readonly snapshots?: SnapshotStore;
-	/**
-	 * The open Workspaces and their agents, for `github.unattended`'s link
-	 * check (`unattended.ts`). Absent: no `github.unattended` at all.
-	 */
-	readonly links?: () => readonly LinkWorkspace[];
-	/**
-	 * The open escalations, for `github.unattended`'s cover check: an Issue
-	 * a 待機中 one is about is not unattended. Absent: none.
-	 */
-	readonly escalations?: () => readonly LinkEscalation[];
+	/** A poll has been read: what `issues` gives may have moved. */
+	readonly polled?: () => void;
 	/** How it stands (`state()`) moved. */
 	readonly changed?: () => void;
 	readonly now?: () => number;
@@ -867,14 +733,6 @@ export interface BoardCounts {
 	readonly items: number;
 	/** Issues and pull requests assigned to the viewer. */
 	readonly assigned: number;
-	readonly unattended: number;
-}
-
-/** An Issue `github.unattended` is about now, for `board --json`. */
-export interface UnattendedIssue {
-	readonly item: EventItem;
-	readonly project: string;
-	readonly lane: string | null;
 }
 
 /** Whether the rate limit is low enough that polling waits for its reset. */
@@ -905,16 +763,6 @@ export class GitHubEventSource {
 	#nextAt: number | undefined;
 	/** The poll a resume asked for, until it is done. */
 	#catchUp: Promise<void> | undefined;
-	/** Issues said to be unattended, until they are not (the episode ends). */
-	#told = new Set<string>();
-	/** The Issues unattended as of the last look, by node id. */
-	#unattended = new Map<string, UnattendedIssue>();
-	/**
-	 * Why the last look said nothing of something: the baseline, an Issue of
-	 * the viewer's that has an agent, waits in an escalation, is closed, or was
-	 * said already.
-	 */
-	#notes: string[] = [];
 
 	constructor(private readonly ports: GitHubSourcePorts) {}
 
@@ -981,9 +829,6 @@ export class GitHubEventSource {
 		this.#pulls = new Map();
 		this.#requested = undefined;
 		this.#readAt = undefined;
-		this.#told = new Set();
-		this.#unattended = new Map();
-		this.#notes = [];
 	}
 
 	/** The stored snapshot, as the memory the first poll is diffed against. */
@@ -1048,8 +893,6 @@ export class GitHubEventSource {
 		readonly problem?: string;
 		readonly watched: number;
 		readonly boards: readonly BoardCounts[];
-		readonly unattended: readonly UnattendedIssue[];
-		readonly notes: readonly string[];
 	} {
 		return {
 			mode: this.#mode,
@@ -1060,8 +903,6 @@ export class GitHubEventSource {
 			...(this.#problem === undefined ? {} : { problem: this.#problem }),
 			watched: this.#pulls.size,
 			boards: this.#counts(),
-			unattended: [...this.#unattended.values()],
-			notes: [...this.#notes],
 		};
 	}
 
@@ -1081,118 +922,62 @@ export class GitHubEventSource {
 						: entries.filter((entry) =>
 								entry.assignees.some((one) => same(one, viewer)),
 							).length,
-				unattended: [...this.#unattended.values()].filter(
-					(one) => one.project === ref,
-				).length,
 			};
 		});
 	}
 
 	/**
-	 * The Workspaces, Agents or escalations moved: look at `github.unattended` again, off
-	 * what was last read (no poll). Nothing while idle.
+	 * Every Issue on the watched boards as last read, with the pull request
+	 * that closes it; undefined until every board has been read in full (the
+	 * population is not known before).
 	 */
-	reconsider(): void {
-		if (this.#mode === "idle") return;
-		if (this.#evaluate(false)) this.ports.changed?.();
-	}
-
-	/**
-	 * Whether the Issue a pending `github.unattended` is about still is, by
-	 * what was last read and the agents now: not closed, still assigned, still
-	 * without an agent, and no escalation started waiting on it.
-	 */
-	stillUnattended(item: EventItem): boolean {
+	issues(): readonly IssueFacts[] | undefined {
 		const viewer = this.#viewer;
-		const links = this.ports.links;
-		if (viewer === undefined || links === undefined) return false;
-		const workspaces = links();
-		const escalations = this.ports.escalations?.() ?? [];
-		for (const state of this.#boards.values())
-			for (const entry of state.complete ?? [])
-				if (
-					entry.kind === "issue" &&
-					entry.item.number === item.number &&
-					same(entry.item.repo, item.repo)
-				)
-					return (
-						unattendedVerdict(entry, viewer, workspaces, escalations)
-							.unattended === true
-					);
-		return false;
-	}
-
-	/**
-	 * Every open Issue of the viewer's without an agent, said if it has not
-	 * been this episode; one that has an agent again (or is gone) is re-armed.
-	 * Whether what is unattended changed.
-	 */
-	#evaluate(poll: boolean, baselines: readonly string[] = []): boolean {
-		const viewer = this.#viewer;
-		const links = this.ports.links;
-		if (viewer === undefined || links === undefined) return false;
-		const workspaces = links();
-		const escalations = this.ports.escalations?.() ?? [];
-		const now = new Map<string, UnattendedIssue>();
-		const notes: string[] = baselines.map(
-			(ref) =>
-				`${ref}: first full pass, a baseline: no github.assigned or lane_changed from it (github.unattended is checked)`,
-		);
-		for (const [ref, state] of this.#boards)
-			for (const entry of state.complete ?? []) {
-				if (now.has(entry.id)) continue;
-				const verdict = unattendedVerdict(
-					entry,
-					viewer,
-					workspaces,
-					escalations,
-				);
-				if (verdict.unattended) {
-					now.set(entry.id, {
-						item: entry.item,
-						project: ref,
-						lane: entry.status,
-					});
-					continue;
-				}
-				const why =
-					verdict.why === "closed"
-						? "closed"
-						: verdict.why === "has an agent"
-							? `linked to agent=${verdict.agent === undefined ? "?" : verdict.agent.id.slice(0, 8)}${verdict.ws === undefined ? "" : ` in ws=${verdict.ws}`}`
-							: verdict.why === "waiting in an escalation"
-								? `waiting in esc=${String(verdict.escalation ?? "?")}`
-								: undefined;
-				if (why !== undefined)
-					notes.push(
-						`#${String(entry.item.number)} (${entry.item.repo}): no github.unattended, ${why}`,
-					);
+		if (viewer === undefined || this.#mode === "idle") return undefined;
+		const refs = this.#boardRefs();
+		if (refs.length === 0) return undefined;
+		const out: IssueFacts[] = [];
+		const seen = new Set<string>();
+		for (const ref of refs) {
+			const entries = this.#boards.get(ref)?.complete;
+			if (entries === undefined) return undefined;
+			for (const entry of entries) {
+				if (entry.kind !== "issue" || seen.has(entry.id)) continue;
+				seen.add(entry.id);
+				const pull =
+					entry.linked.find((one) => one.state === "OPEN") ??
+					entry.linked.at(-1);
+				out.push({
+					item: entry.item,
+					open: entry.state === "OPEN",
+					assignedToMe: entry.assignees.some((one) => same(one, viewer)),
+					project: ref,
+					lane: entry.status,
+					...(pull === undefined ? {} : { pull: this.#pullFacts(pull) }),
+				});
 			}
-		// Attended (or gone) now: the next stretch unattended is said again.
-		for (const id of [...this.#told]) if (!now.has(id)) this.#told.delete(id);
-		const events: OrchestratorEvent[] = [];
-		for (const [id, one] of now) {
-			if (this.#told.has(id)) {
-				notes.push(
-					`#${String(one.item.number)} (${one.item.repo}): unattended, github.unattended said already for this stretch`,
-				);
-				continue;
-			}
-			this.#told.add(id);
-			events.push({
-				type: "github.unattended",
-				item: one.item,
-				project: one.project,
-				lane: one.lane,
-			});
 		}
-		const before = [...this.#unattended.keys()].join(" ");
-		this.#unattended = now;
-		if (poll || events.length > 0) this.#notes = notes;
-		for (const event of events) this.ports.dispatch(event);
-		return (
-			events.length > 0 || before !== [...this.#unattended.keys()].join(" ")
-		);
+		return out;
+	}
+
+	#pullFacts(pull: LinkedPull): PullFacts {
+		const details = this.#pulls.get(pull.id);
+		const state =
+			pull.state === "MERGED"
+				? "merged"
+				: pull.state === "CLOSED"
+					? "closed"
+					: (details?.draft ?? pull.draft)
+						? "draft"
+						: "open";
+		return {
+			number: pull.item.number,
+			...(pull.item.url === undefined ? {} : { url: pull.item.url }),
+			state,
+			review: reviewWord(details?.reviewDecision ?? null),
+			unresolved: details?.unresolved ?? 0,
+			checks: checksWord(details?.checks ?? null),
+		};
 	}
 
 	#boardRefs(): string[] {
@@ -1328,20 +1113,6 @@ export class GitHubEventSource {
 		return ids;
 	}
 
-	/** The viewer's pull requests: theirs, or linked to their Issue. */
-	#mine(id: string, details: PullDetails, viewer: string): boolean {
-		if (same(details.author, viewer)) return true;
-		for (const state of this.#boards.values())
-			for (const entry of state.complete ?? [])
-				if (
-					entry.kind === "issue" &&
-					(relates(entry, viewer) || this.#watched.has(entry.id)) &&
-					entry.linked.some((pull) => pull.id === id)
-				)
-					return true;
-		return false;
-	}
-
 	#apply(reading: GitHubReading, refs: readonly string[]): void {
 		const viewer = reading.viewer;
 		// Another login than the one remembered: its boards are a baseline.
@@ -1360,7 +1131,6 @@ export class GitHubEventSource {
 		this.#viewer = viewer;
 		const where = this.ports.where;
 		const events: OrchestratorEvent[] = [];
-		const baselines: string[] = [];
 		for (const ref of refs) {
 			const page = reading.pages.get(ref);
 			const state = this.#boards.get(ref);
@@ -1374,22 +1144,7 @@ export class GitHubEventSource {
 			const pass = state.partial;
 			state.partial = [];
 			state.after = null;
-			if (state.complete === undefined) {
-				baselines.push(ref);
-				// The baseline: what relates to the viewer now is watched from here.
-				for (const entry of pass)
-					if (relates(entry, viewer)) {
-						this.#watched.add(entry.id);
-						for (const pull of entry.linked) this.#watched.add(pull.id);
-					}
-			} else
-				events.push(
-					...diffBoard(ref, state.complete, pass, {
-						viewer,
-						watched: this.#watched,
-						where,
-					}),
-				);
+			watchBoard(pass, viewer, this.#watched);
 			state.complete = pass;
 		}
 		if (this.#requested !== undefined)
@@ -1412,13 +1167,7 @@ export class GitHubEventSource {
 			)
 				this.#watched.add(id);
 			if (before !== undefined)
-				events.push(
-					...diffPullRequest(before, details, {
-						viewer,
-						mine: this.#mine(id, details, viewer),
-						where,
-					}),
-				);
+				events.push(...diffPullRequest(before, details, { viewer, where }));
 			this.#pulls.set(id, details);
 		}
 		// Finished ones are no longer asked about.
@@ -1427,16 +1176,7 @@ export class GitHubEventSource {
 				this.#pulls.delete(id);
 				this.#watched.delete(id);
 			}
-		// A pull request on the board and linked to an Issue is opened once.
-		const opened = new Set<string>();
-		for (const event of events) {
-			if (event.type === "github.pr_opened") {
-				const key = `${event.pr.repo}#${String(event.pr.number)}`;
-				if (opened.has(key)) continue;
-				opened.add(key);
-			}
-			this.ports.dispatch(event);
-		}
-		this.#evaluate(true, baselines);
+		for (const event of events) this.ports.dispatch(event);
+		this.ports.polled?.();
 	}
 }

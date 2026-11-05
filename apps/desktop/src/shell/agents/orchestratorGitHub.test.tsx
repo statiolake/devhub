@@ -147,20 +147,15 @@ describe("the GitHub pill", () => {
     );
   });
 
-  it("counts each board's cards: items, assigned to me, unattended", () => {
+  it("counts each board's cards: items, assigned to me", () => {
     mount({
       github: {
         state: "active",
-        boards: [
-          { ref: "acme/7", items: 42, assigned: 5, unattended: 2 },
-          { ref: "me/2" },
-        ],
+        boards: [{ ref: "acme/7", items: 42, assigned: 5 }, { ref: "me/2" }],
       },
     });
     const boards = within(card()).getByRole("list", { name: "Boards" });
-    expect(boards).toHaveTextContent(
-      "acme/7 · 42 items, 5 assigned to me, 2 unattended",
-    );
+    expect(boards).toHaveTextContent("acme/7 · 42 items, 5 assigned to me");
     expect(boards).toHaveTextContent("me/2 · not read yet");
   });
 

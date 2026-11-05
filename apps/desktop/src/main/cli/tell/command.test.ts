@@ -167,6 +167,22 @@ describe("devhub --tell's arguments", () => {
 		).toEqual({ verb: "agent-manage", agent: "A", managed: false });
 	});
 
+	it("reads agent keep with a note or --clear, never both or neither", () => {
+		expect(told("agent", "keep", "A", "--note", " 他チームの依頼 ")).toEqual({
+			verb: "agent-keep",
+			agent: "A",
+			note: "他チームの依頼",
+		});
+		expect(told("agent", "keep", "A", "--clear")).toEqual({
+			verb: "agent-keep",
+			agent: "A",
+		});
+		expect(refusal("agent", "keep", "A")).toContain("--note");
+		expect(refusal("agent", "keep", "A", "--note", "x", "--clear")).toContain(
+			"--clear",
+		);
+	});
+
 	it("reads issue assign with a branch of the caller's choosing", () => {
 		expect(
 			told(

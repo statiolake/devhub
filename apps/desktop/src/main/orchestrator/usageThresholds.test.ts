@@ -205,6 +205,7 @@ describe("usage.threshold through the dispatcher", () => {
 				event_prompt: "{EVENT}",
 				init_prompt: undefined,
 				events: DEFAULT_ORCHESTRATOR_EVENTS,
+				delivery_interval: "5m",
 			}),
 			deliver: (_agent, text) => delivered.push(text),
 			busy: () => held,

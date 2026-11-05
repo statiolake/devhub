@@ -129,6 +129,15 @@ export type TellCommand =
 			readonly managed?: boolean;
 	  }
 	| {
+			/**
+			 * `agent keep <a> --note <text>`: an unsettled managed agent left as
+			 * it is, for the reason given; `--clear` (no note) ends that.
+			 */
+			readonly verb: "agent-keep";
+			readonly agent: string;
+			readonly note?: string;
+	  }
+	| {
 			/** `agent manage` / `agent unmanage`: the orchestrator's managed flag. */
 			readonly verb: "agent-manage";
 			readonly agent: string;
@@ -450,8 +459,9 @@ workspaces
                                    CI (--json: the row tooltip's facts under
                                    "github", null when unknown, and fetchedAt)
   workspace status <w>             one workspace in detail: branch, worktree,
-                                   Issue (number, title, state, url), pull
-                                   request (and draft), unresolved
+                                   Issue (number, title, state, url, its
+                                   Projects lanes), pull request (draft,
+                                   review decision), unresolved
                                    conversations, CI counts, and as of when
   workspace open <path> [--worktree <branch>]
                                    open a folder as a workspace (Cmd+Q f);
@@ -495,7 +505,11 @@ agents
                                    last activity, open questions and
                                    permission prompts, entries you have not
                                    read and the cursor, context use, prompt
-                                   cache, and why it stopped or broke
+                                   cache, why it stopped or broke, whether
+                                   it is managed, and how it stands against
+                                   the invariant (settled or unsettled and
+                                   its facts, the 待機中 escalation it is
+                                   on, agent keep's note)
   agent new --workspace <w> --profile <p> --gui|--tui --managed|--unmanaged
             [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
                                    start an agent (Cmd+Q c) and, with
@@ -509,6 +523,12 @@ agents
   agent unmanage <a>               management, or take it out (kept across
                                    restarts and resumes; shown in 'agents',
                                    'agent status' and the row)
+  agent keep <a> --note <text>     leave an unsettled managed agent as it is,
+  agent keep <a> --clear           for the reason given: it is not said
+                                   again ('unsettled') until its facts change
+                                   (its status, its Issue, its PR). Shown in
+                                   'agent status', 'board' and the row's
+                                   tooltip; --clear ends it
   agent rename <a> <name>          the row menu's Rename...: the name the
   agent rename <a> --clear         Sidebar, the pane and the resume lists
                                    show (--clear: back to DevHub's label)
@@ -706,10 +726,10 @@ orchestrator (the Orchestrator row: the board, escalations, events)
   board                            the lanes as data: needs_answer (oldest
                                    first), in_progress (how long since the
                                    answer, 停滞 marked), waiting (each
-                                   trigger and time, soonest first); while
-                                   GitHub is polled, the unattended Issues
-                                   (assigned to me, open, no agent on them:
-                                   --json unattendedIssues)
+                                   trigger and time, soonest first), and
+                                   what breaks the invariant now: each
+                                   unsettled Issue or managed agent with
+                                   its facts (--json unsettled)
   escalation new --title <t> --body <text>|- [--agent <a>]...
                  [--link <url>]... [--option <text>]... [--workspace <w>]
                  [--priority high|normal|low] [--effort quick|normal|deep]
@@ -759,15 +779,15 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    (or --prompt). Refused while one runs
   orchestrator status              its agent, state, lane counts, whether
                                    its events are paused, and each GitHub
-                                   board's items, assigned to me, unattended
+                                   board's items and assigned to me
   orchestrator stop | restart      Stop Agent / Restart Session on it
-  orchestrator pause | resume      hold its events / deliver the held ones,
-                                   in order, as one message
+  orchestrator pause | resume      hold its events / deliver the held ones:
+                                   the person's words each alone, then the
+                                   rest as one message
   orchestrator events [--last <n>] the recent events, one line each, and what
                                    came of them: delivered, pending, filtered,
-                                   coalesced, dropped (default 20; --json: data),
-                                   then why the last GitHub look said nothing
-                                   of some cards (baseline, has an agent, …)
+                                   coalesced, dropped-stale, dropped
+                                   (default 20; --json: data)
   orchestrator emit --type custom.<name> --text <text>|-
                                    send a custom event, through the same
                                    filter and coalescing as DevHub's own
@@ -1579,6 +1599,26 @@ function parseAgent(
 				}),
 			};
 		}
+		case "keep": {
+			const flags = readFlags(rest, {
+				values: ["--note"],
+				switches: ["--clear"],
+			});
+			const [agent] = positionals(flags, ["<agent>"]);
+			const note = one(flags, "--note");
+			const clear = flags.switches.has("--clear");
+			if (clear === (note !== undefined))
+				throw new Refusal(
+					"agent keep takes --note <text> (why it is left as it is) or --clear.",
+				);
+			if (note !== undefined && note.trim().length === 0)
+				throw new Refusal("--note needs the reason.");
+			return {
+				verb: "agent-keep",
+				agent: agent!,
+				...(note === undefined ? {} : { note: note.trim() }),
+			};
+		}
 		case "manage":
 		case "unmanage": {
 			const [agent] = positionals(readFlags(rest, NO_FLAGS), ["<agent>"]);
@@ -1796,7 +1836,7 @@ function parseAgent(
 		}
 		default:
 			throw new Refusal(
-				"agent takes: new, read, send, interrupt, requests, answer, wait, status, stop, restart, resume, rename, meta, manage, unmanage.",
+				"agent takes: new, read, send, interrupt, requests, answer, wait, status, stop, restart, resume, rename, meta, manage, unmanage, keep.",
 			);
 	}
 }
@@ -2142,6 +2182,12 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				...optionalPresentation(record),
 				...optionalMeta(record),
 				...optionalManaged(record),
+			};
+		case "agent-keep":
+			return {
+				verb: "agent-keep",
+				agent: text(record, "agent"),
+				...optionalText(record, "note"),
 			};
 		case "agent-manage": {
 			if (typeof record["managed"] !== "boolean")

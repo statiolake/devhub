@@ -92,6 +92,8 @@ export interface PullRequestStatus {
 	readonly title: string;
 	readonly state: "open" | "draft" | "closed" | "merged";
 	readonly conversations: ConversationCount;
+	/** GitHub's review decision; absent when it has none. */
+	readonly review?: "approved" | "changes_requested" | "review_required";
 	/** Its head commit's CI, or absent when nothing has reported on that commit. */
 	readonly checks?: CheckSummary;
 }
@@ -213,7 +215,7 @@ const QUERY = `query($owner:String!,$name:String!,$branch:String!,$number:Int!,$
   repository(owner:$owner,name:$name){
     pullRequests(headRefName:$branch, first:$prs, orderBy:{field:UPDATED_AT,direction:DESC}){
       nodes{
-        number url title state isDraft headRepositoryOwner{ login }
+        number url title state isDraft reviewDecision headRepositoryOwner{ login }
         reviewThreads(first:$threads){ totalCount nodes{ isResolved } }
         commits(last:1){ nodes{ commit{ statusCheckRollup{
           state
@@ -380,6 +382,8 @@ interface GraphQlPullRequest {
 	/** GitHub's own enum: `OPEN`, `CLOSED` or `MERGED`. */
 	readonly state: string;
 	readonly isDraft: boolean;
+	/** `APPROVED`, `CHANGES_REQUESTED`, `REVIEW_REQUIRED`, or null. */
+	readonly reviewDecision?: string | null;
 	/** Whose copy of the repository the branch is in. Null once a fork is gone. */
 	readonly headRepositoryOwner: { readonly login: string } | null;
 	/** Absent only when GitHub did not answer the field it was asked for. */
@@ -707,10 +711,27 @@ export async function readBranchStatus(
 					title: chosen.title,
 					state: pullRequestState(chosen),
 					conversations: conversationCount(chosen, reference),
+					...reviewOf(chosen.reviewDecision),
 					checks: checkSummary(chosen, reference),
 				}
 			: undefined,
 	};
+}
+
+/** GitHub's review decision in the row's words; nothing when it has none. */
+function reviewOf(decision: string | null | undefined): {
+	readonly review?: PullRequestStatus["review"];
+} {
+	switch (decision) {
+		case "APPROVED":
+			return { review: "approved" };
+		case "CHANGES_REQUESTED":
+			return { review: "changes_requested" };
+		case "REVIEW_REQUIRED":
+			return { review: "review_required" };
+		default:
+			return {};
+	}
 }
 
 /**

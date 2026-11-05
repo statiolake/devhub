@@ -21,6 +21,7 @@ import {
 import { clampSidebarWidth, sidebarWorkspaces } from "../../../ipc/appShell";
 import {
   EMPTY_BOARD,
+  type AgentOrchestrationWire,
   type WorkspaceRepositoryWire,
 } from "../../../ipc/contract";
 import { closingDeletesWorktree } from "../../../model/worktrees";
@@ -500,6 +501,10 @@ function AgentTree({
 }) {
   const dispatch = useSidebarDispatch();
   const selectRow = useSelectRow();
+  // What the orchestration says of each Agent (a Sidebar with no board: none).
+  const agentStates =
+    ((useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD)
+      .agentStates ?? {};
   const selectedAgentId =
     snapshot.selection.context.kind === "agent"
       ? snapshot.selection.context.agentId
@@ -612,7 +617,7 @@ function AgentTree({
               // the tooltip is about in either state, so the row is what
               // it is anchored on.
               data-tooltip-lines={JSON.stringify(
-                tooltipLines(agentTooltipFacts(agent)),
+                tooltipLines(agentTooltipFacts(agent, agentStates[agent.id])),
               )}
               // The prompt cache's line is a countdown, composed when the
               // tooltip is drawn (`RowTooltip`), not when the row is.
@@ -676,7 +681,10 @@ function AgentTree({
                     {note ? <span className="row-note">{note}</span> : null}
                   </span>
                 </button>
-                <AgentMarks agent={agent} />
+                <AgentMarks
+                  agent={agent}
+                  orchestration={agentStates[agent.id]}
+                />
                 {agent.controlState.kind === "stopping" ? null : (
                   <button
                     className="row-action-button agent-row-action"
@@ -703,15 +711,42 @@ function AgentTree({
 }
 
 /**
- * The orchestrator's marks on an Agent's row, after its words: that it is
- * under the orchestrator's management (`Agent.managed`). Quiet, like the
- * row's other context; the tooltip says it in words (`agentTooltipFacts`).
+ * The orchestrator's marks on an Agent's row, after its words: under the
+ * orchestrator's management (`Agent.managed`); one of a 待機中 escalation's
+ * agents — stopped, but fine; unsettled — managed, stopped, and nothing
+ * settles it (missed); kept as it is by the orchestrator. Quiet, like the
+ * row's other context, but for "unsettled"; the tooltip says each in words
+ * (`agentTooltipFacts`), off the board (`OrchestratorBoardWire.agentStates`).
  */
-function AgentMarks({ agent }: { readonly agent: AgentSnapshot }) {
-  if (agent.managed !== true) return null;
+function AgentMarks({
+  agent,
+  orchestration,
+}: {
+  readonly agent: AgentSnapshot;
+  readonly orchestration: AgentOrchestrationWire | undefined;
+}) {
+  const marks: GlyphName[] = [
+    ...(agent.managed === true ? (["orchestrator"] as const) : []),
+    ...(orchestration?.waiting === undefined
+      ? []
+      : (["orchestratorWaiting"] as const)),
+    ...(orchestration?.unsettled === undefined
+      ? []
+      : (["orchestratorUnsettled"] as const)),
+    ...(orchestration?.kept === undefined
+      ? []
+      : (["orchestratorKept"] as const)),
+  ];
+  if (marks.length === 0) return null;
   return (
     <span className="row-agent-marks">
-      <Glyph name="orchestrator" className="row-agent-mark is-managed" />
+      {marks.map((name) => (
+        <Glyph
+          key={name}
+          name={name}
+          className={`row-agent-mark${name === "orchestratorUnsettled" ? " is-unsettled" : ""}`}
+        />
+      ))}
     </span>
   );
 }

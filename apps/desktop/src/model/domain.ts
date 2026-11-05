@@ -994,8 +994,8 @@ export function agentAtPrompt(status: AgentStatus): boolean {
  *
  * **One rule for "is it done yet".** The other half is `agentTurnDone`. What
  * the person is told ("Finished", `agentNotifications.ts`), what the
- * orchestrator hears (`agent.turn_ended`, and its drop as stale at delivery)
- * and whether an escalation has stalled (`escalation.stalled`) all go by
+ * orchestrator's invariant counts as working (`invariant.ts`) and whether an
+ * escalation has stalled (停滞 on the board) all go by
  * these two, so none of them says "done" while background work runs.
  */
 export function agentAtWork(status: string): boolean {

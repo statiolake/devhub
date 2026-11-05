@@ -4,6 +4,7 @@ import {
   configDocument,
   defaultConfig,
   interpretConfig as interpretDocument,
+  retiredKeysIn,
 } from "./config.js";
 
 const interpretConfig = (document: Record<string, unknown>) =>
@@ -39,15 +40,15 @@ describe("[orchestrator] settings", () => {
   it("reads events, [orchestrator.github] and [[orchestrator.timers]]", () => {
     const config = interpretConfig({
       orchestrator: {
-        events: ["github.*", "!github.checks", "agent.turn_ended"],
+        events: ["github.*", "!github.reply", "unsettled"],
         github: { projects: ["my-org/7"], interval: "2m" },
         timers: [{ name: "tick", interval: "5m" }],
       },
     });
     expect(config.orchestrator.events).toEqual([
       "github.*",
-      "!github.checks",
-      "agent.turn_ended",
+      "!github.reply",
+      "unsettled",
     ]);
     expect(config.orchestrator.github).toEqual({
       projects: ["my-org/7"],
@@ -59,7 +60,7 @@ describe("[orchestrator] settings", () => {
     expect(orchestratorProblem(config.orchestrator)).toBeUndefined();
     // And writes them back as tables.
     expect(configDocument(config)["orchestrator"]).toMatchObject({
-      events: ["github.*", "!github.checks", "agent.turn_ended"],
+      events: ["github.*", "!github.reply", "unsettled"],
       github: { projects: ["my-org/7"], interval: "2m" },
       timers: [{ name: "tick", interval: "5m" }],
     });
@@ -93,7 +94,9 @@ describe("[orchestrator] settings", () => {
 
   it("reads usage_thresholds, defaults it to 80 and 95, and refuses what is not a percent", () => {
     expect(interpretConfig({}).orchestrator.usage_thresholds).toEqual([80, 95]);
-    expect(DEFAULT_ORCHESTRATOR_EVENTS).toContain("usage.threshold");
+    expect(eventAllowed("usage.threshold", DEFAULT_ORCHESTRATOR_EVENTS)).toBe(
+      true,
+    );
     expect(
       interpretConfig({ orchestrator: { usage_thresholds: [50, 90] } })
         .orchestrator.usage_thresholds,
@@ -121,31 +124,54 @@ describe("[orchestrator] settings", () => {
     ).toMatchObject({ usage_thresholds: [70] });
   });
 
-  it("reads wait_reminder_interval, defaults it to 1h, and refuses what is not an interval", () => {
-    expect(interpretConfig({}).orchestrator.wait_reminder_interval).toBe("1h");
+  it("reads delivery_interval and reminder_interval, defaults them to 5m and 1h, and refuses what is not an interval", () => {
+    expect(interpretConfig({}).orchestrator.delivery_interval).toBe("5m");
+    expect(interpretConfig({}).orchestrator.reminder_interval).toBe("1h");
     expect(
-      interpretConfig({ orchestrator: { wait_reminder_interval: "30m" } })
-        .orchestrator.wait_reminder_interval,
-    ).toBe("30m");
-    for (const bad of ["30s", "1", "soon", "8d"])
+      interpretConfig({ orchestrator: { delivery_interval: "90s" } })
+        .orchestrator.delivery_interval,
+    ).toBe("90s");
+    for (const bad of ["5s", "1", "soon", "8d"])
       expect(
         orchestratorProblem({
           ...DEFAULT_ORCHESTRATOR,
-          wait_reminder_interval: bad,
+          delivery_interval: bad,
         }),
-      ).toBe("wait_reminder_interval");
-    expect(() =>
-      interpretConfig({ orchestrator: { wait_reminder_interval: "10s" } }),
-    ).toThrow();
+      ).toBe("delivery_interval");
+    for (const bad of ["1m", "soon"])
+      expect(
+        orchestratorProblem({
+          ...DEFAULT_ORCHESTRATOR,
+          reminder_interval: bad,
+        }),
+      ).toBe("reminder_interval");
     expect(
       configDocument(defaultConfig())["orchestrator"] ?? {},
-    ).not.toHaveProperty("wait_reminder_interval");
+    ).not.toHaveProperty("delivery_interval");
     expect(
       configDocument({
         ...defaultConfig(),
-        orchestrator: { ...DEFAULT_ORCHESTRATOR, wait_reminder_interval: "2h" },
+        orchestrator: { ...DEFAULT_ORCHESTRATOR, reminder_interval: "2h" },
       })["orchestrator"],
-    ).toMatchObject({ wait_reminder_interval: "2h" });
+    ).toMatchObject({ reminder_interval: "2h" });
+  });
+
+  it("loads a retired wait_reminder_interval and retired event patterns, leaves them out, and says so", () => {
+    const document = {
+      orchestrator: {
+        wait_reminder_interval: "30m",
+        events: ["*", "!agent.turn_ended", "github.lane_changed", "github.*"],
+      },
+    };
+    expect(interpretConfig(document).orchestrator.events).toEqual([
+      "*",
+      "github.*",
+    ]);
+    expect(retiredKeysIn(document).map((one) => one.key)).toEqual([
+      "orchestrator.wait_reminder_interval",
+      'orchestrator.events "!agent.turn_ended"',
+      'orchestrator.events "github.lane_changed"',
+    ]);
   });
 
   it("defaults the events to the 待機中 and 停滞 ones, without 不明; an old unaccounted pattern is valid and matches nothing", () => {
@@ -165,21 +191,18 @@ describe("[orchestrator] settings", () => {
   });
 
   it("filters by the last matching pattern, and always lets init through", () => {
-    const patterns = ["github.*", "!github.checks", "agent.turn_ended"];
-    expect(eventAllowed("github.assigned", patterns)).toBe(true);
-    expect(eventAllowed("github.checks", patterns)).toBe(false);
-    expect(eventAllowed("agent.turn_ended", patterns)).toBe(true);
-    expect(eventAllowed("agent.started", patterns)).toBe(false);
+    const patterns = ["github.*", "!github.reply", "unsettled"];
+    expect(eventAllowed("github.review_requested", patterns)).toBe(true);
+    expect(eventAllowed("github.reply", patterns)).toBe(false);
+    expect(eventAllowed("unsettled", patterns)).toBe(true);
+    expect(eventAllowed("waiting.changed", patterns)).toBe(false);
     expect(eventAllowed("init", [])).toBe(true);
     expect(eventAllowed("custom.deploy", ["*"])).toBe(true);
     expect(eventPatternProblem("timer.*")).toBe(false);
     expect(eventPatternProblem("!agent.started")).toBe(false);
     expect(eventPatternProblem("a b")).toBe(true);
-    // The default leaves out the chatter.
-    expect(eventAllowed("agent.started", DEFAULT_ORCHESTRATOR_EVENTS)).toBe(
-      false,
-    );
-    expect(eventAllowed("github.pr_merged", DEFAULT_ORCHESTRATOR_EVENTS)).toBe(
+    // The default is everything: there is no chatter left to filter.
+    expect(eventAllowed("github.reply", DEFAULT_ORCHESTRATOR_EVENTS)).toBe(
       true,
     );
   });

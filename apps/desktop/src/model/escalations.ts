@@ -707,7 +707,7 @@ export function dueWords(dueAt: number, now: number): string {
 
 /**
  * How long a 対応中 escalation may stand with none of its agents working
- * before it is 停滞 (`escalation.stalled`): a minute. Just after an answer is
+ * before it is 停滞 (marked on the board): a minute. Just after an answer is
  * read, the orchestrator relays it and sets an agent going; a marker that
  * blinked in that moment would be noise nobody reads.
  */

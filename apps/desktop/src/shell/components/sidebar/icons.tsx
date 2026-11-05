@@ -73,7 +73,10 @@ export type GlyphName =
   | "branch"
   | "project"
   | "copy"
-  | "orchestrator";
+  | "orchestrator"
+  | "orchestratorWaiting"
+  | "orchestratorUnsettled"
+  | "orchestratorKept";
 
 const GLYPHS: Record<GlyphName, ReactNode> = {
   /* Removing a worktree. A bin rather than an X, because the two things a row
@@ -179,6 +182,21 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
       <path d="M8 4.05V6.5M4.1 11 6.4 9.5M11.9 11 9.6 9.5" />
     </>
   ),
+
+  /* What the orchestration says of an Agent, after its words: parked on a
+     待機中 escalation (an hourglass), stopped with nothing settling it (a
+     warning), and left as it is by the orchestrator, for a reason (a tick). */
+  orchestratorWaiting: (
+    <path d="M4.5 2.6h7M4.5 13.4h7M5.4 2.6c0 3.1 5.2 3.3 5.2 5.4s-5.2 2.3-5.2 5.4M10.6 2.6c0 3.1-5.2 3.3-5.2 5.4s5.2 2.3 5.2 5.4" />
+  ),
+  orchestratorUnsettled: (
+    <>
+      <path d="M8 2.6 13.8 12.9H2.2Z" />
+      <path d="M8 6.4v3.1" />
+      <circle className="glyph-fill" cx="8" cy="11.2" r="0.75" />
+    </>
+  ),
+  orchestratorKept: <path d="M3.4 8.4l3 3 6.2-6.8" />,
 
   close: <path d="M4.75 4.75l6.5 6.5M11.25 4.75l-6.5 6.5" />,
 

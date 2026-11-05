@@ -5,6 +5,7 @@ import type {
   WorkspaceSnapshot,
 } from "../../../ipc/appShell";
 import type {
+  AgentOrchestrationWire,
   TooltipFactLineWire,
   TooltipLineWire,
   WorkspaceRepositoryWire,
@@ -752,7 +753,10 @@ export function agentRowDescription(
  * remains what the row's `aria-label` is composed from — the same facts, in
  * the form the reader who needs them can receive.
  */
-export function agentTooltipFacts(agent: AgentSnapshot): RowFact[] {
+export function agentTooltipFacts(
+  agent: AgentSnapshot,
+  orchestration?: AgentOrchestrationWire,
+): RowFact[] {
   const unread = unreadShows(agent.status, agent.unread);
   return said([
     {
@@ -770,6 +774,29 @@ export function agentTooltipFacts(agent: AgentSnapshot): RowFact[] {
           style: "muted",
         }
       : undefined,
+    // What the orchestration says of it: parked on a 待機中 escalation (and
+    // what it waits on), unsettled (and its facts), kept as it is (and why).
+    orchestration?.waiting === undefined
+      ? undefined
+      : {
+          icon: "orchestratorWaiting",
+          text: `Waiting (#${String(orchestration.waiting.escalationId)}): ${orchestration.waiting.trigger}`,
+          style: "muted",
+        },
+    orchestration?.unsettled === undefined
+      ? undefined
+      : {
+          icon: "orchestratorUnsettled",
+          text: `Unsettled: ${orchestration.unsettled}`,
+          tone: "waiting",
+        },
+    orchestration?.kept === undefined
+      ? undefined
+      : {
+          icon: "orchestratorKept",
+          text: `Kept as it is: ${orchestration.kept.note}`,
+          style: "muted",
+        },
     // Its own key/value pairs (`model/agentMeta.ts`), quietly, one a line:
     // somebody's notes about the Agent, never the row's business.
     ...Object.entries(agent.meta ?? {}).map(

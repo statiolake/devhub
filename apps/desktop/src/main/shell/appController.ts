@@ -149,7 +149,6 @@ import type {
 } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
 import { isDevhubLink } from "../../model/devhubLink.js";
-import { escalationState } from "../../model/escalations.js";
 import { fileSelection } from "../agent/conversation/pathLinks.js";
 import {
 	routeAgentOpen,
@@ -376,12 +375,12 @@ import {
 	watchRoot,
 } from "../orchestrator/orchestratorFiles.js";
 import { workspaceToken } from "../orchestrator/events.js";
-import {
-	AgentEventSource,
-	WorkspaceEventSource,
-} from "../orchestrator/liveEvents.js";
 import { GitHubEventSource } from "../orchestrator/githubEvents.js";
-import type { LinkWorkspace } from "../orchestrator/unattended.js";
+import {
+	ISSUE_LINK_KEY,
+	type InvariantAgent,
+	type PullFacts,
+} from "../orchestrator/invariant.js";
 import { GitHubSnapshotFile } from "../orchestrator/githubSnapshot.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import {
@@ -5045,8 +5044,8 @@ export class AppController {
 			this.publishCondition(REPOSITORY_STATUS_CONDITION, status.diagnostic);
 			// Review comments arriving and CI failing are news from here.
 			this.runAutomaticActions();
-			// A branch now names an Issue (or no longer does): github.unattended.
-			this.githubEvents.reconsider();
+			// A pull request moved: the invariant's facts may have.
+			this.orchestrator?.observe();
 			const after = this.orderedWorkspaceIds();
 			if (before.join("\0") !== after.join("\0")) {
 				this.send(CHANNELS.snapshotChanged, this.snapshot());
@@ -9510,10 +9509,6 @@ export class AppController {
 			console.error(`[devhub] ${refused}`);
 			this.publishError(errorWire(new Error(refused)));
 		}
-		// An escalation started or stopped waiting: github.unattended may move.
-		store.onChange(() => {
-			this.githubEvents.reconsider();
-		});
 		this.orchestrator = new OrchestratorService({
 			store,
 			agents: () => this.liveAgents(),
@@ -9532,8 +9527,11 @@ export class AppController {
 						"[devhub] an orchestrator event could not be queued: the agents are not running yet",
 					);
 			},
-			// Mid-turn, on a question, or still holding something of ours: the
-			// events wait, and go out together once it can take them.
+			// In a foreground turn, or still holding something of ours: a batch
+			// waits, and goes out once it can take it. Its own background work
+			// (shells, tasks, subagents: `background`) holds nothing — the
+			// router is never blocked by the subagents it started — and the
+			// person's words never wait for this at all.
 			busy: (agentId) => {
 				const agent = this.coordinator
 					.snapshot()
@@ -9541,11 +9539,13 @@ export class AppController {
 					.find((one) => one.id === agentId);
 				return (
 					agent !== undefined &&
-					(agent.status === "working" ||
-						agent.status === "waiting" ||
-						agent.injection.queued > 0)
+					(agent.status === "working" || agent.injection.queued > 0)
 				);
 			},
+			invariant: () => ({
+				issues: this.githubEvents.issues(),
+				agents: this.invariantAgents(),
+			}),
 			publish: (board) => {
 				this.send(CHANNELS.orchestratorBoardChanged, board);
 				// The escalation being read may have been retitled.
@@ -9557,7 +9557,6 @@ export class AppController {
 				this.followGitHub(paused);
 				return paused ? undefined : this.githubEvents.caughtUp();
 			},
-			githubUnattended: (item) => this.githubEvents.stillUnattended(item),
 			github: () => {
 				const state = this.githubEvents.state();
 				const counted = new Map(state.boards.map((one) => [one.ref, one]));
@@ -9573,7 +9572,6 @@ export class AppController {
 								: {
 										items: one.items,
 										assigned: one.assigned,
-										unattended: one.unattended,
 									}),
 						};
 					});
@@ -9593,21 +9591,6 @@ export class AppController {
 								},
 							}),
 					...(boards.length === 0 ? {} : { boards }),
-					...(state.mode === "idle"
-						? {}
-						: {
-								unattended: state.unattended.map((one) => ({
-									repo: one.item.repo,
-									number: one.item.number,
-									...(one.item.title === undefined
-										? {}
-										: { title: one.item.title }),
-									...(one.item.url === undefined ? {} : { url: one.item.url }),
-									project: one.project,
-									lane: one.lane,
-								})),
-								notes: state.notes,
-							}),
 					...(state.problem === undefined ? {} : { problem: state.problem }),
 				};
 			},
@@ -9708,27 +9691,6 @@ export class AppController {
 		this.observeLiveEvents();
 	}
 
-	/** `workspace.*` and `agent.*` events, read off the projection. */
-	private readonly workspaceEvents = new WorkspaceEventSource((event) => {
-		this.orchestrator?.events.dispatch(event);
-	});
-	private readonly agentEvents = new AgentEventSource({
-		dispatch: (event) => {
-			this.orchestrator?.events.dispatch(event);
-		},
-		conversation: (agentId) => this.tellPorts().conversation(agentId),
-		setTimer: (ms, run) => {
-			const timer = setTimeout(run, ms);
-			return { cancel: () => clearTimeout(timer) };
-		},
-	});
-
-	/**
-	 * Feed the Workspace and Agent sources the projection, while there is an
-	 * orchestrator to tell. Without one they forget, so the first projection
-	 * after a start is their baseline rather than a flood. The orchestrator's
-	 * own Workspace and agent are left out: it is never told about itself.
-	 */
 	/**
 	 * `github.*` events: the configured Projects boards, polled while an
 	 * orchestrator runs. Shares the Workspace watcher's token, client and
@@ -9752,18 +9714,8 @@ export class AppController {
 			this.orchestrator?.events.dispatch(event);
 		},
 		where: (url) => this.githubWhere(url),
-		links: () => this.githubLinks(),
-		// An Issue a 待機中 escalation is about is being handled.
-		escalations: () =>
-			(this.orchestrator?.open() ?? []).map((one) => ({
-				id: one.id,
-				state: escalationState(one),
-				links: one.links,
-				agents: one.agents,
-				...(one.workspaceId === undefined
-					? {}
-					: { workspaceId: one.workspaceId }),
-			})),
+		// What the invariant reads may have moved.
+		polled: () => this.orchestrator?.observe(),
 		// `<userData>/devhub/orchestrator-github.json`, once the profile is known.
 		snapshots: {
 			load: () => this.githubSnapshots?.load(),
@@ -9794,49 +9746,47 @@ export class AppController {
 	}
 
 	/**
-	 * The open Workspaces as `github.unattended`'s link check reads them
-	 * (`unattended.ts`): the Issue each one's branch names, and its agents,
-	 * the orchestrator left out.
+	 * Every agent as the invariant reads it (`invariant.ts`): managed or not,
+	 * its status, the Issue its meta `issue=` links it to, and its
+	 * Workspace's pull request as the Sidebar has it.
 	 */
-	private githubLinks(): readonly LinkWorkspace[] {
+	private invariantAgents(): readonly InvariantAgent[] {
 		const snapshot = this.coordinator.snapshot();
-		const orchestrator = this.orchestrator?.orchestratorAgentId;
-		return snapshot.workspaces.map((workspace) => {
+		return snapshot.workspaces.flatMap((workspace) => {
 			const row = this.lastRepositoryStatus.workspaces.find(
 				(one) => one.workspaceId === workspace.id,
 			);
-			const repo = row?.issueRepository;
-			const number =
-				row?.branch === undefined
+			const pr = row?.pullRequest;
+			const pull: PullFacts | undefined =
+				pr === undefined
 					? undefined
-					: issueNumberFromBranch(row.branch);
-			return {
-				ws:
-					workspace.id === snapshot.scratchWorkspaceId
-						? "scratch"
-						: workspaceToken(workspace.label, workspace.id),
-				id: workspace.id,
-				label: workspace.label,
-				issueUrls: [
-					...(number === undefined || repo === undefined
-						? []
-						: [
-								`https://github.com/${repo.owner}/${repo.repository}/issues/${String(number)}`,
-							]),
-					...(row?.issue === undefined ? [] : [row.issue.url]),
-				],
-				...(repo === undefined
+					: {
+							number: pr.number,
+							url: pr.url,
+							state: pr.state,
+							review: pr.review ?? "none",
+							unresolved: pr.conversations.unresolved,
+							checks: pr.checks?.state ?? "none",
+						};
+			const ws =
+				workspace.id === snapshot.scratchWorkspaceId
+					? "scratch"
+					: workspaceToken(workspace.label, workspace.id);
+			return workspace.agents.map((agent) => ({
+				id: agent.id,
+				name: agent.displayName,
+				ws,
+				workspaceId: workspace.id,
+				workspaceLabel: workspace.label,
+				managed: agent.managed === true,
+				// A maintenance turn is read at the status before it (the service).
+				status: agent.status,
+				stopping: agent.controlState.kind !== "running",
+				...(agent.meta?.[ISSUE_LINK_KEY] === undefined
 					? {}
-					: { repo: `${repo.owner}/${repo.repository}` }),
-				agents: workspace.agents
-					.filter((agent) => agent.id !== orchestrator)
-					.map((agent) => ({
-						id: agent.id,
-						name: agent.displayName,
-						live: agent.controlState.kind === "running",
-						meta: agent.meta ?? {},
-					})),
-			};
+					: { issue: agent.meta[ISSUE_LINK_KEY] }),
+				...(pull === undefined ? {} : { pull }),
+			}));
 		});
 	}
 
@@ -9867,86 +9817,9 @@ export class AppController {
 		};
 	}
 
+	/** GitHub polling follows the orchestrator, read off every projection. */
 	private observeLiveEvents(): void {
-		const orchestrator = this.orchestrator?.orchestratorAgentId;
 		this.followGitHub();
-		// An agent came or went, a branch moved: who is unattended may have.
-		this.githubEvents.reconsider();
-		if (orchestrator === undefined) {
-			this.workspaceEvents.reset();
-			this.agentEvents.reset();
-			return;
-		}
-		const snapshot = this.coordinator.snapshot();
-		const wsOf = (workspace: (typeof snapshot.workspaces)[number]) =>
-			workspace.id === snapshot.scratchWorkspaceId
-				? "scratch"
-				: workspaceToken(workspace.label, workspace.id);
-		const spaces = snapshot.workspaces.filter(
-			(workspace) =>
-				!workspace.agents.some((agent) => agent.id === orchestrator),
-		);
-		this.workspaceEvents.observe(
-			spaces.map((workspace) => {
-				const repository = this.lastRepositoryStatus.workspaces.find(
-					(row) => row.workspaceId === workspace.id,
-				);
-				const pr = repository?.pullRequest;
-				const agent = workspace.agents[0];
-				const repo = repository?.issueRepository;
-				return {
-					id: workspace.id,
-					ws: wsOf(workspace),
-					root: workspace.root,
-					...(repository?.branch === undefined
-						? {}
-						: { branch: repository.branch }),
-					...(pr === undefined
-						? {}
-						: {
-								pullRequest: {
-									repo:
-										repo === undefined
-											? ""
-											: `${repo.owner}/${repo.repository}`,
-									number: pr.number,
-									title: pr.title,
-									url: pr.url,
-								},
-							}),
-					...(agent === undefined
-						? {}
-						: { agent: { id: agent.id, name: agent.displayName } }),
-				};
-			}),
-		);
-		this.agentEvents.observe(
-			snapshot.workspaces.flatMap((workspace) =>
-				workspace.agents
-					// Only the agents the orchestrator manages are its to hear of.
-					.filter((agent) => agent.id !== orchestrator && agent.managed)
-					.map((agent) => ({
-						id: agent.id,
-						name: agent.displayName,
-						ws: wsOf(workspace),
-						status: agent.status,
-						...(agent.failure === undefined
-							? {}
-							: {
-									failure:
-										agent.failure.detail === undefined
-											? agent.failure.code
-											: `${agent.failure.code}: ${agent.failure.detail}`,
-								}),
-						profile: agent.profileId,
-						gui: agent.presentation === "gui",
-						...(agent.activity === undefined
-							? {}
-							: { activity: agent.activity }),
-						...(agent.maintenance === true ? { maintenance: true } : {}),
-					})),
-			),
-		);
 	}
 
 	/** Why the window's Start cannot start one now; undefined when it can. */
@@ -10070,6 +9943,9 @@ export class AppController {
 			// (`CHANNELS.answerEscalation`), and only there.
 			orchestrator: {
 				board: () => orchestrator().wire(),
+				standing: (agentId) => orchestrator().standing(agentId),
+				keep: (agentId, note) => orchestrator().keep(agentId, note),
+				unkeep: (agentId) => orchestrator().unkeep(agentId),
 				escalations: () => orchestrator().allWires(),
 				acknowledge: (id, entries) => {
 					orchestrator().acknowledge(id, entries);
@@ -10985,7 +10861,7 @@ export class AppController {
 		// folder is Scratch from now on; the old one stays as an ordinary row.
 		// Not caught here: a failure goes to the main process's root.
 		void this.scratch.settingsAccepted(config.scratch.daily);
-		// `[[orchestrator.timers]]`, `wait_reminder_interval` and
+		// `[[orchestrator.timers]]`, `reminder_interval` and
 		// `[orchestrator.github]` move with them.
 		this.orchestrator?.timers.sync();
 		this.orchestrator?.settingsChanged();
@@ -11276,27 +11152,17 @@ export class AppController {
 				agentId: named.id,
 				displayName: name,
 			});
+		// The Issue linkage, the one rule (`orchestrator/invariant.ts`): the
+		// agent an Issue is assigned to is linked to it by its meta `issue=`,
+		// written here and nowhere else.
+		if (item.kind === "issue" && named !== undefined)
+			await this.dispatchAwaiting({
+				type: "set_agent_meta",
+				agentId: named.id,
+				key: ISSUE_LINK_KEY,
+				value: `https://github.com/${item.owner}/${item.repository}/issues/${String(item.number)}`,
+			});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId, how);
-		// DevHub's own Issue assignment, said to the orchestrator.
-		const assigned = started();
-		const opened = this.coordinator
-			.snapshot()
-			.workspaces.find((workspace) => workspace.id === workspaceId);
-		this.orchestrator?.events.dispatch({
-			type: "workspace.issue_assigned",
-			ws:
-				opened === undefined
-					? workspaceId
-					: workspaceToken(opened.label, opened.id),
-			issue: {
-				repo: `${item.owner}/${item.repository}`,
-				number: item.number,
-				url: request.issueUrl,
-			},
-			...(assigned === undefined
-				? {}
-				: { agent: { id: assigned.id, name: assigned.displayName } }),
-		});
 		if (!quiet) await this.syncEditorView();
 		return outcomeWire(
 			settled,

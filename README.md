@@ -264,7 +264,7 @@ reader, `external`. Inside DevHub `--as` is refused: the caller is its agent.
 devhub --tell skill                                   # the /devhub SKILL.md, for agents DevHub did not start
 devhub --tell skill --orchestrator                    # the /devhub-orchestrator SKILL.md (writing make-progress), for an orchestrator DevHub did not start
 devhub --tell workspaces                              # open workspaces: id, folder, branch, worktree, Issue, PR, unresolved conversations, CI, agents
-devhub --tell workspace status W                      # one workspace's Issue, PR (draft), unresolved conversations, CI counts, as of when (--json: under "github", null when unknown)
+devhub --tell workspace status W                      # one workspace's Issue (lanes), PR (draft, review decision), unresolved conversations, CI counts, as of when (--json: under "github", null when unknown)
 devhub --tell workspace open ~/src/app [--worktree 123-fix-login]   # Cmd+Q f
 devhub --tell workspace close W [--worktree keep|remove] [--agents stop] [--terminals close] [--discard-unsaved]   # Close Workspace; each question the window would ask is a required flag when it applies
 devhub --tell profiles                                # agent profiles: id, name, kind, --gui/--tui, the window's default, available (and why not)
@@ -272,6 +272,7 @@ devhub --tell agents [--workspace W] [--meta K=V]...  # id, name, kind, status a
 devhub --tell agent status A                          # one agent in detail (--json: a stable schema)
 devhub --tell agent new --workspace W --profile P --gui|--tui --managed|--unmanaged [--name N] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
 devhub --tell agent manage A | agent unmanage A       # under the orchestrator's management, or not
+devhub --tell agent keep A --note TEXT | --clear      # leave an unsettled managed agent as it is, for a reason
 devhub --tell agent rename A NAME | agent rename A --clear   # the row menu's Rename… (--clear: DevHub's label again)
 devhub --tell agent meta A [set KEY VALUE | unset KEY]      # an agent's own key/value pairs
 devhub --tell issue actions                           # Issue actions: id, label, wording (and none)
@@ -295,7 +296,7 @@ devhub --tell agent resume SESSION [--workspace W | --folder PATH] [--profile P]
 devhub --tell commands | run <command-id>             # the command palette
 devhub --tell focus A|W | notify TEXT
 devhub --tell usage [--json]                          # each CLI's plan limits as the Sidebar shows them: per window % and reset, or no plan limits; last read and why not since (never reads itself)
-devhub --tell orchestrator events [--last N] [--json]  # the orchestrator's recent events, one line each: delivered, pending, filtered, coalesced
+devhub --tell orchestrator events [--last N] [--json]  # the orchestrator's recent events, one line each: delivered, pending, filtered, coalesced, dropped-stale
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-   # a custom event, through the same filter and coalescing
 devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # its timers (timer.elapsed), changed for this session
 devhub --tell terminal open [--command C] [--focus]  # your own terminal, beside your pane (Cmd+Q v)
@@ -374,7 +375,8 @@ Agent and Assign Issue alike.
 it was started with `--managed` (or `agent manage A` said so later; `agent
 unmanage A` takes it out). Only a managed agent's state is the
 orchestrator's to hear of and keep settled (`docs/orchestrator.md`,
-"Managed agents"); an agent the person starts in the window — New Agent,
+"Managed agents"); `agent keep A --note TEXT` leaves an unsettled one as it
+is, for a reason, until its facts change; an agent the person starts in the window — New Agent,
 Assign Issue — is not, and the orchestrator agent itself never is. The flag
 is a field of the agent, kept in `state.json` and under its CLI session in
 `session-meta.json` like its metadata, so a restart or a resume keeps it.
@@ -425,8 +427,13 @@ entry: the person's answer, the orchestrator's `escalation
 hold ID [--note TEXT]`, or one of its agents going back to work moves it to
 対応中 until `escalation ask` asks again. One waiting on something outside
 (a date, a reply) is parked in 待機中 with `escalation wait ID --trigger
-TEXT [--at DATETIME]`, its trigger always in words, and the orchestrator is
-reminded of them hourly; see
+TEXT [--at DATETIME]`, its trigger always in words; the orchestrator hears of
+it again at its time or when what it is about changes. DevHub holds the
+orchestrator to one invariant — every open Issue assigned to you on the
+watched boards has a working agent, a 要回答 or a 待機中 escalation, and every
+managed agent is working or on one of those — and says each subject that
+breaks it as an `unsettled` line of facts, batched at most every
+`delivery_interval` (5m); the person's answers go at once, as typed. See
 [`docs/orchestrator.md`](docs/orchestrator.md). `agent status` gives one agent's
 state in one call: kind, profile, workspace, status and since when (as DevHub
 saw it), the turn, last activity, open questions and permission prompts

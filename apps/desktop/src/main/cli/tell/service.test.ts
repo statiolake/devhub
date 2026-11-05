@@ -289,6 +289,9 @@ class FakePorts implements TellPorts {
 			this.focusedOrchestrator = true;
 			return Promise.resolve();
 		},
+		standing: (agentId) => this.service.standing(agentId),
+		keep: (agentId, note) => this.service.keep(agentId, note),
+		unkeep: (agentId) => this.service.unkeep(agentId),
 	};
 	constructor() {
 		this.conversations.set("aaaa1111-0000", new FakeConversation());
@@ -1697,12 +1700,14 @@ describe("workspace PR and review facts", () => {
 			number: 12,
 			title: "Fix login",
 			state: "open" as const,
+			projects: [{ project: "Team", status: "In Review" }],
 		},
 		pullRequest: {
 			number: 34,
 			url: "https://github.com/o/r/pull/34",
 			title: "Fix the login",
 			state: "draft" as const,
+			review: "changes_requested" as const,
 			conversations: { unresolved: 3, uncounted: 0 },
 			checks: { state: "failing" as const, total: 10, failing: 2, pending: 1 },
 		},
@@ -1713,6 +1718,7 @@ describe("workspace PR and review facts", () => {
 			title: "Fix login",
 			url: "https://github.com/o/r/issues/12",
 			state: "open",
+			projects: [{ project: "Team", lane: "In Review" }],
 		},
 		pullRequest: {
 			number: 34,
@@ -1720,6 +1726,7 @@ describe("workspace PR and review facts", () => {
 			url: "https://github.com/o/r/pull/34",
 			state: "open",
 			draft: true,
+			review: "changes_requested",
 		},
 		conversations: { unresolved: 3, uncounted: 0 },
 		checks: {
@@ -1825,7 +1832,9 @@ describe("workspace PR and review facts", () => {
 				"app (w1)  /src/app  [selected]",
 				"branch: 12-fix",
 				"Issue #12 (open): Fix login  https://github.com/o/r/issues/12",
+				"lane: In Review (Team)",
 				"pull request #34 (draft): Fix the login  https://github.com/o/r/pull/34",
+				"review decision: changes_requested",
 				"review: 3 unresolved conversations",
 				"CI: failing - 2 failing, 1 pending, 7 passed or skipped, of 10",
 				"as of: 2026-11-04T10:00:00.000Z",
@@ -2240,6 +2249,7 @@ describe("agent status", () => {
 				misses: 1,
 				autoCompactAt: null,
 			},
+			invariant: null,
 		});
 		expect(answer.message.split("\n")).toEqual([
 			"Claude 1 (aaaa1111-0000)  claude/gui, profile claude, in app (/src/app)",
@@ -2663,13 +2673,37 @@ describe("sessions and agent resume", () => {
 		]);
 		const unset = await viaSocket(
 			service,
-			["session", "meta", "c1aa-0001", "--profile", "claude", "unset", "issue"],
+			[
+				"session",
+				"meta",
+				"c1aa-0001",
+				"--profile",
+				"claude",
+				"unset",
+				"status",
+			],
 			self,
 		);
 		expect(unset.data).toMatchObject({
 			session: "c1aa-0001",
-			meta: { parent: "orch-1", status: "needs review" },
+			meta: { parent: "orch-1", issue: "12" },
 		});
+		// The Issue linkage is DevHub's: never set or unset by hand.
+		await expect(
+			viaSocket(
+				service,
+				[
+					"session",
+					"meta",
+					"c1aa-0001",
+					"--profile",
+					"claude",
+					"unset",
+					"issue",
+				],
+				self,
+			),
+		).rejects.toThrow(/issue= is the Issue linkage DevHub writes/u);
 		const list = await viaSocket(
 			service,
 			["session", "meta", "x1dd-0001"],
@@ -3535,7 +3569,7 @@ describe("agent rename and agent meta", () => {
 		);
 		await viaSocket(
 			service,
-			["agent", "meta", "aaaa", "set", "issue", "123"],
+			["agent", "meta", "aaaa", "set", "ticket", "123"],
 			coordinator,
 		);
 		const listed = await viaSocket(
@@ -3543,14 +3577,14 @@ describe("agent rename and agent meta", () => {
 			["agent", "meta", "aaaa"],
 			coordinator,
 		);
-		expect(listed.message).toBe("role=code reviewer\nissue=123");
+		expect(listed.message).toBe("role=code reviewer\nticket=123");
 		expect(listed.data).toEqual({
 			agentId: "aaaa1111-0000",
-			meta: { role: "code reviewer", issue: "123" },
+			meta: { role: "code reviewer", ticket: "123" },
 		});
 		const filtered = await viaSocket(
 			service,
-			["--json", "agents", "--meta", "issue=123"],
+			["--json", "agents", "--meta", "ticket=123"],
 			coordinator,
 		);
 		const rows = (
@@ -3559,24 +3593,73 @@ describe("agent rename and agent meta", () => {
 		expect(rows.map((row) => row.id)).toEqual(["aaaa1111-0000"]);
 		expect(rows[0]!.state.meta).toEqual({
 			role: "code reviewer",
-			issue: "123",
+			ticket: "123",
 		});
 		const status = await viaSocket(
 			service,
 			["agent", "status", "aaaa"],
 			coordinator,
 		);
-		expect(status.message).toContain("meta      role=code reviewer issue=123");
+		expect(status.message).toContain("meta      role=code reviewer ticket=123");
 		await viaSocket(
 			service,
-			["agent", "meta", "aaaa", "unset", "issue"],
+			["agent", "meta", "aaaa", "unset", "ticket"],
 			coordinator,
 		);
 		expect(
-			(await viaSocket(service, ["agents", "--meta", "issue=123"], coordinator))
-				.message,
-		).toBe("No agent carries issue=123.");
-		expect(ports.calls).toContain("meta aaaa1111-0000 issue <unset>");
+			(
+				await viaSocket(
+					service,
+					["agents", "--meta", "ticket=123"],
+					coordinator,
+				)
+			).message,
+		).toBe("No agent carries ticket=123.");
+		expect(ports.calls).toContain("meta aaaa1111-0000 ticket <unset>");
+	});
+
+	it("refuses the Issue linkage by hand, and keeps only an unsettled agent", async () => {
+		const { service, ports } = setup();
+		for (const line of [
+			[
+				"agent",
+				"meta",
+				"aaaa",
+				"set",
+				"issue",
+				"https://github.com/o/r/issues/1",
+			],
+			["agent", "meta", "aaaa", "unset", "issue"],
+			[
+				"agent",
+				"new",
+				"--workspace",
+				"w1",
+				"--profile",
+				"claude",
+				"--gui",
+				"--managed",
+				"--meta",
+				"issue=1",
+			],
+		])
+			await expect(viaSocket(service, line, coordinator)).rejects.toThrow(
+				/issue= is the Issue linkage DevHub writes when 'issue assign'/u,
+			);
+		expect(ports.calls).toEqual([]);
+		await expect(
+			viaSocket(
+				service,
+				["agent", "keep", "aaaa", "--note", "続ける"],
+				coordinator,
+			),
+		).rejects.toThrow(/not unsettled/u);
+		const cleared = await viaSocket(
+			service,
+			["agent", "keep", "aaaa", "--clear"],
+			coordinator,
+		);
+		expect(cleared.message).toContain("was not kept");
 	});
 
 	it("puts an agent under the orchestrator's management and takes it out, never the orchestrator", async () => {
@@ -4393,6 +4476,7 @@ describe("the Orchestrator row from the command line", () => {
 				"events",
 				"focus",
 				"hold",
+				"keep",
 				"link",
 				"pause",
 				"raise",
@@ -4400,8 +4484,10 @@ describe("the Orchestrator row from the command line", () => {
 				"resume",
 				"resumeWait",
 				"setTimer",
+				"standing",
 				"start",
 				"timers",
+				"unkeep",
 				"wait",
 			].sort(),
 		);
@@ -4542,7 +4628,7 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(ports.calls).toEqual(["orchestrator-start /srv/o claude"]);
 		expect(ports.delivered[0]?.[1]).toBe(
-			"このイベントが発生したのでハンドリングしてください。[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認",
+			"DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれ新しいバックグラウンドのサブエージェントに渡して処理し、すぐに戻ってください。\n[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認",
 		);
 		await expect(
 			viaSocket(
@@ -4567,37 +4653,18 @@ describe("the Orchestrator row from the command line", () => {
 		expect(status.data).toMatchObject({ agentId: ORCHESTRATOR });
 	});
 
-	it("lists the unattended Issues on the board, counts each GitHub board in status, and says why events said nothing", async () => {
+	it("lists the unsettled subjects on the board, and counts each GitHub board in status", async () => {
 		const { service, ports } = orchestrated();
-		const idle = await viaSocket(service, ["board"], undefined);
-		expect(idle.data).toMatchObject({ unattendedIssues: null });
+		const empty = await viaSocket(service, ["board"], undefined);
+		expect(empty.data).toMatchObject({ unsettled: [] });
+		expect(empty.message).toContain("unsettled (0):");
 		ports.github = {
 			state: "active",
 			boards: [
-				{ ref: "acme/7", title: "Team", items: 42, assigned: 5, unattended: 1 },
+				{ ref: "acme/7", title: "Team", items: 42, assigned: 5 },
 				{ ref: "me/2" },
 			],
-			unattended: [
-				{
-					repo: "acme/app",
-					number: 200,
-					title: "検索の改善",
-					url: "https://github.com/acme/app/issues/200",
-					project: "acme/7",
-					lane: "Todo",
-				},
-			],
-			notes: [
-				"#123 (acme/app): no github.unattended, linked to agent=aaaa1111",
-			],
 		};
-		const board = await viaSocket(service, ["board"], undefined);
-		expect(board.message).toContain(
-			"  #200  検索の改善  acme/app  lane=Todo  https://github.com/acme/app/issues/200",
-		);
-		expect(board.data).toMatchObject({
-			unattendedIssues: [{ number: 200, lane: "Todo" }],
-		});
 		const status = await viaSocket(
 			service,
 			["orchestrator", "status"],
@@ -4605,52 +4672,38 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(status.message).toContain("GitHub polling: active");
 		expect(status.message).toContain(
-			"  acme/7 (Team): 42 items, 5 assigned to me, 1 unattended",
+			"  acme/7 (Team): 42 items, 5 assigned to me",
 		);
 		expect(status.message).toContain("  me/2: not read yet");
-		const events = await viaSocket(
-			service,
-			["orchestrator", "events"],
-			undefined,
-		);
-		expect(events.message).toContain(
-			"  #123 (acme/app): no github.unattended, linked to agent=aaaa1111",
-		);
 	});
 
-	it("pauses events and delivers the held ones, in order, as one message on resume", async () => {
+	it("pauses events and delivers the held ones on resume: the person's words each alone, the rest as one", async () => {
 		const { service, ports } = orchestrated();
 		ports.delivered = [];
 		await viaSocket(service, ["orchestrator", "pause"], undefined);
 		ports.service.raise({ title: "one", markdown: "x" });
-		ports.service.raise({ title: "two", markdown: "x" });
 		ports.service.answer(1, "a");
-		ports.service.answer(2, "b");
+		ports.service.emit("custom.deploy", "staging");
+		ports.service.emit("custom.build", "done");
 		expect(ports.delivered).toEqual([]);
-		expect(ports.service.wire()).toMatchObject({ paused: true, held: 2 });
+		expect(ports.service.wire()).toMatchObject({ paused: true, held: 3 });
 		const resumed = await viaSocket(
 			service,
 			["orchestrator", "resume"],
 			undefined,
 		);
-		expect(resumed.data).toMatchObject({ delivered: 2 });
-		expect(ports.delivered).toHaveLength(1);
-		expect(
-			[...(ports.delivered[0]?.[1] ?? "").matchAll(/esc=(\d)/gu)].map(
-				(match) => match[1],
-			),
-		).toEqual(["1", "2"]);
+		expect(resumed.data).toMatchObject({ delivered: 3 });
+		expect(ports.delivered.map(([, text]) => text)).toEqual([
+			"esc=1「one」 への人の回答:\na",
+			expect.stringMatching(/\[custom\.deploy\][^]*\[custom\.build\]/u),
+		]);
 	});
 
 	it("lists recent events with what came of them, as lines or as data", async () => {
 		const { service, ports } = orchestrated();
 		ports.service.raise({ title: "決めて", markdown: "A?" });
 		ports.service.answer(1, "A");
-		// The default filter leaves agent.started out, and says so.
-		ports.service.events.dispatch({
-			type: "agent.started",
-			agent: { id: "aaaa1111-0000" },
-		});
+		ports.service.emit("custom.deploy", "staging");
 		const listed = await viaSocket(
 			service,
 			["orchestrator", "events", "--last", "2"],
@@ -4659,9 +4712,7 @@ describe("the Orchestrator row from the command line", () => {
 		expect(listed.message).toMatch(
 			/delivered +\[escalation_answered\] esc=1「決めて」/u,
 		);
-		expect(listed.message).toMatch(
-			/filtered +\[agent\.started\] agent=aaaa1111/u,
-		);
+		expect(listed.message).toMatch(/\[custom\.deploy\] — staging/u);
 		expect(listed.message).not.toContain("[init]");
 		const parsed = parseTellArguments(["orchestrator", "events", "--json"]);
 		expect(parsed).toMatchObject({
@@ -4675,7 +4726,7 @@ describe("the Orchestrator row from the command line", () => {
 		expect(data.events.map((one) => [one.type, one.fate])).toEqual([
 			["init", "delivered"],
 			["escalation_answered", "delivered"],
-			["agent.started", "filtered"],
+			["custom.deploy", "pending"],
 		]);
 		expect(data.events[1]?.event).toMatchObject({
 			type: "escalation_answered",
@@ -4723,7 +4774,7 @@ describe("the Orchestrator row from the command line", () => {
 		expect(ports.service.events.held()).toHaveLength(1);
 		await viaSocket(service, ["orchestrator", "resume"], undefined);
 		expect(ports.delivered.map(([, text]) => text)).toEqual([
-			"このイベントが発生したのでハンドリングしてください。[custom.deploy] — staging OK",
+			"DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれ新しいバックグラウンドのサブエージェントに渡して処理し、すぐに戻ってください。\n[custom.deploy] — staging OK",
 		]);
 		for (const bad of [
 			["orchestrator", "emit", "--type", "deploy", "--text", "x"],

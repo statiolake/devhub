@@ -34,7 +34,7 @@ export interface OrchestratorConfig {
   readonly init_prompt: string | undefined;
   /**
    * Which events reach the orchestrator, as patterns over their type:
-   * `github.*`, `agent.turn_ended`, `*`; a pattern starting with `!` takes
+   * `github.*`, `unsettled`, `*`; a pattern starting with `!` takes
    * matching types back out. `init` always goes. See `eventAllowed`.
    */
   readonly events: readonly string[];
@@ -45,11 +45,16 @@ export interface OrchestratorConfig {
    */
   readonly usage_thresholds: readonly number[];
   /**
-   * How often the orchestrator is reminded of every 待機中 escalation and
-   * its trigger (`escalation.waiting_reminder`): `1h`, `30m`. Never sent when
-   * none waits.
+   * The most often a batch of events goes to the orchestrator: `5m`. The
+   * person's words (an answer, a message to an escalation's agent) are not
+   * batched and go at once.
    */
-  readonly wait_reminder_interval: string;
+  readonly delivery_interval: string;
+  /**
+   * How often an `unsettled` subject that stays so is said again: `1h`,
+   * `30m`.
+   */
+  readonly reminder_interval: string;
   /** `[orchestrator.github]`: the GitHub event source. */
   readonly github: OrchestratorGitHubConfig;
   /** `[[orchestrator.timers]]`: fixed timers, each a `timer.elapsed`. */
@@ -77,45 +82,93 @@ export const EVENT_PLACEHOLDER = "{EVENT}";
 export const EVENT_JSON_PLACEHOLDER = "{EVENT_JSON}";
 
 /**
- * What reaches the orchestrator unless the settings say otherwise: everything
- * it would act on, and not the chatter (`agent.started`, `workspace.opened`,
- * `workspace.closed`, `workspace.branch_changed`,
- * `agent.permission_requested`), which costs tokens and asks nothing of it.
+ * What reaches the orchestrator unless the settings say otherwise:
+ * everything. Each kind left is a signal it acts on; there is no chatter to
+ * filter (`docs/orchestrator.md`, "Events").
  */
-export const DEFAULT_ORCHESTRATOR_EVENTS: readonly string[] = [
-  "init",
-  "escalation_answered",
-  "escalation.human_direct",
-  "escalation.stalled",
-  "escalation.wait_due",
-  "escalation.waiting_reminder",
-  "github.*",
-  "workspace.issue_assigned",
-  "workspace.pr_linked",
-  "agent.turn_ended",
-  "agent.asked",
-  "agent.exited",
-  "agent.failed",
-  "usage.threshold",
-  "timer.*",
-  "custom.*",
-];
+export const DEFAULT_ORCHESTRATOR_EVENTS: readonly string[] = ["*"];
+
+/**
+ * Event types a past DevHub said and this one does not, with the families
+ * that have nothing left in them. A pattern in `events` naming one (or `!`
+ * one) loads, is left out, and is said once as a retired setting
+ * (`retiredEventPatterns`), as a retired key is (`config.ts`).
+ */
+export const RETIRED_EVENT_TYPES: Readonly<Record<string, string>> = {
+  "escalation.stalled":
+    "an agent stopped with nothing settling it is an `unsettled` subject now",
+  "escalation.waiting_reminder":
+    "a 待機中 escalation is revisited by its `--at` time (`escalation.wait_due`) or by `waiting.changed`",
+  "github.assigned":
+    "an open Issue assigned to you with nobody on it is `unsettled`",
+  "github.unattended":
+    "an open Issue assigned to you with nobody on it is `unsettled`",
+  "github.lane_changed":
+    "an `unsettled` or `waiting.changed` line carries the lane as it is",
+  "github.pr_opened":
+    "an `unsettled` or `waiting.changed` line carries the pull request as it is",
+  "github.pr_ready":
+    "an `unsettled` or `waiting.changed` line carries the pull request as it is",
+  "github.pr_approved":
+    "an `unsettled` or `waiting.changed` line carries the review decision as it is",
+  "github.changes_requested":
+    "an `unsettled` or `waiting.changed` line carries the review decision as it is",
+  "github.review_comment":
+    "an `unsettled` or `waiting.changed` line carries the unresolved conversations as they are",
+  "github.checks":
+    "an `unsettled` or `waiting.changed` line carries the checks as they are",
+  "github.pr_merged":
+    "an `unsettled` or `waiting.changed` line carries the pull request as it is",
+  "github.pr_closed":
+    "an `unsettled` or `waiting.changed` line carries the pull request as it is",
+  "workspace.*": "a Workspace's state is read with `workspace status`",
+  "workspace.opened": "a Workspace's state is read with `workspace status`",
+  "workspace.closed": "a Workspace's state is read with `workspace status`",
+  "workspace.issue_assigned":
+    "a Workspace's state is read with `workspace status`",
+  "workspace.branch_changed":
+    "a Workspace's state is read with `workspace status`",
+  "workspace.pr_linked": "a Workspace's state is read with `workspace status`",
+  "agent.*":
+    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+  "agent.turn_ended":
+    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+  "agent.asked":
+    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+  "agent.permission_requested":
+    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+  "agent.started":
+    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+  "agent.exited": "an Issue left with no agent on it is an `unsettled` subject",
+  "agent.failed":
+    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+};
+
+/** Whether an `events` pattern names a retired type (or an emptied family). */
+export function retiredEventPattern(pattern: string): boolean {
+  const body = pattern.startsWith("!") ? pattern.slice(1) : pattern;
+  return Object.hasOwn(RETIRED_EVENT_TYPES, body);
+}
 
 /** `[orchestrator] usage_thresholds` when it is not set. */
 export const DEFAULT_USAGE_THRESHOLDS: readonly number[] = [80, 95];
 
 export const DEFAULT_GITHUB_INTERVAL = "90s";
-/** `[orchestrator] wait_reminder_interval` when it is not set. */
-export const DEFAULT_WAIT_REMINDER_INTERVAL = "1h";
-/** The most often the 待機中 reminder may come. */
-export const MIN_WAIT_REMINDER_INTERVAL_MS = 60_000;
+/** `[orchestrator] delivery_interval` when it is not set. */
+export const DEFAULT_DELIVERY_INTERVAL = "5m";
+/** The most often a batch may go. */
+export const MIN_DELIVERY_INTERVAL_MS = 10_000;
+/** `[orchestrator] reminder_interval` when it is not set. */
+export const DEFAULT_REMINDER_INTERVAL = "1h";
+/** The most often an `unsettled` subject may be said again. */
+export const MIN_REMINDER_INTERVAL_MS = 5 * 60_000;
 /** The fastest DevHub polls GitHub for events, whatever the settings say. */
 export const MIN_GITHUB_INTERVAL_MS = 30_000;
 /** The fastest a timer may fire. */
 export const MIN_TIMER_INTERVAL_MS = 10_000;
 
 export const DEFAULT_EVENT_PROMPT =
-  "このイベントが発生したのでハンドリングしてください。{EVENT}";
+  "DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれ新しいバックグラウンドのサブエージェントに渡して処理し、すぐに戻ってください。\n{EVENT}";
 
 /** Where the orchestrator runs when `[orchestrator] root` is not set. */
 export const DEFAULT_ORCHESTRATOR_ROOT = "~/orchestrator";
@@ -128,7 +181,8 @@ export const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   init_prompt: undefined,
   events: DEFAULT_ORCHESTRATOR_EVENTS,
   usage_thresholds: DEFAULT_USAGE_THRESHOLDS,
-  wait_reminder_interval: DEFAULT_WAIT_REMINDER_INTERVAL,
+  delivery_interval: DEFAULT_DELIVERY_INTERVAL,
+  reminder_interval: DEFAULT_REMINDER_INTERVAL,
   github: { projects: [], interval: DEFAULT_GITHUB_INTERVAL },
   timers: [],
 };
@@ -141,7 +195,8 @@ export const ORCHESTRATOR_KEYS = [
   "init_prompt",
   "events",
   "usage_thresholds",
-  "wait_reminder_interval",
+  "delivery_interval",
+  "reminder_interval",
   "github",
   "timers",
 ] as const;
@@ -169,13 +224,10 @@ export function orchestratorProblem(
   if (config.events.some(eventPatternProblem)) return "events";
   if (usageThresholdsProblem(config.usage_thresholds))
     return "usage_thresholds";
-  if (
-    intervalProblem(
-      config.wait_reminder_interval,
-      MIN_WAIT_REMINDER_INTERVAL_MS,
-    )
-  )
-    return "wait_reminder_interval";
+  if (intervalProblem(config.delivery_interval, MIN_DELIVERY_INTERVAL_MS))
+    return "delivery_interval";
+  if (intervalProblem(config.reminder_interval, MIN_REMINDER_INTERVAL_MS))
+    return "reminder_interval";
   if (config.github.projects.some((one) => projectRefProblem(one)))
     return "github.projects";
   if (intervalProblem(config.github.interval, MIN_GITHUB_INTERVAL_MS))
@@ -197,7 +249,7 @@ export function isTimerName(name: string): boolean {
 }
 
 /**
- * An event pattern: a type (`agent.turn_ended`), a family (`github.*`), `*`,
+ * An event pattern: a type (`unsettled`), a family (`github.*`), `*`,
  * any of them after `!` to take them out again.
  */
 export function eventPatternProblem(pattern: string): boolean {
@@ -333,11 +385,11 @@ export function formatInterval(ms: number): string {
 }
 
 export const ORCHESTRATOR_EVENTS_RULE =
-  "orchestrator.events lists event types (agent.turn_ended), families (github.*) or *, each optionally after ! to exclude it.";
+  "orchestrator.events lists event types (unsettled), families (github.*) or *, each optionally after ! to exclude it.";
 
 export const ORCHESTRATOR_GITHUB_RULE = `orchestrator.github.projects lists Projects boards as OWNER/NUMBER (my-org/7); orchestrator.github.interval is like 90s or 2m, at least ${String(MIN_GITHUB_INTERVAL_MS / 1000)}s.`;
 
-export const ORCHESTRATOR_WAIT_REMINDER_RULE = `orchestrator.wait_reminder_interval is like 1h or 30m, at least ${String(MIN_WAIT_REMINDER_INTERVAL_MS / 60_000)}m.`;
+export const ORCHESTRATOR_DELIVERY_RULE = `orchestrator.delivery_interval is like 5m or 90s, at least ${String(MIN_DELIVERY_INTERVAL_MS / 1000)}s: the most often a batch of events goes. orchestrator.reminder_interval is like 1h or 30m, at least ${String(MIN_REMINDER_INTERVAL_MS / 60_000)}m: how often an unsettled subject is said again.`;
 
 export const ORCHESTRATOR_TIMER_RULE = `Each [[orchestrator.timers]] has a name (letters, digits, - and _; each once) and an interval like 5m or 1h, at least ${String(MIN_TIMER_INTERVAL_MS / 1000)}s.`;
 
@@ -425,8 +477,10 @@ export function orchestratorDocument(
     )
   )
     document["usage_thresholds"] = [...config.usage_thresholds];
-  if (config.wait_reminder_interval !== DEFAULT_WAIT_REMINDER_INTERVAL)
-    document["wait_reminder_interval"] = config.wait_reminder_interval;
+  if (config.delivery_interval !== DEFAULT_DELIVERY_INTERVAL)
+    document["delivery_interval"] = config.delivery_interval;
+  if (config.reminder_interval !== DEFAULT_REMINDER_INTERVAL)
+    document["reminder_interval"] = config.reminder_interval;
   const github: Record<string, TomlValue> = {};
   if (config.github.projects.length > 0)
     github["projects"] = [...config.github.projects];

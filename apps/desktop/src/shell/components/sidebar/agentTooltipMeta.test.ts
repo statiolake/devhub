@@ -57,4 +57,19 @@ describe("an Agent's metadata in its tooltip", () => {
       ]),
     ).toContainEqual(["orchestrator", "Managed by the orchestrator"]);
   });
+
+  it("says what the orchestration says of it: waiting, unsettled, kept", () => {
+    const lines = agentTooltipFacts(agent({ managed: true }), {
+      waiting: { escalationId: 12, trigger: "approve されたら" },
+      unsettled: "status=idle issue=none",
+      kept: { note: "他チームの依頼", at: 0 },
+    }).map((fact) => [fact.icon, fact.text]);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        ["orchestratorWaiting", "Waiting (#12): approve されたら"],
+        ["orchestratorUnsettled", "Unsettled: status=idle issue=none"],
+        ["orchestratorKept", "Kept as it is: 他チームの依頼"],
+      ]),
+    );
+  });
 });

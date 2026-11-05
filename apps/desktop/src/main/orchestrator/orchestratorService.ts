@@ -17,23 +17,20 @@
  * is told to the orchestrator (`escalation.human_direct`), since what was
  * said may answer or change it.
  *
- * 停滞 is worked out here from live state (`#stalledNow`): an escalation in
- * 対応中 that none of its agents is working on (status `working` or
- * `background`, not stopping) for longer than `STALLED_GRACE_MS`, told once per stretch
- * (`escalation.stalled`). A stretch starts at the latest of: its last entry,
+ * 停滞 is worked out here from live state (`#stalledNow`), for the board
+ * only: an escalation in 対応中 that none of its agents is working on
+ * (status `working` or `background`, not stopping) for longer than
+ * `STALLED_GRACE_MS`. A stretch starts at the latest of: its last entry,
  * the last time one of its agents was seen working, the orchestrator's
- * reading of the answer (`acknowledge`), this service's first reading. An
- * answer the orchestrator has not read yet is not 停滞:
- * `escalation_answered` already says it, and the clock starts once it is
- * read. `escalation_answered` carries the answer itself, so its delivery is
- * the reading (`#deliveredRead`), unless the answer was too long to carry
- * whole: then `escalation show` is, as it always also is.
+ * reading of the answer (`acknowledge`), this service's first reading.
+ * `escalation_answered` carries the answer itself, so its delivery is the
+ * reading (`#deliveredRead`).
  *
- * 待機中 (`escalation wait`): a waiting escalation whose time (`dueAt`) has
- * come is told once per wait (`escalation.wait_due`), and every
- * `[orchestrator] wait_reminder_interval` all of them are, as one line
- * (`escalation.waiting_reminder`; nothing when none waits). An agent of one
- * going working takes it out of 待機中 as it does out of 要回答.
+ * The invariant (`invariant.ts`) is read here on every projection, and its
+ * unsettled subjects and moved waits are said (`unsettled`,
+ * `waiting.changed`). 待機中 (`escalation wait`): a waiting escalation whose
+ * time (`dueAt`) has come is told once per wait (`escalation.wait_due`). An
+ * agent of one going working takes it out of 待機中 as it does out of 要回答.
  *
  * A maintenance turn (`isMaintenanceTurn`: a `/compact`, DevHub's keep-warm
  * one before the prompt cache goes cold or the person's) is not work: every
@@ -44,6 +41,7 @@
  */
 
 import type {
+	AgentOrchestrationWire,
 	EscalationWire,
 	OrchestratorBoardWire,
 } from "../../ipc/contract.js";
@@ -68,14 +66,22 @@ import { agentAtWork } from "../../model/domain.js";
 import { parseInterval } from "../../model/orchestratorSettings.js";
 import type { EscalationStore } from "./escalationStore.js";
 import {
-	cappedWords,
 	customTypeProblem,
 	EventDispatcher,
 	eventJson,
-	type EventItem,
 	type EventLogEntry,
 	type OrchestratorEvent,
 } from "./events.js";
+import {
+	InvariantWatch,
+	issueUrlKey,
+	readInvariant,
+	type AgentStanding,
+	type InvariantAgent,
+	type IssueFacts,
+	type KeptAgent,
+	type UnsettledView,
+} from "./invariant.js";
 import { OrchestratorTimers } from "./timers.js";
 import {
 	usageThresholdRelevant,
@@ -117,10 +123,14 @@ export interface OrchestratorServicePorts {
 	/** How GitHub polling stands, for the board's header. */
 	readonly github?: () => OrchestratorBoardWire["github"];
 	/**
-	 * Whether the Issue of a pending `github.unattended` still is unattended
-	 * (open, mine, no agent linked). Absent: it always is.
+	 * What the invariant is read off (`invariant.ts`): the watched boards'
+	 * Issues (undefined while not known in full) and every agent but the
+	 * orchestrator. Absent: no invariant is held (tests).
 	 */
-	readonly githubUnattended?: (item: EventItem) => boolean;
+	readonly invariant?: () => {
+		readonly issues: readonly IssueFacts[] | undefined;
+		readonly agents: readonly InvariantAgent[];
+	};
 	/**
 	 * The person's last message to `agentId`, read off its conversation: its
 	 * cursor (`agent read --since`) and its text. Undefined when it has none.
@@ -196,11 +206,10 @@ export class OrchestratorService {
 	readonly #workedAt = new Map<number, { at: number; working: boolean }>();
 	/** Per escalation, how many entries the orchestrator has read, and when. */
 	readonly #read = new Map<number, { entries: number; at: number }>();
-	/** `escalationId@since`, once told: one event per stalled stretch. */
-	readonly #stalledTold = new Set<string>();
 	/** `escalationId@waitSince`, once told: one `wait_due` per wait. */
 	readonly #dueTold = new Set<string>();
-	#reminder: { cancel(): void } | undefined;
+	/** The invariant's subjects, their time, and the agents kept as they are. */
+	readonly #invariant: InvariantWatch;
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.events = new EventDispatcher({
@@ -232,7 +241,14 @@ export class OrchestratorService {
 			setTimer: ports.setTimer ?? (() => ({ cancel: () => undefined })),
 		});
 		this.timers.sync();
-		this.#scheduleReminder();
+		this.#invariant = new InvariantWatch({
+			dispatch: (event) => {
+				this.events.dispatch(event);
+			},
+			now: () => this.#now(),
+			reminderMs: () =>
+				parseInterval(this.ports.settings().reminder_interval) ?? 3_600_000,
+		});
 		ports.store.onChange(() => {
 			this.publish();
 		});
@@ -274,54 +290,29 @@ export class OrchestratorService {
 
 	/**
 	 * Whether a pending event still needs the orchestrator, by live state,
-	 * just before it goes: an escalation no longer stalled, a turn
-	 * whose agent is working again (or gone), a question or a permission
-	 * prompt no longer waiting, an answer to an escalation since closed —
-	 * these have been seen to already.
+	 * just before it goes: a subject settled since, a wait no longer waiting,
+	 * a window reset — these need nothing any more.
 	 */
 	#relevant(event: OrchestratorEvent): boolean {
-		const agent = (id: string) => this.#agents().find((one) => one.id === id);
 		switch (event.type) {
-			case "agent.turn_ended": {
-				const live = agent(event.agent.id);
-				// At work again — working, or background (`agentAtWork`) — it is
-				// not done after all; its real end will be said.
-				return live !== undefined && !agentAtWork(live.status);
-			}
-			case "agent.asked":
-			case "agent.permission_requested":
-				return agent(event.agent.id)?.status === "waiting";
-			case "agent.started":
-				return agent(event.agent.id) !== undefined;
 			case "escalation.wait_due": {
 				const one = this.ports.store
 					.all()
 					.find((escalation) => escalation.id === event.escalationId);
 				return one !== undefined && currentWait(one)?.at === event.waitSince;
 			}
-			case "escalation.waiting_reminder":
-				return this.ports.store
-					.all()
-					.some(
-						(one) =>
-							currentWait(one) !== undefined &&
-							event.waiting.some((item) => item.escalationId === one.id),
-					);
-			case "escalation.stalled":
-				return this.#stalledNow(this.#now()).some(
-					(one) =>
-						one.escalation.id === event.escalationId &&
-						one.since === event.since,
-				);
-			case "escalation_answered":
-			case "escalation.human_direct": {
+			case "waiting.changed": {
 				const one = this.ports.store
 					.all()
 					.find((escalation) => escalation.id === event.escalationId);
-				return one !== undefined && one.closed === undefined;
+				return one !== undefined && currentWait(one) !== undefined;
 			}
-			case "github.unattended":
-				return this.ports.githubUnattended?.(event.item) ?? true;
+			case "unsettled":
+				return this.#invariant.stillUnsettled(
+					event.subject.kind === "issue"
+						? `issue ${issueUrlKey(event.subject.item.url ?? "")}`
+						: `agent ${event.subject.agent.id}`,
+				);
 			case "usage.threshold":
 				return usageThresholdRelevant(
 					event,
@@ -350,6 +341,8 @@ export class OrchestratorService {
 	/** Assign the orchestrator agent, and tell it it has started. */
 	assign(agentId: string, initPrompt?: string): void {
 		this.ports.store.setOrchestrator(agentId);
+		// A new orchestrator has heard nothing: every subject is said again.
+		this.#invariant.reset();
 		if (initPrompt !== undefined) this.ports.deliver(agentId, initPrompt);
 		else this.events.dispatch({ type: "init" });
 	}
@@ -473,7 +466,7 @@ export class OrchestratorService {
 	 * set it going, `resumed` for anything else), and stays out until the
 	 * orchestrator asks again. Only the person's words are told (`escalation.
 	 * human_direct`, for every open escalation about the agent): anything
-	 * else the orchestrator caused, or hears of as `agent.turn_ended`.
+	 * else the orchestrator caused itself.
 	 */
 	#watchWorking(agents: readonly LiveAgent[], now: number): void {
 		const before = new Map(this.#status);
@@ -553,8 +546,8 @@ export class OrchestratorService {
 		this.#startedAt ??= now;
 		this.#watchWorking(agents, now);
 		this.#watchStalled(agents, now);
-		this.#announceStalled(now);
 		this.#announceDue(now);
+		this.#watchInvariant();
 		this.#schedule(now);
 		// The orchestrator's status may have moved: what waits for it may go.
 		this.events.flush();
@@ -612,7 +605,6 @@ export class OrchestratorService {
 		for (const event of events) {
 			if (event.type !== "escalation_answered") continue;
 			if (event.readThrough === undefined) continue;
-			if (cappedWords(event.answers ?? []).truncated) continue;
 			if (orchestrator !== undefined)
 				this.ports.acknowledged?.(
 					orchestrator,
@@ -651,24 +643,6 @@ export class OrchestratorService {
 			if (!open.has(id)) this.#workedAt.delete(id);
 	}
 
-	/**
-	 * 停滞 now: every 対応中 escalation none of whose agents is working, past
-	 * the grace, whose last answer (if that is its last entry) the
-	 * orchestrator has read. With since when.
-	 */
-	#stalledNow(
-		now: number,
-	): readonly { readonly escalation: Escalation; readonly since: number }[] {
-		const agents = this.#agents();
-		const out: { escalation: Escalation; since: number }[] = [];
-		for (const one of this.ports.store.all()) {
-			const since = this.#stalledSince(one, agents);
-			if (since !== undefined && now - since >= this.#graceMs)
-				out.push({ escalation: one, since });
-		}
-		return out;
-	}
-
 	/** When `one` started standing still, or undefined while it does not. */
 	#stalledSince(
 		one: Escalation,
@@ -687,28 +661,6 @@ export class OrchestratorService {
 			answer ? (read?.at ?? 0) : 0,
 			this.#startedAt ?? 0,
 		);
-	}
-
-	#announceStalled(now: number): void {
-		if (this.orchestratorAgentId === undefined) return;
-		const names = new Map(this.ports.agents().map((one) => [one.id, one.name]));
-		for (const { escalation, since } of this.#stalledNow(now)) {
-			const key = `${String(escalation.id)}@${String(since)}`;
-			if (this.#stalledTold.has(key)) continue;
-			this.#stalledTold.add(key);
-			this.events.dispatch({
-				type: "escalation.stalled",
-				escalationId: escalation.id,
-				title: escalation.title,
-				agents: escalation.agents
-					.filter((id) => id !== this.ports.store.orchestratorAgentId)
-					.map((id) => {
-						const name = names.get(id);
-						return name === undefined ? { id } : { id, name };
-					}),
-				since,
-			});
-		}
 	}
 
 	// --- 待機中: parked on an outside condition --------------------------------------
@@ -733,48 +685,79 @@ export class OrchestratorService {
 		}
 	}
 
-	/**
-	 * `escalation.waiting_reminder`: every 待機中 escalation and its trigger,
-	 * as one line. Nothing when none waits, or no orchestrator runs.
-	 * The reminder timer calls it every `wait_reminder_interval`.
-	 */
-	remindWaiting(): void {
-		if (this.orchestratorAgentId === undefined) return;
-		const waiting = board(this.ports.store.all()).waiting.map((one) => {
-			const wait = currentWait(one)!;
-			return {
-				escalationId: one.id,
-				title: one.title,
-				trigger: wait.markdown,
-				...(wait.dueAt === undefined ? {} : { dueAt: wait.dueAt }),
-			};
-		});
-		if (waiting.length === 0) return;
-		this.events.dispatch({ type: "escalation.waiting_reminder", waiting });
-	}
-
-	/** The settings moved: `wait_reminder_interval` counts from now. */
+	/** The settings moved: the invariant's reminders follow them on the next look. */
 	settingsChanged(): void {
-		const ms = parseInterval(this.ports.settings().wait_reminder_interval);
-		if (ms === this.#reminderMs) return;
-		this.#scheduleReminder();
+		this.observe();
 	}
 
-	#reminderMs: number | undefined;
+	// --- the invariant -----------------------------------------------------------
 
-	#scheduleReminder(): void {
-		this.#reminder?.cancel();
-		this.#reminder = undefined;
-		const setTimer = this.ports.setTimer;
-		if (setTimer === undefined) return;
-		const ms =
-			parseInterval(this.ports.settings().wait_reminder_interval) ?? 3_600_000;
-		this.#reminderMs = ms;
-		this.#reminder = setTimer(Math.max(ms, 60_000), () => {
-			this.#reminder = undefined;
-			this.remindWaiting();
-			this.#scheduleReminder();
+	/** Read the invariant now, and say what has come of it. */
+	#watchInvariant(): void {
+		const source = this.ports.invariant?.();
+		if (source === undefined) return;
+		const orchestrator = this.ports.store.orchestratorAgentId;
+		// A maintenance turn is not work: the status before it (`#agents`).
+		const statuses = new Map(this.#agents().map((one) => [one.id, one.status]));
+		const reading = readInvariant({
+			issues: source.issues,
+			agents: source.agents
+				.filter((one) => one.id !== orchestrator)
+				.map((one) => ({
+					...one,
+					status: statuses.get(one.id) ?? one.status,
+				})),
+			escalations: this.ports.store
+				.all()
+				.filter(isOpen)
+				.map((one) => ({
+					id: one.id,
+					title: one.title,
+					state: escalationState(one),
+					links: one.links,
+					agents: one.agents,
+					...(one.workspaceId === undefined
+						? {}
+						: { workspaceId: one.workspaceId }),
+					...(currentWait(one) === undefined
+						? {}
+						: { trigger: currentWait(one)!.markdown }),
+				})),
 		});
+		this.#invariant.observe(reading, this.orchestratorAgentId !== undefined);
+	}
+
+	/**
+	 * `agent keep A --note`: leave an unsettled managed agent as it is, for
+	 * the reason given, until its facts change.
+	 */
+	keep(agentId: string, note: string): KeptAgent {
+		this.observe();
+		const kept = this.#invariant.keep(agentId, note);
+		this.publish();
+		return kept;
+	}
+
+	/** `agent keep A --clear`: whether it was being kept. */
+	unkeep(agentId: string): boolean {
+		const was = this.#invariant.unkeep(agentId);
+		this.observe();
+		return was;
+	}
+
+	/** How an agent stands against the invariant, and whether it is kept. */
+	standing(
+		agentId: string,
+	): (AgentStanding & { readonly kept?: KeptAgent }) | undefined {
+		const standing = this.#invariant.standing(agentId);
+		if (standing === undefined) return undefined;
+		const kept = this.#invariant.kept(agentId);
+		return kept === undefined ? standing : { ...standing, kept };
+	}
+
+	/** Every subject unsettled now. */
+	unsettled(): readonly UnsettledView[] {
+		return this.#invariant.unsettled();
 	}
 
 	/** Wake when the next escalation's grace or wait is up, to say so. */
@@ -793,6 +776,9 @@ export class OrchestratorService {
 			...all
 				.map((one) => currentWait(one)?.dueAt)
 				.filter((at): at is number => at !== undefined),
+			...[this.#invariant.nextDue()].filter(
+				(at): at is number => at !== undefined,
+			),
 		]
 			.map((at) => at - now)
 			.filter((ms) => ms > 0);
@@ -883,12 +869,39 @@ export class OrchestratorService {
 			paused: this.events.paused,
 			held: this.events.held().length,
 			github: this.ports.github?.() ?? { state: "idle" },
+			unsettled: this.#invariant.unsettled(),
+			agentStates: this.#agentStates(),
 			needsAnswer: lanes.needsAnswer.map(escalation),
 			inProgress: lanes.inProgress.map(escalation),
 			waiting: lanes.waiting.map(escalation),
 			closed: lanes.closed.slice(0, CLOSED_SHOWN).map(escalation),
 			graceMs: this.#graceMs,
 		};
+	}
+
+	/** What each agent's row shows of the orchestration. */
+	#agentStates(): Record<string, AgentOrchestrationWire> {
+		const out: Record<string, AgentOrchestrationWire> = {};
+		for (const agent of this.ports.agents()) {
+			const standing = this.#invariant.standing(agent.id);
+			const kept = this.#invariant.kept(agent.id);
+			const unsettled =
+				standing !== undefined &&
+				!standing.settled &&
+				kept === undefined &&
+				this.#invariant.pastGrace(`agent ${agent.id}`);
+			const state: AgentOrchestrationWire = {
+				...(standing?.waiting === undefined
+					? {}
+					: { waiting: standing.waiting }),
+				...(unsettled ? { unsettled: (standing.facts ?? []).join(" ") } : {}),
+				...(kept === undefined
+					? {}
+					: { kept: { note: kept.note, at: kept.at } }),
+			};
+			if (Object.keys(state).length > 0) out[agent.id] = state;
+		}
+		return out;
 	}
 
 	/** Every escalation, closed ones included, for `--tell`. */
@@ -915,7 +928,6 @@ export class OrchestratorService {
 
 	dispose(): void {
 		this.#timer?.cancel();
-		this.#reminder?.cancel();
 		this.events.dispose();
 		this.timers.stop();
 	}

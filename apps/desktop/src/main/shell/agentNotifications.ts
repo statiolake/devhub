@@ -10,7 +10,7 @@
  * - Only at work -> idle/waiting fires. At work is `working` or `background`
  *   (`agentAtWork`): "Finished" waits until the background shells, tasks and
  *   subagents are done too and the Agent is `idle` (`agentTurnDone`) — the
- *   rule `agent.turn_ended` goes by. The first sight of an Agent, a restored
+ *   rule the orchestrator's invariant goes by. The first sight of an Agent, a restored
  *   Agent, and a resumed conversation replaying its history never do: an Agent
  *   must have been observed working by this run first.
  * - Debounced: the new status must hold for `DEBOUNCE_MS`. A status that flaps

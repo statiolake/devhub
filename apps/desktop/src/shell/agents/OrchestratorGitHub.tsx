@@ -3,7 +3,7 @@
  * — green active, grey suspended by the pause, hollow idle, amber backing
  * off (a failed poll, or a low rate limit) — and, on hover or focus, a small
  * card with what `orchestrator status` says of it: the boards (links to
- * them) with what each last read (items, assigned to me, unattended), the
+ * them) with what each last read (items, assigned to me), the
  * state and why, the last and next poll, the rate limit left.
  *
  * The card is in this page, under the pill, and the pointer may move into
@@ -135,7 +135,7 @@ export function GitHubPill({
                       {" "}
                       {board.items === undefined
                         ? "· not read yet"
-                        : `· ${String(board.items)} items, ${String(board.assigned ?? 0)} assigned to me, ${String(board.unattended ?? 0)} unattended`}
+                        : `· ${String(board.items)} items, ${String(board.assigned ?? 0)} assigned to me`}
                     </span>
                   </li>
                 );
