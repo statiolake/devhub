@@ -625,7 +625,31 @@ export interface OrchestratorBoardWire {
 		readonly boards?: readonly {
 			readonly ref: string;
 			readonly title?: string;
+			/**
+			 * Its last full pass, counted: every card, those assigned to the
+			 * viewer, and their open Issues no live agent is linked to
+			 * (`github.unattended`). Absent before the first full pass.
+			 */
+			readonly items?: number;
+			readonly assigned?: number;
+			readonly unattended?: number;
 		}[];
+		/** The Issues `github.unattended` is about now, as of the last look. */
+		readonly unattended?: readonly {
+			readonly repo: string;
+			readonly number: number;
+			readonly title?: string;
+			readonly url?: string;
+			/** The board (`OWNER/NUMBER`) it is on. */
+			readonly project: string;
+			readonly lane: string | null;
+		}[];
+		/**
+		 * Why the last look said nothing of some cards (a baseline, an Issue
+		 * with an agent, a closed one, one said already): for
+		 * `orchestrator events`.
+		 */
+		readonly notes?: readonly string[];
 		readonly problem?: string;
 	};
 	/** Oldest question first. */

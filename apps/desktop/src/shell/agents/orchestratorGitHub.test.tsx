@@ -2,7 +2,7 @@
 
 /**
  * The board header, calmer: the events switch says only "Events", and
- * GitHub polling is a `github` pill with a dot, whose card (on hover or
+ * GitHub polling is a `GitHub` pill with a dot, whose card (on hover or
  * focus) holds the boards, the state and why, the polls and the rate limit.
  */
 
@@ -67,7 +67,7 @@ function mount(board: Partial<OrchestratorBoardWire>) {
 }
 
 function pill(): HTMLElement {
-  return screen.getByRole("button", { name: /^github/u });
+  return screen.getByRole("button", { name: /^GitHub/u });
 }
 
 function card(): HTMLElement {
@@ -92,7 +92,7 @@ describe("the events switch", () => {
   });
 });
 
-describe("the github pill", () => {
+describe("the GitHub pill", () => {
   it.each([
     [{ state: "active" } as const, "active"],
     [{ state: "suspended" } as const, "suspended"],
@@ -107,7 +107,9 @@ describe("the github pill", () => {
     ],
   ])("draws %o as %s", (github, health) => {
     mount({ github });
-    expect(pill()).toHaveTextContent(/^github$/u);
+    // Spelled as the product is, in what the person reads.
+    expect(pill()).toHaveTextContent(/^GitHub$/u);
+    expect(pill()).toHaveAccessibleName(/^GitHub: /u);
     expect(pill()).toHaveAttribute("data-health", health);
     expect(pill()).not.toHaveAttribute("title");
     expect(screen.queryByText(/polling/u)).toBeNull();
@@ -143,6 +145,23 @@ describe("the github pill", () => {
     expect(box).toHaveTextContent(
       `Rate limit${(4321).toLocaleString()} / ${(5000).toLocaleString()} left`,
     );
+  });
+
+  it("counts each board's cards: items, assigned to me, unattended", () => {
+    mount({
+      github: {
+        state: "active",
+        boards: [
+          { ref: "acme/7", items: 42, assigned: 5, unattended: 2 },
+          { ref: "me/2" },
+        ],
+      },
+    });
+    const boards = within(card()).getByRole("list", { name: "Boards" });
+    expect(boards).toHaveTextContent(
+      "acme/7 · 42 items, 5 assigned to me, 2 unattended",
+    );
+    expect(boards).toHaveTextContent("me/2 · not read yet");
   });
 
   it("says why it backs off, and when it polls next", () => {

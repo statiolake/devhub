@@ -694,7 +694,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="GitHub Projects"
-          help="The Projects boards whose lanes are watched for github.lane_changed, as OWNER/NUMBER, comma-separated. DevHub only reads them."
+          help="The Projects boards watched for GitHub events (github.lane_changed, github.unattended, …), as OWNER/NUMBER, comma-separated. DevHub only reads them."
         >
           <TextField
             label="Orchestrator GitHub projects"

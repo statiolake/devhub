@@ -1189,6 +1189,7 @@ export class TellService {
 				: [
 						"Unaccounted agents are idle with no open escalation about them: give each its next task, or raise an escalation.",
 					]),
+			...unattendedLines(board),
 		];
 		return {
 			message: lines.join("\n"),
@@ -1200,6 +1201,8 @@ export class TellService {
 				inProgress: board.inProgress,
 				unaccounted: board.unaccounted,
 				graceMs: board.graceMs,
+				// null: GitHub is not polled, so nobody knows.
+				unattendedIssues: board.github.unattended ?? null,
 			},
 		};
 	}
@@ -1385,8 +1388,10 @@ export class TellService {
 
 	private orchestratorEvents(last: number): TellAnswer {
 		const entries = this.ports.orchestrator.events(last);
+		// Why the last GitHub look said nothing of some cards.
+		const notes = this.ports.orchestrator.board().github.notes ?? [];
 		return {
-			message:
+			message: [
 				entries.length === 0
 					? "No events yet."
 					: entries
@@ -1395,7 +1400,14 @@ export class TellService {
 									`${String(entry.seq).padStart(4)} ${new Date(entry.at).toISOString().slice(11, 19)} ${entry.fate.padEnd(9)} ${entry.line}${entry.into === undefined ? "" : ` (→ ${String(entry.into)})`}`,
 							)
 							.join("\n"),
-			data: { events: entries },
+				...(notes.length === 0
+					? []
+					: [
+							"GitHub, the last look: not said, and why",
+							...notes.map((note) => `  ${note}`),
+						]),
+			].join("\n"),
+			data: { events: entries, githubNotes: notes },
 		};
 	}
 
@@ -1434,6 +1446,7 @@ export class TellService {
 				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, unaccounted ${String(counts.unaccounted)}`,
 				`events: ${board.paused ? "paused" : "delivered"}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
 				githubPollingLine(board),
+				...githubBoardLines(board),
 			].join("\n"),
 			data: {
 				agentId: agent?.id ?? null,
@@ -4063,7 +4076,7 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 					: " (no [orchestrator.github] projects)"
 				: "";
 	return [
-		`github polling: ${state}${why}`,
+		`GitHub polling: ${state}${why}`,
 		...(boards === undefined || boards.length === 0
 			? []
 			: [`boards ${boards.map((one) => one.ref).join(" ")}`]),
@@ -4076,6 +4089,40 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 				]),
 		...(problem === undefined ? [] : [problem]),
 	].join(", ");
+}
+
+/**
+ * Each board's last full pass, counted: `acme/7 (Team): 42 items, 5 assigned
+ * to me, 2 unattended`; `not read yet` before the first.
+ */
+function githubBoardLines(board: OrchestratorBoardWire): string[] {
+	if (board.github.state === "idle") return [];
+	return (board.github.boards ?? []).map(
+		(one) =>
+			`  ${one.ref}${one.title === undefined ? "" : ` (${one.title})`}: ${
+				one.items === undefined
+					? "not read yet"
+					: `${String(one.items)} items, ${String(one.assigned ?? 0)} assigned to me, ${String(one.unattended ?? 0)} unattended`
+			}`,
+	);
+}
+
+/** `board`'s GitHub part: the Issues of mine no agent is on (`github.unattended`). */
+function unattendedLines(board: OrchestratorBoardWire): string[] {
+	const list = board.github.unattended;
+	if (list === undefined) return [];
+	return [
+		`unattended Issues (${String(list.length)}, assigned to me, open, no agent):`,
+		...list.map(
+			(one) =>
+				`  #${String(one.number)}  ${one.title ?? ""}  ${one.repo}  lane=${one.lane ?? "(none)"}${one.url === undefined ? "" : `  ${one.url}`}`,
+		),
+		...(list.length === 0
+			? []
+			: [
+					"Give each an agent ('issue assign … --meta issue=N'), or raise an escalation.",
+				]),
+	];
 }
 
 /** The ranking a command gives, as the port takes it. */

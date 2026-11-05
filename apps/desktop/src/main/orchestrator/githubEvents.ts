@@ -34,6 +34,14 @@
  * `diffPullRequests`, `diffRequested`). Each board's first full pass and each
  * pull request's first details are a baseline and say nothing.
  *
+ * **`github.unattended`** is a state, not a diff (`unattended.ts`): on every
+ * successful poll — the baseline too, which is the point: an assignment
+ * missed while nobody watched is said on the first poll — and whenever the
+ * Workspaces or Agents move (`reconsider`), each open Issue assigned to the
+ * viewer with no live agent linked to it is said once, and again only once
+ * it has had an agent and lost it (or was closed and reopened). A start or
+ * restart says every one again: the new orchestrator has heard none.
+ *
  * **Pause, restart.** While the orchestrator's events are paused the source
  * is `suspended`: it does not poll at all, and keeps what it last read. A
  * resume polls at once (the rate limit permitting) and diffs against that, so
@@ -60,6 +68,7 @@ import {
 	usableSnapshot,
 	type SnapshotStore,
 } from "./githubSnapshot.js";
+import { unattendedVerdict, type LinkWorkspace } from "./unattended.js";
 
 // --- the snapshot ----------------------------------------------------------------
 
@@ -770,6 +779,11 @@ export interface GitHubSourcePorts {
 	readonly setTimer: (ms: number, run: () => void) => { cancel(): void };
 	/** Where the last reading is kept across restarts; absent: nowhere. */
 	readonly snapshots?: SnapshotStore;
+	/**
+	 * The open Workspaces and their agents, for `github.unattended`'s link
+	 * check (`unattended.ts`). Absent: no `github.unattended` at all.
+	 */
+	readonly links?: () => readonly LinkWorkspace[];
 	/** How it stands (`state()`) moved. */
 	readonly changed?: () => void;
 	readonly now?: () => number;
@@ -777,6 +791,8 @@ export interface GitHubSourcePorts {
 }
 
 interface BoardState {
+	/** The board's title, as GitHub last gave it. */
+	title?: string;
 	/** The last full pass; undefined until the first (the baseline). */
 	complete: readonly BoardEntry[] | undefined;
 	/** The pass being read, page by page. */
@@ -790,6 +806,25 @@ interface BoardState {
  * `idle` (no orchestrator, or no board configured) has forgotten it.
  */
 export type GitHubPolling = "active" | "suspended" | "idle";
+
+/** A board's last full pass, counted, for `orchestrator status`. */
+export interface BoardCounts {
+	readonly ref: string;
+	readonly title?: string;
+	/** Read in full at least once. */
+	readonly read: boolean;
+	readonly items: number;
+	/** Issues and pull requests assigned to the viewer. */
+	readonly assigned: number;
+	readonly unattended: number;
+}
+
+/** An Issue `github.unattended` is about now, for `board --json`. */
+export interface UnattendedIssue {
+	readonly item: EventItem;
+	readonly project: string;
+	readonly lane: string | null;
+}
 
 /** Whether the rate limit is low enough that polling waits for its reset. */
 function rateLimited(rate: RateLimit | undefined, now: number): boolean {
@@ -819,6 +854,15 @@ export class GitHubEventSource {
 	#nextAt: number | undefined;
 	/** The poll a resume asked for, until it is done. */
 	#catchUp: Promise<void> | undefined;
+	/** Issues said to be unattended, until they are not (the episode ends). */
+	#told = new Set<string>();
+	/** The Issues unattended as of the last look, by node id. */
+	#unattended = new Map<string, UnattendedIssue>();
+	/**
+	 * Why the last look said nothing of something: the baseline, an Issue of
+	 * the viewer's that has an agent, is closed, or was said already.
+	 */
+	#notes: string[] = [];
 
 	constructor(private readonly ports: GitHubSourcePorts) {}
 
@@ -885,6 +929,9 @@ export class GitHubEventSource {
 		this.#pulls = new Map();
 		this.#requested = undefined;
 		this.#readAt = undefined;
+		this.#told = new Set();
+		this.#unattended = new Map();
+		this.#notes = [];
 	}
 
 	/** The stored snapshot, as the memory the first poll is diffed against. */
@@ -948,6 +995,9 @@ export class GitHubEventSource {
 		readonly rateLimit?: RateLimit;
 		readonly problem?: string;
 		readonly watched: number;
+		readonly boards: readonly BoardCounts[];
+		readonly unattended: readonly UnattendedIssue[];
+		readonly notes: readonly string[];
 	} {
 		return {
 			mode: this.#mode,
@@ -957,7 +1007,122 @@ export class GitHubEventSource {
 			...(this.#rate === undefined ? {} : { rateLimit: this.#rate }),
 			...(this.#problem === undefined ? {} : { problem: this.#problem }),
 			watched: this.#pulls.size,
+			boards: this.#counts(),
+			unattended: [...this.#unattended.values()],
+			notes: [...this.#notes],
 		};
+	}
+
+	#counts(): BoardCounts[] {
+		const viewer = this.#viewer;
+		return this.#boardRefs().map((ref) => {
+			const state = this.#boards.get(ref);
+			const entries = state?.complete ?? [];
+			return {
+				ref,
+				...(state?.title === undefined ? {} : { title: state.title }),
+				read: state?.complete !== undefined,
+				items: entries.length,
+				assigned:
+					viewer === undefined
+						? 0
+						: entries.filter((entry) =>
+								entry.assignees.some((one) => same(one, viewer)),
+							).length,
+				unattended: [...this.#unattended.values()].filter(
+					(one) => one.project === ref,
+				).length,
+			};
+		});
+	}
+
+	/**
+	 * The Workspaces or Agents moved: look at `github.unattended` again, off
+	 * what was last read (no poll). Nothing while idle.
+	 */
+	reconsider(): void {
+		if (this.#mode === "idle") return;
+		if (this.#evaluate(false)) this.ports.changed?.();
+	}
+
+	/**
+	 * Whether the Issue a pending `github.unattended` is about still is, by
+	 * what was last read and the agents now: not closed, still assigned, still
+	 * without an agent.
+	 */
+	stillUnattended(item: EventItem): boolean {
+		const viewer = this.#viewer;
+		const links = this.ports.links;
+		if (viewer === undefined || links === undefined) return false;
+		const workspaces = links();
+		for (const state of this.#boards.values())
+			for (const entry of state.complete ?? [])
+				if (
+					entry.kind === "issue" &&
+					entry.item.number === item.number &&
+					same(entry.item.repo, item.repo)
+				)
+					return unattendedVerdict(entry, viewer, workspaces).unattended;
+		return false;
+	}
+
+	/**
+	 * Every open Issue of the viewer's without an agent, said if it has not
+	 * been this episode; one that has an agent again (or is gone) is re-armed.
+	 * Whether what is unattended changed.
+	 */
+	#evaluate(poll: boolean, baselines: readonly string[] = []): boolean {
+		const viewer = this.#viewer;
+		const links = this.ports.links;
+		if (viewer === undefined || links === undefined) return false;
+		const workspaces = links();
+		const now = new Map<string, UnattendedIssue>();
+		const notes: string[] = baselines.map(
+			(ref) =>
+				`${ref}: first full pass, a baseline: no github.assigned or lane_changed from it (github.unattended is checked)`,
+		);
+		for (const [ref, state] of this.#boards)
+			for (const entry of state.complete ?? []) {
+				if (now.has(entry.id)) continue;
+				const verdict = unattendedVerdict(entry, viewer, workspaces);
+				if (verdict.unattended) {
+					now.set(entry.id, {
+						item: entry.item,
+						project: ref,
+						lane: entry.status,
+					});
+					continue;
+				}
+				if (verdict.why === "closed" || verdict.why === "has an agent")
+					notes.push(
+						`#${String(entry.item.number)} (${entry.item.repo}): no github.unattended, ${verdict.why === "closed" ? "closed" : `linked to agent=${verdict.agent === undefined ? "?" : verdict.agent.id.slice(0, 8)}${verdict.ws === undefined ? "" : ` in ws=${verdict.ws}`}`}`,
+					);
+			}
+		// Attended (or gone) now: the next stretch unattended is said again.
+		for (const id of [...this.#told]) if (!now.has(id)) this.#told.delete(id);
+		const events: OrchestratorEvent[] = [];
+		for (const [id, one] of now) {
+			if (this.#told.has(id)) {
+				notes.push(
+					`#${String(one.item.number)} (${one.item.repo}): unattended, github.unattended said already for this stretch`,
+				);
+				continue;
+			}
+			this.#told.add(id);
+			events.push({
+				type: "github.unattended",
+				item: one.item,
+				project: one.project,
+				lane: one.lane,
+			});
+		}
+		const before = [...this.#unattended.keys()].join(" ");
+		this.#unattended = now;
+		if (poll || events.length > 0) this.#notes = notes;
+		for (const event of events) this.ports.dispatch(event);
+		return (
+			events.length > 0 || before !== [...this.#unattended.keys()].join(" ")
+		);
 	}
 
 	#boardRefs(): string[] {
@@ -1125,10 +1290,12 @@ export class GitHubEventSource {
 		this.#viewer = viewer;
 		const where = this.ports.where;
 		const events: OrchestratorEvent[] = [];
+		const baselines: string[] = [];
 		for (const ref of refs) {
 			const page = reading.pages.get(ref);
 			const state = this.#boards.get(ref);
 			if (page === undefined || state === undefined) continue;
+			state.title = page.title;
 			state.partial.push(...page.entries);
 			if (page.next !== null) {
 				state.after = page.next;
@@ -1138,6 +1305,7 @@ export class GitHubEventSource {
 			state.partial = [];
 			state.after = null;
 			if (state.complete === undefined) {
+				baselines.push(ref);
 				// The baseline: what relates to the viewer now is watched from here.
 				for (const entry of pass)
 					if (relates(entry, viewer)) {
@@ -1199,5 +1367,6 @@ export class GitHubEventSource {
 			}
 			this.ports.dispatch(event);
 		}
+		this.#evaluate(true, baselines);
 	}
 }

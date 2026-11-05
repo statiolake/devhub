@@ -305,6 +305,7 @@ pulls the details itself. `{EVENT}` holds these lines.
 | `unaccounted`                                     | an agent entered 不明                                                                                                                                                                                                                 | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m`                                                                                                                        |
 | `github.assigned` / `github.unassigned`           | the viewer was assigned to / taken off a card                                                                                                                                                                                         | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200`                                                                                |
 | `github.lane_changed`                             | a card of the viewer's moved lane (Status)                                                                                                                                                                                            | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123`                                                       |
+| `github.unattended`                               | an open Issue on a board, assigned to the viewer, has no live DevHub agent linked to it (a state, said on every poll and the baseline; see below)                                                                                     | `[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない https://…/issues/200`                                                     |
 | `github.pr_opened`                                | a PR linked to the viewer's Issue, or by the viewer, appeared                                                                                                                                                                         | `[github.pr_opened] PR #130「ログイン修正」 — me が draft で作成 (#123) https://github.com/acme/app/pull/130`                                                                |
 | `github.pr_ready`                                 | a watched PR left draft                                                                                                                                                                                                               | `[github.pr_ready] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — ready for review になった https://…/pull/130`                                             |
 | `github.pr_approved` / `github.changes_requested` | the viewer's PR was approved / changes were requested                                                                                                                                                                                 | `[github.changes_requested] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 — bob が変更を要求 https://…/pull/130`                                                       |
@@ -370,13 +371,15 @@ bob が承認 ／ [github.pr_ready] ready for review になった https://…/pu
   again (someone has given it work; its output stays readable with `agent
 read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   longer waits on it; an `escalation_answered`, `escalation.taken` or
-  `escalation.human_direct` whose escalation is closed.
+  `escalation.human_direct` whose escalation is closed; a `github.unattended`
+  whose Issue was closed, or has had an agent linked to it, since.
 - **Never said twice.** What the last delivery said about a subject is not
   delivered again (`repeat`) unless something about that subject has been
   heard since — a repeated `unaccounted` for the same idle period, the same
   CI result on the same commit. Events that add news each time (`init`,
   `escalation_answered`, `escalation.taken`, `escalation.human_direct`,
-  review comments, replies,
+  review comments, replies, `github.unattended` — its source says it once
+  per stretch of being unattended —
   turns, timers, `custom.*`)
   are never repeats.
 - **Batching.** Lines wait while the orchestrator is mid-turn (working, on a
@@ -399,20 +402,26 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   them, and the next start's `init` sends the orchestrator to the board
   anyway. With no orchestrator assigned, an event is dropped.
 - **The header** says it calmly: the switch is labelled only "Events" (its
-  knob says on or off), and GitHub polling is a `github` pill with a dot —
+  knob says on or off), and GitHub polling is a `GitHub` pill with a dot —
   green active, grey suspended by the pause, hollow idle (no orchestrator,
   or no `[orchestrator.github] projects`), amber backing off (the last poll
   failed or GitHub reported a problem, or the rate limit is under half or
   100 left: `githubHealth` in `model/orchestratorSettings.ts`). Hovering or
   focusing it opens a small card, which the pointer can move into: the
-  boards (`OWNER/NUMBER`, each a link to its GitHub page), the state and
+  boards (`OWNER/NUMBER`, each a link to its GitHub page, with what its last
+  full pass counted: items, assigned to me, unattended), the state and
   why, the last and next poll, and the rate limit left — what
-  `orchestrator status` prints (and `--json` carries as `github`: `boards`,
+  `orchestrator status` prints (and `--json` carries as `github`: `boards`
+  with `items` / `assigned` / `unattended`, `unattended`, `notes`,
   `lastAt`, `nextAt`, `rateLimit`, `problem`).
 - `devhub --tell orchestrator events [--last N] [--json]` lists the last
   events (200 are kept) and what came of each: `delivered`, `pending`,
   `filtered`, `coalesced` (into which), `dropped-stale` (with why: no longer
-  needs attention, or no net change), `repeat`, `overflow`, `dropped`, `self`.
+  needs attention, or no net change), `repeat`, `overflow`, `dropped`, `self`
+  — and then why the last GitHub look said nothing of some cards: a board's
+  baseline pass (no `github.assigned` / `lane_changed` from it), an Issue of
+  the viewer's that has an agent (which, where), a closed one, an unattended
+  one already said (`--json`: `githubNotes`).
 
 ### The sources
 
@@ -467,6 +476,28 @@ remaining limit resetAt }`, a page of 100 items per board (item id,
   - Where the Workspace watcher (the Sidebar's branch → PR, `workspace
 status`) has the PR or Issue open, its Workspace and agent go on the
     line as `ws=` and `agent=`.
+  - **`github.unattended`** (`unattended.ts`) is level-triggered: edge events
+    can be missed (the baseline, an assignment before the orchestrator
+    existed, a failed poll), a state cannot. On **every successful poll —
+    the baseline included** — and whenever the Workspaces or agents move (a
+    projection, a repository-status round), each card that is an **Issue,
+    assigned to the viewer, open**, with **no linked live agent**, is said
+    once. The lane decides nothing (`lane=` is information); a closed Issue
+    is done. **Linked** (`linkedAgent`, the one definition): an open
+    Workspace whose checked-out branch names the Issue (`123-fix-login` in
+    the repository it numbers Issues in — the link DevHub's Issue assignment
+    makes, and the Sidebar shows) and that has at least one agent not
+    stopped or stopping; or a live agent whose meta `issue=` names it, by
+    URL, or by number (`123`, `#123`) in its Workspace's repository. The
+    orchestrator is never the linked agent. **Once per episode**: an Issue
+    said is not said again until it has been attended (an agent linked) or
+    closed, and then is unattended again; a start or restart of the
+    orchestrator says every one again, so right after `init` it hears the
+    whole list — any assignment missed before included. Stale-dropped when,
+    by delivery, it was closed or an agent got linked. The current list is
+    `devhub --tell board` (`--json`: `unattendedIssues`, null when GitHub is
+    not polled); `orchestrator status` counts, per board, its items, those
+    assigned to the viewer, and the unattended ones.
 - **Workspaces and agents** (`liveEvents.ts`), read off the projection the
   window draws (the Sidebar's repository status included) while an
   orchestrator runs; the first projection is a baseline.

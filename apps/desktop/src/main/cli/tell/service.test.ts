@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { COMMANDS } from "../../../model/commands.js";
 import { parseControlRequest } from "../protocol.js";
 import { parseTellArguments } from "./command.js";
+import type { OrchestratorBoardWire } from "../../../ipc/contract.js";
 import type {
 	EntryId,
 	PendingRequest,
@@ -213,6 +214,8 @@ class FakePorts implements TellPorts {
 	clock = { now: 0 };
 	/** What the orchestrator was sent, as `[agentId, text]`. */
 	delivered: [string, string][] = [];
+	/** What the board's header says of GitHub polling. */
+	github: OrchestratorBoardWire["github"] = { state: "idle" };
 	readonly service = new OrchestratorService({
 		store: EscalationStore.inMemory(),
 		agents: () =>
@@ -232,6 +235,7 @@ class FakePorts implements TellPorts {
 			this.delivered.push([agentId, text]);
 		},
 		publish: () => undefined,
+		github: () => this.github,
 		now: () => this.clock.now,
 	});
 	focusedOrchestrator = false;
@@ -3962,6 +3966,57 @@ describe("the Orchestrator row from the command line", () => {
 			undefined,
 		);
 		expect(status.data).toMatchObject({ agentId: ORCHESTRATOR });
+	});
+
+	it("lists the unattended Issues on the board, counts each GitHub board in status, and says why events said nothing", async () => {
+		const { service, ports } = orchestrated();
+		const idle = await viaSocket(service, ["board"], undefined);
+		expect(idle.data).toMatchObject({ unattendedIssues: null });
+		ports.github = {
+			state: "active",
+			boards: [
+				{ ref: "acme/7", title: "Team", items: 42, assigned: 5, unattended: 1 },
+				{ ref: "me/2" },
+			],
+			unattended: [
+				{
+					repo: "acme/app",
+					number: 200,
+					title: "検索の改善",
+					url: "https://github.com/acme/app/issues/200",
+					project: "acme/7",
+					lane: "Todo",
+				},
+			],
+			notes: [
+				"#123 (acme/app): no github.unattended, linked to agent=aaaa1111",
+			],
+		};
+		const board = await viaSocket(service, ["board"], undefined);
+		expect(board.message).toContain(
+			"  #200  検索の改善  acme/app  lane=Todo  https://github.com/acme/app/issues/200",
+		);
+		expect(board.data).toMatchObject({
+			unattendedIssues: [{ number: 200, lane: "Todo" }],
+		});
+		const status = await viaSocket(
+			service,
+			["orchestrator", "status"],
+			undefined,
+		);
+		expect(status.message).toContain("GitHub polling: active");
+		expect(status.message).toContain(
+			"  acme/7 (Team): 42 items, 5 assigned to me, 1 unattended",
+		);
+		expect(status.message).toContain("  me/2: not read yet");
+		const events = await viaSocket(
+			service,
+			["orchestrator", "events"],
+			undefined,
+		);
+		expect(events.message).toContain(
+			"  #123 (acme/app): no github.unattended, linked to agent=aaaa1111",
+		);
 	});
 
 	it("pauses events and delivers the held ones, in order, as one message on resume", async () => {

@@ -1,9 +1,10 @@
 /**
- * The board header's GitHub pill: `github` and a dot for how polling stands
+ * The board header's GitHub pill: `GitHub` and a dot for how polling stands
  * — green active, grey suspended by the pause, hollow idle, amber backing
  * off (a failed poll, or a low rate limit) — and, on hover or focus, a small
  * card with what `orchestrator status` says of it: the boards (links to
- * them), the state and why, the last and next poll, the rate limit left.
+ * them) with what each last read (items, assigned to me, unattended), the
+ * state and why, the last and next poll, the rate limit left.
  *
  * The card is in this page, under the pill, and the pointer may move into
  * it to click a board: it closes a moment after the pointer leaves both.
@@ -82,10 +83,10 @@ export function GitHubPill({
         data-health={health}
         aria-expanded={shown}
         aria-controls="orchestrator-github-card"
-        aria-label={`github: ${HEALTH_LABEL[health].toLowerCase()}`}
+        aria-label={`GitHub: ${HEALTH_LABEL[health].toLowerCase()}`}
       >
         <span className="orchestrator-github-dot" aria-hidden="true" />
-        github
+        GitHub
       </button>
       {shown ? (
         <div
@@ -130,6 +131,12 @@ export function GitHubPill({
                         {board.title}
                       </span>
                     )}
+                    <span className="orchestrator-github-title">
+                      {" "}
+                      {board.items === undefined
+                        ? "· not read yet"
+                        : `· ${String(board.items)} items, ${String(board.assigned ?? 0)} assigned to me, ${String(board.unattended ?? 0)} unattended`}
+                    </span>
                   </li>
                 );
               })}

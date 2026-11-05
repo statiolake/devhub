@@ -16,6 +16,7 @@ import {
 	nextDelay,
 	parseReading,
 } from "./githubEvents.js";
+import { linkedAgent, type LinkWorkspace } from "./unattended.js";
 
 // --- fixtures: GitHub's answers, as JSON ---------------------------------------
 
@@ -214,7 +215,11 @@ function answer(state: Answer) {
 }
 
 /** A source answering from `answers`, one per tick, and what it asked. */
-function world(answers: Answer[], where = new Map<string, string>()) {
+function world(
+	answers: Answer[],
+	where = new Map<string, string>(),
+	links?: () => readonly LinkWorkspace[],
+) {
 	const events: OrchestratorEvent[] = [];
 	const asked: { query: string; variables: Record<string, unknown> }[] = [];
 	let now = Date.parse("2026-11-05T00:00:00Z");
@@ -233,6 +238,7 @@ function world(answers: Answer[], where = new Map<string, string>()) {
 			link !== undefined && where.has(link)
 				? { ws: where.get(link)!, agent: { id: "a1", name: "Claude" } }
 				: undefined,
+		...(links === undefined ? {} : { links }),
 		setTimer: (_ms, run) => {
 			pending.push(run);
 			return { cancel: () => undefined };
@@ -946,5 +952,300 @@ describe("the GitHub interval", () => {
 		expect((state.nextAt ?? 0) - (state.lastAt ?? 0)).toBeGreaterThan(
 			30 * 60_000,
 		);
+	});
+});
+
+// --- github.unattended -----------------------------------------------------------
+
+/** A Workspace on `branch`'s Issue, with an agent (live unless said). */
+function space(
+	number: number | undefined,
+	agent: { live?: boolean; meta?: Record<string, string> } | null = {},
+): LinkWorkspace {
+	return {
+		ws: `ws${String(number ?? 0)}`,
+		issueUrls: number === undefined ? [] : [url(number, "issues")],
+		repo: "acme/app",
+		agents:
+			agent === null
+				? []
+				: [
+						{
+							id: `agent-${String(number ?? 0)}`,
+							name: "Claude",
+							live: agent.live ?? true,
+							meta: agent.meta ?? {},
+						},
+					],
+	};
+}
+
+function unattended(events: readonly OrchestratorEvent[]): number[] {
+	return events.flatMap((event) =>
+		event.type === "github.unattended" ? [event.item.number] : [],
+	);
+}
+
+describe("github.unattended", () => {
+	const MINE: IssueCard[] = [
+		{
+			item: "i1",
+			id: "I1",
+			number: 123,
+			status: "In Progress",
+			assignees: [ME],
+		},
+		{
+			item: "i3",
+			id: "I3",
+			number: 200,
+			title: "検索の改善",
+			status: "Todo",
+			assignees: [ME],
+		},
+		{ item: "i2", id: "I2", number: 300, status: "Todo", assignees: ["bob"] },
+	];
+
+	it("says an unattended Issue of mine on the baseline poll, not one with an agent", async () => {
+		const run = world([{ cards: MINE.map(issueCard) }], new Map(), () => [
+			space(123),
+		]);
+		await run.ticks(1);
+		expect(run.events).toEqual([
+			{
+				type: "github.unattended",
+				item: {
+					repo: "acme/app",
+					number: 200,
+					title: "検索の改善",
+					url: url(200, "issues"),
+				},
+				project: "acme/7",
+				lane: "Todo",
+			},
+		]);
+		const state = run.source.state();
+		expect(state.boards).toEqual([
+			{
+				ref: "acme/7",
+				title: "Team",
+				read: true,
+				items: 3,
+				assigned: 2,
+				unattended: 1,
+			},
+		]);
+		expect(state.unattended.map((one) => one.item.number)).toEqual([200]);
+		expect(state.notes.join("\n")).toMatch(
+			/acme\/7: first full pass, a baseline/u,
+		);
+		expect(state.notes.join("\n")).toMatch(
+			/#123 .*linked to agent=agent-12 in ws=ws123/u,
+		);
+	});
+
+	it("is not said again while nothing changed", async () => {
+		const run = world(
+			[{ cards: MINE.map(issueCard) }, { cards: MINE.map(issueCard) }],
+			new Map(),
+			() => [space(123)],
+		);
+		await run.ticks(2);
+		run.source.reconsider();
+		expect(unattended(run.events)).toEqual([200]);
+		expect(run.source.state().notes.join("\n")).toMatch(
+			/#200 .*said already for this stretch/u,
+		);
+	});
+
+	it("re-arms once an agent is linked, and says it again when it is gone", async () => {
+		let spaces = [space(123)];
+		const run = world(
+			[{ cards: MINE.map(issueCard) }],
+			new Map(),
+			() => spaces,
+		);
+		await run.ticks(1);
+		expect(unattended(run.events)).toEqual([200]);
+		// An agent on its branch: attended.
+		spaces = [space(123), space(200)];
+		run.source.reconsider();
+		expect(run.source.state().unattended).toEqual([]);
+		// Still attended: nothing.
+		run.source.reconsider();
+		expect(unattended(run.events)).toEqual([200]);
+		// The agent stopping: unattended again, said again.
+		spaces = [space(123), space(200, { live: false })];
+		run.source.reconsider();
+		expect(unattended(run.events)).toEqual([200, 200]);
+	});
+
+	it("does not say a closed Issue, whatever its lane; the lane is information", async () => {
+		const run = world(
+			[
+				{
+					cards: [
+						issueCard({
+							item: "i4",
+							id: "I4",
+							number: 400,
+							status: "Todo",
+							assignees: [ME],
+							state: "CLOSED",
+						}),
+						issueCard({
+							item: "i5",
+							id: "I5",
+							number: 500,
+							status: "Done",
+							assignees: [ME],
+						}),
+						issueCard({
+							item: "i6",
+							id: "I6",
+							number: 600,
+							status: null,
+							assignees: [ME],
+						}),
+					],
+				},
+			],
+			new Map(),
+			() => [],
+		);
+		await run.ticks(1);
+		// Open in Done is still open: said, with its lane; closed is not.
+		expect(
+			run.events.map(
+				(event) =>
+					event.type === "github.unattended" && [event.item.number, event.lane],
+			),
+		).toEqual([
+			[500, "Done"],
+			[600, null],
+		]);
+		expect(run.source.state().notes.join("\n")).toMatch(/#400 .*closed/u);
+	});
+
+	it("is not said without a link check (no Workspaces port)", async () => {
+		const run = world([{ cards: MINE.map(issueCard) }]);
+		await run.ticks(1);
+		expect(run.events).toEqual([]);
+	});
+
+	it("is dropped as stale when, by delivery, an agent got linked or it was closed", async () => {
+		let spaces: LinkWorkspace[] = [];
+		const run = world(
+			[
+				{ cards: MINE.map(issueCard) },
+				{
+					cards: MINE.map((card) =>
+						issueCard(
+							card.number === 123 ? { ...card, state: "CLOSED" } : card,
+						),
+					),
+				},
+			],
+			new Map(),
+			() => spaces,
+		);
+		const delivered: string[] = [];
+		const dispatcher = new EventDispatcher({
+			orchestrator: () => "orch",
+			settings: () => ({
+				event_prompt: "{EVENT}",
+				init_prompt: undefined,
+				events: ["github.*"],
+			}),
+			deliver: (_agent, text) => delivered.push(text),
+			relevant: (event) =>
+				event.type !== "github.unattended" ||
+				run.source.stillUnattended(event.item),
+		});
+		dispatcher.pause();
+		await run.ticks(1);
+		for (const event of run.events) dispatcher.dispatch(event);
+		expect(dispatcher.held()).toHaveLength(2);
+		// #200 gets an agent; #123 is closed on the next poll.
+		spaces = [space(200)];
+		await run.ticks(1);
+		void dispatcher.resume();
+		expect(delivered).toEqual([]);
+		expect(dispatcher.recent(10).map((entry) => entry.fate)).toEqual([
+			"dropped-stale",
+			"dropped-stale",
+		]);
+	});
+
+	it("is delivered again after a re-arm, not taken for a repeat", async () => {
+		let spaces: LinkWorkspace[] = [space(123)];
+		const run = world(
+			[{ cards: MINE.map(issueCard) }],
+			new Map(),
+			() => spaces,
+		);
+		const delivered: string[] = [];
+		const dispatcher = new EventDispatcher({
+			orchestrator: () => "orch",
+			settings: () => ({
+				event_prompt: "{EVENT}",
+				init_prompt: undefined,
+				events: ["github.*"],
+			}),
+			deliver: (_agent, text) => delivered.push(text),
+		});
+		await run.ticks(1);
+		spaces = [space(123), space(200)];
+		run.source.reconsider();
+		spaces = [space(123)];
+		run.source.reconsider();
+		for (const event of run.events) dispatcher.dispatch(event);
+		expect(delivered).toEqual([
+			`[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない ${url(200, "issues")}`,
+			`[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない ${url(200, "issues")}`,
+		]);
+	});
+});
+
+describe("linkedAgent", () => {
+	const issue = { repo: "acme/app", number: 200, url: url(200, "issues") };
+
+	it("links a Workspace on the Issue's branch with a live agent", () => {
+		expect(linkedAgent(issue, [space(200)])).toEqual({
+			ws: "ws200",
+			agent: { id: "agent-200", name: "Claude" },
+		});
+		expect(linkedAgent(issue, [space(200, { live: false })])).toBeUndefined();
+		expect(linkedAgent(issue, [space(200, null)])).toBeUndefined();
+		expect(linkedAgent(issue, [space(201)])).toBeUndefined();
+		// Case, a trailing slash: the same Issue.
+		expect(
+			linkedAgent(issue, [
+				{
+					...space(undefined),
+					issueUrls: ["https://github.com/ACME/app/issues/200/"],
+				},
+			]),
+		).toBeDefined();
+	});
+
+	it("links an agent whose meta issue= names it, by URL or by number in its repository", () => {
+		const meta = (value: string, repo?: string): LinkWorkspace => ({
+			...space(undefined, { meta: { issue: value } }),
+			...(repo === undefined ? {} : { repo }),
+		});
+		expect(linkedAgent(issue, [meta("200")])).toBeDefined();
+		expect(linkedAgent(issue, [meta("#200")])).toBeDefined();
+		expect(linkedAgent(issue, [meta(url(200, "issues"))])).toBeDefined();
+		expect(linkedAgent(issue, [meta("201")])).toBeUndefined();
+		expect(linkedAgent(issue, [meta("200", "other/repo")])).toBeUndefined();
+		expect(
+			linkedAgent(issue, [
+				{
+					...meta("200"),
+					agents: [{ id: "x", live: false, meta: { issue: "200" } }],
+				},
+			]),
+		).toBeUndefined();
 	});
 });

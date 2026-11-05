@@ -636,7 +636,10 @@ orchestrator (the Orchestrator row: the board, escalations, events)
   board                            the three lanes as data: needs_answer
                                    (oldest first), in_progress (how long
                                    since the answer), and unaccounted (idle
-                                   agents no open escalation names)
+                                   agents no open escalation names); while
+                                   GitHub is polled, the unattended Issues
+                                   (assigned to me, open, no agent on them:
+                                   --json unattendedIssues)
   escalation new --title <t> --body <text>|- [--agent <a>]...
                  [--link <url>]... [--option <text>]... [--workspace <w>]
                  [--priority high|normal|low] [--effort quick|normal|deep]
@@ -673,14 +676,17 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    workspace, start the orchestrator agent in
                                    it unfocused, and send it the init event
                                    (or --prompt). Refused while one runs
-  orchestrator status              its agent, state, lane counts, and whether
-                                   its events are paused
+  orchestrator status              its agent, state, lane counts, whether
+                                   its events are paused, and each GitHub
+                                   board's items, assigned to me, unattended
   orchestrator stop | restart      Stop Agent / Restart Session on it
   orchestrator pause | resume      hold its events / deliver the held ones,
                                    in order, as one message
   orchestrator events [--last <n>] the recent events, one line each, and what
                                    came of them: delivered, pending, filtered,
-                                   coalesced, dropped (default 20; --json: data)
+                                   coalesced, dropped (default 20; --json: data),
+                                   then why the last GitHub look said nothing
+                                   of some cards (baseline, has an agent, …)
   orchestrator emit --type custom.<name> --text <text>|-
                                    send a custom event, through the same
                                    filter and coalescing as DevHub's own

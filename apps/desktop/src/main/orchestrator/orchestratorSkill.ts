@@ -195,6 +195,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 
       [github.review_comment] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — alice から新規2件 (未解決 2) https://github.com/acme/app/pull/130
       [github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123
+      [github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない https://github.com/acme/app/issues/200
       [agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」
       [agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問
       [escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)
@@ -224,6 +225,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | ボード | \`unaccounted\` | エージェントが 不明 に入った | agent, ws |
 | GitHub | \`github.assigned\` / \`github.unassigned\` | 自分へのアサインが付いた / 外れた | ws, agent, URL |
 | GitHub | \`github.lane_changed\` | 自分の Issue / PR の Project レーンが動いた (from → to) | ws, URL |
+| GitHub | \`github.unattended\` | 自分にアサインされた open な Issue に、紐づく DevHub エージェントがいない (状態で判定。下記) | lane, URL |
 | GitHub | \`github.pr_opened\` | 自分の Issue に紐づく PR、または自分の PR ができた | ws, agent, URL |
 | GitHub | \`github.pr_ready\` | PR が draft から ready になった | ws, agent, URL |
 | GitHub | \`github.pr_approved\` / \`github.changes_requested\` | 自分の PR が承認された / 変更を要求された | ws, agent, URL |
@@ -254,6 +256,20 @@ DevHub の再起動後や同じプロファイルで新しく起動したオー�
 始まる。Project の設定や GitHub のログインが変わったとき、または 7 日より古いときは
 最初の 1 回がベースライン (何も言わない)。\`orchestrator status\` と ボードのヘッダーに
 GitHub ポーリングが active / suspended / idle のどれかが出る。
+
+\`github.unattended\` は差分ではなく **状態** で出る: 毎回の poll (最初のベースラインも
+含む) と、ワークスペース / エージェントが変わるたびに、Project 上の Issue のうち
+「自分にアサイン・open・紐づく生きたエージェントなし」のものを 1 件ずつ言う。
+レーンは判定に使わない (\`lane=\` は参考情報)。**紐づく** とは、開いている
+ワークスペースのブランチがその Issue を指し (\`123-fix-login\`、Issue アサインが作る
+ブランチ)、そこに停止中でないエージェントがいること、またはエージェントの meta
+\`issue=\` がその Issue (URL か、同じリポジトリの番号 \`123\` / \`#123\`) を指すこと。
+同じ Issue は「放置されている間」に 1 回だけ。エージェントが付いて、また外れたら
+もう一度来る。届く前にエージェントが付いた / クローズされた ものは落とされる。
+起動直後の \`init\` のあとに、取りこぼしたアサインも含めて今の一覧が届く。
+いつでも \`devhub --tell --json board\` の \`unattendedIssues\` で今の一覧を取れる
+(\`orchestrator status\` には Project ごとの 件数 / 自分にアサイン / 放置 が出る。
+なぜ何も来なかったかは \`orchestrator events\` の末尾)。
 
 ## 3. ボードとレーンの意味
 
@@ -469,6 +485,11 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
 
     ## github.lane_changed (例: Todo → In Progress)
     issue assign で担当エージェントを立てる (meta issue=N, parent=自分)。
+
+    ## github.unattended
+    github.unattended を受けたら Issue をアサインするか（issue assign）、エスカレする。
+    issue assign には meta issue=N, parent=自分 を付ける (付けると紐づいたと分かる)。
+    着手すべきでない (他の人の作業待ちなど) ならエスカレーションで人に聞く。
 
     ## github.changes_requested / github.review_comment
     その PR のエージェントに対応を依頼。いなければ agent resume か issue assign。

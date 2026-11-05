@@ -57,6 +57,7 @@ import {
 	EventDispatcher,
 	eventJson,
 	workspaceToken,
+	type EventItem,
 	type EventLogEntry,
 	type OrchestratorEvent,
 } from "./events.js";
@@ -100,6 +101,11 @@ export interface OrchestratorServicePorts {
 	readonly paused?: (paused: boolean) => Promise<void> | void;
 	/** How GitHub polling stands, for the board's header. */
 	readonly github?: () => OrchestratorBoardWire["github"];
+	/**
+	 * Whether the Issue of a pending `github.unattended` still is unattended
+	 * (open, mine, no agent linked). Absent: it always is.
+	 */
+	readonly githubUnattended?: (item: EventItem) => boolean;
 	/**
 	 * The cursor (`agent read --since`) of the person's last message to
 	 * `agentId`, read off its conversation; undefined when it has none.
@@ -250,6 +256,8 @@ export class OrchestratorService {
 					.find((escalation) => escalation.id === event.escalationId);
 				return one !== undefined && one.closed === undefined;
 			}
+			case "github.unattended":
+				return this.ports.githubUnattended?.(event.item) ?? true;
 			case "usage.threshold":
 				return usageThresholdRelevant(
 					event,

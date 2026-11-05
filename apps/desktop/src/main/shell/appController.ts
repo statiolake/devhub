@@ -373,6 +373,7 @@ import {
 	WorkspaceEventSource,
 } from "../orchestrator/liveEvents.js";
 import { GitHubEventSource } from "../orchestrator/githubEvents.js";
+import type { LinkWorkspace } from "../orchestrator/unattended.js";
 import { GitHubSnapshotFile } from "../orchestrator/githubSnapshot.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import {
@@ -5002,6 +5003,8 @@ export class AppController {
 			this.publishCondition(REPOSITORY_STATUS_CONDITION, status.diagnostic);
 			// Review comments arriving and CI failing are news from here.
 			this.runAutomaticActions();
+			// A branch now names an Issue (or no longer does): github.unattended.
+			this.githubEvents.reconsider();
 			const after = this.orderedWorkspaceIds();
 			if (before.join("\0") !== after.join("\0")) {
 				this.send(CHANNELS.snapshotChanged, this.snapshot());
@@ -9458,11 +9461,26 @@ export class AppController {
 				this.followGitHub(paused);
 				return paused ? undefined : this.githubEvents.caughtUp();
 			},
+			githubUnattended: (item) => this.githubEvents.stillUnattended(item),
 			github: () => {
 				const state = this.githubEvents.state();
+				const counted = new Map(state.boards.map((one) => [one.ref, one]));
 				const boards = this.config.orchestrator.github.projects
 					.filter((ref) => parseProjectRef(ref) !== undefined)
-					.map((ref) => ({ ref }));
+					.map((ref) => {
+						const one = counted.get(ref);
+						return {
+							ref,
+							...(one?.title === undefined ? {} : { title: one.title }),
+							...(one === undefined || !one.read
+								? {}
+								: {
+										items: one.items,
+										assigned: one.assigned,
+										unattended: one.unattended,
+									}),
+						};
+					});
 				return {
 					state: state.mode,
 					...(state.lastAt === undefined ? {} : { lastAt: state.lastAt }),
@@ -9479,6 +9497,21 @@ export class AppController {
 								},
 							}),
 					...(boards.length === 0 ? {} : { boards }),
+					...(state.mode === "idle"
+						? {}
+						: {
+								unattended: state.unattended.map((one) => ({
+									repo: one.item.repo,
+									number: one.item.number,
+									...(one.item.title === undefined
+										? {}
+										: { title: one.item.title }),
+									...(one.item.url === undefined ? {} : { url: one.item.url }),
+									project: one.project,
+									lane: one.lane,
+								})),
+								notes: state.notes,
+							}),
 					...(state.problem === undefined ? {} : { problem: state.problem }),
 				};
 			},
@@ -9605,6 +9638,7 @@ export class AppController {
 			this.orchestrator?.events.dispatch(event);
 		},
 		where: (url) => this.githubWhere(url),
+		links: () => this.githubLinks(),
 		// `<userData>/devhub/orchestrator-github.json`, once the profile is known.
 		snapshots: {
 			load: () => this.githubSnapshots?.load(),
@@ -9632,6 +9666,51 @@ export class AppController {
 			this.orchestrator?.orchestratorAgentId !== undefined,
 			paused,
 		);
+	}
+
+	/**
+	 * The open Workspaces as `github.unattended`'s link check reads them
+	 * (`unattended.ts`): the Issue each one's branch names, and its agents,
+	 * the orchestrator left out.
+	 */
+	private githubLinks(): readonly LinkWorkspace[] {
+		const snapshot = this.coordinator.snapshot();
+		const orchestrator = this.orchestrator?.orchestratorAgentId;
+		return snapshot.workspaces.map((workspace) => {
+			const row = this.lastRepositoryStatus.workspaces.find(
+				(one) => one.workspaceId === workspace.id,
+			);
+			const repo = row?.issueRepository;
+			const number =
+				row?.branch === undefined
+					? undefined
+					: issueNumberFromBranch(row.branch);
+			return {
+				ws:
+					workspace.id === snapshot.scratchWorkspaceId
+						? "scratch"
+						: workspaceToken(workspace.label, workspace.id),
+				issueUrls: [
+					...(number === undefined || repo === undefined
+						? []
+						: [
+								`https://github.com/${repo.owner}/${repo.repository}/issues/${String(number)}`,
+							]),
+					...(row?.issue === undefined ? [] : [row.issue.url]),
+				],
+				...(repo === undefined
+					? {}
+					: { repo: `${repo.owner}/${repo.repository}` }),
+				agents: workspace.agents
+					.filter((agent) => agent.id !== orchestrator)
+					.map((agent) => ({
+						id: agent.id,
+						name: agent.displayName,
+						live: agent.controlState.kind === "running",
+						meta: agent.meta ?? {},
+					})),
+			};
+		});
 	}
 
 	/** The Workspace (and its agent) the Sidebar shows an Issue's or pull request's work in. */
@@ -9664,6 +9743,8 @@ export class AppController {
 	private observeLiveEvents(): void {
 		const orchestrator = this.orchestrator?.orchestratorAgentId;
 		this.followGitHub();
+		// An agent came or went, a branch moved: who is unattended may have.
+		this.githubEvents.reconsider();
 		if (orchestrator === undefined) {
 			this.workspaceEvents.reset();
 			this.agentEvents.reset();

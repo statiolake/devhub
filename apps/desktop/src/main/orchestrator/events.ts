@@ -120,6 +120,20 @@ export type OrchestratorEvent =
 			readonly kind: "issue" | "pr";
 			readonly login: string;
 	  } & Where)
+	/**
+	 * Level-triggered, unlike the rest: an open Issue on a watched board,
+	 * assigned to the viewer, with no live DevHub agent linked to it
+	 * (`unattended.ts`). Said once per stretch of being unattended, the
+	 * baseline poll included; said again only after an agent was linked and
+	 * then was not.
+	 */
+	| ({
+			readonly type: "github.unattended";
+			readonly item: EventItem;
+			readonly project: string;
+			/** Its Status, for information: it does not decide anything. */
+			readonly lane: string | null;
+	  } & Where)
 	| ({
 			readonly type: "github.lane_changed";
 			readonly item: EventItem;
@@ -269,6 +283,7 @@ export const EVENT_TYPES = [
 	"github.assigned",
 	"github.unassigned",
 	"github.lane_changed",
+	"github.unattended",
 	"github.pr_opened",
 	"github.pr_ready",
 	"github.pr_approved",
@@ -379,6 +394,12 @@ export function windowWords(window: string): string {
 	return `${match[1]!}${unit}枠`;
 }
 
+/** A lane as `lane=` says it: quoted when it has a space in it. */
+function laneToken(lane: string | null): string {
+	if (lane === null) return "(なし)";
+	return /^\S+$/u.test(lane) ? lane : JSON.stringify(lane);
+}
+
 function people(logins: readonly string[]): string {
 	if (logins.length === 0) return "";
 	if (logins.length <= 2) return logins.join("・");
@@ -454,6 +475,16 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 					event.type === "github.assigned"
 						? `${event.login} にアサイン`
 						: `${event.login} のアサインが外れた`,
+				...(event.item.url === undefined ? {} : { url: event.item.url }),
+			};
+		case "github.unattended":
+			return {
+				head: [
+					item("issue", event.item),
+					`lane=${laneToken(event.lane)}`,
+					...where(event),
+				],
+				summary: "自分にアサインされているがエージェントがいない",
 				...(event.item.url === undefined ? {} : { url: event.item.url }),
 			};
 		case "github.lane_changed":
@@ -671,6 +702,7 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "github.assigned":
 		case "github.unassigned":
 		case "github.lane_changed":
+		case "github.unattended":
 			return `gh ${prKey(event.item)}`;
 		case "github.pr_opened":
 		case "github.pr_ready":
@@ -757,6 +789,9 @@ function accumulates(event: OrchestratorEvent): boolean {
 		event.type === "escalation.taken" ||
 		event.type === "github.review_comment" ||
 		event.type === "github.reply" ||
+		// The source says it once per stretch of being unattended: a second
+		// one is a new stretch, never a repeat of the first.
+		event.type === "github.unattended" ||
 		event.type === "agent.turn_ended" ||
 		event.type === "timer.elapsed" ||
 		event.type.startsWith("custom.")
