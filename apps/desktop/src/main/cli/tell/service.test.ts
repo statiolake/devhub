@@ -255,6 +255,15 @@ class FakePorts implements TellPorts {
 			this.service.toWire(this.service.ask(id, markdown, options, links)),
 		close: (id, note) => this.service.toWire(this.service.close(id, note)),
 		hold: (id, note) => this.service.toWire(this.service.hold(id, note)),
+		wait: (id, trigger, dueAt) =>
+			this.service.toWire(
+				this.service.wait(id, {
+					trigger,
+					...(dueAt === undefined ? {} : { dueAt }),
+				}),
+			),
+		resumeWait: (id, note) =>
+			this.service.toWire(this.service.resume(id, note)),
 		link: (id, agentId) => this.service.toWire(this.service.link(id, agentId)),
 		rank: (id, rank) => this.service.toWire(this.service.rank(id, rank)),
 		acknowledge: (id, entries) => {
@@ -4011,6 +4020,99 @@ describe("the Orchestrator row from the command line", () => {
 		).toMatchObject({ escalations: [{ id: 1, state: "closed" }] });
 	});
 
+	it("waits on a condition: the trigger is required, --at is a time, resume and the board", async () => {
+		const { service, ports } = orchestrated();
+		await viaSocket(
+			service,
+			["escalation", "new", "--title", "返事待ち", "--body", "?"],
+			coordinator,
+		);
+		expect(() =>
+			viaSocket(service, ["escalation", "wait", "1"], coordinator),
+		).toThrow(/--trigger is required/u);
+		expect(() =>
+			viaSocket(
+				service,
+				["escalation", "wait", "1", "--trigger", "x", "--at", "tomorrow"],
+				coordinator,
+			),
+		).toThrow(/--at takes an ISO date/u);
+		const waited = await viaSocket(
+			service,
+			["escalation", "wait", "1", "--trigger", "Bob から Slack で返事が来たら"],
+			coordinator,
+		);
+		expect(waited.data).toMatchObject({ state: "waiting" });
+		const at = "2026-11-10T09:00:00.000Z";
+		const born = await viaSocket(
+			service,
+			[
+				"escalation",
+				"new",
+				"--title",
+				"日付待ち",
+				"--body",
+				"b",
+				"--wait",
+				"11/10 以降に再開",
+				"--at",
+				at,
+			],
+			coordinator,
+		);
+		expect(born.message).toContain("in waiting");
+		expect(ports.service.escalations()[1]!.entries.at(-1)).toMatchObject({
+			kind: "wait",
+			markdown: "11/10 以降に再開",
+			dueAt: Date.parse(at),
+		});
+		expect(() =>
+			viaSocket(
+				service,
+				["escalation", "new", "--title", "t", "--body", "b", "--at", at],
+				coordinator,
+			),
+		).toThrow(/--at goes with --wait/u);
+		const board = await viaSocket(service, ["--json", "board"], coordinator);
+		expect(board.message).toContain("waiting (2, soonest first):");
+		expect(board.message).toContain(
+			"#2  日付待ち  waiting on: 11/10 以降に再開  [2026-11-10T09:00:00.000Z,",
+		);
+		expect(board.message).toContain(
+			"#1  返事待ち  waiting on: Bob から Slack で返事が来たら",
+		);
+		expect(
+			(board.data as { waiting: { id: number }[] }).waiting.map(
+				(one) => one.id,
+			),
+		).toEqual([2, 1]);
+		const listed = await viaSocket(
+			service,
+			["escalation", "list", "--state", "waiting"],
+			coordinator,
+		);
+		expect(listed.data).toMatchObject({
+			escalations: [{ id: 1 }, { id: 2 }],
+		});
+		const shown = await viaSocket(
+			service,
+			["escalation", "show", "2"],
+			coordinator,
+		);
+		expect(shown.message).toContain(
+			"--- waiting on: 11/10 以降に再開 (at 2026-11-10T09:00:00.000Z)",
+		);
+		const resumed = await viaSocket(
+			service,
+			["escalation", "resume", "1", "--note", "返事が来た"],
+			coordinator,
+		);
+		expect(resumed.data).toMatchObject({ state: "in_progress" });
+		await expect(
+			viaSocket(service, ["escalation", "resume", "1"], coordinator),
+		).rejects.toThrow(/not waiting on a condition/u);
+	});
+
 	it("holds one in in_progress on the orchestrator's side, never as an answer; ask puts it back", async () => {
 		const { service, ports } = orchestrated();
 		await viaSocket(
@@ -4174,9 +4276,11 @@ describe("the Orchestrator row from the command line", () => {
 				"raise",
 				"rank",
 				"resume",
+				"resumeWait",
 				"setTimer",
 				"start",
 				"timers",
+				"wait",
 			].sort(),
 		);
 		// Nothing a tell command can carry reaches a human entry.

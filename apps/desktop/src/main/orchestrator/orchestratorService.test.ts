@@ -537,3 +537,142 @@ describe("停滞: 対応中 with no agent working on it (escalation.stalled)", (
 		expect(run.service.wire().inProgress[0]!.stalledSince).toBeUndefined();
 	});
 });
+
+describe("待機中 (escalation wait)", () => {
+	const HOUR = 3_600_000;
+
+	function waitWorld() {
+		const clock = { now: 1_000_000 };
+		const sent: string[] = [];
+		const agents: LiveAgent[] = [ORCH, WORKER].map((id) => ({
+			id,
+			name: id === ORCH ? "orchestrator" : "API fix",
+			workspaceId: "w",
+			workspaceLabel: "w",
+			status: "idle",
+			stopping: false,
+		}));
+		const service = new OrchestratorService({
+			store: EscalationStore.inMemory(),
+			agents: () => agents,
+			settings: () => ({ ...DEFAULT_ORCHESTRATOR, events: ["*"] }),
+			startProblem: () => undefined,
+			deliver: (_agent, text) => sent.push(text),
+			publish: () => undefined,
+			now: () => clock.now,
+		});
+		service.assign(ORCH);
+		service.observe();
+		const later = (ms: number) => {
+			clock.now += ms;
+			service.observe();
+		};
+		const set = (change: Partial<LiveAgent>) => {
+			agents[1] = { ...agents[1]!, ...change };
+			service.observe();
+		};
+		const of = (type: string) =>
+			service.events.recent(200).filter((entry) => entry.event.type === type);
+		return { service, sent, clock, later, set, of };
+	}
+
+	it("tells wait_due once when --at passes, and drops it once it left 待機中", () => {
+		const run = waitWorld();
+		const one = run.service.raise({ title: "再開", markdown: "?" });
+		run.service.wait(one.id, {
+			trigger: "11/10 以降に再開",
+			dueAt: run.clock.now + HOUR,
+		});
+		run.later(HOUR - 1000);
+		expect(run.of("escalation.wait_due")).toHaveLength(0);
+		run.later(2000);
+		run.later(HOUR);
+		expect(run.of("escalation.wait_due")).toHaveLength(1);
+		expect(run.sent.at(-1)).toContain(
+			"[escalation.wait_due] esc=1「再開」 — 待機条件の時刻になりました: 11/10 以降に再開",
+		);
+		// Waiting anew on a time already past: once more; then resumed while held.
+		const two = run.service.raise({ title: "後で", markdown: "?" });
+		run.service.events.pause();
+		run.service.wait(two.id, { trigger: "x", dueAt: run.clock.now - 1 });
+		expect(run.of("escalation.wait_due")).toHaveLength(2);
+		run.service.resume(two.id, undefined);
+		void run.service.events.resume();
+		expect(run.of("escalation.wait_due")[1]!.fate).toBe("dropped-stale");
+	});
+
+	it("reminds of every 待機中 one in one line, and of nothing when none waits", () => {
+		const run = waitWorld();
+		run.service.remindWaiting();
+		expect(run.of("escalation.waiting_reminder")).toHaveLength(0);
+		const one = run.service.raise({ title: "返事待ち", markdown: "?" });
+		run.service.wait(one.id, { trigger: "Bob から Slack で返事が来たら" });
+		const two = run.service.raise({
+			title: "日付",
+			markdown: "?",
+			wait: { trigger: "11/10 以降", dueAt: run.clock.now + 3 * 86_400_000 },
+		});
+		run.service.remindWaiting();
+		expect(run.sent.at(-1)).toContain(
+			`[escalation.waiting_reminder] 待機中 2 件 — esc=${String(two.id)}「日付」: 11/10 以降 (あと 3日) / esc=1「返事待ち」: Bob から Slack で返事が来たら`,
+		);
+		// Said again an hour later: a reminder is never a repeat.
+		run.service.remindWaiting();
+		expect(
+			run.of("escalation.waiting_reminder").map((entry) => entry.fate),
+		).toEqual(["delivered", "delivered"]);
+	});
+
+	it("holds reminders while paused, coalesced to the latest", async () => {
+		const run = waitWorld();
+		const one = run.service.raise({ title: "t", markdown: "?" });
+		run.service.wait(one.id, { trigger: "a" });
+		run.service.events.pause();
+		run.service.remindWaiting();
+		run.service.wait(one.id, { trigger: "b" });
+		run.service.remindWaiting();
+		expect(run.service.events.heldLines()).toHaveLength(1);
+		const before = run.sent.length;
+		await run.service.events.resume();
+		expect(run.sent).toHaveLength(before + 1);
+		expect(run.sent.at(-1)).toContain("esc=1「t」: b");
+		expect(run.sent.at(-1)).not.toContain(": a");
+		expect(run.of("escalation.waiting_reminder")[0]!.fate).toBe("coalesced");
+	});
+
+	it("leaves 待機中 when an agent of it goes working, but not on a maintenance turn", () => {
+		const run = waitWorld();
+		const one = run.service.raise({
+			title: "t",
+			markdown: "?",
+			agents: [WORKER],
+			wait: { trigger: "x" },
+		});
+		run.set({ status: "working", maintenance: true });
+		expect(escalationState(run.service.escalations()[0]!)).toBe("waiting");
+		run.set({ status: "idle", maintenance: false });
+		run.set({ status: "working" });
+		expect(escalationState(run.service.escalations()[0]!)).toBe("in_progress");
+		expect(run.service.escalations()[0]!.entries.at(-1)).toMatchObject({
+			kind: "resumed",
+			agent: WORKER,
+		});
+		expect(one.id).toBe(1);
+	});
+
+	it("lays the board's 待機中 lane out, and never calls one stalled", () => {
+		const run = waitWorld();
+		const one = run.service.raise({ title: "a", markdown: "?" });
+		run.service.answer(one.id, "OK");
+		run.service.acknowledge(one.id, 2);
+		run.service.wait(one.id, { trigger: "x" });
+		run.later(10 * 60_000);
+		expect(run.of("escalation.stalled")).toHaveLength(0);
+		expect(run.service.wire().waiting.map((e) => e.id)).toEqual([1]);
+		expect(run.service.wire().inProgress).toEqual([]);
+		expect(run.service.wire().waiting[0]!.entries.at(-1)).toMatchObject({
+			kind: "wait",
+			markdown: "x",
+		});
+	});
+});

@@ -298,6 +298,10 @@ export type TellCommand =
 			readonly priority?: "high" | "normal" | "low";
 			readonly effort?: "quick" | "normal" | "deep";
 			readonly rankNote?: string;
+			/** Born waiting (`--wait`): its trigger, in words. */
+			readonly wait?: string;
+			/** `--at`: the wait's time, ms since the epoch. */
+			readonly at?: number;
 	  }
 	| {
 			/** A follow-up question on the same ticket: back to needs_answer. */
@@ -311,7 +315,21 @@ export type TellCommand =
 	| { readonly verb: "escalation-show"; readonly id: number }
 	| {
 			readonly verb: "escalation-list";
-			readonly state?: "needs_answer" | "in_progress" | "closed";
+			readonly state?: "needs_answer" | "in_progress" | "waiting" | "closed";
+	  }
+	| {
+			/** Parked on an outside condition: 待機中. The trigger is required. */
+			readonly verb: "escalation-wait";
+			readonly id: number;
+			readonly trigger: string;
+			/** `--at`: ms since the epoch. */
+			readonly at?: number;
+	  }
+	| {
+			/** Off its wait, to in_progress. */
+			readonly verb: "escalation-resume";
+			readonly id: number;
+			readonly note?: string;
 	  }
 	| {
 			readonly verb: "escalation-close";
@@ -653,36 +671,47 @@ exception: its row is gone, and the window selects the next). Where the
 window would ask, the command takes the answer as an argument.
 
 orchestrator (the Orchestrator row: the board, escalations, events)
-  board                            the three lanes as data: needs_answer
-                                   (oldest first), in_progress (how long
-                                   since the answer, 停滞 marked); while
+  board                            the lanes as data: needs_answer (oldest
+                                   first), in_progress (how long since the
+                                   answer, 停滞 marked), waiting (each
+                                   trigger and time, soonest first); while
                                    GitHub is polled, the unattended Issues
                                    (assigned to me, open, no agent on them:
                                    --json unattendedIssues)
   escalation new --title <t> --body <text>|- [--agent <a>]...
                  [--link <url>]... [--option <text>]... [--workspace <w>]
                  [--priority high|normal|low] [--effort quick|normal|deep]
-                 [--rank-note <text>]
+                 [--rank-note <text>] [--wait <trigger> [--at <datetime>]]
                                    raise one for the person (Markdown: code,
                                    math, mermaid, svg - as the chat renders);
                                    needs_answer is sorted by priority, then
                                    effort (quick first), then age. A --link
                                    is an http(s) URL or a devhub: link
                                    ('link' makes one); a devhub: link, there
-                                   or in the body, must name what is open
+                                   or in the body, must name what is open.
+                                   With --wait it starts in waiting: nothing
+                                   is asked of the person yet
   escalation ask <id> --body <text>|- [--option <text>]... [--link <url>]...
                                    a follow-up question on the same ticket;
                                    back to needs_answer
   escalation show <id>             the thread, the person's answers included
                                    (this is what acknowledges an answer for
                                    'agent wait --any')
-  escalation list [--state needs_answer|in_progress|closed]
+  escalation list [--state needs_answer|in_progress|waiting|closed]
   escalation close <id> [--note <text>]
                                    the answer is used up: close it
   escalation hold <id> [--note <text>]
                                    park a needs_answer one in in_progress
                                    while you work on it (not an answer; back
                                    to needs_answer with 'escalation ask')
+  escalation wait <id> --trigger <text> [--at <datetime>]
+                                   park it in waiting on an outside
+                                   condition, written in words (a date,
+                                   someone's reply, a deploy); --at (ISO,
+                                   like 2026-11-10T09:00) when it is a time:
+                                   escalation.wait_due comes then
+  escalation resume <id> [--note <text>]
+                                   off its wait, to in_progress
   escalation rank <id> [--priority high|normal|low]
                  [--effort quick|normal|deep] [--rank-note <text>]
                                    rank it again as things change (a
@@ -1190,6 +1219,21 @@ function rankFlags(flags: Flags): {
 	});
 }
 
+/** `--at`: an ISO date and time (local unless it says otherwise), as ms. */
+function atFlag(flags: Flags): number | undefined {
+	const value = one(flags, "--at");
+	if (value === undefined) return undefined;
+	const trimmed = value.trim();
+	const ms = /^\d{4}-\d{2}-\d{2}/u.test(trimmed)
+		? Date.parse(trimmed)
+		: Number.NaN;
+	if (!Number.isFinite(ms))
+		throw new Refusal(
+			`--at takes an ISO date and time, like 2026-11-10T09:00 or 2026-11-10, not ${JSON.stringify(value)}.`,
+		);
+	return ms;
+}
+
 /** `#12`, `12` or `E12`. */
 function escalationId(text: string | undefined): number {
 	const match = /^(?:#|e|E)?(\d{1,9})$/u.exec((text ?? "").trim());
@@ -1218,10 +1262,19 @@ function parseEscalation(
 					"--priority",
 					"--effort",
 					"--rank-note",
+					"--wait",
+					"--at",
 				],
 				switches: [],
 			});
 			positionals(flags, []);
+			const wait = one(flags, "--wait");
+			if (wait !== undefined && wait.trim() === "")
+				throw new Refusal(
+					"--wait needs its trigger, in words: what it waits for.",
+				);
+			if (wait === undefined && one(flags, "--at") !== undefined)
+				throw new Refusal("--at goes with --wait: the time it waits for.");
 			const title = one(flags, "--title");
 			const body = one(flags, "--body");
 			if (title === undefined) throw new Refusal("--title is required.");
@@ -1236,6 +1289,34 @@ function parseEscalation(
 				options: flags.values.get("--option") ?? [],
 				...defined({ workspace: one(flags, "--workspace") }),
 				...rankFlags(flags),
+				...defined({ wait, at: atFlag(flags) }),
+			};
+		}
+		case "wait": {
+			const flags = readFlags(rest, {
+				values: ["--trigger", "--at"],
+				switches: [],
+			});
+			const [id] = positionals(flags, ["<id>"]);
+			const trigger = one(flags, "--trigger");
+			if (trigger === undefined || trigger.trim() === "")
+				throw new Refusal(
+					"--trigger is required: what it waits for, in words (「11/10 以降に再開」「Bob から Slack で返事が来たら」).",
+				);
+			return {
+				verb: "escalation-wait",
+				id: escalationId(id),
+				trigger,
+				...defined({ at: atFlag(flags) }),
+			};
+		}
+		case "resume": {
+			const flags = readFlags(rest, { values: ["--note"], switches: [] });
+			const [id] = positionals(flags, ["<id>"]);
+			return {
+				verb: "escalation-resume",
+				id: escalationId(id),
+				...defined({ note: one(flags, "--note") }),
 			};
 		}
 		case "rank": {
@@ -1282,6 +1363,7 @@ function parseEscalation(
 					state: oneOf(flags, "--state", [
 						"needs_answer",
 						"in_progress",
+						"waiting",
 						"closed",
 					] as const),
 				}),
@@ -1318,7 +1400,7 @@ function parseEscalation(
 			);
 		default:
 			throw new Refusal(
-				"escalation takes: new, ask, show, list, close, hold, link, rank.",
+				"escalation takes: new, ask, show, list, close, hold, wait, resume, link, rank.",
 			);
 	}
 }
@@ -1746,6 +1828,18 @@ function optionalText(
 	key: string,
 ): Record<string, string> {
 	return record[key] === undefined ? {} : { [key]: text(record, key) };
+}
+
+/** A time off the socket (ms since the epoch), when there. */
+function optionalTime(
+	record: Record<string, unknown>,
+	key: string,
+): Record<string, number> {
+	const value = record[key];
+	if (value === undefined) return {};
+	if (typeof value !== "number" || !Number.isFinite(value))
+		throw new Error(`a tell command's ${key} must be a time`);
+	return { [key]: value };
 }
 
 /** An escalation's ranking off the socket: each of the three, when there. */
@@ -2187,6 +2281,8 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				options: textList(record, "options"),
 				...optionalText(record, "workspace"),
 				...rankRecord(record),
+				...optionalText(record, "wait"),
+				...optionalTime(record, "at"),
 			};
 		case "escalation-ask":
 			return {
@@ -2209,10 +2305,11 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				state !== undefined &&
 				state !== "needs_answer" &&
 				state !== "in_progress" &&
+				state !== "waiting" &&
 				state !== "closed"
 			)
 				throw new Error(
-					"a tell command's state must be needs_answer, in_progress or closed",
+					"a tell command's state must be needs_answer, in_progress, waiting or closed",
 				);
 			return {
 				verb: "escalation-list",
@@ -2228,6 +2325,19 @@ export function tellCommandFrom(value: unknown): TellCommand {
 		case "escalation-hold":
 			return {
 				verb: "escalation-hold",
+				id: integer(record["id"], "id", 1, 999_999_999),
+				...optionalText(record, "note"),
+			};
+		case "escalation-wait":
+			return {
+				verb: "escalation-wait",
+				id: integer(record["id"], "id", 1, 999_999_999),
+				trigger: text(record, "trigger"),
+				...optionalTime(record, "at"),
+			};
+		case "escalation-resume":
+			return {
+				verb: "escalation-resume",
 				id: integer(record["id"], "id", 1, 999_999_999),
 				...optionalText(record, "note"),
 			};

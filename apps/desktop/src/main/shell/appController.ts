@@ -10037,6 +10037,7 @@ export class AppController {
 								? {}
 								: { workspaceId: request.workspaceId }),
 							rank: request.rank,
+							...(request.wait === undefined ? {} : { wait: request.wait }),
 						}),
 					),
 				ask: (id, markdown, options, links) => {
@@ -10063,6 +10064,15 @@ export class AppController {
 					orchestrator().toWire(orchestrator().close(id, note)),
 				hold: (id, note) =>
 					orchestrator().toWire(orchestrator().hold(id, note)),
+				wait: (id, trigger, dueAt) =>
+					orchestrator().toWire(
+						orchestrator().wait(id, {
+							trigger,
+							...(dueAt === undefined ? {} : { dueAt }),
+						}),
+					),
+				resumeWait: (id, note) =>
+					orchestrator().toWire(orchestrator().resume(id, note)),
 				link: (id, agentId) =>
 					orchestrator().toWire(orchestrator().link(id, agentId)),
 				rank: (id, rank) =>
@@ -10909,8 +10919,10 @@ export class AppController {
 		// folder is Scratch from now on; the old one stays as an ordinary row.
 		// Not caught here: a failure goes to the main process's root.
 		void this.scratch.settingsAccepted(config.scratch.daily);
-		// `[[orchestrator.timers]]` and `[orchestrator.github]` move with them.
+		// `[[orchestrator.timers]]`, `wait_reminder_interval` and
+		// `[orchestrator.github]` move with them.
 		this.orchestrator?.timers.sync();
+		this.orchestrator?.settingsChanged();
 		this.followGitHub();
 		this.applyChordLayout();
 		// Before the pages are told, because this one is not a message to a page:

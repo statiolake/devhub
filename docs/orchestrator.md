@@ -89,39 +89,46 @@ orchestrator when work cannot go on without one. It is a **thread**:
 
 ```text
 { id, title, entries: [{ role: orchestrator|human, markdown, at, options?,
-                          kind?: direct|resumed, agent? }],
+                          kind?: direct|resumed|held|wait, agent?, dueAt? }],
   agents: [agent ids], workspaceId?, links: [urls], createdAt, updatedAt,
   closed?: { at, note? } }
 ```
 
 Its state is **read off the thread** (`model/escalations.ts`), never stored,
-by **one rule**: it is 要回答 exactly while the last entry is a question.
+by **one rule**: it is 要回答 exactly while the last entry is a question, and
+待機中 exactly while the last entry is the orchestrator's wait.
 
-| state          | when                                                         | lane   |
-| -------------- | ------------------------------------------------------------ | ------ |
-| `needs_answer` | the last entry is a question (the orchestrator's, no `kind`) | 要回答 |
-| `in_progress`  | anything else is last                                        | 対応中 |
-| `closed`       | closed (`escalation close`)                                  | hidden |
+| state          | when                                                                                     | lane   |
+| -------------- | ---------------------------------------------------------------------------------------- | ------ |
+| `needs_answer` | the last entry is a question (the orchestrator's, no `kind`)                             | 要回答 |
+| `waiting`      | the last entry is the orchestrator's `kind: "wait"` (its trigger in words, maybe a time) | 待機中 |
+| `in_progress`  | anything else is last                                                                    | 対応中 |
+| `closed`       | closed (`escalation close`)                                                              | hidden |
 
-Whatever comes after a question takes it to 対応中, and only another
-question (`escalation ask`) brings it back to 要回答; once the matter is done
-the orchestrator closes it. (A thread from before may also hold a `taken`
+Whatever comes after a question or a wait takes it to 対応中, and only another
+question (`escalation ask`) brings it back to 要回答, another wait
+(`escalation wait`) to 待機中; once the matter is done the orchestrator
+closes it. 待機中 is left by `escalation ask` (要回答), the person's answer,
+`escalation resume ID [--note TEXT]` (a `held` entry) or one of its agents
+going working (a `resumed` / `direct` note, as from 要回答; a maintenance
+turn is not work) — all to 対応中 — or a close. (A thread from before may also hold a `taken`
 entry, role `human`, from a 対応中にする the window no longer has: it still
 counts as "anything else", and shows as the neutral line
 「対応中になりました（{time}）[: note]」. Nothing writes one now.) What can
 come after a question (`role` is whose
 side it is on; only the window writes `human` entries):
 
-| entry             | role           | written by                                                                                                                                                                                                                | thread shows                                                                                                |
-| ----------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| an answer         | `human`        | the person, in the board's composer                                                                                                                                                                                       | their Markdown                                                                                              |
-| `kind: "held"`    | `orchestrator` | `escalation hold ID [--note TEXT]`: parked while it works on it (e.g. more investigation delegated). Never an answer                                                                                                      | 「オーケストレーターが対応中にしました（{time}）[: note]」                                                  |
-| `kind: "direct"`  | `human`        | DevHub: one of its `agents` went from idle (or stopped on a question) to working on the person's message from **that agent's own composer** (the conversation IPC's submit: not `agent send`, not an event or a template) | 「人が {agent} と直接やりとりしました（{time}）— 内容はエージェントの会話を参照」, with a chip to the agent |
-| `kind: "resumed"` | `orchestrator` | DevHub: one of its `agents` went working for any other reason (the orchestrator's `agent send`, an injected event, DevHub's own resume after a usage limit)                                                               | 「{agent} が作業を再開しました（{time}）— 回答待ちは一旦解除」                                              |
+| entry             | role           | written by                                                                                                                                                                                                                 | thread shows                                                                                                |
+| ----------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| an answer         | `human`        | the person, in the board's composer                                                                                                                                                                                        | their Markdown                                                                                              |
+| `kind: "held"`    | `orchestrator` | `escalation hold ID [--note TEXT]`: parked while it works on it (e.g. more investigation delegated), from 要回答; `escalation resume ID [--note TEXT]`, off its wait, from 待機中. Never an answer                         | 「オーケストレーターが対応中にしました（{time}）[: note]」                                                  |
+| `kind: "wait"`    | `orchestrator` | `escalation wait ID --trigger TEXT [--at DATETIME]` (or `escalation new … --wait TEXT [--at DATETIME]`): parked on an outside condition. The trigger is required and never empty; `--at` (ISO) when it is a time (`dueAt`) | 「オーケストレーターが待機中にしました（{time}）: trigger[（M/D HH:MM まで）]」                             |
+| `kind: "direct"`  | `human`        | DevHub: one of its `agents` went from idle (or stopped on a question) to working on the person's message from **that agent's own composer** (the conversation IPC's submit: not `agent send`, not an event or a template)  | 「人が {agent} と直接やりとりしました（{time}）— 内容はエージェントの会話を参照」, with a chip to the agent |
+| `kind: "resumed"` | `orchestrator` | DevHub: one of its `agents` went working for any other reason (the orchestrator's `agent send`, an injected event, DevHub's own resume after a usage limit)                                                                | 「{agent} が作業を再開しました（{time}）— 回答待ちは一旦解除」                                              |
 
 The notes (`kind`) have no answer in them: `escalation show` prints them as
 notes, and `agent wait --any` does not report them as answered. DevHub
-writes `direct` / `resumed` (`OrchestratorService`) only on a 要回答 one; the
+writes `direct` / `resumed` (`OrchestratorService`) only on a 要回答 or 待機中 one; the
 orchestrator is told of the person's direct words (`escalation.human_direct`, also for one already 対応中: what was
 said may answer or change it), not of `held` (its own) or `resumed` (it
 caused it, or hears of it as `agent.turn_ended`).
@@ -238,6 +245,10 @@ cannot write one.
   (quick, normal, deep), then oldest question first, with how long it has
   waited. A ticket asked again after an answer carries 追加の質問.
 - **対応中** — answered longest ago first, with how long since the answer.
+- **待機中** — parked on an outside condition: each card leads with its
+  trigger, and its time (`M/D HH:MM · あと 3日`) when it has one; soonest
+  time first, those without one after, then the oldest wait. The person can
+  open one and write to it (that moves it to 対応中); there is no button.
 - **Closed** — a toggle in the header shows the last 30.
 
 Clicking a card opens it in place: the whole thread, drawn by the GUI
@@ -298,6 +309,31 @@ tree and the open file follow, and the tab shows a dot while the board is in
 front. Every path is from the root and confined to it: an absolute path,
 `..`, or a symlink that leads out is refused.
 
+### 待機中: parked on an outside condition
+
+Some work waits on something outside DevHub — a date, a reply on Slack, a
+deploy. The orchestrator parks such an escalation with `escalation wait ID
+--trigger TEXT [--at DATETIME]` (or raises it waiting, `escalation new …
+--wait TEXT`, when nothing is asked of the person yet). **The trigger is
+required, in natural language**, so whoever reads it later can check it;
+`--at` adds a machine time when the condition is one.
+
+- `escalation.wait_due` — once per wait, when `--at` has passed (a restart
+  says it again for a wait still past due). Dropped before delivery when the
+  escalation has left 待機中, or waits anew.
+- `escalation.waiting_reminder` — every `[orchestrator]
+wait_reminder_interval` (default `1h`, at least `1m`; Settings ▸
+  Orchestrator ▸ Waiting reminder), one line listing every 待機中
+  escalation with its trigger (and how far off its time is). Not sent when
+  none waits, or no orchestrator runs. It is one subject: while paused, or
+  while the orchestrator is busy, the latest replaces the one pending, so a
+  backlog never piles up reminders.
+
+On each, the orchestrator checks the triggers (with its own tools for Slack
+and the like) and resumes, asks or closes those that are met.
+`devhub --tell board` lists them (`waiting (N, soonest first):`, `--json`
+`waiting`), and `orchestrator status` counts them.
+
 ### 停滞: 対応中 with nobody working on it
 
 A 対応中 escalation is **stalled** when none of its related agents (`agents`,
@@ -351,6 +387,8 @@ pulls the details itself. `{EVENT}` holds these lines.
 | `escalation_answered`                             | the person answered an escalation                                                                                                                                                                                                     | `[escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)`                                                                     |
 | `escalation.human_direct`                         | the person talked directly to an open escalation's agent, from its composer, and it went working (要回答 → 対応中)                                                                                                                    | `[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります` |
 | `escalation.stalled`                              | a 対応中 escalation none of whose agents has worked for the grace (see 停滞); `agents=none` when it names none (`escalation link` it)                                                                                                 | `[escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない`                                      |
+| `escalation.wait_due`                             | a 待機中 escalation's `--at` time came: once per wait                                                                                                                                                                                 | `[escalation.wait_due] esc=12「本番DBマイグレーション承認」 — 待機条件の時刻になりました: 11/10 以降に再開`                                                                  |
+| `escalation.waiting_reminder`                     | every `wait_reminder_interval` (1h): every 待機中 escalation and its trigger, one line; not sent when none waits                                                                                                                      | `[escalation.waiting_reminder] 待機中 2 件 — esc=12「…」: Bob から Slack で返事が来たら / esc=15「…」: 11/10 以降 (あと 3日)`                                                |
 | `github.assigned`                                 | the viewer was assigned to a card                                                                                                                                                                                                     | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200`                                                                                |
 | `github.lane_changed`                             | a card of the viewer's moved lane (Status)                                                                                                                                                                                            | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123`                                                       |
 | `github.unattended`                               | an open Issue on a board, assigned to the viewer, has no live DevHub agent linked to it (a state, said on every poll and the baseline; see below)                                                                                     | `[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない https://…/issues/200`                                                     |
@@ -419,12 +457,17 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   longer waits on it; an `escalation_answered` or
   `escalation.human_direct` whose escalation is closed; an
   `escalation.stalled` whose stretch is over (an agent of it works again, a
-  new entry, back in 要回答, closed); a `github.unattended`
+  new entry, back in 要回答, closed); an `escalation.wait_due` whose
+  escalation has left 待機中 or waits anew; an
+  `escalation.waiting_reminder` none of whose escalations still waits; a
+  `github.unattended`
   whose Issue was closed, or has had an agent linked to it, since.
 - **Never said twice.** What the last delivery said about a subject is not
   delivered again (`repeat`) unless something about that subject has been
   heard since — the same CI result on the same commit. Events that add news each time (`init`,
   `escalation_answered`, `escalation.human_direct`,
+  `escalation.waiting_reminder` — one subject, so a backlog (or a pause)
+  holds the latest only —
   review comments, replies, `github.unattended` — its source says it once
   per stretch of being unattended —
   turns, timers, `custom.*`)
@@ -473,7 +516,8 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
 ### The sources
 
 - **The board** (`orchestratorService.ts`): `init`, `escalation_answered`,
-  `escalation.human_direct`, `escalation.stalled`.
+  `escalation.human_direct`, `escalation.stalled`,
+  `escalation.wait_due`, `escalation.waiting_reminder`.
 - **GitHub** (`githubEvents.ts`), while an orchestrator runs and
   `[orchestrator.github] projects` names a board. Scope: the cards on those
   Projects (v2) boards that relate to the viewer — assigned to them, authored
@@ -601,6 +645,7 @@ event_prompt = "このイベントが発生したのでハンドリングして�
 # init_prompt = "/start-orchestrating {EVENT}"   # absent: event_prompt with init
 # events = ["*", "!agent.permission_requested"] # which types reach it (default below)
 usage_thresholds = [80, 95]      # usage.threshold at these percents of a plan window (the default); [] never
+wait_reminder_interval = "1h"    # escalation.waiting_reminder this often (the default; at least 1m)
 
 [orchestrator.github]
 projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER; none: no GitHub events
@@ -623,7 +668,7 @@ goes. The default is everything but the chatter:
 
 ```toml
 events = ["init", "escalation_answered", "escalation.human_direct",
-  "escalation.stalled", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
+  "escalation.stalled", "escalation.wait_due", "escalation.waiting_reminder", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
   "agent.asked", "agent.exited", "agent.failed", "usage.threshold", "timer.*", "custom.*"]
 ```
 
@@ -635,17 +680,19 @@ setting.
 ## The command line
 
 ```sh
-devhub --tell board [--json]                         # 要回答, 対応中 (停滞 marked) as data
+devhub --tell board [--json]                         # 要回答, 対応中 (停滞 marked), 待機中 as data
 devhub --tell escalation new --title T --body -|TEXT [--agent A]... [--link URL]... [--option TEXT]... [--workspace W]
                          [--priority high|normal|low] [--effort quick|normal|deep] [--rank-note TEXT]
 devhub --tell escalation rank ID [--priority P] [--effort E] [--rank-note TEXT]   # re-rank; "" clears the note
 devhub --tell escalation ask ID --body -|TEXT [--option TEXT]... [--link URL]...   # back to 要回答
 devhub --tell link agent A | workspace W | file PATH[:L[:C]] | escalation ID | orchestrator | session S   # a devhub: link
 devhub --tell escalation show ID [--json]           # the thread (acknowledges the answer)
-devhub --tell escalation list [--state needs_answer|in_progress|closed] [--json]
+devhub --tell escalation list [--state needs_answer|in_progress|waiting|closed] [--json]
 devhub --tell escalation close ID [--note TEXT]
 devhub --tell escalation link ID --agent A
 devhub --tell escalation hold ID [--note TEXT]      # park it in 対応中 (not an answer)
+devhub --tell escalation wait ID --trigger TEXT [--at DATETIME]   # park it in 待機中 on an outside condition
+devhub --tell escalation resume ID [--note TEXT]    # off its wait, to 対応中
 devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -|TEXT]
 devhub --tell orchestrator status [--json]          # its agent, state, lane counts, pause, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
@@ -686,7 +733,9 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
   the optional `{EVENT_JSON}`, coalescing, held mid-turn and while paused,
   the `events` filter), the event types (its table is tested against
   `EVENT_TYPES`), what each lane asks of the orchestrator (要回答 waits, 対応中 is
-  relayed to the agent and closed, 停滞 is acted on; a related agent that
+  relayed to the agent and closed, 停滞 is acted on, 待機中 always has its
+  trigger in words (and `--at` for a date) and is checked on each
+  `waiting_reminder`, then resumed, asked or closed; a related agent that
   goes working takes an escalation out of 要回答 until it is asked again, and
   on `escalation.human_direct` it reads what the person said with
   `agent read --since`, then closes the escalation, asks again with what is

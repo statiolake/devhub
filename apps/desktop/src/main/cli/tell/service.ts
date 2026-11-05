@@ -35,6 +35,7 @@ import {
 	parseDevhubLink,
 	type DevhubLink,
 } from "../../../model/devhubLink.js";
+import { dueWords } from "../../../model/escalations.js";
 import {
 	TELL_USAGE,
 	type AgentWaitUntil,
@@ -555,6 +556,8 @@ export interface TellNewEscalation {
 	readonly links: readonly string[];
 	readonly workspaceId: string | undefined;
 	readonly rank: TellEscalationRank;
+	/** Born waiting (`--wait`, `--at`). */
+	readonly wait?: { readonly trigger: string; readonly dueAt?: number };
 }
 
 /** The orchestrator's ranking of one, as `--priority`/`--effort`/`--rank-note` give it. */
@@ -591,6 +594,10 @@ export interface TellOrchestratorPorts {
 	 * on its side, never a human one.
 	 */
 	hold(id: number, note: string | undefined): EscalationWire;
+	/** Parked on an outside condition (`escalation wait`): 待機中. */
+	wait(id: number, trigger: string, dueAt: number | undefined): EscalationWire;
+	/** Off its wait, to in_progress (`escalation resume`). */
+	resumeWait(id: number, note: string | undefined): EscalationWire;
 	link(id: number, agentId: string): EscalationWire;
 	/** Ranked again by the orchestrator. Not an answer: it writes no entry. */
 	rank(id: number, rank: TellEscalationRank): EscalationWire;
@@ -1092,6 +1099,27 @@ export class TellService {
 				return this.closeEscalation(command.id, command.note);
 			case "escalation-hold":
 				return this.holdEscalation(command.id, command.note);
+			case "escalation-wait": {
+				const waiting = this.ports.orchestrator.wait(
+					command.id,
+					command.trigger,
+					command.at,
+				);
+				return {
+					message: `#${String(waiting.id)} 「${waiting.title}」 waits on: ${command.trigger.trim()}${command.at === undefined ? "" : ` (escalation.wait_due at ${new Date(command.at).toISOString()})`}. 'escalation resume', 'ask' or 'close' takes it off.`,
+					data: waiting,
+				};
+			}
+			case "escalation-resume": {
+				const resumed = this.ports.orchestrator.resumeWait(
+					command.id,
+					command.note,
+				);
+				return {
+					message: `Resumed #${String(resumed.id)} 「${resumed.title}」: in_progress.`,
+					data: resumed,
+				};
+			}
 			case "escalation-link":
 				return this.linkEscalation(command.id, command.agent);
 			case "escalation-rank":
@@ -1199,6 +1227,11 @@ export class TellService {
 				(one) =>
 					`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}${one.stalledSince === undefined ? "" : `  [停滞 ${span(now - one.stalledSince)}: no agent is working on it]`}`,
 			),
+			`waiting (${String(board.waiting.length)}, soonest first):`,
+			...board.waiting.map((one) => {
+				const wait = one.entries.at(-1);
+				return `  #${String(one.id)}  ${one.title}  waiting on: ${wait?.markdown ?? ""}${wait?.dueAt === undefined ? "" : `  [${new Date(wait.dueAt).toISOString()}, ${dueWords(wait.dueAt, now)}]`}`;
+			}),
 			...unattendedLines(board),
 		];
 		return {
@@ -1209,6 +1242,7 @@ export class TellService {
 				held: board.held,
 				needsAnswer: board.needsAnswer,
 				inProgress: board.inProgress,
+				waiting: board.waiting,
 				graceMs: board.graceMs,
 				// null: GitHub is not polled, so nobody knows.
 				unattendedIssues: board.github.unattended ?? null,
@@ -1233,6 +1267,14 @@ export class TellService {
 			links,
 			workspaceId,
 			rank: rankOf(command),
+			...(command.wait === undefined
+				? {}
+				: {
+						wait: {
+							trigger: command.wait,
+							...(command.at === undefined ? {} : { dueAt: command.at }),
+						},
+					}),
 		});
 		this.memory.markEscalation(
 			callerKey(this.caller),
@@ -1240,7 +1282,10 @@ export class TellService {
 			made.entries.length,
 		);
 		return {
-			message: `Raised #${String(made.id)} 「${made.title}」: it waits for the person's answer (needs_answer).`,
+			message:
+				made.state === "waiting"
+					? `Raised #${String(made.id)} 「${made.title}」 in waiting: nothing is asked of the person yet.`
+					: `Raised #${String(made.id)} 「${made.title}」: it waits for the person's answer (needs_answer).`,
 			data: made,
 		};
 	}
@@ -1310,7 +1355,7 @@ export class TellService {
 	}
 
 	private listEscalations(
-		state: "needs_answer" | "in_progress" | "closed" | undefined,
+		state: "needs_answer" | "in_progress" | "waiting" | "closed" | undefined,
 	): TellAnswer {
 		const all = this.ports.orchestrator
 			.escalations()
@@ -1447,13 +1492,14 @@ export class TellService {
 		const counts = {
 			needsAnswer: board.needsAnswer.length,
 			inProgress: board.inProgress.length,
+			waiting: board.waiting.length,
 		};
 		return {
 			message: [
 				agent === undefined
 					? "No orchestrator is running."
 					: `orchestrator: ${agent.name} (${agent.id}), ${agent.status}${agent.presentation === "gui" ? "" : ", terminal"}`,
-				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}`,
+				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, waiting ${String(counts.waiting)}`,
 				`events: ${board.paused ? "paused" : "delivered"}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
 				githubPollingLine(board),
 				...githubBoardLines(board),
@@ -4437,7 +4483,9 @@ function noteLine(entry: EscalationWire["entries"][number]): string {
 		case "resumed":
 			return `--- ${entry.agent ?? "an agent"} went back to work, ${at}: no longer waiting for an answer`;
 		case "taken":
-			return `--- the person moved it to in_progress (not an answer), ${at}${note}`;
+			return `--- moved to in_progress (not an answer), ${at}${note}`;
+		case "wait":
+			return `--- waiting on: ${entry.markdown}${entry.dueAt === undefined ? "" : ` (at ${new Date(entry.dueAt).toISOString()})`}, since ${at}`;
 		default:
 			return `--- held in in_progress by the orchestrator, ${at}${note}`;
 	}

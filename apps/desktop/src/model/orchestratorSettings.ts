@@ -44,6 +44,12 @@ export interface OrchestratorConfig {
    * once per threshold per window period. Empty: never.
    */
   readonly usage_thresholds: readonly number[];
+  /**
+   * How often the orchestrator is reminded of every 待機中 escalation and
+   * its trigger (`escalation.waiting_reminder`): `1h`, `30m`. Never sent when
+   * none waits.
+   */
+  readonly wait_reminder_interval: string;
   /** `[orchestrator.github]`: the GitHub event source. */
   readonly github: OrchestratorGitHubConfig;
   /** `[[orchestrator.timers]]`: fixed timers, each a `timer.elapsed`. */
@@ -81,6 +87,8 @@ export const DEFAULT_ORCHESTRATOR_EVENTS: readonly string[] = [
   "escalation_answered",
   "escalation.human_direct",
   "escalation.stalled",
+  "escalation.wait_due",
+  "escalation.waiting_reminder",
   "github.*",
   "workspace.issue_assigned",
   "workspace.pr_linked",
@@ -97,6 +105,10 @@ export const DEFAULT_ORCHESTRATOR_EVENTS: readonly string[] = [
 export const DEFAULT_USAGE_THRESHOLDS: readonly number[] = [80, 95];
 
 export const DEFAULT_GITHUB_INTERVAL = "90s";
+/** `[orchestrator] wait_reminder_interval` when it is not set. */
+export const DEFAULT_WAIT_REMINDER_INTERVAL = "1h";
+/** The most often the 待機中 reminder may come. */
+export const MIN_WAIT_REMINDER_INTERVAL_MS = 60_000;
 /** The fastest DevHub polls GitHub for events, whatever the settings say. */
 export const MIN_GITHUB_INTERVAL_MS = 30_000;
 /** The fastest a timer may fire. */
@@ -116,6 +128,7 @@ export const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   init_prompt: undefined,
   events: DEFAULT_ORCHESTRATOR_EVENTS,
   usage_thresholds: DEFAULT_USAGE_THRESHOLDS,
+  wait_reminder_interval: DEFAULT_WAIT_REMINDER_INTERVAL,
   github: { projects: [], interval: DEFAULT_GITHUB_INTERVAL },
   timers: [],
 };
@@ -128,6 +141,7 @@ export const ORCHESTRATOR_KEYS = [
   "init_prompt",
   "events",
   "usage_thresholds",
+  "wait_reminder_interval",
   "github",
   "timers",
 ] as const;
@@ -155,6 +169,13 @@ export function orchestratorProblem(
   if (config.events.some(eventPatternProblem)) return "events";
   if (usageThresholdsProblem(config.usage_thresholds))
     return "usage_thresholds";
+  if (
+    intervalProblem(
+      config.wait_reminder_interval,
+      MIN_WAIT_REMINDER_INTERVAL_MS,
+    )
+  )
+    return "wait_reminder_interval";
   if (config.github.projects.some((one) => projectRefProblem(one)))
     return "github.projects";
   if (intervalProblem(config.github.interval, MIN_GITHUB_INTERVAL_MS))
@@ -316,6 +337,8 @@ export const ORCHESTRATOR_EVENTS_RULE =
 
 export const ORCHESTRATOR_GITHUB_RULE = `orchestrator.github.projects lists Projects boards as OWNER/NUMBER (my-org/7); orchestrator.github.interval is like 90s or 2m, at least ${String(MIN_GITHUB_INTERVAL_MS / 1000)}s.`;
 
+export const ORCHESTRATOR_WAIT_REMINDER_RULE = `orchestrator.wait_reminder_interval is like 1h or 30m, at least ${String(MIN_WAIT_REMINDER_INTERVAL_MS / 60_000)}m.`;
+
 export const ORCHESTRATOR_TIMER_RULE = `Each [[orchestrator.timers]] has a name (letters, digits, - and _; each once) and an interval like 5m or 1h, at least ${String(MIN_TIMER_INTERVAL_MS / 1000)}s.`;
 
 /**
@@ -402,6 +425,8 @@ export function orchestratorDocument(
     )
   )
     document["usage_thresholds"] = [...config.usage_thresholds];
+  if (config.wait_reminder_interval !== DEFAULT_WAIT_REMINDER_INTERVAL)
+    document["wait_reminder_interval"] = config.wait_reminder_interval;
   const github: Record<string, TomlValue> = {};
   if (config.github.projects.length > 0)
     github["projects"] = [...config.github.projects];

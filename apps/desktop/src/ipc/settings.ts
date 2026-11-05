@@ -212,6 +212,8 @@ export interface SettingsConfigWire {
 		readonly events: readonly string[];
 		/** Percents at which `usage.threshold` fires (`80, 95`); empty: never. */
 		readonly usageThresholds: readonly number[];
+		/** How often 待機中 escalations are reminded (`1h`). */
+		readonly waitReminderInterval: string;
 		/** `[orchestrator.github]`. */
 		readonly githubProjects: readonly string[];
 		readonly githubInterval: string;

@@ -17,18 +17,23 @@
  *
  * **The one rule:** `needs_answer` (要回答) exactly when the last entry is
  * a question — the orchestrator's, with no `kind` (`escalation new`,
- * `escalation ask`); `closed` once closed; `in_progress` (対応中) otherwise.
- * Whatever comes after a question takes it out of 要回答, and only another
- * question (`askAgain`) puts it back:
+ * `escalation ask`); `waiting` (待機中) exactly when the last entry is the
+ * orchestrator's `wait` (`escalation wait`, `escalation new --wait`): parked
+ * on an outside condition, its trigger in words (`markdown`, never empty)
+ * and maybe a time (`dueAt`); `closed` once closed; `in_progress` (対応中)
+ * otherwise. Whatever comes after a question or a wait takes it out, and
+ * only another question (`askAgain`) or wait (`waitEscalation`) puts it
+ * back:
  *
  * - the person's answer (role `human`, no `kind`), in the window only;
  * - `taken` (role `human`, an optional note in `markdown`): a 対応中にする
  *   the window once had. Nothing writes one any more; a thread that has one
  *   still reads it, as before;
  * - the orchestrator's `escalation hold` (`held`, role `orchestrator`, an
- *   optional note): parked while it works on it. Never an answer;
+ *   optional note): parked while it works on it, from 要回答; and its
+ *   `escalation resume` from 待機中 (`held` too). Never an answer;
  * - DevHub's notes that one of its agents went from idle to working while it
- *   waited (`noteWorking`): `direct` (role `human`) when the person talked to
+ *   waited, in 要回答 or 待機中 (`noteWorking`): `direct` (role `human`) when the person talked to
  *   it from its own composer, `resumed` (role `orchestrator`: DevHub's, for
  *   the orchestrator's `agent send`, an event, a resume) for anything else.
  *   Empty `markdown`: what was said is in the agent's conversation.
@@ -49,11 +54,16 @@ import {
 
 export type EscalationRole = "orchestrator" | "human";
 
-export type EscalationState = "needs_answer" | "in_progress" | "closed";
+export type EscalationState =
+  | "needs_answer"
+  | "in_progress"
+  | "waiting"
+  | "closed";
 
 export const ESCALATION_STATES: readonly EscalationState[] = [
   "needs_answer",
   "in_progress",
+  "waiting",
   "closed",
 ];
 
@@ -62,9 +72,16 @@ export const ESCALATION_STATES: readonly EscalationState[] = [
  * moved it to `in_progress` without words to answer with (see the module's
  * doc): `direct` / `resumed`, an agent went working (`agent` names it);
  * `taken`, an old 対応中にする (read, never written); `held`, the
- * orchestrator's `escalation hold`.
+ * orchestrator's `escalation hold` / `resume`; `wait`, the orchestrator's
+ * `escalation wait`: parked on a condition (`markdown` the trigger, `dueAt`
+ * its time when it is one).
  */
-export type EscalationEntryKind = "direct" | "resumed" | "taken" | "held";
+export type EscalationEntryKind =
+  | "direct"
+  | "resumed"
+  | "taken"
+  | "held"
+  | "wait";
 
 /** Each kind, and the side it is on. */
 export const ESCALATION_ENTRY_KINDS: Readonly<
@@ -74,7 +91,11 @@ export const ESCALATION_ENTRY_KINDS: Readonly<
   resumed: "orchestrator",
   taken: "human",
   held: "orchestrator",
+  wait: "orchestrator",
 };
+
+/** How long a wait's trigger may be. */
+export const TRIGGER_LIMIT = 500;
 
 /** How long a `taken` or `held` note may be. */
 export const NOTE_LIMIT = 2_000;
@@ -96,6 +117,8 @@ export interface EscalationEntry {
   readonly kind?: EscalationEntryKind;
   /** `direct` / `resumed`: the agent that went working, by id. */
   readonly agent?: string;
+  /** `wait`: when its condition is a time, ms since the epoch. */
+  readonly dueAt?: number;
 }
 
 /** A note (`kind`): not a question, and not anybody's answer. */
@@ -186,7 +209,18 @@ export function isQuestion(entry: EscalationEntry | undefined): boolean {
 /** The one rule (see the module's doc): 要回答 while a question is last. */
 export function escalationState(escalation: Escalation): EscalationState {
   if (escalation.closed !== undefined) return "closed";
-  return isQuestion(escalation.entries.at(-1)) ? "needs_answer" : "in_progress";
+  const last = escalation.entries.at(-1);
+  if (isQuestion(last)) return "needs_answer";
+  return last?.kind === "wait" ? "waiting" : "in_progress";
+}
+
+/** The wait it is parked on, while it is 待機中. */
+export function currentWait(
+  escalation: Escalation,
+): EscalationEntry | undefined {
+  return escalationState(escalation) === "waiting"
+    ? escalation.entries.at(-1)
+    : undefined;
 }
 
 /** Whether it is still being worked on: not closed. */
@@ -401,9 +435,44 @@ export interface NewEscalation {
   readonly workspaceId?: string;
   readonly links?: readonly string[];
   readonly rank?: EscalationRank;
+  /**
+   * Born waiting (`escalation new --wait`): nothing is asked of the person
+   * yet; the body says what it is about.
+   */
+  readonly wait?: WaitRequest;
 }
 
-/** The orchestrator raises one: born `needs_answer`. */
+/** A wait: its trigger in words, and maybe its time. */
+export interface WaitRequest {
+  readonly trigger: string;
+  readonly dueAt?: number;
+}
+
+function checkTrigger(trigger: string): string {
+  const trimmed = trigger.trim();
+  if (trimmed === "")
+    refuse(
+      "a wait needs its trigger, in words: what it waits for (--trigger).",
+    );
+  if (trimmed.length > TRIGGER_LIMIT)
+    refuse(`a trigger is at most ${String(TRIGGER_LIMIT)} characters.`);
+  return trimmed;
+}
+
+function waitEntry(request: WaitRequest, now: number): EscalationEntry {
+  const trigger = checkTrigger(request.trigger);
+  if (request.dueAt !== undefined && !Number.isFinite(request.dueAt))
+    refuse("a wait's time is not a time.");
+  return {
+    role: "orchestrator",
+    kind: "wait",
+    markdown: trigger,
+    at: now,
+    ...(request.dueAt === undefined ? {} : { dueAt: request.dueAt }),
+  };
+}
+
+/** The orchestrator raises one: born `needs_answer` (or `waiting`, with `wait`). */
 export function createEscalation(
   id: number,
   request: NewEscalation,
@@ -419,7 +488,10 @@ export function createEscalation(
     {
       id,
       title: checkTitle(request.title),
-      entries: [entry("orchestrator", request.markdown, now, request.options)],
+      entries: [
+        entry("orchestrator", request.markdown, now, request.options),
+        ...(request.wait === undefined ? [] : [waitEntry(request.wait, now)]),
+      ],
       agents: union([], request.agents ?? [], AGENTS_MAX, "agents"),
       ...(request.workspaceId === undefined
         ? {}
@@ -489,7 +561,8 @@ export function answerEscalation(
  * waited: DevHub's note of it (`kind`), human-side, so a `needs_answer` one
  * moves to `in_progress`. **DevHub's only** — the orchestrator service
  * writes it when it sees that happen; no command line path reaches it. Only
- * on a `needs_answer` one: an `in_progress` or a closed one is left as it is.
+ * on a `needs_answer` or `waiting` one: an `in_progress` or a closed one is
+ * left as it is.
  */
 export function noteWorking(
   escalation: Escalation,
@@ -497,7 +570,8 @@ export function noteWorking(
   agentId: string,
   now: number,
 ): Escalation {
-  if (escalationState(escalation) !== "needs_answer")
+  const state = escalationState(escalation);
+  if (state !== "needs_answer" && state !== "waiting")
     refuse(`#${String(escalation.id)} is not waiting for an answer.`);
   if (!escalation.agents.includes(agentId))
     refuse(`#${String(escalation.id)} is not about ${agentId}.`);
@@ -534,6 +608,41 @@ export function holdEscalation(
   return appended(escalation, {
     role: ESCALATION_ENTRY_KINDS[kind],
     kind,
+    markdown: checkNote(note),
+    at: now,
+  });
+}
+
+/**
+ * The orchestrator parks it on an outside condition (`escalation wait`):
+ * `waiting` until something comes after. A trigger, in words, always; a
+ * time when the condition is one. From any open state; a second wait
+ * replaces what the first said.
+ */
+export function waitEscalation(
+  escalation: Escalation,
+  request: WaitRequest,
+  now: number,
+): Escalation {
+  return appended(escalation, waitEntry(request, now));
+}
+
+/**
+ * The orchestrator takes it off its wait (`escalation resume`): `held`, to
+ * `in_progress`. Only on a `waiting` one.
+ */
+export function resumeEscalation(
+  escalation: Escalation,
+  note: string | undefined,
+  now: number,
+): Escalation {
+  if (escalationState(escalation) !== "waiting")
+    refuse(
+      `#${String(escalation.id)} is not waiting on a condition (${escalationState(escalation)}).`,
+    );
+  return appended(escalation, {
+    role: "orchestrator",
+    kind: "held",
     markdown: checkNote(note),
     at: now,
   });
@@ -577,6 +686,20 @@ export function linkAgent(
 // --- the board ----------------------------------------------------------------
 
 /**
+ * How far off a wait's time is, as a line says it: `あと 3日`, `あと 5h`,
+ * `あと 20m`, or `時刻を過ぎました` once it has passed.
+ */
+export function dueWords(dueAt: number, now: number): string {
+  const ms = dueAt - now;
+  if (ms <= 0) return "時刻を過ぎました";
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `あと ${String(minutes)}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `あと ${String(hours)}h`;
+  return `あと ${String(Math.round(hours / 24))}日`;
+}
+
+/**
  * How long a 対応中 escalation may stand with none of its agents working
  * before it is 停滞 (`escalation.stalled`): a minute. Just after an answer is
  * read, the orchestrator relays it and sets an agent going; a marker that
@@ -605,6 +728,8 @@ export interface Board {
   readonly needsAnswer: readonly Escalation[];
   /** Answered longest ago first: the one the agents have waited on longest. */
   readonly inProgress: readonly Escalation[];
+  /** Soonest time first (one without a time after), then the oldest wait. */
+  readonly waiting: readonly Escalation[];
   /** Most recently closed first. */
   readonly closed: readonly Escalation[];
 }
@@ -619,6 +744,13 @@ export function board(escalations: readonly Escalation[]): Board {
     inProgress: escalations
       .filter((one) => escalationState(one) === "in_progress")
       .sort(bySince),
+    waiting: escalations
+      .filter((one) => escalationState(one) === "waiting")
+      .sort(
+        (left, right) =>
+          (currentWait(left)?.dueAt ?? Infinity) -
+            (currentWait(right)?.dueAt ?? Infinity) || bySince(left, right),
+      ),
     closed: escalations
       .filter((one) => escalationState(one) === "closed")
       .sort((left, right) => bySince(right, left)),
@@ -675,6 +807,19 @@ function entryFrom(value: unknown, where: string): EscalationEntry {
     )
       refuse(`${where}'s kind is not one this DevHub reads.`);
     const at = finiteTime(value["at"], `${where}'s time`);
+    if (kind === "wait") {
+      const dueAt = value["dueAt"];
+      return waitEntry(
+        {
+          trigger:
+            typeof value["markdown"] === "string" ? value["markdown"] : "",
+          ...(dueAt === undefined
+            ? {}
+            : { dueAt: finiteTime(dueAt, `${where}'s due time`) }),
+        },
+        at,
+      );
+    }
     if (kind === "taken" || kind === "held")
       return {
         role,

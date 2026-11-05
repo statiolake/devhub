@@ -2345,6 +2345,12 @@ export function interpretConfig(document: unknown): Config {
         "orchestrator",
         DEFAULT_ORCHESTRATOR.usage_thresholds,
       ),
+      wait_reminder_interval: optionalString(
+        orchestratorTable,
+        "wait_reminder_interval",
+        "orchestrator",
+        DEFAULT_ORCHESTRATOR.wait_reminder_interval,
+      ),
       github: {
         projects: optionalStringArray(
           orchestratorGitHub,

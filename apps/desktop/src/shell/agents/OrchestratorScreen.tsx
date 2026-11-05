@@ -46,7 +46,8 @@ import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
 import { GitHubPill } from "./OrchestratorGitHub";
-import { EscalationNote } from "./EscalationNote";
+import { dueText, EscalationNote } from "./EscalationNote";
+import { dueWords } from "../../model/escalations";
 import { useEscalationRequests } from "./escalationRequests";
 import { DevhubLink } from "../conversation/DevhubLink";
 import { isDevhubLink } from "../../model/devhubLink";
@@ -214,7 +215,7 @@ export function OrchestratorBoard({
           {tab === "board" ? (
             <span className="orchestrator-board-counts">
               {board.needsAnswer.length} 要回答 · {board.inProgress.length}{" "}
-              対応中
+              対応中 · {board.waiting.length} 待機中
             </span>
           ) : null}
         </div>
@@ -426,7 +427,12 @@ function BoardPage({
   const now = useNow();
   const lanes = useRef<HTMLDivElement>(null);
   const all = useMemo(
-    () => [...board.needsAnswer, ...board.inProgress, ...board.closed],
+    () => [
+      ...board.needsAnswer,
+      ...board.inProgress,
+      ...board.waiting,
+      ...board.closed,
+    ],
     [board],
   );
   // Where the pane was left: that escalation, again — unless it has gone
@@ -571,6 +577,24 @@ function BoardPage({
             />
           ))}
         </Lane>
+        <Lane
+          title="待機中"
+          hint="Waiting: parked on an outside condition (a date, someone's reply), its trigger in words. Soonest first. The orchestrator is reminded of them."
+          tone="waiting"
+          count={board.waiting.length}
+          empty="Nothing is waiting on a condition."
+        >
+          {board.waiting.map((one) => (
+            <EscalationCard
+              key={one.id}
+              escalation={one}
+              now={now}
+              onOpen={() => {
+                openCard(one);
+              }}
+            />
+          ))}
+        </Lane>
         {history ? (
           <Lane
             title="Closed"
@@ -623,7 +647,7 @@ function Lane({
 }: {
   readonly title: string;
   readonly hint: string;
-  readonly tone: "ask" | "progress" | "closed";
+  readonly tone: "ask" | "progress" | "waiting" | "closed";
   readonly count: number;
   readonly empty: string;
   readonly children: ReactNode;
@@ -662,7 +686,11 @@ function EscalationCard({
       ? `${span(now - escalation.stateSince)}`
       : escalation.state === "in_progress"
         ? `answered ${span(now - escalation.stateSince)} ago`
-        : `closed ${span(now - escalation.stateSince)} ago`;
+        : escalation.state === "waiting"
+          ? `waiting ${span(now - escalation.stateSince)}`
+          : `closed ${span(now - escalation.stateSince)} ago`;
+  const wait =
+    escalation.state === "waiting" && last?.kind === "wait" ? last : undefined;
   const open = escalation.state !== "closed";
   const followUp =
     escalation.state === "needs_answer" &&
@@ -680,6 +708,18 @@ function EscalationCard({
           <span className="orchestrator-card-title">{escalation.title}</span>
           <span className="orchestrator-card-age">{age}</span>
         </span>
+        {wait === undefined ? null : (
+          <span className="orchestrator-card-trigger">
+            <span className="orchestrator-card-trigger-text">
+              {wait.markdown}
+            </span>
+            {wait.dueAt === undefined ? null : (
+              <span className="orchestrator-card-due">
+                {dueText(wait.dueAt)} · {dueWords(wait.dueAt, now)}
+              </span>
+            )}
+          </span>
+        )}
         <span className="orchestrator-card-preview">
           {escalation.state === "in_progress" &&
           last?.role === "human" &&
@@ -733,6 +773,7 @@ function EscalationCard({
 const STATE_LABEL: Record<EscalationWire["state"], string> = {
   needs_answer: "要回答",
   in_progress: "対応中",
+  waiting: "待機中",
   closed: "Closed",
 };
 
@@ -964,6 +1005,12 @@ function EscalationView({
           <div className="orchestrator-closed-note">
             Answered. The orchestrator is carrying it out; a follow-up question
             would appear here.
+          </div>
+        ) : null}
+        {escalation.state === "waiting" ? (
+          <div className="orchestrator-closed-note">
+            Waiting on a condition. The orchestrator resumes it when it is met;
+            anything you write here moves it to 対応中.
           </div>
         ) : null}
       </div>

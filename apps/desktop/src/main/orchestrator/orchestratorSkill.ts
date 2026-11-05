@@ -125,7 +125,7 @@ export function codexOrchestratorInstructions(
 export function orchestratorSkillText(cli: string): string {
 	return `---
 name: ${ORCHESTRATOR_SKILL_NAME}
-description: DevHub のオーケストレーター専用。イベントごとに DevHub から呼ばれる「ユーザー自身のイベント処理スキル」(/make-progress など) を、ユーザーへのヒアリングを通じて設計・作成・改訂する。DevHub が渡すイベントの中身、ボードのレーン (要回答 / 対応中) の意味、エスカレーションの原則、なるべく停めない心構え、使える CLI をまとめてある。「make-progress を作って」「オーケストレーターのスキルを設定して」「イベントの扱いを変えたい」と言われたとき、または /${ORCHESTRATOR_SKILL_NAME} で使う。
+description: DevHub のオーケストレーター専用。イベントごとに DevHub から呼ばれる「ユーザー自身のイベント処理スキル」(/make-progress など) を、ユーザーへのヒアリングを通じて設計・作成・改訂する。DevHub が渡すイベントの中身、ボードのレーン (要回答 / 対応中 / 待機中) の意味、エスカレーションの原則、なるべく停めない心構え、使える CLI をまとめてある。「make-progress を作って」「オーケストレーターのスキルを設定して」「イベントの扱いを変えたい」と言われたとき、または /${ORCHESTRATOR_SKILL_NAME} で使う。
 ---
 
 # /${ORCHESTRATOR_SKILL_NAME} - make-progress を作るためのスキル
@@ -201,6 +201,8 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)
       [escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります
       [escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない
+      [escalation.wait_due] esc=12「本番DBマイグレーション承認」 — 待機条件の時刻になりました: 11/10 以降に再開
+      [escalation.waiting_reminder] 待機中 2 件 — esc=12「本番DBマイグレーション承認」: Bob から Slack で返事が来たら / esc=15「ログ保存期間」: 11/10 以降 (あと 3日)
       [timer.elapsed] sweep
       [usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました
 
@@ -219,6 +221,8 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | --- | --- | --- | --- |
 | 起動 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
 | ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ) | esc, agent |
+| ボード | \`escalation.wait_due\` | 待機中のエスカレーションの \`--at\` の時刻になった (待機 1 回につき 1 回。届く前に待機中でなくなっていれば落とされる) | esc |
+| ボード | \`escalation.waiting_reminder\` | \`[orchestrator] wait_reminder_interval\` (既定 1h) ごとに、待機中の全エスカレーションとトリガーを 1 行で。待機中がなければ来ない。たまっても最新の 1 件だけ | esc (行内に複数) |
 | ボード | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ) | esc, agent, since |
 | ボード | \`escalation.stalled\` | 対応中のエスカレーションの関係エージェントが 1 分以上誰も動いていない (全員 idle / 待ち / 停止 / 消えた、または紐付けなし: \`agents=none\`)。1 回の停滞につき 1 回。未読の回答 (\`escalation_answered\`) があるうちは来ず、\`escalation show\` で読んでから数え始める | esc, agents |
 | GitHub | \`github.assigned\` | 自分にアサインされた | ws, agent, URL |
@@ -284,14 +288,27 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     **escalation.stalled を受けたら、回答内容を担当エージェントに伝える／作業を再開させる／必要なら escalation ask で要回答に戻す／不要なら close**。
     \`agents=none\` なら \`escalation link ID --agent A\` で担当を紐付ける。
     関係エージェントが動き出すか、新しいエントリが付くと、次の停滞でまた届く。
+- **待機中** (waiting): 外部の条件待ち (日付、相手からの Slack の返事、
+  staging の deploy 完了など) で止めてあるもの。**外部の条件待ちは必ず escalation wait で自然言語のトリガーを残す（日付なら --at も）**。
+  トリガーは後から読んで条件を確かめられる具体的な文に
+  (「11/10 以降に再開」「Bob から Slack で返事が来たら」「staging の deploy 完了後」)。
+  人に何も聞いていない段階なら \`escalation new … --wait TEXT\` で最初から待機中にできる。
+  - \`--at\` の時刻になると \`escalation.wait_due\` が届く。
+  - \`escalation.waiting_reminder\` (既定 1 時間おき) が届いたら、各トリガーを確認し
+    (Slack などは自分のツールで見に行く)、満たされていれば \`escalation resume\`
+    で対応中に戻して作業を進める / 人に聞くことができたら \`escalation ask\` /
+    不要になっていれば \`escalation close\`。満たされていなければそのまま。
+  - 待機中を離れるのは: \`escalation ask\` (要回答へ)、人の書き込みや
+    \`escalation resume\` / 関係エージェントが動き出したとき (対応中へ)、close。
+    \`escalation wait\` をもう一度呼べばトリガーを書き換えられる。
 - **要回答 なのは、最後のエントリがあなたの質問のときだけ。** 質問のあとに何か
   (人の回答、あなたの \`escalation hold\`、下の自動の注記)
   が付けば 対応中 になり、あなたが \`escalation ask\` で聞き直すまで 要回答 には
   戻らない。
   - 追加調査を任せた等で人を待たせたくないときは \`escalation hold ID --note …\`
     で自分から 対応中 に置ける (回答にはならない。人の回答は書けない)。
-- **関係エージェントが動き出したら、エスカレーションは 要回答 を離れる。**
-  要回答のエスカレーションの \`agents\` のどれかが idle / 待ちから working に
+- **関係エージェントが動き出したら、エスカレーションは 要回答 / 待機中 を離れる。**
+  要回答 (または待機中) のエスカレーションの \`agents\` のどれかが idle / 待ちから working に
   なると、理由が何であれ (人がその会話欄で話しかけた、あなたの \`agent send\`、
   イベントの注入、利用上限後の自動再開「続けて」)、DevHub がスレッドに自動の
   注記を足して 対応中 にする。
@@ -348,6 +365,11 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     devhub --tell link file src/app.ts:12
     devhub --tell escalation close 12 --note "案 A で実装を再開"
     devhub --tell escalation hold 12 --note "B に追加調査を依頼中"
+    devhub --tell escalation wait 12 --trigger "Bob から Slack で返事が来たら"
+    devhub --tell escalation wait 15 --trigger "11/10 以降に再開" --at 2026-11-10T09:00
+    devhub --tell escalation new --title "ログ保存期間" --body - --agent A --wait "staging の deploy 完了後"
+    devhub --tell escalation resume 12 --note "Bob から OK が来た"
+    devhub --tell escalation list --state waiting
 
 ## 5. なるべく停めないための心構え
 
@@ -473,6 +495,11 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     もう答えが出ていれば escalation close (要点を note に)。まだ聞くことが残って
     いれば escalation ask で質問を更新 (要回答に戻る)。他のエージェントにも
     関わる決定なら agent send で伝える。決定は decisions.md に追記。
+
+    ## escalation.wait_due / escalation.waiting_reminder
+    各トリガーを確かめる (日付は今日と比べる、Slack の返事は自分のツールで見る)。
+    満たされていれば escalation resume → 担当エージェントに agent send で再開を指示。
+    人に聞くことができたら escalation ask、不要なら escalation close。まだならそのまま。
 
     ## escalation.stalled
     escalation show で回答を読む → 担当エージェントに agent send で伝えて作業を再開させる。

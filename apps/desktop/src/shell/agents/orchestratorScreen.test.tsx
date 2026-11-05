@@ -407,6 +407,50 @@ describe("the orchestrator's ranking on the board", () => {
   });
 });
 
+describe("待機中", () => {
+  it("is a lane of its own: the trigger first, the time and how far off", () => {
+    const due = NOW + 3 * 86_400_000 + 60_000;
+    const waiting = (id: number, trigger: string, dueAt?: number) => ({
+      ...BOARD.inProgress[0]!,
+      id,
+      title: `待ち ${String(id)}`,
+      state: "waiting" as const,
+      entries: [
+        { role: "orchestrator" as const, markdown: "about", at: NOW - 60_000 },
+        {
+          role: "orchestrator" as const,
+          kind: "wait" as const,
+          markdown: trigger,
+          at: NOW - 60_000,
+          ...(dueAt === undefined ? {} : { dueAt }),
+        },
+      ],
+    });
+    mount({
+      ...BOARD,
+      waiting: [
+        waiting(5, "11/10 以降に再開", due),
+        waiting(6, "Bob から Slack で返事が来たら"),
+      ],
+    });
+    const lane = screen.getByRole("region", { name: "待機中" });
+    const [first, second] = [
+      ...lane.querySelectorAll<HTMLElement>(".orchestrator-card"),
+    ];
+    expect(within(first!).getByText("11/10 以降に再開")).toBeVisible();
+    expect(first!.querySelector(".orchestrator-card-due")?.textContent).toMatch(
+      /あと 3日$/u,
+    );
+    expect(
+      within(second!).getByText("Bob から Slack で返事が来たら"),
+    ).toBeVisible();
+    expect(second!.querySelector(".orchestrator-card-due")).toBeNull();
+    // Nothing for the person to press here: no 対応中にする.
+    expect(within(lane).queryByText("対応中にする")).toBeNull();
+    expect(screen.queryByText("対応中にする")).toBeNull();
+  });
+});
+
 describe("停滞", () => {
   it("marks a stalled 対応中 card quietly, with no tooltip", () => {
     mount({

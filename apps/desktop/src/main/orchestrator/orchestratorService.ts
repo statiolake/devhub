@@ -27,6 +27,12 @@
  * `escalation_answered` already says it, and the clock starts once it is
  * read.
  *
+ * 待機中 (`escalation wait`): a waiting escalation whose time (`dueAt`) has
+ * come is told once per wait (`escalation.wait_due`), and every
+ * `[orchestrator] wait_reminder_interval` all of them are, as one line
+ * (`escalation.waiting_reminder`; nothing when none waits). An agent of one
+ * going working takes it out of 待機中 as it does out of 要回答.
+ *
  * A maintenance turn (`isMaintenanceTurn`: a `/compact`, DevHub's keep-warm
  * one before the prompt cache goes cold or the person's) is not work: every
  * reading here goes by the status the agent had before it (`workStatus`), so
@@ -49,10 +55,13 @@ import {
 	STALLED_GRACE_MS,
 	type Escalation,
 	type EscalationRank,
+	currentWait,
 	type NewEscalation,
+	type WaitRequest,
 } from "../../model/escalations.js";
 import type { OrchestratorConfig } from "../../model/orchestratorSettings.js";
 import { workStatus } from "../../model/conversation.js";
+import { parseInterval } from "../../model/orchestratorSettings.js";
 import type { EscalationStore } from "./escalationStore.js";
 import {
 	customTypeProblem,
@@ -167,6 +176,9 @@ export class OrchestratorService {
 	readonly #read = new Map<number, { entries: number; at: number }>();
 	/** `escalationId@since`, once told: one event per stalled stretch. */
 	readonly #stalledTold = new Set<string>();
+	/** `escalationId@waitSince`, once told: one `wait_due` per wait. */
+	readonly #dueTold = new Set<string>();
+	#reminder: { cancel(): void } | undefined;
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.events = new EventDispatcher({
@@ -195,6 +207,7 @@ export class OrchestratorService {
 			setTimer: ports.setTimer ?? (() => ({ cancel: () => undefined })),
 		});
 		this.timers.sync();
+		this.#scheduleReminder();
 		ports.store.onChange(() => {
 			this.publish();
 		});
@@ -253,6 +266,20 @@ export class OrchestratorService {
 				return agent(event.agent.id)?.status === "waiting";
 			case "agent.started":
 				return agent(event.agent.id) !== undefined;
+			case "escalation.wait_due": {
+				const one = this.ports.store
+					.all()
+					.find((escalation) => escalation.id === event.escalationId);
+				return one !== undefined && currentWait(one)?.at === event.waitSince;
+			}
+			case "escalation.waiting_reminder":
+				return this.ports.store
+					.all()
+					.some(
+						(one) =>
+							currentWait(one) !== undefined &&
+							event.waiting.some((item) => item.escalationId === one.id),
+					);
 			case "escalation.stalled":
 				return this.#stalledNow(this.#now()).some(
 					(one) =>
@@ -307,7 +334,10 @@ export class OrchestratorService {
 	// --- escalations: the orchestrator's side ----------------------------------
 
 	raise(request: NewEscalation): Escalation {
-		return this.ports.store.create(request, this.#now());
+		const made = this.ports.store.create(request, this.#now());
+		// Born waiting, maybe on a time: the timer looks for it.
+		if (request.wait !== undefined) this.observe();
+		return made;
 	}
 
 	ask(
@@ -329,6 +359,21 @@ export class OrchestratorService {
 	 */
 	hold(id: number, note: string | undefined): Escalation {
 		return this.ports.store.hold(id, note, this.#now());
+	}
+
+	/**
+	 * `escalation wait`: parked on an outside condition, its trigger in words
+	 * and maybe a time. 待機中 until it is asked, answered, resumed or closed.
+	 */
+	wait(id: number, request: WaitRequest): Escalation {
+		const waiting = this.ports.store.wait(id, request, this.#now());
+		this.observe();
+		return waiting;
+	}
+
+	/** `escalation resume`: off its wait, to 対応中. */
+	resume(id: number, note: string | undefined): Escalation {
+		return this.ports.store.resume(id, note, this.#now());
 	}
 
 	link(id: number, agentId: string): Escalation {
@@ -414,9 +459,10 @@ export class OrchestratorService {
 			.filter((one) => isOpen(one) && one.agents.includes(agent.id));
 		if (about.length === 0) return;
 		const told: Escalation[] = [];
-		for (const one of about)
+		for (const one of about) {
+			const state = escalationState(one);
 			told.push(
-				escalationState(one) === "needs_answer"
+				state === "needs_answer" || state === "waiting"
 					? this.ports.store.note(
 							one.id,
 							byPerson ? "direct" : "resumed",
@@ -425,6 +471,7 @@ export class OrchestratorService {
 						)
 					: one,
 			);
+		}
 		if (!byPerson) return;
 		const say = (since: string | undefined) => {
 			for (const one of told)
@@ -455,6 +502,7 @@ export class OrchestratorService {
 		this.#watchWorking(agents, now);
 		this.#watchStalled(agents, now);
 		this.#announceStalled(now);
+		this.#announceDue(now);
 		this.#schedule(now);
 		// The orchestrator's status may have moved: what waits for it may go.
 		this.events.flush();
@@ -579,21 +627,95 @@ export class OrchestratorService {
 		}
 	}
 
-	/** Wake when the next escalation's grace is up, to say so. */
+	// --- 待機中: parked on an outside condition --------------------------------------
+
+	/** Every waiting escalation whose time has come is told, once per wait. */
+	#announceDue(now: number): void {
+		if (this.orchestratorAgentId === undefined) return;
+		for (const one of this.ports.store.all()) {
+			const wait = currentWait(one);
+			if (wait?.dueAt === undefined || wait.dueAt > now) continue;
+			const key = `${String(one.id)}@${String(wait.at)}`;
+			if (this.#dueTold.has(key)) continue;
+			this.#dueTold.add(key);
+			this.events.dispatch({
+				type: "escalation.wait_due",
+				escalationId: one.id,
+				title: one.title,
+				trigger: wait.markdown,
+				dueAt: wait.dueAt,
+				waitSince: wait.at,
+			});
+		}
+	}
+
+	/**
+	 * `escalation.waiting_reminder`: every 待機中 escalation and its trigger,
+	 * as one line. Nothing when none waits, or no orchestrator runs.
+	 * The reminder timer calls it every `wait_reminder_interval`.
+	 */
+	remindWaiting(): void {
+		if (this.orchestratorAgentId === undefined) return;
+		const waiting = board(this.ports.store.all()).waiting.map((one) => {
+			const wait = currentWait(one)!;
+			return {
+				escalationId: one.id,
+				title: one.title,
+				trigger: wait.markdown,
+				...(wait.dueAt === undefined ? {} : { dueAt: wait.dueAt }),
+			};
+		});
+		if (waiting.length === 0) return;
+		this.events.dispatch({ type: "escalation.waiting_reminder", waiting });
+	}
+
+	/** The settings moved: `wait_reminder_interval` counts from now. */
+	settingsChanged(): void {
+		const ms = parseInterval(this.ports.settings().wait_reminder_interval);
+		if (ms === this.#reminderMs) return;
+		this.#scheduleReminder();
+	}
+
+	#reminderMs: number | undefined;
+
+	#scheduleReminder(): void {
+		this.#reminder?.cancel();
+		this.#reminder = undefined;
+		const setTimer = this.ports.setTimer;
+		if (setTimer === undefined) return;
+		const ms =
+			parseInterval(this.ports.settings().wait_reminder_interval) ?? 3_600_000;
+		this.#reminderMs = ms;
+		this.#reminder = setTimer(Math.max(ms, 60_000), () => {
+			this.#reminder = undefined;
+			this.remindWaiting();
+			this.#scheduleReminder();
+		});
+	}
+
+	/** Wake when the next escalation's grace or wait is up, to say so. */
 	#schedule(now: number): void {
 		this.#timer?.cancel();
 		this.#timer = undefined;
 		const setTimer = this.ports.setTimer;
 		if (setTimer === undefined) return;
 		const agents = this.#agents();
-		const due = this.ports.store
-			.all()
-			.map((one) => this.#stalledSince(one, agents))
-			.filter((since): since is number => since !== undefined)
-			.map((since) => since + this.#graceMs - now)
+		const all = this.ports.store.all();
+		const due = [
+			...all
+				.map((one) => this.#stalledSince(one, agents))
+				.filter((since): since is number => since !== undefined)
+				.map((since) => since + this.#graceMs),
+			...all
+				.map((one) => currentWait(one)?.dueAt)
+				.filter((at): at is number => at !== undefined),
+		]
+			.map((at) => at - now)
 			.filter((ms) => ms > 0);
 		if (due.length === 0) return;
-		this.#timer = setTimer(Math.min(...due) + 50, () => {
+		// A far-off time is looked at again within the hour (a timer cannot
+		// wait weeks, and the clock may jump).
+		this.#timer = setTimer(Math.min(...due, 3_600_000) + 50, () => {
 			this.#timer = undefined;
 			this.observe();
 		});
@@ -618,6 +740,7 @@ export class OrchestratorService {
 				...(entry.options === undefined ? {} : { options: entry.options }),
 				...(entry.kind === undefined ? {} : { kind: entry.kind }),
 				...(entry.agent === undefined ? {} : { agent: entry.agent }),
+				...(entry.dueAt === undefined ? {} : { dueAt: entry.dueAt }),
 			})),
 			agents: one.agents.map((agentId) => {
 				const agent = agents.get(agentId);
@@ -678,6 +801,7 @@ export class OrchestratorService {
 			github: this.ports.github?.() ?? { state: "idle" },
 			needsAnswer: lanes.needsAnswer.map(escalation),
 			inProgress: lanes.inProgress.map(escalation),
+			waiting: lanes.waiting.map(escalation),
 			closed: lanes.closed.slice(0, CLOSED_SHOWN).map(escalation),
 			graceMs: this.#graceMs,
 		};
@@ -707,6 +831,7 @@ export class OrchestratorService {
 
 	dispose(): void {
 		this.#timer?.cancel();
+		this.#reminder?.cancel();
 		this.events.dispose();
 		this.timers.stop();
 	}

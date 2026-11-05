@@ -121,6 +121,49 @@ describe("[orchestrator] settings", () => {
     ).toMatchObject({ usage_thresholds: [70] });
   });
 
+  it("reads wait_reminder_interval, defaults it to 1h, and refuses what is not an interval", () => {
+    expect(interpretConfig({}).orchestrator.wait_reminder_interval).toBe("1h");
+    expect(
+      interpretConfig({ orchestrator: { wait_reminder_interval: "30m" } })
+        .orchestrator.wait_reminder_interval,
+    ).toBe("30m");
+    for (const bad of ["30s", "1", "soon", "8d"])
+      expect(
+        orchestratorProblem({
+          ...DEFAULT_ORCHESTRATOR,
+          wait_reminder_interval: bad,
+        }),
+      ).toBe("wait_reminder_interval");
+    expect(() =>
+      interpretConfig({ orchestrator: { wait_reminder_interval: "10s" } }),
+    ).toThrow();
+    expect(
+      configDocument(defaultConfig())["orchestrator"] ?? {},
+    ).not.toHaveProperty("wait_reminder_interval");
+    expect(
+      configDocument({
+        ...defaultConfig(),
+        orchestrator: { ...DEFAULT_ORCHESTRATOR, wait_reminder_interval: "2h" },
+      })["orchestrator"],
+    ).toMatchObject({ wait_reminder_interval: "2h" });
+  });
+
+  it("defaults the events to the 待機中 and 停滞 ones, without 不明; an old unaccounted pattern is valid and matches nothing", () => {
+    for (const type of [
+      "escalation.stalled",
+      "escalation.wait_due",
+      "escalation.waiting_reminder",
+    ])
+      expect(eventAllowed(type, DEFAULT_ORCHESTRATOR_EVENTS)).toBe(true);
+    expect(DEFAULT_ORCHESTRATOR_EVENTS).not.toContain("unaccounted");
+    expect(DEFAULT_ORCHESTRATOR_EVENTS).not.toContain("escalation.taken");
+    expect(eventPatternProblem("unaccounted")).toBe(false);
+    expect(
+      interpretConfig({ orchestrator: { events: ["init", "unaccounted"] } })
+        .orchestrator.events,
+    ).toEqual(["init", "unaccounted"]);
+  });
+
   it("filters by the last matching pattern, and always lets init through", () => {
     const patterns = ["github.*", "!github.checks", "agent.turn_ended"];
     expect(eventAllowed("github.assigned", patterns)).toBe(true);

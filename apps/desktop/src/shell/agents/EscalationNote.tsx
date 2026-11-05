@@ -22,6 +22,12 @@ export function noteTime(at: number): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+/** `11/10 09:00`: a wait's time, as a card and a note give it. */
+export function dueText(at: number): string {
+  const date = new Date(at);
+  return `${String(date.getMonth() + 1)}/${String(date.getDate())} ${noteTime(at)}`;
+}
+
 /**
  * The note's words: before the agent's chip and after it (`direct`,
  * `resumed`), or the whole line (`taken`, `held`: `before`, with the note).
@@ -30,6 +36,7 @@ export function noteWords(
   kind: NoteKind,
   at: number,
   note = "",
+  dueAt?: number,
 ): { readonly before: string; readonly after: string } {
   const time = noteTime(at);
   const with_ = note === "" ? "" : `: ${note}`;
@@ -51,6 +58,11 @@ export function noteWords(
         before: `オーケストレーターが対応中にしました（${time}）${with_}`,
         after: "",
       };
+    case "wait":
+      return {
+        before: `オーケストレーターが待機中にしました（${time}）${with_}${dueAt === undefined ? "" : `（${dueText(dueAt)} まで）`}`,
+        after: "",
+      };
   }
 }
 
@@ -63,7 +75,7 @@ export function EscalationNote({
   readonly agents: readonly BoardAgentRefWire[];
   readonly onFocusAgent: (agentId: string) => void;
 }) {
-  const words = noteWords(entry.kind, entry.at, entry.markdown);
+  const words = noteWords(entry.kind, entry.at, entry.markdown, entry.dueAt);
   const agentId = entry.agent;
   const agent = agents.find((one) => one.agentId === agentId);
   return (

@@ -39,9 +39,12 @@ import {
 	type EscalationRank,
 	noteWorking,
 	holdEscalation,
+	resumeEscalation,
+	waitEscalation,
 	type Escalation,
 	type EscalationsFile,
 	type NewEscalation,
+	type WaitRequest,
 } from "../../model/escalations.js";
 
 export interface EscalationStoreIo {
@@ -201,6 +204,16 @@ export class EscalationStore {
 	/** To `in_progress` without an answer: the orchestrator's `escalation hold`. */
 	hold(id: number, note: string | undefined, now: number): Escalation {
 		return this.#replace(holdEscalation(this.require(id), note, now));
+	}
+
+	/** Parked on an outside condition: the orchestrator's `escalation wait`. */
+	wait(id: number, request: WaitRequest, now: number): Escalation {
+		return this.#replace(waitEscalation(this.require(id), request, now));
+	}
+
+	/** Off its wait, to `in_progress`: the orchestrator's `escalation resume`. */
+	resume(id: number, note: string | undefined, now: number): Escalation {
+		return this.#replace(resumeEscalation(this.require(id), note, now));
 	}
 
 	link(id: number, agentId: string, now: number): Escalation {

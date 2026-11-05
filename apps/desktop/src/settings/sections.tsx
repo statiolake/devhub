@@ -68,6 +68,9 @@ import {
   MIN_TIMER_INTERVAL_MS,
   ORCHESTRATOR_EVENTS_RULE,
   ORCHESTRATOR_GITHUB_RULE,
+  ORCHESTRATOR_WAIT_REMINDER_RULE,
+  DEFAULT_WAIT_REMINDER_INTERVAL,
+  MIN_WAIT_REMINDER_INTERVAL_MS,
   ORCHESTRATOR_PROMPT_RULE,
   ORCHESTRATOR_ROOT_RULE,
   ORCHESTRATOR_TIMER_RULE,
@@ -687,6 +690,38 @@ export function GeneralSection({
                 orchestrator: {
                   ...config.orchestrator,
                   usageThresholds: parseThresholds(next) ?? [],
+                },
+              });
+            }}
+          />
+        </Row>
+        <Row
+          label="Waiting reminder"
+          help="How often the orchestrator is reminded of every 待機中 escalation and its trigger (escalation.waiting_reminder), as one message. Not sent when none waits."
+        >
+          <TextField
+            label="Orchestrator waiting reminder interval"
+            value={
+              config.orchestrator.waitReminderInterval ===
+              DEFAULT_WAIT_REMINDER_INTERVAL
+                ? ""
+                : config.orchestrator.waitReminderInterval
+            }
+            placeholder={DEFAULT_WAIT_REMINDER_INTERVAL}
+            mono
+            validate={(next) =>
+              next !== "" &&
+              intervalProblem(next, MIN_WAIT_REMINDER_INTERVAL_MS)
+                ? ORCHESTRATOR_WAIT_REMINDER_RULE
+                : undefined
+            }
+            onCommit={(next) => {
+              update({
+                ...config,
+                orchestrator: {
+                  ...config.orchestrator,
+                  waitReminderInterval:
+                    next === "" ? DEFAULT_WAIT_REMINDER_INTERVAL : next,
                 },
               });
             }}

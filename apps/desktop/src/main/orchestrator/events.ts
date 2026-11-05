@@ -46,6 +46,7 @@
  * `dispatch` where it happens. See `docs/orchestrator.md`, "Events".
  */
 
+import { dueWords } from "../../model/escalations.js";
 import {
 	EVENT_JSON_PLACEHOLDER,
 	EVENT_PLACEHOLDER,
@@ -74,6 +75,14 @@ interface Where {
 	readonly ws?: string;
 	/** Its agent (not the orchestrator). */
 	readonly agent?: EventAgent;
+}
+
+/** One 待機中 escalation, as `escalation.waiting_reminder` lists it. */
+export interface WaitingItem {
+	readonly escalationId: number;
+	readonly title: string;
+	readonly trigger: string;
+	readonly dueAt?: number;
 }
 
 export type OrchestratorEvent =
@@ -114,6 +123,28 @@ export type OrchestratorEvent =
 			readonly agents: readonly EventAgent[];
 			/** Since when nothing has moved on it: the stretch's start. */
 			readonly since: number;
+	  }
+	/**
+	 * A 待機中 escalation's time (`escalation wait --at`) has come: once per
+	 * wait. Dropped before it goes if it has left 待機中 (or waits anew).
+	 */
+	| {
+			readonly type: "escalation.wait_due";
+			readonly escalationId: number;
+			readonly title: string;
+			readonly trigger: string;
+			readonly dueAt: number;
+			/** The wait it is about: its entry's time. */
+			readonly waitSince: number;
+	  }
+	/**
+	 * Every `[orchestrator] wait_reminder_interval`: every 待機中 escalation
+	 * and its trigger, as one line. Not said when none waits; one pending at
+	 * most (the latest).
+	 */
+	| {
+			readonly type: "escalation.waiting_reminder";
+			readonly waiting: readonly WaitingItem[];
 	  }
 	| ({
 			readonly type: "github.assigned";
@@ -280,6 +311,8 @@ export const EVENT_TYPES = [
 	"escalation_answered",
 	"escalation.human_direct",
 	"escalation.stalled",
+	"escalation.wait_due",
+	"escalation.waiting_reminder",
 	"github.assigned",
 	"github.lane_changed",
 	"github.unattended",
@@ -464,6 +497,21 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 					event.agents.length === 0
 						? "対応中だが関連エージェントがいない (escalation link で紐づける)"
 						: "対応中だが動いているエージェントがいない",
+			};
+		case "escalation.wait_due":
+			return {
+				head: [`esc=${String(event.escalationId)}${title(event.title)}`],
+				summary: `待機条件の時刻になりました: ${excerpt(event.trigger, 150)}`,
+			};
+		case "escalation.waiting_reminder":
+			return {
+				head: [`待機中 ${String(event.waiting.length)} 件`],
+				summary: event.waiting
+					.map(
+						(one) =>
+							`esc=${String(one.escalationId)}${title(one.title)}: ${excerpt(one.trigger, 80)}${one.dueAt === undefined ? "" : ` (${dueWords(one.dueAt, now)})`}`,
+					)
+					.join(" / "),
 			};
 		case "github.assigned":
 			return {
@@ -683,7 +731,10 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "escalation_answered":
 		case "escalation.human_direct":
 		case "escalation.stalled":
+		case "escalation.wait_due":
 			return `esc ${String(event.escalationId)}`;
+		case "escalation.waiting_reminder":
+			return "waiting_reminder";
 		case "agent.turn_ended":
 		case "agent.asked":
 		case "agent.permission_requested":
@@ -776,6 +827,9 @@ function accumulates(event: OrchestratorEvent): boolean {
 		event.type === "init" ||
 		event.type === "escalation_answered" ||
 		event.type === "escalation.human_direct" ||
+		// Each one reminds anew, even of the same list: never a repeat. While
+		// one is pending, the next replaces it (one subject, `merge`).
+		event.type === "escalation.waiting_reminder" ||
 		event.type === "github.review_comment" ||
 		event.type === "github.reply" ||
 		// The source says it once per stretch of being unattended: a second

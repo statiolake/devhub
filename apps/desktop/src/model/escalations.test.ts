@@ -6,6 +6,10 @@ import {
   board,
   closeEscalation,
   createEscalation,
+  currentWait,
+  dueWords,
+  resumeEscalation,
+  waitEscalation,
   effortOf,
   escalationState,
   escalationsFromJson,
@@ -398,5 +402,136 @@ describe("to in_progress without an answer", () => {
     expect(() =>
       escalationsFromJson({ version: 1, next: 2, escalations: [forged] }),
     ).toThrow(EscalationError);
+  });
+});
+
+describe("待機中: parked on an outside condition", () => {
+  it("is waiting exactly while the orchestrator's wait is last, with its trigger and time", () => {
+    const waiting = waitEscalation(
+      raised(),
+      { trigger: "  Bob から Slack で返事が来たら ", dueAt: 9_000 },
+      2000,
+    );
+    expect(escalationState(waiting)).toBe("waiting");
+    expect(waiting.entries.at(-1)).toEqual({
+      role: "orchestrator",
+      kind: "wait",
+      markdown: "Bob から Slack で返事が来たら",
+      at: 2000,
+      dueAt: 9_000,
+    });
+    expect(currentWait(waiting)?.markdown).toBe(
+      "Bob から Slack で返事が来たら",
+    );
+    expect(lastAnswer(waiting)).toBeUndefined();
+    expect(openOptions(waiting)).toEqual([]);
+    // And reads back the same.
+    expect(
+      escalationsFromJson(
+        JSON.parse(
+          JSON.stringify({ version: 1, next: 2, escalations: [waiting] }),
+        ),
+      ).escalations,
+    ).toEqual([waiting]);
+  });
+
+  it("leaves on a question, an answer, a resume, an agent going working, or a close", () => {
+    const waiting = waitEscalation(raised(), { trigger: "11/10 以降" }, 2000);
+    expect(escalationState(askAgain(waiting, "?", undefined, 3000))).toBe(
+      "needs_answer",
+    );
+    expect(escalationState(answerEscalation(waiting, "もう進めて", 3000))).toBe(
+      "in_progress",
+    );
+    const resumed = resumeEscalation(waiting, "条件を満たした", 3000);
+    expect(escalationState(resumed)).toBe("in_progress");
+    expect(resumed.entries.at(-1)).toMatchObject({
+      role: "orchestrator",
+      kind: "held",
+      markdown: "条件を満たした",
+    });
+    expect(() => resumeEscalation(resumed, undefined, 4000)).toThrow(
+      /not waiting on a condition/u,
+    );
+    expect(escalationState(noteWorking(waiting, "resumed", "a1", 3000))).toBe(
+      "in_progress",
+    );
+    expect(escalationState(closeEscalation(waiting, undefined, 3000))).toBe(
+      "closed",
+    );
+    // A second wait replaces what the first said.
+    const again = waitEscalation(waiting, { trigger: "11/12 以降" }, 3000);
+    expect(currentWait(again)?.markdown).toBe("11/12 以降");
+  });
+
+  it("refuses a wait without its trigger in words, and a closed one", () => {
+    expect(() => waitEscalation(raised(), { trigger: "  " }, 2000)).toThrow(
+      /trigger/u,
+    );
+    expect(() =>
+      waitEscalation(
+        closeEscalation(raised(), undefined, 1500),
+        { trigger: "x" },
+        2000,
+      ),
+    ).toThrow(/closed/u);
+    expect(() =>
+      escalationsFromJson({
+        version: 1,
+        escalations: [
+          {
+            ...raised(),
+            entries: [
+              ...raised().entries,
+              { role: "orchestrator", kind: "wait", markdown: "", at: 2 },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(EscalationError);
+  });
+
+  it("is born waiting with --wait: nothing asked of the person yet", () => {
+    const born = createEscalation(
+      2,
+      {
+        title: "t",
+        markdown: "about",
+        wait: { trigger: "staging の deploy 完了後" },
+      },
+      1000,
+    );
+    expect(escalationState(born)).toBe("waiting");
+    expect(born.entries).toHaveLength(2);
+  });
+
+  it("lays 待機中 out soonest time first, untimed after, then the oldest wait", () => {
+    const at = (id: number, since: number, dueAt?: number) =>
+      waitEscalation(
+        { ...raised(), id },
+        {
+          trigger: `t${String(id)}`,
+          ...(dueAt === undefined ? {} : { dueAt }),
+        },
+        since,
+      );
+    const lanes = board([
+      at(1, 5000),
+      at(2, 3000, 90_000),
+      at(3, 4000),
+      at(4, 6000, 50_000),
+      raised(),
+    ]);
+    expect(lanes.waiting.map((one) => one.id)).toEqual([4, 2, 3, 1]);
+    expect(lanes.needsAnswer.map((one) => one.id)).toEqual([1]);
+    expect(lanes.inProgress).toEqual([]);
+  });
+
+  it("says how far off a time is", () => {
+    const now = 1_000_000;
+    expect(dueWords(now + 20 * 60_000, now)).toBe("あと 20m");
+    expect(dueWords(now + 5 * 3_600_000, now)).toBe("あと 5h");
+    expect(dueWords(now + 3 * 86_400_000, now)).toBe("あと 3日");
+    expect(dueWords(now - 1, now)).toBe("時刻を過ぎました");
   });
 });

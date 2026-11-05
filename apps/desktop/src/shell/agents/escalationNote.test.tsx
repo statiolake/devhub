@@ -90,4 +90,23 @@ describe("an escalation's note", () => {
     );
     expect(screen.queryByRole("button")).toBeNull();
   });
+
+  it("says the orchestrator parked it waiting, with the trigger and its time", () => {
+    render(
+      <EscalationNote
+        entry={{
+          role: "orchestrator",
+          kind: "wait",
+          markdown: "11/10 以降に再開",
+          at: AT,
+          dueAt: new Date(2026, 10, 10, 9, 0).getTime(),
+        }}
+        agents={[]}
+        onFocusAgent={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "オーケストレーターが待機中にしました（14:05）: 11/10 以降に再開（11/10 09:00 まで）",
+    );
+  });
 });

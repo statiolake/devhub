@@ -59,6 +59,7 @@ export function testConfig(
       initPrompt: undefined,
       events: [...DEFAULT_ORCHESTRATOR_EVENTS],
       usageThresholds: [80, 95],
+      waitReminderInterval: "1h",
       githubProjects: [],
       githubInterval: "90s",
       timers: [],

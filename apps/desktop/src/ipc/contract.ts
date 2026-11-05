@@ -525,11 +525,13 @@ export interface EscalationEntryWire {
 	/**
 	 * A note, not a question or an answer (`model/escalations.ts`):
 	 * `direct` / `resumed`, `agent` went working; `taken`, an old
-	 * 対応中にする (read, never written any more); `held`, the orchestrator's `escalation hold` (`markdown`
-	 * their optional note).
+	 * 対応中にする (read, never written any more); `held`, the orchestrator's `escalation hold` /
+	 * `resume` (`markdown` their optional note); `wait`, the orchestrator's
+	 * `escalation wait` (`markdown` the trigger, `dueAt` its time).
 	 */
-	readonly kind?: "direct" | "resumed" | "taken" | "held";
+	readonly kind?: "direct" | "resumed" | "taken" | "held" | "wait";
 	readonly agent?: string;
+	readonly dueAt?: number;
 }
 
 /** An agent an escalation is about, as the board names it. */
@@ -545,7 +547,7 @@ export interface BoardAgentRefWire {
 export interface EscalationWire {
 	readonly id: number;
 	readonly title: string;
-	readonly state: "needs_answer" | "in_progress" | "closed";
+	readonly state: "needs_answer" | "in_progress" | "waiting" | "closed";
 	readonly entries: readonly EscalationEntryWire[];
 	readonly agents: readonly BoardAgentRefWire[];
 	readonly workspaceId?: string;
@@ -652,6 +654,8 @@ export interface OrchestratorBoardWire {
 	readonly needsAnswer: readonly EscalationWire[];
 	/** Answered longest ago first. */
 	readonly inProgress: readonly EscalationWire[];
+	/** 待機中: the soonest `dueAt` first (none after), then the oldest wait. */
+	readonly waiting: readonly EscalationWire[];
 	/** Most recently closed first; the last few only. */
 	readonly closed: readonly EscalationWire[];
 	/** How long a 対応中 one stands with no agent working before it is 停滞. */
@@ -666,6 +670,7 @@ export const EMPTY_BOARD: OrchestratorBoardWire = {
 	github: { state: "idle" },
 	needsAnswer: [],
 	inProgress: [],
+	waiting: [],
 	closed: [],
 	graceMs: 60_000,
 };
