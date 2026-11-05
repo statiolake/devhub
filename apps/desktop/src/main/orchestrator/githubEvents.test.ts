@@ -1044,6 +1044,53 @@ describe("github.unattended", () => {
 		);
 	});
 
+	it("says nothing for an Issue that may be linked while a Workspace's branch is not read yet", async () => {
+		// A fresh launch: the poll comes before the first repository round.
+		let spaces: LinkWorkspace[] = [
+			space(123),
+			{ ...space(200), issueUrls: [], branchKnown: false },
+		];
+		const run = world(
+			[{ cards: MINE.map(issueCard) }],
+			new Map(),
+			() => spaces,
+		);
+		await run.ticks(1);
+		expect(run.events).toEqual([]);
+		expect(run.source.stillUnattended({ repo: "acme/app", number: 200 })).toBe(
+			false,
+		);
+		expect(run.source.state().notes.join("\n")).toMatch(
+			/#200 .*ws=ws200 has an agent and its branch is not read yet/u,
+		);
+		// The branch arrives: it is #200's. Linked; still nothing.
+		spaces = [space(123), space(200)];
+		run.source.reconsider();
+		expect(run.events).toEqual([]);
+		// Had it been another branch, #200 would have been said then.
+		spaces = [space(123), { ...space(201), branchKnown: true }];
+		run.source.reconsider();
+		expect(unattended(run.events)).toEqual([200]);
+	});
+
+	it("neither says nor re-arms an Issue while a branch is unread", async () => {
+		let spaces: LinkWorkspace[] = [space(123)];
+		const run = world(
+			[{ cards: MINE.map(issueCard) }],
+			new Map(),
+			() => spaces,
+		);
+		await run.ticks(1);
+		expect(unattended(run.events)).toEqual([200]);
+		// A Workspace opens with an agent; its branch is not read yet.
+		spaces = [space(123), { ...space(500), branchKnown: false }];
+		run.source.reconsider();
+		// Read: on another Issue. #200 was unattended all along: not said again.
+		spaces = [space(123), space(500)];
+		run.source.reconsider();
+		expect(unattended(run.events)).toEqual([200]);
+	});
+
 	it("is not said again while nothing changed", async () => {
 		const run = world(
 			[{ cards: MINE.map(issueCard) }, { cards: MINE.map(issueCard) }],

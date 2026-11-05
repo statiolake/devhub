@@ -489,7 +489,12 @@ status`) has the PR or Issue open, its Workspace and agent go on the
     makes, and the Sidebar shows) and that has at least one agent not
     stopped or stopping; or a live agent whose meta `issue=` names it, by
     URL, or by number (`123`, `#123`) in its Workspace's repository. The
-    orchestrator is never the linked agent. **Once per episode**: an Issue
+    orchestrator is never the linked agent. **Not known yet**: while an open
+    Workspace with a live agent has had no repository round read its branch
+    (a fresh launch, where the first poll can beat the first round), it may
+    be on any Issue, so none is said — nor re-armed — and the check runs
+    again when the round publishes; a reading that failed counts as known.
+    **Once per episode**: an Issue
     said is not said again until it has been attended (an agent linked) or
     closed, and then is unattended again; a start or restart of the
     orchestrator says every one again, so right after `init` it hears the
