@@ -291,6 +291,9 @@ devhub --tell sessions [--workspace W] [--profile P] [--limit N]   # earlier ses
 devhub --tell agent resume SESSION [--workspace W] [--profile P] [--name N]   # one of them, in a new GUI agent
 devhub --tell commands | run <command-id>             # the command palette
 devhub --tell focus A|W | notify TEXT
+devhub --tell orchestrator events [--last N] [--json]  # the orchestrator's recent events, one line each: delivered, pending, filtered, coalesced
+devhub --tell orchestrator emit --type custom.NAME --text TEXT|-   # a custom event, through the same filter and coalescing
+devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # its timers (timer.elapsed), changed for this session
 devhub --tell terminal open [--command C] [--focus]  # your own terminal, beside your pane (Cmd+Q v)
 devhub --tell terminal status | show                 # open/visible/focused, tmux handle, every tmux pane and where
 devhub --tell terminal close

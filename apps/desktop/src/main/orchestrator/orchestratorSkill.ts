@@ -160,50 +160,79 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   設定してもらう:
 
       [orchestrator]
-      event_prompt = "/make-progress {EVENT_JSON}"
-      init_prompt = "/make-progress {EVENT_JSON}"
+      event_prompt = "/make-progress {EVENT}"
+      # init_prompt = "/make-progress {EVENT}"   # 省略時は event_prompt に init が入る
       # events = ["*", "!agent.permission_requested"]   # 受け取るイベントの絞り込み
+      # [orchestrator.github]
+      # projects = ["my-org/7"]                  # 監視する Project (OWNER/NUMBER)
+      # interval = "90s"                          # 基本間隔 (最短 30s。ここから遅くなるだけ)
       # [[orchestrator.timers]]
       # name = "sweep"
       # interval = "30m"
 
-  \`{EVENT}\` は人間向けの文章、\`{EVENT_JSON}\` は同じ内容の JSON。両方入れてもよい
-  (\`"/make-progress {EVENT}\\n\\n{EVENT_JSON}"\`)。設定の反映は
-  \`devhub --tell orchestrator restart\` で。
+  \`{EVENT}\` はイベントの行 (下の形式)。\`{EVENT_JSON}\` は同じ内容の JSON 配列で、
+  テンプレートに書いたときだけ作られる (スクリプト向けの逃げ道。普段は不要)。
+  設定の反映は \`devhub --tell orchestrator restart\` で。
 
 ## 2. DevHub が make-progress に渡すもの
 
 - **1 回の配信 = 1 メッセージ**。ユーザーからのメッセージとして届く。
-  複数のイベントがまとめて (coalesce されて) 1 通で届くことがある。
-- \`{EVENT}\`: \`[event: <type>] ...\` で始まる短い説明と、見るべきコマンド。
-- \`{EVENT_JSON}\`: イベントの**配列**。各要素は \`type\` を持ち、残りは type ごとの
-  フィールド (agent id、escalation id、URL など)。分岐は \`type\` で行う。
-- オーケストレーターが応答中 (ターン中) のイベントは**保持され、ターン終了後に
-  順番どおり**届く。ポーズ中 (ボードのスイッチ / \`orchestrator pause\`) は全て
-  保持され、resume で順に届く。終了時に保持中のものは失われるが、次の起動の
+  ターン中・ポーズ中にたまったイベントは、次の配信で**まとめて 1 通**
+  (1 イベント 1 行) で届く。順番は発生順。
+- まとめるとき同じものは畳まれる: 同じ PR のレビューコメントは件数付きの 1 行、
+  同じエージェントの turn_ended は最新だけ (since は最初の未読から)、
+  タイマーは 1 つにつき 1 件まで。
+- 各行の形式: \`[type]\` + 次の CLI にそのまま使える \`key=value\` + \`—\` + 短い要約。
+  詳細は自分で取りに行く (\`agent read --since\`、\`workspace status\`、\`escalation show\`)。
+
+      [github.review_comment] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — alice から新規2件 (未解決 2) https://github.com/acme/app/pull/130
+      [github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123
+      [agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」
+      [agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問
+      [escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)
+      [unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 12m
+      [timer.elapsed] sweep
+
+- \`ws=\` は \`workspace status\` などに、\`agent=\` (id の先頭 8 文字) は \`agent ...\` に、
+  \`since=\` は \`agent read A --since\` に、\`req=\` は \`agent answer A REQ\` に、
+  \`esc=\` は \`escalation show\` にそのまま渡せる。
+- \`[orchestrator] events\` で種類を絞れる (\`github.*\`、\`!type\` で除外。最後に
+  一致したものが勝つ)。既定は雑音 (\`agent.started\`、\`workspace.opened\` /
+  \`workspace.closed\` / \`workspace.branch_changed\`、\`agent.permission_requested\`) を除いた全部。
+  \`init\` は常に届く。オーケストレーター自身についてのイベントは来ない。
+- 実物は \`devhub --tell orchestrator events\` で見られる (届いた / 保留 /
+  フィルタ / 畳まれた、の別つき)。終了時に保留中のものは失われるが、次の起動の
   \`init\` で状態を取り直せばよい。
-- \`[orchestrator] events\` で種類を絞れる (\`github.*\`、\`!type\` で除外)。
 
-イベントの種類 (カテゴリ別)。**正確な一覧とフィールドは
-\`devhub --tell orchestrator events\` と DevHub の docs/orchestrator.md が正**。
-実物を見てから playbook を書くこと。
+| カテゴリ | type | いつ | 主な key |
+| --- | --- | --- | --- |
+| 起動 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
+| ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ) | esc, agent |
+| ボード | \`unaccounted\` | エージェントが 不明 に入った | agent, ws |
+| GitHub | \`github.assigned\` / \`github.unassigned\` | 自分へのアサインが付いた / 外れた | ws, agent, URL |
+| GitHub | \`github.lane_changed\` | 自分の Issue / PR の Project レーンが動いた (from → to) | ws, URL |
+| GitHub | \`github.pr_opened\` | 自分の Issue に紐づく PR、または自分の PR ができた | ws, agent, URL |
+| GitHub | \`github.pr_ready\` | PR が draft から ready になった | ws, agent, URL |
+| GitHub | \`github.pr_approved\` / \`github.changes_requested\` | 自分の PR が承認された / 変更を要求された | ws, agent, URL |
+| GitHub | \`github.review_comment\` | 自分の PR に新しいレビューコメント / スレッド (件数) | ws, agent, URL |
+| GitHub | \`github.review_requested\` | 他人の PR で自分にレビュー依頼 | URL |
+| GitHub | \`github.reply\` | 自分がレビューした PR に作者が返信 / コミット | URL |
+| GitHub | \`github.checks\` | 自分の PR の CI が終わった (成功 / 失敗) | ws, agent, URL |
+| GitHub | \`github.pr_merged\` / \`github.pr_closed\` | PR がマージ / マージされずにクローズ | ws, agent, URL |
+| ワークスペース | \`workspace.issue_assigned\` | DevHub の Issue アサインでワークスペースとエージェントができた | ws, agent, URL |
+| ワークスペース | \`workspace.pr_linked\` | ワークスペースのブランチに PR ができた | ws, agent, URL |
+| ワークスペース | \`workspace.opened\` / \`workspace.closed\` / \`workspace.branch_changed\` | 開いた / 閉じた / ブランチが変わった (既定では来ない) | ws |
+| エージェント | \`agent.turn_ended\` | ターンが終わった (最後の発言の抜粋) | agent, ws, since |
+| エージェント | \`agent.asked\` | 質問 (AskUserQuestion) を出した (見出し) | agent, req |
+| エージェント | \`agent.permission_requested\` | 権限確認 (FYI。承認できるのは人だけ。既定では来ない) | agent, req |
+| エージェント | \`agent.started\` / \`agent.exited\` / \`agent.failed\` | 起動 (既定では来ない) / 終了 / 失敗 (理由つき) | agent, ws |
+| タイマー | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
+| カスタム | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |
 
-| カテゴリ | type | 意味 |
-| --- | --- | --- |
-| 起動 | \`init\` | オーケストレーターが起動 / 再起動した。整合性チェックの合図 |
-| ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ) |
-| ボード | \`unaccounted\` | エージェントが 不明 に入った |
-| GitHub | \`github.assigned\`, \`github.lane_changed\` | Issue の割り当て、Project のレーン移動 |
-| GitHub | \`github.pr_opened\` / \`pr_ready\` / \`pr_approved\` / \`pr_changes_requested\` | PR の作成、ready、承認、変更要求 |
-| GitHub | \`github.pr_review_comment\` / \`pr_review_requested\` / \`pr_reply\` | レビューコメント、レビュー依頼、返信 |
-| GitHub | \`github.pr_checks\` / \`pr_merged\` / \`pr_closed\` | CI 結果、マージ、クローズ |
-| ワークスペース | \`workspace.issue_assigned\`, \`workspace.pr_linked\` など | Issue の割り当て、PR の紐付け |
-| エージェント | \`agent.turn_ended\` | ターンが終わった (次の指示が要るか) |
-| エージェント | \`agent.asked\` | 質問 (AskUserQuestion) を出した |
-| エージェント | \`agent.permission_requested\` | 権限確認 (FYI。承認できるのは人だけ) |
-| エージェント | \`agent.failed\`, \`agent.exited\` | 失敗した / 終了した |
-| タイマー | \`timer.elapsed\` | \`[[orchestrator.timers]]\` の定期タイマー |
-| カスタム | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの |
+GitHub は \`[orchestrator.github] projects\` の Project のうち自分に関係するもの
+(アサイン / 作者 / レビュー依頼) と、自分の Issue に紐づく PR だけを読む
+(DevHub は読むだけで、カードは動かさない)。1 tick 1 リクエストで、
+rate limit が減ると間隔が延び、少なくなると reset まで止まる。
 
 ## 3. ボードとレーンの意味
 
@@ -284,11 +313,16 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
     devhub --tell --json orchestrator status
     devhub --tell orchestrator pause
     devhub --tell orchestrator resume
+    devhub --tell orchestrator events --last 20
+    devhub --tell --json orchestrator events --last 50
+    devhub --tell orchestrator emit --type custom.deploy --text "staging に deploy 完了"
+    devhub --tell orchestrator timer list
+    devhub --tell orchestrator timer set sweep 30m
+    devhub --tell orchestrator timer clear sweep
     devhub --tell notify "A が権限確認で止まっています"
 
-イベント関連 (\`devhub --tell orchestrator events\` で最近のイベントの実物、
-\`orchestrator emit\` で custom イベント、\`orchestrator timer\` で一回きりの
-タイマー) は、使える形を \`devhub --tell help\` で確認してから使う。
+\`orchestrator timer set / clear\` はこのセッションだけ有効 (既定は
+\`[[orchestrator.timers]]\`)。\`emit\` は既定のフィルタと畳み込みをそのまま通る。
 
 ## 7. ヒアリングの進め方
 
@@ -319,7 +353,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 
 ## 8. make-progress の構成
 
-1. **ディスパッチャ**: \`{EVENT_JSON}\` の各要素を \`type\` で分岐 (配列を順に処理)。
+1. **ディスパッチャ**: \`{EVENT}\` の各行を先頭の \`[type]\` で分岐 (上から順に処理)。
 2. **イベント種別ごとの playbook**: 何を確認し、誰に何を送り、どの状態で
    終えるか。
 3. **不明レーンのルール**: 処理の最後に \`board\` を見て 不明 を空にする。
@@ -336,7 +370,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
     description: DevHub のイベントを受けてチームの作業を前に進める。event_prompt から呼ばれる。
     ---
     # /make-progress
-    引数は DevHub のイベント ({EVENT_JSON} の配列)。各要素を type で処理する。
+    引数は DevHub のイベント ({EVENT}: 1 行 1 イベント)。各行を先頭の [type] で処理する。
     自分では調査・実装しない。エージェントに任せ、人には要るときだけ聞く。
 
     ## init
@@ -348,16 +382,22 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
     → 使い切ったら escalation close。決定を decisions.md に追記。
 
     ## unaccounted / agent.turn_ended
-    agent read --since で差分を読む → 次の作業を send / エスカレーション / stop。
+    agent read A --since <since=> で差分を読む → 次の作業を send / エスカレーション / stop。
 
     ## agent.asked
-    decisions.md で決まっていれば agent answer、でなければエスカレーション。
+    decisions.md で決まっていれば agent answer A <req=>、でなければエスカレーション。
 
     ## github.lane_changed (例: Todo → In Progress)
     issue assign で担当エージェントを立てる (meta issue=N, parent=自分)。
 
-    ## github.pr_changes_requested / github.pr_review_comment
+    ## github.changes_requested / github.review_comment
     その PR のエージェントに対応を依頼。いなければ agent resume か issue assign。
+
+    ## github.checks (失敗)
+    その PR のエージェントに CI ログを見て直すよう依頼。
+
+    ## github.review_requested
+    レビュー用のエージェントを立てる (issue assign に PR の URL)。
 
     ## github.pr_merged
     エージェントを stop、ワークスペースを閉じる。

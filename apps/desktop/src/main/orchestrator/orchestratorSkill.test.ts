@@ -10,6 +10,7 @@ import {
 	devhubSkillPaths,
 	withDevhubSkill,
 } from "../agent/devhubSkill.js";
+import { EVENT_TYPES } from "./events.js";
 import {
 	codexOrchestratorInstructions,
 	isOrchestratorAgent,
@@ -186,6 +187,36 @@ describe("the /devhub-orchestrator skill", () => {
 				word,
 				found: true,
 			});
+	});
+});
+
+describe("the /devhub-orchestrator skill's event table", () => {
+	const text = orchestratorSkillText("/x/devhub");
+
+	it("names every event type DevHub sends", () => {
+		for (const type of EVENT_TYPES)
+			expect({ type, found: text.includes(`\`${type}\``) }).toEqual({
+				type,
+				found: true,
+			});
+	});
+
+	it("names no type DevHub does not send", () => {
+		const named = [
+			...text.matchAll(/`((?:github|workspace|agent|timer)\.[a-z_]+)`/gu),
+		].map((match) => match[1]!);
+		expect(named.length).toBeGreaterThan(20);
+		for (const type of named)
+			expect({
+				type,
+				known: (EVENT_TYPES as readonly string[]).includes(type),
+			}).toEqual({ type, known: true });
+	});
+
+	it("shows lines in the format DevHub writes them", () => {
+		expect(text).toContain(
+			"[agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」",
+		);
 	});
 });
 

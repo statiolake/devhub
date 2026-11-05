@@ -104,44 +104,139 @@ orchestrator as an `unaccounted` event, once per stretch of idleness.
 
 ## Events
 
-Events are how DevHub tells the orchestrator something happened. Each one is
-rendered into `[orchestrator] event_prompt` (`{EVENT}` is replaced by the
-event's description) and queued for the orchestrator agent as an ordinary
-message from the person — the same queue `devhub --tell agent send` uses, so
-it is held while the orchestrator is mid-turn and written when its turn ends,
-one at a time, in order.
+Events are how DevHub tells the orchestrator something happened. Every
+source calls one dispatcher (`main/orchestrator/events.ts`), which filters,
+coalesces and batches them, renders `[orchestrator] event_prompt` around
+them and queues the message for the orchestrator agent as an ordinary
+message from the person — the same queue `devhub --tell agent send` uses.
 
-| event                 | when                                           |
-| --------------------- | ---------------------------------------------- |
-| `init`                | the orchestrator starts (`init_prompt` if set) |
-| `escalation_answered` | the person answered an escalation              |
-| `unaccounted`         | an agent entered 不明                          |
+### The line format
 
-The description is short and names where to look, e.g.
+Each event is **one line**: a stable `[type]` token, then `key=value` ids
+that go straight into the next command (`ws=` → `workspace status`,
+`agent=` → `agent …` as a unique id prefix, `since=` → `agent read
+--since`, `req=` → `agent answer`, `esc=` → `escalation show`), then `—` and
+a short summary (Japanese; excerpts are cut to about 150 characters). Only
+what is needed to act or to fetch more is on the line: the orchestrator
+pulls the details itself. `{EVENT}` holds these lines.
 
-```text
-[event: escalation_answered] #12 「本番 invoices への列追加」 was answered by the person (now in progress).
-Read it: devhub --tell escalation show 12
-```
+| type | when | example |
+| --- | --- | --- |
+| `init` | the orchestrator starts (`init_prompt` if set) | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認` |
+| `escalation_answered` | the person answered an escalation | `[escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)` |
+| `unaccounted` | an agent entered 不明 | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m` |
+| `github.assigned` / `github.unassigned` | the viewer was assigned to / taken off a card | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200` |
+| `github.lane_changed` | a card of the viewer's moved lane (Status) | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123` |
+| `github.pr_opened` | a PR linked to the viewer's Issue, or by the viewer, appeared | `[github.pr_opened] PR #130「ログイン修正」 — me が draft で作成 (#123) https://github.com/acme/app/pull/130` |
+| `github.pr_ready` | a watched PR left draft | `[github.pr_ready] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — ready for review になった https://…/pull/130` |
+| `github.pr_approved` / `github.changes_requested` | the viewer's PR was approved / changes were requested | `[github.changes_requested] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 — bob が変更を要求 https://…/pull/130` |
+| `github.review_comment` | new review comments or threads on the viewer's PR | `[github.review_comment] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — alice から新規2件 (未解決 2) https://…/pull/130` |
+| `github.review_requested` | the viewer's review was requested on a PR on the boards | `[github.review_requested] PR #9「キャッシュ」 — carol からレビュー依頼 https://…/pull/9` |
+| `github.reply` | the author replied or pushed on a PR the viewer reviewed | `[github.reply] PR #9「キャッシュ」 — carol が返信2件・新しいコミット https://…/pull/9` |
+| `github.checks` | the viewer's PR's CI finished | `[github.checks] PR #130「ログイン修正」 ws=login-fix — CI 失敗 (2/5) https://…/pull/130` |
+| `github.pr_merged` / `github.pr_closed` | a watched PR was merged / closed unmerged | `[github.pr_merged] PR #130「ログイン修正」 ws=login-fix — マージされた https://…/pull/130` |
+| `workspace.opened` / `workspace.closed` | a Workspace opened / closed | `[workspace.opened] ws=api — 開いた /src/api` |
+| `workspace.issue_assigned` | DevHub's Issue assignment made a Workspace and agent | `[workspace.issue_assigned] #123 ws=123-api agent=a1b2c3d4 (Claude) — DevHub で Issue をアサイン https://…/issues/123` |
+| `workspace.branch_changed` | a Workspace's branch changed | `[workspace.branch_changed] ws=login-fix 12-login → 13-other` |
+| `workspace.pr_linked` | a PR appeared for a Workspace's branch | `[workspace.pr_linked] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — このブランチの PR https://…/pull/130` |
+| `agent.turn_ended` | an agent's turn ended | `[agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」` |
+| `agent.asked` | an agent asked a question (AskUserQuestion) | `[agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問` |
+| `agent.permission_requested` | an agent waits on a permission prompt (FYI: only the person approves) | `[agent.permission_requested] agent=e5f6a7b8 req=p1 — 権限確認「rm -rf build」 (FYI: 承認できるのは人だけ)` |
+| `agent.started` / `agent.exited` | an agent started / is gone | `[agent.exited] agent=a1b2c3d4 (API fix) ws=login-fix — 終了した` |
+| `agent.failed` | an agent's pane shows a failure | `[agent.failed] agent=a1b2c3d4 (API fix) ws=login-fix — 失敗: conversation_host_lost` |
+| `timer.elapsed` | a timer fired | `[timer.elapsed] tick` |
+| `custom.NAME` | `orchestrator emit` | `[custom.deploy] — staging に deploy 完了` |
 
-**Pause** (the switch in the board's header, or `orchestrator pause`) holds
-every event, in order; **resume** delivers them all. Held events live in
-memory: a quit drops them, and the next start's `init` sends the orchestrator
-to the board anyway.
+Nothing is ever said about the orchestrator itself (its own agent and its
+Workspace): the dispatcher drops such an event as `self`.
+
+**`{EVENT_JSON}`** is an escape hatch for scripts: the same events as a JSON
+array, each `{ "type": …, …its fields }`. It is rendered **only when the
+template contains it**, so it costs nothing otherwise.
+
+### Delivery: batching, coalescing, pause
+
+- **Batching.** Events wait while the orchestrator is mid-turn (working, on
+  a question, or with something of ours still queued for it) or paused, and
+  go out together as **one** message — one line each in `{EVENT}` — once it
+  can take one. A batch waits 300 ms for more, and after a delivery the next
+  one waits (up to a minute) to see the last one taken.
+- **Coalescing**, while pending: review comments on one PR are one line with
+  the count added up and the authors merged; an agent's repeated
+  `turn_ended` keep the latest excerpt and the first unread `since`; a timer
+  has at most one pending event; lane changes of a card fold into first
+  `from` → last `to`; `reply` and `checks` per PR keep one; an identical
+  `custom.*` is one.
+- **Filter**: `[orchestrator] events` (below). Filtered events are kept in
+  the log as `filtered`.
+- **Pause** (the switch in the board's header, or `orchestrator pause`)
+  holds everything; **resume** delivers it as one message. The header shows
+  how many are pending, beside the switch. Pending events live in memory: a
+  quit drops them, and the next start's `init` sends the orchestrator to the
+  board anyway. With no orchestrator assigned, an event is dropped.
+- `devhub --tell orchestrator events [--last N] [--json]` lists the last
+  events (200 are kept) and what came of each: `delivered`, `pending`,
+  `filtered`, `coalesced` (into which), `dropped`, `self`.
+
+### The sources
+
+- **The board** (`orchestratorService.ts`): `init`, `escalation_answered`,
+  `unaccounted`.
+- **GitHub** (`githubEvents.ts`), while an orchestrator runs and
+  `[orchestrator.github] projects` names a board. Scope: the cards on those
+  Projects (v2) boards that relate to the viewer — assigned to them, authored
+  by them, their review requested — and the PRs linked to those Issues
+  (GitHub's closing references). A card that related to the viewer stays
+  watched for the session, so an Issue that `request-review` unassigned and
+  moved to In Review still reports its lane. DevHub only **reads** the board.
+  - **One batched GraphQL request per tick**, never two in flight, no `gh`
+    subcommands (the token is `gh auth token`'s, as for the Workspace
+    watcher, through the same client): `viewer { login }`, `rateLimit { cost
+    remaining limit resetAt }`, a page of 100 items per board (item id,
+    content type/number/url/title, Status, assignees, author, an Issue's
+    linked PRs), `search(is:pr is:open review-requested:@me)`, and
+    `nodes(ids:)` for the watched PRs (up to 30: state, isDraft,
+    reviewDecision, latest reviews, the last 10 reviews and 5 comments with
+    their totals, review threads and how many are unresolved, the head
+    commit's oid and checks rollup). Typically **2–6 points** a tick.
+  - A board bigger than a page is read a page a tick and diffed when the
+    whole of it has been read.
+  - **Interval**: starts at `interval` (default 90s, at least 30s) and only
+    backs off: ×1.5 under 50% of the hourly limit left, ×2 under 25%, ×4
+    under 10%, **paused until `resetAt`** when fewer than max(100, 20×cost)
+    points remain; doubling after each failure, up to 15 minutes.
+  - **Baseline**: the first reading after a start says nothing — nor does a
+    board's first full pass or a PR's first details.
+  - Where the Workspace watcher (the Sidebar's branch → PR, `workspace
+    status`) has the PR or Issue open, its Workspace and agent go on the
+    line as `ws=` and `agent=`.
+- **Workspaces and agents** (`liveEvents.ts`), read off the projection the
+  window draws (the Sidebar's repository status included) while an
+  orchestrator runs; the first projection is a baseline.
+  `workspace.issue_assigned` is said by DevHub's Issue assignment itself.
+  `turn_ended` waits 1.5 s for the status to settle, and carries the id of
+  the message that began the turn as `since` and the start of the last reply.
+- **Timers** (`timers.ts`): `[[orchestrator.timers]]` are the defaults;
+  `orchestrator timer set NAME INTERVAL | clear NAME` changes them for the
+  session, and a settings change moves the ones nobody set by hand.
+- **`orchestrator emit --type custom.NAME --text TEXT|-`**: anything else
+  (a script, a hook), through the same filter and coalescing.
 
 ### The seam, for new events
 
 `main/orchestrator/events.ts` is the one place events go through:
 
-1. add a variant to `OrchestratorEvent` (`{ kind: "pr_review", … }`);
-2. word it in `describeEvent` — the `[event: kind]` line and where to look;
-3. call `orchestrator.events.dispatch(event)` where it happens (the
-   controller holds the `OrchestratorService`, whose `events` is the
-   `EventDispatcher`).
+1. add a variant to `OrchestratorEvent` (`{ type: "github.x", … }`) and to
+   `EVENT_TYPES`;
+2. word its line in `eventLine` (and, if it should fold, `coalesceKey` and
+   `merge`);
+3. call `orchestrator.events.dispatch(event)` where it happens.
 
-The dispatcher does the rest: pause, order, the prompt, delivery. A loop-style
-orchestrator that waits instead (`agent wait --any`) is woken by the board's
-own news below; an event that should wake it too needs a reason there as well.
+The dispatcher does the rest: the filter, coalescing, pause, batching, the
+prompt, delivery and the log. The `/devhub-orchestrator` skill's table is
+tested against `EVENT_TYPES`. A loop-style orchestrator that waits instead
+(`agent wait --any`) is woken by the board's own news below; an event that
+should wake it too needs a reason there as well.
 
 ### `agent wait --any`
 
@@ -163,14 +258,37 @@ profile = "claude"               # the window's Start; absent: the window's defa
 presentation = "gui"             # gui | tui; absent: the profile's default
 event_prompt = "このイベントが発生したのでハンドリングしてください。{EVENT}"
 # init_prompt = "/start-orchestrating {EVENT}"   # absent: event_prompt with init
+# events = ["*", "!agent.permission_requested"] # which types reach it (default below)
+
+[orchestrator.github]
+projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER; none: no GitHub events
+interval = "90s"                 # the base poll interval (at least 30s); it only backs off
+
+[[orchestrator.timers]]
+name = "sweep"                   # timer.elapsed carries it
+interval = "30m"                 # at least 10s
 ```
 
 `root` defaults to `~/orchestrator`. The window's **Start** makes the folder
 (and its parents) when it is missing; `orchestrator start --root` on a command
 line never does, and refuses a folder that is not there.
 
-`event_prompt` can invoke a skill: `"/make-progress {EVENT}"`. They are in
-Settings ▸ General ▸ Orchestrator and validated with every other setting.
+`event_prompt` can invoke a skill: `"/make-progress {EVENT}"`; `{EVENT_JSON}`
+may be added for a script. `events` is a list of patterns over the type — a
+type (`agent.turn_ended`), a family (`github.*`) or `*`, each optionally after
+`!` to take it out; the last pattern that matches decides, and `init` always
+goes. The default is everything but the chatter:
+
+```toml
+events = ["init", "escalation_answered", "unaccounted", "github.*",
+  "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
+  "agent.asked", "agent.exited", "agent.failed", "timer.*", "custom.*"]
+```
+
+(so `agent.started`, `workspace.opened`, `workspace.closed`,
+`workspace.branch_changed` and `agent.permission_requested` are left out).
+They are in Settings ▸ General ▸ Orchestrator and validated with every other
+setting.
 
 ## The command line
 
@@ -185,7 +303,10 @@ devhub --tell escalation link ID --agent A
 devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -|TEXT]
 devhub --tell orchestrator status [--json]          # its agent, state, lane counts, pause
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
-devhub --tell orchestrator pause | resume
+devhub --tell orchestrator pause | resume          # resume delivers what is pending, as one message
+devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
+devhub --tell orchestrator emit --type custom.NAME --text TEXT|-
+devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # for this session
 devhub --tell focus orchestrator                    # the only one that changes the screen
 ```
 
@@ -198,21 +319,22 @@ and sends it `init` (or `--prompt`). One orchestrator at a time.
 
 What the orchestrator does on each event is the person's own skill in
 `root` (say `/make-progress`, invoked by `event_prompt = "/make-progress
-{EVENT_JSON}"`). DevHub does not ship one — workflows differ — but it gives
+{EVENT}"`). DevHub does not ship one — workflows differ — but it gives
 the orchestrator agent, and no other agent, a skill for **writing** one:
 `/devhub-orchestrator` (`main/orchestrator/orchestratorSkill.ts`).
 
 - **What it says** (in Japanese): what a delivery carries (`init`, one message
-  per delivery that may batch several events, `{EVENT}` and `{EVENT_JSON}`,
-  held mid-turn and while paused, the `events` filter), the event types by
-  family, what each lane asks of the orchestrator (要回答 waits, 対応中 is
+  per delivery that may batch several events, the line format, `{EVENT}` and
+  the optional `{EVENT_JSON}`, coalescing, held mid-turn and while paused,
+  the `events` filter), the event types (its table is tested against
+  `EVENT_TYPES`), what each lane asks of the orchestrator (要回答 waits, 対応中 is
   relayed to the agent and closed, 不明 is kept empty), the escalation
   principles and template below, how to keep work moving (no idle agent
   without a reason, `agent read --since`, permission prompts are the
   person's, no `focus` unasked), the CLI it uses, and an interview: the
   team's lanes, existing skills, review and "done", what it may decide alone
   (and where decisions are recorded), events, timers, naming and meta.
-  Then it drafts make-progress — a dispatcher on `type`, a playbook per
+  Then it drafts make-progress — a dispatcher on each line's `[type]`, a playbook per
   event, the 不明 rule, escalation rules, a reconcile on `init` — shows it,
   and writes it to `<root>/.claude/skills/<name>/SKILL.md` (plus an
   `AGENTS.md` pointer for Codex). It never writes `settings.toml`: it gives

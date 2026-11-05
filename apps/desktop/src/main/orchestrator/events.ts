@@ -372,7 +372,9 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 				head: [item("pr", event.pr), ...where(event)],
 				summary: [
 					event.author === undefined ? "" : `${event.author} が`,
-					event.draft ? "draft で作成" : "作成",
+					event.draft
+						? `${event.author === undefined ? "" : " "}draft で作成`
+						: "作成",
 					event.issue === undefined ? "" : ` (#${String(event.issue)})`,
 				].join(""),
 				...(event.pr.url === undefined ? {} : { url: event.pr.url }),
