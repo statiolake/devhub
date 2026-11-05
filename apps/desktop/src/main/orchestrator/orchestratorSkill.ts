@@ -13,6 +13,11 @@
  * - Claude: a second `--add-dir=<root>` on the orchestrator agent's argv.
  * - Codex (GUI): one more paragraph in the thread's `developerInstructions`.
  *
+ * DevHub's own charter (`orchestratorCharter.ts`) goes with it, by the same
+ * doors: what the orchestrator is for, the router rule, the invariant and
+ * DevHub's conventions are stated there, not here; this skill is the guide
+ * to designing the person's make-progress.
+ *
  * Ordinary agents get neither: the agent wiring asks the controller, per
  * agent, whether this is the orchestrator (`orchestratorSkill` in
  * `shell/agentWiring.ts`). `devhub --tell skill --orchestrator` prints it for
@@ -23,6 +28,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProfile } from "../../model/domain.js";
 import { devhubSkillPaths } from "../agent/devhubSkill.js";
+import { ORCHESTRATOR_CHARTER } from "./orchestratorCharter.js";
 
 export const ORCHESTRATOR_SKILL_NAME = "devhub-orchestrator";
 
@@ -102,37 +108,68 @@ export function isOrchestratorAgent(
 	return state.agentsIn(starting.workspaceId).includes(agentId);
 }
 
-/** The orchestrator's Claude argv: one more `--add-dir`. Other kinds are left alone. */
+const APPEND_SYSTEM_PROMPT = "--append-system-prompt";
+
+/**
+ * The orchestrator's Claude argv: one more `--add-dir`, and DevHub's charter
+ * (`ORCHESTRATOR_CHARTER`) appended to the system prompt — after the
+ * profile's own `--append-system-prompt`, which Claude would otherwise drop
+ * (it keeps only the last). Other kinds are left alone; idempotent.
+ */
 export function withOrchestratorSkill<
 	T extends Pick<AgentProfile, "kind" | "args">,
 >(profile: T, skill: OrchestratorSkill | undefined): T {
 	if (skill === undefined || profile.kind !== "claude") return profile;
 	const flag = `--add-dir=${skill.root}`;
 	if (profile.args.includes(flag)) return profile;
-	return { ...profile, args: [...profile.args, flag] };
+	const kept: string[] = [];
+	let appended: string | undefined;
+	for (let at = 0; at < profile.args.length; at++) {
+		const arg = profile.args[at] ?? "";
+		if (arg === APPEND_SYSTEM_PROMPT && at + 1 < profile.args.length) {
+			appended = profile.args[at + 1];
+			at++;
+		} else if (arg.startsWith(`${APPEND_SYSTEM_PROMPT}=`))
+			appended = arg.slice(APPEND_SYSTEM_PROMPT.length + 1);
+		else kept.push(arg);
+	}
+	return {
+		...profile,
+		args: [
+			...kept,
+			flag,
+			APPEND_SYSTEM_PROMPT,
+			[appended, ORCHESTRATOR_CHARTER]
+				.filter((one) => one !== undefined && one.length > 0)
+				.join("\n\n"),
+		],
+	};
 }
 
 export function codexOrchestratorInstructions(
 	skill: OrchestratorSkill,
 ): string {
-	return [
+	return `${ORCHESTRATOR_CHARTER}\n\n${[
 		`Orchestrator skill: you are DevHub's orchestrator. When the user's message starts with /${ORCHESTRATOR_SKILL_NAME} or $${ORCHESTRATOR_SKILL_NAME},`,
 		"or asks to set up, write or change the orchestrator's event-handling skill (make-progress),",
 		`read ${skill.skillFile} and follow it.`,
-	].join(" ");
+	].join(" ")}`;
 }
 
 export function orchestratorSkillText(cli: string): string {
 	return `---
 name: ${ORCHESTRATOR_SKILL_NAME}
-description: DevHub のオーケストレーター専用。イベントごとに DevHub から呼ばれる「ユーザー自身のイベント処理スキル」(/make-progress など) を、ユーザーへのヒアリングを通じて設計・作成・改訂する。DevHub が渡すイベントの中身、ボードのレーン (要回答 / 対応中 / 待機中) の意味、エスカレーションの原則、なるべく停めない心構え、使える CLI をまとめてある。「make-progress を作って」「オーケストレーターのスキルを設定して」「イベントの扱いを変えたい」と言われたとき、または /${ORCHESTRATOR_SKILL_NAME} で使う。
+description: DevHub のオーケストレーター専用。イベントごとに DevHub から呼ばれる「ユーザー自身のイベント処理スキル」(/make-progress など) を、ユーザーへのヒアリングを通じて設計・作成・改訂する。DevHub が渡すイベントの中身、ボードのレーン (要回答 / 対応中 / 待機中) の意味、エスカレーションの原則、使える CLI、ヒアリングの進め方をまとめてある (DevHub の憲章 — 役割、手を動かさないこと、ルーターの規則、不変条件、約束事 — は起動時に別に渡されている)。「make-progress を作って」「オーケストレーターのスキルを設定して」「イベントの扱いを変えたい」と言われたとき、または /${ORCHESTRATOR_SKILL_NAME} で使う。
 ---
 
 # /${ORCHESTRATOR_SKILL_NAME} - make-progress を作るためのスキル
 
 あなたは DevHub のオーケストレーター (Orchestrator 行のエージェント) です。
-DevHub は**仕組み** (ボード、エスカレーション、イベント) だけを提供し、
-**何をするか**はユーザーのものです。それを書くのが、イベントごとに呼ばれる
+DevHub は**仕組み** (ボード、エスカレーション、イベント) と、起動時に渡す
+**DevHub の憲章** (役割、手を動かさないこと、各行をサブエージェントに渡して戻るルーターの規則、
+不変条件、DevHub の約束事) を提供します。それ以外の**チームのやり方**はユーザーのものです。
+make-progress には憲章と同じことを書き直さず、チーム固有のこと (レーンの意味、レビューと完了、
+自律の範囲、誰に何を頼むか) を書きます。それを書くのが、イベントごとに呼ばれる
 ユーザー自身のスキル (以下 make-progress。名前はユーザーが決める) です。
 
 このスキルの仕事は次の 3 つです。
@@ -238,17 +275,9 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |
 
-**不変条件** (DevHub が判定して \`unsettled\` で知らせる):
-監視中の Project (\`[orchestrator.github] projects\`) にある、自分にアサインされた open な Issue
-(母集団) のそれぞれについて、(a) 紐づくエージェントが作業中、(b) それについての要回答の
-エスカレーションがある、(c) それについての待機中のエスカレーションがある、のどれかが成り立つ。
-紐づくエージェントが管理対象でない Issue は人自身のもので、対象外。
-管理対象のエージェント (\`--managed\`) はそれぞれ、作業中か、要回答 / 待機中のエスカレーションの
-エージェントであること。母集団の外の Issue (closed、自分にアサインされていない、監視中の
-Project にない) に紐づく管理対象エージェントと、Issue のない管理対象エージェントは、それだけで
-\`unsettled\`。**紐づく** とは、エージェントの meta \`issue=\` がその Issue の URL であること。
-この meta は \`issue assign\` (と画面の Assign Issue) がエージェントを始めるときに DevHub が書き、
-手では書けない。\`devhub --tell --json board\` の \`unsettled\` でいつでも今の一覧を取れる。
+\`unsettled\` は DevHub の憲章にある不変条件を満たしていない対象 (母集団の Issue か管理対象エージェント) で、
+事実だけが並ぶ。何をもって「直った」とするか (どのレーンなら誰に何を頼むか) が make-progress に書くこと。
+\`devhub --tell --json board\` の \`unsettled\` でいつでも今の一覧を取れる。
 
 GitHub は \`[orchestrator.github] projects\` の Project を読むだけ (カードは動かさない)。1 tick 1
 リクエストで、rate limit が減ると間隔が延びる。**ポーズ中は GitHub を一切ポーリングしない**。
@@ -301,7 +330,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
 
 - 本当に人の**判断か許可**が必要で、放っておくといずれ進捗が止まるものだけ。
 - その前に、破壊的でない調査 (コード、Notion、Slack 検索など) を**エージェントに
-  任せて**済ませる。オーケストレーター自身は調査も実作業もしない。指揮だけ。
+  任せて**済ませる。
 - 情報が足りなければエスカレーションせず、エージェントに深掘りさせる。
 - 中身は自己完結で濃く。システムもドメインも知らないエンジニアが読んで
   判断できるように。コード、数式、Mermaid / SVG の図、表が使える。
@@ -346,23 +375,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell escalation resume 12 --note "Bob から OK が来た"
     devhub --tell escalation list --state waiting
 
-## 5. なるべく停めないための心構え
-
-- 理由なくエージェントを idle にしない。各イベントの処理の最後に、関係する
-  全エージェントが「進行中 / 既知の外部要因待ち (CI、レビューなど) /
-  エスカレーション中 / 終了」のどれかになっていること。
-- エスカレーション待ちの間も、他の仕事は並行して進める。
-- ビジーポーリングしない。イベントとタイマーに任せ、1 回の処理は短く終える。
-- トークンを節約する。全文を読み直さず \`agent read A --since CURSOR\` で差分だけ。
-  cursor は覚えておく (エージェントの meta や root のメモに)。
-- 権限確認 (permission prompt) を承認できるのは人だけ。止まっているなら
-  \`notify\` かエスカレーションで知らせ、決して自分で回避しない。
-  \`agent answer\` は質問 (AskUserQuestion) にだけ使う。
-- 人の画面を奪わない。\`--tell\` は画面を動かさない。\`focus\` は頼まれたときだけ。
-- 使用率が高いときは新しいエージェントを増やさない・重い作業はリセット後に回す・
-  \`devhub --tell usage\` で確認 (\`usage.threshold\` が合図。\`init\` のときにも一度見る)。
-
-## 6. make-progress から使う CLI (抜粋)
+## 5. make-progress から使う CLI (抜粋)
 
 すべての選択は明示的なフラグで渡す (既定値に頼らない)。詳細は
 \`devhub --tell help\`。\`--json\` は \`--tell\` の直後。
@@ -409,7 +422,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
 \`orchestrator timer set / clear\` はこのセッションだけ有効 (既定は
 \`[[orchestrator.timers]]\`)。\`emit\` は既定のフィルタと畳み込みをそのまま通る。
 
-## 7. ヒアリングの進め方
+## 6. ヒアリングの進め方
 
 一度に全部聞かない。2〜3 問ずつ、具体例を添えて聞き、答えを要約して確認する。
 ワークフローはユーザーごとに違うので、推測で埋めずに聞くこと。
@@ -437,7 +450,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
 書いた後は設定行を提示し、\`custom.*\` イベントや小さなテストで動作確認を
 提案する。改訂の依頼が来たら同じ手順で差分だけ直す。
 
-## 8. make-progress の構成
+## 7. make-progress の構成
 
 1. **ディスパッチャ**: \`{EVENT}\` の各行を先頭の \`[type]\` で分岐。人の言葉
    (\`esc=N … への人の回答:\` などで始まるメッセージ) も別に受ける。
@@ -448,7 +461,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
    GitHub の状態を突き合わせる (対応中の回答の再伝達、エージェントの
    cursor の取り直し)。
 
-## 9. 例: make-progress の骨組み (そのまま使わず、ヒアリング結果に合わせて書き換える)
+## 8. 例: make-progress の骨組み (そのまま使わず、ヒアリング結果に合わせて書き換える)
 
     ---
     name: make-progress

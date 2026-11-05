@@ -3,9 +3,13 @@
 One agent can coordinate the others through `devhub --tell` (see the README,
 "Orchestrating"). The Orchestrator row gives that agent a place in the window
 and gives the person a board of what it needs from them. DevHub supplies the
-**mechanism** — the row, the board, escalations, events — and no rules: what
-the orchestrator does, how it decides what to escalate and how it writes, is
-the person's own, in skills and instructions in the orchestrator's folder.
+**mechanism** — the row, the board, escalations, events, the invariant it
+reports — and its own short **charter** (what the orchestrator is for, that
+it never does hands-on work, that it routes each line to a subagent, and
+DevHub's conventions; see "The charter"). Everything else — what the
+orchestrator does for the team, how it decides what to escalate and how it
+writes — is the person's own, in skills and instructions in the
+orchestrator's folder.
 
 ```text
 ┌───────────────┬──────────────────────────┬────────────────────────┐
@@ -707,6 +711,58 @@ wherever a `<w>` is taken: `workspaces` lists it as `Orchestrator`
 close, and neither do `Cmd+Q W`, File ▸ Close Workspace or Vim's `:q` in its
 editor (`ORCHESTRATOR_CANNOT_CLOSE` in the model).
 
+## The charter: what DevHub asks of the orchestrator
+
+DevHub provides the mechanism and leaves the person's workflow to their
+make-progress skill — but a few things are DevHub's own, and DevHub states
+them itself, to the orchestrator agent at every start, whatever the person's
+skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
+
+1. **Its role**: drive every Issue assigned to the person to closed; do
+   whatever moves their workflow forward, nudging the person included (asking
+   them for a review, an answer).
+2. **No hands-on work, ever** — the orchestrator and its subagents alike.
+   Reading or writing code, fixing, implementing, reading CI logs, review
+   comments or diffs in depth, finding why a check failed: that is the
+   responsible worker agent's, fetched by it with its own tools (`gh`). The
+   state lines DevHub delivers and the facts the CLI gives (lane, PR state,
+   review decision, unresolved count, checks, an agent's status) are for
+   routing only. A subagent decides who should act and what to ask them, and
+   hands it over — `agent send`, `issue assign`, `agent resume`, an
+   escalation — and that is all it does.
+3. **The router rule**: for each line delivered, start a new background
+   subagent to handle it (an escalation, a look at the state, the next step)
+   and return at once; the router never blocks, or every Issue's progress
+   waits on it — and deep looks stay out of its context. DevHub delivers
+   while those subagents run (only a foreground turn holds a batch). The
+   person's words arrive as their own messages and are their instructions.
+4. **The invariant** (see "The invariant"), as what the orchestrator
+   maintains, and how to answer an `unsettled` subject: a subagent reads the
+   state with the CLI, then has the agent ask the person for a review, has it
+   look deeper, raises an escalation, parks it with `escalation wait`, or
+   stops it. A managed agent outside the population (its Issue closed, not
+   the person's, off the boards) or with no Issue is **closed**, not kept
+   around: a subagent first asks that agent about unpushed work or an open
+   pull request, then `agent stop` (and `workspace close` with its flags named)
+   — unless the orchestrator decides it is still worth doing, and says why
+   with `agent keep A --note`; never without a reason.
+5. **DevHub's conventions**: the Issue linkage rule (meta `issue=` by `issue
+assign`, never by hand), `--managed` (and `--meta parent=<its id>`) on
+   every agent it starts, never approving a permission prompt, never writing
+   the person's answer, never taking the screen (`focus` only when asked),
+   and holding back on new agents when a plan window runs high
+   (`usage.threshold`, `devhub --tell usage`).
+
+How it is given: Claude (terminal and GUI) gets it appended to the system
+prompt — `--append-system-prompt`, after the profile's own, which is kept
+(Claude honours only the last one, so the two are joined) — on the
+orchestrator agent's argv only (`withOrchestratorSkill`); a Codex GUI thread
+gets it as a paragraph of `developerInstructions`
+(`codexOrchestratorInstructions`). A Codex terminal orchestrator gets
+neither (DevHub has no channel into it), nor does one DevHub did not start.
+The person's make-progress need not repeat any of it: `/devhub-orchestrator`
+leaves these to the charter and is about the team's own rules.
+
 ## `/devhub-orchestrator`: writing the person's make-progress skill
 
 What the orchestrator does on each event is the person's own skill in
@@ -739,9 +795,9 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
 - **How it is given**: when the agent being launched, restarted or starting a
   thread is the orchestrator — the one the row is assigned to, or the new
   agent `orchestrator start` (and the window's Start) is making — Claude gets
-  a second `--add-dir=<userData>/devhub/orchestrator-skill`, and a Codex GUI
-  thread one more paragraph in `developerInstructions` pointing at the
-  SKILL.md. Every other agent gets only `/devhub` (`isOrchestratorAgent`,
+  a second `--add-dir=<userData>/devhub/orchestrator-skill` (and the charter,
+  above), and a Codex GUI thread the charter and one more paragraph in
+  `developerInstructions` pointing at the SKILL.md. Every other agent gets only `/devhub` (`isOrchestratorAgent`,
   `orchestratorSkill` in `shell/agentWiring.ts`).
 - **From outside DevHub**: `devhub --tell skill --orchestrator` prints it
   (`--json`: `{ text, cli, skillFile }`) for an orchestrator DevHub did not

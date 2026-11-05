@@ -433,7 +433,11 @@ orchestrator to one invariant — every open Issue assigned to you on the
 watched boards has a working agent, a 要回答 or a 待機中 escalation, and every
 managed agent is working or on one of those — and says each subject that
 breaks it as an `unsettled` line of facts, batched at most every
-`delivery_interval` (5m); the person's answers go at once, as typed. See
+`delivery_interval` (5m); the person's answers go at once, as typed. At
+every start DevHub also gives the orchestrator its own short charter — drive
+every assigned Issue to closed, never do hands-on work (the worker agents
+read logs and fix), hand each delivered line to a background subagent and
+return, keep the invariant, and DevHub's conventions. See
 [`docs/orchestrator.md`](docs/orchestrator.md). `agent status` gives one agent's
 state in one call: kind, profile, workspace, status and since when (as DevHub
 saw it), the turn, last activity, open questions and permission prompts

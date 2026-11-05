@@ -11,6 +11,7 @@ import {
 	withDevhubSkill,
 } from "../agent/devhubSkill.js";
 import { EVENT_TYPES } from "./events.js";
+import { ORCHESTRATOR_CHARTER } from "./orchestratorCharter.js";
 import {
 	codexOrchestratorInstructions,
 	isOrchestratorAgent,
@@ -54,7 +55,7 @@ describe("the /devhub-orchestrator skill", () => {
 		});
 	});
 
-	it("gives the orchestrator's Claude a second --add-dir, after /devhub's, once", () => {
+	it("gives the orchestrator's Claude a second --add-dir, after /devhub's, and DevHub's charter, once", () => {
 		const profile = { kind: "claude" as const, args: ["--model", "opus"] };
 		const both = withOrchestratorSkill(withDevhubSkill(profile, devhub), skill);
 		expect(both.args).toEqual([
@@ -62,8 +63,51 @@ describe("the /devhub-orchestrator skill", () => {
 			"opus",
 			`--add-dir=${devhub.root}`,
 			`--add-dir=${skill.root}`,
+			"--append-system-prompt",
+			ORCHESTRATOR_CHARTER,
 		]);
-		expect(withOrchestratorSkill(both, skill).args).toHaveLength(4);
+		expect(withOrchestratorSkill(both, skill)).toBe(both);
+	});
+
+	it("keeps the profile's own appended prompt, before the charter", () => {
+		for (const args of [
+			["--append-system-prompt", "日本語で"],
+			["--append-system-prompt=日本語で"],
+		]) {
+			const made = withOrchestratorSkill(
+				{ kind: "claude" as const, args },
+				skill,
+			);
+			expect(made.args).toEqual([
+				`--add-dir=${skill.root}`,
+				"--append-system-prompt",
+				`日本語で\n\n${ORCHESTRATOR_CHARTER}`,
+			]);
+		}
+	});
+
+	it("states DevHub's charter: the role, no hands-on work, the router, the invariant, the conventions", () => {
+		for (const word of [
+			"close まで進める",
+			"実作業を一切しない",
+			"振り分けのためだけ",
+			"新しいバックグラウンドのサブエージェント",
+			"母集団",
+			"agent keep",
+			"--managed",
+			"meta issue=",
+			"parent=",
+			"決して承認しない",
+			"回答を書かない",
+			"focus は頼まれたときだけ",
+			"usage.threshold",
+		])
+			expect({ word, found: ORCHESTRATOR_CHARTER.includes(word) }).toEqual({
+				word,
+				found: true,
+			});
+		// The guide to make-progress leaves it to the charter.
+		expect(orchestratorSkillText(devhub.cli)).not.toContain("心構え");
 	});
 
 	it("leaves an ordinary agent's argv and Codex instructions as /devhub has them", () => {
@@ -94,6 +138,9 @@ describe("the /devhub-orchestrator skill", () => {
 			].join("\n\n"),
 		);
 		expect(codexOrchestratorInstructions(skill)).toContain(skill.skillFile);
+		expect(
+			codexOrchestratorInstructions(skill).startsWith(ORCHESTRATOR_CHARTER),
+		).toBe(true);
 		expect(codexOrchestratorInstructions(skill)).toContain(
 			"/devhub-orchestrator",
 		);
@@ -203,7 +250,7 @@ describe("the /devhub-orchestrator skill's event table", () => {
 		const named = [
 			...text.matchAll(/`((?:github|workspace|agent|timer|usage)\.[a-z_]+)`/gu),
 		].map((match) => match[1]!);
-		expect(named.length).toBeGreaterThanOrEqual(5);
+		expect(named.length).toBeGreaterThanOrEqual(4);
 		for (const type of named)
 			expect({
 				type,
