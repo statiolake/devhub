@@ -31,9 +31,19 @@
  * `resetAt` when it is low, doubling after a failure.
  *
  * **Events** come of diffing each reading against the last (`diffBoard`,
- * `diffPullRequests`, `diffRequested`). The first reading after a start is the
- * baseline and says nothing — and so is each board's first full pass, and
- * each pull request's first details.
+ * `diffPullRequests`, `diffRequested`). Each board's first full pass and each
+ * pull request's first details are a baseline and say nothing.
+ *
+ * **Pause, restart.** While the orchestrator's events are paused the source
+ * is `suspended`: it does not poll at all, and keeps what it last read. A
+ * resume polls at once (the rate limit permitting) and diffs against that, so
+ * what changed during the pause is said — the net change, not each flip — in
+ * the one message the resume sends. The last reading is also kept on disk
+ * (`githubSnapshot.ts`): a start (DevHub restarted, or a new orchestrator in
+ * the same profile) diffs its first poll against it, unless the boards or the
+ * viewer changed, or it is older than `STALE_SNAPSHOT_MS` — then, as with no
+ * snapshot, the first reading is the baseline. Stopping forgets the memory
+ * and keeps the file.
  *
  * Where the Workspace watcher already knows a pull request (the Sidebar's
  * branch → PR), its Workspace and agent go on the event (`ws=`, `agent=`).
@@ -44,6 +54,12 @@ import {
 	parseProjectRef,
 } from "../../model/orchestratorSettings.js";
 import type { EventAgent, EventItem, OrchestratorEvent } from "./events.js";
+import {
+	SNAPSHOT_VERSION,
+	STALE_SNAPSHOT_MS,
+	usableSnapshot,
+	type SnapshotStore,
+} from "./githubSnapshot.js";
 
 // --- the snapshot ----------------------------------------------------------------
 
@@ -660,6 +676,7 @@ export function diffPullRequest(
 				...(after.checks === "SUCCESS"
 					? {}
 					: { failing: after.checksFailing, total: after.checksTotal }),
+				...(after.headOid === null ? {} : { head: after.headOid }),
 				...at,
 			});
 	}
@@ -751,6 +768,10 @@ export interface GitHubSourcePorts {
 	readonly dispatch: (event: OrchestratorEvent) => void;
 	readonly where: WhereLookup;
 	readonly setTimer: (ms: number, run: () => void) => { cancel(): void };
+	/** Where the last reading is kept across restarts; absent: nowhere. */
+	readonly snapshots?: SnapshotStore;
+	/** How it stands (`state()`) moved. */
+	readonly changed?: () => void;
 	readonly now?: () => number;
 	readonly log?: (line: string) => void;
 }
@@ -763,9 +784,25 @@ interface BoardState {
 	after: string | null;
 }
 
+/**
+ * How the source stands: `active` polls; `suspended` (events paused) sends
+ * nothing and keeps what it last read, to diff the next reading against;
+ * `idle` (no orchestrator, or no board configured) has forgotten it.
+ */
+export type GitHubPolling = "active" | "suspended" | "idle";
+
+/** Whether the rate limit is low enough that polling waits for its reset. */
+function rateLimited(rate: RateLimit | undefined, now: number): boolean {
+	return (
+		rate !== undefined &&
+		rate.remaining <= Math.max(100, rate.cost * 20) &&
+		rate.resetAt > now
+	);
+}
+
 export class GitHubEventSource {
-	#running = false;
-	#inFlight = false;
+	#mode: GitHubPolling = "idle";
+	#inFlight: Promise<void> | undefined;
 	#timer: { cancel(): void } | undefined;
 	#failures = 0;
 	#rate: RateLimit | undefined;
@@ -777,7 +814,11 @@ export class GitHubEventSource {
 	#requested: RequestedPull[] | undefined;
 	#problem: string | undefined;
 	#lastAt: number | undefined;
+	/** When what is remembered was read: the last successful poll. */
+	#readAt: number | undefined;
 	#nextAt: number | undefined;
+	/** The poll a resume asked for, until it is done. */
+	#catchUp: Promise<void> | undefined;
 
 	constructor(private readonly ports: GitHubSourcePorts) {}
 
@@ -785,31 +826,122 @@ export class GitHubEventSource {
 		return (this.ports.now ?? Date.now)();
 	}
 
-	/** Run while there is an orchestrator and a board to watch; else stop and forget. */
-	follow(active: boolean): void {
-		const wanted = active && this.#boardRefs().length > 0;
-		if (wanted === this.#running) return;
-		if (wanted) {
-			this.#running = true;
-			this.#schedule(0);
-		} else this.stop();
+	/**
+	 * Poll while there is an orchestrator and a board to watch, suspended
+	 * while its events are paused; else stop and forget.
+	 *
+	 * Starting (from idle) restores the stored snapshot, if it may be used,
+	 * so the first poll is diffed against it. Resuming polls at once (unless
+	 * the rate limit says to wait), and `caughtUp()` settles when that poll
+	 * has said what it found.
+	 */
+	follow(active: boolean, paused = false): void {
+		const mode: GitHubPolling =
+			!active || this.#boardRefs().length === 0
+				? "idle"
+				: paused
+					? "suspended"
+					: "active";
+		if (mode === this.#mode) return;
+		if (mode === "idle") {
+			this.stop();
+			return;
+		}
+		const from = this.#mode;
+		this.#mode = mode;
+		if (from === "idle") this.#restore();
+		if (mode === "suspended") {
+			this.#timer?.cancel();
+			this.#timer = undefined;
+			this.#nextAt = undefined;
+		} else if (from === "idle") this.#schedule(0);
+		else this.#resume();
+		this.ports.changed?.();
 	}
 
+	/** The poll a resume started, done (its events dispatched). */
+	caughtUp(): Promise<void> {
+		return this.#catchUp ?? Promise.resolve();
+	}
+
+	/** Stop and forget. The stored snapshot stays, for the next start. */
 	stop(): void {
-		this.#running = false;
+		const was = this.#mode;
+		this.#mode = "idle";
 		this.#timer?.cancel();
 		this.#timer = undefined;
+		this.ports.snapshots?.flush();
+		this.#forget();
 		this.#failures = 0;
+		this.#nextAt = undefined;
+		this.#catchUp = undefined;
+		if (was !== "idle") this.ports.changed?.();
+	}
+
+	#forget(): void {
 		this.#viewer = undefined;
 		this.#boards = new Map();
 		this.#watched = new Set();
 		this.#pulls = new Map();
 		this.#requested = undefined;
-		this.#nextAt = undefined;
+		this.#readAt = undefined;
 	}
 
-	/** For `orchestrator status`: how the source stands. */
+	/** The stored snapshot, as the memory the first poll is diffed against. */
+	#restore(): void {
+		const raw = this.ports.snapshots?.load();
+		if (raw === undefined) return;
+		const usable = usableSnapshot(raw, this.#boardRefs(), this.#now());
+		if ("refused" in usable) {
+			this.ports.log?.(
+				`[devhub] orchestrator GitHub events: ${usable.refused}; the first poll is a baseline`,
+			);
+			return;
+		}
+		const { snapshot } = usable;
+		this.#viewer = snapshot.viewer;
+		this.#readAt = snapshot.savedAt;
+		this.#boards = new Map(
+			Object.entries(snapshot.boards).map(([ref, entries]) => [
+				ref,
+				{ complete: entries, partial: [], after: null },
+			]),
+		);
+		this.#watched = new Set(snapshot.watched);
+		this.#pulls = new Map(snapshot.pulls.map((one) => [one.id, one]));
+		this.#requested =
+			snapshot.requested === null ? undefined : [...snapshot.requested];
+	}
+
+	/** Back from a pause: poll now, and diff against what was kept. */
+	#resume(): void {
+		const now = this.#now();
+		if (this.#readAt !== undefined && now - this.#readAt > STALE_SNAPSHOT_MS) {
+			this.ports.log?.(
+				"[devhub] orchestrator GitHub events: paused for too long; the next poll is a baseline",
+			);
+			this.#forget();
+		}
+		if (rateLimited(this.#rate, now)) {
+			const base = parseInterval(this.ports.settings().interval) ?? 90_000;
+			this.#schedule(nextDelay(base, this.#rate, now).ms);
+			this.#catchUp = undefined;
+			return;
+		}
+		this.#timer?.cancel();
+		this.#timer = undefined;
+		this.#nextAt = now;
+		const running = this.#inFlight ?? Promise.resolve();
+		const catchUp = running.then(() => this.tick());
+		this.#catchUp = catchUp;
+		void catchUp.finally(() => {
+			if (this.#catchUp === catchUp) this.#catchUp = undefined;
+		});
+	}
+
+	/** For `orchestrator status` and the board: how the source stands. */
 	state(): {
+		readonly mode: GitHubPolling;
 		readonly running: boolean;
 		readonly lastAt?: number;
 		readonly nextAt?: number;
@@ -818,7 +950,8 @@ export class GitHubEventSource {
 		readonly watched: number;
 	} {
 		return {
-			running: this.#running,
+			mode: this.#mode,
+			running: this.#mode === "active",
 			...(this.#lastAt === undefined ? {} : { lastAt: this.#lastAt }),
 			...(this.#nextAt === undefined ? {} : { nextAt: this.#nextAt }),
 			...(this.#rate === undefined ? {} : { rateLimit: this.#rate }),
@@ -848,27 +981,32 @@ export class GitHubEventSource {
 		this.#problem = problem;
 	}
 
-	/** One request, and its events. Never two at once. */
+	/** One request, and its events. Never two at once; none unless active. */
 	async tick(): Promise<void> {
-		if (!this.#running || this.#inFlight) return;
-		this.#inFlight = true;
+		if (this.#mode !== "active" || this.#inFlight !== undefined) return;
 		const base = parseInterval(this.ports.settings().interval) ?? 90_000;
+		const reading = this.#read();
+		this.#inFlight = reading;
 		try {
-			await this.#read();
+			await reading;
 			this.#failures = 0;
 		} catch (error) {
 			this.#failures += 1;
 			this.#say(error instanceof Error ? error.message : String(error));
 		} finally {
-			this.#inFlight = false;
+			this.#inFlight = undefined;
 			this.#lastAt = this.#now();
 		}
-		if (!this.#running) return;
+		this.ports.changed?.();
+		// Suspended or stopped meanwhile: no next tick until it is resumed.
+		if (this.#mode !== "active") return;
 		const delay = nextDelay(base, this.#rate, this.#now(), this.#failures);
 		this.#schedule(delay.ms);
 	}
 
 	async #read(): Promise<void> {
+		// A promise from the first line on: `tick` holds it as the one in flight.
+		await Promise.resolve();
 		const refs = this.#boardRefs();
 		for (const ref of [...this.#boards.keys()])
 			if (!refs.includes(ref)) this.#boards.delete(ref);
@@ -890,10 +1028,33 @@ export class GitHubEventSource {
 		const pulls = [...this.#watchedPulls()];
 		const request = githubQuery(boards, pulls);
 		const answer = await this.ports.post(request, credentials.token);
+		// Stopped while it was asked: what it says is nobody's.
+		if (this.#mode === "idle") return;
 		const reading = parseReading(answer, refs);
 		this.#say(reading.problems[0]);
 		this.#rate = reading.rateLimit ?? this.#rate;
 		this.#apply(reading, refs);
+		this.#readAt = this.#now();
+		this.#store(refs);
+	}
+
+	/** What is remembered, for the next DevHub to diff against. */
+	#store(refs: readonly string[]): void {
+		const viewer = this.#viewer;
+		if (this.ports.snapshots === undefined || viewer === undefined) return;
+		const boards: Record<string, readonly BoardEntry[]> = {};
+		for (const [ref, state] of this.#boards)
+			if (state.complete !== undefined) boards[ref] = state.complete;
+		this.ports.snapshots.save({
+			version: SNAPSHOT_VERSION,
+			savedAt: this.#readAt ?? this.#now(),
+			viewer,
+			projects: [...refs].sort(),
+			boards,
+			watched: [...this.#watched],
+			pulls: [...this.#pulls.values()],
+			requested: this.#requested ?? null,
+		});
 	}
 
 	/** The pull requests whose details are read: the viewer's, linked, requested, reviewed. */
@@ -948,6 +1109,19 @@ export class GitHubEventSource {
 
 	#apply(reading: GitHubReading, refs: readonly string[]): void {
 		const viewer = reading.viewer;
+		// Another login than the one remembered: its boards are a baseline.
+		if (this.#viewer !== undefined && !same(this.#viewer, viewer)) {
+			this.ports.log?.(
+				`[devhub] orchestrator GitHub events: the viewer is ${viewer} now, not ${this.#viewer}; this poll is a baseline`,
+			);
+			this.#forget();
+			for (const ref of refs)
+				this.#boards.set(ref, {
+					complete: undefined,
+					partial: [],
+					after: null,
+				});
+		}
 		this.#viewer = viewer;
 		const where = this.ports.where;
 		const events: OrchestratorEvent[] = [];

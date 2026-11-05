@@ -68,6 +68,13 @@ export interface OrchestratorServicePorts {
 	readonly busy?: (agentId: string) => boolean;
 	/** The board moved: push it. */
 	readonly publish: (board: OrchestratorBoardWire) => void;
+	/**
+	 * The pause moved: the sources that cost something follow it. On a resume
+	 * the promise is awaited before the held events go (a catch-up poll).
+	 */
+	readonly paused?: (paused: boolean) => Promise<void> | void;
+	/** How GitHub polling stands, for the board's header. */
+	readonly github?: () => OrchestratorBoardWire["github"];
 	readonly now?: () => number;
 	readonly setTimer?: (ms: number, run: () => void) => { cancel(): void };
 	readonly log?: (line: string) => void;
@@ -106,6 +113,8 @@ export class OrchestratorService {
 				this.ports.deliver(agentId, text);
 			},
 			...(ports.busy === undefined ? {} : { busy: ports.busy }),
+			relevant: (event) => this.#relevant(event),
+			...(ports.paused === undefined ? {} : { paused: ports.paused }),
 			changed: () => {
 				this.publish();
 			},
@@ -160,6 +169,41 @@ export class OrchestratorService {
 
 	#now(): number {
 		return (this.ports.now ?? Date.now)();
+	}
+
+	/**
+	 * Whether a pending event still needs the orchestrator, by live state,
+	 * just before it goes: an agent in 不明 that is no longer there, a turn
+	 * whose agent is working again (or gone), a question or a permission
+	 * prompt no longer waiting, an answer to an escalation since closed —
+	 * these have been seen to already.
+	 */
+	#relevant(event: OrchestratorEvent): boolean {
+		const agent = (id: string) =>
+			this.ports.agents().find((one) => one.id === id);
+		switch (event.type) {
+			case "unaccounted":
+				return this.#lanes(this.#now()).unaccounted.some(
+					(one) => one.agentId === event.agent.id,
+				);
+			case "agent.turn_ended": {
+				const live = agent(event.agent.id);
+				return live !== undefined && live.status !== "working";
+			}
+			case "agent.asked":
+			case "agent.permission_requested":
+				return agent(event.agent.id)?.status === "waiting";
+			case "agent.started":
+				return agent(event.agent.id) !== undefined;
+			case "escalation_answered": {
+				const one = this.ports.store
+					.all()
+					.find((escalation) => escalation.id === event.escalationId);
+				return one !== undefined && one.closed === undefined;
+			}
+			default:
+				return true;
+		}
 	}
 
 	get orchestratorAgentId(): string | undefined {
@@ -379,6 +423,7 @@ export class OrchestratorService {
 			},
 			paused: this.events.paused,
 			held: this.events.held().length,
+			github: this.ports.github?.() ?? { state: "idle" },
 			needsAnswer: lanes.needsAnswer.map(escalation),
 			inProgress: lanes.inProgress.map(escalation),
 			closed: lanes.closed.slice(0, CLOSED_SHOWN).map(escalation),

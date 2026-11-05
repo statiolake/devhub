@@ -1,5 +1,14 @@
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { OrchestratorEvent } from "./events.js";
+import { EventDispatcher, type OrchestratorEvent } from "./events.js";
+import {
+	GitHubSnapshotFile,
+	STALE_SNAPSHOT_MS,
+	type GitHubSnapshot,
+	type SnapshotStore,
+} from "./githubSnapshot.js";
 import {
 	GitHubEventSource,
 	githubQuery,
@@ -623,6 +632,276 @@ describe("the GitHub source", () => {
 		// After a restart the next reading is a baseline again.
 		await run.ticks(1);
 		expect(run.events).toEqual([]);
+	});
+});
+
+/** A store in memory: what the file would hold. */
+function memoryStore(): SnapshotStore & { stored: GitHubSnapshot | undefined } {
+	const store = {
+		stored: undefined as GitHubSnapshot | undefined,
+		pending: undefined as GitHubSnapshot | undefined,
+		load: () =>
+			store.stored === undefined
+				? undefined
+				: (JSON.parse(JSON.stringify(store.stored)) as unknown),
+		save: (snapshot: GitHubSnapshot) => {
+			store.pending = snapshot;
+		},
+		flush: () => {
+			if (store.pending !== undefined) store.stored = store.pending;
+			store.pending = undefined;
+		},
+	};
+	return store;
+}
+
+/** A source with a store, a clock, and settings that can move. */
+function durable(
+	answers: Answer[],
+	options: {
+		store?: SnapshotStore;
+		projects?: string[];
+		now?: number;
+		paused?: boolean;
+	} = {},
+) {
+	const events: OrchestratorEvent[] = [];
+	const asked: unknown[] = [];
+	const clock = { now: options.now ?? Date.parse("2026-11-05T00:00:00Z") };
+	const timers: (() => void)[] = [];
+	const settings = {
+		projects: options.projects ?? ["acme/7"],
+		interval: "90s",
+	};
+	const source = new GitHubEventSource({
+		settings: () => settings,
+		token: () => Promise.resolve({ token: "t" }),
+		post: (body) => {
+			asked.push(body);
+			const next = answers.shift();
+			if (next === undefined) throw new Error("no more answers");
+			return Promise.resolve(answer(next));
+		},
+		dispatch: (event) => {
+			dispatch(event);
+		},
+		where: () => undefined,
+		setTimer: (_ms, run) => {
+			timers.push(run);
+			return { cancel: () => undefined };
+		},
+		...(options.store === undefined ? {} : { snapshots: options.store }),
+		now: () => clock.now,
+	});
+	let dispatch = (event: OrchestratorEvent) => {
+		events.push(event);
+	};
+	source.follow(true, options.paused ?? false);
+	return {
+		events,
+		asked,
+		source,
+		clock,
+		settings,
+		/** Route the source's events elsewhere (a dispatcher). */
+		into(to: (event: OrchestratorEvent) => void) {
+			dispatch = to;
+		},
+		/** Run the timers due, as many rounds as asked. */
+		async run(rounds = 1) {
+			for (let index = 0; index < rounds; index += 1) {
+				clock.now += 90_000;
+				const due = timers.splice(0);
+				for (const one of due) one();
+				await new Promise((done) => setTimeout(done, 0));
+			}
+		},
+	};
+}
+
+describe("GitHub polling and the pause", () => {
+	it("asks nothing while suspended, and keeps what it read", async () => {
+		const run = durable([{ cards: BASE.map(issueCard) }]);
+		await run.run();
+		expect(run.asked).toHaveLength(1);
+		run.source.follow(true, true);
+		expect(run.source.state().mode).toBe("suspended");
+		await run.run(5);
+		await run.source.tick();
+		expect(run.asked).toHaveLength(1);
+		expect(run.source.state().watched).toBe(0);
+	});
+
+	it("polls once on resume, and the net change goes out in the resume's one message", async () => {
+		const run = durable([
+			{ cards: BASE.map(issueCard) },
+			// Meanwhile: I was put on #200, and #123 went to review and on to done.
+			{
+				cards: [
+					issueCard({ ...BASE[0]!, status: "Done" }),
+					issueCard({ ...BASE[1]!, assignees: [ME] }),
+				],
+			},
+		]);
+		await run.run();
+		const sent: string[] = [];
+		const dispatcher = new EventDispatcher({
+			orchestrator: () => "orch",
+			settings: () => ({
+				event_prompt: "{EVENT}",
+				init_prompt: undefined,
+				events: ["*"],
+			}),
+			deliver: (_agent, text) => sent.push(text),
+			paused: (paused) => {
+				run.source.follow(true, paused);
+				return paused ? undefined : run.source.caughtUp();
+			},
+		});
+		run.into((event) => dispatcher.dispatch(event));
+		dispatcher.pause();
+		await run.run(3);
+		expect(run.asked).toHaveLength(1);
+		expect(await dispatcher.resume()).toBe(2);
+		expect(run.asked).toHaveLength(2);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]!.split("\n")).toEqual([
+			expect.stringMatching(
+				/^\[github\.lane_changed\] #123.*In Progress → Done/u,
+			),
+			expect.stringMatching(/^\[github\.assigned\] #200/u),
+		]);
+		expect(run.source.state().mode).toBe("active");
+	});
+
+	it("waits for the rate limit's reset on resume rather than polling", async () => {
+		const run = durable([
+			{
+				cards: BASE.map(issueCard),
+				remaining: 50,
+				resetAt: "2026-11-05T01:00:00Z",
+			},
+		]);
+		await run.run();
+		run.source.follow(true, true);
+		run.source.follow(true, false);
+		await run.source.caughtUp();
+		expect(run.asked).toHaveLength(1);
+		expect(run.source.state().nextAt).toBeGreaterThan(
+			Date.parse("2026-11-05T01:00:00Z"),
+		);
+	});
+
+	it("is a baseline again after a pause longer than the staleness limit", async () => {
+		const run = durable([
+			{ cards: BASE.map(issueCard) },
+			{
+				cards: [
+					issueCard(BASE[0]!),
+					issueCard({ ...BASE[1]!, assignees: [ME] }),
+				],
+			},
+		]);
+		await run.run();
+		run.source.follow(true, true);
+		run.clock.now += STALE_SNAPSHOT_MS + 60_000;
+		run.source.follow(true, false);
+		await run.source.caughtUp();
+		expect(run.asked).toHaveLength(2);
+		expect(run.events).toEqual([]);
+	});
+});
+
+describe("the stored snapshot", () => {
+	const changed: Answer = {
+		cards: [issueCard(BASE[0]!), issueCard({ ...BASE[1]!, assignees: [ME] })],
+	};
+
+	it("round-trips through the file, debounced and atomically", () => {
+		const folder = mkdtempSync(join(tmpdir(), "devhub-gh-"));
+		try {
+			const path = join(folder, "devhub", "orchestrator-github.json");
+			const timers: (() => void)[] = [];
+			const file = new GitHubSnapshotFile(path, {
+				setTimer: (_ms, run) => {
+					timers.push(run);
+					return { cancel: () => undefined };
+				},
+			});
+			expect(file.load()).toBeUndefined();
+			const snapshot: GitHubSnapshot = {
+				version: 1,
+				savedAt: 1,
+				viewer: ME,
+				projects: ["acme/7"],
+				boards: { "acme/7": [] },
+				watched: ["I1"],
+				pulls: [],
+				requested: null,
+			};
+			file.save({ ...snapshot, savedAt: 0 });
+			file.save(snapshot);
+			// One write for both, when the debounce is up.
+			expect(timers).toHaveLength(1);
+			timers[0]!();
+			expect(file.load()).toEqual(snapshot);
+			expect(readdirSync(join(folder, "devhub"))).toEqual([
+				"orchestrator-github.json",
+			]);
+		} finally {
+			rmSync(folder, { recursive: true, force: true });
+		}
+	});
+
+	it("diffs the first poll after a restart against it", async () => {
+		const store = memoryStore();
+		const before = durable([{ cards: BASE.map(issueCard) }], { store });
+		await before.run();
+		before.source.stop();
+		expect(store.stored?.viewer).toBe(ME);
+		const after = durable([changed], { store, now: before.clock.now });
+		await after.run();
+		expect(after.events.map((event) => event.type)).toEqual([
+			"github.assigned",
+		]);
+	});
+
+	it("is a baseline when the projects changed", async () => {
+		const store = memoryStore();
+		const before = durable([{ cards: BASE.map(issueCard) }], { store });
+		await before.run();
+		before.source.stop();
+		const after = durable([changed], {
+			store,
+			projects: ["acme/8"],
+			now: before.clock.now,
+		});
+		await after.run();
+		expect(after.events).toEqual([]);
+	});
+
+	it("is a baseline when it is stale", async () => {
+		const store = memoryStore();
+		const before = durable([{ cards: BASE.map(issueCard) }], { store });
+		await before.run();
+		before.source.stop();
+		const after = durable([changed], {
+			store,
+			now: before.clock.now + STALE_SNAPSHOT_MS + 60_000,
+		});
+		await after.run();
+		expect(after.events).toEqual([]);
+	});
+
+	it("is a baseline when the viewer is someone else", async () => {
+		const store = memoryStore();
+		const before = durable([{ cards: BASE.map(issueCard) }], { store });
+		await before.run();
+		before.source.stop();
+		store.stored = { ...store.stored!, viewer: "someone-else" };
+		const after = durable([changed], { store, now: before.clock.now });
+		await after.run();
+		expect(after.events).toEqual([]);
 	});
 });
 

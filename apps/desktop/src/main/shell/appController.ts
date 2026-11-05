@@ -357,6 +357,7 @@ import {
 	WorkspaceEventSource,
 } from "../orchestrator/liveEvents.js";
 import { GitHubEventSource } from "../orchestrator/githubEvents.js";
+import { GitHubSnapshotFile } from "../orchestrator/githubSnapshot.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import {
 	MICROPHONE_SETTINGS_URL,
@@ -9088,6 +9089,16 @@ export class AppController {
 		const { store, refused } = EscalationStore.load(
 			join(userDataPath, "devhub", "escalations.json"),
 		);
+		this.githubSnapshots = new GitHubSnapshotFile(
+			join(userDataPath, "devhub", "orchestrator-github.json"),
+			{
+				setTimer: (ms, run) => {
+					const timer = setTimeout(run, ms);
+					return { cancel: () => clearTimeout(timer) };
+				},
+				log: (line) => console.log(line),
+			},
+		);
 		if (refused !== undefined) {
 			console.error(`[devhub] ${refused}`);
 			this.publishError(errorWire(new Error(refused)));
@@ -9124,6 +9135,20 @@ export class AppController {
 			},
 			publish: (board) => {
 				this.send(CHANNELS.orchestratorBoardChanged, board);
+			},
+			// A paused orchestrator costs no GitHub quota: polling is suspended,
+			// and a resume waits for its catch-up poll before it delivers.
+			paused: (paused) => {
+				this.followGitHub(paused);
+				return paused ? undefined : this.githubEvents.caughtUp();
+			},
+			github: () => {
+				const state = this.githubEvents.state();
+				return {
+					state: state.mode,
+					...(state.lastAt === undefined ? {} : { lastAt: state.lastAt }),
+					...(state.problem === undefined ? {} : { problem: state.problem }),
+				};
 			},
 			setTimer: (ms, run) => {
 				const timer = setTimeout(run, ms);
@@ -9239,12 +9264,34 @@ export class AppController {
 			this.orchestrator?.events.dispatch(event);
 		},
 		where: (url) => this.githubWhere(url),
+		// `<userData>/devhub/orchestrator-github.json`, once the profile is known.
+		snapshots: {
+			load: () => this.githubSnapshots?.load(),
+			save: (snapshot) => this.githubSnapshots?.save(snapshot),
+			flush: () => this.githubSnapshots?.flush(),
+		},
+		changed: () => this.orchestrator?.publish(),
 		setTimer: (ms, run) => {
 			const timer = setTimeout(run, ms);
 			return { cancel: () => clearTimeout(timer) };
 		},
 		log: (line) => console.log(line),
 	});
+
+	private githubSnapshots: GitHubSnapshotFile | undefined;
+
+	/**
+	 * GitHub polling follows the orchestrator: active while one runs,
+	 * suspended while its events are paused, idle (forgotten) without one.
+	 */
+	private followGitHub(
+		paused = this.orchestrator?.events.paused ?? false,
+	): void {
+		this.githubEvents.follow(
+			this.orchestrator?.orchestratorAgentId !== undefined,
+			paused,
+		);
+	}
 
 	/** The Workspace (and its agent) the Sidebar shows an Issue's or pull request's work in. */
 	private githubWhere(
@@ -9275,7 +9322,7 @@ export class AppController {
 
 	private observeLiveEvents(): void {
 		const orchestrator = this.orchestrator?.orchestratorAgentId;
-		this.githubEvents.follow(orchestrator !== undefined);
+		this.followGitHub();
 		if (orchestrator === undefined) {
 			this.workspaceEvents.reset();
 			this.agentEvents.reset();
@@ -10237,9 +10284,7 @@ export class AppController {
 		void this.scratch.settingsAccepted(config.scratch.daily);
 		// `[[orchestrator.timers]]` and `[orchestrator.github]` move with them.
 		this.orchestrator?.timers.sync();
-		this.githubEvents.follow(
-			this.orchestrator?.orchestratorAgentId !== undefined,
-		);
+		this.followGitHub();
 		this.applyChordLayout();
 		// Before the pages are told, because this one is not a message to a page:
 		// it changes what the OS appearance is for the whole process, and every
@@ -11142,12 +11187,12 @@ export class AppController {
 				throw namedFailure(error);
 			}
 		});
-		handle(CHANNELS.setOrchestratorPaused, (_event, paused: unknown) => {
+		handle(CHANNELS.setOrchestratorPaused, async (_event, paused: unknown) => {
 			if (typeof paused !== "boolean")
 				throw namedFailure(new Error("paused is true or false"));
 			const events = this.requireOrchestrator().events;
 			if (paused) events.pause();
-			else events.resume();
+			else await events.resume();
 		});
 		handle(CHANNELS.getUsageLimits, () => this.usageLimits.wire());
 

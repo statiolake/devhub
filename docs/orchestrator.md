@@ -112,8 +112,9 @@ message from the person — the same queue `devhub --tell agent send` uses.
 
 ### The line format
 
-Each event is **one line**: a stable `[type]` token, then `key=value` ids
-that go straight into the next command (`ws=` → `workspace status`,
+Each subject is **one line** (see Delivery below): a stable `[type]`
+token, then `key=value` ids that go straight into the next command
+(`ws=` → `workspace status`,
 `agent=` → `agent …` as a unique id prefix, `since=` → `agent read
 --since`, `req=` → `agent answer`, `esc=` → `escalation show`), then `—` and
 a short summary (Japanese; excerpts are cut to about 150 characters). Only
@@ -154,29 +155,69 @@ Workspace): the dispatcher drops such an event as `self`.
 array, each `{ "type": …, …its fields }`. It is rendered **only when the
 template contains it**, so it costs nothing otherwise.
 
-### Delivery: batching, coalescing, pause
+### Delivery: one line per subject, batching, pause
 
-- **Batching.** Events wait while the orchestrator is mid-turn (working, on
-  a question, or with something of ours still queued for it) or paused, and
-  go out together as **one** message — one line each in `{EVENT}` — once it
-  can take one. A batch waits 300 ms for more, and after a delivery the next
-  one waits (up to a minute) to see the last one taken.
-- **Coalescing**, while pending: review comments on one PR are one line with
-  the count added up and the authors merged; an agent's repeated
-  `turn_ended` keep the latest excerpt and the first unread `since`; a timer
-  has at most one pending event; lane changes of a card fold into first
-  `from` → last `to`; `reply` and `checks` per PR keep one; an identical
-  `custom.*` is one.
+**A delivery is not a history: it lists what currently needs attention, one
+line per subject.** The pending buffer holds action items, not a log.
+
+- **Subjects** (`subjectOf`): a pull request or Issue (`repo#number`), an
+  agent, a Workspace, an escalation, a timer, a custom type and text, `init`.
+  While pending, a subject is **one line**, however many events said
+  something about it. A new event folds into its subject's line, by facet
+  (`facetOf`, `merge`):
+  - review comments add their counts up and merge the authors; `reply` adds
+    up too;
+  - a lane is first `from` → last `to`, and **dropped** when that is no move
+    (In Progress → In Review → In Progress); a branch the same; an assignment
+    taken back cancels out;
+  - checks, reviews (approved / changes requested) and the rest are the
+    latest: CI failed → passed is one line, passed;
+  - a merge or a close (and an agent's exit, a Workspace's close) replaces
+    whatever else was pending about its subject;
+  - an agent's repeated `turn_ended` keep the latest excerpt and the first
+    unread `since`; a timer has at most one pending event;
+  - different statements about one subject share its line, the latest
+    leading it with its `[type]`, the others after `／ [type] …`, without the
+    ids the line already has: `[github.pr_approved] PR #130「ログイン修正」 —
+    bob が承認 ／ [github.pr_ready] ready for review になった https://…/pull/130`.
+    `{EVENT_JSON}` carries them as the line's `also`.
+- **Stale items are dropped before delivery.** Each pending item is re-read
+  against live state when the message is rendered (`relevant`, in
+  `orchestratorService.ts`) and dropped as `dropped-stale` if its subject no
+  longer needs attention: an `unaccounted` agent that is no longer idle or is
+  now named by an open escalation; a `turn_ended` whose agent is working
+  again (someone has given it work; its output stays readable with `agent
+  read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
+  longer waits on it; an `escalation_answered` whose escalation is closed.
+- **Never said twice.** What the last delivery said about a subject is not
+  delivered again (`repeat`) unless something about that subject has been
+  heard since — a repeated `unaccounted` for the same idle period, the same
+  CI result on the same commit. Events that add news each time (`init`,
+  `escalation_answered`, review comments, replies, turns, timers, `custom.*`)
+  are never repeats.
+- **Batching.** Lines wait while the orchestrator is mid-turn (working, on a
+  question, or with something of ours still queued for it) or paused, and go
+  out together as **one** message once it can take one. A batch waits 300 ms
+  for more, and after a delivery the next one waits (up to a minute) to see
+  the last one taken. However long the backlog, the message has one line per
+  subject, at most 50 (`MAX_DELIVERY_LINES`); the rest are counted on a last
+  line, `…ほか N 件 (devhub --tell orchestrator events で確認)`, and logged as
+  `overflow`.
 - **Filter**: `[orchestrator] events` (below). Filtered events are kept in
   the log as `filtered`.
 - **Pause** (the switch in the board's header, or `orchestrator pause`)
-  holds everything; **resume** delivers it as one message. The header shows
-  how many are pending, beside the switch. Pending events live in memory: a
-  quit drops them, and the next start's `init` sends the orchestrator to the
-  board anyway. With no orchestrator assigned, an event is dropped.
+  holds everything and **suspends GitHub polling**: a paused orchestrator
+  spends no API quota. **Resume** polls GitHub once at once (unless the rate
+  limit says to wait for its reset), waits for that poll (at most 20 s), and
+  delivers everything — what was held and what changed on GitHub during the
+  pause, as the net change — as one message. The header shows how many lines
+  are pending, beside the switch. Pending events live in memory: a quit drops
+  them, and the next start's `init` sends the orchestrator to the board
+  anyway. With no orchestrator assigned, an event is dropped.
 - `devhub --tell orchestrator events [--last N] [--json]` lists the last
   events (200 are kept) and what came of each: `delivered`, `pending`,
-  `filtered`, `coalesced` (into which), `dropped`, `self`.
+  `filtered`, `coalesced` (into which), `dropped-stale` (with why: no longer
+  needs attention, or no net change), `repeat`, `overflow`, `dropped`, `self`.
 
 ### The sources
 
@@ -205,8 +246,29 @@ template contains it**, so it costs nothing otherwise.
     backs off: ×1.5 under 50% of the hourly limit left, ×2 under 25%, ×4
     under 10%, **paused until `resetAt`** when fewer than max(100, 20×cost)
     points remain; doubling after each failure, up to 15 minutes.
-  - **Baseline**: the first reading after a start says nothing — nor does a
-    board's first full pass or a PR's first details.
+  - **Polling follows the pause**: `active` while the orchestrator runs,
+    `suspended` while its events are paused (no requests at all; the last
+    reading — boards, watched set, PR details, viewer, review requests — is
+    kept), `idle` with no orchestrator or no `projects` (memory forgotten).
+    The board's header and `orchestrator status` show which. A resume polls
+    at once and diffs against what was kept: the net change is said, flips in
+    between are not.
+  - **Kept across restarts**: the last reading is stored per profile in
+    `<userData>/devhub/orchestrator-github.json` (versioned; written after
+    each successful poll, debounced 5 s, atomically through a temporary file
+    and a rename; flushed when the source stops). When the source starts for
+    an orchestrator it loads it and the first poll is diffed against it — so
+    what changed while DevHub was down is said. **A new orchestrator in the
+    same profile diffs too** (stopping one forgets the memory, never the
+    file): it inherits the team's boards, and what moved since is exactly
+    what it needs to hear.
+  - **Baseline** (the first reading says nothing) when there is no stored
+    snapshot, when it does not read or is of another version, when
+    `[orchestrator.github] projects` changed since it was stored, when the
+    viewer's login is another, or when it is **older than 7 days**
+    (`STALE_SNAPSHOT_MS`; a resume after a pause that long is a baseline too)
+    — what changed in a week is history, not news. A board's first full pass
+    and a PR's first details are a baseline as well.
   - Where the Workspace watcher (the Sidebar's branch → PR, `workspace
     status`) has the PR or Issue open, its Workspace and agent go on the
     line as `ws=` and `agent=`.
@@ -301,9 +363,9 @@ devhub --tell escalation list [--state needs_answer|in_progress|closed] [--json]
 devhub --tell escalation close ID [--note TEXT]
 devhub --tell escalation link ID --agent A
 devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -|TEXT]
-devhub --tell orchestrator status [--json]          # its agent, state, lane counts, pause
+devhub --tell orchestrator status [--json]          # its agent, state, lane counts, pause, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
-devhub --tell orchestrator pause | resume          # resume delivers what is pending, as one message
+devhub --tell orchestrator pause | resume          # pause suspends GitHub polling; resume catches up and delivers, as one message
 devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-
 devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # for this session

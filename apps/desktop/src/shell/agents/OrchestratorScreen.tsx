@@ -248,6 +248,26 @@ export function OrchestratorBoard({
               {board.held} pending
             </span>
           ) : null}
+          <span
+            className="orchestrator-github"
+            data-state={board.github.state}
+            title={
+              board.github.state === "active"
+                ? `GitHub polling is active${board.github.problem === undefined ? "" : `: ${board.github.problem}`}`
+                : board.github.state === "suspended"
+                  ? "GitHub polling is suspended while events are paused: no requests are made. Resume polls once and reports what changed."
+                  : board.orchestratorAgentId === undefined
+                    ? "GitHub polling is idle: no orchestrator is running."
+                    : "GitHub polling is idle: [orchestrator.github] projects names no board."
+            }
+          >
+            GitHub{" "}
+            {board.github.state === "active"
+              ? "polling"
+              : board.github.state === "suspended"
+                ? "suspended"
+                : "idle"}
+          </span>
           <button
             type="button"
             className="orchestrator-history"

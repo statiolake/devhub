@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ORCHESTRATOR_EVENTS } from "../../model/orchestratorSettings.js";
 import {
 	EventDispatcher,
+	MAX_DELIVERY_LINES,
 	eventLine,
 	eventsMessage,
 	shortId,
@@ -246,14 +247,14 @@ describe("the dispatcher", () => {
 		expect(sent).toHaveLength(3);
 	});
 
-	it("holds everything while paused, and resume sends it as one", () => {
+	it("holds everything while paused, and resume sends it as one", async () => {
 		const { dispatcher, sent, tick } = world();
 		dispatcher.pause();
 		dispatcher.dispatch({ type: "custom.a", text: "1" });
 		dispatcher.dispatch({ type: "custom.b", text: "2" });
 		tick();
 		expect(sent).toEqual([]);
-		expect(dispatcher.resume()).toBe(2);
+		expect(await dispatcher.resume()).toBe(2);
 		expect(sent).toEqual(["handle: [custom.a] — 1\n[custom.b] — 2"]);
 	});
 
@@ -391,5 +392,136 @@ describe("the dispatcher", () => {
 		expect(dispatcher.dispatch({ type: "custom.x", text: "y" }).fate).toBe(
 			"dropped",
 		);
+	});
+});
+
+describe("one line per subject", () => {
+	const lane = (from: string, to: string): OrchestratorEvent => ({
+		type: "github.lane_changed",
+		item: PR,
+		kind: "pr",
+		project: "acme/7",
+		from,
+		to,
+	});
+
+	it("says a pull request's news on one line, the latest leading it", () => {
+		const { dispatcher, sent, state } = world({ busy: true });
+		dispatcher.dispatch({ type: "github.pr_ready", pr: PR });
+		dispatcher.dispatch({ type: "github.checks", pr: PR, result: "failed" });
+		dispatcher.dispatch({ type: "github.pr_approved", pr: PR, by: ["bob"] });
+		dispatcher.dispatch({ type: "github.checks", pr: PR, result: "passed" });
+		expect(dispatcher.heldLines()).toEqual([
+			{
+				event: { type: "github.checks", pr: PR, result: "passed" },
+				also: [
+					{ type: "github.pr_ready", pr: PR },
+					{ type: "github.pr_approved", pr: PR, by: ["bob"] },
+				],
+			},
+		]);
+		state.busy = false;
+		dispatcher.flush();
+		expect(sent).toEqual([
+			"handle: [github.checks] PR #130「ログイン修正」 — CI 成功 ／ [github.pr_ready] ready for review になった ／ [github.pr_approved] bob が承認 https://github.com/acme/app/pull/130",
+		]);
+	});
+
+	it("folds a lane into first from → last to, and drops it when that is no move", () => {
+		const { dispatcher } = world({ busy: true });
+		dispatcher.dispatch(lane("Todo", "In Progress"));
+		dispatcher.dispatch(lane("In Progress", "In Review"));
+		expect(dispatcher.held()).toEqual([lane("Todo", "In Review")]);
+		dispatcher.dispatch(lane("In Review", "Todo"));
+		expect(dispatcher.held()).toEqual([]);
+		expect(dispatcher.recent(3).map((entry) => entry.fate)).toEqual([
+			"coalesced",
+			"coalesced",
+			"dropped-stale",
+		]);
+	});
+
+	it("lets a merge replace whatever else was pending about the pull request", () => {
+		const { dispatcher } = world({ busy: true });
+		dispatcher.dispatch({
+			type: "github.review_comment",
+			pr: PR,
+			count: 2,
+			authors: ["alice"],
+		});
+		dispatcher.dispatch({ type: "github.checks", pr: PR, result: "failed" });
+		dispatcher.dispatch({ type: "github.pr_merged", pr: PR });
+		expect(dispatcher.heldLines()).toEqual([
+			{ event: { type: "github.pr_merged", pr: PR }, also: [] },
+		]);
+	});
+
+	it("drops what no longer needs attention when it would go", () => {
+		const stale = new Set<string>();
+		const sent: string[] = [];
+		const state = { busy: true };
+		const dispatcher = new EventDispatcher({
+			orchestrator: () => ORCH,
+			settings: () => ({
+				event_prompt: "{EVENT}",
+				init_prompt: undefined,
+				events: ["*"],
+			}),
+			deliver: (_agent, text) => sent.push(text),
+			busy: () => state.busy,
+			relevant: (event) => !stale.has(event.type),
+		});
+		dispatcher.dispatch({
+			type: "agent.turn_ended",
+			agent: AGENT,
+			since: "e1",
+		});
+		dispatcher.dispatch({ type: "custom.x", text: "still" });
+		stale.add("agent.turn_ended");
+		state.busy = false;
+		dispatcher.flush();
+		expect(sent).toEqual(["[custom.x] — still"]);
+		expect(dispatcher.recent(2)[0]).toMatchObject({
+			fate: "dropped-stale",
+			reason: "no longer needs attention",
+		});
+	});
+
+	it("never says the same thing again while its subject is unchanged", () => {
+		const { dispatcher, sent, state } = world({ events: ["*"] });
+		const idle: OrchestratorEvent = {
+			type: "unaccounted",
+			agent: AGENT,
+			idleSince: 5,
+		};
+		dispatcher.flush();
+		dispatcher.dispatch(idle);
+		dispatcher.flush();
+		expect(sent).toHaveLength(1);
+		expect(dispatcher.dispatch(idle).fate).toBe("repeat");
+		// Something new about it, and the same statement is news again.
+		state.busy = true;
+		dispatcher.dispatch({ type: "agent.turn_ended", agent: AGENT });
+		expect(dispatcher.dispatch(idle).fate).toBe("pending");
+	});
+
+	it("caps a backlog at one line per subject and counts the rest", () => {
+		const { dispatcher, sent, state } = world({ busy: true });
+		for (let round = 0; round < 3; round += 1)
+			for (let index = 0; index < MAX_DELIVERY_LINES + 7; index += 1)
+				dispatcher.dispatch({
+					type: "timer.elapsed",
+					name: `t${String(index)}`,
+					interval: "1m",
+				});
+		expect(dispatcher.held()).toHaveLength(MAX_DELIVERY_LINES + 7);
+		state.busy = false;
+		dispatcher.flush();
+		const lines = sent[0]!.replace(/^handle: /u, "").split("\n");
+		expect(lines).toHaveLength(MAX_DELIVERY_LINES + 1);
+		expect(lines.at(-1)).toBe(
+			"…ほか 7 件 (devhub --tell orchestrator events で確認)",
+		);
+		expect(dispatcher.recent(1)[0]?.fate).toBe("overflow");
 	});
 });

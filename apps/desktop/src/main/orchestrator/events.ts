@@ -8,22 +8,35 @@
  *
  * 1. drops what is about the orchestrator itself, and what the
  *    `[orchestrator] events` patterns filter out;
- * 2. keeps the rest **pending**, coalesced (`coalesceKey`/`merge`): several
- *    review comments on one pull request are one line with a count, an
- *    agent's turns are its latest, a timer is pending once;
- * 3. delivers everything pending as **one** message — one line per event
- *    (`eventLine`) as `{EVENT}`, and as JSON for `{EVENT_JSON}` only when the
+ * 2. keeps the rest **pending** as action items, not a history: **one line
+ *    per subject** (`subjectOf`: a pull request or Issue, an agent, a
+ *    Workspace, an escalation, a timer, a custom type and text). A new event
+ *    about a pending subject folds into its line (`facetOf`/`merge`): review
+ *    comments add up, a lane is first `from` → last `to` (and gone when they
+ *    are the same), checks and reviews are the latest, a merge or a close
+ *    replaces whatever else was said about the pull request; different
+ *    statements share the line, the latest leading it;
+ * 3. just before delivery, drops what no longer needs attention (`relevant`:
+ *    an agent working again, a question answered, an escalation closed, an
+ *    agent no longer in 不明) as `dropped-stale`, and never says again what
+ *    the last delivery said about a subject unless something about it has
+ *    been heard since (`repeat`);
+ * 4. delivers everything pending as **one** message — one line per subject
+ *    (`heldLineText`) as `{EVENT}`, at most `MAX_DELIVERY_LINES` and a last
+ *    line counting the rest, and as JSON for `{EVENT_JSON}` only when the
  *    template has it — once the orchestrator can take it: not paused, not
  *    mid-turn, nothing of ours still queued for it. The message is queued for
  *    it as the person's (`deliver`), the same queue `agent send` uses.
  *
- * **Paused** holds everything; `resume` delivers it, as one message. With no
+ * **Paused** holds everything, and the sources that cost something (GitHub)
+ * are suspended (`paused`); `resume` lets them catch up first and delivers
+ * it all as one message. With no
  * orchestrator assigned there is nobody to tell, and an event is dropped
  * (and kept in the log as dropped): the next start's `init` sends it to the
  * board anyway.
  *
- * Every event, whatever came of it, is kept in a short log (`log`) for
- * `devhub --tell orchestrator events`.
+ * Every event, whatever came of it (coalesced, dropped-stale, repeat …), is
+ * kept in a short log (`log`) for `devhub --tell orchestrator events`.
  *
  * Adding an event is a variant here, its line in `eventLine`, and a
  * `dispatch` where it happens. See `docs/orchestrator.md`, "Events".
@@ -134,6 +147,8 @@ export type OrchestratorEvent =
 			readonly result: "passed" | "failed";
 			readonly failing?: number;
 			readonly total?: number;
+			/** The commit checked: a new one's result is news, the same one's is not. */
+			readonly head?: string;
 	  } & Where)
 	| {
 			readonly type: "workspace.opened" | "workspace.closed";
@@ -531,47 +546,133 @@ export function eventAgent(event: OrchestratorEvent): string | undefined {
 	}
 }
 
-// --- coalescing ----------------------------------------------------------------
+// --- subjects: one line per thing that may need attention ------------------------
 
 function prKey(pr: EventItem): string {
 	return `${pr.repo}#${String(pr.number)}`;
 }
 
 /**
- * Which pending event a new one folds into; undefined: none, it is its own
- * line. Same key, same line.
+ * What an event is about: a pull request or Issue, an agent, a Workspace, an
+ * escalation, a timer, a custom type and text. While pending, a subject is
+ * **one line**, whatever and however many events said something about it.
  */
-export function coalesceKey(event: OrchestratorEvent): string | undefined {
+export function subjectOf(event: OrchestratorEvent): string {
 	switch (event.type) {
+		case "init":
+			return "init";
+		case "escalation_answered":
+			return `esc ${String(event.escalationId)}`;
+		case "unaccounted":
+		case "agent.turn_ended":
+		case "agent.asked":
+		case "agent.permission_requested":
+		case "agent.started":
+		case "agent.exited":
+		case "agent.failed":
+			return `agent ${event.agent.id}`;
+		case "github.assigned":
+		case "github.unassigned":
+		case "github.lane_changed":
+			return `gh ${prKey(event.item)}`;
+		case "github.pr_opened":
+		case "github.pr_ready":
+		case "github.pr_merged":
+		case "github.pr_closed":
+		case "github.review_requested":
+		case "github.pr_approved":
+		case "github.changes_requested":
 		case "github.review_comment":
 		case "github.reply":
 		case "github.checks":
-			return `${event.type} ${prKey(event.pr)}`;
-		case "github.lane_changed":
-			return `${event.type} ${event.project} ${prKey(event.item)}`;
-		case "agent.turn_ended":
-		case "unaccounted":
-			return `${event.type} ${event.agent.id}`;
-		case "agent.asked":
-			return `${event.type} ${event.agent.id} ${event.request}`;
+			return `gh ${prKey(event.pr)}`;
+		case "workspace.opened":
+		case "workspace.closed":
+		case "workspace.issue_assigned":
+		case "workspace.branch_changed":
+		case "workspace.pr_linked":
+			return `ws ${event.ws}`;
 		case "timer.elapsed":
-			return `${event.type} ${event.name}`;
+			return `timer ${event.name}`;
 		default:
-			return event.type.startsWith("custom.") && "text" in event
-				? `${event.type} ${event.text}`
-				: undefined;
+			return `${event.type} ${event.text}`;
 	}
+}
+
+/**
+ * Which part of its subject's line an event speaks for. Two events with the
+ * same subject and facet fold (`merge`); different facets of one subject
+ * share the line, the latest leading it.
+ */
+export function facetOf(event: OrchestratorEvent): string {
+	switch (event.type) {
+		case "github.assigned":
+		case "github.unassigned":
+			return "assign";
+		case "github.lane_changed":
+			return `lane ${event.project}`;
+		case "github.pr_approved":
+		case "github.changes_requested":
+			return "review";
+		case "github.pr_merged":
+		case "github.pr_closed":
+		case "agent.started":
+		case "agent.exited":
+		case "workspace.opened":
+		case "workspace.closed":
+			return "life";
+		case "agent.asked":
+		case "agent.permission_requested":
+			return `${event.type} ${event.request ?? ""}`;
+		case "workspace.pr_linked":
+			return `pr ${prKey(event.pr)}`;
+		case "workspace.issue_assigned":
+			return `issue ${prKey(event.issue)}`;
+		default:
+			return event.type;
+	}
+}
+
+/** An event that ends its subject: what was said about it before is moot. */
+function terminal(event: OrchestratorEvent): boolean {
+	return (
+		event.type === "github.pr_merged" ||
+		event.type === "github.pr_closed" ||
+		event.type === "agent.exited" ||
+		event.type === "workspace.closed"
+	);
+}
+
+/**
+ * Events that add news each time (a count, an answer, a turn, a tick): a
+ * second one is never a repeat of the first. Every other kind states where
+ * its subject stands, and the same statement again says nothing new.
+ */
+function accumulates(event: OrchestratorEvent): boolean {
+	return (
+		event.type === "init" ||
+		event.type === "escalation_answered" ||
+		event.type === "github.review_comment" ||
+		event.type === "github.reply" ||
+		event.type === "agent.turn_ended" ||
+		event.type === "timer.elapsed" ||
+		event.type.startsWith("custom.")
+	);
 }
 
 function union(a: readonly string[], b: readonly string[]): string[] {
 	return [...new Set([...a, ...b])];
 }
 
-/** `older` and `newer` (same `coalesceKey`) as the one line they become. */
+/**
+ * `older` and `newer` (same subject and facet) as the one statement they
+ * become — undefined when they cancel out (a lane moved back, an assignment
+ * taken back): nothing changed, nothing to say.
+ */
 export function merge(
 	older: OrchestratorEvent,
 	newer: OrchestratorEvent,
-): OrchestratorEvent {
+): OrchestratorEvent | undefined {
 	if (
 		older.type === "github.review_comment" &&
 		newer.type === "github.review_comment"
@@ -591,7 +692,18 @@ export function merge(
 		older.type === "github.lane_changed" &&
 		newer.type === "github.lane_changed"
 	)
-		return { ...newer, from: older.from };
+		return older.from === newer.to ? undefined : { ...newer, from: older.from };
+	if (
+		older.type === "workspace.branch_changed" &&
+		newer.type === "workspace.branch_changed"
+	)
+		return older.from === newer.to ? undefined : { ...newer, from: older.from };
+	// Assigned, then taken off (or the other way): where it was.
+	if (
+		(older.type === "github.assigned" && newer.type === "github.unassigned") ||
+		(older.type === "github.unassigned" && newer.type === "github.assigned")
+	)
+		return undefined;
 	// The latest turn, read from where the first unread one began.
 	if (older.type === "agent.turn_ended" && newer.type === "agent.turn_ended")
 		return {
@@ -600,6 +712,7 @@ export function merge(
 		};
 	// A timer is pending once: the first stands.
 	if (older.type === "timer.elapsed") return older;
+	// Where it stands now: the latest (checks failed → passed, approved …).
 	return newer;
 }
 
@@ -610,7 +723,14 @@ export type EventFate =
 	| "pending"
 	| "delivered"
 	| "filtered"
+	/** Folded into a later event about the same subject (`into`). */
 	| "coalesced"
+	/** No longer needed attention when it would have gone (`reason`). */
+	| "dropped-stale"
+	/** Said already, and its subject has not changed since. */
+	| "repeat"
+	/** Beyond a delivery's cap: counted in its last line, not sent. */
+	| "overflow"
 	| "dropped"
 	| "self";
 
@@ -622,6 +742,16 @@ export interface EventLogEntry {
 	/** When it went out (delivered), or was folded into `into` (coalesced). */
 	settledAt?: number;
 	into?: number;
+	/** Why it was dropped-stale. */
+	reason?: string;
+}
+
+/** One pending line: a subject, and what is to be said about it. */
+export interface HeldLine {
+	/** The latest statement: its `[type]` leads the line. */
+	readonly event: OrchestratorEvent;
+	/** The subject's other pending statements, oldest first. */
+	readonly also: readonly OrchestratorEvent[];
 }
 
 /** How many events the log keeps. */
@@ -636,6 +766,10 @@ export const BATCH_WINDOW_MS = 300;
 export const PICKUP_TIMEOUT_MS = 60_000;
 /** How often a batch held by that wait looks again. */
 const PICKUP_RETRY_MS = 2_000;
+/** The most lines one delivery carries; the rest are counted on a last line. */
+export const MAX_DELIVERY_LINES = 50;
+/** How long a resume waits for the sources to catch up before it delivers. */
+export const CATCH_UP_TIMEOUT_MS = 20_000;
 
 export interface EventDelivery {
 	/** The agent to tell, while one is assigned. */
@@ -653,6 +787,19 @@ export interface EventDelivery {
 	 * question, or something is still queued for it. Absent: it always can.
 	 */
 	readonly busy?: (agentId: string) => boolean;
+	/**
+	 * Whether a pending event still needs attention, read off live state just
+	 * before it goes (an agent working again, a question answered, an
+	 * escalation closed). False: it is dropped as `dropped-stale`. Absent:
+	 * everything does.
+	 */
+	readonly relevant?: (event: OrchestratorEvent) => boolean;
+	/**
+	 * The pause moved. On a resume, what it returns is awaited (at most
+	 * `CATCH_UP_TIMEOUT_MS`) before the held events go: a source that was
+	 * suspended catches up first, and its news goes in the same message.
+	 */
+	readonly paused?: (paused: boolean) => Promise<void> | void;
 	/** The pause, or what is pending, changed. */
 	readonly changed?: () => void;
 	readonly log?: (line: string) => void;
@@ -661,11 +808,47 @@ export interface EventDelivery {
 	readonly setTimer?: (ms: number, run: () => void) => { cancel(): void };
 }
 
+interface PendingLine {
+	readonly subject: string;
+	/** Per facet, the entry that now speaks for it. */
+	readonly facets: Map<string, EventLogEntry>;
+}
+
+function leading(line: PendingLine): EventLogEntry {
+	let lead: EventLogEntry | undefined;
+	for (const entry of line.facets.values())
+		if (lead === undefined || entry.seq > lead.seq) lead = entry;
+	return lead!;
+}
+
+function heldLine(line: PendingLine): HeldLine {
+	const lead = leading(line);
+	return {
+		event: lead.event,
+		also: [...line.facets.values()]
+			.filter((entry) => entry !== lead)
+			.sort((a, b) => a.seq - b.seq)
+			.map((entry) => entry.event),
+	};
+}
+
+/** What makes two statements of one facet the same statement. */
+function fingerprint(event: OrchestratorEvent): string {
+	return JSON.stringify(event);
+}
+
 export class EventDispatcher {
 	#paused = false;
-	/** Pending, in order: log entries whose fate is `pending`. */
-	readonly #pending: EventLogEntry[] = [];
+	/** Catching up after a resume: delivery waits for it. */
+	#catchingUp = false;
+	/** Pending, one line per subject, in the order the subjects came up. */
+	readonly #lines: PendingLine[] = [];
 	readonly #log: EventLogEntry[] = [];
+	/**
+	 * What the last delivery said about each subject, per facet, until
+	 * something new is heard about it: the same statement again is a repeat.
+	 */
+	readonly #said = new Map<string, Map<string, string>>();
 	#seq = 0;
 	#timer: { cancel(): void } | undefined;
 	/** The last delivery, until the orchestrator is seen to have taken it. */
@@ -681,9 +864,14 @@ export class EventDispatcher {
 		return this.#paused;
 	}
 
-	/** What is pending (paused, or waiting for the orchestrator), oldest first. */
+	/** What is pending, one event per subject (the one leading its line). */
 	held(): readonly OrchestratorEvent[] {
-		return this.#pending.map((entry) => entry.event);
+		return this.#lines.map((line) => leading(line).event);
+	}
+
+	/** What is pending, line by line, with what else each line says. */
+	heldLines(): readonly HeldLine[] {
+		return this.#lines.map(heldLine);
 	}
 
 	/** The last `last` events, oldest first, whatever came of them. */
@@ -722,22 +910,53 @@ export class EventDispatcher {
 			entry.fate = "filtered";
 			return entry;
 		}
-		const key = coalesceKey(event);
-		const earlier =
-			key === undefined
-				? undefined
-				: this.#pending.find((one) => coalesceKey(one.event) === key);
-		if (earlier !== undefined) {
-			// The new one takes the earlier one's place in line, merged.
-			const merged = merge(earlier.event, event);
-			(entry as { event: OrchestratorEvent }).event = merged;
+		const subject = subjectOf(event);
+		const facet = facetOf(event);
+		let line = this.#lines.find((one) => one.subject === subject);
+		if (
+			line === undefined &&
+			!accumulates(event) &&
+			this.#said.get(subject)?.get(facet) === fingerprint(event)
+		) {
+			entry.fate = "repeat";
+			entry.settledAt = entry.at;
+			return entry;
+		}
+		// Something was heard about it: what was said is no longer the last word.
+		this.#said.delete(subject);
+		if (line === undefined) {
+			line = { subject, facets: new Map() };
+			this.#lines.push(line);
+		}
+		const fold = (earlier: EventLogEntry) => {
 			earlier.fate = "coalesced";
 			earlier.into = entry.seq;
 			earlier.settledAt = entry.at;
-			this.#pending.splice(this.#pending.indexOf(earlier), 1, entry);
+		};
+		if (terminal(event)) {
+			// Merged, closed, gone: that is the line now.
+			for (const earlier of line.facets.values()) fold(earlier);
+			line.facets.clear();
+			line.facets.set(facet, entry);
 		} else {
-			this.#pending.push(entry);
+			const earlier = line.facets.get(facet);
+			if (earlier === undefined) line.facets.set(facet, entry);
+			else {
+				fold(earlier);
+				const merged = merge(earlier.event, event);
+				if (merged === undefined) {
+					entry.fate = "dropped-stale";
+					entry.reason = "no net change";
+					entry.settledAt = entry.at;
+					line.facets.delete(facet);
+				} else {
+					(entry as { event: OrchestratorEvent }).event = merged;
+					line.facets.set(facet, entry);
+				}
+			}
 		}
+		if (line.facets.size === 0)
+			this.#lines.splice(this.#lines.indexOf(line), 1);
 		this.delivery.changed?.();
 		this.#schedule(BATCH_WINDOW_MS);
 		return entry;
@@ -746,19 +965,57 @@ export class EventDispatcher {
 	pause(): void {
 		if (this.#paused) return;
 		this.#paused = true;
+		void this.delivery.paused?.(true);
 		this.delivery.changed?.();
 	}
 
-	/** Stop holding, and deliver what is pending as one message. How many went out. */
-	resume(): number {
+	/**
+	 * Stop holding: let the suspended sources catch up (their news joins the
+	 * held events), then deliver what is pending as one message. How many
+	 * lines went out.
+	 */
+	async resume(): Promise<number> {
 		if (!this.#paused) return 0;
 		this.#paused = false;
-		const count = this.#pending.length;
+		this.delivery.changed?.();
+		const catchUp = this.delivery.paused?.(false);
+		if (catchUp !== undefined) {
+			this.#catchingUp = true;
+			let timer: { cancel(): void } | undefined;
+			await Promise.race([
+				catchUp.catch(() => undefined),
+				new Promise<void>((done) => {
+					timer = this.delivery.setTimer?.(CATCH_UP_TIMEOUT_MS, done);
+				}),
+			]);
+			timer?.cancel();
+			this.#catchingUp = false;
+		}
+		if (this.#paused) return 0;
+		const count = this.#lines.length;
 		// The person asked for them: no batch window, no wait for a pickup.
 		this.#awaiting = undefined;
 		this.flush();
 		this.delivery.changed?.();
-		return count - this.#pending.length;
+		return count - this.#lines.length;
+	}
+
+	/** Drop what no longer needs attention; a line left with nothing goes. */
+	#dropStale(): void {
+		const relevant = this.delivery.relevant;
+		if (relevant === undefined) return;
+		const now = this.#now();
+		for (const line of [...this.#lines]) {
+			for (const [facet, entry] of [...line.facets])
+				if (!relevant(entry.event)) {
+					entry.fate = "dropped-stale";
+					entry.reason = "no longer needs attention";
+					entry.settledAt = now;
+					line.facets.delete(facet);
+				}
+			if (line.facets.size === 0)
+				this.#lines.splice(this.#lines.indexOf(line), 1);
+		}
 	}
 
 	/**
@@ -768,10 +1025,11 @@ export class EventDispatcher {
 	flush(): void {
 		this.#timer?.cancel();
 		this.#timer = undefined;
-		if (this.#pending.length === 0 || this.#paused) return;
+		if (this.#lines.length === 0 || this.#paused || this.#catchingUp) return;
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) {
-			for (const entry of this.#pending.splice(0)) entry.fate = "dropped";
+			for (const line of this.#lines.splice(0))
+				for (const entry of line.facets.values()) entry.fate = "dropped";
 			this.delivery.changed?.();
 			return;
 		}
@@ -790,16 +1048,35 @@ export class EventDispatcher {
 			this.#schedule(PICKUP_RETRY_MS);
 			return;
 		}
-		const batch = this.#pending.splice(0);
-		const events = batch.map((entry) => entry.event);
+		this.#dropStale();
+		if (this.#lines.length === 0) {
+			this.delivery.changed?.();
+			return;
+		}
+		const lines = this.#lines.splice(0);
+		const sent = lines.slice(0, MAX_DELIVERY_LINES);
+		const over = lines.slice(MAX_DELIVERY_LINES);
 		this.delivery.deliver(
 			agentId,
-			eventsMessage(events, this.delivery.settings(), now),
+			eventsMessage(sent.map(heldLine), this.delivery.settings(), now, {
+				more: over.length,
+			}),
 		);
-		for (const entry of batch) {
-			entry.fate = "delivered";
-			entry.settledAt = now;
+		for (const line of sent) {
+			const said = new Map<string, string>();
+			for (const [facet, entry] of line.facets) {
+				entry.fate = "delivered";
+				entry.settledAt = now;
+				if (!accumulates(entry.event))
+					said.set(facet, fingerprint(entry.event));
+			}
+			this.#said.set(line.subject, said);
 		}
+		for (const line of over)
+			for (const entry of line.facets.values()) {
+				entry.fate = "overflow";
+				entry.settledAt = now;
+			}
 		this.#awaiting =
 			this.delivery.busy === undefined
 				? undefined
@@ -832,28 +1109,75 @@ export function eventJson(event: OrchestratorEvent): Record<string, unknown> {
 }
 
 /**
+ * One subject's line: the latest statement's `[type]` and ids, its summary,
+ * then each other pending statement about it (`／ [type] …`, without the ids
+ * the line already has), and the link once at the end.
+ */
+export function heldLineText(line: HeldLine, now: number): string {
+	if (line.also.length === 0) return eventLine(line.event, now);
+	const lead = linePartsOf(line.event, now);
+	const parts = [
+		`[${line.event.type}]`,
+		...lead.head,
+		...(lead.summary === undefined ? [] : [`— ${lead.summary}`]),
+	];
+	let url = lead.url;
+	for (const event of line.also) {
+		const more = linePartsOf(event, now);
+		url ??= more.url;
+		parts.push(
+			"／",
+			`[${event.type}]`,
+			...more.head.filter((part) => !lead.head.includes(part)),
+			...(more.summary === undefined ? [] : [more.summary]),
+		);
+	}
+	if (url !== undefined) parts.push(url);
+	return parts.filter((part) => part.length > 0).join(" ");
+}
+
+/** The last line of a delivery that was cut at `MAX_DELIVERY_LINES`. */
+export function overflowLine(more: number): string {
+	return `…ほか ${String(more)} 件 (devhub --tell orchestrator events で確認)`;
+}
+
+/**
  * The message a batch is sent as: `init_prompt` when it carries `init` (and
- * one is set), else `event_prompt`; `{EVENT}` the lines, `{EVENT_JSON}` —
- * only when the template names it — the array.
+ * one is set), else `event_prompt`; `{EVENT}` the lines, one per subject,
+ * `{EVENT_JSON}` — only when the template names it — the array (a line's
+ * other statements as its `also`).
  */
 export function eventsMessage(
-	events: readonly OrchestratorEvent[],
+	items: readonly (OrchestratorEvent | HeldLine)[],
 	prompts: {
 		readonly event_prompt: string;
 		readonly init_prompt: string | undefined;
 	},
 	now: number,
+	options: { readonly more?: number } = {},
 ): string {
+	const lines: HeldLine[] = items.map((one) =>
+		"type" in one ? { event: one, also: [] } : one,
+	);
 	const template =
 		prompts.init_prompt !== undefined &&
-		events.some((event) => event.type === "init")
+		lines.some((line) => line.event.type === "init")
 			? prompts.init_prompt
 			: prompts.event_prompt;
-	const lines = events.map((event) => eventLine(event, now)).join("\n");
+	const more = options.more ?? 0;
+	const text = [
+		...lines.map((line) => heldLineText(line, now)),
+		...(more > 0 ? [overflowLine(more)] : []),
+	].join("\n");
 	const json = template.includes(EVENT_JSON_PLACEHOLDER)
-		? JSON.stringify(events.map(eventJson))
+		? JSON.stringify(
+				lines.map((line) => ({
+					...eventJson(line.event),
+					...(line.also.length === 0 ? {} : { also: line.also.map(eventJson) }),
+				})),
+			)
 		: undefined;
-	return renderEventPrompt(template, lines, json);
+	return renderEventPrompt(template, text, json);
 }
 
 export { EVENT_JSON_PLACEHOLDER, EVENT_PLACEHOLDER };

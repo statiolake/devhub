@@ -583,6 +583,17 @@ export interface OrchestratorBoardWire {
 	 * finish its turn (they then go out together, as one message).
 	 */
 	readonly held: number;
+	/**
+	 * GitHub polling: `active`; `suspended` while events are paused (nothing
+	 * is asked of GitHub, the last reading is kept); `idle` with no
+	 * orchestrator or no `[orchestrator.github] projects`.
+	 */
+	readonly github: {
+		readonly state: "active" | "suspended" | "idle";
+		/** The last poll (ms since the epoch). */
+		readonly lastAt?: number;
+		readonly problem?: string;
+	};
 	/** Oldest question first. */
 	readonly needsAnswer: readonly EscalationWire[];
 	/** Answered longest ago first. */
@@ -599,6 +610,7 @@ export const EMPTY_BOARD: OrchestratorBoardWire = {
 	start: {},
 	paused: false,
 	held: 0,
+	github: { state: "idle" },
 	needsAnswer: [],
 	inProgress: [],
 	closed: [],

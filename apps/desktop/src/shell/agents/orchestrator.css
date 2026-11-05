@@ -108,6 +108,22 @@
   white-space: nowrap;
 }
 
+.orchestrator-github {
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.orchestrator-github[data-state="active"] {
+  background: var(--wash);
+}
+
+.orchestrator-github[data-state="idle"] {
+  opacity: 0.6;
+}
+
 .orchestrator-history[aria-pressed="true"] {
   background: var(--wash-strong);
   color: var(--primary);

@@ -513,8 +513,8 @@ export interface TellOrchestratorPorts {
 		readonly prompt: string | undefined;
 	}): Promise<string>;
 	pause(): void;
-	/** How many held events went out. */
-	resume(): number;
+	/** How many held lines went out (after the suspended sources caught up). */
+	resume(): Promise<number>;
 	/** The last `last` events, oldest first, each with what came of it. */
 	events(last: number): readonly TellEventEntry[];
 	/** A `custom.*` event, as any source dispatches one. */
@@ -534,7 +534,10 @@ export interface TellEventEntry {
 	/** ms since the epoch. */
 	readonly at: number;
 	readonly type: string;
-	/** delivered, pending, filtered, coalesced (into `into`), dropped, self. */
+	/**
+	 * delivered, pending, filtered, coalesced (into `into`), dropped-stale,
+	 * repeat, overflow, dropped, self.
+	 */
 	readonly fate: string;
 	/** What `{EVENT}` holds for it. */
 	readonly line: string;
@@ -998,13 +1001,13 @@ export class TellService {
 				this.ports.orchestrator.pause();
 				return {
 					message:
-						"The orchestrator's events are paused: each is held, and 'orchestrator resume' delivers them in order.",
+						"The orchestrator's events are paused: each is held (one line per subject), GitHub polling is suspended, and 'orchestrator resume' catches up and delivers them as one message.",
 					data: { paused: true },
 				};
 			case "orchestrator-resume": {
-				const delivered = this.ports.orchestrator.resume();
+				const delivered = await this.ports.orchestrator.resume();
 				return {
-					message: `The orchestrator's events are delivered again${delivered === 0 ? "" : `; ${String(delivered)} held event(s) went out, in order, as one message`}.`,
+					message: `The orchestrator's events are delivered again${delivered === 0 ? "" : `; ${String(delivered)} held line(s) went out as one message`}.`,
 					data: { paused: false, delivered },
 				};
 			}
@@ -1318,6 +1321,7 @@ export class TellService {
 					: `orchestrator: ${agent.name} (${agent.id}), ${agent.status}${agent.presentation === "gui" ? "" : ", terminal"}`,
 				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, unaccounted ${String(counts.unaccounted)}`,
 				`events: ${board.paused ? "paused" : "delivered"}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
+				githubPollingLine(board),
 			].join("\n"),
 			data: {
 				agentId: agent?.id ?? null,
@@ -1326,6 +1330,7 @@ export class TellService {
 				counts,
 				paused: board.paused,
 				held: board.held,
+				github: board.github,
 				root: this.ports.orchestrator.configuredRoot() ?? null,
 			},
 		};
@@ -3616,4 +3621,22 @@ export function answeredBy(
 					? (caller?.label ?? OUTSIDE_LABEL)
 					: "a terminal outside any agent";
 	return `answered via devhub CLI by ${who}`;
+}
+
+/** `orchestrator status`'s GitHub line: polling, suspended by the pause, or idle and why. */
+function githubPollingLine(board: OrchestratorBoardWire): string {
+	const { state, lastAt, problem } = board.github;
+	const why =
+		state === "suspended"
+			? " (events paused: GitHub is not polled)"
+			: state === "idle"
+				? board.orchestratorAgentId === undefined
+					? " (no orchestrator)"
+					: " (no [orchestrator.github] projects)"
+				: "";
+	return [
+		`github polling: ${state}${why}`,
+		...(lastAt === undefined ? [] : [`last ${new Date(lastAt).toISOString()}`]),
+		...(problem === undefined ? [] : [problem]),
+	].join(", ");
 }
