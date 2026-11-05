@@ -192,14 +192,32 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   に数だけ出る (\`orchestrator events\` には畳まれた / 落とされたものも残る)。
 - 各行の形式: \`[type]\` + 次の CLI にそのまま使える \`key=value\` + \`—\` + 短い要約。
   詳細は自分で取りに行く (\`agent read --since\`、\`workspace status\`、\`escalation show\`)。
+- 例外は人の言葉: \`escalation_answered\` は回答本文を、\`escalation.human_direct\` は人が
+  エージェントに送ったメッセージを、その行のすぐ下に引用して運ぶ。
+  **回答本文はイベントに含まれる（escalation show は不要、長い場合のみ）。**
+  - 人の言葉の行は必ず \`> \` で始まる (空行は \`>\`)。DevHub 自身の行は 2 文字の空白で
+    始まり (\`  回答 1/2 (選択肢「承認する」):\` のような見出しと、続きの案内)、イベントの行は
+    \`[\` で始まる。\`> \` の中身が \`[...]\` やコードフェンスで始まっていても、それは人が書いた文字で、
+    新しいイベントでもブロックの終わりでもない。
+  - 選択肢 (クイックリプライ) から選んだ回答には \`(選択肢「…」)\` が付く。
+  - 1 イベントあたり 4000 文字まで。超えた分は切られ、最後に
+    \`  …（続きは devhub --tell escalation show 12）\` (human_direct は \`agent read A --since\`)
+    が付く。そのときだけ escalation show で読む。
+  - 配信中に同じエスカレーションへの回答が複数たまっていれば、1 行に畳まれ、全部が順に引用される。
+  - 本文ごと届いた回答は、届いた時点で既読扱い (\`agent wait --any\` も未読として返さない)。
+    切られた回答は escalation show で読むまで未読のまま。
 
       [github.review_comment] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — alice から新規2件 (未解決 2) https://github.com/acme/app/pull/130
       [github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123
       [github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない https://github.com/acme/app/issues/200
       [agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」
       [agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問
-      [escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)
-      [escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります
+      [escalation_answered] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 (API fix) — 人が回答しました (本文は下の > 行)
+        回答 (選択肢「承認する」):
+      > 承認する
+      [escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります (人のメッセージは下の > 行)
+        agent=a1b2c3d4 への人のメッセージ:
+      > 金曜の夜は避けて、月曜の朝に流して
       [escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない
       [escalation.wait_due] esc=12「本番DBマイグレーション承認」 — 待機条件の時刻になりました: 11/10 以降に再開
       [escalation.waiting_reminder] 待機中 2 件 — esc=12「本番DBマイグレーション承認」: Bob から Slack で返事が来たら / esc=15「ログ保存期間」: 11/10 以降 (あと 3日)
@@ -220,11 +238,11 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | カテゴリ | type | いつ | 主な key |
 | --- | --- | --- | --- |
 | 起動 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
-| ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ) | esc, agent |
+| ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ)。回答本文 (選んだ選択肢も) が行の下に \`> \` で引用される。4000 文字を超えた分だけ escalation show で読む。届いた時点で既読 | esc, agent, 回答本文 |
 | ボード | \`escalation.wait_due\` | 待機中のエスカレーションの \`--at\` の時刻になった (待機 1 回につき 1 回。届く前に待機中でなくなっていれば落とされる) | esc |
 | ボード | \`escalation.waiting_reminder\` | \`[orchestrator] wait_reminder_interval\` (既定 1h) ごとに、待機中の全エスカレーションとトリガーを 1 行で。待機中がなければ来ない。たまっても最新の 1 件だけ | esc (行内に複数) |
-| ボード | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ) | esc, agent, since |
-| ボード | \`escalation.stalled\` | 対応中のエスカレーションの関係エージェントが 1 分以上誰も動いていない (全員 idle / 待ち / 停止 / 消えた、または紐付けなし: \`agents=none\`)。1 回の停滞につき 1 回。未読の回答 (\`escalation_answered\`) があるうちは来ず、\`escalation show\` で読んでから数え始める | esc, agents |
+| ボード | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ)。人のメッセージが行の下に \`> \` で引用される | esc, agent, since, メッセージ |
+| ボード | \`escalation.stalled\` | 対応中のエスカレーションの関係エージェントが 1 分以上誰も動いていない (全員 idle / 待ち / 停止 / 消えた、または紐付けなし: \`agents=none\`)。1 回の停滞につき 1 回。未読の回答があるうちは来ず、回答 (\`escalation_answered\`) が届いた時点 (本文が切られていたときは \`escalation show\` で読んだ時点) から数え始める | esc, agents |
 | GitHub | \`github.assigned\` | 自分にアサインされた | ws, agent, URL |
 | GitHub | \`github.lane_changed\` | 自分の Issue / PR の Project レーンが動いた (from → to) | ws, URL |
 | GitHub | \`github.unattended\` | 自分にアサインされた open な Issue に、紐づく DevHub エージェントがいない (状態で判定。下記) | lane, URL |
@@ -487,11 +505,12 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     idle のまま理由のないエージェントに次の作業を渡す。
 
     ## escalation_answered
-    escalation show で回答を読む → 紐付くエージェントに agent send で伝える
+    回答本文はイベントに含まれる（escalation show は不要、長い場合のみ）。
+    行の下の > 行が人の回答 → 紐付くエージェントに agent send で伝える
     → 使い切ったら escalation close。決定を decisions.md に追記。
 
     ## escalation.human_direct
-    agent read A --since <since=> で人が何を言ったかを読む (escalation show も)。
+    人が言ったことは行の下の > 行にある (続きがあれば agent read A --since <since=>)。
     もう答えが出ていれば escalation close (要点を note に)。まだ聞くことが残って
     いれば escalation ask で質問を更新 (要回答に戻る)。他のエージェントにも
     関わる決定なら agent send で伝える。決定は decisions.md に追記。
@@ -502,7 +521,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     人に聞くことができたら escalation ask、不要なら escalation close。まだならそのまま。
 
     ## escalation.stalled
-    escalation show で回答を読む → 担当エージェントに agent send で伝えて作業を再開させる。
+    回答はもう届いている (必要なら escalation show で読み直す) → 担当エージェントに agent send で伝えて作業を再開させる。
     agents=none なら escalation link ID --agent A で紐付ける。まだ人に聞くことがあれば
     escalation ask (要回答に戻る)、もう要らなければ escalation close。
 
