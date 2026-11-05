@@ -1197,6 +1197,18 @@ describe("Back and Forward", () => {
     expect(model.selection.context).toEqual(B);
   });
 
+  it("comes back to the Orchestrator screen from an agent its board jumped to", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    // The Orchestrator row clicked, then an escalation's agent chip.
+    model.selectContext({ kind: "orchestrator" }, "full", "explicit");
+    model.selectContext({ kind: "agent", agentId: AG_A }, "full", "explicit");
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual({ kind: "orchestrator" });
+    model.navigateHistory("forward");
+    expect(model.selection.context).toEqual({ kind: "agent", agentId: AG_A });
+  });
+
   it("starts again from a reset", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.selectContext(A);

@@ -11,6 +11,8 @@ import {
 	CHANNELS,
 	type AgentsBridge,
 	type ContextMenuRequestWire,
+	type OrchestratorFileWire,
+	type OrchestratorFolderWire,
 	type RichClipboardWire,
 	type SlideImagesRequestWire,
 	type SlidesPdfRequestWire,
@@ -18,6 +20,7 @@ import {
 import {
 	agentActionsBridge,
 	appearanceBridge,
+	on,
 	openExternalUrl,
 	openModal,
 	orchestratorBoardBridge,
@@ -48,6 +51,20 @@ const api: AgentsBridge = {
 		ipcRenderer.invoke(CHANNELS.startOrchestrator) as Promise<void>,
 	setOrchestratorPaused: (paused: boolean) =>
 		ipcRenderer.invoke(CHANNELS.setOrchestratorPaused, paused) as Promise<void>,
+	listOrchestratorFolder: (path: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.listOrchestratorFolder,
+			path,
+		) as Promise<OrchestratorFolderWire>,
+	readOrchestratorFile: (path: string) =>
+		ipcRenderer.invoke(
+			CHANNELS.readOrchestratorFile,
+			path,
+		) as Promise<OrchestratorFileWire>,
+	openOrchestratorFile: (path: string) =>
+		ipcRenderer.invoke(CHANNELS.openOrchestratorFile, path) as Promise<void>,
+	onOrchestratorFilesChanged: (listener) =>
+		on<readonly string[]>(CHANNELS.orchestratorFilesChanged, listener),
 
 	openModal,
 	openExternalUrl,

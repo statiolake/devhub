@@ -85,7 +85,38 @@ conversation's own Markdown renderer (code, tables, KaTeX math, Mermaid, SVG,
 Vega-Lite — whatever a chat answer can show), the related agents (a click
 shows that agent, to talk to it directly) and links, and the composer: free
 Markdown, ⌘Return sends, and the question's options as quick replies. Esc
-goes back to the board.
+(in the composer, while it is empty), "← ボード" or the mouse's Back button
+over the board goes back to the board; Forward opens again what Back left.
+The board and an escalation are two pages of one stack: opening one pushes
+it in from the right and going back reverses it (220 ms, transform and
+opacity only; under Reduce Motion an instant swap). The left pane's width is
+the layout's and never changes with what it shows — a wide code block or
+diagram scrolls or scales inside it. Focus goes to the composer (or the
+thread) on open and back to the card on return. Jumping to an agent from
+an escalation (its chip, or a row in 不明) is a deliberate move
+(`reason: "explicit"`), so Back (prefix+h) returns to the Orchestrator
+screen.
+
+### ファイル: the orchestrator's folder
+
+The left pane's second tab, ボード | ファイル (the board is the default; the
+choice is kept for the session), is the orchestrator's folder — the running
+orchestrator's Workspace root, else `[orchestrator] root` — as a tree: where
+it keeps what it decided (`decisions.md`) and its skills (`.claude/skills`).
+`.git`, `node_modules`, `.DS_Store` and the like are left out, and so is what
+the folder's `.gitignore` ignores; dot-folders stay. A file opens over the
+tree the way an escalation opens over the board, read-only: Markdown with
+the conversation's renderer, other text as a highlighted code block, images
+(SVG included) inline. **エディタで開く** opens it in the workbench of the
+Workspace that contains it — the root's own row — as `devhub <file>` would,
+and that too is a place in Back and Forward.
+
+Main reads the folder and watches it
+(`main/orchestrator/orchestratorFiles.ts`): the page lists, reads and is told
+what changed (debounced), so when the orchestrator writes `decisions.md` the
+tree and the open file follow, and the tab shows a dot while the board is in
+front. Every path is from the root and confined to it: an absolute path,
+`..`, or a symlink that leads out is refused.
 
 ### 不明: agents nobody accounts for
 

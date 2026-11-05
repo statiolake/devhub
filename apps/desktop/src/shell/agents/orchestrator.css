@@ -8,15 +8,17 @@
  * what waits for the person. Every colour is a token (`tokens.css`).
  */
 
-/* Reading one is wider: a thread is prose and code, the board is a list. */
-.orchestrator-board[data-reading] {
-  width: clamp(420px, 52%, 820px);
-}
-
+/* The left pane has one width, the layout's, whatever it shows: the board,
+   or an escalation opened on it. Nothing it holds can widen it — a long code
+   block or a diagram scrolls or scales inside (`overflow: hidden` here and
+   on the stage), and opening one moves only the layers in the stage. */
 .orchestrator-board {
   --board-pad: var(--space-3);
+  /* A push or a pop: `NAV_MS` in `OrchestratorScreen.tsx`. */
+  --nav-duration: 220ms;
   display: flex;
-  width: clamp(360px, 42%, 640px);
+  overflow: hidden;
+  width: clamp(380px, 46%, 720px);
   min-width: 0;
   height: 100%;
   flex: none;
@@ -163,11 +165,278 @@
   color: var(--waiting);
 }
 
+/* ------------------------------------------------------------- the stack */
+
+/*
+ * The board and an escalation are two pages of one stack, as in a Mac or
+ * iOS navigation: opening one pushes it in from the trailing edge while the
+ * board drifts back to the leading edge and fades; going back is the same,
+ * reversed. Each layer fills the stage, so neither one's size ever depends
+ * on the other, and only transform and opacity move.
+ */
+.orchestrator-stage {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.orchestrator-layer {
+  position: absolute;
+  box-sizing: border-box;
+  inset: 0;
+}
+
+.orchestrator-stage[data-nav="push"] > [data-layer="under"] {
+  animation: orchestrator-board-out var(--nav-duration) var(--ease-standard)
+    backwards;
+  visibility: hidden;
+}
+
+.orchestrator-stage[data-nav="pop"] > [data-layer="under"] {
+  animation: orchestrator-board-in var(--nav-duration) var(--ease-standard)
+    backwards;
+}
+
+.orchestrator-stage[data-nav="push"] > [data-layer="over"] {
+  animation: orchestrator-reading-in var(--nav-duration) var(--ease-standard)
+    backwards;
+}
+
+.orchestrator-stage[data-nav="pop"] > [data-layer="over"] {
+  animation: orchestrator-reading-out var(--nav-duration) var(--ease-standard)
+    both;
+  pointer-events: none;
+}
+
+/* A push leaves nothing behind once it has landed (`backwards`): a resting
+   transform would make the reading view the containing block of whatever the
+   renderer pins to the window. A pop holds its end until it unmounts. */
+
+/* The page that comes in casts a soft edge over the one it covers. */
+.orchestrator-stage[data-nav] > [data-layer="over"] {
+  box-shadow:
+    -1px 0 0 var(--line-soft),
+    -10px 0 24px var(--shadow-soft);
+}
+
+@keyframes orchestrator-board-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(-24%);
+    visibility: hidden;
+  }
+}
+
+@keyframes orchestrator-board-in {
+  from {
+    opacity: 0;
+    transform: translateX(-24%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes orchestrator-reading-in {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes orchestrator-reading-out {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes orchestrator-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Reduce Motion: nothing slides. Opening fades the escalation in, briefly;
+   going back is an instant swap (`OrchestratorScreen.tsx` skips the pop). */
+@media (prefers-reduced-motion: reduce) {
+  .orchestrator-stage[data-nav="push"] > [data-layer="under"],
+  .orchestrator-stage[data-nav="pop"] > [data-layer="under"],
+  .orchestrator-stage[data-nav="pop"] > [data-layer="over"] {
+    animation: none;
+  }
+
+  .orchestrator-stage[data-nav="push"] > [data-layer="over"] {
+    animation: orchestrator-fade-in var(--motion-fast) var(--ease-standard) both;
+  }
+}
+
+/* ------------------------------------------------------------- tabs */
+
+/* ボード | ファイル: the header's title, as two quiet segments. */
+.orchestrator-tabs {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.orchestrator-tab {
+  position: relative;
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--secondary);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.orchestrator-tab:hover {
+  background: var(--wash);
+  color: var(--primary);
+}
+
+.orchestrator-tab[aria-selected="true"] {
+  background: var(--wash-strong);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.orchestrator-tab:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+/* Something in the folder changed since the tab was last looked at. */
+.orchestrator-tab-dot {
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ------------------------------------------------------------- files */
+
+.orchestrator-files {
+  padding: var(--space-2) 0 var(--space-4);
+  overflow-y: auto;
+}
+
+.orchestrator-files-root {
+  overflow: hidden;
+  padding: 0 var(--board-pad) var(--space-2);
+  color: var(--tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestrator-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.orchestrator-files > .orchestrator-tree {
+  padding: 0 var(--space-2);
+}
+
+.orchestrator-file-row {
+  display: flex;
+  width: 100%;
+  height: 24px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 4px;
+  padding-right: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.orchestrator-file-row:hover {
+  background: var(--wash);
+}
+
+.orchestrator-file-row:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.orchestrator-file-chevron {
+  width: 12px;
+  flex: none;
+  color: var(--tertiary);
+  font-size: 10px;
+  text-align: center;
+}
+
+.orchestrator-file-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestrator-file-row[data-kind="directory"] .orchestrator-file-name {
+  color: var(--secondary);
+}
+
+.orchestrator-file-folder {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orchestrator-open-editor {
+  flex: none;
+}
+
+.orchestrator-file-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 /* ------------------------------------------------------------- lanes */
 
 .orchestrator-lanes {
-  min-height: 0;
-  flex: 1 1 auto;
   padding: var(--space-2) 0 var(--space-4);
   overflow-y: auto;
 }
@@ -415,8 +684,7 @@
 
 .orchestrator-reading {
   display: flex;
-  min-height: 0;
-  flex: 1 1 auto;
+  min-width: 0;
   flex-direction: column;
   background: var(--surface);
 }
@@ -429,7 +697,10 @@
 }
 
 .orchestrator-back {
+  display: inline-flex;
   height: 20px;
+  align-items: center;
+  gap: 4px;
   margin: 0 0 4px -6px;
   padding: 0 6px;
   border: 0;
@@ -489,12 +760,36 @@
 
 /* The thread: the conversation's renderer, at the board's measure. */
 .orchestrator-thread {
+  min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
   padding: var(--space-3) var(--board-pad) var(--space-3);
+  overflow-x: hidden;
   overflow-y: auto;
+  overflow-wrap: anywhere;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.orchestrator-thread:focus-visible {
+  outline: none;
+}
+
+/* What the renderer draws keeps to the pane: a code block or a table
+   scrolls (the conversation's own rules), a picture or a diagram scales. */
+.orchestrator-entry,
+.orchestrator-entry-body {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.orchestrator-entry-body :is(img, svg, video, canvas) {
+  max-width: 100%;
+}
+
+.orchestrator-entry-body pre {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .orchestrator-entry + .orchestrator-entry {

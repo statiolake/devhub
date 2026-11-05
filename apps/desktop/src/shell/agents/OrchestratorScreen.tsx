@@ -1,6 +1,7 @@
 /**
- * The Orchestrator screen's left half: the board, and an escalation opened
- * on it.
+ * The Orchestrator screen's left half: two tabs, ボード (the board, and an
+ * escalation opened on it) and ファイル (the orchestrator's folder,
+ * `OrchestratorFiles.tsx`), each a navigation stack (`navStack.ts`).
  *
  * The right half is the orchestrator agent's own pane — an ordinary Agent
  * pane from the pool (`AgentPane`), so its conversation is exactly the one
@@ -22,6 +23,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import type {
   EscalationWire,
@@ -29,18 +31,15 @@ import type {
   UnaccountedAgentWire,
 } from "../../ipc/contract";
 import type { AgentStatus, AppSnapshot } from "../../ipc/appShell";
-import { Markdown } from "../conversation/Markdown";
-import {
-  AgentCwdProvider,
-  ConversationActionsProvider,
-  type ConversationActions,
-} from "../conversation/ConversationContext";
-import { PathLinks, PathLinksProvider } from "../conversation/pathLinks";
 import { useMessageKeys, SEND_KEY } from "../conversation/messageKeys";
 import { SendIcon } from "../conversation/icons";
 import { StatusMark } from "../components/sidebar/StatusMark";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
+import { historyDirectionOfButton } from "../historyButtons";
+import { focusIsOurs, useNavStack } from "./navStack";
+import { RichText } from "./orchestratorRichText";
+import { FilesPage } from "./OrchestratorFiles";
 
 /** `45s`, `12m`, `3h`, `2d`. */
 export function span(ms: number): string {
@@ -78,140 +77,146 @@ export function preview(markdown: string): string {
   return (prose[0] ?? "").replace(/[*_`]/gu, "");
 }
 
-/**
- * What the conversation's renderer asks of the page, for an escalation's
- * thread: links, copies and diagrams through the bridge; a file path is
- * looked up on the agent the escalation is about (or the orchestrator's).
- * Nothing here sends anything to an agent — the composer below is the
- * board's own.
- */
-function useThreadActions(
-  agentId: string | undefined,
-  reportFailure: (error: unknown) => void,
-): ConversationActions {
-  return useMemo(() => {
-    const bridge = devhub();
-    const none = () =>
-      Promise.reject(new Error("an escalation's thread sends nothing"));
-    return {
-      writeClipboard: (text) => bridge.writeClipboard(text),
-      writeClipboardImage: (png) => bridge.writeClipboardImage(png),
-      writeClipboardRich: (content) => bridge.writeClipboardRich(content),
-      saveSlidesPdf: (request) => bridge.saveSlidesPdf(request),
-      saveSlideImages: (request) => bridge.saveSlideImages(request),
-      showContextMenu: (request) => bridge.showContextMenu(request),
-      openExternalUrl: (url) => bridge.openExternalUrl(url),
-      send: none,
-      startEditingPending: none,
-      editPending: none,
-      stopEditingPending: none,
-      removePending: none,
-      sendPendingNow: none,
-      instruct: none,
-      rewind: none,
-      cancelLimitResume: none,
-      interrupt: none,
-      stopTask: none,
-      answer: none,
-      setSetting: none,
-      cliDefaults: () => Promise.resolve(undefined),
-      setCliDefault: none,
-      openResume: () => undefined,
-      openMcp: () => undefined,
-      restart: none,
-      saveDraft: () => Promise.resolve(),
-      resolvePaths: (cwd, paths) =>
-        agentId === undefined
-          ? Promise.resolve(paths.map(() => null))
-          : bridge.conversation.resolvePaths(agentId, cwd, paths),
-      readEmbedFile: (path) =>
-        agentId === undefined
-          ? Promise.resolve(null)
-          : bridge.conversation.readEmbedFile(agentId, path),
-      embedSignature: (path) =>
-        agentId === undefined
-          ? Promise.resolve(null)
-          : bridge.conversation.embedSignature(agentId, path),
-      openFile: (path, range) =>
-        agentId === undefined
-          ? none()
-          : bridge.conversation.openFile(agentId, path, range),
-      reportFailure,
-    } satisfies ConversationActions;
-  }, [agentId, reportFailure]);
-}
-
-/** The conversation's renderer, set up for a thread outside a conversation. */
-function RichText({
-  source,
-  agentId,
-}: {
-  readonly source: string;
-  readonly agentId: string | undefined;
-}) {
-  const { reportFailure } = useAgents();
-  const actions = useThreadActions(agentId, reportFailure);
-  const links = useMemo(
-    () => new PathLinks(actions.resolvePaths, actions.reportFailure),
-    [actions],
-  );
-  return (
-    <ConversationActionsProvider value={actions}>
-      <PathLinksProvider value={links}>
-        <AgentCwdProvider value={undefined}>
-          <Markdown source={source} streaming={false} />
-        </AgentCwdProvider>
-      </PathLinksProvider>
-    </ConversationActionsProvider>
-  );
-}
-
 // --- the board ----------------------------------------------------------------
 
-type Opened = { readonly kind: "escalation"; readonly id: number } | undefined;
+export { NAV_MS } from "./navStack";
+
+/** The left pane's two tabs; the board is the default. */
+export type BoardTab = "board" | "files";
+
+const TAB_KEY = "devhub.orchestrator.tab";
+
+/** The tab chosen in this session, kept across a reload of the page. */
+function rememberedTab(): BoardTab {
+  try {
+    return window.sessionStorage.getItem(TAB_KEY) === "files"
+      ? "files"
+      : "board";
+  } catch {
+    return "board";
+  }
+}
+
+/** What a tab answers of the mouse's side buttons; false leaves it be. */
+export type SideButtons = (direction: "back" | "forward") => boolean;
 
 export function OrchestratorBoard({
   snapshot,
 }: {
   readonly snapshot: AppSnapshot;
 }) {
-  const { board, reportFailure, dispatch } = useAgents();
-  const now = useNow();
-  const [opened, setOpened] = useState<Opened>(undefined);
+  const { board, reportFailure } = useAgents();
+  const [tab, setTab] = useState<BoardTab>(rememberedTab);
   const [history, setHistory] = useState(false);
-  const all = useMemo(
-    () => [...board.needsAnswer, ...board.inProgress, ...board.closed],
-    [board],
-  );
-  const open =
-    opened === undefined ? undefined : all.find((one) => one.id === opened.id);
-  const focusAgent = useCallback(
-    (agentId: string) => {
-      void dispatch({
-        type: "select_context",
-        context: { kind: "agent", agentId },
-      });
-    },
-    [dispatch],
-  );
+  // Something in the folder changed while the Files tab was not looked at.
+  const [filesChanged, setFilesChanged] = useState(false);
+  const section = useRef<HTMLElement>(null);
+  const sideButtons = useRef<SideButtons>(() => false);
+  const choose = useCallback((next: BoardTab) => {
+    setTab(next);
+    if (next === "files") setFilesChanged(false);
+    try {
+      window.sessionStorage.setItem(TAB_KEY, next);
+    } catch {
+      // Remembering is a convenience.
+    }
+  }, []);
+  useEffect(() => {
+    if (tab === "files") return;
+    const files = devhub().onOrchestratorFilesChanged;
+    if (typeof files !== "function") return;
+    return files(() => {
+      setFilesChanged(true);
+    });
+  }, [tab]);
+  // The mouse's side buttons over the left pane: Back goes back as Esc
+  // does, Forward opens again what Back left. Only what a tab answers is
+  // kept from the page's own handler (`historyButtons.ts`, the app's
+  // history); anything else — Back on the board itself — is left to it.
+  // Over the orchestrator's pane on the right they are the app's.
+  useEffect(() => {
+    const element = section.current;
+    if (!element) return;
+    // The default is cancelled on every phase, as the page's handler does,
+    // so Chromium never takes the buttons as the document's Back/Forward.
+    const claim = (event: MouseEvent) => {
+      if (historyDirectionOfButton(event.button) === undefined) return;
+      event.preventDefault();
+    };
+    const onUp = (event: MouseEvent) => {
+      const direction = historyDirectionOfButton(event.button);
+      if (direction === undefined) return;
+      event.preventDefault();
+      if (sideButtons.current(direction)) event.stopPropagation();
+    };
+    element.addEventListener("mousedown", claim);
+    element.addEventListener("auxclick", claim);
+    element.addEventListener("mouseup", onUp);
+    return () => {
+      element.removeEventListener("mousedown", claim);
+      element.removeEventListener("auxclick", claim);
+      element.removeEventListener("mouseup", onUp);
+    };
+  }, []);
   const orchestrator = snapshot.workspaces
     .flatMap((workspace) => workspace.agents)
     .find((agent) => agent.id === board.orchestratorAgentId);
   return (
     <section
+      ref={section}
       className="orchestrator-board"
       aria-label="Orchestrator board"
-      data-reading={open === undefined ? undefined : "true"}
     >
       <header className="orchestrator-board-header">
         <div className="orchestrator-board-title">
-          <h1>Board</h1>
-          <span className="orchestrator-board-counts">
-            {board.needsAnswer.length} 要回答 · {board.inProgress.length} 対応中
-            {board.unaccounted.length > 0
-              ? ` · ${String(board.unaccounted.length)} 不明`
-              : ""}
-          </span>
+          <div
+            className="orchestrator-tabs"
+            role="tablist"
+            aria-label="Orchestrator"
+          >
+            <button
+              type="button"
+              role="tab"
+              id="orchestrator-tab-board"
+              className="orchestrator-tab"
+              aria-selected={tab === "board"}
+              aria-controls="orchestrator-panel-board"
+              onClick={() => {
+                choose("board");
+              }}
+            >
+              ボード
+            </button>
+            <button
+              type="button"
+              role="tab"
+              id="orchestrator-tab-files"
+              className="orchestrator-tab"
+              aria-selected={tab === "files"}
+              aria-controls="orchestrator-panel-files"
+              onClick={() => {
+                choose("files");
+              }}
+            >
+              ファイル
+              {filesChanged ? (
+                <span
+                  className="orchestrator-tab-dot"
+                  role="status"
+                  aria-label="changed"
+                />
+              ) : null}
+            </button>
+          </div>
+          {tab === "board" ? (
+            <span className="orchestrator-board-counts">
+              {board.needsAnswer.length} 要回答 · {board.inProgress.length}{" "}
+              対応中
+              {board.unaccounted.length > 0
+                ? ` · ${String(board.unaccounted.length)} 不明`
+                : ""}
+            </span>
+          ) : null}
         </div>
         <div className="orchestrator-board-tools">
           <button
@@ -268,108 +273,196 @@ export function OrchestratorBoard({
                 ? "suspended"
                 : "idle"}
           </span>
-          <button
-            type="button"
-            className="orchestrator-history"
-            aria-pressed={history}
-            onClick={() => {
-              setHistory((value) => !value);
-            }}
-          >
-            Closed {board.closed.length > 0 ? board.closed.length : ""}
-          </button>
-        </div>
-      </header>
-      {open === undefined ? (
-        <div className="orchestrator-lanes">
-          <Lane
-            title="要回答"
-            hint="Needs your answer: the orchestrator cannot go on without it. Oldest first."
-            tone="ask"
-            count={board.needsAnswer.length}
-            empty="Nothing is waiting for you."
-          >
-            {board.needsAnswer.map((one) => (
-              <EscalationCard
-                key={one.id}
-                escalation={one}
-                now={now}
-                onOpen={() => {
-                  setOpened({ kind: "escalation", id: one.id });
-                }}
-              />
-            ))}
-          </Lane>
-          <Lane
-            title="対応中"
-            hint="In progress: you answered, and the orchestrator is carrying it out."
-            tone="progress"
-            count={board.inProgress.length}
-            empty="Nothing in progress."
-          >
-            {board.inProgress.map((one) => (
-              <EscalationCard
-                key={one.id}
-                escalation={one}
-                now={now}
-                onOpen={() => {
-                  setOpened({ kind: "escalation", id: one.id });
-                }}
-              />
-            ))}
-          </Lane>
-          <Lane
-            title="不明"
-            hint={`Unaccounted: idle for over ${span(board.graceMs)} with no open escalation. Normally empty; the orchestrator is told about each.`}
-            tone="unaccounted"
-            count={board.unaccounted.length}
-            empty="Every agent is accounted for."
-          >
-            {board.unaccounted.map((one) => (
-              <UnaccountedRow
-                key={one.agentId}
-                agent={one}
-                now={now}
-                onFocus={() => {
-                  focusAgent(one.agentId);
-                }}
-              />
-            ))}
-          </Lane>
-          {history ? (
-            <Lane
-              title="Closed"
-              hint="Closed escalations, most recent first."
-              tone="closed"
-              count={board.closed.length}
-              empty="Nothing closed yet."
+          {tab === "board" ? (
+            <button
+              type="button"
+              className="orchestrator-history"
+              aria-pressed={history}
+              onClick={() => {
+                setHistory((value) => !value);
+              }}
             >
-              {board.closed.map((one) => (
-                <EscalationCard
-                  key={one.id}
-                  escalation={one}
-                  now={now}
-                  onOpen={() => {
-                    setOpened({ kind: "escalation", id: one.id });
-                  }}
-                />
-              ))}
-            </Lane>
+              Closed {board.closed.length > 0 ? board.closed.length : ""}
+            </button>
           ) : null}
         </div>
+      </header>
+      {tab === "board" ? (
+        <BoardPage pane={section} history={history} sideButtons={sideButtons} />
       ) : (
+        <FilesPage
+          pane={section}
+          sideButtons={sideButtons}
+          orchestratorAgentId={board.orchestratorAgentId}
+        />
+      )}
+    </section>
+  );
+}
+
+/** The board tab: the lanes, and an escalation pushed over them. */
+function BoardPage({
+  pane,
+  history,
+  sideButtons,
+}: {
+  readonly pane: RefObject<HTMLElement | null>;
+  readonly history: boolean;
+  readonly sideButtons: RefObject<SideButtons>;
+}) {
+  const { board, dispatch } = useAgents();
+  const now = useNow();
+  const lanes = useRef<HTMLDivElement>(null);
+  const stack = useNavStack<EscalationWire>(pane, (escalation) =>
+    lanes.current?.querySelector<HTMLElement>(
+      `[data-escalation-id="${String(escalation.id)}"]`,
+    ),
+  );
+  const { nav, shown, forward, open: openCard, close } = stack;
+  const all = useMemo(
+    () => [...board.needsAnswer, ...board.inProgress, ...board.closed],
+    [board],
+  );
+  // The escalation on the page over, as it was when it was opened; the
+  // board's own copy of it is read live. It stays through a pop, so the
+  // view slides out with what it showed.
+  const live =
+    shown === undefined ? undefined : all.find((one) => one.id === shown.id);
+  const open = live ?? shown;
+  useEffect(() => {
+    sideButtons.current = (direction) => {
+      if (direction === "back" && nav === "push") {
+        close();
+        return true;
+      }
+      if (direction === "forward" && nav !== "push" && forward !== undefined) {
+        const again = all.find((one) => one.id === forward.id);
+        if (again === undefined) return false;
+        openCard(again);
+        return true;
+      }
+      return false;
+    };
+  }, [sideButtons, nav, forward, all, close, openCard]);
+  // An escalation that leaves the board while it is read closes, as before.
+  useEffect(() => {
+    if (nav === "push" && shown !== undefined && live === undefined) close();
+  }, [nav, shown, live, close]);
+  // Jumping to an agent is a deliberate move: a place in Back and Forward
+  // at once, so prefix+h comes back here (`NavigationReason`).
+  const focusAgent = useCallback(
+    (agentId: string) => {
+      void dispatch({
+        type: "select_context",
+        context: { kind: "agent", agentId },
+        reason: "explicit",
+      });
+    },
+    [dispatch],
+  );
+  const reading = nav === "push";
+  return (
+    <div
+      className="orchestrator-stage"
+      data-nav={nav}
+      role="tabpanel"
+      id="orchestrator-panel-board"
+      aria-labelledby="orchestrator-tab-board"
+    >
+      <div
+        ref={lanes}
+        className="orchestrator-lanes orchestrator-layer"
+        data-layer="under"
+        inert={reading}
+        aria-hidden={reading ? true : undefined}
+      >
+        <Lane
+          title="要回答"
+          hint="Needs your answer: the orchestrator cannot go on without it. Oldest first."
+          tone="ask"
+          count={board.needsAnswer.length}
+          empty="Nothing is waiting for you."
+        >
+          {board.needsAnswer.map((one) => (
+            <EscalationCard
+              key={one.id}
+              escalation={one}
+              now={now}
+              onOpen={() => {
+                openCard(one);
+              }}
+            />
+          ))}
+        </Lane>
+        <Lane
+          title="対応中"
+          hint="In progress: you answered, and the orchestrator is carrying it out."
+          tone="progress"
+          count={board.inProgress.length}
+          empty="Nothing in progress."
+        >
+          {board.inProgress.map((one) => (
+            <EscalationCard
+              key={one.id}
+              escalation={one}
+              now={now}
+              onOpen={() => {
+                openCard(one);
+              }}
+            />
+          ))}
+        </Lane>
+        <Lane
+          title="不明"
+          hint={`Unaccounted: idle for over ${span(board.graceMs)} with no open escalation. Normally empty; the orchestrator is told about each.`}
+          tone="unaccounted"
+          count={board.unaccounted.length}
+          empty="Every agent is accounted for."
+        >
+          {board.unaccounted.map((one) => (
+            <UnaccountedRow
+              key={one.agentId}
+              agent={one}
+              now={now}
+              onFocus={() => {
+                focusAgent(one.agentId);
+              }}
+            />
+          ))}
+        </Lane>
+        {history ? (
+          <Lane
+            title="Closed"
+            hint="Closed escalations, most recent first."
+            tone="closed"
+            count={board.closed.length}
+            empty="Nothing closed yet."
+          >
+            {board.closed.map((one) => (
+              <EscalationCard
+                key={one.id}
+                escalation={one}
+                now={now}
+                onOpen={() => {
+                  openCard(one);
+                }}
+              />
+            ))}
+          </Lane>
+        ) : null}
+      </div>
+      {open === undefined ? null : (
         <EscalationView
           key={open.id}
           escalation={open}
           now={now}
+          leaving={!reading}
           orchestratorAgentId={board.orchestratorAgentId}
-          onBack={() => {
-            setOpened(undefined);
-          }}
+          onBack={close}
           onFocusAgent={focusAgent}
         />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -428,7 +521,12 @@ function EscalationCard({
     escalation.entries.some((entry) => entry.role === "human");
   return (
     <li>
-      <button type="button" className="orchestrator-card" onClick={onOpen}>
+      <button
+        type="button"
+        className="orchestrator-card"
+        data-escalation-id={escalation.id}
+        onClick={onOpen}
+      >
         <span className="orchestrator-card-head">
           <span className="orchestrator-card-id">#{escalation.id}</span>
           <span className="orchestrator-card-title">{escalation.title}</span>
@@ -505,30 +603,58 @@ const STATE_LABEL: Record<EscalationWire["state"], string> = {
 function EscalationView({
   escalation,
   now,
+  leaving,
   orchestratorAgentId,
   onBack,
   onFocusAgent,
 }: {
   readonly escalation: EscalationWire;
   readonly now: number;
+  /** Going back to the board: drawn while it slides out, and not used. */
+  readonly leaving: boolean;
   readonly orchestratorAgentId: string | undefined;
   readonly onBack: () => void;
   readonly onFocusAgent: (agentId: string) => void;
 }) {
   const pathsOn = escalation.agents[0]?.agentId ?? orchestratorAgentId;
+  const root = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   // A new entry is read from its start: the newest is at the bottom.
   useEffect(() => {
     const element = scroller.current;
     if (element) element.scrollTop = element.scrollHeight;
   }, [escalation.entries.length]);
+  // Opened: focus goes to the answer when one is asked for, else to the
+  // thread — and only from inside the board, never from elsewhere.
+  useEffect(() => {
+    const element = root.current;
+    if (
+      !focusIsOurs(element?.closest<HTMLElement>(".orchestrator-board") ?? null)
+    )
+      return;
+    const target =
+      escalation.state === "needs_answer"
+        ? (element?.querySelector("textarea") ?? scroller.current)
+        : scroller.current;
+    target?.focus({ preventScroll: true });
+    // Once, when the view opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return (
     <div
-      className="orchestrator-reading"
+      ref={root}
+      className="orchestrator-reading orchestrator-layer"
+      data-layer="over"
+      inert={leaving}
+      aria-hidden={leaving ? true : undefined}
       onKeyDown={(event) => {
+        // Esc goes back; in the composer, only while nothing is written.
         if (
           event.key === "Escape" &&
-          !(event.target instanceof HTMLTextAreaElement)
+          !(
+            event.target instanceof HTMLTextAreaElement &&
+            event.target.value !== ""
+          )
         ) {
           event.preventDefault();
           onBack();
@@ -543,7 +669,7 @@ function EscalationView({
           aria-label="Back to the board"
           title="Back to the board (Esc)"
         >
-          ‹ Board
+          <span aria-hidden="true">←</span> ボード
         </button>
         <div className="orchestrator-reading-title">
           <span className="orchestrator-card-id">#{escalation.id}</span>
@@ -602,6 +728,8 @@ function EscalationView({
       <div
         className="orchestrator-thread conversation-selectable"
         ref={scroller}
+        tabIndex={-1}
+        aria-label={`#${String(escalation.id)} ${escalation.title}`}
       >
         {escalation.entries.map((entry, index) => (
           <article

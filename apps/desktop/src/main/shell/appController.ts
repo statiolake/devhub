@@ -350,7 +350,18 @@ import {
 	OrchestratorService,
 	type LiveAgent,
 } from "../orchestrator/orchestratorService.js";
-import { ensureOrchestratorRoot } from "../orchestrator/root.js";
+import {
+	ensureOrchestratorRoot,
+	expandOrchestratorRoot,
+} from "../orchestrator/root.js";
+import {
+	insideRoot,
+	listFolder,
+	OrchestratorFileError,
+	readRootFile,
+	rootProblem,
+	watchRoot,
+} from "../orchestrator/orchestratorFiles.js";
 import { workspaceToken } from "../orchestrator/events.js";
 import {
 	AgentEventSource,
@@ -8778,6 +8789,7 @@ export class AppController {
 		position: FileSelection | undefined,
 		waitMarkerPath: string | undefined,
 		before: NavigationSelection,
+		reason?: "explicit",
 	): Promise<string> {
 		if (destination.kind === "scratch") {
 			openFileInWorkbench(
@@ -8822,6 +8834,7 @@ export class AppController {
 			type: "select_context",
 			context: { kind: "workspace", workspaceId: workspace.id },
 			presentation: besideAgent ? "beside" : "full",
+			...(reason === undefined ? {} : { reason }),
 		});
 		openFileInWorkbench(
 			// The view is filed under the Workspace's key, not its root. For a
@@ -9173,6 +9186,72 @@ export class AppController {
 					.find((workspace) => workspace.id === workspaceId)
 					?.agents.map((agent) => agent.id) ?? [],
 		});
+	}
+
+	/**
+	 * The folder the Files tab shows: the running orchestrator's Workspace,
+	 * else `[orchestrator] root` — the folder it would start in.
+	 */
+	private orchestratorFilesRoot(): string | undefined {
+		const agentId = this.orchestrator?.orchestratorAgentId;
+		const workspace =
+			agentId === undefined
+				? undefined
+				: this.coordinator.model.workspaceForAgent(parseAgentId(agentId));
+		if (workspace !== undefined && workspace.location.kind === "local")
+			return workspace.root;
+		const root = this.config.orchestrator.root;
+		return root === undefined ? undefined : expandOrchestratorRoot(root);
+	}
+
+	private requireOrchestratorFilesRoot(): string {
+		const root = this.orchestratorFilesRoot();
+		if (root === undefined)
+			throw new OrchestratorFileError("No orchestrator folder is set.");
+		return root;
+	}
+
+	/** The watch on the Files tab's folder: one, on the root last listed. */
+	private orchestratorFilesWatch:
+		| { readonly root: string; readonly stop: () => void }
+		| undefined;
+
+	private watchOrchestratorFiles(root: string): void {
+		if (this.orchestratorFilesWatch?.root === root) return;
+		this.orchestratorFilesWatch?.stop();
+		this.orchestratorFilesWatch = {
+			root,
+			stop: watchRoot(root, (paths) => {
+				this.send(CHANNELS.orchestratorFilesChanged, paths);
+			}),
+		};
+	}
+
+	/**
+	 * "エディタで開く": the file opened the way \`devhub <file>\` opens it — in
+	 * the Workspace that contains it (the root's own row), its workbench woken
+	 * as usual and switched to. The person asked for it, so the Workspace is a
+	 * place in Back and Forward at once (\`NavigationReason\`).
+	 */
+	private async openOrchestratorFile(path: unknown): Promise<void> {
+		this.personStartedAction();
+		const absolute = await insideRoot(
+			this.requireOrchestratorFilesRoot(),
+			path,
+		);
+		const machine = runtimeMachine("local");
+		const target = await canonicalise(runtimeById(machine), absolute);
+		if (!target.exists || target.isDirectory)
+			throw fileNotFound(absolute, `${absolute} is not a file to open.`);
+		await this.openRouted(
+			routeOpen(target.path, machine, this.routableWorkspaces()),
+			machine,
+			target,
+			undefined,
+			undefined,
+			this.coordinator.model.selection,
+			"explicit",
+		);
 	}
 
 	private startOrchestratorService(userDataPath: string): void {
@@ -11304,6 +11383,37 @@ export class AppController {
 			const events = this.requireOrchestrator().events;
 			if (paused) events.pause();
 			else await events.resume();
+		});
+		// The Files tab: the orchestrator's folder, read-only and confined to
+		// it (`orchestrator/orchestratorFiles.ts`).
+		handle(CHANNELS.listOrchestratorFolder, async (_event, path: unknown) => {
+			const root = this.orchestratorFilesRoot();
+			const problem = await rootProblem(root);
+			if (root === undefined || problem !== undefined)
+				return { path: "", entries: [], problem };
+			this.watchOrchestratorFiles(root);
+			try {
+				return await listFolder(root, typeof path === "string" ? path : "");
+			} catch (error: unknown) {
+				throw namedFailure(error);
+			}
+		});
+		handle(CHANNELS.readOrchestratorFile, async (_event, path: unknown) => {
+			try {
+				return await readRootFile(
+					this.requireOrchestratorFilesRoot(),
+					String(path),
+				);
+			} catch (error: unknown) {
+				throw namedFailure(error);
+			}
+		});
+		handle(CHANNELS.openOrchestratorFile, async (_event, path: unknown) => {
+			try {
+				await this.openOrchestratorFile(path);
+			} catch (error: unknown) {
+				throw namedFailure(error);
+			}
 		});
 		handle(CHANNELS.getUsageLimits, () => this.usageLimits.wire());
 

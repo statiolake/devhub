@@ -7,6 +7,7 @@
  */
 
 import "@testing-library/jest-dom/vitest";
+import { readFileSync } from "node:fs";
 import {
   act,
   cleanup,
@@ -18,8 +19,9 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../ipc/appShell";
 import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
+import { installHistoryButtons } from "../historyButtons";
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
-import { OrchestratorBoard, preview, span } from "./OrchestratorScreen";
+import { NAV_MS, OrchestratorBoard, preview, span } from "./OrchestratorScreen";
 
 const answerEscalation = vi.fn(() => Promise.resolve());
 window.devhub = {
@@ -32,7 +34,30 @@ window.devhub = {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
+  delete (window as { matchMedia?: unknown }).matchMedia;
 });
+
+/** Whether the person asked for less motion, as `matchMedia` answers it. */
+function motion(reduce: boolean) {
+  window.matchMedia = ((query: string) => ({
+    matches: reduce && query.includes("prefers-reduced-motion: reduce"),
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  })) as unknown as typeof window.matchMedia;
+}
+
+function boardSection(): HTMLElement {
+  return screen.getByRole("region", { name: "Orchestrator board" });
+}
+
+/** What of the left pane could size it: its class, style and attributes. */
+function paneShape(element: HTMLElement): string {
+  return [...element.attributes]
+    .map((attribute) => `${attribute.name}=${attribute.value}`)
+    .join(" ");
+}
 
 const NOW = Date.now();
 
@@ -124,6 +149,23 @@ describe("the Orchestrator board", () => {
     expect(dispatch).toHaveBeenCalledWith({
       type: "select_context",
       context: { kind: "agent", agentId: "a9" },
+      reason: "explicit",
+    });
+  });
+
+  it("jumps to an escalation's agent as a deliberate move, for Back and Forward", () => {
+    motion(true);
+    const dispatch = mount();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /payments-migration/u }),
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "select_context",
+      context: { kind: "agent", agentId: "a1" },
+      reason: "explicit",
     });
   });
 
@@ -154,6 +196,178 @@ describe("the Orchestrator board", () => {
       { key: "Escape" },
     );
     expect(screen.getByRole("region", { name: "要回答" })).toBeVisible();
+  });
+});
+
+describe("opening an escalation and going back", () => {
+  it("keeps the left pane's width: nothing about the pane changes", () => {
+    motion(true);
+    mount();
+    const before = paneShape(boardSection());
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    expect(document.querySelector(".orchestrator-reading")).not.toBeNull();
+    expect(paneShape(boardSection())).toBe(before);
+    fireEvent.click(screen.getByRole("button", { name: "Back to the board" }));
+    expect(paneShape(boardSection())).toBe(before);
+  });
+
+  it("sizes the pane in one rule, keyed on nothing it shows", () => {
+    const css = readFileSync(
+      "src/shell/agents/orchestrator.css",
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//gu, "");
+    const sizing = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+      .filter(([, selector]) =>
+        /orchestrator-board(?![\w-])/u.test(selector ?? ""),
+      )
+      .filter(([, , body]) =>
+        /(?:^|[;\s])(?:min-|max-)?width\s*:/u.test(body ?? ""),
+      )
+      .map(([, selector]) => (selector ?? "").trim());
+    expect(sizing).toEqual([".orchestrator-board"]);
+  });
+
+  it("slides: the view stays while it goes back, then leaves", () => {
+    motion(false);
+    vi.useFakeTimers();
+    mount();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    const stage = document.querySelector(".orchestrator-stage");
+    expect(stage).toHaveAttribute("data-nav", "push");
+    expect(document.querySelector(".orchestrator-lanes")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Back to the board" }),
+      { key: "Escape" },
+    );
+    expect(stage).toHaveAttribute("data-nav", "pop");
+    const leaving = document.querySelector(".orchestrator-reading");
+    expect(leaving).toHaveAttribute("aria-hidden", "true");
+    expect(leaving).toHaveAttribute("inert");
+    act(() => {
+      vi.advanceTimersByTime(NAV_MS);
+    });
+    expect(stage).toHaveAttribute("data-nav", "idle");
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+  });
+
+  it("swaps at once under Reduce Motion", () => {
+    motion(true);
+    mount();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "Back to the board" }),
+      { key: "Escape" },
+    );
+    expect(document.querySelector(".orchestrator-stage")).toHaveAttribute(
+      "data-nav",
+      "idle",
+    );
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+    expect(document.querySelector(".orchestrator-lanes")).not.toHaveAttribute(
+      "aria-hidden",
+    );
+  });
+
+  it("focuses the answer on open, and the opened card on return", () => {
+    motion(false);
+    vi.useFakeTimers();
+    mount();
+    const card = screen.getByRole("button", { name: /本番マイグレーション/u });
+    card.focus();
+    fireEvent.click(card);
+    const field = screen.getByRole("textbox", { name: "Your answer to #1" });
+    expect(field).toHaveFocus();
+    // Esc in the empty composer goes back.
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(card).toHaveFocus();
+    act(() => {
+      vi.advanceTimersByTime(NAV_MS);
+    });
+    expect(card).toHaveFocus();
+  });
+
+  it("focuses the thread when nothing is asked, and keeps a draft on Esc", () => {
+    motion(true);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    expect(document.querySelector(".orchestrator-thread")).toHaveFocus();
+    const field = screen.getByRole("textbox", { name: "Your answer to #2" });
+    fireEvent.change(field, { target: { value: "やはり B" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(document.querySelector(".orchestrator-reading")).not.toBeNull();
+  });
+
+  it("takes no focus from outside the board", () => {
+    motion(true);
+    const outside = document.createElement("input");
+    document.body.append(outside);
+    mount();
+    outside.focus();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    expect(outside).toHaveFocus();
+    outside.remove();
+  });
+});
+
+describe("the mouse's side buttons over the board", () => {
+  function press(target: Element, button: number): MouseEvent {
+    fireEvent.mouseDown(target, { button });
+    const up = new MouseEvent("mouseup", {
+      button,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      target.dispatchEvent(up);
+    });
+    return up;
+  }
+
+  it("goes back and forward between the board and an escalation, and leaves the app's history alone", () => {
+    motion(true);
+    const app = vi.fn();
+    const uninstall = installHistoryButtons(document, app);
+    try {
+      mount();
+      // Back on the board itself is the app's.
+      press(screen.getByRole("region", { name: "要回答" }), 3);
+      expect(app).toHaveBeenCalledWith("back");
+      app.mockClear();
+      // Forward with nothing gone back from is the app's too.
+      press(boardSection(), 4);
+      expect(app).toHaveBeenCalledWith("forward");
+      app.mockClear();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: /本番マイグレーション/u }),
+      );
+      const back = press(
+        document.querySelector(".orchestrator-thread") as Element,
+        3,
+      );
+      expect(back.defaultPrevented).toBe(true);
+      expect(document.querySelector(".orchestrator-reading")).toBeNull();
+      expect(app).not.toHaveBeenCalled();
+
+      press(screen.getByRole("region", { name: "対応中" }), 4);
+      expect(
+        screen.getByRole("textbox", { name: "Your answer to #1" }),
+      ).toBeVisible();
+      expect(app).not.toHaveBeenCalled();
+    } finally {
+      uninstall();
+    }
   });
 });
 

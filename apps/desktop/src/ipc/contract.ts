@@ -626,6 +626,59 @@ export interface OrchestratorBoardBridge {
 	): () => void;
 }
 
+/** One entry of a folder in the orchestrator's root, for the Files tab. */
+export interface OrchestratorFileEntryWire {
+	readonly name: string;
+	/** From the root, `/`-separated: `decisions.md`, `.claude/skills`. */
+	readonly path: string;
+	readonly kind: "directory" | "file";
+}
+
+/** A folder in the orchestrator's root, listed (noise and ignored left out). */
+export interface OrchestratorFolderWire {
+	/** The root, absolute; absent while none is set or it is not there. */
+	readonly root?: string;
+	/** The folder, from the root; `""` is the root itself. */
+	readonly path: string;
+	/** Folders first, then files, each by name. */
+	readonly entries: readonly OrchestratorFileEntryWire[];
+	/** Why there is nothing to list, in a sentence. */
+	readonly problem?: string;
+}
+
+/**
+ * A file in the orchestrator's root, read for the Files tab. Markdown and
+ * other text carry `text`; an image (SVG included) a `data:` URL; a file
+ * too large or not text carries neither.
+ */
+export interface OrchestratorFileWire {
+	readonly path: string;
+	readonly kind: "markdown" | "text" | "image" | "binary" | "too_large";
+	readonly size: number;
+	/** Last written (ms since the epoch): what "changed" is measured against. */
+	readonly modifiedAt: number;
+	readonly text?: string;
+	/** For `text`: the highlighter's language, from the extension. */
+	readonly language?: string;
+	readonly dataUrl?: string;
+}
+
+/**
+ * The orchestrator's folder, read-only: list, read, and be told when it
+ * changes. Every path is from the root and stays inside it — `..`, absolute
+ * paths and symlinks that lead out are refused in main.
+ */
+export interface OrchestratorFilesBridge {
+	listOrchestratorFolder(path: string): Promise<OrchestratorFolderWire>;
+	readOrchestratorFile(path: string): Promise<OrchestratorFileWire>;
+	/** Open the file in the workbench of the Workspace it belongs to. */
+	openOrchestratorFile(path: string): Promise<void>;
+	/** The paths (from the root) that changed, a moment after they did. */
+	onOrchestratorFilesChanged(
+		listener: (paths: readonly string[]) => void,
+	): () => void;
+}
+
 /** What the Orchestrator screen does that no other page may. */
 export interface OrchestratorActionsBridge {
 	/**
@@ -1531,7 +1584,8 @@ export interface AgentsBridge
 		RepositoryStatusBridge,
 		AgentActionsBridge,
 		OrchestratorBoardBridge,
-		OrchestratorActionsBridge {
+		OrchestratorActionsBridge,
+		OrchestratorFilesBridge {
 	/** Put a modal on screen — an injection to review. */
 	openModal(request: ModalRequest): Promise<string>;
 	openExternalUrl(url: string): Promise<void>;
@@ -2050,6 +2104,9 @@ export const CHANNELS = {
 	answerEscalation: "devhub:answer-escalation",
 	startOrchestrator: "devhub:start-orchestrator",
 	setOrchestratorPaused: "devhub:set-orchestrator-paused",
+	listOrchestratorFolder: "devhub:list-orchestrator-folder",
+	readOrchestratorFile: "devhub:read-orchestrator-file",
+	openOrchestratorFile: "devhub:open-orchestrator-file",
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	listSshHosts: "devhub:list-ssh-hosts",
@@ -2154,6 +2211,8 @@ export const CHANNELS = {
 	usageLimitsChanged: "devhub:usage-limits-changed",
 	/** The Orchestrator board moved: an escalation, 不明, the pause. */
 	orchestratorBoardChanged: "devhub:orchestrator-board-changed",
+	/** Something in the orchestrator's folder was written (debounced). */
+	orchestratorFilesChanged: "devhub:orchestrator-files-changed",
 } as const;
 
 /**
