@@ -48,7 +48,11 @@ export interface NavStack<T> {
   /** What Back last left, for Forward. */
   readonly forward: T | undefined;
   readonly open: (item: T) => void;
-  readonly close: () => void;
+  /**
+   * Back to the page under. Focus goes back to what opened the page over,
+   * or to `returnTo` when another item is the one to land on.
+   */
+  readonly close: (returnTo?: T) => void;
 }
 
 /**
@@ -74,22 +78,27 @@ export function useNavStack<T>(
     setShown(item);
     setNav("push");
   }, []);
-  const close = useCallback(() => {
-    if (shown === undefined) return;
-    returnTo.current = focusIsOurs(pane.current) ? shown : undefined;
-    setForward(shown);
-    clearTimeout(popTimer.current);
-    if (reducedMotion()) {
-      setShown(undefined);
-      setNav("idle");
-      return;
-    }
-    setNav("pop");
-    popTimer.current = setTimeout(() => {
-      setShown(undefined);
-      setNav("idle");
-    }, NAV_MS);
-  }, [shown, pane]);
+  const close = useCallback(
+    (landOn?: T) => {
+      if (shown === undefined) return;
+      returnTo.current = focusIsOurs(pane.current)
+        ? (landOn ?? shown)
+        : undefined;
+      setForward(shown);
+      clearTimeout(popTimer.current);
+      if (reducedMotion()) {
+        setShown(undefined);
+        setNav("idle");
+        return;
+      }
+      setNav("pop");
+      popTimer.current = setTimeout(() => {
+        setShown(undefined);
+        setNav("idle");
+      }, NAV_MS);
+    },
+    [shown, pane],
+  );
   useEffect(() => () => clearTimeout(popTimer.current), []);
   // Back on the page under: focus goes to what opened the page over.
   useLayoutEffect(() => {

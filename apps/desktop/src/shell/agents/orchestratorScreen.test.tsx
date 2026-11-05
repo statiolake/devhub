@@ -184,18 +184,133 @@ describe("the Orchestrator board", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    const field = screen.getByRole("textbox", { name: "Your answer to #1" });
-    fireEvent.change(field, { target: { value: "実行して、ただし夜に" } });
+    // Answered: back on the board.
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    const field = screen.getByRole("textbox", { name: "Your answer to #2" });
+    fireEvent.change(field, { target: { value: "やはり B で" } });
     fireEvent.keyDown(field, { key: "Enter", metaKey: true });
-    expect(answerEscalation).toHaveBeenLastCalledWith(
-      1,
-      "実行して、ただし夜に",
+    expect(answerEscalation).toHaveBeenLastCalledWith(2, "やはり B で");
+  });
+});
+
+describe("after an answer", () => {
+  const TWO: OrchestratorBoardWire = {
+    ...BOARD,
+    needsAnswer: [
+      ...BOARD.needsAnswer,
+      {
+        ...BOARD.needsAnswer[0]!,
+        id: 3,
+        title: "ステージングの再作成",
+        entries: [
+          { role: "orchestrator", markdown: "作り直してよい?", at: NOW },
+        ],
+      },
+    ],
+  };
+
+  async function sent() {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("goes back to the board, focusing the next card in 要回答", async () => {
+    motion(true);
+    mount(TWO);
+    const card = screen.getByRole("button", { name: /本番マイグレーション/u });
+    card.focus();
+    fireEvent.click(card);
+    const field = screen.getByRole("textbox", { name: "Your answer to #1" });
+    fireEvent.change(field, { target: { value: "実行して" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    await sent();
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /ステージングの再作成/u }),
+    ).toHaveFocus();
+  });
+
+  it("with none left, focuses the card just answered", async () => {
+    motion(false);
+    vi.useFakeTimers();
+    mount();
+    const card = screen.getByRole("button", { name: /本番マイグレーション/u });
+    card.focus();
+    fireEvent.click(card);
+    const field = screen.getByRole("textbox", { name: "Your answer to #1" });
+    fireEvent.change(field, { target: { value: "実行して" } });
+    fireEvent.keyDown(field, { key: "Enter", metaKey: true });
+    await sent();
+    // The same slide as Esc.
+    expect(document.querySelector(".orchestrator-stage")).toHaveAttribute(
+      "data-nav",
+      "pop",
     );
-    fireEvent.keyDown(
-      screen.getByRole("button", { name: "Back to the board" }),
-      { key: "Escape" },
+    expect(card).toHaveFocus();
+    act(() => {
+      vi.advanceTimersByTime(NAV_MS);
+    });
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+  });
+
+  it("stays, with the error and the draft, when the send fails", async () => {
+    motion(true);
+    answerEscalation.mockImplementationOnce(() =>
+      Promise.reject(new Error("the orchestrator is gone")),
     );
-    expect(screen.getByRole("region", { name: "要回答" })).toBeVisible();
+    mount();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    const field = screen.getByRole("textbox", { name: "Your answer to #1" });
+    fireEvent.change(field, { target: { value: "実行して" } });
+    fireEvent.keyDown(field, { key: "Enter", metaKey: true });
+    await sent();
+    expect(document.querySelector(".orchestrator-reading")).not.toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "the orchestrator is gone",
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Your answer to #1" }),
+    ).toHaveValue("実行して");
+  });
+});
+
+describe("the orchestrator's ranking on the board", () => {
+  it("marks high, low and quick, with the reason as a quiet line; normal shows nothing", () => {
+    mount({
+      ...BOARD,
+      needsAnswer: [
+        {
+          ...BOARD.needsAnswer[0]!,
+          priority: "high",
+          effort: "quick",
+          rankNote: "3 つのエージェントが止まっている",
+        },
+        {
+          ...BOARD.needsAnswer[0]!,
+          id: 4,
+          title: "ログの保存期間",
+          priority: "low",
+          effort: "normal",
+        },
+      ],
+    });
+    const ask = screen.getByRole("region", { name: "要回答" });
+    const [first, second] = within(ask).getAllByRole("button");
+    expect(within(first!).getByText("優先")).toBeVisible();
+    expect(within(first!).getByText("すぐ答えられる")).toBeVisible();
+    expect(
+      within(first!).getByText("3 つのエージェントが止まっている"),
+    ).toBeVisible();
+    expect(within(second!).getByText("低")).toBeVisible();
+    expect(within(second!).queryByText("すぐ答えられる")).toBeNull();
+    const progress = screen.getByRole("region", { name: "対応中" });
+    expect(within(progress).queryByText("優先")).toBeNull();
+    expect(within(progress).queryByText("低")).toBeNull();
   });
 });
 

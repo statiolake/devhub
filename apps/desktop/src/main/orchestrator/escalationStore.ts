@@ -35,6 +35,8 @@ import {
 	createEscalation,
 	escalationsFromJson,
 	linkAgent,
+	rankEscalation,
+	type EscalationRank,
 	type Escalation,
 	type EscalationsFile,
 	type NewEscalation,
@@ -174,6 +176,11 @@ export class EscalationStore {
 
 	link(id: number, agentId: string, now: number): Escalation {
 		return this.#replace(linkAgent(this.require(id), agentId, now));
+	}
+
+	/** The orchestrator's ranking, given again (`escalation rank`). */
+	rank(id: number, rank: EscalationRank, now: number): Escalation {
+		return this.#replace(rankEscalation(this.require(id), rank, now));
 	}
 
 	#replace(next: Escalation): Escalation {

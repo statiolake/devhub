@@ -50,6 +50,40 @@ export interface EscalationEntry {
   readonly options?: readonly string[];
 }
 
+/**
+ * How much it matters, as the orchestrator ranks it: `high` blocks several
+ * agents or a deadline. Absent is `normal`.
+ */
+export type EscalationPriority = "high" | "normal" | "low";
+
+/**
+ * How long it takes the person to answer: `quick` is under about a minute,
+ * from the escalation alone. Absent is `normal`.
+ */
+export type EscalationEffort = "quick" | "normal" | "deep";
+
+export const ESCALATION_PRIORITIES: readonly EscalationPriority[] = [
+  "high",
+  "normal",
+  "low",
+];
+
+export const ESCALATION_EFFORTS: readonly EscalationEffort[] = [
+  "quick",
+  "normal",
+  "deep",
+];
+
+/**
+ * The orchestrator's ranking, as it is given (`escalation new`, `escalation
+ * rank`): what is left out stays as it was; a `note` of `""` takes it away.
+ */
+export interface EscalationRank {
+  readonly priority?: EscalationPriority;
+  readonly effort?: EscalationEffort;
+  readonly note?: string;
+}
+
 export interface Escalation {
   /** A small number, shown as `#12`; unique per profile, never reused. */
   readonly id: number;
@@ -66,6 +100,11 @@ export interface Escalation {
   readonly updatedAt: number;
   /** Closed: when, and the orchestrator's last word on it. */
   readonly closed?: { readonly at: number; readonly note?: string };
+  /** The orchestrator's ranking; absent is `normal`. */
+  readonly priority?: EscalationPriority;
+  readonly effort?: EscalationEffort;
+  /** Why it is ranked so, in a line. */
+  readonly rankNote?: string;
 }
 
 /** Limits, checked at every door (the CLI, the socket, the page, the file). */
@@ -76,6 +115,7 @@ export const OPTIONS_MAX = 8;
 export const LINKS_MAX = 16;
 export const AGENTS_MAX = 32;
 export const ENTRIES_MAX = 200;
+export const RANK_NOTE_LIMIT = 160;
 
 export class EscalationError extends Error {
   override readonly name = "EscalationError";
@@ -104,6 +144,14 @@ export function stateSince(escalation: Escalation): number {
     escalation.entries.at(-1)?.at ??
     escalation.createdAt
   );
+}
+
+export function priorityOf(escalation: Escalation): EscalationPriority {
+  return escalation.priority ?? "normal";
+}
+
+export function effortOf(escalation: Escalation): EscalationEffort {
+  return escalation.effort ?? "normal";
 }
 
 /** The person's last answer, when there is one. */
@@ -160,6 +208,59 @@ export function checkOptions(
   if (new Set(checked).size !== checked.length)
     refuse("the same option is given twice.");
   return checked;
+}
+
+export function checkPriority(value: unknown): EscalationPriority {
+  if (!ESCALATION_PRIORITIES.includes(value as EscalationPriority))
+    refuse(
+      `a priority is ${ESCALATION_PRIORITIES.join(", ")}, not ${JSON.stringify(value)}.`,
+    );
+  return value as EscalationPriority;
+}
+
+export function checkEffort(value: unknown): EscalationEffort {
+  if (!ESCALATION_EFFORTS.includes(value as EscalationEffort))
+    refuse(
+      `an effort is ${ESCALATION_EFFORTS.join(", ")}, not ${JSON.stringify(value)}.`,
+    );
+  return value as EscalationEffort;
+}
+
+export function checkRankNote(note: string): string {
+  const trimmed = note.trim();
+  if ([...trimmed].length > RANK_NOTE_LIMIT)
+    refuse(`a rank note is at most ${String(RANK_NOTE_LIMIT)} characters.`);
+  // eslint-disable-next-line no-control-regex -- control characters are the point
+  if (/[\u0000-\u001f\u007f]/u.test(trimmed))
+    refuse("a rank note is one line of text.");
+  return trimmed;
+}
+
+/**
+ * `rank` laid over `escalation`'s own: `normal` is stored as nothing, and
+ * an empty note takes the note away.
+ */
+function withRank(escalation: Escalation, rank: EscalationRank): Escalation {
+  const {
+    priority: _priority,
+    effort: _effort,
+    rankNote: _note,
+    ...rest
+  } = escalation;
+  const priority =
+    rank.priority === undefined
+      ? escalation.priority
+      : checkPriority(rank.priority);
+  const effort =
+    rank.effort === undefined ? escalation.effort : checkEffort(rank.effort);
+  const note =
+    rank.note === undefined ? escalation.rankNote : checkRankNote(rank.note);
+  return {
+    ...rest,
+    ...(priority === undefined || priority === "normal" ? {} : { priority }),
+    ...(effort === undefined || effort === "normal" ? {} : { effort }),
+    ...(note === undefined || note === "" ? {} : { rankNote: note }),
+  };
 }
 
 export function checkLink(link: string): string {
@@ -224,6 +325,7 @@ export interface NewEscalation {
   readonly agents?: readonly string[];
   readonly workspaceId?: string;
   readonly links?: readonly string[];
+  readonly rank?: EscalationRank;
 }
 
 /** The orchestrator raises one: born `needs_answer`. */
@@ -238,18 +340,41 @@ export function createEscalation(
     LINKS_MAX,
     "links",
   );
-  return {
-    id,
-    title: checkTitle(request.title),
-    entries: [entry("orchestrator", request.markdown, now, request.options)],
-    agents: union([], request.agents ?? [], AGENTS_MAX, "agents"),
-    ...(request.workspaceId === undefined
-      ? {}
-      : { workspaceId: request.workspaceId }),
-    links,
-    createdAt: now,
-    updatedAt: now,
-  };
+  return withRank(
+    {
+      id,
+      title: checkTitle(request.title),
+      entries: [entry("orchestrator", request.markdown, now, request.options)],
+      agents: union([], request.agents ?? [], AGENTS_MAX, "agents"),
+      ...(request.workspaceId === undefined
+        ? {}
+        : { workspaceId: request.workspaceId }),
+      links,
+      createdAt: now,
+      updatedAt: now,
+    },
+    request.rank ?? {},
+  );
+}
+
+/**
+ * The orchestrator ranks it again, as things change. Only what is given
+ * moves; an open one only, since a closed one is on nobody's list.
+ */
+export function rankEscalation(
+  escalation: Escalation,
+  rank: EscalationRank,
+  now: number,
+): Escalation {
+  if (escalation.closed !== undefined)
+    refuse(`#${String(escalation.id)} is closed.`);
+  if (
+    rank.priority === undefined &&
+    rank.effort === undefined &&
+    rank.note === undefined
+  )
+    refuse("a rank gives a priority, an effort or a note.");
+  return { ...withRank(escalation, rank), updatedAt: now };
 }
 
 /** A follow-up question on the same ticket: back to `needs_answer`. */
@@ -380,8 +505,24 @@ export function unaccountedAgents(
     .sort((left, right) => left.idleSince - right.idleSince);
 }
 
+/**
+ * 要回答's order before age: priority (high first), then effort (quick
+ * first) — so the person takes what matters, and what is quick, first.
+ */
+export function byRank(left: Escalation, right: Escalation): number {
+  return (
+    ESCALATION_PRIORITIES.indexOf(priorityOf(left)) -
+      ESCALATION_PRIORITIES.indexOf(priorityOf(right)) ||
+    ESCALATION_EFFORTS.indexOf(effortOf(left)) -
+      ESCALATION_EFFORTS.indexOf(effortOf(right))
+  );
+}
+
 export interface Board {
-  /** Oldest question first: the one waiting longest leads. */
+  /**
+   * Ranked (`byRank`), then oldest question first: among equals, the one
+   * waiting longest leads.
+   */
   readonly needsAnswer: readonly Escalation[];
   /** Answered longest ago first: the one the agents have waited on longest. */
   readonly inProgress: readonly Escalation[];
@@ -402,7 +543,7 @@ export function board(
   return {
     needsAnswer: escalations
       .filter((one) => escalationState(one) === "needs_answer")
-      .sort(bySince),
+      .sort((left, right) => byRank(left, right) || bySince(left, right)),
     inProgress: escalations
       .filter((one) => escalationState(one) === "in_progress")
       .sort(bySince),
@@ -492,6 +633,16 @@ function escalationFrom(value: unknown, at: number): Escalation {
   const workspaceId = value["workspaceId"];
   if (workspaceId !== undefined && typeof workspaceId !== "string")
     refuse(`${where}'s workspace is not an id.`);
+  const rankNote = value["rankNote"];
+  if (rankNote !== undefined && typeof rankNote !== "string")
+    refuse(`${where}'s rank note is not text.`);
+  // Written before there was a ranking: normal, normal, no note.
+  const priority =
+    value["priority"] === undefined
+      ? undefined
+      : checkPriority(value["priority"]);
+  const effort =
+    value["effort"] === undefined ? undefined : checkEffort(value["effort"]);
   return {
     id,
     title: checkTitle(value["title"]),
@@ -511,6 +662,11 @@ function escalationFrom(value: unknown, at: number): Escalation {
               : {}),
           },
         }),
+    ...(priority === undefined || priority === "normal" ? {} : { priority }),
+    ...(effort === undefined || effort === "normal" ? {} : { effort }),
+    ...(rankNote === undefined || rankNote === ""
+      ? {}
+      : { rankNote: checkRankNote(rankNote) }),
   };
 }
 

@@ -250,6 +250,7 @@ class FakePorts implements TellPorts {
 			this.service.toWire(this.service.ask(id, markdown, options)),
 		close: (id, note) => this.service.toWire(this.service.close(id, note)),
 		link: (id, agentId) => this.service.toWire(this.service.link(id, agentId)),
+		rank: (id, rank) => this.service.toWire(this.service.rank(id, rank)),
 		configuredRoot: () => "/Users/me/orchestrator",
 		start: (request) => {
 			this.calls.push(`orchestrator-start ${request.root} ${request.profile}`);
@@ -3617,6 +3618,97 @@ describe("the Orchestrator row from the command line", () => {
 		).toMatchObject({ escalations: [{ id: 1, state: "closed" }] });
 	});
 
+	it("ranks escalations: new and rank take the fields, list and board show them, the board sorts by them", async () => {
+		const { service, ports } = orchestrated();
+		const raise = (title: string, ...rank: string[]) =>
+			viaSocket(
+				service,
+				["escalation", "new", "--title", title, "--body", "?", ...rank],
+				coordinator,
+			);
+		const first = await raise("ふつう");
+		expect(first.data).toMatchObject({ priority: "normal", effort: "normal" });
+		ports.clock.now += 1000;
+		await raise(
+			"急ぎ",
+			"--priority",
+			"high",
+			"--effort",
+			"deep",
+			"--rank-note",
+			"リリースを止めている",
+		);
+		ports.clock.now += 1000;
+		await raise("すぐ", "--effort", "quick");
+		ports.clock.now += 1000;
+		await raise("後で", "--priority", "low", "--effort", "quick");
+		const board = await viaSocket(service, ["--json", "board"], coordinator);
+		const order = (
+			board.data as { needsAnswer: { title: string }[] }
+		).needsAnswer.map((one) => one.title);
+		expect(order).toEqual(["急ぎ", "すぐ", "ふつう", "後で"]);
+		expect(board.message).toContain(
+			"[priority high, effort deep: リリースを止めている]",
+		);
+		// Re-ranked as things change; only what is given moves.
+		const ranked = await viaSocket(
+			service,
+			["escalation", "rank", "#1", "--priority", "high", "--effort", "quick"],
+			coordinator,
+		);
+		expect(ranked.data).toMatchObject({
+			id: 1,
+			priority: "high",
+			effort: "quick",
+			state: "needs_answer",
+			entries: [{ role: "orchestrator" }],
+		});
+		expect(ranked.message).toBe("#1 is ranked priority high, effort quick.");
+		expect(
+			ports.orchestrator.board().needsAnswer.map((one) => one.title),
+		).toEqual(["ふつう", "急ぎ", "すぐ", "後で"]);
+		await viaSocket(
+			service,
+			["escalation", "rank", "2", "--rank-note", ""],
+			coordinator,
+		);
+		const listed = await viaSocket(
+			service,
+			["escalation", "list"],
+			coordinator,
+		);
+		expect(listed.message).toMatch(
+			/#2 {2}needs_answer {2}\S+ {2}\[priority high, effort deep\] {2}急ぎ/u,
+		);
+		expect(listed.data).toMatchObject({
+			escalations: expect.arrayContaining([
+				expect.objectContaining({ id: 4, priority: "low", effort: "quick" }),
+			]),
+		});
+	});
+
+	it("refuses a rank that names nothing, or a priority it does not know", () => {
+		expect(parseTellArguments(["escalation", "rank", "1"])).toMatchObject({
+			kind: "invalid",
+			message: "escalation rank takes --priority, --effort or --rank-note.",
+		});
+		expect(
+			parseTellArguments([
+				"escalation",
+				"new",
+				"--title",
+				"t",
+				"--body",
+				"b",
+				"--priority",
+				"urgent",
+			]),
+		).toMatchObject({
+			kind: "invalid",
+			message: "--priority takes high or normal or low.",
+		});
+	});
+
 	it("has no way to answer one: not a command, not a port", () => {
 		expect(
 			parseTellArguments(["escalation", "answer", "1", "--body", "yes"]),
@@ -3640,6 +3732,7 @@ describe("the Orchestrator row from the command line", () => {
 				"link",
 				"pause",
 				"raise",
+				"rank",
 				"resume",
 				"setTimer",
 				"start",

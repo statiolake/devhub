@@ -72,10 +72,27 @@ one door (`answerEscalation` on the Agents page's bridge); no `devhub --tell`
 command and no `TellPorts` member can write a human entry, and
 `escalation answer` is refused by name. `service.test.ts` holds both.
 
+### Ranking
+
+The orchestrator ranks each escalation, when it raises one and again as
+things change (`escalation rank`): **priority** — `high` when it blocks
+several agents or a deadline, `low` when nobody waits on it, `normal`
+otherwise — and **effort**, how quick it is for the person: `quick` when it
+can be answered in about a minute from the escalation alone, `deep` when it
+needs digging. A short **rank note** says why. All three are kept with the
+escalation (`escalations.json`; a file written before them reads as
+normal/normal), carried by `escalation list`, `escalation show` and
+`board --json`, and drawn on the card: 優先 for high, 低 for low (normal
+shows nothing), すぐ答えられる for quick, and the note as a quiet line.
+A re-rank reorders 要回答 with a short glide (none under Reduce Motion).
+Ranking writes no entry: it is not an answer, and the command line still
+cannot write one.
+
 ### The board
 
-- **要回答** — oldest question first, with how long it has waited. A ticket
-  asked again after an answer carries 追加の質問.
+- **要回答** — ranked: priority first (high, normal, low), then effort
+  (quick, normal, deep), then oldest question first, with how long it has
+  waited. A ticket asked again after an answer carries 追加の質問.
 - **対応中** — answered longest ago first, with how long since the answer.
 - **不明** — see below.
 - **Closed** — a toggle in the header shows the last 30.
@@ -92,7 +109,11 @@ it in from the right and going back reverses it (220 ms, transform and
 opacity only; under Reduce Motion an instant swap). The left pane's width is
 the layout's and never changes with what it shows — a wide code block or
 diagram scrolls or scales inside it. Focus goes to the composer (or the
-thread) on open and back to the card on return. Jumping to an agent from
+thread) on open and back to the card on return. Sending an answer (⌘Return,
+the send button or a quick reply) goes back to the board the same way, with
+focus on the next card in 要回答 — or, with none left, on the one just
+answered, now in 対応中; a send that fails stays, with the error and the
+draft. Jumping to an agent from
 an escalation (its chip, or a row in 不明) is a deliberate move
 (`reason: "explicit"`), so Back (prefix+h) returns to the Orchestrator
 screen.
@@ -388,6 +409,8 @@ setting.
 ```sh
 devhub --tell board [--json]                         # 要回答, 対応中, 不明 as data (acknowledges 不明)
 devhub --tell escalation new --title T --body -|TEXT [--agent A]... [--link URL]... [--option TEXT]... [--workspace W]
+                         [--priority high|normal|low] [--effort quick|normal|deep] [--rank-note TEXT]
+devhub --tell escalation rank ID [--priority P] [--effort E] [--rank-note TEXT]   # re-rank; "" clears the note
 devhub --tell escalation ask ID --body -|TEXT [--option TEXT]...   # back to 要回答
 devhub --tell escalation show ID [--json]           # the thread (acknowledges the answer)
 devhub --tell escalation list [--state needs_answer|in_progress|closed] [--json]

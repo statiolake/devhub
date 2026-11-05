@@ -927,3 +927,37 @@
 .orchestrator-start-problem {
   color: var(--danger);
 }
+
+/* A send that did not go: said where it was written, the draft kept. */
+.orchestrator-composer-error {
+  margin: 0 0 var(--space-2);
+  color: var(--danger);
+  font-size: 11.5px;
+}
+
+/* The orchestrator's ranking on a card: calm marks, no tooltips. */
+.orchestrator-chip.is-priority[data-rank="high"] {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.orchestrator-chip.is-priority[data-rank="low"] {
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  background: transparent;
+  color: var(--tertiary);
+}
+
+.orchestrator-chip.is-quick {
+  background: color-mix(in srgb, var(--status-working) 18%, transparent);
+  color: var(--primary);
+}
+
+/* Why it is ranked so, in a quiet line under the card. */
+.orchestrator-card-why {
+  overflow: hidden;
+  color: var(--tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

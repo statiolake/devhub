@@ -22,12 +22,15 @@ import type {
 } from "../../ipc/contract.js";
 import {
 	board,
+	effortOf,
 	escalationState,
 	isOpen,
+	priorityOf,
 	stateSince,
 	UNACCOUNTED_GRACE_MS,
 	type BoardAgent,
 	type Escalation,
+	type EscalationRank,
 	type NewEscalation,
 	type UnaccountedAgent,
 } from "../../model/escalations.js";
@@ -253,6 +256,10 @@ export class OrchestratorService {
 		return this.ports.store.link(id, agentId, this.#now());
 	}
 
+	rank(id: number, rank: EscalationRank): Escalation {
+		return this.ports.store.rank(id, rank, this.#now());
+	}
+
 	// --- the person's side -----------------------------------------------------
 
 	/** The person's answer, from the window. Moves it to in_progress. */
@@ -391,6 +398,9 @@ export class OrchestratorService {
 			updatedAt: one.updatedAt,
 			stateSince: stateSince(one),
 			...(one.closed === undefined ? {} : { closed: one.closed }),
+			priority: priorityOf(one),
+			effort: effortOf(one),
+			...(one.rankNote === undefined ? {} : { rankNote: one.rankNote }),
 		};
 	}
 

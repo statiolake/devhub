@@ -402,7 +402,10 @@ in the target's transcript. An agent cannot answer its own question.
 commands. The Sidebar's **Orchestrator** row (above Scratch) gives one such
 agent a screen of its own — a board of escalations the person answers, the
 agents nobody accounts for, and events DevHub sends it — with `devhub --tell
-escalation`, `board` and `orchestrator` to drive it; see
+escalation`, `board` and `orchestrator` to drive it. The orchestrator ranks
+each escalation (`escalation new|rank --priority high|normal|low --effort
+quick|normal|deep --rank-note TEXT`), and 要回答 is sorted by priority, then
+effort, then age; see
 [`docs/orchestrator.md`](docs/orchestrator.md). `agent status` gives one agent's
 state in one call: kind, profile, workspace, status and since when (as DevHub
 saw it), the turn, last activity, open questions and permission prompts

@@ -253,6 +253,10 @@ export type TellCommand =
 			readonly links: readonly string[];
 			readonly options: readonly string[];
 			readonly workspace?: string;
+			/** The orchestrator's ranking (`docs/orchestrator.md`). */
+			readonly priority?: "high" | "normal" | "low";
+			readonly effort?: "quick" | "normal" | "deep";
+			readonly rankNote?: string;
 	  }
 	| {
 			/** A follow-up question on the same ticket: back to needs_answer. */
@@ -275,6 +279,14 @@ export type TellCommand =
 			readonly verb: "escalation-link";
 			readonly id: number;
 			readonly agent: string;
+	  }
+	| {
+			/** Ranked again, as things change: only what is given moves. */
+			readonly verb: "escalation-rank";
+			readonly id: number;
+			readonly priority?: "high" | "normal" | "low";
+			readonly effort?: "quick" | "normal" | "deep";
+			readonly rankNote?: string;
 	  }
 	/** The three lanes, 不明 included. */
 	| { readonly verb: "board" }
@@ -568,8 +580,12 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    agents no open escalation names)
   escalation new --title <t> --body <text>|- [--agent <a>]...
                  [--link <url>]... [--option <text>]... [--workspace <w>]
+                 [--priority high|normal|low] [--effort quick|normal|deep]
+                 [--rank-note <text>]
                                    raise one for the person (Markdown: code,
-                                   math, mermaid, svg - as the chat renders)
+                                   math, mermaid, svg - as the chat renders);
+                                   needs_answer is sorted by priority, then
+                                   effort (quick first), then age
   escalation ask <id> --body <text>|- [--option <text>]...
                                    a follow-up question on the same ticket;
                                    back to needs_answer
@@ -579,6 +595,10 @@ orchestrator (the Orchestrator row: the board, escalations, events)
   escalation list [--state needs_answer|in_progress|closed]
   escalation close <id> [--note <text>]
                                    the answer is used up: close it
+  escalation rank <id> [--priority high|normal|low]
+                 [--effort quick|normal|deep] [--rank-note <text>]
+                                   rank it again as things change (a
+                                   --rank-note of "" takes the note away)
   escalation link <id> --agent <a> another agent it is about
                                    (the person answers in DevHub only: no
                                    command writes an answer)
@@ -997,6 +1017,19 @@ function oneOf<T extends string>(
 	return value as T;
 }
 
+/** `--priority`, `--effort` and `--rank-note`, the ones given. */
+function rankFlags(flags: Flags): {
+	readonly priority?: "high" | "normal" | "low";
+	readonly effort?: "quick" | "normal" | "deep";
+	readonly rankNote?: string;
+} {
+	return defined({
+		priority: oneOf(flags, "--priority", ["high", "normal", "low"] as const),
+		effort: oneOf(flags, "--effort", ["quick", "normal", "deep"] as const),
+		rankNote: one(flags, "--rank-note"),
+	});
+}
+
 /** `#12`, `12` or `E12`. */
 function escalationId(text: string | undefined): number {
 	const match = /^(?:#|e|E)?(\d{1,9})$/u.exec((text ?? "").trim());
@@ -1022,6 +1055,9 @@ function parseEscalation(
 					"--link",
 					"--option",
 					"--workspace",
+					"--priority",
+					"--effort",
+					"--rank-note",
 				],
 				switches: [],
 			});
@@ -1039,7 +1075,21 @@ function parseEscalation(
 				links: flags.values.get("--link") ?? [],
 				options: flags.values.get("--option") ?? [],
 				...defined({ workspace: one(flags, "--workspace") }),
+				...rankFlags(flags),
 			};
+		}
+		case "rank": {
+			const flags = readFlags(rest, {
+				values: ["--priority", "--effort", "--rank-note"],
+				switches: [],
+			});
+			const [id] = positionals(flags, ["<id>"]);
+			const rank = rankFlags(flags);
+			if (Object.keys(rank).length === 0)
+				throw new Refusal(
+					"escalation rank takes --priority, --effort or --rank-note.",
+				);
+			return { verb: "escalation-rank", id: escalationId(id), ...rank };
 		}
 		case "ask": {
 			const flags = readFlags(rest, {
@@ -1096,7 +1146,9 @@ function parseEscalation(
 				"an escalation is answered by the person, in DevHub's window, and by no command.",
 			);
 		default:
-			throw new Refusal("escalation takes: new, ask, show, list, close, link.");
+			throw new Refusal(
+				"escalation takes: new, ask, show, list, close, link, rank.",
+			);
 	}
 }
 
@@ -1525,6 +1577,39 @@ function optionalText(
 	return record[key] === undefined ? {} : { [key]: text(record, key) };
 }
 
+/** An escalation's ranking off the socket: each of the three, when there. */
+function rankRecord(record: Record<string, unknown>): {
+	readonly priority?: "high" | "normal" | "low";
+	readonly effort?: "quick" | "normal" | "deep";
+	readonly rankNote?: string;
+} {
+	const priority = record["priority"];
+	const effort = record["effort"];
+	const note = record["rankNote"];
+	if (
+		priority !== undefined &&
+		priority !== "high" &&
+		priority !== "normal" &&
+		priority !== "low"
+	)
+		throw new Error("a tell command's priority must be high, normal or low");
+	if (
+		effort !== undefined &&
+		effort !== "quick" &&
+		effort !== "normal" &&
+		effort !== "deep"
+	)
+		throw new Error("a tell command's effort must be quick, normal or deep");
+	// An empty note is how a note is taken away.
+	if (note !== undefined && typeof note !== "string")
+		throw new Error("a tell command's rankNote must be a string");
+	return {
+		...(priority === undefined ? {} : { priority }),
+		...(effort === undefined ? {} : { effort }),
+		...(note === undefined ? {} : { rankNote: note }),
+	};
+}
+
 function optionalPresentation(record: Record<string, unknown>): {
 	presentation?: "gui" | "tui";
 } {
@@ -1925,6 +2010,7 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				links: textList(record, "links"),
 				options: textList(record, "options"),
 				...optionalText(record, "workspace"),
+				...rankRecord(record),
 			};
 		case "escalation-ask":
 			return {
@@ -1965,6 +2051,12 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				verb: "escalation-link",
 				id: integer(record["id"], "id", 1, 999_999_999),
 				agent: text(record, "agent"),
+			};
+		case "escalation-rank":
+			return {
+				verb: "escalation-rank",
+				id: integer(record["id"], "id", 1, 999_999_999),
+				...rankRecord(record),
 			};
 		case "orchestrator-events":
 			return {

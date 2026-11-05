@@ -19,6 +19,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,7 +38,7 @@ import { StatusMark } from "../components/sidebar/StatusMark";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
 import { historyDirectionOfButton } from "../historyButtons";
-import { focusIsOurs, useNavStack } from "./navStack";
+import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
 
@@ -300,6 +301,51 @@ export function OrchestratorBoard({
   );
 }
 
+/**
+ * 要回答 re-ranked: its cards glide from where they were to where they are
+ * now (transform only, ~200 ms), instead of jumping. Nothing moves under
+ * Reduce Motion, or where the Web Animations API is missing.
+ */
+function useReorderGlide(
+  lanes: RefObject<HTMLDivElement | null>,
+  needsAnswer: readonly EscalationWire[],
+): void {
+  const before = useRef(new Map<number, number>());
+  const order = needsAnswer.map((one) => one.id).join(",");
+  const last = useRef(order);
+  useLayoutEffect(() => {
+    const lane = lanes.current?.querySelector('[data-tone="ask"]');
+    const cards = [
+      ...(lane?.querySelectorAll<HTMLElement>("[data-escalation-id]") ?? []),
+    ];
+    const now = new Map(
+      cards.map((card) => [
+        Number(card.dataset["escalationId"]),
+        card.getBoundingClientRect().top,
+      ]),
+    );
+    const moved = last.current !== order;
+    last.current = order;
+    const was = before.current;
+    before.current = now;
+    if (!moved || reducedMotion()) return;
+    for (const card of cards) {
+      const id = Number(card.dataset["escalationId"]);
+      const from = was.get(id);
+      const to = now.get(id);
+      if (from === undefined || to === undefined || from === to) continue;
+      if (typeof card.animate !== "function") continue;
+      card.animate(
+        [
+          { transform: `translateY(${String(from - to)}px)` },
+          { transform: "translateY(0)" },
+        ],
+        { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+      );
+    }
+  }, [lanes, order]);
+}
+
 /** The board tab: the lanes, and an escalation pushed over them. */
 function BoardPage({
   pane,
@@ -359,6 +405,22 @@ function BoardPage({
       });
     },
     [dispatch],
+  );
+  useReorderGlide(lanes, board.needsAnswer);
+  // Answered: back to the board, as Esc goes, with focus on what is next
+  // in 要回答 — the card after this one in its order, else the first left —
+  // or, with none left, on this one, now in 対応中.
+  const answered = useCallback(
+    (id: number) => {
+      const rest = board.needsAnswer.filter((one) => one.id !== id);
+      const at = board.needsAnswer.findIndex((one) => one.id === id);
+      const next =
+        rest.length === 0
+          ? all.find((one) => one.id === id)
+          : (rest[Math.max(0, at)] ?? rest[0]);
+      close(next);
+    },
+    [board.needsAnswer, all, close],
   );
   const reading = nav === "push";
   return (
@@ -458,7 +520,10 @@ function BoardPage({
           now={now}
           leaving={!reading}
           orchestratorAgentId={board.orchestratorAgentId}
-          onBack={close}
+          onBack={() => {
+            close();
+          }}
+          onAnswered={answered}
           onFocusAgent={focusAgent}
         />
       )}
@@ -516,6 +581,7 @@ function EscalationCard({
       : escalation.state === "in_progress"
         ? `answered ${span(now - escalation.stateSince)} ago`
         : `closed ${span(now - escalation.stateSince)} ago`;
+  const open = escalation.state !== "closed";
   const followUp =
     escalation.state === "needs_answer" &&
     escalation.entries.some((entry) => entry.role === "human");
@@ -538,6 +604,19 @@ function EscalationCard({
             : preview(question?.markdown ?? "")}
         </span>
         <span className="orchestrator-card-meta">
+          {open && escalation.priority === "high" ? (
+            <span className="orchestrator-chip is-priority" data-rank="high">
+              優先
+            </span>
+          ) : null}
+          {open && escalation.priority === "low" ? (
+            <span className="orchestrator-chip is-priority" data-rank="low">
+              低
+            </span>
+          ) : null}
+          {open && escalation.effort === "quick" ? (
+            <span className="orchestrator-chip is-quick">すぐ答えられる</span>
+          ) : null}
           {followUp ? (
             <span className="orchestrator-chip is-followup">追加の質問</span>
           ) : null}
@@ -553,6 +632,9 @@ function EscalationCard({
             </span>
           ))}
         </span>
+        {open && escalation.rankNote !== undefined ? (
+          <span className="orchestrator-card-why">{escalation.rankNote}</span>
+        ) : null}
       </button>
     </li>
   );
@@ -606,6 +688,7 @@ function EscalationView({
   leaving,
   orchestratorAgentId,
   onBack,
+  onAnswered,
   onFocusAgent,
 }: {
   readonly escalation: EscalationWire;
@@ -614,6 +697,8 @@ function EscalationView({
   readonly leaving: boolean;
   readonly orchestratorAgentId: string | undefined;
   readonly onBack: () => void;
+  /** The person's answer went out. */
+  readonly onAnswered: (id: number) => void;
   readonly onFocusAgent: (agentId: string) => void;
 }) {
   const pathsOn = escalation.agents[0]?.agentId ?? orchestratorAgentId;
@@ -768,7 +853,7 @@ function EscalationView({
         ) : null}
       </div>
       {escalation.state === "closed" ? null : (
-        <AnswerComposer escalation={escalation} />
+        <AnswerComposer escalation={escalation} onAnswered={onAnswered} />
       )}
     </div>
   );
@@ -794,12 +879,16 @@ function linkLabel(link: string): string {
  */
 function AnswerComposer({
   escalation,
+  onAnswered,
 }: {
   readonly escalation: EscalationWire;
+  readonly onAnswered: (id: number) => void;
 }) {
   const { reportFailure } = useAgents();
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  // Why the last send did not go; the draft stays, and so does the view.
+  const [failed, setFailed] = useState<string | undefined>(undefined);
   const input = useRef<HTMLTextAreaElement>(null);
   const last = escalation.entries.at(-1);
   const options =
@@ -810,16 +899,24 @@ function AnswerComposer({
     (words: string) => {
       if (words.trim() === "" || sending) return;
       setSending(true);
+      setFailed(undefined);
       void devhub()
         .answerEscalation(escalation.id, words)
-        .then(() => {
-          setText("");
-        }, reportFailure)
+        .then(
+          () => {
+            setText("");
+            onAnswered(escalation.id);
+          },
+          (error: unknown) => {
+            setFailed(error instanceof Error ? error.message : String(error));
+            reportFailure(error);
+          },
+        )
         .finally(() => {
           setSending(false);
         });
     },
-    [escalation.id, reportFailure, sending],
+    [escalation.id, reportFailure, sending, onAnswered],
   );
   const keys = useMessageKeys(() => {
     send(text);
@@ -850,6 +947,11 @@ function AnswerComposer({
           ))}
         </div>
       ) : null}
+      {failed === undefined ? null : (
+        <p className="orchestrator-composer-error" role="alert">
+          The answer did not go out: {failed}
+        </p>
+      )}
       <div className="conversation-composer-box">
         <div className="conversation-composer-field">
           <textarea

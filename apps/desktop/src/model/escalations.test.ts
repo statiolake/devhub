@@ -6,11 +6,14 @@ import {
   board,
   closeEscalation,
   createEscalation,
+  effortOf,
   escalationState,
   escalationsFromJson,
   linkAgent,
   openOptions,
   parseEscalationId,
+  priorityOf,
+  rankEscalation,
   stateSince,
   unaccountedAgents,
   UNACCOUNTED_GRACE_MS,
@@ -190,5 +193,108 @@ describe("不明", () => {
     expect(lanes.needsAnswer.map((one) => one.id)).toEqual([2, 1]);
     expect(lanes.inProgress.map((one) => one.id)).toEqual([3]);
     expect(lanes.closed.map((one) => one.id)).toEqual([4]);
+  });
+});
+
+describe("the orchestrator's ranking", () => {
+  const one = (
+    id: number,
+    at: number,
+    rank?: Parameters<typeof createEscalation>[1]["rank"],
+  ) =>
+    createEscalation(
+      id,
+      { title: `#${String(id)}`, markdown: "?", ...(rank ? { rank } : {}) },
+      at,
+    );
+
+  it("sorts 要回答 by priority, then effort, then age; 対応中 by age alone", () => {
+    const old = one(1, 1000);
+    const quickLow = one(2, 2000, { priority: "low", effort: "quick" });
+    const deepHigh = one(3, 3000, { priority: "high", effort: "deep" });
+    const quick = one(4, 4000, { effort: "quick" });
+    const quickHigh = one(5, 5000, { priority: "high", effort: "quick" });
+    const lanes = board(
+      [old, quickLow, deepHigh, quick, quickHigh],
+      [],
+      undefined,
+      9000,
+    );
+    expect(lanes.needsAnswer.map((e) => e.id)).toEqual([5, 3, 4, 1, 2]);
+    const answered = [
+      answerEscalation(quickHigh, "a", 7000),
+      answerEscalation(old, "a", 6000),
+    ];
+    expect(
+      board(answered, [], undefined, 9000).inProgress.map((e) => e.id),
+    ).toEqual([1, 5]);
+  });
+
+  it("re-ranks only what is given, stores normal as nothing, and an empty note clears", () => {
+    const made = one(1, 1000, {
+      priority: "high",
+      effort: "quick",
+      note: "リリースを止めている",
+    });
+    expect(made).toMatchObject({
+      priority: "high",
+      effort: "quick",
+      rankNote: "リリースを止めている",
+    });
+    const lower = rankEscalation(made, { priority: "normal" }, 2000);
+    expect(lower.priority).toBeUndefined();
+    expect(lower.effort).toBe("quick");
+    expect(lower.updatedAt).toBe(2000);
+    expect(lower.entries).toEqual(made.entries);
+    expect(rankEscalation(lower, { note: "" }, 3000).rankNote).toBeUndefined();
+    expect(() => rankEscalation(made, {}, 2000)).toThrow(EscalationError);
+    expect(() =>
+      rankEscalation(
+        closeEscalation(made, undefined, 2000),
+        { effort: "deep" },
+        3000,
+      ),
+    ).toThrow(/closed/u);
+    expect(() =>
+      rankEscalation(made, { priority: "urgent" as "high" }, 2000),
+    ).toThrow(/a priority is/u);
+  });
+
+  it("is kept on disk, and an older file reads as normal", () => {
+    const ranked = one(1, 1000, {
+      priority: "low",
+      effort: "deep",
+      note: "急がない",
+    });
+    const back = escalationsFromJson(
+      JSON.parse(
+        JSON.stringify({ version: 1, next: 2, escalations: [ranked] }),
+      ),
+    );
+    expect(back.escalations[0]).toEqual(ranked);
+    const older = escalationsFromJson({
+      version: 1,
+      next: 2,
+      escalations: [
+        {
+          id: 1,
+          title: "t",
+          entries: [{ role: "orchestrator", markdown: "?", at: 1 }],
+          agents: [],
+          links: [],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    }).escalations[0]!;
+    expect(priorityOf(older)).toBe("normal");
+    expect(effortOf(older)).toBe("normal");
+    expect(older.rankNote).toBeUndefined();
+    expect(() =>
+      escalationsFromJson({
+        version: 1,
+        escalations: [{ ...ranked, effort: "slow" }],
+      }),
+    ).toThrow(EscalationError);
   });
 });

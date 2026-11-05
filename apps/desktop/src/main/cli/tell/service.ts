@@ -497,6 +497,15 @@ export interface TellNewEscalation {
 	readonly agents: readonly string[];
 	readonly links: readonly string[];
 	readonly workspaceId: string | undefined;
+	readonly rank: TellEscalationRank;
+}
+
+/** The orchestrator's ranking of one, as `--priority`/`--effort`/`--rank-note` give it. */
+export interface TellEscalationRank {
+	readonly priority?: "high" | "normal" | "low";
+	readonly effort?: "quick" | "normal" | "deep";
+	/** `""` takes the note away. */
+	readonly note?: string;
 }
 
 /**
@@ -516,6 +525,8 @@ export interface TellOrchestratorPorts {
 	ask(id: number, markdown: string, options: readonly string[]): EscalationWire;
 	close(id: number, note: string | undefined): EscalationWire;
 	link(id: number, agentId: string): EscalationWire;
+	/** Ranked again by the orchestrator. Not an answer: it writes no entry. */
+	rank(id: number, rank: TellEscalationRank): EscalationWire;
 	/** `[orchestrator] root`, for a refusal that names it. */
 	configuredRoot(): string | undefined;
 	start(request: {
@@ -1010,6 +1021,8 @@ export class TellService {
 				return this.closeEscalation(command.id, command.note);
 			case "escalation-link":
 				return this.linkEscalation(command.id, command.agent);
+			case "escalation-rank":
+				return this.rankEscalation(command);
 			case "orchestrator-start":
 				return this.startOrchestrator(command);
 			case "orchestrator-status":
@@ -1108,10 +1121,10 @@ export class TellService {
 		);
 		const lines = [
 			`orchestrator: ${board.orchestratorAgentId ?? "none"}${board.paused ? `  (events paused, ${String(board.held)} held)` : ""}`,
-			`needs answer (${String(board.needsAnswer.length)}):`,
+			`needs answer (${String(board.needsAnswer.length)}, priority then effort then age):`,
 			...board.needsAnswer.map(
 				(one) =>
-					`  #${String(one.id)}  ${one.title}  waiting ${span(now - one.stateSince)}${agentsText(one)}`,
+					`  #${String(one.id)}  ${one.title}  waiting ${span(now - one.stateSince)}  [${rankText(one)}]${agentsText(one)}`,
 			),
 			`in progress (${String(board.inProgress.length)}):`,
 			...board.inProgress.map(
@@ -1158,6 +1171,7 @@ export class TellService {
 			agents,
 			links: command.links,
 			workspaceId,
+			rank: rankOf(command),
 		});
 		this.memory.markEscalation(
 			callerKey(this.caller),
@@ -1196,6 +1210,7 @@ export class TellService {
 		this.memory.markEscalation(callerKey(this.caller), id, one.entries.length);
 		const lines = [
 			`#${String(one.id)} ${one.title}  [${one.state}]`,
+			`rank: ${rankText(one)}`,
 			...(one.agents.length === 0
 				? []
 				: [
@@ -1238,7 +1253,7 @@ export class TellService {
 					: all
 							.map(
 								(one) =>
-									`#${String(one.id)}  ${one.state}  ${span(now - one.stateSince)}  ${one.title}${agentsText(one)}`,
+									`#${String(one.id)}  ${one.state}  ${span(now - one.stateSince)}  [${rankText(one)}]  ${one.title}${agentsText(one)}`,
 							)
 							.join("\n"),
 			data: { escalations: all },
@@ -1250,6 +1265,16 @@ export class TellService {
 		return {
 			message: `Closed #${String(closed.id)} 「${closed.title}」.`,
 			data: closed,
+		};
+	}
+
+	private rankEscalation(
+		command: Extract<TellCommand, { verb: "escalation-rank" }>,
+	): TellAnswer {
+		const ranked = this.ports.orchestrator.rank(command.id, rankOf(command));
+		return {
+			message: `#${String(ranked.id)} is ranked ${rankText(ranked)}.`,
+			data: ranked,
 		};
 	}
 
@@ -3844,4 +3869,22 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 		...(lastAt === undefined ? [] : [`last ${new Date(lastAt).toISOString()}`]),
 		...(problem === undefined ? [] : [problem]),
 	].join(", ");
+}
+
+/** The ranking a command gives, as the port takes it. */
+function rankOf(command: {
+	readonly priority?: "high" | "normal" | "low";
+	readonly effort?: "quick" | "normal" | "deep";
+	readonly rankNote?: string;
+}): TellEscalationRank {
+	return {
+		...(command.priority === undefined ? {} : { priority: command.priority }),
+		...(command.effort === undefined ? {} : { effort: command.effort }),
+		...(command.rankNote === undefined ? {} : { note: command.rankNote }),
+	};
+}
+
+/** `priority high, effort quick: blocks the release`. */
+function rankText(one: EscalationWire): string {
+	return `priority ${one.priority ?? "normal"}, effort ${one.effort ?? "normal"}${one.rankNote === undefined ? "" : `: ${one.rankNote}`}`;
 }

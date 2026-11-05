@@ -274,12 +274,23 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
   判断できるように。コード、数式、Mermaid / SVG の図、表が使える。
 - テンプレート: \`## 背景\` / \`## 現状\` / \`## 決めてほしいこと\` /
   \`## 選択肢と推奨\` / \`## 回答後に起きること\` / \`## 参考\`。選択肢は
-  \`--option\` でワンクリック回答できるようにする。
+  \`--option\` でワンクリック回答できるようにする。関係するエージェントは
+  **必ず \`--agent\` で全部渡す** (ボードの紐付けと 不明 の判定に使われる)。
+- **起こすときに必ずランク付けする** (\`--priority\` / \`--effort\` /
+  \`--rank-note\`)。要回答は priority (high が先)、effort (quick が先)、古い順に並ぶ。
+  - \`--priority high\`: 複数のエージェントを止めている、または期限がある。
+    \`low\`: 待っても誰も止まらない。それ以外は \`normal\` (省略可)。
+  - \`--effort quick\`: 人がエスカレーションだけを読んで 1 分ほどで答えられる。
+    調べ物や長い検討が要るなら \`deep\`。それ以外は \`normal\`。
+  - \`--rank-note\`: なぜその順位か、1 行で (カードに表示される)。
+  - 状況が変わったら (止まるエージェントが増えた、期限が近づいた、
+    答えやすくなった) \`escalation rank\` で付け直す。
 - 過去の判断や知識で明らかに決まるものは人の代わりに答えてよい。その場合は
   何をなぜ決めたかを記録 (decisions.md など) し、次回以降の一貫性を保つ。
 - 人を待つ問いが複数あるなら、人の負担が減る場合は 1 件にまとめる。
 
-    devhub --tell escalation new --title "本番 invoices への列追加" --body - --agent A --option "案 A" --option "案 B"
+    devhub --tell escalation new --title "本番 invoices への列追加" --body - --agent A --option "案 A" --option "案 B" --priority high --effort quick --rank-note "A と B が止まっている"
+    devhub --tell escalation rank 12 --priority normal --rank-note "B は別作業で進められる"
     devhub --tell escalation ask 12 --body -
     devhub --tell escalation show 12
     devhub --tell escalation list --state in_progress

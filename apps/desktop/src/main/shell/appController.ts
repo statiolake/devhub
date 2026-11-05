@@ -9692,6 +9692,7 @@ export class AppController {
 							...(request.workspaceId === undefined
 								? {}
 								: { workspaceId: request.workspaceId }),
+							rank: request.rank,
 						}),
 					),
 				ask: (id, markdown, options) =>
@@ -9700,6 +9701,8 @@ export class AppController {
 					orchestrator().toWire(orchestrator().close(id, note)),
 				link: (id, agentId) =>
 					orchestrator().toWire(orchestrator().link(id, agentId)),
+				rank: (id, rank) =>
+					orchestrator().toWire(orchestrator().rank(id, rank)),
 				configuredRoot: () => this.config.orchestrator.root,
 				start: (request) => this.startOrchestrator(request),
 				pause: () => {

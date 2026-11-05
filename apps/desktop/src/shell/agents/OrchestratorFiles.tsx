@@ -198,7 +198,9 @@ export function FilesPage({
           file={files.get(shown)}
           leaving={!reading}
           agentId={orchestratorAgentId}
-          onBack={close}
+          onBack={() => {
+            close();
+          }}
           onOpenInEditor={() => {
             void devhub().openOrchestratorFile(shown).catch(reportFailure);
           }}

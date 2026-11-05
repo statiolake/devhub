@@ -547,6 +547,15 @@ export interface EscalationWire {
 	/** Since when it has been in `state`: the last entry, or the close. */
 	readonly stateSince: number;
 	readonly closed?: { readonly at: number; readonly note?: string };
+	/**
+	 * The orchestrator's ranking: how much it matters (`high` blocks several
+	 * agents or a deadline), how quick it is to answer (`quick`: under about
+	 * a minute, from the escalation alone), and why, in a line. Main always
+	 * fills the first two (absent reads as `normal`).
+	 */
+	readonly priority?: "high" | "normal" | "low";
+	readonly effort?: "quick" | "normal" | "deep";
+	readonly rankNote?: string;
 }
 
 /** One agent in 不明: idle, with no open escalation naming it. */
