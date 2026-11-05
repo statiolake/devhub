@@ -30,6 +30,8 @@ export interface KeptAgent {
 	readonly profile: { readonly kind: string; readonly args: readonly string[] };
 	readonly presentation: string;
 	readonly meta: AgentMeta;
+	/** Under the orchestrator's management (`Agent.managed`). */
+	readonly managed: boolean;
 	readonly displayName: string;
 	readonly named: boolean;
 }
@@ -39,12 +41,13 @@ export interface SessionMetaKeeperPorts {
 	agents(): readonly KeptAgent[];
 	/** The CLI session an Agent runs, as its CLI names it; undefined: not yet. */
 	sessionOf(agentId: string): Promise<string | undefined>;
-	/** Give an Agent these pairs (after the save that found them). */
-	restore(agentId: string, meta: AgentMeta): void;
+	/** Give an Agent these pairs and its managed flag (after the save that found them). */
+	restore(agentId: string, meta: AgentMeta, managed: boolean): void;
 }
 
 export interface KnownSession {
 	readonly meta?: AgentMeta;
+	readonly managed?: boolean;
 	/** The Agent running it now. */
 	readonly liveAgentId?: string;
 }
@@ -83,12 +86,17 @@ export class SessionMetaKeeper {
 			if (
 				!seen &&
 				resumed !== undefined &&
-				Object.keys(agent.meta).length === 0
+				Object.keys(agent.meta).length === 0 &&
+				!agent.managed
 			) {
 				const record = this.index.of(kind, resumed);
 				if (record !== undefined) {
-					this.#swept.set(agent.id, signature(record.meta, agent));
-					this.ports.restore(agent.id, record.meta);
+					const managed = record.managed === true;
+					this.#swept.set(
+						agent.id,
+						signature(record.meta, { ...agent, managed }),
+					);
+					this.ports.restore(agent.id, record.meta, managed);
 					continue;
 				}
 			}
@@ -101,7 +109,7 @@ export class SessionMetaKeeper {
 				continue;
 			}
 			// Nothing to write down yet, and no session asked for.
-			if (Object.keys(agent.meta).length === 0) continue;
+			if (Object.keys(agent.meta).length === 0 && !agent.managed) continue;
 			const agentId = agent.id;
 			this.#track(
 				this.ports.sessionOf(agentId).then((session) => {
@@ -126,25 +134,37 @@ export class SessionMetaKeeper {
 	closed(agent: KeptAgent, session: string | undefined): void {
 		const kind = cliKind(agent.profile.kind);
 		if (kind === undefined || session === undefined) return;
-		this.index.remember(kind, session, agent.meta, {
-			name: agent.displayName,
-			named: agent.named,
-		});
+		this.index.remember(
+			kind,
+			session,
+			agent.meta,
+			{ name: agent.displayName, named: agent.named },
+			agent.managed,
+		);
 	}
 
 	/**
-	 * `/resume` in a GUI Agent went on with `session`: the pairs to give it,
-	 * when it has none of its own and the session has some.
+	 * `/resume` in a GUI Agent went on with `session`: the pairs and the
+	 * managed flag to give it, when it has neither of its own and the session
+	 * has some.
 	 */
-	resumedIn(agent: KeptAgent, session: string): AgentMeta | undefined {
+	resumedIn(
+		agent: KeptAgent,
+		session: string,
+	): { readonly meta: AgentMeta; readonly managed: boolean } | undefined {
 		const kind = cliKind(agent.profile.kind);
 		if (kind === undefined) return undefined;
 		this.#sessions.set(agent.id, { kind, session });
 		const record = this.index.of(kind, session);
-		if (record === undefined || Object.keys(agent.meta).length > 0)
+		if (
+			record === undefined ||
+			Object.keys(agent.meta).length > 0 ||
+			agent.managed
+		)
 			return undefined;
-		this.#swept.set(agent.id, signature(record.meta, agent));
-		return record.meta;
+		const managed = record.managed === true;
+		this.#swept.set(agent.id, signature(record.meta, { ...agent, managed }));
+		return { meta: record.meta, managed };
 	}
 
 	/** The sessions of `kind` whose pairs or Agent are known. */
@@ -152,14 +172,21 @@ export class SessionMetaKeeper {
 		const known = new Map<string, KnownSession>();
 		for (const record of this.index.records)
 			if (record.kind === kind)
-				known.set(record.session, { meta: record.meta });
+				known.set(record.session, {
+					meta: record.meta,
+					...(record.managed === true ? { managed: true } : {}),
+				});
 		const agents = new Map(
 			this.ports.agents().map((agent) => [agent.id, agent] as const),
 		);
 		for (const [agentId, place] of this.#sessions) {
 			const agent = agents.get(agentId);
 			if (agent === undefined || place.kind !== kind) continue;
-			known.set(place.session, { meta: agent.meta, liveAgentId: agent.id });
+			known.set(place.session, {
+				meta: agent.meta,
+				...(agent.managed ? { managed: true } : {}),
+				liveAgentId: agent.id,
+			});
 		}
 		return known;
 	}
@@ -208,7 +235,7 @@ export class SessionMetaKeeper {
 				: given === undefined
 					? undefined
 					: { name: given, named: true };
-		this.index.remember(cli, session, meta, name);
+		this.index.remember(cli, session, meta, name, record?.managed === true);
 		return meta;
 	}
 
@@ -231,10 +258,13 @@ export class SessionMetaKeeper {
 		const agent = this.ports.agents().find((one) => one.id === agentId);
 		if (agent === undefined) return;
 		this.#sessions.set(agentId, { kind, session });
-		this.index.remember(kind, session, agent.meta, {
-			name: agent.displayName,
-			named: agent.named,
-		});
+		this.index.remember(
+			kind,
+			session,
+			agent.meta,
+			{ name: agent.displayName, named: agent.named },
+			agent.managed,
+		);
 	}
 }
 
@@ -245,7 +275,7 @@ function cliKind(kind: string): SessionNameKind | undefined {
 /** What the sweep compares to tell an Agent's pairs or name changed. */
 function signature(
 	meta: AgentMeta,
-	agent: Pick<KeptAgent, "displayName" | "named">,
+	agent: Pick<KeptAgent, "displayName" | "named" | "managed">,
 ): string {
-	return JSON.stringify([meta, agent.displayName, agent.named]);
+	return JSON.stringify([meta, agent.displayName, agent.named, agent.managed]);
 }

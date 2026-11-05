@@ -168,9 +168,12 @@ when you parse results): \`devhub --tell --json agents\`.
 Full reference: \`devhub --tell help\`.
 
 **Pass every choice explicitly.** Commands that start something have no
-defaults: \`agent new\` needs \`--workspace\`, \`--profile\` and \`--gui\` or
-\`--tui\`; \`issue assign\` needs \`--repo\`, \`--branch\` or \`--root\`,
-\`--profile\`, \`--gui\` or \`--tui\` and \`--action\`. Run \`profiles\`
+defaults: \`agent new\` needs \`--workspace\`, \`--profile\`, \`--gui\` or
+\`--tui\` and \`--managed\` or \`--unmanaged\`; \`issue assign\` needs
+\`--repo\`, \`--branch\` or \`--root\`, \`--profile\`, \`--gui\` or
+\`--tui\`, \`--action\` and \`--managed\` or \`--unmanaged\`
+(\`--managed\`: the orchestrator manages the agent; anyone else starting one
+for the person passes \`--unmanaged\`). Run \`profiles\`
 and \`issue actions\` first to see the values (and \`workspaces\` for W). A
 call missing one does nothing and says which flags, and their values. No \`--tell\` command opens a picker in the window
 or takes the person's screen: what you start appears in the Sidebar,
@@ -193,7 +196,7 @@ Status is one of working, background, waiting (needs somebody), idle, error.
 ## Open a workspace and start an agent there
 
     devhub --tell workspace open ~/src/app
-    devhub --tell agent new --workspace ~/src/app --profile claude --gui --name "API fix" --prompt "Fix the failing test in api/"
+    devhub --tell agent new --workspace ~/src/app --profile claude --gui --unmanaged --name "API fix" --prompt "Fix the failing test in api/"
 
 \`workspace open\` answers the workspace id. Profiles are the person's
 configured agent profiles (\`profiles\`); use GUI (\`--gui\`) for agents you
@@ -206,7 +209,7 @@ names an agent, yourself included.
 ## Hand a GitHub Issue (or PR) to a new agent
 
     devhub --tell issue actions
-    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login-timeout --profile claude --gui --action issue_assignment --name "123 login fix"
+    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login-timeout --profile claude --gui --action issue_assignment --unmanaged --name "123 login fix"
 
 - Read the Issue first (title/body, e.g. with \`gh issue view\`) and choose a
   short descriptive branch name: \`<number>-<a-few-words>\`, lowercase, words

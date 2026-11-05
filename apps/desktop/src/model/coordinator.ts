@@ -805,6 +805,9 @@ export class AppCoordinator {
       case "set_agent_meta":
         this.model.setAgentMeta(intent.agentId, intent.key, intent.value);
         return this.transitionOutcome(beforeRevision, id);
+      case "set_agent_managed":
+        this.model.setAgentManaged(intent.agentId, intent.managed);
+        return this.transitionOutcome(beforeRevision, id);
       case "set_automatic_action":
         this.model.setAgentAutomaticAction(
           intent.agentId,

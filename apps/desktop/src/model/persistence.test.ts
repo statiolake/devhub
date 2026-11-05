@@ -233,6 +233,20 @@ describe("projection", () => {
     ).toBe(false);
   });
 
+  it("round-trips whether the orchestrator manages an Agent, absent as not", () => {
+    const model = populatedModel();
+    expect(
+      "managed" in stateFromSnapshot(model.snapshot()).workspaces[0].agents[0],
+    ).toBe(false);
+    model.setAgentManaged(AG_A, true);
+    const state = stateFromSnapshot(model.snapshot());
+    expect(state.workspaces[0].agents[0].managed).toBe(true);
+    expect(
+      hydrateModel(state, [codex], today()).snapshot().workspaces[0].agents[0]
+        .managed,
+    ).toBe(true);
+  });
+
   it("writes an Agent DevHub labelled as not named, and loads it so", () => {
     const state = stateFromSnapshot(populatedModel().snapshot());
     expect("named" in state.workspaces[0].agents[0]).toBe(false);

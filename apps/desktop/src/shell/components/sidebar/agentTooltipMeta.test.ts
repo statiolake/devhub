@@ -48,4 +48,13 @@ describe("an Agent's metadata in its tooltip", () => {
       "Reviewer",
     ]);
   });
+
+  it("says an Agent under the orchestrator's management is", () => {
+    expect(
+      agentTooltipFacts(agent({ managed: true })).map((fact) => [
+        fact.icon,
+        fact.text,
+      ]),
+    ).toContainEqual(["orchestrator", "Managed by the orchestrator"]);
+  });
 });

@@ -182,6 +182,8 @@ export interface AgentSnapshot {
   readonly named: boolean;
   /** Its own key/value pairs (`agentMeta.ts`). */
   readonly meta: Readonly<Record<string, string>>;
+  /** Under the orchestrator's management (`Agent.managed`). */
+  readonly managed: boolean;
   readonly ordinal: number;
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
@@ -1176,6 +1178,13 @@ export class AppModel {
   /** One of an Agent's own pairs set, or removed with no value. */
   setAgentMeta(id: AgentId, key: string, value: string | undefined): void {
     if (this.requireAgent(id).setMeta(key, value)) {
+      this.bumpRevision();
+    }
+  }
+
+  /** Put an Agent under the orchestrator's management, or take it out. */
+  setAgentManaged(id: AgentId, managed: boolean): void {
+    if (this.requireAgent(id).setManaged(managed)) {
       this.bumpRevision();
     }
   }
@@ -2358,6 +2367,7 @@ export class AppModel {
         displayName: agentLabelFor(agent, workspace.agents),
         named: agent.named,
         meta: agent.meta,
+        managed: agent.managed,
         ordinal: agent.ordinal,
         status: agent.status,
         runtimeHealth: agent.runtimeHealth,

@@ -35,6 +35,7 @@ function agent(
 		meta,
 		displayName: `Claude ${id}`,
 		named: false,
+		managed: false,
 		...overrides,
 	};
 }
@@ -42,19 +43,22 @@ function agent(
 function keeper(sessions: Record<string, string> = {}) {
 	let agents: KeptAgent[] = [];
 	const restored: [string, AgentMeta][] = [];
+	const managed: string[] = [];
 	const made = new SessionMetaKeeper(SessionMetaFile.load(path).index, {
 		agents: () => agents,
 		sessionOf: (agentId) => Promise.resolve(sessions[agentId]),
-		restore: (agentId, meta) => {
+		restore: (agentId, meta, isManaged) => {
 			restored.push([agentId, meta]);
+			if (isManaged) managed.push(agentId);
 			agents = agents.map((one) =>
-				one.id === agentId ? { ...one, meta } : one,
+				one.id === agentId ? { ...one, meta, managed: isManaged } : one,
 			);
 		},
 	});
 	return {
 		keeper: made,
 		restored,
+		managed,
 		set: (next: KeptAgent[]) => {
 			agents = next;
 		},
@@ -98,6 +102,28 @@ describe("SessionMetaKeeper", () => {
 		});
 	});
 
+	it("keeps the managed flag with the session, pairs or none, and gives it back", async () => {
+		const { keeper: kept, set, managed } = keeper({ a1: "c-1" });
+		set([agent("a1", {}, { managed: true })]);
+		kept.sweep();
+		await kept.settled();
+		expect(kept.index.of("claude", "c-1")?.managed).toBe(true);
+		expect(kept.known("claude").get("c-1")?.managed).toBe(true);
+		set([
+			agent(
+				"a2",
+				{},
+				{ profile: { kind: "claude", args: ["--resume", "c-1"] } },
+			),
+		]);
+		kept.sweep();
+		expect(managed).toEqual(["a2"]);
+		expect(kept.resumedIn(agent("a3"), "c-1")).toEqual({
+			meta: {},
+			managed: true,
+		});
+	});
+
 	it("gives the pairs back to an agent started on the session, not to one already there", async () => {
 		const { keeper: kept, set, restored } = keeper({ a1: "c-1" });
 		set([agent("a1", { parent: "orch" })]);
@@ -130,7 +156,10 @@ describe("SessionMetaKeeper", () => {
 		other.keeper.sweep();
 		expect(other.restored).toEqual([]);
 		// `/resume` inside a GUI agent with no pairs of its own.
-		expect(kept.resumedIn(agent("a4"), "c-1")).toEqual({ parent: "orch" });
+		expect(kept.resumedIn(agent("a4"), "c-1")).toEqual({
+			meta: { parent: "orch" },
+			managed: false,
+		});
 		expect(kept.resumedIn(agent("a5", { k: "v" }), "c-1")).toBeUndefined();
 	});
 

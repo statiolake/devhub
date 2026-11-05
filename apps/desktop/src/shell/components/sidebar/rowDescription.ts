@@ -763,6 +763,13 @@ export function agentTooltipFacts(agent: AgentSnapshot): RowFact[] {
     agent.named === true && agent.activity !== undefined
       ? { text: agent.activity, style: "muted" }
       : undefined,
+    agent.managed === true
+      ? {
+          icon: "orchestrator",
+          text: "Managed by the orchestrator",
+          style: "muted",
+        }
+      : undefined,
     // Its own key/value pairs (`model/agentMeta.ts`), quietly, one a line:
     // somebody's notes about the Agent, never the row's business.
     ...Object.entries(agent.meta ?? {}).map(

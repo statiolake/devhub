@@ -481,6 +481,8 @@ export interface AgentStateRecord {
    * note about an Agent, not something the Agent needs to run.
    */
   meta?: Record<string, string>;
+  /** Under the orchestrator's management (`Agent.managed`); absent is not. */
+  managed?: boolean;
   status: AgentStatus;
   /**
    * Why this Agent is owed a look, or absent if it has been read.
@@ -1465,6 +1467,7 @@ export function hydrateModel(
           temporaryName: agentRecord.temporary_name,
           named: agentRecord.named === true,
           ...(agentRecord.meta === undefined ? {} : { meta: agentRecord.meta }),
+          ...(agentRecord.managed === true ? { managed: true } : {}),
           status,
           unread: unreadFrom(agentRecord.unread),
           runtimeHealth,
@@ -1640,6 +1643,7 @@ export function stateFromSnapshot(
         ...(Object.keys(agent.meta).length === 0
           ? {}
           : { meta: { ...agent.meta } }),
+        ...(agent.managed ? { managed: true } : {}),
         status: agent.status,
         unread: agent.unread,
         runtime_health: agent.runtimeHealth,
@@ -2120,6 +2124,9 @@ function decodeAgentRecord(where: string, value: unknown): AgentStateRecord {
       decodeBoolean(at("named"), entry),
     ),
     meta: decodeMetaLeniently(object["meta"]),
+    managed: decodeOptional(object["managed"], (entry) =>
+      decodeBoolean(at("managed"), entry),
+    ),
     status: decodeMember(at("status"), object["status"], AGENT_STATUSES),
     unread: decodeOptional(object["unread"], (entry) =>
       decodeUnread(at("unread"), entry),

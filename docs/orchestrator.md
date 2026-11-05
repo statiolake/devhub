@@ -388,6 +388,29 @@ reading after a start. It is computed from live state
   its `EscalationWire`) and in `devhub --tell board` (`[停滞 3m: …]` on the
   line; `--json`: `inProgress[].stalledSince`).
 
+## Managed agents
+
+Every agent carries one flag: **managed by the orchestrator** or not
+(`Agent.managed`, a field of its own, not a metadata pair). Only a managed
+agent's activity is the orchestrator's to hear of: the `agent.*` events
+are said of managed agents only. The flag is set where the agent starts and
+nowhere else by default:
+
+- `devhub --tell agent new` and `devhub --tell issue assign` take
+  `--managed` or `--unmanaged`, required: a call with neither does nothing
+  and says both (`--editor-only` starts no agent and takes neither).
+- `agent manage A` / `agent unmanage A` change it later. The orchestrator
+  agent itself is never managed (`agent manage` refuses it).
+- What a person starts in the window — New Agent (`Cmd+Q c`), the Assign
+  Issue sheet — is not managed.
+
+It is kept with the agent in `state.json`, and under its CLI session in
+`session-meta.json` with its metadata, so a restart, `agent resume`, Reopen
+Closed and `/resume` keep it. `agents` and `sessions` say `managed`,
+`agent status` (and `--json` `managed`) too, and the Agent row in the
+Sidebar carries the orchestrator's mark after its words (the tooltip says
+"Managed by the orchestrator").
+
 ## Events
 
 Events are how DevHub tells the orchestrator something happened. Every

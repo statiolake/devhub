@@ -508,6 +508,12 @@ export type UserIntent =
       /** Absent: the key is removed. */
       readonly value?: string;
     }
+  /** Under the orchestrator's management, or not (`Agent.managed`). */
+  | {
+      readonly type: "set_agent_managed";
+      readonly agentId: AgentId;
+      readonly managed: boolean;
+    }
   /** Tick or untick an action as automatic for an Agent (`automaticActions.ts`). */
   | {
       readonly type: "set_automatic_action";

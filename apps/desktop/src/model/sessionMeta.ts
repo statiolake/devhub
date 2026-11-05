@@ -35,8 +35,10 @@ export interface SessionMetaRecord {
   readonly kind: SessionNameKind;
   /** Claude's session id, Codex's thread id. */
   readonly session: string;
-  /** The pairs the Agent had, never empty. */
+  /** The pairs the Agent had; empty only when it was `managed`. */
   readonly meta: AgentMeta;
+  /** The Agent was under the orchestrator's management (`Agent.managed`). */
+  readonly managed?: true;
   /** The name the Agent had when this was written. */
   readonly name?: string;
   /** That name was given by a person (`Agent.named`), not DevHub's label. */
@@ -74,12 +76,14 @@ export function rememberSessionMeta(
   record: SessionMetaRecord,
 ): readonly SessionMetaRecord[] {
   const earlier = sessionMetaOf(records, record.kind, record.session);
-  const empty = Object.keys(record.meta).length === 0;
+  const empty =
+    Object.keys(record.meta).length === 0 && record.managed !== true;
   if (earlier === undefined && empty) return records;
   if (
     earlier !== undefined &&
     !empty &&
     sameMeta(earlier.meta, record.meta) &&
+    (earlier.managed ?? false) === (record.managed ?? false) &&
     earlier.name === record.name &&
     (earlier.named ?? false) === (record.named ?? false)
   )
@@ -118,6 +122,7 @@ export function encodeSessionMeta(
       kind: record.kind,
       session: record.session,
       meta: record.meta,
+      ...(record.managed === true ? { managed: true } : {}),
       ...(record.name === undefined ? {} : { name: record.name }),
       ...(record.named === true ? { named: true } : {}),
       at: record.at,
@@ -159,7 +164,7 @@ export function decodeSessionMeta(
 
 function decodeRecord(entry: unknown): SessionMetaRecord | undefined {
   if (typeof entry !== "object" || entry === null) return undefined;
-  const { kind, session, meta, name, named, at } = entry as Record<
+  const { kind, session, meta, managed, name, named, at } = entry as Record<
     string,
     unknown
   >;
@@ -181,11 +186,12 @@ function decodeRecord(entry: unknown): SessionMetaRecord | undefined {
     // Not a swallow: an entry that does not read is left out, as the doc says.
     return undefined;
   }
-  if (Object.keys(checked).length === 0) return undefined;
+  if (Object.keys(checked).length === 0 && managed !== true) return undefined;
   return {
     kind,
     session,
     meta: checked,
+    ...(managed === true ? { managed: true } : {}),
     ...(name === undefined ? {} : { name }),
     ...(named === true ? { named: true } : {}),
     at,

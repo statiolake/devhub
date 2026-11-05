@@ -125,6 +125,14 @@ export type TellCommand =
 			readonly prompt?: string;
 			readonly presentation?: "gui" | "tui";
 			readonly meta?: readonly AgentMetaPair[];
+			/** `--managed` / `--unmanaged`: required, refused when missing. */
+			readonly managed?: boolean;
+	  }
+	| {
+			/** `agent manage` / `agent unmanage`: the orchestrator's managed flag. */
+			readonly verb: "agent-manage";
+			readonly agent: string;
+			readonly managed: boolean;
 	  }
 	| {
 			readonly verb: "issue-assign";
@@ -145,6 +153,8 @@ export type TellCommand =
 			readonly editorOnly: boolean;
 			readonly presentation?: "gui" | "tui";
 			readonly meta?: readonly AgentMetaPair[];
+			/** `--managed` / `--unmanaged`: required unless --editor-only. */
+			readonly managed?: boolean;
 			/** The agent's name from the start, as `agent new --name`. */
 			readonly name?: string;
 			/**
@@ -486,11 +496,19 @@ agents
                                    permission prompts, entries you have not
                                    read and the cursor, context use, prompt
                                    cache, and why it stopped or broke
-  agent new --workspace <w> --profile <p> --gui|--tui      (all required)
+  agent new --workspace <w> --profile <p> --gui|--tui --managed|--unmanaged
             [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
                                    start an agent (Cmd+Q c) and, with
                                    --prompt, tell it something once it is up
-                                   (without: an idle agent)
+                                   (without: an idle agent). --managed puts
+                                   it under the orchestrator's management
+                                   (its state is the orchestrator's to keep
+                                   settled); --unmanaged leaves it out, as
+                                   the window's New Agent does
+  agent manage <a>                 put an agent under the orchestrator's
+  agent unmanage <a>               management, or take it out (kept across
+                                   restarts and resumes; shown in 'agents',
+                                   'agent status' and the row)
   agent rename <a> <name>          the row menu's Rename...: the name the
   agent rename <a> --clear         Sidebar, the pane and the resume lists
                                    show (--clear: back to DevHub's label)
@@ -595,6 +613,7 @@ issues
                                    label and its wording
   issue assign <url> --repo <path> --branch <name>|--root
                --profile <p> --gui|--tui --action <id>|none
+               --managed|--unmanaged
                [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
                [--offline]                           (all but [] required)
   issue assign <url> --repo <path> --branch <name>|--root --editor-only
@@ -608,6 +627,7 @@ issues
                                    --action none tells the agent nothing;
                                    otherwise the action's wording is sent as
                                    its first message (no review sheet).
+                                   --managed / --unmanaged as 'agent new'.
                                    --editor-only opens the editor and
                                    starts no agent. --name gives the agent
                                    its name from the start, as 'agent new
@@ -870,6 +890,15 @@ function presentation(flags: Flags): "gui" | "tui" | undefined {
 	return gui ? "gui" : tui ? "tui" : undefined;
 }
 
+/** `--managed` / `--unmanaged`: true, false, or undefined when neither is given. */
+function managedFlag(flags: Flags): boolean | undefined {
+	const managed = flags.switches.has("--managed");
+	const unmanaged = flags.switches.has("--unmanaged");
+	if (managed && unmanaged)
+		throw new Refusal("--managed and --unmanaged ask for different things.");
+	return managed ? true : unmanaged ? false : undefined;
+}
+
 /** Every `--meta KEY=VALUE`, checked; a key given twice is refused. */
 function metaPairs(flags: Flags): readonly AgentMetaPair[] | undefined {
 	const given = flags.values.get("--meta");
@@ -1091,6 +1120,8 @@ function parseVerb(args: readonly string[]): TellCommand {
 					"--gui",
 					"--tui",
 					"--offline",
+					"--managed",
+					"--unmanaged",
 				],
 			});
 			const [url] = positionals(flags, ["<url>"]);
@@ -1106,6 +1137,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 				presentation: presentation(flags),
 				meta: metaPairs(flags),
 				name: one(flags, "--name"),
+				managed: managedFlag(flags),
 			};
 			return {
 				verb: "issue-assign",
@@ -1531,7 +1563,7 @@ function parseAgent(
 		case "new": {
 			const flags = readFlags(rest, {
 				values: ["--workspace", "--profile", "--name", "--prompt", "--meta"],
-				switches: ["--gui", "--tui"],
+				switches: ["--gui", "--tui", "--managed", "--unmanaged"],
 			});
 			positionals(flags, []);
 			return {
@@ -1543,8 +1575,14 @@ function parseAgent(
 					prompt: one(flags, "--prompt"),
 					presentation: presentation(flags),
 					meta: metaPairs(flags),
+					managed: managedFlag(flags),
 				}),
 			};
+		}
+		case "manage":
+		case "unmanage": {
+			const [agent] = positionals(readFlags(rest, NO_FLAGS), ["<agent>"]);
+			return { verb: "agent-manage", agent: agent!, managed: sub === "manage" };
 		}
 		case "rename": {
 			const flags = readFlags(rest, { values: [], switches: ["--clear"] });
@@ -1758,7 +1796,7 @@ function parseAgent(
 		}
 		default:
 			throw new Refusal(
-				"agent takes: new, read, send, interrupt, requests, answer, wait, status, stop, restart, resume, rename, meta.",
+				"agent takes: new, read, send, interrupt, requests, answer, wait, status, stop, restart, resume, rename, meta, manage, unmanage.",
 			);
 	}
 }
@@ -1888,6 +1926,16 @@ function optionalPresentation(record: Record<string, unknown>): {
 	if (value !== "gui" && value !== "tui")
 		throw new Error("a tell command's presentation must be gui or tui");
 	return { presentation: value };
+}
+
+function optionalManaged(record: Record<string, unknown>): {
+	managed?: boolean;
+} {
+	const value = record["managed"];
+	if (value === undefined) return {};
+	if (typeof value !== "boolean")
+		throw new Error("a tell command's managed must be a boolean");
+	return { managed: value };
 }
 
 function optionalStart(record: Record<string, unknown>): {
@@ -2093,7 +2141,17 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				...optionalText(record, "prompt"),
 				...optionalPresentation(record),
 				...optionalMeta(record),
+				...optionalManaged(record),
 			};
+		case "agent-manage": {
+			if (typeof record["managed"] !== "boolean")
+				throw new Error("a tell command's managed must be a boolean");
+			return {
+				verb: "agent-manage",
+				agent: text(record, "agent"),
+				managed: record["managed"],
+			};
+		}
 		case "issue-assign": {
 			const place = record["place"];
 			if (place !== "worktree" && place !== "root")
@@ -2115,6 +2173,7 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				...optionalPresentation(record),
 				...optionalStart(record),
 				...optionalMeta(record),
+				...optionalManaged(record),
 				...optionalText(record, "name"),
 				...(record["offline"] === undefined
 					? {}

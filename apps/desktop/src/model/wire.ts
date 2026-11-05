@@ -388,6 +388,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     displayName: agent.displayName,
     ...(agent.named ? { named: true } : {}),
     ...(Object.keys(agent.meta).length === 0 ? {} : { meta: agent.meta }),
+    ...(agent.managed ? { managed: true } : {}),
     ordinal: agent.ordinal,
     status: agent.status,
     runtimeHealth: agent.runtimeHealth,

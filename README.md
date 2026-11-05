@@ -270,12 +270,13 @@ devhub --tell workspace close W [--worktree keep|remove] [--agents stop] [--term
 devhub --tell profiles                                # agent profiles: id, name, kind, --gui/--tui, the window's default, available (and why not)
 devhub --tell agents [--workspace W] [--meta K=V]...  # id, name, kind, status and for how long, open requests, unread, context, meta
 devhub --tell agent status A                          # one agent in detail (--json: a stable schema)
-devhub --tell agent new --workspace W --profile P --gui|--tui [--name N] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
+devhub --tell agent new --workspace W --profile P --gui|--tui --managed|--unmanaged [--name N] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
+devhub --tell agent manage A | agent unmanage A       # under the orchestrator's management, or not
 devhub --tell agent rename A NAME | agent rename A --clear   # the row menu's Rename… (--clear: DevHub's label again)
 devhub --tell agent meta A [set KEY VALUE | unset KEY]      # an agent's own key/value pairs
 devhub --tell issue actions                           # Issue actions: id, label, wording (and none)
 devhub --tell issue assign <url> --repo PATH --branch 123-fix-login-timeout|--root
-              --profile P --gui|--tui --action ID|none
+              --profile P --gui|--tui --action ID|none --managed|--unmanaged
               [--name N] [--prompt TEXT|-] [--meta K=V]... [--offline]   # Cmd+Q i
 devhub --tell issue assign <url> --repo PATH --branch NAME|--root --editor-only [--offline]
 devhub --tell agent read A [--last N] [--since CURSOR] [--full]   # a GUI agent's transcript, with a cursor; long entries clipped and marked
@@ -323,8 +324,9 @@ machine, and the command line takes it only with `--offline`.
 
 **No defaults on the command line.** A `--tell` command that starts or
 creates something takes every choice as a required argument — `agent new`:
-`--workspace`, `--profile`, `--gui|--tui`; `issue assign`: `--repo`,
-`--branch|--root`, `--profile`, `--gui|--tui`, `--action` — because it is
+`--workspace`, `--profile`, `--gui|--tui`, `--managed|--unmanaged`; `issue
+assign`: `--repo`, `--branch|--root`, `--profile`, `--gui|--tui`,
+`--action`, `--managed|--unmanaged` — because it is
 called by agents, and what an agent gets must not move with the person's
 settings or with which item is listed first. A call missing one does
 nothing and names each missing flag with its values, from the same data
@@ -367,6 +369,17 @@ command that would open a picker or ask (`run add_agent`,
 window GUI or TUI has one default: the profile's `presentation`, else
 `[agents] default_presentation` — what the agent picker's row shows for New
 Agent and Assign Issue alike.
+
+**Managed agents.** An agent is under the orchestrator's management when
+it was started with `--managed` (or `agent manage A` said so later; `agent
+unmanage A` takes it out). Only a managed agent's state is the
+orchestrator's to hear of and keep settled (`docs/orchestrator.md`,
+"Managed agents"); an agent the person starts in the window — New Agent,
+Assign Issue — is not, and the orchestrator agent itself never is. The flag
+is a field of the agent, kept in `state.json` and under its CLI session in
+`session-meta.json` like its metadata, so a restart or a resume keeps it.
+`agents`, `agent status` and `sessions` say `managed`, and the Agent row
+carries the orchestrator's mark.
 
 **Metadata.** `agent meta`, and `--meta KEY=VALUE` on `agent new` and
 `issue assign`, keep an agent's own pairs — `role=reviewer`, `issue=123`,

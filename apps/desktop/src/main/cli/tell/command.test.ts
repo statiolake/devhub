@@ -140,6 +140,33 @@ describe("devhub --tell's arguments", () => {
 		).toContain("--gui");
 	});
 
+	it("reads --managed / --unmanaged and agent manage / unmanage", () => {
+		expect(told("agent", "new", "--managed")).toEqual({
+			verb: "agent-new",
+			managed: true,
+		});
+		expect(told("issue", "assign", "u", "--unmanaged")).toMatchObject({
+			verb: "issue-assign",
+			managed: false,
+		});
+		expect(refusal("agent", "new", "--managed", "--unmanaged")).toContain(
+			"--managed and --unmanaged",
+		);
+		expect(told("agent", "manage", "A")).toEqual({
+			verb: "agent-manage",
+			agent: "A",
+			managed: true,
+		});
+		expect(told("agent", "unmanage", "A")).toEqual({
+			verb: "agent-manage",
+			agent: "A",
+			managed: false,
+		});
+		expect(
+			tellCommandFrom({ verb: "agent-manage", agent: "A", managed: false }),
+		).toEqual({ verb: "agent-manage", agent: "A", managed: false });
+	});
+
 	it("reads issue assign with a branch of the caller's choosing", () => {
 		expect(
 			told(

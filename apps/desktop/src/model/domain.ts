@@ -1399,6 +1399,8 @@ export interface AgentRestoreRecord {
   readonly named?: boolean;
   /** Its own key/value pairs (`agentMeta.ts`); absent is none. */
   readonly meta?: AgentMeta;
+  /** Under the orchestrator's management. See `Agent.managed`; absent is not. */
+  readonly managed?: boolean;
   readonly status: AgentStatus;
   readonly runtimeHealth: RuntimeHealth;
   readonly controlState: AgentControlState;
@@ -1473,6 +1475,15 @@ export class Agent {
    * unlike `activity`: it is something somebody said, and stays said.
    */
   private metaValue: AgentMeta = NO_META;
+  /**
+   * Whether the orchestrator manages this Agent: its activity is the
+   * orchestrator's to watch (`docs/orchestrator.md`, "Managed agents"), and
+   * DevHub holds it to the invariant. Set where it was started — the
+   * orchestrator's `--managed`, never the window's New Agent or Assign Issue —
+   * and changed by `agent manage` / `agent unmanage`. Part of
+   * `AgentRestoreRecord`, like `meta`: something somebody said about it.
+   */
+  private managedValue = false;
 
   /**
    * The refusal this Agent's pane is still showing, or nothing.
@@ -1560,6 +1571,7 @@ export class Agent {
       validated.unread,
     );
     if (validated.meta !== undefined) agent.metaValue = validated.meta;
+    agent.managedValue = validated.managed === true;
     return agent;
   }
 
@@ -1583,6 +1595,7 @@ export class Agent {
     copy.injectionValue = this.injectionValue;
     copy.automaticActionsValue = this.automaticActionsValue;
     copy.metaValue = this.metaValue;
+    copy.managedValue = this.managedValue;
     copy.failureValue = this.failureValue;
     return copy;
   }
@@ -1617,6 +1630,18 @@ export class Agent {
     }
     if (next === this.metaValue) return false;
     this.metaValue = next;
+    return true;
+  }
+
+  /** Whether the orchestrator manages it. See `managedValue`. */
+  get managed(): boolean {
+    return this.managedValue;
+  }
+
+  /** Put it under the orchestrator's management, or take it out; whether anything changed. */
+  setManaged(managed: boolean): boolean {
+    if (this.managedValue === managed) return false;
+    this.managedValue = managed;
     return true;
   }
 

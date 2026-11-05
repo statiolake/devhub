@@ -58,6 +58,7 @@ function agent(overrides: Partial<TellAgent> = {}): TellAgent {
 		failure: undefined,
 		promptCache: undefined,
 		meta: {},
+		managed: false,
 		...overrides,
 	};
 }
@@ -375,6 +376,17 @@ class FakePorts implements TellPorts {
 		this.calls.push(`reset-name ${agentId}`);
 		return Promise.resolve();
 	}
+	setAgentManaged(agentId: string, managed: boolean) {
+		this.calls.push(`managed ${agentId} ${String(managed)}`);
+		this.spaces = this.spaces.map((space) => ({
+			...space,
+			agents: space.agents.map((one) =>
+				one.id === agentId ? { ...one, managed } : one,
+			),
+		}));
+		return Promise.resolve();
+	}
+
 	setAgentMeta(agentId: string, key: string, value: string | undefined) {
 		this.calls.push(`meta ${agentId} ${key} ${value ?? "<unset>"}`);
 		this.spaces = this.spaces.map((space) => ({
@@ -809,11 +821,17 @@ describe("devhub --tell, in the app", () => {
 				"--workspace is required: app (w1), scratch (scratch-id) (see devhub --tell workspaces)",
 				"--profile is required: claude, codex, cursor (see devhub --tell profiles)",
 				"--gui or --tui is required: --gui, --tui (see devhub --tell profiles)",
+				"--managed or --unmanaged is required: --managed puts the agent under the orchestrator's management (it is held to the invariant and its state is reported), --unmanaged leaves it the person's",
 			].join("\n"),
 		);
 		await expect(
 			service.run(
-				{ verb: "agent-new", workspace: "w1", profile: "claude" },
+				{
+					verb: "agent-new",
+					workspace: "w1",
+					profile: "claude",
+					managed: false,
+				},
 				coordinator,
 			),
 		).rejects.toThrow(
@@ -826,6 +844,7 @@ describe("devhub --tell, in the app", () => {
 					workspace: "w1",
 					profile: "cursor",
 					presentation: "gui",
+					managed: false,
 				},
 				coordinator,
 			),
@@ -854,18 +873,21 @@ describe("devhub --tell, in the app", () => {
 				name: "API",
 				prompt: "fix the API",
 				presentation: "gui",
+				managed: true,
 			},
 			coordinator,
 		);
 		expect(ports.calls).toEqual([
 			"create w1 codex gui",
 			"rename new-agent API",
+			"managed new-agent true",
 		]);
 		expect(ports.queued).toEqual([["new-agent", "fix the API"]]);
 		expect(answer.data).toEqual({
 			agentId: "new-agent",
 			workspaceId: "w1",
 			profile: "codex",
+			managed: true,
 		});
 	});
 
@@ -901,6 +923,7 @@ describe("devhub --tell, in the app", () => {
 				presentation: "gui",
 				action: "issue_assignment",
 				prompt: "only the backend",
+				managed: false,
 			},
 			coordinator,
 		);
@@ -2185,6 +2208,7 @@ describe("agent status", () => {
 			profile: "claude",
 			presentation: "gui",
 			meta: {},
+			managed: false,
 			workspace: { id: "w1", name: "app", root: "/src/app" },
 			status: "waiting",
 			statusSince: "1970-01-01T00:01:30.000Z",
@@ -3118,6 +3142,7 @@ const FULL_ASSIGN = [
 	"--profile",
 	"claude",
 	"--tui",
+	"--managed",
 	"--action",
 	"issue_assignment",
 	"--meta",
@@ -3203,12 +3228,13 @@ describe("no --tell call opens a picker", () => {
 			action: "issue_assignment",
 		});
 		expect(ports.calls.slice(1)).toEqual([
+			"managed issue-agent true",
 			"meta issue-agent parent bbbb2222-0000",
 			"meta issue-agent role implementer",
 		]);
 		// --action none: no action, and so nothing to send.
 		ports.calls = [];
-		const none = FULL_ASSIGN.slice(0, 10).concat(["--action", "none"]);
+		const none = FULL_ASSIGN.slice(0, 11).concat(["--action", "none"]);
 		await viaSocket(service, none, coordinator);
 		const bare = JSON.parse(
 			ports.calls[0]!.slice("assign ".length),
@@ -3230,6 +3256,7 @@ describe("no --tell call opens a picker", () => {
 				"--branch <name> or --root is required: --branch NAME works in a worktree of NAME (made if need be), --root in the clone itself (with --branch, switched to NAME; without, as it is)",
 				"--profile is required: claude, codex, cursor (see devhub --tell profiles)",
 				"--gui or --tui is required: --gui, --tui (see devhub --tell profiles)",
+				"--managed or --unmanaged is required: --managed puts the agent under the orchestrator's management (it is held to the invariant and its state is reported), --unmanaged leaves it the person's",
 				"--action is required: issue_assignment, review, none (see devhub --tell issue actions; none tells the agent nothing)",
 			].join("\n"),
 		);
@@ -3253,6 +3280,7 @@ describe("no --tell call opens a picker", () => {
 				without("--action"),
 				/^--action is required: issue_assignment, review, none/u,
 			],
+			[without("--managed", 0), /^--managed or --unmanaged is required/u],
 		] as const) {
 			await expect(viaSocket(service, line, coordinator)).rejects.toThrow(said);
 		}
@@ -3269,7 +3297,7 @@ describe("no --tell call opens a picker", () => {
 		expect(ports.calls).toEqual([]);
 		// --root alone is a choice: the clone as it is.
 		await viaSocket(service, [...without("--branch"), "--root"], coordinator);
-		expect(ports.calls).toHaveLength(3);
+		expect(ports.calls).toHaveLength(4);
 		expect(ports.calls[0]).toContain('"place":"root"');
 		expect(ports.calls[0]).not.toContain('"branch"');
 		expect(ports.queued).toEqual([]);
@@ -3551,6 +3579,31 @@ describe("agent rename and agent meta", () => {
 		expect(ports.calls).toContain("meta aaaa1111-0000 issue <unset>");
 	});
 
+	it("puts an agent under the orchestrator's management and takes it out, never the orchestrator", async () => {
+		const { service, ports } = setup();
+		const managed = await viaSocket(
+			service,
+			["agent", "manage", "Claude 1"],
+			coordinator,
+		);
+		expect(managed.data).toEqual({ agentId: "aaaa1111-0000", managed: true });
+		const status = await viaSocket(
+			service,
+			["agent", "status", "Claude 1"],
+			coordinator,
+		);
+		expect(status.message).toContain(
+			"managed   yes: under the orchestrator's management",
+		);
+		const listed = await viaSocket(service, ["agents"], coordinator);
+		expect(listed.message).toMatch(/aaaa1111-0000 .* managed/u);
+		await viaSocket(service, ["agent", "unmanage", "Claude 1"], coordinator);
+		expect(ports.calls).toEqual([
+			"managed aaaa1111-0000 true",
+			"managed aaaa1111-0000 false",
+		]);
+	});
+
 	it("tags a new agent with --meta, and refuses a key or value it cannot keep", async () => {
 		const { service, ports } = setup();
 		await viaSocket(
@@ -3563,6 +3616,7 @@ describe("agent rename and agent meta", () => {
 				"--profile",
 				"claude",
 				"--gui",
+				"--unmanaged",
 				"--meta",
 				"parent=bbbb2222-0000",
 			],
@@ -4963,6 +5017,7 @@ describe("the orchestrator's workspace, by name", () => {
 				"--profile",
 				"codex",
 				"--gui",
+				"--unmanaged",
 			],
 			coordinator,
 		);

@@ -65,6 +65,8 @@ export interface TellAgent {
 	readonly promptCache: PromptCache | undefined;
 	/** Its own key/value pairs (`model/agentMeta.ts`). */
 	readonly meta: Readonly<Record<string, string>>;
+	/** Under the orchestrator's management (`Agent.managed`). */
+	readonly managed: boolean;
 }
 
 /** An agent profile, as the agent picker offers it. */
@@ -409,6 +411,8 @@ export interface TellPorts {
 	renameAgent(agentId: string, name: string): Promise<void>;
 	/** Back to the label DevHub gives it (`reset_agent_name`). */
 	resetAgentName(agentId: string): Promise<void>;
+	/** Put an agent under the orchestrator's management, or take it out. */
+	setAgentManaged(agentId: string, managed: boolean): Promise<void>;
 	/** Set (or, with undefined, remove) one of an agent's own pairs. */
 	setAgentMeta(
 		agentId: string,
@@ -931,6 +935,8 @@ export interface TellAgentStatus {
 	readonly presentation: "gui" | "tui";
 	/** Its own key/value pairs; `{}` when it has none. */
 	readonly meta: Readonly<Record<string, string>>;
+	/** Under the orchestrator's management (`agent manage`, `--managed`). */
+	readonly managed: boolean;
 	readonly workspace: {
 		readonly id: string;
 		readonly name: string;
@@ -1026,6 +1032,8 @@ export class TellService {
 				return this.rename(command.agent, command.name);
 			case "agent-meta":
 				return this.meta(command);
+			case "agent-manage":
+				return this.manage(command.agent, command.managed);
 			case "agent-new":
 				return this.newAgent(command);
 			case "issue-assign":
@@ -1991,6 +1999,7 @@ export class TellService {
 					: `ctx ${String(state.context.percent)}%`,
 				state.failure === null ? undefined : "failed",
 				`in ${row.workspace}`,
+				row.managed ? "managed" : undefined,
 				metaWords(row.meta),
 				row.activity === undefined ? undefined : `— ${row.activity}`,
 			]
@@ -2116,6 +2125,36 @@ export class TellService {
 		};
 	}
 
+	/** `agent manage` / `agent unmanage`. Never the orchestrator itself. */
+	private async manage(name: string, managed: boolean): Promise<TellAnswer> {
+		const agent = this.agent(name);
+		if (
+			managed &&
+			agent.id === this.ports.orchestrator.board().orchestratorAgentId
+		)
+			throw new Error(
+				"the orchestrator is never under its own management: it manages the others.",
+			);
+		await this.ports.setAgentManaged(agent.id, managed);
+		return {
+			message: managed
+				? `${agent.name} (${agent.id}) is under the orchestrator's management.`
+				: `${agent.name} (${agent.id}) is no longer under the orchestrator's management.`,
+			data: { agentId: agent.id, managed },
+		};
+	}
+
+	/** `--managed|--unmanaged`, which must be given; else a line in `missing`. */
+	private requiredManaged(
+		managed: boolean | undefined,
+		missing: string[],
+	): void {
+		if (managed === undefined)
+			missing.push(
+				"--managed or --unmanaged is required: --managed puts the agent under the orchestrator's management (it is held to the invariant and its state is reported), --unmanaged leaves it the person's",
+			);
+	}
+
 	/** Every `--meta` pair onto a new agent, in order. */
 	private async tag(
 		agentId: string,
@@ -2139,6 +2178,7 @@ export class TellService {
 			);
 		const profile = this.requiredProfile(command.profile, missing);
 		this.requiredMode(profile, command.presentation, missing);
+		this.requiredManaged(command.managed, missing);
 		refuseMissing(missing);
 		const workspace = this.workspace(command.workspace!);
 		const agentId = await this.ports.createAgent(
@@ -2148,12 +2188,19 @@ export class TellService {
 		);
 		if (command.name !== undefined)
 			await this.ports.renameAgent(agentId, command.name);
+		if (command.managed === true)
+			await this.ports.setAgentManaged(agentId, true);
 		await this.tag(agentId, command.meta);
 		if (command.prompt !== undefined)
 			this.ports.queueText(agentId, command.prompt);
 		return {
 			message: `Agent ${agentId} (${profile!.id}, ${command.presentation!.toUpperCase()}) is starting in ${workspace.root}${command.prompt === undefined ? "" : "; it is told the prompt once it is ready"}.`,
-			data: { agentId, workspaceId: workspace.id, profile: profile!.id },
+			data: {
+				agentId,
+				workspaceId: workspace.id,
+				profile: profile!.id,
+				managed: command.managed === true,
+			},
 		};
 	}
 
@@ -2181,6 +2228,7 @@ export class TellService {
 				command.meta === undefined ? undefined : "--meta",
 				command.prompt === undefined ? undefined : "--prompt",
 				command.name === undefined ? undefined : "--name",
+				command.managed === undefined ? undefined : "--managed/--unmanaged",
 			].filter((flag) => flag !== undefined);
 			if (extra.length > 0)
 				missing.push(
@@ -2189,6 +2237,7 @@ export class TellService {
 		} else {
 			profile = this.requiredProfile(command.profile, missing);
 			this.requiredMode(profile, command.presentation, missing);
+			this.requiredManaged(command.managed, missing);
 			const actions = this.ports.issueActions();
 			const choices = [...actions.map((one) => one.id), NO_ACTION].join(", ");
 			if (command.action === undefined)
@@ -2219,6 +2268,8 @@ export class TellService {
 			...(command.name === undefined ? {} : { name: command.name.trim() }),
 			offline: command.offline === true,
 		});
+		if (assigned.agentId !== undefined && command.managed === true)
+			await this.ports.setAgentManaged(assigned.agentId, true);
 		if (assigned.agentId !== undefined)
 			await this.tag(assigned.agentId, command.meta);
 		if (command.prompt !== undefined && assigned.agentId !== undefined)
@@ -2753,6 +2804,7 @@ export class TellService {
 			profile: agent.profileId,
 			presentation: agent.presentation,
 			meta: agent.meta,
+			managed: agent.managed,
 			workspace: {
 				id: workspace.id,
 				name: workspace.scratch ? "Scratch" : workspace.name,
@@ -3085,6 +3137,7 @@ export class TellService {
 					title: session.title,
 					agentName: session.agentName ?? null,
 					meta: session.meta ?? {},
+					managed: session.managed === true,
 					liveAgentId: session.liveAgentId ?? null,
 					updatedAt: iso(session.updatedAt),
 					cwd: session.cwd ?? null,
@@ -3125,6 +3178,9 @@ export class TellService {
 		const name = command.name ?? session.agentName;
 		if (name !== undefined) await this.ports.renameAgent(agentId, name);
 		const meta = session.meta ?? {};
+		// So does being under the orchestrator's management.
+		if (session.managed === true)
+			await this.ports.setAgentManaged(agentId, true);
 		await this.tag(
 			agentId,
 			Object.entries(meta).map(([key, value]) => ({ key, value })),
@@ -3147,6 +3203,7 @@ export class TellService {
 				root,
 				name: name ?? null,
 				meta,
+				managed: session.managed === true,
 			},
 		};
 	}
@@ -3661,6 +3718,7 @@ function sessionLine(
 		session.liveAgentId === undefined
 			? undefined
 			: `running in agent ${session.liveAgentId}`,
+		session.managed === true ? "managed" : undefined,
 		metaWords(session.meta ?? {}),
 	]
 		.filter((part) => part !== undefined)
@@ -3814,6 +3872,9 @@ function statusLines(state: TellAgentStatus, now: number): string[] {
 	return [
 		`${state.name} (${state.agentId})  ${state.kind}/${state.presentation}, profile ${state.profile}, in ${state.workspace.name} (${state.workspace.root})`,
 		`status    ${state.status}${since}${state.turn === null ? "" : `, turn ${state.turn}`}${state.control === "running" ? "" : `, ${state.control}`}`,
+		...(state.managed
+			? ["managed   yes: under the orchestrator's management"]
+			: []),
 		...(Object.keys(state.meta).length === 0
 			? []
 			: [`meta      ${metaWords(state.meta) ?? ""}`]),

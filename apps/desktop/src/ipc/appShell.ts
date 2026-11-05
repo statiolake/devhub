@@ -154,6 +154,8 @@ export interface AgentWire {
 	readonly named?: true;
 	/** Its own key/value pairs (`model/agentMeta.ts`); absent when it has none. */
 	readonly meta?: Readonly<Record<string, string>>;
+	/** Under the orchestrator's management (`Agent.managed`); absent is not. */
+	readonly managed?: true;
 	readonly id: string;
 	readonly ordinal: number;
 	readonly profileId: string;

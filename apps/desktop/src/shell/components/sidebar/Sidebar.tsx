@@ -676,6 +676,7 @@ function AgentTree({
                     {note ? <span className="row-note">{note}</span> : null}
                   </span>
                 </button>
+                <AgentMarks agent={agent} />
                 {agent.controlState.kind === "stopping" ? null : (
                   <button
                     className="row-action-button agent-row-action"
@@ -698,6 +699,20 @@ function AgentTree({
         );
       })}
     </ul>
+  );
+}
+
+/**
+ * The orchestrator's marks on an Agent's row, after its words: that it is
+ * under the orchestrator's management (`Agent.managed`). Quiet, like the
+ * row's other context; the tooltip says it in words (`agentTooltipFacts`).
+ */
+function AgentMarks({ agent }: { readonly agent: AgentSnapshot }) {
+  if (agent.managed !== true) return null;
+  return (
+    <span className="row-agent-marks">
+      <Glyph name="orchestrator" className="row-agent-mark is-managed" />
+    </span>
   );
 }
 

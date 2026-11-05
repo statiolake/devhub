@@ -2040,6 +2040,26 @@ body.is-resizing-rows {
   content: none;
 }
 
+/* The orchestrator's marks on an Agent's row (`AgentMarks`): managed, and
+   what its escalations say of it. Small and in the quiet ink, except
+   "unsettled", which is the one thing here asking for a look. */
+.row-agent-marks {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  color: var(--tertiary);
+}
+
+.row-agent-mark {
+  width: 11px;
+  height: 11px;
+}
+
+.sidebar[data-collapsed="true"] .row-agent-marks {
+  display: none;
+}
+
 /* Nothing is left in an Agent's button in the rail — its one mark is in the
    icon column beside it — so the button must take no width of its own, or it
    would push that column off the middle of the rail. */

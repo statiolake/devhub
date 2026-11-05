@@ -1332,8 +1332,8 @@ export class AppController {
 					(workspace) => workspace.agents,
 				),
 			sessionOf: (agentId) => this.sessionAtClose(parseAgentId(agentId)),
-			restore: (agentId, meta) => {
-				this.restoreSessionMeta(parseAgentId(agentId), meta);
+			restore: (agentId, meta, managed) => {
+				this.restoreSessionMeta(parseAgentId(agentId), meta, managed);
 			},
 		});
 		if (sessionMeta.refused !== undefined) {
@@ -3273,13 +3273,23 @@ export class AppController {
 		);
 	}
 
-	/** Set `meta`'s pairs on an Agent, after this save (each is an intent). */
+	/**
+	 * Set `meta`'s pairs and the managed flag on an Agent, after this save
+	 * (each is an intent).
+	 */
 	private restoreSessionMeta(
 		agentId: AgentId,
 		meta: Readonly<Record<string, string>>,
+		managed: boolean,
 	): void {
 		queueMicrotask(() => {
 			void (async () => {
+				if (managed)
+					await this.dispatchAwaiting({
+						type: "set_agent_managed",
+						agentId,
+						managed: true,
+					});
 				for (const [key, value] of Object.entries(meta)) {
 					await this.dispatchAwaiting({
 						type: "set_agent_meta",
@@ -3402,8 +3412,9 @@ export class AppController {
 		const kind = agent?.profile.kind;
 		if (agent === undefined) return;
 		if (kind !== "claude" && kind !== "codex") return;
-		const meta = this.sessionMeta.resumedIn(agent, session);
-		if (meta !== undefined) this.restoreSessionMeta(agentId, meta);
+		const kept = this.sessionMeta.resumedIn(agent, session);
+		if (kept !== undefined)
+			this.restoreSessionMeta(agentId, kept.meta, kept.managed);
 		if (agent.named) return;
 		const name = this.givenSessionName(kind, session);
 		if (name === undefined) return;
@@ -9912,7 +9923,8 @@ export class AppController {
 		this.agentEvents.observe(
 			snapshot.workspaces.flatMap((workspace) =>
 				workspace.agents
-					.filter((agent) => agent.id !== orchestrator)
+					// Only the agents the orchestrator manages are its to hear of.
+					.filter((agent) => agent.id !== orchestrator && agent.managed)
 					.map((agent) => ({
 						id: agent.id,
 						name: agent.displayName,
@@ -10241,6 +10253,13 @@ export class AppController {
 				await this.dispatchAwaiting({
 					type: "reset_agent_name",
 					agentId: parseAgentId(agentId),
+				});
+			},
+			setAgentManaged: async (agentId, managed) => {
+				await this.dispatchAwaiting({
+					type: "set_agent_managed",
+					agentId: parseAgentId(agentId),
+					managed,
 				});
 			},
 			setAgentMeta: async (agentId, key, value) => {
@@ -10740,6 +10759,7 @@ export class AppController {
 							: { code: agent.failure.code, detail: agent.failure.detail },
 					promptCache: agent.promptCache,
 					meta: agent.meta ?? {},
+					managed: agent.managed === true,
 				})),
 			};
 		});
