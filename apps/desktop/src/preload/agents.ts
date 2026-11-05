@@ -47,8 +47,6 @@ const api: AgentsBridge = {
 			id,
 			markdown,
 		) as Promise<void>,
-	takeEscalation: (id: number, note: string) =>
-		ipcRenderer.invoke(CHANNELS.takeEscalation, id, note) as Promise<void>,
 	startOrchestrator: () =>
 		ipcRenderer.invoke(CHANNELS.startOrchestrator) as Promise<void>,
 	setOrchestratorPaused: (paused: boolean) =>

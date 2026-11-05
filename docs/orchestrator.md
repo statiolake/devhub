@@ -106,13 +106,16 @@ by **one rule**: it is 要回答 exactly while the last entry is a question.
 
 Whatever comes after a question takes it to 対応中, and only another
 question (`escalation ask`) brings it back to 要回答; once the matter is done
-the orchestrator closes it. What can come after a question (`role` is whose
+the orchestrator closes it. (A thread from before may also hold a `taken`
+entry, role `human`, from a 対応中にする the window no longer has: it still
+counts as "anything else", and shows as the neutral line
+「対応中になりました（{time}）[: note]」. Nothing writes one now.) What can
+come after a question (`role` is whose
 side it is on; only the window writes `human` entries):
 
 | entry             | role           | written by                                                                                                                                                                                                                | thread shows                                                                                                |
 | ----------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | an answer         | `human`        | the person, in the board's composer                                                                                                                                                                                       | their Markdown                                                                                              |
-| `kind: "taken"`   | `human`        | the person's 対応中にする (card or reading view), with an optional note                                                                                                                                                   | 「人が対応中にしました（{time}）[: note]」                                                                  |
 | `kind: "held"`    | `orchestrator` | `escalation hold ID [--note TEXT]`: parked while it works on it (e.g. more investigation delegated). Never an answer                                                                                                      | 「オーケストレーターが対応中にしました（{time}）[: note]」                                                  |
 | `kind: "direct"`  | `human`        | DevHub: one of its `agents` went from idle (or stopped on a question) to working on the person's message from **that agent's own composer** (the conversation IPC's submit: not `agent send`, not an event or a template) | 「人が {agent} と直接やりとりしました（{time}）— 内容はエージェントの会話を参照」, with a chip to the agent |
 | `kind: "resumed"` | `orchestrator` | DevHub: one of its `agents` went working for any other reason (the orchestrator's `agent send`, an injected event, DevHub's own resume after a usage limit)                                                               | 「{agent} が作業を再開しました（{time}）— 回答待ちは一旦解除」                                              |
@@ -120,8 +123,7 @@ side it is on; only the window writes `human` entries):
 The notes (`kind`) have no answer in them: `escalation show` prints them as
 notes, and `agent wait --any` does not report them as answered. DevHub
 writes `direct` / `resumed` (`OrchestratorService`) only on a 要回答 one; the
-orchestrator is told of `taken` (`escalation.taken`) and of the person's
-direct words (`escalation.human_direct`, also for one already 対応中: what was
+orchestrator is told of the person's direct words (`escalation.human_direct`, also for one already 対応中: what was
 said may answer or change it), not of `held` (its own) or `resumed` (it
 caused it, or hears of it as `agent.turn_ended`).
 
@@ -336,7 +338,7 @@ reading after a start. It is computed from live state
   it, nobody has been set going.
 - **Once per stretch**: `escalation.stalled` is sent once for each stretch;
   one of its agents working (a real turn), or a new entry (an answer, a
-  `taken`, a `held`), ends it, and the next stretch is told again.
+  question and its answer), ends it, and the next stretch is told again.
 - **Marked** on the board (a quiet 停滞 chip on the card, `stalledSince` on
   its `EscalationWire`) and in `devhub --tell board` (`[停滞 3m: …]` on the
   line; `--json`: `inProgress[].stalledSince`).
@@ -364,7 +366,6 @@ pulls the details itself. `{EVENT}` holds these lines.
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init`                                            | the orchestrator starts (`init_prompt` if set)                                                                                                                                                                                        | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                                |
 | `escalation_answered`                             | the person answered an escalation                                                                                                                                                                                                     | `[escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)`                                                                     |
-| `escalation.taken`                                | the person moved an escalation to 対応中 without answering (対応中にする)                                                                                                                                                             | `[escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する`                                                                             |
 | `escalation.human_direct`                         | the person talked directly to an open escalation's agent, from its composer, and it went working (要回答 → 対応中)                                                                                                                    | `[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります` |
 | `escalation.stalled`                              | a 対応中 escalation none of whose agents has worked for the grace (see 停滞); `agents=none` when it names none (`escalation link` it)                                                                                                 | `[escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない`                                      |
 | `unaccounted`                                     | an agent entered 不明                                                                                                                                                                                                                 | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m`                                                                                                                        |
@@ -420,8 +421,7 @@ line per subject.** The pending buffer holds action items, not a log.
     whatever else was pending about its subject;
   - an agent's repeated `turn_ended` keep the latest excerpt and the first
     unread `since`; so does `escalation.human_direct` per agent (its subject
-    is the escalation, so it shares a line with an `escalation_answered` or
-    an `escalation.taken`);
+    is the escalation, so it shares a line with an `escalation_answered`);
     a timer has at most one pending event;
   - different statements about one subject share its line, the latest
     leading it with its `[type]`, the others after `／ [type] …`, without the
@@ -435,7 +435,7 @@ bob が承認 ／ [github.pr_ready] ready for review になった https://…/pu
   now named by an open escalation; a `turn_ended` whose agent is working
   again (someone has given it work; its output stays readable with `agent
 read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
-  longer waits on it; an `escalation_answered`, `escalation.taken` or
+  longer waits on it; an `escalation_answered` or
   `escalation.human_direct` whose escalation is closed; an
   `escalation.stalled` whose stretch is over (an agent of it works again, a
   new entry, back in 要回答, closed); a `github.unattended`
@@ -444,7 +444,7 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   delivered again (`repeat`) unless something about that subject has been
   heard since — a repeated `unaccounted` for the same idle period, the same
   CI result on the same commit. Events that add news each time (`init`,
-  `escalation_answered`, `escalation.taken`, `escalation.human_direct`,
+  `escalation_answered`, `escalation.human_direct`,
   review comments, replies, `github.unattended` — its source says it once
   per stretch of being unattended —
   turns, timers, `custom.*`)
@@ -493,7 +493,7 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
 ### The sources
 
 - **The board** (`orchestratorService.ts`): `init`, `escalation_answered`,
-  `escalation.taken`, `escalation.human_direct`, `escalation.stalled`,
+  `escalation.human_direct`, `escalation.stalled`,
   `unaccounted`.
 - **GitHub** (`githubEvents.ts`), while an orchestrator runs and
   `[orchestrator.github] projects` names a board. Scope: the cards on those
@@ -645,7 +645,7 @@ goes. The default is everything but the chatter:
 
 ```toml
 events = ["init", "escalation_answered", "escalation.human_direct",
-  "escalation.taken", "escalation.stalled", "unaccounted", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
+  "escalation.stalled", "unaccounted", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
   "agent.asked", "agent.exited", "agent.failed", "usage.threshold", "timer.*", "custom.*"]
 ```
 

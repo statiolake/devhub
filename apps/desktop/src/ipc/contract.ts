@@ -524,8 +524,8 @@ export interface EscalationEntryWire {
 	readonly options?: readonly string[];
 	/**
 	 * A note, not a question or an answer (`model/escalations.ts`):
-	 * `direct` / `resumed`, `agent` went working; `taken`, the person's
-	 * 対応中にする; `held`, the orchestrator's `escalation hold` (`markdown`
+	 * `direct` / `resumed`, `agent` went working; `taken`, an old
+	 * 対応中にする (read, never written any more); `held`, the orchestrator's `escalation hold` (`markdown`
 	 * their optional note).
 	 */
 	readonly kind?: "direct" | "resumed" | "taken" | "held";
@@ -768,11 +768,6 @@ export interface OrchestratorActionsBridge {
 	 * written**: no `devhub --tell` command reaches it.
 	 */
 	answerEscalation(id: number, markdown: string): Promise<void>;
-	/**
-	 * The person's 対応中にする: a `needs_answer` escalation to `in_progress`
-	 * without an answer, with an optional note. The window's only.
-	 */
-	takeEscalation(id: number, note: string): Promise<void>;
 	/** Start the orchestrator from `[orchestrator]`, as the board's button does. */
 	startOrchestrator(): Promise<void>;
 	/** Hold the orchestrator's events (true), or deliver them again (false). */
@@ -2211,7 +2206,6 @@ export const CHANNELS = {
 	getUsageLimits: "devhub:get-usage-limits",
 	getOrchestratorBoard: "devhub:get-orchestrator-board",
 	answerEscalation: "devhub:answer-escalation",
-	takeEscalation: "devhub:take-escalation",
 	startOrchestrator: "devhub:start-orchestrator",
 	setOrchestratorPaused: "devhub:set-orchestrator-paused",
 	listOrchestratorFolder: "devhub:list-orchestrator-folder",

@@ -100,13 +100,6 @@ export type OrchestratorEvent =
 			/** `agent read --since`: the person's message. */
 			readonly since?: string;
 	  }
-	/** The person moved an escalation to 対応中 without answering it (対応中にする). */
-	| {
-			readonly type: "escalation.taken";
-			readonly escalationId: number;
-			readonly title: string;
-			readonly note?: string;
-	  }
 	/**
 	 * Level-triggered, like `unaccounted`: an escalation in 対応中 that none of
 	 * its agents is working on (all idle, waiting, stopped or gone, or it
@@ -293,7 +286,6 @@ export const EVENT_TYPES = [
 	"init",
 	"escalation_answered",
 	"escalation.human_direct",
-	"escalation.taken",
 	"escalation.stalled",
 	"unaccounted",
 	"github.assigned",
@@ -458,11 +450,6 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 					...event.agents.map(agentToken),
 				],
 				summary: "人が回答しました (escalation show で読む)",
-			};
-		case "escalation.taken":
-			return {
-				head: [`esc=${String(event.escalationId)}${title(event.title)}`],
-				summary: `人が対応中にしました${event.note === undefined || event.note === "" ? "" : `: ${excerpt(event.note, 150)}`}`,
 			};
 		case "escalation.human_direct":
 			return {
@@ -712,7 +699,6 @@ export function subjectOf(event: OrchestratorEvent): string {
 			return "init";
 		case "escalation_answered":
 		case "escalation.human_direct":
-		case "escalation.taken":
 		case "escalation.stalled":
 			return `esc ${String(event.escalationId)}`;
 		case "unaccounted":
@@ -808,7 +794,6 @@ function accumulates(event: OrchestratorEvent): boolean {
 		event.type === "init" ||
 		event.type === "escalation_answered" ||
 		event.type === "escalation.human_direct" ||
-		event.type === "escalation.taken" ||
 		event.type === "github.review_comment" ||
 		event.type === "github.reply" ||
 		// The source says it once per stretch of being unattended: a second

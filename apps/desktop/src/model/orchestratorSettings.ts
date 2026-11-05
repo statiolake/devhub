@@ -80,7 +80,6 @@ export const DEFAULT_ORCHESTRATOR_EVENTS: readonly string[] = [
   "init",
   "escalation_answered",
   "escalation.human_direct",
-  "escalation.taken",
   "escalation.stalled",
   "unaccounted",
   "github.*",

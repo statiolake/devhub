@@ -276,8 +276,7 @@ export class OrchestratorService {
 						one.since === event.since,
 				);
 			case "escalation_answered":
-			case "escalation.human_direct":
-			case "escalation.taken": {
+			case "escalation.human_direct": {
 				const one = this.ports.store
 					.all()
 					.find((escalation) => escalation.id === event.escalationId);
@@ -345,7 +344,7 @@ export class OrchestratorService {
 	 * it. A `held` note, on the orchestrator's side: never an answer.
 	 */
 	hold(id: number, note: string | undefined): Escalation {
-		return this.ports.store.take(id, "held", note, this.#now());
+		return this.ports.store.hold(id, note, this.#now());
 	}
 
 	link(id: number, agentId: string): Escalation {
@@ -362,22 +361,6 @@ export class OrchestratorService {
 	}
 
 	// --- the person's side -----------------------------------------------------
-
-	/**
-	 * The person's 対応中にする, from the window: to `in_progress` without an
-	 * answer, and the orchestrator is told.
-	 */
-	take(id: number, note: string | undefined): Escalation {
-		const taken = this.ports.store.take(id, "taken", note, this.#now());
-		const written = taken.entries.at(-1)?.markdown ?? "";
-		this.events.dispatch({
-			type: "escalation.taken",
-			escalationId: taken.id,
-			title: taken.title,
-			...(written === "" ? {} : { note: written }),
-		});
-		return taken;
-	}
 
 	/** The person's answer, from the window. Moves it to in_progress. */
 	answer(id: number, markdown: string): Escalation {

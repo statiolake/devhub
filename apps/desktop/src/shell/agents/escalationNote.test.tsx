@@ -8,11 +8,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AgentsContext, type AgentsValue } from "./AgentsContext";
-import { EscalationNote, noteTime, TakeEscalation } from "./EscalationNote";
-
-const takeEscalation = vi.fn(() => Promise.resolve());
-window.devhub = { takeEscalation } as unknown as typeof window.devhub;
+import { EscalationNote, noteTime } from "./EscalationNote";
 
 afterEach(cleanup);
 
@@ -67,7 +63,7 @@ describe("an escalation's note", () => {
     expect(noteTime(AT)).toBe("14:05");
   });
 
-  it("says who moved it to 対応中, with the note", () => {
+  it("says it moved to 対応中, with the note: an old taken neutrally, the orchestrator's hold by name", () => {
     render(
       <>
         <EscalationNote
@@ -88,32 +84,10 @@ describe("an escalation's note", () => {
       </>,
     );
     const [taken, held] = screen.getAllByRole("note");
-    expect(taken).toHaveTextContent(
-      "人が対応中にしました（14:05）: 自分で見る",
-    );
+    expect(taken).toHaveTextContent("対応中になりました（14:05）: 自分で見る");
     expect(held).toHaveTextContent(
       "オーケストレーターが対応中にしました（14:05）",
     );
     expect(screen.queryByRole("button")).toBeNull();
-  });
-});
-
-describe("対応中にする", () => {
-  it("takes it with an optional note", async () => {
-    render(
-      <AgentsContext.Provider
-        value={{ reportFailure: vi.fn() } as unknown as AgentsValue}
-      >
-        <TakeEscalation id={7} />
-      </AgentsContext.Provider>,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "対応中にする" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "メモ (任意)" }), {
-      target: { value: " 自分で確認 " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "対応中にする" }));
-    expect(takeEscalation).toHaveBeenCalledWith(7, "自分で確認");
-    await screen.findByRole("button", { name: "対応中にする" });
-    expect(screen.queryByRole("textbox")).toBeNull();
   });
 });

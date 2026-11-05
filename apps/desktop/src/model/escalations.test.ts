@@ -13,7 +13,7 @@ import {
   linkAgent,
   noteWorking,
   openOptions,
-  takeEscalation,
+  holdEscalation,
   parseEscalationId,
   priorityOf,
   rankEscalation,
@@ -388,24 +388,34 @@ describe("the orchestrator's ranking", () => {
 });
 
 describe("to in_progress without an answer", () => {
-  it("is the person's taken or the orchestrator's held, until a follow-up", () => {
-    const taken = takeEscalation(raised(), "taken", "  自分で見る ", 2000);
+  it("is the orchestrator's held (or an old taken, read), until a follow-up", () => {
+    // Nothing writes `taken` any more; a stored one still reads as 対応中.
+    const taken = escalationsFromJson({
+      version: 1,
+      next: 2,
+      escalations: [
+        {
+          ...raised(),
+          entries: [
+            ...raised().entries,
+            { role: "human", kind: "taken", markdown: "自分で見る", at: 2000 },
+          ],
+        },
+      ],
+    }).escalations[0]!;
     expect(escalationState(taken)).toBe("in_progress");
-    expect(taken.entries.at(-1)).toEqual({
-      role: "human",
-      kind: "taken",
-      markdown: "自分で見る",
-      at: 2000,
-    });
     expect(lastAnswer(taken)).toBeUndefined();
     expect(openOptions(taken)).toEqual([]);
-    const held = takeEscalation(
-      { ...raised(), id: 2 },
-      "held",
-      undefined,
-      2000,
-    );
+    const held = holdEscalation({ ...raised(), id: 2 }, "  B に依頼 ", 2000);
     expect(held.entries.at(-1)).toEqual({
+      role: "orchestrator",
+      kind: "held",
+      markdown: "B に依頼",
+      at: 2000,
+    });
+    expect(
+      holdEscalation({ ...raised(), id: 2 }, undefined, 2000).entries.at(-1),
+    ).toEqual({
       role: "orchestrator",
       kind: "held",
       markdown: "",
@@ -416,7 +426,7 @@ describe("to in_progress without an answer", () => {
     expect(escalationState(askAgain(held, "?", undefined, 3000))).toBe(
       "needs_answer",
     );
-    expect(() => takeEscalation(held, "taken", undefined, 3000)).toThrow(
+    expect(() => holdEscalation(held, undefined, 3000)).toThrow(
       EscalationError,
     );
     const back = escalationsFromJson(
@@ -428,7 +438,7 @@ describe("to in_progress without an answer", () => {
   });
 
   it("refuses a file whose note claims the other side", () => {
-    const held = takeEscalation(raised(), "held", "x", 2000);
+    const held = holdEscalation(raised(), "x", 2000);
     const forged = {
       ...held,
       entries: [

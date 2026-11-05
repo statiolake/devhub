@@ -1,23 +1,18 @@
 /**
- * An escalation's notes and the person's 対応中にする.
+ * An escalation's notes.
  *
  * A note (`kind`, see `model/escalations.ts`) is a quiet system line in the
  * thread, not anybody's answer: an agent went working (`direct`, `resumed`,
  * with a chip to the agent — what was said is in its conversation), the
- * person moved it to 対応中 (`taken`), or the orchestrator parked it there
- * (`held`), with their optional note.
- *
- * `TakeEscalation` is the person's 対応中にする on a 要回答 one: a small
- * button, then an optional one-line note and a confirm.
+ * orchestrator parked it in 対応中 (`held`), with its optional note, or —
+ * in an old thread — it was moved there by a 対応中にする the window no
+ * longer has (`taken`).
  */
 
-import { useState } from "react";
 import type {
   BoardAgentRefWire,
   EscalationEntryWire,
 } from "../../ipc/contract";
-import { useAgents } from "./AgentsContext";
-import { devhub } from "./client";
 
 export type NoteKind = NonNullable<EscalationEntryWire["kind"]>;
 
@@ -50,7 +45,7 @@ export function noteWords(
         after: ` が作業を再開しました（${time}）— 回答待ちは一旦解除`,
       };
     case "taken":
-      return { before: `人が対応中にしました（${time}）${with_}`, after: "" };
+      return { before: `対応中になりました（${time}）${with_}`, after: "" };
     case "held":
       return {
         before: `オーケストレーターが対応中にしました（${time}）${with_}`,
@@ -93,78 +88,5 @@ export function EscalationNote({
       )}
       {words.after}
     </div>
-  );
-}
-
-/** 対応中にする: to 対応中 without an answer, with an optional note. */
-export function TakeEscalation({ id }: { readonly id: number }) {
-  const { reportFailure } = useAgents();
-  const [open, setOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const [sending, setSending] = useState(false);
-  const take = () => {
-    if (sending) return;
-    setSending(true);
-    void devhub()
-      .takeEscalation(id, note.trim())
-      .then(() => {
-        setOpen(false);
-        setNote("");
-      }, reportFailure)
-      .finally(() => {
-        setSending(false);
-      });
-  };
-  if (!open)
-    return (
-      <button
-        type="button"
-        className="orchestrator-take"
-        data-escalation-take={id}
-        onClick={() => {
-          setOpen(true);
-        }}
-      >
-        対応中にする
-      </button>
-    );
-  return (
-    <form
-      className="orchestrator-take-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        take();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-          setOpen(false);
-        }
-      }}
-    >
-      <input
-        type="text"
-        autoFocus
-        aria-label="メモ (任意)"
-        placeholder="メモ (任意)"
-        maxLength={2000}
-        value={note}
-        onChange={(event) => {
-          setNote(event.target.value);
-        }}
-      />
-      <button type="submit" className="orchestrator-take" disabled={sending}>
-        対応中にする
-      </button>
-      <button
-        type="button"
-        className="orchestrator-take is-quiet"
-        onClick={() => {
-          setOpen(false);
-        }}
-      >
-        やめる
-      </button>
-    </form>
   );
 }

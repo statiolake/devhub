@@ -1100,40 +1100,6 @@
   white-space: nowrap;
 }
 
-/* 対応中にする: a small button, then an optional note. */
-.orchestrator-take {
-  height: 20px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--wash);
-  color: var(--secondary);
-  font: inherit;
-  font-size: 11px;
-}
-
-.orchestrator-take:hover:not(:disabled) {
-  background: var(--wash-strong);
-  color: var(--primary);
-}
-
-.orchestrator-take.is-quiet {
-  background: transparent;
-}
-
-.orchestrator-take-form {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.orchestrator-take-form input {
-  width: 180px;
-  height: 20px;
-  font: inherit;
-  font-size: 11px;
-}
-
 /* Back on a page left open over the other (`orchestratorMemory.ts`): it is
    shown where it was, without sliding in again. */
 .orchestrator-stage[data-restored][data-nav] > [data-layer] {

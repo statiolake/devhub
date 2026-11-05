@@ -200,7 +200,6 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問
       [escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)
       [escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります
-      [escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する
       [escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない
       [unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 12m
       [timer.elapsed] sweep
@@ -221,7 +220,6 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | --- | --- | --- | --- |
 | 起動 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
 | ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ) | esc, agent |
-| ボード | \`escalation.taken\` | 人が回答を書かずに「対応中にする」でエスカレーションを対応中にした (メモ付きのことも) | esc |
 | ボード | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ) | esc, agent, since |
 | ボード | \`escalation.stalled\` | 対応中のエスカレーションの関係エージェントが 1 分以上誰も動いていない (全員 idle / 待ち / 停止 / 消えた、または紐付けなし: \`agents=none\`)。1 回の停滞につき 1 回。未読の回答 (\`escalation_answered\`) があるうちは来ず、\`escalation show\` で読んでから数え始める | esc, agents |
 | ボード | \`unaccounted\` | エージェントが 不明 に入った | agent, ws |
@@ -289,12 +287,9 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     \`agents=none\` なら \`escalation link ID --agent A\` で担当を紐付ける。
     関係エージェントが動き出すか、新しいエントリが付くと、次の停滞でまた届く。
 - **要回答 なのは、最後のエントリがあなたの質問のときだけ。** 質問のあとに何か
-  (人の回答、人の「対応中にする」、あなたの \`escalation hold\`、下の自動の注記)
+  (人の回答、あなたの \`escalation hold\`、下の自動の注記)
   が付けば 対応中 になり、あなたが \`escalation ask\` で聞き直すまで 要回答 には
   戻らない。
-  - 人は回答を書かずに「対応中にする」(メモ付き可) を押すことがある →
-    \`escalation.taken\` が届く。人が自分で動いているので、メモを読み、必要なら
-    エージェントに伝え、結論が出たら close。
   - 追加調査を任せた等で人を待たせたくないときは \`escalation hold ID --note …\`
     で自分から 対応中 に置ける (回答にはならない。人の回答は書けない)。
 - **関係エージェントが動き出したら、エスカレーションは 要回答 を離れる。**
@@ -475,9 +470,6 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     ## escalation_answered
     escalation show で回答を読む → 紐付くエージェントに agent send で伝える
     → 使い切ったら escalation close。決定を decisions.md に追記。
-
-    ## escalation.taken
-    escalation show でメモを読む。人が自分で対応中: 関係エージェントに伝え、結論が出たら close。
 
     ## escalation.human_direct
     agent read A --since <since=> で人が何を言ったかを読む (escalation show も)。

@@ -410,7 +410,7 @@ escalation`, `board` and `orchestrator` to drive it. The orchestrator ranks
 each escalation (`escalation new|rank --priority high|normal|low --effort
 quick|normal|deep --rank-note TEXT`), and 要回答 is sorted by priority, then
 effort, then age. An escalation is 要回答 only while a question is its last
-entry: the person's answer or 対応中にする, the orchestrator's `escalation
+entry: the person's answer, the orchestrator's `escalation
 hold ID [--note TEXT]`, or one of its agents going back to work moves it to
 対応中 until `escalation ask` asks again; see
 [`docs/orchestrator.md`](docs/orchestrator.md). `agent status` gives one agent's

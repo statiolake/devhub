@@ -11807,16 +11807,6 @@ export class AppController {
 				}
 			},
 		);
-		// The person's 対応中にする: the window's, like an answer.
-		handle(CHANNELS.takeEscalation, (_event, id: unknown, note: unknown) => {
-			try {
-				if (typeof id !== "number" || typeof note !== "string")
-					throw new Error("対応中にする names an escalation and a note");
-				this.requireOrchestrator().take(id, note);
-			} catch (error: unknown) {
-				throw namedFailure(error);
-			}
-		});
 		handle(CHANNELS.startOrchestrator, async () => {
 			try {
 				await this.startOrchestratorFromWindow();

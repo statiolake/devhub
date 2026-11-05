@@ -407,29 +407,15 @@ describe("an escalation's agent going back to work", () => {
 	});
 });
 
-describe("対応中にする", () => {
-	it("moves it to in_progress and tells the orchestrator, with the note", () => {
+describe("escalation hold", () => {
+	it("moves it to in_progress and tells nobody; the person has no 対応中にする", () => {
 		const run = world();
-		const one = run.service.raise({ title: "承認", markdown: "?" });
-		run.service.take(one.id, "自分で確認する");
-		expect(escalationState(run.service.escalations()[0]!)).toBe("in_progress");
-		run.free();
-		expect(run.sent[0]).toContain(
-			"[escalation.taken] esc=1「承認」 — 人が対応中にしました: 自分で確認する",
-		);
-	});
-
-	it("is dropped when closed before it goes; hold tells nobody", () => {
-		const run = world();
-		const one = run.service.raise({ title: "承認", markdown: "?" });
-		run.service.take(one.id, "");
-		run.service.close(one.id, undefined);
 		const two = run.service.raise({ title: "調査", markdown: "?" });
 		run.service.hold(two.id, "B に依頼");
+		expect(escalationState(run.service.escalations()[0]!)).toBe("in_progress");
 		run.free();
-		expect(run.fates()).toContainEqual(["escalation.taken", "dropped-stale"]);
-		expect(run.sent.join("\n")).not.toContain("[escalation.taken]");
 		expect(run.fates().map(([type]) => type)).not.toContain("escalation.held");
+		expect("take" in run.service).toBe(false);
 	});
 });
 

@@ -50,7 +50,7 @@ import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
 import { GitHubPill } from "./OrchestratorGitHub";
-import { EscalationNote, TakeEscalation } from "./EscalationNote";
+import { EscalationNote } from "./EscalationNote";
 import { useEscalationRequests } from "./escalationRequests";
 import { DevhubLink } from "../conversation/DevhubLink";
 import { isDevhubLink } from "../../model/devhubLink";
@@ -749,9 +749,6 @@ function EscalationCard({
           <span className="orchestrator-card-why">{escalation.rankNote}</span>
         ) : null}
       </button>
-      {escalation.state === "needs_answer" ? (
-        <TakeEscalation id={escalation.id} />
-      ) : null}
     </li>
   );
 }
@@ -896,9 +893,6 @@ function EscalationView({
           <span className="orchestrator-state" data-state={escalation.state}>
             {STATE_LABEL[escalation.state]}
           </span>
-          {escalation.state === "needs_answer" ? (
-            <TakeEscalation id={escalation.id} />
-          ) : null}
         </div>
         {escalation.agents.length > 0 ||
         escalation.links.length > 0 ||

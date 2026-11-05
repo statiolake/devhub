@@ -38,7 +38,7 @@ import {
 	rankEscalation,
 	type EscalationRank,
 	noteWorking,
-	takeEscalation,
+	holdEscalation,
 	type Escalation,
 	type EscalationsFile,
 	type NewEscalation,
@@ -198,17 +198,9 @@ export class EscalationStore {
 		return this.#replace(noteWorking(this.require(id), kind, agentId, now));
 	}
 
-	/**
-	 * To `in_progress` without an answer (`takeEscalation`): `taken`, the
-	 * person's, from the window's bridge only; `held`, the orchestrator's.
-	 */
-	take(
-		id: number,
-		kind: "taken" | "held",
-		note: string | undefined,
-		now: number,
-	): Escalation {
-		return this.#replace(takeEscalation(this.require(id), kind, note, now));
+	/** To `in_progress` without an answer: the orchestrator's `escalation hold`. */
+	hold(id: number, note: string | undefined, now: number): Escalation {
+		return this.#replace(holdEscalation(this.require(id), note, now));
 	}
 
 	link(id: number, agentId: string, now: number): Escalation {

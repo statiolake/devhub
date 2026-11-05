@@ -22,8 +22,9 @@
  * question (`askAgain`) puts it back:
  *
  * - the person's answer (role `human`, no `kind`), in the window only;
- * - the person's 対応中にする in the window (`taken`, role `human`, an
- *   optional note in `markdown`);
+ * - `taken` (role `human`, an optional note in `markdown`): a 対応中にする
+ *   the window once had. Nothing writes one any more; a thread that has one
+ *   still reads it, as before;
  * - the orchestrator's `escalation hold` (`held`, role `orchestrator`, an
  *   optional note): parked while it works on it. Never an answer;
  * - DevHub's notes that one of its agents went from idle to working while it
@@ -60,8 +61,8 @@ export const ESCALATION_STATES: readonly EscalationState[] = [
  * What kind of entry: absent for a question or an answer; else a note that
  * moved it to `in_progress` without words to answer with (see the module's
  * doc): `direct` / `resumed`, an agent went working (`agent` names it);
- * `taken`, the person's 対応中にする; `held`, the orchestrator's
- * `escalation hold`.
+ * `taken`, an old 対応中にする (read, never written); `held`, the
+ * orchestrator's `escalation hold`.
  */
 export type EscalationEntryKind = "direct" | "resumed" | "taken" | "held";
 
@@ -517,16 +518,15 @@ function checkNote(note: string | undefined): string {
 }
 
 /**
- * Moved to `in_progress` without an answer: the person's 対応中にする
- * (`taken`, **the window's only**) or the orchestrator's `escalation hold`
- * (`held`, never a human entry). Only on a `needs_answer` one.
+ * Moved to `in_progress` without an answer: the orchestrator's `escalation
+ * hold` (`held`, never a human entry). Only on a `needs_answer` one.
  */
-export function takeEscalation(
+export function holdEscalation(
   escalation: Escalation,
-  kind: "taken" | "held",
   note: string | undefined,
   now: number,
 ): Escalation {
+  const kind = "held";
   if (escalationState(escalation) !== "needs_answer")
     refuse(
       `#${String(escalation.id)} is not waiting for an answer (${escalationState(escalation)}).`,
