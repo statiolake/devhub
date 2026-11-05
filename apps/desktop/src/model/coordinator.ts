@@ -693,8 +693,8 @@ export class AppCoordinator {
       case "navigate_history":
         this.model.navigateHistory(intent.direction);
         return this.transitionOutcome(beforeRevision, id);
-      case "toggle_scratch":
-        this.model.toggleScratch();
+      case "toggle_place":
+        this.model.togglePlace(intent.place);
         return this.transitionOutcome(beforeRevision, id);
       case "note_interaction":
         this.model.noteInteraction();

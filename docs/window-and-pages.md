@@ -657,7 +657,7 @@ keys belong to is a function of the selection.
 
 **A move made from the keyboard lands the keyboard in what it chose.** Every
 chord that goes somewhere — a digit, `N`/`P`, `n`/`p`, `]`/`[`, `}`/`{`, `e`,
-`z`, `o`, `Cmd+J`, `Shift+J` — goes through one door, `AppController.arrive`: the
+`z`, `o`, `Cmd+J`, `Shift+J`, `Shift+O` — goes through one door, `AppController.arrive`: the
 move is made, and the keyboard is placed on the new selection, out of the
 Sidebar too if that is where the chord was typed. A chord typed in the Sidebar
 is not the Sidebar's own Return, and the Sidebar keeping the keys after one
@@ -686,7 +686,8 @@ DevHub builds stopped reporting itself, `Cmd+Q F` stopped arriving anywhere.
 Where the keys go _inside_ a workbench is the workbench's own business, with
 one exception: **a toggle that lands on an editor lands in its editor group.**
 `Cmd+Q Cmd+J` going Agent → editor and `Cmd+Q Shift+J` arriving at an editor —
-Scratch on the way out, or the editor it came from on the way back — focus
+Scratch on the way out, or the editor it came from on the way back — and
+`Cmd+Q Shift+O` coming back from the Orchestrator screen to an editor focus
 that workbench's active editor group (`workbench.action.focusActiveEditorGroup`),
 not its integrated terminal, so the keyboard is in the text and not just on the
 view. Every other way of choosing the same workbench — a sidebar click, `Cmd+Q
@@ -1011,13 +1012,13 @@ pages to drift from it.
 **A place enters it once somebody does something there**, not when the
 selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
 
-| What happened while the place was shown                                                                                                                                                                                                                                 | Recorded?             |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                                                                                                                                  | yes, at the first one |
-| a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                                                                                                                            | yes, at the first one |
-| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F`'s picker …), a click on a Sidebar row (a Workspace, an Agent, Scratch, the Orchestrator), a click on a `devhub:` link's chip (`model/devhubLink.ts`), `devhub --tell focus`, Enter or a click on a discarded editor's placeholder | yes, at once          |
-| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, the Sidebar walked from the keyboard (its Return included), `Cmd+Q Shift+J`, a selection repaired after a close, a command line that does not take focus                                                                  | no                    |
-| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                    | no                    |
+| What happened while the place was shown                                                                                                                                                                                                                                                                                                                                             | Recorded?             |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                                                                                                                                                                                                                                              | yes, at the first one |
+| a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                                                                                                                                                                                                                                        | yes, at the first one |
+| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F`'s picker …), a click on a Sidebar row (a Workspace, an Agent, Scratch, the Orchestrator), `Cmd+Q Shift+O` (to the Orchestrator and back), a click on a `devhub:` link's chip (`model/devhubLink.ts`), `devhub --tell focus`, Enter or a click on a discarded editor's placeholder | yes, at once          |
+| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, the Sidebar walked from the keyboard (its Return included), `Cmd+Q Shift+J`, a selection repaired after a close, a command line that does not take focus                                                                                                                                                                              | no                    |
+| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                                                                                                                                | no                    |
 
 "In it" means its views: a workbench (and what it hosts), the Agents' page (a
 GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`, the

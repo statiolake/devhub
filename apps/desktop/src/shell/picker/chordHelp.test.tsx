@@ -78,6 +78,8 @@ describe("the chord help", () => {
       screen.getByText("Switch between Scratch and where you were"),
     ).toBeInTheDocument();
     expect(screen.getByText("Cmd+q J")).toBeInTheDocument();
+    expect(screen.getByText("Orchestrator")).toBeInTheDocument();
+    expect(screen.getByText("Cmd+q O")).toBeInTheDocument();
     expect(screen.getByText("Cmd+q z")).toBeInTheDocument();
   });
 

@@ -52,6 +52,7 @@ import { terminalZoomFor } from "./terminalZoom.js";
 import { historyDirectionFor } from "./historyKeys.js";
 import type { NavigationDirection } from "../../model/navigationHistory.js";
 import type { CommandId } from "../../model/commands.js";
+import type { TogglePlace } from "../../model/intents.js";
 import { resolveChord, type ChordEffect, type Landing } from "./chords.js";
 import {
 	defaultChordLayout,
@@ -119,10 +120,11 @@ export interface ChordHost {
 	/** Show the Sidebar as its icon rail, or give it its width back. */
 	toggleSidebar(): void;
 	/**
-	 * Jump out to Scratch, or back to where the jump out started — a move like
-	 * `selectContext`, landing the same way, to a place only the model knows.
+	 * Jump out to Scratch or the Orchestrator, or back to where the jump out
+	 * started — a move like `selectContext`, landing the same way, to a place
+	 * only the model knows.
 	 */
-	toggleScratch(focus: Landing): void;
+	togglePlace(place: TogglePlace, focus: Landing): void;
 	openWorkspacePicker(): void;
 	/** Every workspace and Agent, as a list to choose from. */
 	openTabPicker(): void;
@@ -266,8 +268,8 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 		case "toggle-sidebar":
 			host.toggleSidebar();
 			return;
-		case "toggle-scratch":
-			host.toggleScratch(effect.focus);
+		case "toggle-place":
+			host.togglePlace(effect.place, effect.focus);
 			return;
 		case "open-workspace-picker":
 			host.openWorkspacePicker();

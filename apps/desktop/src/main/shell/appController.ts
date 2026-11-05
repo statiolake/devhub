@@ -2019,10 +2019,10 @@ export class AppController {
 			closeTerminal: (terminalId) => {
 				void this.closePaneTerminal(terminalId).catch(report);
 			},
-			toggleScratch: (focus) => {
+			togglePlace: (place, focus) => {
 				// A selection change like any other, to a place only the model
 				// remembers — so it arrives exactly the way `selectContext` does.
-				this.arrive({ type: "toggle_scratch" }, focus);
+				this.arrive({ type: "toggle_place", place }, focus);
 			},
 			openWorkspacePicker: () => {
 				this.send(CHANNELS.menuCommand, "open_workspace_picker");

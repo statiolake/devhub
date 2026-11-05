@@ -50,6 +50,7 @@
  * | `Cmd+Q Cmd+J`               | `toggle_workspace_agent`  |
  * | `Cmd+Q Z`                   | `toggle_split`            |
  * | `Cmd+Q Shift+J`             | `toggle_scratch`          |
+ * | `Cmd+Q Shift+O`             | `toggle_orchestrator`     |
  * | `Cmd+Q O`                   | `swap_split_focus`        |
  * | `Cmd+Q V`                   | `toggle_terminal`         |
  * | `Cmd+Q E`                   | `focus_editor`            |
@@ -404,6 +405,7 @@ export type CommandId =
   | "toggle_workspace_agent"
   | "toggle_split"
   | "toggle_scratch"
+  | "toggle_orchestrator"
   | "focus_editor"
   | "focus_sidebar"
   | "toggle_sidebar"
@@ -618,6 +620,18 @@ export const COMMANDS: readonly CommandDefinition[] = [
     needs: "nothing",
     category: "Navigate",
     defaultKeys: ["J"],
+  },
+  {
+    // The same toggle as `toggle_scratch`, to the Orchestrator row's screen
+    // (`docs/orchestrator.md`), with its own way back. Shift, like the jump to
+    // Scratch; the bare `o` is the pane step. Going there is on purpose, so
+    // both directions enter Back and Forward's history, as a click on the row
+    // does. With no orchestrator assigned the screen offers Start.
+    id: "toggle_orchestrator",
+    label: "Orchestrator",
+    needs: "nothing",
+    category: "Navigate",
+    defaultKeys: ["O"],
   },
   {
     // Every pane on screen, left to right: the editor and the Agent of a

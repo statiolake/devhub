@@ -654,11 +654,38 @@ describe("the layout toggles", () => {
 					context: { kind: "agent", agentId: "b1" },
 				}),
 			),
-		).toEqual({ kind: "toggle-scratch", focus: "editor" });
+		).toEqual({ kind: "toggle-place", place: "scratch", focus: "editor" });
 		expect(run("toggle_scratch", snapshotOf())).toEqual({
-			kind: "toggle-scratch",
+			kind: "toggle-place",
+			place: "scratch",
 			focus: "editor",
 		});
+	});
+
+	it("asks the model for the jump to the Orchestrator, from either end of it", () => {
+		// Ungated, like the jump to Scratch: the screen is there with or
+		// without an orchestrator assigned, and the way back is the model's.
+		const expected = {
+			kind: "toggle-place",
+			place: "orchestrator",
+			focus: "editor",
+		};
+		expect(
+			run(
+				"toggle_orchestrator",
+				snapshotOf({
+					workspaces: [two],
+					context: { kind: "agent", agentId: "b1" },
+				}),
+			),
+		).toEqual(expected);
+		expect(run("toggle_orchestrator", snapshotOf())).toEqual(expected);
+		expect(
+			run(
+				"toggle_orchestrator",
+				snapshotOf({ context: { kind: "orchestrator" } }),
+			),
+		).toEqual(expected);
 	});
 
 	it("moves the keyboard to the other pane of a split, and nowhere else", () => {

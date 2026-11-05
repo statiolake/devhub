@@ -8,7 +8,7 @@
  * already seen.
  */
 
-import type { IntentFocus, NavigationReason } from "./intents.js";
+import type { IntentFocus, NavigationReason, TogglePlace } from "./intents.js";
 import {
   Agent,
   AgentProfile,
@@ -458,22 +458,26 @@ export class AppModel {
    */
   private readonly lastAgentByWorkspace = new Map<WorkspaceId, AgentId>();
   /**
-   * Where `toggle_scratch` (`Cmd+Q Shift+J`) jumped out of, whole.
+   * Where each toggle — `toggle_scratch` (`Cmd+Q Shift+J`) and
+   * `toggle_orchestrator` (`Cmd+Q Shift+O`) — jumped out of, whole, by the
+   * place it jumped to.
    *
    * The selection, not the context: an Agent left side by side with its editor
    * has to come back side by side, and the presentation is the half of that
    * fact the context does not carry.
    *
-   * Written by `toggleScratch` and by nothing else. "Where you were" means
+   * Written by `togglePlace` and by nothing else. "Where you were" means
    * where you were *when you jumped* — a memory kept in step with every
    * selection change would come back to whatever was clicked on the way to
-   * Scratch, which is not somewhere anybody left.
+   * Scratch, which is not somewhere anybody left. One per place, so jumping
+   * from Scratch to the Orchestrator and back again does not forget where the
+   * jump to Scratch started.
    *
    * In memory only, and deliberately: it is one gesture's undo, not a fact
    * about the workspace, so after a restart there is nothing to come back to
    * and the chord is a no-op until the next jump out.
    */
-  private scratchReturn: NavigationSelection | undefined;
+  private readonly placeReturns = new Map<TogglePlace, NavigationSelection>();
   /**
    * The agent the Orchestrator row shows, when one is assigned. Main owns
    * the assignment (`main/orchestrator/`, kept in `escalations.json`) and
@@ -1466,33 +1470,49 @@ export class AppModel {
   }
 
   /**
-   * Scratch, and back again.
-   *
-   * Off Scratch it writes down the whole selection and goes there; on Scratch
-   * it goes back to what it wrote down. The way back is used once and then
-   * forgotten, so a second jump out is what decides where the next jump back
-   * lands.
-   *
-   * A remembered workspace or Agent that has been closed in the meantime is
-   * not replaced by a guess: the way out has gone, the selection stays on
-   * Scratch, and the chord is a no-op — which is what it is with nothing
-   * remembered at all, and what it is after a restart.
+   * Scratch, and back again. `togglePlace("scratch")`.
    */
   toggleScratch(): void {
-    const context = this.selectionValue.context;
-    if (
-      context.kind !== "workspace" ||
-      context.workspaceId !== this.scratchId
-    ) {
-      this.scratchReturn = this.selectionValue;
-      this.selectContext({ kind: "workspace", workspaceId: this.scratchId });
+    this.togglePlace("scratch");
+  }
+
+  /**
+   * A place, and back again: Scratch (`Cmd+Q Shift+J`) or the Orchestrator
+   * screen (`Cmd+Q Shift+O`).
+   *
+   * Off the place it writes down the whole selection and goes there; on the
+   * place it goes back to what it wrote down. The way back is used once and
+   * then forgotten, so a second jump out is what decides where the next jump
+   * back lands.
+   *
+   * A remembered workspace or Agent that has been closed in the meantime is
+   * not replaced by a guess: the way out has gone, the selection stays where
+   * it is, and the chord is a no-op — which is what it is with nothing
+   * remembered at all, and what it is after a restart.
+   *
+   * The Orchestrator is there whether or not an orchestrator is assigned
+   * (without one, its screen offers Start), and going to it is going
+   * somewhere on purpose, the way its Sidebar row is: both directions enter
+   * Back and Forward's history at once. The jump to Scratch passes through,
+   * as it always has.
+   */
+  togglePlace(place: TogglePlace): void {
+    const target: NavigationContext =
+      place === "scratch"
+        ? { kind: "workspace", workspaceId: this.scratchId }
+        : { kind: "orchestrator" };
+    const reason: NavigationReason | undefined =
+      place === "orchestrator" ? "explicit" : undefined;
+    if (!sameContext(this.selectionValue.context, target)) {
+      this.placeReturns.set(place, this.selectionValue);
+      this.selectContext(target, "full", reason);
       return;
     }
-    const back = this.scratchReturn;
+    const back = this.placeReturns.get(place);
     if (back === undefined) return;
-    this.scratchReturn = undefined;
+    this.placeReturns.delete(place);
     if (!this.contextExists(back.context)) return;
-    this.selectContext(back.context, back.presentation);
+    this.selectContext(back.context, back.presentation, reason);
   }
 
   /**

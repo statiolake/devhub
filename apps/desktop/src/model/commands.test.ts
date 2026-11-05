@@ -94,6 +94,27 @@ describe("the registry itself", () => {
     expect(commandFor(bindings, "Cmd+j")).toBe("toggle_workspace_agent");
   });
 
+  it("puts the Orchestrator on Shift+O, and leaves the bare o to the panes", () => {
+    expect(commandById("toggle_orchestrator")).toMatchObject({
+      label: "Orchestrator",
+      category: "Navigate",
+      needs: "nothing",
+      defaultKeys: ["O"],
+    });
+    const bindings = defaultBindings();
+    expect(commandFor(bindings, "O")).toBe("toggle_orchestrator");
+    // The multiplexer's `Shift+o` spelling is the same stroke.
+    expect(commandFor(bindings, "Shift+o")).toBe("toggle_orchestrator");
+    expect(commandFor(bindings, "o")).toBe("swap_split_focus");
+    // No other command, default or palette, reaches the same stroke.
+    const owners = defaultBindings().filter(
+      (binding) => chordKeyId(binding.key) === chordKeyId(parseChordKey("O")),
+    );
+    expect(owners.map((binding) => binding.commandId)).toEqual([
+      "toggle_orchestrator",
+    ]);
+  });
+
   it("lets the sidebar step take the bare letter as well as the Command one", () => {
     // `Cmd+Q Cmd+N` is the multiplexer habit; `Cmd+Q N` is the one hand that
     // has already let go of Command. Both are the same step, and the shifted
@@ -285,6 +306,16 @@ describe("the table actually in effect", () => {
     expect(
       commandFor({ prefix: "Cmd+q", chords: { g: "next_tab" } }, "g"),
     ).toBe("next_tab");
+  });
+
+  it("rebinds the Orchestrator toggle like any other command", () => {
+    const spec = {
+      prefix: "Cmd+q",
+      chords: { O: "", "Shift+y": "toggle_orchestrator" },
+    };
+    expect(checkKeybindings(spec)).toEqual([]);
+    expect(commandFor(spec, "Y")).toBe("toggle_orchestrator");
+    expect(commandFor(spec, "O")).toBeUndefined();
   });
 
   it("lets a key be taken away with the empty string", () => {

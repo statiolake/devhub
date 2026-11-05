@@ -281,6 +281,42 @@ describe("layout resolution", () => {
     });
   });
 
+  it("jumps to the Orchestrator screen and back, with or without an orchestrator", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.addAgent(WS_A, AG_A, codex, "tui");
+    model.selectContext({ kind: "agent", agentId: AG_A }, "beside");
+    // None assigned: the screen is still there, and offers Start.
+    expect(model.orchestratorAgentId).toBeUndefined();
+    model.togglePlace("orchestrator");
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "orchestrator" },
+      presentation: "full",
+    });
+    model.togglePlace("orchestrator");
+    expect(model.snapshot().selection).toEqual({
+      context: { kind: "agent", agentId: AG_A },
+      presentation: "beside",
+    });
+    // On the Orchestrator with nothing remembered, it is a no-op.
+    model.selectContext({ kind: "orchestrator" });
+    model.togglePlace("orchestrator");
+    expect(model.selection.context).toEqual({ kind: "orchestrator" });
+  });
+
+  it("keeps a way back per place, so the two toggles nest", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.selectContext({ kind: "workspace", workspaceId: WS_A });
+    model.toggleScratch();
+    model.togglePlace("orchestrator");
+    model.togglePlace("orchestrator");
+    expect(model.selection.context).toEqual(scratchOf(model));
+    model.toggleScratch();
+    expect(model.selection.context).toEqual({
+      kind: "workspace",
+      workspaceId: WS_A,
+    });
+  });
+
   it("re-selecting the same Agent a different way moves the layout", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.addAgent(WS_A, AG_A, codex, "tui");
@@ -1207,6 +1243,22 @@ describe("Back and Forward", () => {
     expect(model.selection.context).toEqual({ kind: "orchestrator" });
     model.navigateHistory("forward");
     expect(model.selection.context).toEqual({ kind: "agent", agentId: AG_A });
+  });
+
+  it("records the Orchestrator toggle at once, both ways, as a click on its row is", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    visit(model, A);
+    model.togglePlace("orchestrator");
+    // Nothing done there yet, and already an entry: an explicit arrival.
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual(A);
+    expect(model.navigateHistory("forward")).toBe(true);
+    expect(model.selection.context).toEqual({ kind: "orchestrator" });
+    // And the way back is recorded too, without an interaction in A.
+    model.togglePlace("orchestrator");
+    expect(model.selection.context).toEqual(A);
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual({ kind: "orchestrator" });
   });
 
   it("starts again from a reset", () => {

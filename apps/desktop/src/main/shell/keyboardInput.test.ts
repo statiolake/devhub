@@ -128,7 +128,7 @@ function host(zoomActs = true) {
 		closeTerminal: record("closeTerminal"),
 		focusSidebar: record("focusSidebar"),
 		toggleSidebar: record("toggleSidebar"),
-		toggleScratch: record("toggleScratch"),
+		togglePlace: record("togglePlace"),
 		openWorkspacePicker: record("openWorkspacePicker"),
 		openTabPicker: record("openTabPicker"),
 		openAgentPicker: record("openAgentPicker"),
@@ -294,7 +294,13 @@ describe("a chord, as Electron delivers it", () => {
 	it("hands the jump to Scratch to the host with the landing a toggle has", () => {
 		const { calls, chordHost } = host();
 		type(chordHost, [PREFIX, input("KeyJ", "J", { shift: true })]);
-		expect(calls).toEqual(["toggleScratch editor"]);
+		expect(calls).toEqual(["togglePlace scratch editor"]);
+	});
+
+	it("hands Shift+O to the Orchestrator toggle, and leaves the bare o to the panes", () => {
+		const { calls, chordHost } = host();
+		type(chordHost, [PREFIX, input("KeyO", "O", { shift: true })]);
+		expect(calls).toEqual(["togglePlace orchestrator editor"]);
 	});
 
 	it("keeps the chord through the Shift that arrives before the key", () => {

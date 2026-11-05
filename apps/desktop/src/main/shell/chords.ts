@@ -36,6 +36,7 @@
 
 import { chordKeyId, type ChordKey } from "../../model/chordKeys.js";
 import { pairedAgentId } from "../../model/appModel.js";
+import type { TogglePlace } from "../../model/intents.js";
 import { moveAgent, moveWorkspace } from "../../model/workspaceOrder.js";
 import {
 	commandById,
@@ -125,9 +126,9 @@ export function matchChord(
  * leaves it wherever that editor was last typed into, which is what coming
  * back to an editor is supposed to feel like.
  *
- * The toggles are the exception, and both of them, for one reason: `Cmd+Q
- * Cmd+J` and `Cmd+Q Shift+J` are how somebody goes *to the other place they
- * work*, and at an editor that place is the editor itself. So a toggle that lands on
+ * The toggles are the exception, all of them, for one reason: `Cmd+Q
+ * Cmd+J`, `Cmd+Q Shift+J` and `Cmd+Q Shift+O` are how somebody goes *to the
+ * other place they work*, and at an editor that place is the editor itself. So a toggle that lands on
  * an editor lands in the editor group, with the keyboard in it. Landing on an
  * Agent, it means nothing — an Agent is a terminal already.
  */
@@ -183,15 +184,20 @@ export type ChordEffect =
 	/** The Sidebar as its icon rail, or back to its width. */
 	| { readonly kind: "toggle-sidebar" }
 	/**
-	 * Out to Scratch, or back to wherever the jump out started.
+	 * Out to Scratch or the Orchestrator, or back to wherever the jump out
+	 * started.
 	 *
-	 * The one move that carries no target: which selection to come back to is
-	 * a thing only the model remembers, because it is written down by this
-	 * command and by nothing else, and a snapshot of what is on screen cannot
-	 * say where somebody was before it. It is a toggle all the same, so it
-	 * lands the way the other toggle does.
+	 * The one move that carries no target beyond the place: which selection
+	 * to come back to is a thing only the model remembers, because it is
+	 * written down by this command and by nothing else, and a snapshot of what
+	 * is on screen cannot say where somebody was before it. It is a toggle all
+	 * the same, so it lands the way the other toggle does.
 	 */
-	| { readonly kind: "toggle-scratch"; readonly focus: Landing }
+	| {
+			readonly kind: "toggle-place";
+			readonly place: TogglePlace;
+			readonly focus: Landing;
+	  }
 	| { readonly kind: "open-workspace-picker" }
 	| { readonly kind: "open-tab-picker" }
 	| { readonly kind: "open-agent-picker"; readonly workspaceId: string }
@@ -555,7 +561,12 @@ export function resolveChord(
 			// Both directions, unconditionally: the model holds the memory this
 			// turns on, so there is nothing here to decide and nothing to gate
 			// on. On Scratch with nothing remembered it is a no-op there.
-			return { kind: "toggle-scratch", focus: "editor" };
+			return { kind: "toggle-place", place: "scratch", focus: "editor" };
+
+		case "toggle_orchestrator":
+			// The same toggle to the Orchestrator screen, which is there with or
+			// without an orchestrator assigned (without one it offers Start).
+			return { kind: "toggle-place", place: "orchestrator", focus: "editor" };
 
 		case "toggle_split": {
 			// Both halves of one pair, side by side — the twin of

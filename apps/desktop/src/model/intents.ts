@@ -72,6 +72,12 @@ export type IntentFocus = "none";
  */
 export type NavigationReason = "explicit";
 
+/**
+ * The places a toggle jumps to and back from: Scratch (`Cmd+Q Shift+J`) and
+ * the Orchestrator screen (`Cmd+Q Shift+O`). See `AppModel.togglePlace`.
+ */
+export type TogglePlace = "scratch" | "orchestrator";
+
 export type AppReadiness = "starting" | "ready" | "unavailable";
 
 declare const brand: unique symbol;
@@ -256,13 +262,14 @@ export type UserIntent =
       readonly direction: "back" | "forward";
     }
   /**
-   * Scratch, and back again.
+   * Scratch or the Orchestrator, and back again.
    *
-   * Raised by the shell, never by the page — `Cmd+Q Shift+J` — and it carries
-   * nothing: where to come back to is the one selection the model wrote down
-   * the last time this intent jumped out of one.
+   * Raised by the shell, never by the page — `Cmd+Q Shift+J`, `Cmd+Q
+   * Shift+O` — and it carries only the place: where to come back to is the
+   * one selection the model wrote down the last time this intent jumped out
+   * of one to that place.
    */
-  | { readonly type: "toggle_scratch" }
+  | { readonly type: "toggle_place"; readonly place: TogglePlace }
   /**
    * The person did something in the place on screen — a key, a click, a
    * scroll in its views — or opened it on purpose: it enters Back and

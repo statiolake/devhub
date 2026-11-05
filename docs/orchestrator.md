@@ -32,6 +32,13 @@ the person's own, in skills and instructions in the orchestrator's folder.
   `orchestrator`): the page divides its own rectangle, so no new
   `WebContentsView`, z-order or keyboard rule was needed. Selecting the
   orchestrator agent any other way (a chord, `focus A`) selects the row.
+- **`Cmd+Q Shift+O`** (`toggle_orchestrator`, "Navigate: Orchestrator" in the
+  command palette, rebindable like every chord) goes to the screen, and
+  pressed again there goes back to where you were — `Cmd+Q Shift+J`'s toggle
+  for Scratch, with a way back of its own (`AppModel.togglePlace`). Both
+  directions enter Back and Forward's history at once, as a click on the row
+  does. With no orchestrator assigned it still opens the screen, which offers
+  Start. The bare `Cmd+Q O` stays the pane step.
 - `root` opens as an ordinary Workspace row (nothing selected), so the
   orchestrator's skills and instructions are an editor click away.
 - With no orchestrator, the right half says so and offers **Start
