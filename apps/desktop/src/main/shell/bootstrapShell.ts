@@ -9,8 +9,8 @@
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
+import { APP_ROOT } from "./appRoot.js";
 import { createAppController } from "./appController.js";
 import { installMainFailureRoot } from "./mainFailureRoot.js";
 import { appearanceMode } from "./appearanceMode.js";
@@ -84,14 +84,6 @@ import {
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
-
-/** `apps/desktop/out/main/shell` -> `apps/desktop`. */
-const APP_ROOT = join(
-	dirname(fileURLToPath(import.meta.url)),
-	"..",
-	"..",
-	"..",
-);
 
 /**
  * Write the settings DevHub cannot contribute as defaults; see the module.

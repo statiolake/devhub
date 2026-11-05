@@ -32,17 +32,10 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
-/** `apps/desktop/out/main/shell` -> `apps/desktop/out/native`. */
-export const ANCHOR_HELPER = join(
-	dirname(fileURLToPath(import.meta.url)),
-	"..",
-	"..",
-	"native",
-	"devhub-pgrp-anchor",
-);
+import { nativeHelperPath } from "./appRoot.js";
+
+export const ANCHOR_HELPER = nativeHelperPath("devhub-pgrp-anchor");
 
 /** A restart this soon after the last start is a helper that cannot hold. */
 const RESTART_AFTER_MS = 1_000;

@@ -31,8 +31,6 @@
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { UtilityProcess } from "code-oss-dev/out/vs/platform/utilityProcess/electron-main/utilityProcess.js";
 import { electron } from "../electron.js";
 import type { TaskSnapshotWire } from "../../ipc/taskManager.js";
@@ -53,17 +51,9 @@ import {
 	utilitiesByWindow,
 } from "../diagnostics/taskTree.js";
 import type { ProcessPanes } from "../terminal/tmux.js";
+import { nativeHelperPath } from "./appRoot.js";
 
-/** `apps/desktop/out/main/shell` -> `apps/desktop`, where `out/native` is. */
-const FOOTPRINT_HELPER = join(
-	dirname(fileURLToPath(import.meta.url)),
-	"..",
-	"..",
-	"..",
-	"out",
-	"native",
-	"devhub-footprint",
-);
+const FOOTPRINT_HELPER = nativeHelperPath("devhub-footprint");
 
 /**
  * A command's stdout, with its pid noted in `spawned` the moment it starts,

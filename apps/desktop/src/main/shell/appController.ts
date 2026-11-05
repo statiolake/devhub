@@ -15,13 +15,13 @@
  */
 
 import { parseProjectRef } from "../../model/orchestratorSettings.js";
+import { APP_ROOT } from "./appRoot.js";
 import { processGroupAnchor } from "./processGroupAnchor.js";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, posix } from "node:path";
-import { fileURLToPath } from "node:url";
 import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
 /**
  * The product facts that are DevHub's own and not VS Code's.
@@ -678,14 +678,6 @@ const PAGE_NAMES: Readonly<Record<string, string>> = {
 	toasts: "Notices page",
 	picker: "Questions page",
 };
-
-/** `apps/desktop/out/main/shell` -> `apps/desktop`. */
-const APP_ROOT = join(
-	dirname(fileURLToPath(import.meta.url)),
-	"..",
-	"..",
-	"..",
-);
 
 /**
  * Where the remote extension host tarballs are.
