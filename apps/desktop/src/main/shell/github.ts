@@ -887,6 +887,29 @@ export function resetProjectScopeMemory(): void {
 	projectScopeMissingAt = undefined;
 }
 
+/**
+ * One GraphQL request with `token`, for a caller that shapes its own query
+ * (the orchestrator's GitHub events, `orchestrator/githubEvents.ts`): the
+ * same client, timeout and refusals as the Workspace watcher's, and the
+ * token is never in what it throws.
+ */
+export async function postGraphQl(
+	body: { readonly query: string; readonly variables: unknown },
+	token: string,
+): Promise<{
+	readonly data?: unknown;
+	readonly errors?:
+		| readonly { readonly message?: string; readonly type?: string }[]
+		| null;
+}> {
+	return post(body, token);
+}
+
+/** GitHub's rollup verdict (`StatusState`) as one of `CheckSummary`'s three. */
+export function checkVerdict(state: string): CheckSummary["state"] | undefined {
+	return CHECK_VERDICT[state.toUpperCase()];
+}
+
 async function post(body: unknown, token: string): Promise<GraphQlAnswer> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => {

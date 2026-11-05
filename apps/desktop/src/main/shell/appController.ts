@@ -356,6 +356,7 @@ import {
 	AgentEventSource,
 	WorkspaceEventSource,
 } from "../orchestrator/liveEvents.js";
+import { GitHubEventSource } from "../orchestrator/githubEvents.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import {
 	MICROPHONE_SETTINGS_URL,
@@ -506,6 +507,7 @@ import {
 import { findClones } from "./issues.js";
 import { prepareContainerMigration } from "./containerMigration.js";
 import {
+	postGraphQl,
 	readGitHubLogin,
 	readGitHubToken,
 	readIssueLinkedBranch,
@@ -4187,6 +4189,7 @@ export class AppController {
 		this.stopWatchingWake?.();
 		this.scratch.stop();
 		this.repositoryStatus.stop();
+		this.githubEvents.stop();
 		this.usageReaders?.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
@@ -9213,8 +9216,66 @@ export class AppController {
 	 * after a start is their baseline rather than a flood. The orchestrator's
 	 * own Workspace and agent are left out: it is never told about itself.
 	 */
+	/**
+	 * `github.*` events: the configured Projects boards, polled while an
+	 * orchestrator runs. Shares the Workspace watcher's token, client and
+	 * pull requests (the `ws=` and `agent=` of an event).
+	 */
+	private readonly githubEvents = new GitHubEventSource({
+		settings: () => this.config.orchestrator.github,
+		token: async () => {
+			const credentials = await readGitHubToken(this.launchEnvironment);
+			return credentials.kind === "token"
+				? { token: credentials.token }
+				: {
+						problem:
+							credentials.kind === "unrunnable"
+								? `DevHub could not run \`gh\` for GitHub credentials: ${credentials.reason}.`
+								: "DevHub has no GitHub credentials. Run `gh auth login`.",
+					};
+		},
+		post: postGraphQl,
+		dispatch: (event) => {
+			this.orchestrator?.events.dispatch(event);
+		},
+		where: (url) => this.githubWhere(url),
+		setTimer: (ms, run) => {
+			const timer = setTimeout(run, ms);
+			return { cancel: () => clearTimeout(timer) };
+		},
+		log: (line) => console.log(line),
+	});
+
+	/** The Workspace (and its agent) the Sidebar shows an Issue's or pull request's work in. */
+	private githubWhere(
+		url: string | undefined,
+	): { ws?: string; agent?: { id: string; name: string } } | undefined {
+		if (url === undefined) return undefined;
+		const row = this.lastRepositoryStatus.workspaces.find(
+			(one) => one.pullRequest?.url === url || one.issue?.url === url,
+		);
+		if (row === undefined) return undefined;
+		const snapshot = this.coordinator.snapshot();
+		const workspace = snapshot.workspaces.find(
+			(one) => one.id === row.workspaceId,
+		);
+		if (workspace === undefined) return undefined;
+		const orchestrator = this.orchestrator?.orchestratorAgentId;
+		const agent = workspace.agents.find((one) => one.id !== orchestrator);
+		return {
+			ws:
+				workspace.id === snapshot.scratchWorkspaceId
+					? "scratch"
+					: workspaceToken(workspace.label, workspace.id),
+			...(agent === undefined
+				? {}
+				: { agent: { id: agent.id, name: agent.displayName } }),
+		};
+	}
+
 	private observeLiveEvents(): void {
 		const orchestrator = this.orchestrator?.orchestratorAgentId;
+		this.githubEvents.follow(orchestrator !== undefined);
 		if (orchestrator === undefined) {
 			this.workspaceEvents.reset();
 			this.agentEvents.reset();
@@ -10176,6 +10237,9 @@ export class AppController {
 		void this.scratch.settingsAccepted(config.scratch.daily);
 		// `[[orchestrator.timers]]` and `[orchestrator.github]` move with them.
 		this.orchestrator?.timers.sync();
+		this.githubEvents.follow(
+			this.orchestrator?.orchestratorAgentId !== undefined,
+		);
 		this.applyChordLayout();
 		// Before the pages are told, because this one is not a message to a page:
 		// it changes what the OS appearance is for the whole process, and every
