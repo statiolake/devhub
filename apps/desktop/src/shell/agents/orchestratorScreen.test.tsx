@@ -213,6 +213,40 @@ describe("the Orchestrator board", () => {
   });
 });
 
+describe("Enter on the board", () => {
+  it("opens the card on top when no card is focused", () => {
+    motion(false);
+    mount();
+    fireEvent.keyDown(document.body, { key: "Enter" });
+    expect(
+      screen.getByRole("textbox", { name: "Your answer to #1" }),
+    ).toBeVisible();
+  });
+
+  it("opens the first of the next lane when 要回答 is empty", () => {
+    motion(false);
+    mount({ ...BOARD, needsAnswer: [] });
+    fireEvent.keyDown(document.body, { key: "Enter" });
+    expect(
+      document.querySelector(".orchestrator-reading")?.textContent,
+    ).toContain("リトライ方針");
+  });
+
+  it("leaves a focused card's own Enter, and IME confirmation, alone", () => {
+    motion(false);
+    mount();
+    const second = screen.getByRole("button", { name: /リトライ方針/u });
+    second.focus();
+    fireEvent.keyDown(second, { key: "Enter" });
+    // A button's Enter is the browser's click, which jsdom does not draw:
+    // the board's handler did not open the top card in its place.
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+    second.blur();
+    fireEvent.keyDown(document.body, { key: "Enter", isComposing: true });
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+  });
+});
+
 describe("after an answer", () => {
   const TWO: OrchestratorBoardWire = {
     ...BOARD,

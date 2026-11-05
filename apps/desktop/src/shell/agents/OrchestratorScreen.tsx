@@ -516,6 +516,35 @@ function BoardPage({
     [dispatch],
   );
   useReorderGlide(lanes, board.needsAnswer);
+  // Enter on the board, with no card focused, opens the card on top: the
+  // first of 要回答, else of the lanes after it. A focused card (a button)
+  // opens itself, and a field or a link keeps its own Enter.
+  const reading = nav === "push";
+  useEffect(() => {
+    if (reading) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Enter" ||
+        event.isComposing ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.shiftKey ||
+        event.defaultPrevented ||
+        !focusIsOurs(pane.current) ||
+        ownsEnter(document.activeElement)
+      )
+        return;
+      const top = all.find((one) => one.state !== "closed");
+      if (top === undefined) return;
+      event.preventDefault();
+      openCard(top);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [reading, all, pane, openCard]);
   // Answered: back to the board, as Esc goes, with focus on what is next
   // in 要回答 — the card after this one in its order, else the first left —
   // or, with none left, on this one, now in 対応中.
@@ -531,7 +560,6 @@ function BoardPage({
     },
     [board.needsAnswer, all, close],
   );
-  const reading = nav === "push";
   return (
     <div
       className="orchestrator-stage"
@@ -641,6 +669,16 @@ function BoardPage({
         />
       )}
     </div>
+  );
+}
+
+/** An element whose Enter is its own: a control, a field, a link. */
+function ownsEnter(element: Element | null): boolean {
+  return (
+    element instanceof HTMLElement &&
+    element.closest(
+      'button, a[href], input, textarea, select, [contenteditable="true"], [role="button"], [role="tab"], [role="link"]',
+    ) !== null
   );
 }
 
