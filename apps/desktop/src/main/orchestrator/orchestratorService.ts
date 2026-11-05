@@ -64,6 +64,7 @@ import {
 } from "../../model/escalations.js";
 import type { OrchestratorConfig } from "../../model/orchestratorSettings.js";
 import { workStatus } from "../../model/conversation.js";
+import { agentAtWork } from "../../model/domain.js";
 import { parseInterval } from "../../model/orchestratorSettings.js";
 import type { EscalationStore } from "./escalationStore.js";
 import {
@@ -283,7 +284,9 @@ export class OrchestratorService {
 		switch (event.type) {
 			case "agent.turn_ended": {
 				const live = agent(event.agent.id);
-				return live !== undefined && live.status !== "working";
+				// At work again — working, or background (`agentAtWork`) — it is
+				// not done after all; its real end will be said.
+				return live !== undefined && !agentAtWork(live.status);
 			}
 			case "agent.asked":
 			case "agent.permission_requested":
@@ -623,7 +626,7 @@ export class OrchestratorService {
 				ids.includes(agent.id) &&
 				agent.id !== this.ports.store.orchestratorAgentId &&
 				!agent.stopping &&
-				(agent.status === "working" || agent.status === "background"),
+				agentAtWork(agent.status),
 		);
 	}
 

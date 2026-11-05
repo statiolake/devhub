@@ -22,6 +22,7 @@ import {
 	type PendingRequest,
 	type TranscriptEntry,
 } from "../../model/conversation.js";
+import { agentAtWork, agentTurnDone } from "../../model/domain.js";
 import type { EventAgent, EventItem, OrchestratorEvent } from "./events.js";
 
 // --- Workspaces --------------------------------------------------------------
@@ -143,12 +144,18 @@ export interface AgentSourcePorts {
 	readonly setTimer?: (ms: number, run: () => void) => { cancel(): void };
 }
 
-/** A status that ends a turn must hold this long (it flaps between tool calls). */
+/**
+ * The status that ends a turn (`idle`, nothing in the background:
+ * `agentTurnDone`) must hold this long (it flaps between tool calls).
+ */
 export const TURN_SETTLE_MS = 1500;
 
 interface AgentMemory {
 	reading: LiveAgentReading;
-	/** Seen working by this source: the next idle is the end of a turn. */
+	/**
+	 * Seen at work (working, or background: `agentAtWork`) by this source: the
+	 * next settled idle is the end of a turn.
+	 */
 	armed: boolean;
 	/** Requests already said (or there at the baseline). */
 	readonly requests: Set<string>;
@@ -156,10 +163,6 @@ interface AgentMemory {
 	requestsRead: boolean;
 	settle: { cancel(): void } | undefined;
 	reading$: boolean;
-}
-
-function ended(status: string): boolean {
-	return status === "idle" || status === "background";
 }
 
 /** The text of an assistant entry, its text blocks joined. */
@@ -236,7 +239,7 @@ export class AgentEventSource {
 			if (memory === undefined) {
 				known.set(reading.id, {
 					reading: { ...reading, status: workStatus(reading, undefined) },
-					armed: workStatus(reading, undefined) === "working",
+					armed: agentAtWork(workStatus(reading, undefined)),
 					requests: new Set(),
 					// An agent new since the baseline has no requests to forgive.
 					requestsRead: !baseline,
@@ -293,7 +296,9 @@ export class AgentEventSource {
 			});
 			return;
 		}
-		if (reading.status === "working") {
+		// Background work (a shell, a task, a subagent) is still work: the turn
+		// is not over to anyone until it has finished too.
+		if (agentAtWork(reading.status)) {
 			memory.armed = true;
 			memory.settle?.cancel();
 			memory.settle = undefined;
@@ -309,10 +314,14 @@ export class AgentEventSource {
 					...(reading.activity === undefined ? {} : { what: reading.activity }),
 				});
 		}
-		if (ended(reading.status) && memory.armed && memory.settle === undefined) {
+		if (
+			agentTurnDone(reading.status) &&
+			memory.armed &&
+			memory.settle === undefined
+		) {
 			const settle = () => {
 				memory.settle = undefined;
-				if (!memory.armed || !ended(memory.reading.status)) return;
+				if (!memory.armed || !agentTurnDone(memory.reading.status)) return;
 				memory.armed = false;
 				void this.#turnEnded(memory);
 			};

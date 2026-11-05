@@ -986,6 +986,29 @@ export function agentIsIdle(status: AgentStatus): boolean {
 export function agentAtPrompt(status: AgentStatus): boolean {
   return status === "idle" || status === "background";
 }
+
+/**
+ * Whether the Agent is still at work: `working`, or `background` — its turn
+ * is over, but a command, a subagent or a teammate it set going still runs,
+ * and it usually takes its turn again by itself when that ends.
+ *
+ * **One rule for "is it done yet".** The other half is `agentTurnDone`. What
+ * the person is told ("Finished", `agentNotifications.ts`), what the
+ * orchestrator hears (`agent.turn_ended`, and its drop as stale at delivery)
+ * and whether an escalation has stalled (`escalation.stalled`) all go by
+ * these two, so none of them says "done" while background work runs.
+ */
+export function agentAtWork(status: string): boolean {
+  return status === "working" || status === "background";
+}
+
+/**
+ * Whether the Agent is truly done: `idle`, with nothing it started still
+ * running (not `background`). See `agentAtWork`.
+ */
+export function agentTurnDone(status: string): boolean {
+  return status === "idle";
+}
 /**
  * Why an operation on one Agent was refused.
  *

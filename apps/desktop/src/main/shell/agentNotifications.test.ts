@@ -105,6 +105,35 @@ describe("agent notifications", () => {
 		});
 	});
 
+	it("does not say finished while background work runs, and says it once at idle", () => {
+		const n = make();
+		go(n, "working");
+		go(n, "background");
+		go(n, "background", 60_000);
+		expect(sent).toHaveLength(0);
+		go(n, "idle");
+		go(n, "idle");
+		expect(sent.map((one) => one.kind)).toEqual(["finished"]);
+	});
+
+	it("says finished after background → working → idle, once", () => {
+		const n = make();
+		go(n, "idle");
+		go(n, "background");
+		go(n, "working");
+		go(n, "idle");
+		expect(sent.map((one) => one.kind)).toEqual(["finished"]);
+	});
+
+	it("debounces an idle that goes back to background", () => {
+		const n = make();
+		go(n, "working");
+		go(n, "idle", 500);
+		go(n, "background");
+		vi.advanceTimersByTime(5000);
+		expect(sent).toHaveLength(0);
+	});
+
 	it("labels waiting differently", () => {
 		const n = make();
 		go(n, "working");

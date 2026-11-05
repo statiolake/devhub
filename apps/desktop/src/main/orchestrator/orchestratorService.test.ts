@@ -76,6 +76,12 @@ describe("the orchestrator's events, re-read before they go", () => {
 		(run.worker as { status: string }).status = "working";
 		run.free();
 		expect(run.fates()).toContainEqual(["agent.turn_ended", "dropped-stale"]);
+		// Background work running again is not done either.
+		const busy = world();
+		busy.service.events.dispatch(turn);
+		(busy.worker as { status: string }).status = "background";
+		busy.free();
+		expect(busy.fates()).toContainEqual(["agent.turn_ended", "dropped-stale"]);
 		const again = world();
 		again.service.events.dispatch(turn);
 		again.free();
@@ -486,6 +492,12 @@ describe("停滞: 対応中 with no agent working on it (escalation.stalled)", (
 		run.set(OTHER, { status: "background" });
 		run.later(10 * GRACE);
 		expect(run.stalled()).toHaveLength(0);
+		// Its background work done, the grace runs from then.
+		run.set(OTHER, { status: "idle" });
+		run.later(GRACE / 2);
+		expect(run.stalled()).toHaveLength(0);
+		run.later(GRACE);
+		expect(run.stalled()).toHaveLength(1);
 	});
 
 	it("does not count a maintenance turn as work", () => {

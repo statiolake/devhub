@@ -8,6 +8,7 @@ import type {
 import type { OrchestratorEvent } from "./events.js";
 import {
 	AgentEventSource,
+	TURN_SETTLE_MS,
 	turnOf,
 	WorkspaceEventSource,
 	type ConversationReading,
@@ -233,6 +234,80 @@ describe("the Agent source", () => {
 		source.observe([claude]);
 		await settle();
 		expect(events.map((event) => event.type)).toEqual(["agent.turn_ended"]);
+	});
+
+	describe("waits for background work before it says a turn ended", () => {
+		/** A source whose settle timers run when `run()` says. */
+		function timed() {
+			const events: OrchestratorEvent[] = [];
+			const timers: { ms: number; run: () => void; live: boolean }[] = [];
+			const source = new AgentEventSource({
+				dispatch: (event) => events.push(event),
+				conversation: () =>
+					Promise.resolve({ entries: () => [], requests: () => [] }),
+				setTimer: (ms, run) => {
+					const timer = { ms, run, live: true };
+					timers.push(timer);
+					return { cancel: () => (timer.live = false) };
+				},
+			});
+			const at = (status: string) => source.observe([{ ...claude, status }]);
+			const run = async () => {
+				for (const timer of timers.splice(0))
+					if (timer.live) {
+						expect(timer.ms).toBe(TURN_SETTLE_MS);
+						timer.run();
+					}
+				await settle();
+			};
+			return { events, timers, at, run };
+		}
+
+		it("working → background says nothing; the idle after it says it once", async () => {
+			const { events, timers, at, run } = timed();
+			at("idle");
+			at("working");
+			at("background");
+			await run();
+			expect(timers).toHaveLength(0);
+			expect(events).toEqual([]);
+			at("background");
+			await run();
+			expect(events).toEqual([]);
+			at("idle");
+			await run();
+			at("idle");
+			await run();
+			expect(events.map((event) => event.type)).toEqual(["agent.turn_ended"]);
+		});
+
+		it("background → working → idle says it once", async () => {
+			const { events, at, run } = timed();
+			at("idle");
+			at("background");
+			at("working");
+			at("idle");
+			await run();
+			expect(events.map((event) => event.type)).toEqual(["agent.turn_ended"]);
+		});
+
+		it("still waits out the settle: idle that goes back to background or working ends nothing", async () => {
+			const { events, timers, at, run } = timed();
+			at("idle");
+			at("working");
+			at("idle");
+			at("background");
+			await run();
+			expect(events).toEqual([]);
+			at("idle");
+			at("working");
+			await run();
+			expect(events).toEqual([]);
+			at("idle");
+			expect(timers.filter((timer) => timer.live)).toHaveLength(1);
+			await run();
+			expect(events.map((event) => event.type)).toEqual(["agent.turn_ended"]);
+		});
 	});
 
 	it("says what it asks, and the permission it wants (for the person)", async () => {

@@ -7,7 +7,10 @@
  * this is the event: a notification and a sound.
  *
  * Rules, all here and all testable without Electron:
- * - Only working -> idle/waiting fires. The first sight of an Agent, a restored
+ * - Only at work -> idle/waiting fires. At work is `working` or `background`
+ *   (`agentAtWork`): "Finished" waits until the background shells, tasks and
+ *   subagents are done too and the Agent is `idle` (`agentTurnDone`) — the
+ *   rule `agent.turn_ended` goes by. The first sight of an Agent, a restored
  *   Agent, and a resumed conversation replaying its history never do: an Agent
  *   must have been observed working by this run first.
  * - Debounced: the new status must hold for `DEBOUNCE_MS`. A status that flaps
@@ -21,6 +24,7 @@
 
 import type { AppSnapshotWire } from "../../ipc/appShell.js";
 import { workStatus } from "../../model/conversation.js";
+import { agentAtWork, agentTurnDone } from "../../model/domain.js";
 
 export const DEBOUNCE_MS = 1500;
 
@@ -107,13 +111,13 @@ export class AgentNotifier {
 	}
 
 	private step(tracked: Tracked, id: string, status: string): void {
-		if (status === "working") {
+		if (agentAtWork(status)) {
 			tracked.armed = true;
 			this.cancel(tracked);
 			return;
 		}
-		if (status === "idle" || status === "waiting") {
-			const kind: NotifyKind = status === "idle" ? "finished" : "waiting";
+		if (agentTurnDone(status) || status === "waiting") {
+			const kind: NotifyKind = agentTurnDone(status) ? "finished" : "waiting";
 			if (!tracked.armed) return;
 			if (tracked.pending === kind) return;
 			this.cancel(tracked);
@@ -125,7 +129,7 @@ export class AgentNotifier {
 			}, DEBOUNCE_MS);
 			return;
 		}
-		// background / unknown: neither a finish nor a new start.
+		// unknown / error: neither a finish nor a new start.
 		this.cancel(tracked);
 		if (status === "error") tracked.armed = false;
 	}
