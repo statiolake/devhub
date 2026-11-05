@@ -8,7 +8,12 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EscalationNote, noteTime } from "./EscalationNote";
+import {
+  EscalationNote,
+  inProgressBefore,
+  noteTime,
+  noteWords,
+} from "./EscalationNote";
 
 afterEach(cleanup);
 
@@ -89,6 +94,33 @@ describe("an escalation's note", () => {
       "オーケストレーターが対応中にしました（14:05）",
     );
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("calls a hold on a thread already in 対応中 the orchestrator's note", () => {
+    expect(
+      noteWords("held", AT, "B から返事待ち", undefined, true).before,
+    ).toBe("オーケストレーターのメモ（14:05）: B から返事待ち");
+    const question = { role: "orchestrator", markdown: "?", at: AT } as const;
+    const answer = { role: "human", markdown: "A", at: AT } as const;
+    const held = {
+      role: "orchestrator",
+      kind: "held",
+      markdown: "",
+      at: AT,
+    } as const;
+    expect(inProgressBefore([question, held], 1)).toBe(false);
+    expect(inProgressBefore([question, answer, held], 2)).toBe(true);
+    expect(inProgressBefore([question, held, held], 2)).toBe(true);
+    expect(
+      inProgressBefore(
+        [
+          question,
+          { role: "orchestrator", kind: "wait", markdown: "t", at: AT },
+          held,
+        ],
+        2,
+      ),
+    ).toBe(false);
   });
 
   it("says the orchestrator parked it waiting, with the trigger and its time", () => {

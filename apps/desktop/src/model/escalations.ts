@@ -30,7 +30,8 @@
  *   the window once had. Nothing writes one any more; a thread that has one
  *   still reads it, as before;
  * - the orchestrator's `escalation hold` (`held`, role `orchestrator`, an
- *   optional note): parked while it works on it, from 要回答; and its
+ *   optional note): parked while it works on it, from 要回答, or a note of
+ *   where the work stands, in 対応中; and its
  *   `escalation resume` from 待機中 (`held` too). Never an answer;
  * - DevHub's notes that one of its agents went from idle to working while it
  *   waited, in 要回答 or 待機中 (`noteWorking`): `direct` (role `human`) when the person talked to
@@ -592,8 +593,11 @@ function checkNote(note: string | undefined): string {
 }
 
 /**
- * Moved to `in_progress` without an answer: the orchestrator's `escalation
- * hold` (`held`, never a human entry). Only on a `needs_answer` one.
+ * In `in_progress` without an answer: the orchestrator's `escalation hold`
+ * (`held`, never a human entry). From `needs_answer` it moves it there; on an
+ * `in_progress` one it is a note of where the work stands, the state as it
+ * was. A `waiting` one leaves its wait by `escalation resume`, a closed one
+ * not at all.
  */
 export function holdEscalation(
   escalation: Escalation,
@@ -601,10 +605,12 @@ export function holdEscalation(
   now: number,
 ): Escalation {
   const kind = "held";
-  if (escalationState(escalation) !== "needs_answer")
+  const state = escalationState(escalation);
+  if (state === "waiting")
     refuse(
-      `#${String(escalation.id)} is not waiting for an answer (${escalationState(escalation)}).`,
+      `#${String(escalation.id)} is waiting on a condition: take it off with 'escalation resume'.`,
     );
+  if (state === "closed") refuse(`#${String(escalation.id)} is closed.`);
   return appended(escalation, {
     role: ESCALATION_ENTRY_KINDS[kind],
     kind,

@@ -4199,10 +4199,20 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(shown.message).toContain("held in in_progress by the orchestrator");
 		expect(shown.message).not.toContain("the person (answer)");
-		// Only a needs_answer one is held.
-		await expect(
-			viaSocket(service, ["escalation", "hold", "1"], coordinator),
-		).rejects.toThrow(/not waiting for an answer/u);
+		// On one already in in_progress it notes where the work stands.
+		await viaSocket(
+			service,
+			["escalation", "hold", "1", "--note", "B から返事待ち"],
+			coordinator,
+		);
+		expect(ports.service.escalations()[0]!.entries.at(-1)).toMatchObject({
+			role: "orchestrator",
+			kind: "held",
+			markdown: "B から返事待ち",
+		});
+		expect(
+			(await viaSocket(service, ["escalation", "show", "1"], coordinator)).data,
+		).toMatchObject({ state: "in_progress" });
 		await viaSocket(
 			service,
 			["escalation", "ask", "1", "--body", "結論は?"],

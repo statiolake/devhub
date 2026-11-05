@@ -714,8 +714,9 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    the answer is used up: close it
   escalation hold <id> [--note <text>]
                                    park a needs_answer one in in_progress
-                                   while you work on it (not an answer; back
-                                   to needs_answer with 'escalation ask')
+                                   while you work on it, or note where an
+                                   in_progress one stands (not an answer;
+                                   back to needs_answer with 'escalation ask')
   escalation wait <id> --trigger <text> [--at <datetime>]
                                    park it in waiting on an outside
                                    condition, written in words (a date,

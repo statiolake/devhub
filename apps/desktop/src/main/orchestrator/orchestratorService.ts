@@ -382,7 +382,8 @@ export class OrchestratorService {
 
 	/**
 	 * `escalation hold`: the orchestrator parks it in 対応中 while it works on
-	 * it. A `held` note, on the orchestrator's side: never an answer.
+	 * it, or notes where an 対応中 one stands. A `held` note, on the
+	 * orchestrator's side: never an answer.
 	 */
 	hold(id: number, note: string | undefined): Escalation {
 		return this.ports.store.hold(id, note, this.#now());

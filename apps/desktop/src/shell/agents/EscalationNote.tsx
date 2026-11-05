@@ -4,7 +4,8 @@
  * A note (`kind`, see `model/escalations.ts`) is a quiet system line in the
  * thread, not anybody's answer: an agent went working (`direct`, `resumed`,
  * with a chip to the agent — what was said is in its conversation), the
- * orchestrator parked it in 対応中 (`held`), with its optional note, or —
+ * orchestrator parked it in 対応中 (`held`), with its optional note — or,
+ * on one already there, noted where the work stands — or —
  * in an old thread — it was moved there by a 対応中にする the window no
  * longer has (`taken`).
  */
@@ -29,14 +30,31 @@ export function dueText(at: number): string {
 }
 
 /**
+ * Whether the thread was in 対応中 just before `index`: anything but the
+ * orchestrator's question or a wait leaves it there (`escalationState`).
+ */
+export function inProgressBefore(
+  entries: readonly EscalationEntryWire[],
+  index: number,
+): boolean {
+  const previous = entries[index - 1];
+  if (previous === undefined) return false;
+  if (previous.kind === "wait") return false;
+  return !(previous.kind === undefined && previous.role === "orchestrator");
+}
+
+/**
  * The note's words: before the agent's chip and after it (`direct`,
  * `resumed`), or the whole line (`taken`, `held`: `before`, with the note).
+ * A `held` one on a thread already in 対応中 (`alreadyInProgress`) moved
+ * nothing: it is the orchestrator's note of where the work stands.
  */
 export function noteWords(
   kind: NoteKind,
   at: number,
   note = "",
   dueAt?: number,
+  alreadyInProgress = false,
 ): { readonly before: string; readonly after: string } {
   const time = noteTime(at);
   const with_ = note === "" ? "" : `: ${note}`;
@@ -55,7 +73,9 @@ export function noteWords(
       return { before: `対応中になりました（${time}）${with_}`, after: "" };
     case "held":
       return {
-        before: `オーケストレーターが対応中にしました（${time}）${with_}`,
+        before: alreadyInProgress
+          ? `オーケストレーターのメモ（${time}）${with_}`
+          : `オーケストレーターが対応中にしました（${time}）${with_}`,
         after: "",
       };
     case "wait":
@@ -70,12 +90,21 @@ export function EscalationNote({
   entry,
   agents,
   onFocusAgent,
+  alreadyInProgress = false,
 }: {
   readonly entry: EscalationEntryWire & { readonly kind: NoteKind };
+  /** See `noteWords`. */
+  readonly alreadyInProgress?: boolean;
   readonly agents: readonly BoardAgentRefWire[];
   readonly onFocusAgent: (agentId: string) => void;
 }) {
-  const words = noteWords(entry.kind, entry.at, entry.markdown, entry.dueAt);
+  const words = noteWords(
+    entry.kind,
+    entry.at,
+    entry.markdown,
+    entry.dueAt,
+    alreadyInProgress,
+  );
   const agentId = entry.agent;
   const agent = agents.find((one) => one.agentId === agentId);
   return (

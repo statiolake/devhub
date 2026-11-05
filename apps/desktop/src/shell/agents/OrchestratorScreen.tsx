@@ -46,7 +46,7 @@ import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
 import { GitHubPill } from "./OrchestratorGitHub";
-import { dueText, EscalationNote } from "./EscalationNote";
+import { dueText, EscalationNote, inProgressBefore } from "./EscalationNote";
 import { dueWords } from "../../model/escalations";
 import { useEscalationRequests } from "./escalationRequests";
 import { DevhubLink } from "../conversation/DevhubLink";
@@ -973,6 +973,7 @@ function EscalationView({
               entry={{ ...entry, kind: entry.kind }}
               agents={escalation.agents}
               onFocusAgent={onFocusAgent}
+              alreadyInProgress={inProgressBefore(escalation.entries, index)}
             />
           ) : (
             <article

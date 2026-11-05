@@ -379,7 +379,21 @@ describe("to in_progress without an answer", () => {
     expect(escalationState(askAgain(held, "?", undefined, 3000))).toBe(
       "needs_answer",
     );
-    expect(() => holdEscalation(held, undefined, 3000)).toThrow(
+    // In 対応中 it is a note of where the work stands, the state as it was.
+    const again = holdEscalation(held, "B から返事待ち", 3000);
+    expect(again.entries.at(-1)).toEqual({
+      role: "orchestrator",
+      kind: "held",
+      markdown: "B から返事待ち",
+      at: 3000,
+    });
+    expect(escalationState(again)).toBe("in_progress");
+    const parked = waitEscalation(held, { trigger: "B の PR" }, 3000);
+    expect(() => holdEscalation(parked, undefined, 4000)).toThrow(
+      /escalation resume/,
+    );
+    const closed = closeEscalation(held, undefined, 3000);
+    expect(() => holdEscalation(closed, undefined, 4000)).toThrow(
       EscalationError,
     );
     const back = escalationsFromJson(
