@@ -635,7 +635,12 @@ export class GitHubItemSource {
 			out.push({
 				item: one.item,
 				kind: one.kind,
-				open: one.state === "OPEN",
+				state:
+					one.state === "OPEN"
+						? "open"
+						: one.state === "MERGED"
+							? "merged"
+							: "closed",
 				assignedToMe: one.assignees.some((name) => same(name, viewer)),
 				projects: one.projects
 					.filter((project) => watched.has(project.ref.toLowerCase()))

@@ -130,7 +130,7 @@ export type TellCommand =
 	  }
 	| {
 			/**
-			 * `agent keep <a> --note <text>`: an unsettled managed agent left as
+			 * `agent keep <a> --note <text>`: a managed agent that needs action, left as
 			 * it is, for the reason given; `--clear` (no note) ends that.
 			 */
 			readonly verb: "agent-keep";
@@ -381,6 +381,8 @@ export type TellCommand =
 	  }
 	/** The lanes. */
 	| { readonly verb: "board" }
+	/** One subject's whole state now: an item (URL, `owner/repo#N`) or an agent. */
+	| { readonly verb: "status"; readonly ref: string }
 	| {
 			readonly verb: "orchestrator-start";
 			/** Required: the folder it runs in (the window reads orchestrator.root). */
@@ -507,9 +509,10 @@ agents
                                    read and the cursor, context use, prompt
                                    cache, why it stopped or broke, whether
                                    it is managed, and how it stands against
-                                   the invariant (settled or unsettled and
-                                   its facts, the 待機中 escalation it is
-                                   on, agent keep's note)
+                                   the invariant (settled, or the clause it
+                                   fails, the 待機中 escalation it is on,
+                                   agent keep's note); its whole state:
+                                   'status <a>'
   agent new --workspace <w> --profile <p> --gui|--tui --managed|--unmanaged
             [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
                                    start an agent (Cmd+Q c) and, with
@@ -523,10 +526,11 @@ agents
   agent unmanage <a>               management, or take it out (kept across
                                    restarts and resumes; shown in 'agents',
                                    'agent status' and the row)
-  agent keep <a> --note <text>     leave an unsettled managed agent as it is,
-  agent keep <a> --clear           for the reason given: it is not said
-                                   again ('unsettled') until its facts change
-                                   (its status, its Issue, its PR). Shown in
+  agent keep <a> --note <text>     leave a managed agent that needs action as
+  agent keep <a> --clear           it is, for the reason given: it is not said
+                                   again ('needs_action') until its state
+                                   changes (its status, its item, its PR).
+                                   Shown in
                                    'agent status', 'board' and the row's
                                    tooltip; --clear ends it
   agent rename <a> <name>          the row menu's Rename...: the name the
@@ -730,9 +734,24 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    first), in_progress (how long since the
                                    answer, 停滞 marked), waiting (each
                                    trigger and time, soonest first), and
-                                   what breaks the invariant now: each
-                                   unsettled Issue or managed agent with
-                                   its facts (--json unsettled)
+                                   what breaks the invariant now: each item
+                                   (Issue or PR) or managed agent that needs
+                                   action, and the clause it fails (--json
+                                   needsAction)
+  status <item|agent>              one subject's whole state, as one call:
+                                   an item (its URL, or owner/repo#N: an
+                                   Issue's or a PR's) — its state, whether
+                                   it is assigned to me and in the
+                                   population, its lane on each watched
+                                   Project, its pull request (state, review
+                                   decision, unresolved conversations,
+                                   checks), the agents linked to it and how
+                                   each stands, the escalations about it,
+                                   the clause it fails and since when; or an
+                                   agent (id, prefix or name) — the same of
+                                   its item, its Workspace's facts as the
+                                   Sidebar's tooltip has them, its 待機中
+                                   escalation and agent keep's note
   escalation new --title <t> --body <text>|- [--agent <a>]...
                  [--link <url>]... [--option <text>]... [--workspace <w>]
                  [--priority high|normal|low] [--effort quick|normal|deep]
@@ -1193,6 +1212,12 @@ function parseVerb(args: readonly string[]): TellCommand {
 		case "board":
 			positionals(readFlags(args.slice(1), NO_FLAGS), []);
 			return { verb: "board" };
+		case "status": {
+			const [ref] = positionals(readFlags(args.slice(1), NO_FLAGS), [
+				"<item|agent>",
+			]);
+			return { verb: "status", ref: ref! };
+		}
 		case "usage": {
 			const flags = readFlags(args.slice(1), {
 				values: [],
@@ -2385,6 +2410,8 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				focus: record["focus"],
 			};
 		}
+		case "status":
+			return { verb: "status", ref: text(record, "ref") };
 		case "board":
 		case "orchestrator-status":
 		case "orchestrator-stop":

@@ -201,7 +201,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       # init_prompt = "/make-progress {EVENT}"   # 省略時は event_prompt に init が入る
       # events = ["*", "!timer.*"]                # 受け取るイベントの絞り込み (既定は全部)
       # delivery_interval = "5m"                  # 束ねた配信の最短間隔 (人の言葉はすぐ)
-      # reminder_interval = "1h"                  # 解消しない unsettled を言い直す間隔
+      # reminder_interval = "1h"                  # 解消しない needs_action を言い直す間隔
       # [orchestrator.github]
       # projects = ["my-org/7"]                  # lane を読む Project (OWNER/NUMBER)。母集団は決めない
       # interval = "90s"                          # 基本間隔 (最短 30s。ここから遅くなるだけ)
@@ -227,33 +227,46 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   1 回の配信 = 1 メッセージ (\`event_prompt\` の \`{EVENT}\`)。
 - **配信は履歴ではない。いま対応が要るものの一覧で、対象ごとに 1 行**
   (アイテム = Issue か PR、エージェント、エスカレーション、タイマー、CLI の使用量枠、カスタムの種類+本文)。
-  同じ対象の新しいものは古いものを置き換える: **行はその対象のいまの状態** を書く
-  (差分ではない)。届ける直前に、もう対応の要らないもの (解消した対象、待機中でなくなった
+  同じ対象の新しいものは古いものを置き換える: 行はその対象がいま対応を要する理由を書く
+  (差分ではない。状態は \`status\` で読む)。届ける直前に、もう対応の要らないもの (解消した対象、待機中でなくなった
   エスカレーション、リセット済みの使用量枠) は落とされる。
 - オーケストレーターがターン中 (フォアグラウンド) の間は束ねた配信を待つ。バックグラウンドの
   シェル・タスク・サブエージェントが動いているだけなら待たずに届く。
 - 1 通は最大 50 行。超えた分は最後の行 \`…ほか N 件 (devhub --tell orchestrator events で確認)\`
   に数だけ出る。
-- 各行の形式: \`[type]\` + 次の CLI にそのまま使える \`key=value\` (対象の id と、状態の事実)。
-  **理由や推奨は書かない**。事実は件数と状態だけで、中身 (どのチェックがなぜ落ちたか、
-  レビューコメントの内容、CI のログ、差分) は運ばない。
+- 各行の形式: \`[type]\` + 次の CLI にそのまま使える \`key=value\` (対象の id) と、\`—\` のあとに
+  短いコード。**状態は行に載らない**。理由や推奨も書かない。対象のいまの状態は
+  \`devhub --tell --json status <対象>\` を 1 回呼べば全部返る (下記)。
 
-      [unsettled] issue=acme/app#200「検索の改善」 state=open assigned=yes lane=Todo pr=none agents=none esc=none https://github.com/acme/app/issues/200
-      [unsettled] issue=acme/app#123「API整理」 state=open assigned=yes lane="In Review" pr=#130 pr_state=open review=changes_requested unresolved=2 checks=failing agents=a1b2c3d4:idle esc=none https://github.com/acme/app/issues/123
-      [unsettled] agent=a1b2c3d4 (API fix) ws=login-fix status=idle issue=acme/app#123 state=closed assigned=yes lane=Done pr=#130 pr_state=merged review=approved unresolved=0 checks=passing esc=none
-      [unsettled] agent=c3d4e5f6 (調査) ws=docs status=working issue=none pr=none esc=none
+      [needs_action] issue=acme/app#200 — no_agent
+      [needs_action] issue=acme/app#123 ws=login-fix — idle_no_escalation
+      [needs_action] pr=acme/app#9 — no_agent
+      [needs_action] agent=a1b2c3d4 (API fix) ws=login-fix — outside_population (closed)
+      [needs_action] agent=c3d4e5f6 (調査) ws=docs — outside_population (no_item)
+      [needs_action] agent=e5f6a7b8 (ログ修正) ws=logs — idle_no_escalation
       [waiting.changed] esc=12 — subjects_changed
       [waiting.changed] esc=15 — due
-      [unsettled] pr=acme/app#9「設定画面」 state=open assigned=yes lane=Review pr=#9 pr_state=open review=review_required unresolved=0 checks=passing agents=none esc=none https://github.com/acme/app/pull/9
       [timer.elapsed] sweep
       [usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました
 
-- \`issue=\` / \`pr=\` はアイテム (\`owner/repo#N\`。Issue か PR かの違いだけで、扱いは同じ)、\`ws=\` は \`workspace status\` などに、\`agent=\`
-  (id の先頭 8 文字) は \`agent ...\` に、\`esc=\` は \`escalation show\` にそのまま渡せる。
-  \`pr_state\` は open / draft / closed / merged、\`review\` は approved /
-  changes_requested / review_required / none、\`checks\` は passing / failing /
-  pending / none、\`agents=\` はアイテムに紐づくエージェントと状態、\`esc=\` は関係する
-  エスカレーションと状態。
+- \`issue=\` / \`pr=\` はアイテム (\`owner/repo#N\`。Issue か PR かの違いだけで、扱いは同じ)、
+  \`agent=\` (id の先頭 8 文字) はエージェント。どちらもそのまま \`status\` に渡せる。
+  \`ws=\` は \`workspace status\` などに、\`esc=\` は \`escalation show\` に渡せる。
+- \`needs_action\` のコード: \`no_agent\` (母集団のアイテムに紐づくエージェントがいない)、
+  \`idle_no_escalation\` (作業中でなく、要回答 / 待機中のエスカレーションもない)、
+  \`outside_population (closed|unassigned|no_item)\` (管理対象エージェントのアイテムが
+  閉じた / 自分にアサインされていない / アイテムがない)。
+- **状態を知る 1 回の呼び出し**: \`devhub --tell --json status <issue=/pr= の値か URL、または agent=>\`。
+  アイテムなら状態 (open / closed / merged)、自分へのアサイン、母集団か、watched Project ごとの
+  lane、PR (状態、review decision、未解決の会話、checks)、紐づくエージェントとその状態
+  (needs_action のコード、keep の理由)、関係するエスカレーション (状態、トリガー、時刻)、
+  needs_action のコードといつから。エージェントなら同じことを、紐づくアイテムと、その
+  ワークスペースの事実 (サイドバーのツールチップと同じ: Issue、PR、review、会話、checks)、
+  待機中のエスカレーション、keep の理由とともに。
+
+      devhub --tell --json status acme/app#123
+      devhub --tell --json status a1b2c3d4
+
 - \`[orchestrator] events\` で種類を絞れる (\`escalation.*\`、\`!type\` で除外。最後に
   一致したものが勝つ)。既定は全部。\`init\` は常に届く。
 - 実物は \`devhub --tell orchestrator events\` で見られる (届いた / 保留 /
@@ -265,15 +278,15 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
 | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ)。人の言葉として単独ですぐ届く (上記) | esc |
 | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ)。人の言葉として単独ですぐ届く | esc, agent |
-| \`unsettled\` | 不変条件 (下記) を満たしていないアイテム (Issue / PR) か管理対象エージェント。猶予 1 分のあとに 1 回、事実が変わるたびにもう 1 回、解消しないうちは \`[orchestrator] reminder_interval\` (既定 1h) ごとに | issue / agent, ws, 事実 |
+| \`needs_action\` | 不変条件 (下記) を満たしていないアイテム (Issue / PR) か管理対象エージェントと、満たしていない条項のコード。猶予 1 分のあとに 1 回、状態が変わるたびにもう 1 回 (行は同じ。\`status\` で何が動いたか見る)、解消しないうちは \`[orchestrator] reminder_interval\` (既定 1h) ごとに | issue / pr / agent, ws, コード |
 | \`waiting.changed\` | 待機中のエスカレーションの条件が満たされたかもしれない: 対象のアイテム (Issue / PR) やエージェントの状態が変わった (\`subjects_changed\`) か、\`--at\` の時刻が来た (\`due\`、待機 1 回につき 1 回)。行はどのエスカレーションかと、そのどちらかだけ | esc, 理由 |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |
 
-\`unsettled\` は DevHub の憲章にある不変条件を満たしていない対象 (母集団のアイテムか管理対象エージェント) で、
-事実だけが並ぶ。何をもって「直った」とするか (どのレーンなら誰に何を頼むか) が make-progress に書くこと。
-\`devhub --tell --json board\` の \`unsettled\` でいつでも今の一覧を取れる。
+\`needs_action\` は DevHub の憲章にある不変条件を満たしていない対象 (母集団のアイテムか管理対象エージェント) で、
+対象とコードだけが並ぶ。何をもって「直った」とするか (\`status\` で見たどのレーン・状態なら誰に何を頼むか) が
+make-progress に書くこと。\`devhub --tell --json board\` の \`needsAction\` でいつでも今の一覧を取れる。
 
 GitHub は読むだけ (何も書かない)。母集団は自分にアサインされた open な Issue と PR (GitHub 全体、
 \`is:open assignee:@me\`) で、他人の PR のレビューも自分にアサインされていれば同じアイテムになる
@@ -292,7 +305,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
   再開させ**、回答を使い切ったら \`escalation close\` する。追加で聞くことが
   あれば同じチケットに \`escalation ask\` (要回答に戻る)。対応中に放置しない
   (関係エージェントが誰も動いていないまま 1 分たつと、ボードに「停滞」と出る。
-  そのエージェントは \`unsettled\` で届く)。
+  そのエージェントは \`needs_action\` で届く)。
 - **待機中** (waiting): 外部の条件待ち (日付、相手からの Slack の返事、
   レビュー、staging の deploy 完了など) で止めてあるもの。**外部の条件待ちは必ず
   escalation wait で自然言語のトリガーを残す（日付なら --at も）**。
@@ -321,7 +334,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
   人が直接話しかけた場合だけ \`escalation.human_direct\` が届く。
   ただし会話の保守だけのターン — \`/compact\` によるコンパクション — は作業ではない。
 - サイドバーのエージェント行には、管理対象 (オーケストレーターの印)、待機中のエスカレーションの
-  エージェント (砂時計。ツールチップにトリガー)、\`unsettled\` (警告。ツールチップに事実)、
+  エージェント (砂時計。ツールチップにトリガー)、\`needs_action\` (警告。ツールチップにコード)、
   \`agent keep\` 済み (チェック。ツールチップに理由) の印が出る。
 
 ## 4. エスカレーションの原則
@@ -380,6 +393,8 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
 
     devhub --tell --json agents --meta role=worker
     devhub --tell --json agent status A
+    devhub --tell --json status acme/app#123
+    devhub --tell --json status A
     devhub --tell --json agent wait --any --timeout 600
     devhub --tell agent read A --since CURSOR
     devhub --tell agent read A --entry ID
@@ -481,23 +496,25 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     いれば escalation ask で質問を更新。他のエージェントにも関わる決定なら agent send で伝える。
 
     ## init
-    board の unsettled / 対応中 / 待機中を見て整合性を取る。対応中は回答を伝え直す。
+    board の needs action / 対応中 / 待機中を見て整合性を取る。対応中は回答を伝え直す。
 
-    ## unsettled issue=… / pr=… agents=none
+    どの行も、まず devhub --tell --json status <対象> で状態を得る。
+
+    ## needs_action issue=… / pr=… — no_agent
     着手するアイテムなら issue assign (--managed、--meta parent=自分)。
     着手すべきでない (他の人の作業待ちなど) なら、アイテムの URL を --link に付けた
     待機中のエスカレーション (escalation new … --wait TEXT) か、人に聞くエスカレーション。
 
-    ## unsettled issue=… lane="In Review" review=changes_requested / checks=failing
+    ## needs_action issue=… — idle_no_escalation (status で review=changes_requested / checks=failing)
     担当エージェントに agent send で「レビュー / CI を自分で確認して対応して」と頼む
     (いなければ agent resume か issue assign)。中身は担当が gh で読む。
 
-    ## unsettled agent=… status=idle
+    ## needs_action agent=… — idle_no_escalation
     agent read A --since で何が終わったかだけ確かめる → 次の作業を send /
     レビュー依頼を人に出させる / エスカレーションを起こして紐付ける /
     レビュー待ちなら escalation wait --trigger "#130 が approve されたら"。
 
-    ## unsettled agent=… state=closed / assigned=no / issue=none
+    ## needs_action agent=… — outside_population (closed / unassigned / no_item)
     担当エージェントに未 push の作業や開いた PR がないか聞く → なければ agent stop
     (必要なら workspace close をフラグを明示して)。続ける理由があるなら agent keep A --note 理由。
 
@@ -505,11 +522,11 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     トリガーを確かめる (review=approved になった、日付が来た、Slack の返事は自分のツールで)。
     満たされていれば escalation resume → 担当エージェントに agent send で再開を指示。
 
-    ## unsettled pr=… (他人の PR のレビュー)
+    ## needs_action pr=… — no_agent (他人の PR のレビュー)
     PR もアイテム。レビュー用のエージェントを issue assign に PR の URL で立てる (--managed)。
     そのエージェントは PR に紐づき、Issue のときと同じに扱われる。
 
     ## timer.elapsed
-    棚卸し: board の unsettled と停滞を確認。
+    棚卸し: board の needs action と停滞を確認。
 `;
 }

@@ -2042,7 +2042,7 @@ body.is-resizing-rows {
 
 /* The orchestrator's marks on an Agent's row (`AgentMarks`): managed, and
    what its escalations say of it. Small and in the quiet ink, except
-   "unsettled", which is the one thing here asking for a look. */
+   "needs action", which is the one thing here asking for a look. */
 .row-agent-marks {
   display: flex;
   flex: none;
@@ -2056,7 +2056,7 @@ body.is-resizing-rows {
   height: 11px;
 }
 
-.row-agent-mark.is-unsettled {
+.row-agent-mark.is-needs-action {
   color: var(--status-waiting, var(--secondary));
 }
 

@@ -75,7 +75,7 @@ export type GlyphName =
   | "copy"
   | "orchestrator"
   | "orchestratorWaiting"
-  | "orchestratorUnsettled"
+  | "orchestratorNeedsAction"
   | "orchestratorKept";
 
 const GLYPHS: Record<GlyphName, ReactNode> = {
@@ -189,7 +189,7 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
   orchestratorWaiting: (
     <path d="M4.5 2.6h7M4.5 13.4h7M5.4 2.6c0 3.1 5.2 3.3 5.2 5.4s-5.2 2.3-5.2 5.4M10.6 2.6c0 3.1-5.2 3.3-5.2 5.4s5.2 2.3 5.2 5.4" />
   ),
-  orchestratorUnsettled: (
+  orchestratorNeedsAction: (
     <>
       <path d="M8 2.6 13.8 12.9H2.2Z" />
       <path d="M8 6.4v3.1" />

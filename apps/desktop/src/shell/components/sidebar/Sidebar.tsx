@@ -713,9 +713,9 @@ function AgentTree({
 /**
  * The orchestrator's marks on an Agent's row, after its words: under the
  * orchestrator's management (`Agent.managed`); one of a 待機中 escalation's
- * agents — stopped, but fine; unsettled — managed, stopped, and nothing
+ * agents — stopped, but fine; needs action — managed, stopped, and nothing
  * settles it (missed); kept as it is by the orchestrator. Quiet, like the
- * row's other context, but for "unsettled"; the tooltip says each in words
+ * row's other context, but for "needs action"; the tooltip says each in words
  * (`agentTooltipFacts`), off the board (`OrchestratorBoardWire.agentStates`).
  */
 function AgentMarks({
@@ -730,9 +730,9 @@ function AgentMarks({
     ...(orchestration?.waiting === undefined
       ? []
       : (["orchestratorWaiting"] as const)),
-    ...(orchestration?.unsettled === undefined
+    ...(orchestration?.needsAction === undefined
       ? []
-      : (["orchestratorUnsettled"] as const)),
+      : (["orchestratorNeedsAction"] as const)),
     ...(orchestration?.kept === undefined
       ? []
       : (["orchestratorKept"] as const)),
@@ -744,7 +744,7 @@ function AgentMarks({
         <Glyph
           key={name}
           name={name}
-          className={`row-agent-mark${name === "orchestratorUnsettled" ? " is-unsettled" : ""}`}
+          className={`row-agent-mark${name === "orchestratorNeedsAction" ? " is-needs-action" : ""}`}
         />
       ))}
     </span>

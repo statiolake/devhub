@@ -281,7 +281,7 @@ describe("the GitHub items", () => {
 		await run.ticks(2);
 		expect(run.asked[1]?.variables).toMatchObject({ u0: closed, u1: gone });
 		expect(run.source.items()).toEqual([
-			expect.objectContaining({ open: false, assignedToMe: false }),
+			expect.objectContaining({ state: "closed", assignedToMe: false }),
 		]);
 		expect(run.source.missing(gone)).toBe(true);
 		expect(run.source.missing(closed)).toBe(false);

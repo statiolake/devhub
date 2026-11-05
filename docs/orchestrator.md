@@ -379,14 +379,14 @@ agents was seen working, the orchestrator's reading of the answer (its
 delivery: see "The person's words"), and main's first reading after a start.
 It is a mark for the person only — a quiet 停滞 chip on the card,
 `stalledSince` on its `EscalationWire`, `[停滞 3m: …]` in `devhub --tell
-board` — and no event: its idle managed agents are `unsettled` (below), which
+board` — and no event: its idle managed agents are `needs_action` (below), which
 is what the orchestrator hears.
 
 ## Managed agents
 
 Every agent carries one flag: **managed by the orchestrator** or not
 (`Agent.managed`, a field of its own, not a metadata pair). Only a managed
-agent is held to the invariant and said as `unsettled`; the orchestrator
+agent is held to the invariant and said as `needs_action`; the orchestrator
 agent itself never is. The flag is set where the agent starts:
 
 - `devhub --tell agent new` and `devhub --tell issue assign` take
@@ -409,8 +409,9 @@ row's tooltip:
 - the orchestrator's mark — managed ("Managed by the orchestrator");
 - an hourglass — one of the agents of a 待機中 escalation, stopped but fine
   ("Waiting (#12): <trigger>");
-- a warning, in the waiting ink — managed, unsettled past the grace: stopped
-  (or outside the population) with nothing settling it ("Unsettled: <facts>");
+- a warning, in the waiting ink — managed, needing action past the grace:
+  stopped (or outside the population) with nothing settling it ("Needs
+  action: <clause>");
 - a tick — kept as it is by the orchestrator (`agent keep`; "Kept as it is:
   <note>").
 
@@ -439,17 +440,18 @@ item, exactly one of these holds:
   person;
 - (c) a 待機中 escalation is about it — parked on an explicit condition.
 
-Otherwise the item is **unsettled** (nobody linked; its agent idle with no
-escalation; …). An item one of whose linked agents is not managed is the
+Otherwise the item **needs action**: `no_agent` (nobody linked) or
+`idle_no_escalation` (its agents stopped, with no 要回答 or 待機中 escalation
+about it). An item one of whose linked agents is not managed is the
 person's own and left out.
 
 **Every managed agent** is working, or is one of the agents of a 要回答 or
-待機中 escalation. An idle or waiting one with neither is unsettled (it ended
-its turn and nobody picked it up). So is a managed agent linked to an item
-outside the population — closed or merged, not assigned to the viewer, or
-one GitHub has no item for — or linked to no item at all, **whatever it is
-doing**, for that reason alone: its line carries the facts that show it
-(`state=closed`, `assigned=no`, `item=none`, `issue=none`). DevHub looks up
+待機中 escalation. An idle or waiting one with neither needs action,
+`idle_no_escalation` (it ended its turn and nobody picked it up). So does a
+managed agent linked to an item outside the population — closed or merged,
+not assigned to the viewer — or to no item at all (none linked, or one GitHub
+has no item for), **whatever it is doing**, for that reason alone:
+`outside_population (closed)`, `(unassigned)`, `(no_item)`. DevHub looks up
 each linked item the search did not return by its URL; until it has, and
 while the population is not known — GitHub not polled, or the assigned items
 not read in full yet — only the status rule applies to agents, and no item
@@ -468,19 +470,64 @@ Workspace is on links nothing.
 or one of its agents — `--agent`, a `devhub:agent/` link, the agents of a
 `devhub:workspace/` link or of its `--workspace` — is linked to it.
 
-**Kept**: the orchestrator may decide an unsettled managed agent is to go
+**Kept**: the orchestrator may decide a managed agent that needs action is to go
 on anyway (work outside the population that is still worth doing):
 `devhub --tell agent keep A --note TEXT`. It is not said again while its
-facts stay what they were when it was kept; when they change (its item is
+state (its status, its item's, its pull request's: what `status` shows)
+stays what it was when it was kept; when they change (its item is
 assigned or closed, it goes idle after working, …) the keeping ends and it
 is said again. `agent keep A --clear` ends it at once. The keeping and its
 note are shown by `agent status` (`kept`), `board` and the row's tooltip.
 It lives in the running DevHub: a restart says the agent again.
 
-What breaks it now is in `devhub --tell board` (`unsettled (N):`, `--json`
-`unsettled`: each subject's line, since when, when last said, its keeping),
-and each agent's standing in `agent status` (`invariant`: settled or not, its
-facts, the 待機中 escalation it is on, its keeping).
+What breaks it now is in `devhub --tell board` (`needs action (N):`,
+`--json` `needsAction`: each subject's line, the clause, since when, when
+last said, its keeping), and each agent's standing in `agent status`
+(`invariant`: settled, or the clause it fails; the 待機中 escalation it is
+on; its keeping).
+
+### `status`: one subject's whole state, in one call
+
+A line never carries state. What a subject is now — everything the
+Sidebar's tooltip shows, and more — is one call, `devhub --tell [--json]
+status <subject>`, the subject being what a line names it by: an item
+(`acme/app#123` — an Issue's or a pull request's number alike — or its URL)
+or an agent (its id, a 4+ prefix, or its name). Built from the reading the
+invariant was just made from (`OrchestratorService.status`), never fetched
+for the call:
+
+- **an item**: its kind, state (`open` / `closed` / `merged`), whether it is
+  assigned to the viewer and in the population, its lane on each watched
+  Project, its pull request (its own, or the one closing the Issue: state,
+  review decision, unresolved conversations, checks), the agents linked to
+  it (status, managed, the clause each fails, `agent keep`'s note), the
+  escalations about it (state, trigger, time), and the clause it fails,
+  since when and when last said;
+- **an agent**: the same of the agent and of its item, its Workspace's facts
+  as the Sidebar's tooltip has them (`workspace status`'s `review`: Issue,
+  pull request, review decision, conversations, checks), the 待機中
+  escalation it is on and the escalations it is one of the agents of.
+
+```text
+$ devhub --tell --json status acme/app#9
+{ "subject": "item",
+  "item": { "kind": "pr", "ref": "pr=acme/app#9", "url": "https://github.com/acme/app/pull/9",
+            "title": "設定画面", "state": "open", "assigned": true, "inPopulation": true,
+            "projects": [{ "project": "acme/7", "lane": "Review" }],
+            "pullRequest": { "number": 9, "url": "…", "state": "open",
+                             "review": "changes_requested", "unresolved": 2, "checks": "failing" } },
+  "needsAction": { "clause": "idle_no_escalation", "line": "pr=acme/app#9 ws=web — idle_no_escalation",
+                   "since": "2026-11-05T09:00:00.000Z", "toldAt": "2026-11-05T09:01:00.000Z" },
+  "agents": [{ "id": "a1b2c3d4-…", "name": "PR 9 review", "ws": "web", "workspaceId": "…",
+               "status": "idle", "managed": true, "linked": "https://github.com/acme/app/pull/9",
+               "needsAction": "idle_no_escalation", "kept": null }],
+  "escalations": [] }
+```
+
+An agent's has `"subject": "agent"`, `agent`, `item` (or null),
+`workspace` (the tooltip's facts), `needsAction`, `waiting` and
+`escalations`. An item DevHub has not read (not assigned to the viewer and
+no agent linked to it) is refused with what it does read.
 
 ## Events
 
@@ -491,54 +538,54 @@ queues the message for the orchestrator agent as an ordinary message from the
 person — the same queue `devhub --tell agent send` uses. **The person's
 words are the exception**: they go at once, as they were typed (below).
 
-A line says **how a subject stands now**, not what happened to it: an
-item's state, lane, pull request, review decision, unresolved conversations
-and checks, as facts (`key=value`, counts and states), never contents (which
-check failed and why, what a review comment says, a CI log) and never a
-reason or a suggestion. Details are fetched by the agent responsible for the
+A line says **why a subject needs the orchestrator now**, not what happened
+to it and not its state: the subject (the ids the next command takes) and a
+short code — the invariant's clause it fails, which wait may be ready —
+never facts, contents or a suggestion. A subject's state is one call,
+`devhub --tell status` (above); details (which check failed and why, what a
+review comment says, a CI log) are fetched by the agent responsible for the
 work, with its own tools (`gh`), not by the orchestrator.
 
 ### The event types
 
-| type                      | when                                                                                                                                                          | example                                                                                                                                                                                                 |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init`                    | the orchestrator has just started (or restarted)                                                                                                              | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                                                           |
-| `escalation_answered`     | the person answered an escalation (→ 対応中). Sent at once, as its own message: the person's words                                                            | `esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                                                                             |
-| `escalation.human_direct` | the person wrote to an open escalation's agent from its own composer and it went working (要回答 → 対応中). Sent at once, as its own message                  | `esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 に人が直接送ったメッセージ:` and, on the next line, what they wrote                                                                                |
-| `unsettled`               | an item of the population, or a managed agent, breaks the invariant: after a minute's grace, again when its facts change, and every `reminder_interval` after | `[unsettled] issue=acme/app#123「API整理」 state=open assigned=yes lane="In Review" pr=#130 pr_state=open review=changes_requested unresolved=2 checks=failing agents=a1b2c3d4:idle esc=none https://…` |
-| `waiting.changed`         | a 待機中 escalation may be ready: what it is about changed (`subjects_changed`), or its `--at` came (`due`, once per wait)                                    | `[waiting.changed] esc=12 — subjects_changed`, `[waiting.changed] esc=15 — due`                                                                                                                         |
-| `usage.threshold`         | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                        | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                                             |
-| `timer.elapsed`           | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                       | `[timer.elapsed] sweep`                                                                                                                                                                                 |
-| `custom.*`                | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                 | `[custom.deploy] — staging に deploy 完了`                                                                                                                                                              |
+| type                      | when                                                                                                                                                                                                                               | example                                                                                                                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `init`                    | the orchestrator has just started (or restarted)                                                                                                                                                                                   | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                                        |
+| `escalation_answered`     | the person answered an escalation (→ 対応中). Sent at once, as its own message: the person's words                                                                                                                                 | `esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                                                          |
+| `escalation.human_direct` | the person wrote to an open escalation's agent from its own composer and it went working (要回答 → 対応中). Sent at once, as its own message                                                                                       | `esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 に人が直接送ったメッセージ:` and, on the next line, what they wrote                                                             |
+| `needs_action`            | an item of the population, or a managed agent, breaks the invariant: after a minute's grace, again when its clause or its state changes (the line may be the same: `status` shows what moved), and every `reminder_interval` after | `[needs_action] issue=acme/web#123 ws=web — no_agent`, `[needs_action] agent=ab12cd34 (API fix) ws=web — idle_no_escalation`, `[needs_action] agent=… — outside_population (closed)` |
+| `waiting.changed`         | a 待機中 escalation may be ready: what it is about changed (`subjects_changed`), or its `--at` came (`due`, once per wait)                                                                                                         | `[waiting.changed] esc=12 — subjects_changed`, `[waiting.changed] esc=15 — due`                                                                                                      |
+| `usage.threshold`         | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                                                                             | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                          |
+| `timer.elapsed`           | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                                                                            | `[timer.elapsed] sweep`                                                                                                                                                              |
+| `custom.*`                | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                                                                                      | `[custom.deploy] — staging に deploy 完了`                                                                                                                                           |
 
-An unsettled agent's line: `[unsettled] agent=a1b2c3d4 (API fix) ws=login-fix
-status=idle issue=acme/app#123 state=closed assigned=yes lane=Done pr=#130
-pr_state=merged review=approved unresolved=0 checks=passing esc=none`; one
-with no item: `… status=working issue=none pr=none esc=none` (an agent
-linked to no item GitHub returned carries its Workspace's pull request,
-as the Sidebar has it).
+The `needs_action` codes: an item's `no_agent` or `idle_no_escalation`
+(`issue=` or `pr=` names it, `ws=` its first agent's Workspace); a managed
+agent's `idle_no_escalation` or `outside_population (closed|unassigned|no_item)`
+(`agent=` names it by its id's first block and name). `unsettled`, the type
+before, is a retired event pattern.
 
 **Why this set.** The person asked for lane changes and turn ends not to be
 told, and for state over diffs. Everything the invariant covers is said as
-`unsettled` (with the state as it is) or not at all, so these are gone:
+`needs_action` (with the clause it fails; the state is `status`) or not at all, so these are gone:
 `github.assigned`, `github.unattended` (an Issue of mine with nobody on it
-is `unsettled`), `github.lane_changed`, `github.pr_opened`,
+is `needs_action`), `github.lane_changed`, `github.pr_opened`,
 `github.pr_ready`, `github.pr_approved`, `github.changes_requested`,
 `github.review_comment`, `github.checks`, `github.pr_merged`,
 `github.pr_closed` (the line carries the lane, the pull request's state,
 review decision, unresolved count and checks), every `agent.*`
 (`turn_ended`, `asked`, `permission_requested`, `started`, `exited`,
 `failed`: a managed agent that stops with nothing settling it is
-`unsettled`, whatever stopped it; an Issue left with no agent is), every
+`needs_action`, whatever stopped it; an item left with no agent is), every
 `workspace.*` (read with `workspace status`), `escalation.stalled` (its idle
-agents are `unsettled`; 停滞 stays a mark on the board) and
+agents need action; 停滞 stays a mark on the board) and
 `escalation.waiting_reminder` and `escalation.wait_due` (a 待機中 escalation
 comes back as `waiting.changed`, by its time or when what it is about
 changes; an outside condition DevHub cannot see is given an `--at` to look
 again).
 `github.review_requested` and `github.reply` went too: another person's pull
 request is an item like any other — assigned to the viewer, it is in the
-population and said as `unsettled` when nobody settles it — so GitHub itself
+population and said as `needs_action` when nobody settles it — so GitHub itself
 says nothing (`github.*` is an emptied family). What stays is what no state
 shows: the person's words, a wait's time, a change under a parked subject,
 the plan's use, timers and `custom.*`. An `[orchestrator] events` pattern that names a removed type
@@ -595,7 +642,7 @@ resume` polls once (the rate limit permitting), then sends the person's
 - **The board** (`orchestratorService.ts`): the answers, the person's direct
   words, `waiting.changed` (`— due`); and the invariant, read off every projection
   and every GitHub poll, its subjects timed by `InvariantWatch`: a subject is
-  said once it has been unsettled for a minute, again when its facts change,
+  said once it has needed action for a minute, again when its clause or state changes,
   and every `reminder_interval` while it stays so; a new orchestrator (a
   start, a restart) hears every one again. `waiting.changed`
   (`— subjects_changed`) compares each 待機中 escalation's subjects' facts
@@ -646,7 +693,7 @@ event_prompt = "/make-progress {EVENT}"   # absent: DevHub's default (below)
 # events = ["*", "!timer.*"]       # which types reach it (default: all)
 usage_thresholds = [80, 95]      # usage.threshold at these percents of a plan window (the default); [] never
 delivery_interval = "5m"         # a batch at most this often (the default; at least 10s); the person's words go at once
-reminder_interval = "1h"         # an unsettled subject said again this often while it stays so (the default; at least 5m)
+reminder_interval = "1h"         # a needs_action subject said again this often while it stays so (the default; at least 5m)
 
 [orchestrator.github]
 projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER, an item's lane is read from (never the population)
@@ -668,7 +715,7 @@ batch is and to hand each line to a new background subagent and return
 サブエージェント (Agent ツールの subagent_type: "fork") に渡して処理し、すぐに戻ってください。」
 then `{EVENT}`). The
 person's words never go through it. `events` is a list of patterns over the
-type — a type (`unsettled`), a family (`escalation.*`) or `*`, each optionally
+type — a type (`needs_action`), a family (`escalation.*`) or `*`, each optionally
 after `!` to take it out; the last pattern that matches decides, and `init`
 always goes. The default is `["*"]`: every kind left is a signal. A pattern
 naming a removed type (`agent.turn_ended`, `github.lane_changed`,
@@ -681,10 +728,11 @@ setting.
 ## The command line
 
 ```sh
-devhub --tell board [--json]                         # 要回答, 対応中 (停滞 marked), 待機中, and what is unsettled now, as data
+devhub --tell board [--json]                         # 要回答, 対応中 (停滞 marked), 待機中, and what needs action now, as data
+devhub --tell [--json] status ITEM|A                 # one subject's whole state: an item (owner/repo#N or URL) or an agent
 devhub --tell agent manage A | agent unmanage A     # under the orchestrator's management, or not
-devhub --tell agent keep A --note TEXT | --clear    # leave an unsettled managed agent as it is, for a reason, until its facts change
-devhub --tell --json agent status A                 # managed, invariant (settled, facts, 待機中 escalation, kept)
+devhub --tell agent keep A --note TEXT | --clear    # leave a managed agent that needs action as it is, for a reason, until its state changes
+devhub --tell --json agent status A                 # managed, invariant (settled or the clause, 待機中 escalation, kept)
 devhub --tell --json workspace status W             # branch, Issue (state, lanes), PR (state, draft, review decision), conversations, checks
 devhub --tell escalation new --title T --body -|TEXT [--agent A]... [--link URL]... [--option TEXT]... [--workspace W]
                          [--priority high|normal|low] [--effort quick|normal|deep] [--rank-note TEXT]
@@ -741,7 +789,7 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    Reading or writing code, fixing, implementing, reading CI logs, review
    comments or diffs in depth, finding why a check failed: that is the
    responsible worker agent's, fetched by it with its own tools (`gh`). The
-   state lines DevHub delivers and the facts the CLI gives (lane, PR state,
+   lines DevHub delivers and the facts the CLI gives (`status`: lane, PR state,
    review decision, unresolved count, checks, an agent's status) are for
    routing only. A subagent decides who should act and what to ask them, and
    hands it over — `agent send`, `issue assign`, `agent resume`, an
@@ -761,8 +809,8 @@ skill says (`main/orchestrator/orchestratorCharter.ts`, in Japanese):
    arrive as their own messages and are their instructions. `DEFAULT_EVENT_PROMPT`
    says the same in one line.
 4. **The invariant** (see "The invariant"), as what the orchestrator
-   maintains, and how to answer an `unsettled` subject: a subagent reads the
-   state with the CLI, then has the agent ask the person for a review, has it
+   maintains, and how to answer a `needs_action` subject: a subagent first
+   reads its whole state with one `devhub --tell --json status <subject>`, then has the agent ask the person for a review, has it
    look deeper, raises an escalation, parks it with `escalation wait`, or
    stops it. A managed agent outside the population (its item closed or not
    the person's) or with no item is **closed**, not kept
@@ -797,7 +845,7 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
 
 - **What it says** (in Japanese): what a delivery carries (the person's
   words at once and alone; the rest as one batch per `delivery_interval`,
-  one line per subject, its state as facts; `{EVENT}` and the optional
+  one line per subject, the subject and a code (the state is `status`); `{EVENT}` and the optional
   `{EVENT_JSON}`; held only by a foreground turn and a pause; the `events`
   filter), the event types (its table is tested against `EVENT_TYPES`), the
   invariant as DevHub reports it, what each lane asks of the orchestrator

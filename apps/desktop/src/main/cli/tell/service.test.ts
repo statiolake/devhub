@@ -41,6 +41,7 @@ import {
 import { EscalationStore } from "../../orchestrator/escalationStore.js";
 import type { UsageReport } from "../../shell/usageLimits.js";
 import { OrchestratorService } from "../../orchestrator/orchestratorService.js";
+import type { ItemFacts } from "../../orchestrator/invariant.js";
 import { DEFAULT_ORCHESTRATOR } from "../../../model/orchestratorSettings.js";
 
 function agent(overrides: Partial<TellAgent> = {}): TellAgent {
@@ -217,7 +218,26 @@ class FakePorts implements TellPorts {
 	delivered: [string, string][] = [];
 	/** What the board's header says of GitHub polling. */
 	github: OrchestratorBoardWire["github"] = { state: "idle" };
+	/** What the invariant reads: the items GitHub gave, undefined until read. */
+	items: ItemFacts[] | undefined = undefined;
 	readonly service = new OrchestratorService({
+		invariant: () => ({
+			items: this.items,
+			agents: this.spaces.flatMap((space) =>
+				space.agents.map((one) => ({
+					id: one.id,
+					name: one.name,
+					ws: space.name,
+					workspaceId: space.id,
+					managed: one.managed,
+					status: one.status,
+					stopping: one.controlState !== "running",
+					...(one.meta["issue"] === undefined
+						? {}
+						: { issue: one.meta["issue"] }),
+				})),
+			),
+		}),
 		store: EscalationStore.inMemory(),
 		agents: () =>
 			this.spaces.flatMap((space) =>
@@ -290,6 +310,7 @@ class FakePorts implements TellPorts {
 			return Promise.resolve();
 		},
 		standing: (agentId) => this.service.standing(agentId),
+		status: (target) => this.service.status(target),
 		keep: (agentId, note) => this.service.keep(agentId, note),
 		unkeep: (agentId) => this.service.unkeep(agentId),
 	};
@@ -2703,7 +2724,7 @@ describe("sessions and agent resume", () => {
 				],
 				self,
 			),
-		).rejects.toThrow(/issue= is the Issue linkage DevHub writes/u);
+		).rejects.toThrow(/issue= is the item linkage DevHub writes/u);
 		const list = await viaSocket(
 			service,
 			["session", "meta", "x1dd-0001"],
@@ -3618,7 +3639,7 @@ describe("agent rename and agent meta", () => {
 		expect(ports.calls).toContain("meta aaaa1111-0000 ticket <unset>");
 	});
 
-	it("refuses the Issue linkage by hand, and keeps only an unsettled agent", async () => {
+	it("refuses the item linkage by hand, and keeps only an agent that needs action", async () => {
 		const { service, ports } = setup();
 		for (const line of [
 			[
@@ -3644,7 +3665,7 @@ describe("agent rename and agent meta", () => {
 			],
 		])
 			await expect(viaSocket(service, line, coordinator)).rejects.toThrow(
-				/issue= is the Issue linkage DevHub writes when 'issue assign'/u,
+				/issue= is the item linkage DevHub writes when 'issue assign'/u,
 			);
 		expect(ports.calls).toEqual([]);
 		await expect(
@@ -3653,7 +3674,7 @@ describe("agent rename and agent meta", () => {
 				["agent", "keep", "aaaa", "--note", "続ける"],
 				coordinator,
 			),
-		).rejects.toThrow(/not unsettled/u);
+		).rejects.toThrow(/does not need action/u);
 		const cleared = await viaSocket(
 			service,
 			["agent", "keep", "aaaa", "--clear"],
@@ -4485,6 +4506,7 @@ describe("the Orchestrator row from the command line", () => {
 				"resumeWait",
 				"setTimer",
 				"standing",
+				"status",
 				"start",
 				"timers",
 				"unkeep",
@@ -4653,11 +4675,93 @@ describe("the Orchestrator row from the command line", () => {
 		expect(status.data).toMatchObject({ agentId: ORCHESTRATOR });
 	});
 
-	it("lists the unsettled subjects on the board, and counts my items in status", async () => {
+	it("gives one subject's whole state in one call: an item, or an agent", async () => {
+		const { service, ports } = orchestrated();
+		const PR = "https://github.com/acme/app/pull/9";
+		ports.items = [
+			{
+				item: { repo: "acme/app", number: 9, title: "設定画面", url: PR },
+				kind: "pr",
+				state: "open",
+				assignedToMe: true,
+				projects: [{ project: "acme/7", lane: "Review" }],
+				pull: {
+					number: 9,
+					url: PR,
+					state: "open",
+					review: "changes_requested",
+					unresolved: 2,
+					checks: "failing",
+				},
+			},
+		];
+		const lonely = await viaSocket(
+			service,
+			["--json", "status", "acme/app#9"],
+			undefined,
+		);
+		expect(lonely.data).toMatchObject({
+			subject: "item",
+			item: {
+				kind: "pr",
+				ref: "pr=acme/app#9",
+				state: "open",
+				assigned: true,
+				inPopulation: true,
+				projects: [{ project: "acme/7", lane: "Review" }],
+				pullRequest: { review: "changes_requested", unresolved: 2 },
+			},
+			needsAction: { clause: "no_agent" },
+			agents: [],
+		});
+		const worker = ports.spaces[0]!.agents[0]!;
+		ports.spaces[0] = {
+			...ports.spaces[0]!,
+			agents: [
+				{ ...worker, status: "idle", managed: true, meta: { issue: PR } },
+			],
+		};
+		const linked = await viaSocket(
+			service,
+			["--json", "status", PR],
+			undefined,
+		);
+		expect(linked.data).toMatchObject({
+			needsAction: { clause: "idle_no_escalation" },
+			agents: [
+				{
+					id: worker.id,
+					status: "idle",
+					managed: true,
+					needsAction: "idle_no_escalation",
+				},
+			],
+		});
+		const byAgent = await viaSocket(
+			service,
+			["status", worker.id.slice(0, 4)],
+			undefined,
+		);
+		expect(byAgent.data).toMatchObject({
+			subject: "agent",
+			agent: { id: worker.id, linked: PR },
+			item: { ref: "pr=acme/app#9" },
+			workspace: { issue: null },
+			needsAction: { clause: "idle_no_escalation" },
+		});
+		expect(byAgent.message).toContain(
+			"pr=acme/app#9「設定画面」  open, assigned to me, in the population",
+		);
+		await expect(
+			viaSocket(service, ["status", "acme/app#404"], undefined),
+		).rejects.toThrow(/has not read acme\/app#404/u);
+	});
+
+	it("lists what needs action on the board, and counts my items in status", async () => {
 		const { service, ports } = orchestrated();
 		const empty = await viaSocket(service, ["board"], undefined);
-		expect(empty.data).toMatchObject({ unsettled: [] });
-		expect(empty.message).toContain("unsettled (0):");
+		expect(empty.data).toMatchObject({ needsAction: [] });
+		expect(empty.message).toContain("needs action (0):");
 		ports.github = {
 			state: "active",
 			assigned: 5,

@@ -1,12 +1,12 @@
 /**
  * The invariant DevHub holds the orchestrator to, and the subjects that break
- * it: what `unsettled` and `waiting.changed` say (`docs/orchestrator.md`,
+ * it: what `needs_action` and `waiting.changed` say (`docs/orchestrator.md`,
  * "The invariant").
  *
  * **The population** is every open item assigned to the viewer on GitHub — an
  * Issue or a pull request, one thing here (`githubItems.ts`); the watched
  * Projects only give an item's lane. For each of them exactly one of these
- * holds, or it is **unsettled**:
+ * holds, or it **needs action**:
  *
  * - (a) an agent linked to it is working (status `working` or `background`,
  *   not stopping);
@@ -18,50 +18,58 @@
  * and left out.
  *
  * **Every managed agent** (the orchestrator is never one) is working, or is
- * one of the agents of a 要回答 or 待機中 escalation; one that is neither is
- * unsettled. So is one whose item is outside the population — closed, not
- * assigned to the viewer, or not on GitHub — or that has no item at all,
+ * one of the agents of a 要回答 or 待機中 escalation; one that is neither
+ * needs action. So does one whose item is outside the population — closed,
+ * not assigned to the viewer, or not on GitHub — or that has no item at all,
  * whatever it is doing: for that reason alone. While the population is not
  * known (GitHub is not read, or not in full yet), only the first rule is
- * applied to agents, and no Issue is said.
+ * applied to agents, and no item is said.
  *
- * **Linked**, the one rule: an agent is linked to the item its meta
- * `issue=` names, by URL. DevHub writes that pair itself when `issue assign`
- * (or the window's Assign Issue) starts the agent on an Issue or a pull
- * request; it is not set
- * by hand. The branch a Workspace is on does not link anything.
+ * **Linked**, the one rule: an agent is linked to the item its meta `issue=`
+ * names, by URL. DevHub writes that pair itself when `issue assign` (or the
+ * window's Assign Issue) starts the agent on an Issue or a pull request; it
+ * is not set by hand. The branch a Workspace is on does not link anything.
  *
- * **About an Issue**, for an escalation: one of its links is the Issue's URL,
+ * **About an item**, for an escalation: one of its links is the item's URL,
  * or one of its agents — `--agent`, a `devhub:agent/` link, the agents of a
  * `devhub:workspace/` link or of its `--workspace` — is linked to it.
  *
- * Nothing here says why: a line is the subject and its facts as they are
- * (state, lane, the pull request's state, review decision, unresolved
- * conversations, checks; the agent's status; the escalations about it), and
- * the orchestrator reads the rest itself.
+ * A line names the subject and the clause it fails (`Breach`), never its
+ * state: the state is read with `devhub --tell status` (`statusOf` here is
+ * what it is built from). What the subject's state is still matters here, as
+ * `facts`: a subject is said again when they change, and a keeping ends.
  *
- * `InvariantWatch` keeps the time: a subject is said once it has been
- * unsettled for `UNSETTLED_GRACE_MS`, again when its facts change, and every
- * `reminder_interval` while it stays so. An agent the orchestrator chose to
- * keep as it is (`agent keep A --note`) is not said while its facts stay what
- * they were when it was kept. A 待機中 escalation whose subject's facts
- * change is said (`waiting.changed`): what it waits on may have come.
+ * `InvariantWatch` keeps the time: a subject is said once it has needed
+ * action for `NEEDS_ACTION_GRACE_MS`, again when its facts or its clause
+ * change, and every `reminder_interval` while it stays so. An agent the
+ * orchestrator chose to keep as it is (`agent keep A --note`) is not said
+ * while its facts stay what they were when it was kept. A 待機中 escalation
+ * whose subjects' facts change is said (`waiting.changed`): what it waits on
+ * may have come.
  */
 
 import { agentByIdOrPrefix, parseDevhubLink } from "../../model/devhubLink.js";
 import { agentAtWork } from "../../model/domain.js";
 import type { EscalationState } from "../../model/escalations.js";
-import type { EventAgent, EventItem, OrchestratorEvent } from "./events.js";
-import { excerpt, shortId } from "./events.js";
+import {
+	breachWords,
+	needsActionWords,
+	shortId,
+	type Breach,
+	type EventAgent,
+	type EventItem,
+	type OrchestratorEvent,
+	type OutsideReason,
+} from "./events.js";
 
 /**
- * The meta key the Issue linkage is kept under: written by DevHub when
- * `issue assign` (or Assign Issue) starts an agent on an Issue, refused to
- * `agent meta` and `--meta` (`cli/tell/service.ts`).
+ * The meta key the item linkage is kept under: written by DevHub when `issue
+ * assign` (or Assign Issue) starts an agent on an Issue or a pull request,
+ * refused to `agent meta` and `--meta` (`cli/tell/service.ts`).
  */
 export const ISSUE_LINK_KEY = "issue";
 
-/** A pull request as a line states it. */
+/** A pull request's state, as `status` gives it. */
 export interface PullFacts {
 	readonly number: number;
 	readonly url?: string;
@@ -84,7 +92,7 @@ export interface PullFacts {
 export interface ItemFacts {
 	readonly item: EventItem;
 	readonly kind: "issue" | "pr";
-	readonly open: boolean;
+	readonly state: "open" | "closed" | "merged";
 	readonly assignedToMe: boolean;
 	/** Its lane (Status) on each watched Project it is on. */
 	readonly projects: readonly {
@@ -109,7 +117,7 @@ export interface InvariantAgent {
 	/** working, background, waiting, idle, error, unknown. */
 	readonly status: string;
 	readonly stopping: boolean;
-	/** The Issue it is linked to: its meta `issue=`. */
+	/** The item it is linked to: its meta `issue=`. */
 	readonly issue?: string;
 	/** Its Workspace's pull request, as the Sidebar has it. */
 	readonly pull?: PullFacts;
@@ -123,9 +131,10 @@ export interface InvariantEscalation {
 	readonly links: readonly string[];
 	readonly agents: readonly string[];
 	readonly workspaceId?: string;
-	/** A 待機中 one's trigger, and when its wait began. */
+	/** A 待機中 one's trigger, when its wait began, and its time. */
 	readonly trigger?: string;
 	readonly waitSince?: number;
+	readonly dueAt?: number;
 }
 
 export interface InvariantInput {
@@ -143,8 +152,8 @@ export interface InvariantInput {
 	readonly escalations: readonly InvariantEscalation[];
 }
 
-/** One subject that breaks the invariant now, with its facts. */
-export interface UnsettledSubject {
+/** One subject that breaks the invariant now. */
+export interface NeedsActionSubject {
 	/** `item <url key>` or `agent <id>`: the subject. */
 	readonly key: string;
 	/** An Issue or a pull request item, or a managed agent. */
@@ -152,7 +161,9 @@ export interface UnsettledSubject {
 	readonly item?: EventItem;
 	readonly agent?: EventAgent;
 	readonly ws?: string;
-	/** `key=value` facts, as the line has them. */
+	/** The clause it fails: what its line says. */
+	readonly breach: Breach;
+	/** Its state, `key=value`: not said, but a change says it again. */
 	readonly facts: readonly string[];
 }
 
@@ -164,25 +175,46 @@ export interface WaitingSubject {
 	readonly facts: readonly string[];
 }
 
-/** How an agent stands, for its row and `agent status`. */
+/** How an agent stands, for its row, `agent status` and `status`. */
 export interface AgentStanding {
 	readonly settled: boolean;
+	/** The clause it fails (managed agents only). */
+	readonly breach?: Breach;
 	/** The 待機中 escalation it is one of the agents of, and its trigger. */
 	readonly waiting?: {
 		readonly escalationId: number;
 		readonly trigger: string;
 	};
-	/** Its facts, as an `unsettled` line would say them (managed agents). */
+	/** The item it is linked to, as last read; absent when not known. */
+	readonly item?: ItemFacts;
+	/** The open escalations it is one of the agents of. */
+	readonly escalations: readonly number[];
+	/** Its state as facts (managed agents): a change ends a keeping. */
 	readonly facts?: readonly string[];
 }
 
-export interface InvariantReading {
-	readonly unsettled: readonly UnsettledSubject[];
-	readonly waiting: readonly WaitingSubject[];
-	readonly agents: ReadonlyMap<string, AgentStanding>;
+/** How an item stands, for `status`. */
+export interface ItemStanding {
+	readonly key: string;
+	readonly facts: ItemFacts;
+	readonly inPopulation: boolean;
+	/** The agents linked to it. */
+	readonly agents: readonly string[];
+	/** The open escalations about it. */
+	readonly escalations: readonly number[];
+	/** The clause it fails, when it is in the population and needs action. */
+	readonly breach?: Breach;
 }
 
-/** An Issue URL, compared without case, a trailing slash or a fragment. */
+export interface InvariantReading {
+	readonly needsAction: readonly NeedsActionSubject[];
+	readonly waiting: readonly WaitingSubject[];
+	readonly agents: ReadonlyMap<string, AgentStanding>;
+	/** Every item read, by its URL key. */
+	readonly items: ReadonlyMap<string, ItemStanding>;
+}
+
+/** An item URL, compared without case, a trailing slash or a fragment. */
 export function issueUrlKey(url: string): string {
 	return url
 		.trim()
@@ -235,7 +267,7 @@ function escalationAgents(
 	return [...out];
 }
 
-/** Whether the escalation is about the Issue: see the module's comment. */
+/** Whether the escalation is about the item: see the module's comment. */
 export function escalationAbout(
 	escalation: InvariantEscalation,
 	item: EventItem,
@@ -255,13 +287,7 @@ export function escalationAbout(
 	);
 }
 
-/** A lane as `lane=` says it: quoted when it has a space in it. */
-function laneToken(lane: string | null): string {
-	if (lane === null) return "lane=none";
-	return `lane=${/^\S+$/u.test(lane) ? lane : JSON.stringify(lane)}`;
-}
-
-/** `repo#123` for `issue=` / `pr=`: the repository and the number. */
+/** `repo#123`: the repository and the number. */
 export function issueToken(item: EventItem): string {
 	return `${item.repo === "" ? "" : item.repo}#${String(item.number)}`;
 }
@@ -271,7 +297,9 @@ export function itemToken(kind: "issue" | "pr", item: EventItem): string {
 	return `${kind}=${issueToken(item)}`;
 }
 
-export function pullFacts(pull: PullFacts | undefined): string[] {
+// --- facts: a subject's state, kept to see it move --------------------------------
+
+function pullFacts(pull: PullFacts | undefined): string[] {
 	if (pull === undefined) return ["pr=none"];
 	return [
 		`pr=#${String(pull.number)}`,
@@ -282,12 +310,12 @@ export function pullFacts(pull: PullFacts | undefined): string[] {
 	];
 }
 
-function issueFacts(issue: ItemFacts): string[] {
+function itemFacts(item: ItemFacts): string[] {
 	return [
-		`state=${issue.open ? "open" : "closed"}`,
-		`assigned=${issue.assignedToMe ? "yes" : "no"}`,
-		laneToken(issue.projects[0]?.lane ?? null),
-		...pullFacts(issue.pull),
+		`state=${item.state}`,
+		`assigned=${item.assignedToMe ? "yes" : "no"}`,
+		...item.projects.map((one) => `lane=${one.project}:${one.lane ?? "none"}`),
+		...pullFacts(item.pull),
 	];
 }
 
@@ -303,115 +331,133 @@ function escalationFacts(
 			];
 }
 
-function inPopulation(issue: ItemFacts): boolean {
-	return issue.open && issue.assignedToMe;
+function inPopulation(item: ItemFacts): boolean {
+	return item.state === "open" && item.assignedToMe;
 }
+
+/** Why an item is outside the population, as `outside_population` says it. */
+function outsideReason(item: ItemFacts): OutsideReason | undefined {
+	if (item.state !== "open") return "closed";
+	if (!item.assignedToMe) return "unassigned";
+	return undefined;
+}
+
+const parkedState = (one: InvariantEscalation) =>
+	one.state === "needs_answer" || one.state === "waiting";
 
 /** The invariant, read off one moment's state. */
 export function readInvariant(input: InvariantInput): InvariantReading {
-	const { items: issues, agents, escalations } = input;
-	const unsettled: UnsettledSubject[] = [];
+	const { items, agents, escalations } = input;
+	const needsAction: NeedsActionSubject[] = [];
 	const standings = new Map<string, AgentStanding>();
-	const parked = (agent: InvariantAgent) =>
-		escalations.filter(
-			(one) =>
-				(one.state === "needs_answer" || one.state === "waiting") &&
-				escalationAgents(one, agents).includes(agent),
-		);
+	const itemStandings = new Map<string, ItemStanding>();
 	const about = (agent: InvariantAgent) =>
 		escalations.filter((one) => escalationAgents(one, agents).includes(agent));
-	const byKey = new Map(
-		(issues ?? []).flatMap((issue) =>
-			issue.item.url === undefined
-				? []
-				: [[issueUrlKey(issue.item.url), issue] as const],
-		),
-	);
-	// The Issues.
-	const seen = new Set<string>();
-	for (const issue of issues ?? []) {
-		if (!inPopulation(issue) || issue.item.url === undefined) continue;
-		const key = issueUrlKey(issue.item.url);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		const on = agents.filter((agent) => linked(agent, issue.item));
-		if (on.some((agent) => !agent.managed)) continue;
-		if (on.some(atWork)) continue;
+	const byKey = new Map<string, ItemFacts>();
+	for (const one of items ?? [])
+		if (one.item.url !== undefined) {
+			const key = issueUrlKey(one.item.url);
+			if (!byKey.has(key)) byKey.set(key, one);
+		}
+	// The items.
+	for (const [key, item] of byKey) {
+		const on = agents.filter((agent) => linked(agent, item.item));
 		const its = escalations.filter((one) =>
-			escalationAbout(one, issue.item, agents),
+			escalationAbout(one, item.item, agents),
 		);
-		if (
-			its.some((one) => one.state === "needs_answer" || one.state === "waiting")
-		)
-			continue;
-		unsettled.push({
+		const population = inPopulation(item);
+		const settled =
+			!population ||
+			on.some((agent) => !agent.managed) ||
+			on.some(atWork) ||
+			its.some(parkedState);
+		const breach: Breach | undefined = settled
+			? undefined
+			: { clause: on.length === 0 ? "no_agent" : "idle_no_escalation" };
+		itemStandings.set(key, {
+			key,
+			facts: item,
+			inPopulation: population,
+			agents: on.map((agent) => agent.id),
+			escalations: its.map((one) => one.id),
+			...(breach === undefined ? {} : { breach }),
+		});
+		if (breach === undefined) continue;
+		needsAction.push({
 			key: `item ${key}`,
-			kind: issue.kind,
-			item: issue.item,
+			kind: item.kind,
+			item: item.item,
 			...(on[0] === undefined ? {} : { ws: on[0].ws }),
+			breach,
 			facts: [
-				...issueFacts(issue),
-				on.length === 0
-					? "agents=none"
-					: `agents=${on.map((agent) => `${shortId(agent.id)}:${agent.status}`).join(",")}`,
+				...itemFacts(item),
+				`agents=${on.length === 0 ? "none" : on.map((agent) => `${shortId(agent.id)}:${agent.status}`).join(",")}`,
 				...escalationFacts(its),
 			],
 		});
 	}
 	// The agents.
 	for (const agent of agents) {
-		const waitingIn = escalations.find(
-			(one) =>
-				one.state === "waiting" &&
-				escalationAgents(one, agents).includes(agent),
-		);
-		const waiting =
-			waitingIn === undefined
+		const mine = about(agent);
+		const waitingIn = mine.find((one) => one.state === "waiting");
+		const item =
+			agent.issue === undefined
+				? undefined
+				: byKey.get(issueUrlKey(agent.issue));
+		const common = {
+			...(waitingIn === undefined
 				? {}
 				: {
 						waiting: {
 							escalationId: waitingIn.id,
 							trigger: waitingIn.trigger ?? "",
 						},
-					};
+					}),
+			...(item === undefined ? {} : { item }),
+			escalations: mine.map((one) => one.id),
+		};
 		if (!agent.managed) {
-			standings.set(agent.id, { settled: true, ...waiting });
+			standings.set(agent.id, { settled: true, ...common });
 			continue;
 		}
-		const issue =
-			agent.issue === undefined
-				? undefined
-				: byKey.get(issueUrlKey(agent.issue));
 		// Linked to a URL GitHub has no item for (deleted, or not visible).
 		const missing =
 			agent.issue !== undefined &&
-			issue === undefined &&
+			item === undefined &&
 			input.missing?.(agent.issue) === true;
-		const issueWords =
-			agent.issue === undefined
-				? ["issue=none"]
-				: issue === undefined
-					? [`issue=${agent.issue}`, ...(missing ? ["item=none"] : [])]
-					: [itemToken(issue.kind, issue.item), ...issueFacts(issue)];
-		const outside =
-			issues !== undefined &&
-			(agent.issue === undefined ||
-				missing ||
-				(issue !== undefined && !inPopulation(issue)));
-		const settled = !outside && (atWork(agent) || parked(agent).length > 0);
+		const outside: OutsideReason | undefined =
+			items === undefined
+				? undefined
+				: agent.issue === undefined || missing
+					? "no_item"
+					: item === undefined
+						? undefined
+						: outsideReason(item);
+		const breach: Breach | undefined =
+			outside !== undefined
+				? { clause: "outside_population", outside }
+				: atWork(agent) || mine.some(parkedState)
+					? undefined
+					: { clause: "idle_no_escalation" };
 		const facts = [
 			`status=${agent.stopping ? "stopping" : agent.status}`,
-			...issueWords,
-			...(issue === undefined ? pullFacts(agent.pull) : []),
-			...escalationFacts(about(agent)),
+			`issue=${agent.issue ?? "none"}`,
+			...(item === undefined ? pullFacts(agent.pull) : itemFacts(item)),
+			...escalationFacts(mine),
 		];
-		standings.set(agent.id, { settled, facts, ...waiting });
-		if (settled) continue;
-		unsettled.push({
+		standings.set(agent.id, {
+			settled: breach === undefined,
+			...(breach === undefined ? {} : { breach }),
+			facts,
+			...common,
+		});
+		if (breach === undefined) continue;
+		needsAction.push({
 			key: `agent ${agent.id}`,
 			kind: "agent",
 			agent: { id: agent.id, name: agent.name },
 			ws: agent.ws,
+			breach,
 			facts,
 		});
 	}
@@ -420,9 +466,9 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 	for (const one of escalations) {
 		if (one.state !== "waiting") continue;
 		const facts: string[] = [];
-		for (const issue of issues ?? [])
-			if (escalationAbout(one, issue.item, agents))
-				facts.push(itemToken(issue.kind, issue.item), ...issueFacts(issue));
+		for (const item of byKey.values())
+			if (escalationAbout(one, item.item, agents))
+				facts.push(itemToken(item.kind, item.item), ...itemFacts(item));
 		for (const agent of escalationAgents(one, agents))
 			facts.push(
 				`agent=${shortId(agent.id)}`,
@@ -437,13 +483,32 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 			facts,
 		});
 	}
-	return { unsettled, waiting, agents: standings };
+	return { needsAction, waiting, agents: standings, items: itemStandings };
+}
+
+/**
+ * The item a `status` reference names, in a reading: its URL, or
+ * `owner/repo#N` (an Issue's or a pull request's number alike).
+ */
+export function findItem(
+	reading: InvariantReading,
+	ref: string,
+): ItemStanding | undefined {
+	const short = /^([\w.-]+\/[\w.-]+)#(\d+)$/u.exec(ref.trim());
+	if (short === null) return reading.items.get(issueUrlKey(ref));
+	const repo = short[1]!.toLowerCase();
+	const number = Number(short[2]);
+	return [...reading.items.values()].find(
+		(one) =>
+			one.facts.item.repo.toLowerCase() === repo &&
+			one.facts.item.number === number,
+	);
 }
 
 // --- the watch ---------------------------------------------------------------
 
-/** How long a subject must stay unsettled before it is said. */
-export const UNSETTLED_GRACE_MS = 60_000;
+/** How long a subject must need action before it is said. */
+export const NEEDS_ACTION_GRACE_MS = 60_000;
 
 /** An agent the orchestrator chose to keep as it is, and why. */
 export interface KeptAgent {
@@ -453,12 +518,15 @@ export interface KeptAgent {
 	readonly facts: string;
 }
 
-/** A subject unsettled now, as the board and `agent status` show it. */
-export interface UnsettledView {
+/** A subject that needs action now, as the board and `status` show it. */
+export interface NeedsActionView {
 	readonly key: string;
 	readonly kind: "issue" | "pr" | "agent";
+	/** Its words, as its `needs_action` line has them, without the `[type]`. */
 	readonly line: string;
-	/** Since when it has been unsettled, as DevHub saw it. */
+	/** The clause it fails: `no_agent`, `outside_population (closed)`. */
+	readonly clause: string;
+	/** Since when it has needed action, as DevHub saw it. */
 	readonly since: number;
 	/** When it was last said; absent while in its grace. */
 	readonly toldAt?: number;
@@ -474,37 +542,43 @@ export interface InvariantWatchPorts {
 	readonly graceMs?: number;
 }
 
-/** The words of a subject, without its `[type]`: what `--tell` shows. */
-export function subjectWords(subject: UnsettledSubject): string {
-	const head =
-		subject.kind !== "agent" && subject.item !== undefined
-			? `${itemToken(subject.kind, subject.item)}${subject.item.title === undefined || subject.item.title.length === 0 ? "" : `「${excerpt(subject.item.title, 40)}」`}`
-			: `agent=${shortId(subject.agent?.id ?? "")}${subject.agent?.name === undefined ? "" : ` (${excerpt(subject.agent.name, 40)})`}`;
-	return [
-		head,
-		...(subject.ws === undefined ? [] : [`ws=${subject.ws}`]),
-		...subject.facts,
-	].join(" ");
+/** The event a subject is said as. */
+function eventOf(subject: NeedsActionSubject): OrchestratorEvent {
+	return {
+		type: "needs_action",
+		subject:
+			subject.kind !== "agent"
+				? { kind: subject.kind, item: subject.item! }
+				: { kind: "agent", agent: subject.agent! },
+		...(subject.ws === undefined ? {} : { ws: subject.ws }),
+		breach: subject.breach,
+	};
+}
+
+/** What is compared to say a subject again: its clause and its facts. */
+function fingerprint(subject: NeedsActionSubject): string {
+	return [breachWords(subject.breach), ...subject.facts].join(" ");
 }
 
 export class InvariantWatch {
-	/** Since when each subject has been unsettled. */
+	/** Since when each subject has needed action. */
 	readonly #since = new Map<string, number>();
-	/** When each was last said, and with which facts. */
+	/** When each was last said, and as what. */
 	readonly #told = new Map<string, { at: number; facts: string }>();
 	readonly #kept = new Map<string, KeptAgent>();
 	/** Each 待機中 escalation's facts as last seen. */
 	readonly #waiting = new Map<number, string>();
 	#reading: InvariantReading = {
-		unsettled: [],
+		needsAction: [],
 		waiting: [],
 		agents: new Map(),
+		items: new Map(),
 	};
 
 	constructor(private readonly ports: InvariantWatchPorts) {}
 
 	get #grace(): number {
-		return this.ports.graceMs ?? UNSETTLED_GRACE_MS;
+		return this.ports.graceMs ?? NEEDS_ACTION_GRACE_MS;
 	}
 
 	/** Everything is said again from now: a new orchestrator has heard none. */
@@ -513,33 +587,37 @@ export class InvariantWatch {
 		this.#waiting.clear();
 	}
 
+	get reading(): InvariantReading {
+		return this.#reading;
+	}
+
 	/**
-	 * A new reading: what has been unsettled past the grace is said (first,
-	 * with new facts, or as a reminder), and each 待機中 escalation whose
-	 * subject moved. `speak` false: the time is kept, nothing is said (no
-	 * orchestrator).
+	 * A new reading: what has needed action past the grace is said (first,
+	 * when its clause or facts moved, or as a reminder), and each 待機中
+	 * escalation whose subjects moved. `speak` false: the time is kept,
+	 * nothing is said (no orchestrator).
 	 */
 	observe(reading: InvariantReading, speak: boolean): void {
 		const now = this.ports.now();
 		this.#reading = reading;
-		const keys = new Set(reading.unsettled.map((one) => one.key));
+		const keys = new Set(reading.needsAction.map((one) => one.key));
 		for (const key of [...this.#since.keys()])
 			if (!keys.has(key)) {
 				this.#since.delete(key);
 				this.#told.delete(key);
 			}
 		for (const [key, kept] of [...this.#kept]) {
-			const subject = reading.unsettled.find((one) => one.key === key);
+			const subject = reading.needsAction.find((one) => one.key === key);
 			// Settled, or its facts moved: the keeping is over.
-			if (subject === undefined || subject.facts.join(" ") !== kept.facts)
+			if (subject === undefined || fingerprint(subject) !== kept.facts)
 				this.#kept.delete(key);
 		}
-		for (const subject of reading.unsettled) {
+		for (const subject of reading.needsAction) {
 			const since = this.#since.get(subject.key) ?? now;
 			this.#since.set(subject.key, since);
 			if (!speak || now - since < this.#grace) continue;
 			if (this.#kept.has(subject.key)) continue;
-			const facts = subject.facts.join(" ");
+			const facts = fingerprint(subject);
 			const told = this.#told.get(subject.key);
 			if (
 				told !== undefined &&
@@ -548,15 +626,7 @@ export class InvariantWatch {
 			)
 				continue;
 			this.#told.set(subject.key, { at: now, facts });
-			this.ports.dispatch({
-				type: "unsettled",
-				subject:
-					subject.kind !== "agent"
-						? { kind: subject.kind, item: subject.item! }
-						: { kind: "agent", agent: subject.agent! },
-				...(subject.ws === undefined ? {} : { ws: subject.ws }),
-				facts: subject.facts,
-			});
+			this.ports.dispatch(eventOf(subject));
 		}
 		const open = new Set(reading.waiting.map((one) => one.escalationId));
 		for (const id of [...this.#waiting.keys()])
@@ -591,30 +661,26 @@ export class InvariantWatch {
 		return due.length === 0 ? undefined : Math.min(...due);
 	}
 
-	/** Whether the subject still breaks the invariant (for a pending line). */
-	stillUnsettled(key: string): boolean {
+	/** Whether the subject still needs action (for a pending line). */
+	stillNeedsAction(key: string): boolean {
 		return (
-			this.#reading.unsettled.some((one) => one.key === key) &&
+			this.#reading.needsAction.some((one) => one.key === key) &&
 			!this.#kept.has(key)
 		);
 	}
 
 	/**
 	 * `agent keep A --note`: leave a managed agent as it is, for `note`, until
-	 * its facts change. Refused for one that is not unsettled now.
+	 * its facts change. Refused for one that does not need action now.
 	 */
 	keep(agentId: string, note: string): KeptAgent {
 		const key = `agent ${agentId}`;
-		const subject = this.#reading.unsettled.find((one) => one.key === key);
+		const subject = this.#reading.needsAction.find((one) => one.key === key);
 		if (subject === undefined)
 			throw new Error(
-				"that agent is not unsettled: there is nothing to keep (agent status shows how it stands).",
+				"that agent does not need action: there is nothing to keep (devhub --tell status shows how it stands).",
 			);
-		const kept = {
-			note,
-			at: this.ports.now(),
-			facts: subject.facts.join(" "),
-		};
+		const kept = { note, at: this.ports.now(), facts: fingerprint(subject) };
 		this.#kept.set(key, kept);
 		return kept;
 	}
@@ -633,25 +699,33 @@ export class InvariantWatch {
 		return this.#reading.agents.get(agentId);
 	}
 
-	/** Every subject unsettled now. */
-	unsettled(): readonly UnsettledView[] {
-		return this.#reading.unsettled.map((subject) => {
-			const told = this.#told.get(subject.key);
-			const kept = this.#kept.get(subject.key);
-			return {
-				key: subject.key,
-				kind: subject.kind,
-				line: subjectWords(subject),
-				since: this.#since.get(subject.key) ?? this.ports.now(),
-				...(told === undefined ? {} : { toldAt: told.at }),
-				...(kept === undefined
-					? {}
-					: { kept: { note: kept.note, at: kept.at } }),
-			};
-		});
+	/** One subject's view, if it needs action now. */
+	view(key: string): NeedsActionView | undefined {
+		const subject = this.#reading.needsAction.find((one) => one.key === key);
+		return subject === undefined ? undefined : this.#view(subject);
 	}
 
-	/** Whether a subject has been unsettled past the grace. */
+	#view(subject: NeedsActionSubject): NeedsActionView {
+		const told = this.#told.get(subject.key);
+		const kept = this.#kept.get(subject.key);
+		const event = eventOf(subject);
+		return {
+			key: subject.key,
+			kind: subject.kind,
+			line: event.type === "needs_action" ? needsActionWords(event) : "",
+			clause: breachWords(subject.breach),
+			since: this.#since.get(subject.key) ?? this.ports.now(),
+			...(told === undefined ? {} : { toldAt: told.at }),
+			...(kept === undefined ? {} : { kept: { note: kept.note, at: kept.at } }),
+		};
+	}
+
+	/** Every subject that needs action now. */
+	needsAction(): readonly NeedsActionView[] {
+		return this.#reading.needsAction.map((subject) => this.#view(subject));
+	}
+
+	/** Whether a subject has needed action past the grace. */
 	pastGrace(key: string): boolean {
 		const since = this.#since.get(key);
 		return since !== undefined && this.ports.now() - since >= this.#grace;

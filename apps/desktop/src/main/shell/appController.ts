@@ -9889,6 +9889,7 @@ export class AppController {
 			orchestrator: {
 				board: () => orchestrator().wire(),
 				standing: (agentId) => orchestrator().standing(agentId),
+				status: (target) => orchestrator().status(target),
 				keep: (agentId, note) => orchestrator().keep(agentId, note),
 				unkeep: (agentId) => orchestrator().unkeep(agentId),
 				escalations: () => orchestrator().allWires(),

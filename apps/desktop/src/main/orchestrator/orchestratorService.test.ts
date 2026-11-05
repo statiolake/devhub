@@ -120,7 +120,7 @@ function issue(overrides: Partial<ItemFacts> = {}): ItemFacts {
 	return {
 		item: { repo: "acme/app", number: 123, title: "API整理", url: ISSUE_URL },
 		kind: "issue",
-		open: true,
+		state: "open",
 		assignedToMe: true,
 		projects: [{ project: "acme/7", lane: "Todo" }],
 		...overrides,
@@ -278,17 +278,21 @@ describe("待機中 (escalation wait)", () => {
 });
 
 describe("the invariant", () => {
-	it("says an open Issue of mine nobody is on, after the grace, as a batch line", () => {
+	it("says an open item of mine nobody is on, after the grace, as a batch line", () => {
 		const run = world({ items: [issue()] });
 		run.later(30_000);
-		expect(run.of("unsettled")).toHaveLength(0);
+		expect(run.of("needs_action")).toHaveLength(0);
 		run.later(31_000);
-		expect(run.of("unsettled")).toHaveLength(1);
+		expect(run.of("needs_action")).toHaveLength(1);
 		expect(run.sent.at(-1)).toBe(
-			"[unsettled] issue=acme/app#123「API整理」 state=open assigned=yes lane=Todo pr=none agents=none esc=none https://github.com/acme/app/issues/123",
+			"[needs_action] issue=acme/app#123 — no_agent",
 		);
-		expect(run.service.wire().unsettled).toEqual([
-			expect.objectContaining({ kind: "issue", key: `item ${ISSUE_URL}` }),
+		expect(run.service.wire().needsAction).toEqual([
+			expect.objectContaining({
+				kind: "issue",
+				key: `item ${ISSUE_URL}`,
+				clause: "no_agent",
+			}),
 		]);
 	});
 
@@ -297,7 +301,7 @@ describe("the invariant", () => {
 		run.invariant.links.set(WORKER, ISSUE_URL);
 		run.status(WORKER, "working");
 		run.later(120_000);
-		expect(run.of("unsettled")).toHaveLength(0);
+		expect(run.of("needs_action")).toHaveLength(0);
 		const one = run.service.raise({
 			title: "t",
 			markdown: "?",
@@ -307,7 +311,7 @@ describe("the invariant", () => {
 		run.status(WORKER, "idle");
 		run.later(120_000);
 		// The Issue waits; the idle managed agent is on no escalation.
-		expect(run.of("unsettled").map((entry) => entry.event)).toEqual([
+		expect(run.of("needs_action").map((entry) => entry.event)).toEqual([
 			expect.objectContaining({
 				subject: {
 					kind: "agent",
@@ -315,8 +319,8 @@ describe("the invariant", () => {
 				},
 			}),
 		]);
-		expect(run.service.wire().agentStates[WORKER]?.unsettled).toContain(
-			"status=idle",
+		expect(run.service.wire().agentStates[WORKER]?.needsAction).toBe(
+			"idle_no_escalation",
 		);
 	});
 
@@ -341,11 +345,8 @@ describe("the invariant", () => {
 		run.invariant.links.set(WORKER, ISSUE_URL);
 		run.status(WORKER, "working");
 		run.later(61_000);
-		expect(run.of("unsettled").at(-1)?.event).toMatchObject({
-			facts: expect.arrayContaining([
-				"status=working",
-				"assigned=no",
-			]) as unknown,
+		expect(run.of("needs_action").at(-1)?.event).toMatchObject({
+			breach: { clause: "outside_population", outside: "unassigned" },
 		});
 		const kept = run.service.keep(WORKER, "他チームの依頼で続ける");
 		expect(kept.note).toBe("他チームの依頼で続ける");
@@ -356,20 +357,20 @@ describe("the invariant", () => {
 			"他チームの依頼で続ける",
 		);
 		run.later(2 * 3_600_000);
-		expect(run.of("unsettled")).toHaveLength(1);
+		expect(run.of("needs_action")).toHaveLength(1);
 		// Its Issue closed: the facts moved, it is said again.
-		run.invariant.items = [issue({ assignedToMe: false, open: false })];
+		run.invariant.items = [issue({ assignedToMe: false, state: "closed" })];
 		run.later(1_000);
-		expect(run.of("unsettled")).toHaveLength(2);
+		expect(run.of("needs_action")).toHaveLength(2);
 		expect(run.service.standing(WORKER)?.kept).toBeUndefined();
 	});
 
 	it("says every subject again to a new orchestrator", () => {
 		const run = world({ items: [issue()] });
 		run.later(61_000);
-		expect(run.of("unsettled")).toHaveLength(1);
+		expect(run.of("needs_action")).toHaveLength(1);
 		run.service.assign(ORCH);
 		run.later(61_000);
-		expect(run.of("unsettled")).toHaveLength(2);
+		expect(run.of("needs_action")).toHaveLength(2);
 	});
 });

@@ -10,7 +10,7 @@ import {
 	devhubSkillPaths,
 	withDevhubSkill,
 } from "../agent/devhubSkill.js";
-import { EVENT_TYPES } from "./events.js";
+import { EVENT_TYPES, eventLine } from "./events.js";
 import { ORCHESTRATOR_CHARTER } from "./orchestratorCharter.js";
 import {
 	codexOrchestratorInstructions,
@@ -95,6 +95,7 @@ describe("the /devhub-orchestrator skill", () => {
 			"通常のサブエージェント",
 			"decisions.md",
 			"母集団",
+			"devhub --tell --json status",
 			"agent keep",
 			"--managed",
 			"meta issue=",
@@ -211,7 +212,8 @@ describe("the /devhub-orchestrator skill", () => {
 			"{EVENT_JSON}",
 			"init",
 			"escalation_answered",
-			"unsettled",
+			"needs_action",
+			"--json status",
 			"waiting.changed",
 			"pr=",
 			"fork",
@@ -262,9 +264,27 @@ describe("the /devhub-orchestrator skill's event table", () => {
 	});
 
 	it("shows lines in the format DevHub writes them", () => {
-		expect(text).toContain(
-			"[unsettled] agent=c3d4e5f6 (調査) ws=docs status=working issue=none pr=none esc=none",
-		);
+		const item = { repo: "acme/app", number: 9 };
+		for (const event of [
+			{
+				type: "needs_action",
+				subject: { kind: "pr", item },
+				breach: { clause: "no_agent" },
+			},
+			{
+				type: "needs_action",
+				subject: { kind: "agent", agent: { id: "c3d4e5f6", name: "調査" } },
+				ws: "docs",
+				breach: { clause: "outside_population", outside: "no_item" },
+			},
+			{
+				type: "waiting.changed",
+				escalationId: 15,
+				reasons: ["due"],
+				waitSince: 0,
+			},
+		] as const)
+			expect(text).toContain(eventLine(event, 0));
 	});
 });
 

@@ -272,7 +272,8 @@ devhub --tell agents [--workspace W] [--meta K=V]...  # id, name, kind, status a
 devhub --tell agent status A                          # one agent in detail (--json: a stable schema)
 devhub --tell agent new --workspace W --profile P --gui|--tui --managed|--unmanaged [--name N] [--prompt TEXT|-] [--meta K=V]...   # Cmd+Q c
 devhub --tell agent manage A | agent unmanage A       # under the orchestrator's management, or not
-devhub --tell agent keep A --note TEXT | --clear      # leave an unsettled managed agent as it is, for a reason
+devhub --tell agent keep A --note TEXT | --clear      # leave a managed agent that needs action as it is, for a reason
+devhub --tell status ITEM|A                           # one subject's whole state: an item (owner/repo#N, URL) or an agent (--json)
 devhub --tell agent rename A NAME | agent rename A --clear   # the row menu's Rename… (--clear: DevHub's label again)
 devhub --tell agent meta A [set KEY VALUE | unset KEY]      # an agent's own key/value pairs
 devhub --tell issue actions                           # Issue actions: id, label, wording (and none)
@@ -375,8 +376,8 @@ Agent and Assign Issue alike.
 it was started with `--managed` (or `agent manage A` said so later; `agent
 unmanage A` takes it out). Only a managed agent's state is the
 orchestrator's to hear of and keep settled (`docs/orchestrator.md`,
-"Managed agents"); `agent keep A --note TEXT` leaves an unsettled one as it
-is, for a reason, until its facts change; an agent the person starts in the window — New Agent,
+"Managed agents"); `agent keep A --note TEXT` leaves one that needs action as it
+is, for a reason, until its state changes; an agent the person starts in the window — New Agent,
 Assign Issue — is not, and the orchestrator agent itself never is. The flag
 is a field of the agent, kept in `state.json` and under its CLI session in
 `session-meta.json` like its metadata, so a restart or a resume keeps it.
@@ -433,7 +434,9 @@ orchestrator to one invariant — every open item assigned to you on GitHub
 (an Issue or a pull request: one thing to DevHub) has a working agent, a
 要回答 or a 待機中 escalation, and every managed agent is working or on one
 of those — and says each subject that
-breaks it as an `unsettled` line of facts, batched at most every
+breaks it as a `needs_action` line — the subject and the clause it fails,
+`[needs_action] issue=acme/web#123 ws=web — no_agent`, never its state, which
+`devhub --tell status <subject>` gives in one call — batched at most every
 `delivery_interval` (5m); the person's answers go at once, as typed. At
 every start DevHub also gives the orchestrator its own short charter — drive
 every assigned item to closed, never do hands-on work (the worker agents

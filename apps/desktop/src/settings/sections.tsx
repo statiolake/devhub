@@ -598,7 +598,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Event message"
-          help="Sent to the orchestrator with each batch of events (an unsettled Issue or agent, a wait's time, …), one line per subject. {EVENT} is replaced by the lines, {EVENT_JSON} by the same as JSON, e.g. /make-progress {EVENT}. The person's answers are not wrapped in it: they go as they were typed."
+          help="Sent to the orchestrator with each batch of events (an item or agent that needs action, a wait that may be ready, …), one line per subject. {EVENT} is replaced by the lines, {EVENT_JSON} by the same as JSON, e.g. /make-progress {EVENT}. The person's answers are not wrapped in it: they go as they were typed."
         >
           <TextField
             label="Orchestrator event message"
@@ -641,7 +641,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Events"
-          help="Which events reach the orchestrator, by type, comma-separated: unsettled, github.*, timer.*, … ; !type takes one back out. Left empty, all of them."
+          help="Which events reach the orchestrator, by type, comma-separated: needs_action, escalation.*, timer.*, … ; !type takes one back out. Left empty, all of them."
         >
           <TextField
             label="Orchestrator events"
@@ -728,11 +728,11 @@ export function GeneralSection({
           />
         </Row>
         <Row
-          label="Unsettled reminder"
-          help="How often an unsettled subject (an Issue or a managed agent nothing settles) is said again while it stays so."
+          label="Needs-action reminder"
+          help="How often a subject that needs action (an item — Issue or pull request — or a managed agent nothing settles) is said again while it stays so."
         >
           <TextField
-            label="Orchestrator unsettled reminder"
+            label="Orchestrator needs-action reminder"
             value={
               config.orchestrator.reminderInterval === DEFAULT_REMINDER_INTERVAL
                 ? ""
@@ -759,7 +759,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="GitHub Projects"
-          help="The Projects boards whose open Issues assigned to you are the orchestrator's to settle (unsettled), as OWNER/NUMBER, comma-separated. DevHub only reads them."
+          help="The Projects boards an item's lane is read from (shown by devhub --tell status), as OWNER/NUMBER, comma-separated. The orchestrator's population is every open Issue or pull request assigned to you, whatever board it is on. DevHub only reads them."
         >
           <TextField
             label="Orchestrator GitHub projects"

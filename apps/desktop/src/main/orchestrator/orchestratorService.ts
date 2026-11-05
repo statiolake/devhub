@@ -68,6 +68,7 @@ import type { EscalationStore } from "./escalationStore.js";
 import {
 	customTypeProblem,
 	EventDispatcher,
+	breachWords,
 	eventJson,
 	type EventLogEntry,
 	type OrchestratorEvent,
@@ -78,9 +79,13 @@ import {
 	readInvariant,
 	type AgentStanding,
 	type InvariantAgent,
+	type PullFacts,
 	type ItemFacts,
+	findItem,
+	itemToken,
+	type ItemStanding,
 	type KeptAgent,
-	type UnsettledView,
+	type NeedsActionView,
 } from "./invariant.js";
 import { OrchestratorTimers } from "./timers.js";
 import {
@@ -170,6 +175,104 @@ export interface PersonMessage {
 	readonly text?: string;
 }
 
+/** An item, as `status` gives it. */
+export interface StatusItem {
+	readonly kind: "issue" | "pr";
+	/** `issue=acme/app#123`, `pr=acme/app#9`: as a line names it. */
+	readonly ref: string;
+	readonly url?: string;
+	readonly title?: string;
+	readonly state: "open" | "closed" | "merged";
+	readonly assigned: boolean;
+	/** Open and assigned to the viewer: held to the invariant. */
+	readonly inPopulation: boolean;
+	/** Its lane on each watched Project it is on. */
+	readonly projects: readonly {
+		readonly project: string;
+		readonly lane: string | null;
+	}[];
+	/** Its pull request (its own, or the one closing the Issue). */
+	readonly pull?: PullFacts;
+}
+
+/** An agent, as `status` gives it. */
+export interface StatusAgent {
+	readonly id: string;
+	readonly name: string;
+	readonly ws: string;
+	readonly workspaceId: string;
+	/** working, background, waiting, idle, error, unknown, stopping. */
+	readonly status: string;
+	readonly managed: boolean;
+	/** The item URL its meta `issue=` links it to. */
+	readonly linked?: string;
+	/** The clause it fails, when it does. */
+	readonly needsAction?: string;
+	readonly kept?: { readonly note: string; readonly at: number };
+}
+
+export interface StatusEscalation {
+	readonly id: number;
+	readonly title: string;
+	readonly state: string;
+	readonly trigger?: string;
+	readonly dueAt?: number;
+}
+
+export interface StatusNeedsAction {
+	readonly clause: string;
+	readonly line: string;
+	readonly since: number;
+	readonly toldAt?: number;
+	readonly kept?: { readonly note: string; readonly at: number };
+}
+
+/** One subject's whole state now: what `devhub --tell status` prints. */
+export type SubjectStatus =
+	| {
+			readonly subject: "item";
+			readonly item: StatusItem;
+			readonly needsAction?: StatusNeedsAction;
+			readonly agents: readonly StatusAgent[];
+			readonly escalations: readonly StatusEscalation[];
+	  }
+	| {
+			readonly subject: "agent";
+			readonly agent: StatusAgent;
+			readonly item?: StatusItem;
+			readonly needsAction?: StatusNeedsAction;
+			readonly waiting?: {
+				readonly escalationId: number;
+				readonly trigger: string;
+			};
+			readonly escalations: readonly StatusEscalation[];
+	  };
+
+function statusItem(item: ItemStanding): StatusItem {
+	const facts = item.facts;
+	return {
+		kind: facts.kind,
+		ref: itemToken(facts.kind, facts.item),
+		...(facts.item.url === undefined ? {} : { url: facts.item.url }),
+		...(facts.item.title === undefined ? {} : { title: facts.item.title }),
+		state: facts.state,
+		assigned: facts.assignedToMe,
+		inPopulation: item.inPopulation,
+		projects: facts.projects,
+		...(facts.pull === undefined ? {} : { pull: facts.pull }),
+	};
+}
+
+function needsActionOf(view: NeedsActionView): StatusNeedsAction {
+	return {
+		clause: view.clause,
+		line: view.line,
+		since: view.since,
+		...(view.toldAt === undefined ? {} : { toldAt: view.toldAt }),
+		...(view.kept === undefined ? {} : { kept: view.kept }),
+	};
+}
+
 /** How many closed escalations the board carries for its history. */
 const CLOSED_SHOWN = 30;
 
@@ -212,6 +315,8 @@ export class OrchestratorService {
 	readonly #dueTold = new Set<string>();
 	/** The invariant's subjects, their time, and the agents kept as they are. */
 	readonly #invariant: InvariantWatch;
+	/** The agents the invariant was last read with. */
+	#invariantAgents: readonly InvariantAgent[] = [];
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.events = new EventDispatcher({
@@ -303,8 +408,8 @@ export class OrchestratorService {
 					.find((escalation) => escalation.id === event.escalationId);
 				return one !== undefined && currentWait(one)?.at === event.waitSince;
 			}
-			case "unsettled":
-				return this.#invariant.stillUnsettled(
+			case "needs_action":
+				return this.#invariant.stillNeedsAction(
 					event.subject.kind !== "agent"
 						? `item ${issueUrlKey(event.subject.item.url ?? "")}`
 						: `agent ${event.subject.agent.id}`,
@@ -693,15 +798,16 @@ export class OrchestratorService {
 		const orchestrator = this.ports.store.orchestratorAgentId;
 		// A maintenance turn is not work: the status before it (`#agents`).
 		const statuses = new Map(this.#agents().map((one) => [one.id, one.status]));
+		this.#invariantAgents = source.agents
+			.filter((one) => one.id !== orchestrator)
+			.map((one) => ({
+				...one,
+				status: statuses.get(one.id) ?? one.status,
+			}));
 		const reading = readInvariant({
 			items: source.items,
 			...(source.missing === undefined ? {} : { missing: source.missing }),
-			agents: source.agents
-				.filter((one) => one.id !== orchestrator)
-				.map((one) => ({
-					...one,
-					status: statuses.get(one.id) ?? one.status,
-				})),
+			agents: this.#invariantAgents,
 			escalations: this.ports.store
 				.all()
 				.filter(isOpen)
@@ -726,7 +832,7 @@ export class OrchestratorService {
 	}
 
 	/**
-	 * `agent keep A --note`: leave an unsettled managed agent as it is, for
+	 * `agent keep A --note`: leave a managed agent that needs action as it is, for
 	 * the reason given, until its facts change.
 	 */
 	keep(agentId: string, note: string): KeptAgent {
@@ -753,9 +859,93 @@ export class OrchestratorService {
 		return kept === undefined ? standing : { ...standing, kept };
 	}
 
-	/** Every subject unsettled now. */
-	unsettled(): readonly UnsettledView[] {
-		return this.#invariant.unsettled();
+	/** Every subject that needs action now. */
+	needsAction(): readonly NeedsActionView[] {
+		return this.#invariant.needsAction();
+	}
+
+	/**
+	 * `devhub --tell status`: the whole state of one subject now — an item
+	 * (its URL, or `owner/repo#N`) or an agent — as far as DevHub knows it:
+	 * the item's state, assignment, lanes and pull request (review decision,
+	 * unresolved conversations, checks), the agents linked to it and how each
+	 * stands, the escalations about it, the clause it fails and since when,
+	 * and `agent keep`'s note. Undefined when DevHub has read no such item
+	 * (or has no such agent).
+	 */
+	status(
+		target: { readonly item: string } | { readonly agentId: string },
+	): SubjectStatus | undefined {
+		this.observe();
+		const reading = this.#invariant.reading;
+		if ("item" in target) {
+			const item = findItem(reading, target.item);
+			if (item === undefined) return undefined;
+			const view = this.#invariant.view(`item ${item.key}`);
+			return {
+				subject: "item",
+				item: statusItem(item),
+				...(view === undefined ? {} : { needsAction: needsActionOf(view) }),
+				agents: item.agents.flatMap((id) => {
+					const agent = this.#statusAgent(id);
+					return agent === undefined ? [] : [agent];
+				}),
+				escalations: this.#statusEscalations(item.escalations),
+			};
+		}
+		const agent = this.#statusAgent(target.agentId);
+		if (agent === undefined) return undefined;
+		const standing = this.#invariant.standing(target.agentId);
+		const view = this.#invariant.view(`agent ${target.agentId}`);
+		const item =
+			standing?.item?.item.url === undefined
+				? undefined
+				: findItem(reading, standing.item.item.url);
+		return {
+			subject: "agent",
+			agent,
+			...(item === undefined ? {} : { item: statusItem(item) }),
+			...(view === undefined ? {} : { needsAction: needsActionOf(view) }),
+			...(standing?.waiting === undefined ? {} : { waiting: standing.waiting }),
+			escalations: this.#statusEscalations(standing?.escalations ?? []),
+		};
+	}
+
+	#statusAgent(id: string): StatusAgent | undefined {
+		const agent = this.#invariantAgents.find((one) => one.id === id);
+		if (agent === undefined) return undefined;
+		const standing = this.#invariant.standing(id);
+		const kept = this.#invariant.kept(id);
+		return {
+			id: agent.id,
+			name: agent.name,
+			ws: agent.ws,
+			workspaceId: agent.workspaceId,
+			status: agent.stopping ? "stopping" : agent.status,
+			managed: agent.managed,
+			...(agent.issue === undefined ? {} : { linked: agent.issue }),
+			...(standing?.breach === undefined
+				? {}
+				: { needsAction: breachWords(standing.breach) }),
+			...(kept === undefined ? {} : { kept: { note: kept.note, at: kept.at } }),
+		};
+	}
+
+	#statusEscalations(ids: readonly number[]): StatusEscalation[] {
+		return ids.flatMap((id) => {
+			const one = this.ports.store.get(id);
+			if (one === undefined) return [];
+			const wait = currentWait(one);
+			return [
+				{
+					id: one.id,
+					title: one.title,
+					state: escalationState(one),
+					...(wait === undefined ? {} : { trigger: wait.markdown }),
+					...(wait?.dueAt === undefined ? {} : { dueAt: wait.dueAt }),
+				},
+			];
+		});
 	}
 
 	/** Wake when the next escalation's grace or wait is up, to say so. */
@@ -867,7 +1057,7 @@ export class OrchestratorService {
 			paused: this.events.paused,
 			held: this.events.held().length,
 			github: this.ports.github?.() ?? { state: "idle" },
-			unsettled: this.#invariant.unsettled(),
+			needsAction: this.#invariant.needsAction(),
 			agentStates: this.#agentStates(),
 			needsAnswer: lanes.needsAnswer.map(escalation),
 			inProgress: lanes.inProgress.map(escalation),
@@ -883,16 +1073,16 @@ export class OrchestratorService {
 		for (const agent of this.ports.agents()) {
 			const standing = this.#invariant.standing(agent.id);
 			const kept = this.#invariant.kept(agent.id);
-			const unsettled =
-				standing !== undefined &&
-				!standing.settled &&
+			const breach = standing?.breach;
+			const needsAction =
+				breach !== undefined &&
 				kept === undefined &&
 				this.#invariant.pastGrace(`agent ${agent.id}`);
 			const state: AgentOrchestrationWire = {
 				...(standing?.waiting === undefined
 					? {}
 					: { waiting: standing.waiting }),
-				...(unsettled ? { unsettled: (standing.facts ?? []).join(" ") } : {}),
+				...(needsAction ? { needsAction: breachWords(breach) } : {}),
 				...(kept === undefined
 					? {}
 					: { kept: { note: kept.note, at: kept.at } }),

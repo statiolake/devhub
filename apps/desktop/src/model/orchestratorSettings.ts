@@ -34,7 +34,7 @@ export interface OrchestratorConfig {
   readonly init_prompt: string | undefined;
   /**
    * Which events reach the orchestrator, as patterns over their type:
-   * `escalation.*`, `unsettled`, `*`; a pattern starting with `!` takes
+   * `escalation.*`, `needs_action`, `*`; a pattern starting with `!` takes
    * matching types back out. `init` always goes. See `eventAllowed`.
    */
   readonly events: readonly string[];
@@ -51,7 +51,7 @@ export interface OrchestratorConfig {
    */
   readonly delivery_interval: string;
   /**
-   * How often an `unsettled` subject that stays so is said again: `1h`,
+   * How often a `needs_action` subject that stays so is said again: `1h`,
    * `30m`.
    */
   readonly reminder_interval: string;
@@ -97,40 +97,36 @@ export const DEFAULT_ORCHESTRATOR_EVENTS: readonly string[] = ["*"];
  * (`retiredEventPatterns`), as a retired key is (`config.ts`).
  */
 export const RETIRED_EVENT_TYPES: Readonly<Record<string, string>> = {
+  unsettled:
+    "renamed `needs_action`: its line names the subject and the clause it fails",
   "escalation.stalled":
-    "an agent stopped with nothing settling it is an `unsettled` subject now",
+    "an agent stopped with nothing settling it is a `needs_action` subject now",
   "escalation.waiting_reminder":
     "a 待機中 escalation that may be ready — its `--at` time came, or what it is about moved — is `waiting.changed`",
   "escalation.wait_due":
     "a 待機中 escalation whose `--at` time came is `waiting.changed` (`— due`)",
   "github.assigned":
-    "an open Issue assigned to you with nobody on it is `unsettled`",
+    "an open Issue assigned to you with nobody on it is `needs_action`",
   "github.unattended":
-    "an open Issue assigned to you with nobody on it is `unsettled`",
-  "github.lane_changed":
-    "an `unsettled` or `waiting.changed` line carries the lane as it is",
-  "github.pr_opened":
-    "an `unsettled` or `waiting.changed` line carries the pull request as it is",
-  "github.pr_ready":
-    "an `unsettled` or `waiting.changed` line carries the pull request as it is",
+    "an open Issue assigned to you with nobody on it is `needs_action`",
+  "github.lane_changed": "`devhub --tell status` gives an item's lane",
+  "github.pr_opened": "`devhub --tell status` gives an item's pull request",
+  "github.pr_ready": "`devhub --tell status` gives an item's pull request",
   "github.pr_approved":
-    "an `unsettled` or `waiting.changed` line carries the review decision as it is",
+    "`devhub --tell status` gives an item's review decision",
   "github.changes_requested":
-    "an `unsettled` or `waiting.changed` line carries the review decision as it is",
+    "`devhub --tell status` gives an item's review decision",
   "github.review_comment":
-    "an `unsettled` or `waiting.changed` line carries the unresolved conversations as they are",
-  "github.checks":
-    "an `unsettled` or `waiting.changed` line carries the checks as they are",
-  "github.pr_merged":
-    "an `unsettled` or `waiting.changed` line carries the pull request as it is",
-  "github.pr_closed":
-    "an `unsettled` or `waiting.changed` line carries the pull request as it is",
+    "`devhub --tell status` gives an item's unresolved conversations",
+  "github.checks": "`devhub --tell status` gives an item's checks",
+  "github.pr_merged": "`devhub --tell status` gives an item's pull request",
+  "github.pr_closed": "`devhub --tell status` gives an item's pull request",
   "github.review_requested":
-    "a pull request assigned to you is an item like an Issue: one nobody settles is `unsettled`",
+    "a pull request assigned to you is an item like an Issue: one nobody settles is `needs_action`",
   "github.reply":
-    "a pull request assigned to you is an item like an Issue: one nobody settles is `unsettled`",
+    "a pull request assigned to you is an item like an Issue: one nobody settles is `needs_action`",
   "github.*":
-    "nothing is said by GitHub itself: an item's state is in `unsettled`",
+    "nothing is said by GitHub itself: an item that needs action is `needs_action`, its state is `devhub --tell status`",
   "workspace.*": "a Workspace's state is read with `workspace status`",
   "workspace.opened": "a Workspace's state is read with `workspace status`",
   "workspace.closed": "a Workspace's state is read with `workspace status`",
@@ -140,18 +136,19 @@ export const RETIRED_EVENT_TYPES: Readonly<Record<string, string>> = {
     "a Workspace's state is read with `workspace status`",
   "workspace.pr_linked": "a Workspace's state is read with `workspace status`",
   "agent.*":
-    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+    "a managed agent that stops with nothing settling it is a `needs_action` subject",
   "agent.turn_ended":
-    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+    "a managed agent that stops with nothing settling it is a `needs_action` subject",
   "agent.asked":
-    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+    "a managed agent that stops with nothing settling it is a `needs_action` subject",
   "agent.permission_requested":
-    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+    "a managed agent that stops with nothing settling it is a `needs_action` subject",
   "agent.started":
-    "a managed agent that stops with nothing settling it is an `unsettled` subject",
-  "agent.exited": "an Issue left with no agent on it is an `unsettled` subject",
+    "a managed agent that stops with nothing settling it is a `needs_action` subject",
+  "agent.exited":
+    "an Issue left with no agent on it is a `needs_action` subject",
   "agent.failed":
-    "a managed agent that stops with nothing settling it is an `unsettled` subject",
+    "a managed agent that stops with nothing settling it is a `needs_action` subject",
 };
 
 /** Whether an `events` pattern names a retired type (or an emptied family). */
@@ -170,7 +167,7 @@ export const DEFAULT_DELIVERY_INTERVAL = "5m";
 export const MIN_DELIVERY_INTERVAL_MS = 10_000;
 /** `[orchestrator] reminder_interval` when it is not set. */
 export const DEFAULT_REMINDER_INTERVAL = "1h";
-/** The most often an `unsettled` subject may be said again. */
+/** The most often a `needs_action` subject may be said again. */
 export const MIN_REMINDER_INTERVAL_MS = 5 * 60_000;
 /** The fastest DevHub polls GitHub for events, whatever the settings say. */
 export const MIN_GITHUB_INTERVAL_MS = 30_000;
@@ -259,7 +256,7 @@ export function isTimerName(name: string): boolean {
 }
 
 /**
- * An event pattern: a type (`unsettled`), a family (`github.*`), `*`,
+ * An event pattern: a type (`needs_action`), a family (`escalation.*`), `*`,
  * any of them after `!` to take them out again.
  */
 export function eventPatternProblem(pattern: string): boolean {
@@ -395,11 +392,11 @@ export function formatInterval(ms: number): string {
 }
 
 export const ORCHESTRATOR_EVENTS_RULE =
-  "orchestrator.events lists event types (unsettled), families (github.*) or *, each optionally after ! to exclude it.";
+  "orchestrator.events lists event types (needs_action), families (escalation.*) or *, each optionally after ! to exclude it.";
 
 export const ORCHESTRATOR_GITHUB_RULE = `orchestrator.github.projects lists Projects boards as OWNER/NUMBER (my-org/7); orchestrator.github.interval is like 90s or 2m, at least ${String(MIN_GITHUB_INTERVAL_MS / 1000)}s.`;
 
-export const ORCHESTRATOR_DELIVERY_RULE = `orchestrator.delivery_interval is like 5m or 90s, at least ${String(MIN_DELIVERY_INTERVAL_MS / 1000)}s: the most often a batch of events goes. orchestrator.reminder_interval is like 1h or 30m, at least ${String(MIN_REMINDER_INTERVAL_MS / 60_000)}m: how often an unsettled subject is said again.`;
+export const ORCHESTRATOR_DELIVERY_RULE = `orchestrator.delivery_interval is like 5m or 90s, at least ${String(MIN_DELIVERY_INTERVAL_MS / 1000)}s: the most often a batch of events goes. orchestrator.reminder_interval is like 1h or 30m, at least ${String(MIN_REMINDER_INTERVAL_MS / 60_000)}m: how often a needs_action subject is said again.`;
 
 export const ORCHESTRATOR_TIMER_RULE = `Each [[orchestrator.timers]] has a name (letters, digits, - and _; each once) and an interval like 5m or 1h, at least ${String(MIN_TIMER_INTERVAL_MS / 1000)}s.`;
 

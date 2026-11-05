@@ -21,13 +21,13 @@ const ISSUE = {
 	url: "https://github.com/acme/app/issues/123",
 };
 
-function unsettledIssue(
-	facts: readonly string[] = ["state=open"],
+function needsActionIssue(
+	clause: "no_agent" | "idle_no_escalation" = "no_agent",
 ): OrchestratorEvent {
 	return {
-		type: "unsettled",
+		type: "needs_action",
 		subject: { kind: "issue", item: ISSUE },
-		facts,
+		breach: { clause },
 	};
 }
 
@@ -85,37 +85,39 @@ function world(
 
 describe("an event's line", () => {
 	const now = Date.UTC(2026, 10, 5, 3, 0);
-	it("states an unsettled Issue and its facts, no reason", () => {
-		expect(
-			eventLine(
-				unsettledIssue([
-					"state=open",
-					"assigned=yes",
-					"lane=Todo",
-					"pr=none",
-					"agents=none",
-					"esc=none",
-				]),
-				now,
-			),
-		).toBe(
-			"[unsettled] issue=acme/app#123「API整理」 state=open assigned=yes lane=Todo pr=none agents=none esc=none https://github.com/acme/app/issues/123",
+	it("names an item and the clause it fails, no state", () => {
+		expect(eventLine(needsActionIssue(), now)).toBe(
+			"[needs_action] issue=acme/app#123 — no_agent",
 		);
-	});
-
-	it("states an unsettled agent by the id --tell takes", () => {
 		expect(
 			eventLine(
 				{
-					type: "unsettled",
+					type: "needs_action",
+					subject: {
+						kind: "pr",
+						item: { ...ISSUE, number: 9, url: `${ISSUE.url}9` },
+					},
+					ws: "web",
+					breach: { clause: "idle_no_escalation" },
+				},
+				now,
+			),
+		).toBe("[needs_action] pr=acme/app#9 ws=web — idle_no_escalation");
+	});
+
+	it("names an agent by the id --tell takes, and why it is outside", () => {
+		expect(
+			eventLine(
+				{
+					type: "needs_action",
 					subject: { kind: "agent", agent: AGENT },
 					ws: "api",
-					facts: ["status=idle", "issue=none"],
+					breach: { clause: "outside_population", outside: "closed" },
 				},
 				now,
 			),
 		).toBe(
-			"[unsettled] agent=a1b2c3d4 (API fix) ws=api status=idle issue=none",
+			"[needs_action] agent=a1b2c3d4 (API fix) ws=api — outside_population (closed)",
 		);
 	});
 
@@ -176,7 +178,7 @@ describe("the person's words", () => {
 
 	it("are sent at once, whatever is pending or busy, and never in the template", () => {
 		const { dispatcher, sent, delivered, state } = world({ busy: true });
-		dispatcher.dispatch(unsettledIssue());
+		dispatcher.dispatch(needsActionIssue());
 		state.busy = true;
 		dispatcher.dispatch({
 			type: "escalation_answered",
@@ -193,7 +195,7 @@ describe("the person's words", () => {
 	it("are held by a pause, and go first, each alone, on resume", async () => {
 		const { dispatcher, sent } = world();
 		dispatcher.pause();
-		dispatcher.dispatch(unsettledIssue());
+		dispatcher.dispatch(needsActionIssue());
 		for (const text of ["一つ目", "二つ目"])
 			dispatcher.dispatch({
 				type: "escalation_answered",
@@ -207,7 +209,7 @@ describe("the person's words", () => {
 		expect(sent).toEqual([
 			"esc=3「t」 への人の回答:\n一つ目",
 			"esc=3「t」 への人の回答:\n二つ目",
-			expect.stringContaining("[unsettled] issue=acme/app#123"),
+			expect.stringContaining("[needs_action] issue=acme/app#123"),
 		]);
 	});
 });
@@ -218,17 +220,17 @@ describe("the dispatcher", () => {
 		dispatcher.dispatch({ type: "init" });
 		advance(300);
 		expect(sent).toHaveLength(1);
-		dispatcher.dispatch(unsettledIssue());
+		dispatcher.dispatch(needsActionIssue());
 		advance(60_000);
 		expect(sent).toHaveLength(1);
 		advance(240_000);
 		expect(sent).toHaveLength(2);
-		expect(sent[1]).toContain("[unsettled] issue=acme/app#123");
+		expect(sent[1]).toContain("[needs_action] issue=acme/app#123");
 	});
 
 	it("holds a batch while the orchestrator is in a foreground turn", () => {
 		const { dispatcher, sent, state, advance } = world({ busy: true });
-		dispatcher.dispatch(unsettledIssue());
+		dispatcher.dispatch(needsActionIssue());
 		advance(300);
 		expect(sent).toEqual([]);
 		state.busy = false;
@@ -238,12 +240,12 @@ describe("the dispatcher", () => {
 
 	it("keeps one line per subject: the latest says how it stands", () => {
 		const { dispatcher, sent, state, advance } = world({ busy: true });
-		dispatcher.dispatch(unsettledIssue(["state=open", "checks=pending"]));
-		dispatcher.dispatch(unsettledIssue(["state=open", "checks=failing"]));
+		dispatcher.dispatch(needsActionIssue("no_agent"));
+		dispatcher.dispatch(needsActionIssue("idle_no_escalation"));
 		state.busy = false;
 		advance(300);
 		expect(sent).toEqual([
-			"handle: [unsettled] issue=acme/app#123「API整理」 state=open checks=failing https://github.com/acme/app/issues/123",
+			"handle: [needs_action] issue=acme/app#123 — idle_no_escalation",
 		]);
 	});
 
@@ -258,7 +260,7 @@ describe("the dispatcher", () => {
 
 	it("drops what no longer needs attention when it would go", () => {
 		const { dispatcher, sent, advance } = world({ relevant: () => false });
-		dispatcher.dispatch(unsettledIssue());
+		dispatcher.dispatch(needsActionIssue());
 		advance(300);
 		expect(sent).toEqual([]);
 		expect(dispatcher.recent(1)[0]?.fate).toBe("dropped-stale");
@@ -269,7 +271,7 @@ describe("the dispatcher", () => {
 			events: ["*", "!timer.*"],
 		});
 		dispatcher.dispatch({ type: "timer.elapsed", name: "t", interval: "5m" });
-		dispatcher.dispatch(unsettledIssue());
+		dispatcher.dispatch(needsActionIssue());
 		advance(300);
 		expect(sent).toHaveLength(1);
 		expect(sent[0]).not.toContain("timer.elapsed");
@@ -279,7 +281,7 @@ describe("the dispatcher", () => {
 		const { dispatcher, sent, state, advance } = world({ busy: true });
 		for (let index = 0; index < MAX_DELIVERY_LINES + 3; index += 1)
 			dispatcher.dispatch({
-				type: "unsettled",
+				type: "needs_action",
 				subject: {
 					kind: "issue",
 					item: {
@@ -288,7 +290,7 @@ describe("the dispatcher", () => {
 						url: `${ISSUE.url}${String(index)}`,
 					},
 				},
-				facts: [],
+				breach: { clause: "no_agent" },
 			});
 		state.busy = false;
 		advance(300);
@@ -308,7 +310,7 @@ describe("the dispatcher", () => {
 				throw new Error("nobody to tell");
 			},
 		});
-		expect(dispatcher.dispatch(unsettledIssue()).fate).toBe("dropped");
+		expect(dispatcher.dispatch(needsActionIssue()).fate).toBe("dropped");
 	});
 });
 

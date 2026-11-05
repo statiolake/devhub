@@ -28,6 +28,11 @@ import type { UsageReport } from "../../shell/usageLimits.js";
 import { usageJson, usageText } from "./usage.js";
 import { ORCHESTRATOR_CANNOT_CLOSE } from "./windowActs.js";
 import { ISSUE_LINK_KEY } from "../../orchestrator/invariant.js";
+import { breachWords, type Breach } from "../../orchestrator/events.js";
+import type {
+	StatusItem,
+	SubjectStatus,
+} from "../../orchestrator/orchestratorService.js";
 import {
 	DEVHUB_LINK_FORMS,
 	formatDevhubLink,
@@ -661,7 +666,14 @@ export interface TellOrchestratorPorts {
 	focus(): Promise<void>;
 	/** How an agent stands against the invariant (`orchestrator/invariant.ts`). */
 	standing(agentId: string): TellStanding | undefined;
-	/** `agent keep A --note`: leave an unsettled agent as it is, for `note`. */
+	/**
+	 * `status`: one subject's whole state now — an item (URL or
+	 * `owner/repo#N`) or an agent. Undefined when DevHub has not read it.
+	 */
+	status(
+		target: { readonly item: string } | { readonly agentId: string },
+	): SubjectStatus | undefined;
+	/** `agent keep A --note`: leave an agent that needs action as it is, for `note`. */
 	keep(
 		agentId: string,
 		note: string,
@@ -673,8 +685,8 @@ export interface TellOrchestratorPorts {
 /** An agent's standing against the invariant, as `agent status` reads it. */
 export interface TellStanding {
 	readonly settled: boolean;
-	/** Its facts, as an `unsettled` line says them (managed agents). */
-	readonly facts?: readonly string[];
+	/** The clause it fails (managed agents), as `needs_action` says it. */
+	readonly breach?: Breach;
 	readonly waiting?: {
 		readonly escalationId: number;
 		readonly trigger: string;
@@ -976,14 +988,14 @@ export interface TellAgentStatus {
 	/** Under the orchestrator's management (`agent manage`, `--managed`). */
 	readonly managed: boolean;
 	/**
-	 * How it stands against the invariant: settled or not, its facts as an
-	 * `unsettled` line says them, the 待機中 escalation it is one of the
-	 * agents of, and `agent keep`'s note. Null while no orchestrator service
-	 * reads it.
+	 * How it stands against the invariant: settled or not, the clause it
+	 * fails as its `needs_action` line says it, the 待機中 escalation it is
+	 * one of the agents of, and `agent keep`'s note. Null while no
+	 * orchestrator service reads it. Its whole state: `status`.
 	 */
 	readonly invariant: {
 		readonly settled: boolean;
-		readonly facts: string | null;
+		readonly needsAction: string | null;
 		readonly waiting: {
 			readonly escalationId: number;
 			readonly trigger: string;
@@ -1159,6 +1171,8 @@ export class TellService {
 			}
 			case "board":
 				return this.board();
+			case "status":
+				return this.subjectStatus(command.ref);
 			case "escalation-new":
 				return this.raise(command);
 			case "escalation-ask":
@@ -1304,7 +1318,7 @@ export class TellService {
 				const wait = one.entries.at(-1);
 				return `  #${String(one.id)}  ${one.title}  waiting on: ${wait?.markdown ?? ""}${wait?.dueAt === undefined ? "" : `  [${new Date(wait.dueAt).toISOString()}, ${dueWords(wait.dueAt, now)}]`}`;
 			}),
-			...unsettledLines(board, now),
+			...needsActionLines(board, now),
 		];
 		return {
 			message: lines.join("\n"),
@@ -1316,7 +1330,7 @@ export class TellService {
 				inProgress: board.inProgress,
 				waiting: board.waiting,
 				graceMs: board.graceMs,
-				unsettled: board.unsettled,
+				needsAction: board.needsAction,
 			},
 		};
 	}
@@ -1785,6 +1799,44 @@ export class TellService {
 		);
 	}
 
+	/**
+	 * `status <item|agent>`: one subject's whole state now, as one call — an
+	 * item's state, assignment, lanes and pull request, the agents linked to
+	 * it and how each stands, the escalations about it, the clause it fails
+	 * and `agent keep`'s note; for an agent, all of that of its item, and its
+	 * Workspace's facts as the Sidebar's tooltip has them.
+	 */
+	private subjectStatus(ref: string): TellAnswer {
+		const now = this.clock.now();
+		const isItem =
+			/^https?:\/\//iu.test(ref.trim()) ||
+			/^[\w.-]+\/[\w.-]+#\d+$/u.test(ref.trim());
+		if (isItem) {
+			const found = this.ports.orchestrator.status({ item: ref });
+			if (found === undefined)
+				throw new Error(
+					`DevHub has not read ${ref}: it reads the open Issues and pull requests assigned to you, and the items agents are linked to, while an orchestrator runs (devhub --tell orchestrator status says how GitHub polling stands).`,
+				);
+			return {
+				message: subjectText(found, undefined, now),
+				data: subjectJson(found, undefined),
+			};
+		}
+		const agent = this.agent(ref);
+		const found = this.ports.orchestrator.status({ agentId: agent.id });
+		if (found === undefined)
+			throw new Error(
+				`${agent.name} (${agent.id}) is not read by the orchestrator's invariant (the orchestrator agent itself never is, and nothing is read before DevHub has started).`,
+			);
+		const workspace = this.ports
+			.workspaces()
+			.find((one) => one.agents.some((each) => each.id === agent.id));
+		return {
+			message: subjectText(found, workspace?.review, now),
+			data: subjectJson(found, workspace?.review ?? null),
+		};
+	}
+
 	private agent(name: string): TellAgent {
 		const all = this.ports
 			.workspaces()
@@ -2199,7 +2251,7 @@ export class TellService {
 			const was = this.ports.orchestrator.unkeep(agent.id);
 			return {
 				message: was
-					? `${agent.name} (${agent.id}) is no longer kept: it is said again while it is unsettled.`
+					? `${agent.name} (${agent.id}) is no longer kept: it is said again while it needs action.`
 					: `${agent.name} (${agent.id}) was not kept.`,
 				data: { agentId: agent.id, kept: null },
 			};
@@ -3952,11 +4004,9 @@ function statusLines(state: TellAgentStatus, now: number): string[] {
 		...(state.invariant === null
 			? []
 			: [
-					...(state.invariant.facts === null
+					...(state.invariant.needsAction === null
 						? []
-						: [
-								`invariant ${state.invariant.settled ? "settled" : "unsettled"}: ${state.invariant.facts}`,
-							]),
+						: [`needs     action: ${state.invariant.needsAction}`]),
 					...(state.invariant.waiting === null
 						? []
 						: [
@@ -4584,11 +4634,151 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 	].join(", ");
 }
 
-/** `board`'s invariant part: every subject unsettled now, with its facts. */
-function unsettledLines(board: OrchestratorBoardWire, now: number): string[] {
-	const list = board.unsettled;
+/** An item as `status --json` carries it: every field there, null when unknown. */
+function itemJson(item: StatusItem): Record<string, unknown> {
+	return {
+		kind: item.kind,
+		ref: item.ref,
+		url: item.url ?? null,
+		title: item.title ?? null,
+		state: item.state,
+		assigned: item.assigned,
+		inPopulation: item.inPopulation,
+		projects: item.projects,
+		pullRequest:
+			item.pull === undefined
+				? null
+				: {
+						number: item.pull.number,
+						url: item.pull.url ?? null,
+						state: item.pull.state,
+						review: item.pull.review,
+						unresolved: item.pull.unresolved,
+						checks: item.pull.checks,
+					},
+	};
+}
+
+/** `status --json`: one stable shape for an item and for an agent. */
+function subjectJson(
+	found: SubjectStatus,
+	workspace: TellReview | null | undefined,
+): Record<string, unknown> {
+	const needsAction =
+		found.needsAction === undefined
+			? null
+			: {
+					clause: found.needsAction.clause,
+					line: found.needsAction.line,
+					since: iso(found.needsAction.since),
+					toldAt: iso(found.needsAction.toldAt),
+				};
+	const agentJson = (
+		agent: (typeof found & { subject: "agent" })["agent"],
+	) => ({
+		id: agent.id,
+		name: agent.name,
+		ws: agent.ws,
+		workspaceId: agent.workspaceId,
+		status: agent.status,
+		managed: agent.managed,
+		linked: agent.linked ?? null,
+		needsAction: agent.needsAction ?? null,
+		kept:
+			agent.kept === undefined
+				? null
+				: { note: agent.kept.note, at: iso(agent.kept.at) },
+	});
+	const escalations = found.escalations.map((one) => ({
+		id: one.id,
+		title: one.title,
+		state: one.state,
+		trigger: one.trigger ?? null,
+		dueAt: iso(one.dueAt),
+	}));
+	if (found.subject === "item")
+		return {
+			subject: "item",
+			item: itemJson(found.item),
+			needsAction,
+			agents: found.agents.map(agentJson),
+			escalations,
+		};
+	return {
+		subject: "agent",
+		agent: agentJson(found.agent),
+		item: found.item === undefined ? null : itemJson(found.item),
+		workspace: workspace ?? null,
+		needsAction,
+		waiting: found.waiting ?? null,
+		escalations,
+	};
+}
+
+function itemLines(item: StatusItem): string[] {
+	const pull = item.pull;
 	return [
-		`unsettled (${String(list.length)}):`,
+		`${item.ref}${item.title === undefined ? "" : `「${item.title}」`}  ${item.state}, ${item.assigned ? "assigned to me" : "not assigned to me"}, ${item.inPopulation ? "in the population" : "outside the population"}${item.url === undefined ? "" : `  ${item.url}`}`,
+		`  lanes      ${item.projects.length === 0 ? "-" : item.projects.map((one) => `${one.project} ${one.lane ?? "(none)"}`).join(", ")}`,
+		`  pull req.  ${pull === undefined ? "none" : `#${String(pull.number)} ${pull.state}, review ${pull.review}, unresolved ${String(pull.unresolved)}, checks ${pull.checks}`}`,
+	];
+}
+
+/** `status`, as text: the same facts as `--json`. */
+function subjectText(
+	found: SubjectStatus,
+	workspace: TellReview | undefined,
+	now: number,
+): string {
+	const needs =
+		found.needsAction === undefined
+			? "needs action: no"
+			: `needs action: ${found.needsAction.clause} (for ${span(now - found.needsAction.since)}${found.needsAction.toldAt === undefined ? ", in its grace" : `, last said ${span(now - found.needsAction.toldAt)} ago`})`;
+	const agentLine = (agent: (typeof found & { subject: "agent" })["agent"]) =>
+		`${agent.name} (${agent.id}) ws=${agent.ws} ${agent.status}${agent.managed ? ", managed" : ""}${agent.needsAction === undefined ? "" : `, needs action: ${agent.needsAction}`}${agent.kept === undefined ? "" : `, kept: ${agent.kept.note}`}`;
+	const escalations =
+		found.escalations.length === 0
+			? ["escalations: none"]
+			: [
+					"escalations:",
+					...found.escalations.map(
+						(one) =>
+							`  #${String(one.id)} ${one.title}  ${one.state}${one.trigger === undefined ? "" : `  waiting on: ${one.trigger}`}${one.dueAt === undefined ? "" : ` [${new Date(one.dueAt).toISOString()}]`}`,
+					),
+				];
+	if (found.subject === "item")
+		return [
+			...itemLines(found.item),
+			needs,
+			found.agents.length === 0 ? "agents: none linked" : "agents:",
+			...found.agents.map((agent) => `  ${agentLine(agent)}`),
+			...escalations,
+		].join("\n");
+	const review = workspace;
+	return [
+		agentLine(found.agent),
+		`linked to ${found.agent.linked ?? "no item"}`,
+		...(found.item === undefined ? [] : itemLines(found.item)),
+		...(review === undefined
+			? []
+			: [
+					`workspace  issue ${review.issue === null ? "none" : `#${String(review.issue.number)} ${review.issue.state}`}, pull request ${review.pullRequest === null ? "none" : `#${String(review.pullRequest.number)} ${review.pullRequest.draft ? "draft" : review.pullRequest.state}, review ${review.pullRequest.review}`}, unresolved ${review.conversations === null ? "-" : String(review.conversations.unresolved)}, checks ${review.checks === null ? "none" : review.checks.state}`,
+				]),
+		needs,
+		...(found.waiting === undefined
+			? []
+			: [
+					`waiting in esc=${String(found.waiting.escalationId)}: ${found.waiting.trigger}`,
+				]),
+		...escalations,
+	].join("\n");
+}
+
+/** `board`'s invariant part: every subject that needs action now, and why. */
+function needsActionLines(board: OrchestratorBoardWire, now: number): string[] {
+	const list = board.needsAction;
+	return [
+		`needs action (${String(list.length)}):`,
 		...list.map(
 			(one) =>
 				`  ${one.line}  [${span(now - one.since)}${one.toldAt === undefined ? ", in its grace" : ""}${one.kept === undefined ? "" : `, kept: ${one.kept.note}`}]`,
@@ -4600,7 +4790,7 @@ function unsettledLines(board: OrchestratorBoardWire, now: number): string[] {
 function refuseLinkKey(key: string | undefined): void {
 	if (key === ISSUE_LINK_KEY)
 		throw new Error(
-			`${ISSUE_LINK_KEY}= is the Issue linkage DevHub writes when 'issue assign' starts an agent on an Issue: it is not set by hand. Start the agent with 'issue assign <url>' to link it.`,
+			`${ISSUE_LINK_KEY}= is the item linkage DevHub writes when 'issue assign' starts an agent on an Issue or a pull request: it is not set by hand. Start the agent with 'issue assign <url>' to link it.`,
 		);
 }
 
@@ -4611,7 +4801,8 @@ function invariantOf(
 	if (standing === undefined) return null;
 	return {
 		settled: standing.settled,
-		facts: standing.facts === undefined ? null : standing.facts.join(" "),
+		needsAction:
+			standing.breach === undefined ? null : breachWords(standing.breach),
 		waiting: standing.waiting ?? null,
 		kept:
 			standing.kept === undefined

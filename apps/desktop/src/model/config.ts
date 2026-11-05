@@ -949,7 +949,7 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.color_scheme":
     "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
   "orchestrator.wait_reminder_interval":
-    "there is no 待機中 reminder any more: a waiting escalation comes back as `waiting.changed`, when its `--at` time comes or when what it waits on changes; `orchestrator.reminder_interval` is how often an `unsettled` subject is said again",
+    "there is no 待機中 reminder any more: a waiting escalation comes back as `waiting.changed`, when its `--at` time comes or when what it waits on changes; `orchestrator.reminder_interval` is how often a `needs_action` subject is said again",
   "general.workbench":
     "every Workspace's editor area is its own VS Code workbench now",
   "runtimes.herdr":

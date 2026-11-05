@@ -539,14 +539,16 @@ export interface RepositoryStatusWire {
 }
 
 /** One subject that breaks the invariant, as the board carries it. */
-export interface UnsettledWire {
+export interface NeedsActionWire {
 	/** An Issue or a pull request item, or a managed agent. */
 	readonly kind: "issue" | "pr" | "agent";
 	/** `item <url>` or `agent <id>`. */
 	readonly key: string;
-	/** Its words, as `unsettled` says them (without the `[type]`). */
+	/** Its words, as `needs_action` says them (without the `[type]`). */
 	readonly line: string;
-	/** Since when it has been unsettled (ms since the epoch). */
+	/** The clause it fails: `no_agent`, `outside_population (closed)`. */
+	readonly clause: string;
+	/** Since when it has needed action (ms since the epoch). */
 	readonly since: number;
 	/** When it was last said; absent while in its grace. */
 	readonly toldAt?: number;
@@ -560,8 +562,8 @@ export interface AgentOrchestrationWire {
 		readonly escalationId: number;
 		readonly trigger: string;
 	};
-	/** Managed, and unsettled past the grace (its facts). */
-	readonly unsettled?: string;
+	/** Managed, and needing action past the grace: the clause it fails. */
+	readonly needsAction?: string;
 	readonly kept?: { readonly note: string; readonly at: number };
 }
 
@@ -683,14 +685,15 @@ export interface OrchestratorBoardWire {
 	};
 	/**
 	 * The subjects that break the invariant now (`main/orchestrator/
-	 * invariant.ts`): open items (Issues, pull requests) of mine nothing settles, managed agents
-	 * nothing settles. Each with its facts as an `unsettled` line has them.
+	 * invariant.ts`): open items (Issues, pull requests) of mine nothing
+	 * settles, managed agents nothing settles. Each as its `needs_action`
+	 * line names it, with the clause it fails.
 	 */
-	readonly unsettled: readonly UnsettledWire[];
+	readonly needsAction: readonly NeedsActionWire[];
 	/**
 	 * What the escalations and the invariant say of each agent, for its row:
-	 * one of a 待機中 escalation's agents (and what it waits on), unsettled
-	 * past the grace, or kept as it is by the orchestrator (and why). Absent
+	 * one of a 待機中 escalation's agents (and what it waits on), needing
+	 * action past the grace, or kept as it is by the orchestrator (and why). Absent
 	 * for an agent with none of these.
 	 */
 	readonly agentStates: Readonly<Record<string, AgentOrchestrationWire>>;
@@ -712,7 +715,7 @@ export const EMPTY_BOARD: OrchestratorBoardWire = {
 	paused: false,
 	held: 0,
 	github: { state: "idle" },
-	unsettled: [],
+	needsAction: [],
 	agentStates: {},
 	needsAnswer: [],
 	inProgress: [],

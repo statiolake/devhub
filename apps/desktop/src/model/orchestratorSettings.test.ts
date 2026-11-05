@@ -40,7 +40,7 @@ describe("[orchestrator] settings", () => {
   it("reads events, [orchestrator.github] and [[orchestrator.timers]]", () => {
     const config = interpretConfig({
       orchestrator: {
-        events: ["escalation.*", "!escalation.human_direct", "unsettled"],
+        events: ["escalation.*", "!escalation.human_direct", "needs_action"],
         github: { projects: ["my-org/7"], interval: "2m" },
         timers: [{ name: "tick", interval: "5m" }],
       },
@@ -48,7 +48,7 @@ describe("[orchestrator] settings", () => {
     expect(config.orchestrator.events).toEqual([
       "escalation.*",
       "!escalation.human_direct",
-      "unsettled",
+      "needs_action",
     ]);
     expect(config.orchestrator.github).toEqual({
       projects: ["my-org/7"],
@@ -60,7 +60,7 @@ describe("[orchestrator] settings", () => {
     expect(orchestratorProblem(config.orchestrator)).toBeUndefined();
     // And writes them back as tables.
     expect(configDocument(config)["orchestrator"]).toMatchObject({
-      events: ["escalation.*", "!escalation.human_direct", "unsettled"],
+      events: ["escalation.*", "!escalation.human_direct", "needs_action"],
       github: { projects: ["my-org/7"], interval: "2m" },
       timers: [{ name: "tick", interval: "5m" }],
     });
@@ -194,11 +194,15 @@ describe("[orchestrator] settings", () => {
   });
 
   it("filters by the last matching pattern, and always lets init through", () => {
-    const patterns = ["escalation.*", "!escalation.human_direct", "unsettled"];
+    const patterns = [
+      "escalation.*",
+      "!escalation.human_direct",
+      "needs_action",
+    ];
     expect(eventAllowed("escalation_answered", patterns)).toBe(false);
     expect(eventAllowed("escalation.stalled", patterns)).toBe(true);
     expect(eventAllowed("escalation.human_direct", patterns)).toBe(false);
-    expect(eventAllowed("unsettled", patterns)).toBe(true);
+    expect(eventAllowed("needs_action", patterns)).toBe(true);
     expect(eventAllowed("waiting.changed", patterns)).toBe(false);
     expect(eventAllowed("init", [])).toBe(true);
     expect(eventAllowed("custom.deploy", ["*"])).toBe(true);

@@ -775,7 +775,7 @@ export function agentTooltipFacts(
         }
       : undefined,
     // What the orchestration says of it: parked on a 待機中 escalation (and
-    // what it waits on), unsettled (and its facts), kept as it is (and why).
+    // what it waits on), needing action (and the clause it fails), kept as it is (and why).
     orchestration?.waiting === undefined
       ? undefined
       : {
@@ -783,11 +783,11 @@ export function agentTooltipFacts(
           text: `Waiting (#${String(orchestration.waiting.escalationId)}): ${orchestration.waiting.trigger}`,
           style: "muted",
         },
-    orchestration?.unsettled === undefined
+    orchestration?.needsAction === undefined
       ? undefined
       : {
-          icon: "orchestratorUnsettled",
-          text: `Unsettled: ${orchestration.unsettled}`,
+          icon: "orchestratorNeedsAction",
+          text: `Needs action: ${orchestration.needsAction}`,
           tone: "waiting",
         },
     orchestration?.kept === undefined

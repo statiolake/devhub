@@ -107,17 +107,17 @@ export type OrchestratorEvent =
 			readonly messages?: readonly HumanWords[];
 	  }
 	/**
-	 * A subject that breaks the invariant (`invariant.ts`): an Issue of the
-	 * population or a managed agent, with its facts as they are. No reason.
+	 * A subject that breaks the invariant (`invariant.ts`): an item of the
+	 * population or a managed agent, and the clause it fails. No state: that
+	 * is `devhub --tell status`'s.
 	 */
 	| {
-			readonly type: "unsettled";
+			readonly type: "needs_action";
 			readonly subject:
 				| { readonly kind: "issue" | "pr"; readonly item: EventItem }
 				| { readonly kind: "agent"; readonly agent: EventAgent };
 			readonly ws?: string;
-			/** `key=value` facts. */
-			readonly facts: readonly string[];
+			readonly breach: Breach;
 	  }
 	/**
 	 * A 待機中 escalation may be ready: what it is about moved (its items,
@@ -158,6 +158,34 @@ export type OrchestratorEvent =
 
 export type OrchestratorEventType = OrchestratorEvent["type"];
 
+/**
+ * The invariant's clause a subject fails (`invariant.ts`), as a short code:
+ * an item with no agent linked, or whose agents are all stopped with no
+ * 要回答 / 待機中 escalation about it (`idle_no_escalation`); a managed agent
+ * stopped with no such escalation, or linked to an item outside the
+ * population, or to none (`outside_population`, and why).
+ */
+export type NeedsActionClause =
+	| "no_agent"
+	| "idle_no_escalation"
+	| "outside_population";
+
+/** Why an agent's item is outside the population. */
+export type OutsideReason = "closed" | "unassigned" | "no_item";
+
+export interface Breach {
+	readonly clause: NeedsActionClause;
+	/** With `outside_population`. */
+	readonly outside?: OutsideReason;
+}
+
+/** `no_agent`, `outside_population (closed)`: a breach as a line says it. */
+export function breachWords(breach: Breach): string {
+	return breach.outside === undefined
+		? breach.clause
+		: `${breach.clause} (${breach.outside})`;
+}
+
 /** Why a 待機中 escalation may be ready, as `waiting.changed` says it. */
 export type WaitingReason = "subjects_changed" | "due";
 
@@ -166,7 +194,7 @@ export const EVENT_TYPES = [
 	"init",
 	"escalation_answered",
 	"escalation.human_direct",
-	"unsettled",
+	"needs_action",
 	"waiting.changed",
 	"timer.elapsed",
 	"usage.threshold",
@@ -270,6 +298,32 @@ export function eventLine(event: OrchestratorEvent, now: number): string {
 		.join(" ");
 }
 
+function needsActionParts(
+	event: Extract<OrchestratorEvent, { type: "needs_action" }>,
+): LineParts {
+	const subject = event.subject;
+	return {
+		head: [
+			subject.kind !== "agent"
+				? `${subject.kind}=${issueRef(subject.item)}`
+				: agentToken(subject.agent),
+			...(event.ws === undefined ? [] : [`ws=${event.ws}`]),
+		],
+		summary: breachWords(event.breach),
+	};
+}
+
+/**
+ * A `needs_action` line without its `[type]`: the subject, its Workspace and
+ * the clause — `issue=acme/web#123 ws=web — no_agent`.
+ */
+export function needsActionWords(
+	event: Extract<OrchestratorEvent, { type: "needs_action" }>,
+): string {
+	const parts = needsActionParts(event);
+	return [...parts.head, `— ${parts.summary ?? ""}`].join(" ");
+}
+
 interface LineParts {
 	readonly head: readonly string[];
 	readonly summary?: string;
@@ -301,21 +355,8 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 				],
 				summary: "人がエージェントと直接やりとりしました",
 			};
-		case "unsettled": {
-			const subject = event.subject;
-			return {
-				head: [
-					subject.kind !== "agent"
-						? `${subject.kind}=${issueRef(subject.item)}${title(subject.item.title)}`
-						: agentToken(subject.agent),
-					...(event.ws === undefined ? [] : [`ws=${event.ws}`]),
-					...event.facts,
-				],
-				...(subject.kind !== "agent" && subject.item.url !== undefined
-					? { url: subject.item.url }
-					: {}),
-			};
-		}
+		case "needs_action":
+			return needsActionParts(event);
 		case "waiting.changed":
 			return {
 				head: [`esc=${String(event.escalationId)}`],
@@ -402,7 +443,7 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "escalation.human_direct":
 		case "waiting.changed":
 			return `esc ${String(event.escalationId)}`;
-		case "unsettled":
+		case "needs_action":
 			return event.subject.kind !== "agent"
 				? `item ${prKey(event.subject.item)}`
 				: `agent ${event.subject.agent.id}`;
