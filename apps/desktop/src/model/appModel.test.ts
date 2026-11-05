@@ -1143,6 +1143,60 @@ describe("Back and Forward", () => {
     expect(model.selection).toEqual({ context: A, presentation: "beside" });
   });
 
+  it("records a place gone to on purpose at once, and skips what was passed through", () => {
+    const model = modelWith(
+      [WS_A, "/dev/a"],
+      [WS_B, "/dev/b"],
+      [WS_C, "/dev/c"],
+    );
+    // A click on A's row; B only passed through (`Cmd+Q N`); C chosen (`Cmd+Q F`).
+    model.selectContext(A, "full", "explicit");
+    model.selectContext(B);
+    model.selectContext(C, "full", "explicit");
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual(A);
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual(scratchOf(model));
+    expect(model.navigateHistory("back")).toBe(false);
+    model.navigateHistory("forward");
+    model.navigateHistory("forward");
+    expect(model.selection.context).toEqual(C);
+    expect(history(model).canGoForward).toBe(false);
+  });
+
+  it("records nothing for cycling alone", () => {
+    const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
+    model.selectContext(A);
+    model.selectContext(B);
+    // Back from a place with no entry is the cursor's own: Scratch, and no further.
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual(scratchOf(model));
+    expect(history(model)).toEqual({ canGoBack: false, canGoForward: false });
+  });
+
+  it("adds no entry for choosing the place already recorded", () => {
+    const model = modelWith([WS_A, "/dev/a"]);
+    model.selectContext(A, "full", "explicit");
+    const revision = model.snapshot().revision;
+    model.selectContext(A, "full", "explicit");
+    expect(model.snapshot().revision).toBe(revision);
+    expect(model.navigateHistory("back")).toBe(true);
+    expect(model.selection.context).toEqual(scratchOf(model));
+    expect(model.navigateHistory("back")).toBe(false);
+  });
+
+  it("records an explicit choice of the place on screen that had no entry", () => {
+    const model = modelWith([WS_A, "/dev/a"], [WS_B, "/dev/b"]);
+    visit(model, A);
+    model.selectContext(B);
+    // Clicking the row of B, already selected but never recorded.
+    model.selectContext(B, "full", "explicit");
+    model.navigateHistory("back");
+    expect(model.selection.context).toEqual(A);
+    model.navigateHistory("forward");
+    expect(model.selection.context).toEqual(B);
+  });
+
   it("starts again from a reset", () => {
     const model = modelWith([WS_A, "/dev/a"]);
     model.selectContext(A);

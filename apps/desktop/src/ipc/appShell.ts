@@ -686,6 +686,14 @@ export type AppIntentWire =
 			 * whatever this says.
 			 */
 			readonly split?: boolean;
+			/**
+			 * `"explicit"`: somebody chose to go there — a click on its Sidebar
+			 * row, the command line's `focus` — so it is a place for Back and
+			 * Forward at once. Absent is passing through (`Cmd+Q N`/`P`, the
+			 * Sidebar's keyboard), recorded only once something is done there.
+			 * See `NavigationReason` in `model/intents.ts`.
+			 */
+			readonly reason?: "explicit";
 			readonly type: "select_context";
 	  }
 	| { readonly type: "resize_sidebar"; readonly width: number }

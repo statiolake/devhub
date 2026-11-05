@@ -119,6 +119,12 @@ function setTreeTabStop(
  * *after* the selection has been applied, because the child the keys belong to
  * is a function of the selection: asked any earlier it would answer with the
  * row that was selected a moment ago.
+ *
+ * **A click is a destination.** The same `detail` says whether the row is a
+ * place for Back and Forward: a click on it is going there on purpose, so the
+ * selection carries `reason: "explicit"` and is recorded at once, where
+ * walking the list from the keyboard is passing over rows and records only
+ * what is then used (`NavigationReason`, `docs/window-and-pages.md`).
  */
 function useSelectRow(): (
   event: { readonly detail: number },
@@ -128,7 +134,11 @@ function useSelectRow(): (
   return useCallback(
     (event: { readonly detail: number }, intent: AppIntent) => {
       const byPointer = event.detail > 0;
-      void dispatch(intent).then(() => {
+      const chosen: AppIntent =
+        byPointer && intent.type === "select_context"
+          ? { ...intent, reason: "explicit" }
+          : intent;
+      void dispatch(chosen).then(() => {
         if (byPointer) void devhub().focusSurface();
       });
     },

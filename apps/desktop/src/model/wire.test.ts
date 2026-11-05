@@ -424,6 +424,25 @@ describe("a name somebody gave an Agent, across the wire", () => {
   });
 });
 
+describe("why a selection moves, across the wire", () => {
+  const WORKSPACE = "22222222-2222-4222-8222-222222222222";
+  const select = (reason?: unknown) =>
+    intentFromWire({
+      type: "select_context",
+      context: { kind: "workspace", workspaceId: WORKSPACE },
+      ...(reason === undefined ? {} : { reason }),
+    } as AppIntentWire);
+
+  it("carries an explicit destination (a click on a Sidebar row)", () => {
+    expect(select("explicit")).toMatchObject({ reason: "explicit" });
+  });
+
+  it("says nothing for passing through, or for a word it does not know", () => {
+    expect("reason" in select()).toBe(false);
+    expect("reason" in select("sideways")).toBe(false);
+  });
+});
+
 describe("an automatic action ticked, across the wire", () => {
   const AGENT = "33333333-3333-4333-8333-333333333333";
   const tick = (actionId: unknown, automatic: unknown) =>

@@ -363,6 +363,84 @@ describe("opening a folder", () => {
   });
 });
 
+/**
+ * Back and Forward over the ways of going somewhere the coordinator carries:
+ * an explicit one (`Cmd+Q F`'s picker, a click on a Sidebar row, the command
+ * line's `focus`) is a place at once; a selection passing through is not.
+ */
+describe("explicit destinations, for Back and Forward", () => {
+  const PROJECT = { kind: "workspace", workspaceId: WS_A } as const;
+  const scratch = (driver: Driver) =>
+    ({
+      kind: "workspace",
+      workspaceId: driver.coordinator.model.scratchWorkspaceId,
+    }) as const;
+  const select = (
+    driver: Driver,
+    context: NavigationContext,
+    reason?: "explicit",
+  ) => {
+    driver.dispatch({
+      type: "select_context",
+      context,
+      presentation: "full",
+      ...(reason === undefined ? {} : { reason }),
+    });
+    driver.settle();
+  };
+  const openExplicitly = (driver: Driver, path: string) => {
+    driver.dispatch({
+      type: "open_folder",
+      location: requestedLocation({ kind: "local", path }),
+      reason: "explicit",
+    });
+    driver.settle();
+  };
+  const back = (driver: Driver) => {
+    driver.dispatch({ type: "navigate_history", direction: "back" });
+    driver.settle();
+    return driver.coordinator.snapshot().selection.context;
+  };
+
+  it("records a folder opened on purpose (Cmd+Q F) the moment it is selected", () => {
+    const driver = new Driver();
+    openExplicitly(driver, "/dev/project");
+    select(driver, scratch(driver));
+    expect(back(driver)).toEqual(PROJECT);
+    expect(back(driver)).toEqual(scratch(driver));
+  });
+
+  it("records one that was open already, opened on purpose again", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    select(driver, scratch(driver));
+    openExplicitly(driver, "/dev/project");
+    select(driver, scratch(driver));
+    expect(back(driver)).toEqual(PROJECT);
+  });
+
+  it("records nothing for an open that did not say so", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    select(driver, scratch(driver));
+    expect(driver.coordinator.snapshot().history.canGoBack).toBe(false);
+  });
+
+  it("records a selection that says it is explicit, and not one passing through", () => {
+    const driver = new Driver();
+    driver.openFolder("/dev/project");
+    select(driver, scratch(driver));
+    // Passing through (`Cmd+Q N`/`P`): no entry, so nowhere behind Scratch.
+    select(driver, PROJECT);
+    select(driver, scratch(driver));
+    expect(driver.coordinator.snapshot().history.canGoBack).toBe(false);
+    // A click on its row: an entry.
+    select(driver, PROJECT, "explicit");
+    select(driver, scratch(driver));
+    expect(back(driver)).toEqual(PROJECT);
+  });
+});
+
 describe("opening a folder on another machine", () => {
   // An ssh open used to skip resolution and become a Workspace with the path
   // as typed. On a host whose `$HOME` is a symlink — `/home/x` canonically

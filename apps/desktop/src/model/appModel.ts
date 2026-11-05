@@ -8,7 +8,7 @@
  * already seen.
  */
 
-import type { IntentFocus } from "./intents.js";
+import type { IntentFocus, NavigationReason } from "./intents.js";
 import {
   Agent,
   AgentProfile,
@@ -514,8 +514,10 @@ export class AppModel {
    * Not every selection: a place enters it when the person interacts with it
    * while it is shown (`noteInteraction`, which main raises for a key, a
    * click or a scroll inside the page's views), or when they arrived on
-   * purpose — a new Agent (`addAgent`), and main's explicit opens. Passing
-   * over a place with `Cmd+Q N/P` or a Sidebar row records nothing. Going
+   * purpose — a new Agent (`addAgent`), and a selection made with
+   * `reason: "explicit"` (a click on a Sidebar row, `Cmd+Q F`, the command
+   * line's `focus`; `NavigationReason`). Passing over a place with
+   * `Cmd+Q N/P`, a digit or the Sidebar's keyboard records nothing. Going
    * Back moves the cursor before it selects. See `model/navigationHistory.ts`.
    */
   private readonly history: NavigationHistory<NavigationSelection>;
@@ -1398,10 +1400,15 @@ export class AppModel {
    * invariant a fact about the stored value rather than a rule every reader has
    * to remember — there is no selection carrying a `beside` nothing would
    * honour.
+   *
+   * `reason` is for Back and Forward: `"explicit"` records the selection in
+   * the history now; absent leaves that to an interaction there
+   * (`NavigationReason`).
    */
   selectContext(
     context: NavigationContext,
     presentation: SurfacePresentation = "full",
+    reason?: NavigationReason,
   ): void {
     // The orchestrator agent is shown on its own row: selecting it is
     // selecting that row, however it was asked for.
@@ -1440,7 +1447,11 @@ export class AppModel {
     // `terminalActivity.ts`).
     const readAgent = this.readVisibleAgent();
     const readTerminals = this.readVisibleTerminals();
-    if (moved || readAgent || readTerminals || leftTerminal) {
+    // Going there on purpose is being there: it enters Back and Forward's
+    // history now, by the rule an interaction would record it by — so the
+    // row of the place already recorded adds nothing.
+    const recorded = reason === "explicit" && this.recordSelection();
+    if (moved || readAgent || readTerminals || leftTerminal || recorded) {
       this.bumpRevision();
     }
   }

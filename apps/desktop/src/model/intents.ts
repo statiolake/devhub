@@ -58,6 +58,20 @@ import type { WorkspaceTerminalObservation } from "./terminalActivity.js";
  */
 export type IntentFocus = "none";
 
+/**
+ * Why the selection is moving, for Back and Forward's history.
+ *
+ * Absent is passing through: `Cmd+Q N`/`P`, a digit, the tab picker, the
+ * Sidebar's keyboard, a selection repaired after a close. The place enters
+ * the history only once somebody does something in it
+ * (`AppModel.noteInteraction`). `"explicit"` is going there on purpose — a
+ * click on a Sidebar row, `Cmd+Q F`'s picker, `devhub --tell focus` — and it
+ * is recorded at once, by the same rule an interaction is (the place the
+ * cursor already names is not a second entry). See
+ * `docs/window-and-pages.md` (Back and Forward).
+ */
+export type NavigationReason = "explicit";
+
 export type AppReadiness = "starting" | "ready" | "unavailable";
 
 declare const brand: unique symbol;
@@ -218,6 +232,8 @@ export type UserIntent =
       readonly context: NavigationContext;
       /** How much of the content area it should take. Only Agents have two. */
       readonly presentation: SurfacePresentation;
+      /** `"explicit"`: a place for Back and Forward now (`NavigationReason`). */
+      readonly reason?: NavigationReason;
     }
   /**
    * Side by side: put the keyboard in the other half.
@@ -356,6 +372,12 @@ export type UserIntent =
       readonly location: RequestedWorkspaceLocation;
       /** `"none"`: open it without selecting it (`IntentFocus`). */
       readonly focus?: IntentFocus;
+      /**
+       * `"explicit"`: the Workspace it selects is a place for Back and
+       * Forward at once (`NavigationReason`). Meaningless with `focus: "none"`,
+       * which selects nothing.
+       */
+      readonly reason?: NavigationReason;
     }
   | { readonly type: "new_window"; readonly path?: RequestedPath }
   | { readonly type: "retry_workspace"; readonly workspaceId: WorkspaceId }

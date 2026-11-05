@@ -188,4 +188,16 @@ describe("the Orchestrator row", () => {
       context: { kind: "orchestrator" },
     });
   });
+  it("selects it as a place for Back and Forward when clicked", () => {
+    const dispatch = mount(snapshot(false), EMPTY_BOARD);
+    fireEvent.click(
+      within(treeItems()[0]!).getByRole("button", { name: /^Orchestrator/u }),
+      { detail: 1 },
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "select_context",
+      context: { kind: "orchestrator" },
+      reason: "explicit",
+    });
+  });
 });

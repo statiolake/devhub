@@ -263,3 +263,52 @@ describe("opening an Agent beside the workbench", () => {
     expect((await select({})).split).toBe(false);
   });
 });
+
+/**
+ * Back and Forward's half of the same `detail`: a click on a row is going
+ * there on purpose, so the selection says so and main records it at once
+ * (`NavigationReason`); walking the list from the keyboard is passing over
+ * rows, recorded only once something is done in one.
+ */
+describe("a pointer selection is a place for Back and Forward", () => {
+  const dispatched = async (
+    target: () => HTMLElement,
+    detail: number,
+  ): Promise<{ reason?: string }> => {
+    const dispatch = mount();
+    fireEvent.click(target(), { detail });
+    await vi.waitFor(() => {
+      expect(dispatch).toHaveBeenCalledTimes(1);
+    });
+    return dispatch.mock.calls[0]?.[0] as { reason?: string };
+  };
+
+  it("from a Workspace row", async () => {
+    expect((await dispatched(() => row("workspace:w-1"), 1)).reason).toBe(
+      "explicit",
+    );
+  });
+
+  it("from an Agent row", async () => {
+    expect((await dispatched(() => row("agent:a-1"), 1)).reason).toBe(
+      "explicit",
+    );
+  });
+
+  it("from Scratch", async () => {
+    expect(
+      (
+        await dispatched(
+          () => screen.getByRole("button", { name: /^Scratch workspace/ }),
+          1,
+        )
+      ).reason,
+    ).toBe("explicit");
+  });
+
+  it("but not from Return on a focused row", async () => {
+    expect(
+      (await dispatched(() => row("agent:a-1"), 0)).reason,
+    ).toBeUndefined();
+  });
+});

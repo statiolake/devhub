@@ -75,6 +75,7 @@ import {
   type IntentOutcome,
   type OperationId,
   type OperationToken,
+  type NavigationReason,
   type ProviderEvent,
   type ProviderEventEnvelope,
   type ProviderEventId,
@@ -501,6 +502,12 @@ export class AppCoordinator {
    * selected (`IntentFocus`). Cleared when the operation ends either way.
    */
   private readonly unfocused = new Set<OperationId>();
+  /**
+   * The folder opens asked for with `reason: "explicit"`: the Workspace each
+   * selects is a place in Back and Forward's history at once
+   * (`NavigationReason`). Cleared when the operation ends either way.
+   */
+  private readonly explicitOpens = new Set<OperationId>();
   private readonly requestedPresentations = new Map<
     OperationId,
     {
@@ -674,7 +681,11 @@ export class AppCoordinator {
     const beforeRevision = this.model.snapshot().revision;
     switch (intent.type) {
       case "select_context":
-        this.model.selectContext(intent.context, intent.presentation);
+        this.model.selectContext(
+          intent.context,
+          intent.presentation,
+          intent.reason,
+        );
         return this.transitionOutcome(beforeRevision, id);
       case "swap_split_focus":
         this.model.swapSplitFocus();
@@ -729,6 +740,7 @@ export class AppCoordinator {
         return this.transitionOutcome(beforeRevision, id);
       case "open_folder":
         if (intent.focus === "none") this.unfocused.add(id);
+        else if (intent.reason === "explicit") this.explicitOpens.add(id);
         return this.beginWorkspaceResolution(intent.location, id);
       case "new_window": {
         if (intent.path !== undefined) {
@@ -1541,11 +1553,17 @@ export class AppCoordinator {
     throw new NamedFailure(failure);
   }
 
+  /** Why a folder open selects what it selects, spent by asking. */
+  private openReason(id: OperationId): NavigationReason | undefined {
+    return this.explicitOpens.delete(id) ? "explicit" : undefined;
+  }
+
   private clearOperationAuxiliaryState(token: OperationToken): void {
     const id = token.operationId;
     this.resolvedLocations.delete(id);
     this.requestedPresentations.delete(id);
     this.unfocused.delete(id);
+    this.explicitOpens.delete(id);
     this.resolvedProfiles.delete(id);
     this.launchProfiles.delete(id);
     this.replacedByLaunch.delete(id);
@@ -1625,11 +1643,13 @@ export class AppCoordinator {
     );
     if (existing) {
       const beforeRevision = this.model.snapshot().revision;
+      const reason = this.openReason(token.operationId);
       if (!this.unfocused.delete(token.operationId))
-        this.model.selectContext({
-          kind: "workspace",
-          workspaceId: existing.id,
-        });
+        this.model.selectContext(
+          { kind: "workspace", workspaceId: existing.id },
+          "full",
+          reason,
+        );
       const snapshot = this.snapshot();
       if (snapshot.revision !== beforeRevision) {
         this.emit({ kind: "snapshot", snapshot });
@@ -1654,8 +1674,13 @@ export class AppCoordinator {
     // same of one that was open already. Nothing else selects it: a workbench
     // DevHub builds for a Workspace does not report itself back. Unless the
     // command line asked: then it is in the Sidebar, and nothing moves.
+    const reason = this.openReason(token.operationId);
     if (!this.unfocused.delete(token.operationId))
-      this.model.selectContext({ kind: "workspace", workspaceId });
+      this.model.selectContext(
+        { kind: "workspace", workspaceId },
+        "full",
+        reason,
+      );
     const snapshot = this.snapshot();
     this.emit({ kind: "snapshot", snapshot });
     this.emit({ kind: "operation_completed", token });

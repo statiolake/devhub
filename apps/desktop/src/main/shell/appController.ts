@@ -7736,9 +7736,15 @@ export class AppController {
 		const openBefore = new Set(
 			this.coordinator.model.workspaces.map((workspace) => workspace.id),
 		);
+		// An explicit open of the folder alone is a place for Back and Forward
+		// the moment it is selected. One opened for an Agent is not: the Agent
+		// it then makes is the place (`AppModel.addAgent`).
 		const opened = await this.dispatchAwaiting({
 			type: "open_folder",
 			location,
+			...(opening === "explicit" && withAgent === undefined
+				? { reason: "explicit" as const }
+				: {}),
 		});
 		if (anchor !== undefined) {
 			const workspaceId = this.openedWorkspaceId(location);
@@ -7827,7 +7833,8 @@ export class AppController {
 	/**
 	 * A Workspace somebody opened on purpose: its editor starts or wakes now
 	 * if it is what the Workspace shows (the lifecycle ignores the ask when
-	 * the editor area shows the terminal), and it is a place in the history.
+	 * the editor area shows the terminal). It is already a place in the
+	 * history: the open said `reason: "explicit"`.
 	 */
 	private openedOnPurpose(location: RequestedWorkspaceLocation): void {
 		const workspace = this.coordinator.model.workspace(
@@ -7835,7 +7842,6 @@ export class AppController {
 		);
 		if (workspace === undefined) return;
 		this.askForWorkbench(workspace.key, "opened");
-		this.noteInteraction();
 	}
 
 	/**
@@ -9548,6 +9554,7 @@ export class AppController {
 						intentFromWire({
 							type: "select_context",
 							context: { kind: "orchestrator" },
+							reason: "explicit",
 						}),
 					);
 					this.bringToFront();
@@ -9723,11 +9730,14 @@ export class AppController {
 				if (!isCommandId(id) || this.chordHost === undefined) return false;
 				return runCommand(this.chordHost, id);
 			},
+			// `focus` is the command line going somewhere on purpose: the place
+			// enters Back and Forward's history at once (`NavigationReason`).
 			focusWorkspace: async (workspaceId) => {
 				await this.dispatchAwaiting(
 					intentFromWire({
 						type: "select_context",
 						context: { kind: "workspace", workspaceId },
+						reason: "explicit",
 					}),
 				);
 				await this.syncEditorView();
@@ -9738,6 +9748,7 @@ export class AppController {
 					intentFromWire({
 						type: "select_context",
 						context: { kind: "agent", agentId },
+						reason: "explicit",
 					}),
 				);
 				this.bringToFront();

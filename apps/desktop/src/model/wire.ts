@@ -1082,6 +1082,8 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
       // is. The two words meet here, once, and `split` is absent for every
       // plain click and every plain Return.
       const presentation = presentationFrom(wire.split);
+      // Anything but the one word is passing through, as absent is.
+      const reason = wire.reason === "explicit" ? { reason: wire.reason } : {};
       switch (context.kind) {
         case "workspace":
           return {
@@ -1093,6 +1095,7 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
               ),
             },
             presentation,
+            ...reason,
           };
         case "agent":
           return {
@@ -1102,12 +1105,14 @@ export function intentFromWire(wire: AppIntentWire): UserIntent {
               agentId: tryParse(() => parseAgentId(context.agentId)),
             },
             presentation,
+            ...reason,
           };
         case "orchestrator":
           return {
             type: "select_context",
             context: { kind: "orchestrator" },
             presentation: "full",
+            ...reason,
           };
       }
       break;

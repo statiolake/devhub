@@ -1011,13 +1011,13 @@ pages to drift from it.
 **A place enters it once somebody does something there**, not when the
 selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
 
-| What happened while the place was shown                                                                                                                             | Recorded?             |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                              | yes, at the first one |
-| a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                        | yes, at the first one |
-| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F` …), Enter or a click on a discarded editor's placeholder | yes                   |
-| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, a Sidebar row, `Cmd+Q Shift+J`, a selection repaired after a close                                                    | no                    |
-| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                | no                    |
+| What happened while the place was shown                                                                                                                                                                                                                                 | Recorded?             |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                                                                                                                                  | yes, at the first one |
+| a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                                                                                                                            | yes, at the first one |
+| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F`'s picker …), a click on a Sidebar row (a Workspace, an Agent, Scratch, the Orchestrator), `devhub --tell focus`, Enter or a click on a discarded editor's placeholder | yes, at once          |
+| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, the Sidebar walked from the keyboard (its Return included), `Cmd+Q Shift+J`, a selection repaired after a close, a command line that does not take focus                                                                  | no                    |
+| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                    | no                    |
 
 "In it" means its views: a workbench (and what it hosts), the Agents' page (a
 GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`, the
@@ -1034,6 +1034,17 @@ is the selection at that moment, deduplicated against the cursor's entry
 one `note_interaction`). From a place with no entry, Back goes to the cursor's
 own entry — the last place recorded — and Forward is what it was: passing on
 cuts nothing off; doing something there does.
+
+Arriving on purpose is said by the move itself, never inferred from the
+input: a selection or a folder open that carries `reason: "explicit"`
+(`NavigationReason` in `model/intents.ts`) is recorded by the model the moment
+it is made, by the same rule an interaction is — the place the cursor already
+names adds nothing, so clicking the row you are on is not a second entry. The
+Sidebar tells a click from Return by the click's `detail` (`useSelectRow`), the
+picker's open says it in `openFolder` (not for a folder opened _for_ an Agent:
+the Agent is the place), and `focus` from the command line says it in its port.
+There are no tabs or pane headers to click: a press in either half of a split
+is already an interaction there.
 
 The rest of the rules are `model/navigationHistory.ts`'s, and they are a
 browser's: going back and then doing something somewhere new cuts Forward
