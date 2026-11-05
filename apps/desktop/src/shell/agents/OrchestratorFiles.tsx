@@ -198,6 +198,7 @@ export function FilesPage({
           file={files.get(shown)}
           leaving={!reading}
           agentId={orchestratorAgentId}
+          folderRoot={root?.root}
           onBack={() => {
             close();
           }}
@@ -278,6 +279,7 @@ function FileView({
   file,
   leaving,
   agentId,
+  folderRoot,
   onBack,
   onOpenInEditor,
 }: {
@@ -285,6 +287,8 @@ function FileView({
   readonly file: OrchestratorFileWire | undefined;
   readonly leaving: boolean;
   readonly agentId: string | undefined;
+  /** The folder's root, absolute: what the file's relative paths start from. */
+  readonly folderRoot: string | undefined;
   readonly onBack: () => void;
   readonly onOpenInEditor: () => void;
 }) {
@@ -343,7 +347,17 @@ function FileView({
         tabIndex={-1}
         aria-label={path}
       >
-        <FileBody file={file} agentId={agentId} />
+        <FileBody
+          file={file}
+          agentId={agentId}
+          cwd={
+            folderRoot === undefined
+              ? undefined
+              : folder === ""
+                ? folderRoot
+                : `${folderRoot}/${folder}`
+          }
+        />
       </div>
     </div>
   );
@@ -352,14 +366,16 @@ function FileView({
 function FileBody({
   file,
   agentId,
+  cwd,
 }: {
   readonly file: OrchestratorFileWire | undefined;
   readonly agentId: string | undefined;
+  readonly cwd: string | undefined;
 }) {
   if (file === undefined) return null;
   switch (file.kind) {
     case "markdown":
-      return <RichText source={file.text ?? ""} agentId={agentId} />;
+      return <RichText source={file.text ?? ""} agentId={agentId} cwd={cwd} />;
     case "text":
       return (
         <RichText

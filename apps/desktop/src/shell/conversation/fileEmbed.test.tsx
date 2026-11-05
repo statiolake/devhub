@@ -153,8 +153,43 @@ describe("a file an answer embeds", () => {
     );
   });
 
-  it("is a link to the file inside a line of text", () => {
+  it("is a link to the file inside a line of text when there is no picture to draw", async () => {
     draw("See ![the plot](out/plot.png) here.\n", filesAt({}));
-    expect(screen.getByRole("link", { name: "the plot" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "the plot" }),
+    ).toBeInTheDocument();
+    draw("See ![notes](out/notes.md) here.\n", filesAt({}));
+    expect(screen.getByRole("link", { name: "notes" })).toBeInTheDocument();
+  });
+
+  it("draws a picture inside a line of text in place", async () => {
+    draw(
+      "See ![the plot](out/plot.png) here.\n",
+      filesAt({ "/w/out/plot.png": file(new Uint8Array([137, 80, 78, 71])) }),
+    );
+    const image = await screen.findByRole("img", { name: "the plot" });
+    expect(image).toHaveClass("conversation-inline-image");
+    expect(image.getAttribute("src")).toMatch(/^data:image\/png;base64,/u);
+  });
+
+  it("draws screenshots and SVGs inside a table's cells, and opens one large", async () => {
+    draw(
+      [
+        "| 画面 | 図 |",
+        "|---|---|",
+        "| ![旧](out/old.png) | ![流れ](/abs/flow.svg) |",
+        "",
+      ].join("\n"),
+      filesAt({
+        "/w/out/old.png": file(new Uint8Array([137, 80, 78, 71])),
+        "/abs/flow.svg": file(SVG("flow")),
+      }),
+    );
+    const old = await screen.findByRole("img", { name: "旧" });
+    const flow = await screen.findByRole("img", { name: "流れ" });
+    expect(old.closest("td")).not.toBeNull();
+    expect(flow.getAttribute("src")).toMatch(/^data:image\/svg\+xml;base64,/u);
+    fireEvent.click(old);
+    expect(screen.getByRole("dialog", { name: "旧" })).toBeInTheDocument();
   });
 });

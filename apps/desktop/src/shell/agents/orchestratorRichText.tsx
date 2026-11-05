@@ -2,7 +2,8 @@
  * The conversation's Markdown renderer, set up for the Orchestrator screen's
  * left pane — an escalation's thread, a file in the orchestrator's folder —
  * where nothing is a conversation: links, copies and diagrams go through the
- * bridge, and a file path is looked up on `agentId`'s machine.
+ * bridge; a file it draws (`![…](path)`) is read on this Mac, relative to
+ * `cwd`, and one it links is opened on `agentId`'s.
  */
 
 import { useMemo } from "react";
@@ -58,18 +59,12 @@ function useThreadActions(
       openMcp: () => undefined,
       restart: none,
       saveDraft: () => Promise.resolve(),
-      resolvePaths: (cwd, paths) =>
-        agentId === undefined
-          ? Promise.resolve(paths.map(() => null))
-          : bridge.conversation.resolvePaths(agentId, cwd, paths),
-      readEmbedFile: (path) =>
-        agentId === undefined
-          ? Promise.resolve(null)
-          : bridge.conversation.readEmbedFile(agentId, path),
-      embedSignature: (path) =>
-        agentId === undefined
-          ? Promise.resolve(null)
-          : bridge.conversation.embedSignature(agentId, path),
+      // On this Mac, through the conversation's own readers, whether or not
+      // the agent is still there: an escalation's pictures are copied into
+      // its own folder when it is raised.
+      resolvePaths: (cwd, paths) => bridge.resolveEscalationPaths(cwd, paths),
+      readEmbedFile: (path) => bridge.readEscalationEmbed(path),
+      embedSignature: (path) => bridge.escalationEmbedSignature(path),
       openFile: (path, range) =>
         agentId === undefined
           ? none()
@@ -83,9 +78,12 @@ function useThreadActions(
 export function RichText({
   source,
   agentId,
+  cwd,
 }: {
   readonly source: string;
   readonly agentId: string | undefined;
+  /** What a relative path in it is relative to. */
+  readonly cwd?: string;
 }) {
   const { reportFailure } = useAgents();
   const actions = useThreadActions(agentId, reportFailure);
@@ -96,7 +94,7 @@ export function RichText({
   return (
     <ConversationActionsProvider value={actions}>
       <PathLinksProvider value={links}>
-        <AgentCwdProvider value={undefined}>
+        <AgentCwdProvider value={cwd}>
           <Markdown source={source} streaming={false} />
         </AgentCwdProvider>
       </PathLinksProvider>

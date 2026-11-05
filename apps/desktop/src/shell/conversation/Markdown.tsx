@@ -41,7 +41,7 @@ import { normalizeMath } from "./mathDelimiters";
 import { fileNotFoundError } from "../failure";
 import { CodeBlock } from "./CodeBlock";
 import { FencePreview } from "./Preview";
-import { FileEmbed, isLocalSource } from "./FileEmbed";
+import { FileEmbed, InlineImage, isLocalSource } from "./FileEmbed";
 import { previewKindOfFence } from "./previewKinds";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
@@ -258,11 +258,15 @@ function componentsFor(settled: boolean, depth: number): Components {
       }
       return <p>{children}</p>;
     },
-    // An image of a file inside a line of text is a link to the file (the
-    // page has no way to load one); any other is drawn as it always was.
+    // An image of a file inside a line of text or a table cell is drawn in
+    // place from the file's bytes, when it is a picture (`InlineImage`), and
+    // is a link to the file otherwise; any other is drawn as it always was.
     img({ src, alt }) {
       if (typeof src === "string" && isLocalSource(src)) {
-        return <ExternalLink href={src}>{alt || src}</ExternalLink>;
+        const link = <ExternalLink href={src}>{alt || src}</ExternalLink>;
+        const path = pathOfHref(src)?.path;
+        if (!settled || path === undefined) return link;
+        return <InlineImage path={path} alt={alt ?? ""} fallback={link} />;
       }
       return <img src={src} alt={alt} />;
     },

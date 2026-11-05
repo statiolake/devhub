@@ -38,6 +38,7 @@ import {
 } from "./embedContext";
 import { imageUrl } from "./EntryParts";
 import { FencePreview } from "./Preview";
+import { Lightbox, LightboxPicture, opensLightbox } from "./Lightbox";
 import {
   extensionOf,
   previewKindOfFile,
@@ -294,5 +295,100 @@ export const FileEmbed = memo(function FileEmbed({
     <div className="conversation-embed" ref={box} data-path={path}>
       {body}
     </div>
+  );
+});
+
+/** The pictures a line of text, or a table cell, draws in place. */
+const INLINE_PICTURES: Readonly<Record<string, string>> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".bmp": "image/bmp",
+  ".svg": "image/svg+xml",
+};
+
+/** Whether a local image inside a line (a table cell) is drawn in place. */
+export function isInlinePicture(path: string): boolean {
+  return extensionOf(path) in INLINE_PICTURES;
+}
+
+/**
+ * A local picture inside a line of text or a table cell — a screenshot in a
+ * comparison table — drawn in place from its bytes (read as an embed is:
+ * `resolvePaths`, `readEmbedFile`), at most the cell's width and a modest
+ * height, its aspect kept; a click opens it large. What is not a picture,
+ * or not there, is `fallback`: a link to the file, as before.
+ */
+export const InlineImage = memo(function InlineImage({
+  path,
+  alt,
+  fallback,
+}: {
+  readonly path: string;
+  readonly alt: string;
+  readonly fallback: ReactNode;
+}) {
+  const { resolvePaths, readEmbedFile } = useConversationActions();
+  const agentCwd = useAgentCwd();
+  const base = useContext(EmbedBaseContext);
+  const cwd = base ?? agentCwd;
+  const picture = isInlinePicture(path);
+  // undefined while reading; null when it is not drawn.
+  const [url, setUrl] = useState<string | null | undefined>(
+    picture ? undefined : null,
+  );
+  const [enlarged, setEnlarged] = useState(false);
+  useEffect(() => {
+    if (!picture) return;
+    let current = true;
+    void (async () => {
+      const [absolute] = await resolvePaths(cwd, [path]);
+      if (typeof absolute !== "string") return null;
+      const file = await readEmbedFile(absolute);
+      if (file === null) return null;
+      const mediaType = file.mediaType.startsWith("image/")
+        ? file.mediaType
+        : INLINE_PICTURES[extensionOf(absolute)];
+      return mediaType === undefined
+        ? null
+        : `data:${mediaType};base64,${base64Of(file.bytes)}`;
+    })()
+      .catch(() => null)
+      .then((drawn) => {
+        if (current) setUrl(drawn);
+      });
+    return () => {
+      current = false;
+    };
+  }, [picture, cwd, path, resolvePaths, readEmbedFile]);
+  if (url === null) return <>{fallback}</>;
+  const label = alt || path;
+  if (url === undefined)
+    return (
+      <span className="conversation-inline-image is-reading" aria-busy="true">
+        {label}
+      </span>
+    );
+  return (
+    <>
+      <img
+        className="conversation-inline-image"
+        src={url}
+        alt={label}
+        title={path}
+        draggable={false}
+        onClick={(event) => {
+          if (opensLightbox(event)) setEnlarged(true);
+        }}
+      />
+      {enlarged ? (
+        <Lightbox label={label} onClose={() => setEnlarged(false)}>
+          <LightboxPicture src={url} alt={label} />
+        </Lightbox>
+      ) : null}
+    </>
   );
 });

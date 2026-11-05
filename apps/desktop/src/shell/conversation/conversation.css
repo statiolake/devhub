@@ -4030,3 +4030,32 @@ button.conversation-setting-face:focus-visible {
 .conversation-dictation-tentative {
   animation: conversation-fade-in var(--motion-fast) var(--ease-enter);
 }
+
+/* A local picture inside a line or a table cell (`InlineImage`): at most the
+   cell's width and a modest height, its aspect kept; a click opens it large. */
+.conversation-inline-image {
+  display: inline-block;
+  max-width: 100%;
+  max-height: 320px;
+  height: auto;
+  vertical-align: middle;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--line-soft);
+  cursor: zoom-in;
+}
+
+.conversation-inline-image.is-reading {
+  min-width: 48px;
+  min-height: 1.4em;
+  padding: 0 4px;
+  background: var(--wash);
+  box-shadow: none;
+  color: var(--tertiary);
+  cursor: default;
+  font-size: 0.9em;
+}
+
+td .conversation-inline-image,
+th .conversation-inline-image {
+  max-height: 240px;
+}

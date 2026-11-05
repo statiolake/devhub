@@ -14,6 +14,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,14 +22,46 @@ import type { AppSnapshot } from "../../ipc/appShell";
 import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
 import { installHistoryButtons } from "../historyButtons";
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
-import { NAV_MS, OrchestratorBoard, preview, span } from "./OrchestratorScreen";
+import {
+  escalationBase,
+  NAV_MS,
+  OrchestratorBoard,
+  preview,
+  span,
+} from "./OrchestratorScreen";
 
 const answerEscalation = vi.fn(() => Promise.resolve());
+/** The files an escalation's thread may draw, by absolute path. */
+const FILES: Record<string, Uint8Array> = {
+  "/w/payments/out/shot.png": new Uint8Array([137, 80, 78, 71]),
+  "/abs/flow.svg": new TextEncoder().encode(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>',
+  ),
+};
+const resolveEscalationPaths = vi.fn(
+  (cwd: string | undefined, paths: readonly string[]) =>
+    Promise.resolve(
+      paths.map((path) => {
+        const absolute = path.startsWith("/") ? path : `${cwd ?? ""}/${path}`;
+        return absolute in FILES ? absolute : null;
+      }),
+    ),
+);
+const readEscalationEmbed = vi.fn((path: string) =>
+  Promise.resolve(
+    FILES[path] === undefined
+      ? null
+      : { mediaType: "", bytes: FILES[path], signature: "1" },
+  ),
+);
 window.devhub = {
   answerEscalation,
   setOrchestratorPaused: vi.fn(() => Promise.resolve()),
   openExternalUrl: vi.fn(() => Promise.resolve()),
   conversation: { resolvePaths: () => Promise.resolve([]) },
+  resolveEscalationPaths,
+  readEscalationEmbed,
+  escalationEmbedSignature: () => Promise.resolve(null),
 } as unknown as typeof window.devhub;
 
 afterEach(() => {
@@ -113,7 +146,10 @@ const BOARD: OrchestratorBoardWire = {
   ],
 };
 
-function mount(board: OrchestratorBoardWire = BOARD) {
+function mount(
+  board: OrchestratorBoardWire = BOARD,
+  workspaces: readonly unknown[] = [],
+) {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   render(
     <AgentsContext.Provider
@@ -121,9 +157,7 @@ function mount(board: OrchestratorBoardWire = BOARD) {
         { board, dispatch, reportFailure: vi.fn() } as unknown as AgentsValue
       }
     >
-      <OrchestratorBoard
-        snapshot={{ workspaces: [] } as unknown as AppSnapshot}
-      />
+      <OrchestratorBoard snapshot={{ workspaces } as unknown as AppSnapshot} />
     </AgentsContext.Provider>,
   );
   return dispatch;
@@ -276,6 +310,80 @@ describe("after an answer", () => {
     expect(
       screen.getByRole("textbox", { name: "Your answer to #1" }),
     ).toHaveValue("実行して");
+  });
+});
+
+describe("an escalation's pictures", () => {
+  it("draws relative and absolute images — in a table too — and an svg block, from its workspace", async () => {
+    mount(
+      {
+        ...BOARD,
+        needsAnswer: [
+          {
+            ...BOARD.needsAnswer[0]!,
+            workspaceId: "w-pay",
+            entries: [
+              {
+                role: "orchestrator",
+                markdown: [
+                  "![画面](out/shot.png)",
+                  "",
+                  "| 前 | 後 |",
+                  "|---|---|",
+                  "| ![前](out/shot.png) | ![図](/abs/flow.svg) |",
+                  "",
+                  "```svg",
+                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><rect width="4" height="4"/></svg>',
+                  "```",
+                ].join("\n"),
+                at: NOW,
+              },
+            ],
+          },
+        ],
+      },
+      [{ id: "w-pay", root: "/w/payments", agents: [] }],
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    const thread = document.querySelector(".orchestrator-thread")!;
+    await waitFor(() => {
+      expect(
+        within(thread as HTMLElement).getByRole("img", { name: "前" }),
+      ).toBeInTheDocument();
+    });
+    expect(resolveEscalationPaths).toHaveBeenCalledWith("/w/payments", [
+      "out/shot.png",
+    ]);
+    expect(
+      within(thread as HTMLElement)
+        .getByRole("img", { name: "図" })
+        .getAttribute("src"),
+    ).toMatch(/^data:image\/svg\+xml;base64,/u);
+    await waitFor(() => {
+      expect(
+        thread.querySelector(
+          '.conversation-embed[data-path="out/shot.png"] img',
+        ),
+      ).not.toBeNull();
+    });
+    expect(thread.querySelector('figure[data-kind="svg"] img')).not.toBeNull();
+  });
+
+  it("takes relative paths from the workspace, else the first agent's, else the orchestrator's folder", () => {
+    const one = BOARD.needsAnswer[0]!;
+    const workspaces = [
+      { id: "w1", root: "/w/one", agents: [] },
+      { id: "w2", root: "/w/two", agents: [{ id: "a1" }] },
+    ] as unknown as AppSnapshot["workspaces"];
+    expect(
+      escalationBase({ ...one, workspaceId: "w1" }, workspaces, "/orch"),
+    ).toBe("/w/one");
+    expect(escalationBase(one, workspaces, "/orch")).toBe("/w/two");
+    expect(escalationBase({ ...one, agents: [] }, workspaces, "/orch")).toBe(
+      "/orch",
+    );
   });
 });
 

@@ -290,7 +290,12 @@ export function OrchestratorBoard({
         </div>
       </header>
       {tab === "board" ? (
-        <BoardPage pane={section} history={history} sideButtons={sideButtons} />
+        <BoardPage
+          pane={section}
+          history={history}
+          sideButtons={sideButtons}
+          workspaces={snapshot.workspaces}
+        />
       ) : (
         <FilesPage
           pane={section}
@@ -348,14 +353,37 @@ function useReorderGlide(
 }
 
 /** The board tab: the lanes, and an escalation pushed over them. */
+/**
+ * What an escalation's relative paths are relative to: its workspace, else
+ * its first agent's, else the orchestrator's folder — as main takes its
+ * pictures in (`main/orchestrator/escalationFiles.ts`).
+ */
+export function escalationBase(
+  escalation: EscalationWire,
+  workspaces: AppSnapshot["workspaces"],
+  orchestratorRoot: string | undefined,
+): string | undefined {
+  const named = workspaces.find((one) => one.id === escalation.workspaceId);
+  const first = escalation.agents[0]?.agentId;
+  const ofAgent =
+    first === undefined
+      ? undefined
+      : workspaces.find((one) =>
+          one.agents.some((agent) => agent.id === first),
+        );
+  return named?.root ?? ofAgent?.root ?? orchestratorRoot;
+}
+
 function BoardPage({
   pane,
   history,
   sideButtons,
+  workspaces,
 }: {
   readonly pane: RefObject<HTMLElement | null>;
   readonly history: boolean;
   readonly sideButtons: RefObject<SideButtons>;
+  readonly workspaces: AppSnapshot["workspaces"];
 }) {
   const { board, dispatch } = useAgents();
   const now = useNow();
@@ -521,6 +549,7 @@ function BoardPage({
           now={now}
           leaving={!reading}
           orchestratorAgentId={board.orchestratorAgentId}
+          base={escalationBase(open, workspaces, board.start.root)}
           onBack={() => {
             close();
           }}
@@ -694,6 +723,7 @@ function EscalationView({
   leaving,
   orchestratorAgentId,
   onBack,
+  base,
   onAnswered,
   onFocusAgent,
 }: {
@@ -703,6 +733,8 @@ function EscalationView({
   readonly leaving: boolean;
   readonly orchestratorAgentId: string | undefined;
   readonly onBack: () => void;
+  /** What its relative paths are relative to (`escalationBase`). */
+  readonly base: string | undefined;
   /** The person's answer went out. */
   readonly onAnswered: (id: number) => void;
   readonly onFocusAgent: (agentId: string) => void;
@@ -850,7 +882,11 @@ function EscalationView({
                 </span>
               </div>
               <div className="orchestrator-entry-body">
-                <RichText source={entry.markdown} agentId={pathsOn} />
+                <RichText
+                  source={entry.markdown}
+                  agentId={pathsOn}
+                  cwd={base}
+                />
               </div>
             </article>
           ),

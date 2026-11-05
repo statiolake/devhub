@@ -91,6 +91,27 @@ one door (`answerEscalation` on the Agents page's bridge); no `devhub --tell`
 command and no `TellPorts` member can write a human entry, and
 `escalation answer` is refused by name. `service.test.ts` holds both.
 
+### Pictures
+
+An escalation draws what a conversation draws — ```svg, ```mermaid,
+```vega-lite, ```html, Marp, and local files as `![alt](path)`, also inside
+a table's cells (a screenshot in a comparison table is drawn in place, at
+most the cell's width, and opens large on a click; the conversation does the
+same). A relative path is relative to the escalation's workspace, else its
+first agent's, else the orchestrator's folder, and files are read with the
+conversation's own embed readers on this Mac.
+
+`escalation new` and `escalation ask` take the local images (PNG, JPEG, GIF,
+WebP, SVG, …) a body names into the escalation's own folder,
+`<userData>/devhub/escalations/<id>/`, and point the references at the
+copies, the original path kept in the alt text — so an escalation still
+shows its screenshots after the worktree that made them is gone
+(`main/orchestrator/escalationFiles.ts`). Only files under an open
+Workspace or the orchestrator's folder are taken (symlinks followed), at most
+10 MB each and 25 MB for a body; a reference that breaks a rule, or names a
+file that is not there, refuses the command with the reason. Code spans and
+fences are left alone.
+
 ### Ranking
 
 The orchestrator ranks each escalation, when it raises one and again as
