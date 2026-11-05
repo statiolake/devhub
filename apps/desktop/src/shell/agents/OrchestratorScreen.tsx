@@ -112,7 +112,6 @@ export function OrchestratorBoard({
 }) {
   const { board, reportFailure } = useAgents();
   const [tab, setTab] = useState<BoardTab>(rememberedTab);
-  const [history, setHistory] = useState(() => memory.history);
   // Something in the folder changed while the Files tab was not looked at.
   const [filesChanged, setFilesChanged] = useState(false);
   const section = useRef<HTMLElement>(null);
@@ -265,27 +264,11 @@ export function OrchestratorBoard({
             github={board.github}
             orchestratorAgentId={board.orchestratorAgentId}
           />
-          {tab === "board" ? (
-            <button
-              type="button"
-              className="orchestrator-history"
-              aria-pressed={history}
-              onClick={() => {
-                setHistory((value) => {
-                  memory.history = !value;
-                  return !value;
-                });
-              }}
-            >
-              Closed {board.closed.length > 0 ? board.closed.length : ""}
-            </button>
-          ) : null}
         </div>
       </header>
       {tab === "board" ? (
         <BoardPage
           pane={section}
-          history={history}
           sideButtons={sideButtons}
           workspaces={snapshot.workspaces}
         />
@@ -420,18 +403,24 @@ export function escalationWorkspaces(
 
 function BoardPage({
   pane,
-  history,
   sideButtons,
   workspaces,
 }: {
   readonly pane: RefObject<HTMLElement | null>;
-  readonly history: boolean;
   readonly sideButtons: RefObject<SideButtons>;
   readonly workspaces: AppSnapshot["workspaces"];
 }) {
   const { board, dispatch } = useAgents();
   const now = useNow();
   const lanes = useRef<HTMLDivElement>(null);
+  const [folded, setFolded] = useState(() => memory.folded);
+  const fold = useCallback((lane: "waiting" | "closed") => {
+    setFolded((value) => {
+      const next = { ...value, [lane]: !value[lane] };
+      memory.folded = next;
+      return next;
+    });
+  }, []);
   const all = useMemo(
     () => [
       ...board.needsAnswer,
@@ -618,6 +607,10 @@ function BoardPage({
           tone="waiting"
           count={board.waiting.length}
           empty="Nothing is waiting on a condition."
+          folded={folded.waiting}
+          onFold={() => {
+            fold("waiting");
+          }}
         >
           {board.waiting.map((one) => (
             <EscalationCard
@@ -630,26 +623,28 @@ function BoardPage({
             />
           ))}
         </Lane>
-        {history ? (
-          <Lane
-            title="Closed"
-            hint="Closed escalations, most recent first."
-            tone="closed"
-            count={board.closed.length}
-            empty="Nothing closed yet."
-          >
-            {board.closed.map((one) => (
-              <EscalationCard
-                key={one.id}
-                escalation={one}
-                now={now}
-                onOpen={() => {
-                  openCard(one);
-                }}
-              />
-            ))}
-          </Lane>
-        ) : null}
+        <Lane
+          title="完了"
+          hint="Closed escalations, most recent first."
+          tone="closed"
+          count={board.closed.length}
+          empty="Nothing closed yet."
+          folded={folded.closed}
+          onFold={() => {
+            fold("closed");
+          }}
+        >
+          {board.closed.map((one) => (
+            <EscalationCard
+              key={one.id}
+              escalation={one}
+              now={now}
+              onOpen={() => {
+                openCard(one);
+              }}
+            />
+          ))}
+        </Lane>
       </div>
       {open === undefined ? null : (
         <EscalationView
@@ -682,12 +677,19 @@ function ownsEnter(element: Element | null): boolean {
   );
 }
 
+/**
+ * One lane. A lane given `onFold` folds: its heading is a disclosure button,
+ * the chevron on the left, and a folded lane shows only the heading and its
+ * count.
+ */
 function Lane({
   title,
   hint,
   tone,
   count,
   empty,
+  folded = false,
+  onFold,
   children,
 }: {
   readonly title: string;
@@ -695,16 +697,46 @@ function Lane({
   readonly tone: "ask" | "progress" | "waiting" | "closed";
   readonly count: number;
   readonly empty: string;
+  readonly folded?: boolean;
+  readonly onFold?: () => void;
   readonly children: ReactNode;
 }) {
+  const heading = (
+    <>
+      <span className="orchestrator-lane-mark" aria-hidden="true" />
+      <span className="orchestrator-lane-title">{title}</span>
+      <span className="orchestrator-lane-count">{count}</span>
+    </>
+  );
   return (
-    <section className="orchestrator-lane" data-tone={tone} aria-label={title}>
+    <section
+      className="orchestrator-lane"
+      data-tone={tone}
+      data-folded={folded ? "true" : undefined}
+      aria-label={title}
+    >
       <h2 className="orchestrator-lane-heading" title={hint}>
-        <span className="orchestrator-lane-mark" aria-hidden="true" />
-        <span className="orchestrator-lane-title">{title}</span>
-        <span className="orchestrator-lane-count">{count}</span>
+        {onFold === undefined ? (
+          heading
+        ) : (
+          <button
+            type="button"
+            className="orchestrator-lane-fold"
+            aria-expanded={!folded}
+            onClick={onFold}
+          >
+            <svg
+              className="orchestrator-lane-chevron"
+              viewBox="0 0 10 10"
+              aria-hidden="true"
+            >
+              <path d="M3.5 2 L6.5 5 L3.5 8" />
+            </svg>
+            {heading}
+          </button>
+        )}
       </h2>
-      {count === 0 ? (
+      {folded ? null : count === 0 ? (
         <p className="orchestrator-lane-empty">{empty}</p>
       ) : (
         <ul className="orchestrator-cards">{children}</ul>

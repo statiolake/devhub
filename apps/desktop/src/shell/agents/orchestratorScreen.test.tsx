@@ -213,6 +213,46 @@ describe("the Orchestrator board", () => {
   });
 });
 
+describe("folding lanes", () => {
+  const DONE = {
+    ...BOARD.inProgress[0]!,
+    id: 5,
+    title: "終わった件",
+    state: "closed" as const,
+    closed: { at: NOW },
+  };
+
+  it("puts 完了 under 待機中, folded at first; both fold and unfold", () => {
+    mount({ ...BOARD, closed: [DONE] });
+    const regions = screen
+      .getAllByRole("region")
+      .map((one) => one.getAttribute("aria-label"));
+    expect(regions).toEqual([
+      "Orchestrator board",
+      "要回答",
+      "対応中",
+      "待機中",
+      "完了",
+    ]);
+    const done = screen.getByRole("button", { name: /完了/u });
+    expect(done).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("終わった件")).toBeNull();
+    fireEvent.click(done);
+    expect(done).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("終わった件")).toBeVisible();
+    const waiting = screen.getByRole("button", { name: /待機中/u });
+    expect(waiting).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(waiting);
+    expect(waiting).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Nothing is waiting on a condition.")).toBeNull();
+  });
+
+  it("has no Closed button in the header any more", () => {
+    mount({ ...BOARD, closed: [DONE] });
+    expect(screen.queryByRole("button", { name: /^Closed/u })).toBeNull();
+  });
+});
+
 describe("Enter on the board", () => {
   it("opens the card on top when no card is focused", () => {
     motion(false);
@@ -893,7 +933,7 @@ describe("leaving the Orchestrator screen and coming back", () => {
     expect(document.querySelector(".orchestrator-reading")).toBeNull();
   });
 
-  it("is back on a closed escalation that was being read from Closed", () => {
+  it("is back on a closed escalation that was being read from 完了", () => {
     motion(true);
     const done = {
       ...BOARD.inProgress[0]!,
@@ -903,7 +943,7 @@ describe("leaving the Orchestrator screen and coming back", () => {
       closed: { at: NOW },
     };
     const screenNow = mountScreen({ ...BOARD, closed: [done] });
-    fireEvent.click(screen.getByRole("button", { name: /^Closed/u }));
+    fireEvent.click(screen.getByRole("button", { name: /完了/u }));
     fireEvent.click(screen.getByRole("button", { name: /終わった件/u }));
     screenNow.leave();
     screenNow.back();

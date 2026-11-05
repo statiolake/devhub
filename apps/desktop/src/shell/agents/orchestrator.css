@@ -74,8 +74,7 @@
   gap: var(--space-2);
 }
 
-.orchestrator-pause,
-.orchestrator-history {
+.orchestrator-pause {
   display: inline-flex;
   height: 22px;
   align-items: center;
@@ -89,8 +88,7 @@
   font-size: 11px;
 }
 
-.orchestrator-pause:hover:not(:disabled),
-.orchestrator-history:hover {
+.orchestrator-pause:hover:not(:disabled) {
   background: var(--wash);
   color: var(--primary);
 }
@@ -242,11 +240,6 @@
 .orchestrator-github-facts dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
-}
-
-.orchestrator-history[aria-pressed="true"] {
-  background: var(--wash-strong);
-  color: var(--primary);
 }
 
 /* A small switch, the Mac's: on is the accent, paused is the waiting ink. */
@@ -595,6 +588,51 @@
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+/* A folding lane's heading: the whole row is the button, the chevron left. */
+.orchestrator-lane-fold {
+  display: flex;
+  height: 100%;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+}
+
+.orchestrator-lane-fold:hover {
+  background: var(--wash);
+}
+
+.orchestrator-lane-chevron {
+  width: 10px;
+  height: 10px;
+  margin-left: -3px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(90deg);
+  transition: transform 120ms ease;
+}
+
+.orchestrator-lane-fold[aria-expanded="false"] .orchestrator-lane-chevron {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orchestrator-lane-chevron {
+    transition: none;
+  }
 }
 
 .orchestrator-lane-mark {

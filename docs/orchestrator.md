@@ -271,7 +271,11 @@ cannot write one.
   trigger, and its time (`M/D HH:MM · あと 3日`) when it has one; soonest
   time first, those without one after, then the oldest wait. The person can
   open one and write to it (that moves it to 対応中); there is no button.
-- **Closed** — a toggle in the header shows the last 30.
+- **完了** — closed escalations, the last 30, most recent first.
+
+待機中 and 完了 fold: the chevron on the left of the heading shows or hides the
+lane's cards, with the count kept in the heading. 完了 starts folded; what was
+folded is kept for the session (`orchestratorMemory.ts`).
 
 Clicking a card opens it in place: the whole thread, drawn by the GUI
 conversation's own Markdown renderer (code, tables, KaTeX math, Mermaid, SVG,
@@ -304,7 +308,7 @@ as it was and the unsent answer still in the composer (per escalation), and
 on the Files tab the same folders open (`shell/agents/orchestratorMemory.ts`).
 It is shown in place, without sliding in again. An escalation that has left
 the board, or was closed since (one already closed when it was read from
-Closed stays), lands on the board instead; so does a file that is gone. The
+完了 stays), lands on the board instead; so does a file that is gone. The
 escalation is not a place in Back and Forward of its own: history stays the
 selection's (`docs/window-and-pages.md`), and the Orchestrator place
 restores what it was showing. This is kept for the session only; a restart
