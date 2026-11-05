@@ -545,3 +545,74 @@ describe("devhub --tell's orchestration commands", () => {
 			expect(TELL_USAGE).toContain(line);
 	});
 });
+
+describe("devhub --tell link", () => {
+	it("reads what to link to, a file's line and column apart", () => {
+		expect(told("link", "agent", "aaaa")).toEqual({
+			verb: "link",
+			kind: "agent",
+			target: "aaaa",
+		});
+		expect(told("link", "escalation", "#12")).toEqual({
+			verb: "link",
+			kind: "escalation",
+			target: "12",
+		});
+		expect(told("link", "orchestrator")).toEqual({
+			verb: "link",
+			kind: "orchestrator",
+		});
+		expect(told("link", "file", "/a/b.ts:12:3")).toEqual({
+			verb: "link",
+			kind: "file",
+			target: "/a/b.ts",
+			line: 12,
+			column: 3,
+		});
+		expect(told("link", "file", "src/b.ts")).toEqual({
+			verb: "link",
+			kind: "file",
+			target: "src/b.ts",
+		});
+		expect(refusal("link", "robot", "x")).toMatch(/agent, workspace, file/u);
+		expect(refusal("link", "agent")).toMatch(/<agent>/u);
+		expect(refusal("link", "file", "a.ts:0")).toMatch(/start at 1/u);
+		expect(TELL_USAGE).toContain("link agent <a> | workspace <w> | file");
+	});
+
+	it("comes back off the socket as it went, a file's path absolute", () => {
+		const file: TellCommand = {
+			verb: "link",
+			kind: "file",
+			target: "/a/b.ts",
+			line: 2,
+		};
+		expect(tellCommandFrom(JSON.parse(JSON.stringify(file)))).toEqual(file);
+		expect(() =>
+			tellCommandFrom({ verb: "link", kind: "file", target: "b.ts" }),
+		).toThrow(/absolute/u);
+		expect(() => tellCommandFrom({ verb: "link", kind: "robot" })).toThrow(
+			/kind/u,
+		);
+	});
+
+	it("takes --link on escalation ask", () => {
+		expect(
+			told(
+				"escalation",
+				"ask",
+				"3",
+				"--body",
+				"b",
+				"--link",
+				"devhub:orchestrator",
+			),
+		).toEqual({
+			verb: "escalation-ask",
+			id: 3,
+			body: "b",
+			options: [],
+			links: ["devhub:orchestrator"],
+		});
+	});
+});

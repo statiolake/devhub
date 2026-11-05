@@ -92,6 +92,36 @@ describe("the state is the thread", () => {
     ).toThrow(/twice/u);
   });
 
+  it("keeps a devhub: link canonically, refuses a broken one, and adds an ask's", () => {
+    const made = createEscalation(
+      1,
+      {
+        title: "t",
+        markdown: "x",
+        links: ["DEVHUB:escalation/%237", "https://x.test/a"],
+      },
+      0,
+    );
+    expect(made.links).toEqual(["devhub:escalation/7", "https://x.test/a"]);
+    expect(() =>
+      createEscalation(
+        1,
+        { title: "t", markdown: "x", links: ["devhub:robot/1"] },
+        0,
+      ),
+    ).toThrow(/not a devhub: link/u);
+    const asked = askAgain(made, "more", undefined, 5, [
+      "devhub:orchestrator",
+      "devhub:escalation/7",
+    ]);
+    expect(asked.links).toEqual([
+      "devhub:escalation/7",
+      "https://x.test/a",
+      "devhub:orchestrator",
+    ]);
+    expect(askAgain(made, "more", undefined, 5).links).toBe(made.links);
+  });
+
   it("links an agent once", () => {
     const linked = linkAgent(linkAgent(raised(), "a2", 5), "a2", 6);
     expect(linked.agents).toEqual(["a1", "a2"]);

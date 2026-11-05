@@ -65,6 +65,17 @@ const api: AgentsBridge = {
 		) as Promise<OrchestratorFileWire>,
 	openOrchestratorFile: (path: string) =>
 		ipcRenderer.invoke(CHANNELS.openOrchestratorFile, path) as Promise<void>,
+	openLinkedFile: (workspaceId, path, range) =>
+		ipcRenderer.invoke(
+			CHANNELS.openLinkedFile,
+			workspaceId,
+			path,
+			range,
+		) as Promise<void>,
+	devhubSessionAgent: (session) =>
+		ipcRenderer.invoke(CHANNELS.devhubSessionAgent, session) as Promise<
+			string | null
+		>,
 	resolveEscalationPaths: (cwd, paths) =>
 		ipcRenderer.invoke(CHANNELS.resolveEscalationPaths, cwd, paths) as Promise<
 			readonly (string | null)[]

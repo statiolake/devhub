@@ -502,6 +502,10 @@ function expandTellPaths(
 			return command.root === undefined
 				? command
 				: { ...command, root: expandPath(command.root, cwd, home) };
+		case "link":
+			return command.kind === "file" && command.target !== undefined
+				? { ...command, target: expandPath(command.target, cwd, home) }
+				: command;
 		case "escalation-new":
 			return command.workspace === undefined
 				? command

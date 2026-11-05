@@ -246,8 +246,8 @@ class FakePorts implements TellPorts {
 						: { workspaceId: request.workspaceId }),
 				}),
 			),
-		ask: (id, markdown, options) =>
-			this.service.toWire(this.service.ask(id, markdown, options)),
+		ask: (id, markdown, options, links) =>
+			this.service.toWire(this.service.ask(id, markdown, options, links)),
 		close: (id, note) => this.service.toWire(this.service.close(id, note)),
 		hold: (id, note) => this.service.toWire(this.service.hold(id, note)),
 		link: (id, agentId) => this.service.toWire(this.service.link(id, agentId)),
@@ -277,6 +277,22 @@ class FakePorts implements TellPorts {
 	}
 	workspaces() {
 		return this.spaces;
+	}
+	/** What is on disk, for a devhub:file link: anything else is absent. */
+	files = new Map<string, "file" | "directory">([
+		["local:/src/app/src/main.ts", "file"],
+		["local:/src/app/src", "directory"],
+	]);
+	fileKind(
+		machine: string,
+		path: string,
+	): Promise<"file" | "directory" | "absent"> {
+		return Promise.resolve(this.files.get(`${machine}:${path}`) ?? "absent");
+	}
+	/** Which agent runs which session. */
+	running = new Map<string, string>([["sess-1234", "aaaa1111-0000"]]);
+	sessionAgent(session: string) {
+		return Promise.resolve(this.running.get(session));
 	}
 	profiles(): TellProfile[] {
 		return [
@@ -4122,5 +4138,137 @@ describe("the Orchestrator row from the command line", () => {
 		expect(ports.focusedOrchestrator).toBe(false);
 		await viaSocket(service, ["focus", "orchestrator"], undefined);
 		expect(ports.focusedOrchestrator).toBe(true);
+	});
+});
+
+describe("devhub: links from the command line", () => {
+	function orchestrated() {
+		const world = setup();
+		world.conversation.pending = [];
+		world.ports.service.assign("bbbb2222-0000");
+		return world;
+	}
+
+	it("prints the canonical link to each kind of place, checked", async () => {
+		const { service } = orchestrated();
+		await viaSocket(
+			service,
+			["escalation", "new", "--title", "t", "--body", "b"],
+			coordinator,
+		);
+		const link = async (...argv: string[]) =>
+			(await viaSocket(service, ["link", ...argv], coordinator)).message;
+		expect(await link("agent", "Claude 1")).toBe("devhub:agent/aaaa1111-0000");
+		expect(await link("agent", "aaaa")).toBe("devhub:agent/aaaa1111-0000");
+		expect(await link("workspace", "app")).toBe("devhub:workspace/w1");
+		expect(await link("file", "/src/app/src/main.ts:12:3")).toBe(
+			"devhub:file/src/app/src/main.ts:12:3",
+		);
+		expect(await link("escalation", "#1")).toBe("devhub:escalation/1");
+		expect(await link("orchestrator")).toBe("devhub:orchestrator");
+		expect(await link("session", "sess-1234")).toBe("devhub:session/sess-1234");
+		await expect(link("agent", "nobody")).rejects.toThrow(/no agent/u);
+		await expect(link("escalation", "9")).rejects.toThrow(/no escalation #9/u);
+		await expect(link("file", "/etc/hosts")).rejects.toThrow(
+			/no open workspace holds \/etc\/hosts/u,
+		);
+		await expect(link("file", "/src/app/src/gone.ts")).rejects.toThrow(
+			/no file/u,
+		);
+		await expect(link("file", "/src/app/src")).rejects.toThrow(/folder/u);
+		await expect(link("session", "other")).rejects.toThrow(
+			/no agent is running/u,
+		);
+		expect(parseTellArguments(["link", "robot", "x"])).toMatchObject({
+			kind: "invalid",
+			message: expect.stringMatching(/agent, workspace, file/u),
+		});
+	});
+
+	it("checks an escalation's devhub: links, in --link and in the body, and stores them canonically", async () => {
+		const { service, ports } = orchestrated();
+		const made = await viaSocket(
+			service,
+			[
+				"escalation",
+				"new",
+				"--title",
+				"t",
+				"--body",
+				"See [the file](devhub:file/src/app/src/main.ts:4).",
+				"--link",
+				"devhub:agent/aaaa",
+				"--link",
+				"https://github.com/acme/app/pull/7",
+			],
+			coordinator,
+		);
+		expect(made.data).toMatchObject({
+			links: [
+				"devhub:agent/aaaa1111-0000",
+				"https://github.com/acme/app/pull/7",
+			],
+		});
+		await viaSocket(
+			service,
+			[
+				"escalation",
+				"ask",
+				"1",
+				"--body",
+				"b",
+				"--link",
+				"devhub:workspace/app",
+			],
+			coordinator,
+		);
+		expect(ports.service.escalations()[0]!.links).toContain(
+			"devhub:workspace/w1",
+		);
+		const refused = (argv: string[]) =>
+			viaSocket(
+				service,
+				["escalation", "new", "--title", "x", "--body", "b", ...argv],
+				coordinator,
+			);
+		// An invalid scheme: the valid forms are listed.
+		await expect(refused(["--link", "devhub:robot/1"])).rejects.toThrow(
+			/not a valid devhub: link[\s\S]*devhub:agent\/[\s\S]*devhub:orchestrator/u,
+		);
+		// A target that is not open.
+		await expect(refused(["--link", "devhub:agent/ffff9999"])).rejects.toThrow(
+			/leads nowhere: no agent/u,
+		);
+		await expect(
+			viaSocket(
+				service,
+				[
+					"escalation",
+					"new",
+					"--title",
+					"x",
+					"--body",
+					"[gone](devhub:escalation/42)",
+				],
+				coordinator,
+			),
+		).rejects.toThrow(/devhub:escalation\/42 leads nowhere/u);
+		await expect(
+			viaSocket(
+				service,
+				[
+					"escalation",
+					"ask",
+					"1",
+					"--body",
+					"b",
+					"--link",
+					"devhub:file/etc/x",
+				],
+				coordinator,
+			),
+		).rejects.toThrow(/no open workspace holds/u);
+		// Nothing was raised by a refusal.
+		expect(ports.service.escalations()).toHaveLength(1);
 	});
 });

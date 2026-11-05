@@ -13,7 +13,7 @@
 
 import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
-import type { ConversationApi } from "./conversation.js";
+import type { ConversationApi, FileRange } from "./conversation.js";
 import type { VoiceApi } from "./voice.js";
 import type {
 	AgentLaunchWire,
@@ -1634,9 +1634,30 @@ export interface SlideImagesRequestWire {
 	readonly name: string;
 }
 
+/**
+ * What a `devhub:` link (`model/devhubLink.ts`) asks of main that the
+ * snapshot cannot answer. Every other kind goes through `dispatch`
+ * (`select_context`, `reason: "explicit"`).
+ */
+export interface DevhubLinksBridge {
+	/**
+	 * Open `path` in the workbench of `workspaceId`, the open Workspace whose
+	 * folder holds it, at `range` — as an explicit move (Back and Forward).
+	 * Rejects, with the reason, when the file is gone or not in it.
+	 */
+	openLinkedFile(
+		workspaceId: string,
+		path: string,
+		range: FileRange | undefined,
+	): Promise<void>;
+	/** The open Agent running `session` (an id or a 4+ prefix), or `null`. */
+	devhubSessionAgent(session: string): Promise<string | null>;
+}
+
 /** Every Agent, in one view — `agents.html`. */
 export interface AgentsBridge
 	extends PageBridge,
+		DevhubLinksBridge,
 		ProjectionBridge,
 		AppearanceBridge,
 		RepositoryStatusBridge,
@@ -2167,6 +2188,8 @@ export const CHANNELS = {
 	listOrchestratorFolder: "devhub:list-orchestrator-folder",
 	readOrchestratorFile: "devhub:read-orchestrator-file",
 	openOrchestratorFile: "devhub:open-orchestrator-file",
+	openLinkedFile: "devhub:open-linked-file",
+	devhubSessionAgent: "devhub:devhub-session-agent",
 	resolveEscalationPaths: "devhub:resolve-escalation-paths",
 	readEscalationEmbed: "devhub:read-escalation-embed",
 	escalationEmbedSignature: "devhub:escalation-embed-signature",

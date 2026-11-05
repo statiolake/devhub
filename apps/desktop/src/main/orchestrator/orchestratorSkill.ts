@@ -318,6 +318,9 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
 - 過去の判断や知識で明らかに決まるものは人の代わりに答えてよい。その場合は
   何をなぜ決めたかを記録 (decisions.md など) し、次回以降の一貫性を保つ。
 - 人を待つ問いが複数あるなら、人の負担が減る場合は 1 件にまとめる。
+- 関連するエージェント・ワークスペース・ファイル・エスカレは devhub: リンクで貼れる
+  （\`devhub --tell link …\` で作れる）。\`--link devhub:…\` か本文の
+  \`[説明](devhub:…)\` に。存在しない対象は起票時に断られる。
 
     devhub --tell escalation new --title "本番 invoices への列追加" --body - --agent A --option "案 A" --option "案 B" --priority high --effort quick --rank-note "A と B が止まっている"
     devhub --tell escalation rank 12 --priority normal --rank-note "B は別作業で進められる"
@@ -325,6 +328,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     devhub --tell escalation show 12
     devhub --tell escalation list --state in_progress
     devhub --tell escalation link 12 --agent B
+    devhub --tell link file src/app.ts:12
     devhub --tell escalation close 12 --note "案 A で実装を再開"
     devhub --tell escalation hold 12 --note "B に追加調査を依頼中"
 

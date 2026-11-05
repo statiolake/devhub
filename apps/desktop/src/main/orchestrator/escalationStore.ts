@@ -168,8 +168,11 @@ export class EscalationStore {
 		markdown: string,
 		options: readonly string[] | undefined,
 		now: number,
+		links: readonly string[] = [],
 	): Escalation {
-		return this.#replace(askAgain(this.require(id), markdown, options, now));
+		return this.#replace(
+			askAgain(this.require(id), markdown, options, now, links),
+		);
 	}
 
 	/** The person's answer. Reached from the window's bridge, and nothing else. */

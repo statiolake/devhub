@@ -44,6 +44,9 @@ import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
 import { GitHubPill } from "./OrchestratorGitHub";
 import { EscalationNote, TakeEscalation } from "./EscalationNote";
+import { useEscalationRequests } from "./escalationRequests";
+import { DevhubLink } from "../conversation/DevhubLink";
+import { isDevhubLink } from "../../model/devhubLink";
 import {
   memory,
   rememberedTab,
@@ -114,6 +117,10 @@ export function OrchestratorBoard({
     if (next === "files") setFilesChanged(false);
     rememberTab(next);
   }, []);
+  // A `devhub:escalation` link, followed: it is read on the board.
+  useEscalationRequests(() => {
+    choose("board");
+  }, false);
   useEffect(() => {
     if (tab === "files") return;
     const files = devhub().onOrchestratorFilesChanged;
@@ -434,6 +441,11 @@ function BoardPage({
     initial,
   );
   const { nav, shown, forward, restored, open: openCard, close } = stack;
+  // A `devhub:escalation` link, followed (`escalationRequests.ts`).
+  useEscalationRequests((id) => {
+    const asked = all.find((one) => one.id === id);
+    if (asked !== undefined) openCard(asked);
+  }, true);
   // The escalation on the page over, as it was when it was opened; the
   // board's own copy of it is read live. It stays through a pop, so the
   // view slides out with what it showed.
@@ -928,19 +940,23 @@ function EscalationView({
                   />
                 )),
             ])}
-            {escalation.links.map((link) => (
-              <button
-                key={link}
-                type="button"
-                className="orchestrator-chip is-link"
-                title={link}
-                onClick={() => {
-                  void devhub().openExternalUrl(link);
-                }}
-              >
-                {linkLabel(link)}
-              </button>
-            ))}
+            {escalation.links.map((link) =>
+              isDevhubLink(link) ? (
+                <DevhubLink key={link} href={link} />
+              ) : (
+                <button
+                  key={link}
+                  type="button"
+                  className="orchestrator-chip is-link"
+                  title={link}
+                  onClick={() => {
+                    void devhub().openExternalUrl(link);
+                  }}
+                >
+                  {linkLabel(link)}
+                </button>
+              ),
+            )}
           </div>
         ) : null}
       </div>

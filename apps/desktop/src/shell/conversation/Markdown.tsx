@@ -30,6 +30,7 @@
 
 import { memo, useMemo, type ReactNode } from "react";
 import ReactMarkdown, {
+  defaultUrlTransform,
   type Components,
   type ExtraProps,
 } from "react-markdown";
@@ -46,6 +47,8 @@ import { previewKindOfFence } from "./previewKinds";
 import { useAgentCwd, useConversationActions } from "./ConversationContext";
 import { settledLength } from "./markdownBlocks";
 import { LinkedText } from "./LinkedText";
+import { DevhubLink } from "./DevhubLink";
+import { isDevhubLink } from "../../model/devhubLink";
 import { Table } from "./Table";
 import { linkSpans, pathOfHref, rangeSuffix } from "./textLinks";
 
@@ -271,6 +274,10 @@ function componentsFor(settled: boolean, depth: number): Components {
       return <img src={src} alt={alt} />;
     },
     a({ href, children }) {
+      // A place inside DevHub (`model/devhubLink.ts`): a chip that goes
+      // there, never a link out.
+      if (href !== undefined && isDevhubLink(href))
+        return <DevhubLink href={href}>{children}</DevhubLink>;
       return <ExternalLink href={href}>{children}</ExternalLink>;
     },
     table({ children }) {
@@ -279,6 +286,14 @@ function componentsFor(settled: boolean, depth: number): Components {
       return <Table>{children}</Table>;
     },
   };
+}
+
+/**
+ * react-markdown's own URL rule, which empties a scheme it does not know —
+ * with `devhub:` kept, for `a` to draw as a chip (`DevhubLink.tsx`).
+ */
+function urlTransform(url: string): string {
+  return isDevhubLink(url) ? url : defaultUrlTransform(url);
 }
 
 /** The components of each depth, made once: a new object would redraw every block. */
@@ -313,6 +328,7 @@ export const MarkdownDocument = memo(function MarkdownDocument({
       remarkPlugins={REMARK_PLUGINS}
       rehypePlugins={settled ? REHYPE_PLUGINS : REHYPE_PLUGINS_UNSETTLED}
       skipHtml
+      urlTransform={urlTransform}
       components={componentsAt(settled, depth)}
     >
       {text}

@@ -132,6 +132,46 @@ Workspace or the orchestrator's folder are taken (symlinks followed), at most
 file that is not there, refuses the command with the reason. Code spans and
 fences are left alone.
 
+### Links: `devhub:`
+
+An escalation (and any agent, in chat) links to places inside DevHub the way
+it links to a web page: in `--link`, or as a Markdown link in a body or an
+answer. The syntax is `model/devhubLink.ts`'s, each segment percent-encoded
+as a URI component (`/` in a path excepted, `:` in a path as `%3A`):
+
+| link                                               | goes to                                                                |
+| -------------------------------------------------- | ---------------------------------------------------------------------- |
+| `devhub:agent/<id or 4+ prefix>`                   | the agent (`select_context`)                                           |
+| `devhub:workspace/<id or name>`                    | the workspace (`select_context`)                                       |
+| `devhub:file/<path without its leading />[:L[:C]]` | the file, in the workbench of the open workspace whose folder holds it |
+| `devhub:escalation/<id>`                           | the Orchestrator row, with the escalation open                         |
+| `devhub:orchestrator`                              | the Orchestrator row                                                   |
+| `devhub:session/<session id>`                      | the agent running that session (resuming one stays `/resume`)          |
+
+For example `devhub:agent/3f2a9c1e`, `devhub:workspace/login-fix`,
+`devhub:file/Users/me/app/src/a%20b.ts:12:3`, `devhub:escalation/12`, and in
+a body `[失敗しているテスト](devhub:file/Users/me/app/test/api.test.ts:40)`.
+`devhub --tell link agent A | workspace W | file PATH[:L[:C]] | escalation ID
+| orchestrator | session S` prints the canonical link (by id) for something
+open, so nobody builds one by hand.
+
+`escalation new` and `escalation ask` check every `devhub:` link, in
+`--link` and in the body: one that does not parse, or names nothing open (a
+file outside every open workspace, or not there), refuses the command with
+the forms that are valid. A `--link` is stored canonically.
+
+They are drawn as compact chips — a glyph per kind and the place's live name
+from the snapshot: the agent's display name and status mark, the workspace's
+name, the file's basename and `:line`, `#12` and the escalation's title — on
+a hairline pill, unlike an underlined link out. A click is an explicit move
+(`reason: "explicit"`, a place in Back and Forward at once) through the
+intents the window has — `select_context`, the open-file routing
+(`openLinkedFile`, which opens only a file inside the workspace named), the
+board's own reading view — and never reaches the system browser (main's
+`openExternalUrl` refuses a `devhub:` URL). A link whose target is gone is
+its text with a quiet 見つかりません, never a broken navigation. External
+http(s) links open in the browser as before.
+
 ### Ranking
 
 The orchestrator ranks each escalation, when it raises one and again as
@@ -506,7 +546,8 @@ devhub --tell board [--json]                         # 要回答, 対応中, 不
 devhub --tell escalation new --title T --body -|TEXT [--agent A]... [--link URL]... [--option TEXT]... [--workspace W]
                          [--priority high|normal|low] [--effort quick|normal|deep] [--rank-note TEXT]
 devhub --tell escalation rank ID [--priority P] [--effort E] [--rank-note TEXT]   # re-rank; "" clears the note
-devhub --tell escalation ask ID --body -|TEXT [--option TEXT]...   # back to 要回答
+devhub --tell escalation ask ID --body -|TEXT [--option TEXT]... [--link URL]...   # back to 要回答
+devhub --tell link agent A | workspace W | file PATH[:L[:C]] | escalation ID | orchestrator | session S   # a devhub: link
 devhub --tell escalation show ID [--json]           # the thread (acknowledges the answer)
 devhub --tell escalation list [--state needs_answer|in_progress|closed] [--json]
 devhub --tell escalation close ID [--note TEXT]

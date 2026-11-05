@@ -145,6 +145,8 @@ import type {
 	TerminalProfileAnswer,
 } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
+import { isDevhubLink } from "../../model/devhubLink.js";
+import { fileSelection } from "../agent/conversation/pathLinks.js";
 import {
 	routeAgentOpen,
 	routeOpen,
@@ -9286,6 +9288,77 @@ export class AppController {
 	 * as usual and switched to. The person asked for it, so the Workspace is a
 	 * place in Back and Forward at once (\`NavigationReason\`).
 	 */
+	/**
+	 * A `devhub:file` link, clicked (`model/devhubLink.ts`): the file, on the
+	 * machine of the Workspace the page found holding it, opened in that
+	 * Workspace's workbench the way \`devhub <file>\` opens one — an explicit
+	 * move, so the Workspace is a place in Back and Forward at once. The
+	 * Workspace must hold it: a link cannot open a file anywhere else.
+	 */
+	private async openLinkedFile(
+		workspaceId: unknown,
+		path: unknown,
+		range: unknown,
+	): Promise<void> {
+		this.personStartedAction();
+		if (typeof path !== "string" || !path.startsWith("/"))
+			throw new Error(`${JSON.stringify(path)} is not a file to open`);
+		const workspace = this.coordinator.model.workspaces.find(
+			(one) => one.id === workspaceId,
+		);
+		if (workspace === undefined)
+			throw new Error("the workspace that holds this file is no longer open");
+		const machine = runtimeIdFor(workspace.location);
+		const target = await canonicalise(runtimeById(machine), path);
+		if (!target.exists)
+			throw fileNotFound(path, `It is not there${runtimeById(machine).where}.`);
+		if (target.isDirectory)
+			throw fileNotFound(
+				target.path,
+				`${target.path} is a folder, not a file to open.`,
+			);
+		const routable = this.routableWorkspaces().find(
+			(one) => one.workspaceId === workspace.id,
+		);
+		if (
+			routable === undefined ||
+			workspaceRootFor(target.path, [routable.root]) === undefined
+		)
+			throw new Error(`${target.path} is not in ${workspace.root}`);
+		await this.openRouted(
+			{ kind: "workspace", workspace: routable, reason: "containing" },
+			machine,
+			target,
+			fileSelection(range),
+			undefined,
+			this.coordinator.model.selection,
+			"explicit",
+		);
+	}
+
+	/**
+	 * The open Agent whose CLI is running `session` (its id, or a unique
+	 * prefix of 4+ characters), if one is: what a `devhub:session` link shows.
+	 */
+	private async agentRunningSession(
+		session: string,
+	): Promise<string | undefined> {
+		const agents = this.coordinator.model.workspaces.flatMap(
+			(workspace) => workspace.agents,
+		);
+		const running = await Promise.all(
+			agents.map(async (agent) => ({
+				id: agent.id,
+				session: await this.sessionAtClose(agent.id),
+			})),
+		);
+		const exact = running.find((one) => one.session === session);
+		if (exact !== undefined) return exact.id;
+		if (session.length < 4) return undefined;
+		const prefixed = running.filter((one) => one.session?.startsWith(session));
+		return prefixed.length === 1 ? prefixed[0]!.id : undefined;
+	}
+
 	private async openOrchestratorFile(path: unknown): Promise<void> {
 		this.personStartedAction();
 		const absolute = await insideRoot(
@@ -9779,7 +9852,7 @@ export class AppController {
 							rank: request.rank,
 						}),
 					),
-				ask: (id, markdown, options) => {
+				ask: (id, markdown, options, links) => {
 					const one = orchestrator()
 						.allWires()
 						.find((escalation) => escalation.id === id);
@@ -9795,6 +9868,7 @@ export class AppController {
 										one.agents.map((agent) => agent.agentId),
 									),
 							options,
+							...(links === undefined ? [] : [links]),
 						),
 					);
 				},
@@ -10022,6 +10096,18 @@ export class AppController {
 				);
 				this.bringToFront();
 			},
+			// `devhub:` links (`model/devhubLink.ts`): what a link names, checked.
+			fileKind: (machine, path) =>
+				runtimeById(machine === "local" ? "local" : (machine as RuntimeId))
+					.stat(path)
+					.then((kind) =>
+						kind === "absent"
+							? "absent"
+							: kind === "directory"
+								? "directory"
+								: "file",
+					),
+			sessionAgent: (session) => this.agentRunningSession(session),
 			notify: (text) => {
 				const { Notification } = electron;
 				if (!Notification.isSupported())
@@ -11667,8 +11753,31 @@ export class AppController {
 		handle(CHANNELS.openMicrophoneSettings, () =>
 			electron.shell.openExternal(MICROPHONE_SETTINGS_URL),
 		);
-		handle(CHANNELS.openExternalUrl, (_event, url: string) =>
-			electron.shell.openExternal(url),
+		handle(CHANNELS.openExternalUrl, (_event, url: string) => {
+			// A `devhub:` link is a place inside DevHub, never the system's to
+			// open (`model/devhubLink.ts`); the page navigates it itself.
+			if (typeof url !== "string" || isDevhubLink(url))
+				throw namedFailure(
+					new Error(`${String(url)} is not a link to open outside DevHub`),
+				);
+			return electron.shell.openExternal(url);
+		});
+		// A `devhub:file` link, clicked: the file opened in the workspace that
+		// holds it, as an explicit move (`openLinkedFile`).
+		handle(
+			CHANNELS.openLinkedFile,
+			async (_event, workspaceId: unknown, path: unknown, range: unknown) => {
+				try {
+					await this.openLinkedFile(workspaceId, path, range);
+				} catch (error: unknown) {
+					throw namedFailure(error);
+				}
+			},
+		);
+		handle(CHANNELS.devhubSessionAgent, async (_event, session: unknown) =>
+			typeof session === "string"
+				? ((await this.agentRunningSession(session)) ?? null)
+				: null,
 		);
 		// A copy inside a terminal pane. It is main's clipboard rather than
 		// the renderer's because the write arrives from a PTY: the browser's

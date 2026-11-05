@@ -40,6 +40,12 @@
  * keeps them on disk is `main/orchestrator/escalationStore.ts`.
  */
 
+import {
+  formatDevhubLink,
+  isDevhubLink,
+  parseDevhubLink,
+} from "./devhubLink.js";
+
 export type EscalationRole = "orchestrator" | "human";
 
 export type EscalationState = "needs_answer" | "in_progress" | "closed";
@@ -314,7 +320,22 @@ function withRank(escalation: Escalation, rank: EscalationRank): Escalation {
   };
 }
 
+/**
+ * An escalation's link: an http(s) URL, or a place inside DevHub
+ * (`model/devhubLink.ts`), kept in its canonical spelling. Whether a
+ * `devhub:` link's target exists is the command line's to check
+ * (`tell/service.ts`); a stored one whose target has gone is drawn as
+ * 見つかりません, never followed.
+ */
 export function checkLink(link: string): string {
+  if (isDevhubLink(link)) {
+    const parsed = parseDevhubLink(link);
+    if (!parsed.ok)
+      refuse(
+        `${JSON.stringify(link)} is not a devhub: link: ${parsed.problem}`,
+      );
+    return formatDevhubLink(parsed.link);
+  }
   let url: URL;
   try {
     url = new URL(link);
@@ -322,7 +343,9 @@ export function checkLink(link: string): string {
     refuse(`${JSON.stringify(link)} is not a URL.`);
   }
   if (url.protocol !== "https:" && url.protocol !== "http:")
-    refuse(`a link is an http(s) URL, not ${JSON.stringify(link)}.`);
+    refuse(
+      `a link is an http(s) URL or a devhub: link, not ${JSON.stringify(link)}.`,
+    );
   return url.toString();
 }
 
@@ -434,8 +457,18 @@ export function askAgain(
   markdown: string,
   options: readonly string[] | undefined,
   now: number,
+  /** More links it is about (`escalation ask --link`), kept once each. */
+  links: readonly string[] = [],
 ): Escalation {
-  return appended(escalation, entry("orchestrator", markdown, now, options));
+  const asked = appended(
+    escalation,
+    entry("orchestrator", markdown, now, options),
+  );
+  if (links.length === 0) return asked;
+  return {
+    ...asked,
+    links: union(escalation.links, links.map(checkLink), LINKS_MAX, "links"),
+  };
 }
 
 /**

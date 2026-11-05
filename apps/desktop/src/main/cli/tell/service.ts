@@ -25,6 +25,14 @@ import type {
 	WorkspaceRepositoryWire,
 } from "../../../ipc/contract.js";
 import {
+	DEVHUB_LINK_FORMS,
+	formatDevhubLink,
+	isDevhubLink,
+	owningWorkspace,
+	parseDevhubLink,
+	type DevhubLink,
+} from "../../../model/devhubLink.js";
+import {
 	TELL_USAGE,
 	type AgentWaitUntil,
 	type AnswerPart,
@@ -419,6 +427,17 @@ export interface TellPorts {
 	runCommand(id: string): boolean;
 	focusWorkspace(workspaceId: string): Promise<void>;
 	focusAgent(agentId: string): Promise<void>;
+	/**
+	 * What is at `path` on `machine` (`local`, `ssh:<host>`): a `devhub:file`
+	 * link must name a file. Absent: not checked (the window checks it again
+	 * when the link is followed).
+	 */
+	fileKind?(
+		machine: string,
+		path: string,
+	): Promise<"file" | "directory" | "absent">;
+	/** The agent running `session` (an id, or a unique prefix of one), if one is. */
+	sessionAgent?(session: string): Promise<string | undefined>;
 	notify(text: string): void;
 	/** An Agent's own terminal, read live. */
 	agentTerminal(agentId: string): Promise<TellTerminal>;
@@ -522,7 +541,12 @@ export interface TellOrchestratorPorts {
 	/** Every escalation, closed ones included. */
 	escalations(): readonly EscalationWire[];
 	raise(request: TellNewEscalation): EscalationWire;
-	ask(id: number, markdown: string, options: readonly string[]): EscalationWire;
+	ask(
+		id: number,
+		markdown: string,
+		options: readonly string[],
+		links?: readonly string[],
+	): EscalationWire;
 	close(id: number, note: string | undefined): EscalationWire;
 	/**
 	 * Parked in in_progress by the orchestrator (`escalation hold`): an entry
@@ -999,6 +1023,8 @@ export class TellService {
 				return this.runCommand(command.command);
 			case "focus":
 				return this.focus(command.target);
+			case "link":
+				return this.makeLink(command);
 			case "notify":
 				this.ports.notify(command.text);
 				return { message: "Shown in DevHub.", data: { ok: true } };
@@ -1163,20 +1189,21 @@ export class TellService {
 		};
 	}
 
-	private raise(
+	private async raise(
 		command: Extract<TellCommand, { verb: "escalation-new" }>,
-	): TellAnswer {
+	): Promise<TellAnswer> {
 		const agents = command.agents.map((name) => this.agent(name).id);
 		const workspaceId =
 			command.workspace === undefined
 				? undefined
 				: this.workspace(command.workspace).id;
+		const links = await this.checkedLinks(command.links, command.body);
 		const made = this.ports.orchestrator.raise({
 			title: command.title,
 			markdown: command.body,
 			options: command.options,
 			agents,
-			links: command.links,
+			links,
 			workspaceId,
 			rank: rankOf(command),
 		});
@@ -1191,14 +1218,19 @@ export class TellService {
 		};
 	}
 
-	private askAgain(
+	private async askAgain(
 		command: Extract<TellCommand, { verb: "escalation-ask" }>,
-	): TellAnswer {
-		const asked = this.ports.orchestrator.ask(
-			command.id,
-			command.body,
-			command.options,
-		);
+	): Promise<TellAnswer> {
+		const links = await this.checkedLinks(command.links ?? [], command.body);
+		const asked =
+			links.length === 0
+				? this.ports.orchestrator.ask(command.id, command.body, command.options)
+				: this.ports.orchestrator.ask(
+						command.id,
+						command.body,
+						command.options,
+						links,
+					);
 		this.memory.markEscalation(
 			callerKey(this.caller),
 			asked.id,
@@ -3058,6 +3090,123 @@ export class TellService {
 		};
 	}
 
+	// --- devhub: links (`model/devhubLink.ts`) ---------------------------------
+
+	/**
+	 * An escalation's `--link`s, each `devhub:` one checked against what is
+	 * open and written canonically (an http(s) one is the model's to check),
+	 * and the `devhub:` links its Markdown body makes, checked the same way.
+	 */
+	private async checkedLinks(
+		links: readonly string[],
+		markdown: string,
+	): Promise<readonly string[]> {
+		const checked: string[] = [];
+		for (const link of links)
+			checked.push(isDevhubLink(link) ? await this.checkedLink(link) : link);
+		for (const link of devhubLinksIn(markdown)) await this.checkedLink(link);
+		return checked;
+	}
+
+	/** A `devhub:` link to something open, canonically; refused otherwise. */
+	private async checkedLink(text: string): Promise<string> {
+		const parsed = parseDevhubLink(text);
+		if (!parsed.ok)
+			throw new Error(
+				`${JSON.stringify(text)} is not a valid devhub: link: ${parsed.problem} A devhub: link is one of:\n${DEVHUB_LINK_FORMS.map((form) => `  ${form}`).join("\n")}\n'devhub --tell link ...' makes one.`,
+			);
+		try {
+			return formatDevhubLink(await this.linkTarget(parsed.link));
+		} catch (error: unknown) {
+			throw new Error(
+				`${text} leads nowhere: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+
+	/** The link, naming what is open by its id; refused when nothing is. */
+	private async linkTarget(link: DevhubLink): Promise<DevhubLink> {
+		switch (link.kind) {
+			case "agent":
+				return { kind: "agent", agent: this.agent(link.agent).id };
+			case "workspace":
+				return {
+					kind: "workspace",
+					workspace: this.workspace(link.workspace).id,
+				};
+			case "escalation":
+				return { kind: "escalation", id: this.escalation(link.id).id };
+			case "orchestrator":
+				return link;
+			case "session": {
+				const agentId = await this.ports.sessionAgent?.(link.session);
+				if (agentId === undefined)
+					throw new Error(
+						`no agent is running the session ${JSON.stringify(link.session)}. A devhub:session link shows the agent that runs it; 'devhub --tell agents' lists them.`,
+					);
+				return link;
+			}
+			case "file": {
+				const all = this.ports.workspaces();
+				const machine = this.caller?.machine;
+				const here =
+					machine === undefined
+						? all
+						: all.filter((workspace) => workspace.machine === machine);
+				const owner = owningWorkspace(
+					link.path,
+					(here.length === 0 ? all : here).map((workspace) => ({
+						...workspace,
+						label: workspace.name,
+						local: workspace.machine === "local",
+						agents: [],
+					})),
+				);
+				if (owner === undefined)
+					throw new Error(
+						`no open workspace holds ${link.path}. A devhub:file link opens in the workspace whose folder holds it: ${all.map((workspace) => workspace.root).join(", ") || "none is open"}.`,
+					);
+				const kind = await this.ports.fileKind?.(owner.machine, link.path);
+				if (kind === "absent")
+					throw new Error(`there is no file ${link.path}.`);
+				if (kind === "directory")
+					throw new Error(
+						`${link.path} is a folder; a devhub:file link names a file (a folder's workspace is devhub:workspace/<w>).`,
+					);
+				return link;
+			}
+		}
+	}
+
+	private async makeLink(
+		command: Extract<TellCommand, { verb: "link" }>,
+	): Promise<TellAnswer> {
+		const asked: DevhubLink = (() => {
+			const target = command.target ?? "";
+			switch (command.kind) {
+				case "agent":
+					return { kind: "agent", agent: target };
+				case "workspace":
+					return { kind: "workspace", workspace: target };
+				case "escalation":
+					return { kind: "escalation", id: Number(target) };
+				case "orchestrator":
+					return { kind: "orchestrator" };
+				case "session":
+					return { kind: "session", session: target };
+				case "file":
+					return {
+						kind: "file",
+						path: target,
+						...(command.line === undefined ? {} : { line: command.line }),
+						...(command.column === undefined ? {} : { column: command.column }),
+					};
+			}
+		})();
+		const link = formatDevhubLink(await this.linkTarget(asked));
+		return { message: link, data: { link } };
+	}
+
 	private async focus(target: string): Promise<TellAnswer> {
 		if (target === "orchestrator") {
 			await this.ports.orchestrator.focus();
@@ -3089,6 +3238,19 @@ export class TellService {
 }
 
 // --- words ------------------------------------------------------------------
+
+/**
+ * The `devhub:` links a Markdown body makes: `[text](devhub:…)`,
+ * `[text](<devhub:…>)` and `<devhub:…>`.
+ */
+export function devhubLinksIn(markdown: string): readonly string[] {
+	const found: string[] = [];
+	for (const match of markdown.matchAll(
+		/\]\(\s*<?(devhub:[^\s)>]+)>?|<(devhub:[^\s>]+)>/giu,
+	))
+		found.push((match[1] ?? match[2])!);
+	return found;
+}
 
 /** One stretch of an agent in 不明: it is new again each time it goes idle. */
 function unaccountedKey(one: {

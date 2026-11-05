@@ -278,8 +278,9 @@ export class OrchestratorService {
 		id: number,
 		markdown: string,
 		options: readonly string[] | undefined,
+		links: readonly string[] = [],
 	): Escalation {
-		return this.ports.store.ask(id, markdown, options, this.#now());
+		return this.ports.store.ask(id, markdown, options, this.#now(), links);
 	}
 
 	close(id: number, note: string | undefined): Escalation {

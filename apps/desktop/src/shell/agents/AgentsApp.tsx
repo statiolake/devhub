@@ -54,13 +54,16 @@
 import { AgentsProvider } from "./AgentsContext";
 import { useAgents } from "./AgentsContext";
 import { AgentPane } from "./AgentPane";
+import { AgentsDevhubLinks } from "./devhubLinks";
 import { OrchestratorBoard, OrchestratorStart } from "./OrchestratorScreen";
 import "./orchestrator.css";
 
 export function AgentsApp() {
   return (
     <AgentsProvider>
-      <Panes />
+      <AgentsDevhubLinks>
+        <Panes />
+      </AgentsDevhubLinks>
     </AgentsProvider>
   );
 }

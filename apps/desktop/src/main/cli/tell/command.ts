@@ -26,6 +26,24 @@ import {
 
 export type AgentWaitUntil = "idle" | "waiting" | "any";
 
+/** What `devhub --tell link` can make a link to. */
+export type LinkTargetKind =
+	| "agent"
+	| "workspace"
+	| "file"
+	| "escalation"
+	| "orchestrator"
+	| "session";
+
+const LINK_TARGET_KINDS: readonly LinkTargetKind[] = [
+	"agent",
+	"workspace",
+	"file",
+	"escalation",
+	"orchestrator",
+	"session",
+];
+
 /** The answer to one question of a request: `--q <question> --option <n>... --text <t>`. */
 export interface AnswerPart {
 	/** Its 1-based index in 'agent requests', its id, or its header. */
@@ -242,6 +260,18 @@ export type TellCommand =
 	| { readonly verb: "commands" }
 	| { readonly verb: "run"; readonly command: string }
 	| { readonly verb: "focus"; readonly target: string }
+	/**
+	 * The canonical `devhub:` link to a place (`model/devhubLink.ts`), checked
+	 * against what is open. `target` is the agent, workspace, escalation id or
+	 * session; for `file`, the absolute path (made so on the CLI's side).
+	 */
+	| {
+			readonly verb: "link";
+			readonly kind: LinkTargetKind;
+			readonly target?: string;
+			readonly line?: number;
+			readonly column?: number;
+	  }
 	| { readonly verb: "notify"; readonly text: string }
 	// --- the Orchestrator row (`docs/orchestrator.md`) ----------------------
 	| {
@@ -264,6 +294,8 @@ export type TellCommand =
 			readonly id: number;
 			readonly body: string;
 			readonly options: readonly string[];
+			/** More links it is about (`--link`); absent: none. */
+			readonly links?: readonly string[];
 	  }
 	| { readonly verb: "escalation-show"; readonly id: number }
 	| {
@@ -566,6 +598,14 @@ app
                                    select it in DevHub ('orchestrator': the
                                    Orchestrator screen)
   notify <text>                    show a notification in DevHub
+  link agent <a> | workspace <w> | file <path>[:line[:col]] | escalation <id>
+       | orchestrator | session <session>
+                                   print the canonical devhub: link to it
+                                   (checked: it must be open), for an
+                                   escalation's --link or a Markdown link
+                                   [text](devhub:...) in a body or a chat
+                                   answer. DevHub draws it as a chip that
+                                   goes there
 
 <w> is a workspace id, its folder, its name, or "scratch". A folder is a
 folder on the machine devhub runs on: on an SSH host, the host's.
@@ -591,8 +631,11 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    raise one for the person (Markdown: code,
                                    math, mermaid, svg - as the chat renders);
                                    needs_answer is sorted by priority, then
-                                   effort (quick first), then age
-  escalation ask <id> --body <text>|- [--option <text>]...
+                                   effort (quick first), then age. A --link
+                                   is an http(s) URL or a devhub: link
+                                   ('link' makes one); a devhub: link, there
+                                   or in the body, must name what is open
+  escalation ask <id> --body <text>|- [--option <text>]... [--link <url>]...
                                    a follow-up question on the same ticket;
                                    back to needs_answer
   escalation show <id>             the thread, the person's answers included
@@ -995,6 +1038,8 @@ function parseVerb(args: readonly string[]): TellCommand {
 			]);
 			return { verb: "focus", target: target! };
 		}
+		case "link":
+			return parseLink(args.slice(1));
 		case "board":
 			positionals(readFlags(args.slice(1), NO_FLAGS), []);
 			return { verb: "board" };
@@ -1012,6 +1057,40 @@ function parseVerb(args: readonly string[]): TellCommand {
 				`${JSON.stringify(head)} is not a --tell subcommand. Run 'devhub --tell help'.`,
 			);
 	}
+}
+
+/**
+ * `link agent A | workspace W | file PATH[:L[:C]] | escalation ID |
+ * orchestrator | session S`.
+ */
+function parseLink(args: readonly string[]): TellCommand {
+	const kind = args[0];
+	if (kind === undefined || !(LINK_TARGET_KINDS as string[]).includes(kind))
+		throw new Refusal(
+			`link takes what to link to: ${LINK_TARGET_KINDS.join(", ")} (e.g. 'link agent a1b2c3d4', 'link file src/app.ts:12').`,
+		);
+	const typed = kind as LinkTargetKind;
+	if (typed === "orchestrator") {
+		positionals(readFlags(args.slice(1), NO_FLAGS), []);
+		return { verb: "link", kind: typed };
+	}
+	const [target] = positionals(readFlags(args.slice(1), NO_FLAGS), [
+		typed === "file" ? "<path>[:line[:column]]" : `<${typed}>`,
+	]);
+	if (typed === "escalation")
+		return { verb: "link", kind: typed, target: String(escalationId(target)) };
+	if (typed !== "file") return { verb: "link", kind: typed, target: target! };
+	const at = /^(.*?):(\d{1,7})(?::(\d{1,7}))?$/su.exec(target!);
+	const line = at?.[2] === undefined ? undefined : Number(at[2]);
+	const column = at?.[3] === undefined ? undefined : Number(at[3]);
+	if (line === 0 || column === 0)
+		throw new Refusal("a line and a column start at 1.");
+	return {
+		verb: "link",
+		kind: typed,
+		target: at === null ? target! : at[1]!,
+		...defined({ line, column }),
+	};
 }
 
 /** One of `allowed`, or refused naming them. */
@@ -1103,18 +1182,20 @@ function parseEscalation(
 		}
 		case "ask": {
 			const flags = readFlags(rest, {
-				values: ["--body", "--option"],
+				values: ["--body", "--option", "--link"],
 				switches: [],
 			});
 			const [id] = positionals(flags, ["<id>"]);
 			const body = one(flags, "--body");
 			if (body === undefined)
 				throw new Refusal("--body is required (Markdown, or - for stdin).");
+			const links = flags.values.get("--link") ?? [];
 			return {
 				verb: "escalation-ask",
 				id: escalationId(id),
 				body,
 				options: flags.values.get("--option") ?? [],
+				...(links.length === 0 ? {} : { links }),
 			};
 		}
 		case "show": {
@@ -2037,6 +2118,9 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				id: integer(record["id"], "id", 1, 999_999_999),
 				body: text(record, "body"),
 				options: textList(record, "options"),
+				...(record["links"] === undefined
+					? {}
+					: { links: textList(record, "links") }),
 			};
 		case "escalation-show":
 			return {
@@ -2118,6 +2202,28 @@ export function tellCommandFrom(value: unknown): TellCommand {
 			return { verb: "run", command: text(record, "command") };
 		case "focus":
 			return { verb: "focus", target: text(record, "target") };
+		case "link": {
+			const kind = record["kind"];
+			if (!(LINK_TARGET_KINDS as unknown[]).includes(kind))
+				throw new Error(
+					`a tell command's kind must be one of ${LINK_TARGET_KINDS.join(", ")}`,
+				);
+			const typed = kind as LinkTargetKind;
+			if (typed === "orchestrator") return { verb: "link", kind: typed };
+			return {
+				verb: "link",
+				kind: typed,
+				...(typed === "file"
+					? { target: absolute(record, "target") }
+					: { target: text(record, "target") }),
+				...(typed === "file" && record["line"] !== undefined
+					? { line: integer(record["line"], "line", 1, 9_999_999) }
+					: {}),
+				...(typed === "file" && record["column"] !== undefined
+					? { column: integer(record["column"], "column", 1, 9_999_999) }
+					: {}),
+			};
+		}
 		case "notify":
 			return { verb: "notify", text: text(record, "text") };
 		default:

@@ -326,6 +326,7 @@ person's decision or permission (finish read-only investigation first):
     devhub --tell --json board                      # needs_answer, in_progress, unaccounted
 
 The body is Markdown drawn like a chat answer (code, math, mermaid, svg).
+Related agents, workspaces, files and escalations can be pasted as devhub: links, in \`--link\` or as \`[text](devhub:...)\` here or in chat (\`devhub --tell link agent A | workspace W | file PATH[:L] | escalation ID\` prints one).
 \`agent wait --any\` also wakes you on an answer you have not shown, and on
 an idle agent no open escalation names (unaccounted; \`board\` acknowledges
 it). DevHub also sends you each such event as a message (\`[event: ...]\`).
