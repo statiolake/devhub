@@ -2,8 +2,8 @@
 
 /**
  * The Orchestrator row is the tree's first, above Scratch. It wears the
- * board's count of escalations waiting for the person, the 不明 count while
- * an orchestrator runs, and the orchestrator agent is drawn on it rather
+ * board's count of escalations waiting for the person, and the orchestrator
+ * agent is drawn on it rather
  * than under its Workspace.
  */
 
@@ -142,31 +142,19 @@ describe("the Orchestrator row", () => {
     expect(second!.querySelector(".row-label")).toHaveTextContent(/^Scratch$/);
   });
 
-  it("wears the number waiting for an answer, and 不明 quietly beside it", () => {
+  it("wears the number waiting for an answer, and no 不明 count", () => {
     mount(snapshot(true), {
       ...EMPTY_BOARD,
       orchestratorAgentId: "orch",
       needsAnswer: [escalation(1), escalation(2)],
-      unaccounted: [
-        {
-          agentId: "worker",
-          name: "worker",
-          workspaceId: SCRATCH_ID,
-          workspaceLabel: "Scratch",
-          idleSince: 0,
-        },
-      ],
     });
     const row = treeItems()[0]!;
     expect(row.querySelector(".orchestrator-badge")).toHaveTextContent("2");
-    expect(row.querySelector(".orchestrator-unaccounted")).toHaveTextContent(
-      "1",
-    );
-    expect(
-      within(row).getByRole("button", {
-        name: /2 waiting for your answer, 1 unaccounted for/u,
-      }),
-    ).toBeInTheDocument();
+    expect(row.querySelector(".orchestrator-unaccounted")).toBeNull();
+    const button = within(row).getByRole("button", {
+      name: /2 waiting for your answer/u,
+    });
+    expect(button.getAttribute("aria-label")).not.toMatch(/unaccounted/u);
   });
 
   it("draws the orchestrator agent on its own row, not under its Workspace", () => {

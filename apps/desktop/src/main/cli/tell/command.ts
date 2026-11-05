@@ -337,7 +337,7 @@ export type TellCommand =
 			readonly effort?: "quick" | "normal" | "deep";
 			readonly rankNote?: string;
 	  }
-	/** The three lanes, 不明 included. */
+	/** The lanes. */
 	| { readonly verb: "board" }
 	| {
 			readonly verb: "orchestrator-start";
@@ -655,8 +655,7 @@ window would ask, the command takes the answer as an argument.
 orchestrator (the Orchestrator row: the board, escalations, events)
   board                            the three lanes as data: needs_answer
                                    (oldest first), in_progress (how long
-                                   since the answer), and unaccounted (idle
-                                   agents no open escalation names); while
+                                   since the answer, 停滞 marked); while
                                    GitHub is polled, the unattended Issues
                                    (assigned to me, open, no agent on them:
                                    --json unattendedIssues)

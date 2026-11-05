@@ -4243,43 +4243,21 @@ describe("the Orchestrator row from the command line", () => {
 		).toBe(ports.clock.now - 60_000);
 	});
 
-	it("wakes it when an agent enters 不明, until the board is read", async () => {
+	it("has no 不明: an idle agent no escalation names wakes nothing and is on no lane", async () => {
 		const { service, ports } = orchestrated();
-		// Shell is idle from the first reading on; after the grace it is unaccounted.
 		ports.service.observe();
 		ports.clock.now += 61_000;
 		ports.service.observe();
-		const woken = await viaSocket(
+		const quiet = await viaSocket(
 			service,
-			["agent", "wait", "--any", "--until", "idle"],
+			["agent", "wait", "--any", "--until", "idle", "--timeout", "1"],
 			coordinator,
 		);
-		expect(woken.data).toMatchObject({
-			reached: true,
-			unaccounted: [{ agentId: "cccc3333-0000", name: "Shell" }],
-		});
-		// The event went to the orchestrator too, once.
-		expect(
-			ports.delivered.filter(([, text]) => text.includes("[unaccounted]")),
-		).toHaveLength(1);
-		const board = await viaSocket(service, ["board"], coordinator);
-		expect(board.message).toContain("unaccounted (1):");
-		expect(
-			(
-				await viaSocket(
-					service,
-					["agent", "wait", "--any", "--until", "idle", "--timeout", "1"],
-					coordinator,
-				)
-			).data,
-		).toMatchObject({ reached: false, unaccounted: [] });
-		// An escalation that names it accounts for it.
-		await viaSocket(
-			service,
-			["escalation", "new", "--title", "t", "--body", "b", "--agent", "Shell"],
-			coordinator,
-		);
-		expect(ports.service.unaccounted()).toEqual([]);
+		expect(quiet.data).not.toHaveProperty("unaccounted");
+		expect(ports.delivered.join("\n")).not.toContain("[unaccounted]");
+		const board = await viaSocket(service, ["--json", "board"], coordinator);
+		expect(board.message).not.toContain("unaccounted");
+		expect(board.data).not.toHaveProperty("unaccounted");
 	});
 
 	it("does not wake an agent that is not the orchestrator on these", async () => {

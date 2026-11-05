@@ -404,8 +404,8 @@ in the target's transcript. An agent cannot answer its own question.
 
 **Orchestrating.** One ordinary agent can drive the others with these
 commands. The Sidebar's **Orchestrator** row (above Scratch) gives one such
-agent a screen of its own — a board of escalations the person answers, the
-agents nobody accounts for, and events DevHub sends it — with `devhub --tell
+agent a screen of its own — a board of escalations the person answers, and
+events DevHub sends it — with `devhub --tell
 escalation`, `board` and `orchestrator` to drive it. The orchestrator ranks
 each escalation (`escalation new|rank --priority high|normal|low --effort
 quick|normal|deep --rank-note TEXT`), and 要回答 is sorted by priority, then

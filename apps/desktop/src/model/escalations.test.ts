@@ -18,9 +18,6 @@ import {
   priorityOf,
   rankEscalation,
   stateSince,
-  unaccountedAgents,
-  UNACCOUNTED_GRACE_MS,
-  type BoardAgent,
 } from "./escalations.js";
 
 const raised = () =>
@@ -167,48 +164,7 @@ describe("on disk", () => {
   });
 });
 
-describe("不明", () => {
-  const agent = (over: Partial<BoardAgent>): BoardAgent => ({
-    id: "a1",
-    name: "Claude",
-    workspaceId: "w",
-    workspaceLabel: "app",
-    status: "idle",
-    stopping: false,
-    idleSince: 0,
-    ...over,
-  });
-  const now = UNACCOUNTED_GRACE_MS + 10;
-
-  it("lists idle agents past the grace that no open escalation names", () => {
-    const agents = [
-      agent({ id: "a1" }),
-      agent({ id: "a2", status: "working", idleSince: undefined }),
-      agent({ id: "a3", idleSince: now - 1000 }),
-      agent({ id: "orch" }),
-      agent({ id: "a4", stopping: true }),
-      agent({ id: "a5" }),
-    ];
-    const open = createEscalation(
-      1,
-      { title: "t", markdown: "x", agents: ["a5"] },
-      0,
-    );
-    const listed = unaccountedAgents(agents, [open], "orch", now);
-    expect(listed.map((one) => one.agentId)).toEqual(["a1"]);
-  });
-
-  it("counts an agent again once the escalation naming it is closed", () => {
-    const closed = closeEscalation(
-      createEscalation(1, { title: "t", markdown: "x", agents: ["a1"] }, 0),
-      undefined,
-      1,
-    );
-    expect(
-      unaccountedAgents([agent({})], [closed], undefined, now),
-    ).toHaveLength(1);
-  });
-
+describe("the board", () => {
   it("lays out the lanes: oldest question first, closed hidden from both", () => {
     const first = createEscalation(1, { title: "a", markdown: "x" }, 10);
     const second = createEscalation(2, { title: "b", markdown: "x" }, 5);
@@ -222,7 +178,7 @@ describe("不明", () => {
       undefined,
       2,
     );
-    const lanes = board([first, second, answered, done], [], undefined, now);
+    const lanes = board([first, second, answered, done]);
     expect(lanes.needsAnswer.map((one) => one.id)).toEqual([2, 1]);
     expect(lanes.inProgress.map((one) => one.id)).toEqual([3]);
     expect(lanes.closed.map((one) => one.id)).toEqual([4]);
@@ -302,20 +258,13 @@ describe("the orchestrator's ranking", () => {
     const deepHigh = one(3, 3000, { priority: "high", effort: "deep" });
     const quick = one(4, 4000, { effort: "quick" });
     const quickHigh = one(5, 5000, { priority: "high", effort: "quick" });
-    const lanes = board(
-      [old, quickLow, deepHigh, quick, quickHigh],
-      [],
-      undefined,
-      9000,
-    );
+    const lanes = board([old, quickLow, deepHigh, quick, quickHigh]);
     expect(lanes.needsAnswer.map((e) => e.id)).toEqual([5, 3, 4, 1, 2]);
     const answered = [
       answerEscalation(quickHigh, "a", 7000),
       answerEscalation(old, "a", 6000),
     ];
-    expect(
-      board(answered, [], undefined, 9000).inProgress.map((e) => e.id),
-    ).toEqual([1, 5]);
+    expect(board(answered).inProgress.map((e) => e.id)).toEqual([1, 5]);
   });
 
   it("re-ranks only what is given, stores normal as nothing, and an empty note clears", () => {

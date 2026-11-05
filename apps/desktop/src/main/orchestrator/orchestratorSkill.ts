@@ -125,7 +125,7 @@ export function codexOrchestratorInstructions(
 export function orchestratorSkillText(cli: string): string {
 	return `---
 name: ${ORCHESTRATOR_SKILL_NAME}
-description: DevHub のオーケストレーター専用。イベントごとに DevHub から呼ばれる「ユーザー自身のイベント処理スキル」(/make-progress など) を、ユーザーへのヒアリングを通じて設計・作成・改訂する。DevHub が渡すイベントの中身、ボードのレーン (要回答 / 対応中 / 不明) の意味、エスカレーションの原則、なるべく停めない心構え、使える CLI をまとめてある。「make-progress を作って」「オーケストレーターのスキルを設定して」「イベントの扱いを変えたい」と言われたとき、または /${ORCHESTRATOR_SKILL_NAME} で使う。
+description: DevHub のオーケストレーター専用。イベントごとに DevHub から呼ばれる「ユーザー自身のイベント処理スキル」(/make-progress など) を、ユーザーへのヒアリングを通じて設計・作成・改訂する。DevHub が渡すイベントの中身、ボードのレーン (要回答 / 対応中) の意味、エスカレーションの原則、なるべく停めない心構え、使える CLI をまとめてある。「make-progress を作って」「オーケストレーターのスキルを設定して」「イベントの扱いを変えたい」と言われたとき、または /${ORCHESTRATOR_SKILL_NAME} で使う。
 ---
 
 # /${ORCHESTRATOR_SKILL_NAME} - make-progress を作るためのスキル
@@ -185,7 +185,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   マージ / クローズはその PR の他の行を置き換える、turn_ended は最新 (since は最初の未読から)、
   タイマーは 1 つにつき 1 件まで。同じ対象の別の話は同じ行に \`／ [type] …\` で続く
   (行頭の \`[type]\` が最新のもの)。
-- 届ける直前に、もう対応の要らないものは落とされる: 不明 でなくなったエージェント、
+- 届ける直前に、もう対応の要らないものは落とされる: 停滞でなくなったエスカレーション、
   また作業中になったエージェントの turn_ended、回答済みの質問、クローズ済みの
   エスカレーションへの回答、リセット済みの使用量枠の \`usage.threshold\`。前回届けたのと同じことは、その対象に変化がない限り再送されない。
 - 1 通は最大 50 行。超えた分は最後の行 \`…ほか N 件 (devhub --tell orchestrator events で確認)\`
@@ -201,7 +201,6 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)
       [escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります
       [escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない
-      [unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 12m
       [timer.elapsed] sweep
       [usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました
 
@@ -222,7 +221,6 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ) | esc, agent |
 | ボード | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ) | esc, agent, since |
 | ボード | \`escalation.stalled\` | 対応中のエスカレーションの関係エージェントが 1 分以上誰も動いていない (全員 idle / 待ち / 停止 / 消えた、または紐付けなし: \`agents=none\`)。1 回の停滞につき 1 回。未読の回答 (\`escalation_answered\`) があるうちは来ず、\`escalation show\` で読んでから数え始める | esc, agents |
-| ボード | \`unaccounted\` | エージェントが 不明 に入った | agent, ws |
 | GitHub | \`github.assigned\` | 自分にアサインされた | ws, agent, URL |
 | GitHub | \`github.lane_changed\` | 自分の Issue / PR の Project レーンが動いた (from → to) | ws, URL |
 | GitHub | \`github.unattended\` | 自分にアサインされた open な Issue に、紐づく DevHub エージェントがいない (状態で判定。下記) | lane, URL |
@@ -302,11 +300,10 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
   (それ以外はあなたが起こしたか、\`agent.turn_ended\` で分かるので届かない)。
   ただし会話の保守だけのターン — \`/compact\` によるコンパクション (DevHub が
   キャッシュ切れ前に自動で送るもの、人が打ったもの) — は作業ではない。
-  要回答のまま、注記も \`agent.turn_ended\` も届かず、不明 の idle 時間も切れない。
-- **不明** (unaccounted): 1 分以上 idle で、どの未完了エスカレーションにも
-  名前がないエージェント。**常に空にしておく**。入ったら必ず次のどれか:
-  次の作業を渡す / エスカレーションを起こして紐付ける / 終わっていれば
-  stop (必要ならワークスペースを閉じる)。
+  要回答のまま、注記も \`agent.turn_ended\` も届かず、停滞 も解けない。
+- **idle のエージェントを放置しない。** ターンが終わったら (\`agent.turn_ended\`)
+  必ず次のどれか: 次の作業を渡す / エスカレーションを起こして紐付ける /
+  終わっていれば stop (必要ならワークスペースを閉じる)。
 
 ## 4. エスカレーションの原則
 
@@ -319,7 +316,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
 - テンプレート: \`## 背景\` / \`## 現状\` / \`## 決めてほしいこと\` /
   \`## 選択肢と推奨\` / \`## 回答後に起きること\` / \`## 参考\`。選択肢は
   \`--option\` でワンクリック回答できるようにする。関係するエージェントは
-  **必ず \`--agent\` で全部渡す** (ボードの紐付けと 不明 の判定に使われる)。
+  **必ず \`--agent\` で全部渡す** (ボードの紐付けと 停滞 の判定に使われる)。
 - 画像・SVG はファイルパス (\`![説明](out/shot.png)\`、表のセルの中でもよい) か
   \`\`\`svg で埋め込める；起票時に取り込まれる (\`escalation new\` / \`ask\` の時点で
   エスカレーション専用の場所にコピーされるので、元のワークツリーが消えても残る)。
@@ -445,7 +442,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
 1. **ディスパッチャ**: \`{EVENT}\` の各行を先頭の \`[type]\` で分岐 (上から順に処理)。
 2. **イベント種別ごとの playbook**: 何を確認し、誰に何を送り、どの状態で
    終えるか。
-3. **不明レーンのルール**: 処理の最後に \`board\` を見て 不明 を空にする。
+3. **放置しないルール**: 処理の最後に \`board\` を見て、停滞 のエスカレーションと idle のまま理由のないエージェントをなくす。
 4. **エスカレーションのルール**: 上の原則とテンプレート、自律の範囲、
    decisions.md の更新。
 5. **init での復旧・整合性チェック**: 再起動後、ボード・エージェント・
@@ -465,7 +462,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
 
     ## init
     board / agents / 監視 Project を見て整合性を取る。対応中は回答を伝え直す。
-    不明 のエージェントに次の作業を渡す。
+    idle のまま理由のないエージェントに次の作業を渡す。
 
     ## escalation_answered
     escalation show で回答を読む → 紐付くエージェントに agent send で伝える
@@ -482,7 +479,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     agents=none なら escalation link ID --agent A で紐付ける。まだ人に聞くことがあれば
     escalation ask (要回答に戻る)、もう要らなければ escalation close。
 
-    ## unaccounted / agent.turn_ended
+    ## agent.turn_ended
     agent read A --since <since=> で差分を読む → 次の作業を send / エスカレーション / stop。
 
     ## agent.asked
@@ -509,10 +506,10 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     エージェントを stop、ワークスペースを閉じる。
 
     ## timer.elapsed
-    棚卸し: 対応中が放置されていないか、不明 が空か、止まった CI はないか。
+    棚卸し: 対応中が停滞していないか、idle で放置されたエージェントはいないか、止まった CI はないか。
 
     ## 最後に必ず
-    board を確認し、不明 を空に。関係エージェントが全員「進行中 / 待ち /
+    board を確認し、停滞をなくす。関係エージェントが全員「進行中 / 待ち /
     エスカレーション中 / 終了」のどれかであること。
 `;
 }

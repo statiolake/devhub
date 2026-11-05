@@ -9,11 +9,6 @@
  * Agents page's bridge (`answer`), and that is the only door it has; the
  * `--tell` commands reach `raise`, `ask`, `close` and `link`, never `answer`.
  *
- * 不明 is worked out here from live state (`model/escalations.ts`,
- * `unaccountedAgents`): when an agent went idle is this service's own
- * reading of every snapshot, and an agent that crosses the grace is told to
- * the orchestrator once (`unaccounted` event) for each time it went idle.
- *
  * An escalation's agent going back to work is watched here too
  * (`#watchWorking`): a `needs_answer` escalation about it gets DevHub's note
  * and so moves to `in_progress` until the orchestrator asks again. When the
@@ -22,9 +17,9 @@
  * is told to the orchestrator (`escalation.human_direct`), since what was
  * said may answer or change it.
  *
- * 停滞 is worked out here too (`#stalledNow`): an escalation in 対応中 that
- * none of its agents is working on (status `working` or `background`, not
- * stopping) for longer than the same grace, told once per stretch
+ * 停滞 is worked out here from live state (`#stalledNow`): an escalation in
+ * 対応中 that none of its agents is working on (status `working` or
+ * `background`, not stopping) for longer than `STALLED_GRACE_MS`, told once per stretch
  * (`escalation.stalled`). A stretch starts at the latest of: its last entry,
  * the last time one of its agents was seen working, the orchestrator's
  * reading of the answer (`acknowledge`), this service's first reading. An
@@ -35,15 +30,14 @@
  * A maintenance turn (`isMaintenanceTurn`: a `/compact`, DevHub's keep-warm
  * one before the prompt cache goes cold or the person's) is not work: every
  * reading here goes by the status the agent had before it (`workStatus`), so
- * it writes no `resumed` / `direct` note, tells nothing, and neither ends
- * nor restarts a stretch of idleness (不明). A person's `/compact` is not
+ * it writes no `resumed` / `direct` note, tells nothing, and does not end a
+ * stalled stretch (停滞). A person's `/compact` is not
  * their words to the agent either: its mark goes with it.
  */
 
 import type {
 	EscalationWire,
 	OrchestratorBoardWire,
-	UnaccountedAgentWire,
 } from "../../ipc/contract.js";
 import {
 	board,
@@ -52,12 +46,10 @@ import {
 	isOpen,
 	priorityOf,
 	stateSince,
-	UNACCOUNTED_GRACE_MS,
-	type BoardAgent,
+	STALLED_GRACE_MS,
 	type Escalation,
 	type EscalationRank,
 	type NewEscalation,
-	type UnaccountedAgent,
 } from "../../model/escalations.js";
 import type { OrchestratorConfig } from "../../model/orchestratorSettings.js";
 import { workStatus } from "../../model/conversation.js";
@@ -66,7 +58,6 @@ import {
 	customTypeProblem,
 	EventDispatcher,
 	eventJson,
-	workspaceToken,
 	type EventItem,
 	type EventLogEntry,
 	type OrchestratorEvent,
@@ -154,9 +145,6 @@ export class OrchestratorService {
 	readonly events: EventDispatcher;
 	/** `[[orchestrator.timers]]`, and `orchestrator timer` for this session. */
 	readonly timers: OrchestratorTimers;
-	readonly #idleSince = new Map<string, number>();
-	/** `agentId@idleSince`, once told: one event per stretch of idleness. */
-	readonly #told = new Set<string>();
 	/**
 	 * The agents the person has just written to from their composer, until
 	 * they are seen to take it up: `armed` once seen not working (a message
@@ -167,7 +155,7 @@ export class OrchestratorService {
 	readonly #status = new Map<string, string>();
 	#revision = 0;
 	#timer: { cancel(): void } | undefined;
-	#graceMs = UNACCOUNTED_GRACE_MS;
+	#graceMs = STALLED_GRACE_MS;
 	/** The first reading: nothing before it was seen, so no stretch starts earlier. */
 	#startedAt: number | undefined;
 	/**
@@ -248,7 +236,7 @@ export class OrchestratorService {
 
 	/**
 	 * Whether a pending event still needs the orchestrator, by live state,
-	 * just before it goes: an agent in 不明 that is no longer there, a turn
+	 * just before it goes: an escalation no longer stalled, a turn
 	 * whose agent is working again (or gone), a question or a permission
 	 * prompt no longer waiting, an answer to an escalation since closed —
 	 * these have been seen to already.
@@ -256,10 +244,6 @@ export class OrchestratorService {
 	#relevant(event: OrchestratorEvent): boolean {
 		const agent = (id: string) => this.#agents().find((one) => one.id === id);
 		switch (event.type) {
-			case "unaccounted":
-				return this.#lanes(this.#now()).unaccounted.some(
-					(one) => one.agentId === event.agent.id,
-				);
 			case "agent.turn_ended": {
 				const live = agent(event.agent.id);
 				return live !== undefined && live.status !== "working";
@@ -460,37 +444,21 @@ export class OrchestratorService {
 	// --- live state ------------------------------------------------------------
 
 	/**
-	 * A new projection: who is idle since when, and who has crossed into 不明.
-	 * Called on every snapshot; cheap, and idempotent.
+	 * A new projection: who went working, and which 対応中 escalation has
+	 * stood still past the grace. Called on every snapshot; cheap, and
+	 * idempotent.
 	 */
 	observe(): void {
 		const now = this.#now();
 		const agents = this.#agents();
-		const live = new Set<string>();
-		for (const agent of agents) {
-			live.add(agent.id);
-			if (agent.status === "idle") {
-				if (!this.#idleSince.has(agent.id)) this.#idleSince.set(agent.id, now);
-			} else {
-				this.#idleSince.delete(agent.id);
-			}
-		}
-		for (const id of [...this.#idleSince.keys()])
-			if (!live.has(id)) this.#idleSince.delete(id);
 		this.#startedAt ??= now;
 		this.#watchWorking(agents, now);
 		this.#watchStalled(agents, now);
-		this.#announceUnaccounted(now);
 		this.#announceStalled(now);
 		this.#schedule(now);
 		// The orchestrator's status may have moved: what waits for it may go.
 		this.events.flush();
 		this.publish();
-	}
-
-	/** 不明, now. */
-	unaccounted(): readonly UnaccountedAgent[] {
-		return this.#lanes(this.#now()).unaccounted;
 	}
 
 	/**
@@ -507,39 +475,8 @@ export class OrchestratorService {
 			);
 	}
 
-	#boardAgents(): readonly BoardAgent[] {
-		return this.#agents().map((agent) => ({
-			...agent,
-			idleSince: this.#idleSince.get(agent.id),
-		}));
-	}
-
-	#lanes(now: number) {
-		return board(
-			this.ports.store.all(),
-			this.#boardAgents(),
-			this.ports.store.orchestratorAgentId,
-			now,
-			this.#graceMs,
-		);
-	}
-
-	#announceUnaccounted(now: number): void {
-		// Only while there is an orchestrator to tell: an agent that went
-		// unaccounted for before one started is on the board its init reads.
-		if (this.orchestratorAgentId === undefined) return;
-		for (const agent of this.#lanes(now).unaccounted) {
-			const key = `${agent.agentId}@${String(agent.idleSince)}`;
-			if (this.#told.has(key)) continue;
-			this.#told.add(key);
-			const event: OrchestratorEvent = {
-				type: "unaccounted",
-				agent: { id: agent.agentId, name: agent.name },
-				ws: workspaceToken(agent.workspaceLabel, agent.workspaceId),
-				idleSince: agent.idleSince,
-			};
-			this.events.dispatch(event);
-		}
+	#lanes() {
+		return board(this.ports.store.all());
 	}
 
 	// --- 停滞: 対応中 with nobody working on it -----------------------------------
@@ -642,20 +579,17 @@ export class OrchestratorService {
 		}
 	}
 
-	/** Wake when the next idle agent's (or escalation's) grace is up, to say so. */
+	/** Wake when the next escalation's grace is up, to say so. */
 	#schedule(now: number): void {
 		this.#timer?.cancel();
 		this.#timer = undefined;
 		const setTimer = this.ports.setTimer;
 		if (setTimer === undefined) return;
 		const agents = this.#agents();
-		const due = [
-			...this.#idleSince.values(),
-			...this.ports.store
-				.all()
-				.map((one) => this.#stalledSince(one, agents))
-				.filter((since): since is number => since !== undefined),
-		]
+		const due = this.ports.store
+			.all()
+			.map((one) => this.#stalledSince(one, agents))
+			.filter((since): since is number => since !== undefined)
 			.map((since) => since + this.#graceMs - now)
 			.filter((ms) => ms > 0);
 		if (due.length === 0) return;
@@ -719,8 +653,7 @@ export class OrchestratorService {
 	}
 
 	wire(): OrchestratorBoardWire {
-		const now = this.#now();
-		const lanes = this.#lanes(now);
+		const lanes = this.#lanes();
 		const escalation = (one: Escalation) => this.toWire(one);
 		const settings = this.ports.settings();
 		const problem = this.ports.startProblem();
@@ -746,9 +679,6 @@ export class OrchestratorService {
 			needsAnswer: lanes.needsAnswer.map(escalation),
 			inProgress: lanes.inProgress.map(escalation),
 			closed: lanes.closed.slice(0, CLOSED_SHOWN).map(escalation),
-			unaccounted: lanes.unaccounted.map(
-				(one): UnaccountedAgentWire => ({ ...one }),
-			),
 			graceMs: this.#graceMs,
 		};
 	}

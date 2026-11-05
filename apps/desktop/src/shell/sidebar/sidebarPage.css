@@ -173,10 +173,9 @@
 /*
  * ------------------------------------------------------- the Orchestrator row
  *
- * Above Scratch. Its trailing marks are the board's two counts: escalations
+ * Above Scratch. Its trailing mark is the board's count of escalations
  * waiting for the person, as the one filled badge in the Sidebar (it is the
- * one count here that is a request to you), and the agents nobody accounts
- * for (不明), as a quiet outlined count beside it — news, not a request.
+ * one count here that is a request to you).
  */
 .orchestrator-row {
   /* A hairline under it, so the row reads as above the tree, not in it. */
@@ -201,8 +200,7 @@
   height: 12px;
 }
 
-.orchestrator-badge,
-.orchestrator-unaccounted {
+.orchestrator-badge {
   display: inline-flex;
   min-width: 17px;
   height: 16px;
@@ -215,17 +213,8 @@
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   line-height: 1;
-}
-
-.orchestrator-badge {
   background: var(--accent);
   color: var(--accent-ink);
-}
-
-.orchestrator-unaccounted {
-  border: 1px solid var(--line-strong);
-  color: var(--secondary);
-  font-weight: 500;
 }
 
 /* On the rail the badge rides the glyph's corner, as a Dock badge does. */

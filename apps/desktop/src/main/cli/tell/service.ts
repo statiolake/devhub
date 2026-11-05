@@ -823,7 +823,6 @@ export class TellMemory {
 	}
 
 	readonly #escalations = new Map<string, Map<number, number>>();
-	readonly #unaccounted = new Map<string, Set<string>>();
 
 	/** How many entries of escalation `id` the caller has been shown (`escalation show`). */
 	escalationSeen(caller: string, id: number): number | undefined {
@@ -834,17 +833,6 @@ export class TellMemory {
 		const byId = this.#escalations.get(caller) ?? new Map<number, number>();
 		this.#escalations.set(caller, byId);
 		byId.set(id, entries);
-	}
-
-	/** Whether the caller has been shown this stretch of 不明 (`board`). */
-	unaccountedSeen(caller: string, key: string): boolean {
-		return this.#unaccounted.get(caller)?.has(key) === true;
-	}
-
-	markUnaccounted(caller: string, keys: readonly string[]): void {
-		const seen = this.#unaccounted.get(caller) ?? new Set<string>();
-		this.#unaccounted.set(caller, seen);
-		for (const key of keys) seen.add(key);
 	}
 
 	seen(caller: string, agentId: string): TellSeen | undefined {
@@ -1199,11 +1187,6 @@ export class TellService {
 	private board(): TellAnswer {
 		const board = this.ports.orchestrator.board();
 		const now = this.clock.now();
-		// Reading the board is what acknowledges 不明 for 'agent wait --any'.
-		this.memory.markUnaccounted(
-			callerKey(this.caller),
-			board.unaccounted.map(unaccountedKey),
-		);
 		const lines = [
 			`orchestrator: ${board.orchestratorAgentId ?? "none"}${board.paused ? `  (events paused, ${String(board.held)} held)` : ""}`,
 			`needs answer (${String(board.needsAnswer.length)}, priority then effort then age):`,
@@ -1216,16 +1199,6 @@ export class TellService {
 				(one) =>
 					`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}${one.stalledSince === undefined ? "" : `  [停滞 ${span(now - one.stalledSince)}: no agent is working on it]`}`,
 			),
-			`unaccounted (${String(board.unaccounted.length)}):`,
-			...board.unaccounted.map(
-				(one) =>
-					`  ${one.name} (${one.agentId})  ${one.workspaceLabel}  idle ${span(now - one.idleSince)}`,
-			),
-			...(board.unaccounted.length === 0
-				? []
-				: [
-						"Unaccounted agents are idle with no open escalation about them: give each its next task, or raise an escalation.",
-					]),
 			...unattendedLines(board),
 		];
 		return {
@@ -1236,7 +1209,6 @@ export class TellService {
 				held: board.held,
 				needsAnswer: board.needsAnswer,
 				inProgress: board.inProgress,
-				unaccounted: board.unaccounted,
 				graceMs: board.graceMs,
 				// null: GitHub is not polled, so nobody knows.
 				unattendedIssues: board.github.unattended ?? null,
@@ -1475,14 +1447,13 @@ export class TellService {
 		const counts = {
 			needsAnswer: board.needsAnswer.length,
 			inProgress: board.inProgress.length,
-			unaccounted: board.unaccounted.length,
 		};
 		return {
 			message: [
 				agent === undefined
 					? "No orchestrator is running."
 					: `orchestrator: ${agent.name} (${agent.id}), ${agent.status}${agent.presentation === "gui" ? "" : ", terminal"}`,
-				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, unaccounted ${String(counts.unaccounted)}`,
+				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}`,
 				`events: ${board.paused ? "paused" : "delivered"}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
 				githubPollingLine(board),
 				...githubBoardLines(board),
@@ -1502,21 +1473,16 @@ export class TellService {
 
 	/**
 	 * What the board has for the orchestrator that it has not been shown:
-	 * answers it has not read (`escalation show`), and agents in 不明 it has
-	 * not been shown (`board`). Only the orchestrator is woken by these.
+	 * answers it has not read (`escalation show`). Only the orchestrator is
+	 * woken by these.
 	 */
 	private boardNews(): {
 		readonly answered: readonly {
 			readonly id: number;
 			readonly title: string;
 		}[];
-		readonly unaccounted: readonly {
-			readonly agentId: string;
-			readonly name: string;
-			readonly idleSince: number;
-		}[];
 	} {
-		if (!this.callerIsOrchestrator()) return { answered: [], unaccounted: [] };
+		if (!this.callerIsOrchestrator()) return { answered: [] };
 		const caller = callerKey(this.caller);
 		const board = this.ports.orchestrator.board();
 		return {
@@ -1529,15 +1495,6 @@ export class TellService {
 						),
 				)
 				.map((one) => ({ id: one.id, title: one.title })),
-			unaccounted: board.unaccounted
-				.filter(
-					(one) => !this.memory.unaccountedSeen(caller, unaccountedKey(one)),
-				)
-				.map((one) => ({
-					agentId: one.agentId,
-					name: one.name,
-					idleSince: one.idleSince,
-				})),
 		};
 	}
 
@@ -2622,19 +2579,14 @@ export class TellService {
 				const news = await this.news(agent, command.until);
 				if (news !== undefined) ready.push(news);
 			}
-			// The orchestrator's own news: an answer it has not read, an
-			// agent in 不明 it has not been shown. Until 'idle' does not ask
+			// The orchestrator's own news: an answer it has not read. Until
+			// 'idle' does not ask
 			// about questions, and these are not questions, so every until
 			// but 'waiting' takes them.
 			const board =
-				command.until === "waiting"
-					? { answered: [], unaccounted: [] }
-					: this.boardNews();
+				command.until === "waiting" ? { answered: [] } : this.boardNews();
 			const reached =
-				ready.length > 0 ||
-				gone.length > 0 ||
-				board.answered.length > 0 ||
-				board.unaccounted.length > 0;
+				ready.length > 0 || gone.length > 0 || board.answered.length > 0;
 			if (reached || this.clock.now() >= deadline) {
 				const lines = [
 					...ready.map((one) => newsLine(one)),
@@ -2642,10 +2594,6 @@ export class TellService {
 					...board.answered.map(
 						(one) =>
 							`Escalation #${String(one.id)} 「${one.title}」 was answered by the person: read it with 'devhub --tell escalation show ${String(one.id)}'.`,
-					),
-					...board.unaccounted.map(
-						(one) =>
-							`${one.name} (${one.agentId}) is unaccounted for: idle since ${new Date(one.idleSince).toISOString()} with no open escalation. Give it its next task or raise an escalation ('devhub --tell board' acknowledges it).`,
 					),
 				];
 				return {
@@ -2659,7 +2607,6 @@ export class TellService {
 						ready,
 						gone,
 						answered: board.answered,
-						unaccounted: board.unaccounted,
 						agents: targets.map((target) => target.id),
 					},
 				};
@@ -3554,14 +3501,6 @@ export function devhubLinksIn(markdown: string): readonly string[] {
 	))
 		found.push((match[1] ?? match[2])!);
 	return found;
-}
-
-/** One stretch of an agent in 不明: it is new again each time it goes idle. */
-function unaccountedKey(one: {
-	readonly agentId: string;
-	readonly idleSince: number;
-}): string {
-	return `${one.agentId}@${String(one.idleSince)}`;
 }
 
 function agentsText(one: EscalationWire): string {

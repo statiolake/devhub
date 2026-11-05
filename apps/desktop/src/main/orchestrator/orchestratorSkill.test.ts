@@ -157,12 +157,11 @@ describe("the /devhub-orchestrator skill", () => {
 		for (const word of [
 			"要回答",
 			"対応中",
-			"不明",
+			"escalation.stalled",
 			"{EVENT}",
 			"{EVENT_JSON}",
 			"init",
 			"escalation_answered",
-			"unaccounted",
 			"github.lane_changed",
 			"github.pr_merged",
 			"workspace.issue_assigned",

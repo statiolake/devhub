@@ -14,17 +14,16 @@ the person's own, in skills and instructions in the orchestrator's folder.
 │ Scratch       │   #1 本番 invoices …  1m │  agent's own pane      │
 │ ▼ payments    │ ● 対応中 2               │  (an ordinary GUI or   │
 │    Claude ●   │   #2 決済リトライ …      │   terminal Agent)      │
-│ ▼ web-console │ ● 不明 1                 │                        │
-│               │   docs-writer  idle 3m   │                        │
+│ ▼ web-console │                          │                        │
+│    Claude ○   │                          │                        │
 └───────────────┴──────────────────────────┴────────────────────────┘
 ```
 
 ## The row and the screen
 
 - **The row** is the Sidebar's first, above Scratch. It ends with the number
-  of escalations waiting for an answer (the one filled badge in the Sidebar)
-  and, quieter, the number of agents in 不明 while an orchestrator runs. The
-  orchestrator agent's status mark sits before them. The orchestrator agent is
+  of escalations waiting for an answer (the one filled badge in the Sidebar).
+  The orchestrator agent's status mark sits before it. The orchestrator agent is
   drawn on this row only, not under its Workspace.
 - **The row is its Workspace's row**, the way Scratch's row is Scratch's
   Workspace's (`AppModel.orchestratorWorkspaceId`, `orchestratorWorkspaceId`
@@ -132,7 +131,7 @@ conversation — DevHub's keep-warm `/compact` just before the prompt cache
 goes cold (`CacheKeeper`, sent with origin `auto-compact`), or a `/compact`
 the person typed — writes no `direct` / `resumed` note, tells no
 `escalation.human_direct`, ends no `agent.turn_ended`, keeps the agent's
-stretch of idleness (so 不明 is not re-armed), and does not notify
+stalled stretch (停滞 is not re-armed), and does not notify
 "finished". It is recognised by what started the turn, never by how long
 it ran: one predicate, `isMaintenanceTurn` (`model/conversation.ts`), reads
 the last top-level message since the last turn's end (a `/compact` command
@@ -239,7 +238,6 @@ cannot write one.
   (quick, normal, deep), then oldest question first, with how long it has
   waited. A ticket asked again after an answer carries 追加の質問.
 - **対応中** — answered longest ago first, with how long since the answer.
-- **不明** — see below.
 - **Closed** — a toggle in the header shows the last 30.
 
 Clicking a card opens it in place: the whole thread, drawn by the GUI
@@ -259,7 +257,7 @@ the send button or a quick reply) goes back to the board the same way, with
 focus on the next card in 要回答 — or, with none left, on the one just
 answered, now in 対応中; a send that fails stays, with the error and the
 draft. Jumping to an agent from
-an escalation (its chip, or a row in 不明) is a deliberate move
+an escalation (its chip) is a deliberate move
 (`reason: "explicit"`), so Back (prefix+h) returns to the Orchestrator
 screen. So is going to a Workspace from an escalation: beside each agent
 chip, a folder and the name of that agent's Workspace (and, first, the
@@ -300,27 +298,12 @@ tree and the open file follow, and the tab shows a dot while the board is in
 front. Every path is from the root and confined to it: an absolute path,
 `..`, or a symlink that leads out is refused.
 
-### 不明: agents nobody accounts for
-
-不明 lists the agents that are **idle for longer than a minute**
-(`UNACCOUNTED_GRACE_MS`), are not the orchestrator, are not stopping, and are
-named by no open (要回答 or 対応中) escalation. It is computed from live state
-on every reading and never stored, so nobody clears it: it empties when the
-agent is given work or an escalation names it. The minute is the grace for an
-agent that has just finished or just started — long enough for the
-orchestrator to read it and hand it its next task, short enough that a
-forgotten agent shows up the same minute. "Idle since" is main's own reading
-of each snapshot.
-
-It should normally be empty. Each agent that enters it is sent to the
-orchestrator as an `unaccounted` event, once per stretch of idleness.
-
 ### 停滞: 対応中 with nobody working on it
 
 A 対応中 escalation is **stalled** when none of its related agents (`agents`,
 the orchestrator left out) is working — every one idle, waiting, stopped or
-gone, or it names none — and that has held for the same grace as 不明
-(`UNACCOUNTED_GRACE_MS`, a minute: the orchestrator's time to relay the answer
+gone, or it names none — and that has held for a grace
+(`STALLED_GRACE_MS`, a minute: the orchestrator's time to relay the answer
 and set an agent going). Working is status `working` or `background` (a
 background task runs for it) and not stopping; a maintenance turn
 (`isMaintenanceTurn`) is not work (`workStatus`, as everywhere). The stretch
@@ -368,7 +351,6 @@ pulls the details itself. `{EVENT}` holds these lines.
 | `escalation_answered`                             | the person answered an escalation                                                                                                                                                                                                     | `[escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)`                                                                     |
 | `escalation.human_direct`                         | the person talked directly to an open escalation's agent, from its composer, and it went working (要回答 → 対応中)                                                                                                                    | `[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります` |
 | `escalation.stalled`                              | a 対応中 escalation none of whose agents has worked for the grace (see 停滞); `agents=none` when it names none (`escalation link` it)                                                                                                 | `[escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない`                                      |
-| `unaccounted`                                     | an agent entered 不明                                                                                                                                                                                                                 | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m`                                                                                                                        |
 | `github.assigned`                                 | the viewer was assigned to a card                                                                                                                                                                                                     | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200`                                                                                |
 | `github.lane_changed`                             | a card of the viewer's moved lane (Status)                                                                                                                                                                                            | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123`                                                       |
 | `github.unattended`                               | an open Issue on a board, assigned to the viewer, has no live DevHub agent linked to it (a state, said on every poll and the baseline; see below)                                                                                     | `[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない https://…/issues/200`                                                     |
@@ -431,8 +413,7 @@ bob が承認 ／ [github.pr_ready] ready for review になった https://…/pu
 - **Stale items are dropped before delivery.** Each pending item is re-read
   against live state when the message is rendered (`relevant`, in
   `orchestratorService.ts`) and dropped as `dropped-stale` if its subject no
-  longer needs attention: an `unaccounted` agent that is no longer idle or is
-  now named by an open escalation; a `turn_ended` whose agent is working
+  longer needs attention: a `turn_ended` whose agent is working
   again (someone has given it work; its output stays readable with `agent
 read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   longer waits on it; an `escalation_answered` or
@@ -442,8 +423,7 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   whose Issue was closed, or has had an agent linked to it, since.
 - **Never said twice.** What the last delivery said about a subject is not
   delivered again (`repeat`) unless something about that subject has been
-  heard since — a repeated `unaccounted` for the same idle period, the same
-  CI result on the same commit. Events that add news each time (`init`,
+  heard since — the same CI result on the same commit. Events that add news each time (`init`,
   `escalation_answered`, `escalation.human_direct`,
   review comments, replies, `github.unattended` — its source says it once
   per stretch of being unattended —
@@ -493,8 +473,7 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
 ### The sources
 
 - **The board** (`orchestratorService.ts`): `init`, `escalation_answered`,
-  `escalation.human_direct`, `escalation.stalled`,
-  `unaccounted`.
+  `escalation.human_direct`, `escalation.stalled`.
 - **GitHub** (`githubEvents.ts`), while an orchestrator runs and
   `[orchestrator.github] projects` names a board. Scope: the cards on those
   Projects (v2) boards that relate to the viewer — assigned to them, authored
@@ -606,8 +585,7 @@ should wake it too needs a reason there as well.
 Called by the orchestrator, `agent wait --any` also returns for:
 
 - an escalation the person answered that it has not read — acknowledged by
-  `escalation show ID`;
-- an agent in 不明 it has not been shown — acknowledged by `board`.
+  `escalation show ID`.
 
 The same read-tracking as the rest of `wait --any` (`TellMemory`): it stays
 reported until it is read, so nothing between two waits is missed.
@@ -645,7 +623,7 @@ goes. The default is everything but the chatter:
 
 ```toml
 events = ["init", "escalation_answered", "escalation.human_direct",
-  "escalation.stalled", "unaccounted", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
+  "escalation.stalled", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
   "agent.asked", "agent.exited", "agent.failed", "usage.threshold", "timer.*", "custom.*"]
 ```
 
@@ -657,7 +635,7 @@ setting.
 ## The command line
 
 ```sh
-devhub --tell board [--json]                         # 要回答, 対応中 (停滞 marked), 不明 as data (acknowledges 不明)
+devhub --tell board [--json]                         # 要回答, 対応中 (停滞 marked) as data
 devhub --tell escalation new --title T --body -|TEXT [--agent A]... [--link URL]... [--option TEXT]... [--workspace W]
                          [--priority high|normal|low] [--effort quick|normal|deep] [--rank-note TEXT]
 devhub --tell escalation rank ID [--priority P] [--effort E] [--rank-note TEXT]   # re-rank; "" clears the note
@@ -708,7 +686,7 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
   the optional `{EVENT_JSON}`, coalescing, held mid-turn and while paused,
   the `events` filter), the event types (its table is tested against
   `EVENT_TYPES`), what each lane asks of the orchestrator (要回答 waits, 対応中 is
-  relayed to the agent and closed, 不明 is kept empty; a related agent that
+  relayed to the agent and closed, 停滞 is acted on; a related agent that
   goes working takes an escalation out of 要回答 until it is asked again, and
   on `escalation.human_direct` it reads what the person said with
   `agent read --since`, then closes the escalation, asks again with what is
@@ -719,7 +697,7 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
   team's lanes, existing skills, review and "done", what it may decide alone
   (and where decisions are recorded), events, timers, naming and meta.
   Then it drafts make-progress — a dispatcher on each line's `[type]`, a playbook per
-  event, the 不明 rule, escalation rules, a reconcile on `init` — shows it,
+  event, the no-idle rule, escalation rules, a reconcile on `init` — shows it,
   and writes it to `<root>/.claude/skills/<name>/SKILL.md` (plus an
   `AGENTS.md` pointer for Codex). It never writes `settings.toml`: it gives
   the person the `[orchestrator]` lines to add, or to set in Settings.

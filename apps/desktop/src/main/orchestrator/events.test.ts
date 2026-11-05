@@ -119,11 +119,26 @@ describe("an event's line", () => {
 		],
 		[
 			{
-				type: "unaccounted",
-				agent: { id: "e5f6", name: "調査" },
-				idleSince: now - 12 * 60_000,
+				type: "escalation.stalled",
+				escalationId: 12,
+				title: "本番DBマイグレーション承認",
+				agents: [
+					{ id: "a1b2c3d4-0000-4000-8000-000000000000" },
+					{ id: "c3d4e5f6-0000-4000-8000-000000000000", name: "x" },
+				],
+				since: now - 3 * 60_000,
 			},
-			"[unaccounted] agent=e5f6 (調査) idle 12m",
+			"[escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない",
+		],
+		[
+			{
+				type: "escalation.stalled",
+				escalationId: 3,
+				title: "t",
+				agents: [],
+				since: now - 60_000,
+			},
+			"[escalation.stalled] esc=3「t」 agents=none idle 1m — 対応中だが関連エージェントがいない (escalation link で紐づける)",
 		],
 		[
 			{ type: "timer.elapsed", name: "tick", interval: "5m" },
@@ -500,9 +515,9 @@ describe("one line per subject", () => {
 	it("never says the same thing again while its subject is unchanged", () => {
 		const { dispatcher, sent, state } = world({ events: ["*"] });
 		const idle: OrchestratorEvent = {
-			type: "unaccounted",
+			type: "agent.failed",
 			agent: AGENT,
-			idleSince: 5,
+			reason: "conversation_host_lost",
 		};
 		dispatcher.flush();
 		dispatcher.dispatch(idle);

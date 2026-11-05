@@ -576,10 +576,6 @@
   --lane-ink: var(--status-working);
 }
 
-.orchestrator-lane[data-tone="unaccounted"] {
-  --lane-ink: var(--status-waiting);
-}
-
 .orchestrator-lane[data-tone="closed"] {
   --lane-ink: var(--tertiary);
 }
@@ -780,22 +776,6 @@
 
 .orchestrator-chip-sub {
   color: var(--tertiary);
-}
-
-.orchestrator-unaccounted-row {
-  padding-top: 5px;
-  padding-bottom: 5px;
-}
-
-.orchestrator-unaccounted-mark {
-  display: flex;
-  align-self: center;
-  color: var(--status-idle);
-}
-
-.orchestrator-unaccounted-mark .sidebar-glyph {
-  width: 12px;
-  height: 12px;
 }
 
 /* ------------------------------------------------------------- reading */

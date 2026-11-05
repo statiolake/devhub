@@ -984,7 +984,7 @@ function SidebarResizeHandle({
  *
  * It leads with its own mark and ends with what the board has for the person:
  * the number of escalations waiting for an answer, as the one filled badge in
- * the Sidebar, and — quieter — how many agents nobody accounts for (不明).
+ * the Sidebar.
  * The orchestrator agent's own status mark sits before them, so its row says
  * what it is doing the way an Agent row does.
  *
@@ -1037,7 +1037,6 @@ function OrchestratorRow({
     .flatMap((workspace) => workspace.agents)
     .find((one) => one.id === snapshot.orchestratorAgentId);
   const waiting = board.needsAnswer.length;
-  const unaccounted = agent === undefined ? 0 : board.unaccounted.length;
   const facts = [
     "Orchestrator",
     agent === undefined
@@ -1047,7 +1046,6 @@ function OrchestratorRow({
     ...(board.inProgress.length > 0
       ? [`${String(board.inProgress.length)} in progress`]
       : []),
-    ...(unaccounted > 0 ? [`${String(unaccounted)} unaccounted for`] : []),
     ...(board.paused ? ["events paused"] : []),
   ];
   return (
@@ -1124,15 +1122,6 @@ function OrchestratorRow({
                   <StatusMark status={agent.status} unread={agent.unread} />
                 </span>
               )}
-              {unaccounted > 0 ? (
-                <span
-                  className="orchestrator-unaccounted"
-                  data-count={unaccounted}
-                  aria-hidden="true"
-                >
-                  {unaccounted}
-                </span>
-              ) : null}
               {waiting > 0 ? (
                 <span className="orchestrator-badge" aria-hidden="true">
                   {waiting}

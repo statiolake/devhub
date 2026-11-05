@@ -324,13 +324,11 @@ person's decision or permission (finish read-only investigation first):
     devhub --tell escalation ask 12 --body -        # a follow-up on the same ticket
     devhub --tell escalation show 12                # the thread, the person's answers too
     devhub --tell escalation close 12 [--note TEXT] # the answer is used up
-    devhub --tell --json board                      # needs_answer, in_progress, unaccounted
+    devhub --tell --json board                      # needs_answer, in_progress
 
 The body is Markdown drawn like a chat answer (code, math, mermaid, svg).
 Related agents, workspaces, files and escalations can be pasted as devhub: links, in \`--link\` or as \`[text](devhub:...)\` here or in chat (\`devhub --tell link agent A | workspace W | file PATH[:L] | escalation ID\` prints one).
-\`agent wait --any\` also wakes you on an answer you have not shown, and on
-an idle agent no open escalation names (unaccounted; \`board\` acknowledges
-it). DevHub also sends you each such event as a message (\`[event: ...]\`).
+\`agent wait --any\` also wakes you on an answer you have not shown. DevHub also sends you each such event as a message (\`[event: ...]\`).
 See docs/orchestrator.md in DevHub for a recommended escalation template.
 
 ## Your terminal

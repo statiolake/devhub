@@ -571,15 +571,6 @@ export interface EscalationWire {
 	readonly stalledSince?: number;
 }
 
-/** One agent in 不明: idle, with no open escalation naming it. */
-export interface UnaccountedAgentWire {
-	readonly agentId: string;
-	readonly name: string;
-	readonly workspaceId: string;
-	readonly workspaceLabel: string;
-	readonly idleSince: number;
-}
-
 /**
  * The Orchestrator screen's board: the three lanes, the orchestrator, and
  * whether its events are paused. Pushed whenever any of it moves.
@@ -663,8 +654,7 @@ export interface OrchestratorBoardWire {
 	readonly inProgress: readonly EscalationWire[];
 	/** Most recently closed first; the last few only. */
 	readonly closed: readonly EscalationWire[];
-	readonly unaccounted: readonly UnaccountedAgentWire[];
-	/** How long an idle agent goes unaccounted for before it is listed. */
+	/** How long a 対応中 one stands with no agent working before it is 停滞. */
 	readonly graceMs: number;
 }
 
@@ -677,7 +667,6 @@ export const EMPTY_BOARD: OrchestratorBoardWire = {
 	needsAnswer: [],
 	inProgress: [],
 	closed: [],
-	unaccounted: [],
 	graceMs: 60_000,
 };
 
@@ -2318,7 +2307,7 @@ export const CHANNELS = {
 	repositoryStatusChanged: "devhub:repository-status-changed",
 	/** Claude's and Codex's rate limits, when a GUI Agent reports a change. */
 	usageLimitsChanged: "devhub:usage-limits-changed",
-	/** The Orchestrator board moved: an escalation, 不明, the pause. */
+	/** The Orchestrator board moved: an escalation, the pause. */
 	orchestratorBoardChanged: "devhub:orchestrator-board-changed",
 	/** Something in the orchestrator's folder was written (debounced). */
 	orchestratorFilesChanged: "devhub:orchestrator-files-changed",

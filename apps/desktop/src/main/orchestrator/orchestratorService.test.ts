@@ -59,28 +59,13 @@ function world() {
 }
 
 describe("the orchestrator's events, re-read before they go", () => {
-	it("drops an unaccounted agent that is working again", () => {
+	it("tells nothing of an idle agent no escalation names: there is no 不明", () => {
 		const run = world();
-		run.clock.now += 1_000;
+		run.clock.now += 10 * 60_000;
 		run.service.observe();
-		expect(run.service.events.held()).toEqual([
-			expect.objectContaining({ type: "init" }),
-			expect.objectContaining({ type: "unaccounted" }),
-		]);
-		(run.worker as { status: string }).status = "working";
 		run.free();
-		expect(run.sent).toHaveLength(1);
-		expect(run.sent[0]).not.toContain("[unaccounted]");
-		expect(run.fates()).toContainEqual(["unaccounted", "dropped-stale"]);
-	});
-
-	it("drops an unaccounted agent an escalation now names", () => {
-		const run = world();
-		run.clock.now += 1_000;
-		run.service.observe();
-		run.service.raise({ title: "t", markdown: "m", agents: [WORKER] });
-		run.free();
-		expect(run.sent[0]).not.toContain("[unaccounted]");
+		expect(run.fates().map(([type]) => type)).toEqual(["init"]);
+		expect("unaccounted" in run.service.wire()).toBe(false);
 	});
 
 	it("drops a turn whose agent is working again, and keeps one still idle", () => {
@@ -297,30 +282,6 @@ describe("an escalation's agent going back to work", () => {
 			agent: WORKER,
 		});
 		expect(run.direct()).toHaveLength(1);
-	});
-
-	it("keeps an idle agent's stretch of idleness through a compaction: 不明 is not re-armed", () => {
-		const run = settled();
-		run.service.setGrace(0);
-		run.status(WORKER, "idle");
-		const told = () =>
-			run.service.events
-				.recent(50)
-				.filter(
-					(one) =>
-						one.event.type === "unaccounted" && one.event.agent.id === WORKER,
-				);
-		expect(told()).toHaveLength(1);
-		const since = run.service
-			.unaccounted()
-			.find((one) => one.agentId === WORKER)?.idleSince;
-		run.status(WORKER, "working", true);
-		expect(
-			run.service.unaccounted().find((one) => one.agentId === WORKER)
-				?.idleSince,
-		).toBe(since);
-		run.status(WORKER, "idle");
-		expect(told()).toHaveLength(1);
 	});
 
 	it("leaves alone an escalation about other agents, and a closed one", () => {

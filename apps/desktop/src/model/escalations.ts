@@ -577,73 +577,12 @@ export function linkAgent(
 // --- the board ----------------------------------------------------------------
 
 /**
- * How long an idle agent may go unaccounted for before the board lists it:
- * a minute. An agent that has just finished (or just started) is idle for a
- * moment before the orchestrator reads it and gives it its next task, and a
- * lane that blinked with every turn's end would be noise nobody reads.
+ * How long a 対応中 escalation may stand with none of its agents working
+ * before it is 停滞 (`escalation.stalled`): a minute. Just after an answer is
+ * read, the orchestrator relays it and sets an agent going; a marker that
+ * blinked in that moment would be noise nobody reads.
  */
-export const UNACCOUNTED_GRACE_MS = 60_000;
-
-/** One agent, as much of it as the 不明 rule reads. */
-export interface BoardAgent {
-  readonly id: string;
-  readonly name: string;
-  readonly workspaceId: string;
-  readonly workspaceLabel: string;
-  /** `working`, `idle`, `waiting`, …: the Sidebar's status. */
-  readonly status: string;
-  /** Not `running`: stopping, or a stop that failed. */
-  readonly stopping: boolean;
-  /** Since when it has been `idle`, as main saw it; undefined when it is not. */
-  readonly idleSince: number | undefined;
-}
-
-export interface UnaccountedAgent {
-  readonly agentId: string;
-  readonly name: string;
-  readonly workspaceId: string;
-  readonly workspaceLabel: string;
-  readonly idleSince: number;
-}
-
-/**
- * 不明: the agents nobody is accounting for — idle for longer than the grace,
- * not the orchestrator, not stopping, and not named by any open escalation
- * (needs_answer or in_progress). Longest idle first.
- *
- * Computed from live state on every reading; it is never stored, so it can
- * never be stale or be "cleared" by anybody. It empties itself when the agent
- * is given work, or an escalation names it.
- */
-export function unaccountedAgents(
-  agents: readonly BoardAgent[],
-  escalations: readonly Escalation[],
-  orchestratorAgentId: string | undefined,
-  now: number,
-  graceMs: number = UNACCOUNTED_GRACE_MS,
-): readonly UnaccountedAgent[] {
-  const accounted = new Set(
-    escalations.filter(isOpen).flatMap((escalation) => escalation.agents),
-  );
-  return agents
-    .filter(
-      (agent) =>
-        agent.id !== orchestratorAgentId &&
-        agent.status === "idle" &&
-        !agent.stopping &&
-        agent.idleSince !== undefined &&
-        now - agent.idleSince >= graceMs &&
-        !accounted.has(agent.id),
-    )
-    .map((agent) => ({
-      agentId: agent.id,
-      name: agent.name,
-      workspaceId: agent.workspaceId,
-      workspaceLabel: agent.workspaceLabel,
-      idleSince: agent.idleSince!,
-    }))
-    .sort((left, right) => left.idleSince - right.idleSince);
-}
+export const STALLED_GRACE_MS = 60_000;
 
 /**
  * 要回答's order before age: priority (high first), then effort (quick
@@ -668,16 +607,9 @@ export interface Board {
   readonly inProgress: readonly Escalation[];
   /** Most recently closed first. */
   readonly closed: readonly Escalation[];
-  readonly unaccounted: readonly UnaccountedAgent[];
 }
 
-export function board(
-  escalations: readonly Escalation[],
-  agents: readonly BoardAgent[],
-  orchestratorAgentId: string | undefined,
-  now: number,
-  graceMs: number = UNACCOUNTED_GRACE_MS,
-): Board {
+export function board(escalations: readonly Escalation[]): Board {
   const bySince = (left: Escalation, right: Escalation) =>
     stateSince(left) - stateSince(right) || left.id - right.id;
   return {
@@ -690,13 +622,6 @@ export function board(
     closed: escalations
       .filter((one) => escalationState(one) === "closed")
       .sort((left, right) => bySince(right, left)),
-    unaccounted: unaccountedAgents(
-      agents,
-      escalations,
-      orchestratorAgentId,
-      now,
-      graceMs,
-    ),
   };
 }
 

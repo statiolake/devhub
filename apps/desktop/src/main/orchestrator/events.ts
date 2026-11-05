@@ -17,8 +17,8 @@
  *    replaces whatever else was said about the pull request; different
  *    statements share the line, the latest leading it;
  * 3. just before delivery, drops what no longer needs attention (`relevant`:
- *    an agent working again, a question answered, an escalation closed, an
- *    agent no longer in 不明) as `dropped-stale`, and never says again what
+ *    an agent working again, a question answered, an escalation closed or
+ *    no longer stalled) as `dropped-stale`, and never says again what
  *    the last delivery said about a subject unless something about it has
  *    been heard since (`repeat`);
  * 4. delivers everything pending as **one** message — one line per subject
@@ -101,7 +101,7 @@ export type OrchestratorEvent =
 			readonly since?: string;
 	  }
 	/**
-	 * Level-triggered, like `unaccounted`: an escalation in 対応中 that none of
+	 * Level-triggered: an escalation in 対応中 that none of
 	 * its agents is working on (all idle, waiting, stopped or gone, or it
 	 * names none), for longer than the grace. Once per stalled stretch
 	 * (`since`): said again only after one of them worked, or a new entry.
@@ -114,13 +114,6 @@ export type OrchestratorEvent =
 			readonly agents: readonly EventAgent[];
 			/** Since when nothing has moved on it: the stretch's start. */
 			readonly since: number;
-	  }
-	/** An agent appeared in 不明: idle, with no open escalation naming it. */
-	| {
-			readonly type: "unaccounted";
-			readonly agent: EventAgent;
-			readonly ws?: string;
-			readonly idleSince: number;
 	  }
 	| ({
 			readonly type: "github.assigned";
@@ -287,7 +280,6 @@ export const EVENT_TYPES = [
 	"escalation_answered",
 	"escalation.human_direct",
 	"escalation.stalled",
-	"unaccounted",
 	"github.assigned",
 	"github.lane_changed",
 	"github.unattended",
@@ -472,14 +464,6 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 					event.agents.length === 0
 						? "対応中だが関連エージェントがいない (escalation link で紐づける)"
 						: "対応中だが動いているエージェントがいない",
-			};
-		case "unaccounted":
-			return {
-				head: [
-					agentToken(event.agent),
-					...ws(event.ws),
-					`idle ${span(now - event.idleSince)}`,
-				],
 			};
 		case "github.assigned":
 			return {
@@ -669,7 +653,6 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 /** The agent an event is about, for "never about the orchestrator itself". */
 export function eventAgent(event: OrchestratorEvent): string | undefined {
 	switch (event.type) {
-		case "unaccounted":
 		case "agent.turn_ended":
 		case "agent.asked":
 		case "agent.permission_requested":
@@ -701,7 +684,6 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "escalation.human_direct":
 		case "escalation.stalled":
 			return `esc ${String(event.escalationId)}`;
-		case "unaccounted":
 		case "agent.turn_ended":
 		case "agent.asked":
 		case "agent.permission_requested":

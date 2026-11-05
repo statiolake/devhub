@@ -138,15 +138,6 @@ const BOARD: OrchestratorBoardWire = {
       stateSince: NOW - 300_000,
     },
   ],
-  unaccounted: [
-    {
-      agentId: "a9",
-      name: "docs-writer",
-      workspaceId: "w",
-      workspaceLabel: "web",
-      idleSince: NOW - 180_000,
-    },
-  ],
 };
 
 function mount(
@@ -167,7 +158,7 @@ function mount(
 }
 
 describe("the Orchestrator board", () => {
-  it("lays out 要回答, 対応中 and 不明, with ages", () => {
+  it("lays out 要回答 and 対応中, with ages, and no 不明", () => {
     mount();
     const ask = screen.getByRole("region", { name: "要回答" });
     expect(
@@ -176,18 +167,7 @@ describe("the Orchestrator board", () => {
     expect(within(ask).getByText("列を追加します。")).toBeVisible();
     const progress = screen.getByRole("region", { name: "対応中" });
     expect(within(progress).getByText("answered 5m ago")).toBeVisible();
-    const unaccounted = screen.getByRole("region", { name: "不明" });
-    expect(within(unaccounted).getByText("idle 3m")).toBeVisible();
-  });
-
-  it("shows an agent in 不明 when it is clicked", () => {
-    const dispatch = mount();
-    fireEvent.click(screen.getByRole("button", { name: /docs-writer/u }));
-    expect(dispatch).toHaveBeenCalledWith({
-      type: "select_context",
-      context: { kind: "agent", agentId: "a9" },
-      reason: "explicit",
-    });
+    expect(screen.queryByRole("region", { name: "不明" })).toBeNull();
   });
 
   it("jumps to an escalation's agent as a deliberate move, for Back and Forward", () => {

@@ -26,11 +26,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import type {
-  EscalationWire,
-  OrchestratorBoardWire,
-  UnaccountedAgentWire,
-} from "../../ipc/contract";
+import type { EscalationWire, OrchestratorBoardWire } from "../../ipc/contract";
 import type { AgentStatus, AppSnapshot } from "../../ipc/appShell";
 import { pressFocusesField } from "../conversation/fieldClick";
 import { useMessageKeys, SEND_KEY } from "../conversation/messageKeys";
@@ -219,9 +215,6 @@ export function OrchestratorBoard({
             <span className="orchestrator-board-counts">
               {board.needsAnswer.length} 要回答 · {board.inProgress.length}{" "}
               対応中
-              {board.unaccounted.length > 0
-                ? ` · ${String(board.unaccounted.length)} 不明`
-                : ""}
             </span>
           ) : null}
         </div>
@@ -235,7 +228,7 @@ export function OrchestratorBoard({
             title={
               board.paused
                 ? "Events are held for the orchestrator. Resume delivers them, in order."
-                : "Each event (an answer, an unaccounted agent, GitHub, an agent's turn, a timer) is sent to the orchestrator. Pause holds them."
+                : "Each event (an answer, a stalled escalation, GitHub, an agent's turn, a timer) is sent to the orchestrator. Pause holds them."
             }
             onClick={() => {
               void devhub()
@@ -578,24 +571,6 @@ function BoardPage({
             />
           ))}
         </Lane>
-        <Lane
-          title="不明"
-          hint={`Unaccounted: idle for over ${span(board.graceMs)} with no open escalation. Normally empty; the orchestrator is told about each.`}
-          tone="unaccounted"
-          count={board.unaccounted.length}
-          empty="Every agent is accounted for."
-        >
-          {board.unaccounted.map((one) => (
-            <UnaccountedRow
-              key={one.agentId}
-              agent={one}
-              now={now}
-              onFocus={() => {
-                focusAgent(one.agentId);
-              }}
-            />
-          ))}
-        </Lane>
         {history ? (
           <Lane
             title="Closed"
@@ -648,7 +623,7 @@ function Lane({
 }: {
   readonly title: string;
   readonly hint: string;
-  readonly tone: "ask" | "progress" | "unaccounted" | "closed";
+  readonly tone: "ask" | "progress" | "closed";
   readonly count: number;
   readonly empty: string;
   readonly children: ReactNode;
@@ -748,40 +723,6 @@ function EscalationCard({
         {open && escalation.rankNote !== undefined ? (
           <span className="orchestrator-card-why">{escalation.rankNote}</span>
         ) : null}
-      </button>
-    </li>
-  );
-}
-
-function UnaccountedRow({
-  agent,
-  now,
-  onFocus,
-}: {
-  readonly agent: UnaccountedAgentWire;
-  readonly now: number;
-  readonly onFocus: () => void;
-}) {
-  return (
-    <li>
-      <button
-        type="button"
-        className="orchestrator-card orchestrator-unaccounted-row"
-        onClick={onFocus}
-        title="Show this agent"
-      >
-        <span className="orchestrator-card-head">
-          <span className="orchestrator-unaccounted-mark">
-            <StatusMark status="idle" unread={undefined} />
-          </span>
-          <span className="orchestrator-card-title">{agent.name}</span>
-          <span className="orchestrator-card-workspace">
-            {agent.workspaceLabel}
-          </span>
-          <span className="orchestrator-card-age">
-            idle {span(now - agent.idleSince)}
-          </span>
-        </span>
       </button>
     </li>
   );

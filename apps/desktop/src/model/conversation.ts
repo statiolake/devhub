@@ -1620,7 +1620,7 @@ export function isCompactCommand(text: string | undefined): boolean {
  * before the prompt cache goes cold (`CacheKeeper`, origin `auto-compact`:
  * the keep-warm compaction), or the person's own `/compact`. The one
  * predicate (`AgentSnapshot.maintenance`): the orchestrator's escalation
- * notes and `agent.*` events, its 不明 lane and the "finished" notification
+ * notes and `agent.*` events, its 停滞 and the "finished" notification
  * go by the status the Agent had before such a turn, as if it had not run.
  *
  * Read off what started the turn, never its length: the last top-level
