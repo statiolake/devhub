@@ -107,6 +107,21 @@ export type OrchestratorEvent =
 			readonly title: string;
 			readonly note?: string;
 	  }
+	/**
+	 * Level-triggered, like `unaccounted`: an escalation in 対応中 that none of
+	 * its agents is working on (all idle, waiting, stopped or gone, or it
+	 * names none), for longer than the grace. Once per stalled stretch
+	 * (`since`): said again only after one of them worked, or a new entry.
+	 */
+	| {
+			readonly type: "escalation.stalled";
+			readonly escalationId: number;
+			readonly title: string;
+			/** Its agents (the orchestrator left out); empty when it names none. */
+			readonly agents: readonly EventAgent[];
+			/** Since when nothing has moved on it: the stretch's start. */
+			readonly since: number;
+	  }
 	/** An agent appeared in 不明: idle, with no open escalation naming it. */
 	| {
 			readonly type: "unaccounted";
@@ -279,6 +294,7 @@ export const EVENT_TYPES = [
 	"escalation_answered",
 	"escalation.human_direct",
 	"escalation.taken",
+	"escalation.stalled",
 	"unaccounted",
 	"github.assigned",
 	"github.unassigned",
@@ -458,6 +474,18 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 				],
 				summary:
 					"人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります",
+			};
+		case "escalation.stalled":
+			return {
+				head: [
+					`esc=${String(event.escalationId)}${title(event.title)}`,
+					`agents=${event.agents.length === 0 ? "none" : event.agents.map((one) => shortId(one.id)).join(",")}`,
+					`idle ${span(now - event.since)}`,
+				],
+				summary:
+					event.agents.length === 0
+						? "対応中だが関連エージェントがいない (escalation link で紐づける)"
+						: "対応中だが動いているエージェントがいない",
 			};
 		case "unaccounted":
 			return {
@@ -690,6 +718,7 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "escalation_answered":
 		case "escalation.human_direct":
 		case "escalation.taken":
+		case "escalation.stalled":
 			return `esc ${String(event.escalationId)}`;
 		case "unaccounted":
 		case "agent.turn_ended":

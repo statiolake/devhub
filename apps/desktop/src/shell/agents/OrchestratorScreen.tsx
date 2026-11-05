@@ -729,6 +729,10 @@ function EscalationCard({
           {followUp ? (
             <span className="orchestrator-chip is-followup">追加の質問</span>
           ) : null}
+          {escalation.state === "in_progress" &&
+          escalation.stalledSince !== undefined ? (
+            <span className="orchestrator-chip is-stalled">停滞</span>
+          ) : null}
           {question?.options !== undefined &&
           escalation.state === "needs_answer" ? (
             <span className="orchestrator-chip">

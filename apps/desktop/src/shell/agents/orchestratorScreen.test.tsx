@@ -427,6 +427,26 @@ describe("the orchestrator's ranking on the board", () => {
   });
 });
 
+describe("停滞", () => {
+  it("marks a stalled 対応中 card quietly, with no tooltip", () => {
+    mount({
+      ...BOARD,
+      inProgress: [
+        { ...BOARD.inProgress[0]!, stalledSince: NOW - 60_000 },
+        { ...BOARD.inProgress[0]!, id: 3, title: "動いている" },
+      ],
+    });
+    const progress = screen.getByRole("region", { name: "対応中" });
+    const [stalled, moving] = [
+      ...progress.querySelectorAll<HTMLElement>(".orchestrator-card"),
+    ];
+    const mark = within(stalled!).getByText("停滞");
+    expect(mark).toBeVisible();
+    expect(mark).not.toHaveAttribute("title");
+    expect(within(moving!).queryByText("停滞")).toBeNull();
+  });
+});
+
 describe("opening an escalation and going back", () => {
   it("keeps the left pane's width: nothing about the pane changes", () => {
     motion(true);

@@ -9937,6 +9937,9 @@ export class AppController {
 			orchestrator: {
 				board: () => orchestrator().wire(),
 				escalations: () => orchestrator().allWires(),
+				acknowledge: (id, entries) => {
+					orchestrator().acknowledge(id, entries);
+				},
 				raise: (request) =>
 					orchestrator().toWire(
 						orchestrator().raise({

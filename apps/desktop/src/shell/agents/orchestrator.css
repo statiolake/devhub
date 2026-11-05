@@ -1085,6 +1085,12 @@
   color: var(--primary);
 }
 
+/* 停滞: 対応中 with no agent working on it. Quiet, like the rest. */
+.orchestrator-chip.is-stalled {
+  background: color-mix(in srgb, var(--secondary) 14%, transparent);
+  color: var(--secondary);
+}
+
 /* Why it is ranked so, in a quiet line under the card. */
 .orchestrator-card-why {
   overflow: hidden;

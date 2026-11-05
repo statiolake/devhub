@@ -432,3 +432,161 @@ describe("対応中にする", () => {
 		expect(run.fates().map(([type]) => type)).not.toContain("escalation.held");
 	});
 });
+
+describe("停滞: 対応中 with no agent working on it (escalation.stalled)", () => {
+	const OTHER = "c3d4e5f6-0000-4000-8000-000000000000";
+	const GRACE = 60_000;
+
+	/** The orchestrator free, two workers idle, the real grace. */
+	function stalledWorld() {
+		const clock = { now: 1_000_000 };
+		const sent: string[] = [];
+		const agents: LiveAgent[] = [ORCH, WORKER, OTHER].map((id) => ({
+			id,
+			name: id === ORCH ? "orchestrator" : `agent ${id.slice(0, 2)}`,
+			workspaceId: "w",
+			workspaceLabel: "w",
+			status: "idle",
+			stopping: false,
+		}));
+		const service = new OrchestratorService({
+			store: EscalationStore.inMemory(),
+			agents: () => agents,
+			settings: () => ({ ...DEFAULT_ORCHESTRATOR, events: ["*"] }),
+			startProblem: () => undefined,
+			deliver: (_agent, text) => sent.push(text),
+			publish: () => undefined,
+			now: () => clock.now,
+		});
+		service.assign(ORCH);
+		service.observe();
+		const set = (id: string, change: Partial<LiveAgent>) => {
+			const index = agents.findIndex((one) => one.id === id);
+			agents[index] = { ...agents[index]!, ...change };
+			service.observe();
+		};
+		const later = (ms: number) => {
+			clock.now += ms;
+			service.observe();
+		};
+		/** Raised, answered and read: 対応中, the clock running. */
+		const answered = (agents: readonly string[] = [WORKER, OTHER]) => {
+			const one = service.raise({
+				title: "本番DBマイグレーション承認",
+				markdown: "?",
+				agents,
+			});
+			service.answer(one.id, "OK");
+			service.acknowledge(one.id, 2);
+			return one.id;
+		};
+		const stalled = () =>
+			service.events
+				.recent(200)
+				.filter((entry) => entry.event.type === "escalation.stalled");
+		return { service, sent, clock, set, later, answered, stalled };
+	}
+
+	it("is told once the grace is up, with its agents and how long", () => {
+		const run = stalledWorld();
+		run.answered();
+		run.later(GRACE - 1_000);
+		expect(run.stalled()).toHaveLength(0);
+		run.later(2 * 60_000);
+		expect(run.stalled()).toHaveLength(1);
+		expect(run.sent.at(-1)).toContain(
+			"[escalation.stalled] esc=1「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない",
+		);
+	});
+
+	it("says nothing while one of its agents works", () => {
+		const run = stalledWorld();
+		run.answered();
+		run.set(OTHER, { status: "working" });
+		run.later(10 * GRACE);
+		expect(run.stalled()).toHaveLength(0);
+		run.set(OTHER, { status: "background" });
+		run.later(10 * GRACE);
+		expect(run.stalled()).toHaveLength(0);
+	});
+
+	it("does not count a maintenance turn as work", () => {
+		const run = stalledWorld();
+		run.answered();
+		run.later(GRACE / 2);
+		run.set(WORKER, { status: "working", maintenance: true });
+		run.later(GRACE / 2);
+		expect(run.stalled()).toHaveLength(1);
+	});
+
+	it("is told once per stretch, and again after an agent worked or a new entry", () => {
+		const run = stalledWorld();
+		const id = run.answered();
+		run.later(GRACE);
+		run.later(5 * GRACE);
+		expect(run.stalled()).toHaveLength(1);
+		run.set(WORKER, { status: "working" });
+		run.set(WORKER, { status: "idle" });
+		run.later(GRACE / 2);
+		expect(run.stalled()).toHaveLength(1);
+		run.later(GRACE);
+		expect(run.stalled()).toHaveLength(2);
+		run.service.ask(id, "もう一つ", []);
+		run.service.answer(id, "それも OK");
+		run.service.acknowledge(id, 4);
+		run.later(GRACE);
+		expect(run.stalled()).toHaveLength(3);
+	});
+
+	it("says agents=none, and to link one, when it names none", () => {
+		const run = stalledWorld();
+		run.answered([]);
+		run.later(GRACE);
+		expect(run.sent.at(-1)).toContain(
+			"[escalation.stalled] esc=1「本番DBマイグレーション承認」 agents=none idle 1m — 対応中だが関連エージェントがいない (escalation link で紐づける)",
+		);
+	});
+
+	it("is dropped before it goes when an agent works again, it is asked again or closed", () => {
+		for (const move of ["work", "ask", "close"] as const) {
+			const run = stalledWorld();
+			const id = run.answered();
+			run.service.events.pause();
+			run.later(GRACE);
+			expect(run.stalled()).toHaveLength(1);
+			if (move === "work") run.set(WORKER, { status: "working" });
+			if (move === "ask") run.service.ask(id, "もう一つ", []);
+			if (move === "close") run.service.close(id, undefined);
+			void run.service.events.resume();
+			expect(run.stalled()[0]!.fate).toBe("dropped-stale");
+		}
+	});
+
+	it("waits for an answer the orchestrator has not read: escalation_answered says it", () => {
+		const run = stalledWorld();
+		const one = run.service.raise({
+			title: "承認",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.service.answer(one.id, "OK");
+		run.later(10 * GRACE);
+		expect(run.stalled()).toHaveLength(0);
+		expect(run.service.wire().inProgress[0]!.stalledSince).toBeUndefined();
+		run.service.acknowledge(one.id, 2);
+		run.later(GRACE / 2);
+		expect(run.stalled()).toHaveLength(0);
+		run.later(GRACE / 2);
+		expect(run.stalled()).toHaveLength(1);
+	});
+
+	it("marks the card on the board", () => {
+		const run = stalledWorld();
+		run.answered();
+		expect(run.service.wire().inProgress[0]!.stalledSince).toBeUndefined();
+		run.later(GRACE);
+		expect(run.service.wire().inProgress[0]!.stalledSince).toBe(1_000_000);
+		run.set(WORKER, { status: "working" });
+		expect(run.service.wire().inProgress[0]!.stalledSince).toBeUndefined();
+	});
+});

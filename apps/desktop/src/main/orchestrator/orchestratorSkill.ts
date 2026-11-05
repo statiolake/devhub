@@ -201,6 +201,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)
       [escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります
       [escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する
+      [escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない
       [unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 12m
       [timer.elapsed] sweep
       [usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました
@@ -222,6 +223,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ) | esc, agent |
 | ボード | \`escalation.taken\` | 人が回答を書かずに「対応中にする」でエスカレーションを対応中にした (メモ付きのことも) | esc |
 | ボード | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ) | esc, agent, since |
+| ボード | \`escalation.stalled\` | 対応中のエスカレーションの関係エージェントが 1 分以上誰も動いていない (全員 idle / 待ち / 停止 / 消えた、または紐付けなし: \`agents=none\`)。1 回の停滞につき 1 回。未読の回答 (\`escalation_answered\`) があるうちは来ず、\`escalation show\` で読んでから数え始める | esc, agents |
 | ボード | \`unaccounted\` | エージェントが 不明 に入った | agent, ws |
 | GitHub | \`github.assigned\` / \`github.unassigned\` | 自分へのアサインが付いた / 外れた | ws, agent, URL |
 | GitHub | \`github.lane_changed\` | 自分の Issue / PR の Project レーンが動いた (from → to) | ws, URL |
@@ -281,6 +283,11 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
   \`escalation show\` で回答を読み、**元のエージェントに判断を伝えて作業を
   再開させ**、回答を使い切ったら \`escalation close\` する。追加で聞くことが
   あれば同じチケットに \`escalation ask\` (要回答に戻る)。対応中に放置しない。
+  - 対応中なのに関係エージェントが誰も動いていない (idle / 待ち / 停止 / 消えた、
+    紐付けなし) まま 1 分たつと \`escalation.stalled\` が届く (ボードには「停滞」)。
+    **escalation.stalled を受けたら、回答内容を担当エージェントに伝える／作業を再開させる／必要なら escalation ask で要回答に戻す／不要なら close**。
+    \`agents=none\` なら \`escalation link ID --agent A\` で担当を紐付ける。
+    関係エージェントが動き出すか、新しいエントリが付くと、次の停滞でまた届く。
 - **要回答 なのは、最後のエントリがあなたの質問のときだけ。** 質問のあとに何か
   (人の回答、人の「対応中にする」、あなたの \`escalation hold\`、下の自動の注記)
   が付けば 対応中 になり、あなたが \`escalation ask\` で聞き直すまで 要回答 には
@@ -476,6 +483,11 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     もう答えが出ていれば escalation close (要点を note に)。まだ聞くことが残って
     いれば escalation ask で質問を更新 (要回答に戻る)。他のエージェントにも
     関わる決定なら agent send で伝える。決定は decisions.md に追記。
+
+    ## escalation.stalled
+    escalation show で回答を読む → 担当エージェントに agent send で伝えて作業を再開させる。
+    agents=none なら escalation link ID --agent A で紐付ける。まだ人に聞くことがあれば
+    escalation ask (要回答に戻る)、もう要らなければ escalation close。
 
     ## unaccounted / agent.turn_ended
     agent read A --since <since=> で差分を読む → 次の作業を send / エスカレーション / stop。

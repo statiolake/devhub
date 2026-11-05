@@ -277,6 +277,34 @@ of each snapshot.
 It should normally be empty. Each agent that enters it is sent to the
 orchestrator as an `unaccounted` event, once per stretch of idleness.
 
+### 停滞: 対応中 with nobody working on it
+
+A 対応中 escalation is **stalled** when none of its related agents (`agents`,
+the orchestrator left out) is working — every one idle, waiting, stopped or
+gone, or it names none — and that has held for the same grace as 不明
+(`UNACCOUNTED_GRACE_MS`, a minute: the orchestrator's time to relay the answer
+and set an agent going). Working is status `working` or `background` (a
+background task runs for it) and not stopping; a maintenance turn
+(`isMaintenanceTurn`) is not work (`workStatus`, as everywhere). The stretch
+starts at the latest of: its last entry, the last moment one of its agents was
+seen working, the orchestrator's reading of the answer, and main's first
+reading after a start. It is computed from live state
+(`orchestratorService.ts`, `#stalledSince`), never stored.
+
+- **No noise over an unread answer.** While the last entry is the person's
+  answer and the orchestrator has not read it (`escalation show`, by the
+  orchestrator itself: `acknowledge`), it is not stalled —
+  `escalation_answered` already says so. The clock starts at that reading.
+  Chosen over merging both into one line: one message is one thing to do
+  (read the answer), and a second one only comes if, a minute after reading
+  it, nobody has been set going.
+- **Once per stretch**: `escalation.stalled` is sent once for each stretch;
+  one of its agents working (a real turn), or a new entry (an answer, a
+  `taken`, a `held`), ends it, and the next stretch is told again.
+- **Marked** on the board (a quiet 停滞 chip on the card, `stalledSince` on
+  its `EscalationWire`) and in `devhub --tell board` (`[停滞 3m: …]` on the
+  line; `--json`: `inProgress[].stalledSince`).
+
 ## Events
 
 Events are how DevHub tells the orchestrator something happened. Every
@@ -302,6 +330,7 @@ pulls the details itself. `{EVENT}` holds these lines.
 | `escalation_answered`                             | the person answered an escalation                                                                                                                                                                                                     | `[escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)`                                                                     |
 | `escalation.taken`                                | the person moved an escalation to 対応中 without answering (対応中にする)                                                                                                                                                             | `[escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する`                                                                             |
 | `escalation.human_direct`                         | the person talked directly to an open escalation's agent, from its composer, and it went working (要回答 → 対応中)                                                                                                                    | `[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります` |
+| `escalation.stalled`                              | a 対応中 escalation none of whose agents has worked for the grace (see 停滞); `agents=none` when it names none (`escalation link` it)                                                                                                 | `[escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない`                                      |
 | `unaccounted`                                     | an agent entered 不明                                                                                                                                                                                                                 | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m`                                                                                                                        |
 | `github.assigned` / `github.unassigned`           | the viewer was assigned to / taken off a card                                                                                                                                                                                         | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200`                                                                                |
 | `github.lane_changed`                             | a card of the viewer's moved lane (Status)                                                                                                                                                                                            | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123`                                                       |
@@ -371,7 +400,9 @@ bob が承認 ／ [github.pr_ready] ready for review になった https://…/pu
   again (someone has given it work; its output stays readable with `agent
 read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   longer waits on it; an `escalation_answered`, `escalation.taken` or
-  `escalation.human_direct` whose escalation is closed; a `github.unattended`
+  `escalation.human_direct` whose escalation is closed; an
+  `escalation.stalled` whose stretch is over (an agent of it works again, a
+  new entry, back in 要回答, closed); a `github.unattended`
   whose Issue was closed, or has had an agent linked to it, since.
 - **Never said twice.** What the last delivery said about a subject is not
   delivered again (`repeat`) unless something about that subject has been
@@ -426,7 +457,8 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
 ### The sources
 
 - **The board** (`orchestratorService.ts`): `init`, `escalation_answered`,
-  `escalation.taken`, `escalation.human_direct`, `unaccounted`.
+  `escalation.taken`, `escalation.human_direct`, `escalation.stalled`,
+  `unaccounted`.
 - **GitHub** (`githubEvents.ts`), while an orchestrator runs and
   `[orchestrator.github] projects` names a board. Scope: the cards on those
   Projects (v2) boards that relate to the viewer — assigned to them, authored
@@ -579,7 +611,7 @@ goes. The default is everything but the chatter:
 
 ```toml
 events = ["init", "escalation_answered", "escalation.human_direct",
-  "escalation.taken", "unaccounted", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
+  "escalation.taken", "escalation.stalled", "unaccounted", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
   "agent.asked", "agent.exited", "agent.failed", "usage.threshold", "timer.*", "custom.*"]
 ```
 
@@ -591,7 +623,7 @@ setting.
 ## The command line
 
 ```sh
-devhub --tell board [--json]                         # 要回答, 対応中, 不明 as data (acknowledges 不明)
+devhub --tell board [--json]                         # 要回答, 対応中 (停滞 marked), 不明 as data (acknowledges 不明)
 devhub --tell escalation new --title T --body -|TEXT [--agent A]... [--link URL]... [--option TEXT]... [--workspace W]
                          [--priority high|normal|low] [--effort quick|normal|deep] [--rank-note TEXT]
 devhub --tell escalation rank ID [--priority P] [--effort E] [--rank-note TEXT]   # re-rank; "" clears the note

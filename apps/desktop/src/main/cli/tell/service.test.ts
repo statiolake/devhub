@@ -257,6 +257,9 @@ class FakePorts implements TellPorts {
 		hold: (id, note) => this.service.toWire(this.service.hold(id, note)),
 		link: (id, agentId) => this.service.toWire(this.service.link(id, agentId)),
 		rank: (id, rank) => this.service.toWire(this.service.rank(id, rank)),
+		acknowledge: (id, entries) => {
+			this.service.acknowledge(id, entries);
+		},
 		configuredRoot: () => "/Users/me/orchestrator",
 		start: (request) => {
 			this.calls.push(`orchestrator-start ${request.root} ${request.profile}`);
@@ -3793,6 +3796,7 @@ describe("the Orchestrator row from the command line", () => {
 		const ports = new FakePorts();
 		expect(Object.keys(ports.orchestrator).sort()).toEqual(
 			[
+				"acknowledge",
 				"ask",
 				"board",
 				"clearTimer",
@@ -3853,6 +3857,28 @@ describe("the Orchestrator row from the command line", () => {
 				)
 			).data,
 		).toMatchObject({ reached: false, answered: [] });
+	});
+
+	it("marks a stalled 対応中 escalation on the board, once its answer is read", async () => {
+		const { service, ports } = orchestrated();
+		ports.service.observe();
+		ports.service.raise({ title: "決めて", markdown: "A or B?" });
+		ports.service.answer(1, "A");
+		ports.clock.now += 120_000;
+		ports.service.observe();
+		const unread = await viaSocket(service, ["--json", "board"], coordinator);
+		expect(unread.message).not.toContain("停滞");
+		await viaSocket(service, ["escalation", "show", "1"], coordinator);
+		ports.clock.now += 60_000;
+		ports.service.observe();
+		const board = await viaSocket(service, ["--json", "board"], coordinator);
+		expect(board.message).toMatch(
+			/#1 {2}決めて {2}answered .* ago {2}\[停滞 .*: no agent is working on it\]/u,
+		);
+		expect(
+			(board.data as { inProgress: { stalledSince?: number }[] }).inProgress[0]
+				?.stalledSince,
+		).toBe(ports.clock.now - 60_000);
 	});
 
 	it("wakes it when an agent enters 不明, until the board is read", async () => {

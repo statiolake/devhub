@@ -563,6 +563,12 @@ export interface TellOrchestratorPorts {
 	link(id: number, agentId: string): EscalationWire;
 	/** Ranked again by the orchestrator. Not an answer: it writes no entry. */
 	rank(id: number, rank: TellEscalationRank): EscalationWire;
+	/**
+	 * The orchestrator has been shown escalation `id`'s first `entries`
+	 * entries (`escalation show`): an answer among them is read, and 停滞
+	 * (`escalation.stalled`) may start counting.
+	 */
+	acknowledge?(id: number, entries: number): void;
 	/** `[orchestrator] root`, for a refusal that names it. */
 	configuredRoot(): string | undefined;
 	start(request: {
@@ -1177,7 +1183,7 @@ export class TellService {
 			`in progress (${String(board.inProgress.length)}):`,
 			...board.inProgress.map(
 				(one) =>
-					`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}`,
+					`  #${String(one.id)}  ${one.title}  answered ${span(now - one.stateSince)} ago${agentsText(one)}${one.stalledSince === undefined ? "" : `  [停滞 ${span(now - one.stalledSince)}: no agent is working on it]`}`,
 			),
 			`unaccounted (${String(board.unaccounted.length)}):`,
 			...board.unaccounted.map(
@@ -1265,6 +1271,8 @@ export class TellService {
 		// Being shown the thread is reading the answer: 'agent wait --any'
 		// stops reporting it.
 		this.memory.markEscalation(callerKey(this.caller), id, one.entries.length);
+		if (this.callerIsOrchestrator())
+			this.ports.orchestrator.acknowledge?.(id, one.entries.length);
 		const lines = [
 			`#${String(one.id)} ${one.title}  [${one.state}]`,
 			`rank: ${rankText(one)}`,

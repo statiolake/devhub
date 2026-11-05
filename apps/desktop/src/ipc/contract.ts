@@ -564,6 +564,11 @@ export interface EscalationWire {
 	readonly priority?: "high" | "normal" | "low";
 	readonly effort?: "quick" | "normal" | "deep";
 	readonly rankNote?: string;
+	/**
+	 * 停滞: 対応中, and none of its agents has worked since then, for longer
+	 * than the grace (`escalation.stalled`). Absent otherwise.
+	 */
+	readonly stalledSince?: number;
 }
 
 /** One agent in 不明: idle, with no open escalation naming it. */

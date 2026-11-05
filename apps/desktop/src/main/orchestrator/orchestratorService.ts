@@ -22,6 +22,16 @@
  * is told to the orchestrator (`escalation.human_direct`), since what was
  * said may answer or change it.
  *
+ * 停滞 is worked out here too (`#stalledNow`): an escalation in 対応中 that
+ * none of its agents is working on (status `working` or `background`, not
+ * stopping) for longer than the same grace, told once per stretch
+ * (`escalation.stalled`). A stretch starts at the latest of: its last entry,
+ * the last time one of its agents was seen working, the orchestrator's
+ * reading of the answer (`acknowledge`), this service's first reading. An
+ * answer the orchestrator has not read yet (`escalation show`) is not 停滞:
+ * `escalation_answered` already says it, and the clock starts once it is
+ * read.
+ *
  * A maintenance turn (`isMaintenanceTurn`: a `/compact`, DevHub's keep-warm
  * one before the prompt cache goes cold or the person's) is not work: every
  * reading here goes by the status the agent had before it (`workStatus`), so
@@ -158,6 +168,17 @@ export class OrchestratorService {
 	#revision = 0;
 	#timer: { cancel(): void } | undefined;
 	#graceMs = UNACCOUNTED_GRACE_MS;
+	/** The first reading: nothing before it was seen, so no stretch starts earlier. */
+	#startedAt: number | undefined;
+	/**
+	 * Per open escalation, the last time one of its agents was seen working
+	 * (or seen stop), and whether one was at the last reading.
+	 */
+	readonly #workedAt = new Map<number, { at: number; working: boolean }>();
+	/** Per escalation, how many entries the orchestrator has read, and when. */
+	readonly #read = new Map<number, { entries: number; at: number }>();
+	/** `escalationId@since`, once told: one event per stalled stretch. */
+	readonly #stalledTold = new Set<string>();
 
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.events = new EventDispatcher({
@@ -248,6 +269,12 @@ export class OrchestratorService {
 				return agent(event.agent.id)?.status === "waiting";
 			case "agent.started":
 				return agent(event.agent.id) !== undefined;
+			case "escalation.stalled":
+				return this.#stalledNow(this.#now()).some(
+					(one) =>
+						one.escalation.id === event.escalationId &&
+						one.since === event.since,
+				);
 			case "escalation_answered":
 			case "escalation.human_direct":
 			case "escalation.taken": {
@@ -467,8 +494,11 @@ export class OrchestratorService {
 		}
 		for (const id of [...this.#idleSince.keys()])
 			if (!live.has(id)) this.#idleSince.delete(id);
+		this.#startedAt ??= now;
 		this.#watchWorking(agents, now);
+		this.#watchStalled(agents, now);
 		this.#announceUnaccounted(now);
+		this.#announceStalled(now);
 		this.#schedule(now);
 		// The orchestrator's status may have moved: what waits for it may go.
 		this.events.flush();
@@ -529,13 +559,120 @@ export class OrchestratorService {
 		}
 	}
 
-	/** Wake when the next idle agent's grace is up, to say so. */
+	// --- 停滞: 対応中 with nobody working on it -----------------------------------
+
+	/**
+	 * The orchestrator has been shown escalation `id`'s first `entries`
+	 * entries (`escalation show`): an answer among them is read, and a
+	 * stalled stretch may start.
+	 */
+	acknowledge(id: number, entries: number): void {
+		const before = this.#read.get(id);
+		if (before !== undefined && before.entries >= entries) return;
+		this.#read.set(id, { entries, at: this.#now() });
+		this.observe();
+	}
+
+	/** Whether one of `ids` is working now (a maintenance turn is not). */
+	#anyWorking(ids: readonly string[], agents: readonly LiveAgent[]): boolean {
+		return agents.some(
+			(agent) =>
+				ids.includes(agent.id) &&
+				agent.id !== this.ports.store.orchestratorAgentId &&
+				!agent.stopping &&
+				(agent.status === "working" || agent.status === "background"),
+		);
+	}
+
+	#watchStalled(agents: readonly LiveAgent[], now: number): void {
+		const open = new Set<number>();
+		for (const one of this.ports.store.all()) {
+			if (!isOpen(one)) continue;
+			open.add(one.id);
+			const working = this.#anyWorking(one.agents, agents);
+			const was = this.#workedAt.get(one.id);
+			// Working, or seen to stop just now: the stretch starts here.
+			if (working || was?.working === true)
+				this.#workedAt.set(one.id, { at: now, working });
+		}
+		for (const id of [...this.#workedAt.keys()])
+			if (!open.has(id)) this.#workedAt.delete(id);
+	}
+
+	/**
+	 * 停滞 now: every 対応中 escalation none of whose agents is working, past
+	 * the grace, whose last answer (if that is its last entry) the
+	 * orchestrator has read. With since when.
+	 */
+	#stalledNow(
+		now: number,
+	): readonly { readonly escalation: Escalation; readonly since: number }[] {
+		const agents = this.#agents();
+		const out: { escalation: Escalation; since: number }[] = [];
+		for (const one of this.ports.store.all()) {
+			const since = this.#stalledSince(one, agents);
+			if (since !== undefined && now - since >= this.#graceMs)
+				out.push({ escalation: one, since });
+		}
+		return out;
+	}
+
+	/** When `one` started standing still, or undefined while it does not. */
+	#stalledSince(
+		one: Escalation,
+		agents: readonly LiveAgent[],
+	): number | undefined {
+		if (escalationState(one) !== "in_progress") return undefined;
+		if (this.#anyWorking(one.agents, agents)) return undefined;
+		const last = one.entries.at(-1);
+		const read = this.#read.get(one.id);
+		const answer = last?.role === "human" && last.kind === undefined;
+		// An answer it has not read: escalation_answered says it already.
+		if (answer && (read?.entries ?? 0) < one.entries.length) return undefined;
+		return Math.max(
+			last?.at ?? one.createdAt,
+			this.#workedAt.get(one.id)?.at ?? 0,
+			answer ? (read?.at ?? 0) : 0,
+			this.#startedAt ?? 0,
+		);
+	}
+
+	#announceStalled(now: number): void {
+		if (this.orchestratorAgentId === undefined) return;
+		const names = new Map(this.ports.agents().map((one) => [one.id, one.name]));
+		for (const { escalation, since } of this.#stalledNow(now)) {
+			const key = `${String(escalation.id)}@${String(since)}`;
+			if (this.#stalledTold.has(key)) continue;
+			this.#stalledTold.add(key);
+			this.events.dispatch({
+				type: "escalation.stalled",
+				escalationId: escalation.id,
+				title: escalation.title,
+				agents: escalation.agents
+					.filter((id) => id !== this.ports.store.orchestratorAgentId)
+					.map((id) => {
+						const name = names.get(id);
+						return name === undefined ? { id } : { id, name };
+					}),
+				since,
+			});
+		}
+	}
+
+	/** Wake when the next idle agent's (or escalation's) grace is up, to say so. */
 	#schedule(now: number): void {
 		this.#timer?.cancel();
 		this.#timer = undefined;
 		const setTimer = this.ports.setTimer;
 		if (setTimer === undefined) return;
-		const due = [...this.#idleSince.values()]
+		const agents = this.#agents();
+		const due = [
+			...this.#idleSince.values(),
+			...this.ports.store
+				.all()
+				.map((one) => this.#stalledSince(one, agents))
+				.filter((since): since is number => since !== undefined),
+		]
 			.map((since) => since + this.#graceMs - now)
 			.filter((ms) => ms > 0);
 		if (due.length === 0) return;
@@ -549,6 +686,7 @@ export class OrchestratorService {
 
 	/** One escalation as the board and `--tell` carry it. */
 	toWire(one: Escalation): EscalationWire {
+		const stalled = this.#stalledSince(one, this.#agents());
 		const agents = new Map(
 			this.ports.agents().map((agent) => [agent.id, agent]),
 		);
@@ -586,6 +724,9 @@ export class OrchestratorService {
 			priority: priorityOf(one),
 			effort: effortOf(one),
 			...(one.rankNote === undefined ? {} : { rankNote: one.rankNote }),
+			...(stalled === undefined || this.#now() - stalled < this.#graceMs
+				? {}
+				: { stalledSince: stalled }),
 		};
 	}
 
