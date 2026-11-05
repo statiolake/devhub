@@ -648,6 +648,9 @@ issues
                                    otherwise the action's wording is sent as
                                    its first message (no review sheet).
                                    --managed / --unmanaged as 'agent new'.
+                                   The agent is linked to the item (meta
+                                   issue=<its URL>, an Issue's or a pull
+                                   request's alike).
                                    --editor-only opens the editor and
                                    starts no agent. --name gives the agent
                                    its name from the start, as 'agent new

@@ -215,7 +215,9 @@ names an agent, yourself included.
   short descriptive branch name: \`<number>-<a-few-words>\`, lowercase, words
   joined by \`-\`, e.g. \`123-fix-login-timeout\`. Keep the Issue number first;
   DevHub links a workspace to its Issue by it. For a pull request pass its own
-  branch (\`gh pr view N --json headRefName\`).
+  branch (\`gh pr view N --json headRefName\`). Either way the new agent is
+  linked to the item (meta \`issue=<its URL>\`, written by DevHub): an Issue
+  and a pull request are the same kind of item to the orchestrator.
 - \`--repo\` is the clone to work in (find it with \`workspaces\`, or ask the
   person). \`--branch\` makes (or opens) a worktree of the branch;
   \`--root\` works in the clone itself instead (with \`--branch\`: switched

@@ -2,9 +2,10 @@
  * The board header's GitHub pill: `GitHub` and a dot for how polling stands
  * — green active, grey suspended by the pause, hollow idle, amber backing
  * off (a failed poll, or a low rate limit) — and, on hover or focus, a small
- * card with what `orchestrator status` says of it: the boards (links to
- * them) with what each last read (items, assigned to me), the
- * state and why, the last and next poll, the rate limit left.
+ * card with what `orchestrator status` says of it: how many open items
+ * (Issues, pull requests) are assigned to me, the Projects lanes are read
+ * from (links to them), the state and why, the last and next poll, the rate
+ * limit left.
  *
  * The card is in this page, under the pill, and the pointer may move into
  * it to click a board: it closes a moment after the pointer leaves both.
@@ -58,7 +59,7 @@ export function GitHubPill({
   const idleWhy =
     orchestratorAgentId === undefined
       ? "no orchestrator is running"
-      : "[orchestrator.github] projects names no board";
+      : "not started yet";
   const boards = github.boards ?? [];
   return (
     <span
@@ -107,7 +108,10 @@ export function GitHubPill({
             ) : null}
           </div>
           {boards.length === 0 ? null : (
-            <ul className="orchestrator-github-boards" aria-label="Boards">
+            <ul
+              className="orchestrator-github-boards"
+              aria-label="Projects (lanes)"
+            >
               {boards.map((board) => {
                 const url = projectUrl(board.ref);
                 return (
@@ -131,18 +135,18 @@ export function GitHubPill({
                         {board.title}
                       </span>
                     )}
-                    <span className="orchestrator-github-title">
-                      {" "}
-                      {board.items === undefined
-                        ? "· not read yet"
-                        : `· ${String(board.items)} items, ${String(board.assigned ?? 0)} assigned to me`}
-                    </span>
                   </li>
                 );
               })}
             </ul>
           )}
           <dl className="orchestrator-github-facts">
+            <dt>Assigned to me</dt>
+            <dd>
+              {github.assigned === undefined
+                ? "not read yet"
+                : `${String(github.assigned)} open items`}
+            </dd>
             {github.lastAt === undefined ? null : (
               <>
                 <dt>Last poll</dt>

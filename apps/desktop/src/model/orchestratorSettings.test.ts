@@ -40,14 +40,14 @@ describe("[orchestrator] settings", () => {
   it("reads events, [orchestrator.github] and [[orchestrator.timers]]", () => {
     const config = interpretConfig({
       orchestrator: {
-        events: ["github.*", "!github.reply", "unsettled"],
+        events: ["escalation.*", "!escalation.human_direct", "unsettled"],
         github: { projects: ["my-org/7"], interval: "2m" },
         timers: [{ name: "tick", interval: "5m" }],
       },
     });
     expect(config.orchestrator.events).toEqual([
-      "github.*",
-      "!github.reply",
+      "escalation.*",
+      "!escalation.human_direct",
       "unsettled",
     ]);
     expect(config.orchestrator.github).toEqual({
@@ -60,7 +60,7 @@ describe("[orchestrator] settings", () => {
     expect(orchestratorProblem(config.orchestrator)).toBeUndefined();
     // And writes them back as tables.
     expect(configDocument(config)["orchestrator"]).toMatchObject({
-      events: ["github.*", "!github.reply", "unsettled"],
+      events: ["escalation.*", "!escalation.human_direct", "unsettled"],
       github: { projects: ["my-org/7"], interval: "2m" },
       timers: [{ name: "tick", interval: "5m" }],
     });
@@ -160,17 +160,24 @@ describe("[orchestrator] settings", () => {
     const document = {
       orchestrator: {
         wait_reminder_interval: "30m",
-        events: ["*", "!agent.turn_ended", "github.lane_changed", "github.*"],
+        events: [
+          "*",
+          "!agent.turn_ended",
+          "github.lane_changed",
+          "!github.reply",
+          "timer.*",
+        ],
       },
     };
     expect(interpretConfig(document).orchestrator.events).toEqual([
       "*",
-      "github.*",
+      "timer.*",
     ]);
     expect(retiredKeysIn(document).map((one) => one.key)).toEqual([
       "orchestrator.wait_reminder_interval",
       'orchestrator.events "!agent.turn_ended"',
       'orchestrator.events "github.lane_changed"',
+      'orchestrator.events "!github.reply"',
     ]);
   });
 
@@ -191,9 +198,9 @@ describe("[orchestrator] settings", () => {
   });
 
   it("filters by the last matching pattern, and always lets init through", () => {
-    const patterns = ["github.*", "!github.reply", "unsettled"];
-    expect(eventAllowed("github.review_requested", patterns)).toBe(true);
-    expect(eventAllowed("github.reply", patterns)).toBe(false);
+    const patterns = ["escalation.*", "!escalation.human_direct", "unsettled"];
+    expect(eventAllowed("escalation.wait_due", patterns)).toBe(true);
+    expect(eventAllowed("escalation.human_direct", patterns)).toBe(false);
     expect(eventAllowed("unsettled", patterns)).toBe(true);
     expect(eventAllowed("waiting.changed", patterns)).toBe(false);
     expect(eventAllowed("init", [])).toBe(true);
@@ -202,7 +209,7 @@ describe("[orchestrator] settings", () => {
     expect(eventPatternProblem("!agent.started")).toBe(false);
     expect(eventPatternProblem("a b")).toBe(true);
     // The default is everything: there is no chatter left to filter.
-    expect(eventAllowed("github.reply", DEFAULT_ORCHESTRATOR_EVENTS)).toBe(
+    expect(eventAllowed("usage.threshold", DEFAULT_ORCHESTRATOR_EVENTS)).toBe(
       true,
     );
   });

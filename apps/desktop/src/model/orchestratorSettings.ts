@@ -34,7 +34,7 @@ export interface OrchestratorConfig {
   readonly init_prompt: string | undefined;
   /**
    * Which events reach the orchestrator, as patterns over their type:
-   * `github.*`, `unsettled`, `*`; a pattern starting with `!` takes
+   * `escalation.*`, `unsettled`, `*`; a pattern starting with `!` takes
    * matching types back out. `init` always goes. See `eventAllowed`.
    */
   readonly events: readonly string[];
@@ -63,8 +63,10 @@ export interface OrchestratorConfig {
 
 export interface OrchestratorGitHubConfig {
   /**
-   * The GitHub Projects (v2) boards whose lane (`Status`) is watched, as
-   * `OWNER/NUMBER` (`my-org/7`). Read only; DevHub never moves a card.
+   * The GitHub Projects (v2) boards an item's lane (`Status`) is read from,
+   * as `OWNER/NUMBER` (`my-org/7`): a fact of the item, never what decides
+   * the population (every open Issue or pull request assigned to you). Read
+   * only; DevHub never moves a card.
    */
   readonly projects: readonly string[];
   /** The base poll interval (`90s`, `2m`); it only ever backs off from here. */
@@ -121,6 +123,12 @@ export const RETIRED_EVENT_TYPES: Readonly<Record<string, string>> = {
     "an `unsettled` or `waiting.changed` line carries the pull request as it is",
   "github.pr_closed":
     "an `unsettled` or `waiting.changed` line carries the pull request as it is",
+  "github.review_requested":
+    "a pull request assigned to you is an item like an Issue: one nobody settles is `unsettled`",
+  "github.reply":
+    "a pull request assigned to you is an item like an Issue: one nobody settles is `unsettled`",
+  "github.*":
+    "nothing is said by GitHub itself: an item's state is in `unsettled`",
   "workspace.*": "a Workspace's state is read with `workspace status`",
   "workspace.opened": "a Workspace's state is read with `workspace status`",
   "workspace.closed": "a Workspace's state is read with `workspace status`",
@@ -168,7 +176,7 @@ export const MIN_GITHUB_INTERVAL_MS = 30_000;
 export const MIN_TIMER_INTERVAL_MS = 10_000;
 
 export const DEFAULT_EVENT_PROMPT =
-  "DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれ新しいバックグラウンドのサブエージェントに渡して処理し、すぐに戻ってください。\n{EVENT}";
+  'DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれバックグラウンドの fork サブエージェント (Agent ツールの subagent_type: "fork") に渡して処理し、すぐに戻ってください。\n{EVENT}';
 
 /** Where the orchestrator runs when `[orchestrator] root` is not set. */
 export const DEFAULT_ORCHESTRATOR_ROOT = "~/orchestrator";

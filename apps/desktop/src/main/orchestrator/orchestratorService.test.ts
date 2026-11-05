@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ORCHESTRATOR } from "../../model/orchestratorSettings.js";
 import { EscalationStore } from "./escalationStore.js";
 import { escalationState } from "../../model/escalations.js";
-import type { InvariantAgent, IssueFacts } from "./invariant.js";
+import type { InvariantAgent, ItemFacts } from "./invariant.js";
 import { OrchestratorService, type LiveAgent } from "./orchestratorService.js";
 
 const ORCH = "orch-0000";
@@ -19,7 +19,7 @@ function world(
 	options: {
 		cursor?: { value?: string; text?: string };
 		prompt?: string;
-		issues?: IssueFacts[];
+		items?: ItemFacts[];
 		managed?: boolean;
 	} = {},
 ) {
@@ -36,7 +36,7 @@ function world(
 		stopping: false,
 	}));
 	const invariant = {
-		issues: options.issues as IssueFacts[] | undefined,
+		items: options.items as ItemFacts[] | undefined,
 		managed: new Set<string>(options.managed === true ? [WORKER] : []),
 		links: new Map<string, string>(),
 	};
@@ -62,7 +62,7 @@ function world(
 				...(cursor.text === undefined ? {} : { text: cursor.text }),
 			}),
 		invariant: () => ({
-			issues: invariant.issues,
+			items: invariant.items,
 			agents: agents.map(
 				(agent): InvariantAgent => ({
 					id: agent.id,
@@ -116,13 +116,13 @@ function world(
 	};
 }
 
-function issue(overrides: Partial<IssueFacts> = {}): IssueFacts {
+function issue(overrides: Partial<ItemFacts> = {}): ItemFacts {
 	return {
 		item: { repo: "acme/app", number: 123, title: "API整理", url: ISSUE_URL },
+		kind: "issue",
 		open: true,
 		assignedToMe: true,
-		project: "acme/7",
-		lane: "Todo",
+		projects: [{ project: "acme/7", lane: "Todo" }],
 		...overrides,
 	};
 }
@@ -281,7 +281,7 @@ describe("待機中 (escalation wait)", () => {
 
 describe("the invariant", () => {
 	it("says an open Issue of mine nobody is on, after the grace, as a batch line", () => {
-		const run = world({ issues: [issue()] });
+		const run = world({ items: [issue()] });
 		run.later(30_000);
 		expect(run.of("unsettled")).toHaveLength(0);
 		run.later(31_000);
@@ -290,12 +290,12 @@ describe("the invariant", () => {
 			"[unsettled] issue=acme/app#123「API整理」 state=open assigned=yes lane=Todo pr=none agents=none esc=none https://github.com/acme/app/issues/123",
 		);
 		expect(run.service.wire().unsettled).toEqual([
-			expect.objectContaining({ kind: "issue", key: `issue ${ISSUE_URL}` }),
+			expect.objectContaining({ kind: "issue", key: `item ${ISSUE_URL}` }),
 		]);
 	});
 
 	it("is settled by a working linked agent, and by a 待機中 escalation about the Issue", () => {
-		const run = world({ issues: [issue()], managed: true });
+		const run = world({ items: [issue()], managed: true });
 		run.invariant.links.set(WORKER, ISSUE_URL);
 		run.status(WORKER, "working");
 		run.later(120_000);
@@ -337,7 +337,7 @@ describe("the invariant", () => {
 
 	it("says a managed agent whose Issue is closed or not mine, and keeps one with a reason", () => {
 		const run = world({
-			issues: [issue({ assignedToMe: false })],
+			items: [issue({ assignedToMe: false })],
 			managed: true,
 		});
 		run.invariant.links.set(WORKER, ISSUE_URL);
@@ -360,14 +360,14 @@ describe("the invariant", () => {
 		run.later(2 * 3_600_000);
 		expect(run.of("unsettled")).toHaveLength(1);
 		// Its Issue closed: the facts moved, it is said again.
-		run.invariant.issues = [issue({ assignedToMe: false, open: false })];
+		run.invariant.items = [issue({ assignedToMe: false, open: false })];
 		run.later(1_000);
 		expect(run.of("unsettled")).toHaveLength(2);
 		expect(run.service.standing(WORKER)?.kept).toBeUndefined();
 	});
 
 	it("says every subject again to a new orchestrator", () => {
-		const run = world({ issues: [issue()] });
+		const run = world({ items: [issue()] });
 		run.later(61_000);
 		expect(run.of("unsettled")).toHaveLength(1);
 		run.service.assign(ORCH);

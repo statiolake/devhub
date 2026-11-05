@@ -128,7 +128,7 @@ describe("the GitHub pill", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     const box = card();
     expect(box).toHaveTextContent("Active");
-    const boards = within(box).getByRole("list", { name: "Boards" });
+    const boards = within(box).getByRole("list", { name: "Projects (lanes)" });
     expect(boards).toHaveTextContent("acme/7 Roadmap");
     const link = within(box).getByRole("link", { name: "acme/7" });
     expect(link).toHaveAttribute(
@@ -147,16 +147,19 @@ describe("the GitHub pill", () => {
     );
   });
 
-  it("counts each board's cards: items, assigned to me", () => {
+  it("counts the open items assigned to me, and lists the lanes' Projects", () => {
     mount({
       github: {
         state: "active",
-        boards: [{ ref: "acme/7", items: 42, assigned: 5 }, { ref: "me/2" }],
+        assigned: 5,
+        boards: [{ ref: "acme/7" }, { ref: "me/2" }],
       },
     });
-    const boards = within(card()).getByRole("list", { name: "Boards" });
-    expect(boards).toHaveTextContent("acme/7 · 42 items, 5 assigned to me");
-    expect(boards).toHaveTextContent("me/2 · not read yet");
+    expect(card()).toHaveTextContent("Assigned to me5 open items");
+    const boards = within(card()).getByRole("list", {
+      name: "Projects (lanes)",
+    });
+    expect(boards).toHaveTextContent("acme/7");
   });
 
   it("says why it backs off, and when it polls next", () => {
@@ -179,9 +182,7 @@ describe("the GitHub pill", () => {
     expect(card()).not.toHaveTextContent("Next poll");
     cleanup();
     mount({ github: { state: "idle" } });
-    expect(card()).toHaveTextContent(
-      "Idle: [orchestrator.github] projects names no board",
-    );
+    expect(card()).toHaveTextContent("Idle: not started yet");
     cleanup();
     mount({ orchestratorAgentId: undefined, github: { state: "idle" } });
     expect(card()).toHaveTextContent("Idle: no orchestrator is running");

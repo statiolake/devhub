@@ -1564,7 +1564,6 @@ export class TellService {
 				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, waiting ${String(counts.waiting)}`,
 				`events: ${board.paused ? "paused" : "delivered"}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
 				githubPollingLine(board),
-				...githubBoardLines(board),
 			].join("\n"),
 			data: {
 				agentId: agent?.id ?? null,
@@ -4558,20 +4557,22 @@ export function answeredBy(
 
 /** `orchestrator status`'s GitHub line: polling, suspended by the pause, or idle and why. */
 function githubPollingLine(board: OrchestratorBoardWire): string {
-	const { state, lastAt, nextAt, rateLimit, boards, problem } = board.github;
+	const { state, lastAt, nextAt, rateLimit, boards, assigned, problem } =
+		board.github;
 	const why =
 		state === "suspended"
 			? " (events paused: GitHub is not polled)"
 			: state === "idle"
-				? board.orchestratorAgentId === undefined
-					? " (no orchestrator)"
-					: " (no [orchestrator.github] projects)"
+				? " (no orchestrator)"
 				: "";
 	return [
 		`GitHub polling: ${state}${why}`,
+		...(assigned === undefined
+			? []
+			: [`${String(assigned)} open items assigned to me`]),
 		...(boards === undefined || boards.length === 0
 			? []
-			: [`boards ${boards.map((one) => one.ref).join(" ")}`]),
+			: [`lanes from ${boards.map((one) => one.ref).join(" ")}`]),
 		...(lastAt === undefined ? [] : [`last ${new Date(lastAt).toISOString()}`]),
 		...(nextAt === undefined ? [] : [`next ${new Date(nextAt).toISOString()}`]),
 		...(rateLimit === undefined
@@ -4581,22 +4582,6 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 				]),
 		...(problem === undefined ? [] : [problem]),
 	].join(", ");
-}
-
-/**
- * Each board's last full pass, counted: `acme/7 (Team): 42 items, 5 assigned
- * to me`; `not read yet` before the first.
- */
-function githubBoardLines(board: OrchestratorBoardWire): string[] {
-	if (board.github.state === "idle") return [];
-	return (board.github.boards ?? []).map(
-		(one) =>
-			`  ${one.ref}${one.title === undefined ? "" : ` (${one.title})`}: ${
-				one.items === undefined
-					? "not read yet"
-					: `${String(one.items)} items, ${String(one.assigned ?? 0)} assigned to me`
-			}`,
-	);
 }
 
 /** `board`'s invariant part: every subject unsettled now, with its facts. */

@@ -3,9 +3,10 @@
  * it: what `unsettled` and `waiting.changed` say (`docs/orchestrator.md`,
  * "The invariant").
  *
- * **The population** is every open Issue assigned to the viewer on a watched
- * board (`[orchestrator.github] projects`). For each of them exactly one of
- * these holds, or it is **unsettled**:
+ * **The population** is every open item assigned to the viewer on GitHub — an
+ * Issue or a pull request, one thing here (`githubItems.ts`); the watched
+ * Projects only give an item's lane. For each of them exactly one of these
+ * holds, or it is **unsettled**:
  *
  * - (a) an agent linked to it is working (status `working` or `background`,
  *   not stopping);
@@ -13,20 +14,21 @@
  *   waiting for the person);
  * - (c) a 待機中 (`waiting`) escalation is about it (an explicit condition).
  *
- * An Issue one of whose linked agents is not managed is the person's own,
+ * An item one of whose linked agents is not managed is the person's own,
  * and left out.
  *
  * **Every managed agent** (the orchestrator is never one) is working, or is
  * one of the agents of a 要回答 or 待機中 escalation; one that is neither is
- * unsettled. So is one whose Issue is outside the population — closed, not
- * assigned to the viewer, on no watched board — or that has no Issue at all,
+ * unsettled. So is one whose item is outside the population — closed, not
+ * assigned to the viewer, or not on GitHub — or that has no item at all,
  * whatever it is doing: for that reason alone. While the population is not
  * known (GitHub is not read, or not in full yet), only the first rule is
  * applied to agents, and no Issue is said.
  *
- * **Linked**, the one rule: an agent is linked to the Issue its meta
+ * **Linked**, the one rule: an agent is linked to the item its meta
  * `issue=` names, by URL. DevHub writes that pair itself when `issue assign`
- * (or the window's Assign Issue) starts the agent on an Issue; it is not set
+ * (or the window's Assign Issue) starts the agent on an Issue or a pull
+ * request; it is not set
  * by hand. The branch a Workspace is on does not link anything.
  *
  * **About an Issue**, for an escalation: one of its links is the Issue's URL,
@@ -75,15 +77,24 @@ export interface PullFacts {
 	readonly checks: "passing" | "failing" | "pending" | "none";
 }
 
-/** An Issue on a watched board, as last read. */
-export interface IssueFacts {
+/**
+ * An item — an Issue or a pull request, one thing here — as last read: one
+ * assigned to the viewer, or one an agent is linked to.
+ */
+export interface ItemFacts {
 	readonly item: EventItem;
+	readonly kind: "issue" | "pr";
 	readonly open: boolean;
 	readonly assignedToMe: boolean;
-	/** The board (`OWNER/NUMBER`) and its Status. */
-	readonly project: string;
-	readonly lane: string | null;
-	/** The pull request that closes it (the open one, else the latest). */
+	/** Its lane (Status) on each watched Project it is on. */
+	readonly projects: readonly {
+		readonly project: string;
+		readonly lane: string | null;
+	}[];
+	/**
+	 * Its pull request: a pull request item's own; an Issue's, the one that
+	 * closes it (the open one, else the latest).
+	 */
 	readonly pull?: PullFacts;
 }
 
@@ -118,10 +129,13 @@ export interface InvariantEscalation {
 
 export interface InvariantInput {
 	/**
-	 * Every Issue on the watched boards, as last read; undefined while the
-	 * population is not known (GitHub not read, or not every board in full).
+	 * Every item as last read — the open ones assigned to the viewer, and the
+	 * ones agents are linked to — undefined while the population is not known
+	 * (GitHub not read, or not in full yet).
 	 */
-	readonly issues: readonly IssueFacts[] | undefined;
+	readonly items: readonly ItemFacts[] | undefined;
+	/** Whether GitHub was asked about a linked URL and has no item for it. */
+	readonly missing?: (url: string) => boolean;
 	/** Every agent but the orchestrator. */
 	readonly agents: readonly InvariantAgent[];
 	/** The open escalations. */
@@ -130,9 +144,10 @@ export interface InvariantInput {
 
 /** One subject that breaks the invariant now, with its facts. */
 export interface UnsettledSubject {
-	/** `issue <url key>` or `agent <id>`: the subject. */
+	/** `item <url key>` or `agent <id>`: the subject. */
 	readonly key: string;
-	readonly kind: "issue" | "agent";
+	/** An Issue or a pull request item, or a managed agent. */
+	readonly kind: "issue" | "pr" | "agent";
 	readonly item?: EventItem;
 	readonly agent?: EventAgent;
 	readonly ws?: string;
@@ -245,9 +260,14 @@ function laneToken(lane: string | null): string {
 	return `lane=${/^\S+$/u.test(lane) ? lane : JSON.stringify(lane)}`;
 }
 
-/** `repo#123` for `issue=`: the repository and the number. */
+/** `repo#123` for `issue=` / `pr=`: the repository and the number. */
 export function issueToken(item: EventItem): string {
 	return `${item.repo === "" ? "" : item.repo}#${String(item.number)}`;
+}
+
+/** An item as a line names it: `issue=acme/app#1`, `pr=acme/app#9`. */
+export function itemToken(kind: "issue" | "pr", item: EventItem): string {
+	return `${kind}=${issueToken(item)}`;
 }
 
 export function pullFacts(pull: PullFacts | undefined): string[] {
@@ -261,11 +281,11 @@ export function pullFacts(pull: PullFacts | undefined): string[] {
 	];
 }
 
-function issueFacts(issue: IssueFacts): string[] {
+function issueFacts(issue: ItemFacts): string[] {
 	return [
 		`state=${issue.open ? "open" : "closed"}`,
 		`assigned=${issue.assignedToMe ? "yes" : "no"}`,
-		laneToken(issue.lane),
+		laneToken(issue.projects[0]?.lane ?? null),
 		...pullFacts(issue.pull),
 	];
 }
@@ -282,13 +302,13 @@ function escalationFacts(
 			];
 }
 
-function inPopulation(issue: IssueFacts): boolean {
+function inPopulation(issue: ItemFacts): boolean {
 	return issue.open && issue.assignedToMe;
 }
 
 /** The invariant, read off one moment's state. */
 export function readInvariant(input: InvariantInput): InvariantReading {
-	const { issues, agents, escalations } = input;
+	const { items: issues, agents, escalations } = input;
 	const unsettled: UnsettledSubject[] = [];
 	const standings = new Map<string, AgentStanding>();
 	const parked = (agent: InvariantAgent) =>
@@ -324,8 +344,8 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 		)
 			continue;
 		unsettled.push({
-			key: `issue ${key}`,
-			kind: "issue",
+			key: `item ${key}`,
+			kind: issue.kind,
 			item: issue.item,
 			...(on[0] === undefined ? {} : { ws: on[0].ws }),
 			facts: [
@@ -361,20 +381,22 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 			agent.issue === undefined
 				? undefined
 				: byKey.get(issueUrlKey(agent.issue));
+		// Linked to a URL GitHub has no item for (deleted, or not visible).
+		const missing =
+			agent.issue !== undefined &&
+			issue === undefined &&
+			input.missing?.(agent.issue) === true;
 		const issueWords =
 			agent.issue === undefined
 				? ["issue=none"]
 				: issue === undefined
-					? [
-							`issue=${agent.issue}`,
-							...(issues === undefined ? [] : ["project=none"]),
-						]
-					: [`issue=${issueToken(issue.item)}`, ...issueFacts(issue)];
+					? [`issue=${agent.issue}`, ...(missing ? ["item=none"] : [])]
+					: [itemToken(issue.kind, issue.item), ...issueFacts(issue)];
 		const outside =
 			issues !== undefined &&
 			(agent.issue === undefined ||
-				issue === undefined ||
-				!inPopulation(issue));
+				missing ||
+				(issue !== undefined && !inPopulation(issue)));
 		const settled = !outside && (atWork(agent) || parked(agent).length > 0);
 		const facts = [
 			`status=${agent.stopping ? "stopping" : agent.status}`,
@@ -399,7 +421,7 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 		const facts: string[] = [];
 		for (const issue of issues ?? [])
 			if (escalationAbout(one, issue.item, agents))
-				facts.push(`issue=${issueToken(issue.item)}`, ...issueFacts(issue));
+				facts.push(itemToken(issue.kind, issue.item), ...issueFacts(issue));
 		for (const agent of escalationAgents(one, agents))
 			facts.push(
 				`agent=${shortId(agent.id)}`,
@@ -434,7 +456,7 @@ export interface KeptAgent {
 /** A subject unsettled now, as the board and `agent status` show it. */
 export interface UnsettledView {
 	readonly key: string;
-	readonly kind: "issue" | "agent";
+	readonly kind: "issue" | "pr" | "agent";
 	readonly line: string;
 	/** Since when it has been unsettled, as DevHub saw it. */
 	readonly since: number;
@@ -455,8 +477,8 @@ export interface InvariantWatchPorts {
 /** The words of a subject, without its `[type]`: what `--tell` shows. */
 export function subjectWords(subject: UnsettledSubject): string {
 	const head =
-		subject.kind === "issue" && subject.item !== undefined
-			? `issue=${issueToken(subject.item)}${subject.item.title === undefined || subject.item.title.length === 0 ? "" : `「${excerpt(subject.item.title, 40)}」`}`
+		subject.kind !== "agent" && subject.item !== undefined
+			? `${itemToken(subject.kind, subject.item)}${subject.item.title === undefined || subject.item.title.length === 0 ? "" : `「${excerpt(subject.item.title, 40)}」`}`
 			: `agent=${shortId(subject.agent?.id ?? "")}${subject.agent?.name === undefined ? "" : ` (${excerpt(subject.agent.name, 40)})`}`;
 	return [
 		head,
@@ -529,8 +551,8 @@ export class InvariantWatch {
 			this.ports.dispatch({
 				type: "unsettled",
 				subject:
-					subject.kind === "issue"
-						? { kind: "issue", item: subject.item! }
+					subject.kind !== "agent"
+						? { kind: subject.kind, item: subject.item! }
 						: { kind: "agent", agent: subject.agent! },
 				...(subject.ws === undefined ? {} : { ws: subject.ws }),
 				facts: subject.facts,

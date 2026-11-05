@@ -910,7 +910,7 @@ export function resetProjectScopeMemory(): void {
 
 /**
  * One GraphQL request with `token`, for a caller that shapes its own query
- * (the orchestrator's GitHub events, `orchestrator/githubEvents.ts`): the
+ * (the orchestrator's GitHub items, `orchestrator/githubItems.ts`): the
  * same client, timeout and refusals as the Workspace watcher's, and the
  * token is never in what it throws.
  */

@@ -199,11 +199,11 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [orchestrator]
       event_prompt = "/make-progress {EVENT}"
       # init_prompt = "/make-progress {EVENT}"   # 省略時は event_prompt に init が入る
-      # events = ["*", "!github.reply"]           # 受け取るイベントの絞り込み (既定は全部)
+      # events = ["*", "!timer.*"]                # 受け取るイベントの絞り込み (既定は全部)
       # delivery_interval = "5m"                  # 束ねた配信の最短間隔 (人の言葉はすぐ)
       # reminder_interval = "1h"                  # 解消しない unsettled を言い直す間隔
       # [orchestrator.github]
-      # projects = ["my-org/7"]                  # 監視する Project (OWNER/NUMBER)
+      # projects = ["my-org/7"]                  # lane を読む Project (OWNER/NUMBER)。母集団は決めない
       # interval = "90s"                          # 基本間隔 (最短 30s。ここから遅くなるだけ)
       # [[orchestrator.timers]]
       # name = "sweep"
@@ -226,7 +226,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 - **それ以外は束ねて、\`[orchestrator] delivery_interval\` (既定 5m) に 1 回まで** 届く。
   1 回の配信 = 1 メッセージ (\`event_prompt\` の \`{EVENT}\`)。
 - **配信は履歴ではない。いま対応が要るものの一覧で、対象ごとに 1 行**
-  (Issue、エージェント、エスカレーション、PR、タイマー、CLI の使用量枠、カスタムの種類+本文)。
+  (アイテム = Issue か PR、エージェント、エスカレーション、タイマー、CLI の使用量枠、カスタムの種類+本文)。
   同じ対象の新しいものは古いものを置き換える: **行はその対象のいまの状態** を書く
   (差分ではない)。届ける直前に、もう対応の要らないもの (解消した対象、待機中でなくなった
   エスカレーション、リセット済みの使用量枠) は落とされる。
@@ -244,18 +244,17 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [unsettled] agent=c3d4e5f6 (調査) ws=docs status=working issue=none pr=none esc=none
       [waiting.changed] esc=12「レビュー待ち」 issue=acme/app#123 state=open assigned=yes lane="In Review" pr=#130 pr_state=open review=approved unresolved=0 checks=passing agent=a1b2c3d4 status=idle — 待機条件: approve されたら再開
       [escalation.wait_due] esc=15「ログ保存期間」 due=09:00 — 待機条件: 11/10 以降に再開
-      [github.review_requested] PR #9「設定画面」 — carol からレビュー依頼 https://github.com/acme/app/pull/9
-      [github.reply] PR #9「設定画面」 author=carol replies=2 new_commits=yes https://github.com/acme/app/pull/9
+      [unsettled] pr=acme/app#9「設定画面」 state=open assigned=yes lane=Review pr=#9 pr_state=open review=review_required unresolved=0 checks=passing agents=none esc=none https://github.com/acme/app/pull/9
       [timer.elapsed] sweep
       [usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました
 
-- \`issue=\` は Issue (\`owner/repo#N\`)、\`ws=\` は \`workspace status\` などに、\`agent=\`
+- \`issue=\` / \`pr=\` はアイテム (\`owner/repo#N\`。Issue か PR かの違いだけで、扱いは同じ)、\`ws=\` は \`workspace status\` などに、\`agent=\`
   (id の先頭 8 文字) は \`agent ...\` に、\`esc=\` は \`escalation show\` にそのまま渡せる。
   \`pr_state\` は open / draft / closed / merged、\`review\` は approved /
   changes_requested / review_required / none、\`checks\` は passing / failing /
-  pending / none、\`agents=\` は Issue に紐づくエージェントと状態、\`esc=\` は関係する
+  pending / none、\`agents=\` はアイテムに紐づくエージェントと状態、\`esc=\` は関係する
   エスカレーションと状態。
-- \`[orchestrator] events\` で種類を絞れる (\`github.*\`、\`!type\` で除外。最後に
+- \`[orchestrator] events\` で種類を絞れる (\`escalation.*\`、\`!type\` で除外。最後に
   一致したものが勝つ)。既定は全部。\`init\` は常に届く。
 - 実物は \`devhub --tell orchestrator events\` で見られる (届いた / 保留 /
   フィルタ / 置き換え / 落とした、の別つき)。終了時に保留中のものは失われるが、次の起動の
@@ -266,21 +265,21 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
 | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ)。人の言葉として単独ですぐ届く (上記) | esc |
 | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ)。人の言葉として単独ですぐ届く | esc, agent |
-| \`unsettled\` | 不変条件 (下記) を満たしていない Issue か管理対象エージェント。猶予 1 分のあとに 1 回、事実が変わるたびにもう 1 回、解消しないうちは \`[orchestrator] reminder_interval\` (既定 1h) ごとに | issue / agent, ws, 事実 |
+| \`unsettled\` | 不変条件 (下記) を満たしていないアイテム (Issue / PR) か管理対象エージェント。猶予 1 分のあとに 1 回、事実が変わるたびにもう 1 回、解消しないうちは \`[orchestrator] reminder_interval\` (既定 1h) ごとに | issue / agent, ws, 事実 |
 | \`waiting.changed\` | 待機中のエスカレーションが対象にしている Issue / PR / エージェントの状態が変わった (待っている条件が満たされたかもしれない) | esc, 事実 |
 | \`escalation.wait_due\` | 待機中のエスカレーションの \`--at\` の時刻になった (待機 1 回につき 1 回) | esc, due |
-| \`github.review_requested\` | 監視中の Project 上の他人の PR で、自分にレビュー依頼が来た | PR, URL |
-| \`github.reply\` | 自分がレビューした PR に作者が返信 / コミットした (自分の push は除く) | PR, author |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |
 
-\`unsettled\` は DevHub の憲章にある不変条件を満たしていない対象 (母集団の Issue か管理対象エージェント) で、
+\`unsettled\` は DevHub の憲章にある不変条件を満たしていない対象 (母集団のアイテムか管理対象エージェント) で、
 事実だけが並ぶ。何をもって「直った」とするか (どのレーンなら誰に何を頼むか) が make-progress に書くこと。
 \`devhub --tell --json board\` の \`unsettled\` でいつでも今の一覧を取れる。
 
-GitHub は \`[orchestrator.github] projects\` の Project を読むだけ (カードは動かさない)。1 tick 1
-リクエストで、rate limit が減ると間隔が延びる。**ポーズ中は GitHub を一切ポーリングしない**。
+GitHub は読むだけ (何も書かない)。母集団は自分にアサインされた open な Issue と PR (GitHub 全体、
+\`is:open assignee:@me\`) で、他人の PR のレビューも自分にアサインされていれば同じアイテムになる
+(レビュー依頼そのものはイベントにならない)。\`[orchestrator.github] projects\` は各アイテムの lane を読む
+Project の一覧で、母集団は決めない。1 tick 1 リクエストで、rate limit が減ると間隔が延びる。**ポーズ中は GitHub を一切ポーリングしない**。
 resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届ける。\`orchestrator status\` と
 ボードのヘッダーに GitHub ポーリングが active / suspended / idle のどれかが出る。
 
@@ -401,6 +400,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell --json sessions --all --meta parent=ORCH
     devhub --tell profiles
     devhub --tell issue actions
+    devhub --tell issue assign https://github.com/OWNER/REPO/pull/9 --repo ~/src/REPO --branch carol/settings-page --profile claude --gui --action none --managed --name "PR 9 review" --meta parent=ORCH
     devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login --profile claude --gui --action issue_assignment --managed --name "123 login fix" --meta parent=ORCH
     devhub --tell workspace open ~/src/REPO
     devhub --tell --json workspace status W
@@ -452,7 +452,10 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
 
 ## 7. make-progress の構成
 
-1. **ディスパッチャ**: \`{EVENT}\` の各行を先頭の \`[type]\` で分岐。人の言葉
+1. **ディスパッチャ**: \`{EVENT}\` の各行を、憲章のルーターの規則どおり Agent ツールの
+   \`subagent_type: "fork"\` でバックグラウンドに渡し、すぐ戻る (fork は会話の文脈を引き継ぎ、
+   最後の短い要約 — 何を決め、誰に何を渡したか — だけが戻る。Codex では過去の判断を渡した通常の
+   サブエージェント)。fork の中で各行を先頭の \`[type]\` で分岐。人の言葉
    (\`esc=N … への人の回答:\` などで始まるメッセージ) も別に受ける。
 2. **種別ごとの playbook**: 何を確認し、誰に何を頼み、どの状態で終えるか。
    チームのレーンの意味、レビューと完了の定義、自律の範囲。
@@ -481,9 +484,9 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     ## init
     board の unsettled / 対応中 / 待機中を見て整合性を取る。対応中は回答を伝え直す。
 
-    ## unsettled issue=… agents=none
-    着手する Issue なら issue assign (--managed、--meta parent=自分)。
-    着手すべきでない (他の人の作業待ちなど) なら、Issue の URL を --link に付けた
+    ## unsettled issue=… / pr=… agents=none
+    着手するアイテムなら issue assign (--managed、--meta parent=自分)。
+    着手すべきでない (他の人の作業待ちなど) なら、アイテムの URL を --link に付けた
     待機中のエスカレーション (escalation new … --wait TEXT) か、人に聞くエスカレーション。
 
     ## unsettled issue=… lane="In Review" review=changes_requested / checks=failing
@@ -503,9 +506,9 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     トリガーを確かめる (review=approved になった、日付が来た、Slack の返事は自分のツールで)。
     満たされていれば escalation resume → 担当エージェントに agent send で再開を指示。
 
-    ## github.review_requested / github.reply
-    レビュー用のエージェントを立てる (issue assign に PR の URL、--managed) か、そのエージェントに伝える。
-    Issue のないエージェントは unsettled になるので、agent keep A --note "PR #9 のレビュー" で理由を残す。
+    ## unsettled pr=… (他人の PR のレビュー)
+    PR もアイテム。レビュー用のエージェントを issue assign に PR の URL で立てる (--managed)。
+    そのエージェントは PR に紐づき、Issue のときと同じに扱われる。
 
     ## timer.elapsed
     棚卸し: board の unsettled と停滞を確認。

@@ -384,7 +384,7 @@ is a field of the agent, kept in `state.json` and under its CLI session in
 carries the orchestrator's mark.
 
 **Metadata.** `agent meta`, and `--meta KEY=VALUE` on `agent new` and
-`issue assign`, keep an agent's own pairs — `role=reviewer`, `issue=123`,
+`issue assign`, keep an agent's own pairs — `role=reviewer`, `ticket=123`,
 `parent=<agent id>` — with it in `state.json` across restarts. A key is a
 letter and up to 31 of `A-Z a-z 0-9 _ . -`, a value one line of up to 256
 characters, 32 pairs an agent. They are in `agents --json` / `agent status
@@ -429,15 +429,16 @@ hold ID [--note TEXT]`, or one of its agents going back to work moves it to
 (a date, a reply) is parked in 待機中 with `escalation wait ID --trigger
 TEXT [--at DATETIME]`, its trigger always in words; the orchestrator hears of
 it again at its time or when what it is about changes. DevHub holds the
-orchestrator to one invariant — every open Issue assigned to you on the
-watched boards has a working agent, a 要回答 or a 待機中 escalation, and every
-managed agent is working or on one of those — and says each subject that
+orchestrator to one invariant — every open item assigned to you on GitHub
+(an Issue or a pull request: one thing to DevHub) has a working agent, a
+要回答 or a 待機中 escalation, and every managed agent is working or on one
+of those — and says each subject that
 breaks it as an `unsettled` line of facts, batched at most every
 `delivery_interval` (5m); the person's answers go at once, as typed. At
 every start DevHub also gives the orchestrator its own short charter — drive
-every assigned Issue to closed, never do hands-on work (the worker agents
-read logs and fix), hand each delivered line to a background subagent and
-return, keep the invariant, and DevHub's conventions. See
+every assigned item to closed, never do hands-on work (the worker agents
+read logs and fix), hand each delivered line to a background fork subagent
+and return, keep the invariant, and DevHub's conventions. See
 [`docs/orchestrator.md`](docs/orchestrator.md). `agent status` gives one agent's
 state in one call: kind, profile, workspace, status and since when (as DevHub
 saw it), the turn, last activity, open questions and permission prompts

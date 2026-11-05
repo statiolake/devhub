@@ -4628,7 +4628,7 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(ports.calls).toEqual(["orchestrator-start /srv/o claude"]);
 		expect(ports.delivered[0]?.[1]).toBe(
-			"DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれ新しいバックグラウンドのサブエージェントに渡して処理し、すぐに戻ってください。\n[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認",
+			'DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれバックグラウンドの fork サブエージェント (Agent ツールの subagent_type: "fork") に渡して処理し、すぐに戻ってください。\n[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認',
 		);
 		await expect(
 			viaSocket(
@@ -4653,17 +4653,15 @@ describe("the Orchestrator row from the command line", () => {
 		expect(status.data).toMatchObject({ agentId: ORCHESTRATOR });
 	});
 
-	it("lists the unsettled subjects on the board, and counts each GitHub board in status", async () => {
+	it("lists the unsettled subjects on the board, and counts my items in status", async () => {
 		const { service, ports } = orchestrated();
 		const empty = await viaSocket(service, ["board"], undefined);
 		expect(empty.data).toMatchObject({ unsettled: [] });
 		expect(empty.message).toContain("unsettled (0):");
 		ports.github = {
 			state: "active",
-			boards: [
-				{ ref: "acme/7", title: "Team", items: 42, assigned: 5 },
-				{ ref: "me/2" },
-			],
+			assigned: 5,
+			boards: [{ ref: "acme/7", title: "Team" }, { ref: "me/2" }],
 		};
 		const status = await viaSocket(
 			service,
@@ -4672,9 +4670,8 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(status.message).toContain("GitHub polling: active");
 		expect(status.message).toContain(
-			"  acme/7 (Team): 42 items, 5 assigned to me",
+			"GitHub polling: active, 5 open items assigned to me, lanes from acme/7 me/2",
 		);
-		expect(status.message).toContain("  me/2: not read yet");
 	});
 
 	it("pauses events and delivers the held ones on resume: the person's words each alone, the rest as one", async () => {
@@ -4774,7 +4771,7 @@ describe("the Orchestrator row from the command line", () => {
 		expect(ports.service.events.held()).toHaveLength(1);
 		await viaSocket(service, ["orchestrator", "resume"], undefined);
 		expect(ports.delivered.map(([, text]) => text)).toEqual([
-			"DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれ新しいバックグラウンドのサブエージェントに渡して処理し、すぐに戻ってください。\n[custom.deploy] — staging OK",
+			'DevHub からの通知です (対象ごとに 1 行)。各行をそれぞれバックグラウンドの fork サブエージェント (Agent ツールの subagent_type: "fork") に渡して処理し、すぐに戻ってください。\n[custom.deploy] — staging OK',
 		]);
 		for (const bad of [
 			["orchestrator", "emit", "--type", "deploy", "--text", "x"],

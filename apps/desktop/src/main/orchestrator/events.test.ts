@@ -13,12 +13,6 @@ import {
 
 const AGENT = { id: "a1b2c3d4-0000-4000-8000-000000000000", name: "API fix" };
 const ORCH = "0rc4e57r-0000";
-const PR = {
-	repo: "acme/app",
-	number: 130,
-	title: "ログイン修正",
-	url: "https://github.com/acme/app/pull/130",
-};
 const ISSUE = {
 	repo: "acme/app",
 	number: 123,
@@ -247,21 +241,12 @@ describe("the dispatcher", () => {
 		]);
 	});
 
-	it("adds up a reply's counts, and keeps one pending event per timer", () => {
+	it("keeps one pending event per timer", () => {
 		const { dispatcher, state, advance, sent } = world({ busy: true });
-		for (const comments of [1, 2])
-			dispatcher.dispatch({
-				type: "github.reply",
-				pr: PR,
-				author: "bob",
-				comments,
-				commits: comments === 2,
-			});
 		dispatcher.dispatch({ type: "timer.elapsed", name: "t", interval: "5m" });
 		dispatcher.dispatch({ type: "timer.elapsed", name: "t", interval: "5m" });
 		state.busy = false;
 		advance(300);
-		expect(sent[0]).toContain("author=bob replies=3 new_commits=yes");
 		expect(sent[0]?.match(/\[timer\.elapsed\]/gu)).toHaveLength(1);
 	});
 
@@ -275,16 +260,13 @@ describe("the dispatcher", () => {
 
 	it("applies the events filter", () => {
 		const { dispatcher, sent, advance } = world({
-			events: ["*", "!github.*"],
+			events: ["*", "!timer.*"],
 		});
-		dispatcher.dispatch({
-			type: "github.review_requested",
-			pr: PR,
-		});
+		dispatcher.dispatch({ type: "timer.elapsed", name: "t", interval: "5m" });
 		dispatcher.dispatch(unsettledIssue());
 		advance(300);
 		expect(sent).toHaveLength(1);
-		expect(sent[0]).not.toContain("github.review_requested");
+		expect(sent[0]).not.toContain("timer.elapsed");
 	});
 
 	it("caps a backlog at one line per subject and counts the rest", () => {

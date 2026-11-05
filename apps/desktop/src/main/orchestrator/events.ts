@@ -2,8 +2,8 @@
  * Events for the orchestrator: the seam everything that wants the
  * orchestrator to act goes through.
  *
- * A source — the board, the invariant (`invariant.ts`), GitHub
- * (`githubEvents.ts`), the timers (`timers.ts`), the usage readout,
+ * A source — the board, the invariant (`invariant.ts`, read off GitHub's
+ * items, `githubItems.ts`), the timers (`timers.ts`), the usage readout,
  * `orchestrator emit` — calls `dispatch` with an `OrchestratorEvent`. The
  * dispatcher
  *
@@ -15,9 +15,9 @@
  *    `event_prompt` template, so the orchestrator reads it as the person's
  *    own input. Only a pause holds them;
  * 3. keeps the rest **pending** as action items, not a history: **one line
- *    per subject** (`subjectOf`: an Issue, an agent, an escalation, a pull
- *    request, a timer, a usage window, a custom type and text). A newer
- *    statement about a pending subject replaces the older one (`merge`):
+ *    per subject** (`subjectOf`: an item, an agent, an escalation, a timer,
+ *    a usage window, a custom type and text). A newer statement about a
+ *    pending subject replaces the older one (`merge`):
  *    a line says how the subject stands now, not what happened to it;
  * 4. just before delivery, drops what no longer needs attention (`relevant`:
  *    a subject settled since, a wait no longer waiting) as `dropped-stale`;
@@ -64,14 +64,6 @@ export interface EventItem {
 	readonly number: number;
 	readonly title?: string;
 	readonly url?: string;
-}
-
-/** Where a GitHub event's work is, when DevHub has it open. */
-interface Where {
-	/** The Workspace, as `--tell` takes it (its name, or its id). */
-	readonly ws?: string;
-	/** Its agent (not the orchestrator). */
-	readonly agent?: EventAgent;
 }
 
 /** What the person wrote, carried in the event itself. */
@@ -134,7 +126,7 @@ export type OrchestratorEvent =
 	| {
 			readonly type: "unsettled";
 			readonly subject:
-				| { readonly kind: "issue"; readonly item: EventItem }
+				| { readonly kind: "issue" | "pr"; readonly item: EventItem }
 				| { readonly kind: "agent"; readonly agent: EventAgent };
 			readonly ws?: string;
 			/** `key=value` facts. */
@@ -151,20 +143,6 @@ export type OrchestratorEvent =
 			readonly trigger: string;
 			readonly facts: readonly string[];
 	  }
-	/** Someone asked the viewer to review a pull request on a watched board. */
-	| ({
-			readonly type: "github.review_requested";
-			readonly pr: EventItem;
-			readonly author?: string;
-	  } & Where)
-	/** New activity by its author on a pull request the viewer reviewed. */
-	| ({
-			readonly type: "github.reply";
-			readonly pr: EventItem;
-			readonly author: string;
-			readonly comments: number;
-			readonly commits: boolean;
-	  } & Where)
 	| {
 			readonly type: "timer.elapsed";
 			readonly name: string;
@@ -199,8 +177,6 @@ export const EVENT_TYPES = [
 	"escalation.wait_due",
 	"unsettled",
 	"waiting.changed",
-	"github.review_requested",
-	"github.reply",
 	"timer.elapsed",
 	"usage.threshold",
 	"custom.*",
@@ -256,17 +232,6 @@ function title(text: string | undefined): string {
 	return text === undefined || text.length === 0
 		? ""
 		: `「${excerpt(text, 40)}」`;
-}
-
-function prItem(one: EventItem): string {
-	return `PR #${String(one.number)}${title(one.title)}`;
-}
-
-function where(event: Where): string[] {
-	return [
-		...(event.ws === undefined ? [] : [`ws=${event.ws}`]),
-		...(event.agent === undefined ? [] : [agentToken(event.agent)]),
-	];
 }
 
 /**
@@ -357,13 +322,13 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 			const subject = event.subject;
 			return {
 				head: [
-					subject.kind === "issue"
-						? `issue=${issueRef(subject.item)}${title(subject.item.title)}`
+					subject.kind !== "agent"
+						? `${subject.kind}=${issueRef(subject.item)}${title(subject.item.title)}`
 						: agentToken(subject.agent),
 					...(event.ws === undefined ? [] : [`ws=${event.ws}`]),
 					...event.facts,
 				],
-				...(subject.kind === "issue" && subject.item.url !== undefined
+				...(subject.kind !== "agent" && subject.item.url !== undefined
 					? { url: subject.item.url }
 					: {}),
 			};
@@ -375,23 +340,6 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 					...event.facts,
 				],
 				summary: `待機条件: ${excerpt(event.trigger, 150)}`,
-			};
-		case "github.review_requested":
-			return {
-				head: [prItem(event.pr), ...where(event)],
-				summary: `${event.author === undefined ? "" : `${event.author} から`}レビュー依頼`,
-				...(event.pr.url === undefined ? {} : { url: event.pr.url }),
-			};
-		case "github.reply":
-			return {
-				head: [
-					prItem(event.pr),
-					...where(event),
-					`author=${event.author}`,
-					`replies=${String(event.comments)}`,
-					`new_commits=${event.commits ? "yes" : "no"}`,
-				],
-				...(event.pr.url === undefined ? {} : { url: event.pr.url }),
 			};
 		case "timer.elapsed":
 			return { head: [event.name] };
@@ -476,12 +424,9 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "waiting.changed":
 			return `esc ${String(event.escalationId)}`;
 		case "unsettled":
-			return event.subject.kind === "issue"
-				? `issue ${prKey(event.subject.item)}`
+			return event.subject.kind !== "agent"
+				? `item ${prKey(event.subject.item)}`
 				: `agent ${event.subject.agent.id}`;
-		case "github.review_requested":
-		case "github.reply":
-			return `gh ${prKey(event.pr)}`;
 		case "timer.elapsed":
 			return `timer ${event.name}`;
 		case "usage.threshold":
@@ -493,19 +438,13 @@ export function subjectOf(event: OrchestratorEvent): string {
 
 /**
  * `older` and `newer` (one subject) as the one statement they become. A
- * reply's counts add up; a timer pending once stands; anything else says how
- * the subject stands now, and the latest does.
+ * timer pending once stands; anything else says how the subject stands now,
+ * and the latest does.
  */
 export function merge(
 	older: OrchestratorEvent,
 	newer: OrchestratorEvent,
 ): OrchestratorEvent {
-	if (older.type === "github.reply" && newer.type === "github.reply")
-		return {
-			...newer,
-			comments: older.comments + newer.comments,
-			commits: older.commits || newer.commits,
-		};
 	if (older.type === "timer.elapsed" && newer.type === "timer.elapsed")
 		return older;
 	return newer;

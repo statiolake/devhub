@@ -540,8 +540,9 @@ export interface RepositoryStatusWire {
 
 /** One subject that breaks the invariant, as the board carries it. */
 export interface UnsettledWire {
-	readonly kind: "issue" | "agent";
-	/** `issue <url>` or `agent <id>`. */
+	/** An Issue or a pull request item, or a managed agent. */
+	readonly kind: "issue" | "pr" | "agent";
+	/** `item <url>` or `agent <id>`. */
 	readonly key: string;
 	/** Its words, as `unsettled` says them (without the `[type]`). */
 	readonly line: string;
@@ -650,7 +651,7 @@ export interface OrchestratorBoardWire {
 	/**
 	 * GitHub polling: `active`; `suspended` while events are paused (nothing
 	 * is asked of GitHub, the last reading is kept); `idle` with no
-	 * orchestrator or no `[orchestrator.github] projects`.
+	 * orchestrator.
 	 */
 	readonly github: {
 		readonly state: "active" | "suspended" | "idle";
@@ -666,24 +667,23 @@ export interface OrchestratorBoardWire {
 			readonly resetAt: number;
 		};
 		/**
-		 * The boards polled (`[orchestrator.github] projects`, `OWNER/NUMBER`),
-		 * with their title when DevHub has one.
+		 * The open Issues and pull requests assigned to the viewer (the
+		 * population), once read in full.
+		 */
+		readonly assigned?: number;
+		/**
+		 * The Projects lanes are read from (`[orchestrator.github] projects`,
+		 * `OWNER/NUMBER`), with their title when DevHub has one.
 		 */
 		readonly boards?: readonly {
 			readonly ref: string;
 			readonly title?: string;
-			/**
-			 * Its last full pass, counted: every card, and those assigned to
-			 * the viewer. Absent before the first full pass.
-			 */
-			readonly items?: number;
-			readonly assigned?: number;
 		}[];
 		readonly problem?: string;
 	};
 	/**
 	 * The subjects that break the invariant now (`main/orchestrator/
-	 * invariant.ts`): open Issues of mine nothing settles, managed agents
+	 * invariant.ts`): open items (Issues, pull requests) of mine nothing settles, managed agents
 	 * nothing settles. Each with its facts as an `unsettled` line has them.
 	 */
 	readonly unsettled: readonly UnsettledWire[];

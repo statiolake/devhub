@@ -5,19 +5,22 @@ import {
 	readInvariant,
 	type InvariantAgent,
 	type InvariantEscalation,
-	type IssueFacts,
+	type ItemFacts,
 } from "./invariant.js";
 
 const URL = "https://github.com/acme/app/issues/123";
 
-function issue(overrides: Partial<IssueFacts> = {}): IssueFacts {
+function issue(
+	overrides: Partial<ItemFacts> & { lane?: string } = {},
+): ItemFacts {
+	const { lane = "In Progress", ...rest } = overrides;
 	return {
 		item: { repo: "acme/app", number: 123, title: "API整理", url: URL },
+		kind: "issue",
 		open: true,
 		assignedToMe: true,
-		project: "acme/7",
-		lane: "In Progress",
-		...overrides,
+		projects: [{ project: "acme/7", lane }],
+		...rest,
 	};
 }
 
@@ -57,7 +60,7 @@ describe("the invariant", () => {
 		expect(
 			keys(
 				readInvariant({
-					issues: [issue()],
+					items: [issue()],
 					agents: [agent()],
 					escalations: [],
 				}),
@@ -67,7 +70,7 @@ describe("the invariant", () => {
 			expect(
 				keys(
 					readInvariant({
-						issues: [issue()],
+						items: [issue()],
 						agents: [agent({ status: "idle" })],
 						escalations: [escalation({ state })],
 					}),
@@ -77,11 +80,11 @@ describe("the invariant", () => {
 
 	it("says an Issue nobody is on, and an idle managed agent nothing settles", () => {
 		const reading = readInvariant({
-			issues: [issue()],
+			items: [issue()],
 			agents: [agent({ status: "idle" })],
 			escalations: [escalation({ state: "in_progress" })],
 		});
-		expect(keys(reading)).toEqual([`issue ${URL}`, "agent a1b2c3d4-0000"]);
+		expect(keys(reading)).toEqual([`item ${URL}`, "agent a1b2c3d4-0000"]);
 		expect(reading.unsettled[0]?.facts).toEqual([
 			"state=open",
 			"assigned=yes",
@@ -91,7 +94,7 @@ describe("the invariant", () => {
 			"esc=12:in_progress",
 		]);
 		const none = readInvariant({
-			issues: [issue()],
+			items: [issue()],
 			agents: [],
 			escalations: [],
 		});
@@ -102,7 +105,7 @@ describe("the invariant", () => {
 		expect(
 			keys(
 				readInvariant({
-					issues: [issue()],
+					items: [issue()],
 					agents: [agent({ managed: false, status: "idle" })],
 					escalations: [],
 				}),
@@ -114,12 +117,12 @@ describe("the invariant", () => {
 		expect(
 			keys(
 				readInvariant({
-					issues: [issue()],
+					items: [issue()],
 					agents: [agent({ issue: undefined })],
 					escalations: [],
 				}),
 			),
-		).toEqual([`issue ${URL}`, "agent a1b2c3d4-0000"]);
+		).toEqual([`item ${URL}`, "agent a1b2c3d4-0000"]);
 	});
 
 	it("says a managed agent whose Issue left the population, working or not, with the facts", () => {
@@ -128,32 +131,58 @@ describe("the invariant", () => {
 			[{ assignedToMe: false }, "assigned=no"],
 		] as const) {
 			const reading = readInvariant({
-				issues: [issue(facts)],
+				items: [issue(facts)],
 				agents: [agent()],
 				escalations: [],
 			});
 			expect(keys(reading)).toEqual(["agent a1b2c3d4-0000"]);
 			expect(reading.unsettled[0]?.facts).toContain(word);
 		}
-		const offBoard = readInvariant({
-			issues: [],
+		// Not looked up yet: only the status rule.
+		expect(
+			keys(readInvariant({ items: [], agents: [agent()], escalations: [] })),
+		).toEqual([]);
+		const gone = readInvariant({
+			items: [],
+			missing: () => true,
 			agents: [agent()],
 			escalations: [],
 		});
-		expect(offBoard.unsettled[0]?.facts).toContain("project=none");
+		expect(gone.unsettled[0]?.facts).toContain("item=none");
 		const noIssue = readInvariant({
-			issues: [],
+			items: [],
 			agents: [agent({ issue: undefined })],
 			escalations: [],
 		});
 		expect(noIssue.unsettled[0]?.facts).toContain("issue=none");
 	});
 
+	it("treats a pull request item as an Issue", () => {
+		const PR = "https://github.com/acme/app/pull/9";
+		const pr = issue({
+			item: { repo: "acme/app", number: 9, title: "設定画面", url: PR },
+			kind: "pr",
+		});
+		const nobody = readInvariant({ items: [pr], agents: [], escalations: [] });
+		expect(nobody.unsettled.map((one) => [one.key, one.kind])).toEqual([
+			[`item ${PR}`, "pr"],
+		]);
+		expect(
+			keys(
+				readInvariant({
+					items: [pr],
+					agents: [agent({ issue: PR })],
+					escalations: [],
+				}),
+			),
+		).toEqual([]);
+	});
+
 	it("applies only the status rule while the population is not known", () => {
 		expect(
 			keys(
 				readInvariant({
-					issues: undefined,
+					items: undefined,
 					agents: [agent({ issue: undefined })],
 					escalations: [],
 				}),
@@ -162,7 +191,7 @@ describe("the invariant", () => {
 		expect(
 			keys(
 				readInvariant({
-					issues: undefined,
+					items: undefined,
 					agents: [agent({ status: "idle" })],
 					escalations: [],
 				}),
@@ -174,7 +203,7 @@ describe("the invariant", () => {
 		expect(
 			keys(
 				readInvariant({
-					issues: [issue()],
+					items: [issue()],
 					agents: [],
 					escalations: [escalation({ agents: [], links: [`${URL}/`] })],
 				}),
@@ -183,7 +212,7 @@ describe("the invariant", () => {
 		expect(
 			keys(
 				readInvariant({
-					issues: [issue()],
+					items: [issue()],
 					agents: [agent({ status: "idle" })],
 					escalations: [
 						escalation({ agents: [], links: ["devhub:agent/a1b2c3d4"] }),
@@ -195,7 +224,7 @@ describe("the invariant", () => {
 
 	it("tells each agent on a 待機中 escalation what it waits on", () => {
 		const reading = readInvariant({
-			issues: [issue()],
+			items: [issue()],
 			agents: [agent({ status: "idle", managed: false })],
 			escalations: [escalation()],
 		});
@@ -220,7 +249,7 @@ describe("the watch", () => {
 	}
 	const idle = () =>
 		readInvariant({
-			issues: [issue()],
+			items: [issue()],
 			agents: [agent({ status: "idle" })],
 			escalations: [],
 		});
@@ -237,7 +266,7 @@ describe("the watch", () => {
 		clock.now = 70_000;
 		made.observe(
 			readInvariant({
-				issues: [issue({ lane: "In Review" })],
+				items: [issue({ lane: "In Review" })],
 				agents: [agent({ status: "idle" })],
 				escalations: [],
 			}),
@@ -247,7 +276,7 @@ describe("the watch", () => {
 		clock.now = 70_000 + 3_600_000;
 		made.observe(
 			readInvariant({
-				issues: [issue({ lane: "In Review" })],
+				items: [issue({ lane: "In Review" })],
 				agents: [agent({ status: "idle" })],
 				escalations: [],
 			}),
@@ -261,7 +290,7 @@ describe("the watch", () => {
 		made.observe(idle(), true);
 		clock.now = 30_000;
 		made.observe(
-			readInvariant({ issues: [issue()], agents: [agent()], escalations: [] }),
+			readInvariant({ items: [issue()], agents: [agent()], escalations: [] }),
 			true,
 		);
 		clock.now = 70_000;
@@ -273,7 +302,7 @@ describe("the watch", () => {
 		const { watch: made, said, clock } = watch();
 		const outside = (status: string) =>
 			readInvariant({
-				issues: [issue({ assignedToMe: false })],
+				items: [issue({ assignedToMe: false })],
 				agents: [agent({ status })],
 				escalations: [],
 			});
@@ -295,7 +324,7 @@ describe("the watch", () => {
 		const { watch: made, said } = watch();
 		const waiting = (review: "none" | "approved") =>
 			readInvariant({
-				issues: [
+				items: [
 					issue({
 						pull: {
 							number: 130,

@@ -14,7 +14,6 @@
  * happens to be current.
  */
 
-import { parseProjectRef } from "../../model/orchestratorSettings.js";
 import { APP_ROOT } from "./appRoot.js";
 import { processGroupAnchor } from "./processGroupAnchor.js";
 import { randomUUID } from "node:crypto";
@@ -375,13 +374,12 @@ import {
 	watchRoot,
 } from "../orchestrator/orchestratorFiles.js";
 import { workspaceToken } from "../orchestrator/events.js";
-import { GitHubEventSource } from "../orchestrator/githubEvents.js";
+import { GitHubItemSource } from "../orchestrator/githubItems.js";
 import {
 	ISSUE_LINK_KEY,
 	type InvariantAgent,
 	type PullFacts,
 } from "../orchestrator/invariant.js";
-import { GitHubSnapshotFile } from "../orchestrator/githubSnapshot.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import {
 	MICROPHONE_SETTINGS_URL,
@@ -4298,7 +4296,7 @@ export class AppController {
 		this.stopWatchingWake?.();
 		this.scratch.stop();
 		this.repositoryStatus.stop();
-		this.githubEvents.stop();
+		this.githubItems.stop();
 		this.usageReaders?.stop();
 		// Quitting detaches clients and leaves every session — an Agent's as
 		// much as a terminal's. That is the point of putting them on the same
@@ -9495,16 +9493,6 @@ export class AppController {
 		const { store, refused } = EscalationStore.load(
 			join(userDataPath, "devhub", "escalations.json"),
 		);
-		this.githubSnapshots = new GitHubSnapshotFile(
-			join(userDataPath, "devhub", "orchestrator-github.json"),
-			{
-				setTimer: (ms, run) => {
-					const timer = setTimeout(run, ms);
-					return { cancel: () => clearTimeout(timer) };
-				},
-				log: (line) => console.log(line),
-			},
-		);
 		if (refused !== undefined) {
 			console.error(`[devhub] ${refused}`);
 			this.publishError(errorWire(new Error(refused)));
@@ -9543,7 +9531,8 @@ export class AppController {
 				);
 			},
 			invariant: () => ({
-				issues: this.githubEvents.issues(),
+				items: this.githubItems.items(),
+				missing: (url) => this.githubItems.missing(url),
 				agents: this.invariantAgents(),
 			}),
 			publish: (board) => {
@@ -9555,26 +9544,11 @@ export class AppController {
 			// and a resume waits for its catch-up poll before it delivers.
 			paused: (paused) => {
 				this.followGitHub(paused);
-				return paused ? undefined : this.githubEvents.caughtUp();
+				return paused ? undefined : this.githubItems.caughtUp();
 			},
 			github: () => {
-				const state = this.githubEvents.state();
-				const counted = new Map(state.boards.map((one) => [one.ref, one]));
-				const boards = this.config.orchestrator.github.projects
-					.filter((ref) => parseProjectRef(ref) !== undefined)
-					.map((ref) => {
-						const one = counted.get(ref);
-						return {
-							ref,
-							...(one?.title === undefined ? {} : { title: one.title }),
-							...(one === undefined || !one.read
-								? {}
-								: {
-										items: one.items,
-										assigned: one.assigned,
-									}),
-						};
-					});
+				const state = this.githubItems.state();
+				const boards = state.projects;
 				return {
 					state: state.mode,
 					...(state.lastAt === undefined ? {} : { lastAt: state.lastAt }),
@@ -9590,6 +9564,7 @@ export class AppController {
 									resetAt: state.rateLimit.resetAt,
 								},
 							}),
+					...(state.assigned === undefined ? {} : { assigned: state.assigned }),
 					...(boards.length === 0 ? {} : { boards }),
 					...(state.problem === undefined ? {} : { problem: state.problem }),
 				};
@@ -9692,11 +9667,12 @@ export class AppController {
 	}
 
 	/**
-	 * `github.*` events: the configured Projects boards, polled while an
-	 * orchestrator runs. Shares the Workspace watcher's token, client and
-	 * pull requests (the `ws=` and `agent=` of an event).
+	 * The items the invariant is read off — every open Issue or pull request
+	 * assigned to the viewer, and the ones agents are linked to — polled
+	 * while an orchestrator runs. Shares the Workspace watcher's token and
+	 * client.
 	 */
-	private readonly githubEvents = new GitHubEventSource({
+	private readonly githubItems = new GitHubItemSource({
 		settings: () => this.config.orchestrator.github,
 		token: async () => {
 			const credentials = await readGitHubToken(this.launchEnvironment);
@@ -9710,18 +9686,16 @@ export class AppController {
 					};
 		},
 		post: postGraphQl,
-		dispatch: (event) => {
-			this.orchestrator?.events.dispatch(event);
-		},
-		where: (url) => this.githubWhere(url),
+		linked: () =>
+			this.coordinator
+				.snapshot()
+				.workspaces.flatMap((workspace) => workspace.agents)
+				.flatMap((agent) => {
+					const url = agent.meta?.[ISSUE_LINK_KEY];
+					return url === undefined ? [] : [url];
+				}),
 		// What the invariant reads may have moved.
 		polled: () => this.orchestrator?.observe(),
-		// `<userData>/devhub/orchestrator-github.json`, once the profile is known.
-		snapshots: {
-			load: () => this.githubSnapshots?.load(),
-			save: (snapshot) => this.githubSnapshots?.save(snapshot),
-			flush: () => this.githubSnapshots?.flush(),
-		},
 		changed: () => this.orchestrator?.publish(),
 		setTimer: (ms, run) => {
 			const timer = setTimeout(run, ms);
@@ -9730,8 +9704,6 @@ export class AppController {
 		log: (line) => console.log(line),
 	});
 
-	private githubSnapshots: GitHubSnapshotFile | undefined;
-
 	/**
 	 * GitHub polling follows the orchestrator: active while one runs,
 	 * suspended while its events are paused, idle (forgotten) without one.
@@ -9739,7 +9711,7 @@ export class AppController {
 	private followGitHub(
 		paused = this.orchestrator?.events.paused ?? false,
 	): void {
-		this.githubEvents.follow(
+		this.githubItems.follow(
 			this.orchestrator?.orchestratorAgentId !== undefined,
 			paused,
 		);
@@ -9788,33 +9760,6 @@ export class AppController {
 				...(pull === undefined ? {} : { pull }),
 			}));
 		});
-	}
-
-	/** The Workspace (and its agent) the Sidebar shows an Issue's or pull request's work in. */
-	private githubWhere(
-		url: string | undefined,
-	): { ws?: string; agent?: { id: string; name: string } } | undefined {
-		if (url === undefined) return undefined;
-		const row = this.lastRepositoryStatus.workspaces.find(
-			(one) => one.pullRequest?.url === url || one.issue?.url === url,
-		);
-		if (row === undefined) return undefined;
-		const snapshot = this.coordinator.snapshot();
-		const workspace = snapshot.workspaces.find(
-			(one) => one.id === row.workspaceId,
-		);
-		if (workspace === undefined) return undefined;
-		const orchestrator = this.orchestrator?.orchestratorAgentId;
-		const agent = workspace.agents.find((one) => one.id !== orchestrator);
-		return {
-			ws:
-				workspace.id === snapshot.scratchWorkspaceId
-					? "scratch"
-					: workspaceToken(workspace.label, workspace.id),
-			...(agent === undefined
-				? {}
-				: { agent: { id: agent.id, name: agent.displayName } }),
-		};
 	}
 
 	/** GitHub polling follows the orchestrator, read off every projection. */
@@ -11152,15 +11097,16 @@ export class AppController {
 				agentId: named.id,
 				displayName: name,
 			});
-		// The Issue linkage, the one rule (`orchestrator/invariant.ts`): the
-		// agent an Issue is assigned to is linked to it by its meta `issue=`,
-		// written here and nowhere else.
-		if (item.kind === "issue" && named !== undefined)
+		// The item linkage, the one rule (`orchestrator/invariant.ts`): the
+		// agent an Issue or a pull request is assigned to is linked to it by
+		// its meta `issue=` (the item's URL, either kind), written here and
+		// nowhere else.
+		if (named !== undefined)
 			await this.dispatchAwaiting({
 				type: "set_agent_meta",
 				agentId: named.id,
 				key: ISSUE_LINK_KEY,
-				value: `https://github.com/${item.owner}/${item.repository}/issues/${String(item.number)}`,
+				value: `https://github.com/${item.owner}/${item.repository}/${item.kind === "pull" ? "pull" : "issues"}/${String(item.number)}`,
 			});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId, how);
 		if (!quiet) await this.syncEditorView();

@@ -78,7 +78,7 @@ import {
 	readInvariant,
 	type AgentStanding,
 	type InvariantAgent,
-	type IssueFacts,
+	type ItemFacts,
 	type KeptAgent,
 	type UnsettledView,
 } from "./invariant.js";
@@ -123,12 +123,14 @@ export interface OrchestratorServicePorts {
 	/** How GitHub polling stands, for the board's header. */
 	readonly github?: () => OrchestratorBoardWire["github"];
 	/**
-	 * What the invariant is read off (`invariant.ts`): the watched boards'
-	 * Issues (undefined while not known in full) and every agent but the
-	 * orchestrator. Absent: no invariant is held (tests).
+	 * What the invariant is read off (`invariant.ts`): the items GitHub gave
+	 * (undefined while not known in full), which linked URLs it has no item
+	 * for, and every agent but the orchestrator. Absent: no invariant is held
+	 * (tests).
 	 */
 	readonly invariant?: () => {
-		readonly issues: readonly IssueFacts[] | undefined;
+		readonly items: readonly ItemFacts[] | undefined;
+		readonly missing?: (url: string) => boolean;
 		readonly agents: readonly InvariantAgent[];
 	};
 	/**
@@ -309,8 +311,8 @@ export class OrchestratorService {
 			}
 			case "unsettled":
 				return this.#invariant.stillUnsettled(
-					event.subject.kind === "issue"
-						? `issue ${issueUrlKey(event.subject.item.url ?? "")}`
+					event.subject.kind !== "agent"
+						? `item ${issueUrlKey(event.subject.item.url ?? "")}`
 						: `agent ${event.subject.agent.id}`,
 				);
 			case "usage.threshold":
@@ -700,7 +702,8 @@ export class OrchestratorService {
 		// A maintenance turn is not work: the status before it (`#agents`).
 		const statuses = new Map(this.#agents().map((one) => [one.id, one.status]));
 		const reading = readInvariant({
-			issues: source.issues,
+			items: source.items,
+			...(source.missing === undefined ? {} : { missing: source.missing }),
 			agents: source.agents
 				.filter((one) => one.id !== orchestrator)
 				.map((one) => ({

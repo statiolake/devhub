@@ -88,10 +88,12 @@ describe("the /devhub-orchestrator skill", () => {
 
 	it("states DevHub's charter: the role, no hands-on work, the router, the invariant, the conventions", () => {
 		for (const word of [
-			"close まで進める",
+			"close / merge まで進める",
 			"実作業を一切しない",
 			"振り分けのためだけ",
-			"新しいバックグラウンドのサブエージェント",
+			'subagent_type: "fork"',
+			"通常のサブエージェント",
+			"decisions.md",
 			"母集団",
 			"agent keep",
 			"--managed",
@@ -211,7 +213,8 @@ describe("the /devhub-orchestrator skill", () => {
 			"escalation_answered",
 			"unsettled",
 			"waiting.changed",
-			"github.review_requested",
+			"pr=",
+			"fork",
 			"delivery_interval",
 			"agent keep",
 			"timer.elapsed",
@@ -250,7 +253,7 @@ describe("the /devhub-orchestrator skill's event table", () => {
 		const named = [
 			...text.matchAll(/`((?:github|workspace|agent|timer|usage)\.[a-z_]+)`/gu),
 		].map((match) => match[1]!);
-		expect(named.length).toBeGreaterThanOrEqual(4);
+		expect(named.length).toBeGreaterThanOrEqual(2);
 		for (const type of named)
 			expect({
 				type,
