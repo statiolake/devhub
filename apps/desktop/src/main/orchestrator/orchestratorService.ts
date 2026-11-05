@@ -87,6 +87,7 @@ import {
 	type KeptAgent,
 	type NeedsActionView,
 } from "./invariant.js";
+import type { KeptStore } from "./keptFile.js";
 import { OrchestratorTimers } from "./timers.js";
 import {
 	usageThresholdRelevant,
@@ -164,6 +165,8 @@ export interface OrchestratorServicePorts {
 		cli: string,
 		window: string,
 	) => UsageWindowNow | undefined;
+	/** Where `agent keep`'s keepings are kept across restarts; absent: memory. */
+	readonly kept?: KeptStore;
 	readonly now?: () => number;
 	readonly setTimer?: (ms: number, run: () => void) => { cancel(): void };
 	readonly log?: (line: string) => void;
@@ -355,6 +358,7 @@ export class OrchestratorService {
 			now: () => this.#now(),
 			reminderMs: () =>
 				parseInterval(this.ports.settings().reminder_interval) ?? 3_600_000,
+			...(ports.kept === undefined ? {} : { kept: ports.kept }),
 		});
 		ports.store.onChange(() => {
 			this.publish();

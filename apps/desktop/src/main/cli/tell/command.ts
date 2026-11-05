@@ -532,7 +532,8 @@ agents
                                    changes (its status, its item, its PR).
                                    Shown in
                                    'agent status', 'board' and the row's
-                                   tooltip; --clear ends it
+                                   tooltip; kept across restarts; --clear
+                                   ends it
   agent rename <a> <name>          the row menu's Rename...: the name the
   agent rename <a> --clear         Sidebar, the pane and the resume lists
                                    show (--clear: back to DevHub's label)

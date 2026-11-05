@@ -375,6 +375,7 @@ import {
 } from "../orchestrator/orchestratorFiles.js";
 import { workspaceToken } from "../orchestrator/events.js";
 import { GitHubItemSource } from "../orchestrator/githubItems.js";
+import { KeptFile } from "../orchestrator/keptFile.js";
 import {
 	ISSUE_LINK_KEY,
 	type InvariantAgent,
@@ -9497,8 +9498,15 @@ export class AppController {
 			console.error(`[devhub] ${refused}`);
 			this.publishError(errorWire(new Error(refused)));
 		}
+		// `agent keep`'s keepings, across restarts.
+		const kept = new KeptFile(
+			join(userDataPath, "devhub", "orchestrator-kept.json"),
+			undefined,
+			(line) => console.error(line),
+		);
 		this.orchestrator = new OrchestratorService({
 			store,
+			kept,
 			agents: () => this.liveAgents(),
 			settings: () => this.config.orchestrator,
 			startProblem: () => this.orchestratorStartProblem(),
@@ -9600,6 +9608,10 @@ export class AppController {
 				);
 			},
 		});
+		if (kept.refused !== undefined) {
+			console.error(`[devhub] ${kept.refused}`);
+			this.publishError(errorWire(new Error(kept.refused)));
+		}
 		this.syncOrchestrator();
 	}
 

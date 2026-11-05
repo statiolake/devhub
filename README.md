@@ -377,7 +377,7 @@ it was started with `--managed` (or `agent manage A` said so later; `agent
 unmanage A` takes it out). Only a managed agent's state is the
 orchestrator's to hear of and keep settled (`docs/orchestrator.md`,
 "Managed agents"); `agent keep A --note TEXT` leaves one that needs action as it
-is, for a reason, until its state changes; an agent the person starts in the window — New Agent,
+is, for a reason, until its state changes (kept across restarts); an agent the person starts in the window — New Agent,
 Assign Issue — is not, and the orchestrator agent itself never is. The flag
 is a field of the agent, kept in `state.json` and under its CLI session in
 `session-meta.json` like its metadata, so a restart or a resume keeps it.

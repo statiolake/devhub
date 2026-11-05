@@ -43,7 +43,8 @@
  * action for `NEEDS_ACTION_GRACE_MS`, again when its facts or its clause
  * change, and every `reminder_interval` while it stays so. An agent the
  * orchestrator chose to keep as it is (`agent keep A --note`) is not said
- * while its facts stay what they were when it was kept. A 待機中 escalation
+ * while its state stays what it was when it was kept; keepings are kept on
+ * disk (`keptFile.ts`), and judged again once the state is known again. A 待機中 escalation
  * whose subjects' facts change is said (`waiting.changed`): what it waits on
  * may have come.
  */
@@ -61,6 +62,7 @@ import {
 	type OrchestratorEvent,
 	type OutsideReason,
 } from "./events.js";
+import type { KeptStore } from "./keptFile.js";
 
 /**
  * The meta key the item linkage is kept under: written by DevHub when `issue
@@ -165,6 +167,12 @@ export interface NeedsActionSubject {
 	readonly breach: Breach;
 	/** Its state, `key=value`: not said, but a change says it again. */
 	readonly facts: readonly string[];
+	/**
+	 * An agent's state as a keeping holds it: its status, its item's, its
+	 * escalations — not its Workspace's pull request, which a restart reads
+	 * again later than the rest.
+	 */
+	readonly keepFacts?: readonly string[];
 }
 
 /** A 待機中 escalation and the facts of what it is about. */
@@ -212,6 +220,8 @@ export interface InvariantReading {
 	readonly agents: ReadonlyMap<string, AgentStanding>;
 	/** Every item read, by its URL key. */
 	readonly items: ReadonlyMap<string, ItemStanding>;
+	/** The population is known (GitHub's items read in full). */
+	readonly known: boolean;
 }
 
 /** An item URL, compared without case, a trailing slash or a fragment. */
@@ -439,11 +449,15 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 				: atWork(agent) || mine.some(parkedState)
 					? undefined
 					: { clause: "idle_no_escalation" };
-		const facts = [
+		const keepFacts = [
 			`status=${agent.stopping ? "stopping" : agent.status}`,
 			`issue=${agent.issue ?? "none"}`,
-			...(item === undefined ? pullFacts(agent.pull) : itemFacts(item)),
+			...(item === undefined ? [] : itemFacts(item)),
 			...escalationFacts(mine),
+		];
+		const facts = [
+			...keepFacts,
+			...(item === undefined ? pullFacts(agent.pull) : []),
 		];
 		standings.set(agent.id, {
 			settled: breach === undefined,
@@ -459,6 +473,7 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 			ws: agent.ws,
 			breach,
 			facts,
+			keepFacts,
 		});
 	}
 	// The 待機中 escalations, and the facts of what they are about.
@@ -483,7 +498,13 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 			facts,
 		});
 	}
-	return { needsAction, waiting, agents: standings, items: itemStandings };
+	return {
+		needsAction,
+		waiting,
+		agents: standings,
+		items: itemStandings,
+		known: items !== undefined,
+	};
 }
 
 /**
@@ -540,6 +561,8 @@ export interface InvariantWatchPorts {
 	/** `[orchestrator] reminder_interval`, in ms. */
 	readonly reminderMs: () => number;
 	readonly graceMs?: number;
+	/** Where the keepings are kept across restarts; absent: in memory only. */
+	readonly kept?: KeptStore;
 }
 
 /** The event a subject is said as. */
@@ -560,11 +583,20 @@ function fingerprint(subject: NeedsActionSubject): string {
 	return [breachWords(subject.breach), ...subject.facts].join(" ");
 }
 
+/** What a keeping holds an agent to: its clause and its state. */
+function keepPrint(subject: NeedsActionSubject): string {
+	return [
+		breachWords(subject.breach),
+		...(subject.keepFacts ?? subject.facts),
+	].join(" ");
+}
+
 export class InvariantWatch {
 	/** Since when each subject has needed action. */
 	readonly #since = new Map<string, number>();
 	/** When each was last said, and as what. */
 	readonly #told = new Map<string, { at: number; facts: string }>();
+	/** By `agent <id>`; kept on disk when the ports say where. */
 	readonly #kept = new Map<string, KeptAgent>();
 	/** Each 待機中 escalation's facts as last seen. */
 	readonly #waiting = new Map<number, string>();
@@ -573,9 +605,24 @@ export class InvariantWatch {
 		waiting: [],
 		agents: new Map(),
 		items: new Map(),
+		known: false,
 	};
 
-	constructor(private readonly ports: InvariantWatchPorts) {}
+	constructor(private readonly ports: InvariantWatchPorts) {
+		for (const [agentId, kept] of ports.kept?.load() ?? [])
+			this.#kept.set(`agent ${agentId}`, kept);
+	}
+
+	#saveKept(): void {
+		this.ports.kept?.save(
+			new Map(
+				[...this.#kept].map(([key, kept]) => [
+					key.slice("agent ".length),
+					kept,
+				]),
+			),
+		);
+	}
 
 	get #grace(): number {
 		return this.ports.graceMs ?? NEEDS_ACTION_GRACE_MS;
@@ -606,12 +653,25 @@ export class InvariantWatch {
 				this.#since.delete(key);
 				this.#told.delete(key);
 			}
+		let keptMoved = false;
 		for (const [key, kept] of [...this.#kept]) {
+			// Not judged before the state is known again: GitHub's items not
+			// read yet, or the agent not read yet (a restart, a resume).
+			const agentId = key.slice("agent ".length);
+			const standing = reading.agents.get(agentId);
+			if (
+				!reading.known ||
+				standing?.facts?.includes("status=unknown") === true
+			)
+				continue;
 			const subject = reading.needsAction.find((one) => one.key === key);
-			// Settled, or its facts moved: the keeping is over.
-			if (subject === undefined || fingerprint(subject) !== kept.facts)
+			// Settled, gone, or its state moved: the keeping is over.
+			if (subject === undefined || keepPrint(subject) !== kept.facts) {
 				this.#kept.delete(key);
+				keptMoved = true;
+			}
 		}
+		if (keptMoved) this.#saveKept();
 		for (const subject of reading.needsAction) {
 			const since = this.#since.get(subject.key) ?? now;
 			this.#since.set(subject.key, since);
@@ -680,14 +740,17 @@ export class InvariantWatch {
 			throw new Error(
 				"that agent does not need action: there is nothing to keep (devhub --tell status shows how it stands).",
 			);
-		const kept = { note, at: this.ports.now(), facts: fingerprint(subject) };
+		const kept = { note, at: this.ports.now(), facts: keepPrint(subject) };
 		this.#kept.set(key, kept);
+		this.#saveKept();
 		return kept;
 	}
 
 	/** `agent keep A --clear`: whether there was a keeping to end. */
 	unkeep(agentId: string): boolean {
-		return this.#kept.delete(`agent ${agentId}`);
+		const was = this.#kept.delete(`agent ${agentId}`);
+		if (was) this.#saveKept();
+		return was;
 	}
 
 	kept(agentId: string): KeptAgent | undefined {

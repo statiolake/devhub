@@ -503,7 +503,14 @@ stays what it was when it was kept; when they change (its item is
 assigned or closed, it goes idle after working, …) the keeping ends and it
 is said again. `agent keep A --clear` ends it at once. The keeping and its
 note are shown by `agent status` (`kept`), `board` and the row's tooltip.
-It lives in the running DevHub: a restart says the agent again.
+It is kept across restarts, per profile, in
+`<userData>/devhub/orchestrator-kept.json` (`keptFile.ts`; written whole and
+atomically on every change, moved aside as `.corrupt` and said when it does
+not read). What it holds the agent to is its status, its item's state and
+its escalations — not its Workspace's pull request, which a restart reads
+again later — and after a restart it is judged again only once that is
+known again (GitHub's items read, the agent read: not `unknown`), so a
+restart or a resume does not end it by itself.
 
 What breaks it now is in `devhub --tell board` (`needs action (N):`,
 `--json` `needsAction`: each subject's line, the clause, since when, when

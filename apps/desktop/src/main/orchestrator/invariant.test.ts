@@ -7,6 +7,7 @@ import {
 	type InvariantAgent,
 	type InvariantEscalation,
 	type ItemFacts,
+	type KeptAgent,
 } from "./invariant.js";
 
 const URL = "https://github.com/acme/app/issues/123";
@@ -328,6 +329,46 @@ describe("the watch", () => {
 		expect(said.map((one) => one.type)).toEqual(["needs_action"]);
 		expect(made.kept("a1b2c3d4-0000")).toBeUndefined();
 		expect(() => made.keep("nobody", "x")).toThrow(/does not need action/u);
+	});
+
+	it("keeps a keeping across a restart, judged again once the state is known", () => {
+		const stored = new Map<string, KeptAgent>();
+		const store = {
+			load: () => new Map(stored),
+			save: (kept: ReadonlyMap<string, KeptAgent>) => {
+				stored.clear();
+				for (const [id, one] of kept) stored.set(id, one);
+			},
+		};
+		const make = () =>
+			new InvariantWatch({
+				dispatch: () => undefined,
+				now: () => 0,
+				reminderMs: () => 3_600_000,
+				kept: store,
+			});
+		const outside = (status: string, known = true) =>
+			readInvariant({
+				items: known ? [issue({ assignedToMe: false })] : undefined,
+				agents: [agent({ status })],
+				escalations: [],
+			});
+		const before = make();
+		before.observe(outside("working"), true);
+		before.keep("a1b2c3d4-0000", "他チームの依頼で続ける");
+		expect([...stored.keys()]).toEqual(["a1b2c3d4-0000"]);
+		// DevHub restarts: GitHub not read yet, the agent not read yet.
+		const after = make();
+		after.observe(outside("working", false), true);
+		after.observe(outside("unknown"), true);
+		expect(after.kept("a1b2c3d4-0000")?.note).toBe("他チームの依頼で続ける");
+		// Read again as it was: still kept.
+		after.observe(outside("working"), true);
+		expect(after.needsAction()[0]?.kept?.note).toBe("他チームの依頼で続ける");
+		// Its state moved: over, on disk too.
+		after.observe(outside("idle"), true);
+		expect(after.kept("a1b2c3d4-0000")).toBeUndefined();
+		expect(stored.size).toBe(0);
 	});
 
 	it("says a wait whose subject moved, never its first look", () => {
