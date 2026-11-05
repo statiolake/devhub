@@ -212,6 +212,10 @@ export type TellCommand =
 			/** The earlier sessions the agent picker offers to resume. */
 			readonly verb: "sessions";
 			readonly workspace?: string;
+			/** A folder, open or not, on the caller's machine (made absolute by the CLI). */
+			readonly folder?: string;
+			/** Every folder's, newest first (bounded by each CLI's listing). */
+			readonly all?: true;
 			readonly profile?: string;
 			readonly limit: number;
 			/** Only the sessions carrying every pair (`model/sessionMeta.ts`). */
@@ -235,6 +239,8 @@ export type TellCommand =
 			readonly verb: "agent-resume";
 			readonly session: string;
 			readonly workspace?: string;
+			/** The folder it is looked up (and resumed) in, open or not. */
+			readonly folder?: string;
 			readonly profile?: string;
 			readonly name?: string;
 	  }
@@ -518,16 +524,21 @@ agents
                                    it, and its terminal moves to the editor
   agent restart <a>                Restart Session, as the row menu does
                                    (an agent cannot stop or restart itself)
-  sessions [--workspace <w>] [--profile <p>] [--limit <n>]
-           [--meta KEY=VALUE]...
+  sessions [--workspace <w> | --folder <path> | --all] [--profile <p>]
+           [--limit <n>] [--meta KEY=VALUE]...
                                    earlier Claude/Codex sessions to resume, as
                                    the agent picker lists them: id, profile,
                                    when, title or agent name, branch or
-                                   worktree, the agent running it now, and
-                                   the metadata of the agent that ran it,
-                                   kept after it is stopped or closed
-                                   (default: your workspace, 20). --meta keeps
-                                   only the sessions carrying every pair
+                                   worktree, the folder it resumes in and
+                                   whether a workspace has it open, the agent
+                                   running it now, and the metadata of the
+                                   agent that ran it, kept after it is
+                                   stopped or closed (default: your
+                                   workspace, 20). --folder: a folder that
+                                   need not be open; --all: every folder's on
+                                   this machine, newest first (each CLI's
+                                   newest 50 are read). --meta keeps only the
+                                   sessions carrying every pair
   session meta <session> [--workspace <w>] [--profile <p>]
                [set <key> <value> | unset <key>]
                                    a stopped session's metadata, as 'agent
@@ -535,14 +546,21 @@ agents
                                    session an agent runs is that agent's.
                                    Kept for the 500 most recently changed
                                    sessions, 180 days each
-  agent resume <session> [--workspace <w>] [--profile <p>] [--name <n>]
+  agent resume <session> [--workspace <w> | --folder <path>] [--profile <p>]
+               [--name <n>]
                                    go on with one in a new GUI agent, as the
                                    picker does. Where it opens is the
                                    session's own: its folder, or its
-                                   worktree (opened, or checked out again).
-                                   --workspace is where it is looked up
-                                   (default: yours, a fact of where you run,
-                                   not a setting). --profile is required only
+                                   worktree (opened, or checked out again);
+                                   a folder that is not open is opened as a
+                                   workspace, unselected and unfocused.
+                                   --workspace / --folder is where it is
+                                   looked up (default: yours, then every
+                                   folder's as 'sessions --all' lists them;
+                                   a fact of where you run, not a setting).
+                                   When more than one folder could take it,
+                                   nothing is opened and they are listed:
+                                   give --folder. --profile is required only
                                    when two profiles run the session's CLI.
                                    Always GUI: there is no --tui here. The
                                    new agent gets the session's metadata and
@@ -697,8 +715,9 @@ orchestrator (the Orchestrator row: the board, escalations, events)
 
 The few defaults left are fixed, never read from settings: agent read
 --last 20, agent wait --until any --timeout 300, sessions --limit 20, and
-your own workspace where sessions and agent resume look sessions up - which
-is where you run, not a setting.`;
+your own workspace where sessions and agent resume look sessions up (agent
+resume then every folder's, as sessions --all) - which is where you run, not
+a setting.`;
 
 export type TellParse =
 	| {
@@ -833,6 +852,25 @@ function metaPairs(flags: Flags): readonly AgentMetaPair[] | undefined {
 }
 
 const NO_FLAGS: FlagSpec = { values: [], switches: [] };
+
+/** `--workspace W`, `--folder PATH` (and `--all`, where given): one at most. */
+function oneWhere(
+	flags: Flags,
+	all: boolean,
+): { workspace: string | undefined; folder: string | undefined } {
+	const workspace = one(flags, "--workspace");
+	const folder = one(flags, "--folder");
+	const given = [
+		...(workspace === undefined ? [] : ["--workspace"]),
+		...(folder === undefined ? [] : ["--folder"]),
+		...(all ? ["--all"] : []),
+	];
+	if (given.length > 1)
+		throw new Refusal(
+			`${given.join(" and ")} name different places: give one.`,
+		);
+	return { workspace, folder };
+}
 
 /**
  * `session meta <session> [--workspace <w>] [--profile <p>]
@@ -974,19 +1012,22 @@ function parseVerb(args: readonly string[]): TellCommand {
 			return parseSessionMeta(rest);
 		case "sessions": {
 			const flags = readFlags(args.slice(1), {
-				values: ["--workspace", "--profile", "--limit", "--meta"],
-				switches: [],
+				values: ["--workspace", "--folder", "--profile", "--limit", "--meta"],
+				switches: ["--all"],
 			});
 			positionals(flags, []);
 			const limit = one(flags, "--limit");
+			const all = flags.switches.has("--all");
+			const where = oneWhere(flags, all);
 			return {
 				verb: "sessions",
 				limit:
 					limit === undefined
 						? DEFAULT_SESSIONS_LIMIT
 						: count(limit, "--limit", 1, MAX_SESSIONS_LIMIT),
+				...(all ? { all: true as const } : {}),
 				...defined({
-					workspace: one(flags, "--workspace"),
+					...where,
 					profile: one(flags, "--profile"),
 					meta: metaPairs(flags),
 				}),
@@ -1502,7 +1543,7 @@ function parseAgent(
 		}
 		case "resume": {
 			const flags = readFlags(rest, {
-				values: ["--workspace", "--profile", "--name"],
+				values: ["--workspace", "--folder", "--profile", "--name"],
 				switches: [],
 			});
 			const [session] = positionals(flags, ["<session>"]);
@@ -1510,7 +1551,7 @@ function parseAgent(
 				verb: "agent-resume",
 				session: session!,
 				...defined({
-					workspace: one(flags, "--workspace"),
+					...oneWhere(flags, false),
 					profile: one(flags, "--profile"),
 					name: one(flags, "--name"),
 				}),
@@ -2037,6 +2078,8 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				verb: "sessions",
 				limit: integer(record["limit"], "limit", 1, MAX_SESSIONS_LIMIT),
 				...optionalText(record, "workspace"),
+				...optionalText(record, "folder"),
+				...(record["all"] === true ? { all: true as const } : {}),
 				...optionalText(record, "profile"),
 				...optionalMeta(record),
 			};
@@ -2066,6 +2109,7 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				verb: "agent-resume",
 				session: text(record, "session"),
 				...optionalText(record, "workspace"),
+				...optionalText(record, "folder"),
 				...optionalText(record, "profile"),
 				...optionalText(record, "name"),
 			};

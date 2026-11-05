@@ -589,6 +589,20 @@ describe("devhub --tell on the command line", () => {
 				"/home/d",
 			),
 		).toMatchObject({ command: { repo: "/work/app" } });
+		expect(
+			requestFor(
+				parseArguments(["--tell", "sessions", "--folder", "../tools"]),
+				"/work/app",
+				"/home/d",
+			),
+		).toMatchObject({ command: { verb: "sessions", folder: "/work/tools" } });
+		expect(
+			requestFor(
+				parseArguments(["--tell", "agent", "resume", "c1", "--folder", "~/x"]),
+				"/work",
+				"/home/d",
+			),
+		).toMatchObject({ command: { verb: "agent-resume", folder: "/home/d/x" } });
 		// A terminal has no --cwd: it is the Agent's own, in its folder.
 		expect(
 			requestFor(

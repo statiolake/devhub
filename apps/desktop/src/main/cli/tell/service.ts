@@ -503,6 +503,34 @@ export interface TellPorts {
 		session: TellPastSession,
 	): Promise<string>;
 	/**
+	 * The agent picker's listing for `folder` on `machine`, whether or not a
+	 * Workspace has it open (`here`), or every folder's sessions as the CLIs
+	 * keep them, newest first and bounded by each listing (`everywhere`).
+	 */
+	pastSessionsIn(
+		folder: string,
+		machine: string,
+		profileId: string,
+		scope: "here" | "everywhere",
+	): Promise<readonly TellPastSession[]>;
+	/**
+	 * Go on with one in `folder`, opened as a Workspace if it is not open —
+	 * in the Sidebar, unselected, nothing focused — or, for a session of
+	 * another worktree (`session.worktree`), in that worktree of the clone at
+	 * `folder`, opened or checked out again as the picker does.
+	 */
+	resumeSessionIn(
+		folder: string,
+		machine: string,
+		profileId: string,
+		session: TellPastSession,
+	): Promise<string>;
+	/** What `path` is on `machine`: a folder, a file, or nothing. */
+	pathKind(
+		path: string,
+		machine: string,
+	): Promise<"directory" | "file" | "absent">;
+	/**
 	 * Set (or, with undefined, remove) one pair of a session no agent runs
 	 * now, checked as an agent's are (`model/sessionMeta.ts`); answers its
 	 * pairs. Refused for a session an agent runs: that is `agent meta`'s.
@@ -2836,12 +2864,12 @@ export class TellService {
 	// --- earlier sessions -------------------------------------------------
 
 	/**
-	 * The agent picker's earlier sessions in `workspace`: every resumable
+	 * The agent picker's earlier sessions where `where` says: every resumable
 	 * profile's (or `profileId`'s), newest first, one row per session of a
 	 * CLI. A profile whose listing failed is said, as the picker says it.
 	 */
 	private async pastSessions(
-		workspace: TellWorkspace,
+		where: TellWorkspace | SessionsWhere,
 		profileId: string | undefined,
 	): Promise<{
 		readonly sessions: readonly {
@@ -2853,6 +2881,8 @@ export class TellService {
 			readonly reason: string;
 		}[];
 	}> {
+		const place: SessionsWhere =
+			"kind" in where ? where : { kind: "workspace", workspace: where };
 		const profiles = this.ports
 			.profiles()
 			.filter((profile) => profileId === undefined || profile.id === profileId);
@@ -2868,7 +2898,14 @@ export class TellService {
 			);
 		const listed = await Promise.allSettled(
 			resumable.map((profile) =>
-				this.ports.pastSessions(workspace.id, profile.id),
+				place.kind === "workspace"
+					? this.ports.pastSessions(place.workspace.id, profile.id)
+					: this.ports.pastSessionsIn(
+							place.root,
+							place.machine,
+							profile.id,
+							place.kind === "all" ? "everywhere" : "here",
+						),
 			),
 		);
 		const offered = new Set<string>();
@@ -2906,13 +2943,80 @@ export class TellService {
 		return { sessions, failures };
 	}
 
+	/** The machine a `--folder` (or `--all`) is on: the asking `devhub`'s. */
+	private callerMachine(): string {
+		return this.caller?.machine ?? "local";
+	}
+
+	/** The open workspace whose folder is `folder` on `machine`, if one is. */
+	private openAt(folder: string, machine: string): TellWorkspace | undefined {
+		const root = stripSlashes(folder);
+		return this.ports
+			.workspaces()
+			.find(
+				(workspace) =>
+					workspace.machine === machine &&
+					stripSlashes(workspace.root) === root,
+			);
+	}
+
+	/**
+	 * Where `sessions` / `agent resume` look: `--workspace W`, `--folder PATH`
+	 * (an open workspace's when one has it open), `--all`, or the caller's
+	 * own workspace — never a setting.
+	 */
+	private async sessionsWhere(asked: {
+		readonly workspace?: string;
+		readonly folder?: string;
+		readonly all?: true;
+	}): Promise<SessionsWhere> {
+		if (asked.all === true) {
+			const machine = this.callerMachine();
+			const all = this.ports
+				.workspaces()
+				.filter((workspace) => workspace.machine === machine);
+			// The listing is read from somewhere: the caller's own workspace
+			// (whose repository's worktrees it then places), else Scratch.
+			const base =
+				all.find(
+					(workspace) =>
+						this.caller?.paneless !== true &&
+						workspace.id === (this.caller?.workspaceId ?? "") &&
+						!workspace.scratch,
+				) ??
+				all.find((workspace) => workspace.scratch) ??
+				all[0];
+			if (base === undefined)
+				throw new Error(
+					`no workspace is open on ${machine}, the machine devhub runs on, to list its sessions from: open one, or give --folder <path>.`,
+				);
+			return { kind: "all", root: base.root, machine, base };
+		}
+		if (asked.folder !== undefined) {
+			const machine = this.callerMachine();
+			const root = stripSlashes(asked.folder);
+			const open = this.openAt(root, machine);
+			if (open !== undefined) return { kind: "workspace", workspace: open };
+			const kind = await this.ports.pathKind(root, machine);
+			if (kind !== "directory")
+				throw new Error(
+					kind === "absent"
+						? `${root} does not exist on ${machine}: there is no folder to list or resume sessions in.`
+						: `${root} is a file, not a folder.`,
+				);
+			return { kind: "folder", root, machine };
+		}
+		return {
+			kind: "workspace",
+			workspace: this.workspace(this.workspaceOrCallers(asked.workspace)),
+		};
+	}
+
 	private async sessions(
 		command: Extract<TellCommand, { verb: "sessions" }>,
 	): Promise<TellAnswer> {
-		const workspace = this.workspace(
-			this.workspaceOrCallers(command.workspace),
-		);
-		const listed = await this.pastSessions(workspace, command.profile);
+		const where = await this.sessionsWhere(command);
+		const listed = await this.pastSessions(where, command.profile);
 		const failures = listed.failures;
 		const meta = command.meta ?? [];
 		const sessions = listed.sessions.filter(({ session }) =>
@@ -2920,16 +3024,38 @@ export class TellService {
 		);
 		const shown = sessions.slice(0, command.limit);
 		const now = this.clock.now();
+		const listedRoot =
+			where.kind === "workspace"
+				? where.workspace.root
+				: where.kind === "folder"
+					? where.root
+					: undefined;
+		const machine =
+			where.kind === "workspace" ? where.workspace.machine : where.machine;
+		const rows = shown.map(({ profile, session }) => {
+			const folder = sessionFolder(where, session);
+			const open =
+				folder === undefined ? undefined : this.openAt(folder, machine);
+			return { profile, session, folder, open };
+		});
+		const named =
+			where.kind === "all"
+				? `any folder on ${machine}`
+				: `${listedRoot ?? ""}${where.kind === "folder" ? " (not open)" : ""}`;
 		return {
 			message: [
 				...(shown.length === 0
 					? [
 							meta.length > 0
-								? `No earlier session in ${workspace.root} carries ${meta.map((pair) => `${pair.key}=${pair.value}`).join(" ")}.`
-								: `No earlier sessions in ${workspace.root}.`,
+								? `No earlier session in ${named} carries ${meta.map((pair) => `${pair.key}=${pair.value}`).join(" ")}.`
+								: `No earlier sessions in ${named}.`,
 						]
-					: shown.map(({ profile, session }) =>
-							sessionLine(profile, session, now),
+					: rows.map((row) =>
+							sessionLine(row.profile, row.session, now, {
+								listedRoot,
+								folder: row.folder,
+								open: row.open?.id,
+							}),
 						)),
 				...failures.map(
 					(one) =>
@@ -2940,8 +3066,11 @@ export class TellService {
 					: []),
 			].join("\n"),
 			data: {
-				workspaceId: workspace.id,
-				sessions: shown.map(({ profile, session }) => ({
+				scope: where.kind,
+				workspaceId: where.kind === "workspace" ? where.workspace.id : null,
+				folder: listedRoot ?? null,
+				machine,
+				sessions: rows.map(({ profile, session, folder, open }) => ({
 					id: session.id,
 					profile,
 					title: session.title,
@@ -2950,9 +3079,11 @@ export class TellService {
 					liveAgentId: session.liveAgentId ?? null,
 					updatedAt: iso(session.updatedAt),
 					cwd: session.cwd ?? null,
+					folder: folder ?? null,
+					openWorkspaceId: open?.id ?? null,
 					branch: session.worktree?.branch ?? session.branch ?? null,
 					worktree: session.worktree ?? null,
-					resumable: session.resumableHere || session.worktree !== undefined,
+					resumable: folder !== undefined,
 				})),
 				more: sessions.length - shown.length,
 				failures,
@@ -2963,14 +3094,7 @@ export class TellService {
 	private async resume(
 		command: Extract<TellCommand, { verb: "agent-resume" }>,
 	): Promise<TellAnswer> {
-		const workspace = this.workspace(
-			this.workspaceOrCallers(command.workspace),
-		);
-		const { profile, session } = await this.findSession(
-			workspace,
-			command.session,
-			command.profile,
-		);
+		const { where, profile, session } = await this.sessionToResume(command);
 		// Two profiles of one kind both list the session (the listing shows it
 		// once, under the first): which one goes on with it is the caller's.
 		if (command.profile === undefined) {
@@ -2986,15 +3110,7 @@ export class TellService {
 					`--profile is required: session ${session.id} is a ${kind ?? "?"} session, and ${same.join(", ")} all run ${kind ?? "it"} (see devhub --tell profiles)`,
 				);
 		}
-		if (!session.resumableHere && session.worktree === undefined)
-			throw new Error(
-				`session ${session.id} ran in ${session.cwd ?? "another folder"}, and its CLI resumes it only there: open that folder as a workspace and resume it from there.`,
-			);
-		const agentId = await this.ports.resumeSession(
-			workspace.id,
-			profile,
-			session,
-		);
+		const agentId = await this.resumeWhere(where, profile, session);
 		// The name and the pairs it had go on with it, as the window gives
 		// them back; --name is the caller's own.
 		const name = command.name ?? session.agentName;
@@ -3007,7 +3123,11 @@ export class TellService {
 		const placed = this.ports
 			.workspaces()
 			.find((each) => each.agents.some((one) => one.id === agentId));
-		const root = placed?.root ?? session.worktree?.root ?? workspace.root;
+		const root =
+			placed?.root ??
+			session.worktree?.root ??
+			sessionFolder(where, session) ??
+			"";
 		return {
 			message: `Agent ${agentId} (${profile}) is going on with ${JSON.stringify(sessionTitle(session))} (${session.id}) in ${root}${Object.keys(meta).length === 0 ? "" : `, with ${metaWords(meta) ?? ""}`}.`,
 			data: {
@@ -3020,6 +3140,155 @@ export class TellService {
 				meta,
 			},
 		};
+	}
+
+	/**
+	 * The session `agent resume` names, and where it was listed: where
+	 * `--workspace` / `--folder` say, or the caller's workspace and then
+	 * every folder's sessions (`sessions --all`).
+	 */
+	private async sessionToResume(
+		command: Extract<TellCommand, { verb: "agent-resume" }>,
+	): Promise<{
+		readonly where: SessionsWhere;
+		readonly profile: string;
+		readonly session: TellPastSession;
+	}> {
+		const explicit =
+			command.workspace !== undefined ||
+			command.folder !== undefined ||
+			(this.caller !== undefined && this.caller.paneless !== true);
+		if (explicit) {
+			const where = await this.sessionsWhere(command);
+			const { sessions } = await this.pastSessions(where, command.profile);
+			const found = matchSession(sessions, command.session);
+			if (found !== undefined) return { where, ...found };
+			if (command.workspace !== undefined || command.folder !== undefined)
+				throw new Error(
+					`there is no earlier session ${JSON.stringify(command.session)} in ${where.kind === "workspace" ? where.workspace.root : where.kind === "folder" ? where.root : "any folder"}. Run 'devhub --tell sessions ${where.kind === "workspace" ? `--workspace ${where.workspace.id}` : `--folder ${where.kind === "folder" ? where.root : "<path>"}`}'.`,
+				);
+		}
+		const where = await this.sessionsWhere({ all: true });
+		const { sessions } = await this.pastSessions(where, command.profile);
+		const found = matchSession(sessions, command.session);
+		if (found !== undefined) return { where, ...found };
+		throw new Error(
+			`there is no earlier session ${JSON.stringify(command.session)} here or among the newest of every folder on ${this.callerMachine()}. Run 'devhub --tell sessions --all', or give --folder <path> for an older one.`,
+		);
+	}
+
+	/**
+	 * Start the new Agent on `session` where it belongs: the listed
+	 * workspace, its worktree (opened, or checked out again), or its own
+	 * folder — opened unfocused when no workspace has it open, and its
+	 * worktree checked out again when it was one that is gone.
+	 */
+	private async resumeWhere(
+		where: SessionsWhere,
+		profile: string,
+		session: TellPastSession,
+	): Promise<string> {
+		const workspace =
+			where.kind === "workspace"
+				? where.workspace
+				: where.kind === "all"
+					? where.base
+					: undefined;
+		if (session.worktree !== undefined || session.resumableHere) {
+			if (
+				workspace !== undefined &&
+				(where.kind !== "all" || session.worktree !== undefined)
+			)
+				return this.ports.resumeSession(workspace.id, profile, session);
+			if (where.kind === "folder")
+				return this.ports.resumeSessionIn(
+					where.root,
+					where.machine,
+					profile,
+					session,
+				);
+		}
+		const machine =
+			where.kind === "workspace" ? where.workspace.machine : where.machine;
+		const folder = sessionFolder(where, session);
+		if (folder === undefined)
+			throw new Error(
+				`session ${session.id} does not say which folder it ran in: give --folder <path> to resume it there.`,
+			);
+		const here = { ...session, resumableHere: true, worktree: undefined };
+		const open = this.openAt(folder, machine);
+		if (open !== undefined)
+			return this.ports.resumeSession(open.id, profile, here);
+		const kind = await this.ports.pathKind(folder, machine);
+		if (kind === "directory")
+			return this.ports.resumeSessionIn(folder, machine, profile, here);
+		if (kind === "file")
+			throw new Error(
+				`session ${session.id} ran in ${folder}, which is now a file: there is no folder to resume it in.`,
+			);
+		// Gone: a DevHub worktree of a clone is made again, as the picker does.
+		const clones = await this.clonesFor(folder, machine);
+		if (clones.length === 0)
+			throw new Error(
+				`session ${session.id} ran in ${folder}, which no longer exists on ${machine}, and it is not a worktree of a clone DevHub can find (an open workspace's repository, or a folder beside it named like ${folder.slice(0, folder.lastIndexOf("_") + 1) || "<clone>_"}): nothing can check it out again. Give --folder <clone> if it was a worktree of one.`,
+			);
+		if (clones.length > 1)
+			throw new Error(
+				`--folder is required: session ${session.id} ran in ${folder}, which no longer exists, and more than one clone could check it out again:\n${clones.map((clone) => `  --folder ${clone.root}`).join("\n")}`,
+			);
+		const [clone] = clones;
+		const branch = session.branch;
+		if (branch === undefined)
+			throw new Error(
+				`session ${session.id} ran in ${clone!.worktree}, which no longer exists, and it did not record which branch it was on, so there is no worktree to make again for it.`,
+			);
+		return this.ports.resumeSessionIn(clone!.root, machine, profile, {
+			...session,
+			resumableHere: false,
+			worktree: { root: clone!.worktree, branch, present: false },
+		});
+	}
+
+	/**
+	 * The clones `folder` would be one of DevHub's worktrees of
+	 * (`worktreeSiblingPrefix`: `<clone>_<name>`), with the worktree's own
+	 * folder: open workspaces' repositories, and folders beside it that are
+	 * there and named like one.
+	 */
+	private async clonesFor(
+		folder: string,
+		machine: string,
+	): Promise<readonly { readonly root: string; readonly worktree: string }[]> {
+		const found = new Map<string, string>();
+		const worktreeOf = (clone: string): string | undefined => {
+			const prefix = `${stripSlashes(clone)}_`;
+			if (!folder.startsWith(prefix)) return undefined;
+			const segment = folder.slice(prefix.length).split("/")[0] ?? "";
+			return segment.length === 0 ? undefined : `${prefix}${segment}`;
+		};
+		for (const workspace of this.ports.workspaces()) {
+			if (workspace.scratch || workspace.machine !== machine) continue;
+			const clone = workspace.worktreeOf ?? workspace.root;
+			const worktree = worktreeOf(clone);
+			if (worktree !== undefined) found.set(stripSlashes(clone), worktree);
+		}
+		const parts = folder.split("/");
+		for (let at = 1; at < parts.length; at += 1) {
+			const part = parts[at]!;
+			for (
+				let cut = part.indexOf("_");
+				cut > 0;
+				cut = part.indexOf("_", cut + 1)
+			) {
+				const clone = [...parts.slice(0, at), part.slice(0, cut)].join("/");
+				if (found.has(clone)) continue;
+				const worktree = worktreeOf(clone);
+				if (worktree === undefined) continue;
+				if ((await this.ports.pathKind(clone, machine)) === "directory")
+					found.set(clone, worktree);
+			}
+		}
+		return [...found].map(([root, worktree]) => ({ root, worktree }));
 	}
 
 	/** `session meta`: a session's pairs, kept past its agent; set or unset one. */
@@ -3069,22 +3338,12 @@ export class TellService {
 		profileId: string | undefined,
 	): Promise<{ readonly profile: string; readonly session: TellPastSession }> {
 		const { sessions } = await this.pastSessions(workspace, profileId);
-		const exact = sessions.filter(({ session }) => session.id === id);
-		const matches =
-			exact.length > 0
-				? exact
-				: sessions.filter(
-						({ session }) => id.length >= 4 && session.id.startsWith(id),
-					);
-		if (matches.length === 0)
+		const found = matchSession(sessions, id);
+		if (found === undefined)
 			throw new Error(
 				`there is no earlier session ${JSON.stringify(id)} in ${workspace.root}. Run 'devhub --tell sessions --workspace ${workspace.id}'.`,
 			);
-		if (new Set(matches.map(({ session }) => session.id)).size > 1)
-			throw new Error(
-				`${JSON.stringify(id)} is the start of more than one session's id: ${matches.map(({ session }) => session.id).join(", ")}.`,
-			);
-		return matches[0]!;
+		return found;
 	}
 
 	// --- the app ------------------------------------------------------------
@@ -3303,6 +3562,59 @@ function agentsText(one: EscalationWire): string {
 }
 
 /** A session's name in a line: its title, or the agent's name it ran under. */
+/** Where `sessions` and `agent resume` look (`TellService.sessionsWhere`). */
+type SessionsWhere =
+	| { readonly kind: "workspace"; readonly workspace: TellWorkspace }
+	/** A folder no workspace has open. */
+	| { readonly kind: "folder"; readonly root: string; readonly machine: string }
+	/** Every folder's, read from `base` (whose repository's worktrees are placed). */
+	| {
+			readonly kind: "all";
+			readonly root: string;
+			readonly machine: string;
+			readonly base: TellWorkspace;
+	  };
+
+function stripSlashes(path: string): string {
+	return path.length > 1 ? path.replace(/\/+$/u, "") : path;
+}
+
+/**
+ * The folder a listed session is gone on with in: its worktree's, the
+ * listed folder's when its CLI resumes it there, else the one it ran in.
+ */
+function sessionFolder(
+	where: SessionsWhere,
+	session: TellPastSession,
+): string | undefined {
+	if (session.worktree !== undefined) return session.worktree.root;
+	if (session.resumableHere)
+		return where.kind === "workspace" ? where.workspace.root : where.root;
+	return session.cwd === undefined ? undefined : stripSlashes(session.cwd);
+}
+
+/** The one session `id` (or a unique prefix of one) names; undefined for none. */
+function matchSession(
+	sessions: readonly {
+		readonly profile: string;
+		readonly session: TellPastSession;
+	}[],
+	id: string,
+): { readonly profile: string; readonly session: TellPastSession } | undefined {
+	const exact = sessions.filter(({ session }) => session.id === id);
+	const matches =
+		exact.length > 0
+			? exact
+			: sessions.filter(
+					({ session }) => id.length >= 4 && session.id.startsWith(id),
+				);
+	if (new Set(matches.map(({ session }) => session.id)).size > 1)
+		throw new Error(
+			`${JSON.stringify(id)} is the start of more than one session's id: ${matches.map(({ session }) => session.id).join(", ")}.`,
+		);
+	return matches[0];
+}
+
 function sessionTitle(session: TellPastSession): string {
 	return session.title.length > 0 ? session.title : (session.agentName ?? "");
 }
@@ -3311,8 +3623,17 @@ function sessionLine(
 	profile: string,
 	session: TellPastSession,
 	now: number,
+	place: {
+		/** The folder listed (absent for --all): rows there say nothing more. */
+		readonly listedRoot: string | undefined;
+		readonly folder: string | undefined;
+		/** The open workspace that has `folder`, if one does. */
+		readonly open: string | undefined;
+	},
 ): string {
 	const worktree = session.worktree;
+	const elsewhere =
+		place.folder !== undefined && place.folder !== place.listedRoot;
 	return [
 		session.id,
 		profile,
@@ -3326,9 +3647,16 @@ function sessionLine(
 			: session.branch === undefined
 				? undefined
 				: `branch ${session.branch}`,
-		session.resumableHere || worktree !== undefined
+		place.folder === undefined
+			? "folder unknown: resume with --folder"
+			: elsewhere && worktree === undefined
+				? `in ${place.folder}`
+				: undefined,
+		!elsewhere || worktree?.present === false
 			? undefined
-			: `not resumable here (ran in ${session.cwd ?? "another folder"})`,
+			: place.open === undefined
+				? "not open"
+				: `open as ${place.open}`,
 		session.liveAgentId === undefined
 			? undefined
 			: `running in agent ${session.liveAgentId}`,

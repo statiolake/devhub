@@ -305,7 +305,8 @@ happens between two calls is missed - always read before waiting again.
 - \`sessions [--workspace W] [--meta K=V]...\` lists earlier sessions (with the
   meta their stopped agents had); \`agent resume ID [--name N]\` goes on with one
   in a new GUI agent, its name and meta given back; \`session meta ID [set K V
-  | unset K]\` tags a stopped one.
+  | unset K]\` tags a stopped one. \`sessions --folder PATH\` / \`--all\` look beyond
+  your workspace; \`agent resume\` opens a closed folder unfocused.
 - **Tag the agents you start**: \`--meta parent=YOUR_ID --meta role=reviewer\`
   on \`agent new\` and \`issue assign\`, then find them again with
   \`agents --meta parent=YOUR_ID\`. \`agent meta A [set KEY VALUE | unset

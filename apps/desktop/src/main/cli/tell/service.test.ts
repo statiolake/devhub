@@ -558,6 +558,50 @@ class FakePorts implements TellPorts {
 		this.calls.push(`resume ${workspaceId} ${profileId} ${session.id}`);
 		return Promise.resolve("resumed-agent");
 	}
+	/** Listings of folders by `${scope} ${folder} ${profile}`. */
+	pastIn = new Map<string, readonly TellPastSession[]>();
+	pastSessionsIn(
+		folder: string,
+		machine: string,
+		profileId: string,
+		scope: "here" | "everywhere",
+	) {
+		this.calls.push(`sessions-in ${scope} ${machine}:${folder} ${profileId}`);
+		return Promise.resolve(
+			this.pastIn.get(`${scope} ${folder} ${profileId}`) ?? [],
+		);
+	}
+	resumeSessionIn(
+		folder: string,
+		machine: string,
+		profileId: string,
+		session: TellPastSession,
+	) {
+		const worktree = session.worktree;
+		this.calls.push(
+			`resume-in ${machine}:${folder} ${profileId} ${session.id}${worktree === undefined ? "" : ` worktree ${worktree.root}${worktree.present ? "" : " (gone)"}`}`,
+		);
+		// As the app does: the folder (or worktree) opens as an unselected
+		// workspace in the Sidebar, with the new agent in it.
+		const root = worktree?.root ?? folder;
+		if (!this.spaces.some((one) => one.root === root))
+			this.spaces = [
+				...this.spaces,
+				workspace({
+					id: `opened-${String(this.spaces.length)}`,
+					name: root.slice(root.lastIndexOf("/") + 1),
+					root,
+					selected: false,
+					agents: [agent({ id: "resumed-agent", name: "Claude 9" })],
+				}),
+			];
+		return Promise.resolve("resumed-agent");
+	}
+	/** What is on disk; anything else is absent. */
+	paths = new Map<string, "directory" | "file">();
+	pathKind(path: string): Promise<"directory" | "file" | "absent"> {
+		return Promise.resolve(this.paths.get(path) ?? "absent");
+	}
 	/** The pairs `setSessionMeta` kept, by session id. */
 	sessionMeta = new Map<string, Record<string, string>>();
 	setSessionMeta(
@@ -2458,7 +2502,7 @@ describe("sessions and agent resume", () => {
 		expect(answer.message).toContain(
 			"(codex's sessions could not be read: codex is not installed)",
 		);
-		expect(answer.message).toContain("not resumable here (ran in /tmp/other)");
+		expect(answer.message).toContain('"Elsewhere"  in /tmp/other  not open');
 		ports.calls = [];
 		await viaSocket(service, ["sessions", "--profile", "claude"], self);
 		expect(ports.calls).toEqual(["sessions w1 claude"]);
@@ -2618,11 +2662,13 @@ describe("sessions and agent resume", () => {
 		});
 	});
 
-	it("refuses a session it cannot go on with here, and one it cannot tell apart", async () => {
+	it("refuses a session whose folder is gone for good, and one it cannot tell apart", async () => {
 		const { service, ports } = withSessions();
 		await expect(
 			viaSocket(service, ["agent", "resume", "c3cc-0003"], self),
-		).rejects.toThrow(/ran in \/tmp\/other.*only there/);
+		).rejects.toThrow(
+			/ran in \/tmp\/other, which no longer exists on local, and it is not a worktree of a clone DevHub can find/,
+		);
 		ports.past.set("codex", [
 			...PAST["codex"]!,
 			{ ...PAST["codex"]![0]!, id: "x1dd-0002" },
@@ -2632,8 +2678,324 @@ describe("sessions and agent resume", () => {
 		).rejects.toThrow(/more than one session/);
 		await expect(
 			viaSocket(service, ["agent", "resume", "zzzz"], self),
-		).rejects.toThrow(/no earlier session/);
+		).rejects.toThrow(/no earlier session "zzzz" here or among the newest/);
 		expect(ports.calls.filter((call) => call.startsWith("resume"))).toEqual([]);
+	});
+});
+
+describe("sessions and agent resume beyond the caller's workspace", () => {
+	/** w1 at /src/app, w2 at /src/api; sessions of other folders besides. */
+	function withFolders() {
+		const made = setup();
+		made.advance(10 * 3_600_000);
+		made.ports.past.set("claude", PAST["claude"]!);
+		made.ports.spaces = [
+			...made.ports.spaces,
+			workspace({
+				id: "w2",
+				name: "api",
+				root: "/src/api",
+				selected: false,
+				branch: "main",
+				agents: [],
+			}),
+		];
+		const tools: TellPastSession = {
+			id: "c4dd-0004",
+			title: "Tidy the tools",
+			updatedAt: 7 * 3_600_000,
+			cwd: "/src/tools",
+			branch: "main",
+			resumableHere: true,
+			meta: { parent: "orch-1" },
+		};
+		const api: TellPastSession = {
+			id: "c5ee-0005",
+			title: "Rate limits",
+			updatedAt: 6 * 3_600_000,
+			cwd: "/src/api",
+			branch: "main",
+			resumableHere: false,
+			meta: { parent: "orch-1" },
+		};
+		const gone: TellPastSession = {
+			id: "c6ff-0006",
+			title: "Old worktree",
+			updatedAt: 4 * 3_600_000,
+			cwd: "/src/api_14-retry",
+			branch: "14-retry",
+			resumableHere: false,
+		};
+		made.ports.pastIn.set("here /src/tools claude", [tools]);
+		// Listed from another folder, the CLI resumes these only in their own.
+		const everywhere = [
+			PAST["claude"]![0]!,
+			{ ...tools, resumableHere: false },
+			api,
+			gone,
+		];
+		made.ports.pastIn.set("everywhere /src/app claude", everywhere);
+		made.ports.pastIn.set("everywhere /scratch/today claude", everywhere);
+		made.ports.paths.set("/src/tools", "directory");
+		made.ports.paths.set("/src/api", "directory");
+		return { ...made, tools, api, gone };
+	}
+
+	it("lists an open workspace's, a closed folder's, and every folder's, each row with its folder and whether it is open", async () => {
+		const { service, ports } = withFolders();
+		const other = await viaSocket(
+			service,
+			["sessions", "--workspace", "w2"],
+			self,
+		);
+		expect(ports.calls).toEqual(["sessions w2 claude", "sessions w2 codex"]);
+		expect(other.data).toMatchObject({ scope: "workspace", workspaceId: "w2" });
+
+		ports.calls = [];
+		const folder = await viaSocket(
+			service,
+			["sessions", "--folder", "/src/tools/"],
+			self,
+		);
+		expect(ports.calls).toEqual([
+			"sessions-in here local:/src/tools claude",
+			"sessions-in here local:/src/tools codex",
+		]);
+		expect(folder.message).toBe(
+			'c4dd-0004  claude  3h ago  "Tidy the tools"  branch main  parent=orch-1',
+		);
+		expect(folder.data).toMatchObject({
+			scope: "folder",
+			workspaceId: null,
+			folder: "/src/tools",
+			sessions: [
+				{ id: "c4dd-0004", folder: "/src/tools", openWorkspaceId: null },
+			],
+		});
+		// An open folder is its workspace's listing.
+		ports.calls = [];
+		await viaSocket(service, ["sessions", "--folder", "/src/api"], self);
+		expect(ports.calls[0]).toBe("sessions w2 claude");
+
+		ports.calls = [];
+		const all = await viaSocket(service, ["sessions", "--all"], self);
+		expect(ports.calls).toEqual([
+			"sessions-in everywhere local:/src/app claude",
+			"sessions-in everywhere local:/src/app codex",
+		]);
+		expect(all.message.split("\n")).toEqual([
+			'c1aa-0001  claude  2h ago  "Fix the login timeout"  branch 12-fix  in /src/app  open as w1',
+			'c4dd-0004  claude  3h ago  "Tidy the tools"  branch main  in /src/tools  not open  parent=orch-1',
+			'c5ee-0005  claude  4h ago  "Rate limits"  branch main  in /src/api  open as w2  parent=orch-1',
+			'c6ff-0006  claude  6h ago  "Old worktree"  branch 14-retry  in /src/api_14-retry  not open',
+		]);
+		expect(all.data).toMatchObject({
+			scope: "all",
+			workspaceId: null,
+			sessions: [
+				{ id: "c1aa-0001", openWorkspaceId: "w1" },
+				{ id: "c4dd-0004", openWorkspaceId: null },
+				{ id: "c5ee-0005", folder: "/src/api", openWorkspaceId: "w2" },
+				{ id: "c6ff-0006", folder: "/src/api_14-retry" },
+			],
+		});
+		const tagged = await viaSocket(
+			service,
+			["sessions", "--all", "--meta", "parent=orch-1", "--limit", "1"],
+			self,
+		);
+		expect(tagged.data).toMatchObject({
+			sessions: [{ id: "c4dd-0004" }],
+			more: 1,
+		});
+		const none = await viaSocket(
+			service,
+			["sessions", "--folder", "/src/tools", "--meta", "parent=x"],
+			self,
+		);
+		expect(none.message).toBe(
+			"No earlier session in /src/tools (not open) carries parent=x.",
+		);
+		await expect(
+			viaSocket(service, ["sessions", "--folder", "/src/nowhere"], self),
+		).rejects.toThrow(/\/src\/nowhere does not exist on local/);
+		expect(
+			parseTellArguments(["sessions", "--all", "--workspace", "w1"]),
+		).toMatchObject({ kind: "invalid", message: /give one/ });
+		expect(parseTellArguments(["sessions", "--all"])).toMatchObject({
+			kind: "tell",
+			command: { verb: "sessions", all: true, limit: 20 },
+		});
+		expect(
+			parseTellArguments(["agent", "resume", "c4dd", "--folder", "/src/tools"]),
+		).toMatchObject({
+			command: { verb: "agent-resume", folder: "/src/tools" },
+		});
+	});
+
+	it("resumes a session of another open workspace there, focusing nothing", async () => {
+		const { service, ports } = withFolders();
+		const answer = await viaSocket(
+			service,
+			["agent", "resume", "c5ee", "--profile", "claude"],
+			self,
+		);
+		expect(ports.calls).toEqual([
+			"sessions w1 claude",
+			"sessions-in everywhere local:/src/app claude",
+			"resume w2 claude c5ee-0005",
+			"meta resumed-agent parent orch-1",
+		]);
+		expect(answer.message).toContain("(c5ee-0005) in /src/api");
+		expect(ports.calls.some((call) => call.startsWith("focus"))).toBe(false);
+	});
+
+	it("opens a closed folder unfocused and resumes in it, its meta and name given back", async () => {
+		const { service, ports } = withFolders();
+		const before = ports.spaces.map((one) => [one.id, one.selected]);
+		const answer = await viaSocket(
+			service,
+			["agent", "resume", "c4dd-0004", "--name", "tools"],
+			coordinator,
+		);
+		expect(ports.calls).toEqual([
+			"sessions scratch-id claude",
+			"sessions scratch-id codex",
+			"sessions-in everywhere local:/scratch/today claude",
+			"sessions-in everywhere local:/scratch/today codex",
+			"resume-in local:/src/tools claude c4dd-0004",
+			"rename resumed-agent tools",
+			"meta resumed-agent parent orch-1",
+		]);
+		expect(answer.data).toMatchObject({
+			agentId: "resumed-agent",
+			root: "/src/tools",
+			name: "tools",
+			meta: { parent: "orch-1" },
+		});
+		// Opened in the Sidebar, unselected; nothing else moved.
+		expect(ports.spaces.map((one) => [one.id, one.selected])).toEqual([
+			...before,
+			["opened-3", false],
+		]);
+		expect(ports.calls.some((call) => call.startsWith("focus"))).toBe(false);
+		// --folder looks there directly.
+		ports.calls = [];
+		ports.spaces = ports.spaces.filter((one) => one.id !== "opened-3");
+		await viaSocket(
+			service,
+			["agent", "resume", "c4dd", "--folder", "/src/tools"],
+			self,
+		);
+		expect(ports.calls.slice(0, 3)).toEqual([
+			"sessions-in here local:/src/tools claude",
+			"sessions-in here local:/src/tools codex",
+			"resume-in local:/src/tools claude c4dd-0004",
+		]);
+	});
+
+	it("checks a gone worktree out again from its clone, then opens and resumes it", async () => {
+		const { service, ports } = withFolders();
+		const answer = await viaSocket(
+			service,
+			["agent", "resume", "c6ff", "--profile", "claude"],
+			self,
+		);
+		expect(ports.calls.at(-1)).toBe(
+			"resume-in local:/src/api claude c6ff-0006 worktree /src/api_14-retry (gone)",
+		);
+		expect(answer.message).toContain("in /src/api_14-retry");
+		// A listing told about the clone places it itself: resumed from there.
+		ports.calls = [];
+		ports.pastIn.set("here /src/tools claude", [
+			{
+				id: "c7aa-0007",
+				title: "Tools worktree",
+				updatedAt: 1,
+				cwd: "/src/tools_15-x",
+				branch: "15-x",
+				resumableHere: false,
+				worktree: { root: "/src/tools_15-x", branch: "15-x", present: false },
+			},
+		]);
+		await viaSocket(
+			service,
+			["agent", "resume", "c7aa", "--folder", "/src/tools"],
+			self,
+		);
+		expect(ports.calls).toContain(
+			"resume-in local:/src/tools claude c7aa-0007 worktree /src/tools_15-x (gone)",
+		);
+		// No branch recorded: nothing to check out, and said why.
+		ports.pastIn.set("everywhere /src/app claude", [
+			{
+				...PAST["claude"]![0]!,
+				id: "c8bb-0008",
+				cwd: "/src/api_16-y",
+				branch: undefined,
+				resumableHere: false,
+			},
+		]);
+		await expect(
+			viaSocket(
+				service,
+				["agent", "resume", "c8bb", "--profile", "claude"],
+				self,
+			),
+		).rejects.toThrow(/did not record which branch/);
+	});
+
+	it("refuses a target more than one clone could take, naming them, and resumes with --folder", async () => {
+		const { service, ports } = withFolders();
+		// /src/my and /src/my_app both name /src/my_app_17-z as a worktree of theirs.
+		ports.paths.set("/src/my", "directory");
+		ports.paths.set("/src/my_app", "directory");
+		ports.pastIn.set("everywhere /src/app claude", [
+			{
+				id: "c9cc-0009",
+				title: "Which clone",
+				updatedAt: 1,
+				cwd: "/src/my_app_17-z",
+				branch: "17-z",
+				resumableHere: false,
+			},
+		]);
+		const refused = viaSocket(
+			service,
+			["agent", "resume", "c9cc", "--profile", "claude"],
+			self,
+		);
+		await expect(refused).rejects.toThrow(
+			"--folder is required: session c9cc-0009 ran in /src/my_app_17-z, which no longer exists, and more than one clone could check it out again:\n  --folder /src/my\n  --folder /src/my_app",
+		);
+		expect(ports.calls.filter((call) => call.startsWith("resume"))).toEqual([]);
+		ports.pastIn.set("here /src/my_app claude", [
+			{
+				id: "c9cc-0009",
+				title: "Which clone",
+				updatedAt: 1,
+				cwd: "/src/my_app_17-z",
+				branch: "17-z",
+				resumableHere: false,
+				worktree: { root: "/src/my_app_17-z", branch: "17-z", present: false },
+			},
+		]);
+		await viaSocket(
+			service,
+			[
+				"agent",
+				"resume",
+				"c9cc",
+				"--folder",
+				"/src/my_app",
+				"--profile",
+				"claude",
+			],
+			self,
+		);
+		expect(ports.calls.at(-1)).toBe(
+			"resume-in local:/src/my_app claude c9cc-0009 worktree /src/my_app_17-z (gone)",
+		);
 	});
 });
 

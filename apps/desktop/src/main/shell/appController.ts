@@ -10377,6 +10377,61 @@ export class AppController {
 					throw new Error("DevHub did not start the agent.");
 				return created;
 			},
+			pastSessionsIn: async (folder, machine, profileId, scope) => {
+				// The same listing, for a folder no workspace need have open.
+				const place = tellPlace(folder, machine);
+				const { runtime, profile } = await this.sessionsProfile(
+					place,
+					profileId,
+				);
+				return listPastSessions(
+					runtime,
+					profile,
+					place.path,
+					scope,
+					await this.listingContext(runtime, place.path, profile.kind),
+				);
+			},
+			resumeSessionIn: async (folder, machine, profileId, session) => {
+				const place = tellPlace(folder, machine);
+				const before = this.modelAgentIds();
+				if (session.worktree !== undefined) {
+					// Another worktree of the clone at `folder`: opened, or checked
+					// out again, unfocused (`resumeSessionElsewhere`).
+					await this.resumeSessionElsewhere(
+						{
+							place,
+							profileId,
+							session: session.id,
+							worktree: session.worktree,
+							...(session.cwd === undefined ? {} : { cwd: session.cwd }),
+							presentation: "gui",
+						},
+						"none",
+					);
+				} else {
+					// An Agent asking, not a person: the folder in the Sidebar,
+					// nothing selected, shown or focused (as `workspace open`).
+					const workspaceId = await this.openFolderUnfocused(
+						requestedLocation(place),
+					);
+					await this.dispatchAwaiting({
+						type: "create_agent",
+						workspaceId,
+						profileId: agentProfileId(profileId),
+						presentation: "full",
+						agentPresentation: agentPresentation("gui"),
+						resume: sessionId(session.id),
+						focus: "none",
+					});
+				}
+				const created = newAgent(before);
+				if (created === undefined)
+					throw new Error("DevHub did not start the agent.");
+				return created;
+			},
+			pathKind: (path, machine) =>
+				runtimeFor(workspaceLocation(tellPlace(path, machine))).stat(path),
 			setSessionMeta: (profileId, session, key, value) => {
 				const kind = this.config.agentProfiles.find(
 					(candidate) => candidate.id === profileId,
@@ -12309,6 +12364,13 @@ function sendTargetAgentOf(agent: AgentSnapshot): SendTargetAgent {
 }
 
 /** Where a Workspace is, in the shape a page names a place: its folder, on its machine. */
+/** A `--tell` folder on a `TellWorkspace.machine` (`local`, `ssh:<host>`). */
+function tellPlace(path: string, machine: string): WorkspacePlaceWire {
+	return machine.startsWith("ssh:")
+		? { kind: "ssh", host: machine.slice("ssh:".length), path }
+		: { kind: "local", path };
+}
+
 function workspacePlaceOf(workspace: Workspace): WorkspacePlaceWire {
 	const location = workspace.location;
 	return location.kind === "ssh"

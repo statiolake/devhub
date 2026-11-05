@@ -539,7 +539,7 @@ describe("devhub --tell's orchestration commands", () => {
 			"agent wait --all [<a>...]",
 			"agent stop <a>",
 			"agent restart <a>",
-			"sessions [--workspace <w>] [--profile <p>] [--limit <n>]",
+			"sessions [--workspace <w> | --folder <path> | --all] [--profile <p>]",
 			"agent resume <session>",
 		])
 			expect(TELL_USAGE).toContain(line);

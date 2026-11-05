@@ -393,6 +393,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     devhub --tell --json sessions --workspace W --meta parent=ORCH
     devhub --tell session meta ID set state done
     devhub --tell agent resume ID --name "123 login fix"
+    devhub --tell --json sessions --all --meta parent=ORCH
     devhub --tell profiles
     devhub --tell issue actions
     devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login --profile claude --gui --action issue_assignment --send --meta parent=ORCH --meta issue=123

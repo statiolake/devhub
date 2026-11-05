@@ -288,9 +288,9 @@ devhub --tell agent answer A REQUEST --q 1 --option N... [--text T] --q 2 ...   
 devhub --tell agent wait A [--until idle|waiting|any] [--timeout S]
 devhub --tell agent wait --any|--all [A...] [--workspace W] [--until ...] [--timeout S]
 devhub --tell agent stop A | agent restart A          # Stop Agent, Restart Session (no sheet: the command is the decision)
-devhub --tell sessions [--workspace W] [--profile P] [--limit N] [--meta K=V]...   # earlier sessions, as the agent picker lists them, with their meta
+devhub --tell sessions [--workspace W | --folder PATH | --all] [--profile P] [--limit N] [--meta K=V]...   # earlier sessions, as the agent picker lists them, with their meta, folder and whether it is open (--all: every folder's, newest first)
 devhub --tell session meta SESSION [set KEY VALUE | unset KEY]   # a stopped session's own key/value pairs
-devhub --tell agent resume SESSION [--workspace W] [--profile P] [--name N]   # one of them, in a new GUI agent (its meta and name given back)
+devhub --tell agent resume SESSION [--workspace W | --folder PATH] [--profile P] [--name N]   # one of them, in a new GUI agent (its meta and name given back), in its own folder: opened unfocused if closed, a gone worktree checked out again
 devhub --tell commands | run <command-id>             # the command palette
 devhub --tell focus A|W | notify TEXT
 devhub --tell usage [--json]                          # each CLI's plan limits as the Sidebar shows them: per window % and reset, or no plan limits; last read and why not since (never reads itself)
@@ -328,7 +328,10 @@ profiles run that session's CLI, and is always GUI. `workspace open` opens
 the path, or with `--worktree` that branch's worktree: no setting is read.
 The defaults left are fixed numbers (`agent read --last 20`, `agent wait
 --timeout 300`, `sessions --limit 20`) and the caller's own workspace for
-`sessions` and `agent resume`. The window keeps its settings-based defaults.
+`sessions` and `agent resume` (`agent resume` then looks through every
+folder's, as `sessions --all`; when more than one clone could check a gone
+worktree out again it opens nothing and lists them for `--folder`). The
+window keeps its settings-based defaults.
 
 **`workspace close`** is the window's Close Workspace by the same intents,
 with its sheets' questions as flags, each required only when it applies:

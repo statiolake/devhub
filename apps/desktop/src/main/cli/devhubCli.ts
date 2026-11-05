@@ -513,12 +513,23 @@ function expandTellPaths(
 						...command,
 						workspace: expandWorkspacePath(command.workspace, cwd, home),
 					};
+		case "sessions":
+		case "agent-resume":
+			return {
+				...command,
+				...(command.workspace === undefined
+					? {}
+					: {
+							workspace: expandWorkspacePath(command.workspace, cwd, home),
+						}),
+				...(command.folder === undefined
+					? {}
+					: { folder: posix.normalize(expandPath(command.folder, cwd, home)) }),
+			};
 		case "agents":
 		case "agent-new":
 		case "agent-wait-many":
-		case "sessions":
 		case "session-meta":
-		case "agent-resume":
 			return command.workspace === undefined
 				? command
 				: {
