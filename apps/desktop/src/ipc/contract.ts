@@ -609,6 +609,23 @@ export interface OrchestratorBoardWire {
 		readonly state: "active" | "suspended" | "idle";
 		/** The last poll (ms since the epoch). */
 		readonly lastAt?: number;
+		/** When the next poll is due, while active. */
+		readonly nextAt?: number;
+		/** What the last poll said of the rate limit. */
+		readonly rateLimit?: {
+			readonly remaining: number;
+			readonly limit: number;
+			/** ms since the epoch. */
+			readonly resetAt: number;
+		};
+		/**
+		 * The boards polled (`[orchestrator.github] projects`, `OWNER/NUMBER`),
+		 * with their title when DevHub has one.
+		 */
+		readonly boards?: readonly {
+			readonly ref: string;
+			readonly title?: string;
+		}[];
 		readonly problem?: string;
 	};
 	/** Oldest question first. */

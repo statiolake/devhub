@@ -350,6 +350,17 @@ read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   are pending, beside the switch. Pending events live in memory: a quit drops
   them, and the next start's `init` sends the orchestrator to the board
   anyway. With no orchestrator assigned, an event is dropped.
+- **The header** says it calmly: the switch is labelled only "Events" (its
+  knob says on or off), and GitHub polling is a `github` pill with a dot —
+  green active, grey suspended by the pause, hollow idle (no orchestrator,
+  or no `[orchestrator.github] projects`), amber backing off (the last poll
+  failed or GitHub reported a problem, or the rate limit is under half or
+  100 left: `githubHealth` in `model/orchestratorSettings.ts`). Hovering or
+  focusing it opens a small card, which the pointer can move into: the
+  boards (`OWNER/NUMBER`, each a link to its GitHub page), the state and
+  why, the last and next poll, and the rate limit left — what
+  `orchestrator status` prints (and `--json` carries as `github`: `boards`,
+  `lastAt`, `nextAt`, `rateLimit`, `problem`).
 - `devhub --tell orchestrator events [--last N] [--json]` lists the last
   events (200 are kept) and what came of each: `delivered`, `pending`,
   `filtered`, `coalesced` (into which), `dropped-stale` (with why: no longer

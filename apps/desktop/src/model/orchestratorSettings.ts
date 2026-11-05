@@ -212,6 +212,47 @@ export function parseProjectRef(
   return number > 0 ? { owner: match[1]!, number } : undefined;
 }
 
+/** A board's page on GitHub: `https://github.com/orgs/OWNER/projects/N`. */
+export function projectUrl(ref: string): string | undefined {
+  const parsed = parseProjectRef(ref);
+  return parsed === undefined
+    ? undefined
+    : `https://github.com/orgs/${parsed.owner}/projects/${String(parsed.number)}`;
+}
+
+/** How GitHub polling stands, as the board and `orchestrator status` say it. */
+export type GitHubHealth = "active" | "suspended" | "idle" | "backing_off";
+
+/**
+ * The polling's health: its mode, except that an active one which last
+ * failed, or is slowed or paused by a low rate limit, is backing off — with
+ * why. The same thresholds the poller slows down by (`nextDelay`).
+ */
+export function githubHealth(github: {
+  readonly state: "active" | "suspended" | "idle";
+  readonly problem?: string;
+  readonly rateLimit?: { readonly remaining: number; readonly limit: number };
+}): { readonly health: GitHubHealth; readonly why?: string } {
+  if (github.state !== "active") return { health: github.state };
+  if (github.problem !== undefined)
+    return { health: "backing_off", why: github.problem };
+  const rate = github.rateLimit;
+  if (rate !== undefined) {
+    if (rate.remaining <= 100)
+      return {
+        health: "backing_off",
+        why: `rate limit low (${String(rate.remaining)} left)`,
+      };
+    const share = rate.limit > 0 ? rate.remaining / rate.limit : 1;
+    if (share < 0.5)
+      return {
+        health: "backing_off",
+        why: `rate limit at ${String(Math.round(share * 100))}%: polling slower`,
+      };
+  }
+  return { health: "active" };
+}
+
 /**
  * `90s`, `5m`, `1h30m`, `2h` as milliseconds; undefined when it is none of
  * those. Bare numbers are refused: a unit is what makes `5` mean something.

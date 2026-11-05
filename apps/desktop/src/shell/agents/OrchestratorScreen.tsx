@@ -42,6 +42,7 @@ import { historyDirectionOfButton } from "../historyButtons";
 import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
+import { GitHubPill } from "./OrchestratorGitHub";
 import { EscalationNote, TakeEscalation } from "./EscalationNote";
 import {
   memory,
@@ -231,7 +232,8 @@ export function OrchestratorBoard({
             <span className="orchestrator-pause-track" aria-hidden="true">
               <span className="orchestrator-pause-knob" />
             </span>
-            {board.paused ? "Events paused" : "Events on"}
+            {/* The switch says on or off; the word is only what it is. */}
+            Events
           </button>
           {board.held > 0 ? (
             <span
@@ -245,26 +247,10 @@ export function OrchestratorBoard({
               {board.held} pending
             </span>
           ) : null}
-          <span
-            className="orchestrator-github"
-            data-state={board.github.state}
-            title={
-              board.github.state === "active"
-                ? `GitHub polling is active${board.github.problem === undefined ? "" : `: ${board.github.problem}`}`
-                : board.github.state === "suspended"
-                  ? "GitHub polling is suspended while events are paused: no requests are made. Resume polls once and reports what changed."
-                  : board.orchestratorAgentId === undefined
-                    ? "GitHub polling is idle: no orchestrator is running."
-                    : "GitHub polling is idle: [orchestrator.github] projects names no board."
-            }
-          >
-            GitHub{" "}
-            {board.github.state === "active"
-              ? "polling"
-              : board.github.state === "suspended"
-                ? "suspended"
-                : "idle"}
-          </span>
+          <GitHubPill
+            github={board.github}
+            orchestratorAgentId={board.orchestratorAgentId}
+          />
           {tab === "board" ? (
             <button
               type="button"

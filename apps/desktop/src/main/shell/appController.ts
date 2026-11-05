@@ -14,6 +14,7 @@
  * happens to be current.
  */
 
+import { parseProjectRef } from "../../model/orchestratorSettings.js";
 import { processGroupAnchor } from "./processGroupAnchor.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -9365,9 +9366,25 @@ export class AppController {
 			},
 			github: () => {
 				const state = this.githubEvents.state();
+				const boards = this.config.orchestrator.github.projects
+					.filter((ref) => parseProjectRef(ref) !== undefined)
+					.map((ref) => ({ ref }));
 				return {
 					state: state.mode,
 					...(state.lastAt === undefined ? {} : { lastAt: state.lastAt }),
+					...(state.nextAt === undefined || state.mode !== "active"
+						? {}
+						: { nextAt: state.nextAt }),
+					...(state.rateLimit === undefined
+						? {}
+						: {
+								rateLimit: {
+									remaining: state.rateLimit.remaining,
+									limit: state.rateLimit.limit,
+									resetAt: state.rateLimit.resetAt,
+								},
+							}),
+					...(boards.length === 0 ? {} : { boards }),
 					...(state.problem === undefined ? {} : { problem: state.problem }),
 				};
 			},

@@ -16,7 +16,9 @@ import {
   formatInterval,
   orchestratorProblem,
   parseInterval,
+  githubHealth,
   parseProjectRef,
+  projectUrl,
   renderEventPrompt,
 } from "./orchestratorSettings.js";
 
@@ -126,5 +128,43 @@ describe("[orchestrator] settings", () => {
       '/go [{"type":"x"}]',
     );
     expect(renderEventPrompt("handle it", "E")).toBe("handle it\n\nE");
+  });
+});
+
+describe("GitHub polling's health", () => {
+  it("is the mode, unless an active one failed or is short of rate limit", () => {
+    expect(githubHealth({ state: "idle" })).toEqual({ health: "idle" });
+    expect(githubHealth({ state: "suspended", problem: "x" })).toEqual({
+      health: "suspended",
+    });
+    expect(
+      githubHealth({
+        state: "active",
+        rateLimit: { remaining: 4000, limit: 5000 },
+      }),
+    ).toEqual({ health: "active" });
+    expect(githubHealth({ state: "active", problem: "HTTP 502" })).toEqual({
+      health: "backing_off",
+      why: "HTTP 502",
+    });
+    expect(
+      githubHealth({
+        state: "active",
+        rateLimit: { remaining: 50, limit: 5000 },
+      }),
+    ).toEqual({ health: "backing_off", why: "rate limit low (50 left)" });
+    expect(
+      githubHealth({
+        state: "active",
+        rateLimit: { remaining: 1000, limit: 5000 },
+      }).why,
+    ).toBe("rate limit at 20%: polling slower");
+  });
+
+  it("links a board to its page", () => {
+    expect(projectUrl("acme/7")).toBe(
+      "https://github.com/orgs/acme/projects/7",
+    );
+    expect(projectUrl("nope")).toBeUndefined();
   });
 });

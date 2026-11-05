@@ -110,20 +110,138 @@
   white-space: nowrap;
 }
 
+/* GitHub: one word and a dot; the card under it says the rest. */
+.orchestrator-github-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
 .orchestrator-github {
-  padding: 1px 6px;
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 0;
   border-radius: 999px;
+  background: var(--wash);
   color: var(--secondary);
+  font: inherit;
   font-size: 11px;
   white-space: nowrap;
 }
 
-.orchestrator-github[data-state="active"] {
-  background: var(--wash);
+.orchestrator-github:hover,
+.orchestrator-github[aria-expanded="true"] {
+  color: var(--primary);
 }
 
-.orchestrator-github[data-state="idle"] {
-  opacity: 0.6;
+.orchestrator-github-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  flex: none;
+  border-radius: 50%;
+  background: var(--tertiary);
+}
+
+[data-health="active"] > .orchestrator-github-dot,
+.orchestrator-github-dot[data-health="active"] {
+  background: var(--status-idle);
+}
+
+[data-health="suspended"] > .orchestrator-github-dot,
+.orchestrator-github-dot[data-health="suspended"] {
+  background: var(--tertiary);
+}
+
+[data-health="idle"] > .orchestrator-github-dot,
+.orchestrator-github-dot[data-health="idle"] {
+  border: 1px solid var(--tertiary);
+  background: transparent;
+}
+
+[data-health="backing_off"] > .orchestrator-github-dot,
+.orchestrator-github-dot[data-health="backing_off"] {
+  background: var(--waiting);
+}
+
+.orchestrator-github[data-health="idle"] {
+  opacity: 0.7;
+}
+
+/* The card: the tooltip's box (`tooltip/tooltipPage.css`), drawn in this
+   page so the pointer can go into it and click a board. The 4px above it
+   is part of it, so the way from the pill to the card never leaves both. */
+.orchestrator-github-card {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  right: 0;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 320px;
+  padding: 4px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  margin-top: 4px;
+  background: var(--chrome-raised, var(--chrome));
+  color: var(--primary);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.orchestrator-github-card::before {
+  position: absolute;
+  top: -5px;
+  right: 0;
+  left: 0;
+  height: 5px;
+  content: "";
+}
+
+.orchestrator-github-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.orchestrator-github-boards {
+  padding: 0;
+  margin: 3px 0 0;
+  list-style: none;
+}
+
+.orchestrator-github-boards a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.orchestrator-github-boards a:hover {
+  text-decoration: underline;
+}
+
+.orchestrator-github-title {
+  color: var(--secondary);
+}
+
+.orchestrator-github-facts {
+  display: grid;
+  margin: 3px 0 0;
+  color: var(--secondary);
+  gap: 0 8px;
+  grid-template-columns: auto auto;
+}
+
+.orchestrator-github-facts:empty {
+  display: none;
+}
+
+.orchestrator-github-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .orchestrator-history[aria-pressed="true"] {

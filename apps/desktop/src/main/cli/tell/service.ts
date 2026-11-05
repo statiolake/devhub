@@ -3876,7 +3876,7 @@ export function answeredBy(
 
 /** `orchestrator status`'s GitHub line: polling, suspended by the pause, or idle and why. */
 function githubPollingLine(board: OrchestratorBoardWire): string {
-	const { state, lastAt, problem } = board.github;
+	const { state, lastAt, nextAt, rateLimit, boards, problem } = board.github;
 	const why =
 		state === "suspended"
 			? " (events paused: GitHub is not polled)"
@@ -3887,7 +3887,16 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 				: "";
 	return [
 		`github polling: ${state}${why}`,
+		...(boards === undefined || boards.length === 0
+			? []
+			: [`boards ${boards.map((one) => one.ref).join(" ")}`]),
 		...(lastAt === undefined ? [] : [`last ${new Date(lastAt).toISOString()}`]),
+		...(nextAt === undefined ? [] : [`next ${new Date(nextAt).toISOString()}`]),
+		...(rateLimit === undefined
+			? []
+			: [
+					`rate limit ${String(rateLimit.remaining)}/${String(rateLimit.limit)} left`,
+				]),
 		...(problem === undefined ? [] : [problem]),
 	].join(", ");
 }
