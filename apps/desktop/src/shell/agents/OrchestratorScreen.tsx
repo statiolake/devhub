@@ -41,6 +41,7 @@ import { historyDirectionOfButton } from "../historyButtons";
 import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
+import { EscalationNote, TakeEscalation } from "./EscalationNote";
 
 /** `45s`, `12m`, `3h`, `2d`. */
 export function span(ms: number): string {
@@ -574,7 +575,7 @@ function EscalationCard({
   const last = escalation.entries.at(-1);
   const question = [...escalation.entries]
     .reverse()
-    .find((entry) => entry.role === "orchestrator");
+    .find((entry) => entry.role === "orchestrator" && entry.kind === undefined);
   const age =
     escalation.state === "needs_answer"
       ? `${span(now - escalation.stateSince)}`
@@ -599,7 +600,9 @@ function EscalationCard({
           <span className="orchestrator-card-age">{age}</span>
         </span>
         <span className="orchestrator-card-preview">
-          {escalation.state === "in_progress" && last?.role === "human"
+          {escalation.state === "in_progress" &&
+          last?.role === "human" &&
+          last.kind === undefined
             ? `↳ ${preview(last.markdown)}`
             : preview(question?.markdown ?? "")}
         </span>
@@ -636,6 +639,9 @@ function EscalationCard({
           <span className="orchestrator-card-why">{escalation.rankNote}</span>
         ) : null}
       </button>
+      {escalation.state === "needs_answer" ? (
+        <TakeEscalation id={escalation.id} />
+      ) : null}
     </li>
   );
 }
@@ -762,6 +768,9 @@ function EscalationView({
           <span className="orchestrator-state" data-state={escalation.state}>
             {STATE_LABEL[escalation.state]}
           </span>
+          {escalation.state === "needs_answer" ? (
+            <TakeEscalation id={escalation.id} />
+          ) : null}
         </div>
         {escalation.agents.length > 0 || escalation.links.length > 0 ? (
           <div className="orchestrator-reading-refs">
@@ -816,27 +825,36 @@ function EscalationView({
         tabIndex={-1}
         aria-label={`#${String(escalation.id)} ${escalation.title}`}
       >
-        {escalation.entries.map((entry, index) => (
-          <article
-            key={`${String(entry.at)}-${String(index)}`}
-            className="orchestrator-entry"
-            data-role={entry.role}
-          >
-            <div className="orchestrator-entry-byline">
-              {entry.role === "human"
-                ? "You"
-                : index === 0
-                  ? "Orchestrator"
-                  : "Orchestrator · follow-up"}
-              <span className="orchestrator-entry-time">
-                {span(now - entry.at)} ago
-              </span>
-            </div>
-            <div className="orchestrator-entry-body">
-              <RichText source={entry.markdown} agentId={pathsOn} />
-            </div>
-          </article>
-        ))}
+        {escalation.entries.map((entry, index) =>
+          entry.kind !== undefined ? (
+            <EscalationNote
+              key={`${String(entry.at)}-${String(index)}`}
+              entry={{ ...entry, kind: entry.kind }}
+              agents={escalation.agents}
+              onFocusAgent={onFocusAgent}
+            />
+          ) : (
+            <article
+              key={`${String(entry.at)}-${String(index)}`}
+              className="orchestrator-entry"
+              data-role={entry.role}
+            >
+              <div className="orchestrator-entry-byline">
+                {entry.role === "human"
+                  ? "You"
+                  : index === 0
+                    ? "Orchestrator"
+                    : "Orchestrator · follow-up"}
+                <span className="orchestrator-entry-time">
+                  {span(now - entry.at)} ago
+                </span>
+              </div>
+              <div className="orchestrator-entry-body">
+                <RichText source={entry.markdown} agentId={pathsOn} />
+              </div>
+            </article>
+          ),
+        )}
         {escalation.closed === undefined ? null : (
           <div className="orchestrator-closed-note">
             Closed {span(now - escalation.closed.at)} ago

@@ -47,6 +47,8 @@ const api: AgentsBridge = {
 			id,
 			markdown,
 		) as Promise<void>,
+	takeEscalation: (id: number, note: string) =>
+		ipcRenderer.invoke(CHANNELS.takeEscalation, id, note) as Promise<void>,
 	startOrchestrator: () =>
 		ipcRenderer.invoke(CHANNELS.startOrchestrator) as Promise<void>,
 	setOrchestratorPaused: (paused: boolean) =>
@@ -63,6 +65,18 @@ const api: AgentsBridge = {
 		) as Promise<OrchestratorFileWire>,
 	openOrchestratorFile: (path: string) =>
 		ipcRenderer.invoke(CHANNELS.openOrchestratorFile, path) as Promise<void>,
+	resolveEscalationPaths: (cwd, paths) =>
+		ipcRenderer.invoke(CHANNELS.resolveEscalationPaths, cwd, paths) as Promise<
+			readonly (string | null)[]
+		>,
+	readEscalationEmbed: (path) =>
+		ipcRenderer.invoke(CHANNELS.readEscalationEmbed, path) as ReturnType<
+			AgentsBridge["readEscalationEmbed"]
+		>,
+	escalationEmbedSignature: (path) =>
+		ipcRenderer.invoke(CHANNELS.escalationEmbedSignature, path) as Promise<
+			string | null
+		>,
 	onOrchestratorFilesChanged: (listener) =>
 		on<readonly string[]>(CHANNELS.orchestratorFilesChanged, listener),
 

@@ -15,13 +15,26 @@
  * There is no stored state to drift from what was said: it is read off the
  * thread every time.
  *
- * - `needs_answer` — the last entry is the orchestrator's: a question waits.
- * - `in_progress` — the last entry is the person's: the orchestrator owes the
- *   agents the answer.
- * - `closed` — closed, whatever the last entry was.
+ * **The one rule:** `needs_answer` (要回答) exactly when the last entry is
+ * a question — the orchestrator's, with no `kind` (`escalation new`,
+ * `escalation ask`); `closed` once closed; `in_progress` (対応中) otherwise.
+ * Whatever comes after a question takes it out of 要回答, and only another
+ * question (`askAgain`) puts it back:
  *
- * So a person's answer moves it to `in_progress` by being an answer, and a
- * follow-up question moves it back by being a question. Nothing else moves it.
+ * - the person's answer (role `human`, no `kind`), in the window only;
+ * - the person's 対応中にする in the window (`taken`, role `human`, an
+ *   optional note in `markdown`);
+ * - the orchestrator's `escalation hold` (`held`, role `orchestrator`, an
+ *   optional note): parked while it works on it. Never an answer;
+ * - DevHub's notes that one of its agents went from idle to working while it
+ *   waited (`noteWorking`): `direct` (role `human`) when the person talked to
+ *   it from its own composer, `resumed` (role `orchestrator`: DevHub's, for
+ *   the orchestrator's `agent send`, an event, a resume) for anything else.
+ *   Empty `markdown`: what was said is in the agent's conversation.
+ *
+ * `role` says whose side an entry is on; only the window writes `human`
+ * ones, and the person's answer is the only one with words of theirs
+ * (`lastAnswer`).
  *
  * Pure: no clock (every operation is handed `now`), no I/O. The store that
  * keeps them on disk is `main/orchestrator/escalationStore.ts`.
@@ -37,9 +50,34 @@ export const ESCALATION_STATES: readonly EscalationState[] = [
   "closed",
 ];
 
+/**
+ * What kind of entry: absent for a question or an answer; else a note that
+ * moved it to `in_progress` without words to answer with (see the module's
+ * doc): `direct` / `resumed`, an agent went working (`agent` names it);
+ * `taken`, the person's 対応中にする; `held`, the orchestrator's
+ * `escalation hold`.
+ */
+export type EscalationEntryKind = "direct" | "resumed" | "taken" | "held";
+
+/** Each kind, and the side it is on. */
+export const ESCALATION_ENTRY_KINDS: Readonly<
+  Record<EscalationEntryKind, EscalationRole>
+> = {
+  direct: "human",
+  resumed: "orchestrator",
+  taken: "human",
+  held: "orchestrator",
+};
+
+/** How long a `taken` or `held` note may be. */
+export const NOTE_LIMIT = 2_000;
+
 export interface EscalationEntry {
   readonly role: EscalationRole;
-  /** Rich Markdown, drawn by the conversation's own renderer. */
+  /**
+   * Rich Markdown, drawn by the conversation's own renderer. For a note
+   * (`kind`): `taken`'s or `held`'s optional note, else empty.
+   */
   readonly markdown: string;
   /** When it was written, ms since the epoch. */
   readonly at: number;
@@ -48,6 +86,14 @@ export interface EscalationEntry {
    * may always write something else instead.
    */
   readonly options?: readonly string[];
+  readonly kind?: EscalationEntryKind;
+  /** `direct` / `resumed`: the agent that went working, by id. */
+  readonly agent?: string;
+}
+
+/** A note (`kind`): not a question, and not anybody's answer. */
+export function isNoteEntry(entry: EscalationEntry): boolean {
+  return entry.kind !== undefined;
 }
 
 /**
@@ -125,11 +171,15 @@ function refuse(message: string): never {
   throw new EscalationError(message);
 }
 
+/** A question: the orchestrator's, not a note. */
+export function isQuestion(entry: EscalationEntry | undefined): boolean {
+  return entry?.role === "orchestrator" && entry.kind === undefined;
+}
+
+/** The one rule (see the module's doc): 要回答 while a question is last. */
 export function escalationState(escalation: Escalation): EscalationState {
   if (escalation.closed !== undefined) return "closed";
-  return escalation.entries.at(-1)?.role === "human"
-    ? "in_progress"
-    : "needs_answer";
+  return isQuestion(escalation.entries.at(-1)) ? "needs_answer" : "in_progress";
 }
 
 /** Whether it is still being worked on: not closed. */
@@ -158,15 +208,16 @@ export function effortOf(escalation: Escalation): EscalationEffort {
 export function lastAnswer(
   escalation: Escalation,
 ): EscalationEntry | undefined {
-  return [...escalation.entries].reverse().find((one) => one.role === "human");
+  return [...escalation.entries]
+    .reverse()
+    .find((one) => one.role === "human" && !isNoteEntry(one));
 }
 
 /** The options the last question offered, when the last entry is a question. */
 export function openOptions(escalation: Escalation): readonly string[] {
   const last = escalation.entries.at(-1);
-  if (escalation.closed !== undefined || last?.role !== "orchestrator")
-    return [];
-  return last.options ?? [];
+  if (escalation.closed !== undefined || !isQuestion(last)) return [];
+  return last?.options ?? [];
 }
 
 // --- checking ---------------------------------------------------------------
@@ -399,6 +450,62 @@ export function answerEscalation(
   return appended(escalation, entry("human", markdown, now));
 }
 
+/**
+ * `agentId`, one of the agents it is about, went back to work while it
+ * waited: DevHub's note of it (`kind`), human-side, so a `needs_answer` one
+ * moves to `in_progress`. **DevHub's only** — the orchestrator service
+ * writes it when it sees that happen; no command line path reaches it. Only
+ * on a `needs_answer` one: an `in_progress` or a closed one is left as it is.
+ */
+export function noteWorking(
+  escalation: Escalation,
+  kind: "direct" | "resumed",
+  agentId: string,
+  now: number,
+): Escalation {
+  if (escalationState(escalation) !== "needs_answer")
+    refuse(`#${String(escalation.id)} is not waiting for an answer.`);
+  if (!escalation.agents.includes(agentId))
+    refuse(`#${String(escalation.id)} is not about ${agentId}.`);
+  return appended(escalation, {
+    role: ESCALATION_ENTRY_KINDS[kind],
+    kind,
+    agent: agentId,
+    markdown: "",
+    at: now,
+  });
+}
+
+function checkNote(note: string | undefined): string {
+  const trimmed = (note ?? "").trim();
+  if (trimmed.length > NOTE_LIMIT)
+    refuse(`a note is at most ${String(NOTE_LIMIT)} characters.`);
+  return trimmed;
+}
+
+/**
+ * Moved to `in_progress` without an answer: the person's 対応中にする
+ * (`taken`, **the window's only**) or the orchestrator's `escalation hold`
+ * (`held`, never a human entry). Only on a `needs_answer` one.
+ */
+export function takeEscalation(
+  escalation: Escalation,
+  kind: "taken" | "held",
+  note: string | undefined,
+  now: number,
+): Escalation {
+  if (escalationState(escalation) !== "needs_answer")
+    refuse(
+      `#${String(escalation.id)} is not waiting for an answer (${escalationState(escalation)}).`,
+    );
+  return appended(escalation, {
+    role: ESCALATION_ENTRY_KINDS[kind],
+    kind,
+    markdown: checkNote(note),
+    at: now,
+  });
+}
+
 /** The answer has been used up: closed, with the orchestrator's note. */
 export function closeEscalation(
   escalation: Escalation,
@@ -601,6 +708,34 @@ function entryFrom(value: unknown, where: string): EscalationEntry {
   const role = value["role"];
   if (role !== "orchestrator" && role !== "human")
     refuse(`${where}'s role is not orchestrator or human.`);
+  if (value["kind"] !== undefined) {
+    const kind = value["kind"];
+    if (
+      typeof kind !== "string" ||
+      !Object.hasOwn(ESCALATION_ENTRY_KINDS, kind) ||
+      ESCALATION_ENTRY_KINDS[kind as EscalationEntryKind] !== role
+    )
+      refuse(`${where}'s kind is not one this DevHub reads.`);
+    const at = finiteTime(value["at"], `${where}'s time`);
+    if (kind === "taken" || kind === "held")
+      return {
+        role,
+        kind,
+        markdown: checkNote(
+          typeof value["markdown"] === "string" ? value["markdown"] : "",
+        ),
+        at,
+      };
+    if (typeof value["agent"] !== "string" || value["agent"] === "")
+      refuse(`${where} names no agent.`);
+    return {
+      role,
+      kind: kind as EscalationEntryKind,
+      agent: value["agent"],
+      markdown: "",
+      at,
+    };
+  }
   if (typeof value["markdown"] !== "string")
     refuse(`${where} has no markdown.`);
   const options =

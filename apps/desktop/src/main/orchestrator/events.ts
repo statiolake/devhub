@@ -82,6 +82,27 @@ export type OrchestratorEvent =
 			readonly title: string;
 			readonly agents: readonly EventAgent[];
 	  }
+	/**
+	 * The person talked to one of an open escalation's agents directly, from
+	 * its own composer, and it took that up (went working). A `needs_answer`
+	 * one has moved to `in_progress`; either way what was said may answer it,
+	 * or change it.
+	 */
+	| {
+			readonly type: "escalation.human_direct";
+			readonly escalationId: number;
+			readonly title: string;
+			readonly agent: EventAgent;
+			/** `agent read --since`: the person's message. */
+			readonly since?: string;
+	  }
+	/** The person moved an escalation to 対応中 without answering it (対応中にする). */
+	| {
+			readonly type: "escalation.taken";
+			readonly escalationId: number;
+			readonly title: string;
+			readonly note?: string;
+	  }
 	/** An agent appeared in 不明: idle, with no open escalation naming it. */
 	| {
 			readonly type: "unaccounted";
@@ -221,6 +242,8 @@ export type OrchestratorEventType = OrchestratorEvent["type"];
 export const EVENT_TYPES = [
 	"init",
 	"escalation_answered",
+	"escalation.human_direct",
+	"escalation.taken",
 	"unaccounted",
 	"github.assigned",
 	"github.unassigned",
@@ -354,6 +377,21 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 					...event.agents.map(agentToken),
 				],
 				summary: "人が回答しました (escalation show で読む)",
+			};
+		case "escalation.taken":
+			return {
+				head: [`esc=${String(event.escalationId)}${title(event.title)}`],
+				summary: `人が対応中にしました${event.note === undefined || event.note === "" ? "" : `: ${excerpt(event.note, 150)}`}`,
+			};
+		case "escalation.human_direct":
+			return {
+				head: [
+					`esc=${String(event.escalationId)}${title(event.title)}`,
+					agentToken(event.agent),
+					...(event.since === undefined ? [] : [`since=${event.since}`]),
+				],
+				summary:
+					"人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります",
 			};
 		case "unaccounted":
 			return {
@@ -562,6 +600,8 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "init":
 			return "init";
 		case "escalation_answered":
+		case "escalation.human_direct":
+		case "escalation.taken":
 			return `esc ${String(event.escalationId)}`;
 		case "unaccounted":
 		case "agent.turn_ended":
@@ -628,6 +668,8 @@ export function facetOf(event: OrchestratorEvent): string {
 			return `pr ${prKey(event.pr)}`;
 		case "workspace.issue_assigned":
 			return `issue ${prKey(event.issue)}`;
+		case "escalation.human_direct":
+			return `${event.type} ${event.agent.id}`;
 		default:
 			return event.type;
 	}
@@ -652,6 +694,8 @@ function accumulates(event: OrchestratorEvent): boolean {
 	return (
 		event.type === "init" ||
 		event.type === "escalation_answered" ||
+		event.type === "escalation.human_direct" ||
+		event.type === "escalation.taken" ||
 		event.type === "github.review_comment" ||
 		event.type === "github.reply" ||
 		event.type === "agent.turn_ended" ||
@@ -706,6 +750,15 @@ export function merge(
 		return undefined;
 	// The latest turn, read from where the first unread one began.
 	if (older.type === "agent.turn_ended" && newer.type === "agent.turn_ended")
+		return {
+			...newer,
+			...(older.since === undefined ? {} : { since: older.since }),
+		};
+	// What the person said, read from their first unread message.
+	if (
+		older.type === "escalation.human_direct" &&
+		newer.type === "escalation.human_direct"
+	)
 		return {
 			...newer,
 			...(older.since === undefined ? {} : { since: older.since }),

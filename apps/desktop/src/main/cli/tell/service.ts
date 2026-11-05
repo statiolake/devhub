@@ -524,6 +524,11 @@ export interface TellOrchestratorPorts {
 	raise(request: TellNewEscalation): EscalationWire;
 	ask(id: number, markdown: string, options: readonly string[]): EscalationWire;
 	close(id: number, note: string | undefined): EscalationWire;
+	/**
+	 * Parked in in_progress by the orchestrator (`escalation hold`): an entry
+	 * on its side, never a human one.
+	 */
+	hold(id: number, note: string | undefined): EscalationWire;
 	link(id: number, agentId: string): EscalationWire;
 	/** Ranked again by the orchestrator. Not an answer: it writes no entry. */
 	rank(id: number, rank: TellEscalationRank): EscalationWire;
@@ -1019,6 +1024,8 @@ export class TellService {
 				return this.listEscalations(command.state);
 			case "escalation-close":
 				return this.closeEscalation(command.id, command.note);
+			case "escalation-hold":
+				return this.holdEscalation(command.id, command.note);
 			case "escalation-link":
 				return this.linkEscalation(command.id, command.agent);
 			case "escalation-rank":
@@ -1217,16 +1224,20 @@ export class TellService {
 						`agents: ${one.agents.map((agent) => `${agent.name ?? "(gone)"} (${agent.agentId})`).join(", ")}`,
 					]),
 			...(one.links.length === 0 ? [] : [`links: ${one.links.join(" ")}`]),
-			...one.entries.flatMap((entry) => [
-				"",
-				`--- ${entry.role === "human" ? "the person (answer)" : "orchestrator"}, ${new Date(entry.at).toISOString()}`,
-				entry.markdown,
-				...(entry.options === undefined
-					? []
+			...one.entries.flatMap((entry) =>
+				entry.kind !== undefined
+					? ["", noteLine(entry)]
 					: [
-							`options: ${entry.options.map((option) => JSON.stringify(option)).join(", ")}`,
-						]),
-			]),
+							"",
+							`--- ${entry.role === "human" ? "the person (answer)" : "orchestrator"}, ${new Date(entry.at).toISOString()}`,
+							entry.markdown,
+							...(entry.options === undefined
+								? []
+								: [
+										`options: ${entry.options.map((option) => JSON.stringify(option)).join(", ")}`,
+									]),
+						],
+			),
 			...(one.closed === undefined
 				? []
 				: [
@@ -1265,6 +1276,14 @@ export class TellService {
 		return {
 			message: `Closed #${String(closed.id)} 「${closed.title}」.`,
 			data: closed,
+		};
+	}
+
+	private holdEscalation(id: number, note: string | undefined): TellAnswer {
+		const held = this.ports.orchestrator.hold(id, note);
+		return {
+			message: `Held #${String(held.id)} 「${held.title}」 in in_progress; 'escalation ask' puts it back to needs_answer.`,
+			data: held,
 		};
 	}
 
@@ -1406,7 +1425,9 @@ export class TellService {
 				.filter((one) =>
 					one.entries
 						.slice(this.memory.escalationSeen(caller, one.id) ?? 0)
-						.some((entry) => entry.role === "human"),
+						.some(
+							(entry) => entry.role === "human" && entry.kind === undefined,
+						),
 				)
 				.map((one) => ({ id: one.id, title: one.title })),
 			unaccounted: board.unaccounted
@@ -3887,4 +3908,20 @@ function rankOf(command: {
 /** `priority high, effort quick: blocks the release`. */
 function rankText(one: EscalationWire): string {
 	return `priority ${one.priority ?? "normal"}, effort ${one.effort ?? "normal"}${one.rankNote === undefined ? "" : `: ${one.rankNote}`}`;
+}
+
+/** `escalation show`'s line for a note (an entry with a `kind`). */
+function noteLine(entry: EscalationWire["entries"][number]): string {
+	const at = new Date(entry.at).toISOString();
+	const note = entry.markdown === "" ? "" : `: ${entry.markdown}`;
+	switch (entry.kind) {
+		case "direct":
+			return `--- the person talked to ${entry.agent ?? "an agent"} directly, ${at} (read it: devhub --tell agent read ${entry.agent ?? "<agent>"})`;
+		case "resumed":
+			return `--- ${entry.agent ?? "an agent"} went back to work, ${at}: no longer waiting for an answer`;
+		case "taken":
+			return `--- the person moved it to in_progress (not an answer), ${at}${note}`;
+		default:
+			return `--- held in in_progress by the orchestrator, ${at}${note}`;
+	}
 }

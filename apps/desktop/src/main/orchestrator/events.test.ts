@@ -109,6 +109,29 @@ describe("an event's line", () => {
 		],
 		[
 			{
+				type: "escalation.human_direct",
+				escalationId: 12,
+				title: "本番DBマイグレーション承認",
+				agent: { id: "a1b2c3d4-0000-4000-8000-000000000000" },
+				since: "e39",
+			},
+			"[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります",
+		],
+		[
+			{
+				type: "escalation.taken",
+				escalationId: 12,
+				title: "本番DBマイグレーション承認",
+				note: "自分で確認する",
+			},
+			"[escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する",
+		],
+		[
+			{ type: "escalation.taken", escalationId: 3, title: "t" },
+			"[escalation.taken] esc=3「t」 — 人が対応中にしました",
+		],
+		[
+			{
 				type: "unaccounted",
 				agent: { id: "e5f6", name: "調査" },
 				idleSince: now - 12 * 60_000,

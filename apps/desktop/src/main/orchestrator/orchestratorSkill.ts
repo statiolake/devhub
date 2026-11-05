@@ -198,6 +198,8 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」
       [agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問
       [escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)
+      [escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります
+      [escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する
       [unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 12m
       [timer.elapsed] sweep
 
@@ -216,6 +218,8 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | --- | --- | --- | --- |
 | 起動 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
 | ボード | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ) | esc, agent |
+| ボード | \`escalation.taken\` | 人が回答を書かずに「対応中にする」でエスカレーションを対応中にした (メモ付きのことも) | esc |
+| ボード | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ) | esc, agent, since |
 | ボード | \`unaccounted\` | エージェントが 不明 に入った | agent, ws |
 | GitHub | \`github.assigned\` / \`github.unassigned\` | 自分へのアサインが付いた / 外れた | ws, agent, URL |
 | GitHub | \`github.lane_changed\` | 自分の Issue / PR の Project レーンが動いた (from → to) | ws, URL |
@@ -259,6 +263,22 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
   \`escalation show\` で回答を読み、**元のエージェントに判断を伝えて作業を
   再開させ**、回答を使い切ったら \`escalation close\` する。追加で聞くことが
   あれば同じチケットに \`escalation ask\` (要回答に戻る)。対応中に放置しない。
+- **要回答 なのは、最後のエントリがあなたの質問のときだけ。** 質問のあとに何か
+  (人の回答、人の「対応中にする」、あなたの \`escalation hold\`、下の自動の注記)
+  が付けば 対応中 になり、あなたが \`escalation ask\` で聞き直すまで 要回答 には
+  戻らない。
+  - 人は回答を書かずに「対応中にする」(メモ付き可) を押すことがある →
+    \`escalation.taken\` が届く。人が自分で動いているので、メモを読み、必要なら
+    エージェントに伝え、結論が出たら close。
+  - 追加調査を任せた等で人を待たせたくないときは \`escalation hold ID --note …\`
+    で自分から 対応中 に置ける (回答にはならない。人の回答は書けない)。
+- **関係エージェントが動き出したら、エスカレーションは 要回答 を離れる。**
+  要回答のエスカレーションの \`agents\` のどれかが idle / 待ちから working に
+  なると、理由が何であれ (人がその会話欄で話しかけた、あなたの \`agent send\`、
+  イベントの注入、resume)、DevHub がスレッドに自動の注記を足して 対応中 にする。
+  あなたが \`escalation ask\` で聞き直す (要回答に戻る) か close するまで対応中の
+  まま。人が直接話しかけた場合だけ \`escalation.human_direct\` が届く
+  (それ以外はあなたが起こしたか、\`agent.turn_ended\` で分かるので届かない)。
 - **不明** (unaccounted): 1 分以上 idle で、どの未完了エスカレーションにも
   名前がないエージェント。**常に空にしておく**。入ったら必ず次のどれか:
   次の作業を渡す / エスカレーションを起こして紐付ける / 終わっていれば
@@ -296,6 +316,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     devhub --tell escalation list --state in_progress
     devhub --tell escalation link 12 --agent B
     devhub --tell escalation close 12 --note "案 A で実装を再開"
+    devhub --tell escalation hold 12 --note "B に追加調査を依頼中"
 
 ## 5. なるべく停めないための心構え
 
@@ -410,6 +431,15 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     ## escalation_answered
     escalation show で回答を読む → 紐付くエージェントに agent send で伝える
     → 使い切ったら escalation close。決定を decisions.md に追記。
+
+    ## escalation.taken
+    escalation show でメモを読む。人が自分で対応中: 関係エージェントに伝え、結論が出たら close。
+
+    ## escalation.human_direct
+    agent read A --since <since=> で人が何を言ったかを読む (escalation show も)。
+    もう答えが出ていれば escalation close (要点を note に)。まだ聞くことが残って
+    いれば escalation ask で質問を更新 (要回答に戻る)。他のエージェントにも
+    関わる決定なら agent send で伝える。決定は decisions.md に追記。
 
     ## unaccounted / agent.turn_ended
     agent read A --since <since=> で差分を読む → 次の作業を send / エスカレーション / stop。

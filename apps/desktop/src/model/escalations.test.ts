@@ -9,8 +9,11 @@ import {
   effortOf,
   escalationState,
   escalationsFromJson,
+  lastAnswer,
   linkAgent,
+  noteWorking,
   openOptions,
+  takeEscalation,
   parseEscalationId,
   priorityOf,
   rankEscalation,
@@ -196,6 +199,61 @@ describe("不明", () => {
   });
 });
 
+describe("DevHub's note that an agent went back to work", () => {
+  it("moves needs_answer to in_progress, and a follow-up moves it back", () => {
+    const noted = noteWorking(raised(), "direct", "a1", 2000);
+    expect(escalationState(noted)).toBe("in_progress");
+    expect(noted.entries.at(-1)).toEqual({
+      role: "human",
+      kind: "direct",
+      agent: "a1",
+      markdown: "",
+      at: 2000,
+    });
+    // Not the person's answer.
+    expect(lastAnswer(noted)).toBeUndefined();
+    const asked = askAgain(noted, "まだ決まっていない点は?", undefined, 3000);
+    expect(escalationState(asked)).toBe("needs_answer");
+    expect(escalationState(noteWorking(asked, "resumed", "a1", 4000))).toBe(
+      "in_progress",
+    );
+  });
+
+  it("is written only on a needs_answer one, about one of its agents", () => {
+    const answered = answerEscalation(raised(), "OK", 2000);
+    expect(() => noteWorking(answered, "direct", "a1", 3000)).toThrow(
+      EscalationError,
+    );
+    expect(() => noteWorking(raised(), "resumed", "zz", 3000)).toThrow(
+      EscalationError,
+    );
+    const closed = closeEscalation(raised(), undefined, 2000);
+    expect(() => noteWorking(closed, "direct", "a1", 3000)).toThrow(
+      EscalationError,
+    );
+  });
+
+  it("reads back from the file", () => {
+    const noted = noteWorking(raised(), "resumed", "a1", 2000);
+    const file = escalationsFromJson(
+      JSON.parse(JSON.stringify({ version: 1, next: 2, escalations: [noted] })),
+    );
+    expect(file.escalations[0]).toEqual(noted);
+    expect(() =>
+      escalationsFromJson({
+        version: 1,
+        next: 2,
+        escalations: [
+          {
+            ...noted,
+            entries: [...noted.entries, { role: "human", kind: "x", at: 3 }],
+          },
+        ],
+      }),
+    ).toThrow(EscalationError);
+  });
+});
+
 describe("the orchestrator's ranking", () => {
   const one = (
     id: number,
@@ -295,6 +353,61 @@ describe("the orchestrator's ranking", () => {
         version: 1,
         escalations: [{ ...ranked, effort: "slow" }],
       }),
+    ).toThrow(EscalationError);
+  });
+});
+
+describe("to in_progress without an answer", () => {
+  it("is the person's taken or the orchestrator's held, until a follow-up", () => {
+    const taken = takeEscalation(raised(), "taken", "  自分で見る ", 2000);
+    expect(escalationState(taken)).toBe("in_progress");
+    expect(taken.entries.at(-1)).toEqual({
+      role: "human",
+      kind: "taken",
+      markdown: "自分で見る",
+      at: 2000,
+    });
+    expect(lastAnswer(taken)).toBeUndefined();
+    expect(openOptions(taken)).toEqual([]);
+    const held = takeEscalation(
+      { ...raised(), id: 2 },
+      "held",
+      undefined,
+      2000,
+    );
+    expect(held.entries.at(-1)).toEqual({
+      role: "orchestrator",
+      kind: "held",
+      markdown: "",
+      at: 2000,
+    });
+    // An orchestrator-side entry, and still not 要回答: only a question is.
+    expect(escalationState(held)).toBe("in_progress");
+    expect(escalationState(askAgain(held, "?", undefined, 3000))).toBe(
+      "needs_answer",
+    );
+    expect(() => takeEscalation(held, "taken", undefined, 3000)).toThrow(
+      EscalationError,
+    );
+    const back = escalationsFromJson(
+      JSON.parse(
+        JSON.stringify({ version: 1, next: 3, escalations: [taken, held] }),
+      ),
+    );
+    expect(back.escalations).toEqual([taken, held]);
+  });
+
+  it("refuses a file whose note claims the other side", () => {
+    const held = takeEscalation(raised(), "held", "x", 2000);
+    const forged = {
+      ...held,
+      entries: [
+        ...held.entries.slice(0, -1),
+        { ...held.entries.at(-1), role: "human" },
+      ],
+    };
+    expect(() =>
+      escalationsFromJson({ version: 1, next: 2, escalations: [forged] }),
     ).toThrow(EscalationError);
   });
 });

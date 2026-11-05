@@ -249,6 +249,7 @@ class FakePorts implements TellPorts {
 		ask: (id, markdown, options) =>
 			this.service.toWire(this.service.ask(id, markdown, options)),
 		close: (id, note) => this.service.toWire(this.service.close(id, note)),
+		hold: (id, note) => this.service.toWire(this.service.hold(id, note)),
 		link: (id, agentId) => this.service.toWire(this.service.link(id, agentId)),
 		rank: (id, rank) => this.service.toWire(this.service.rank(id, rank)),
 		configuredRoot: () => "/Users/me/orchestrator",
@@ -3618,6 +3619,51 @@ describe("the Orchestrator row from the command line", () => {
 		).toMatchObject({ escalations: [{ id: 1, state: "closed" }] });
 	});
 
+	it("holds one in in_progress on the orchestrator's side, never as an answer; ask puts it back", async () => {
+		const { service, ports } = orchestrated();
+		await viaSocket(
+			service,
+			["escalation", "new", "--title", "調査", "--body", "?"],
+			coordinator,
+		);
+		const held = await viaSocket(
+			service,
+			["escalation", "hold", "1", "--note", "B に追加調査を依頼"],
+			coordinator,
+		);
+		expect(held.data).toMatchObject({ state: "in_progress" });
+		const entry = ports.service.escalations()[0]!.entries.at(-1);
+		expect(entry).toEqual({
+			role: "orchestrator",
+			kind: "held",
+			markdown: "B に追加調査を依頼",
+			at: expect.any(Number),
+		});
+		// Not an answer: nothing to report as answered, and nothing the person said.
+		const shown = await viaSocket(
+			service,
+			["escalation", "show", "1"],
+			coordinator,
+		);
+		expect(shown.message).toContain("held in in_progress by the orchestrator");
+		expect(shown.message).not.toContain("the person (answer)");
+		// Only a needs_answer one is held.
+		await expect(
+			viaSocket(service, ["escalation", "hold", "1"], coordinator),
+		).rejects.toThrow(/not waiting for an answer/u);
+		await viaSocket(
+			service,
+			["escalation", "ask", "1", "--body", "結論は?"],
+			coordinator,
+		);
+		expect(ports.service.escalations()[0]!.entries.at(-1)?.role).toBe(
+			"orchestrator",
+		);
+		expect(
+			(await viaSocket(service, ["escalation", "show", "1"], coordinator)).data,
+		).toMatchObject({ state: "needs_answer" });
+	});
+
 	it("ranks escalations: new and rank take the fields, list and board show them, the board sorts by them", async () => {
 		const { service, ports } = orchestrated();
 		const raise = (title: string, ...rank: string[]) =>
@@ -3729,6 +3775,7 @@ describe("the Orchestrator row from the command line", () => {
 				"escalations",
 				"events",
 				"focus",
+				"hold",
 				"link",
 				"pause",
 				"raise",
@@ -3746,6 +3793,8 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(source).not.toMatch(/\.answer\(\s*command\.id/u);
 		expect(source).not.toMatch(/role:\s*"human"/u);
+		// `hold` writes the orchestrator's side, never the person's.
+		expect(source).not.toMatch(/\.take\(/u);
 	});
 
 	it("wakes the orchestrator's wait --any on an answer, until it is shown", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ORCHESTRATOR } from "../../model/orchestratorSettings.js";
 import { EscalationStore } from "./escalationStore.js";
+import { escalationState } from "../../model/escalations.js";
 import { OrchestratorService, type LiveAgent } from "./orchestratorService.js";
 
 const ORCH = "orch-0000";
@@ -120,5 +121,235 @@ describe("the orchestrator's events, re-read before they go", () => {
 			"dropped-stale",
 		]);
 		expect(run.sent[0]).not.toContain("[escalation_answered]");
+	});
+});
+
+/** Past the cursor read: its promise and what it sets off. */
+const tick = () => new Promise((done) => setTimeout(done, 0));
+
+describe("an escalation's agent going back to work", () => {
+	const OTHER = "e5f6a7b8-0000-4000-8000-000000000000";
+
+	/** `world()`, its worker idle and seen so, the orchestrator free. */
+	function settled(cursor: { value?: string } = { value: "e39" }) {
+		const clock = { now: 1_000_000 };
+		const sent: string[] = [];
+		const agents: LiveAgent[] = [ORCH, WORKER, OTHER].map((id) => ({
+			id,
+			name: id === ORCH ? "orchestrator" : `agent ${id.slice(0, 2)}`,
+			workspaceId: "w",
+			workspaceLabel: "w",
+			status: "idle",
+			stopping: false,
+		}));
+		const store = EscalationStore.inMemory();
+		const service = new OrchestratorService({
+			store,
+			agents: () => agents,
+			settings: () => DEFAULT_ORCHESTRATOR,
+			startProblem: () => undefined,
+			deliver: (_agent, text) => sent.push(text),
+			publish: () => undefined,
+			personCursor: () => Promise.resolve(cursor.value),
+			now: () => clock.now,
+		});
+		service.assign(ORCH);
+		service.observe();
+		sent.length = 0;
+		const status = (id: string, to: string) => {
+			(agents.find((one) => one.id === id) as { status: string }).status = to;
+			clock.now += 1_000;
+			service.observe();
+		};
+		const direct = () =>
+			service.events
+				.recent(50)
+				.filter((one) => one.event.type === "escalation.human_direct");
+		return { service, store, sent, status, direct, clock };
+	}
+
+	it("moves a needs_answer one to in_progress on the person's own words, and tells the orchestrator once", async () => {
+		const run = settled();
+		const one = run.service.raise({
+			title: "本番DBマイグレーション承認",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		const now = run.store.require(one.id);
+		expect(escalationState(now)).toBe("in_progress");
+		expect(now.entries.at(-1)).toMatchObject({
+			role: "human",
+			kind: "direct",
+			agent: WORKER,
+		});
+		await tick();
+		expect(run.direct()).toHaveLength(1);
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toContain(
+			`[escalation.human_direct] esc=${String(one.id)}「本番DBマイグレーション承認」 agent=a1b2c3d4 (agent a1) since=e39 — 人がエージェントと直接やりとりしました`,
+		);
+		// Still working: nothing more.
+		run.status(WORKER, "working");
+		expect(run.direct()).toHaveLength(1);
+		// The orchestrator asks again: back to 要回答.
+		run.service.ask(one.id, "staging も?", undefined);
+		expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
+	});
+
+	it("waits for the turn a message held mid-turn starts", async () => {
+		const run = settled();
+		const one = run.service.raise({
+			title: "t",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.status(WORKER, "working");
+		// Working on something else already: the running turn left 要回答 …
+		expect(run.store.require(one.id).entries.at(-1)?.kind).toBe("resumed");
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		expect(run.direct()).toHaveLength(0);
+		run.status(WORKER, "idle");
+		run.status(WORKER, "working");
+		await tick();
+		// … and an in_progress one is still told, but not written to.
+		expect(run.direct()).toHaveLength(1);
+		expect(
+			run.store.require(one.id).entries.filter((entry) => entry.kind),
+		).toHaveLength(1);
+	});
+
+	it("moves it for any other cause too, with a resumed note and no event", () => {
+		for (const how of ["agent send", "an injected event", "a resume"]) {
+			const run = settled();
+			const one = run.service.raise({
+				title: how,
+				markdown: "?",
+				agents: [WORKER],
+			});
+			// None of these comes through `personSent`.
+			run.status(WORKER, "working");
+			const now = run.store.require(one.id);
+			expect(escalationState(now)).toBe("in_progress");
+			expect(now.entries.at(-1)).toMatchObject({
+				kind: "resumed",
+				agent: WORKER,
+			});
+			expect(run.direct()).toHaveLength(0);
+			expect(run.sent).toEqual([]);
+			run.service.ask(one.id, "もう一度", undefined);
+			expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
+		}
+	});
+
+	it("leaves alone an escalation about other agents, and a closed one", () => {
+		const run = settled();
+		const elsewhere = run.service.raise({
+			title: "t",
+			markdown: "?",
+			agents: [OTHER],
+		});
+		const closed = run.service.raise({
+			title: "c",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.service.close(closed.id, undefined);
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		expect(run.store.require(elsewhere.id).entries).toHaveLength(1);
+		expect(run.store.require(closed.id).entries).toHaveLength(1);
+		expect(run.direct()).toHaveLength(0);
+		expect(run.sent).toEqual([]);
+	});
+
+	it("drops the event when the escalation is closed before it goes", async () => {
+		const run = settled();
+		const one = run.service.raise({
+			title: "t",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.service.events.pause();
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		await tick();
+		run.service.close(one.id, "直接決まった");
+		await run.service.events.resume();
+		expect(run.direct()[0]?.fate).toBe("dropped-stale");
+		expect(run.sent).toEqual([]);
+	});
+
+	it("says one line per escalation, read from the person's first message", async () => {
+		const cursor = { value: "e10" };
+		const run = settled(cursor);
+		const one = run.service.raise({
+			title: "t",
+			markdown: "?",
+			agents: [WORKER, OTHER],
+		});
+		run.service.events.pause();
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		await tick();
+		run.status(WORKER, "idle");
+		cursor.value = "e20";
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		await tick();
+		run.service.personSent(OTHER);
+		run.status(OTHER, "working");
+		await tick();
+		const lines = run.service.events.heldLines();
+		expect(lines).toHaveLength(1);
+		expect(lines[0]!.event).toMatchObject({
+			type: "escalation.human_direct",
+			escalationId: one.id,
+			agent: { id: OTHER },
+		});
+		expect(lines[0]!.also).toEqual([
+			expect.objectContaining({
+				agent: expect.objectContaining({ id: WORKER }),
+				since: "e10",
+			}),
+		]);
+		expect(
+			run.service.events
+				.recent(50)
+				.filter((entry) => entry.fate === "coalesced"),
+		).toHaveLength(1);
+		await run.service.events.resume();
+		expect(run.sent).toHaveLength(1);
+		expect(
+			run.sent[0]!.split("\n").filter((line) => line.includes("esc=")),
+		).toHaveLength(1);
+	});
+});
+
+describe("対応中にする", () => {
+	it("moves it to in_progress and tells the orchestrator, with the note", () => {
+		const run = world();
+		const one = run.service.raise({ title: "承認", markdown: "?" });
+		run.service.take(one.id, "自分で確認する");
+		expect(escalationState(run.service.escalations()[0]!)).toBe("in_progress");
+		run.free();
+		expect(run.sent[0]).toContain(
+			"[escalation.taken] esc=1「承認」 — 人が対応中にしました: 自分で確認する",
+		);
+	});
+
+	it("is dropped when closed before it goes; hold tells nobody", () => {
+		const run = world();
+		const one = run.service.raise({ title: "承認", markdown: "?" });
+		run.service.take(one.id, "");
+		run.service.close(one.id, undefined);
+		const two = run.service.raise({ title: "調査", markdown: "?" });
+		run.service.hold(two.id, "B に依頼");
+		run.free();
+		expect(run.fates()).toContainEqual(["escalation.taken", "dropped-stale"]);
+		expect(run.sent.join("\n")).not.toContain("[escalation.taken]");
+		expect(run.fates().map(([type]) => type)).not.toContain("escalation.held");
 	});
 });

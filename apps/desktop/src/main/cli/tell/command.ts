@@ -276,6 +276,12 @@ export type TellCommand =
 			readonly note?: string;
 	  }
 	| {
+			/** Parked in in_progress by the orchestrator: never an answer. */
+			readonly verb: "escalation-hold";
+			readonly id: number;
+			readonly note?: string;
+	  }
+	| {
 			readonly verb: "escalation-link";
 			readonly id: number;
 			readonly agent: string;
@@ -595,6 +601,10 @@ orchestrator (the Orchestrator row: the board, escalations, events)
   escalation list [--state needs_answer|in_progress|closed]
   escalation close <id> [--note <text>]
                                    the answer is used up: close it
+  escalation hold <id> [--note <text>]
+                                   park a needs_answer one in in_progress
+                                   while you work on it (not an answer; back
+                                   to needs_answer with 'escalation ask')
   escalation rank <id> [--priority high|normal|low]
                  [--effort quick|normal|deep] [--rank-note <text>]
                                    rank it again as things change (a
@@ -1134,6 +1144,15 @@ function parseEscalation(
 				...defined({ note: one(flags, "--note") }),
 			};
 		}
+		case "hold": {
+			const flags = readFlags(rest, { values: ["--note"], switches: [] });
+			const [id] = positionals(flags, ["<id>"]);
+			return {
+				verb: "escalation-hold",
+				id: escalationId(id),
+				...defined({ note: one(flags, "--note") }),
+			};
+		}
 		case "link": {
 			const flags = readFlags(rest, { values: ["--agent"], switches: [] });
 			const [id] = positionals(flags, ["<id>"]);
@@ -1147,7 +1166,7 @@ function parseEscalation(
 			);
 		default:
 			throw new Refusal(
-				"escalation takes: new, ask, show, list, close, link, rank.",
+				"escalation takes: new, ask, show, list, close, hold, link, rank.",
 			);
 	}
 }
@@ -2043,6 +2062,12 @@ export function tellCommandFrom(value: unknown): TellCommand {
 		case "escalation-close":
 			return {
 				verb: "escalation-close",
+				id: integer(record["id"], "id", 1, 999_999_999),
+				...optionalText(record, "note"),
+			};
+		case "escalation-hold":
+			return {
+				verb: "escalation-hold",
 				id: integer(record["id"], "id", 1, 999_999_999),
 				...optionalText(record, "note"),
 			};

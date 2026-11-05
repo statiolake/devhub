@@ -13,6 +13,14 @@
  * `unaccountedAgents`): when an agent went idle is this service's own
  * reading of every snapshot, and an agent that crosses the grace is told to
  * the orchestrator once (`unaccounted` event) for each time it went idle.
+ *
+ * An escalation's agent going back to work is watched here too
+ * (`#watchWorking`): a `needs_answer` escalation about it gets DevHub's note
+ * and so moves to `in_progress` until the orchestrator asks again. When the
+ * person set it going from that agent's own composer (`personSent`; not
+ * `agent send`, not an event or a template), every open escalation about it
+ * is told to the orchestrator (`escalation.human_direct`), since what was
+ * said may answer or change it.
  */
 
 import type {
@@ -78,6 +86,13 @@ export interface OrchestratorServicePorts {
 	readonly paused?: (paused: boolean) => Promise<void> | void;
 	/** How GitHub polling stands, for the board's header. */
 	readonly github?: () => OrchestratorBoardWire["github"];
+	/**
+	 * The cursor (`agent read --since`) of the person's last message to
+	 * `agentId`, read off its conversation; undefined when it has none.
+	 */
+	readonly personCursor?: (
+		agentId: string,
+	) => Promise<string | undefined> | string | undefined;
 	readonly now?: () => number;
 	readonly setTimer?: (ms: number, run: () => void) => { cancel(): void };
 	readonly log?: (line: string) => void;
@@ -104,6 +119,14 @@ export class OrchestratorService {
 	readonly #idleSince = new Map<string, number>();
 	/** `agentId@idleSince`, once told: one event per stretch of idleness. */
 	readonly #told = new Set<string>();
+	/**
+	 * The agents the person has just written to from their composer, until
+	 * they are seen to take it up: `armed` once seen not working (a message
+	 * held mid-turn starts the turn after the one running).
+	 */
+	readonly #direct = new Map<string, { armed: boolean }>();
+	/** Each agent's status at the last projection: what moved to working. */
+	readonly #status = new Map<string, string>();
 	#revision = 0;
 	#timer: { cancel(): void } | undefined;
 	#graceMs = UNACCOUNTED_GRACE_MS;
@@ -198,7 +221,9 @@ export class OrchestratorService {
 				return agent(event.agent.id)?.status === "waiting";
 			case "agent.started":
 				return agent(event.agent.id) !== undefined;
-			case "escalation_answered": {
+			case "escalation_answered":
+			case "escalation.human_direct":
+			case "escalation.taken": {
 				const one = this.ports.store
 					.all()
 					.find((escalation) => escalation.id === event.escalationId);
@@ -252,8 +277,21 @@ export class OrchestratorService {
 		return this.ports.store.close(id, note, this.#now());
 	}
 
+	/**
+	 * `escalation hold`: the orchestrator parks it in 対応中 while it works on
+	 * it. A `held` note, on the orchestrator's side: never an answer.
+	 */
+	hold(id: number, note: string | undefined): Escalation {
+		return this.ports.store.take(id, "held", note, this.#now());
+	}
+
 	link(id: number, agentId: string): Escalation {
 		return this.ports.store.link(id, agentId, this.#now());
+	}
+
+	/** The id `raise` will give the next one: its pictures' folder is named for it. */
+	nextEscalationId(): number {
+		return this.ports.store.nextId;
 	}
 
 	rank(id: number, rank: EscalationRank): Escalation {
@@ -261,6 +299,22 @@ export class OrchestratorService {
 	}
 
 	// --- the person's side -----------------------------------------------------
+
+	/**
+	 * The person's 対応中にする, from the window: to `in_progress` without an
+	 * answer, and the orchestrator is told.
+	 */
+	take(id: number, note: string | undefined): Escalation {
+		const taken = this.ports.store.take(id, "taken", note, this.#now());
+		const written = taken.entries.at(-1)?.markdown ?? "";
+		this.events.dispatch({
+			type: "escalation.taken",
+			escalationId: taken.id,
+			title: taken.title,
+			...(written === "" ? {} : { note: written }),
+		});
+		return taken;
+	}
 
 	/** The person's answer, from the window. Moves it to in_progress. */
 	answer(id: number, markdown: string): Escalation {
@@ -277,6 +331,81 @@ export class OrchestratorService {
 			}),
 		});
 		return answered;
+	}
+
+	/**
+	 * The person sent `agentId` a message from its own composer in the window
+	 * — the conversation IPC's submit, and nothing else (`agent send`, the
+	 * orchestrator's events and templates never come here). Told once the
+	 * agent is seen to start working on it (`observe`).
+	 */
+	personSent(agentId: string): void {
+		const live = this.ports.agents().find((one) => one.id === agentId);
+		if (live === undefined) return;
+		this.#direct.set(agentId, { armed: live.status !== "working" });
+	}
+
+	/**
+	 * Every agent that went from waiting (idle, or stopped on a question) to
+	 * working since the last projection: a `needs_answer` escalation about it
+	 * leaves 要回答 (DevHub's note: `direct` when the person's own composer
+	 * set it going, `resumed` for anything else), and stays out until the
+	 * orchestrator asks again. Only the person's words are told (`escalation.
+	 * human_direct`, for every open escalation about the agent): anything
+	 * else the orchestrator caused, or hears of as `agent.turn_ended`.
+	 */
+	#watchWorking(agents: readonly LiveAgent[], now: number): void {
+		const before = new Map(this.#status);
+		this.#status.clear();
+		for (const agent of agents) {
+			this.#status.set(agent.id, agent.status);
+			const mark = this.#direct.get(agent.id);
+			if (agent.status !== "working") {
+				if (mark !== undefined) mark.armed = true;
+				continue;
+			}
+			const was = before.get(agent.id);
+			if (was !== "idle" && was !== "waiting") continue;
+			const byPerson = mark?.armed === true;
+			if (byPerson) this.#direct.delete(agent.id);
+			this.#startedWorking(agent, byPerson, now);
+		}
+		for (const id of [...this.#direct.keys()])
+			if (!this.#status.has(id)) this.#direct.delete(id);
+	}
+
+	#startedWorking(agent: LiveAgent, byPerson: boolean, now: number): void {
+		if (agent.id === this.ports.store.orchestratorAgentId) return;
+		const about = this.ports.store
+			.all()
+			.filter((one) => isOpen(one) && one.agents.includes(agent.id));
+		if (about.length === 0) return;
+		const told: Escalation[] = [];
+		for (const one of about)
+			told.push(
+				escalationState(one) === "needs_answer"
+					? this.ports.store.note(
+							one.id,
+							byPerson ? "direct" : "resumed",
+							agent.id,
+							now,
+						)
+					: one,
+			);
+		if (!byPerson) return;
+		const say = (since: string | undefined) => {
+			for (const one of told)
+				this.events.dispatch({
+					type: "escalation.human_direct",
+					escalationId: one.id,
+					title: one.title,
+					agent: { id: agent.id, name: agent.name },
+					...(since === undefined ? {} : { since }),
+				});
+		};
+		const cursor = this.ports.personCursor?.(agent.id);
+		if (cursor instanceof Promise) void cursor.catch(() => undefined).then(say);
+		else say(cursor);
 	}
 
 	// --- live state ------------------------------------------------------------
@@ -299,6 +428,7 @@ export class OrchestratorService {
 		}
 		for (const id of [...this.#idleSince.keys()])
 			if (!live.has(id)) this.#idleSince.delete(id);
+		this.#watchWorking(agents, now);
 		this.#announceUnaccounted(now);
 		this.#schedule(now);
 		// The orchestrator's status may have moved: what waits for it may go.
@@ -378,6 +508,8 @@ export class OrchestratorService {
 				markdown: entry.markdown,
 				at: entry.at,
 				...(entry.options === undefined ? {} : { options: entry.options }),
+				...(entry.kind === undefined ? {} : { kind: entry.kind }),
+				...(entry.agent === undefined ? {} : { agent: entry.agent }),
 			})),
 			agents: one.agents.map((agentId) => {
 				const agent = agents.get(agentId);

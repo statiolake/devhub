@@ -522,6 +522,14 @@ export interface EscalationEntryWire {
 	/** ms since the epoch. */
 	readonly at: number;
 	readonly options?: readonly string[];
+	/**
+	 * A note, not a question or an answer (`model/escalations.ts`):
+	 * `direct` / `resumed`, `agent` went working; `taken`, the person's
+	 * 対応中にする; `held`, the orchestrator's `escalation hold` (`markdown`
+	 * their optional note).
+	 */
+	readonly kind?: "direct" | "resumed" | "taken" | "held";
+	readonly agent?: string;
 }
 
 /** An agent an escalation is about, as the board names it. */
@@ -688,6 +696,25 @@ export interface OrchestratorFilesBridge {
 	): () => void;
 }
 
+/**
+ * What an escalation's thread draws from files — a screenshot, an SVG, a
+ * diagram file — read the way a conversation reads its embeds (the same
+ * readers, the same rules: absolute, a kind an embed draws) on this Mac,
+ * so an escalation draws whether or not its agents are still there.
+ */
+export interface EscalationEmbedsBridge {
+	resolveEscalationPaths(
+		cwd: string | undefined,
+		paths: readonly string[],
+	): Promise<readonly (string | null)[]>;
+	readEscalationEmbed(path: string): Promise<{
+		readonly mediaType: string;
+		readonly bytes: Uint8Array;
+		readonly signature: string;
+	} | null>;
+	escalationEmbedSignature(path: string): Promise<string | null>;
+}
+
 /** What the Orchestrator screen does that no other page may. */
 export interface OrchestratorActionsBridge {
 	/**
@@ -695,6 +722,11 @@ export interface OrchestratorActionsBridge {
 	 * written**: no `devhub --tell` command reaches it.
 	 */
 	answerEscalation(id: number, markdown: string): Promise<void>;
+	/**
+	 * The person's 対応中にする: a `needs_answer` escalation to `in_progress`
+	 * without an answer, with an optional note. The window's only.
+	 */
+	takeEscalation(id: number, note: string): Promise<void>;
 	/** Start the orchestrator from `[orchestrator]`, as the board's button does. */
 	startOrchestrator(): Promise<void>;
 	/** Hold the orchestrator's events (true), or deliver them again (false). */
@@ -1594,7 +1626,8 @@ export interface AgentsBridge
 		AgentActionsBridge,
 		OrchestratorBoardBridge,
 		OrchestratorActionsBridge,
-		OrchestratorFilesBridge {
+		OrchestratorFilesBridge,
+		EscalationEmbedsBridge {
 	/** Put a modal on screen — an injection to review. */
 	openModal(request: ModalRequest): Promise<string>;
 	openExternalUrl(url: string): Promise<void>;
@@ -2111,11 +2144,15 @@ export const CHANNELS = {
 	getUsageLimits: "devhub:get-usage-limits",
 	getOrchestratorBoard: "devhub:get-orchestrator-board",
 	answerEscalation: "devhub:answer-escalation",
+	takeEscalation: "devhub:take-escalation",
 	startOrchestrator: "devhub:start-orchestrator",
 	setOrchestratorPaused: "devhub:set-orchestrator-paused",
 	listOrchestratorFolder: "devhub:list-orchestrator-folder",
 	readOrchestratorFile: "devhub:read-orchestrator-file",
 	openOrchestratorFile: "devhub:open-orchestrator-file",
+	resolveEscalationPaths: "devhub:resolve-escalation-paths",
+	readEscalationEmbed: "devhub:read-escalation-embed",
+	escalationEmbedSignature: "devhub:escalation-embed-signature",
 	cloneProject: "devhub:clone-project",
 	projectDefaultDirectory: "devhub:project-default-directory",
 	listSshHosts: "devhub:list-ssh-hosts",

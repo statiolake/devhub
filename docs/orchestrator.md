@@ -46,22 +46,41 @@ An escalation is a request for a human decision or permission, raised by the
 orchestrator when work cannot go on without one. It is a **thread**:
 
 ```text
-{ id, title, entries: [{ role: orchestrator|human, markdown, at, options? }],
+{ id, title, entries: [{ role: orchestrator|human, markdown, at, options?,
+                          kind?: direct|resumed, agent? }],
   agents: [agent ids], workspaceId?, links: [urls], createdAt, updatedAt,
   closed?: { at, note? } }
 ```
 
-Its state is **read off the thread** (`model/escalations.ts`), never stored:
+Its state is **read off the thread** (`model/escalations.ts`), never stored,
+by **one rule**: it is 要回答 exactly while the last entry is a question.
 
-| state          | when                                 | lane   |
-| -------------- | ------------------------------------ | ------ |
-| `needs_answer` | the last entry is the orchestrator's | 要回答 |
-| `in_progress`  | the last entry is the person's       | 対応中 |
-| `closed`       | closed (`escalation close`)          | hidden |
+| state          | when                                                     | lane   |
+| -------------- | -------------------------------------------------------- | ------ |
+| `needs_answer` | the last entry is a question (the orchestrator's, no `kind`) | 要回答 |
+| `in_progress`  | anything else is last                                    | 対応中 |
+| `closed`       | closed (`escalation close`)                              | hidden |
 
-So the person's answer moves it to 対応中 by being an answer, and a follow-up
-question on the same ticket (`escalation ask`) moves it back to 要回答. Once
-the answer has been used up the orchestrator closes it.
+Whatever comes after a question takes it to 対応中, and only another
+question (`escalation ask`) brings it back to 要回答; once the matter is done
+the orchestrator closes it. What can come after a question (`role` is whose
+side it is on; only the window writes `human` entries):
+
+| entry | role | written by | thread shows |
+| --- | --- | --- | --- |
+| an answer | `human` | the person, in the board's composer | their Markdown |
+| `kind: "taken"` | `human` | the person's 対応中にする (card or reading view), with an optional note | 「人が対応中にしました（{time}）[: note]」 |
+| `kind: "held"` | `orchestrator` | `escalation hold ID [--note TEXT]`: parked while it works on it (e.g. more investigation delegated). Never an answer | 「オーケストレーターが対応中にしました（{time}）[: note]」 |
+| `kind: "direct"` | `human` | DevHub: one of its `agents` went from idle (or stopped on a question) to working on the person's message from **that agent's own composer** (the conversation IPC's submit: not `agent send`, not an event or a template) | 「人が {agent} と直接やりとりしました（{time}）— 内容はエージェントの会話を参照」, with a chip to the agent |
+| `kind: "resumed"` | `orchestrator` | DevHub: one of its `agents` went working for any other reason (the orchestrator's `agent send`, an injected event, a resume) | 「{agent} が作業を再開しました（{time}）— 回答待ちは一旦解除」 |
+
+The notes (`kind`) have no answer in them: `escalation show` prints them as
+notes, and `agent wait --any` does not report them as answered. DevHub
+writes `direct` / `resumed` (`OrchestratorService`) only on a 要回答 one; the
+orchestrator is told of `taken` (`escalation.taken`) and of the person's
+direct words (`escalation.human_direct`, also for one already 対応中: what was
+said may answer or change it), not of `held` (its own) or `resumed` (it
+caused it, or hears of it as `agent.turn_ended`).
 
 They are kept per profile in `<userData>/devhub/escalations.json`, written
 whole and atomically on every change; a file that does not read is moved to
@@ -177,6 +196,8 @@ pulls the details itself. `{EVENT}` holds these lines.
 | --- | --- | --- |
 | `init` | the orchestrator starts (`init_prompt` if set) | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認` |
 | `escalation_answered` | the person answered an escalation | `[escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)` |
+| `escalation.taken` | the person moved an escalation to 対応中 without answering (対応中にする) | `[escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する` |
+| `escalation.human_direct` | the person talked directly to an open escalation's agent, from its composer, and it went working (要回答 → 対応中) | `[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります` |
 | `unaccounted` | an agent entered 不明 | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m` |
 | `github.assigned` / `github.unassigned` | the viewer was assigned to / taken off a card | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200` |
 | `github.lane_changed` | a card of the viewer's moved lane (Status) | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123` |
@@ -227,7 +248,10 @@ line per subject.** The pending buffer holds action items, not a log.
   - a merge or a close (and an agent's exit, a Workspace's close) replaces
     whatever else was pending about its subject;
   - an agent's repeated `turn_ended` keep the latest excerpt and the first
-    unread `since`; a timer has at most one pending event;
+    unread `since`; so does `escalation.human_direct` per agent (its subject
+    is the escalation, so it shares a line with an `escalation_answered` or
+    an `escalation.taken`);
+    a timer has at most one pending event;
   - different statements about one subject share its line, the latest
     leading it with its `[type]`, the others after `／ [type] …`, without the
     ids the line already has: `[github.pr_approved] PR #130「ログイン修正」 —
@@ -240,12 +264,15 @@ line per subject.** The pending buffer holds action items, not a log.
   now named by an open escalation; a `turn_ended` whose agent is working
   again (someone has given it work; its output stays readable with `agent
   read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
-  longer waits on it; an `escalation_answered` whose escalation is closed.
+  longer waits on it; an `escalation_answered`, `escalation.taken` or
+  `escalation.human_direct` whose escalation is closed.
 - **Never said twice.** What the last delivery said about a subject is not
   delivered again (`repeat`) unless something about that subject has been
   heard since — a repeated `unaccounted` for the same idle period, the same
   CI result on the same commit. Events that add news each time (`init`,
-  `escalation_answered`, review comments, replies, turns, timers, `custom.*`)
+  `escalation_answered`, `escalation.taken`, `escalation.human_direct`,
+  review comments, replies,
+  turns, timers, `custom.*`)
   are never repeats.
 - **Batching.** Lines wait while the orchestrator is mid-turn (working, on a
   question, or with something of ours still queued for it) or paused, and go
@@ -274,7 +301,7 @@ line per subject.** The pending buffer holds action items, not a log.
 ### The sources
 
 - **The board** (`orchestratorService.ts`): `init`, `escalation_answered`,
-  `unaccounted`.
+  `escalation.taken`, `escalation.human_direct`, `unaccounted`.
 - **GitHub** (`githubEvents.ts`), while an orchestrator runs and
   `[orchestrator.github] projects` names a board. Scope: the cards on those
   Projects (v2) boards that relate to the viewer — assigned to them, authored
@@ -394,8 +421,8 @@ type (`agent.turn_ended`), a family (`github.*`) or `*`, each optionally after
 goes. The default is everything but the chatter:
 
 ```toml
-events = ["init", "escalation_answered", "unaccounted", "github.*",
-  "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
+events = ["init", "escalation_answered", "escalation.human_direct",
+  "escalation.taken", "unaccounted", "github.*", "workspace.issue_assigned", "workspace.pr_linked", "agent.turn_ended",
   "agent.asked", "agent.exited", "agent.failed", "timer.*", "custom.*"]
 ```
 
@@ -416,6 +443,7 @@ devhub --tell escalation show ID [--json]           # the thread (acknowledges t
 devhub --tell escalation list [--state needs_answer|in_progress|closed] [--json]
 devhub --tell escalation close ID [--note TEXT]
 devhub --tell escalation link ID --agent A
+devhub --tell escalation hold ID [--note TEXT]      # park it in 対応中 (not an answer)
 devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -|TEXT]
 devhub --tell orchestrator status [--json]          # its agent, state, lane counts, pause, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
@@ -444,7 +472,11 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
   the optional `{EVENT_JSON}`, coalescing, held mid-turn and while paused,
   the `events` filter), the event types (its table is tested against
   `EVENT_TYPES`), what each lane asks of the orchestrator (要回答 waits, 対応中 is
-  relayed to the agent and closed, 不明 is kept empty), the escalation
+  relayed to the agent and closed, 不明 is kept empty; a related agent that
+  goes working takes an escalation out of 要回答 until it is asked again, and
+  on `escalation.human_direct` it reads what the person said with
+  `agent read --since`, then closes the escalation, asks again with what is
+  still open, or relays the decision to other agents), the escalation
   principles and template below, how to keep work moving (no idle agent
   without a reason, `agent read --since`, permission prompts are the
   person's, no `focus` unasked), the CLI it uses, and an interview: the

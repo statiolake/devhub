@@ -300,7 +300,9 @@ describe("the orchestrator's ranking on the board", () => {
       ],
     });
     const ask = screen.getByRole("region", { name: "要回答" });
-    const [first, second] = within(ask).getAllByRole("button");
+    const [first, second] = [
+      ...ask.querySelectorAll<HTMLElement>(".orchestrator-card"),
+    ];
     expect(within(first!).getByText("優先")).toBeVisible();
     expect(within(first!).getByText("すぐ答えられる")).toBeVisible();
     expect(

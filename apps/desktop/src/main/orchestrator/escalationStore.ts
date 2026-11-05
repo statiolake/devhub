@@ -37,6 +37,8 @@ import {
 	linkAgent,
 	rankEscalation,
 	type EscalationRank,
+	noteWorking,
+	takeEscalation,
 	type Escalation,
 	type EscalationsFile,
 	type NewEscalation,
@@ -126,6 +128,11 @@ export class EscalationStore {
 		return found;
 	}
 
+	/** The number the next escalation will get. */
+	get nextId(): number {
+		return this.#file.next;
+	}
+
 	get orchestratorAgentId(): string | undefined {
 		return this.#file.orchestratorAgentId;
 	}
@@ -172,6 +179,33 @@ export class EscalationStore {
 
 	close(id: number, note: string | undefined, now: number): Escalation {
 		return this.#replace(closeEscalation(this.require(id), note, now));
+	}
+
+	/**
+	 * DevHub's note that `agentId` went back to work (`noteWorking`): the
+	 * person talked to it directly, or it resumed. Reached from the
+	 * orchestrator service seeing it happen, and nothing else.
+	 */
+	note(
+		id: number,
+		kind: "direct" | "resumed",
+		agentId: string,
+		now: number,
+	): Escalation {
+		return this.#replace(noteWorking(this.require(id), kind, agentId, now));
+	}
+
+	/**
+	 * To `in_progress` without an answer (`takeEscalation`): `taken`, the
+	 * person's, from the window's bridge only; `held`, the orchestrator's.
+	 */
+	take(
+		id: number,
+		kind: "taken" | "held",
+		note: string | undefined,
+		now: number,
+	): Escalation {
+		return this.#replace(takeEscalation(this.require(id), kind, note, now));
 	}
 
 	link(id: number, agentId: string, now: number): Escalation {

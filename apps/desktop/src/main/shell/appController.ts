@@ -354,6 +354,7 @@ import {
 	ensureOrchestratorRoot,
 	expandOrchestratorRoot,
 } from "../orchestrator/root.js";
+import { importEscalationFiles } from "../orchestrator/escalationFiles.js";
 import {
 	insideRoot,
 	listFolder,
@@ -1609,6 +1610,8 @@ export class AppController {
 						);
 				}
 			},
+			// The person's own words to an Agent: the orchestrator watches them.
+			personSent: (agentId) => this.orchestrator?.personSent(agentId),
 			fail: (error) => namedFailure(error),
 		});
 		// The Sidebar's usage-limits readout, from what the GUI Agents report
@@ -9211,6 +9214,55 @@ export class AppController {
 		return root;
 	}
 
+	/**
+	 * What an escalation's relative paths are relative to: its workspace,
+	 * else its first agent's, else the orchestrator's folder.
+	 */
+	private escalationBase(
+		workspaceId: string | undefined,
+		agents: readonly string[],
+	): string | undefined {
+		const model = this.coordinator.model;
+		const named =
+			workspaceId === undefined
+				? undefined
+				: model.workspaces.find((one) => one.id === workspaceId);
+		const first = agents[0];
+		const ofAgent =
+			first === undefined
+				? undefined
+				: model.workspaceForAgent(parseAgentId(first));
+		const workspace = [named, ofAgent].find(
+			(one) => one !== undefined && one.location.kind === "local",
+		);
+		return workspace?.root ?? this.orchestratorFilesRoot();
+	}
+
+	/**
+	 * The body with the local images it names copied into the escalation's
+	 * own folder and pointed at (`orchestrator/escalationFiles.ts`), from
+	 * the open Workspaces or the orchestrator's folder only.
+	 */
+	private withEscalationFiles(
+		markdown: string,
+		id: number,
+		workspaceId: string | undefined,
+		agents: readonly string[],
+	): string {
+		if (this.userDataPath === undefined) return markdown;
+		const roots = this.coordinator.model.workspaces
+			.filter((one) => one.location.kind === "local")
+			.map((one) => one.root as string);
+		const orchestratorRoot = this.orchestratorFilesRoot();
+		return importEscalationFiles(markdown, {
+			storeRoot: join(this.userDataPath, "devhub", "escalations"),
+			id,
+			baseDir: this.escalationBase(workspaceId, agents),
+			allowedRoots:
+				orchestratorRoot === undefined ? roots : [...roots, orchestratorRoot],
+		}).markdown;
+	}
+
 	/** The watch on the Files tab's folder: one, on the root last listed. */
 	private orchestratorFilesWatch:
 		| { readonly root: string; readonly stop: () => void }
@@ -9324,6 +9376,14 @@ export class AppController {
 				return { cancel: () => clearTimeout(timer) };
 			},
 			log: (line) => console.log(line),
+			// `since=` of `escalation.human_direct`: the person's last message.
+			personCursor: async (agentId) => {
+				const conversation = await this.tellPorts().conversation(agentId);
+				return conversation
+					?.entries()
+					.findLast((one) => one.kind === "user" && one.origin === "person")
+					?.id;
+			},
 		});
 		this.syncOrchestrator();
 	}
@@ -9685,7 +9745,12 @@ export class AppController {
 					orchestrator().toWire(
 						orchestrator().raise({
 							title: request.title,
-							markdown: request.markdown,
+							markdown: this.withEscalationFiles(
+								request.markdown,
+								orchestrator().nextEscalationId(),
+								request.workspaceId,
+								request.agents,
+							),
 							options: request.options,
 							agents: request.agents,
 							links: request.links,
@@ -9695,10 +9760,29 @@ export class AppController {
 							rank: request.rank,
 						}),
 					),
-				ask: (id, markdown, options) =>
-					orchestrator().toWire(orchestrator().ask(id, markdown, options)),
+				ask: (id, markdown, options) => {
+					const one = orchestrator()
+						.allWires()
+						.find((escalation) => escalation.id === id);
+					return orchestrator().toWire(
+						orchestrator().ask(
+							id,
+							one === undefined
+								? markdown
+								: this.withEscalationFiles(
+										markdown,
+										id,
+										one.workspaceId,
+										one.agents.map((agent) => agent.agentId),
+									),
+							options,
+						),
+					);
+				},
 				close: (id, note) =>
 					orchestrator().toWire(orchestrator().close(id, note)),
+				hold: (id, note) =>
+					orchestrator().toWire(orchestrator().hold(id, note)),
 				link: (id, agentId) =>
 					orchestrator().toWire(orchestrator().link(id, agentId)),
 				rank: (id, rank) =>
@@ -11373,6 +11457,16 @@ export class AppController {
 				}
 			},
 		);
+		// The person's 対応中にする: the window's, like an answer.
+		handle(CHANNELS.takeEscalation, (_event, id: unknown, note: unknown) => {
+			try {
+				if (typeof id !== "number" || typeof note !== "string")
+					throw new Error("対応中にする names an escalation and a note");
+				this.requireOrchestrator().take(id, note);
+			} catch (error: unknown) {
+				throw namedFailure(error);
+			}
+		});
 		handle(CHANNELS.startOrchestrator, async () => {
 			try {
 				await this.startOrchestratorFromWindow();
@@ -11411,6 +11505,31 @@ export class AppController {
 				throw namedFailure(error);
 			}
 		});
+		// An escalation's embeds: the conversation's own readers, on this Mac
+		// (its pictures are copied here when it is raised: `escalationFiles.ts`).
+		handle(
+			CHANNELS.resolveEscalationPaths,
+			(_event, cwd: unknown, paths: unknown) => {
+				if (cwd !== undefined && typeof cwd !== "string")
+					throw new Error(`${JSON.stringify(cwd)} is not a directory`);
+				if (
+					!Array.isArray(paths) ||
+					!paths.every((path): path is string => typeof path === "string")
+				)
+					throw new Error(`${JSON.stringify(paths)} is not a list of paths`);
+				return resolvePathCandidates(
+					runtimeById("local"),
+					cwd === undefined ? undefined : expandOrchestratorRoot(cwd),
+					paths,
+				);
+			},
+		);
+		handle(CHANNELS.readEscalationEmbed, (_event, path: unknown) =>
+			readEmbedFile(runtimeById("local"), path),
+		);
+		handle(CHANNELS.escalationEmbedSignature, (_event, path: unknown) =>
+			embedSignature(runtimeById("local"), path),
+		);
 		handle(CHANNELS.openOrchestratorFile, async (_event, path: unknown) => {
 			try {
 				await this.openOrchestratorFile(path);

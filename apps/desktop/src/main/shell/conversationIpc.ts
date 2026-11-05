@@ -94,6 +94,12 @@ export interface ConversationIpcOptions {
 		value: string,
 		model: string | undefined,
 	) => Promise<void>;
+	/**
+	 * The person sent an Agent a message from its composer: the one door that
+	 * is theirs alone (`agent send` and the injections submit elsewhere). The
+	 * orchestrator watches it (`OrchestratorService.personSent`).
+	 */
+	readonly personSent?: (agentId: AgentId) => void;
 	/** The app's one conversion of a failure into what crosses IPC. */
 	readonly fail: (error: unknown) => Error;
 }
@@ -341,6 +347,7 @@ export function registerConversationIpc(
 			case "set-setting":
 				return conversation.configure(request.which, request.id);
 			case "submit":
+				options.personSent?.(agentId);
 				return conversation.submit(request.text, request.images);
 			case "start-editing-pending":
 				return conversation.startEditingPending(request.pending);
