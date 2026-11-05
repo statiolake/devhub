@@ -351,6 +351,11 @@ import {
 	type LiveAgent,
 } from "../orchestrator/orchestratorService.js";
 import { ensureOrchestratorRoot } from "../orchestrator/root.js";
+import { workspaceToken } from "../orchestrator/events.js";
+import {
+	AgentEventSource,
+	WorkspaceEventSource,
+} from "../orchestrator/liveEvents.js";
 import { registerConversationIpc } from "./conversationIpc.js";
 import {
 	MICROPHONE_SETTINGS_URL,
@@ -9184,6 +9189,105 @@ export class AppController {
 			});
 		}
 		service.observe();
+		this.observeLiveEvents();
+	}
+
+	/** `workspace.*` and `agent.*` events, read off the projection. */
+	private readonly workspaceEvents = new WorkspaceEventSource((event) => {
+		this.orchestrator?.events.dispatch(event);
+	});
+	private readonly agentEvents = new AgentEventSource({
+		dispatch: (event) => {
+			this.orchestrator?.events.dispatch(event);
+		},
+		conversation: (agentId) => this.tellPorts().conversation(agentId),
+		setTimer: (ms, run) => {
+			const timer = setTimeout(run, ms);
+			return { cancel: () => clearTimeout(timer) };
+		},
+	});
+
+	/**
+	 * Feed the Workspace and Agent sources the projection, while there is an
+	 * orchestrator to tell. Without one they forget, so the first projection
+	 * after a start is their baseline rather than a flood. The orchestrator's
+	 * own Workspace and agent are left out: it is never told about itself.
+	 */
+	private observeLiveEvents(): void {
+		const orchestrator = this.orchestrator?.orchestratorAgentId;
+		if (orchestrator === undefined) {
+			this.workspaceEvents.reset();
+			this.agentEvents.reset();
+			return;
+		}
+		const snapshot = this.coordinator.snapshot();
+		const wsOf = (workspace: (typeof snapshot.workspaces)[number]) =>
+			workspace.id === snapshot.scratchWorkspaceId
+				? "scratch"
+				: workspaceToken(workspace.label, workspace.id);
+		const spaces = snapshot.workspaces.filter(
+			(workspace) =>
+				!workspace.agents.some((agent) => agent.id === orchestrator),
+		);
+		this.workspaceEvents.observe(
+			spaces.map((workspace) => {
+				const repository = this.lastRepositoryStatus.workspaces.find(
+					(row) => row.workspaceId === workspace.id,
+				);
+				const pr = repository?.pullRequest;
+				const agent = workspace.agents[0];
+				const repo = repository?.issueRepository;
+				return {
+					id: workspace.id,
+					ws: wsOf(workspace),
+					root: workspace.root,
+					...(repository?.branch === undefined
+						? {}
+						: { branch: repository.branch }),
+					...(pr === undefined
+						? {}
+						: {
+								pullRequest: {
+									repo:
+										repo === undefined
+											? ""
+											: `${repo.owner}/${repo.repository}`,
+									number: pr.number,
+									title: pr.title,
+									url: pr.url,
+								},
+							}),
+					...(agent === undefined
+						? {}
+						: { agent: { id: agent.id, name: agent.displayName } }),
+				};
+			}),
+		);
+		this.agentEvents.observe(
+			snapshot.workspaces.flatMap((workspace) =>
+				workspace.agents
+					.filter((agent) => agent.id !== orchestrator)
+					.map((agent) => ({
+						id: agent.id,
+						name: agent.displayName,
+						ws: wsOf(workspace),
+						status: agent.status,
+						...(agent.failure === undefined
+							? {}
+							: {
+									failure:
+										agent.failure.detail === undefined
+											? agent.failure.code
+											: `${agent.failure.code}: ${agent.failure.detail}`,
+								}),
+						profile: agent.profileId,
+						gui: agent.presentation === "gui",
+						...(agent.activity === undefined
+							? {}
+							: { activity: agent.activity }),
+					})),
+			),
+		);
 	}
 
 	/** Why the window's Start cannot start one now; undefined when it can. */
@@ -10331,6 +10435,28 @@ export class AppController {
 			...(quiet ? { focus: "none" as const } : {}),
 		});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId, how);
+		// DevHub's own Issue assignment, said to the orchestrator.
+		const assigned = this.coordinator.model.workspaces
+			.find((workspace) => workspace.id === workspaceId)
+			?.agents.find((agent) => !agentsBefore.has(agent.id));
+		const opened = this.coordinator
+			.snapshot()
+			.workspaces.find((workspace) => workspace.id === workspaceId);
+		this.orchestrator?.events.dispatch({
+			type: "workspace.issue_assigned",
+			ws:
+				opened === undefined
+					? workspaceId
+					: workspaceToken(opened.label, opened.id),
+			issue: {
+				repo: `${item.owner}/${item.repository}`,
+				number: item.number,
+				url: request.issueUrl,
+			},
+			...(assigned === undefined
+				? {}
+				: { agent: { id: assigned.id, name: assigned.displayName } }),
+		});
 		if (!quiet) await this.syncEditorView();
 		return outcomeWire(
 			settled,
