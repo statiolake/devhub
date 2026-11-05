@@ -4405,17 +4405,24 @@ describe("the Orchestrator row from the command line", () => {
 		).toMatchObject({ reached: false, answered: [] });
 	});
 
-	it("marks a stalled 対応中 escalation on the board, once its answer is read", async () => {
+	it("marks a stalled 対応中 escalation on the board, a grace after its answer reached the orchestrator", async () => {
 		const { service, ports } = orchestrated();
 		ports.service.observe();
 		ports.service.raise({ title: "決めて", markdown: "A or B?" });
+		// Held: the answer has not reached the orchestrator, so it is unread.
+		ports.service.events.pause();
 		ports.service.answer(1, "A");
 		ports.clock.now += 120_000;
 		ports.service.observe();
 		const unread = await viaSocket(service, ["--json", "board"], coordinator);
 		expect(unread.message).not.toContain("停滞");
-		await viaSocket(service, ["escalation", "show", "1"], coordinator);
-		ports.clock.now += 60_000;
+		// Delivered with the answer in it: that is the reading.
+		await ports.service.events.resume();
+		ports.clock.now += 59_000;
+		ports.service.observe();
+		const soon = await viaSocket(service, ["--json", "board"], coordinator);
+		expect(soon.message).not.toContain("停滞");
+		ports.clock.now += 1_000;
 		ports.service.observe();
 		const board = await viaSocket(service, ["--json", "board"], coordinator);
 		expect(board.message).toMatch(

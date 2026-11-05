@@ -77,6 +77,17 @@ interface Where {
 	readonly agent?: EventAgent;
 }
 
+/**
+ * What the person wrote, carried in the event itself (`escalation_answered`,
+ * `escalation.human_direct`): the orchestrator need not run a command to
+ * read it (`humanBlock` quotes it under the event's line).
+ */
+export interface HumanWords {
+	readonly text: string;
+	/** The quick reply it is, when the person picked one of the question's options. */
+	readonly option?: string;
+}
+
 /** One 待機中 escalation, as `escalation.waiting_reminder` lists it. */
 export interface WaitingItem {
 	readonly escalationId: number;
@@ -94,6 +105,13 @@ export type OrchestratorEvent =
 			readonly escalationId: number;
 			readonly title: string;
 			readonly agents: readonly EventAgent[];
+			/** What they wrote, oldest first (several while one was pending). */
+			readonly answers?: readonly HumanWords[];
+			/**
+			 * How many of the escalation's entries the last answer completes:
+			 * what delivering it acknowledges as read (`acknowledge`).
+			 */
+			readonly readThrough?: number;
 	  }
 	/**
 	 * The person talked to one of an open escalation's agents directly, from
@@ -108,6 +126,8 @@ export type OrchestratorEvent =
 			readonly agent: EventAgent;
 			/** `agent read --since`: the person's message. */
 			readonly since?: string;
+			/** What they said, oldest first; absent when it could not be read. */
+			readonly messages?: readonly HumanWords[];
 	  }
 	/**
 	 * Level-triggered: an escalation in 対応中 that none of
@@ -460,6 +480,129 @@ interface LineParts {
 	readonly url?: string;
 }
 
+// --- the person's words, quoted under the line --------------------------------
+
+/**
+ * How much of the person's words one event carries, all its answers (or
+ * messages) together; the rest is cut, with where to read it.
+ */
+export const HUMAN_TEXT_CAP = 4_000;
+
+/**
+ * The person's words as one event carries them, cut at `HUMAN_TEXT_CAP`:
+ * each piece's text (the last one carried maybe cut short), and whether
+ * anything was left out.
+ */
+export function cappedWords(
+	pieces: readonly HumanWords[],
+	cap = HUMAN_TEXT_CAP,
+): { readonly pieces: readonly HumanWords[]; readonly truncated: boolean } {
+	const out: HumanWords[] = [];
+	let budget = cap;
+	for (const piece of pieces) {
+		const chars = [...piece.text];
+		if (chars.length <= budget) {
+			out.push(piece);
+			budget -= chars.length;
+			continue;
+		}
+		if (budget > 0)
+			out.push({ ...piece, text: chars.slice(0, budget).join("") });
+		return { pieces: out, truncated: true };
+	}
+	return { pieces: out, truncated: false };
+}
+
+/**
+ * The person's text as quoted lines: every line `> ` and the line (a blank
+ * one a bare `>`), so nothing they wrote can start a line of its own — not
+ * an event's `[type]`, not DevHub's own `  ` lines, and a fence they typed
+ * stays inside the quote. Every line break a reader might honour (CR, LS,
+ * PS, NEL, VT, FF) breaks a quoted line; other control characters go.
+ */
+export function quoteLines(text: string): string[] {
+	return (
+		text
+			// eslint-disable-next-line no-control-regex
+			.replace(/[\u0000-\u0008\u000e-\u001f\u007f]/gu, "")
+			.replace(/\s+$/u, "")
+			// eslint-disable-next-line no-control-regex
+			.split(/\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/u)
+			.map((line) => (line.trim().length === 0 ? ">" : `> ${line}`))
+	);
+}
+
+/** What a piece is, on DevHub's own line above its quote. */
+function pieceLabel(
+	noun: string,
+	piece: HumanWords,
+	index: number,
+	count: number,
+): string {
+	const number = count > 1 ? ` ${String(index + 1)}/${String(count)}` : "";
+	const option =
+		piece.option === undefined
+			? ""
+			: ` (選択肢「${excerpt(piece.option, 80)}」)`;
+	return `  ${noun}${number}${option}:`;
+}
+
+/**
+ * The lines under an event's own: the person's words, quoted. DevHub's lines
+ * start with two spaces (what each quote is; where to read the rest), the
+ * person's with `>` — never `[`, which only an event's line starts with.
+ */
+function humanBlock(event: OrchestratorEvent): string[] {
+	if (event.type === "escalation_answered") {
+		const answers = event.answers ?? [];
+		if (answers.length === 0) return [];
+		const { pieces, truncated } = cappedWords(answers);
+		return [
+			...pieces.flatMap((piece, index) => [
+				pieceLabel("回答", piece, index, answers.length),
+				...quoteLines(piece.text),
+			]),
+			...(truncated
+				? [
+						`  …（続きは devhub --tell escalation show ${String(event.escalationId)}）`,
+					]
+				: []),
+		];
+	}
+	if (event.type === "escalation.human_direct") {
+		const messages = event.messages ?? [];
+		if (messages.length === 0) return [];
+		const { pieces, truncated } = cappedWords(messages);
+		const agent = shortId(event.agent.id);
+		return [
+			...pieces.flatMap((piece, index) => [
+				pieceLabel(
+					`agent=${agent} への人のメッセージ`,
+					piece,
+					index,
+					messages.length,
+				),
+				...quoteLines(piece.text),
+			]),
+			...(truncated
+				? [
+						`  …（続きは devhub --tell agent read ${agent}${event.since === undefined ? "" : ` --since ${event.since}`}）`,
+					]
+				: []),
+		];
+	}
+	return [];
+}
+
+/**
+ * What `{EVENT}` holds for one event standing alone: its line, then the
+ * person's words quoted under it (`escalation_answered`,
+ * `escalation.human_direct`).
+ */
+export function eventText(event: OrchestratorEvent, now: number): string {
+	return [eventLine(event, now), ...humanBlock(event)].join("\n");
+}
+
 function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 	switch (event.type) {
 		case "init":
@@ -474,7 +617,10 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 					`esc=${String(event.escalationId)}${title(event.title)}`,
 					...event.agents.map(agentToken),
 				],
-				summary: "人が回答しました (escalation show で読む)",
+				summary:
+					(event.answers ?? []).length === 0
+						? "人が回答しました (escalation show で読む)"
+						: "人が回答しました (本文は下の > 行)",
 			};
 		case "escalation.human_direct":
 			return {
@@ -483,8 +629,7 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 					agentToken(event.agent),
 					...(event.since === undefined ? [] : [`since=${event.since}`]),
 				],
-				summary:
-					"人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります",
+				summary: `人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります${(event.messages ?? []).length === 0 ? "" : " (人のメッセージは下の > 行)"}`,
 			};
 		case "escalation.stalled":
 			return {
@@ -885,15 +1030,26 @@ export function merge(
 			...newer,
 			...(older.since === undefined ? {} : { since: older.since }),
 		};
-	// What the person said, read from their first unread message.
+	// What the person said, read from their first unread message, all of it.
 	if (
 		older.type === "escalation.human_direct" &&
 		newer.type === "escalation.human_direct"
-	)
+	) {
+		const messages = [...(older.messages ?? []), ...(newer.messages ?? [])];
 		return {
 			...newer,
 			...(older.since === undefined ? {} : { since: older.since }),
+			...(messages.length === 0 ? {} : { messages }),
 		};
+	}
+	// One escalation's answers: every one of them, in order.
+	if (
+		older.type === "escalation_answered" &&
+		newer.type === "escalation_answered"
+	) {
+		const answers = [...(older.answers ?? []), ...(newer.answers ?? [])];
+		return { ...newer, ...(answers.length === 0 ? {} : { answers }) };
+	}
 	// A timer is pending once: the first stands.
 	if (older.type === "timer.elapsed") return older;
 	// Where it stands now: the latest (checks failed → passed, approved …).
@@ -984,6 +1140,12 @@ export interface EventDelivery {
 	 * suspended catches up first, and its news goes in the same message.
 	 */
 	readonly paused?: (paused: boolean) => Promise<void> | void;
+	/**
+	 * These events have just gone out (queued for the orchestrator), every
+	 * statement of every line sent: what they carried is read
+	 * (`escalation_answered`'s answer).
+	 */
+	readonly delivered?: (events: readonly OrchestratorEvent[]) => void;
 	/** The pause, or what is pending, changed. */
 	readonly changed?: () => void;
 	readonly log?: (line: string) => void;
@@ -1265,6 +1427,11 @@ export class EventDispatcher {
 			this.delivery.busy === undefined
 				? undefined
 				: { at: now, sawBusy: false };
+		this.delivery.delivered?.(
+			sent.flatMap((line) =>
+				[...line.facets.values()].map((entry) => entry.event),
+			),
+		);
 		this.delivery.changed?.();
 	}
 
@@ -1287,18 +1454,43 @@ export class EventDispatcher {
 	}
 }
 
-/** An event as `{EVENT_JSON}` carries it: its type, and its fields. */
+/**
+ * An event as `{EVENT_JSON}` carries it: its type, and its fields. The
+ * person's words in full (`answer` for `escalation_answered`, `message` for
+ * `escalation.human_direct`: every piece, a blank line between), and
+ * `truncated`: whether `{EVENT}` had to cut them (`HUMAN_TEXT_CAP`).
+ */
 export function eventJson(event: OrchestratorEvent): Record<string, unknown> {
+	if (event.type === "escalation_answered") {
+		const { readThrough: _read, ...rest } = event;
+		const answers = event.answers ?? [];
+		return {
+			...rest,
+			answers,
+			answer: answers.map((one) => one.text).join("\n\n"),
+			truncated: cappedWords(answers).truncated,
+		};
+	}
+	if (event.type === "escalation.human_direct") {
+		const messages = event.messages ?? [];
+		return {
+			...event,
+			messages,
+			message: messages.map((one) => one.text).join("\n\n"),
+			truncated: cappedWords(messages).truncated,
+		};
+	}
 	return { ...event };
 }
 
 /**
  * One subject's line: the latest statement's `[type]` and ids, its summary,
  * then each other pending statement about it (`／ [type] …`, without the ids
- * the line already has), and the link once at the end.
+ * the line already has), and the link once at the end. Under it, the
+ * person's words any of them carry, quoted (`humanBlock`), oldest first.
  */
 export function heldLineText(line: HeldLine, now: number): string {
-	if (line.also.length === 0) return eventLine(line.event, now);
+	if (line.also.length === 0) return eventText(line.event, now);
 	const lead = linePartsOf(line.event, now);
 	const parts = [
 		`[${line.event.type}]`,
@@ -1317,7 +1509,10 @@ export function heldLineText(line: HeldLine, now: number): string {
 		);
 	}
 	if (url !== undefined) parts.push(url);
-	return parts.filter((part) => part.length > 0).join(" ");
+	return [
+		parts.filter((part) => part.length > 0).join(" "),
+		...[...line.also, line.event].flatMap(humanBlock),
+	].join("\n");
 }
 
 /** The last line of a delivery that was cut at `MAX_DELIVERY_LINES`. */

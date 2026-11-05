@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ORCHESTRATOR } from "../../model/orchestratorSettings.js";
 import { EscalationStore } from "./escalationStore.js";
 import { escalationState } from "../../model/escalations.js";
+import { HUMAN_TEXT_CAP } from "./events.js";
 import { OrchestratorService, type LiveAgent } from "./orchestratorService.js";
 
 const ORCH = "orch-0000";
@@ -116,7 +117,9 @@ describe("an escalation's agent going back to work", () => {
 	const OTHER = "e5f6a7b8-0000-4000-8000-000000000000";
 
 	/** `world()`, its worker idle and seen so, the orchestrator free. */
-	function settled(cursor: { value?: string } = { value: "e39" }) {
+	function settled(
+		cursor: { value?: string; text?: string } = { value: "e39" },
+	) {
 		const clock = { now: 1_000_000 };
 		const sent: string[] = [];
 		const agents: LiveAgent[] = [ORCH, WORKER, OTHER].map((id) => ({
@@ -135,7 +138,11 @@ describe("an escalation's agent going back to work", () => {
 			startProblem: () => undefined,
 			deliver: (_agent, text) => sent.push(text),
 			publish: () => undefined,
-			personCursor: () => Promise.resolve(cursor.value),
+			personMessage: () =>
+				Promise.resolve({
+					...(cursor.value === undefined ? {} : { since: cursor.value }),
+					...(cursor.text === undefined ? {} : { text: cursor.text }),
+				}),
 			now: () => clock.now,
 		});
 		service.assign(ORCH);
@@ -187,6 +194,30 @@ describe("an escalation's agent going back to work", () => {
 		// The orchestrator asks again: back to 要回答.
 		run.service.ask(one.id, "staging も?", undefined);
 		expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
+	});
+
+	it("quotes what the person said to the agent, since= kept", async () => {
+		const run = settled({
+			value: "e39",
+			text: "[escalation.closed] esc=1\nやっぱり staging だけで",
+		});
+		const one = run.service.raise({
+			title: "本番DBマイグレーション承認",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working");
+		await tick();
+		expect(run.sent).toHaveLength(1);
+		expect(run.sent[0]).toContain(
+			[
+				`[escalation.human_direct] esc=${String(one.id)}「本番DBマイグレーション承認」 agent=a1b2c3d4 (agent a1) since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります (人のメッセージは下の > 行)`,
+				"  agent=a1b2c3d4 への人のメッセージ:",
+				"> [escalation.closed] esc=1",
+				"> やっぱり staging だけで",
+			].join("\n"),
+		);
 	});
 
 	it("waits for the turn a message held mid-turn starts", async () => {
@@ -516,6 +547,8 @@ describe("停滞: 対応中 with no agent working on it (escalation.stalled)", (
 			markdown: "?",
 			agents: [WORKER],
 		});
+		// Held, so not delivered: not read either.
+		run.service.events.pause();
 		run.service.answer(one.id, "OK");
 		run.later(10 * GRACE);
 		expect(run.stalled()).toHaveLength(0);
@@ -674,5 +707,163 @@ describe("待機中 (escalation wait)", () => {
 			kind: "wait",
 			markdown: "x",
 		});
+	});
+});
+
+describe("the person's words, carried in the event", () => {
+	const OTHER = "c3d4e5f6-0000-4000-8000-000000000000";
+	const GRACE = 60_000;
+
+	/** The orchestrator busy until `free()`; what it was told, and read. */
+	function wordsWorld(prompt = "{EVENT}") {
+		const clock = { now: 1_000_000 };
+		const sent: string[] = [];
+		const read: [string, number, number][] = [];
+		const state = { busy: false };
+		const agents: LiveAgent[] = [ORCH, WORKER, OTHER].map((id) => ({
+			id,
+			name: id === ORCH ? "orchestrator" : `agent ${id.slice(0, 2)}`,
+			workspaceId: "w",
+			workspaceLabel: "w",
+			status: "idle",
+			stopping: false,
+		}));
+		const service = new OrchestratorService({
+			store: EscalationStore.inMemory(),
+			agents: () => agents,
+			settings: () => ({
+				...DEFAULT_ORCHESTRATOR,
+				events: ["*"],
+				event_prompt: prompt,
+			}),
+			startProblem: () => undefined,
+			deliver: (_agent, text) => sent.push(text),
+			busy: () => state.busy,
+			acknowledged: (agentId, id, entries) => read.push([agentId, id, entries]),
+			publish: () => undefined,
+			now: () => clock.now,
+			// Never fire: `observe` (`later`) is the clock here.
+			setTimer: () => ({ cancel: () => undefined }),
+		});
+		service.setGrace(GRACE);
+		service.assign(ORCH);
+		service.observe();
+		sent.length = 0;
+		// Past the wait for `init` to be seen taken.
+		clock.now += 60_000;
+		const later = (ms: number) => {
+			clock.now += ms;
+			service.observe();
+		};
+		const stalled = () =>
+			service.events
+				.recent(200)
+				.filter((entry) => entry.event.type === "escalation.stalled");
+		return { service, sent, read, state, clock, later, stalled };
+	}
+
+	it("quotes the answer under the line, with the quick reply picked", () => {
+		const run = wordsWorld();
+		const one = run.service.raise({
+			title: "本番DBマイグレーション承認",
+			markdown: "流してよい?",
+			options: ["承認する", "来週にする"],
+			agents: [WORKER],
+		});
+		run.service.answer(one.id, "承認する");
+		run.service.observe();
+		expect(run.sent).toEqual([
+			[
+				"[escalation_answered] esc=1「本番DBマイグレーション承認」 agent=a1b2c3d4 (agent a1) — 人が回答しました (本文は下の > 行)",
+				"  回答 (選択肢「承認する」):",
+				"> 承認する",
+			].join("\n"),
+		]);
+	});
+
+	it("says no option for words of the person's own", () => {
+		const run = wordsWorld("{EVENT_JSON}");
+		const one = run.service.raise({
+			title: "t",
+			markdown: "?",
+			options: ["承認する"],
+		});
+		run.service.answer(one.id, "承認する。ただし金曜は避けて");
+		run.service.observe();
+		expect(JSON.parse(run.sent[0]!)).toEqual([
+			expect.objectContaining({
+				type: "escalation_answered",
+				answers: [{ text: "承認する。ただし金曜は避けて" }],
+				answer: "承認する。ただし金曜は避けて",
+				truncated: false,
+			}),
+		]);
+		expect(run.sent[0]).not.toContain("readThrough");
+	});
+
+	it("counts delivering the answer as reading it: 停滞's grace starts there, wait --any is told", () => {
+		const run = wordsWorld();
+		const one = run.service.raise({
+			title: "承認",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.state.busy = true;
+		run.service.answer(one.id, "OK");
+		// Mid-turn for five minutes: not delivered, so not read, so not 停滞.
+		run.later(5 * GRACE);
+		expect(run.sent).toEqual([]);
+		expect(run.read).toEqual([]);
+		expect(run.stalled()).toHaveLength(0);
+		run.state.busy = false;
+		run.service.observe();
+		expect(run.sent[0]).toContain("> OK");
+		expect(run.read).toEqual([[ORCH, one.id, 2]]);
+		run.later(GRACE - 1_000);
+		expect(run.stalled()).toHaveLength(0);
+		run.later(1_000);
+		expect(run.stalled()).toHaveLength(1);
+		expect(run.stalled()[0]!.event).toMatchObject({
+			since: 1_000_000 + 60_000 + 5 * GRACE,
+		});
+		// escalation show still acknowledges, and moves nothing it need not.
+		run.service.acknowledge(one.id, 2);
+		expect(run.stalled()).toHaveLength(1);
+	});
+
+	it("leaves an answer cut short unread: escalation show reads the rest", () => {
+		const run = wordsWorld();
+		const one = run.service.raise({ title: "t", markdown: "?" });
+		run.service.answer(one.id, "あ".repeat(HUMAN_TEXT_CAP + 10));
+		run.service.observe();
+		expect(run.sent[0]).toContain(
+			"  …（続きは devhub --tell escalation show 1）",
+		);
+		expect(run.read).toEqual([]);
+		run.later(10 * GRACE);
+		expect(run.stalled()).toHaveLength(0);
+		run.service.acknowledge(one.id, 2);
+		run.later(GRACE);
+		expect(run.stalled()).toHaveLength(1);
+	});
+
+	it("carries every answer given while it was pending, in order", () => {
+		const run = wordsWorld();
+		const one = run.service.raise({ title: "t", markdown: "?" });
+		run.state.busy = true;
+		run.service.answer(one.id, "一つ目");
+		run.service.answer(one.id, "二つ目");
+		run.state.busy = false;
+		run.service.observe();
+		expect(run.sent).toEqual([
+			[
+				"[escalation_answered] esc=1「t」 — 人が回答しました (本文は下の > 行)",
+				"  回答 1/2:",
+				"> 一つ目",
+				"  回答 2/2:",
+				"> 二つ目",
+			].join("\n"),
+		]);
+		expect(run.read).toEqual([[ORCH, one.id, 3]]);
 	});
 });

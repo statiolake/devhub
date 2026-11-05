@@ -23,9 +23,11 @@
  * (`escalation.stalled`). A stretch starts at the latest of: its last entry,
  * the last time one of its agents was seen working, the orchestrator's
  * reading of the answer (`acknowledge`), this service's first reading. An
- * answer the orchestrator has not read yet (`escalation show`) is not 停滞:
+ * answer the orchestrator has not read yet is not 停滞:
  * `escalation_answered` already says it, and the clock starts once it is
- * read.
+ * read. `escalation_answered` carries the answer itself, so its delivery is
+ * the reading (`#deliveredRead`), unless the answer was too long to carry
+ * whole: then `escalation show` is, as it always also is.
  *
  * 待機中 (`escalation wait`): a waiting escalation whose time (`dueAt`) has
  * come is told once per wait (`escalation.wait_due`), and every
@@ -56,6 +58,7 @@ import {
 	type Escalation,
 	type EscalationRank,
 	currentWait,
+	openOptions,
 	type NewEscalation,
 	type WaitRequest,
 } from "../../model/escalations.js";
@@ -64,6 +67,7 @@ import { workStatus } from "../../model/conversation.js";
 import { parseInterval } from "../../model/orchestratorSettings.js";
 import type { EscalationStore } from "./escalationStore.js";
 import {
+	cappedWords,
 	customTypeProblem,
 	EventDispatcher,
 	eventJson,
@@ -117,12 +121,23 @@ export interface OrchestratorServicePorts {
 	 */
 	readonly githubUnattended?: (item: EventItem) => boolean;
 	/**
-	 * The cursor (`agent read --since`) of the person's last message to
-	 * `agentId`, read off its conversation; undefined when it has none.
+	 * The person's last message to `agentId`, read off its conversation: its
+	 * cursor (`agent read --since`) and its text. Undefined when it has none.
 	 */
-	readonly personCursor?: (
+	readonly personMessage?: (
 		agentId: string,
-	) => Promise<string | undefined> | string | undefined;
+	) => Promise<PersonMessage | undefined> | PersonMessage | undefined;
+	/**
+	 * The orchestrator `agentId` has been delivered escalation `id`'s first
+	 * `entries` entries in an event (`escalation_answered`, carried whole):
+	 * as read as if it had run `escalation show` (`agent wait --any` stops
+	 * reporting the answer).
+	 */
+	readonly acknowledged?: (
+		agentId: string,
+		id: number,
+		entries: number,
+	) => void;
 	/**
 	 * A plan window as the usage readout has it now, for a pending
 	 * `usage.threshold` (`usageThresholds.ts`). Absent: not checked.
@@ -134,6 +149,12 @@ export interface OrchestratorServicePorts {
 	readonly now?: () => number;
 	readonly setTimer?: (ms: number, run: () => void) => { cancel(): void };
 	readonly log?: (line: string) => void;
+}
+
+/** The person's last message to an agent, as `escalation.human_direct` carries it. */
+export interface PersonMessage {
+	readonly since?: string;
+	readonly text?: string;
 }
 
 /** How many closed escalations the board carries for its history. */
@@ -189,6 +210,9 @@ export class OrchestratorService {
 			},
 			...(ports.busy === undefined ? {} : { busy: ports.busy }),
 			relevant: (event) => this.#relevant(event),
+			delivered: (events) => {
+				this.#deliveredRead(events);
+			},
 			...(ports.paused === undefined ? {} : { paused: ports.paused }),
 			changed: () => {
 				this.publish();
@@ -393,6 +417,12 @@ export class OrchestratorService {
 
 	/** The person's answer, from the window. Moves it to in_progress. */
 	answer(id: number, markdown: string): Escalation {
+		const before = this.ports.store.all().find((one) => one.id === id);
+		// A quick reply is sent as the option's own words.
+		const option =
+			before === undefined
+				? undefined
+				: openOptions(before).find((one) => one === markdown.trim());
 		const answered = this.ports.store.answer(id, markdown, this.#now());
 		const names = new Map(this.ports.agents().map((one) => [one.id, one.name]));
 		this.events.dispatch({
@@ -404,6 +434,13 @@ export class OrchestratorService {
 				const name = names.get(id);
 				return name === undefined ? { id } : { id, name };
 			}),
+			answers: [
+				{
+					text: answered.entries.at(-1)?.markdown ?? markdown,
+					...(option === undefined ? {} : { option }),
+				},
+			],
+			readThrough: answered.entries.length,
 		});
 		return answered;
 	}
@@ -473,7 +510,9 @@ export class OrchestratorService {
 			);
 		}
 		if (!byPerson) return;
-		const say = (since: string | undefined) => {
+		const say = (message: PersonMessage | undefined) => {
+			const since = message?.since;
+			const text = message?.text;
 			for (const one of told)
 				this.events.dispatch({
 					type: "escalation.human_direct",
@@ -481,11 +520,15 @@ export class OrchestratorService {
 					title: one.title,
 					agent: { id: agent.id, name: agent.name },
 					...(since === undefined ? {} : { since }),
+					...(text === undefined || text.trim().length === 0
+						? {}
+						: { messages: [{ text }] }),
 				});
 		};
-		const cursor = this.ports.personCursor?.(agent.id);
-		if (cursor instanceof Promise) void cursor.catch(() => undefined).then(say);
-		else say(cursor);
+		const message = this.ports.personMessage?.(agent.id);
+		if (message instanceof Promise)
+			void message.catch(() => undefined).then(say);
+		else say(message);
 	}
 
 	// --- live state ------------------------------------------------------------
@@ -535,10 +578,42 @@ export class OrchestratorService {
 	 * stalled stretch may start.
 	 */
 	acknowledge(id: number, entries: number): void {
-		const before = this.#read.get(id);
-		if (before !== undefined && before.entries >= entries) return;
-		this.#read.set(id, { entries, at: this.#now() });
+		if (!this.#markRead(id, entries)) return;
 		this.observe();
+	}
+
+	/** Escalation `id`'s first `entries` are read now; false: they were already. */
+	#markRead(id: number, entries: number): boolean {
+		const before = this.#read.get(id);
+		if (before !== undefined && before.entries >= entries) return false;
+		this.#read.set(id, { entries, at: this.#now() });
+		return true;
+	}
+
+	/**
+	 * Events just delivered: an `escalation_answered` that carried its
+	 * answers whole is the orchestrator's reading of them — 停滞's grace
+	 * starts now, and `agent wait --any` no longer owes it them. One cut at
+	 * `HUMAN_TEXT_CAP` is not: `escalation show` reads the rest, and is the
+	 * reading.
+	 */
+	#deliveredRead(events: readonly OrchestratorEvent[]): void {
+		const orchestrator = this.orchestratorAgentId;
+		let moved = false;
+		for (const event of events) {
+			if (event.type !== "escalation_answered") continue;
+			if (event.readThrough === undefined) continue;
+			if (cappedWords(event.answers ?? []).truncated) continue;
+			if (orchestrator !== undefined)
+				this.ports.acknowledged?.(
+					orchestrator,
+					event.escalationId,
+					event.readThrough,
+				);
+			moved = this.#markRead(event.escalationId, event.readThrough) || moved;
+		}
+		// The grace runs from here: wake when it is up.
+		if (moved) this.#schedule(this.#now());
 	}
 
 	/** Whether one of `ids` is working now (a maintenance turn is not). */
