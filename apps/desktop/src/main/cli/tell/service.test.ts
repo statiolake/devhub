@@ -3395,9 +3395,7 @@ describe("the Orchestrator row from the command line", () => {
 		});
 		// The event went to the orchestrator too, once.
 		expect(
-			ports.delivered.filter(([, text]) =>
-				text.includes("[event: unaccounted]"),
-			),
+			ports.delivered.filter(([, text]) => text.includes("[unaccounted]")),
 		).toHaveLength(1);
 		const board = await viaSocket(service, ["board"], coordinator);
 		expect(board.message).toContain("unaccounted (1):");
@@ -3468,7 +3466,7 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(ports.calls).toEqual(["orchestrator-start /srv/o claude"]);
 		expect(ports.delivered[0]?.[1]).toBe(
-			"このイベントが発生したのでハンドリングしてください。[event: init] The orchestrator has started.\nBoard: devhub --tell board",
+			"このイベントが発生したのでハンドリングしてください。[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認",
 		);
 		await expect(
 			viaSocket(
@@ -3493,7 +3491,7 @@ describe("the Orchestrator row from the command line", () => {
 		expect(status.data).toMatchObject({ agentId: ORCHESTRATOR });
 	});
 
-	it("pauses events and delivers the held ones in order on resume", async () => {
+	it("pauses events and delivers the held ones, in order, as one message on resume", async () => {
 		const { service, ports } = orchestrated();
 		ports.delivered = [];
 		await viaSocket(service, ["orchestrator", "pause"], undefined);
@@ -3509,9 +3507,12 @@ describe("the Orchestrator row from the command line", () => {
 			undefined,
 		);
 		expect(resumed.data).toMatchObject({ delivered: 2 });
-		expect(ports.delivered.map(([, text]) => /#(\d)/u.exec(text)?.[1])).toEqual(
-			["1", "2"],
-		);
+		expect(ports.delivered).toHaveLength(1);
+		expect(
+			[...(ports.delivered[0]?.[1] ?? "").matchAll(/esc=(\d)/gu)].map(
+				(match) => match[1],
+			),
+		).toEqual(["1", "2"]);
 	});
 
 	it("focuses the Orchestrator screen only on 'focus orchestrator'", async () => {

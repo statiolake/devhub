@@ -9100,6 +9100,20 @@ export class AppController {
 						"[devhub] an orchestrator event could not be queued: the agents are not running yet",
 					);
 			},
+			// Mid-turn, on a question, or still holding something of ours: the
+			// events wait, and go out together once it can take them.
+			busy: (agentId) => {
+				const agent = this.coordinator
+					.snapshot()
+					.workspaces.flatMap((workspace) => workspace.agents)
+					.find((one) => one.id === agentId);
+				return (
+					agent !== undefined &&
+					(agent.status === "working" ||
+						agent.status === "waiting" ||
+						agent.injection.queued > 0)
+				);
+			},
 			publish: (board) => {
 				this.send(CHANNELS.orchestratorBoardChanged, board);
 			},

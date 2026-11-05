@@ -223,7 +223,7 @@ export function OrchestratorBoard({
             title={
               board.paused
                 ? "Events are held for the orchestrator. Resume delivers them, in order."
-                : "Each event (an answer, an unaccounted agent) is sent to the orchestrator. Pause holds them."
+                : "Each event (an answer, an unaccounted agent, GitHub, an agent's turn, a timer) is sent to the orchestrator. Pause holds them."
             }
             onClick={() => {
               void devhub()
@@ -234,10 +234,20 @@ export function OrchestratorBoard({
             <span className="orchestrator-pause-track" aria-hidden="true">
               <span className="orchestrator-pause-knob" />
             </span>
-            {board.paused
-              ? `Events paused${board.held > 0 ? ` · ${String(board.held)} held` : ""}`
-              : "Events on"}
+            {board.paused ? "Events paused" : "Events on"}
           </button>
+          {board.held > 0 ? (
+            <span
+              className="orchestrator-pending"
+              title={
+                board.paused
+                  ? "Events held by the pause. Resume delivers them as one message."
+                  : "Events waiting for the orchestrator's turn to end. They go out together, as one message."
+              }
+            >
+              {board.held} pending
+            </span>
+          ) : null}
           <button
             type="button"
             className="orchestrator-history"

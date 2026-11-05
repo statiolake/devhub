@@ -576,8 +576,12 @@ export interface OrchestratorBoardWire {
 		readonly presentation?: "gui" | "tui";
 		readonly problem?: string;
 	};
-	/** Events are held, not delivered; `held` of them so far. */
+	/** Events are held, not delivered, until resumed. */
 	readonly paused: boolean;
+	/**
+	 * Events pending: held by the pause, or waiting for the orchestrator to
+	 * finish its turn (they then go out together, as one message).
+	 */
 	readonly held: number;
 	/** Oldest question first. */
 	readonly needsAnswer: readonly EscalationWire[];

@@ -33,7 +33,11 @@ import {
 } from "../../model/escalations.js";
 import type { OrchestratorConfig } from "../../model/orchestratorSettings.js";
 import type { EscalationStore } from "./escalationStore.js";
-import { EventDispatcher, type OrchestratorEvent } from "./events.js";
+import {
+	EventDispatcher,
+	workspaceToken,
+	type OrchestratorEvent,
+} from "./events.js";
 
 /** One agent as the service reads it off the projection. */
 export interface LiveAgent {
@@ -53,6 +57,11 @@ export interface OrchestratorServicePorts {
 	readonly startProblem: () => string | undefined;
 	/** Queue `text` as the person's message to `agentId`, held while it is mid-turn. */
 	readonly deliver: (agentId: string, text: string) => void;
+	/**
+	 * Whether `agentId` cannot take a message now (mid-turn, on a question, or
+	 * something still queued for it): events wait, and go out together.
+	 */
+	readonly busy?: (agentId: string) => boolean;
 	/** The board moved: push it. */
 	readonly publish: (board: OrchestratorBoardWire) => void;
 	readonly now?: () => number;
@@ -75,14 +84,17 @@ export class OrchestratorService {
 	constructor(private readonly ports: OrchestratorServicePorts) {
 		this.events = new EventDispatcher({
 			orchestrator: () => this.orchestratorAgentId,
-			prompts: () => this.ports.settings(),
+			settings: () => this.ports.settings(),
 			deliver: (agentId, text) => {
 				this.ports.deliver(agentId, text);
 			},
+			...(ports.busy === undefined ? {} : { busy: ports.busy }),
 			changed: () => {
 				this.publish();
 			},
+			now: () => this.#now(),
 			...(ports.log === undefined ? {} : { log: ports.log }),
+			...(ports.setTimer === undefined ? {} : { setTimer: ports.setTimer }),
 		});
 		ports.store.onChange(() => {
 			this.publish();
@@ -111,7 +123,7 @@ export class OrchestratorService {
 	assign(agentId: string, initPrompt?: string): void {
 		this.ports.store.setOrchestrator(agentId);
 		if (initPrompt !== undefined) this.ports.deliver(agentId, initPrompt);
-		else this.events.dispatch({ kind: "init" });
+		else this.events.dispatch({ type: "init" });
 	}
 
 	release(): void {
@@ -147,13 +159,13 @@ export class OrchestratorService {
 		const answered = this.ports.store.answer(id, markdown, this.#now());
 		const names = new Map(this.ports.agents().map((one) => [one.id, one.name]));
 		this.events.dispatch({
-			kind: "escalation_answered",
+			type: "escalation_answered",
 			escalationId: answered.id,
 			title: answered.title,
 			// Named as the person sees them, with the id to address them by.
 			agents: answered.agents.map((id) => {
 				const name = names.get(id);
-				return name === undefined ? id : `${name} (${id})`;
+				return name === undefined ? { id } : { id, name };
 			}),
 		});
 		return answered;
@@ -181,6 +193,8 @@ export class OrchestratorService {
 			if (!live.has(id)) this.#idleSince.delete(id);
 		this.#announceUnaccounted(now);
 		this.#schedule(now);
+		// The orchestrator's status may have moved: what waits for it may go.
+		this.events.flush();
 		this.publish();
 	}
 
@@ -215,10 +229,9 @@ export class OrchestratorService {
 			if (this.#told.has(key)) continue;
 			this.#told.add(key);
 			const event: OrchestratorEvent = {
-				kind: "unaccounted",
-				agentId: agent.agentId,
-				name: agent.name,
-				workspace: agent.workspaceLabel,
+				type: "unaccounted",
+				agent: { id: agent.agentId, name: agent.name },
+				ws: workspaceToken(agent.workspaceLabel, agent.workspaceId),
 				idleSince: agent.idleSince,
 			};
 			this.events.dispatch(event);
@@ -343,5 +356,6 @@ export class OrchestratorService {
 
 	dispose(): void {
 		this.#timer?.cancel();
+		this.events.dispose();
 	}
 }

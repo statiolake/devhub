@@ -97,6 +97,17 @@
   color: var(--disabled-ink);
 }
 
+/* How many events wait for the orchestrator (paused, or mid-turn). */
+.orchestrator-pending {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--wash);
+  color: var(--secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .orchestrator-history[aria-pressed="true"] {
   background: var(--wash-strong);
   color: var(--primary);
