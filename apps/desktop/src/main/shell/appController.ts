@@ -366,6 +366,8 @@ import {
 import { locateWhisper, whisperCandidates } from "../voice/whisper.js";
 import { AgentDrafts } from "../agent/conversation/drafts.js";
 import { AgentRecords } from "../agent/conversation/agentRecords.js";
+import { SessionMetaFile } from "../agent/conversation/sessionMetaFile.js";
+import { SessionMetaKeeper, type KnownSession } from "./sessionMetaKeeper.js";
 import {
 	LIMIT_RESUME_RECORDS,
 	type LimitResumeRecord,
@@ -1078,6 +1080,13 @@ export class AppController {
 	private readonly automaticActions = new AutomaticActions();
 	/** What each GUI Agent decided about the usage limit it stopped at (`limitResume.ts`). */
 	private readonly limitResumes: AgentRecords<LimitResumeRecord>;
+	/**
+	 * The metadata of the Agents that ran each CLI session, kept once they are
+	 * stopped or closed, beside `state.json`. See `model/sessionMeta.ts`.
+	 */
+	private readonly sessionMeta: SessionMetaKeeper;
+	/** The state file's Agents were told to `sessionMeta` as seen. */
+	private sessionMetaSeeded = false;
 	/** The sweep of DevHub's own stray sessions, and the machines it owes. */
 	private sessionSweeper: SessionSweeper | undefined;
 	private stopHearingReconnections: (() => void) | undefined;
@@ -1291,6 +1300,24 @@ export class AppController {
 		if (limitResumes.refused !== undefined) {
 			this.noteStartupFailure(
 				withDetail(errorWireAt("persistence_degraded"), limitResumes.refused),
+			);
+		}
+		const sessionMeta = SessionMetaFile.load(
+			join(dirname(stateStore.path), "session-meta.json"),
+		);
+		this.sessionMeta = new SessionMetaKeeper(sessionMeta.index, {
+			agents: () =>
+				this.coordinator.model.workspaces.flatMap(
+					(workspace) => workspace.agents,
+				),
+			sessionOf: (agentId) => this.sessionAtClose(parseAgentId(agentId)),
+			restore: (agentId, meta) => {
+				this.restoreSessionMeta(parseAgentId(agentId), meta);
+			},
+		});
+		if (sessionMeta.refused !== undefined) {
+			this.noteStartupFailure(
+				withDetail(errorWireAt("persistence_degraded"), sessionMeta.refused),
 			);
 		}
 		this.registerIpc();
@@ -3177,9 +3204,14 @@ export class AppController {
 			kind === "claude" || kind === "codex"
 				? this.sessionNames(kind)
 				: new Map<string, string>();
+		const known =
+			kind === "claude" || kind === "codex"
+				? this.sessionMeta.known(kind)
+				: new Map<string, KnownSession>();
 		return {
 			...(repository === undefined ? {} : { repository }),
 			nameOf: (session) => names.get(session),
+			metaOf: (session) => known.get(session),
 		};
 	}
 
@@ -3201,6 +3233,44 @@ export class AppController {
 			}
 		}
 		return names;
+	}
+
+	/**
+	 * The name to give back to an Agent started on `session`: the one
+	 * `session_names` has, else a person-given one the meta index kept.
+	 */
+	private givenSessionName(
+		kind: SessionNameKind,
+		session: string,
+	): string | undefined {
+		const indexed = this.sessionMeta.index.of(kind, session);
+		return (
+			sessionNameOf(this.state.session_names, kind, session) ??
+			(indexed?.named === true ? indexed.name : undefined)
+		);
+	}
+
+	/** Set `meta`'s pairs on an Agent, after this save (each is an intent). */
+	private restoreSessionMeta(
+		agentId: AgentId,
+		meta: Readonly<Record<string, string>>,
+	): void {
+		queueMicrotask(() => {
+			void (async () => {
+				for (const [key, value] of Object.entries(meta)) {
+					await this.dispatchAwaiting({
+						type: "set_agent_meta",
+						agentId,
+						key,
+						value,
+					});
+				}
+			})().catch((error: unknown) => {
+				console.warn(
+					`[devhub] Agent ${agentId}: its session's metadata could not be given back: ${failureText(error)}`,
+				);
+			});
+		});
 	}
 
 	/** Write down that `session` was the named Agent `name`'s. Saved with the next save. */
@@ -3249,7 +3319,7 @@ export class AppController {
 			const resumed = resumedSession(kind, agent.profile.args);
 			const seen = swept.has(agent.id);
 			if (!seen && !agent.named && resumed !== undefined) {
-				const name = sessionNameOf(this.state.session_names, kind, resumed);
+				const name = this.givenSessionName(kind, resumed);
 				if (name !== undefined) {
 					swept.set(agent.id, name);
 					const agentId = agent.id;
@@ -3307,9 +3377,12 @@ export class AppController {
 	): Promise<void> {
 		const agent = this.coordinator.model.agent(agentId);
 		const kind = agent?.profile.kind;
-		if (agent === undefined || agent.named) return;
+		if (agent === undefined) return;
 		if (kind !== "claude" && kind !== "codex") return;
-		const name = sessionNameOf(this.state.session_names, kind, session);
+		const meta = this.sessionMeta.resumedIn(agent, session);
+		if (meta !== undefined) this.restoreSessionMeta(agentId, meta);
+		if (agent.named) return;
+		const name = this.givenSessionName(kind, session);
 		if (name === undefined) return;
 		await this.dispatchAwaiting({
 			type: "rename_agent",
@@ -3559,6 +3632,8 @@ export class AppController {
 		if (agent.named && session !== undefined) {
 			this.rememberSessionName(agent.profile.kind, session, agent.displayName);
 		}
+		// And its metadata, for 'sessions --meta' and whoever goes on with it.
+		this.sessionMeta.closed(agent, session);
 		return {
 			profile_id: agent.profile.id,
 			profile_kind: agent.profile.kind,
@@ -5406,8 +5481,17 @@ export class AppController {
 					),
 				),
 			);
+			if (!this.sessionMetaSeeded) {
+				this.sessionMetaSeeded = true;
+				this.sessionMeta.seed(
+					this.state.workspaces.flatMap((workspace) =>
+						workspace.agents.map((agent) => agent.agent_id),
+					),
+				);
+			}
 			this.state = applySnapshot(this.state, this.coordinator.snapshot());
 			this.sweepSessionNames();
+			this.sessionMeta.sweep();
 			await this.saveState();
 		} catch (error) {
 			// A save that did not happen is reported as degraded, so the model can
@@ -9913,6 +9997,22 @@ export class AppController {
 				if (created === undefined)
 					throw new Error("DevHub did not start the agent.");
 				return created;
+			},
+			setSessionMeta: (profileId, session, key, value) => {
+				const kind = this.config.agentProfiles.find(
+					(candidate) => candidate.id === profileId,
+				)?.kind;
+				if (kind === undefined)
+					throw new Error(`there is no agent profile called '${profileId}'.`);
+				return this.sessionMeta.set(
+					kind,
+					session,
+					key,
+					value,
+					kind === "claude" || kind === "codex"
+						? sessionNameOf(this.state.session_names, kind, session)
+						: undefined,
+				);
 			},
 		};
 	}

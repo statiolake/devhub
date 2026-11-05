@@ -513,6 +513,7 @@ function expandTellPaths(
 		case "agent-new":
 		case "agent-wait-many":
 		case "sessions":
+		case "session-meta":
 		case "agent-resume":
 			return command.workspace === undefined
 				? command

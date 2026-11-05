@@ -135,6 +135,10 @@ export type TellCommand =
 			readonly agent: string;
 			readonly last?: number;
 			readonly since?: string;
+			/** Every entry whole, nothing clipped (a tool's output too). */
+			readonly full?: boolean;
+			/** One entry, by its id, whole; reads nothing else and moves no cursor. */
+			readonly entry?: string;
 	  }
 	| {
 			readonly verb: "agent-send";
@@ -192,6 +196,21 @@ export type TellCommand =
 			readonly workspace?: string;
 			readonly profile?: string;
 			readonly limit: number;
+			/** Only the sessions carrying every pair (`model/sessionMeta.ts`). */
+			readonly meta?: readonly AgentMetaPair[];
+	  }
+	| {
+			/**
+			 * A session's own key/value pairs, kept once its agent is stopped or
+			 * closed: list, set one, or unset one, as `agent meta` does.
+			 */
+			readonly verb: "session-meta";
+			readonly session: string;
+			readonly workspace?: string;
+			readonly profile?: string;
+			readonly op: "list" | "set" | "unset";
+			readonly key?: string;
+			readonly value?: string;
 	  }
 	| {
 			/** One of them, gone on with in a new GUI Agent. */
@@ -396,9 +415,16 @@ agents
                                    shown in the row's tooltip. A key is a
                                    letter then up to 31 of [A-Za-z0-9_.-]; a
                                    value is one line of up to 256 characters
-  agent read <a> [--last <n>] [--since <cursor>]
+  agent read <a> [--last <n>] [--since <cursor>] [--full]
                                    the transcript of a GUI agent, as text;
-                                   prints a cursor to pass as --since
+                                   prints a cursor to pass as --since. A long
+                                   entry is clipped (2,000 characters; a
+                                   tool's output left out) and says so, with
+                                   its length and the --entry to read it
+                                   whole; --full clips nothing (--json: the
+                                   whole text; otherwise truncated and length)
+  agent read <a> --entry <id>      one entry, whole. Moves no cursor: what
+                                   'agent wait --any' owes you is unchanged
   agent send <a> <text>|-          say something to an agent; queued while
                                    it is busy, like the composer does
   agent interrupt <a>              stop the agent's current turn
@@ -438,10 +464,22 @@ agents
   agent restart <a>                Restart Session, as the row menu does
                                    (an agent cannot stop or restart itself)
   sessions [--workspace <w>] [--profile <p>] [--limit <n>]
+           [--meta KEY=VALUE]...
                                    earlier Claude/Codex sessions to resume, as
                                    the agent picker lists them: id, profile,
                                    when, title or agent name, branch or
-                                   worktree (default: your workspace, 20)
+                                   worktree, the agent running it now, and
+                                   the metadata of the agent that ran it,
+                                   kept after it is stopped or closed
+                                   (default: your workspace, 20). --meta keeps
+                                   only the sessions carrying every pair
+  session meta <session> [--workspace <w>] [--profile <p>]
+               [set <key> <value> | unset <key>]
+                                   a stopped session's metadata, as 'agent
+                                   meta' (the same keys and values); a
+                                   session an agent runs is that agent's.
+                                   Kept for the 500 most recently changed
+                                   sessions, 180 days each
   agent resume <session> [--workspace <w>] [--profile <p>] [--name <n>]
                                    go on with one in a new GUI agent, as the
                                    picker does. Where it opens is the
@@ -451,7 +489,9 @@ agents
                                    (default: yours, a fact of where you run,
                                    not a setting). --profile is required only
                                    when two profiles run the session's CLI.
-                                   Always GUI: there is no --tui here
+                                   Always GUI: there is no --tui here. The
+                                   new agent gets the session's metadata and
+                                   given name back (--name: yours instead)
 
 issues
   issue actions                    the Issue actions Assign Issue offers: id,
@@ -703,6 +743,41 @@ function metaPairs(flags: Flags): readonly AgentMetaPair[] | undefined {
 const NO_FLAGS: FlagSpec = { values: [], switches: [] };
 
 /**
+ * `session meta <session> [--workspace <w>] [--profile <p>]
+ * [set KEY VALUE... | unset KEY]`: the flags come before `set`/`unset`,
+ * after which every word is the key and the value, as `agent meta` reads them.
+ */
+function parseSessionMeta(rest: readonly string[]): TellCommand {
+	const at = rest.findIndex((word) => word === "set" || word === "unset");
+	const head = at < 0 ? rest : rest.slice(0, at);
+	const flags = readFlags(head, {
+		values: ["--workspace", "--profile"],
+		switches: [],
+	});
+	const [session] = positionals(flags, ["<session>"]);
+	const where = defined({
+		workspace: one(flags, "--workspace"),
+		profile: one(flags, "--profile"),
+	});
+	if (at < 0)
+		return { verb: "session-meta", session: session!, op: "list", ...where };
+	const [op, key, ...words] = rest.slice(at) as ["set" | "unset", ...string[]];
+	if (key === undefined) throw new Refusal("missing KEY.");
+	const keyProblem = metaKeyProblem(key);
+	if (keyProblem !== undefined) throw new Refusal(keyProblem);
+	if (op === "unset") {
+		if (words.length > 0)
+			throw new Refusal(`unexpected ${JSON.stringify(words[0])}.`);
+		return { verb: "session-meta", session: session!, op, key, ...where };
+	}
+	if (words.length === 0) throw new Refusal("missing VALUE.");
+	const value = words.join(" ");
+	const valueProblem = metaValueProblem(value);
+	if (valueProblem !== undefined) throw new Refusal(valueProblem);
+	return { verb: "session-meta", session: session!, op, key, value, ...where };
+}
+
+/**
  * `devhub --tell …`, everything after `--tell`.
  *
  * Paths are left as typed: the CLI expands them against its own cwd, which is
@@ -802,9 +877,12 @@ function parseVerb(args: readonly string[]): TellCommand {
 			return { verb: "profiles" };
 		case "agent":
 			return parseAgent(sub, rest);
+		case "session":
+			if (sub !== "meta") throw new Refusal("session takes: meta.");
+			return parseSessionMeta(rest);
 		case "sessions": {
 			const flags = readFlags(args.slice(1), {
-				values: ["--workspace", "--profile", "--limit"],
+				values: ["--workspace", "--profile", "--limit", "--meta"],
 				switches: [],
 			});
 			positionals(flags, []);
@@ -818,6 +896,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 				...defined({
 					workspace: one(flags, "--workspace"),
 					profile: one(flags, "--profile"),
+					meta: metaPairs(flags),
 				}),
 			};
 		}
@@ -1200,17 +1279,28 @@ function parseAgent(
 		}
 		case "read": {
 			const flags = readFlags(rest, {
-				values: ["--last", "--since"],
-				switches: [],
+				values: ["--last", "--since", "--entry"],
+				switches: ["--full"],
 			});
 			const [agent] = positionals(flags, ["<agent>"]);
 			const last = one(flags, "--last");
 			const since = one(flags, "--since");
+			const entry = one(flags, "--entry");
+			const full = flags.switches.has("--full");
+			if (
+				entry !== undefined &&
+				(last ?? since ?? (full || undefined)) !== undefined
+			)
+				throw new Refusal(
+					"--entry reads one entry, whole: it takes no --last, --since or --full.",
+				);
 			return {
 				verb: "agent-read",
 				agent: agent!,
 				...(last === undefined ? {} : { last: count(last, "--last", 1, 1000) }),
 				...(since === undefined ? {} : { since }),
+				...(full ? { full: true } : {}),
+				...(entry === undefined ? {} : { entry }),
 			};
 		}
 		case "send": {
@@ -1678,6 +1768,14 @@ export function tellCommandFrom(value: unknown): TellCommand {
 					? {}
 					: { last: integer(record["last"], "last", 1, 1000) }),
 				...optionalText(record, "since"),
+				...optionalText(record, "entry"),
+				...(record["full"] === undefined
+					? {}
+					: record["full"] === true
+						? { full: true }
+						: (() => {
+								throw new Error("a tell command's full must be true");
+							})()),
 			};
 		case "agent-send":
 			return {
@@ -1724,7 +1822,29 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				limit: integer(record["limit"], "limit", 1, MAX_SESSIONS_LIMIT),
 				...optionalText(record, "workspace"),
 				...optionalText(record, "profile"),
+				...optionalMeta(record),
 			};
+		case "session-meta": {
+			const op = record["op"];
+			if (op !== "list" && op !== "set" && op !== "unset")
+				throw new Error("a tell command's op must be list, set or unset");
+			const where = {
+				session: text(record, "session"),
+				...optionalText(record, "workspace"),
+				...optionalText(record, "profile"),
+			};
+			if (op === "list") return { verb: "session-meta", op, ...where };
+			const key = text(record, "key");
+			const keyProblem = metaKeyProblem(key);
+			if (keyProblem !== undefined) throw new Error(keyProblem);
+			if (op === "unset") return { verb: "session-meta", op, key, ...where };
+			const value = record["value"];
+			if (typeof value !== "string")
+				throw new Error("a tell command's value must be a string");
+			const valueProblem = metaValueProblem(value);
+			if (valueProblem !== undefined) throw new Error(valueProblem);
+			return { verb: "session-meta", op, key, value, ...where };
+		}
 		case "agent-resume":
 			return {
 				verb: "agent-resume",

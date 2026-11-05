@@ -233,6 +233,7 @@ Then tell the person which agent took it (id, workspace, branch).
     devhub --tell agent wait A --until any --timeout 300   # returns when A is idle or waiting
     devhub --tell agent read A --last 20                   # transcript tail (GUI agents)
     devhub --tell agent read A --since CURSOR              # only what is new since the last read
+    devhub --tell agent read A --entry ID                  # one clipped entry in full (--full: all of them)
 
 \`agent read\` prints a cursor on its last line (\`cursor ...\`; \`cursor\` in
 JSON); pass it to \`--since\` next time. \`agent wait\` is the way to wait: do
@@ -301,8 +302,10 @@ happens between two calls is missed - always read before waiting again.
   it applies (\`--worktree remove\` deletes a worktree's folder). Run it
   without them first: it closes nothing and lists the open questions; ask
   the person before stopping their agents or discarding unsaved work.
-- \`sessions [--workspace W]\` lists earlier sessions; \`agent resume ID
-  [--name N]\` goes on with one in a new GUI agent.
+- \`sessions [--workspace W] [--meta K=V]...\` lists earlier sessions (with the
+  meta their stopped agents had); \`agent resume ID [--name N]\` goes on with one
+  in a new GUI agent, its name and meta given back; \`session meta ID [set K V
+  | unset K]\` tags a stopped one.
 - **Tag the agents you start**: \`--meta parent=YOUR_ID --meta role=reviewer\`
   on \`agent new\` and \`issue assign\`, then find them again with
   \`agents --meta parent=YOUR_ID\`. \`agent meta A [set KEY VALUE | unset

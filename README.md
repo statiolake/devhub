@@ -278,7 +278,8 @@ devhub --tell issue assign <url> --repo PATH --branch 123-fix-login-timeout|--ro
               --profile P --gui|--tui --action ID|none --send|--draft
               [--prompt TEXT|-] [--meta K=V]...                # Cmd+Q i
 devhub --tell issue assign <url> --repo PATH --branch NAME|--root --editor-only
-devhub --tell agent read A [--last N] [--since CURSOR]   # a GUI agent's transcript, with a cursor
+devhub --tell agent read A [--last N] [--since CURSOR] [--full]   # a GUI agent's transcript, with a cursor; long entries clipped and marked
+devhub --tell agent read A --entry ID                 # one entry, whole (moves no cursor)
 devhub --tell agent send A TEXT|-                     # held until its turn ends, like the composer
 devhub --tell agent interrupt A
 devhub --tell agent requests A                        # open questions (and permission prompts, read-only)
@@ -287,8 +288,9 @@ devhub --tell agent answer A REQUEST --q 1 --option N... [--text T] --q 2 ...   
 devhub --tell agent wait A [--until idle|waiting|any] [--timeout S]
 devhub --tell agent wait --any|--all [A...] [--workspace W] [--until ...] [--timeout S]
 devhub --tell agent stop A | agent restart A          # Stop Agent, Restart Session (no sheet: the command is the decision)
-devhub --tell sessions [--workspace W] [--profile P] [--limit N]   # earlier sessions, as the agent picker lists them
-devhub --tell agent resume SESSION [--workspace W] [--profile P] [--name N]   # one of them, in a new GUI agent
+devhub --tell sessions [--workspace W] [--profile P] [--limit N] [--meta K=V]...   # earlier sessions, as the agent picker lists them, with their meta
+devhub --tell session meta SESSION [set KEY VALUE | unset KEY]   # a stopped session's own key/value pairs
+devhub --tell agent resume SESSION [--workspace W] [--profile P] [--name N]   # one of them, in a new GUI agent (its meta and name given back)
 devhub --tell commands | run <command-id>             # the command palette
 devhub --tell focus A|W | notify TEXT
 devhub --tell orchestrator events [--last N] [--json]  # the orchestrator's recent events, one line each: delivered, pending, filtered, coalesced
@@ -370,6 +372,21 @@ says `--send` or `--draft` every time, and draws no sheet.
 letter and up to 31 of `A-Z a-z 0-9 _ . -`, a value one line of up to 256
 characters, 32 pairs an agent. They are in `agents --json` / `agent status
 --json`, filter `agents --meta`, and show quietly in the Agent row's tooltip.
+They outlive the agent: whenever they change, and when it is closed, DevHub
+writes them (and the agent's name) down under its CLI session in
+`session-meta.json` beside `state.json` (versioned, replaced whole by a
+rename; the 500 most recently changed sessions, each forgotten after 180
+days untouched). `sessions --meta K=V` finds past sessions by them,
+`sessions --json` lists each session's `meta` (and `liveAgentId`, the agent
+running it now), `session meta SESSION [set | unset]` tags a stopped one, and
+`agent resume` — or the window's resume picker, Reopen Closed, `/resume` —
+gives the new agent the session's pairs and given name back.
+
+**Long entries.** `agent read` clips an entry at 2,000 characters and shows a
+tool call's title without its output; such a line ends `(truncated, N chars;
+devhub --tell agent read A --entry ID)`, and `--json` has `truncated: true`
+and `length`. `--full` reads every entry whole, `--entry ID` one; `--entry`
+leaves what the caller has read (`agent wait --any`) as it was.
 
 Two things are deliberately not reachable from a command line. A **permission
 prompt** (may this tool call run?) is the person's, in DevHub: `agent requests`

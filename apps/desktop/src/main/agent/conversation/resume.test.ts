@@ -1175,6 +1175,16 @@ describe("a Workspace's sessions across its repository's worktrees", () => {
 			{
 				repository: REPOSITORY,
 				nameOf: (id) => (id === "topic" ? "Refactor bot" : undefined),
+				metaOf: (
+					id,
+				):
+					| { meta: Record<string, string>; liveAgentId?: string }
+					| undefined =>
+					id === "here"
+						? { meta: { parent: "orch" }, liveAgentId: "a1" }
+						: id === "gone"
+							? { meta: {} }
+							: undefined,
 			},
 		);
 		expect(sessions).toEqual([
@@ -1209,6 +1219,8 @@ describe("a Workspace's sessions across its repository's worktrees", () => {
 				cwd: "/work/widget",
 				branch: "main",
 				resumableHere: true,
+				meta: { parent: "orch" },
+				liveAgentId: "a1",
 			},
 		]);
 	});

@@ -309,6 +309,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     devhub --tell --json agent status A
     devhub --tell --json agent wait --any --timeout 600
     devhub --tell agent read A --since CURSOR
+    devhub --tell agent read A --entry ID
     devhub --tell agent send A "次は ... をしてください"
     devhub --tell agent requests A
     devhub --tell agent answer A REQ --option 1
@@ -316,7 +317,8 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     devhub --tell agent restart A
     devhub --tell agent rename A "123 login fix"
     devhub --tell agent meta A set issue 123
-    devhub --tell sessions --workspace W
+    devhub --tell --json sessions --workspace W --meta parent=ORCH
+    devhub --tell session meta ID set state done
     devhub --tell agent resume ID --name "123 login fix"
     devhub --tell profiles
     devhub --tell issue actions
@@ -358,7 +360,8 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
    タイマーの間隔 (例: 30 分ごとに棚卸し)。
 6. エスカレーションの言語と書き方 (上のテンプレートでよいか、長さ、図の好み)。
 7. エージェントの命名と meta タグ (例 \`parent=<orchestrator id>\`、
-   \`issue=123\`、\`role=reviewer\`)。
+   \`issue=123\`、\`role=reviewer\`)。meta は停止・クローズ後もセッションに
+   残り、\`sessions --meta\` で探せて、\`agent resume\` で引き継がれる。
 8. イベント種別ごとに何をしたいか (playbook の素案を一緒に作る)。
 9. 必要なら稼働時間 / 静かにしてほしい時間帯。
 

@@ -14,6 +14,7 @@ import type {
 	PromptCache,
 	Question,
 	RequestAnswer,
+	ToolOutput,
 	TranscriptEntry,
 	Usage,
 } from "../../../model/conversation.js";
@@ -475,6 +476,17 @@ export interface TellPorts {
 		profileId: string,
 		session: TellPastSession,
 	): Promise<string>;
+	/**
+	 * Set (or, with undefined, remove) one pair of a session no agent runs
+	 * now, checked as an agent's are (`model/sessionMeta.ts`); answers its
+	 * pairs. Refused for a session an agent runs: that is `agent meta`'s.
+	 */
+	setSessionMeta(
+		profileId: string,
+		session: string,
+		key: string,
+		value: string | undefined,
+	): Promise<Readonly<Record<string, string>>>;
 }
 
 /** A new escalation, as `escalation new` asks for one. */
@@ -931,7 +943,14 @@ export class TellService {
 			case "issue-assign":
 				return this.assignIssue(command);
 			case "agent-read":
-				return this.read(command.agent, command.last, command.since);
+				return command.entry !== undefined
+					? this.readEntry(command.agent, command.entry)
+					: this.read(
+							command.agent,
+							command.last,
+							command.since,
+							command.full === true,
+						);
 			case "agent-send":
 				return this.send(command.agent, command.text);
 			case "agent-interrupt":
@@ -956,6 +975,8 @@ export class TellService {
 				return this.sessions(command);
 			case "agent-resume":
 				return this.resume(command);
+			case "session-meta":
+				return this.sessionMeta(command);
 			case "commands":
 				return this.listCommands();
 			case "run":
@@ -2118,6 +2139,7 @@ export class TellService {
 		name: string,
 		last: number | undefined,
 		since: string | undefined,
+		full = false,
 	): Promise<TellAnswer> {
 		const agent = this.agent(name);
 		const conversation = await this.guiConversation(agent);
@@ -2131,7 +2153,13 @@ export class TellService {
 		}
 		const shown = entries.slice(from);
 		const cursor = entries.at(-1)?.id ?? since ?? "";
-		const lines = shown.map(entryLine).filter((line) => line !== undefined);
+		const views = shown.map((entry) => ({
+			entry,
+			view: entryView(entry, full, agent.id),
+		}));
+		const lines = views
+			.map(({ view }) => view?.text)
+			.filter((line) => line !== undefined);
 		const requests = conversation.requests().length;
 		// Read to the end: what `wait --any` owes this caller is what came after.
 		this.memory.mark(callerKey(this.caller), agent.id, {
@@ -2150,11 +2178,42 @@ export class TellService {
 				turn: conversation.turn(),
 				requests,
 				cursor,
-				entries: shown.map((entry) => ({
+				entries: views.map(({ entry, view }) => ({
 					id: entry.id,
 					kind: entry.kind,
-					text: entryLine(entry),
+					text: view?.json,
+					truncated: view?.truncated ?? false,
+					length: view?.length ?? 0,
 				})),
+			},
+		};
+	}
+
+	/**
+	 * `agent read <a> --entry <id>`: one entry, in full. What the caller has
+	 * read (`TellMemory`) is left as it was: this is a look back, and moves
+	 * no cursor.
+	 */
+	private async readEntry(name: string, id: string): Promise<TellAnswer> {
+		const agent = this.agent(name);
+		const conversation = await this.guiConversation(agent);
+		const entry = conversation.entries().find((one) => one.id === id);
+		if (entry === undefined)
+			throw new Error(
+				`${agent.name} has no entry ${JSON.stringify(id)} (a rewind or a compaction may have taken it). Run 'devhub --tell agent read ${agent.id}'.`,
+			);
+		const view = entryView(entry, true, agent.id);
+		return {
+			message: view?.text ?? `(entry ${entry.id} has no text)`,
+			data: {
+				agentId: agent.id,
+				entry: {
+					id: entry.id,
+					kind: entry.kind,
+					text: view?.json,
+					truncated: false,
+					length: view?.length ?? 0,
+				},
 			},
 		};
 	}
@@ -2739,16 +2798,22 @@ export class TellService {
 		const workspace = this.workspace(
 			this.workspaceOrCallers(command.workspace),
 		);
-		const { sessions, failures } = await this.pastSessions(
-			workspace,
-			command.profile,
+		const listed = await this.pastSessions(workspace, command.profile);
+		const failures = listed.failures;
+		const meta = command.meta ?? [];
+		const sessions = listed.sessions.filter(({ session }) =>
+			meta.every((pair) => session.meta?.[pair.key] === pair.value),
 		);
 		const shown = sessions.slice(0, command.limit);
 		const now = this.clock.now();
 		return {
 			message: [
 				...(shown.length === 0
-					? [`No earlier sessions in ${workspace.root}.`]
+					? [
+							meta.length > 0
+								? `No earlier session in ${workspace.root} carries ${meta.map((pair) => `${pair.key}=${pair.value}`).join(" ")}.`
+								: `No earlier sessions in ${workspace.root}.`,
+						]
 					: shown.map(({ profile, session }) =>
 							sessionLine(profile, session, now),
 						)),
@@ -2767,6 +2832,8 @@ export class TellService {
 					profile,
 					title: session.title,
 					agentName: session.agentName ?? null,
+					meta: session.meta ?? {},
+					liveAgentId: session.liveAgentId ?? null,
 					updatedAt: iso(session.updatedAt),
 					cwd: session.cwd ?? null,
 					branch: session.worktree?.branch ?? session.branch ?? null,
@@ -2785,27 +2852,11 @@ export class TellService {
 		const workspace = this.workspace(
 			this.workspaceOrCallers(command.workspace),
 		);
-		const { sessions } = await this.pastSessions(workspace, command.profile);
-		const exact = sessions.filter(
-			({ session }) => session.id === command.session,
+		const { profile, session } = await this.findSession(
+			workspace,
+			command.session,
+			command.profile,
 		);
-		const matches =
-			exact.length > 0
-				? exact
-				: sessions.filter(
-						({ session }) =>
-							command.session.length >= 4 &&
-							session.id.startsWith(command.session),
-					);
-		if (matches.length === 0)
-			throw new Error(
-				`there is no earlier session ${JSON.stringify(command.session)} in ${workspace.root}. Run 'devhub --tell sessions --workspace ${workspace.id}'.`,
-			);
-		if (new Set(matches.map(({ session }) => session.id)).size > 1)
-			throw new Error(
-				`${JSON.stringify(command.session)} is the start of more than one session's id: ${matches.map(({ session }) => session.id).join(", ")}.`,
-			);
-		const { profile, session } = matches[0]!;
 		// Two profiles of one kind both list the session (the listing shows it
 		// once, under the first): which one goes on with it is the caller's.
 		if (command.profile === undefined) {
@@ -2830,22 +2881,96 @@ export class TellService {
 			profile,
 			session,
 		);
-		if (command.name !== undefined)
-			await this.ports.renameAgent(agentId, command.name);
+		// The name and the pairs it had go on with it, as the window gives
+		// them back; --name is the caller's own.
+		const name = command.name ?? session.agentName;
+		if (name !== undefined) await this.ports.renameAgent(agentId, name);
+		const meta = session.meta ?? {};
+		await this.tag(
+			agentId,
+			Object.entries(meta).map(([key, value]) => ({ key, value })),
+		);
 		const placed = this.ports
 			.workspaces()
 			.find((each) => each.agents.some((one) => one.id === agentId));
 		const root = placed?.root ?? session.worktree?.root ?? workspace.root;
 		return {
-			message: `Agent ${agentId} (${profile}) is going on with ${JSON.stringify(sessionTitle(session))} (${session.id}) in ${root}.`,
+			message: `Agent ${agentId} (${profile}) is going on with ${JSON.stringify(sessionTitle(session))} (${session.id}) in ${root}${Object.keys(meta).length === 0 ? "" : `, with ${metaWords(meta) ?? ""}`}.`,
 			data: {
 				agentId,
 				session: session.id,
 				profile,
 				workspaceId: placed?.id ?? null,
 				root,
+				name: name ?? null,
+				meta,
 			},
 		};
+	}
+
+	/** `session meta`: a session's pairs, kept past its agent; set or unset one. */
+	private async sessionMeta(
+		command: Extract<TellCommand, { verb: "session-meta" }>,
+	): Promise<TellAnswer> {
+		const workspace = this.workspace(
+			this.workspaceOrCallers(command.workspace),
+		);
+		const { profile, session } = await this.findSession(
+			workspace,
+			command.session,
+			command.profile,
+		);
+		if (command.op !== "list" && session.liveAgentId !== undefined)
+			throw new Error(
+				`session ${session.id} is agent ${session.liveAgentId}'s, running now: use 'agent meta ${session.liveAgentId}'.`,
+			);
+		const meta =
+			command.op === "list" || command.key === undefined
+				? (session.meta ?? {})
+				: await this.ports.setSessionMeta(
+						profile,
+						session.id,
+						command.key,
+						command.op === "set" ? command.value : undefined,
+					);
+		const entries = Object.entries(meta);
+		return {
+			message:
+				entries.length === 0
+					? `Session ${session.id} has no metadata.`
+					: entries.map(([key, value]) => `${key}=${value}`).join("\n"),
+			data: {
+				session: session.id,
+				profile,
+				liveAgentId: session.liveAgentId ?? null,
+				meta,
+			},
+		};
+	}
+
+	/** The one earlier session `id` (or a unique prefix of one) names in `workspace`. */
+	private async findSession(
+		workspace: TellWorkspace,
+		id: string,
+		profileId: string | undefined,
+	): Promise<{ readonly profile: string; readonly session: TellPastSession }> {
+		const { sessions } = await this.pastSessions(workspace, profileId);
+		const exact = sessions.filter(({ session }) => session.id === id);
+		const matches =
+			exact.length > 0
+				? exact
+				: sessions.filter(
+						({ session }) => id.length >= 4 && session.id.startsWith(id),
+					);
+		if (matches.length === 0)
+			throw new Error(
+				`there is no earlier session ${JSON.stringify(id)} in ${workspace.root}. Run 'devhub --tell sessions --workspace ${workspace.id}'.`,
+			);
+		if (new Set(matches.map(({ session }) => session.id)).size > 1)
+			throw new Error(
+				`${JSON.stringify(id)} is the start of more than one session's id: ${matches.map(({ session }) => session.id).join(", ")}.`,
+			);
+		return matches[0]!;
 	}
 
 	// --- the app ------------------------------------------------------------
@@ -2960,6 +3085,10 @@ function sessionLine(
 		session.resumableHere || worktree !== undefined
 			? undefined
 			: `not resumable here (ran in ${session.cwd ?? "another folder"})`,
+		session.liveAgentId === undefined
+			? undefined
+			: `running in agent ${session.liveAgentId}`,
+		metaWords(session.meta ?? {}),
 	]
 		.filter((part) => part !== undefined)
 		.join("  ");
@@ -3371,11 +3500,84 @@ function clip(text: string): string {
 	return flat.length > LINE_LIMIT ? `${flat.slice(0, LINE_LIMIT)}…` : flat;
 }
 
+/**
+ * One entry as `agent read` shows it. `text` is its line: clipped, unless
+ * `full`, and then saying so and how to read it whole (`--entry`); `json`
+ * is the same without that note. `length` is the whole text's, in
+ * characters, and `truncated` whether `text` is less than it.
+ */
+export function entryView(
+	entry: TranscriptEntry,
+	full: boolean,
+	agentId: string,
+):
+	| {
+			readonly text: string;
+			readonly json: string;
+			readonly truncated: boolean;
+			readonly length: number;
+	  }
+	| undefined {
+	const whole = entryText(entry, true);
+	if (whole === undefined) return undefined;
+	const length = [...whole].length;
+	if (full) return { text: whole, json: whole, truncated: false, length };
+	const short = entryText(entry, false) ?? "";
+	if (short === whole)
+		return { text: whole, json: whole, truncated: false, length };
+	return {
+		text: `${short} (truncated, ${length.toLocaleString("en-US")} chars; devhub --tell agent read ${agentId} --entry ${entry.id})`,
+		json: short,
+		truncated: true,
+		length,
+	};
+}
+
 /** One transcript entry, as a line or two of text. */
 export function entryLine(entry: TranscriptEntry): string | undefined {
+	return entryText(entry, false);
+}
+
+/** A tool's output as text: what it printed, said once each. */
+function toolOutputText(output: ToolOutput | undefined): string {
+	if (output === undefined) return "";
+	return output
+		.map((part) => {
+			switch (part.kind) {
+				case "text":
+					return part.text;
+				case "image":
+					return "[image]";
+				case "reference":
+					return `[tool ${part.name}]`;
+				case "command":
+					return [
+						part.output,
+						part.stderr === undefined || part.stderr.length === 0
+							? undefined
+							: `[stderr]\n${part.stderr}`,
+						part.interrupted
+							? "[interrupted]"
+							: part.exitCode === undefined
+								? undefined
+								: `[exit ${String(part.exitCode)}]`,
+					]
+						.filter((piece) => piece !== undefined)
+						.join("\n");
+				case "persisted":
+					return `${part.preview}\n[${part.note}]`;
+			}
+		})
+		.join("\n")
+		.trim();
+}
+
+/** An entry's text: clipped, or (`whole`) all of it, a tool's output too. */
+function entryText(entry: TranscriptEntry, whole: boolean): string | undefined {
+	const cut = whole ? (text: string) => text.trim() : clip;
 	switch (entry.kind) {
 		case "user":
-			return `> ${clip(entry.text)}`;
+			return `> ${cut(entry.text)}`;
 		case "answer":
 			return `> (answered) ${entry.answers
 				.map((answer) =>
@@ -3387,22 +3589,25 @@ export function entryLine(entry: TranscriptEntry): string | undefined {
 				)
 				.join("; ")}`;
 		case "command":
-			return `$ ${entry.line ?? ""}${entry.output === undefined ? "" : `\n${clip(entry.output)}`}`;
+			return `$ ${entry.line ?? ""}${entry.output === undefined ? "" : `\n${cut(entry.output)}`}`;
 		case "assistant": {
 			const text = entry.blocks
 				.filter((block) => block.kind === "text")
 				.map((block) => block.markdown)
 				.join("\n");
-			return text.trim().length === 0 ? undefined : clip(text);
+			return text.trim().length === 0 ? undefined : cut(text);
 		}
-		case "tool":
-			return `[${entry.tool}] ${clip(entry.title)} (${entry.status})`;
+		case "tool": {
+			const line = `[${entry.tool}] ${cut(entry.title)} (${entry.status})`;
+			const output = toolOutputText(entry.output);
+			return whole && output.length > 0 ? `${line}\n${output}` : line;
+		}
 		case "notice":
-			return `! ${clip(entry.text)}`;
+			return `! ${cut(entry.text)}`;
 		case "compaction":
 			return "-- compacted --";
 		case "turn-end":
-			return `-- turn ${entry.outcome}${entry.detail === undefined ? "" : `: ${clip(entry.detail)}`} --`;
+			return `-- turn ${entry.outcome}${entry.detail === undefined ? "" : `: ${cut(entry.detail)}`} --`;
 	}
 }
 

@@ -526,6 +526,30 @@ class FakePorts implements TellPorts {
 		this.calls.push(`resume ${workspaceId} ${profileId} ${session.id}`);
 		return Promise.resolve("resumed-agent");
 	}
+	/** The pairs `setSessionMeta` kept, by session id. */
+	sessionMeta = new Map<string, Record<string, string>>();
+	setSessionMeta(
+		profileId: string,
+		session: string,
+		key: string,
+		value: string | undefined,
+	) {
+		this.calls.push(
+			`session-meta ${profileId} ${session} ${key} ${value ?? "<unset>"}`,
+		);
+		const listed = this.past.get(profileId);
+		const before =
+			this.sessionMeta.get(session) ??
+			(Array.isArray(listed)
+				? listed.find((one) => one.id === session)?.meta
+				: undefined) ??
+			{};
+		const meta: Record<string, string> = { ...before };
+		if (value === undefined) delete meta[key];
+		else meta[key] = value;
+		this.sessionMeta.set(session, meta);
+		return Promise.resolve(meta);
+	}
 }
 
 function pane(
@@ -2208,6 +2232,153 @@ const PAST: Record<string, TellPastSession[]> = {
 	],
 };
 
+describe("agent read, long entries", () => {
+	const LONG = "x".repeat(12_340);
+	function withLong() {
+		const made = setup();
+		made.conversation.pending = [];
+		made.conversation.state = "none";
+		made.conversation.log = [
+			...made.conversation.log,
+			{
+				kind: "assistant",
+				id: "e4" as EntryId,
+				parent: null,
+				blocks: [{ kind: "text", markdown: LONG }],
+				streaming: false,
+			},
+			{
+				kind: "tool",
+				id: "e5",
+				parent: null,
+				tool: "Bash",
+				title: "make test",
+				status: "completed",
+				output: [
+					{
+						kind: "command",
+						exitCode: 1,
+						output: "1 failed",
+						stderr: "boom",
+						interrupted: false,
+					},
+				],
+			} as unknown as TranscriptEntry,
+		];
+		return made;
+	}
+
+	it("says what it clipped, and how to read it whole", async () => {
+		const { service } = withLong();
+		const answer = await viaSocket(
+			service,
+			["agent", "read", "aaaa"],
+			coordinator,
+		);
+		const lines = answer.message.split("\n");
+		expect(lines).toContain(
+			`${"x".repeat(2000)}… (truncated, 12,340 chars; devhub --tell agent read aaaa1111-0000 --entry e4)`,
+		);
+		expect(lines).toContain(
+			"[Bash] make test (completed) (truncated, 60 chars; devhub --tell agent read aaaa1111-0000 --entry e5)",
+		);
+		expect(lines).toContain("On it.");
+		expect(answer.data).toMatchObject({
+			entries: expect.arrayContaining([
+				{
+					id: "e2",
+					kind: "assistant",
+					text: "On it.",
+					truncated: false,
+					length: 6,
+				},
+				{
+					id: "e4",
+					kind: "assistant",
+					text: `${"x".repeat(2000)}…`,
+					truncated: true,
+					length: 12_340,
+				},
+			]),
+		});
+	});
+
+	it("gives every entry whole with --full, and one with --entry", async () => {
+		const { service } = withLong();
+		const full = await viaSocket(
+			service,
+			["agent", "read", "aaaa", "--full", "--last", "2"],
+			coordinator,
+		);
+		expect(full.message).toContain(LONG);
+		expect(full.message).toContain(
+			"[Bash] make test (completed)\n1 failed\n[stderr]\nboom\n[exit 1]",
+		);
+		expect(full.message).not.toContain("truncated");
+		expect(full.data).toMatchObject({
+			entries: [
+				{ id: "e4", text: LONG, truncated: false, length: 12_340 },
+				{ id: "e5", truncated: false },
+			],
+		});
+		const one = await viaSocket(
+			service,
+			["agent", "read", "aaaa", "--entry", "e4"],
+			coordinator,
+		);
+		expect(one.message).toBe(LONG);
+		expect(one.data).toMatchObject({
+			entry: { id: "e4", text: LONG, truncated: false, length: 12_340 },
+		});
+		await expect(
+			viaSocket(
+				service,
+				["agent", "read", "aaaa", "--entry", "nope"],
+				coordinator,
+			),
+		).rejects.toThrow(/no entry "nope"/);
+		expect(
+			parseTellArguments(["agent", "read", "a", "--entry", "e1", "--full"]),
+		).toMatchObject({ kind: "invalid" });
+	});
+
+	it("moves no cursor for --entry: what was read stays read, what was not stays news", async () => {
+		const { service, conversation } = withLong();
+		await viaSocket(service, ["agent", "read", "aaaa"], coordinator);
+		// Reading an old entry whole does not make the newer ones unread...
+		await viaSocket(
+			service,
+			["agent", "read", "aaaa", "--entry", "e2"],
+			coordinator,
+		);
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: false });
+		// ...and reading one does not mark what came after it as read.
+		conversation.log = [...conversation.log, said("e6")];
+		await viaSocket(
+			service,
+			["agent", "read", "aaaa", "--entry", "e6"],
+			coordinator,
+		);
+		expect(
+			(
+				await viaSocket(
+					service,
+					["agent", "wait", "--any", "--timeout", "1"],
+					coordinator,
+				)
+			).data,
+		).toMatchObject({ reached: true, ready: [{ since: "e5", cursor: "e6" }] });
+	});
+});
+
 describe("sessions and agent resume", () => {
 	function withSessions() {
 		const made = setup();
@@ -2286,6 +2457,133 @@ describe("sessions and agent resume", () => {
 		ports.calls = [];
 		await viaSocket(service, ["agent", "resume", "x1dd-0001"], self);
 		expect(ports.calls.at(-1)).toBe("resume w1 codex x1dd-0001");
+	});
+
+	/** PAST with metadata kept for two stopped sessions and a running one. */
+	function withMeta() {
+		const made = withSessions();
+		const [login, api, elsewhere] = PAST["claude"]!;
+		made.ports.past.set("claude", [
+			{ ...login!, meta: { parent: "orch-1", issue: "12" } },
+			{ ...api!, meta: { parent: "orch-1" } },
+			{ ...elsewhere!, meta: { parent: "orch-2" }, liveAgentId: "aaaa1111" },
+		]);
+		return made;
+	}
+
+	it("lists a stopped agent's metadata with its session, and filters by it", async () => {
+		const { service } = withMeta();
+		const all = await viaSocket(service, ["sessions"], self);
+		expect(all.message).toContain(
+			'c1aa-0001  claude  2h ago  "Fix the login timeout"  branch 12-fix  parent=orch-1 issue=12',
+		);
+		expect(all.message).toContain("running in agent aaaa1111  parent=orch-2");
+		expect(all.data).toMatchObject({
+			sessions: expect.arrayContaining([
+				expect.objectContaining({
+					id: "x1dd-0001",
+					meta: {},
+					liveAgentId: null,
+				}),
+				expect.objectContaining({
+					id: "c1aa-0001",
+					meta: { parent: "orch-1", issue: "12" },
+				}),
+				expect.objectContaining({ id: "c3cc-0003", liveAgentId: "aaaa1111" }),
+			]),
+		});
+		const one = await viaSocket(
+			service,
+			["sessions", "--meta", "parent=orch-1", "--meta", "issue=12"],
+			self,
+		);
+		expect(
+			(one.data as { sessions: { id: string }[] }).sessions.map((s) => s.id),
+		).toEqual(["c1aa-0001"]);
+		const two = await viaSocket(
+			service,
+			["sessions", "--meta", "parent=orch-1", "--limit", "1"],
+			self,
+		);
+		expect(two.data).toMatchObject({
+			sessions: [{ id: "c1aa-0001" }],
+			more: 1,
+		});
+		const none = await viaSocket(
+			service,
+			["sessions", "--meta", "parent=nobody"],
+			self,
+		);
+		expect(none.message).toBe(
+			"No earlier session in /src/app carries parent=nobody.",
+		);
+	});
+
+	it("gives a resumed session's metadata and name back to the new agent", async () => {
+		const { service, ports } = withMeta();
+		const answer = await viaSocket(
+			service,
+			["agent", "resume", "c2bb", "--workspace", "w1"],
+			coordinator,
+		);
+		expect(ports.calls.slice(2)).toEqual([
+			"resume w1 claude c2bb-0002",
+			"rename resumed-agent API",
+			"meta resumed-agent parent orch-1",
+		]);
+		expect(answer.message).toBe(
+			'Agent resumed-agent (claude) is going on with "API" (c2bb-0002) in /src/app-13-api, with parent=orch-1.',
+		);
+		expect(answer.data).toMatchObject({
+			name: "API",
+			meta: { parent: "orch-1" },
+		});
+	});
+
+	it("edits a stopped session's metadata, checked as an agent's is", async () => {
+		const { service, ports } = withMeta();
+		const set = await viaSocket(
+			service,
+			["session", "meta", "c1aa", "set", "status", "needs", "review"],
+			self,
+		);
+		expect(ports.calls.at(-1)).toBe(
+			"session-meta claude c1aa-0001 status needs review",
+		);
+		expect(set.message.split("\n")).toEqual([
+			"parent=orch-1",
+			"issue=12",
+			"status=needs review",
+		]);
+		const unset = await viaSocket(
+			service,
+			["session", "meta", "c1aa-0001", "--profile", "claude", "unset", "issue"],
+			self,
+		);
+		expect(unset.data).toMatchObject({
+			session: "c1aa-0001",
+			meta: { parent: "orch-1", status: "needs review" },
+		});
+		const list = await viaSocket(
+			service,
+			["session", "meta", "x1dd-0001"],
+			self,
+		);
+		expect(list.message).toBe("Session x1dd-0001 has no metadata.");
+		await expect(
+			viaSocket(service, ["session", "meta", "c3cc", "set", "a", "b"], self),
+		).rejects.toThrow(
+			/agent aaaa1111's, running now: use 'agent meta aaaa1111'/,
+		);
+		expect(
+			parseTellArguments(["session", "meta", "c1aa", "set", "1bad", "x"]),
+		).toMatchObject({ kind: "invalid", message: /not a metadata key/ });
+		expect(
+			parseTellArguments(["session", "meta", "c1aa", "set", "k", "a\u0007"]),
+		).toMatchObject({ kind: "invalid", message: /one line of text/ });
+		expect(parseTellArguments(["sessions", "--meta", "nokey"])).toMatchObject({
+			kind: "invalid",
+		});
 	});
 
 	it("refuses a session it cannot go on with here, and one it cannot tell apart", async () => {

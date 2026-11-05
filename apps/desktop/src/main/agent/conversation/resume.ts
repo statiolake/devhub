@@ -74,6 +74,13 @@ export interface PastSession {
 	readonly worktree?: SessionWorktree;
 	/** The name a person gave the Agent that ran it (`model/sessionNames.ts`). */
 	readonly agentName?: string;
+	/**
+	 * The metadata of the Agent that ran it (`model/sessionMeta.ts`), or of
+	 * the one running it now; absent when it has none.
+	 */
+	readonly meta?: Readonly<Record<string, string>>;
+	/** The Agent running it now, if one is. */
+	readonly liveAgentId?: string;
 }
 
 /** The worktree a session ran in, when it is not the Workspace's own. */
@@ -88,12 +95,20 @@ export interface SessionWorktree {
 
 /**
  * What a listing knows beyond the CLI's own store: the repository the
- * Workspace is a checkout of, and the names people gave the Agents.
+ * Workspace is a checkout of, the names people gave the Agents, and their
+ * metadata.
  */
 export interface ListingContext {
 	readonly repository?: RepositoryWorktrees;
 	/** The name given to the Agent that ran this CLI's `session`, if one was. */
 	readonly nameOf?: (session: string) => string | undefined;
+	/** Its metadata and the Agent running it now, if either is known. */
+	readonly metaOf?: (session: string) =>
+		| {
+				readonly meta?: Readonly<Record<string, string>>;
+				readonly liveAgentId?: string;
+		  }
+		| undefined;
 }
 
 /**
@@ -254,13 +269,22 @@ export async function listPastSessions(
 		repository === undefined
 			? listed
 			: placeSessions(kind, listed, cwd, repository, scope);
-	const nameOf = context.nameOf;
-	return nameOf === undefined
-		? placed
-		: placed.map((session) => {
-				const agentName = nameOf(session.id);
-				return agentName === undefined ? session : { ...session, agentName };
-			});
+	const { nameOf, metaOf } = context;
+	if (nameOf === undefined && metaOf === undefined) return placed;
+	return placed.map((session) => {
+		const agentName = nameOf?.(session.id);
+		const known = metaOf?.(session.id);
+		return {
+			...session,
+			...(agentName === undefined ? {} : { agentName }),
+			...(known?.meta === undefined || Object.keys(known.meta).length === 0
+				? {}
+				: { meta: known.meta }),
+			...(known?.liveAgentId === undefined
+				? {}
+				: { liveAgentId: known.liveAgentId }),
+		};
+	});
 }
 
 /** `path` is `root` or a folder under it. */
