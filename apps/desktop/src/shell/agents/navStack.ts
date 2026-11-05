@@ -47,6 +47,11 @@ export interface NavStack<T> {
   readonly nav: Nav;
   /** What Back last left, for Forward. */
   readonly forward: T | undefined;
+  /**
+   * The page over was there when the stack mounted (`initial`): it is
+   * where the pane was left, so it is shown as it was — no slide in.
+   */
+  readonly restored: boolean;
   readonly open: (item: T) => void;
   /**
    * Back to the page under. Focus goes back to what opened the page over,
@@ -58,14 +63,18 @@ export interface NavStack<T> {
 /**
  * One stack. `findReturn` finds, on the page under, the element that opened
  * an item (a card, a row): focus goes back to it on return — but only when
- * focus was in the pane, so nothing is taken from elsewhere.
+ * focus was in the pane, so nothing is taken from elsewhere. `initial` is
+ * what was open over the page under when the pane was last left
+ * (`orchestratorMemory.ts`).
  */
 export function useNavStack<T>(
   pane: RefObject<HTMLElement | null>,
   findReturn: (item: T) => HTMLElement | null | undefined,
+  initial?: T,
 ): NavStack<T> {
-  const [shown, setShown] = useState<T | undefined>(undefined);
-  const [nav, setNav] = useState<Nav>("idle");
+  const [shown, setShown] = useState<T | undefined>(initial);
+  const [nav, setNav] = useState<Nav>(initial === undefined ? "idle" : "push");
+  const [restored, setRestored] = useState(initial !== undefined);
   const [forward, setForward] = useState<T | undefined>(undefined);
   const popTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const returnTo = useRef<T | undefined>(undefined);
@@ -74,6 +83,7 @@ export function useNavStack<T>(
   const open = useCallback((item: T) => {
     clearTimeout(popTimer.current);
     returnTo.current = undefined;
+    setRestored(false);
     setForward(undefined);
     setShown(item);
     setNav("push");
@@ -85,6 +95,7 @@ export function useNavStack<T>(
         ? (landOn ?? shown)
         : undefined;
       setForward(shown);
+      setRestored(false);
       clearTimeout(popTimer.current);
       if (reducedMotion()) {
         setShown(undefined);
@@ -107,5 +118,5 @@ export function useNavStack<T>(
     returnTo.current = undefined;
     find.current(item)?.focus({ preventScroll: true });
   }, [nav]);
-  return { shown, nav, forward, open, close };
+  return { shown, nav, forward, restored, open, close };
 }

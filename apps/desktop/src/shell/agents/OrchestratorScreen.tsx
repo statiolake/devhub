@@ -43,6 +43,12 @@ import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
 import { EscalationNote, TakeEscalation } from "./EscalationNote";
+import {
+  memory,
+  rememberedTab,
+  rememberTab,
+  type BoardTab,
+} from "./orchestratorMemory";
 
 /** `45s`, `12m`, `3h`, `2d`. */
 export function span(ms: number): string {
@@ -85,20 +91,7 @@ export function preview(markdown: string): string {
 export { NAV_MS } from "./navStack";
 
 /** The left pane's two tabs; the board is the default. */
-export type BoardTab = "board" | "files";
-
-const TAB_KEY = "devhub.orchestrator.tab";
-
-/** The tab chosen in this session, kept across a reload of the page. */
-function rememberedTab(): BoardTab {
-  try {
-    return window.sessionStorage.getItem(TAB_KEY) === "files"
-      ? "files"
-      : "board";
-  } catch {
-    return "board";
-  }
-}
+export type { BoardTab } from "./orchestratorMemory";
 
 /** What a tab answers of the mouse's side buttons; false leaves it be. */
 export type SideButtons = (direction: "back" | "forward") => boolean;
@@ -110,7 +103,7 @@ export function OrchestratorBoard({
 }) {
   const { board, reportFailure } = useAgents();
   const [tab, setTab] = useState<BoardTab>(rememberedTab);
-  const [history, setHistory] = useState(false);
+  const [history, setHistory] = useState(() => memory.history);
   // Something in the folder changed while the Files tab was not looked at.
   const [filesChanged, setFilesChanged] = useState(false);
   const section = useRef<HTMLElement>(null);
@@ -118,11 +111,7 @@ export function OrchestratorBoard({
   const choose = useCallback((next: BoardTab) => {
     setTab(next);
     if (next === "files") setFilesChanged(false);
-    try {
-      window.sessionStorage.setItem(TAB_KEY, next);
-    } catch {
-      // Remembering is a convenience.
-    }
+    rememberTab(next);
   }, []);
   useEffect(() => {
     if (tab === "files") return;
@@ -282,7 +271,10 @@ export function OrchestratorBoard({
               className="orchestrator-history"
               aria-pressed={history}
               onClick={() => {
-                setHistory((value) => !value);
+                setHistory((value) => {
+                  memory.history = !value;
+                  return !value;
+                });
               }}
             >
               Closed {board.closed.length > 0 ? board.closed.length : ""}
@@ -375,6 +367,57 @@ export function escalationBase(
   return named?.root ?? ofAgent?.root ?? orchestratorRoot;
 }
 
+/** The escalation the pane was left on, if it is still there to show. */
+function restoredEscalation(
+  all: readonly EscalationWire[],
+): EscalationWire | undefined {
+  const left = memory.escalation;
+  if (left === undefined) return undefined;
+  const now = all.find((one) => one.id === left.id);
+  if (now === undefined || (now.state === "closed" && !left.closed)) {
+    memory.escalation = undefined;
+    return undefined;
+  }
+  return now;
+}
+
+/** A Workspace the reading view offers to go to. */
+export interface WorkspaceJump {
+  readonly id: string;
+  readonly label: string;
+  /** The agent chip it is drawn after; absent: the escalation's own, first. */
+  readonly afterAgent?: string;
+}
+
+/**
+ * The Workspaces an escalation's reading view offers to go to: its own, and
+ * each related agent's, once each — found by the snapshot, which knows where
+ * every agent is. One an agent is in goes after that agent's chip.
+ */
+export function escalationWorkspaces(
+  escalation: EscalationWire,
+  workspaces: AppSnapshot["workspaces"],
+): readonly WorkspaceJump[] {
+  const out: WorkspaceJump[] = [];
+  const seen = new Set<string>();
+  for (const agent of escalation.agents) {
+    const workspace = workspaces.find((one) =>
+      one.agents.some((it) => it.id === agent.agentId),
+    );
+    if (workspace === undefined || seen.has(workspace.id)) continue;
+    seen.add(workspace.id);
+    out.push({
+      id: workspace.id,
+      label: workspace.label,
+      afterAgent: agent.agentId,
+    });
+  }
+  const own = workspaces.find((one) => one.id === escalation.workspaceId);
+  if (own !== undefined && !seen.has(own.id))
+    out.unshift({ id: own.id, label: own.label });
+  return out;
+}
+
 function BoardPage({
   pane,
   history,
@@ -389,16 +432,22 @@ function BoardPage({
   const { board, dispatch } = useAgents();
   const now = useNow();
   const lanes = useRef<HTMLDivElement>(null);
-  const stack = useNavStack<EscalationWire>(pane, (escalation) =>
-    lanes.current?.querySelector<HTMLElement>(
-      `[data-escalation-id="${String(escalation.id)}"]`,
-    ),
-  );
-  const { nav, shown, forward, open: openCard, close } = stack;
   const all = useMemo(
     () => [...board.needsAnswer, ...board.inProgress, ...board.closed],
     [board],
   );
+  // Where the pane was left: that escalation, again — unless it has gone
+  // from the board, or was closed since, and then the board.
+  const [initial] = useState(() => restoredEscalation(all));
+  const stack = useNavStack<EscalationWire>(
+    pane,
+    (escalation) =>
+      lanes.current?.querySelector<HTMLElement>(
+        `[data-escalation-id="${String(escalation.id)}"]`,
+      ),
+    initial,
+  );
+  const { nav, shown, forward, restored, open: openCard, close } = stack;
   // The escalation on the page over, as it was when it was opened; the
   // board's own copy of it is read live. It stays through a pop, so the
   // view slides out with what it showed.
@@ -424,6 +473,13 @@ function BoardPage({
   useEffect(() => {
     if (nav === "push" && shown !== undefined && live === undefined) close();
   }, [nav, shown, live, close]);
+  // What is open is what the pane comes back to.
+  const openId = nav === "push" ? open?.id : undefined;
+  const openClosed = open?.state === "closed";
+  useEffect(() => {
+    memory.escalation =
+      openId === undefined ? undefined : { id: openId, closed: openClosed };
+  }, [openId, openClosed]);
   // Jumping to an agent is a deliberate move: a place in Back and Forward
   // at once, so prefix+h comes back here (`NavigationReason`).
   const focusAgent = useCallback(
@@ -431,6 +487,18 @@ function BoardPage({
       void dispatch({
         type: "select_context",
         context: { kind: "agent", agentId },
+        reason: "explicit",
+      });
+    },
+    [dispatch],
+  );
+  // So is going to a Workspace's editor: prefix+h comes back here, to the
+  // escalation that was open.
+  const focusWorkspace = useCallback(
+    (workspaceId: string) => {
+      void dispatch({
+        type: "select_context",
+        context: { kind: "workspace", workspaceId },
         reason: "explicit",
       });
     },
@@ -457,6 +525,7 @@ function BoardPage({
     <div
       className="orchestrator-stage"
       data-nav={nav}
+      data-restored={restored ? "true" : undefined}
       role="tabpanel"
       id="orchestrator-panel-board"
       aria-labelledby="orchestrator-tab-board"
@@ -551,11 +620,13 @@ function BoardPage({
           leaving={!reading}
           orchestratorAgentId={board.orchestratorAgentId}
           base={escalationBase(open, workspaces, board.start.root)}
+          workspaces={workspaces}
           onBack={() => {
             close();
           }}
           onAnswered={answered}
           onFocusAgent={focusAgent}
+          onFocusWorkspace={focusWorkspace}
         />
       )}
     </div>
@@ -725,8 +796,10 @@ function EscalationView({
   orchestratorAgentId,
   onBack,
   base,
+  workspaces,
   onAnswered,
   onFocusAgent,
+  onFocusWorkspace,
 }: {
   readonly escalation: EscalationWire;
   readonly now: number;
@@ -736,18 +809,31 @@ function EscalationView({
   readonly onBack: () => void;
   /** What its relative paths are relative to (`escalationBase`). */
   readonly base: string | undefined;
+  readonly workspaces: AppSnapshot["workspaces"];
   /** The person's answer went out. */
   readonly onAnswered: (id: number) => void;
   readonly onFocusAgent: (agentId: string) => void;
+  readonly onFocusWorkspace: (workspaceId: string) => void;
 }) {
   const pathsOn = escalation.agents[0]?.agentId ?? orchestratorAgentId;
   const root = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  // A new entry is read from its start: the newest is at the bottom.
-  useEffect(() => {
+  const jumps = escalationWorkspaces(escalation, workspaces);
+  const scrollKey = `esc:${String(escalation.id)}`;
+  const entryCount = escalation.entries.length;
+  // A new entry is read from its start: the newest is at the bottom. Coming
+  // back to the same thread, it is where it was left.
+  const placed = useRef(false);
+  useLayoutEffect(() => {
     const element = scroller.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [escalation.entries.length]);
+    if (!element) return;
+    const left = placed.current ? undefined : memory.scroll.get(scrollKey);
+    placed.current = true;
+    element.scrollTop =
+      left !== undefined && left.entries === entryCount
+        ? left.top
+        : element.scrollHeight;
+  }, [scrollKey, entryCount]);
   // Opened: focus goes to the answer when one is asked for, else to the
   // thread — and only from inside the board, never from elsewhere.
   useEffect(() => {
@@ -805,9 +891,20 @@ function EscalationView({
             <TakeEscalation id={escalation.id} />
           ) : null}
         </div>
-        {escalation.agents.length > 0 || escalation.links.length > 0 ? (
+        {escalation.agents.length > 0 ||
+        escalation.links.length > 0 ||
+        jumps.length > 0 ? (
           <div className="orchestrator-reading-refs">
-            {escalation.agents.map((agent) => (
+            {jumps
+              .filter((jump) => jump.afterAgent === undefined)
+              .map((jump) => (
+                <WorkspaceButton
+                  key={jump.id}
+                  jump={jump}
+                  onFocusWorkspace={onFocusWorkspace}
+                />
+              ))}
+            {escalation.agents.flatMap((agent) => [
               <button
                 key={agent.agentId}
                 type="button"
@@ -834,8 +931,17 @@ function EscalationView({
                     {agent.workspaceLabel}
                   </span>
                 )}
-              </button>
-            ))}
+              </button>,
+              ...jumps
+                .filter((jump) => jump.afterAgent === agent.agentId)
+                .map((jump) => (
+                  <WorkspaceButton
+                    key={`ws-${jump.id}`}
+                    jump={jump}
+                    onFocusWorkspace={onFocusWorkspace}
+                  />
+                )),
+            ])}
             {escalation.links.map((link) => (
               <button
                 key={link}
@@ -856,6 +962,12 @@ function EscalationView({
         className="orchestrator-thread conversation-selectable"
         ref={scroller}
         tabIndex={-1}
+        onScroll={(event) => {
+          memory.scroll.set(scrollKey, {
+            top: event.currentTarget.scrollTop,
+            entries: entryCount,
+          });
+        }}
         aria-label={`#${String(escalation.id)} ${escalation.title}`}
       >
         {escalation.entries.map((entry, index) =>
@@ -914,6 +1026,43 @@ function EscalationView({
   );
 }
 
+/** A folder, as the Workspace picker draws one. */
+function FolderGlyph() {
+  return (
+    <svg
+      className="orchestrator-folder-glyph"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M1.8 4.2a1 1 0 0 1 1-1h3l1.4 1.6h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9.4a1 1 0 0 1-1-1z" />
+    </svg>
+  );
+}
+
+/** Go to a Workspace's editor: the glyph and its name, nothing on hover. */
+function WorkspaceButton({
+  jump,
+  onFocusWorkspace,
+}: {
+  readonly jump: WorkspaceJump;
+  readonly onFocusWorkspace: (workspaceId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="orchestrator-chip is-link is-workspace"
+      aria-label={`Workspace ${jump.label}`}
+      onClick={() => {
+        onFocusWorkspace(jump.id);
+      }}
+    >
+      <FolderGlyph />
+      {jump.label}
+    </button>
+  );
+}
+
 function linkLabel(link: string): string {
   const github =
     /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(pull|issues)\/(\d+)/u.exec(
@@ -942,7 +1091,18 @@ function AnswerComposer({
   readonly onAnswered: (id: number) => void;
 }) {
   const { reportFailure } = useAgents();
-  const [text, setText] = useState("");
+  // The unsent answer is kept for the pane's return (`orchestratorMemory`).
+  const [text, setTextState] = useState(
+    () => memory.drafts.get(escalation.id) ?? "",
+  );
+  const setText = useCallback(
+    (value: string) => {
+      setTextState(value);
+      if (value === "") memory.drafts.delete(escalation.id);
+      else memory.drafts.set(escalation.id, value);
+    },
+    [escalation.id],
+  );
   const [sending, setSending] = useState(false);
   // Why the last send did not go; the draft stays, and so does the view.
   const [failed, setFailed] = useState<string | undefined>(undefined);
@@ -973,7 +1133,7 @@ function AnswerComposer({
           setSending(false);
         });
     },
-    [escalation.id, reportFailure, sending, onAnswered],
+    [escalation.id, reportFailure, sending, onAnswered, setText],
   );
   const keys = useMessageKeys(() => {
     send(text);

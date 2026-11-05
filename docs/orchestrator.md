@@ -55,24 +55,24 @@ orchestrator when work cannot go on without one. It is a **thread**:
 Its state is **read off the thread** (`model/escalations.ts`), never stored,
 by **one rule**: it is 要回答 exactly while the last entry is a question.
 
-| state          | when                                                     | lane   |
-| -------------- | -------------------------------------------------------- | ------ |
+| state          | when                                                         | lane   |
+| -------------- | ------------------------------------------------------------ | ------ |
 | `needs_answer` | the last entry is a question (the orchestrator's, no `kind`) | 要回答 |
-| `in_progress`  | anything else is last                                    | 対応中 |
-| `closed`       | closed (`escalation close`)                              | hidden |
+| `in_progress`  | anything else is last                                        | 対応中 |
+| `closed`       | closed (`escalation close`)                                  | hidden |
 
 Whatever comes after a question takes it to 対応中, and only another
 question (`escalation ask`) brings it back to 要回答; once the matter is done
 the orchestrator closes it. What can come after a question (`role` is whose
 side it is on; only the window writes `human` entries):
 
-| entry | role | written by | thread shows |
-| --- | --- | --- | --- |
-| an answer | `human` | the person, in the board's composer | their Markdown |
-| `kind: "taken"` | `human` | the person's 対応中にする (card or reading view), with an optional note | 「人が対応中にしました（{time}）[: note]」 |
-| `kind: "held"` | `orchestrator` | `escalation hold ID [--note TEXT]`: parked while it works on it (e.g. more investigation delegated). Never an answer | 「オーケストレーターが対応中にしました（{time}）[: note]」 |
-| `kind: "direct"` | `human` | DevHub: one of its `agents` went from idle (or stopped on a question) to working on the person's message from **that agent's own composer** (the conversation IPC's submit: not `agent send`, not an event or a template) | 「人が {agent} と直接やりとりしました（{time}）— 内容はエージェントの会話を参照」, with a chip to the agent |
-| `kind: "resumed"` | `orchestrator` | DevHub: one of its `agents` went working for any other reason (the orchestrator's `agent send`, an injected event, DevHub's own resume after a usage limit) | 「{agent} が作業を再開しました（{time}）— 回答待ちは一旦解除」 |
+| entry             | role           | written by                                                                                                                                                                                                                | thread shows                                                                                                |
+| ----------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| an answer         | `human`        | the person, in the board's composer                                                                                                                                                                                       | their Markdown                                                                                              |
+| `kind: "taken"`   | `human`        | the person's 対応中にする (card or reading view), with an optional note                                                                                                                                                   | 「人が対応中にしました（{time}）[: note]」                                                                  |
+| `kind: "held"`    | `orchestrator` | `escalation hold ID [--note TEXT]`: parked while it works on it (e.g. more investigation delegated). Never an answer                                                                                                      | 「オーケストレーターが対応中にしました（{time}）[: note]」                                                  |
+| `kind: "direct"`  | `human`        | DevHub: one of its `agents` went from idle (or stopped on a question) to working on the person's message from **that agent's own composer** (the conversation IPC's submit: not `agent send`, not an event or a template) | 「人が {agent} と直接やりとりしました（{time}）— 内容はエージェントの会話を参照」, with a chip to the agent |
+| `kind: "resumed"` | `orchestrator` | DevHub: one of its `agents` went working for any other reason (the orchestrator's `agent send`, an injected event, DevHub's own resume after a usage limit)                                                               | 「{agent} が作業を再開しました（{time}）— 回答待ちは一旦解除」                                              |
 
 The notes (`kind`) have no answer in them: `escalation show` prints them as
 notes, and `agent wait --any` does not report them as answered. DevHub
@@ -113,8 +113,8 @@ command and no `TellPorts` member can write a human entry, and
 
 ### Pictures
 
-An escalation draws what a conversation draws — ```svg, ```mermaid,
-```vega-lite, ```html, Marp, and local files as `![alt](path)`, also inside
+An escalation draws what a conversation draws — `svg, `mermaid,
+`vega-lite, `html, Marp, and local files as `![alt](path)`, also inside
 a table's cells (a screenshot in a comparison table is drawn in place, at
 most the cell's width, and opens large on a click; the conversation does the
 same). A relative path is relative to the escalation's workspace, else its
@@ -176,7 +176,23 @@ answered, now in 対応中; a send that fails stays, with the error and the
 draft. Jumping to an agent from
 an escalation (its chip, or a row in 不明) is a deliberate move
 (`reason: "explicit"`), so Back (prefix+h) returns to the Orchestrator
-screen.
+screen. So is going to a Workspace from an escalation: beside each agent
+chip, a folder and the name of that agent's Workspace (and, first, the
+escalation's own `workspaceId` when no agent is in it) selects that
+Workspace — its editor — and Back comes back to the escalation.
+
+The left pane is where it was left. Whichever way the Orchestrator row is
+selected again — Back, its Sidebar row, `focus orchestrator` — the pane
+shows the same tab, the same escalation or file over it, its thread scrolled
+as it was and the unsent answer still in the composer (per escalation), and
+on the Files tab the same folders open (`shell/agents/orchestratorMemory.ts`).
+It is shown in place, without sliding in again. An escalation that has left
+the board, or was closed since (one already closed when it was read from
+Closed stays), lands on the board instead; so does a file that is gone. The
+escalation is not a place in Back and Forward of its own: history stays the
+selection's (`docs/window-and-pages.md`), and the Orchestrator place
+restores what it was showing. This is kept for the session only; a restart
+starts on the board.
 
 ### ファイル: the orchestrator's folder
 
@@ -233,34 +249,34 @@ a short summary (Japanese; excerpts are cut to about 150 characters). Only
 what is needed to act or to fetch more is on the line: the orchestrator
 pulls the details itself. `{EVENT}` holds these lines.
 
-| type | when | example |
-| --- | --- | --- |
-| `init` | the orchestrator starts (`init_prompt` if set) | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認` |
-| `escalation_answered` | the person answered an escalation | `[escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)` |
-| `escalation.taken` | the person moved an escalation to 対応中 without answering (対応中にする) | `[escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する` |
-| `escalation.human_direct` | the person talked directly to an open escalation's agent, from its composer, and it went working (要回答 → 対応中) | `[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります` |
-| `unaccounted` | an agent entered 不明 | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m` |
-| `github.assigned` / `github.unassigned` | the viewer was assigned to / taken off a card | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200` |
-| `github.lane_changed` | a card of the viewer's moved lane (Status) | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123` |
-| `github.pr_opened` | a PR linked to the viewer's Issue, or by the viewer, appeared | `[github.pr_opened] PR #130「ログイン修正」 — me が draft で作成 (#123) https://github.com/acme/app/pull/130` |
-| `github.pr_ready` | a watched PR left draft | `[github.pr_ready] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — ready for review になった https://…/pull/130` |
-| `github.pr_approved` / `github.changes_requested` | the viewer's PR was approved / changes were requested | `[github.changes_requested] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 — bob が変更を要求 https://…/pull/130` |
-| `github.review_comment` | new review comments or threads on the viewer's PR | `[github.review_comment] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — alice から新規2件 (未解決 2) https://…/pull/130` |
-| `github.review_requested` | the viewer's review was requested on a PR on the boards | `[github.review_requested] PR #9「キャッシュ」 — carol からレビュー依頼 https://…/pull/9` |
-| `github.reply` | the author replied or pushed on a PR the viewer reviewed | `[github.reply] PR #9「キャッシュ」 — carol が返信2件・新しいコミット https://…/pull/9` |
-| `github.checks` | the viewer's PR's CI finished | `[github.checks] PR #130「ログイン修正」 ws=login-fix — CI 失敗 (2/5) https://…/pull/130` |
-| `github.pr_merged` / `github.pr_closed` | a watched PR was merged / closed unmerged | `[github.pr_merged] PR #130「ログイン修正」 ws=login-fix — マージされた https://…/pull/130` |
-| `workspace.opened` / `workspace.closed` | a Workspace opened / closed | `[workspace.opened] ws=api — 開いた /src/api` |
-| `workspace.issue_assigned` | DevHub's Issue assignment made a Workspace and agent | `[workspace.issue_assigned] #123 ws=123-api agent=a1b2c3d4 (Claude) — DevHub で Issue をアサイン https://…/issues/123` |
-| `workspace.branch_changed` | a Workspace's branch changed | `[workspace.branch_changed] ws=login-fix 12-login → 13-other` |
-| `workspace.pr_linked` | a PR appeared for a Workspace's branch | `[workspace.pr_linked] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — このブランチの PR https://…/pull/130` |
-| `agent.turn_ended` | an agent's turn ended | `[agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」` |
-| `agent.asked` | an agent asked a question (AskUserQuestion) | `[agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問` |
-| `agent.permission_requested` | an agent waits on a permission prompt (FYI: only the person approves) | `[agent.permission_requested] agent=e5f6a7b8 req=p1 — 権限確認「rm -rf build」 (FYI: 承認できるのは人だけ)` |
-| `agent.started` / `agent.exited` | an agent started / is gone | `[agent.exited] agent=a1b2c3d4 (API fix) ws=login-fix — 終了した` |
-| `agent.failed` | an agent's pane shows a failure | `[agent.failed] agent=a1b2c3d4 (API fix) ws=login-fix — 失敗: conversation_host_lost` |
-| `timer.elapsed` | a timer fired | `[timer.elapsed] tick` |
-| `custom.NAME` | `orchestrator emit` | `[custom.deploy] — staging に deploy 完了` |
+| type                                              | when                                                                                                               | example                                                                                                                                                                      |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init`                                            | the orchestrator starts (`init_prompt` if set)                                                                     | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                                |
+| `escalation_answered`                             | the person answered an escalation                                                                                  | `[escalation_answered] esc=12「本番DBマイグレーション承認」 — 人が回答しました (escalation show で読む)`                                                                     |
+| `escalation.taken`                                | the person moved an escalation to 対応中 without answering (対応中にする)                                          | `[escalation.taken] esc=12「本番DBマイグレーション承認」 — 人が対応中にしました: 自分で確認する`                                                                             |
+| `escalation.human_direct`                         | the person talked directly to an open escalation's agent, from its composer, and it went working (要回答 → 対応中) | `[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります` |
+| `unaccounted`                                     | an agent entered 不明                                                                                              | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m`                                                                                                                        |
+| `github.assigned` / `github.unassigned`           | the viewer was assigned to / taken off a card                                                                      | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200`                                                                                |
+| `github.lane_changed`                             | a card of the viewer's moved lane (Status)                                                                         | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123`                                                       |
+| `github.pr_opened`                                | a PR linked to the viewer's Issue, or by the viewer, appeared                                                      | `[github.pr_opened] PR #130「ログイン修正」 — me が draft で作成 (#123) https://github.com/acme/app/pull/130`                                                                |
+| `github.pr_ready`                                 | a watched PR left draft                                                                                            | `[github.pr_ready] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — ready for review になった https://…/pull/130`                                             |
+| `github.pr_approved` / `github.changes_requested` | the viewer's PR was approved / changes were requested                                                              | `[github.changes_requested] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 — bob が変更を要求 https://…/pull/130`                                                       |
+| `github.review_comment`                           | new review comments or threads on the viewer's PR                                                                  | `[github.review_comment] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — alice から新規2件 (未解決 2) https://…/pull/130`                                    |
+| `github.review_requested`                         | the viewer's review was requested on a PR on the boards                                                            | `[github.review_requested] PR #9「キャッシュ」 — carol からレビュー依頼 https://…/pull/9`                                                                                    |
+| `github.reply`                                    | the author replied or pushed on a PR the viewer reviewed                                                           | `[github.reply] PR #9「キャッシュ」 — carol が返信2件・新しいコミット https://…/pull/9`                                                                                      |
+| `github.checks`                                   | the viewer's PR's CI finished                                                                                      | `[github.checks] PR #130「ログイン修正」 ws=login-fix — CI 失敗 (2/5) https://…/pull/130`                                                                                    |
+| `github.pr_merged` / `github.pr_closed`           | a watched PR was merged / closed unmerged                                                                          | `[github.pr_merged] PR #130「ログイン修正」 ws=login-fix — マージされた https://…/pull/130`                                                                                  |
+| `workspace.opened` / `workspace.closed`           | a Workspace opened / closed                                                                                        | `[workspace.opened] ws=api — 開いた /src/api`                                                                                                                                |
+| `workspace.issue_assigned`                        | DevHub's Issue assignment made a Workspace and agent                                                               | `[workspace.issue_assigned] #123 ws=123-api agent=a1b2c3d4 (Claude) — DevHub で Issue をアサイン https://…/issues/123`                                                       |
+| `workspace.branch_changed`                        | a Workspace's branch changed                                                                                       | `[workspace.branch_changed] ws=login-fix 12-login → 13-other`                                                                                                                |
+| `workspace.pr_linked`                             | a PR appeared for a Workspace's branch                                                                             | `[workspace.pr_linked] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — このブランチの PR https://…/pull/130`                                                 |
+| `agent.turn_ended`                                | an agent's turn ended                                                                                              | `[agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」`                                                                     |
+| `agent.asked`                                     | an agent asked a question (AskUserQuestion)                                                                        | `[agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問`                                                                                                    |
+| `agent.permission_requested`                      | an agent waits on a permission prompt (FYI: only the person approves)                                              | `[agent.permission_requested] agent=e5f6a7b8 req=p1 — 権限確認「rm -rf build」 (FYI: 承認できるのは人だけ)`                                                                  |
+| `agent.started` / `agent.exited`                  | an agent started / is gone                                                                                         | `[agent.exited] agent=a1b2c3d4 (API fix) ws=login-fix — 終了した`                                                                                                            |
+| `agent.failed`                                    | an agent's pane shows a failure                                                                                    | `[agent.failed] agent=a1b2c3d4 (API fix) ws=login-fix — 失敗: conversation_host_lost`                                                                                        |
+| `timer.elapsed`                                   | a timer fired                                                                                                      | `[timer.elapsed] tick`                                                                                                                                                       |
+| `custom.NAME`                                     | `orchestrator emit`                                                                                                | `[custom.deploy] — staging に deploy 完了`                                                                                                                                   |
 
 Nothing is ever said about the orchestrator itself (its own agent and its
 Workspace): the dispatcher drops such an event as `self`.
@@ -296,7 +312,7 @@ line per subject.** The pending buffer holds action items, not a log.
   - different statements about one subject share its line, the latest
     leading it with its `[type]`, the others after `／ [type] …`, without the
     ids the line already has: `[github.pr_approved] PR #130「ログイン修正」 —
-    bob が承認 ／ [github.pr_ready] ready for review になった https://…/pull/130`.
+bob が承認 ／ [github.pr_ready] ready for review になった https://…/pull/130`.
     `{EVENT_JSON}` carries them as the line's `also`.
 - **Stale items are dropped before delivery.** Each pending item is re-read
   against live state when the message is rendered (`relevant`, in
@@ -304,7 +320,7 @@ line per subject.** The pending buffer holds action items, not a log.
   longer needs attention: an `unaccounted` agent that is no longer idle or is
   now named by an open escalation; a `turn_ended` whose agent is working
   again (someone has given it work; its output stays readable with `agent
-  read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
+read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
   longer waits on it; an `escalation_answered`, `escalation.taken` or
   `escalation.human_direct` whose escalation is closed.
 - **Never said twice.** What the last delivery said about a subject is not
@@ -353,7 +369,7 @@ line per subject.** The pending buffer holds action items, not a log.
   - **One batched GraphQL request per tick**, never two in flight, no `gh`
     subcommands (the token is `gh auth token`'s, as for the Workspace
     watcher, through the same client): `viewer { login }`, `rateLimit { cost
-    remaining limit resetAt }`, a page of 100 items per board (item id,
+remaining limit resetAt }`, a page of 100 items per board (item id,
     content type/number/url/title, Status, assignees, author, an Issue's
     linked PRs), `search(is:pr is:open review-requested:@me)`, and
     `nodes(ids:)` for the watched PRs (up to 30: state, isDraft,
@@ -390,7 +406,7 @@ line per subject.** The pending buffer holds action items, not a log.
     — what changed in a week is history, not news. A board's first full pass
     and a PR's first details are a baseline as well.
   - Where the Workspace watcher (the Sidebar's branch → PR, `workspace
-    status`) has the PR or Issue open, its Workspace and agent go on the
+status`) has the PR or Issue open, its Workspace and agent go on the
     line as `ws=` and `agent=`.
 - **Workspaces and agents** (`liveEvents.ts`), read off the projection the
   window draws (the Sidebar's repository status included) while an

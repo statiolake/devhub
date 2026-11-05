@@ -24,6 +24,7 @@ import {
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
 import { codeBlock } from "./OrchestratorFiles";
 import { OrchestratorBoard } from "./OrchestratorScreen";
+import { forgetOrchestratorMemory } from "./orchestratorMemory";
 
 const FOLDERS: Record<string, OrchestratorFolderWire> = {
   "": {
@@ -79,6 +80,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  forgetOrchestratorMemory();
   vi.clearAllMocks();
   window.sessionStorage.clear();
 });
@@ -212,5 +214,49 @@ describe("the Files tab", () => {
   it("fences text longer than any run of backticks in it", () => {
     expect(codeBlock("a ```` b", "ts")).toBe("`````ts\na ```` b\n`````");
     expect(codeBlock("x\n", undefined)).toBe("```\nx\n```");
+  });
+});
+
+describe("leaving the Files tab and coming back", () => {
+  it("is back on the open file, scrolled as it was, the folders as they were", async () => {
+    mount();
+    await openFilesTab();
+    fireEvent.click(screen.getByRole("button", { name: /\.claude/u }));
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /decisions\.md/u }));
+    await settle();
+    const body = () =>
+      document.querySelector<HTMLElement>(".orchestrator-file-body")!;
+    body().scrollTop = 40;
+    fireEvent.scroll(body());
+    cleanup();
+    mount();
+    await settle();
+    expect(screen.getByRole("tab", { name: /ファイル/u })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(document.querySelector(".orchestrator-file-view")).not.toBeNull();
+    expect(screen.getByText("請求の丸めは half_even")).toBeInTheDocument();
+    expect(body().scrollTop).toBe(40);
+    expect(listOrchestratorFolder).toHaveBeenCalledWith(".claude");
+  });
+
+  it("falls back to the tree when the file is gone", async () => {
+    mount();
+    await openFilesTab();
+    fireEvent.click(screen.getByRole("button", { name: /decisions\.md/u }));
+    await settle();
+    cleanup();
+    readOrchestratorFile.mockImplementationOnce(() =>
+      Promise.reject(new Error("gone")),
+    );
+    mount();
+    await settle();
+    await settle();
+    expect(document.querySelector(".orchestrator-stage")).not.toHaveAttribute(
+      "data-nav",
+      "push",
+    );
   });
 });

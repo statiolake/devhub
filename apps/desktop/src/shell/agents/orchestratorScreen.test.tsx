@@ -22,6 +22,7 @@ import type { AppSnapshot } from "../../ipc/appShell";
 import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
 import { installHistoryButtons } from "../historyButtons";
 import { AgentsContext, type AgentsValue } from "./AgentsContext";
+import { forgetOrchestratorMemory } from "./orchestratorMemory";
 import {
   escalationBase,
   NAV_MS,
@@ -66,6 +67,8 @@ window.devhub = {
 
 afterEach(() => {
   cleanup();
+  forgetOrchestratorMemory();
+  window.sessionStorage.clear();
   vi.clearAllMocks();
   vi.useRealTimers();
   delete (window as { matchMedia?: unknown }).matchMedia;
@@ -658,5 +661,261 @@ describe("the answer composer", () => {
       fireEvent.mouseDown(screen.getByRole("button", { name: "Send answer" })),
     ).toBe(true);
     expect(field).not.toHaveFocus();
+  });
+});
+
+/**
+ * The Orchestrator row selected or not, as `AgentsApp` draws it: the left
+ * pane unmounts while another place is shown, and mounts again on return.
+ */
+function mountScreen(
+  board: OrchestratorBoardWire = BOARD,
+  workspaces: readonly unknown[] = [],
+) {
+  const dispatch = vi.fn().mockResolvedValue(undefined);
+  const view = (shown: boolean, now: OrchestratorBoardWire) => (
+    <AgentsContext.Provider
+      value={
+        {
+          board: now,
+          dispatch,
+          reportFailure: vi.fn(),
+        } as unknown as AgentsValue
+      }
+    >
+      {shown ? (
+        <OrchestratorBoard
+          snapshot={{ workspaces } as unknown as AppSnapshot}
+        />
+      ) : null}
+    </AgentsContext.Provider>
+  );
+  const { rerender } = render(view(true, board));
+  return {
+    dispatch,
+    /** Another place is selected. */
+    leave: (now: OrchestratorBoardWire = board) => {
+      rerender(view(false, now));
+    },
+    /** The Orchestrator row again. */
+    back: (now: OrchestratorBoardWire = board) => {
+      rerender(view(true, now));
+    },
+  };
+}
+
+function thread(): HTMLElement {
+  return document.querySelector<HTMLElement>(".orchestrator-thread")!;
+}
+
+describe("leaving the Orchestrator screen and coming back", () => {
+  // Back (prefix+h), a click on the Sidebar's Orchestrator row and
+  // `devhub --tell focus orchestrator` all select the row, and the page
+  // draws the pane again: each lands on what was left.
+  it.each(["prefix+h", "a Sidebar click", "focus orchestrator"])(
+    "via %s, is back on the open escalation, scrolled as it was, with the draft",
+    (_path) => {
+      motion(false);
+      const screenNow = mountScreen();
+      fireEvent.click(
+        screen.getByRole("button", { name: /本番マイグレーション/u }),
+      );
+      fireEvent.change(
+        screen.getByRole("textbox", { name: "Your answer to #1" }),
+        { target: { value: "書きかけ" } },
+      );
+      thread().scrollTop = 120;
+      fireEvent.scroll(thread());
+      screenNow.leave();
+      expect(document.querySelector(".orchestrator-board")).toBeNull();
+      screenNow.back();
+      expect(document.querySelector(".orchestrator-reading")).not.toBeNull();
+      // Shown where it was, not slid in again.
+      const stage = document.querySelector(".orchestrator-stage");
+      expect(stage).toHaveAttribute("data-nav", "push");
+      expect(stage).toHaveAttribute("data-restored", "true");
+      expect(
+        screen.getByRole("textbox", { name: "Your answer to #1" }),
+      ).toHaveValue("書きかけ");
+      expect(thread().scrollTop).toBe(120);
+      // And Esc still goes back to the board, as from any reading.
+      fireEvent.keyDown(thread(), { key: "Escape" });
+      expect(stage).toHaveAttribute("data-nav", "pop");
+    },
+  );
+
+  it("lands on the board when it was left there", () => {
+    motion(true);
+    const screenNow = mountScreen();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to the board" }));
+    screenNow.leave();
+    screenNow.back();
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+  });
+
+  it("reads the newest entry when one came while it was away", () => {
+    motion(true);
+    const screenNow = mountScreen();
+    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    thread().scrollTop = 7;
+    fireEvent.scroll(thread());
+    screenNow.leave();
+    const more: OrchestratorBoardWire = {
+      ...BOARD,
+      inProgress: [
+        {
+          ...BOARD.inProgress[0]!,
+          entries: [
+            ...BOARD.inProgress[0]!.entries,
+            { role: "orchestrator", markdown: "B も試す?", at: NOW },
+          ],
+        },
+      ],
+    };
+    screenNow.back(more);
+    expect(within(thread()).getByText("B も試す?")).toBeInTheDocument();
+    // jsdom lays nothing out: the bottom is 0, and not where it was left.
+    expect(thread().scrollTop).toBe(0);
+  });
+
+  it("falls back to the board when the escalation was closed meanwhile", () => {
+    motion(true);
+    const screenNow = mountScreen();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    screenNow.leave();
+    const closed: OrchestratorBoardWire = {
+      ...BOARD,
+      needsAnswer: [],
+      closed: [
+        {
+          ...BOARD.needsAnswer[0]!,
+          state: "closed",
+          closed: { at: NOW },
+        },
+      ],
+    };
+    screenNow.back(closed);
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+    expect(screen.getByRole("region", { name: "要回答" })).toBeVisible();
+  });
+
+  it("falls back to the board when the escalation is gone", () => {
+    motion(true);
+    const screenNow = mountScreen();
+    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    screenNow.leave();
+    screenNow.back({ ...BOARD, inProgress: [] });
+    expect(document.querySelector(".orchestrator-reading")).toBeNull();
+  });
+
+  it("is back on a closed escalation that was being read from Closed", () => {
+    motion(true);
+    const done = {
+      ...BOARD.inProgress[0]!,
+      id: 5,
+      title: "終わった件",
+      state: "closed" as const,
+      closed: { at: NOW },
+    };
+    const screenNow = mountScreen({ ...BOARD, closed: [done] });
+    fireEvent.click(screen.getByRole("button", { name: /^Closed/u }));
+    fireEvent.click(screen.getByRole("button", { name: /終わった件/u }));
+    screenNow.leave();
+    screenNow.back();
+    expect(document.querySelector(".orchestrator-reading")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "終わった件" })).toBeVisible();
+  });
+
+  it("restores the tab", () => {
+    motion(true);
+    window.devhub = {
+      ...(window.devhub as object),
+      listOrchestratorFolder: () =>
+        Promise.resolve({ root: "/o", path: "", entries: [] }),
+      onOrchestratorFilesChanged: () => () => undefined,
+    } as unknown as typeof window.devhub;
+    const screenNow = mountScreen();
+    fireEvent.click(screen.getByRole("tab", { name: /ファイル/u }));
+    screenNow.leave();
+    // Not only `sessionStorage`: the page's own memory for the session.
+    window.sessionStorage.clear();
+    screenNow.back();
+    expect(screen.getByRole("tab", { name: /ファイル/u })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+});
+
+describe("going to a Workspace from an escalation", () => {
+  const WORKSPACES = [
+    {
+      id: "w-pay",
+      label: "payments",
+      root: "/w/payments",
+      agents: [{ id: "a1" }],
+    },
+    { id: "w-ops", label: "ops", root: "/w/ops", agents: [] },
+  ];
+
+  it("offers each agent's Workspace and the escalation's own, by name with a folder, no tooltip", () => {
+    motion(true);
+    mountScreen(
+      {
+        ...BOARD,
+        needsAnswer: [{ ...BOARD.needsAnswer[0]!, workspaceId: "w-ops" }],
+      },
+      WORKSPACES,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    const pay = screen.getByRole("button", { name: "Workspace payments" });
+    expect(pay).toHaveTextContent("payments");
+    expect(pay.querySelector("svg")).not.toBeNull();
+    expect(pay).not.toHaveAttribute("title");
+    // Beside the agent it is the Workspace of.
+    expect(pay.previousElementSibling).toHaveTextContent("payments-migration");
+    expect(
+      screen.getByRole("button", { name: "Workspace ops" }),
+    ).toBeInTheDocument();
+  });
+
+  it("goes there explicitly, and Back comes back to the escalation", () => {
+    motion(true);
+    const screenNow = mountScreen(BOARD, WORKSPACES);
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Your answer to #1" }),
+      { target: { value: "確認中" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Workspace payments" }));
+    expect(screenNow.dispatch).toHaveBeenCalledWith({
+      type: "select_context",
+      context: { kind: "workspace", workspaceId: "w-pay" },
+      reason: "explicit",
+    });
+    // The Workspace is selected; then Back (prefix+h) selects the row again.
+    screenNow.leave();
+    screenNow.back();
+    expect(
+      screen.getByRole("textbox", { name: "Your answer to #1" }),
+    ).toHaveValue("確認中");
+    // The agent chip still shows the agent.
+    fireEvent.click(
+      screen.getByRole("button", { name: /payments-migration/u }),
+    );
+    expect(screenNow.dispatch).toHaveBeenLastCalledWith({
+      type: "select_context",
+      context: { kind: "agent", agentId: "a1" },
+      reason: "explicit",
+    });
   });
 });

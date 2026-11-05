@@ -1009,3 +1009,18 @@
   font: inherit;
   font-size: 11px;
 }
+
+/* Back on a page left open over the other (`orchestratorMemory.ts`): it is
+   shown where it was, without sliding in again. */
+.orchestrator-stage[data-restored][data-nav] > [data-layer] {
+  animation: none;
+}
+
+/* A Workspace to go to from an escalation: a folder and its name. */
+.orchestrator-folder-glyph {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  fill: currentColor;
+  opacity: 0.8;
+}

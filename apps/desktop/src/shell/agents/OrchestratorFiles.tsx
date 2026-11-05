@@ -13,6 +13,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type RefObject,
@@ -25,6 +26,7 @@ import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
 import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
+import { memory } from "./orchestratorMemory";
 import type { SideButtons } from "./OrchestratorScreen";
 
 /** A text file as Markdown: one fenced block, fenced longer than any run. */
@@ -50,20 +52,32 @@ export function FilesPage({
   const [folders, setFolders] = useState<
     ReadonlyMap<string, OrchestratorFolderWire>
   >(() => new Map());
+  // Where the pane was left (`orchestratorMemory.ts`): the folders open,
+  // and the file over them.
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
-    () => new Set(),
+    () => new Set(memory.expanded),
   );
   const [files, setFiles] = useState<ReadonlyMap<string, OrchestratorFileWire>>(
     () => new Map(),
   );
   const tree = useRef<HTMLDivElement>(null);
-  const stack = useNavStack<string>(pane, (path) =>
-    [
-      ...(tree.current?.querySelectorAll<HTMLElement>("[data-file-path]") ??
-        []),
-    ].find((row) => row.dataset["filePath"] === path),
+  const stack = useNavStack<string>(
+    pane,
+    (path) =>
+      [
+        ...(tree.current?.querySelectorAll<HTMLElement>("[data-file-path]") ??
+          []),
+      ].find((row) => row.dataset["filePath"] === path),
+    memory.file,
   );
-  const { nav, shown, forward, open, close } = stack;
+  const { nav, shown, forward, restored, open, close } = stack;
+  const openPath = nav === "push" ? shown : undefined;
+  useEffect(() => {
+    memory.file = openPath;
+  }, [openPath]);
+  useEffect(() => {
+    memory.expanded = [...expanded];
+  }, [expanded]);
 
   const load = useCallback(async (path: string) => {
     try {
@@ -79,12 +93,14 @@ export function FilesPage({
     }
   }, []);
   const read = useCallback(
-    async (path: string) => {
+    async (path: string, quiet = false): Promise<boolean> => {
       try {
         const file = await devhub().readOrchestratorFile(path);
         setFiles((before) => new Map(before).set(path, file));
+        return true;
       } catch (error: unknown) {
-        reportFailure(error);
+        if (!quiet) reportFailure(error);
+        return false;
       }
     },
     [reportFailure],
@@ -99,7 +115,15 @@ export function FilesPage({
 
   useEffect(() => {
     void load("");
-  }, [load]);
+    for (const folder of memory.expanded) void load(folder);
+    // A file gone since: back on the tree, without a word.
+    if (memory.file !== undefined)
+      void read(memory.file, true).then((there) => {
+        if (!there) close();
+      });
+    // Once, on mount: the tree and the file it was left on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Live: the orchestrator writes `decisions.md`, and the tree and the file
   // on screen follow, a moment later (main debounces).
@@ -156,6 +180,7 @@ export function FilesPage({
     <div
       className="orchestrator-stage"
       data-nav={nav}
+      data-restored={restored ? "true" : undefined}
       role="tabpanel"
       id="orchestrator-panel-files"
       aria-labelledby="orchestrator-tab-files"
@@ -294,6 +319,16 @@ function FileView({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
+  // Back to where it was read to, once the file is there to scroll.
+  const scrollKey = `file:${path}`;
+  const placed = useRef(false);
+  useLayoutEffect(() => {
+    const element = body.current;
+    if (!element || file === undefined || placed.current) return;
+    placed.current = true;
+    const left = memory.scroll.get(scrollKey);
+    if (left !== undefined) element.scrollTop = left.top;
+  }, [file, scrollKey]);
   // Opened: focus goes to the file, and only from inside the pane.
   useEffect(() => {
     const pane =
@@ -345,6 +380,12 @@ function FileView({
         ref={body}
         className="orchestrator-thread orchestrator-file-body conversation-selectable"
         tabIndex={-1}
+        onScroll={(event) => {
+          memory.scroll.set(scrollKey, {
+            top: event.currentTarget.scrollTop,
+            entries: 0,
+          });
+        }}
         aria-label={path}
       >
         <FileBody
