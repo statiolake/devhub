@@ -239,7 +239,7 @@ describe("停滞 on the board", () => {
 describe("待機中 (escalation wait)", () => {
 	const HOUR = 3_600_000;
 
-	it("tells wait_due once when --at passes, and drops it once it left 待機中", async () => {
+	it("says waiting.changed due once when --at passes, and drops it once it left 待機中", async () => {
 		const run = world();
 		const one = run.service.raise({ title: "再開", markdown: "?" });
 		run.service.wait(one.id, {
@@ -247,20 +247,18 @@ describe("待機中 (escalation wait)", () => {
 			dueAt: run.clock.now + HOUR,
 		});
 		run.later(HOUR - 1000);
-		expect(run.of("escalation.wait_due")).toHaveLength(0);
+		expect(run.of("waiting.changed")).toHaveLength(0);
 		run.later(2000);
 		run.later(HOUR);
-		expect(run.of("escalation.wait_due")).toHaveLength(1);
-		expect(run.sent.at(-1)).toContain(
-			"[escalation.wait_due] esc=1「再開」 due=",
-		);
+		expect(run.of("waiting.changed")).toHaveLength(1);
+		expect(run.sent.at(-1)).toBe("[waiting.changed] esc=1 — due");
 		const two = run.service.raise({ title: "後で", markdown: "?" });
 		run.service.events.pause();
 		run.service.wait(two.id, { trigger: "x", dueAt: run.clock.now - 1 });
-		expect(run.of("escalation.wait_due")).toHaveLength(2);
+		expect(run.of("waiting.changed")).toHaveLength(2);
 		run.service.resume(two.id, undefined);
 		await run.service.events.resume();
-		expect(run.of("escalation.wait_due")[1]!.fate).toBe("dropped-stale");
+		expect(run.of("waiting.changed")[1]!.fate).toBe("dropped-stale");
 	});
 
 	it("leaves 待機中 when an agent of it goes working, but not on a maintenance turn", () => {

@@ -1178,7 +1178,7 @@ export class TellService {
 					command.at,
 				);
 				return {
-					message: `#${String(waiting.id)} 「${waiting.title}」 waits on: ${command.trigger.trim()}${command.at === undefined ? "" : ` (escalation.wait_due at ${new Date(command.at).toISOString()})`}. 'escalation resume', 'ask' or 'close' takes it off.`,
+					message: `#${String(waiting.id)} 「${waiting.title}」 waits on: ${command.trigger.trim()}${command.at === undefined ? "" : ` (waiting.changed, due, at ${new Date(command.at).toISOString()})`}. 'escalation resume', 'ask' or 'close' takes it off.`,
 					data: waiting,
 				};
 			}

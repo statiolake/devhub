@@ -27,9 +27,9 @@
  * reading (`#deliveredRead`).
  *
  * The invariant (`invariant.ts`) is read here on every projection, and its
- * unsettled subjects and moved waits are said (`unsettled`,
- * `waiting.changed`). 待機中 (`escalation wait`): a waiting escalation whose
- * time (`dueAt`) has come is told once per wait (`escalation.wait_due`). An
+ * unsettled subjects are said (`unsettled`). 待機中 (`escalation wait`): a
+ * waiting escalation that may be ready is said (`waiting.changed`) when its
+ * subjects' facts moved, and once per wait when its time (`dueAt`) came. An
  * agent of one going working takes it out of 待機中 as it does out of 要回答.
  *
  * A maintenance turn (`isMaintenanceTurn`: a `/compact`, DevHub's keep-warm
@@ -208,7 +208,7 @@ export class OrchestratorService {
 	readonly #workedAt = new Map<number, { at: number; working: boolean }>();
 	/** Per escalation, how many entries the orchestrator has read, and when. */
 	readonly #read = new Map<number, { entries: number; at: number }>();
-	/** `escalationId@waitSince`, once told: one `wait_due` per wait. */
+	/** `escalationId@waitSince`, once told: one `due` per wait. */
 	readonly #dueTold = new Set<string>();
 	/** The invariant's subjects, their time, and the agents kept as they are. */
 	readonly #invariant: InvariantWatch;
@@ -297,17 +297,11 @@ export class OrchestratorService {
 	 */
 	#relevant(event: OrchestratorEvent): boolean {
 		switch (event.type) {
-			case "escalation.wait_due": {
-				const one = this.ports.store
-					.all()
-					.find((escalation) => escalation.id === event.escalationId);
-				return one !== undefined && currentWait(one)?.at === event.waitSince;
-			}
 			case "waiting.changed": {
 				const one = this.ports.store
 					.all()
 					.find((escalation) => escalation.id === event.escalationId);
-				return one !== undefined && currentWait(one) !== undefined;
+				return one !== undefined && currentWait(one)?.at === event.waitSince;
 			}
 			case "unsettled":
 				return this.#invariant.stillUnsettled(
@@ -677,11 +671,9 @@ export class OrchestratorService {
 			if (this.#dueTold.has(key)) continue;
 			this.#dueTold.add(key);
 			this.events.dispatch({
-				type: "escalation.wait_due",
+				type: "waiting.changed",
 				escalationId: one.id,
-				title: one.title,
-				trigger: wait.markdown,
-				dueAt: wait.dueAt,
+				reasons: ["due"],
 				waitSince: wait.at,
 			});
 		}
@@ -724,7 +716,10 @@ export class OrchestratorService {
 						: { workspaceId: one.workspaceId }),
 					...(currentWait(one) === undefined
 						? {}
-						: { trigger: currentWait(one)!.markdown }),
+						: {
+								trigger: currentWait(one)!.markdown,
+								waitSince: currentWait(one)!.at,
+							}),
 				})),
 		});
 		this.#invariant.observe(reading, this.orchestratorAgentId !== undefined);

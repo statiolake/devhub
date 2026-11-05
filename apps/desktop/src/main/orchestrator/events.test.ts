@@ -6,6 +6,7 @@ import {
 	eventLine,
 	eventsMessage,
 	humanMessages,
+	merge,
 	shortId,
 	workspaceToken,
 	type OrchestratorEvent,
@@ -118,20 +119,25 @@ describe("an event's line", () => {
 		);
 	});
 
-	it("states a wait whose subject moved, with its trigger", () => {
-		expect(
-			eventLine(
-				{
-					type: "waiting.changed",
-					escalationId: 12,
-					title: "レビュー待ち",
-					trigger: "approve されたら",
-					facts: ["issue=acme/app#123", "review=approved"],
-				},
-				now,
-			),
-		).toBe(
-			"[waiting.changed] esc=12「レビュー待ち」 issue=acme/app#123 review=approved — 待機条件: approve されたら",
+	it("says which wait may be ready and why, nothing more", () => {
+		const changed = {
+			type: "waiting.changed",
+			escalationId: 12,
+			reasons: ["subjects_changed"],
+			waitSince: 5,
+		} as const;
+		expect(eventLine(changed, now)).toBe(
+			"[waiting.changed] esc=12 — subjects_changed",
+		);
+		const due = { ...changed, reasons: ["due"] } as const;
+		expect(eventLine(due, now)).toBe("[waiting.changed] esc=12 — due");
+		// Both, for the same wait, are one line saying both.
+		expect(eventLine(merge(changed, due), now)).toBe(
+			"[waiting.changed] esc=12 — due, subjects_changed",
+		);
+		// A new wait is a new statement.
+		expect(eventLine(merge(changed, { ...due, waitSince: 9 }), now)).toBe(
+			"[waiting.changed] esc=12 — due",
 		);
 	});
 

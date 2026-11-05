@@ -123,8 +123,9 @@ export interface InvariantEscalation {
 	readonly links: readonly string[];
 	readonly agents: readonly string[];
 	readonly workspaceId?: string;
-	/** A 待機中 one's trigger. */
+	/** A 待機中 one's trigger, and when its wait began. */
 	readonly trigger?: string;
+	readonly waitSince?: number;
 }
 
 export interface InvariantInput {
@@ -158,8 +159,8 @@ export interface UnsettledSubject {
 /** A 待機中 escalation and the facts of what it is about. */
 export interface WaitingSubject {
 	readonly escalationId: number;
-	readonly title: string;
-	readonly trigger: string;
+	readonly waitSince: number;
+	/** Its subjects' facts: a change is `waiting.changed`. */
 	readonly facts: readonly string[];
 }
 
@@ -432,8 +433,7 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 			);
 		waiting.push({
 			escalationId: one.id,
-			title: one.title,
-			trigger: one.trigger ?? "",
+			waitSince: one.waitSince ?? 0,
 			facts,
 		});
 	}
@@ -570,9 +570,8 @@ export class InvariantWatch {
 			this.ports.dispatch({
 				type: "waiting.changed",
 				escalationId: one.escalationId,
-				title: one.title,
-				trigger: one.trigger,
-				facts: one.facts,
+				reasons: ["subjects_changed"],
+				waitSince: one.waitSince,
 			});
 		}
 	}

@@ -48,6 +48,7 @@ function escalation(
 		links: [],
 		agents: ["a1b2c3d4-0000"],
 		trigger: "approve されたら",
+		waitSince: 7,
 		...overrides,
 	};
 }
@@ -343,11 +344,12 @@ describe("the watch", () => {
 		expect(said).toEqual([]);
 		made.observe(waiting("approved"), true);
 		expect(said).toEqual([
-			expect.objectContaining({
+			{
 				type: "waiting.changed",
 				escalationId: 12,
-				facts: expect.arrayContaining(["review=approved"]) as unknown,
-			}),
+				reasons: ["subjects_changed"],
+				waitSince: 7,
+			},
 		]);
 	});
 

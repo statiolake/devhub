@@ -107,19 +107,6 @@ export type OrchestratorEvent =
 			readonly messages?: readonly HumanWords[];
 	  }
 	/**
-	 * A 待機中 escalation's time (`escalation wait --at`) has come: once per
-	 * wait. Dropped before it goes if it has left 待機中 (or waits anew).
-	 */
-	| {
-			readonly type: "escalation.wait_due";
-			readonly escalationId: number;
-			readonly title: string;
-			readonly trigger: string;
-			readonly dueAt: number;
-			/** The wait it is about: its entry's time. */
-			readonly waitSince: number;
-	  }
-	/**
 	 * A subject that breaks the invariant (`invariant.ts`): an Issue of the
 	 * population or a managed agent, with its facts as they are. No reason.
 	 */
@@ -133,15 +120,17 @@ export type OrchestratorEvent =
 			readonly facts: readonly string[];
 	  }
 	/**
-	 * What a 待機中 escalation is about moved (its Issue, its pull request,
-	 * its agents): the facts as they are now, with the trigger it waits on.
+	 * A 待機中 escalation may be ready: what it is about moved (its items,
+	 * its agents: `subjects_changed`), or its `--at` time came (`due`, once
+	 * per wait). Which of the two, nothing more. Dropped before it goes if it
+	 * has left 待機中 or waits anew.
 	 */
 	| {
 			readonly type: "waiting.changed";
 			readonly escalationId: number;
-			readonly title: string;
-			readonly trigger: string;
-			readonly facts: readonly string[];
+			readonly reasons: readonly WaitingReason[];
+			/** The wait it is about: its entry's time. */
+			readonly waitSince: number;
 	  }
 	| {
 			readonly type: "timer.elapsed";
@@ -169,12 +158,14 @@ export type OrchestratorEvent =
 
 export type OrchestratorEventType = OrchestratorEvent["type"];
 
+/** Why a 待機中 escalation may be ready, as `waiting.changed` says it. */
+export type WaitingReason = "subjects_changed" | "due";
+
 /** Every type DevHub itself emits (`custom.*` is the open family). */
 export const EVENT_TYPES = [
 	"init",
 	"escalation_answered",
 	"escalation.human_direct",
-	"escalation.wait_due",
 	"unsettled",
 	"waiting.changed",
 	"timer.elapsed",
@@ -310,14 +301,6 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 				],
 				summary: "人がエージェントと直接やりとりしました",
 			};
-		case "escalation.wait_due":
-			return {
-				head: [
-					`esc=${String(event.escalationId)}${title(event.title)}`,
-					`due=${clockAt(event.dueAt, now, "T")}`,
-				],
-				summary: `待機条件: ${excerpt(event.trigger, 150)}`,
-			};
 		case "unsettled": {
 			const subject = event.subject;
 			return {
@@ -335,11 +318,8 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 		}
 		case "waiting.changed":
 			return {
-				head: [
-					`esc=${String(event.escalationId)}${title(event.title)}`,
-					...event.facts,
-				],
-				summary: `待機条件: ${excerpt(event.trigger, 150)}`,
+				head: [`esc=${String(event.escalationId)}`],
+				summary: event.reasons.join(", "),
 			};
 		case "timer.elapsed":
 			return { head: [event.name] };
@@ -420,7 +400,6 @@ export function subjectOf(event: OrchestratorEvent): string {
 			return "init";
 		case "escalation_answered":
 		case "escalation.human_direct":
-		case "escalation.wait_due":
 		case "waiting.changed":
 			return `esc ${String(event.escalationId)}`;
 		case "unsettled":
@@ -438,8 +417,8 @@ export function subjectOf(event: OrchestratorEvent): string {
 
 /**
  * `older` and `newer` (one subject) as the one statement they become. A
- * timer pending once stands; anything else says how the subject stands now,
- * and the latest does.
+ * timer pending once stands; a wait's two reasons add up; anything else
+ * says how the subject stands now, and the latest does.
  */
 export function merge(
 	older: OrchestratorEvent,
@@ -447,6 +426,18 @@ export function merge(
 ): OrchestratorEvent {
 	if (older.type === "timer.elapsed" && newer.type === "timer.elapsed")
 		return older;
+	// The same wait: both of what happened to it are said.
+	if (
+		older.type === "waiting.changed" &&
+		newer.type === "waiting.changed" &&
+		older.waitSince === newer.waitSince
+	)
+		return {
+			...newer,
+			reasons: (["due", "subjects_changed"] as const).filter(
+				(one) => older.reasons.includes(one) || newer.reasons.includes(one),
+			),
+		};
 	return newer;
 }
 

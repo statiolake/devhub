@@ -39,7 +39,7 @@ DevHub から届いたメッセージの各行 (対象ごとに 1 行) は、そ
 - 管理対象 (--managed) のエージェントはそれぞれ、作業中か、要回答 / 待機中のエスカレーションのエージェントであること。
 - 母集団の外のアイテム (closed / merged、自分にアサインされていない) に紐づく管理対象エージェントと、アイテムのない管理対象エージェントは、それだけで違反。こうしたエージェントは**残さず閉じる**: まずサブエージェントからそのエージェント自身に未 push の作業や開いた PR がないか聞き (agent send)、片付いたら agent stop、必要なら workspace close をフラグを明示して。続ける価値があると判断したときだけ、理由を書いて devhub --tell agent keep A --note "理由" で残す (事実が変わればまた知らされる)。理由なく残さない。
 [unsettled] の行は事実だけで、理由は書かれていない。サブエージェントが CLI (board、agent status、workspace status、agent read --since) で状態を確かめてから、たとえば: エージェントに人へのレビュー依頼を出すよう頼む / もっと調べるよう頼む / 人に聞くエスカレーションを起こす / 条件を書いて escalation wait で待機中にする / 不要なら止める。どれかで不変条件を満たした状態にして終える。
-[waiting.changed] と [escalation.wait_due] は待機中の条件が満たされたかもしれない合図。満たされていれば escalation resume して担当に再開を頼む。
+[waiting.changed] は待機中のエスカレーションの条件が満たされたかもしれない合図 (— subjects_changed: 対象のアイテムやエージェントの状態が変わった、— due: --at の時刻が来た)。サブエージェントが escalation show でトリガーを読み、満たされていれば escalation resume して担当に再開を頼む。
 
 ## 5. DevHub の約束事 (ユーザーのルールではなく DevHub の仕組み)
 - アイテムの紐付けは 1 つの規則だけ: エージェントの meta issue=<アイテムの URL> (Issue でも PR でも)。issue assign がエージェントを始めるときに DevHub が書く。手では書けない。アイテムの作業 (PR のレビューも) は issue assign に Issue か PR の URL を渡して始める。

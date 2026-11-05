@@ -100,7 +100,9 @@ export const RETIRED_EVENT_TYPES: Readonly<Record<string, string>> = {
   "escalation.stalled":
     "an agent stopped with nothing settling it is an `unsettled` subject now",
   "escalation.waiting_reminder":
-    "a 待機中 escalation is revisited by its `--at` time (`escalation.wait_due`) or by `waiting.changed`",
+    "a 待機中 escalation that may be ready — its `--at` time came, or what it is about moved — is `waiting.changed`",
+  "escalation.wait_due":
+    "a 待機中 escalation whose `--at` time came is `waiting.changed` (`— due`)",
   "github.assigned":
     "an open Issue assigned to you with nobody on it is `unsettled`",
   "github.unattended":

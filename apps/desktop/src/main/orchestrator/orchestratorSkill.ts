@@ -242,8 +242,8 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       [unsettled] issue=acme/app#123「API整理」 state=open assigned=yes lane="In Review" pr=#130 pr_state=open review=changes_requested unresolved=2 checks=failing agents=a1b2c3d4:idle esc=none https://github.com/acme/app/issues/123
       [unsettled] agent=a1b2c3d4 (API fix) ws=login-fix status=idle issue=acme/app#123 state=closed assigned=yes lane=Done pr=#130 pr_state=merged review=approved unresolved=0 checks=passing esc=none
       [unsettled] agent=c3d4e5f6 (調査) ws=docs status=working issue=none pr=none esc=none
-      [waiting.changed] esc=12「レビュー待ち」 issue=acme/app#123 state=open assigned=yes lane="In Review" pr=#130 pr_state=open review=approved unresolved=0 checks=passing agent=a1b2c3d4 status=idle — 待機条件: approve されたら再開
-      [escalation.wait_due] esc=15「ログ保存期間」 due=09:00 — 待機条件: 11/10 以降に再開
+      [waiting.changed] esc=12 — subjects_changed
+      [waiting.changed] esc=15 — due
       [unsettled] pr=acme/app#9「設定画面」 state=open assigned=yes lane=Review pr=#9 pr_state=open review=review_required unresolved=0 checks=passing agents=none esc=none https://github.com/acme/app/pull/9
       [timer.elapsed] sweep
       [usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました
@@ -266,8 +266,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ)。人の言葉として単独ですぐ届く (上記) | esc |
 | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ)。人の言葉として単独ですぐ届く | esc, agent |
 | \`unsettled\` | 不変条件 (下記) を満たしていないアイテム (Issue / PR) か管理対象エージェント。猶予 1 分のあとに 1 回、事実が変わるたびにもう 1 回、解消しないうちは \`[orchestrator] reminder_interval\` (既定 1h) ごとに | issue / agent, ws, 事実 |
-| \`waiting.changed\` | 待機中のエスカレーションが対象にしている Issue / PR / エージェントの状態が変わった (待っている条件が満たされたかもしれない) | esc, 事実 |
-| \`escalation.wait_due\` | 待機中のエスカレーションの \`--at\` の時刻になった (待機 1 回につき 1 回) | esc, due |
+| \`waiting.changed\` | 待機中のエスカレーションの条件が満たされたかもしれない: 対象のアイテム (Issue / PR) やエージェントの状態が変わった (\`subjects_changed\`) か、\`--at\` の時刻が来た (\`due\`、待機 1 回につき 1 回)。行はどのエスカレーションかと、そのどちらかだけ | esc, 理由 |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |
 | \`custom.*\` | \`orchestrator emit\` でスクリプトや他ツールが送るもの | 本文 |
@@ -300,8 +299,8 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
   トリガーは後から読んで条件を確かめられる具体的な文に
   (「11/10 以降に再開」「Bob から Slack で返事が来たら」「#130 が approve されたら」)。
   人に何も聞いていない段階なら \`escalation new … --wait TEXT\` で最初から待機中にできる。
-  - \`--at\` の時刻になると \`escalation.wait_due\` が、対象の Issue / PR / エージェントの状態が
-    変わると \`waiting.changed\` が届く。トリガーを確かめ、満たされていれば \`escalation resume\`
+  - \`--at\` の時刻になるか、対象のアイテム / エージェントの状態が変わると \`waiting.changed\`
+    が届く (\`— due\` / \`— subjects_changed\`)。\`escalation show\` でトリガーを読んで確かめ、満たされていれば \`escalation resume\`
     で対応中に戻して作業を進める / 人に聞くことができたら \`escalation ask\` /
     不要になっていれば \`escalation close\`。満たされていなければそのまま。
     DevHub から見えない条件 (Slack の返事など) は \`--at\` で見直す時刻を付けておく。
@@ -502,7 +501,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     担当エージェントに未 push の作業や開いた PR がないか聞く → なければ agent stop
     (必要なら workspace close をフラグを明示して)。続ける理由があるなら agent keep A --note 理由。
 
-    ## waiting.changed / escalation.wait_due
+    ## waiting.changed (— due / — subjects_changed)
     トリガーを確かめる (review=approved になった、日付が来た、Slack の返事は自分のツールで)。
     満たされていれば escalation resume → 担当エージェントに agent send で再開を指示。
 

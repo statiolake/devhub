@@ -348,14 +348,18 @@ deploy. The orchestrator parks such an escalation with `escalation wait ID
 required, in natural language**, so whoever reads it later can check it;
 `--at` adds a machine time when the condition is one.
 
-- `escalation.wait_due` — once per wait, when `--at` has passed (a restart
-  says it again for a wait still past due). Dropped before delivery when the
-  escalation has left 待機中, or waits anew.
-- `waiting.changed` — when what it is about changes: the Issue it links (its
-  state, lane, pull request, review decision, conversations, checks) or its
-  agents' (see "The invariant"). Its first look says nothing.
+One event says a wait may be ready, `waiting.changed`, and its line says
+which escalation and which of two things happened, nothing more:
 
-On each, the orchestrator checks the trigger (with its own tools for Slack
+- `— subjects_changed` — what it is about changed: the items it is about
+  (their state, lanes, pull request, review decision, conversations,
+  checks) or its agents' (see "The invariant"). Its first look says nothing.
+- `— due` — once per wait, when `--at` has passed (a restart says it again
+  for a wait still past due).
+
+Both of one wait pending are one line (`— due, subjects_changed`). It is
+dropped before delivery when the escalation has left 待機中, or waits anew.
+On each, the orchestrator reads the trigger (`escalation show`), checks it (with its own tools for Slack
 and the like) and resumes, asks or closes it. A condition DevHub cannot see
 is given an `--at` to look again: there is no periodic reminder of every
 wait. A 待機中 escalation settles the Issue it is about and its agents
@@ -502,8 +506,7 @@ work, with its own tools (`gh`), not by the orchestrator.
 | `escalation_answered`     | the person answered an escalation (→ 対応中). Sent at once, as its own message: the person's words                                                            | `esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                                                                             |
 | `escalation.human_direct` | the person wrote to an open escalation's agent from its own composer and it went working (要回答 → 対応中). Sent at once, as its own message                  | `esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 に人が直接送ったメッセージ:` and, on the next line, what they wrote                                                                                |
 | `unsettled`               | an item of the population, or a managed agent, breaks the invariant: after a minute's grace, again when its facts change, and every `reminder_interval` after | `[unsettled] issue=acme/app#123「API整理」 state=open assigned=yes lane="In Review" pr=#130 pr_state=open review=changes_requested unresolved=2 checks=failing agents=a1b2c3d4:idle esc=none https://…` |
-| `waiting.changed`         | what a 待機中 escalation is about — its Issue, its pull request, its agents — changed: what it waits on may have come                                         | `[waiting.changed] esc=12「レビュー待ち」 issue=acme/app#123 … review=approved … — 待機条件: approve されたら再開`                                                                                      |
-| `escalation.wait_due`     | a 待機中 escalation's `--at` has passed (once per wait)                                                                                                       | `[escalation.wait_due] esc=15「ログ保存期間」 due=09:00 — 待機条件: 11/10 以降に再開`                                                                                                                   |
+| `waiting.changed`         | a 待機中 escalation may be ready: what it is about changed (`subjects_changed`), or its `--at` came (`due`, once per wait)                                    | `[waiting.changed] esc=12 — subjects_changed`, `[waiting.changed] esc=15 — due`                                                                                                                         |
 | `usage.threshold`         | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                        | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                                             |
 | `timer.elapsed`           | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                       | `[timer.elapsed] sweep`                                                                                                                                                                                 |
 | `custom.*`                | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                 | `[custom.deploy] — staging に deploy 完了`                                                                                                                                                              |
@@ -529,9 +532,10 @@ review decision, unresolved count and checks), every `agent.*`
 `unsettled`, whatever stopped it; an Issue left with no agent is), every
 `workspace.*` (read with `workspace status`), `escalation.stalled` (its idle
 agents are `unsettled`; 停滞 stays a mark on the board) and
-`escalation.waiting_reminder` (a 待機中 escalation comes back by its time,
-`escalation.wait_due`, or when what it is about changes, `waiting.changed`;
-an outside condition DevHub cannot see is given an `--at` to look again).
+`escalation.waiting_reminder` and `escalation.wait_due` (a 待機中 escalation
+comes back as `waiting.changed`, by its time or when what it is about
+changes; an outside condition DevHub cannot see is given an `--at` to look
+again).
 `github.review_requested` and `github.reply` went too: another person's pull
 request is an item like any other — assigned to the viewer, it is in the
 population and said as `unsettled` when nobody settles it — so GitHub itself
@@ -589,12 +593,13 @@ resume` polls once (the rate limit permitting), then sends the person's
 ### The sources
 
 - **The board** (`orchestratorService.ts`): the answers, the person's direct
-  words, `escalation.wait_due`; and the invariant, read off every projection
+  words, `waiting.changed` (`— due`); and the invariant, read off every projection
   and every GitHub poll, its subjects timed by `InvariantWatch`: a subject is
   said once it has been unsettled for a minute, again when its facts change,
   and every `reminder_interval` while it stays so; a new orchestrator (a
-  start, a restart) hears every one again. `waiting.changed` compares each
-  待機中 escalation's facts with the last look (its first look says nothing).
+  start, a restart) hears every one again. `waiting.changed`
+  (`— subjects_changed`) compares each 待機中 escalation's subjects' facts
+  with the last look (its first look says nothing).
 - **GitHub** (`githubItems.ts`): read — never written — one request per
   tick: a page (100) of the open items assigned to the viewer (`search`
   `is:open assignee:@me`: Issues and pull requests, each with its state,
@@ -798,7 +803,7 @@ the orchestrator agent, and no other agent, a skill for **writing** one:
   invariant as DevHub reports it, what each lane asks of the orchestrator
   (要回答 waits, 対応中 is relayed to the agent and closed, 待機中 always has
   its trigger in words (and `--at` for a date) and is checked on
-  `escalation.wait_due` and `waiting.changed`), the escalation principles and
+  `waiting.changed`), the escalation principles and
   template below, the CLI it uses, and an interview: the team's lanes,
   existing skills, review and "done", what it may decide alone (and where
   decisions are recorded), events, timers, naming and meta. Then it drafts

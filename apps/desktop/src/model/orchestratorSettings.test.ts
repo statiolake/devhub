@@ -182,11 +182,7 @@ describe("[orchestrator] settings", () => {
   });
 
   it("defaults the events to the 待機中 and 停滞 ones, without 不明; an old unaccounted pattern is valid and matches nothing", () => {
-    for (const type of [
-      "escalation.stalled",
-      "escalation.wait_due",
-      "escalation.waiting_reminder",
-    ])
+    for (const type of ["escalation.stalled", "waiting.changed"])
       expect(eventAllowed(type, DEFAULT_ORCHESTRATOR_EVENTS)).toBe(true);
     expect(DEFAULT_ORCHESTRATOR_EVENTS).not.toContain("unaccounted");
     expect(DEFAULT_ORCHESTRATOR_EVENTS).not.toContain("escalation.taken");
@@ -199,7 +195,8 @@ describe("[orchestrator] settings", () => {
 
   it("filters by the last matching pattern, and always lets init through", () => {
     const patterns = ["escalation.*", "!escalation.human_direct", "unsettled"];
-    expect(eventAllowed("escalation.wait_due", patterns)).toBe(true);
+    expect(eventAllowed("escalation_answered", patterns)).toBe(false);
+    expect(eventAllowed("escalation.stalled", patterns)).toBe(true);
     expect(eventAllowed("escalation.human_direct", patterns)).toBe(false);
     expect(eventAllowed("unsettled", patterns)).toBe(true);
     expect(eventAllowed("waiting.changed", patterns)).toBe(false);

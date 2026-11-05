@@ -765,7 +765,7 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    condition, written in words (a date,
                                    someone's reply, a deploy); --at (ISO,
                                    like 2026-11-10T09:00) when it is a time:
-                                   escalation.wait_due comes then
+                                   waiting.changed (due) comes then
   escalation resume <id> [--note <text>]
                                    off its wait, to in_progress
   escalation rank <id> [--priority high|normal|low]
