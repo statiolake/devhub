@@ -788,7 +788,22 @@ export interface OrchestratorActionsBridge {
 	startOrchestrator(): Promise<void>;
 	/** Hold the orchestrator's events (true), or deliver them again (false). */
 	setOrchestratorPaused(paused: boolean): Promise<void>;
+	/**
+	 * What the left pane is showing, for the window's title: main names the
+	 * window (`main/shell/shellTitle.ts`), so the page says only which
+	 * escalation or file — an id or a path, never a body.
+	 */
+	reportOrchestratorView(view: OrchestratorViewWire): void;
 }
+
+/**
+ * What the Orchestrator screen's left pane shows: the board (or the Files
+ * tab's tree), an escalation read over the board, or a file over the tree.
+ */
+export type OrchestratorViewWire =
+	| { readonly kind: "board" }
+	| { readonly kind: "escalation"; readonly id: number }
+	| { readonly kind: "file"; readonly path: string };
 
 /**
  * What the page has put in the content area.
@@ -2233,6 +2248,7 @@ export const CHANNELS = {
 	answerEscalation: "devhub:answer-escalation",
 	startOrchestrator: "devhub:start-orchestrator",
 	setOrchestratorPaused: "devhub:set-orchestrator-paused",
+	reportOrchestratorView: "devhub:report-orchestrator-view",
 	listOrchestratorFolder: "devhub:list-orchestrator-folder",
 	readOrchestratorFile: "devhub:read-orchestrator-file",
 	openOrchestratorFile: "devhub:open-orchestrator-file",

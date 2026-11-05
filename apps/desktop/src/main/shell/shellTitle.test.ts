@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { editorElement, shellTitleFor } from "./shellTitle.js";
+import {
+	editorElement,
+	orchestratorViewWire,
+	shellTitleFor,
+	titleText,
+} from "./shellTitle.js";
 import type { ShellTitleFacts } from "./shellTitle.js";
 import { agentId, workspaceId } from "../../model/domain.js";
 
@@ -172,5 +177,162 @@ describe("what the workbench reports as an element", () => {
 	it("takes nothing from a workbench that has not reported yet", () => {
 		expect(editorElement(undefined, "Code - OSS")).toBeUndefined();
 		expect(editorElement("   ", "Code - OSS")).toBeUndefined();
+	});
+});
+
+describe("the shell window's title on the Orchestrator screen", () => {
+	const ORCHESTRATOR = workspaceId("9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d");
+	const CHILD = agentId("1b2c3d4e-5f60-4718-8293-a4b5c6d7e8f9");
+	const WORKER = agentId("2c3d4e5f-6071-4829-93a4-b5c6d7e8f901");
+	const PAYMENTS = workspaceId("3d4e5f60-7182-493a-a4b5-c6d7e8f90123");
+
+	function orchestrator(
+		view: ShellTitleFacts["orchestratorView"],
+		context: ShellTitleFacts["selection"]["context"] = { kind: "orchestrator" },
+	): ShellTitleFacts {
+		return {
+			selection: { context, presentation: "full" },
+			workspaces: [
+				{
+					id: ORCHESTRATOR,
+					label: "Orchestrator",
+					agents: [
+						{
+							id: CHILD,
+							displayName: "helper",
+							named: true,
+							activity: "Reading decisions.md",
+						},
+					],
+				},
+				{
+					id: WORKSPACE,
+					label: "#123 ログイン修正",
+					agents: [{ id: WORKER, displayName: "Claude 1", named: false }],
+				},
+				{ id: PAYMENTS, label: "payments", agents: [] },
+			],
+			editorElement: "ignored.ts",
+			orchestratorWorkspaceId: ORCHESTRATOR,
+			orchestratorView: view,
+		} as unknown as ShellTitleFacts;
+	}
+
+	it("is Orchestrator — DevHub on the board, whatever the workbench says", () => {
+		expect(shellTitleFor(orchestrator({ kind: "board" }))).toBe(
+			"Orchestrator — DevHub",
+		);
+		expect(shellTitleFor(orchestrator(undefined))).toBe(
+			"Orchestrator — DevHub",
+		);
+	});
+
+	it("leads with the escalation's Workspace, then its subject", () => {
+		expect(
+			shellTitleFor(
+				orchestrator({
+					kind: "escalation",
+					subject: "本番DBマイグレーション承認",
+					workspaceId: PAYMENTS,
+					agentIds: [WORKER],
+				}),
+			),
+		).toBe("payments · 本番DBマイグレーション承認 — Orchestrator — DevHub");
+	});
+
+	it("takes the first related agent's Workspace when it names none", () => {
+		expect(
+			shellTitleFor(
+				orchestrator({
+					kind: "escalation",
+					subject: "本番DBマイグレーション承認",
+					agentIds: [WORKER, CHILD],
+				}),
+			),
+		).toBe(
+			"#123 ログイン修正 · 本番DBマイグレーション承認 — Orchestrator — DevHub",
+		);
+	});
+
+	it("is the subject alone with no Workspace to name, or only the Orchestrator's", () => {
+		expect(
+			shellTitleFor(
+				orchestrator({
+					kind: "escalation",
+					subject: "方針の確認",
+					agentIds: [],
+				}),
+			),
+		).toBe("方針の確認 — Orchestrator — DevHub");
+		expect(
+			shellTitleFor(
+				orchestrator({
+					kind: "escalation",
+					subject: "方針の確認",
+					agentIds: [CHILD],
+				}),
+			),
+		).toBe("方針の確認 — Orchestrator — DevHub");
+	});
+
+	it("names the file open in the Files tab", () => {
+		expect(
+			shellTitleFor(orchestrator({ kind: "file", path: "notes/decisions.md" })),
+		).toBe("decisions.md — Orchestrator — DevHub");
+	});
+
+	it("calls a child agent of the row what any agent is called", () => {
+		expect(
+			shellTitleFor(
+				orchestrator(
+					{ kind: "escalation", subject: "x", agentIds: [] },
+					{ kind: "agent", agentId: CHILD },
+				),
+			),
+		).toBe("helper — Orchestrator — DevHub");
+	});
+
+	it("puts a subject on one line and cuts a long one near 80 characters", () => {
+		const title = shellTitleFor(
+			orchestrator({
+				kind: "escalation",
+				subject: `承認\n\tお願い\u0007します ${"とても長い件名 ".repeat(20)}`,
+				agentIds: [],
+			}),
+		);
+		const subject = title.split(" — ")[0] ?? "";
+		expect(subject.startsWith("承認 お願い します とても長い件名")).toBe(true);
+		expect(subject.endsWith("…")).toBe(true);
+		expect(Array.from(subject).length).toBeLessThanOrEqual(80);
+		// eslint-disable-next-line no-control-regex
+		expect(title).not.toMatch(/[\u0000-\u001f]/u);
+	});
+});
+
+describe("titleText", () => {
+	it("leaves a short line alone", () => {
+		expect(titleText("  ログイン修正 ")).toBe("ログイン修正");
+	});
+
+	it("cuts at a word when one is near the limit", () => {
+		expect(titleText("alpha beta gamma delta", 15)).toBe("alpha beta…");
+	});
+});
+
+describe("what the Orchestrator screen may report", () => {
+	it("is an id or a path, and nothing else", () => {
+		expect(orchestratorViewWire({ kind: "board" })).toEqual({ kind: "board" });
+		expect(
+			orchestratorViewWire({ kind: "escalation", id: 4, body: "x" }),
+		).toEqual({ kind: "escalation", id: 4 });
+		expect(orchestratorViewWire({ kind: "file", path: "a.md" })).toEqual({
+			kind: "file",
+			path: "a.md",
+		});
+		expect(
+			orchestratorViewWire({ kind: "escalation", id: "4" }),
+		).toBeUndefined();
+		expect(orchestratorViewWire({ kind: "title", text: "x" })).toBeUndefined();
+		expect(orchestratorViewWire(null)).toBeUndefined();
 	});
 });

@@ -58,6 +58,7 @@ const readOrchestratorFile = vi.fn(
     }),
 );
 const openOrchestratorFile = vi.fn(() => Promise.resolve());
+const reportOrchestratorView = vi.fn();
 
 beforeEach(() => {
   decisions = "# 決定\n\n- 請求の丸めは half_even\n";
@@ -66,6 +67,7 @@ beforeEach(() => {
     listOrchestratorFolder,
     readOrchestratorFile,
     openOrchestratorFile,
+    reportOrchestratorView,
     onOrchestratorFilesChanged: (
       listener: (paths: readonly string[]) => void,
     ) => {
@@ -258,5 +260,34 @@ describe("leaving the Files tab and coming back", () => {
       "data-nav",
       "push",
     );
+  });
+});
+
+describe("what the Files tab tells main, for the window's title", () => {
+  it("says the file open over the tree by its path, the tree on Back, and the file again on return", async () => {
+    mount();
+    await openFilesTab();
+    expect(reportOrchestratorView).toHaveBeenLastCalledWith({ kind: "board" });
+    fireEvent.click(screen.getByRole("button", { name: "decisions.md" }));
+    await settle();
+    expect(reportOrchestratorView).toHaveBeenLastCalledWith({
+      kind: "file",
+      path: "decisions.md",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Back to the files" }));
+    expect(reportOrchestratorView).toHaveBeenLastCalledWith({ kind: "board" });
+    fireEvent.click(screen.getByRole("button", { name: "decisions.md" }));
+    await settle();
+    cleanup();
+    reportOrchestratorView.mockClear();
+    mount();
+    await settle();
+    expect(reportOrchestratorView).toHaveBeenLastCalledWith({
+      kind: "file",
+      path: "decisions.md",
+    });
+    // The board tab: what is read there, not the file left on the other tab.
+    fireEvent.click(screen.getByRole("tab", { name: "ボード" }));
+    expect(reportOrchestratorView).toHaveBeenLastCalledWith({ kind: "board" });
   });
 });

@@ -26,7 +26,7 @@ import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
 import { focusIsOurs, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
-import { memory } from "./orchestratorMemory";
+import { memory, reportOrchestratorView } from "./orchestratorMemory";
 import type { SideButtons } from "./OrchestratorScreen";
 
 /** A text file as Markdown: one fenced block, fenced longer than any run. */
@@ -74,6 +74,7 @@ export function FilesPage({
   const openPath = nav === "push" ? shown : undefined;
   useEffect(() => {
     memory.file = openPath;
+    reportOrchestratorView();
   }, [openPath]);
   useEffect(() => {
     memory.expanded = [...expanded];

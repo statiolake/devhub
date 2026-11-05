@@ -55,8 +55,10 @@ const readEscalationEmbed = vi.fn((path: string) =>
       : { mediaType: "", bytes: FILES[path], signature: "1" },
   ),
 );
+const reportOrchestratorView = vi.fn();
 window.devhub = {
   answerEscalation,
+  reportOrchestratorView,
   setOrchestratorPaused: vi.fn(() => Promise.resolve()),
   openExternalUrl: vi.fn(() => Promise.resolve()),
   conversation: { resolvePaths: () => Promise.resolve([]) },
@@ -961,5 +963,67 @@ describe("going to a Workspace from an escalation", () => {
       context: { kind: "agent", agentId: "a1" },
       reason: "explicit",
     });
+  });
+});
+
+describe("what the pane tells main, for the window's title", () => {
+  const last = () => reportOrchestratorView.mock.lastCall?.[0] as unknown;
+
+  it("says the board, then the escalation opened, then the board on Back, and it again on Forward", () => {
+    motion(true);
+    mount();
+    expect(last()).toEqual({ kind: "board" });
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    expect(last()).toEqual({ kind: "escalation", id: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Back to the board" }));
+    expect(last()).toEqual({ kind: "board" });
+    const forward = new MouseEvent("mouseup", {
+      button: 4,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      screen.getByRole("region", { name: "対応中" }).dispatchEvent(forward);
+    });
+    expect(last()).toEqual({ kind: "escalation", id: 1 });
+    // An id only: no subject, no answer, no thread.
+    for (const [view] of reportOrchestratorView.mock.calls)
+      expect(Object.keys(view as object).sort()).toEqual(
+        (view as { kind: string }).kind === "board" ? ["kind"] : ["id", "kind"],
+      );
+  });
+
+  it("says it as soon as the pane starts going back, not when the slide ends", () => {
+    motion(false);
+    mount();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    fireEvent.keyDown(thread(), { key: "Escape" });
+    expect(document.querySelector(".orchestrator-stage")).toHaveAttribute(
+      "data-nav",
+      "pop",
+    );
+    expect(last()).toEqual({ kind: "board" });
+  });
+
+  it("says again what the screen came back to", () => {
+    motion(true);
+    const screenNow = mountScreen();
+    fireEvent.click(screen.getByRole("button", { name: /リトライ方針/u }));
+    screenNow.leave();
+    reportOrchestratorView.mockClear();
+    screenNow.back();
+    expect(reportOrchestratorView).toHaveBeenCalledWith({
+      kind: "escalation",
+      id: 2,
+    });
+    // And the board, when what it was left on has gone meanwhile.
+    screenNow.leave();
+    reportOrchestratorView.mockClear();
+    screenNow.back({ ...BOARD, inProgress: [] });
+    expect(last()).toEqual({ kind: "board" });
   });
 });

@@ -26,6 +26,17 @@
  * model here, so a row and a title can never disagree about what an Agent is
  * doing. Which of that and its name leads is `agentLeadingText`, for the same
  * reason.
+ *
+ * **The Orchestrator's part comes from its page, by id.** The screen reports
+ * which escalation or file its left pane shows (`reportOrchestratorView`) and
+ * main reads the escalation's subject and Workspace off its own store, so the
+ * title is the time spent on the project the escalation is about:
+ *
+ *     {workspace} · {subject} — Orchestrator — DevHub
+ *     {file name} — Orchestrator — DevHub
+ *     Orchestrator — DevHub
+ *
+ * Only titles and names: never what anyone wrote in a thread.
  */
 
 import type {
@@ -34,10 +45,12 @@ import type {
 	WorkspaceSnapshot,
 } from "../../model/appModel.js";
 import {
+	ORCHESTRATOR_NAME,
 	shellWindowTitle,
 	type ShellTitleParts,
 } from "../../ipc/windowTitles.js";
 import { agentLeadingText } from "../../model/domain.js";
+import type { OrchestratorViewWire } from "../../ipc/contract.js";
 
 /** Everything the title is a function of. */
 export interface ShellTitleFacts {
@@ -48,6 +61,49 @@ export interface ShellTitleFacts {
 	 * `editorElement` is what reduces it.
 	 */
 	readonly editorElement: string | undefined;
+	/** The Orchestrator row's Workspace (`AppSnapshot.orchestratorWorkspaceId`). */
+	readonly orchestratorWorkspaceId?: string | undefined;
+	/**
+	 * What the Orchestrator screen's left pane shows, resolved by main; absent
+	 * is the board.
+	 */
+	readonly orchestratorView?: OrchestratorTitleView | undefined;
+}
+
+/** What the Orchestrator screen shows, as far as its title is concerned. */
+export type OrchestratorTitleView =
+	| { readonly kind: "board" }
+	| {
+			readonly kind: "escalation";
+			/** The escalation's title — its subject, never its thread. */
+			readonly subject: string;
+			readonly workspaceId?: string | undefined;
+			/** The agents it is about, in order; the first one's Workspace counts. */
+			readonly agentIds: readonly string[];
+	  }
+	| { readonly kind: "file"; readonly path: string };
+
+/** How long a subject or a file name may run in the title, in characters. */
+export const TITLE_TEXT_LIMIT = 80;
+
+/** Between the Workspace an escalation is about and its subject. */
+export const SUBJECT_SEPARATOR = " · ";
+
+/**
+ * Text from elsewhere made fit for one line of a title: control characters
+ * and line breaks become spaces, runs of space one, and anything past
+ * `limit` characters is cut at a word where one is near, with an ellipsis.
+ */
+export function titleText(text: string, limit = TITLE_TEXT_LIMIT): string {
+	// eslint-disable-next-line no-control-regex
+	const flat = text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/gu, " ");
+	const one = flat.replace(/\s+/gu, " ").trim();
+	const characters = Array.from(one);
+	if (characters.length <= limit) return one;
+	const cut = characters.slice(0, limit - 1).join("");
+	const space = cut.lastIndexOf(" ");
+	const head = space >= limit * 0.6 ? cut.slice(0, space) : cut;
+	return `${head.trimEnd()}…`;
 }
 
 /**
@@ -107,8 +163,65 @@ function titleParts(facts: ShellTitleFacts): ShellTitleParts {
 			};
 		}
 		case "orchestrator":
-			return { element: undefined, workspace: "Orchestrator" };
+			return {
+				element: orchestratorElement(facts),
+				workspace:
+					facts.workspaces.find(
+						(one) => one.id === facts.orchestratorWorkspaceId,
+					)?.label ?? ORCHESTRATOR_NAME,
+			};
 	}
+}
+
+/**
+ * The Orchestrator screen's element: the escalation being read — after the
+ * Workspace it is about, so the time lands on that project — or the file
+ * open in the Files tab. The board has none.
+ */
+function orchestratorElement(facts: ShellTitleFacts): string | undefined {
+	const view = facts.orchestratorView;
+	switch (view?.kind) {
+		case undefined:
+		case "board":
+			return undefined;
+		case "file": {
+			const name = titleText(view.path.split("/").at(-1) ?? "");
+			return name === "" ? undefined : name;
+		}
+		case "escalation": {
+			const subject = titleText(view.subject);
+			const workspace = escalationWorkspace(facts, view)?.label;
+			const parts = [workspace, subject].filter(
+				(part): part is string => part !== undefined && part !== "",
+			);
+			return parts.length === 0 ? undefined : parts.join(SUBJECT_SEPARATOR);
+		}
+	}
+}
+
+/**
+ * The one Workspace an escalation is about: its own, else its first agent's.
+ * The Orchestrator's own is not one — the title already names it.
+ */
+function escalationWorkspace(
+	facts: ShellTitleFacts,
+	view: Extract<OrchestratorTitleView, { kind: "escalation" }>,
+): WorkspaceSnapshot | undefined {
+	const own =
+		view.workspaceId === undefined
+			? undefined
+			: facts.workspaces.find((one) => one.id === view.workspaceId);
+	const first = view.agentIds[0];
+	const found =
+		own ??
+		(first === undefined
+			? undefined
+			: facts.workspaces.find((one) =>
+					one.agents.some((agent) => agent.id === first),
+				));
+	return found === undefined || found.id === facts.orchestratorWorkspaceId
+		? undefined
+		: found;
 }
 
 function requireWorkspace(
@@ -135,4 +248,26 @@ function findAgent(
 		}
 	}
 	throw new Error("the selected agent is not in the model");
+}
+
+/** A page's `reportOrchestratorView`, checked; anything else is nothing. */
+export function orchestratorViewWire(
+	value: unknown,
+): OrchestratorViewWire | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const view = value as Record<string, unknown>;
+	switch (view["kind"]) {
+		case "board":
+			return { kind: "board" };
+		case "escalation":
+			return typeof view["id"] === "number" && Number.isInteger(view["id"])
+				? { kind: "escalation", id: view["id"] }
+				: undefined;
+		case "file":
+			return typeof view["path"] === "string" && view["path"] !== ""
+				? { kind: "file", path: view["path"] }
+				: undefined;
+		default:
+			return undefined;
+	}
 }

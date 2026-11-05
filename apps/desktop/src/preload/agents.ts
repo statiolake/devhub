@@ -13,6 +13,7 @@ import {
 	type ContextMenuRequestWire,
 	type OrchestratorFileWire,
 	type OrchestratorFolderWire,
+	type OrchestratorViewWire,
 	type RichClipboardWire,
 	type SlideImagesRequestWire,
 	type SlidesPdfRequestWire,
@@ -51,6 +52,9 @@ const api: AgentsBridge = {
 		ipcRenderer.invoke(CHANNELS.startOrchestrator) as Promise<void>,
 	setOrchestratorPaused: (paused: boolean) =>
 		ipcRenderer.invoke(CHANNELS.setOrchestratorPaused, paused) as Promise<void>,
+	reportOrchestratorView: (view: OrchestratorViewWire) => {
+		ipcRenderer.send(CHANNELS.reportOrchestratorView, view);
+	},
 	listOrchestratorFolder: (path: string) =>
 		ipcRenderer.invoke(
 			CHANNELS.listOrchestratorFolder,

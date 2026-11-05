@@ -408,6 +408,11 @@ export class OrchestratorService {
 	}
 
 	/** The id `raise` will give the next one: its pictures' folder is named for it. */
+	/** One escalation, as stored — for the window's title. */
+	escalation(id: number): Escalation | undefined {
+		return this.ports.store.get(id);
+	}
+
 	nextEscalationId(): number {
 		return this.ports.store.nextId;
 	}

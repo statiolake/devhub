@@ -96,6 +96,7 @@ import {
 	type ModalRequest,
 	type RepositoryStatusWire,
 	EMPTY_BOARD,
+	type OrchestratorViewWire,
 	type ContextMenuRequestWire,
 	type TooltipRequestWire,
 	type UsageLimitsWire,
@@ -294,7 +295,12 @@ import { ConversationStopped } from "../agent/conversation/failures.js";
 import { deadEditorKeys, editorGaveUpFailure } from "./editorSupervisor.js";
 import { appearanceMode } from "./appearanceMode.js";
 import { mainLogPath } from "../diagnostics/mainLog.js";
-import { editorElement, shellTitleFor } from "./shellTitle.js";
+import {
+	editorElement,
+	orchestratorViewWire,
+	shellTitleFor,
+	type OrchestratorTitleView,
+} from "./shellTitle.js";
 import {
 	WorkbenchLifecycle,
 	type EditorPlaceholder,
@@ -4663,6 +4669,27 @@ export class AppController {
 	 * on screen calls itself. Nothing is cached, so there is no second copy to
 	 * go stale, and calling this more often than necessary costs a string.
 	 */
+	/**
+	 * What the Orchestrator screen says it shows (`reportOrchestratorView`),
+	 * with the escalation read off the store: its subject and what it is
+	 * about, never its thread.
+	 */
+	private orchestratorTitleView(): OrchestratorTitleView {
+		const view = this.orchestratorView;
+		if (view.kind !== "escalation") return view;
+		const escalation = this.orchestrator?.escalation(view.id);
+		if (escalation === undefined) return { kind: "board" };
+		return {
+			kind: "escalation",
+			subject: escalation.title,
+			workspaceId: escalation.workspaceId,
+			agentIds: escalation.agents,
+		};
+	}
+
+	/** What the Orchestrator screen's left pane last said it shows. */
+	private orchestratorView: OrchestratorViewWire = { kind: "board" };
+
 	private refreshWindowTitle(): void {
 		const shell = shellWindow();
 		if (shell.window.isDestroyed()) return;
@@ -4674,6 +4701,8 @@ export class AppController {
 				shell.revealedTitle(),
 				vscodeProduct.nameLong,
 			),
+			orchestratorWorkspaceId: snapshot.orchestratorWorkspaceId,
+			orchestratorView: this.orchestratorTitleView(),
 		});
 		shell.window.setTitle(title);
 		// The same string, once, to both places that show it. DevHub's own
@@ -9528,6 +9557,8 @@ export class AppController {
 			},
 			publish: (board) => {
 				this.send(CHANNELS.orchestratorBoardChanged, board);
+				// The escalation being read may have been retitled.
+				this.refreshWindowTitle();
 			},
 			// A paused orchestrator costs no GitHub quota: polling is suspended,
 			// and a resume waits for its catch-up poll before it delivers.
@@ -11911,6 +11942,14 @@ export class AppController {
 			} catch (error: unknown) {
 				throw namedFailure(error);
 			}
+		});
+		// What the Orchestrator screen shows, for the window's title — by id
+		// and path only; the title is composed here (`shellTitle.ts`).
+		receive(CHANNELS.reportOrchestratorView, (_event, view: unknown) => {
+			const parsed = orchestratorViewWire(view);
+			if (parsed === undefined) return;
+			this.orchestratorView = parsed;
+			this.refreshWindowTitle();
 		});
 		handle(CHANNELS.setOrchestratorPaused, async (_event, paused: unknown) => {
 			if (typeof paused !== "boolean")

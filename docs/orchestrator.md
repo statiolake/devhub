@@ -81,6 +81,23 @@ the person's own, in skills and instructions in the orchestrator's folder.
   Orchestrator row as its own selection does.
 - A restart opens on Scratch rather than on this row: the row is not written
   into `state.json`, so an older DevHub can still read the file.
+- **The window title** says what the screen shows, for time trackers
+  (`main/shell/shellTitle.ts`; the page reports only an escalation id or a
+  file path, `reportOrchestratorView`, and main composes the title):
+
+  | Showing                            | Title                                                           |
+  | ---------------------------------- | --------------------------------------------------------------- |
+  | the board, or the Files tab's tree | `Orchestrator — DevHub`                                         |
+  | an escalation                      | `payments · 本番DBマイグレーション承認 — Orchestrator — DevHub` |
+  | an escalation with no Workspace    | `本番DBマイグレーション承認 — Orchestrator — DevHub`            |
+  | a file in the Files tab            | `decisions.md — Orchestrator — DevHub`                          |
+  | a helper agent under the row       | as any Agent: `helper — Orchestrator — DevHub`                  |
+
+  The Workspace is the escalation's own, else its first agent's (by its
+  usual label; not the Orchestrator's own), so the time lands on that
+  project. The subject and file name are put on one line and cut near 80
+  characters; no thread or answer text is ever in the title. It follows
+  every open, Back, Forward and tab, and the screen coming back as it was.
 
 ## Escalations
 

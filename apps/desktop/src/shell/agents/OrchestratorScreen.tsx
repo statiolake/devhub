@@ -55,6 +55,7 @@ import {
   memory,
   rememberedTab,
   rememberTab,
+  reportOrchestratorView,
   type BoardTab,
 } from "./orchestratorMemory";
 
@@ -120,6 +121,11 @@ export function OrchestratorBoard({
     setTab(next);
     if (next === "files") setFilesChanged(false);
     rememberTab(next);
+    reportOrchestratorView();
+  }, []);
+  // Back on the screen: the title says what it came back to.
+  useEffect(() => {
+    reportOrchestratorView(true);
   }, []);
   // A `devhub:escalation` link, followed: it is read on the board.
   useEscalationRequests(() => {
@@ -483,6 +489,7 @@ function BoardPage({
   useEffect(() => {
     memory.escalation =
       openId === undefined ? undefined : { id: openId, closed: openClosed };
+    reportOrchestratorView();
   }, [openId, openClosed]);
   // Jumping to an agent is a deliberate move: a place in Back and Forward
   // at once, so prefix+h comes back here (`NavigationReason`).
