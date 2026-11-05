@@ -853,6 +853,9 @@ export class AppCoordinator {
       case "orchestrator_assigned":
         this.model.setOrchestratorAgent(intent.agentId);
         return this.transitionOutcome(beforeRevision, id);
+      case "orchestrator_root_resolved":
+        this.model.setOrchestratorRoot(intent.root);
+        return this.transitionOutcome(beforeRevision, id);
       case "terminal_activity_observed": {
         this.model.observeTerminalActivity(intent.workspaces);
         // Not persisted: the reading is live tmux state, rebuilt by the first
@@ -1431,6 +1434,9 @@ export class AppCoordinator {
     }
     if (workspaceId === this.model.scratchWorkspaceId) {
       throw domainRefusal(DomainErrorCode.ScratchCannotClose);
+    }
+    if (workspaceId === this.model.orchestratorWorkspaceId) {
+      throw domainRefusal(DomainErrorCode.OrchestratorCannotClose);
     }
     if (workspace.close.kind === "running") {
       throw domainRefusal(DomainErrorCode.WorkspaceClosing);

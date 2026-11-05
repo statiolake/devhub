@@ -62,7 +62,7 @@ import {
   nextTerminalZoomOffset,
   type TerminalZoomDirection,
 } from "./terminalZoom.js";
-import { SCRATCH_NAME } from "../ipc/windowTitles.js";
+import { ORCHESTRATOR_NAME, SCRATCH_NAME } from "../ipc/windowTitles.js";
 import type { PromptCache } from "./conversation.js";
 import type {
   TerminalActivity,
@@ -277,6 +277,13 @@ export interface AppSnapshot {
   readonly scratchWorkspaceId: WorkspaceId;
   /** The agent the Orchestrator row shows, while one is assigned. */
   readonly orchestratorAgentId: AgentId | undefined;
+  /**
+   * The Workspace that is the Orchestrator row's, as Scratch's is Scratch's:
+   * the orchestrator agent's, else the open one at `[orchestrator] root`
+   * (`AppModel.orchestratorWorkspaceId`). Never Scratch. Its row is the
+   * Orchestrator row, and its other Agents are drawn under it.
+   */
+  readonly orchestratorWorkspaceId: WorkspaceId | undefined;
   /** What the content area holds for that selection. */
   readonly layout: SurfaceLayout;
   readonly workspaces: readonly WorkspaceSnapshot[];
@@ -485,6 +492,13 @@ export class AppModel {
    */
   private orchestratorAgentValue: AgentId | undefined;
   /**
+   * The orchestrator's folder as main resolved it (`[orchestrator] root`, or
+   * the `--root` of an orchestrator being started), canonical, on this Mac:
+   * the open Workspace there is the Orchestrator row's while no orchestrator
+   * agent says otherwise. Main tells the model; it is never persisted.
+   */
+  private orchestratorRootValue: string | undefined;
+  /**
    * Each Agent's own terminal, while its session is up. See
    * `model/agentTerminal.ts`.
    */
@@ -550,6 +564,44 @@ export class AppModel {
     return id !== undefined && this.agent(id) !== undefined ? id : undefined;
   }
 
+  /**
+   * The Workspace that is the Orchestrator row's: the orchestrator agent's
+   * while one is assigned, else the open local Workspace whose folder is the
+   * orchestrator's root. Never Scratch.
+   *
+   * Read, not stored, so a Workspace persisted as an ordinary row by an
+   * older DevHub — or opened at the root by hand — is the Orchestrator's as
+   * soon as it is there, and the Workspace at a root the person moved away
+   * from is an ordinary row again once its orchestrator has stopped.
+   */
+  get orchestratorWorkspaceId(): WorkspaceId | undefined {
+    const agent = this.orchestratorAgentId;
+    const own =
+      agent === undefined ? undefined : this.agent(agent)?.workspaceId;
+    const root = this.orchestratorRootValue;
+    const id =
+      own ??
+      (root === undefined
+        ? undefined
+        : this.workspaceList.find(
+            (workspace) =>
+              workspace.location.kind === "local" && workspace.root === root,
+          )?.id);
+    return id === this.scratchId ? undefined : id;
+  }
+
+  /** The orchestrator's folder as main last said it (`setOrchestratorRoot`). */
+  get orchestratorRoot(): string | undefined {
+    return this.orchestratorRootValue;
+  }
+
+  /** Main's answer to where the orchestrator's folder is (undefined: none). */
+  setOrchestratorRoot(root: string | undefined): void {
+    if (root === this.orchestratorRootValue) return;
+    this.orchestratorRootValue = root;
+    this.bumpRevision();
+  }
+
   /** Assign (or, with undefined, release) the Orchestrator row's agent. */
   setOrchestratorAgent(id: AgentId | undefined): void {
     if (id !== undefined && this.agent(id) === undefined)
@@ -593,6 +645,7 @@ export class AppModel {
       selection: this.selectionValue,
       scratchWorkspaceId: this.scratchId,
       orchestratorAgentId: this.orchestratorAgentId,
+      orchestratorWorkspaceId: this.orchestratorWorkspaceId,
       layout: this.resolveLayout(this.selectionValue),
       workspaces: this.workspaceSnapshots(),
       sidebar: {
@@ -2025,7 +2078,14 @@ export class AppModel {
     if (successor === undefined) {
       throw new Error("a removal left no row to select");
     }
-    this.selectionValue = { context: successor, presentation: "full" };
+    // The Orchestrator row's Workspace, and its agent, are drawn as that
+    // row: a close under it that lands on either lands on the row.
+    this.selectionValue = {
+      context: this.isOrchestratorRow(successor)
+        ? { kind: "orchestrator" }
+        : successor,
+      presentation: "full",
+    };
   }
 
   closeWorkspace(
@@ -2047,6 +2107,10 @@ export class AppModel {
     // one.
     if (id === this.scratchId) {
       fail(DomainErrorCode.ScratchCannotClose);
+    }
+    // The Orchestrator row's Workspace is that row, and the row has no close.
+    if (id === this.orchestratorWorkspaceId) {
+      fail(DomainErrorCode.OrchestratorCannotClose);
     }
     if (this.workspaceList[index].agents.length > 0) {
       fail(DomainErrorCode.WorkspaceHasLiveAgents);
@@ -2197,6 +2261,14 @@ export class AppModel {
     return workspace;
   }
 
+  /** Whether this row is drawn as the Orchestrator row (`repairSelection`). */
+  private isOrchestratorRow(context: NavigationContext): boolean {
+    if (context.kind === "orchestrator") return true;
+    if (context.kind === "agent")
+      return context.agentId === this.orchestratorAgentId;
+    return context.workspaceId === this.orchestratorWorkspaceId;
+  }
+
   /** Whether this context still names something. `selectContext`'s gate, asked. */
   private contextExists(context: NavigationContext): boolean {
     if (context.kind === "orchestrator") return true;
@@ -2313,13 +2385,20 @@ export class AppModel {
    * It is called that only while it is today's folder — the same Workspace
    * after midnight is labelled by its folder like any other row. It takes no
    * part in the collisions either way, since nothing else is called Scratch.
+   * The Orchestrator row's Workspace is called Orchestrator by the same rule
+   * (`orchestratorWorkspaceId`), while it is that.
    */
-  private labelFor(workspace: Workspace): string {
+  private labelFor(
+    workspace: Workspace,
+    orchestrator: WorkspaceId | undefined = this.orchestratorWorkspaceId,
+  ): string {
     if (workspace.id === this.scratchId) return SCRATCH_NAME;
+    if (workspace.id === orchestrator) return ORCHESTRATOR_NAME;
     const basename = rootBasename(workspace.root);
     const collisions = this.workspaceList.filter(
       (candidate) =>
         candidate.id !== this.scratchId &&
+        candidate.id !== orchestrator &&
         rootBasename(candidate.root) === basename,
     );
     if (collisions.length === 1) {

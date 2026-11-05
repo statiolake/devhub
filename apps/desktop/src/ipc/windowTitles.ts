@@ -68,6 +68,12 @@ export const WINDOW_TITLES: Readonly<Record<ShellWindowKind, string>> = {
  */
 export const SCRATCH_NAME = "Scratch";
 
+/**
+ * What the Orchestrator row's Workspace is called (the orchestrator's
+ * folder, `docs/orchestrator.md`), applied the way `SCRATCH_NAME` is.
+ */
+export const ORCHESTRATOR_NAME = "Orchestrator";
+
 /** Between the parts of the shell window's title, and nowhere else. */
 export const TITLE_SEPARATOR = " — ";
 

@@ -10,11 +10,11 @@ the person's own, in skills and instructions in the orchestrator's folder.
 ```text
 ┌───────────────┬──────────────────────────┬────────────────────────┐
 │ Orchestrator 3│ Board         Events ●   │                        │
-│ Scratch       │ ● 要回答 3               │  the orchestrator      │
-│ ▼ payments    │   #1 本番 invoices …  1m │  agent's own pane      │
-│    Claude ●   │ ● 対応中 2               │  (an ordinary GUI or   │
-│ ▼ web-console │   #2 決済リトライ …      │   terminal Agent)      │
-│    Claude ○   │ ● 不明 1                 │                        │
+│    research ● │ ● 要回答 3               │  the orchestrator      │
+│ Scratch       │   #1 本番 invoices …  1m │  agent's own pane      │
+│ ▼ payments    │ ● 対応中 2               │  (an ordinary GUI or   │
+│    Claude ●   │   #2 決済リトライ …      │   terminal Agent)      │
+│ ▼ web-console │ ● 不明 1                 │                        │
 │               │   docs-writer  idle 3m   │                        │
 └───────────────┴──────────────────────────┴────────────────────────┘
 ```
@@ -26,6 +26,38 @@ the person's own, in skills and instructions in the orchestrator's folder.
   and, quieter, the number of agents in 不明 while an orchestrator runs. The
   orchestrator agent's status mark sits before them. The orchestrator agent is
   drawn on this row only, not under its Workspace.
+- **The row is its Workspace's row**, the way Scratch's row is Scratch's
+  Workspace's (`AppModel.orchestratorWorkspaceId`, `orchestratorWorkspaceId`
+  on the wire). The orchestrator's folder is never an ordinary row: its other
+  agents — helpers the person or the orchestrator start there — are listed
+  under the Orchestrator row with the tree every Workspace's agents use
+  (indentation, status marks, unread, the row menu, drag within the row), and
+  its `+` starts one there. Selecting one shows its pane as usual. The
+  Workspace is labelled `Orchestrator` (the window title, `workspaces`, the
+  board's chips), takes no digit (`Cmd+Q 1` is still the first row below
+  Scratch), and is walked by `Cmd+Q N`/`]` through its helpers only. Closing
+  its last helper lands on the row.
+- **Which Workspace that is** is read, never stored: the orchestrator agent's
+  Workspace while one is assigned, else the open Workspace on this Mac at
+  `[orchestrator] root` (main resolves `~` and symlinks and tells the model,
+  `orchestrator_root_resolved`). Never Scratch. So a root that was already
+  open as an ordinary row — persisted by the earlier design, or opened by
+  hand — becomes the Orchestrator row's on startup with no duplicate, and
+  `state.json` is unchanged (an older DevHub reads it as an ordinary row).
+- **Changing `root` while one runs** changes nothing at once: the running
+  orchestrator's Workspace stays the row's while its agent is assigned. Once
+  it has stopped, the Workspace at the new root (if one is open) is the row's,
+  and the one at the old root is an ordinary row again. An orchestrator
+  started with a `--root` other than the setting is the same: its folder is
+  the row's while it runs.
+- **Its editor** (the root's VS Code, for skills and `decisions.md`) is the
+  Workspace selected: the content area is its workbench, as Scratch's is
+  when Scratch is selected, and the Orchestrator row stays the highlighted
+  one. It is reached by the row's right-click **Show Editor**, by the Files
+  tab's **エディタで開く** (which opens the folder first, unselected, when it
+  is not open, rather than sending the file to Scratch), by `devhub <file>`
+  inside the root, and by a `devhub:file` link. A click on the row goes back
+  to the board.
 - **Selecting it** shows the Orchestrator screen: the board on the left, the
   orchestrator agent's pane on the right. It is the Agents view over the whole
   content area (`NavigationContext` `orchestrator`, `SurfaceLayout`
@@ -39,11 +71,15 @@ the person's own, in skills and instructions in the orchestrator's folder.
   directions enter Back and Forward's history at once, as a click on the row
   does. With no orchestrator assigned it still opens the screen, which offers
   Start. The bare `Cmd+Q O` stays the pane step.
-- `root` opens as an ordinary Workspace row (nothing selected), so the
+- Start opens `root` as the row's Workspace (nothing selected), so the
   orchestrator's skills and instructions are an editor click away.
 - With no orchestrator, the right half says so and offers **Start
   Orchestrator**, from `[orchestrator]` below (in `~/orchestrator` unless
   `root` says otherwise; the folder is made if it is missing).
+- Freezing and Back/Forward are unchanged: its helpers are Agents and its
+  editor is a Workspace's workbench, frozen, thawed and entered in the
+  history as Scratch's are; an entry for one of them highlights the
+  Orchestrator row as its own selection does.
 - A restart opens on Scratch rather than on this row: the row is not written
   into `state.json`, so an older DevHub can still read the file.
 
@@ -252,7 +288,7 @@ the folder's `.gitignore` ignores; dot-folders stay. A file opens over the
 tree the way an escalation opens over the board, read-only: Markdown with
 the conversation's renderer, other text as a highlighted code block, images
 (SVG included) inline. **エディタで開く** opens it in the workbench of the
-Workspace that contains it — the root's own row — as `devhub <file>` would,
+Workspace that contains it — the Orchestrator row's own — as `devhub <file>` would,
 and that too is a place in Back and Forward.
 
 Main reads the folder and watches it
@@ -646,9 +682,20 @@ devhub --tell focus orchestrator                    # the only one that changes 
 ```
 
 `orchestrator start` takes every choice as an argument, `--root` included
-(the refusal names `orchestrator.root`); it opens the folder as a Workspace
-unselected, starts the agent there unfocused, marks it `role=orchestrator`,
-and sends it `init` (or `--prompt`). One orchestrator at a time.
+(the refusal names `orchestrator.root`); it opens the folder as the
+Orchestrator row's Workspace unselected (never as an ordinary row), starts
+the agent there unfocused, marks it `role=orchestrator`, and sends it `init`
+(or `--prompt`). One orchestrator at a time.
+
+That Workspace is addressed as **`orchestrator`**, as Scratch is `scratch`,
+wherever a `<w>` is taken: `workspaces` lists it as `Orchestrator`
+(`"orchestrator": true` in `--json`), and `workspace status orchestrator`,
+`agent new --workspace orchestrator`, `agents --workspace orchestrator` and
+`link workspace orchestrator` reach it; its id and folder work too, and
+`issue assign --repo <root> --root` works in it when the root is a clone.
+`workspace close orchestrator` is refused, as Scratch's is — the row has no
+close, and neither do `Cmd+Q W`, File ▸ Close Workspace or Vim's `:q` in its
+editor (`ORCHESTRATOR_CANNOT_CLOSE` in the model).
 
 ## `/devhub-orchestrator`: writing the person's make-progress skill
 

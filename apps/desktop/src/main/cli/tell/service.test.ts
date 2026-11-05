@@ -4764,3 +4764,61 @@ describe("devhub --tell usage", () => {
 		});
 	});
 });
+
+describe("the orchestrator's workspace, by name", () => {
+	const withOrchestrator = (ports: FakePorts) => {
+		ports.spaces = [
+			...ports.spaces,
+			workspace({
+				id: "orch-ws",
+				name: "Orchestrator",
+				root: "/Users/me/orchestrator",
+				orchestrator: true,
+				selected: false,
+				agents: [],
+			}),
+		];
+	};
+
+	it('is addressed as "orchestrator" by workspaces, workspace status and agent new', async () => {
+		const { service, ports } = setup();
+		withOrchestrator(ports);
+		const listed = await service.run({ verb: "workspaces" }, undefined);
+		expect(listed.message).toContain(
+			"orch-ws  Orchestrator  /Users/me/orchestrator",
+		);
+		expect(listed.data).toMatchObject({
+			workspaces: [{}, {}, { id: "orch-ws", orchestrator: true }],
+		});
+		const status = await viaSocket(
+			service,
+			["workspace", "status", "orchestrator"],
+			undefined,
+		);
+		expect(status.message).toMatch(/^Orchestrator \(orch-ws\)/u);
+		const created = await viaSocket(
+			service,
+			[
+				"agent",
+				"new",
+				"--workspace",
+				"orchestrator",
+				"--profile",
+				"codex",
+				"--gui",
+			],
+			coordinator,
+		);
+		expect(ports.calls).toContain("create orch-ws codex gui");
+		expect(created.data).toMatchObject({ workspaceId: "orch-ws" });
+	});
+
+	it("refuses to close it, as it refuses Scratch", async () => {
+		const { service, ports } = setup();
+		withOrchestrator(ports);
+		await expect(
+			viaSocket(service, ["workspace", "close", "orchestrator"], undefined),
+		).rejects.toThrow(/orchestrator's workspace cannot be closed/u);
+		expect(ports.calls.some((call) => call.startsWith("close"))).toBe(false);
+	});
+});

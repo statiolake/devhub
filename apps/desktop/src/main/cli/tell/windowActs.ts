@@ -90,11 +90,17 @@ export async function restartAsTheMenuDoes(
 	return { busy };
 }
 
+/** Why `workspace close` refuses the Orchestrator row's Workspace. */
+export const ORCHESTRATOR_CANNOT_CLOSE =
+	"The orchestrator's workspace cannot be closed: it is the Orchestrator row, and the window has no close for it. Set orchestrator.root to another folder (once the orchestrator has stopped) to make it an ordinary workspace.";
+
 /** What `workspace close` needs to know about the Workspace before it asks. */
 export interface ClosedWorkspace {
 	readonly id: WorkspaceId;
 	readonly label: string;
 	readonly scratch: boolean;
+	/** It is the Orchestrator row's Workspace, which has no close either. */
+	readonly orchestrator?: boolean;
 	/** A close of it is already running (the window refuses a second). */
 	readonly closing: boolean;
 	/**
@@ -214,6 +220,8 @@ export async function closeAsTheWindowDoes(
 		throw new Error(
 			"Scratch cannot be closed: it is today's folder, and the window has no close for it.",
 		);
+	if (workspace.orchestrator === true)
+		throw new Error(ORCHESTRATOR_CANNOT_CLOSE);
 	if (workspace.closing)
 		throw new Error(`${workspace.label} is already closing.`);
 	if (workspace.worktree === undefined && answers.worktree === "remove")

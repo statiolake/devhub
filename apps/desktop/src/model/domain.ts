@@ -35,6 +35,7 @@ export enum DomainErrorCode {
   WorkspaceUnavailable = "WORKSPACE_UNAVAILABLE",
   WorkspaceNotClean = "WORKSPACE_NOT_CLEAN",
   ScratchCannotClose = "SCRATCH_CANNOT_CLOSE",
+  OrchestratorCannotClose = "ORCHESTRATOR_CANNOT_CLOSE",
   InvalidProfile = "INVALID_PROFILE",
   AgentWorkspaceMismatch = "AGENT_WORKSPACE_MISMATCH",
   WorkspaceNotUnavailable = "WORKSPACE_NOT_UNAVAILABLE",

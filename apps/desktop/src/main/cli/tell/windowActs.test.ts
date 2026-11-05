@@ -388,6 +388,11 @@ describe("workspace close, the window's way", () => {
 	it("refuses what the window refuses, before sending anything", async () => {
 		for (const [workspace, given, refusal] of [
 			[closing({ scratch: true }), answers(), /Scratch cannot be closed/],
+			[
+				closing({ orchestrator: true }),
+				answers(),
+				/orchestrator's workspace cannot be closed/,
+			],
 			[closing({ closing: true }), answers(), /app is already closing/],
 			[
 				closing(),

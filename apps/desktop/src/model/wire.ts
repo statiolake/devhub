@@ -474,7 +474,8 @@ function drawnWorkspaces(
 }
 
 /**
- * Every Workspace as the Sidebar lists it: Scratch, then the rows as drawn.
+ * Every Workspace as the Sidebar lists it: the Orchestrator row's, when
+ * there is one, then Scratch, then the rows as drawn.
  *
  * What the model is told when it has to repair the selection after a
  * Workspace's removal (`DrawnOrder` in `coordinator.ts`), so that the row the
@@ -485,11 +486,16 @@ export function drawnWorkspaceOrder(
   snapshot: AppSnapshot,
   repositoryOf: RepositoryOf,
 ): readonly WorkspaceId[] {
-  const { scratch, rows } = sidebarWorkspaces({
+  const { orchestrator, scratch, rows } = sidebarWorkspaces({
     workspaces: drawnWorkspaces(snapshot, repositoryOf),
     scratchWorkspaceId: snapshot.scratchWorkspaceId,
+    orchestratorWorkspaceId: snapshot.orchestratorWorkspaceId,
   });
-  return [scratch, ...rows].map((workspace) => workspace.id);
+  return [
+    ...(orchestrator === undefined ? [] : [orchestrator]),
+    scratch,
+    ...rows,
+  ].map((workspace) => workspace.id);
 }
 
 export function snapshotWire(
@@ -548,6 +554,9 @@ export function snapshotWire(
     ...(snapshot.orchestratorAgentId === undefined
       ? {}
       : { orchestratorAgentId: snapshot.orchestratorAgentId }),
+    ...(snapshot.orchestratorWorkspaceId === undefined
+      ? {}
+      : { orchestratorWorkspaceId: snapshot.orchestratorWorkspaceId }),
     sidebar: {
       width: snapshot.sidebar.width,
       collapsed: snapshot.sidebar.collapsed,

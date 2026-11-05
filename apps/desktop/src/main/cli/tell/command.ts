@@ -439,7 +439,8 @@ workspaces
                                    --discard-unsaved for unsaved editors
                                    (named). Missing one: nothing is closed,
                                    and the open ones are listed. Not Scratch,
-                                   not your own workspace. If it was selected,
+                                   not the orchestrator's, not your own
+                                   workspace. If it was selected,
                                    the window selects the next row, as when a
                                    person closes it; nothing else moves
 
@@ -638,7 +639,8 @@ app
                                    answer. DevHub draws it as a chip that
                                    goes there
 
-<w> is a workspace id, its folder, its name, or "scratch". A folder is a
+<w> is a workspace id, its folder, its name, "scratch", or "orchestrator"
+(the orchestrator's folder, the Orchestrator row's workspace). A folder is a
 folder on the machine devhub runs on: on an SSH host, the host's.
 <a> is an agent id (or a unique prefix of one) or its name. <session> is a
 session id from 'sessions' (or a unique prefix of one).

@@ -26,6 +26,7 @@ import type {
 } from "../../../ipc/contract.js";
 import type { UsageReport } from "../../shell/usageLimits.js";
 import { usageJson, usageText } from "./usage.js";
+import { ORCHESTRATOR_CANNOT_CLOSE } from "./windowActs.js";
 import {
 	DEVHUB_LINK_FORMS,
 	formatDevhubLink,
@@ -93,6 +94,8 @@ export interface TellWorkspace {
 	/** `local`, or `ssh:<host>`. */
 	readonly machine: string;
 	readonly scratch: boolean;
+	/** The Orchestrator row's Workspace (addressed as "orchestrator"). */
+	readonly orchestrator?: boolean;
 	readonly selected: boolean;
 	readonly branch: string | undefined;
 	/** The main checkout, when this workspace is a worktree of one. */
@@ -1688,6 +1691,10 @@ export class TellService {
 			const scratch = all.find((workspace) => workspace.scratch);
 			if (scratch) return scratch;
 		}
+		if (name === "orchestrator") {
+			const own = all.find((workspace) => workspace.orchestrator === true);
+			if (own) return own;
+		}
 		const trimmed = name.length > 1 ? name.replace(/\/+$/, "") : name;
 		// A folder is a folder on the machine the asking `devhub` runs on:
 		// `/srv/app` typed on a host is not this Mac's `/srv/app`. A caller
@@ -1837,6 +1844,8 @@ export class TellService {
 			throw new Error(
 				"Scratch cannot be closed: it is today's folder, and the window has no close for it.",
 			);
+		if (workspace.orchestrator === true)
+			throw new Error(ORCHESTRATOR_CANNOT_CLOSE);
 		const caller = this.caller;
 		if (caller !== undefined && caller.paneless !== true) {
 			const own =

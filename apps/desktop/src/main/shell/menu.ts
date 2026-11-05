@@ -71,7 +71,11 @@ function selectedWorkspace(
 			: context.kind === "agent" &&
 				candidate.agents.some((agent) => agent.id === context.agentId),
 	);
-	if (!workspace || workspace.id === snapshot.scratchWorkspaceId) {
+	if (
+		!workspace ||
+		workspace.id === snapshot.scratchWorkspaceId ||
+		workspace.id === snapshot.orchestratorWorkspaceId
+	) {
 		return undefined;
 	}
 	return { id: workspace.id, label: workspace.label };

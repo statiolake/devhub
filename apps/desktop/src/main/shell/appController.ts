@@ -17,6 +17,7 @@
 import { parseProjectRef } from "../../model/orchestratorSettings.js";
 import { processGroupAnchor } from "./processGroupAnchor.js";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, posix } from "node:path";
@@ -4310,10 +4311,14 @@ export class AppController {
 	 */
 	taskManagerSnapshot(): Promise<TaskSnapshotWire> {
 		const shell = shellWindow();
-		const { scratch, rows } = sidebarWorkspaces(this.snapshot());
+		const { orchestrator, scratch, rows } = sidebarWorkspaces(this.snapshot());
 		return takeTaskReading({
 			workspaces: () =>
-				[scratch, ...rows].map((workspace) => {
+				[
+					...(orchestrator === undefined ? [] : [orchestrator]),
+					scratch,
+					...rows,
+				].map((workspace) => {
 					const phase = this.workbenches.phase(workspace.key);
 					const state = this.workbenches.state(workspace.key);
 					const view = shell.viewForEditorKey(workspace.key);
@@ -7994,7 +7999,11 @@ export class AppController {
 				: context.kind === "agent"
 					? model.workspaceForAgent(context.agentId)
 					: undefined;
-		if (workspace === undefined || workspace.id === model.scratchWorkspaceId) {
+		if (
+			workspace === undefined ||
+			workspace.id === model.scratchWorkspaceId ||
+			workspace.id === model.orchestratorWorkspaceId
+		) {
 			return undefined;
 		}
 		return workspace.id;
@@ -9203,6 +9212,58 @@ export class AppController {
 	private orchestratorStarting:
 		| { readonly workspaceId: string; readonly before: ReadonlySet<string> }
 		| undefined;
+	/**
+	 * While `startOrchestrator` runs: the folder it opens, so the Workspace
+	 * it opens there is the Orchestrator row's from the start, whatever
+	 * `[orchestrator] root` says (`orchestratorRootPath`).
+	 */
+	private orchestratorStartingRoot: string | undefined;
+	private orchestratorRootSyncing = false;
+	/** `orchestratorRootPath`'s last answer, by what it was asked about. */
+	private orchestratorRootCache:
+		| { readonly from: string; readonly path: string }
+		| undefined;
+
+	/**
+	 * The folder whose open Workspace is the Orchestrator row's while no
+	 * orchestrator agent is assigned (`AppModel.orchestratorWorkspaceId`): the
+	 * one an orchestrator is being started in, else `[orchestrator] root`,
+	 * expanded and with its symlinks resolved as a Workspace's root is.
+	 */
+	private orchestratorRootPath(): string {
+		const from = this.orchestratorStartingRoot ?? this.config.orchestrator.root;
+		if (this.orchestratorRootCache?.from !== from) {
+			const expanded = expandOrchestratorRoot(from);
+			let path = expanded;
+			try {
+				path = realpathSync(expanded);
+			} catch {
+				// Not there yet: the window's Start makes it, at this path.
+			}
+			this.orchestratorRootCache = { from, path };
+		}
+		return this.orchestratorRootCache.path;
+	}
+
+	/** The model's orchestrator root follows `orchestratorRootPath`. */
+	private syncOrchestratorRoot(): void {
+		if (this.orchestratorRootSyncing) return;
+		if (this.coordinator.model.orchestratorRoot === this.orchestratorRootPath())
+			return;
+		// After the projection that showed the difference, as `syncOrchestrator`.
+		this.orchestratorRootSyncing = true;
+		queueMicrotask(() => {
+			this.orchestratorRootSyncing = false;
+			const root = this.orchestratorRootPath();
+			if (this.coordinator.model.orchestratorRoot === root) return;
+			this.coordinator.dispatchUser({
+				intentId: parseIntentId(randomUUID()),
+				operationId: this.freshOperationId(),
+				intent: { type: "orchestrator_root_resolved", root },
+			});
+			this.drain();
+		});
+	}
 
 	/** Whether `agentId` is (or is being started as) the orchestrator agent. */
 	private isOrchestratorAgent(agentId: string): boolean {
@@ -9383,16 +9444,28 @@ export class AppController {
 
 	private async openOrchestratorFile(path: unknown): Promise<void> {
 		this.personStartedAction();
-		const absolute = await insideRoot(
-			this.requireOrchestratorFilesRoot(),
-			path,
-		);
+		const root = this.requireOrchestratorFilesRoot();
+		const absolute = await insideRoot(root, path);
 		const machine = runtimeMachine("local");
 		const target = await canonicalise(runtimeById(machine), absolute);
 		if (!target.exists || target.isDirectory)
 			throw fileNotFound(absolute, `${absolute} is not a file to open.`);
+		let destination = routeOpen(
+			target.path,
+			machine,
+			this.routableWorkspaces(),
+		);
+		// The folder is not open (no orchestrator has run, or its Workspace
+		// was never opened): open it, unselected, as the Orchestrator row's
+		// Workspace, and open the file there rather than in Scratch.
+		if (destination.kind === "scratch") {
+			await this.openFolderUnfocused(
+				requestedLocation({ kind: "local", path: root }),
+			);
+			destination = routeOpen(target.path, machine, this.routableWorkspaces());
+		}
 		await this.openRouted(
-			routeOpen(target.path, machine, this.routableWorkspaces()),
+			destination,
 			machine,
 			target,
 			undefined,
@@ -9566,6 +9639,7 @@ export class AppController {
 	private syncOrchestrator(): void {
 		const service = this.orchestrator;
 		if (service === undefined) return;
+		this.syncOrchestratorRoot();
 		const model = this.coordinator.model;
 		const stored = service.orchestratorAgentId;
 		const wanted = stored === undefined ? undefined : parseAgentId(stored);
@@ -9877,15 +9951,21 @@ export class AppController {
 		const root = ensureOrchestratorRoot(request.root, {
 			create: request.createRoot === true,
 		});
-		const workspaceId = await this.openFolderUnfocused(
-			requestedLocation({ kind: "local", path: root }),
-		);
+		// The Workspace opened there is the Orchestrator row's, never an
+		// ordinary row, even before its agent is assigned: the model is told
+		// the folder first, the window's Start having just made it.
+		this.orchestratorStartingRoot = root;
+		this.orchestratorRootCache = undefined;
+		this.syncOrchestratorRoot();
 		const ports = this.tellPorts();
-		this.orchestratorStarting = {
-			workspaceId,
-			before: this.modelAgentIds(),
-		};
 		try {
+			const workspaceId = await this.openFolderUnfocused(
+				requestedLocation({ kind: "local", path: root }),
+			);
+			this.orchestratorStarting = {
+				workspaceId,
+				before: this.modelAgentIds(),
+			};
 			const agentId = await ports.createAgent(
 				workspaceId,
 				request.profile,
@@ -9897,6 +9977,8 @@ export class AppController {
 			return agentId;
 		} finally {
 			this.orchestratorStarting = undefined;
+			this.orchestratorStartingRoot = undefined;
+			this.orchestratorRootCache = undefined;
 		}
 	}
 
@@ -10478,6 +10560,7 @@ export class AppController {
 						this.snapshot()?.workspaces.find((one) => one.id === id)?.label ??
 						workspace.root,
 					scratch: id === this.coordinator.model.scratchWorkspaceId,
+					orchestrator: id === this.coordinator.model.orchestratorWorkspaceId,
 					closing: workspace.close.kind === "running",
 					worktree: closingDeletesWorktree(repository, workspace.root)
 						? {
@@ -10570,6 +10653,7 @@ export class AppController {
 						? `ssh:${workspace.location.host}`
 						: "local",
 				scratch: workspace.id === snapshot.scratchWorkspaceId,
+				orchestrator: workspace.id === snapshot.orchestratorWorkspaceId,
 				selected: workspace.id === selected,
 				branch: repository?.branch,
 				worktreeOf:
@@ -11841,7 +11925,11 @@ export class AppController {
 				if (workspace === undefined) return undefined;
 				return {
 					id: workspace.id,
-					scratch: workspace.id === this.coordinator.model.scratchWorkspaceId,
+					// The Orchestrator row's Workspace has no close either: Vim's
+					// `:q` there is refused as it is in Scratch.
+					scratch:
+						workspace.id === this.coordinator.model.scratchWorkspaceId ||
+						workspace.id === this.coordinator.model.orchestratorWorkspaceId,
 					closing: this.coordinator.closeUnderway(workspace.id),
 				};
 			},

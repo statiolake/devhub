@@ -884,6 +884,13 @@ export interface AppSnapshotWire {
 	 * drawn on that row, not under its Workspace.
 	 */
 	readonly orchestratorAgentId?: string;
+	/**
+	 * The Workspace that is the Orchestrator row's (the orchestrator's
+	 * folder), as Scratch's is Scratch's: never one of the ordinary rows, its
+	 * other agents drawn under the Orchestrator row. Absent while none is
+	 * open. See `docs/orchestrator.md`.
+	 */
+	readonly orchestratorWorkspaceId?: string;
 	readonly sidebar: SidebarWire;
 	/** Where the divider sits when the layout is a split, as a fraction. */
 	readonly splitRatio: number;
@@ -1337,7 +1344,13 @@ export function workspaceById(
 export function sidebarWorkspaces<W extends { readonly id: string }>(snapshot: {
 	readonly workspaces: readonly W[];
 	readonly scratchWorkspaceId: string;
-}): { readonly scratch: W; readonly rows: readonly W[] } {
+	readonly orchestratorWorkspaceId?: string | undefined;
+}): {
+	readonly scratch: W;
+	/** The Orchestrator row's Workspace, drawn as that row, above Scratch. */
+	readonly orchestrator: W | undefined;
+	readonly rows: readonly W[];
+} {
 	const scratch = snapshot.workspaces.find(
 		(workspace) => workspace.id === snapshot.scratchWorkspaceId,
 	);
@@ -1346,9 +1359,20 @@ export function sidebarWorkspaces<W extends { readonly id: string }>(snapshot: {
 			`Scratch ${snapshot.scratchWorkspaceId} is not one of the snapshot's workspaces`,
 		);
 	}
+	const orchestrator =
+		snapshot.orchestratorWorkspaceId === undefined
+			? undefined
+			: snapshot.workspaces.find(
+					(workspace) =>
+						workspace.id === snapshot.orchestratorWorkspaceId &&
+						workspace !== scratch,
+				);
 	return {
 		scratch,
-		rows: snapshot.workspaces.filter((workspace) => workspace !== scratch),
+		orchestrator,
+		rows: snapshot.workspaces.filter(
+			(workspace) => workspace !== scratch && workspace !== orchestrator,
+		),
 	};
 }
 /**

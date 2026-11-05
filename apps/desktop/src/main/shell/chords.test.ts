@@ -1352,3 +1352,44 @@ describe("reopening what was closed", () => {
 		);
 	});
 });
+
+describe("the Orchestrator row's Workspace", () => {
+	const orchestrator = workspace("orch-ws", ["orch", "helper"], {
+		label: "Orchestrator",
+	});
+	const withOrchestrator = (context: NavigationContext): AppSnapshotWire => ({
+		...snapshotOf({ workspaces: [orchestrator, one], context }),
+		orchestratorAgentId: "orch",
+		orchestratorWorkspaceId: "orch-ws",
+	});
+
+	it("walks its helpers, but neither its row nor the orchestrator agent", () => {
+		expect(
+			run("next_tab", withOrchestrator({ kind: "agent", agentId: "helper" })),
+		).toEqual(passes(SCRATCH));
+		expect(run("previous_tab", withOrchestrator(SCRATCH))).toEqual(
+			passes({ kind: "agent", agentId: "helper" }),
+		);
+	});
+
+	it("gives it no digit: 1 is still the first ordinary row", () => {
+		expect(run("select_entry_1", withOrchestrator(SCRATCH))).toEqual(
+			selects({ kind: "workspace", workspaceId: "one" }),
+		);
+	});
+
+	it("does not close it, from its editor or from a helper", () => {
+		expect(
+			run(
+				"close_workspace",
+				withOrchestrator({ kind: "workspace", workspaceId: "orch-ws" }),
+			),
+		).toBeUndefined();
+		expect(
+			run(
+				"close_workspace",
+				withOrchestrator({ kind: "agent", agentId: "helper" }),
+			),
+		).toBeUndefined();
+	});
+});

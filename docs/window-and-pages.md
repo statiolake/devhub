@@ -186,6 +186,17 @@ draws the board in the left part of its own rectangle beside the orchestrator
 agent's pane from the same pool — so it adds no view, no z-order and no
 keyboard rule. See [`orchestrator.md`](orchestrator.md).
 
+**The Orchestrator row is also a Workspace's row**, in the Sidebar, the way
+Scratch's row is Scratch's Workspace's: the orchestrator's folder is not
+drawn as an ordinary row (`sidebarWorkspaces` hands it out as `orchestrator`,
+apart from `scratch` and `rows`), and its Agents other than the orchestrator
+are the row's children, drawn by the same `AgentTree` every Workspace's
+Agents are. A child selected is an ordinary Agent selection — its pane, full
+or beside the root's workbench. The root's workbench itself is that Workspace
+selected, and the content area is its workbench as for Scratch; the
+Orchestrator row stays highlighted, and its right-click **Show Editor** is
+the way there from the Sidebar (the Files tab's エディタで開く is the other).
+
 ## A close asks once, then acts
 
 Closing a Workspace asks every question it has before it does anything, and
@@ -213,9 +224,12 @@ never leaves that Workspace: it lands on the Agent under it, on the Agent
 above it when it was the Workspace's last, and on the Workspace's own row
 when it was the only one — the row stays, and it is the one row above. The
 last row on screen is only another last Agent, and Scratch's Agents are the
-same. A Workspace is held by the Sidebar, so closing one lands on the next
-row as drawn — Scratch first, each Workspace followed by its Agents, the same
-list `Cmd+Q N` and `]` walk — which is the next Workspace's row, because its
+same. So are the Orchestrator row's: that row is its Workspace's row (the
+orchestrator's folder, `docs/orchestrator.md`), so closing its last helper
+lands on the row itself — the board, not the orchestrator agent drawn as a
+pane. A Workspace is held by the Sidebar, so closing one lands on the next
+row as drawn — the Orchestrator row's Workspace, Scratch, each Workspace
+followed by its Agents, the same list `Cmd+Q N` and `]` walk — which is the next Workspace's row, because its
 own Agents are removed first by the Agent rule; when it was drawn last, the
 row above it. The rule is one method, `AppModel.repairSelection`, handed the
 rows of what held the removed row and run by every removal: an Agent stopped

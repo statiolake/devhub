@@ -200,12 +200,7 @@ function WorkspaceRow({
   const selected =
     snapshot.selection.context.kind === "workspace" &&
     snapshot.selection.context.workspaceId === workspace.id;
-  const selectedAgentId =
-    snapshot.selection.context.kind === "agent"
-      ? snapshot.selection.context.agentId
-      : undefined;
 
-  const dispatch = useSidebarDispatch();
   const selectRow = useSelectRow();
   const { openExternalUrl } = useSidebar();
 
@@ -460,203 +455,249 @@ function WorkspaceRow({
           )}
         </div>
       </div>
-      {rowAgents.length > 0 && (
-        <ul
-          className="agent-tree"
-          role="group"
-          aria-label={`${workspace.label} agents`}
-        >
-          {rowAgents.map((agent) => {
-            const agentSelected = selectedAgentId === agent.id;
-            const control = agent.controlState;
-            const stopFailed = control.kind === "stop-failed";
-            // A stop that failed says why, in the vocabulary every other
-            // reason is said in. DevHub computed the diagnostic when the stop
-            // failed and it now crosses the wire with the state that carries
-            // it, so the row states it rather than saying "Stop failed" and
-            // leaving the person to guess at a reason DevHub already knows.
-            // A refusal about *this* Agent leads, because it is the newest
-            // news about it and it is news nothing else on screen carries: it
-            // is delivered to this Agent rather than to an app-wide banner,
-            // and it is retired by the next reconcile that reads the Agent.
-            // It is computed beside the sentence that says it
-            // (`rowDescription`), so the line the row draws and the name a
-            // screen reader hears cannot disagree about what stopped.
-            const note = agentNote(agent);
-            /**
-             * A row leads with whatever tells it from the rows beside it.
-             *
-             * For a Workspace that is its name. For an Agent it is not: the
-             * Agents under one Workspace are "Codex" and "Claude", and reading
-             * a column of those tells you nothing you did not already know
-             * from having started them. What tells them apart is what each one
-             * is doing, so that is what leads, at the size a row's own name is
-             * set in.
-             *
-             * Unless somebody named it. A name a person gave an Agent — in the
-             * rename sheet, or with `devhub --tell` when it was started — is
-             * not "Claude" again: it is the word they chose to tell this one
-             * from the rest, and the word they will scan the column for. So it
-             * leads, and what the Agent is doing follows it, dimmed.
-             *
-             * An Agent that has not said anything yet leads with its name
-             * instead. The leading text is never empty: a row whose only words
-             * were 11px dimmed would be a row you cannot read the name of.
-             * The rule is `agentLeadingText`, which the window title reads too.
-             */
-            const leading = agentLeadingText(agent);
-            const agentFacts = agentRowFacts(agent, {
-              label: workspace.label,
-              icon: identity.glyph,
-            });
-            const agentDescription = describe(agentFacts);
-            /**
-             * The Agent's own name, when the name is a name.
-             *
-             * `agentLabelFor` gives the only Claude under a Workspace the bare
-             * word "Claude", and two of them "Claude 1" and "Claude 2". The
-             * bare word is the *kind* of Agent and nothing else — it is on the
-             * row's status mark, it is what you chose when you started it, and
-             * a row that spent its remaining width repeating it was spending it
-             * on the one fact nobody was going to read. What is worth keeping
-             * is what tells two Agents apart: the ordinal. So the kind word is
-             * dropped and anything else is kept.
-             *
-             * A named Agent's name is already leading, so what follows it is
-             * the other thing: what it is doing.
-             */
-            const profileName = agentProfiles.find(
-              (profile) => profile.id === agent.profileId,
-            )?.displayName;
-            const naming = agent.named
-              ? agent.activity
-              : agent.activity && agent.displayName !== profileName
-                ? agent.displayName
-                : undefined;
-            return (
-              <li
-                key={agent.id}
-                role="treeitem"
-                {...reorder.rowProps({
-                  kind: "agent",
-                  id: agent.id,
-                  workspaceId: workspace.id,
-                })}
-                draggable={!closing}
-                aria-level={2}
-                aria-selected={agentSelected}
-              >
-                <div
-                  className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}`}
-                  data-control-state={agent.controlState.kind}
-                  // The one fact, for the rail — where the words are off and
-                  // the pointer is the only way to ask which Agent this is.
-                  // Not the accessible name: a reader has no mark to look at
-                  // and is told the status in words, and a person looking at
-                  // the box can see the mark and the row it belongs to. See
-                  // `agentTooltipFacts`.
-                  //
-                  // On the row and not on the select button, and on the rail
-                  // that is the difference between a tooltip and none. In the
-                  // rail an Agent's button holds nothing — its mark is the
-                  // sibling beside it and its words are off — so it is a
-                  // zero-by-zero box, and a tooltip anchored on it had no
-                  // rectangle to be beside: `RowTooltip` clips the anchor to
-                  // the column and drops what comes back empty, which is
-                  // exactly what a row with no height does. The row is what
-                  // the tooltip is about in either state, so the row is what
-                  // it is anchored on.
-                  data-tooltip-lines={JSON.stringify(
-                    tooltipLines(agentTooltipFacts(agent)),
-                  )}
-                  // The prompt cache's line is a countdown, composed when the
-                  // tooltip is drawn (`RowTooltip`), not when the row is.
-                  data-tooltip-cache={
-                    agent.promptCache === undefined
-                      ? undefined
-                      : JSON.stringify(agent.promptCache)
-                  }
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    onAgentMenu(agent, {
-                      x: event.clientX,
-                      y: event.clientY,
-                    });
-                  }}
-                >
-                  <div className="row-head">
-                    {/* An Agent's icon column, and what it puts in it: its
-                        one status mark — the unread dot included, see
-                        `unreadShows` in `StatusMark.tsx`.
-
-                        Indented the way a file tree draws a child: right of
-                        the connector, under its Workspace's name, so which
-                        Workspace an Agent belongs to is said by where it
-                        stands as well as by the guide. In the rail it comes
-                        back to the one column every row leads with. The
-                        button's hit area covers the whole row
-                        (`.sidebar-context-button::after`), so the mark is
-                        still part of what selects the row. */}
-                    <span className="row-glyph">
-                      <StatusMark status={agent.status} unread={agent.unread} />
-                    </span>
-                    <button
-                      className="sidebar-context-button"
-                      type="button"
-                      data-tree-item-id={`agent:${agent.id}`}
-                      tabIndex={agentSelected ? 0 : -1}
-                      aria-current={agentSelected ? "page" : undefined}
-                      aria-label={agentDescription}
-                      disabled={agent.controlState.kind === "stopping"}
-                      // Option-click opens the Agent beside its workbench; a
-                      // plain click gives it the whole content area. The same
-                      // pair as Return and Option-Return in the picker, because
-                      // it is the same choice, and it is stated in the intent
-                      // rather than applied afterwards.
-                      onClick={(event) =>
-                        selectRow(event, {
-                          type: "select_context",
-                          context: { kind: "agent", agentId: agent.id },
-                          split: event.altKey,
-                        })
-                      }
-                    >
-                      {/* What it is doing, then which Agent it is — or, for an
-                          Agent somebody named, the other way round — then why
-                          it may not be doing it: one line, fading out under
-                          the row's own controls. */}
-                      <span className="row-text">
-                        <span className="row-label">{leading}</span>
-                        {naming ? (
-                          <span className="row-name">{naming}</span>
-                        ) : null}
-                        {note ? <span className="row-note">{note}</span> : null}
-                      </span>
-                    </button>
-                    {agent.controlState.kind === "stopping" ? null : (
-                      <button
-                        className="row-action-button agent-row-action"
-                        type="button"
-                        aria-label={`Stop ${agent.displayName}`}
-                        onClick={() =>
-                          dispatch(
-                            stopFailed
-                              ? { type: "retry_stop_agent", agentId: agent.id }
-                              : { type: "stop_agent", agentId: agent.id },
-                          )
-                        }
-                      >
-                        <Glyph name="close" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <AgentTree
+        workspace={workspace}
+        agents={rowAgents}
+        identity={identity}
+        snapshot={snapshot}
+        agentProfiles={agentProfiles}
+        closing={closing}
+        onAgentMenu={onAgentMenu}
+        reorder={reorder}
+      />
     </li>
+  );
+}
+
+/**
+ * A Workspace's Agents, under its row: Scratch's, an ordinary Workspace's,
+ * and the Orchestrator row's (its Workspace's agents but the orchestrator
+ * itself). One tree, so indentation, status marks, unread and the drag rules
+ * are the same wherever an Agent is listed.
+ */
+function AgentTree({
+  workspace,
+  agents,
+  identity,
+  snapshot,
+  agentProfiles,
+  closing,
+  onAgentMenu,
+  reorder,
+}: {
+  readonly workspace: WorkspaceSnapshot;
+  /** The Agents drawn: the orchestrator agent is drawn on its own row. */
+  readonly agents: readonly AgentSnapshot[];
+  readonly identity: RowIdentity;
+  readonly snapshot: AppSnapshot;
+  readonly agentProfiles: readonly AgentProfile[];
+  readonly closing: boolean;
+  readonly onAgentMenu: (
+    agent: AgentSnapshot,
+    at: { x: number; y: number },
+  ) => void;
+  readonly reorder: Reorder;
+}) {
+  const dispatch = useSidebarDispatch();
+  const selectRow = useSelectRow();
+  const selectedAgentId =
+    snapshot.selection.context.kind === "agent"
+      ? snapshot.selection.context.agentId
+      : undefined;
+  if (agents.length === 0) return null;
+  return (
+    <ul
+      className="agent-tree"
+      role="group"
+      aria-label={`${workspace.label} agents`}
+    >
+      {agents.map((agent) => {
+        const agentSelected = selectedAgentId === agent.id;
+        const control = agent.controlState;
+        const stopFailed = control.kind === "stop-failed";
+        // A stop that failed says why, in the vocabulary every other
+        // reason is said in. DevHub computed the diagnostic when the stop
+        // failed and it now crosses the wire with the state that carries
+        // it, so the row states it rather than saying "Stop failed" and
+        // leaving the person to guess at a reason DevHub already knows.
+        // A refusal about *this* Agent leads, because it is the newest
+        // news about it and it is news nothing else on screen carries: it
+        // is delivered to this Agent rather than to an app-wide banner,
+        // and it is retired by the next reconcile that reads the Agent.
+        // It is computed beside the sentence that says it
+        // (`rowDescription`), so the line the row draws and the name a
+        // screen reader hears cannot disagree about what stopped.
+        const note = agentNote(agent);
+        /**
+         * A row leads with whatever tells it from the rows beside it.
+         *
+         * For a Workspace that is its name. For an Agent it is not: the
+         * Agents under one Workspace are "Codex" and "Claude", and reading
+         * a column of those tells you nothing you did not already know
+         * from having started them. What tells them apart is what each one
+         * is doing, so that is what leads, at the size a row's own name is
+         * set in.
+         *
+         * Unless somebody named it. A name a person gave an Agent — in the
+         * rename sheet, or with `devhub --tell` when it was started — is
+         * not "Claude" again: it is the word they chose to tell this one
+         * from the rest, and the word they will scan the column for. So it
+         * leads, and what the Agent is doing follows it, dimmed.
+         *
+         * An Agent that has not said anything yet leads with its name
+         * instead. The leading text is never empty: a row whose only words
+         * were 11px dimmed would be a row you cannot read the name of.
+         * The rule is `agentLeadingText`, which the window title reads too.
+         */
+        const leading = agentLeadingText(agent);
+        const agentFacts = agentRowFacts(agent, {
+          label: workspace.label,
+          icon: identity.glyph,
+        });
+        const agentDescription = describe(agentFacts);
+        /**
+         * The Agent's own name, when the name is a name.
+         *
+         * `agentLabelFor` gives the only Claude under a Workspace the bare
+         * word "Claude", and two of them "Claude 1" and "Claude 2". The
+         * bare word is the *kind* of Agent and nothing else — it is on the
+         * row's status mark, it is what you chose when you started it, and
+         * a row that spent its remaining width repeating it was spending it
+         * on the one fact nobody was going to read. What is worth keeping
+         * is what tells two Agents apart: the ordinal. So the kind word is
+         * dropped and anything else is kept.
+         *
+         * A named Agent's name is already leading, so what follows it is
+         * the other thing: what it is doing.
+         */
+        const profileName = agentProfiles.find(
+          (profile) => profile.id === agent.profileId,
+        )?.displayName;
+        const naming = agent.named
+          ? agent.activity
+          : agent.activity && agent.displayName !== profileName
+            ? agent.displayName
+            : undefined;
+        return (
+          <li
+            key={agent.id}
+            role="treeitem"
+            {...reorder.rowProps({
+              kind: "agent",
+              id: agent.id,
+              workspaceId: workspace.id,
+            })}
+            draggable={!closing}
+            aria-level={2}
+            aria-selected={agentSelected}
+          >
+            <div
+              className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}`}
+              data-control-state={agent.controlState.kind}
+              // The one fact, for the rail — where the words are off and
+              // the pointer is the only way to ask which Agent this is.
+              // Not the accessible name: a reader has no mark to look at
+              // and is told the status in words, and a person looking at
+              // the box can see the mark and the row it belongs to. See
+              // `agentTooltipFacts`.
+              //
+              // On the row and not on the select button, and on the rail
+              // that is the difference between a tooltip and none. In the
+              // rail an Agent's button holds nothing — its mark is the
+              // sibling beside it and its words are off — so it is a
+              // zero-by-zero box, and a tooltip anchored on it had no
+              // rectangle to be beside: `RowTooltip` clips the anchor to
+              // the column and drops what comes back empty, which is
+              // exactly what a row with no height does. The row is what
+              // the tooltip is about in either state, so the row is what
+              // it is anchored on.
+              data-tooltip-lines={JSON.stringify(
+                tooltipLines(agentTooltipFacts(agent)),
+              )}
+              // The prompt cache's line is a countdown, composed when the
+              // tooltip is drawn (`RowTooltip`), not when the row is.
+              data-tooltip-cache={
+                agent.promptCache === undefined
+                  ? undefined
+                  : JSON.stringify(agent.promptCache)
+              }
+              onContextMenu={(event) => {
+                event.preventDefault();
+                onAgentMenu(agent, {
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }}
+            >
+              <div className="row-head">
+                {/* An Agent's icon column, and what it puts in it: its
+                    one status mark — the unread dot included, see
+                    `unreadShows` in `StatusMark.tsx`.
+
+                    Indented the way a file tree draws a child: right of
+                    the connector, under its Workspace's name, so which
+                    Workspace an Agent belongs to is said by where it
+                    stands as well as by the guide. In the rail it comes
+                    back to the one column every row leads with. The
+                    button's hit area covers the whole row
+                    (`.sidebar-context-button::after`), so the mark is
+                    still part of what selects the row. */}
+                <span className="row-glyph">
+                  <StatusMark status={agent.status} unread={agent.unread} />
+                </span>
+                <button
+                  className="sidebar-context-button"
+                  type="button"
+                  data-tree-item-id={`agent:${agent.id}`}
+                  tabIndex={agentSelected ? 0 : -1}
+                  aria-current={agentSelected ? "page" : undefined}
+                  aria-label={agentDescription}
+                  disabled={agent.controlState.kind === "stopping"}
+                  // Option-click opens the Agent beside its workbench; a
+                  // plain click gives it the whole content area. The same
+                  // pair as Return and Option-Return in the picker, because
+                  // it is the same choice, and it is stated in the intent
+                  // rather than applied afterwards.
+                  onClick={(event) =>
+                    selectRow(event, {
+                      type: "select_context",
+                      context: { kind: "agent", agentId: agent.id },
+                      split: event.altKey,
+                    })
+                  }
+                >
+                  {/* What it is doing, then which Agent it is — or, for an
+                      Agent somebody named, the other way round — then why
+                      it may not be doing it: one line, fading out under
+                      the row's own controls. */}
+                  <span className="row-text">
+                    <span className="row-label">{leading}</span>
+                    {naming ? <span className="row-name">{naming}</span> : null}
+                    {note ? <span className="row-note">{note}</span> : null}
+                  </span>
+                </button>
+                {agent.controlState.kind === "stopping" ? null : (
+                  <button
+                    className="row-action-button agent-row-action"
+                    type="button"
+                    aria-label={`Stop ${agent.displayName}`}
+                    onClick={() =>
+                      dispatch(
+                        stopFailed
+                          ? { type: "retry_stop_agent", agentId: agent.id }
+                          : { type: "stop_agent", agentId: agent.id },
+                      )
+                    }
+                  >
+                    <Glyph name="close" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -946,19 +987,52 @@ function SidebarResizeHandle({
  * the Sidebar, and — quieter — how many agents nobody accounts for (不明).
  * The orchestrator agent's own status mark sits before them, so its row says
  * what it is doing the way an Agent row does.
+ *
+ * It is also its Workspace's row — the orchestrator's folder, as Scratch's
+ * row is Scratch's (`orchestratorWorkspaceId`): the other Agents there are
+ * drawn under it with the same tree as any Workspace's, `+` starts one, and
+ * its right-click shows the folder's editor (the Workspace selected, the row
+ * still the one highlighted).
  */
 function OrchestratorRow({
   snapshot,
   collapsed,
+  workspace,
+  agentProfiles,
+  agentProfilesAvailability,
+  onCreateAgent,
+  onAgentMenu,
+  reorder,
 }: {
   readonly snapshot: AppSnapshot;
   readonly collapsed: boolean;
+  /** The Orchestrator row's Workspace, while one is open. */
+  readonly workspace: WorkspaceSnapshot | undefined;
+  readonly agentProfiles: readonly AgentProfile[];
+  readonly agentProfilesAvailability: AgentProfilesAvailabilityWire;
+  readonly onCreateAgent: (workspaceId: string) => void;
+  readonly onAgentMenu: (
+    agent: AgentSnapshot,
+    at: { x: number; y: number },
+  ) => void;
+  readonly reorder: Reorder;
 }) {
   // A Sidebar mounted without a board (a test, a page between loads) has
   // nothing on it: the empty board.
   const board = (useSidebar() as Partial<SidebarValue>).board ?? EMPTY_BOARD;
   const selectRow = useSelectRow();
-  const selected = snapshot.selection.context.kind === "orchestrator";
+  const context = snapshot.selection.context;
+  // The board, or its Workspace's editor: both are this row's.
+  const selected =
+    context.kind === "orchestrator" ||
+    (workspace !== undefined &&
+      context.kind === "workspace" &&
+      context.workspaceId === workspace.id);
+  const closing = workspace?.close.kind === "running";
+  const children =
+    workspace?.agents.filter(
+      (one) => one.id !== snapshot.orchestratorAgentId,
+    ) ?? [];
   const agent = snapshot.workspaces
     .flatMap((workspace) => workspace.agents)
     .find((one) => one.id === snapshot.orchestratorAgentId);
@@ -982,6 +1056,7 @@ function OrchestratorRow({
       role="treeitem"
       aria-level={1}
       aria-selected={selected}
+      aria-expanded={children.length > 0 ? true : undefined}
       data-orchestrator="true"
     >
       <div
@@ -989,6 +1064,34 @@ function OrchestratorRow({
         data-tooltip-lines={JSON.stringify(
           tooltipLines(facts.map((text) => ({ text }))),
         )}
+        onContextMenu={
+          workspace === undefined || closing
+            ? undefined
+            : (event) => {
+                event.preventDefault();
+                openRowMenu(
+                  [
+                    {
+                      id: "show-editor",
+                      label: "Show Editor",
+                      run: () => {
+                        selectRow(
+                          { detail: 1 },
+                          {
+                            type: "select_context",
+                            context: {
+                              kind: "workspace",
+                              workspaceId: workspace.id,
+                            },
+                          },
+                        );
+                      },
+                    },
+                  ],
+                  { x: event.clientX, y: event.clientY },
+                );
+              }
+        }
       >
         <div className="row-head">
           {collapsed ? null : <WorkspaceGlyph glyphName="orchestrator" />}
@@ -1042,8 +1145,34 @@ function OrchestratorRow({
               {waiting}
             </span>
           ) : null}
+          {workspace?.canCreateAgent === true && !closing ? (
+            <button
+              className="row-action-button"
+              type="button"
+              aria-label={`Create agent in Orchestrator${createAgentCaveat(agentProfilesAvailability, agentProfiles.length)}`}
+              disabled={
+                agentProfilesAvailability === "unavailable" ||
+                agentProfiles.length === 0
+              }
+              onClick={() => onCreateAgent(workspace.id)}
+            >
+              <Glyph name="plus" />
+            </button>
+          ) : null}
         </div>
       </div>
+      {workspace === undefined ? null : (
+        <AgentTree
+          workspace={workspace}
+          agents={children}
+          identity={{ glyph: "orchestrator", fixed: true }}
+          snapshot={snapshot}
+          agentProfiles={agentProfiles}
+          closing={closing}
+          onAgentMenu={onAgentMenu}
+          reorder={reorder}
+        />
+      )}
     </li>
   );
 }
@@ -1092,10 +1221,11 @@ export function Sidebar({ snapshot }: SidebarProps) {
   //
   // Scratch is one of them, drawn first, in the order main counts entries in
   // (`sidebarWorkspaces`), so `Cmd+Q 0` and the row on top are the same row.
-  const { scratch, rows: workspaces } = useMemo(
-    () => sidebarWorkspaces(snapshot),
-    [snapshot],
-  );
+  const {
+    scratch,
+    orchestrator,
+    rows: workspaces,
+  } = useMemo(() => sidebarWorkspaces(snapshot), [snapshot]);
   // Rows that have finished closing, still on screen for as long as it takes
   // them to leave. See `closingExit.ts`.
   const armed = useChordArmed();
@@ -1496,7 +1626,16 @@ export function Sidebar({ snapshot }: SidebarProps) {
         >
           {/* The Orchestrator first, above Scratch: the board and the agent
                 that coordinates the others. Walked like any row. */}
-          <OrchestratorRow snapshot={snapshot} collapsed={drawnCollapsed} />
+          <OrchestratorRow
+            snapshot={drawn}
+            collapsed={drawnCollapsed}
+            workspace={orchestrator}
+            agentProfiles={agentProfiles.profiles}
+            agentProfilesAvailability={agentProfiles.availability}
+            onCreateAgent={openAgentPicker}
+            onAgentMenu={openAgentMenu}
+            reorder={reorder}
+          />
           {/* Scratch first, as the tree's first row: it is a Workspace, so it
                 is walked, selected and focused the way every Workspace is. */}
           <WorkspaceRow

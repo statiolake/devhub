@@ -37,8 +37,12 @@ export function TabPickerSheet({ onDismiss }: TabPickerSheetProps) {
   // counts entries in (`sidebarWorkspaces`). Scratch is named "Scratch" by main.
   const workspaces = useMemo(() => {
     if (state.status !== "ready") return EMPTY;
-    const { scratch, rows } = sidebarWorkspaces(state.snapshot);
-    return [scratch, ...rows];
+    const { orchestrator, scratch, rows } = sidebarWorkspaces(state.snapshot);
+    return [
+      ...(orchestrator === undefined ? [] : [orchestrator]),
+      scratch,
+      ...rows,
+    ];
   }, [state]);
 
   const items = useMemo((): readonly PickerItem[] => {

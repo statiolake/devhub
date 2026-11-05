@@ -246,23 +246,34 @@ export type ChordEffect =
 			readonly direction: "back" | "forward";
 	  };
 
-/** Scratch, then the workspaces in sidebar order. See `sidebarWorkspaces`. */
+/**
+ * The Orchestrator row's Workspace, Scratch, then the workspaces in sidebar
+ * order. See `sidebarWorkspaces`.
+ */
 function orderedWorkspaces(
 	snapshot: AppSnapshotWire,
 ): readonly WorkspaceWire[] {
-	const { scratch, rows } = sidebarWorkspaces(snapshot);
-	return [scratch, ...rows];
+	const { orchestrator, scratch, rows } = sidebarWorkspaces(snapshot);
+	return [
+		...(orchestrator === undefined ? [] : [orchestrator]),
+		scratch,
+		...rows,
+	];
 }
 
 function scratchContext(snapshot: AppSnapshotWire): NavigationContext {
 	return { kind: "workspace", workspaceId: snapshot.scratchWorkspaceId };
 }
 
-/** Scratch, then the workspaces in sidebar order. What a digit names (0 is Scratch). */
+/**
+ * Scratch, then the workspaces in sidebar order. What a digit names (0 is
+ * Scratch); the Orchestrator row has `Cmd+Q Shift+O` and no digit.
+ */
 function sidebarEntries(
 	snapshot: AppSnapshotWire,
 ): readonly TabOf<string, string>[] {
-	return orderedWorkspaces(snapshot).map(
+	const { scratch, rows } = sidebarWorkspaces(snapshot);
+	return [scratch, ...rows].map(
 		(workspace): TabOf<string, string> => ({
 			kind: "workspace",
 			workspaceId: workspace.id,
@@ -282,9 +293,17 @@ function everyAgent(snapshot: AppSnapshotWire): readonly AgentWire[] {
 	return orderedWorkspaces(snapshot).flatMap((workspace) => workspace.agents);
 }
 
-/** Every row of the tree, of both kinds, in the order it is drawn. */
+/**
+ * Every row of the tree, of both kinds, in the order it is drawn. The
+ * Orchestrator row is not one of them (it has `Cmd+Q Shift+O`); the agents
+ * under it are.
+ */
 function everyTab(snapshot: AppSnapshotWire): readonly TabOf<string, string>[] {
-	return tabOrder(orderedWorkspaces(snapshot));
+	return tabOrder(orderedWorkspaces(snapshot)).filter((tab) =>
+		tab.kind === "workspace"
+			? tab.workspaceId !== snapshot.orchestratorWorkspaceId
+			: tab.agentId !== snapshot.orchestratorAgentId,
+	);
 }
 
 /** The workspace the selection is in, whether a row or one of its agents. */
@@ -322,7 +341,11 @@ function closeWorkspace(
 	snapshot: AppSnapshotWire,
 	workspace: WorkspaceWire | undefined,
 ): ChordEffect | undefined {
-	if (!workspace || workspace.id === snapshot.scratchWorkspaceId) {
+	if (
+		!workspace ||
+		workspace.id === snapshot.scratchWorkspaceId ||
+		workspace.id === snapshot.orchestratorWorkspaceId
+	) {
 		return undefined;
 	}
 	return { kind: "close-workspace", workspaceId: workspace.id };
@@ -696,7 +719,8 @@ export function resolveChord(
 			if (
 				context.kind === "orchestrator" ||
 				(context.kind === "workspace" &&
-					context.workspaceId === snapshot.scratchWorkspaceId)
+					(context.workspaceId === snapshot.scratchWorkspaceId ||
+						context.workspaceId === snapshot.orchestratorWorkspaceId))
 			) {
 				return undefined;
 			}

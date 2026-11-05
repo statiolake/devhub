@@ -577,6 +577,13 @@ export type UserIntent =
    */
   | { readonly type: "orchestrator_assigned"; readonly agentId?: AgentId }
   /**
+   * The orchestrator's folder is `root` (canonical, on this Mac; absent:
+   * none is set), and the open Workspace there is the Orchestrator row's
+   * while no orchestrator agent is assigned (`AppModel.orchestratorWorkspaceId`).
+   * Raised by main and by nothing else.
+   */
+  | { readonly type: "orchestrator_root_resolved"; readonly root?: string }
+  /**
    * One round's reading of the Workspace terminals on one machine
    * (`terminalActivity.ts`). Raised by main's terminal-activity loop and by
    * nothing else; every Workspace on that machine is in `workspaces`.
