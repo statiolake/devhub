@@ -130,7 +130,7 @@ export type OrchestratorEvent =
 			readonly idleSince: number;
 	  }
 	| ({
-			readonly type: "github.assigned" | "github.unassigned";
+			readonly type: "github.assigned";
 			readonly item: EventItem;
 			readonly kind: "issue" | "pr";
 			readonly login: string;
@@ -297,7 +297,6 @@ export const EVENT_TYPES = [
 	"escalation.stalled",
 	"unaccounted",
 	"github.assigned",
-	"github.unassigned",
 	"github.lane_changed",
 	"github.unattended",
 	"github.pr_opened",
@@ -496,13 +495,9 @@ function linePartsOf(event: OrchestratorEvent, now: number): LineParts {
 				],
 			};
 		case "github.assigned":
-		case "github.unassigned":
 			return {
 				head: [item(event.kind, event.item), ...where(event)],
-				summary:
-					event.type === "github.assigned"
-						? `${event.login} にアサイン`
-						: `${event.login} のアサインが外れた`,
+				summary: `${event.login} にアサイン`,
 				...(event.item.url === undefined ? {} : { url: event.item.url }),
 			};
 		case "github.unattended":
@@ -729,7 +724,6 @@ export function subjectOf(event: OrchestratorEvent): string {
 		case "agent.failed":
 			return `agent ${event.agent.id}`;
 		case "github.assigned":
-		case "github.unassigned":
 		case "github.lane_changed":
 		case "github.unattended":
 			return `gh ${prKey(event.item)}`;
@@ -767,7 +761,6 @@ export function subjectOf(event: OrchestratorEvent): string {
 export function facetOf(event: OrchestratorEvent): string {
 	switch (event.type) {
 		case "github.assigned":
-		case "github.unassigned":
 			return "assign";
 		case "github.lane_changed":
 			return `lane ${event.project}`;
@@ -865,12 +858,6 @@ export function merge(
 		newer.type === "workspace.branch_changed"
 	)
 		return older.from === newer.to ? undefined : { ...newer, from: older.from };
-	// Assigned, then taken off (or the other way): where it was.
-	if (
-		(older.type === "github.assigned" && newer.type === "github.unassigned") ||
-		(older.type === "github.unassigned" && newer.type === "github.assigned")
-	)
-		return undefined;
 	// The latest turn, read from where the first unread one began.
 	if (older.type === "agent.turn_ended" && newer.type === "agent.turn_ended")
 		return {

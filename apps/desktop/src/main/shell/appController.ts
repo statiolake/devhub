@@ -9775,8 +9775,6 @@ export class AppController {
 				...(repo === undefined
 					? {}
 					: { repo: `${repo.owner}/${repo.repository}` }),
-				// No row yet: no repository round has read this Workspace.
-				branchKnown: row !== undefined,
 				agents: workspace.agents
 					.filter((agent) => agent.id !== orchestrator)
 					.map((agent) => ({

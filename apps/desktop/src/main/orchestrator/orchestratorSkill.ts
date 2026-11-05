@@ -225,7 +225,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | ボード | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ) | esc, agent, since |
 | ボード | \`escalation.stalled\` | 対応中のエスカレーションの関係エージェントが 1 分以上誰も動いていない (全員 idle / 待ち / 停止 / 消えた、または紐付けなし: \`agents=none\`)。1 回の停滞につき 1 回。未読の回答 (\`escalation_answered\`) があるうちは来ず、\`escalation show\` で読んでから数え始める | esc, agents |
 | ボード | \`unaccounted\` | エージェントが 不明 に入った | agent, ws |
-| GitHub | \`github.assigned\` / \`github.unassigned\` | 自分へのアサインが付いた / 外れた | ws, agent, URL |
+| GitHub | \`github.assigned\` | 自分にアサインされた | ws, agent, URL |
 | GitHub | \`github.lane_changed\` | 自分の Issue / PR の Project レーンが動いた (from → to) | ws, URL |
 | GitHub | \`github.unattended\` | 自分にアサインされた open な Issue に、紐づく DevHub エージェントがいない (状態で判定。下記) | lane, URL |
 | GitHub | \`github.pr_opened\` | 自分の Issue に紐づく PR、または自分の PR ができた | ws, agent, URL |

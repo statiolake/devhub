@@ -307,7 +307,7 @@ describe("the GitHub source", () => {
 		expect(events).toEqual([]);
 	});
 
-	it("says assigned, unassigned and a lane change of my Issue", async () => {
+	it("says assigned and a lane change of my Issue, nothing for an unassignment", async () => {
 		const { events, ticks } = world(
 			[
 				{ cards: BASE.map(issueCard) },
@@ -323,19 +323,6 @@ describe("the GitHub source", () => {
 		);
 		await ticks(2);
 		expect(events).toEqual([
-			{
-				type: "github.unassigned",
-				item: {
-					repo: "acme/app",
-					number: 123,
-					title: "API整理",
-					url: url(123, "issues"),
-				},
-				kind: "issue",
-				login: ME,
-				ws: "api-refactor",
-				agent: { id: "a1", name: "Claude" },
-			},
 			{
 				type: "github.lane_changed",
 				item: {
@@ -1044,51 +1031,52 @@ describe("github.unattended", () => {
 		);
 	});
 
-	it("says nothing for an Issue that may be linked while a Workspace's branch is not read yet", async () => {
-		// A fresh launch: the poll comes before the first repository round.
-		let spaces: LinkWorkspace[] = [
+	it("does not wait for a Workspace that is not a repository, nor one whose branch is unread", async () => {
+		// Scratch (a plain folder) with a live agent, and a Workspace no round
+		// has read yet: neither links #200, and neither holds it back.
+		const run = world([{ cards: MINE.map(issueCard) }], new Map(), () => [
 			space(123),
-			{ ...space(200), issueUrls: [], branchKnown: false },
-		];
-		const run = world(
-			[{ cards: MINE.map(issueCard) }],
-			new Map(),
-			() => spaces,
-		);
+			{ ws: "scratch", issueUrls: [], agents: space(undefined).agents },
+			{ ...space(undefined), ws: "fresh" },
+		]);
 		await run.ticks(1);
-		expect(run.events).toEqual([]);
-		expect(run.source.stillUnattended({ repo: "acme/app", number: 200 })).toBe(
-			false,
-		);
-		expect(run.source.state().notes.join("\n")).toMatch(
-			/#200 .*ws=ws200 has an agent and its branch is not read yet/u,
-		);
-		// The branch arrives: it is #200's. Linked; still nothing.
-		spaces = [space(123), space(200)];
-		run.source.reconsider();
-		expect(run.events).toEqual([]);
-		// Had it been another branch, #200 would have been said then.
-		spaces = [space(123), { ...space(201), branchKnown: true }];
-		run.source.reconsider();
 		expect(unattended(run.events)).toEqual([200]);
 	});
 
-	it("neither says nor re-arms an Issue while a branch is unread", async () => {
-		let spaces: LinkWorkspace[] = [space(123)];
+	it("says an Issue assigned to me after the baseline", async () => {
+		const later: IssueCard[] = [
+			MINE[0]!,
+			MINE[1]!,
+			{ ...MINE[2]!, assignees: ["bob", ME] },
+		];
 		const run = world(
-			[{ cards: MINE.map(issueCard) }],
+			[{ cards: MINE.map(issueCard) }, { cards: later.map(issueCard) }],
 			new Map(),
-			() => spaces,
+			() => [space(123)],
 		);
-		await run.ticks(1);
-		expect(unattended(run.events)).toEqual([200]);
-		// A Workspace opens with an agent; its branch is not read yet.
-		spaces = [space(123), { ...space(500), branchKnown: false }];
-		run.source.reconsider();
-		// Read: on another Issue. #200 was unattended all along: not said again.
-		spaces = [space(123), space(500)];
-		run.source.reconsider();
-		expect(unattended(run.events)).toEqual([200]);
+		await run.ticks(2);
+		expect(unattended(run.events)).toEqual([200, 300]);
+		expect(run.events.map((event) => event.type)).toContain("github.assigned");
+	});
+
+	it("says an Issue of mine added to the board after the baseline", async () => {
+		const added: IssueCard = {
+			item: "i9",
+			id: "I9",
+			number: 900,
+			status: "Todo",
+			assignees: [ME],
+		};
+		const run = world(
+			[
+				{ cards: MINE.map(issueCard) },
+				{ cards: [...MINE, added].map(issueCard) },
+			],
+			new Map(),
+			() => [space(123)],
+		);
+		await run.ticks(2);
+		expect(unattended(run.events)).toEqual([200, 900]);
 	});
 
 	it("is not said again while nothing changed", async () => {

@@ -368,7 +368,7 @@ pulls the details itself. `{EVENT}` holds these lines.
 | `escalation.human_direct`                         | the person talked directly to an open escalation's agent, from its composer, and it went working (要回答 → 対応中)                                                                                                                    | `[escalation.human_direct] esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 since=e39 — 人がエージェントと直接やりとりしました。エスカレの内容が変わった可能性があります` |
 | `escalation.stalled`                              | a 対応中 escalation none of whose agents has worked for the grace (see 停滞); `agents=none` when it names none (`escalation link` it)                                                                                                 | `[escalation.stalled] esc=12「本番DBマイグレーション承認」 agents=a1b2c3d4,c3d4e5f6 idle 3m — 対応中だが動いているエージェントがいない`                                      |
 | `unaccounted`                                     | an agent entered 不明                                                                                                                                                                                                                 | `[unaccounted] agent=e5f6a7b8 (調査) ws=docs idle 1m`                                                                                                                        |
-| `github.assigned` / `github.unassigned`           | the viewer was assigned to / taken off a card                                                                                                                                                                                         | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200`                                                                                |
+| `github.assigned`                                 | the viewer was assigned to a card                                                                                                                                                                                                     | `[github.assigned] #200「検索の改善」 — me にアサイン https://github.com/acme/app/issues/200`                                                                                |
 | `github.lane_changed`                             | a card of the viewer's moved lane (Status)                                                                                                                                                                                            | `[github.lane_changed] #123「API整理」 In Progress → In Review ws=api-refactor https://github.com/acme/app/issues/123`                                                       |
 | `github.unattended`                               | an open Issue on a board, assigned to the viewer, has no live DevHub agent linked to it (a state, said on every poll and the baseline; see below)                                                                                     | `[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない https://…/issues/200`                                                     |
 | `github.pr_opened`                                | a PR linked to the viewer's Issue, or by the viewer, appeared                                                                                                                                                                         | `[github.pr_opened] PR #130「ログイン修正」 — me が draft で作成 (#123) https://github.com/acme/app/pull/130`                                                                |
@@ -557,12 +557,10 @@ status`) has the PR or Issue open, its Workspace and agent go on the
     makes, and the Sidebar shows) and that has at least one agent not
     stopped or stopping; or a live agent whose meta `issue=` names it, by
     URL, or by number (`123`, `#123`) in its Workspace's repository. The
-    orchestrator is never the linked agent. **Not known yet**: while an open
-    Workspace with a live agent has had no repository round read its branch
-    (a fresh launch, where the first poll can beat the first round), it may
-    be on any Issue, so none is said — nor re-armed — and the check runs
-    again when the round publishes; a reading that failed counts as known.
-    **Once per episode**: an Issue
+    orchestrator is never the linked agent. A Workspace whose branch no
+    repository round has read yet links nothing: should it be on the Issue,
+    the stale check at delivery drops what is still waiting. **Once per
+    episode**: an Issue
     said is not said again until it has been attended (an agent linked) or
     closed, and then is unattended again; a start or restart of the
     orchestrator says every one again, so right after `init` it hears the

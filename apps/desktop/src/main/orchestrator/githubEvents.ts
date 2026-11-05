@@ -511,9 +511,9 @@ export function diffBoard(
 		const at = placed(where, entry.item.url);
 		const mineNow = entry.assignees.some((one) => same(one, viewer));
 		const mineBefore = was?.assignees.some((one) => same(one, viewer)) ?? false;
-		if (mineNow !== mineBefore)
+		if (mineNow && !mineBefore)
 			events.push({
-				type: mineNow ? "github.assigned" : "github.unassigned",
+				type: "github.assigned",
 				item: entry.item,
 				kind: entry.kind,
 				login: viewer,
@@ -1079,7 +1079,6 @@ export class GitHubEventSource {
 		if (viewer === undefined || links === undefined) return false;
 		const workspaces = links();
 		const now = new Map<string, UnattendedIssue>();
-		const unknown = new Set<string>();
 		const notes: string[] = baselines.map(
 			(ref) =>
 				`${ref}: first full pass, a baseline: no github.assigned or lane_changed from it (github.unattended is checked)`,
@@ -1088,16 +1087,6 @@ export class GitHubEventSource {
 			for (const entry of state.complete ?? []) {
 				if (now.has(entry.id)) continue;
 				const verdict = unattendedVerdict(entry, viewer, workspaces);
-				if (verdict.unattended === "unknown") {
-					// Not known yet: neither said nor re-armed; as it was.
-					unknown.add(entry.id);
-					const was = this.#unattended.get(entry.id);
-					if (was !== undefined) now.set(entry.id, was);
-					notes.push(
-						`#${String(entry.item.number)} (${entry.item.repo}): no github.unattended yet, ws=${verdict.ws} has an agent and its branch is not read yet`,
-					);
-					continue;
-				}
 				if (verdict.unattended) {
 					now.set(entry.id, {
 						item: entry.item,
@@ -1112,11 +1101,9 @@ export class GitHubEventSource {
 					);
 			}
 		// Attended (or gone) now: the next stretch unattended is said again.
-		for (const id of [...this.#told])
-			if (!now.has(id) && !unknown.has(id)) this.#told.delete(id);
+		for (const id of [...this.#told]) if (!now.has(id)) this.#told.delete(id);
 		const events: OrchestratorEvent[] = [];
 		for (const [id, one] of now) {
-			if (unknown.has(id)) continue;
 			if (this.#told.has(id)) {
 				notes.push(
 					`#${String(one.item.number)} (${one.item.repo}): unattended, github.unattended said already for this stretch`,

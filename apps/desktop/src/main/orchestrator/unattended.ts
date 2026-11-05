@@ -27,13 +27,10 @@
  *
  * The orchestrator itself is never the linked agent.
  *
- * **Not known yet.** A Workspace whose branch DevHub has not read yet (a
- * fresh launch: the first poll can come before the first repository round)
- * may turn out to be on any Issue. While one with a live agent is unread,
- * no Issue is unattended — the verdict is `unknown`, which neither says
- * the Issue nor re-arms it — and the check runs again when the branch
- * arrives (the repository round calls `reconsider`). A reading that failed
- * is known: a row with no branch.
+ * A Workspace whose branch DevHub has not read yet is not linked by it.
+ * Should it turn out to be on the Issue, the delivery's stale check
+ * (`stillUnattended`) and the `reconsider` the repository round runs drop
+ * what was not yet delivered.
  */
 
 import type { EventAgent, EventItem } from "./events.js";
@@ -46,11 +43,6 @@ export interface LinkWorkspace {
 	readonly issueUrls: readonly string[];
 	/** `owner/name` where its Issues are numbered, when known. */
 	readonly repo?: string;
-	/**
-	 * Whether a repository round has read its branch (or failed to: that is
-	 * known too). Absent: known.
-	 */
-	readonly branchKnown?: boolean;
 	/** Its agents, the orchestrator left out. */
 	readonly agents: readonly LinkAgent[];
 }
@@ -127,8 +119,6 @@ export function linkedAgent(
 /** Why an Issue on a board is, or is not, unattended. */
 export type UnattendedVerdict =
 	| { readonly unattended: true }
-	/** A Workspace with a live agent has no branch read yet: it may be on it. */
-	| { readonly unattended: "unknown"; readonly ws: string }
 	| {
 			readonly unattended: false;
 			readonly why:
@@ -165,11 +155,5 @@ export function unattendedVerdict(
 			ws: linked.ws,
 			agent: linked.agent,
 		};
-	const unread = workspaces.find(
-		(workspace) =>
-			workspace.branchKnown === false &&
-			workspace.agents.some((agent) => agent.live),
-	);
-	if (unread !== undefined) return { unattended: "unknown", ws: unread.ws };
 	return { unattended: true };
 }
