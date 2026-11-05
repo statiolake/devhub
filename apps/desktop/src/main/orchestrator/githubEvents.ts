@@ -34,6 +34,15 @@
  * `diffPullRequests`, `diffRequested`). Each board's first full pass and each
  * pull request's first details are a baseline and say nothing.
  *
+ * **The viewer's own activity is never an event.** Their agents post with the
+ * same GitHub identity, so a review, comment or push of theirs saying
+ * `github.review_comment`, `github.pr_approved`, `github.changes_requested`
+ * or `github.reply` back to them would be an echo: it is left out, and the
+ * counts are of others' activity only — nothing at all when only the viewer's
+ * is new. New review threads carry no author in the query, so they count
+ * only in a look with no review by the author or the viewer; a push counts as
+ * the viewer's when its head commit's author (or committer) is.
+ *
  * **`github.unattended`** is a state, not a diff (`unattended.ts`): on every
  * successful poll — the baseline too, which is the point: an assignment
  * missed while nobody watched is said on the first poll — and whenever the
@@ -126,6 +135,12 @@ export interface PullDetails {
 	}[];
 	readonly commentCount: number;
 	readonly headOid: string | null;
+	/**
+	 * Who wrote the head commit (its author's, else its committer's, GitHub
+	 * login), when GitHub links the commit to an account. The pusher is not
+	 * in the API; a push whose last commit is the viewer's counts as theirs.
+	 */
+	readonly headAuthor?: string;
 	/** The head commit's rollup: SUCCESS, FAILURE, ERROR, PENDING, EXPECTED. */
 	readonly checks: string | null;
 	readonly checksFailing: number;
@@ -180,7 +195,8 @@ const PULL_DETAILS = `id number title url state isDraft reviewDecision
   reviews(last:10){ totalCount nodes{ author{ login } state submittedAt } }
   reviewThreads(first:100){ totalCount nodes{ isResolved } }
   comments(last:5){ totalCount nodes{ author{ login } createdAt } }
-  commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state
+  commits(last:1){ nodes{ commit{ oid author{ user{ login } } committer{ user{ login } }
+    statusCheckRollup{ state
     contexts{ totalCount checkRunCountsByState{ state count } statusContextCountsByState{ state count } }
   } } } }`;
 
@@ -313,6 +329,9 @@ export function parseDetails(node: Json): PullDetails | undefined {
 		return count === undefined ? [] : [count];
 	});
 	const author = login(node["author"]);
+	const headAuthor =
+		login(record(commit?.["author"])?.["user"]) ??
+		login(record(commit?.["committer"])?.["user"]);
 	return {
 		id,
 		item: itemOf(node),
@@ -332,6 +351,7 @@ export function parseDetails(node: Json): PullDetails | undefined {
 		})),
 		commentCount: num(comments?.["totalCount"]),
 		headOid: str(commit?.["oid"]) ?? null,
+		...(headAuthor === undefined ? {} : { headAuthor }),
 		checks: str(rollup?.["state"])?.toUpperCase() ?? null,
 		checksFailing: counts
 			.filter((count) => FAILING.has(str(count["state"])?.toUpperCase() ?? ""))
@@ -582,6 +602,12 @@ export function diffRequested(
 		}));
 }
 
+/**
+ * What on the page is new since the last look: everyone's, the viewer's too —
+ * the caller leaves the viewer's out afterwards, so their own comment neither
+ * counts nor hides someone else's that came in the same tick, and the next
+ * look's cursor is past it all the same (it is in `since` from then on).
+ */
 function newer<T extends { readonly at: string }>(
 	list: readonly T[],
 	since: readonly T[],
@@ -589,9 +615,14 @@ function newer<T extends { readonly at: string }>(
 	countAfter: number,
 ): T[] {
 	const last = since.reduce((max, one) => (one.at > max ? one.at : max), "");
-	const byTime = list.filter((one) => one.at > last);
-	// The page is the last few; the count says how many are new at most.
-	const fresh = Math.max(0, countAfter - countBefore);
+	// Not yet submitted (a pending review): nothing to say until it is.
+	const byTime = list.filter((one) => one.at !== "" && one.at > last);
+	if (last !== "") return byTime;
+	// Nothing to go by but the count: the page is the last few, and the count
+	// says how many are new at most — those not yet submitted last time
+	// (pending, timeless) are new once they are.
+	const unsaid = since.filter((one) => one.at === "").length;
+	const fresh = Math.max(0, countAfter - countBefore + unsaid);
 	return byTime.slice(Math.max(0, byTime.length - fresh));
 }
 
@@ -636,10 +667,20 @@ export function diffPullRequest(
 		before.reviewCount,
 		after.reviewCount,
 	);
+	// The viewer's own activity is never news: their agents post as them.
+	const byViewer = (who: string | undefined) => same(who, viewer);
 	if (mine) {
+		// Reviews by others: not the author's (replies in their own threads),
+		// not the viewer's.
 		const others = reviews.filter(
-			(review) => !same(review.author, author ?? ""),
+			(review) =>
+				!same(review.author, author ?? "") && !byViewer(review.author),
 		);
+		// The review threads have no author here (it would cost a nested
+		// connection a pull request): a new thread is counted only when no
+		// review in the window was the author's or the viewer's, who could
+		// have opened it.
+		const ownReviews = reviews.length > others.length;
 		const by = (state: string) => [
 			...new Set(
 				others
@@ -659,10 +700,9 @@ export function diffPullRequest(
 				...at,
 			});
 		const commented = others.filter((review) => review.state === "COMMENTED");
-		const count = Math.max(
-			commented.length,
-			Math.max(0, after.threads - before.threads),
-		);
+		const count = ownReviews
+			? commented.length
+			: Math.max(commented.length, Math.max(0, after.threads - before.threads));
 		if (count > 0)
 			events.push({
 				type: "github.review_comment",
@@ -701,7 +741,8 @@ export function diffPullRequest(
 		const commits =
 			after.headOid !== null &&
 			before.headOid !== null &&
-			after.headOid !== before.headOid;
+			after.headOid !== before.headOid &&
+			!byViewer(after.headAuthor);
 		if (replies > 0 || commits)
 			events.push({
 				type: "github.reply",

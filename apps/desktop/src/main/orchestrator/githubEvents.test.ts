@@ -98,6 +98,8 @@ interface Details {
 	comments?: { author: string; at: string }[];
 	commentCount?: number;
 	oid?: string;
+	/** The head commit's author's login; absent: not linked to an account. */
+	commitAuthor?: string;
 	checks?: string | null;
 	failing?: number;
 	total?: number;
@@ -148,6 +150,13 @@ function details(pull: Details) {
 				{
 					commit: {
 						oid: pull.oid ?? "c1",
+						author: {
+							user:
+								pull.commitAuthor === undefined
+									? null
+									: { login: pull.commitAuthor },
+						},
+						committer: { user: null },
 						statusCheckRollup:
 							pull.checks === null || pull.checks === undefined
 								? null
@@ -448,6 +457,144 @@ describe("the GitHub source", () => {
 			}),
 			expect.objectContaining({ type: "github.pr_approved", by: ["bob"] }),
 		]);
+	});
+
+	describe("leaves the viewer's own activity out", () => {
+		const at = (minute: number) =>
+			`2026-11-05T00:${String(minute).padStart(2, "0")}:00Z`;
+		/** My Issue's pull request, written by someone else (dave). */
+		async function onDavesPull(...steps: Omit<Details, "id" | "number">[]) {
+			const linked = [{ id: "P1", number: 130, author: "dave" }];
+			const cards = [issueCard({ ...BASE[0]!, linked }), issueCard(BASE[1]!)];
+			const run = world([
+				{ cards },
+				...steps.map((pull) => ({
+					cards,
+					pulls: [{ id: "P1", number: 130, author: "dave", ...pull }],
+				})),
+			]);
+			await run.ticks(1 + steps.length);
+			return run.events;
+		}
+
+		it("says nothing when only my comment is new", async () => {
+			// My own pull request: my agent's review comments open threads.
+			const events = await onMyPull(
+				{ id: "P1", number: 130 },
+				{
+					id: "P1",
+					number: 130,
+					reviews: [{ author: ME, state: "COMMENTED", at: at(1) }],
+					threads: [false, false],
+				},
+			);
+			expect(events).toEqual([]);
+			// Someone else's, linked to my Issue: my review comment.
+			expect(
+				await onDavesPull(
+					{},
+					{
+						reviews: [{ author: ME, state: "COMMENTED", at: at(1) }],
+						threads: [false],
+					},
+				),
+			).toEqual([]);
+		});
+
+		it("counts only the other person's when mine came in the same tick", async () => {
+			const events = await onDavesPull(
+				{ reviews: [{ author: "alice", state: "COMMENTED", at: at(1) }] },
+				{
+					reviews: [
+						{ author: "alice", state: "COMMENTED", at: at(1) },
+						{ author: "bob", state: "COMMENTED", at: at(3) },
+						{ author: ME, state: "COMMENTED", at: at(4) },
+					],
+					threads: [false, false, false],
+				},
+				// Later looks do not say either again.
+				{
+					reviews: [
+						{ author: "alice", state: "COMMENTED", at: at(1) },
+						{ author: "bob", state: "COMMENTED", at: at(3) },
+						{ author: ME, state: "COMMENTED", at: at(4) },
+					],
+					threads: [false, false, false],
+				},
+			);
+			expect(events).toEqual([
+				expect.objectContaining({
+					type: "github.review_comment",
+					count: 1,
+					authors: ["bob"],
+				}),
+			]);
+		});
+
+		it("is not hidden by my review being submitted in the same tick as theirs", async () => {
+			// My pending review is in the count but has no time yet.
+			const events = await onDavesPull(
+				{
+					reviews: [{ author: ME, state: "PENDING", at: "" }],
+				},
+				{
+					reviews: [
+						{ author: "bob", state: "COMMENTED", at: at(5) },
+						{ author: ME, state: "COMMENTED", at: at(6) },
+					],
+				},
+			);
+			expect(events).toEqual([
+				expect.objectContaining({
+					type: "github.review_comment",
+					count: 1,
+					authors: ["bob"],
+				}),
+			]);
+		});
+
+		it("does not say approved or changes requested for my own review", async () => {
+			const events = await onDavesPull(
+				{},
+				{
+					reviews: [{ author: ME, state: "APPROVED", at: at(1) }],
+					latest: [{ author: ME, state: "APPROVED", at: at(1) }],
+				},
+				{
+					reviews: [
+						{ author: ME, state: "APPROVED", at: at(1) },
+						{ author: ME, state: "CHANGES_REQUESTED", at: at(2) },
+					],
+					latest: [{ author: ME, state: "CHANGES_REQUESTED", at: at(2) }],
+				},
+			);
+			expect(events).toEqual([]);
+		});
+
+		it("does not say a reply for commits I pushed to a pull request I reviewed", async () => {
+			const mine = { author: ME, state: "COMMENTED", at: at(5) };
+			const theirs = { id: "P9", number: 9, author: "carol" };
+			const cards = [
+				issueCard(BASE[0]!),
+				issueCard({ ...BASE[1]!, linked: [theirs] }),
+			];
+			const pull = { ...theirs, latest: [mine], reviews: [mine] };
+			const { events, ticks } = world([
+				{ cards },
+				{ cards, pulls: [pull] },
+				{ cards, pulls: [{ ...pull, oid: "c2", commitAuthor: ME }] },
+				{ cards, pulls: [{ ...pull, oid: "c3", commitAuthor: "carol" }] },
+			]);
+			await ticks(4);
+			expect(events).toEqual([
+				expect.objectContaining({
+					type: "github.reply",
+					author: "carol",
+					comments: 0,
+					commits: true,
+				}),
+			]);
+		});
 	});
 
 	it("says CI passed or failed once per head commit", async () => {
