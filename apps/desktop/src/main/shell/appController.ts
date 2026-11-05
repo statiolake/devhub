@@ -4704,6 +4704,7 @@ export class AppController {
 			),
 			orchestratorWorkspaceId: snapshot.orchestratorWorkspaceId,
 			orchestratorView: this.orchestratorTitleView(),
+			repositories: this.lastRepositoryStatus.workspaces,
 		});
 		shell.window.setTitle(title);
 		// The same string, once, to both places that show it. DevHub's own
@@ -5021,6 +5022,9 @@ export class AppController {
 			const before = this.orderedWorkspaceIds();
 			this.lastRepositoryStatus = status;
 			this.send(CHANNELS.repositoryStatusChanged, status);
+			// The title names the Workspace's Issue, which is this projection's:
+			// a branch switched, and so an Issue changed, renames the window.
+			if (shellWindowIfCreated() !== undefined) this.refreshWindowTitle();
 			// Why what the rows say may be out of date, said where the
 			// application says everything else it has to say. It is a
 			// *condition*, not a failed action: nobody asked for the look that

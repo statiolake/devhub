@@ -85,7 +85,10 @@ export interface ShellTitleParts {
 	 * more specific than the Workspace itself.
 	 */
 	readonly element: string | undefined;
-	/** The Workspace the selection is in — Scratch is one of them. */
+	/**
+	 * The Workspace the selection is in — Scratch is one of them — with the
+	 * Issue it is on after its name when one is known (`workReference`).
+	 */
 	readonly workspace: string;
 }
 

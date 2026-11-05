@@ -85,18 +85,23 @@ the person's own, in skills and instructions in the orchestrator's folder.
   (`main/shell/shellTitle.ts`; the page reports only an escalation id or a
   file path, `reportOrchestratorView`, and main composes the title):
 
-  | Showing                            | Title                                                           |
-  | ---------------------------------- | --------------------------------------------------------------- |
-  | the board, or the Files tab's tree | `Orchestrator — DevHub`                                         |
-  | an escalation                      | `payments · 本番DBマイグレーション承認 — Orchestrator — DevHub` |
-  | an escalation with no Workspace    | `本番DBマイグレーション承認 — Orchestrator — DevHub`            |
-  | a file in the Files tab            | `decisions.md — Orchestrator — DevHub`                          |
-  | a helper agent under the row       | as any Agent: `helper — Orchestrator — DevHub`                  |
+  | Showing                              | Title                                                                   |
+  | ------------------------------------ | ----------------------------------------------------------------------- |
+  | the board, or the Files tab's tree   | `Orchestrator — DevHub`                                                 |
+  | an escalation                        | `payments · 本番DBマイグレーション承認 — Orchestrator — DevHub`         |
+  | an escalation, Workspace on an Issue | `payments #123 · 本番DBマイグレーション承認 — Orchestrator — DevHub`    |
+  | an escalation, Workspace on a PR     | `payments PR #130 · 本番DBマイグレーション承認 — Orchestrator — DevHub` |
+  | an escalation with no Workspace      | `本番DBマイグレーション承認 — Orchestrator — DevHub`                    |
+  | a file in the Files tab              | `decisions.md — Orchestrator — DevHub`                                  |
+  | a helper agent under the row         | as any Agent: `helper — Orchestrator — DevHub`                          |
 
   The Workspace is the escalation's own, else its first agent's (by its
   usual label; not the Orchestrator's own), so the time lands on that
-  project. The subject and file name are put on one line and cut near 80
-  characters; no thread or answer text is ever in the title. It follows
+  project. That Workspace carries its Issue as everywhere else in the title
+  — `#123`, `owner/repo#123` when the Issue is in another repository,
+  `PR #130` on a pull request's branch with no Issue, nothing when none is
+  known ([window-and-pages.md](window-and-pages.md#the-windows-title)). The
+  subject and file name are put on one line and cut near 80 characters; no thread or answer text is ever in the title. It follows
   every open, Back, Forward and tab, and the screen coming back as it was.
 
 ## Escalations

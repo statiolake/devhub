@@ -111,17 +111,17 @@ file main loaded.** (An Agent terminal's page is loaded once per terminal;
 the fragment, `pane.html#<id>`, names which terminal — an instance, not a
 role.)
 
-| Page                  | Entry           | What it draws                                                                                                   | What it may ask for                                                                                                                                                                                                                                                                            |
-| --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| the window's own page | `index.html`    | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split    | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout`                                                                                                                                 |
-| the Sidebar           | `sidebar.html`  | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showContextMenu`, `showTooltip`, `hideTooltip`, `releaseTooltip`                              |
-| the Agents            | `agents.html`   | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
-| an Agent's terminal   | `pane.html`     | an Agent's own terminal, on the right: a terminal surface and nothing else, no header                           | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`                                                                                                                                                                                                    |
-| the notices           | `toasts.html`   | what the application has to say, over whatever is on screen, and the notice center                              | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
-| the tooltip           | `tooltip.html`  | one box with a row's facts in it, over whatever is on screen; its GitHub pages are links                         | `tooltipText` in; `tooltipSize`, `tooltipPointer`, `openExternalUrl` (GitHub pages only) and `writeClipboard` (a row's paths) out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                                                             |
-| the questions         | `picker.html`   | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
-| Settings              | `settings.html` | its own window                                                                                                  | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
-| Task Manager          | `task-manager.html` | its own window: what each Workspace, workbench and Agent costs ([task-manager.md](task-manager.md)) | `TASK_MANAGER_CHANNELS` in full, plus the failure contract every page has |
+| Page                  | Entry               | What it draws                                                                                                   | What it may ask for                                                                                                                                                                                                                                                                            |
+| --------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the window's own page | `index.html`        | the title bar, the drag strip, the three states in which there is no child view to show, the seam of a split    | the projection, the appearance, the window's name, the workbench area, `openModal`, `closeWorkspace`, `chooseWorkspaceFolder`, `openSettings`, `previewLayout`                                                                                                                                 |
+| the Sidebar           | `sidebar.html`      | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showContextMenu`, `showTooltip`, `hideTooltip`, `releaseTooltip`                              |
+| the Agents            | `agents.html`       | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
+| an Agent's terminal   | `pane.html`         | an Agent's own terminal, on the right: a terminal surface and nothing else, no header                           | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`                                                                                                                                                                                                    |
+| the notices           | `toasts.html`       | what the application has to say, over whatever is on screen, and the notice center                              | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
+| the tooltip           | `tooltip.html`      | one box with a row's facts in it, over whatever is on screen; its GitHub pages are links                        | `tooltipText` in; `tooltipSize`, `tooltipPointer`, `openExternalUrl` (GitHub pages only) and `writeClipboard` (a row's paths) out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                         |
+| the questions         | `picker.html`       | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
+| Settings              | `settings.html`     | its own window                                                                                                  | `SETTINGS_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                          |
+| Task Manager          | `task-manager.html` | its own window: what each Workspace, workbench and Agent costs ([task-manager.md](task-manager.md))             | `TASK_MANAGER_CHANNELS` in full, plus the failure contract every page has                                                                                                                                                                                                                      |
 
 Every one of them also has `raiseFailure` and `onTheme`, which is what "a
 DevHub page" means.
@@ -570,14 +570,14 @@ pane has it), a server an earlier DevHub left running is told on bring-up, and
 every running server is told again with `set-environment -g` when the theme
 changes. Panes already running keep the environment they started with.
 
-| Variable | Value |
-| --- | --- |
-| `DEVHUB_THEME` | the theme's name, as `theme_dark` / `theme_light` say it (`Nord`, `Dark 2026`) |
-| `DEVHUB_THEME_KIND` | `dark`, `light` or `hc` (either high-contrast theme) |
-| `DEVHUB_THEME_BACKGROUND` | `dark` or `light`: what a program that knows only two should take |
-| `DEVHUB_THEME_COLORS` | `bg=#rrggbb fg=… cursor=… cursor_text=… selection=… [selection_fg=…] color0=… … color15=…` |
-| `DEVHUB_FZF_COLORS` | a ready `fzf --color=` value: `fg:…,bg:…,hl:…,fg+:…,bg+:…,…` |
-| `DEVHUB_THEME_FILE` | the file below (on this Mac only; a host's panes get the rest) |
+| Variable                  | Value                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------ |
+| `DEVHUB_THEME`            | the theme's name, as `theme_dark` / `theme_light` say it (`Nord`, `Dark 2026`)             |
+| `DEVHUB_THEME_KIND`       | `dark`, `light` or `hc` (either high-contrast theme)                                       |
+| `DEVHUB_THEME_BACKGROUND` | `dark` or `light`: what a program that knows only two should take                          |
+| `DEVHUB_THEME_COLORS`     | `bg=#rrggbb fg=… cursor=… cursor_text=… selection=… [selection_fg=…] color0=… … color15=…` |
+| `DEVHUB_FZF_COLORS`       | a ready `fzf --color=` value: `fg:…,bg:…,hl:…,fg+:…,bg+:…,…`                               |
+| `DEVHUB_THEME_FILE`       | the file below (on this Mac only; a host's panes get the rest)                             |
 
 **The file**, for programs already running: `$XDG_STATE_HOME/devhub/theme.json`
 (`~/.local/state/devhub/theme.json` when `XDG_STATE_HOME` is unset;
@@ -591,15 +591,29 @@ object, `version: 1`:
 ```json
 {
   "version": 1,
-  "name": "Nord", "label": "Nord",
-  "kind": "dark", "type": "dark", "background": "dark",
+  "name": "Nord",
+  "label": "Nord",
+  "kind": "dark",
+  "type": "dark",
+  "background": "dark",
   "temporary": false,
-  "colors": { "background": "#2e3440", "foreground": "#d8dee9",
-              "cursor": "…", "cursorText": "…",
-              "selectionBackground": "…", "selectionForeground": "…",
-              "ansi": ["#3b4252", "… sixteen …"] },
-  "editor": { "editor.background": "#2e3440", "editorLineNumber.foreground": "…" },
-  "tokens": { "comment": { "fg": "#616e88", "italic": true }, "keyword": { "fg": "#81a1c1" } },
+  "colors": {
+    "background": "#2e3440",
+    "foreground": "#d8dee9",
+    "cursor": "…",
+    "cursorText": "…",
+    "selectionBackground": "…",
+    "selectionForeground": "…",
+    "ansi": ["#3b4252", "… sixteen …"]
+  },
+  "editor": {
+    "editor.background": "#2e3440",
+    "editorLineNumber.foreground": "…"
+  },
+  "tokens": {
+    "comment": { "fg": "#616e88", "italic": true },
+    "keyword": { "fg": "#81a1c1" }
+  },
   "fzf": "fg:#d8dee9,bg:#2e3440,…"
 }
 ```
@@ -1013,6 +1027,39 @@ the setting, down to the re-fit and the tmux resize the changed geometry
 causes, and there is one zoom for the terminal surface rather than one per
 Agent because there is one appearance.
 
+## The window's title
+
+The window's name says what is being worked on, for anyone — or any time
+tracker — reading window titles: the element, the Workspace, then DevHub
+(`ipc/windowTitles.ts` is the rule, `main/shell/shellTitle.ts` collects its
+facts). The Workspace part carries the Issue its branch names, the one the
+Sidebar's row shows, right after the Workspace's name:
+
+| The Workspace is on                         | Title                                           |
+| ------------------------------------------- | ----------------------------------------------- |
+| a branch whose Issue is known               | `reconciler.ts — widget #123 — DevHub`          |
+| an Issue that lives in another repository   | `reconciler.ts — widget acme/plan#123 — DevHub` |
+| a pull request's branch that names no Issue | `reconciler.ts — widget PR #130 — DevHub`       |
+| neither                                     | `reconciler.ts — widget — DevHub`               |
+| (an Agent selected)                         | `Reading the reconciler — widget #123 — DevHub` |
+| (nothing open in the Editor)                | `widget #123 — DevHub`                          |
+
+- **`#N` is always an Issue, `PR #N` always a pull request.** GitHub numbers
+  both in one sequence and writes both `#N`, so the pull request carries the
+  `PR ` prefix to stay unambiguous. A branch with both shows the Issue.
+- **`owner/repo#N`** only when the Issue (or pull request) is not in the
+  Workspace's own repository (`origin`): an upstream's Issue in a fork, or one
+  whose URL names another repository — the case the row's tooltip says as
+  _Issue in `owner/name`_. Otherwise the number is bare.
+- **No Issue known, no number:** a branch that names none, an Issue still
+  being read (_Reading #N_) or unavailable, and a Workspace that is not a
+  GitHub repository are titled exactly as before.
+- It is read off the same projection as the row
+  (`WorkspaceRepositoryWire`), and the title is recomposed whenever that
+  projection is published, so switching branches renames the window as soon
+  as the row changes. The Orchestrator screen names an escalation's Workspace
+  the same way ([orchestrator.md](orchestrator.md)).
+
 ## Back and Forward
 
 The window keeps a browser's history of the places it has shown, and the title
@@ -1245,15 +1292,15 @@ loopback API, say) gone with it. Freezing costs none of that.
 Each folder's workbench is in one phase at a time (`WorkbenchPhase` in
 `workbenchPlan.ts`):
 
-| Phase                                            | What it is                                                                 |
-| ------------------------------------------------ | -------------------------------------------------------------------------- |
-| _absent_                                         | not started in this run                                                    |
-| _starting_ (cause start, restart or wake)        | an open in flight, or a view whose page has not loaded                     |
-| _running_                                        | its view loaded; _settled_ once it has finished starting                   |
-| _frozen_                                         | every process of it stopped (SIGSTOP)                                      |
-| _discarding_                                     | thawed, being unloaded                                                     |
-| _discarded_                                      | closed; its placeholder shows the frame it left                            |
-| _restart-waiting_, _gave-up_, _parked_           | failed: backing off, given up on, unavailable until Retry or Locate…       |
+| Phase                                     | What it is                                                           |
+| ----------------------------------------- | -------------------------------------------------------------------- |
+| _absent_                                  | not started in this run                                              |
+| _starting_ (cause start, restart or wake) | an open in flight, or a view whose page has not loaded               |
+| _running_                                 | its view loaded; _settled_ once it has finished starting             |
+| _frozen_                                  | every process of it stopped (SIGSTOP)                                |
+| _discarding_                              | thawed, being unloaded                                               |
+| _discarded_                               | closed; its placeholder shows the frame it left                      |
+| _restart-waiting_, _gave-up_, _parked_    | failed: backing off, given up on, unavailable until Retry or Locate… |
 
 ```text
 absent     ─ shown / asked / requested ─────────────────────▶ starting
