@@ -9409,6 +9409,7 @@ export class AppController {
 					: workspace.label,
 				status: agent.status,
 				stopping: agent.controlState.kind !== "running",
+				...(agent.maintenance === true ? { maintenance: true } : {}),
 			})),
 		);
 	}
@@ -9622,6 +9623,7 @@ export class AppController {
 						...(agent.activity === undefined
 							? {}
 							: { activity: agent.activity }),
+						...(agent.maintenance === true ? { maintenance: true } : {}),
 					})),
 			),
 		);

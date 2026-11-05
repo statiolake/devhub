@@ -21,6 +21,13 @@
  * `agent send`, not an event or a template), every open escalation about it
  * is told to the orchestrator (`escalation.human_direct`), since what was
  * said may answer or change it.
+ *
+ * A maintenance turn (`isMaintenanceTurn`: a `/compact`, DevHub's keep-warm
+ * one before the prompt cache goes cold or the person's) is not work: every
+ * reading here goes by the status the agent had before it (`workStatus`), so
+ * it writes no `resumed` / `direct` note, tells nothing, and neither ends
+ * nor restarts a stretch of idleness (不明). A person's `/compact` is not
+ * their words to the agent either: its mark goes with it.
  */
 
 import type {
@@ -43,6 +50,7 @@ import {
 	type UnaccountedAgent,
 } from "../../model/escalations.js";
 import type { OrchestratorConfig } from "../../model/orchestratorSettings.js";
+import { workStatus } from "../../model/conversation.js";
 import type { EscalationStore } from "./escalationStore.js";
 import {
 	customTypeProblem,
@@ -62,6 +70,8 @@ export interface LiveAgent {
 	readonly workspaceLabel: string;
 	readonly status: string;
 	readonly stopping: boolean;
+	/** Its turn running is upkeep, not work (`isMaintenanceTurn`). */
+	readonly maintenance?: boolean;
 }
 
 export interface OrchestratorServicePorts {
@@ -205,8 +215,7 @@ export class OrchestratorService {
 	 * these have been seen to already.
 	 */
 	#relevant(event: OrchestratorEvent): boolean {
-		const agent = (id: string) =>
-			this.ports.agents().find((one) => one.id === id);
+		const agent = (id: string) => this.#agents().find((one) => one.id === id);
 		switch (event.type) {
 			case "unaccounted":
 				return this.#lanes(this.#now()).unaccounted.some(
@@ -360,6 +369,9 @@ export class OrchestratorService {
 		for (const agent of agents) {
 			this.#status.set(agent.id, agent.status);
 			const mark = this.#direct.get(agent.id);
+			// The person's `/compact`: upkeep they asked for, not their words.
+			if (agent.maintenance === true && mark?.armed === true)
+				this.#direct.delete(agent.id);
 			if (agent.status !== "working") {
 				if (mark !== undefined) mark.armed = true;
 				continue;
@@ -416,7 +428,7 @@ export class OrchestratorService {
 	 */
 	observe(): void {
 		const now = this.#now();
-		const agents = this.ports.agents();
+		const agents = this.#agents();
 		const live = new Set<string>();
 		for (const agent of agents) {
 			live.add(agent.id);
@@ -441,8 +453,22 @@ export class OrchestratorService {
 		return this.#lanes(this.#now()).unaccounted;
 	}
 
+	/**
+	 * Every agent at the status work goes by: one on a maintenance turn keeps
+	 * the status it was last seen with (`workStatus`).
+	 */
+	#agents(): readonly LiveAgent[] {
+		return this.ports
+			.agents()
+			.map((agent) =>
+				agent.maintenance === true
+					? { ...agent, status: workStatus(agent, this.#status.get(agent.id)) }
+					: agent,
+			);
+	}
+
 	#boardAgents(): readonly BoardAgent[] {
-		return this.ports.agents().map((agent) => ({
+		return this.#agents().map((agent) => ({
 			...agent,
 			idleSince: this.#idleSince.get(agent.id),
 		}));

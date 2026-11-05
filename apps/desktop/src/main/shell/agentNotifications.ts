@@ -14,9 +14,13 @@
  *   idle for a moment between tool calls cancels itself.
  * - Not when the person is already looking: window focused and that Agent is
  *   the selection.
+ * - A maintenance turn (`isMaintenanceTurn`: a `/compact`, DevHub's keep-warm
+ *   one or the person's) is not work: the Agent is read at the status it had
+ *   before it (`workStatus`), so it neither arms nor ends anything.
  */
 
 import type { AppSnapshotWire } from "../../ipc/appShell.js";
+import { workStatus } from "../../model/conversation.js";
 
 export const DEBOUNCE_MS = 1500;
 
@@ -64,6 +68,8 @@ export function snippet(text: string | undefined, max = 100): string {
 
 interface Tracked {
 	armed: boolean;
+	/** The status it was last read at (`workStatus`). */
+	status: string | undefined;
 	timer: unknown;
 	pending: NotifyKind | undefined;
 }
@@ -80,10 +86,17 @@ export class AgentNotifier {
 				seen.add(agent.id);
 				let tracked = this.agents.get(agent.id);
 				if (!tracked) {
-					tracked = { armed: false, timer: undefined, pending: undefined };
+					tracked = {
+						armed: false,
+						status: undefined,
+						timer: undefined,
+						pending: undefined,
+					};
 					this.agents.set(agent.id, tracked);
 				}
-				this.step(tracked, agent.id, agent.status);
+				const status = workStatus(agent, tracked.status);
+				tracked.status = status;
+				this.step(tracked, agent.id, status);
 			}
 		}
 		for (const [id, tracked] of this.agents) {

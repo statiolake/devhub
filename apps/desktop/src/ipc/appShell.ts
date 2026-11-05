@@ -185,6 +185,12 @@ export interface AgentWire {
 	 */
 	readonly promptCache?: PromptCacheWire;
 	/**
+	 * The turn running is upkeep of the conversation, not work on its task: a
+	 * `/compact` (DevHub's before the prompt cache goes cold, or the person's).
+	 * Absent when it is not. See `isMaintenanceTurn` in `model/conversation.ts`.
+	 */
+	readonly maintenance?: true;
+	/**
 	 * Text DevHub is holding for this Agent, and why it has not gone yet.
 	 *
 	 * `queued` is how many instructions are waiting; `waitingFor` is the reason

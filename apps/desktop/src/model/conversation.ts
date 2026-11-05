@@ -1609,6 +1609,59 @@ export function conversationStatus(transcript: Transcript): AgentStatus {
   }
 }
 
+/** A `/compact`, with or without its instructions: the CLI's own compaction. */
+export function isCompactCommand(text: string | undefined): boolean {
+  return text !== undefined && /^\s*\/compact(?:\s|$)/u.test(text);
+}
+
+/**
+ * Whether the turn running now is upkeep of the conversation rather than
+ * work on its task: a turn that only compacts it — DevHub's `/compact` just
+ * before the prompt cache goes cold (`CacheKeeper`, origin `auto-compact`:
+ * the keep-warm compaction), or the person's own `/compact`. The one
+ * predicate (`AgentSnapshot.maintenance`): the orchestrator's escalation
+ * notes and `agent.*` events, its 不明 lane and the "finished" notification
+ * go by the status the Agent had before such a turn, as if it had not run.
+ *
+ * Read off what started the turn, never its length: the last top-level
+ * message since the last turn's end — a `/compact` command (echoed, or drawn
+ * when the turn ends) is upkeep, the person's words, an answer or anything
+ * else that reached the CLI is work. Until one is drawn, the turn is the
+ * oldest message written and not yet taken: Claude prints no echo of a
+ * `/compact`, and the turn runs from its write. A compaction the CLI does by
+ * itself inside a turn (`compacting`, Claude's auto compact, Codex's
+ * `contextCompaction`) is part of that turn's work: whatever started the
+ * turn decides. So does a usage-limit resume (`after-limit`): it goes on
+ * with the task.
+ */
+export function isMaintenanceTurn(transcript: Transcript): boolean {
+  const { state, entries } = transcript;
+  if (state.phase !== "ready" || state.turn !== "running") return false;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (entry.kind === "turn-end") break;
+    if (entry.parent !== null) continue;
+    if (entry.kind === "user" || entry.kind === "answer") return false;
+    if (entry.kind === "command") return isCompactCommand(entry.line);
+  }
+  const first = transcript.sending[0];
+  return first !== undefined && isCompactCommand(first.text);
+}
+
+/**
+ * The status a watcher of work goes by: while a maintenance turn runs
+ * (`isMaintenanceTurn`), the one the Agent had before it — idle when none
+ * was seen — so it neither starts nor ends anything.
+ */
+export function workStatus(
+  agent: { readonly status: string; readonly maintenance?: boolean },
+  before: string | undefined,
+): string {
+  return agent.maintenance === true && agent.status === "working"
+    ? (before ?? "idle")
+    : agent.status;
+}
+
 /**
  * What the Agent is doing, in its own words: the title of the latest running
  * tool call, else the in-progress step of the latest plan. Outside a turn,

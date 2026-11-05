@@ -197,6 +197,8 @@ export interface AgentSnapshot {
   readonly activity: string | undefined;
   /** Its prompt cache, for a GUI Claude Agent that has reported one. */
   readonly promptCache: PromptCache | undefined;
+  /** The turn running is upkeep, not work (`isMaintenanceTurn`). */
+  readonly maintenance?: boolean;
   readonly injection: AgentInjection;
   /** The actions ticked as automatic for it. */
   readonly automaticActions: readonly string[];
@@ -1339,6 +1341,13 @@ export class AppModel {
       ) {
         this.bumpRevision();
       }
+      if (
+        this.requireAgent(observation.agentId).setMaintenance(
+          observation.maintenance === true,
+        )
+      ) {
+        this.bumpRevision();
+      }
       this.setAgentInjection(observation.agentId, observation.injection);
       this.setAgentRuntimeHealth(
         observation.agentId,
@@ -2264,6 +2273,7 @@ export class AppModel {
         unread: agent.unread,
         activity: agent.activity,
         promptCache: agent.promptCache,
+        ...(agent.maintenance ? { maintenance: true } : {}),
         injection: agent.injection,
         automaticActions: agent.automaticActions,
         failure: agent.failure,

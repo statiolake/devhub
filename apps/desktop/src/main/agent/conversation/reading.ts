@@ -11,6 +11,7 @@
 import {
 	conversationActivity,
 	conversationStatus,
+	isMaintenanceTurn,
 	type ConversationFailureCode,
 	type PromptCache,
 } from "../../../model/conversation.js";
@@ -26,6 +27,8 @@ export interface ConversationObservation {
 	readonly status: AgentStatus;
 	readonly activity: string | undefined;
 	readonly promptCache?: PromptCache | undefined;
+	/** The turn running is upkeep, not work (`isMaintenanceTurn`). */
+	readonly maintenance?: boolean;
 	readonly failure: AgentFailure | undefined;
 }
 
@@ -84,6 +87,7 @@ export function observeConversation(
 	return {
 		status: conversationStatus(transcript),
 		activity: conversationActivity(transcript),
+		...(isMaintenanceTurn(transcript) ? { maintenance: true } : {}),
 		promptCache: promptCacheOf(
 			transcript.usage?.promptCache,
 			reading.autoCompactAt,

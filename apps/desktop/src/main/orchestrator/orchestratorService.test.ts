@@ -156,8 +156,14 @@ describe("an escalation's agent going back to work", () => {
 		service.assign(ORCH);
 		service.observe();
 		sent.length = 0;
-		const status = (id: string, to: string) => {
-			(agents.find((one) => one.id === id) as { status: string }).status = to;
+		const status = (id: string, to: string, maintenance = false) => {
+			const agent = agents.find((one) => one.id === id) as {
+				status: string;
+				maintenance?: boolean;
+			};
+			agent.status = to;
+			if (maintenance) agent.maintenance = true;
+			else delete agent.maintenance;
 			clock.now += 1_000;
 			service.observe();
 		};
@@ -242,6 +248,79 @@ describe("an escalation's agent going back to work", () => {
 			run.service.ask(one.id, "もう一度", undefined);
 			expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
 		}
+	});
+
+	it("stays 要回答 through a compaction or a keep-warm /compact: no note, no event", async () => {
+		for (const how of [
+			"DevHub's keep-warm /compact",
+			"the person's /compact",
+		]) {
+			const run = settled();
+			const one = run.service.raise({
+				title: how,
+				markdown: "?",
+				agents: [WORKER],
+			});
+			if (how === "the person's /compact") run.service.personSent(WORKER);
+			run.status(WORKER, "working", true);
+			run.status(WORKER, "working", true);
+			run.status(WORKER, "idle");
+			await tick();
+			expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
+			expect(run.store.require(one.id).entries).toHaveLength(1);
+			expect(run.direct()).toHaveLength(0);
+			expect(run.sent).toEqual([]);
+			// The person's /compact took its mark with it: what the
+			// orchestrator sends next is not the person's.
+			run.status(WORKER, "working");
+			await tick();
+			expect(run.store.require(one.id).entries.at(-1)?.kind).toBe("resumed");
+			expect(run.direct()).toHaveLength(0);
+		}
+	});
+
+	it("still counts a real turn right after a compaction, with no idle seen between", async () => {
+		const run = settled();
+		const one = run.service.raise({
+			title: "t",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.status(WORKER, "working", true);
+		// The person writes meanwhile: held until the compaction ends.
+		run.service.personSent(WORKER);
+		run.status(WORKER, "working", true);
+		run.status(WORKER, "working");
+		await tick();
+		expect(run.store.require(one.id).entries.at(-1)).toMatchObject({
+			kind: "direct",
+			agent: WORKER,
+		});
+		expect(run.direct()).toHaveLength(1);
+	});
+
+	it("keeps an idle agent's stretch of idleness through a compaction: 不明 is not re-armed", () => {
+		const run = settled();
+		run.service.setGrace(0);
+		run.status(WORKER, "idle");
+		const told = () =>
+			run.service.events
+				.recent(50)
+				.filter(
+					(one) =>
+						one.event.type === "unaccounted" && one.event.agent.id === WORKER,
+				);
+		expect(told()).toHaveLength(1);
+		const since = run.service
+			.unaccounted()
+			.find((one) => one.agentId === WORKER)?.idleSince;
+		run.status(WORKER, "working", true);
+		expect(
+			run.service.unaccounted().find((one) => one.agentId === WORKER)
+				?.idleSince,
+		).toBe(since);
+		run.status(WORKER, "idle");
+		expect(told()).toHaveLength(1);
 	});
 
 	it("leaves alone an escalation about other agents, and a closed one", () => {

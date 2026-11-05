@@ -1269,6 +1269,11 @@ export interface AgentObservation {
    * absent for an Agent with nothing to say about one.
    */
   readonly promptCache?: PromptCache | undefined;
+  /**
+   * The turn running is upkeep of the conversation, not work on its task
+   * (`isMaintenanceTurn`: a `/compact`); absent when it is not.
+   */
+  readonly maintenance?: boolean;
   /** What DevHub is holding for this Agent, and why it has not gone yet. */
   readonly injection: AgentInjection;
   /**
@@ -1427,6 +1432,7 @@ export class Agent {
    */
   private activityValue: string | undefined;
   private promptCacheValue: PromptCache | undefined;
+  private maintenanceValue = false;
   private injectionValue: AgentInjection = NO_INJECTION;
   /**
    * The ids of the actions a person ticked as automatic for this Agent: sent
@@ -1549,6 +1555,7 @@ export class Agent {
     );
     copy.activityValue = this.activityValue;
     copy.promptCacheValue = this.promptCacheValue;
+    copy.maintenanceValue = this.maintenanceValue;
     copy.injectionValue = this.injectionValue;
     copy.automaticActionsValue = this.automaticActionsValue;
     copy.metaValue = this.metaValue;
@@ -1601,6 +1608,17 @@ export class Agent {
   setPromptCache(cache: PromptCache | undefined): boolean {
     if (this.promptCacheValue === cache) return false;
     this.promptCacheValue = cache;
+    return true;
+  }
+
+  /** Whether the turn running is upkeep, not work (`isMaintenanceTurn`). */
+  get maintenance(): boolean {
+    return this.maintenanceValue;
+  }
+
+  setMaintenance(maintenance: boolean): boolean {
+    if (this.maintenanceValue === maintenance) return false;
+    this.maintenanceValue = maintenance;
     return true;
   }
 

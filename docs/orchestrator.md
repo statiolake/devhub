@@ -72,7 +72,7 @@ side it is on; only the window writes `human` entries):
 | `kind: "taken"` | `human` | the person's 対応中にする (card or reading view), with an optional note | 「人が対応中にしました（{time}）[: note]」 |
 | `kind: "held"` | `orchestrator` | `escalation hold ID [--note TEXT]`: parked while it works on it (e.g. more investigation delegated). Never an answer | 「オーケストレーターが対応中にしました（{time}）[: note]」 |
 | `kind: "direct"` | `human` | DevHub: one of its `agents` went from idle (or stopped on a question) to working on the person's message from **that agent's own composer** (the conversation IPC's submit: not `agent send`, not an event or a template) | 「人が {agent} と直接やりとりしました（{time}）— 内容はエージェントの会話を参照」, with a chip to the agent |
-| `kind: "resumed"` | `orchestrator` | DevHub: one of its `agents` went working for any other reason (the orchestrator's `agent send`, an injected event, a resume) | 「{agent} が作業を再開しました（{time}）— 回答待ちは一旦解除」 |
+| `kind: "resumed"` | `orchestrator` | DevHub: one of its `agents` went working for any other reason (the orchestrator's `agent send`, an injected event, DevHub's own resume after a usage limit) | 「{agent} が作業を再開しました（{time}）— 回答待ちは一旦解除」 |
 
 The notes (`kind`) have no answer in them: `escalation show` prints them as
 notes, and `agent wait --any` does not report them as answered. DevHub
@@ -81,6 +81,26 @@ orchestrator is told of `taken` (`escalation.taken`) and of the person's
 direct words (`escalation.human_direct`, also for one already 対応中: what was
 said may answer or change it), not of `held` (its own) or `resumed` (it
 caused it, or hears of it as `agent.turn_ended`).
+
+**A maintenance turn is not work.** A turn that only compacts the
+conversation — DevHub's keep-warm `/compact` just before the prompt cache
+goes cold (`CacheKeeper`, sent with origin `auto-compact`), or a `/compact`
+the person typed — writes no `direct` / `resumed` note, tells no
+`escalation.human_direct`, ends no `agent.turn_ended`, keeps the agent's
+stretch of idleness (so 不明 is not re-armed), and does not notify
+"finished". It is recognised by what started the turn, never by how long
+it ran: one predicate, `isMaintenanceTurn` (`model/conversation.ts`), reads
+the last top-level message since the last turn's end (a `/compact` command
+entry, echoed or drawn at the turn's end), else the oldest message written
+and not yet taken (Claude prints no echo of `/compact`, and the turn runs
+from its write). The round carries it as the agent's `maintenance`, and every
+watcher of work reads the agent at the status it had before such a turn
+(`workStatus`). A real turn right after one still counts, with or without an
+idle seen between. A compaction the CLI does by itself inside a turn
+(Claude's `compacting` / `compact_boundary`, Codex's `contextCompaction`)
+is part of that turn: whatever started the turn decides. DevHub's resume
+after a usage limit (`after-limit`, the `resume_after_limit_message`) is
+work: it goes on with the task the limit stopped, so it is `resumed`.
 
 They are kept per profile in `<userData>/devhub/escalations.json`, written
 whole and atomically on every change; a file that does not read is moved to

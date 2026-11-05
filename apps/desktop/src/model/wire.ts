@@ -397,6 +397,7 @@ function agentWire(agent: AgentSnapshot): AgentWire {
     ...(agent.promptCache === undefined
       ? {}
       : { promptCache: agent.promptCache }),
+    ...(agent.maintenance === true ? { maintenance: true } : {}),
     injection: agent.injection,
     automaticActions: agent.automaticActions,
     ...(agent.failure === undefined ? {} : { failure: agent.failure }),

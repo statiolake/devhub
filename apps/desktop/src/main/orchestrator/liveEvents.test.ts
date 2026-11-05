@@ -213,6 +213,28 @@ describe("the Agent source", () => {
 		expect(events).toHaveLength(1);
 	});
 
+	it("says nothing of a compaction or keep-warm /compact turn, and still ends the real turn after it", async () => {
+		const { events, conversations, source } = world();
+		conversations.set("a1", {
+			entries: () => [told("e3", "テストを足して"), said("e5", "足しました。")],
+			requests: () => [],
+		});
+		const compacting = { ...claude, status: "working", maintenance: true };
+		source.observe([claude]);
+		source.observe([compacting]);
+		source.observe([compacting]);
+		source.observe([claude]);
+		await settle();
+		expect(events).toEqual([]);
+		// The person's message, held through the compaction, starts a real
+		// turn straight after it: that one ends a turn.
+		source.observe([compacting]);
+		source.observe([{ ...claude, status: "working" }]);
+		source.observe([claude]);
+		await settle();
+		expect(events.map((event) => event.type)).toEqual(["agent.turn_ended"]);
+	});
+
 	it("says what it asks, and the permission it wants (for the person)", async () => {
 		const { events, conversations, source } = world();
 		let requests: PendingRequest[] = [];

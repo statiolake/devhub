@@ -12,6 +12,7 @@ let selected: string | undefined;
 let focused = false;
 let enabled = true;
 let present = true;
+let maintenance = false;
 const sent: AgentNotification[] = [];
 
 function snap(): AppSnapshotWire {
@@ -30,6 +31,7 @@ function snap(): AppSnapshotWire {
 								id: "a1",
 								displayName: "Claude",
 								status,
+								...(maintenance ? { maintenance: true } : {}),
 								activity: " did\n it ",
 							},
 						],
@@ -57,6 +59,7 @@ beforeEach(() => {
 	focused = false;
 	enabled = true;
 	present = true;
+	maintenance = false;
 	sent.length = 0;
 });
 afterEach(() => vi.useRealTimers());
@@ -68,6 +71,20 @@ function go(n: AgentNotifier, next: string, ms = DEBOUNCE_MS + 1): void {
 }
 
 describe("agent notifications", () => {
+	it("does not say finished after a compaction or keep-warm /compact turn", () => {
+		const n = make();
+		go(n, "idle");
+		maintenance = true;
+		go(n, "working");
+		maintenance = false;
+		go(n, "idle");
+		expect(sent).toHaveLength(0);
+		// A real turn after it still does.
+		go(n, "working");
+		go(n, "idle");
+		expect(sent.map((one) => one.kind)).toEqual(["finished"]);
+	});
+
 	it("does not fire for the initial state", () => {
 		const n = make();
 		go(n, "idle");

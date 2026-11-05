@@ -16,6 +16,7 @@ import {
 	childrenOf,
 	conversationStatus,
 	entryId,
+	isMaintenanceTurn,
 	requestId,
 	rewindTargets,
 	type ConversationEvent,
@@ -4135,6 +4136,70 @@ describe("the turn a message starts, ended by the CLI's result", () => {
 			"command: /compact",
 			"turn-end completed",
 		]);
+	});
+
+	it("is a maintenance turn from the write of DevHub's keep-warm /compact to its result, and the next real turn is not", () => {
+		const adapter = ready();
+		const upkeep = () => isMaintenanceTurn(adapter.transcript);
+		expect(upkeep()).toBe(false);
+		perform(adapter, {
+			kind: "send",
+			text: "/compact",
+			images: [],
+			origin: "auto-compact",
+		});
+		expect(upkeep()).toBe(true);
+		adapter.received(init());
+		adapter.received(status({ status: "compacting" }));
+		expect(upkeep()).toBe(true);
+		adapter.received(boundary({ trigger: "manual", pre_tokens: 90000 }));
+		expect(upkeep()).toBe(true);
+		adapter.received(status({ status: null, compact_result: "success" }));
+		expect(upkeep()).toBe(true);
+		adapter.received(localResult("compact"));
+		expect(conversationStatus(adapter.transcript)).toBe("idle");
+		expect(upkeep()).toBe(false);
+		// A real message after it is work, from its write on.
+		send(adapter, "テストを足して");
+		expect(conversationStatus(adapter.transcript)).toBe("working");
+		expect(upkeep()).toBe(false);
+		adapter.received(echo("テストを足して", "u-real"));
+		expect(upkeep()).toBe(false);
+	});
+
+	it("is a maintenance turn for the person's echoed /compact too, until their words reach it", () => {
+		const adapter = ready();
+		send(adapter, "/compact keep the plan");
+		adapter.received(
+			echo(
+				"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args>keep the plan</command-args>",
+				"u-compact",
+			),
+		);
+		adapter.received(status({ status: "compacting" }));
+		expect(isMaintenanceTurn(adapter.transcript)).toBe(true);
+		// Written while it compacts, taken into the same turn: work.
+		send(adapter, "それから README も");
+		expect(isMaintenanceTurn(adapter.transcript)).toBe(true);
+		adapter.received(echo("それから README も", "u-more"));
+		expect(isMaintenanceTurn(adapter.transcript)).toBe(false);
+	});
+
+	it("is no maintenance turn for an automatic compaction inside a real turn, nor for a usage-limit resume", () => {
+		const adapter = inTurn();
+		adapter.received(status({ status: "compacting" }));
+		expect(isMaintenanceTurn(adapter.transcript)).toBe(false);
+		adapter.received(boundary({ trigger: "auto", pre_tokens: 150000 }));
+		expect(isMaintenanceTurn(adapter.transcript)).toBe(false);
+		adapter.received(result());
+		perform(adapter, {
+			kind: "send",
+			text: "続けて",
+			images: [],
+			origin: "after-limit",
+		});
+		expect(conversationStatus(adapter.transcript)).toBe("working");
+		expect(isMaintenanceTurn(adapter.transcript)).toBe(false);
 	});
 
 	it("shows an automatic compaction inside a turn, which the turn's end ends in any case", () => {

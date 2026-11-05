@@ -17,9 +17,10 @@
  * anyway (`events.ts`), and the orchestrator's own Workspace is left out.
  */
 
-import type {
-	PendingRequest,
-	TranscriptEntry,
+import {
+	workStatus,
+	type PendingRequest,
+	type TranscriptEntry,
 } from "../../model/conversation.js";
 import type { EventAgent, EventItem, OrchestratorEvent } from "./events.js";
 
@@ -119,6 +120,12 @@ export interface LiveAgentReading {
 	readonly gui: boolean;
 	/** What it says it is doing (a terminal Agent's only excerpt). */
 	readonly activity?: string;
+	/**
+	 * Its turn running is upkeep, not work (`isMaintenanceTurn`: a
+	 * `/compact`): read at the status it had before, so the turn neither
+	 * starts nor ends one (`agent.turn_ended`).
+	 */
+	readonly maintenance?: boolean;
 }
 
 /** What is read of a GUI Agent's conversation (`TellConversation`'s half). */
@@ -228,8 +235,8 @@ export class AgentEventSource {
 			const memory = known.get(reading.id);
 			if (memory === undefined) {
 				known.set(reading.id, {
-					reading,
-					armed: reading.status === "working",
+					reading: { ...reading, status: workStatus(reading, undefined) },
+					armed: workStatus(reading, undefined) === "working",
 					requests: new Set(),
 					// An agent new since the baseline has no requests to forgive.
 					requestsRead: !baseline,
@@ -262,8 +269,12 @@ export class AgentEventSource {
 		}
 	}
 
-	#step(memory: AgentMemory, reading: LiveAgentReading): void {
+	#step(memory: AgentMemory, seen: LiveAgentReading): void {
 		const before = memory.reading;
+		const reading =
+			seen.maintenance === true
+				? { ...seen, status: workStatus(seen, before.status) }
+				: seen;
 		memory.reading = reading;
 		const agent = { id: reading.id, name: reading.name };
 		const ws = reading.ws === undefined ? {} : { ws: reading.ws };
