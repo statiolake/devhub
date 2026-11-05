@@ -729,6 +729,50 @@ describe("unread agents", () => {
     }
   });
 
+  it("stays as it was after a working spell that was not work: a restore, a resume, a /compact", () => {
+    const observe = (
+      model: AppModel,
+      status: AgentStatus,
+      maintenance: boolean,
+    ) => {
+      model.reconcileAgents({
+        observations: [
+          {
+            agentId: AG_A,
+            status,
+            runtimeHealth: "healthy",
+            activity: undefined,
+            ...(maintenance ? { maintenance: true } : {}),
+            injection: {
+              queued: 0,
+              waitingFor: "nothing_queued",
+              lastResult: undefined,
+            },
+            failure: undefined,
+          },
+        ],
+        exited: [],
+      });
+    };
+    // Read before (the mark kept in state.json), then restored at a restart:
+    // the journal replayed shows its last turn running, then idle.
+    const read = withAgent();
+    observe(read, "idle", false);
+    observe(read, "working", true);
+    observe(read, "idle", false);
+    expect(read.agent(AG_A)?.unread).toBeUndefined();
+    // Unread before: it stays unread, for what it was.
+    const unread = withAgent();
+    ranAndThen(unread, "waiting");
+    observe(unread, "working", true);
+    observe(unread, "idle", false);
+    expect(unread.agent(AG_A)?.unread).toBe("waiting");
+    // A real turn after it still counts.
+    observe(unread, "working", false);
+    observe(unread, "idle", false);
+    expect(unread.agent(AG_A)?.unread).toBe("idle");
+  });
+
   it("stays read while its background tasks work, and becomes unread when the last one ends", () => {
     const model = withAgent();
     ranAndThen(model, "background");

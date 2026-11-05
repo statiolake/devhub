@@ -87,7 +87,10 @@ export function observeConversation(
 	return {
 		status: conversationStatus(transcript),
 		activity: conversationActivity(transcript),
-		...(isMaintenanceTurn(transcript) ? { maintenance: true } : {}),
+		// Upkeep, or the past read again after a restart of DevHub: not work.
+		...(isMaintenanceTurn(transcript) || reading.restoring === true
+			? { maintenance: true }
+			: {}),
 		promptCache: promptCacheOf(
 			transcript.usage?.promptCache,
 			reading.autoCompactAt,

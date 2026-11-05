@@ -21,6 +21,8 @@ function world(
 		prompt?: string;
 		items?: ItemFacts[];
 		managed?: boolean;
+		/** WORKER as the first reading finds it (a restart restoring it). */
+		worker?: { status: string; maintenance?: boolean };
 	} = {},
 ) {
 	const clock = { now: 1_000_000 };
@@ -34,6 +36,7 @@ function world(
 		workspaceLabel: "w",
 		status: "idle",
 		stopping: false,
+		...(id === WORKER ? options.worker : {}),
 	}));
 	const invariant = {
 		items: options.items as ItemFacts[] | undefined,
@@ -170,6 +173,38 @@ describe("an escalation's agent going back to work", () => {
 			agent: WORKER,
 		});
 		expect(run.of("escalation.human_direct")).toHaveLength(0);
+	});
+
+	it("stays 要回答 through the CLI started again on its session (/resume, Restart Session, a wake)", () => {
+		const run = world();
+		const one = run.service.raise({
+			title: "t",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		run.service.wait(one.id, { trigger: "x" });
+		// Its `rewinding` turn: working, and upkeep.
+		run.status(WORKER, "working", true);
+		run.status(WORKER, "idle");
+		expect(escalationState(run.store.require(one.id))).toBe("waiting");
+	});
+
+	it("is not moved by a restart of DevHub: the replayed past, and what follows it, are not going back to work", () => {
+		// Restored mid-replay: first seen working, restoring.
+		const run = world({ worker: { status: "working", maintenance: true } });
+		const one = run.service.raise({
+			title: "t",
+			markdown: "?",
+			agents: [WORKER],
+		});
+		// The replay ends on a turn still running in the CLI.
+		run.status(WORKER, "working");
+		run.status(WORKER, "idle");
+		expect(escalationState(run.store.require(one.id))).toBe("needs_answer");
+		expect(run.store.require(one.id).entries).toHaveLength(1);
+		// A real turn after it is work again.
+		run.status(WORKER, "working");
+		expect(escalationState(run.store.require(one.id))).toBe("in_progress");
 	});
 
 	it("stays 要回答 through a keep-warm /compact: no note, no event", () => {

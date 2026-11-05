@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EMPTY_TRANSCRIPT,
+  isMaintenanceTurn,
   TranscriptInvariantError,
   applyEvent,
   attachedImages,
@@ -1213,6 +1214,20 @@ describe("what the CLI says that DevHub does not know", () => {
     expect(
       childrenOf(noticed, entryId("task1")).map((each) => each.id),
     ).toEqual(["n1"]);
+  });
+});
+
+describe("the CLI started again on its session", () => {
+  it("is working for the spinner, and no work for a watcher of work", () => {
+    const restarting = fold(READY, user("u1", "first"), {
+      type: "state",
+      state: { phase: "ready", turn: "rewinding" },
+    });
+    expect(conversationStatus(restarting)).toBe("working");
+    expect(isMaintenanceTurn(restarting)).toBe(true);
+    expect(isMaintenanceTurn(fold(READY, user("u1", "first"), RUNNING))).toBe(
+      false,
+    );
   });
 });
 

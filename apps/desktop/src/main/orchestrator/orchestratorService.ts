@@ -660,13 +660,17 @@ export class OrchestratorService {
 	 * the status it was last seen with (`workStatus`).
 	 */
 	#agents(): readonly LiveAgent[] {
-		return this.ports
-			.agents()
-			.map((agent) =>
-				agent.maintenance === true
-					? { ...agent, status: workStatus(agent, this.#status.get(agent.id)) }
-					: agent,
-			);
+		return this.ports.agents().map((agent) =>
+			agent.maintenance === true
+				? {
+						...agent,
+						// Never seen before it (a restart of DevHub, a resumed
+						// session): not known, so going on from it is not going
+						// back to work.
+						status: workStatus(agent, this.#status.get(agent.id) ?? "unknown"),
+					}
+				: agent,
+		);
 	}
 
 	#lanes() {

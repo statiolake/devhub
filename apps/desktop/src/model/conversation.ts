@@ -1633,9 +1633,16 @@ export function isCompactCommand(text: string | undefined): boolean {
  * `contextCompaction`) is part of that turn's work: whatever started the
  * turn decides. So does a usage-limit resume (`after-limit`): it goes on
  * with the task.
+ *
+ * The CLI being started on its session again is upkeep too: a `rewinding`
+ * turn — a `/resume`, Restart Session, a wake from sleep, the start-up of a
+ * rewind — runs until the new CLI has answered its greeting, and does no
+ * work (`conversationStatus` still says `working`, for the spinner). What
+ * reaches the CLI after it is a turn of its own, and decides for itself.
  */
 export function isMaintenanceTurn(transcript: Transcript): boolean {
   const { state, entries } = transcript;
+  if (state.phase === "ready" && state.turn === "rewinding") return true;
   if (state.phase !== "ready" || state.turn !== "running") return false;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index]!;

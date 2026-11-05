@@ -195,7 +195,10 @@ yellow). Each thing that reads a status treats it on purpose:
   hold it for good behind a dev server or a watcher, which never end on their
   own.
 - **Unread** is raised when a turn ends into it (leaving `working`), and the
-  row wears the unread mark until somebody looks, as an idle one does.
+  row wears the unread mark until somebody looks, as an idle one does. A
+  turn that was not work — a `/compact`, the CLI started again on its
+  session (`rewinding`), the journal replayed after a restart of DevHub
+  (`restoring`) — raises nothing: the mark stays as `state.json` kept it.
 - **The Sidebar's activity line** names the one task, or says how many there
   are.
 

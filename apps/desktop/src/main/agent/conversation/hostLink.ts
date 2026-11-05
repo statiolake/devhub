@@ -380,6 +380,21 @@ export class HostLink {
 		);
 	}
 
+	/**
+	 * How long the journal is now, in bytes (0 when there is none yet): how
+	 * far a DevHub attaching again has to replay before it is following live.
+	 */
+	async journalSize(): Promise<number> {
+		const result = await this.#read(
+			'[ -f "$1/out" ] || { echo 0; exit 0; }; exec wc -c < "$1/out"',
+			[],
+			limits("the journal's size in", this.#directory),
+		);
+		this.#answered(result, "the journal's size");
+		const size = Number(result.stdout.toString("utf8").trim());
+		return Number.isSafeInteger(size) && size >= 0 ? size : 0;
+	}
+
 	/** Every line DevHub has written to this host, in order, each with the offset it followed. */
 	async sentLog(): Promise<readonly SentRecord[]> {
 		const result = await this.#read(

@@ -167,6 +167,8 @@ export function describeHostLink(name: string, make: () => Runtime): void {
 			expect(await link.sentLog()).toEqual([
 				{ afterOffset: 0, line: '{"say":"日本語も一行"}' },
 			]);
+			// How far a DevHub attaching again replays: the journal's length.
+			expect(await link.journalSize()).toBe(echo?.offset);
 		}, 20_000);
 
 		it("attaches from an offset after main restarts, with nothing missing and nothing twice", async () => {

@@ -1205,7 +1205,12 @@ export class AppModel {
     failure: AgentFailure | undefined = undefined,
   ): void {
     const agent = this.requireAgent(id);
-    const attention = wantsAttention(agent.status, status);
+    // A working spell that was not work — upkeep, a restart of the CLI on its
+    // session, the past read again after a restart of DevHub (the reading
+    // before said so: `maintenance`) — ends owing nothing: the mark the
+    // Agent had (kept in `state.json`) stays as it was.
+    const attention =
+      wantsAttention(agent.status, status) && !agent.maintenance;
     // Reading the Agent is what retires its last refusal, and the only thing
     // that does. See `Agent.clearFailure`. A reading that itself says the
     // Agent is failing puts that failure in its place instead.

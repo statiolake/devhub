@@ -179,6 +179,31 @@ is part of that turn: whatever started the turn decides. DevHub's resume
 after a usage limit (`after-limit`, the `resume_after_limit_message`) is
 work: it goes on with the task the limit stopped, so it is `resumed`.
 
+**Neither is a restore or a resume.** Two working spells look like work and
+are not, and are read as maintenance too (`maintenance` on the round):
+
+- **The CLI started again on its session** — `/resume`, Restart Session,
+  `agent resume` and Reopen Closed on a session, a wake from sleep, the
+  start-up of a rewind — runs a `rewinding` turn until the new CLI answers
+  its greeting (`conversationStatus` says `working`, for the spinner).
+  `isMaintenanceTurn` is true for it.
+- **The past read again after a restart of DevHub.** Attaching again, a GUI
+  agent's conversation replays its journal from 0 (`AgentConversation`),
+  and its old turns run again on the way: working, then idle. Until it has
+  read as far as the journal was long when it attached (`journalSize`, an
+  `in.log` already there being what says it is a re-attach), its reading
+  is `restoring`, and that is maintenance.
+
+So none of them moves an escalation out of 要回答 or 待機中 (no `resumed` /
+`direct` note), counts as working for the invariant, clears an `agent
+keep`, ends a stalled stretch or notifies "finished" — and none raises the
+unread mark: `setAgentStatus` raises it only when a working spell that was
+work ends (`AppModel`), so an agent's read or unread state, kept in
+`state.json` with it, is what it was before the restart or the resume. An
+agent first seen during one (a restart, a resumed session) has no status to
+go back to: it is read as `unknown`, and going on from there is not going
+back to work either.
+
 They are kept per profile in `<userData>/devhub/escalations.json`, written
 whole and atomically on every change; a file that does not read is moved to
 `escalations.json.corrupt` and said, and the board starts empty.

@@ -36,6 +36,7 @@ import {
 import { CancellationToken } from "../../terminal/ports.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
 import { RESTART_MARK } from "./protocolAdapter.js";
+import { observeConversation } from "./reading.js";
 import {
 	HandClock,
 	memoryRecords,
@@ -178,6 +179,10 @@ class FakeHost implements ConversationHost {
 	async sentLog(): Promise<readonly SentRecord[]> {
 		return [...this.inLog];
 	}
+
+	async journalSize(): Promise<number> {
+		return this.#size;
+	}
 }
 
 /** Prints the fixture's CLI lines up to the next line DevHub is to write, and checks that line when it comes. */
@@ -313,6 +318,42 @@ describe("a conversation attached again after DevHub restarts", () => {
 		expect(again.reading().transcript).toEqual(live);
 		expect(host.inLog).toHaveLength(writes);
 		await again.stop();
+	});
+
+	it("reads as restoring while it replays the past, so its turns are not work", async () => {
+		const { host, conversation } = await liveTurn();
+		await conversation.stop();
+		const seen: { status: string; restoring: boolean }[] = [];
+		const again: AgentConversation = new AgentConversation(
+			host,
+			new ClaudeAdapter("boot-b"),
+			() => {
+				const reading = again.reading();
+				seen.push({
+					status: observeConversation(reading).status,
+					restoring: reading.restoring === true,
+				});
+			},
+			resumeOff(),
+		);
+		again.start();
+		await settle();
+		// The past turn ran again: working, and every reading of it restoring.
+		expect(seen.some((one) => one.status === "working")).toBe(true);
+		expect(
+			seen
+				.filter((one) => one.status === "working")
+				.every((one) => one.restoring),
+		).toBe(true);
+		expect(observeConversation(again.reading()).maintenance).toBeUndefined();
+		expect(again.reading().restoring).toBeUndefined();
+		await again.stop();
+	});
+
+	it("is not restoring on its first launch", async () => {
+		const { conversation } = await liveTurn();
+		expect(conversation.reading().restoring).toBeUndefined();
+		await conversation.stop();
 	});
 
 	it("replays a request as still open when DevHub had not answered it", async () => {

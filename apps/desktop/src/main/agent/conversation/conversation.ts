@@ -155,6 +155,8 @@ export interface ConversationHost {
 	/** Have the host stop the CLI and wait in its place, `mark` in the journal. */
 	sleep(mark: readonly string[]): Promise<void>;
 	sentLog(): Promise<readonly SentRecord[]>;
+	/** The journal's length now, in bytes; absent: not known (a replay is not told apart). */
+	journalSize?(): Promise<number>;
 }
 
 /** The line the host puts in the journal where it stopped the CLI to sleep. */
@@ -172,6 +174,7 @@ export interface HostOnLink {
 	write(line: string, afterOffset: number): Promise<void>;
 	restart(cli: RestartedCli, mark: readonly string[]): Promise<void>;
 	sentLog(): Promise<readonly SentRecord[]>;
+	journalSize(): Promise<number>;
 }
 
 /**
@@ -189,6 +192,7 @@ export function hostOn(
 		restart: (session, mark) => link.restart(cliOn(session), mark),
 		sleep: (mark) => link.restart(SLEEPER, mark),
 		sentLog: () => link.sentLog(),
+		journalSize: () => link.journalSize(),
 	};
 }
 
@@ -212,6 +216,7 @@ export function openedLater(
 		restart: async (args, mark) => (await host()).restart(args, mark),
 		sleep: async (mark) => (await host()).sleep(mark),
 		sentLog: async () => (await host()).sentLog(),
+		journalSize: async () => (await host()).journalSize?.() ?? 0,
 	};
 }
 
@@ -223,6 +228,11 @@ export interface ConversationReading {
 	readonly crashed: Error | undefined;
 	/** When DevHub will compact the idle conversation to beat its cache's expiry, if it will. */
 	readonly autoCompactAt?: number | undefined;
+	/**
+	 * The journal an earlier DevHub read is being read again (attaching after a
+	 * restart of DevHub): what it shows is the past, not work happening now.
+	 */
+	readonly restoring?: boolean;
 }
 
 /** An event as the page receives it: numbered, so a gap is visible. */
@@ -257,6 +267,11 @@ export class AgentConversation {
 	 * demands again is not written again. -1 is "it never wrote".
 	 */
 	#answeredUpTo = -1;
+	/**
+	 * Attaching again (an earlier DevHub wrote to this host): the journal's
+	 * length then. Until it is read that far, the conversation is restoring.
+	 */
+	#restoringUntil = 0;
 	#turnstile: Promise<unknown> = Promise.resolve();
 
 	#cancel = new CancellationToken();
@@ -330,6 +345,7 @@ export class AgentConversation {
 			lost: this.#lost,
 			crashed: this.#crashed,
 			autoCompactAt: this.#cacheKeeper.dueAt(),
+			...(this.#offset < this.#restoringUntil ? { restoring: true } : {}),
 		};
 	}
 
@@ -933,6 +949,7 @@ export class AgentConversation {
 					);
 					if (this.#replay.length === 0)
 						await this.#write(this.#adapter.opening());
+					else this.#restoringUntil = (await this.#host.journalSize?.()) ?? 0;
 					this.#feedSentUpTo(this.#offset);
 					this.#attached = true;
 				});

@@ -1294,8 +1294,10 @@ export interface AgentObservation {
    */
   readonly promptCache?: PromptCache | undefined;
   /**
-   * The turn running is upkeep of the conversation, not work on its task
-   * (`isMaintenanceTurn`: a `/compact`); absent when it is not.
+   * The turn running is not work on its task: upkeep of the conversation
+   * (`isMaintenanceTurn`: a `/compact`, the CLI started again on its session)
+   * or the past read again after a restart of DevHub; absent when it is
+   * work.
    */
   readonly maintenance?: boolean;
   /** What DevHub is holding for this Agent, and why it has not gone yet. */
