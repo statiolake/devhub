@@ -186,7 +186,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   タイマーは 1 つにつき 1 件まで。同じ対象の別の話は同じ行に \`／ [type] …\` で続く
   (行頭の \`[type]\` が最新のもの)。
 - 届ける直前に、もう対応の要らないものは落とされる: 停滞でなくなったエスカレーション、
-  また作業中になったエージェントの turn_ended、回答済みの質問、クローズ済みの
+  また作業中 (working またはバックグラウンド実行中) になったエージェントの turn_ended、回答済みの質問、クローズ済みの
   エスカレーションへの回答、リセット済みの使用量枠の \`usage.threshold\`。前回届けたのと同じことは、その対象に変化がない限り再送されない。
 - 1 通は最大 50 行。超えた分は最後の行 \`…ほか N 件 (devhub --tell orchestrator events で確認)\`
   に数だけ出る (\`orchestrator events\` には畳まれた / 落とされたものも残る)。
@@ -248,16 +248,16 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 | GitHub | \`github.unattended\` | 自分にアサインされた open な Issue に、紐づく DevHub エージェントがいない (状態で判定。下記) | lane, URL |
 | GitHub | \`github.pr_opened\` | 自分の Issue に紐づく PR、または自分の PR ができた | ws, agent, URL |
 | GitHub | \`github.pr_ready\` | PR が draft から ready になった | ws, agent, URL |
-| GitHub | \`github.pr_approved\` / \`github.changes_requested\` | 自分の PR が承認された / 変更を要求された | ws, agent, URL |
-| GitHub | \`github.review_comment\` | 自分の PR に新しいレビューコメント / スレッド (件数) | ws, agent, URL |
+| GitHub | \`github.pr_approved\` / \`github.changes_requested\` | 自分の PR が他の人に承認された / 変更を要求された | ws, agent, URL |
+| GitHub | \`github.review_comment\` | 自分の PR に他の人の新しいレビューコメント / スレッド (件数は他の人の分だけ) | ws, agent, URL |
 | GitHub | \`github.review_requested\` | 他人の PR で自分にレビュー依頼 | URL |
-| GitHub | \`github.reply\` | 自分がレビューした PR に作者が返信 / コミット | URL |
+| GitHub | \`github.reply\` | 自分がレビューした PR に作者が返信 / コミット (自分の push は除く) | URL |
 | GitHub | \`github.checks\` | 自分の PR の CI が終わった (成功 / 失敗) | ws, agent, URL |
 | GitHub | \`github.pr_merged\` / \`github.pr_closed\` | PR がマージ / マージされずにクローズ | ws, agent, URL |
 | ワークスペース | \`workspace.issue_assigned\` | DevHub の Issue アサインでワークスペースとエージェントができた | ws, agent, URL |
 | ワークスペース | \`workspace.pr_linked\` | ワークスペースのブランチに PR ができた | ws, agent, URL |
 | ワークスペース | \`workspace.opened\` / \`workspace.closed\` / \`workspace.branch_changed\` | 開いた / 閉じた / ブランチが変わった (既定では来ない) | ws |
-| エージェント | \`agent.turn_ended\` | ターンが終わった (最後の発言の抜粋) | agent, ws, since |
+| エージェント | \`agent.turn_ended\` | 本当に終わった: idle になり、裏のバックグラウンドシェル / タスク / サブエージェントも残っていない (最後の発言の抜粋) | agent, ws, since |
 | エージェント | \`agent.asked\` | 質問 (AskUserQuestion) を出した (見出し) | agent, req |
 | エージェント | \`agent.permission_requested\` | 権限確認 (FYI。承認できるのは人だけ。既定では来ない) | agent, req |
 | エージェント | \`agent.started\` / \`agent.exited\` / \`agent.failed\` | 起動 (既定では来ない) / 終了 / 失敗 (理由つき) | agent, ws |
@@ -267,7 +267,9 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 
 GitHub は \`[orchestrator.github] projects\` の Project のうち自分に関係するもの
 (アサイン / 作者 / レビュー依頼) と、自分の Issue に紐づく PR だけを読む
-(DevHub は読むだけで、カードは動かさない)。1 tick 1 リクエストで、
+(DevHub は読むだけで、カードは動かさない)。**自分 (viewer) のレビュー・コメント・push は
+イベントにならない** (エージェントも同じ GitHub アカウントで書くので、自分の返信がこだましない):
+件数は他の人の分だけで、新しいのが自分の分だけなら何も来ない。1 tick 1 リクエストで、
 rate limit が減ると間隔が延び、少なくなると reset まで止まる。
 **ポーズ中は GitHub を一切ポーリングしない** (API を消費しない。最後の状態は保持)。
 resume ですぐ 1 回読み、ポーズ中の正味の変化 (途中の行き来は消える) を resume の
@@ -526,6 +528,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     escalation ask (要回答に戻る)、もう要らなければ escalation close。
 
     ## agent.turn_ended
+    (バックグラウンドのシェル / タスク / サブエージェントが全部終わって idle になったときだけ来る)
     agent read A --since <since=> で差分を読む → 次の作業を send / エスカレーション / stop。
 
     ## agent.asked

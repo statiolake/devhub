@@ -341,7 +341,8 @@ the orchestrator left out) is working — every one idle, waiting, stopped or
 gone, or it names none — and that has held for a grace
 (`STALLED_GRACE_MS`, a minute: the orchestrator's time to relay the answer
 and set an agent going). Working is status `working` or `background` (a
-background task runs for it) and not stopping; a maintenance turn
+background task runs for it; the rule `agent.turn_ended` goes by,
+`agentAtWork`) and not stopping; a maintenance turn
 (`isMaintenanceTurn`) is not work (`workStatus`, as everywhere). The stretch
 starts at the latest of: its last entry, the last moment one of its agents was
 seen working, the orchestrator's reading of the answer, and main's first
@@ -437,17 +438,17 @@ Code's auto mode may hold for permission even when writes are allowed.
 | `github.unattended`                               | an open Issue on a board, assigned to the viewer, has no live DevHub agent linked to it (a state, said on every poll and the baseline; see below)                                                                                     | `[github.unattended] #200「検索の改善」 lane=Todo — 自分にアサインされているがエージェントがいない https://…/issues/200`                                           |
 | `github.pr_opened`                                | a PR linked to the viewer's Issue, or by the viewer, appeared                                                                                                                                                                         | `[github.pr_opened] PR #130「ログイン修正」 — me が draft で作成 (#123) https://github.com/acme/app/pull/130`                                                      |
 | `github.pr_ready`                                 | a watched PR left draft                                                                                                                                                                                                               | `[github.pr_ready] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — ready for review になった https://…/pull/130`                                   |
-| `github.pr_approved` / `github.changes_requested` | the viewer's PR was approved / changes were requested                                                                                                                                                                                 | `[github.changes_requested] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 — bob が変更を要求 https://…/pull/130`                                             |
-| `github.review_comment`                           | new review comments or threads on the viewer's PR                                                                                                                                                                                     | `[github.review_comment] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — alice から新規2件 (未解決 2) https://…/pull/130`                          |
+| `github.pr_approved` / `github.changes_requested` | the viewer's PR was approved / changes were requested (by someone other than the viewer)                                                                                                                                              | `[github.changes_requested] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 — bob が変更を要求 https://…/pull/130`                                             |
+| `github.review_comment`                           | new review comments or threads on the viewer's PR, by others (never the viewer's own; counts are others' only)                                                                                                                        | `[github.review_comment] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — alice から新規2件 (未解決 2) https://…/pull/130`                          |
 | `github.review_requested`                         | the viewer's review was requested on a PR on the boards                                                                                                                                                                               | `[github.review_requested] PR #9「キャッシュ」 — carol からレビュー依頼 https://…/pull/9`                                                                          |
-| `github.reply`                                    | the author replied or pushed on a PR the viewer reviewed                                                                                                                                                                              | `[github.reply] PR #9「キャッシュ」 — carol が返信2件・新しいコミット https://…/pull/9`                                                                            |
+| `github.reply`                                    | the author replied or pushed on a PR the viewer reviewed (a push whose head commit is the viewer's is not said)                                                                                                                       | `[github.reply] PR #9「キャッシュ」 — carol が返信2件・新しいコミット https://…/pull/9`                                                                            |
 | `github.checks`                                   | the viewer's PR's CI finished                                                                                                                                                                                                         | `[github.checks] PR #130「ログイン修正」 ws=login-fix — CI 失敗 (2/5) https://…/pull/130`                                                                          |
 | `github.pr_merged` / `github.pr_closed`           | a watched PR was merged / closed unmerged                                                                                                                                                                                             | `[github.pr_merged] PR #130「ログイン修正」 ws=login-fix — マージされた https://…/pull/130`                                                                        |
 | `workspace.opened` / `workspace.closed`           | a Workspace opened / closed                                                                                                                                                                                                           | `[workspace.opened] ws=api — 開いた /src/api`                                                                                                                      |
 | `workspace.issue_assigned`                        | DevHub's Issue assignment made a Workspace and agent                                                                                                                                                                                  | `[workspace.issue_assigned] #123 ws=123-api agent=a1b2c3d4 (Claude) — DevHub で Issue をアサイン https://…/issues/123`                                             |
 | `workspace.branch_changed`                        | a Workspace's branch changed                                                                                                                                                                                                          | `[workspace.branch_changed] ws=login-fix 12-login → 13-other`                                                                                                      |
 | `workspace.pr_linked`                             | a PR appeared for a Workspace's branch                                                                                                                                                                                                | `[workspace.pr_linked] PR #130「ログイン修正」 ws=login-fix agent=a1b2c3d4 (API fix) — このブランチの PR https://…/pull/130`                                       |
-| `agent.turn_ended`                                | an agent's turn ended                                                                                                                                                                                                                 | `[agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」`                                                           |
+| `agent.turn_ended`                                | an agent is truly done: settled into `idle`, no background shell, task or subagent left running (`background` waits)                                                                                                                  | `[agent.turn_ended] agent=a1b2c3d4 (API fix) ws=login-fix since=e39 — 「テストを追加しました。残りは…」`                                                           |
 | `agent.asked`                                     | an agent asked a question (AskUserQuestion)                                                                                                                                                                                           | `[agent.asked] agent=c3d4e5f6 req=q7 — 「マイグレーションの順番」ほか1問`                                                                                          |
 | `agent.permission_requested`                      | an agent waits on a permission prompt (FYI: only the person approves)                                                                                                                                                                 | `[agent.permission_requested] agent=e5f6a7b8 req=p1 — 権限確認「rm -rf build」 (FYI: 承認できるのは人だけ)`                                                        |
 | `agent.started` / `agent.exited`                  | an agent started / is gone                                                                                                                                                                                                            | `[agent.exited] agent=a1b2c3d4 (API fix) ws=login-fix — 終了した`                                                                                                  |
@@ -494,9 +495,9 @@ bob が承認 ／ [github.pr_ready] ready for review になった https://…/pu
 - **Stale items are dropped before delivery.** Each pending item is re-read
   against live state when the message is rendered (`relevant`, in
   `orchestratorService.ts`) and dropped as `dropped-stale` if its subject no
-  longer needs attention: a `turn_ended` whose agent is working
-  again (someone has given it work; its output stays readable with `agent
-read`) or is gone; an `agent.asked` or `permission_requested` whose agent no
+  longer needs attention: a `turn_ended` whose agent is at work
+  again — `working` or `background` (its real end will be said; its output
+  stays readable with `agent read`) — or is gone; an `agent.asked` or `permission_requested` whose agent no
   longer waits on it; an `escalation_answered` or
   `escalation.human_direct` whose escalation is closed; an
   `escalation.stalled` whose stretch is over (an agent of it works again, a
@@ -577,7 +578,22 @@ remaining limit resetAt }`, a page of 100 items per board (item id,
     `nodes(ids:)` for the watched PRs (up to 30: state, isDraft,
     reviewDecision, latest reviews, the last 10 reviews and 5 comments with
     their totals, review threads and how many are unresolved, the head
-    commit's oid and checks rollup). Typically **2–6 points** a tick.
+    commit's oid, author and committer login, and checks rollup). Typically
+    **2–6 points** a tick.
+  - **The viewer's own activity is never an event.** The viewer's agents post
+    with the same GitHub identity, so a review, comment or push of theirs is
+    left out of `github.review_comment`, `github.pr_approved` /
+    `github.changes_requested` and `github.reply`: the counts (`新規2件`,
+    `返信2件`) are of others' activity only, and when only the viewer's is
+    new there is no event at all. The viewer's comment in the same tick as
+    someone else's neither hides it nor is said later (new is by time, the
+    viewer's left out after; a pending review counts once submitted). Review
+    threads carry no author in the query, so a new thread counts only in a
+    look with no review by the PR's author or the viewer (who could have
+    opened it); otherwise the count is others' `COMMENTED` reviews. A push is
+    the viewer's when the new head commit's author (else committer) login is
+    theirs — the pusher is not in the API, and only the head commit is read,
+    so a push of others' commits topped by one of the viewer's is not said.
   - A board bigger than a page is read a page a tick and diffed when the
     whole of it has been read.
   - **Interval**: starts at `interval` (default 90s, at least 30s) and only
@@ -639,8 +655,18 @@ status`) has the PR or Issue open, its Workspace and agent go on the
   window draws (the Sidebar's repository status included) while an
   orchestrator runs; the first projection is a baseline.
   `workspace.issue_assigned` is said by DevHub's Issue assignment itself.
-  `turn_ended` waits 1.5 s for the status to settle, and carries the id of
-  the message that began the turn as `since` and the start of the last reply.
+  `turn_ended` is said when the agent is **truly done**: armed once it is
+  seen at work — `working`, or `background` (its turn is over but a
+  background shell, task or subagent it started still runs) — and said when
+  it settles into `idle` for 1.5 s. `working → background → idle` and
+  `background → working → idle` are each one `turn_ended`, at the idle; an
+  agent that keeps something running in the background (a dev server) says
+  none until it stops. One rule (`agentAtWork` / `agentTurnDone` in
+  `model/domain.ts`) also decides the person's "Finished" notification
+  (`agentNotifications.ts`), the stale drop at delivery and
+  `escalation.stalled`. A maintenance turn neither arms nor ends one. It
+  carries the id of the message that began the turn as `since` and the start
+  of the last reply.
 - **Timers** (`timers.ts`): `[[orchestrator.timers]]` are the defaults;
   `orchestrator timer set NAME INTERVAL | clear NAME` changes them for the
   session, and a settings change moves the ones nobody set by hand.
