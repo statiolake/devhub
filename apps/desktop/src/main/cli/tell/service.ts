@@ -515,8 +515,40 @@ export interface TellOrchestratorPorts {
 	pause(): void;
 	/** How many held events went out. */
 	resume(): number;
+	/** The last `last` events, oldest first, each with what came of it. */
+	events(last: number): readonly TellEventEntry[];
+	/** A `custom.*` event, as any source dispatches one. */
+	emit(type: string, text: string): TellEventEntry;
+	timers(): readonly TellTimer[];
+	/** For this session; refused with the rule it breaks. */
+	setTimer(name: string, interval: string): TellTimer;
+	/** Off for this session; false when no such timer runs. */
+	clearTimer(name: string): boolean;
 	/** Show the Orchestrator screen: the one focus this family has. */
 	focus(): Promise<void>;
+}
+
+/** One event in the orchestrator's log (`orchestrator events`). */
+export interface TellEventEntry {
+	readonly seq: number;
+	/** ms since the epoch. */
+	readonly at: number;
+	readonly type: string;
+	/** delivered, pending, filtered, coalesced (into `into`), dropped, self. */
+	readonly fate: string;
+	/** What `{EVENT}` holds for it. */
+	readonly line: string;
+	readonly into?: number;
+	/** The event's fields, as `{EVENT_JSON}` carries them. */
+	readonly event: Record<string, unknown>;
+}
+
+export interface TellTimer {
+	readonly name: string;
+	readonly interval: string;
+	readonly source: "settings" | "session";
+	/** ms since the epoch. */
+	readonly nextAt: number;
 }
 
 /** Which Agent is asking, from its pane's `DEVHUB_ORIGIN`. */
@@ -972,8 +1004,40 @@ export class TellService {
 			case "orchestrator-resume": {
 				const delivered = this.ports.orchestrator.resume();
 				return {
-					message: `The orchestrator's events are delivered again${delivered === 0 ? "" : `; ${String(delivered)} held event(s) went out, in order`}.`,
+					message: `The orchestrator's events are delivered again${delivered === 0 ? "" : `; ${String(delivered)} held event(s) went out, in order, as one message`}.`,
 					data: { paused: false, delivered },
+				};
+			}
+			case "orchestrator-events":
+				return this.orchestratorEvents(command.last);
+			case "orchestrator-emit": {
+				const entry = this.ports.orchestrator.emit(command.type, command.text);
+				return {
+					message: `${entry.line}\n-- ${entry.fate}${entry.fate === "pending" ? ": it goes out with the next delivery" : ""}`,
+					data: entry,
+				};
+			}
+			case "orchestrator-timer-list":
+				return this.timerList();
+			case "orchestrator-timer-set": {
+				const timer = this.ports.orchestrator.setTimer(
+					command.name,
+					command.interval,
+				);
+				return {
+					message: `Timer ${timer.name} fires every ${timer.interval} for this session (next at ${new Date(timer.nextAt).toISOString()}).`,
+					data: timer,
+				};
+			}
+			case "orchestrator-timer-clear": {
+				const cleared = this.ports.orchestrator.clearTimer(command.name);
+				if (!cleared)
+					throw new Error(
+						`there is no timer ${command.name}. 'orchestrator timer list' lists them.`,
+					);
+				return {
+					message: `Timer ${command.name} is off for this session.`,
+					data: { name: command.name, cleared },
 				};
 			}
 		}
@@ -1204,6 +1268,38 @@ export class TellService {
 		};
 	}
 
+	private orchestratorEvents(last: number): TellAnswer {
+		const entries = this.ports.orchestrator.events(last);
+		return {
+			message:
+				entries.length === 0
+					? "No events yet."
+					: entries
+							.map(
+								(entry) =>
+									`${String(entry.seq).padStart(4)} ${new Date(entry.at).toISOString().slice(11, 19)} ${entry.fate.padEnd(9)} ${entry.line}${entry.into === undefined ? "" : ` (→ ${String(entry.into)})`}`,
+							)
+							.join("\n"),
+			data: { events: entries },
+		};
+	}
+
+	private timerList(): TellAnswer {
+		const timers = this.ports.orchestrator.timers();
+		return {
+			message:
+				timers.length === 0
+					? "No timers. 'orchestrator timer set NAME INTERVAL' starts one; [[orchestrator.timers]] are the defaults."
+					: timers
+							.map(
+								(timer) =>
+									`${timer.name}  every ${timer.interval}  (${timer.source})  next ${new Date(timer.nextAt).toISOString()}`,
+							)
+							.join("\n"),
+			data: { timers },
+		};
+	}
+
 	private orchestratorStatus(): TellAnswer {
 		const board = this.ports.orchestrator.board();
 		const agent =
@@ -1221,7 +1317,7 @@ export class TellService {
 					? "No orchestrator is running."
 					: `orchestrator: ${agent.name} (${agent.id}), ${agent.status}${agent.presentation === "gui" ? "" : ", terminal"}`,
 				`needs answer ${String(counts.needsAnswer)}, in progress ${String(counts.inProgress)}, unaccounted ${String(counts.unaccounted)}`,
-				`events: ${board.paused ? `paused (${String(board.held)} held)` : "delivered"}`,
+				`events: ${board.paused ? "paused" : "delivered"}${board.held > 0 ? ` (${String(board.held)} pending)` : ""}`,
 			].join("\n"),
 			data: {
 				agentId: agent?.id ?? null,

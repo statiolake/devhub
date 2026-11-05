@@ -9325,6 +9325,11 @@ export class AppController {
 					orchestrator().events.pause();
 				},
 				resume: () => orchestrator().events.resume(),
+				events: (last) => orchestrator().eventLog(last),
+				emit: (type, text) => orchestrator().emit(type, text),
+				timers: () => orchestrator().timers.list(),
+				setTimer: (name, interval) => orchestrator().timers.set(name, interval),
+				clearTimer: (name) => orchestrator().timers.clear(name),
 				// `focus orchestrator`: the one command here that takes the window.
 				focus: async () => {
 					await this.dispatchAwaiting(
@@ -10065,6 +10070,8 @@ export class AppController {
 		// folder is Scratch from now on; the old one stays as an ordinary row.
 		// Not caught here: a failure goes to the main process's root.
 		void this.scratch.settingsAccepted(config.scratch.daily);
+		// `[[orchestrator.timers]]` and `[orchestrator.github]` move with them.
+		this.orchestrator?.timers.sync();
 		this.applyChordLayout();
 		// Before the pages are told, because this one is not a message to a page:
 		// it changes what the OS appearance is for the whole process, and every

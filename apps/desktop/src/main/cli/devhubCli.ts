@@ -556,6 +556,7 @@ export function withStdinText(
 	const text = stdin.replace(/\n$/, "");
 	switch (command.verb) {
 		case "agent-send":
+		case "orchestrator-emit":
 			return command.text === STDIN_TEXT ? { ...command, text } : command;
 		case "agent-new":
 		case "issue-assign":
@@ -574,6 +575,7 @@ export function withStdinText(
 function readsStdin(command: TellCommand): boolean {
 	switch (command.verb) {
 		case "agent-send":
+		case "orchestrator-emit":
 			return command.text === STDIN_TEXT;
 		case "agent-new":
 		case "issue-assign":

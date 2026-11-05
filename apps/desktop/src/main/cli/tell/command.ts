@@ -273,7 +273,27 @@ export type TellCommand =
 	| { readonly verb: "orchestrator-restart" }
 	/** Hold the orchestrator's events; resume delivers them, in order. */
 	| { readonly verb: "orchestrator-pause" }
-	| { readonly verb: "orchestrator-resume" };
+	| { readonly verb: "orchestrator-resume" }
+	/** The recent events: delivered, pending, filtered, coalesced, dropped. */
+	| {
+			readonly verb: "orchestrator-events";
+			readonly last: number;
+			/** `--json` after the verb, as well as before it. */
+			readonly json?: true;
+	  }
+	/** A `custom.NAME` event, through the same filter and coalescing. */
+	| {
+			readonly verb: "orchestrator-emit";
+			readonly type: string;
+			readonly text: string;
+	  }
+	| { readonly verb: "orchestrator-timer-list" }
+	| {
+			readonly verb: "orchestrator-timer-set";
+			readonly name: string;
+			readonly interval: string;
+	  }
+	| { readonly verb: "orchestrator-timer-clear"; readonly name: string };
 
 export type TellVerb = TellCommand["verb"];
 
@@ -531,7 +551,17 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                                    its events are paused
   orchestrator stop | restart      Stop Agent / Restart Session on it
   orchestrator pause | resume      hold its events / deliver the held ones,
-                                   in order
+                                   in order, as one message
+  orchestrator events [--last <n>] the recent events, one line each, and what
+                                   came of them: delivered, pending, filtered,
+                                   coalesced, dropped (default 20; --json: data)
+  orchestrator emit --type custom.<name> --text <text>|-
+                                   send a custom event, through the same
+                                   filter and coalescing as DevHub's own
+  orchestrator timer list | set <name> <interval> | clear <name>
+                                   the timers (timer.elapsed); set and clear
+                                   last for this session, [[orchestrator.timers]]
+                                   are the defaults
 
 The few defaults left are fixed, never read from settings: agent read
 --last 20, agent wait --until any --timeout 300, sessions --limit 20, and
@@ -557,6 +587,11 @@ export function callerLabelProblem(label: string): string | undefined {
 		? undefined
 		: `--as takes a name: a letter or digit, then up to 63 letters, digits, '_', '.', '@' or '-'; not ${JSON.stringify(label)}.`;
 }
+
+/** `orchestrator events` without `--last`. */
+const DEFAULT_EVENTS_LAST = 20;
+/** The most `orchestrator events --last` shows: what the log keeps. */
+const EVENT_LOG_LIMIT = 200;
 
 /** A value read from stdin, standing in for a `-` where text was asked for. */
 export const STDIN_TEXT = "-";
@@ -696,10 +731,11 @@ export function parseTellArguments(argv: readonly string[]): TellParse {
 			}
 			break;
 		}
+		const command = parseVerb(args);
 		return {
 			kind: "tell",
-			command: parseVerb(args),
-			json,
+			command,
+			json: json || ("json" in command && command.json === true),
 			...(as === undefined ? {} : { as }),
 		};
 	} catch (error) {
@@ -1013,9 +1049,69 @@ function parseOrchestrator(
 		case "resume":
 			positionals(readFlags(rest, NO_FLAGS), []);
 			return { verb: `orchestrator-${sub}` };
+		case "events": {
+			const flags = readFlags(rest, {
+				values: ["--last"],
+				switches: ["--json"],
+			});
+			positionals(flags, []);
+			const last = one(flags, "--last");
+			return {
+				verb: "orchestrator-events",
+				last:
+					last === undefined
+						? DEFAULT_EVENTS_LAST
+						: count(last, "--last", 1, EVENT_LOG_LIMIT),
+				...(flags.switches.has("--json") ? { json: true as const } : {}),
+			};
+		}
+		case "emit": {
+			const flags = readFlags(rest, {
+				values: ["--type", "--text"],
+				switches: [],
+			});
+			positionals(flags, []);
+			const type = one(flags, "--type");
+			const text = one(flags, "--text");
+			if (type === undefined || text === undefined)
+				throw new Refusal(
+					"--type custom.NAME and --text <text>|- are required.",
+				);
+			if (!/^custom\.[a-z0-9][a-z0-9_-]{0,39}$/u.test(type))
+				throw new Refusal(
+					`--type is custom.NAME (lower-case letters, digits, - and _), not ${JSON.stringify(type)}.`,
+				);
+			if (text.trim().length === 0) throw new Refusal("--text is empty.");
+			return { verb: "orchestrator-emit", type, text };
+		}
+		case "timer": {
+			const [action, ...more] = rest;
+			switch (action) {
+				case "list":
+					positionals(readFlags(more, NO_FLAGS), []);
+					return { verb: "orchestrator-timer-list" };
+				case "set": {
+					const [name, interval] = positionals(readFlags(more, NO_FLAGS), [
+						"NAME",
+						"INTERVAL",
+					]);
+					return {
+						verb: "orchestrator-timer-set",
+						name: name!,
+						interval: interval!,
+					};
+				}
+				case "clear": {
+					const [name] = positionals(readFlags(more, NO_FLAGS), ["NAME"]);
+					return { verb: "orchestrator-timer-clear", name: name! };
+				}
+				default:
+					throw new Refusal("orchestrator timer takes: list, set, clear.");
+			}
+		}
 		default:
 			throw new Refusal(
-				"orchestrator takes: start, status, stop, restart, pause, resume.",
+				"orchestrator takes: start, status, stop, restart, pause, resume, events, emit, timer.",
 			);
 	}
 }
@@ -1750,6 +1846,27 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				id: integer(record["id"], "id", 1, 999_999_999),
 				agent: text(record, "agent"),
 			};
+		case "orchestrator-events":
+			return {
+				verb: "orchestrator-events",
+				last: integer(record["last"], "last", 1, EVENT_LOG_LIMIT),
+			};
+		case "orchestrator-emit":
+			return {
+				verb: "orchestrator-emit",
+				type: text(record, "type"),
+				text: text(record, "text"),
+			};
+		case "orchestrator-timer-list":
+			return { verb: "orchestrator-timer-list" };
+		case "orchestrator-timer-set":
+			return {
+				verb: "orchestrator-timer-set",
+				name: text(record, "name"),
+				interval: text(record, "interval"),
+			};
+		case "orchestrator-timer-clear":
+			return { verb: "orchestrator-timer-clear", name: text(record, "name") };
 		case "orchestrator-start":
 			return {
 				verb: "orchestrator-start",

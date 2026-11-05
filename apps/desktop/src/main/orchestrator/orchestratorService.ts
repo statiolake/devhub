@@ -34,10 +34,14 @@ import {
 import type { OrchestratorConfig } from "../../model/orchestratorSettings.js";
 import type { EscalationStore } from "./escalationStore.js";
 import {
+	customTypeProblem,
 	EventDispatcher,
+	eventJson,
 	workspaceToken,
+	type EventLogEntry,
 	type OrchestratorEvent,
 } from "./events.js";
+import { OrchestratorTimers } from "./timers.js";
 
 /** One agent as the service reads it off the projection. */
 export interface LiveAgent {
@@ -72,8 +76,21 @@ export interface OrchestratorServicePorts {
 /** How many closed escalations the board carries for its history. */
 const CLOSED_SHOWN = 30;
 
+/** One event in the log, as `orchestrator events` shows it. */
+export interface EventLogView {
+	readonly seq: number;
+	readonly at: number;
+	readonly type: string;
+	readonly fate: string;
+	readonly line: string;
+	readonly into?: number;
+	readonly event: Record<string, unknown>;
+}
+
 export class OrchestratorService {
 	readonly events: EventDispatcher;
+	/** `[[orchestrator.timers]]`, and `orchestrator timer` for this session. */
+	readonly timers: OrchestratorTimers;
 	readonly #idleSince = new Map<string, number>();
 	/** `agentId@idleSince`, once told: one event per stretch of idleness. */
 	readonly #told = new Set<string>();
@@ -96,9 +113,49 @@ export class OrchestratorService {
 			...(ports.log === undefined ? {} : { log: ports.log }),
 			...(ports.setTimer === undefined ? {} : { setTimer: ports.setTimer }),
 		});
+		this.timers = new OrchestratorTimers({
+			defaults: () => this.ports.settings().timers,
+			dispatch: (event) => {
+				this.events.dispatch(event);
+			},
+			now: () => this.#now(),
+			// Without a clock (tests) a timer is listed and never fires.
+			setTimer: ports.setTimer ?? (() => ({ cancel: () => undefined })),
+		});
+		this.timers.sync();
 		ports.store.onChange(() => {
 			this.publish();
 		});
+	}
+
+	// --- events ---------------------------------------------------------------
+
+	/** The last `last` events, oldest first, with what came of each. */
+	eventLog(last: number): readonly EventLogView[] {
+		return this.events.recent(last).map((entry) => this.#view(entry));
+	}
+
+	/** `orchestrator emit`: a `custom.*` event, like any source's. */
+	emit(type: string, text: string): EventLogView {
+		if (customTypeProblem(type))
+			throw new Error(
+				`--type is custom.NAME (lower-case letters, digits, - and _), not ${JSON.stringify(type)}.`,
+			);
+		return this.#view(
+			this.events.dispatch({ type: type as `custom.${string}`, text }),
+		);
+	}
+
+	#view(entry: EventLogEntry): EventLogView {
+		return {
+			seq: entry.seq,
+			at: entry.at,
+			type: entry.event.type,
+			fate: entry.fate,
+			line: this.events.line(entry.event),
+			...(entry.into === undefined ? {} : { into: entry.into }),
+			event: eventJson(entry.event),
+		};
 	}
 
 	#now(): number {
@@ -357,5 +414,6 @@ export class OrchestratorService {
 	dispose(): void {
 		this.#timer?.cancel();
 		this.events.dispose();
+		this.timers.stop();
 	}
 }

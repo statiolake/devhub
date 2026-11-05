@@ -260,6 +260,11 @@ class FakePorts implements TellPorts {
 			this.service.events.pause();
 		},
 		resume: () => this.service.events.resume(),
+		events: (last) => this.service.eventLog(last),
+		emit: (type, text) => this.service.emit(type, text),
+		timers: () => this.service.timers.list(),
+		setTimer: (name, interval) => this.service.timers.set(name, interval),
+		clearTimer: (name) => this.service.timers.clear(name),
 		focus: () => {
 			this.focusedOrchestrator = true;
 			return Promise.resolve();
@@ -3327,15 +3332,20 @@ describe("the Orchestrator row from the command line", () => {
 			[
 				"ask",
 				"board",
+				"clearTimer",
 				"close",
 				"configuredRoot",
+				"emit",
 				"escalations",
+				"events",
 				"focus",
 				"link",
 				"pause",
 				"raise",
 				"resume",
+				"setTimer",
 				"start",
+				"timers",
 			].sort(),
 		);
 		// Nothing a tell command can carry reaches a human entry.
@@ -3513,6 +3523,156 @@ describe("the Orchestrator row from the command line", () => {
 				(match) => match[1],
 			),
 		).toEqual(["1", "2"]);
+	});
+
+	it("lists recent events with what came of them, as lines or as data", async () => {
+		const { service, ports } = orchestrated();
+		ports.service.raise({ title: "決めて", markdown: "A?" });
+		ports.service.answer(1, "A");
+		// The default filter leaves agent.started out, and says so.
+		ports.service.events.dispatch({
+			type: "agent.started",
+			agent: { id: "aaaa1111-0000" },
+		});
+		const listed = await viaSocket(
+			service,
+			["orchestrator", "events", "--last", "2"],
+			coordinator,
+		);
+		expect(listed.message).toMatch(
+			/delivered +\[escalation_answered\] esc=1「決めて」/u,
+		);
+		expect(listed.message).toMatch(
+			/filtered +\[agent\.started\] agent=aaaa1111/u,
+		);
+		expect(listed.message).not.toContain("[init]");
+		const parsed = parseTellArguments(["orchestrator", "events", "--json"]);
+		expect(parsed).toMatchObject({
+			kind: "tell",
+			json: true,
+			command: { verb: "orchestrator-events", last: 20 },
+		});
+		const data = (
+			await viaSocket(service, ["orchestrator", "events"], coordinator)
+		).data as { events: { type: string; fate: string; event: unknown }[] };
+		expect(data.events.map((one) => [one.type, one.fate])).toEqual([
+			["init", "delivered"],
+			["escalation_answered", "delivered"],
+			["agent.started", "filtered"],
+		]);
+		expect(data.events[1]?.event).toMatchObject({
+			type: "escalation_answered",
+			escalationId: 1,
+		});
+		expect(
+			parseTellArguments(["orchestrator", "events", "--last", "0"]),
+		).toMatchObject({ kind: "invalid" });
+	});
+
+	it("emits custom events through the same filter and coalescing", async () => {
+		const { service, ports } = orchestrated();
+		ports.delivered = [];
+		await viaSocket(service, ["orchestrator", "pause"], undefined);
+		const emitted = await viaSocket(
+			service,
+			[
+				"orchestrator",
+				"emit",
+				"--type",
+				"custom.deploy",
+				"--text",
+				"staging OK",
+			],
+			undefined,
+		);
+		expect(emitted.message).toContain("[custom.deploy] — staging OK");
+		expect(emitted.data).toMatchObject({
+			fate: "pending",
+			type: "custom.deploy",
+		});
+		// The same again is the same line.
+		await viaSocket(
+			service,
+			[
+				"orchestrator",
+				"emit",
+				"--type",
+				"custom.deploy",
+				"--text",
+				"staging OK",
+			],
+			undefined,
+		);
+		expect(ports.service.events.held()).toHaveLength(1);
+		await viaSocket(service, ["orchestrator", "resume"], undefined);
+		expect(ports.delivered.map(([, text]) => text)).toEqual([
+			"このイベントが発生したのでハンドリングしてください。[custom.deploy] — staging OK",
+		]);
+		for (const bad of [
+			["orchestrator", "emit", "--type", "deploy", "--text", "x"],
+			["orchestrator", "emit", "--type", "custom.Deploy", "--text", "x"],
+			["orchestrator", "emit", "--type", "custom.deploy"],
+		])
+			expect(parseTellArguments(bad)).toMatchObject({ kind: "invalid" });
+		expect(
+			parseTellArguments([
+				"orchestrator",
+				"emit",
+				"--type",
+				"custom.x",
+				"--text",
+				"-",
+			]),
+		).toMatchObject({ command: { verb: "orchestrator-emit", text: "-" } });
+	});
+
+	it("lists, sets and clears timers for the session", async () => {
+		const { service } = orchestrated();
+		expect(
+			(await viaSocket(service, ["orchestrator", "timer", "list"], undefined))
+				.message,
+		).toMatch(/^No timers/u);
+		const set = await viaSocket(
+			service,
+			["orchestrator", "timer", "set", "sweep", "30m"],
+			undefined,
+		);
+		expect(set.data).toMatchObject({
+			name: "sweep",
+			interval: "30m",
+			source: "session",
+		});
+		expect(
+			(await viaSocket(service, ["orchestrator", "timer", "list"], undefined))
+				.data,
+		).toMatchObject({ timers: [{ name: "sweep", interval: "30m" }] });
+		await expect(
+			viaSocket(
+				service,
+				["orchestrator", "timer", "set", "x", "1s"],
+				undefined,
+			),
+		).rejects.toThrow(/at least 10s/u);
+		await viaSocket(
+			service,
+			["orchestrator", "timer", "clear", "sweep"],
+			undefined,
+		);
+		await expect(
+			viaSocket(
+				service,
+				["orchestrator", "timer", "clear", "sweep"],
+				undefined,
+			),
+		).rejects.toThrow(/there is no timer sweep/u);
+		expect(
+			parseTellArguments(["orchestrator", "timer", "set", "x"]),
+		).toMatchObject({ kind: "invalid" });
+		expect(parseTellArguments(["orchestrator", "timer", "stop"])).toMatchObject(
+			{
+				kind: "invalid",
+			},
+		);
 	});
 
 	it("focuses the Orchestrator screen only on 'focus orchestrator'", async () => {
