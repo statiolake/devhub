@@ -276,8 +276,8 @@ devhub --tell agent meta A [set KEY VALUE | unset KEY]      # an agent's own key
 devhub --tell issue actions                           # Issue actions: id, label, draft or send in the window, wording (and none)
 devhub --tell issue assign <url> --repo PATH --branch 123-fix-login-timeout|--root
               --profile P --gui|--tui --action ID|none --send|--draft
-              [--prompt TEXT|-] [--meta K=V]...                # Cmd+Q i
-devhub --tell issue assign <url> --repo PATH --branch NAME|--root --editor-only
+              [--name N] [--prompt TEXT|-] [--meta K=V]... [--offline]   # Cmd+Q i
+devhub --tell issue assign <url> --repo PATH --branch NAME|--root --editor-only [--offline]
 devhub --tell agent read A [--last N] [--since CURSOR] [--full]   # a GUI agent's transcript, with a cursor; long entries clipped and marked
 devhub --tell agent read A --entry ID                 # one entry, whole (moves no cursor)
 devhub --tell agent send A TEXT|-                     # held until its turn ends, like the composer
@@ -312,7 +312,13 @@ print the handle (`tmux` binary, `-S` socket, session, pane) an agent drives it 
 sheet does, with every answer given: the clone (`--repo`), a worktree of
 `--branch` or the clone itself (`--root`; with `--branch`, switched to it),
 the profile and its mode, the Issue action (or `none`) and whether its
-wording is drafted or sent.
+wording is drafted or sent. `--name` names the agent from the start, as
+`agent new --name` and the sheet's 名前 field do (left out: DevHub's label).
+Both fetch `origin` once, first — before the Issue's branch is looked for,
+a pull request's head is found or a new branch's base is chosen — and every
+later step reads what that fetch left. A fetch that fails stops the
+assignment with git's reason; the sheet then offers the copy on this
+machine, and the command line takes it only with `--offline`.
 
 **No defaults on the command line.** A `--tell` command that starts or
 creates something takes every choice as a required argument — `agent new`:

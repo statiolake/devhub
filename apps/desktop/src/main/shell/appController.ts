@@ -513,11 +513,11 @@ import {
 	ensureWorktree,
 	listBranchCandidates,
 	repositoryName,
-	switchRootBranch,
 	issueBranchPlan,
 	fetchBranchFrom,
+	fetchOriginFirst,
 	findBranch,
-	refreshOrigin,
+	prepareIssueCheckout,
 	remoteForRepository,
 	listBranches,
 	workspaceFailure,
@@ -586,6 +586,7 @@ import { launcherScript } from "../cli/install.js";
 import { launchCommandFor } from "../cli/launch.js";
 import type { TellCommand } from "../cli/tell/command.js";
 import {
+	callerKey,
 	tellCaller,
 	tellReview,
 	TellMemory,
@@ -9593,13 +9594,30 @@ export class AppController {
 				return { cancel: () => clearTimeout(timer) };
 			},
 			log: (line) => console.log(line),
-			// `since=` of `escalation.human_direct`: the person's last message.
-			personCursor: async (agentId) => {
+			// `escalation.human_direct`: the person's last message, its `since=`
+			// and its words.
+			personMessage: async (agentId) => {
 				const conversation = await this.tellPorts().conversation(agentId);
-				return conversation
+				const last = conversation
 					?.entries()
-					.findLast((one) => one.kind === "user" && one.origin === "person")
-					?.id;
+					.findLast((one) => one.kind === "user" && one.origin === "person");
+				return last?.kind === "user"
+					? { since: last.id, text: last.text }
+					: undefined;
+			},
+			// An answer delivered in its event is read: `agent wait --any`
+			// (the orchestrator's `TellMemory`) stops reporting it.
+			acknowledged: (agentId, id, entries) => {
+				const reader = callerKey({
+					machine: "",
+					agentId,
+					workspaceId: undefined,
+				});
+				this.tellMemory.markEscalation(
+					reader,
+					id,
+					Math.max(this.tellMemory.escalationSeen(reader, id) ?? 0, entries),
+				);
 			},
 		});
 		this.syncOrchestrator();
@@ -10713,6 +10731,7 @@ export class AppController {
 	private async assignIssueFromCli(request: IssueAssignRequest): Promise<{
 		readonly workspaceId: string;
 		readonly agentId: string | undefined;
+		readonly origin: "fetched" | "on-disk" | undefined;
 	}> {
 		// Everything is named (`tell/service.ts` refuses a call that leaves a
 		// choice open): no clone is searched for, no branch derived, no profile,
@@ -10723,18 +10742,23 @@ export class AppController {
 		if (!item)
 			throw new Error("That is not a GitHub Issue or pull request URL.");
 		const clone: WorkspacePlaceWire = { kind: "local", path: request.repo };
-		const folder = await this.prepareIssueFolder({
+		// `origin` is fetched once, first, inside: a fetch that fails stops
+		// here with git's reason unless `--offline` said to go on from the copy
+		// on disk — the window's "Start from the copy on this machine".
+		const { place: folder, origin } = await this.issueFolder({
 			issueUrl: request.url,
 			place: clone,
 			...(request.branch === undefined
 				? {}
 				: { branch: request.branch, inRoot: request.place === "root" }),
+			...(request.offline ? { allowStaleBase: true } : {}),
 		});
 		if (request.editorOnly) {
 			// The folder in the Sidebar, as `workspace open` puts it there.
 			return {
 				workspaceId: await this.openFolderUnfocused(requestedLocation(folder)),
 				agentId: undefined,
+				origin,
 			};
 		}
 		const profile = config.agentProfiles.find(
@@ -10768,6 +10792,7 @@ export class AppController {
 				...(action === undefined ? {} : { actionId: action.id }),
 				split: false,
 				presentation: request.presentation,
+				...(request.name === undefined ? {} : { name: request.name }),
 			},
 			{
 				...(request.start === undefined ? {} : { start: request.start }),
@@ -10783,6 +10808,7 @@ export class AppController {
 				agent?.workspaceId ??
 				(await this.openFolderUnfocused(requestedLocation(folder))),
 			agentId: agent?.id,
+			origin,
 		};
 	}
 
@@ -11087,37 +11113,50 @@ export class AppController {
 	private async prepareIssueFolder(
 		request: IssueFolderRequest,
 	): Promise<WorkspacePlaceWire> {
+		return (await this.issueFolder(request)).place;
+	}
+
+	/**
+	 * `prepareIssueFolder`, with what became of the fetch: the command line
+	 * says when it went on from the copy on disk.
+	 *
+	 * `origin` is fetched once, first, before anything is decided about the
+	 * branch (`prepareIssueCheckout`) — unless the window's flow already did
+	 * and hands the result in, which is then all there is. The clone as it
+	 * stands asks nothing of the remote, so it fetches nothing.
+	 */
+	private async issueFolder(request: IssueFolderRequest): Promise<{
+		readonly place: WorkspacePlaceWire;
+		readonly origin: "fetched" | "on-disk" | undefined;
+	}> {
 		const item = parseGitHubItemUrl(request.issueUrl);
 		if (!item) {
 			throw workspaceFailure("That is not a GitHub Issue or pull request URL.");
 		}
 		const place = request.place;
-		const location = workspaceLocation(place);
-		const target = !request.branch
-			? place.path
-			: request.inRoot === true
-				? await switchRootBranch(
-						await this.gitCommand(runtimeFor(location)),
-						place.path,
-						item,
-						request.branch,
-						{ allowStaleBase: request.allowStaleBase },
-					)
-				: await ensureWorktree(
-						await this.gitCommand(runtimeFor(location)),
-						place.path,
-						// Which work this is — an Issue, or a pull request whose branch
-						// already exists — follows from the URL rather than from a second
-						// field beside it, because two facts saying the same thing can
-						// disagree. It also names the folder (`worktreeDirectory`).
-						item,
-						request.branch,
-						{ allowStaleBase: request.allowStaleBase },
-					);
+		if (!request.branch) return { place, origin: request.origin };
+		const checkout = await prepareIssueCheckout(
+			await this.gitCommand(runtimeFor(workspaceLocation(place))),
+			place.path,
+			// Which work this is — an Issue, or a pull request whose branch
+			// already exists — follows from the URL rather than from a second
+			// field beside it, because two facts saying the same thing can
+			// disagree. It also names the folder (`worktreeDirectory`).
+			item,
+			request.branch,
+			{
+				inRoot: request.inRoot === true,
+				allowStaleBase: request.allowStaleBase,
+				origin: request.origin,
+			},
+		);
 		// A worktree of a repository on a host is beside it, on that host: git
 		// made it there, and there is nowhere else it could be. So the place the
 		// flow was working in decides the machine, and only the path moves.
-		return { ...place, path: target };
+		return {
+			place: { ...place, path: checkout.path },
+			origin: checkout.origin,
+		};
 	}
 
 	/**
@@ -11182,11 +11221,24 @@ export class AppController {
 				: { resume: sessionId(request.resume) }),
 			...(quiet ? { focus: "none" as const } : {}),
 		});
+		const started = (): Agent | undefined =>
+			this.coordinator.model.workspaces
+				.find((workspace) => workspace.id === workspaceId)
+				?.agents.find((agent) => !agentsBefore.has(agent.id));
+		// The name the person gave it, as Rename… gives one: kept with its
+		// session, shown wherever a given name is — and given before the
+		// orchestrator hears of the agent, so it hears it by that name.
+		const name = request.name?.trim();
+		const named = started();
+		if (name !== undefined && name.length > 0 && named !== undefined)
+			await this.dispatchAwaiting({
+				type: "rename_agent",
+				agentId: named.id,
+				displayName: name,
+			});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId, how);
 		// DevHub's own Issue assignment, said to the orchestrator.
-		const assigned = this.coordinator.model.workspaces
-			.find((workspace) => workspace.id === workspaceId)
-			?.agents.find((agent) => !agentsBefore.has(agent.id));
+		const assigned = started();
 		const opened = this.coordinator
 			.snapshot()
 			.workspaces.find((workspace) => workspace.id === workspaceId);
@@ -11223,13 +11275,13 @@ export class AppController {
 	 * this checkout can have it: is there a remote it can be fetched from, is it
 	 * here already, and is it already checked out somewhere.
 	 *
-	 * Everything is best effort except the asking. A fetch that fails narrows
-	 * what can be offered and is not reported here, because this runs while
-	 * somebody is being asked a question and a network that is down is not an
-	 * answer to it; the fetch that has to succeed happens when the worktree is
-	 * made, where its failure is shown and answered. What is *not* softened is
-	 * GitHub refusing to talk at all — no token, no such pull request — because
-	 * then the flow is offering choices about something it never read.
+	 * `origin` is not fetched here: the flow fetched it once, first
+	 * (`fetchForAssignment`), and its refs are what this reads — a pull
+	 * request's head, an Issue's linked branch, a branch named for the Issue.
+	 * Only a fork's remote is fetched, best effort, for a pull request out of
+	 * one. What is *not* softened is GitHub refusing to talk at all — no token,
+	 * no such pull request — because then the flow is offering choices about
+	 * something it never read.
 	 */
 	private async assignmentBranch(
 		url: string,
@@ -11269,7 +11321,8 @@ export class AppController {
 						head.owner,
 						head.repository,
 					);
-			if (remote)
+			// `origin` was fetched as the flow began; a fork's copy was not.
+			if (remote !== undefined && remote !== "origin")
 				await fetchBranchFrom(git, directory, remote, head.branch, cancel);
 			const whereabouts = await this.branchWhereabouts(
 				git,
@@ -11277,30 +11330,36 @@ export class AppController {
 				head.branch,
 				sameRepository ? undefined : `${head.owner}/${head.repository}`,
 			);
-			return head.state === undefined
-				? whereabouts
-				: { ...whereabouts, pullRequestState: head.state };
+			return {
+				...whereabouts,
+				...(head.state === undefined ? {} : { pullRequestState: head.state }),
+				...(head.title === undefined ? {} : { title: head.title }),
+			};
 		}
 		// GitHub's own record first — the branch its Create a branch button made
 		// — and only then the convention, which is a guess about a name and is
 		// consulted exactly because most Issues have no record to read.
 		const linked = await readIssueLinkedBranch(item, credentials.token);
-		// Fetched before either answer is looked for, the linked one included:
-		// a branch GitHub's button made a minute ago is on `origin` and not yet
-		// in this clone's refs.
-		await refreshOrigin(git, directory, cancel);
+		// Both answers are looked for in refs the flow's first fetch brought up
+		// to date, the linked one included: a branch GitHub's button made a
+		// minute ago is on `origin`, and now in this clone's refs too.
+		const titled = linked.title === undefined ? {} : { title: linked.title };
 		const branch =
-			linked ?? (await this.branchNamedFor(git, directory, item, cancel));
-		if (branch === undefined) return { reachable: false };
+			linked.branch ??
+			(await this.branchNamedFor(git, directory, item, cancel));
+		if (branch === undefined) return { reachable: false, ...titled };
 		// An Issue's branch that this clone cannot reach is no branch at all for
 		// this question: a link to one that was deleted, or that lives in some
 		// other copy, or a name nobody pushed. Unlike a pull request's head it is
 		// nobody's work to protect, so the Issue is offered as not started — and
 		// the new branch is made from the default branch — rather than offered
 		// a branch that `git worktree add` can never check out.
-		return issueBranchPlan(
-			await this.branchWhereabouts(git, directory, branch, undefined),
-		);
+		return {
+			...issueBranchPlan(
+				await this.branchWhereabouts(git, directory, branch, undefined),
+			),
+			...titled,
+		};
 	}
 
 	/**
@@ -11616,6 +11675,33 @@ export class AppController {
 				this.boundedLookup(`the branch for ${url}`, (cancel) =>
 					this.assignmentBranch(url, place, cancel),
 				),
+		);
+		// The fetch an assignment begins with: once, before the branch is asked
+		// about, and not under the lookup deadline — it is the one network step
+		// that has to finish, and it gets git's own timeout. Escape still stops
+		// it (`cancelPickerLookup`). A failure is `git_fetch_failed` with git's
+		// reason, which the sheet turns into "use the copy on this machine".
+		handle(
+			CHANNELS.fetchForAssignment,
+			async (_event, place: WorkspacePlaceWire) => {
+				this.pickerLookup?.cancel();
+				const cancel = new CancellationToken();
+				this.pickerLookup = cancel;
+				try {
+					return await fetchOriginFirst(
+						await this.gitCommand(runtimeFor(workspaceLocation(place))),
+						place.path,
+						{},
+						cancel,
+					);
+				} catch (error: unknown) {
+					if (cancel.isCancelled)
+						throw namedFailure(workspaceFailure("The fetch was cancelled."));
+					throw namedFailure(error);
+				} finally {
+					if (this.pickerLookup === cancel) this.pickerLookup = undefined;
+				}
+			},
 		);
 		// A refusal travels the way every other one does — as the structured
 		// error inside the message — so the sheet that asked shows the sentence

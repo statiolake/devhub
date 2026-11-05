@@ -278,6 +278,13 @@ export interface IssueAssignRequest {
 	readonly action: string | undefined;
 	readonly editorOnly: boolean;
 	readonly presentation: "gui" | "tui" | undefined;
+	/** The agent's name from the start, as `agent new --name`; absent: DevHub's label. */
+	readonly name?: string;
+	/**
+	 * `--offline`: when the fetch `origin` gets first fails, go on from the
+	 * copy on disk rather than stop. Without it a failed fetch is the answer.
+	 */
+	readonly offline: boolean;
 }
 
 /**
@@ -420,6 +427,12 @@ export interface TellPorts {
 	assignIssue(request: IssueAssignRequest): Promise<{
 		readonly workspaceId: string;
 		readonly agentId: string | undefined;
+		/**
+		 * What became of the fetch `origin` got first: `on-disk` when it failed
+		 * and `--offline` went on anyway (or there is no `origin`); absent when
+		 * nothing was fetched — the clone as it stands.
+		 */
+		readonly origin?: "fetched" | "on-disk";
 	}>;
 	/** A GUI Agent's conversation; undefined for a terminal Agent. */
 	conversation(agentId: string): Promise<TellConversation | undefined>;
@@ -2175,6 +2188,7 @@ export class TellService {
 				command.start === undefined ? undefined : "--send/--draft",
 				command.meta === undefined ? undefined : "--meta",
 				command.prompt === undefined ? undefined : "--prompt",
+				command.name === undefined ? undefined : "--name",
 			].filter((flag) => flag !== undefined);
 			if (extra.length > 0)
 				missing.push(
@@ -2206,6 +2220,8 @@ export class TellService {
 					`--send/--draft is about the action's wording, and --action ${NO_ACTION} has none`,
 				);
 		}
+		if (command.name !== undefined && command.name.trim().length === 0)
+			missing.push("--name needs a name: leave it out for DevHub's own label");
 		refuseMissing(missing);
 		const assigned = await this.ports.assignIssue({
 			url: command.url,
@@ -2217,6 +2233,8 @@ export class TellService {
 			editorOnly: command.editorOnly,
 			presentation: command.presentation,
 			start: action === undefined ? undefined : command.start,
+			...(command.name === undefined ? {} : { name: command.name.trim() }),
+			offline: command.offline === true,
 		});
 		if (assigned.agentId !== undefined)
 			await this.tag(assigned.agentId, command.meta);
@@ -2225,11 +2243,17 @@ export class TellService {
 		const workspace = this.ports
 			.workspaces()
 			.find((each) => each.id === assigned.workspaceId);
+		// Said, because it is the one thing about the branch that may be old.
+		const stale =
+			command.offline === true && assigned.origin === "on-disk"
+				? " origin was not fetched: the branch was found and started from the copy on this machine."
+				: "";
 		return {
 			message:
-				assigned.agentId === undefined
+				(assigned.agentId === undefined
 					? `Opened ${workspace?.root ?? "the workspace"} for ${command.url}.`
-					: `Agent ${assigned.agentId} is taking ${command.url} in ${workspace?.root ?? "its workspace"}.`,
+					: `Agent ${assigned.agentId}${command.name === undefined ? "" : ` (${command.name.trim()})`} is taking ${command.url} in ${workspace?.root ?? "its workspace"}.`) +
+				stale,
 			data: { ...assigned, root: workspace?.root },
 		};
 	}

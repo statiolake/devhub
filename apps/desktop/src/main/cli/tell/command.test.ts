@@ -173,6 +173,29 @@ describe("devhub --tell's arguments", () => {
 		);
 	});
 
+	it("reads issue assign's --name and --offline", () => {
+		expect(
+			told(
+				"issue",
+				"assign",
+				"u",
+				"--branch",
+				"b",
+				"--name",
+				"login fix",
+				"--offline",
+			),
+		).toEqual({
+			verb: "issue-assign",
+			url: "u",
+			branch: "b",
+			name: "login fix",
+			offline: true,
+			place: "worktree",
+			editorOnly: false,
+		});
+	});
+
 	it("reads the per-agent subcommands", () => {
 		expect(told("agent", "read", "a1", "--last", "5", "--since", "e9")).toEqual(
 			{ verb: "agent-read", agent: "a1", last: 5, since: "e9" },
@@ -276,6 +299,16 @@ describe("a tell command off the socket", () => {
 				branch: "b",
 				place: "root",
 				editorOnly: false,
+			},
+			{
+				verb: "issue-assign",
+				url: "u",
+				repo: "/r",
+				branch: "b",
+				place: "worktree",
+				editorOnly: false,
+				name: "login fix",
+				offline: true,
 			},
 			{ verb: "agent-read", agent: "a", last: 3, since: "e" },
 			{ verb: "agent-send", agent: "a", text: "t" },

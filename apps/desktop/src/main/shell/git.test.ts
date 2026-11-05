@@ -9,6 +9,7 @@
  */
 
 import {
+	chmod,
 	mkdtemp,
 	mkdir,
 	readFile,
@@ -24,7 +25,9 @@ import { NamedFailure } from "../../model/wire.js";
 import { localRuntime } from "../runtime/registry.js";
 import {
 	ensureWorktree,
+	fetchOriginFirst,
 	findBranch,
+	prepareIssueCheckout,
 	issueBranchPlan,
 	switchRootBranch,
 	gitSupportsRelativeWorktrees,
@@ -983,5 +986,167 @@ describe("a branch in the root checkout", () => {
 		await expect(
 			switchRootBranch(command, repository, ISSUE_128, "feature/128-wip"),
 		).rejects.toThrow(/already checked out in/u);
+	});
+});
+
+describe("an assignment's fetch: once, first", () => {
+	/**
+	 * A git that writes down every command it is given, in order, and then
+	 * runs the real one — or, told to, fails `fetch` the way an unreachable
+	 * remote does, without running it.
+	 */
+	async function recordingGit(failFetch = false): Promise<{
+		readonly command: GitCommand;
+		readonly log: () => Promise<readonly string[]>;
+	}> {
+		const script = join(parent, "recording-git");
+		const record = join(parent, "git-commands.log");
+		await writeFile(record, "");
+		await writeFile(
+			script,
+			[
+				"#!/bin/sh",
+				'printf "%s\\n" "$*" >> "$DEVHUB_GIT_LOG"',
+				failFetch
+					? 'if [ "$1" = fetch ]; then echo "fatal: Could not read from remote repository." >&2; exit 128; fi'
+					: "",
+				'exec git "$@"',
+				"",
+			].join("\n"),
+		);
+		await chmod(script, 0o755);
+		return {
+			command: {
+				...command,
+				git: script,
+				environment: { ...command.environment, DEVHUB_GIT_LOG: record },
+			},
+			log: async () =>
+				(await readFile(record, "utf8"))
+					.split("\n")
+					.filter((line) => line.length > 0),
+		};
+	}
+
+	const fetches = (log: readonly string[]) =>
+		log.filter((line) => line.startsWith("fetch"));
+	/** The first time the branch's existence is read (`findBranch`). */
+	const firstBranchCheck = (log: readonly string[]) =>
+		log.findIndex((line) => line.startsWith("for-each-ref"));
+
+	it("fetches origin once, before the Issue's branch is looked for or started", async () => {
+		await masterOrigin();
+		const git = await recordingGit();
+		const made = await prepareIssueCheckout(
+			git.command,
+			repository,
+			ISSUE_128,
+			"feature/128-wip",
+		);
+		expect(made.origin).toBe("fetched");
+		const log = await git.log();
+		expect(fetches(log)).toEqual(["fetch origin"]);
+		const fetched = log.indexOf("fetch origin");
+		expect(firstBranchCheck(log)).toBeGreaterThan(fetched);
+		// Which branch to start from is asked after it too, of the remote that
+		// was just fetched.
+		expect(log.indexOf("remote show origin")).toBeGreaterThan(fetched);
+		expect(
+			log.findIndex((line) => line.startsWith("worktree add")),
+		).toBeGreaterThan(fetched);
+	});
+
+	it("fetches once for a pull request's branch, before it is looked for", async () => {
+		await masterOrigin();
+		await runGit(command, ["push", "origin", "master:patch-1"], {
+			cwd: repository,
+		});
+		const git = await recordingGit();
+		await prepareIssueCheckout(
+			git.command,
+			repository,
+			PULL_REQUEST,
+			"patch-1",
+		);
+		const log = await git.log();
+		expect(fetches(log)).toEqual(["fetch origin"]);
+		expect(firstBranchCheck(log)).toBeGreaterThan(log.indexOf("fetch origin"));
+	});
+
+	it("fetches once for a new branch in the root checkout", async () => {
+		await masterOrigin();
+		const git = await recordingGit();
+		await prepareIssueCheckout(
+			git.command,
+			repository,
+			ISSUE_128,
+			"feature/128-wip",
+			{ inRoot: true },
+		);
+		const log = await git.log();
+		expect(fetches(log)).toEqual(["fetch origin"]);
+		expect(firstBranchCheck(log)).toBeGreaterThan(log.indexOf("fetch origin"));
+	});
+
+	it("does not fetch again when the flow already did", async () => {
+		await masterOrigin();
+		const git = await recordingGit();
+		expect(await fetchOriginFirst(git.command, repository)).toBe("fetched");
+		await prepareIssueCheckout(
+			git.command,
+			repository,
+			ISSUE_128,
+			"feature/128-wip",
+			{ origin: "fetched" },
+		);
+		expect(fetches(await git.log())).toEqual(["fetch origin"]);
+	});
+
+	it("stops on a fetch that failed, with git's reason, before any branch is read", async () => {
+		await masterOrigin();
+		const git = await recordingGit(true);
+		const failed = await prepareIssueCheckout(
+			git.command,
+			repository,
+			ISSUE_128,
+			"feature/128-wip",
+		).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(failed).toBeInstanceOf(NamedFailure);
+		expect((failed as NamedFailure).wire).toMatchObject({
+			code: "git_fetch_failed",
+			summary: expect.stringContaining(
+				"Could not read from remote repository.",
+			) as string,
+		});
+		const log = await git.log();
+		expect(fetches(log)).toEqual(["fetch origin"]);
+		expect(firstBranchCheck(log)).toBe(-1);
+		expect(log.some((line) => line.startsWith("worktree add"))).toBe(false);
+	});
+
+	it("goes on from the copy on disk only when told to, asking the network nothing more", async () => {
+		await masterOrigin();
+		const git = await recordingGit(true);
+		const made = await prepareIssueCheckout(
+			git.command,
+			repository,
+			ISSUE_128,
+			"feature/128-wip",
+			{ allowStaleBase: true },
+		);
+		expect(made.origin).toBe("on-disk");
+		const log = await git.log();
+		expect(fetches(log)).toEqual(["fetch origin"]);
+		expect(log).not.toContain("remote show origin");
+		const head = await runGit(command, ["rev-parse", "HEAD"], {
+			cwd: made.path,
+		});
+		const master = await runGit(command, ["rev-parse", "origin/master"], {
+			cwd: repository,
+		});
+		expect(head.trim()).toBe(master.trim());
 	});
 });

@@ -147,6 +147,13 @@ export type TellCommand =
 			/** The action's wording drafted or sent, for this call (`ActionStart`). */
 			readonly start?: "draft" | "send";
 			readonly meta?: readonly AgentMetaPair[];
+			/** The agent's name from the start, as `agent new --name`. */
+			readonly name?: string;
+			/**
+			 * `--offline`: a failed fetch of `origin` is gone past, from the copy
+			 * on disk. Absent: a failed fetch stops the assignment.
+			 */
+			readonly offline?: boolean;
 	  }
 	| {
 			readonly verb: "agent-read";
@@ -591,8 +598,10 @@ issues
                                    it, and its wording
   issue assign <url> --repo <path> --branch <name>|--root
                --profile <p> --gui|--tui --action <id>|none --send|--draft
-               [--prompt <text>|-] [--meta KEY=VALUE]...  (all but [] required)
+               [--name <n>] [--prompt <text>|-] [--meta KEY=VALUE]...
+               [--offline]                           (all but [] required)
   issue assign <url> --repo <path> --branch <name>|--root --editor-only
+               [--offline]
                                    hand an Issue or pull request to a new
                                    agent (Cmd+Q i): in the clone at --repo, in
                                    a worktree of --branch (made if need be;
@@ -604,7 +613,14 @@ issues
                                    wording into its input box unsent, --send
                                    sends it as its first message (no review
                                    sheet). --editor-only opens the editor and
-                                   starts no agent
+                                   starts no agent. --name gives the agent
+                                   its name from the start, as 'agent new
+                                   --name' (default: DevHub's label).
+                                   With --branch, origin is fetched once,
+                                   first, before the branch is looked for or
+                                   started; a failed fetch stops with git's
+                                   reason, unless --offline: then the copy on
+                                   this machine is used, and the answer says so
 
 terminal (your own: one per agent, beside your pane; hidden with the editor alone)
   terminal open [--command <cmd>] [--focus]
@@ -1078,6 +1094,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 					"--prompt",
 					"--prompt-extra",
 					"--meta",
+					"--name",
 				],
 				switches: [
 					"--root",
@@ -1087,6 +1104,7 @@ function parseVerb(args: readonly string[]): TellCommand {
 					"--tui",
 					"--send",
 					"--draft",
+					"--offline",
 				],
 			});
 			const [url] = positionals(flags, ["<url>"]);
@@ -1102,12 +1120,14 @@ function parseVerb(args: readonly string[]): TellCommand {
 				presentation: presentation(flags),
 				start: start(flags),
 				meta: metaPairs(flags),
+				name: one(flags, "--name"),
 			};
 			return {
 				verb: "issue-assign",
 				url: url!,
 				place: flags.switches.has("--root") ? "root" : "worktree",
 				editorOnly: flags.switches.has("--editor-only"),
+				...(flags.switches.has("--offline") ? { offline: true } : {}),
 				...defined(optional),
 			};
 		}
@@ -2110,6 +2130,14 @@ export function tellCommandFrom(value: unknown): TellCommand {
 				...optionalPresentation(record),
 				...optionalStart(record),
 				...optionalMeta(record),
+				...optionalText(record, "name"),
+				...(record["offline"] === undefined
+					? {}
+					: record["offline"] === true
+						? { offline: true }
+						: (() => {
+								throw new Error("a tell command's offline must be true");
+							})()),
 			};
 		}
 		case "agent-read":

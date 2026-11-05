@@ -3320,6 +3320,86 @@ describe("no --tell call opens a picker", () => {
 		expect(ports.calls).toHaveLength(1);
 	});
 
+	it("gives the agent its --name at creation, and refuses it with --editor-only", async () => {
+		const { service, ports } = setup();
+		const answer = await viaSocket(
+			service,
+			[...FULL_ASSIGN, "--name", "  login fix  "],
+			coordinator,
+		);
+		const assigned = JSON.parse(
+			ports.calls[0]!.slice("assign ".length),
+		) as IssueAssignRequest;
+		// Handed to the assignment itself, which names the agent as it starts —
+		// not a rename afterwards from here.
+		expect(assigned).toMatchObject({ name: "login fix", offline: false });
+		expect(ports.calls.some((call) => call.startsWith("rename "))).toBe(false);
+		expect(answer.message).toContain("Agent issue-agent (login fix) is taking");
+		// Optional: without it, nothing is named and no default is read.
+		ports.calls = [];
+		await viaSocket(service, FULL_ASSIGN, coordinator);
+		expect(ports.calls[0]).not.toContain('"name"');
+		ports.calls = [];
+		await expect(
+			viaSocket(service, [...FULL_ASSIGN, "--name", "  "], coordinator),
+		).rejects.toThrow("--name needs a name");
+		await expect(
+			viaSocket(
+				service,
+				[
+					"issue",
+					"assign",
+					"https://github.com/o/r/issues/7",
+					"--repo",
+					"/src/r",
+					"--root",
+					"--editor-only",
+					"--name",
+					"x",
+				],
+				coordinator,
+			),
+		).rejects.toThrow(
+			"--name is about the agent, and --editor-only starts none",
+		);
+		expect(ports.calls).toEqual([]);
+	});
+
+	it("goes on from the copy on disk after a failed fetch only with --offline, and says so", async () => {
+		const { service, ports } = setup();
+		const requests: IssueAssignRequest[] = [];
+		ports.assignIssue = (request) => {
+			requests.push(request);
+			return Promise.resolve({
+				workspaceId: "w1",
+				agentId: "issue-agent",
+				origin: request.offline ? "on-disk" : "fetched",
+			});
+		};
+		const plain = await viaSocket(service, FULL_ASSIGN, coordinator);
+		expect(requests[0]?.offline).toBe(false);
+		expect(plain.message).not.toContain("origin was not fetched");
+		const offline = await viaSocket(
+			service,
+			[...FULL_ASSIGN, "--offline"],
+			coordinator,
+		);
+		expect(requests[1]?.offline).toBe(true);
+		expect(offline.message).toContain(
+			"origin was not fetched: the branch was found and started from the copy on this machine.",
+		);
+		// A failed fetch without it is the answer, in git's words.
+		ports.assignIssue = () =>
+			Promise.reject(
+				new Error(
+					"The latest changes could not be fetched: fatal: Could not read from remote repository.",
+				),
+			);
+		await expect(viaSocket(service, FULL_ASSIGN, coordinator)).rejects.toThrow(
+			"Could not read from remote repository.",
+		);
+	});
+
 	it("needs --profile for a session two profiles could go on with", async () => {
 		const { service, ports } = setup();
 		ports.past.set("claude", PAST["claude"]!);

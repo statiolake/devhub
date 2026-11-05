@@ -26,6 +26,7 @@ import {
 	type AgentProfilesBridge,
 	type AppearanceBridge,
 	type AssignmentBranchWire,
+	type OriginFetchWire,
 	type BranchListWire,
 	type GitHubLoginWire,
 	type IssueAssignment,
@@ -260,6 +261,11 @@ export function workspaceOpeningBridge(): WorkspaceOpeningBridge {
 				url,
 				place,
 			) as Promise<AssignmentBranchWire>,
+		fetchForAssignment: (place: WorkspacePlaceWire) =>
+			ipcRenderer.invoke(
+				CHANNELS.fetchForAssignment,
+				place,
+			) as Promise<OriginFetchWire>,
 		listBranches: (place: WorkspacePlaceWire) =>
 			ipcRenderer.invoke(CHANNELS.listBranches, place) as Promise<
 				readonly string[]

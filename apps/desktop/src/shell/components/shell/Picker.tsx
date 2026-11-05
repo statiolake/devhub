@@ -618,7 +618,10 @@ export function Picker({
       if (candidate) choose(candidate.id, event.altKey, event.metaKey);
       return;
     }
-    // Anything else is typing, and typing belongs in the field.
+    // Anything else is typing, and typing belongs in the field — unless it
+    // is typing into a field of the toolbar's own (the agent's name), which
+    // keeps it.
+    if (inToolbarField(event.target)) return;
     focusField();
   };
 
@@ -656,7 +659,9 @@ export function Picker({
         // A click inside the sheet acts, it does not move the keyboard. The
         // field keeps it whatever was pressed, which is what makes the sheet
         // still answer Return after a row was clicked and missed.
-        onMouseDown={focusField}
+        onMouseDown={(event) => {
+          if (!inToolbarField(event.target)) focusField();
+        }}
       >
         {/* What is being asked, and why. One band, not two: the title and the
             sentence under it are one statement, and the stack's rule goes
@@ -839,5 +844,13 @@ export function Picker({
       </section>
     </div>,
     document.body,
+  );
+}
+
+/** A text field the toolbar holds, rather than the search field. */
+function inToolbarField(target: EventTarget): boolean {
+  return (
+    target instanceof HTMLInputElement &&
+    target.closest(".picker-toolbar") !== null
   );
 }

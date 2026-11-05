@@ -71,6 +71,8 @@ function mount(overrides: Partial<PickerValue> = {}) {
   // Nothing has a branch yet: the shape most of these walk, where the flow
   // offers `feature/128-wip` and the root checkout.
   const assignmentBranch = vi.fn().mockResolvedValue({ reachable: false });
+  // `origin` fetched, once, before the branch is asked about.
+  const fetchForAssignment = vi.fn().mockResolvedValue("fetched");
   const onDismiss = vi.fn();
   const value = {
     agentProfiles: {
@@ -104,6 +106,7 @@ function mount(overrides: Partial<PickerValue> = {}) {
       .fn()
       .mockResolvedValue(["/projects", "/code/github"]),
     assignmentBranch,
+    fetchForAssignment,
     // No earlier sessions unless a test says so.
     listAgentSessions: vi.fn().mockResolvedValue([]),
     previewAgentSession: vi.fn().mockResolvedValue([]),
@@ -131,6 +134,7 @@ function mount(overrides: Partial<PickerValue> = {}) {
     listBranches,
     cloneRepository,
     assignmentBranch,
+    fetchForAssignment: value.fetchForAssignment as typeof fetchForAssignment,
     onDismiss,
   };
 }
@@ -154,6 +158,7 @@ function mountFor(agentProfiles: PickerValue["agentProfiles"]) {
     projectDefaultDirectory: vi.fn().mockResolvedValue("/projects"),
     cloneParentDirectories: vi.fn().mockResolvedValue([]),
     assignmentBranch: vi.fn().mockResolvedValue({ reachable: false }),
+    fetchForAssignment: vi.fn().mockResolvedValue("fetched"),
     agentActions: vi.fn().mockResolvedValue([
       { id: "implement", displayName: "Work on it", trigger: "issue" },
       // A workspace button's action, in the same list. It is not an answer to
@@ -249,7 +254,7 @@ describe("assigning an Issue", () => {
       issueUrl: ISSUE,
       place: { kind: "local", path: "/projects/widget" },
       branch: "feature/128-wip",
-      allowStaleBase: false,
+      origin: "fetched",
     });
     expect(assignIssue).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
@@ -382,7 +387,7 @@ describe("assigning an Issue", () => {
       expect(prepareIssueFolder).toHaveBeenCalledWith({
         issueUrl: ISSUE,
         place: { kind: "local", path: "/other/widget" },
-        allowStaleBase: false,
+        origin: "fetched",
       });
     });
   });
@@ -412,7 +417,7 @@ describe("assigning an Issue", () => {
           kind: "local",
           path: "/projects/widget_alice_fix-the-crash",
         },
-        allowStaleBase: false,
+        origin: "fetched",
       });
     });
   });
@@ -562,7 +567,7 @@ describe("assigning an Issue", () => {
     expect(prepareIssueFolder).toHaveBeenCalledWith({
       issueUrl: ISSUE,
       place: { kind: "local", path: "/projects/widget" },
-      allowStaleBase: false,
+      origin: "fetched",
     });
     await vi.waitFor(() => {
       expect(assignIssue).toHaveBeenCalledWith(
@@ -655,7 +660,7 @@ describe("assigning an Issue", () => {
         issueUrl: PULL_REQUEST,
         place: { kind: "local", path: "/projects/widget" },
         branch: "alice/fix-the-crash",
-        allowStaleBase: false,
+        origin: "fetched",
       });
     });
     expect(assignmentBranch).toHaveBeenCalledWith(
@@ -720,7 +725,7 @@ describe("assigning an Issue", () => {
         place: { kind: "local", path: "/projects/widget" },
         branch: "feature/128-wip",
         inRoot: true,
-        allowStaleBase: false,
+        origin: "fetched",
       });
     });
   });
@@ -744,7 +749,7 @@ describe("assigning an Issue", () => {
         place: { kind: "local", path: "/projects/widget" },
         branch: "alice/fix-the-crash",
         inRoot: true,
-        allowStaleBase: false,
+        origin: "fetched",
       });
     });
   });
@@ -952,11 +957,73 @@ describe("assigning an Issue", () => {
     expect(screen.getByRole("dialog", { name: /Agent for/u })).toBeVisible();
   });
 
-  it("asks before starting a branch from a copy the fetch could not refresh", async () => {
+  it("fetches origin once, before the branch is read, and hands the result on", async () => {
+    // The user's own order: fetch first, then every question that depends on
+    // what the remote has — the branch reading, the folder step — reads the
+    // refs it left and fetches nothing more.
+    const order: string[] = [];
+    const fetchForAssignment = vi.fn(() => {
+      order.push("fetch");
+      return Promise.resolve("fetched");
+    });
+    const assignmentBranch = vi.fn(() => {
+      order.push("branch");
+      return Promise.resolve({ reachable: false });
+    });
+    const { prepareIssueFolder } = mount({
+      fetchForAssignment,
+      assignmentBranch,
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
+    await screen.findByRole("dialog", { name: /Agent for/u });
+
+    expect(order).toEqual(["fetch", "branch"]);
+    expect(fetchForAssignment).toHaveBeenCalledTimes(1);
+    expect(fetchForAssignment).toHaveBeenCalledWith(
+      { kind: "local", path: "/projects/widget" },
+      expect.anything(),
+    );
+    expect(prepareIssueFolder).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: "fetched" }),
+    );
+  });
+
+  it("does not fetch again when the branch question is asked again", async () => {
+    // A folder in the way brings the branch question back; the fetch the flow
+    // began with still stands.
+    const fetchForAssignment = vi.fn().mockResolvedValue("fetched");
+    const prepareIssueFolder = vi
+      .fn()
+      .mockRejectedValueOnce(refusal("/projects/widget_128 already exists."))
+      .mockImplementation(preparedFolder());
+    mount({
+      fetchForAssignment,
+      prepareIssueFolder,
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
+    await screen.findByText("/projects/widget_128 already exists.");
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
+    await screen.findByRole("dialog", { name: /Agent for/u });
+    expect(fetchForAssignment).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops on a fetch that failed, with git's reason, before any branch is read", async () => {
     // The fetch failing is not the end of the flow and not a silent fallback:
-    // the reason is shown, and starting from what is on disk is a decision the
-    // person makes once, in words — before the agent is asked about, because
-    // the folder is what the fetch was for.
+    // the reason is shown before the branch question, and going on from what
+    // is on disk is a decision the person makes once, in words.
     const failure = Object.assign(new Error("fetch"), {
       code: "git_fetch_failed",
       summary:
@@ -964,33 +1031,85 @@ describe("assigning an Issue", () => {
       module: "app",
       actions: [],
     });
-    const fallback = preparedFolder();
-    const prepareIssueFolder = vi
-      .fn()
-      .mockRejectedValueOnce(failure)
-      .mockImplementation(fallback);
-    mount({ prepareIssueFolder } as unknown as Partial<PickerValue>);
+    const fetchForAssignment = vi.fn().mockRejectedValue(failure);
+    const { prepareIssueFolder, assignmentBranch } = mount({
+      fetchForAssignment,
+    } as unknown as Partial<PickerValue>);
 
     await answer("Assign Issue", ISSUE);
-    await choose(
-      /Where to work on example\/widget#128/u,
-      /Create feature\/128-wip in a new worktree/u,
-    );
 
     expect(
       await screen.findByText(
         "The latest changes could not be fetched: Could not read origin.",
       ),
     ).toBeInTheDocument();
+    expect(assignmentBranch).not.toHaveBeenCalled();
+    expect(prepareIssueFolder).not.toHaveBeenCalled();
+
     await choose(/remote could not be reached/u, /Start from the copy/u);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
 
     await screen.findByRole("dialog", { name: /Agent for/u });
+    // Once: going on from the copy on disk is not a second attempt.
+    expect(fetchForAssignment).toHaveBeenCalledTimes(1);
     expect(prepareIssueFolder).toHaveBeenLastCalledWith(
       expect.objectContaining({
         branch: "feature/128-wip",
-        allowStaleBase: true,
+        origin: "on-disk",
       }),
     );
+  });
+
+  it("names the agent from the 名前 field, suggesting the Issue's title", async () => {
+    const { assignIssue } = mount({
+      assignmentBranch: vi
+        .fn()
+        .mockResolvedValue({ reachable: false, title: "Add the picker" }),
+    } as unknown as Partial<PickerValue>);
+
+    await answer("Assign Issue", ISSUE);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
+    await screen.findByRole("dialog", { name: /Agent for/u });
+    const field = screen.getByRole("textbox", { name: "名前" });
+    // Empty to begin with: the title is only the example.
+    expect(field).toHaveValue("");
+    expect(field).toHaveAttribute("placeholder", "Add the picker");
+    fireEvent.change(field, { target: { value: "  picker work  " } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalledWith(
+        expect.objectContaining({ profileId: "claude", name: "picker work" }),
+      );
+    });
+  });
+
+  it("keeps DevHub's own naming when the 名前 field is left empty", async () => {
+    const { assignIssue } = mount();
+
+    await answer("Assign Issue", ISSUE);
+    await choose(
+      /Where to work on example\/widget#128/u,
+      /Create feature\/128-wip in a new worktree/u,
+    );
+    await screen.findByRole("dialog", { name: /Agent for/u });
+    // Without a title from GitHub, the Issue's own label is the example.
+    expect(screen.getByRole("textbox", { name: "名前" })).toHaveAttribute(
+      "placeholder",
+      "example/widget#128",
+    );
+    await answer(/Agent for example\/widget#128/u);
+
+    await vi.waitFor(() => {
+      expect(assignIssue).toHaveBeenCalled();
+    });
+    expect(assignIssue.mock.calls[0]?.[0]).not.toHaveProperty("name");
   });
 
   it("clones when there is no clone to work in", async () => {

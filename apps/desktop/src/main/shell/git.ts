@@ -952,14 +952,15 @@ export async function worktreeForBranch(
 }
 
 /**
- * Bring one branch here from a remote, for a question rather than for work.
+ * Bring one branch here from a remote other than `origin`, for a question
+ * rather than for work: a pull request's head on a fork this clone already
+ * has as a remote.
  *
- * Best effort, and deliberately so: this runs while somebody is being *asked*
- * which branch to work on, and a network that is down is not an answer to that
- * question. What it changes is only how much this clone knows — a branch that
- * arrives can be offered, one that does not is offered as a new branch instead
- * — and the fetch that has to succeed still happens later, in `ensureWorktree`,
- * where its failure is reported and answered.
+ * Best effort, and deliberately so: what it changes is only how much this
+ * clone knows about somebody else's copy — a branch that arrives can be
+ * offered, one that does not is reported as out of reach. `origin` itself is
+ * never fetched here; the assignment fetched it once, first
+ * (`fetchOriginFirst`).
  */
 export async function fetchBranchFrom(
 	command: GitCommand,
@@ -976,19 +977,43 @@ export async function fetchBranchFrom(
 }
 
 /**
- * Bring `origin` up to date, for a question rather than for work.
+ * What became of the fetch an assignment starts with.
  *
- * The same best-effort bargain as `fetchBranchFrom`, and for the same moment:
- * DevHub is about to look through the branch names for one that belongs to an
- * Issue, and a list one fetch out of date is a worse answer than none only if
- * it is presented as certain — it is not, it is a row the person can decline.
+ * - `fetched`: `origin` was fetched just now, so what the refs say about it is
+ *   what it has today, and the remote can be asked which branch is its default.
+ * - `on-disk`: it was not — the fetch failed and the person said to go on with
+ *   the copy on this machine, or there is no `origin` to fetch — so the refs
+ *   are what there is, and nothing more is asked of the network.
  */
-export async function refreshOrigin(
+export type OriginFetch = "fetched" | "on-disk";
+
+/**
+ * Fetch `origin` once, before anything is decided about the work's branch.
+ *
+ * Assigning an Issue asks several questions whose answers are on the remote —
+ * does the Issue's branch exist there, which is a pull request's head, which
+ * branch is the default to start a new one from — and they are only as good as
+ * the last fetch. So the fetch comes first, once, and every later step is
+ * handed its result (`WorktreeOptions.origin`) rather than fetching again.
+ *
+ * A fetch that fails stops here with git's own reason (`fetchFailure`), unless
+ * the person has already said to go on from the copy on disk
+ * (`allowStaleBase`): the window asks them, the command line takes it as
+ * `--offline`.
+ */
+export async function fetchOriginFirst(
 	command: GitCommand,
 	directory: string,
+	options: { readonly allowStaleBase?: boolean } = {},
 	cancel?: CancellationToken,
-): Promise<void> {
-	await fetchOrigin(command, directory, { allowStaleBase: true }, cancel);
+): Promise<OriginFetch> {
+	const fetched = await fetchOrigin(
+		command,
+		directory,
+		{ allowStaleBase: options.allowStaleBase },
+		cancel,
+	);
+	return fetched ? "fetched" : "on-disk";
 }
 
 /**
@@ -1018,6 +1043,15 @@ export interface WorktreeOptions {
 	 * to carry on anyway.
 	 */
 	readonly allowStaleBase?: boolean;
+	/**
+	 * The fetch this assignment already began with (`fetchOriginFirst`).
+	 *
+	 * Present, `origin` is not fetched again: `fetched` reads the refs as
+	 * current and asks the remote for its default branch, `on-disk` reads them
+	 * as they are and asks the network nothing. Absent, the operation fetches
+	 * for itself, as a branch picked in the workspace picker does.
+	 */
+	readonly origin?: OriginFetch;
 	/**
 	 * Where the new worktree goes, in place of the name the work gives it.
 	 *
@@ -1258,6 +1292,48 @@ export async function switchRootBranch(
 	return root;
 }
 
+/** Where an Issue's branch is to be checked out, and on what terms. */
+export interface IssueCheckoutOptions {
+	/** In the clone's own folder (`switchRootBranch`) rather than a worktree. */
+	readonly inRoot?: boolean;
+	/** Go on from the `origin` on disk when the fetch fails: see `WorktreeOptions`. */
+	readonly allowStaleBase?: boolean;
+	/** The fetch already made for this assignment; absent, it is made here. */
+	readonly origin?: OriginFetch;
+}
+
+/**
+ * The folder for an Issue's or a pull request's branch, `origin` fetched first.
+ *
+ * The one order an assignment's git runs in: fetch `origin` once
+ * (`fetchOriginFirst`) — unless the caller already did and hands the result
+ * in — and only then look at which worktree holds the branch, whether it
+ * exists here or on a remote, and what a new one starts from, each of which is
+ * handed that result instead of fetching again.
+ */
+export async function prepareIssueCheckout(
+	command: GitCommand,
+	directory: string,
+	work: WorkItem,
+	branch: string,
+	options: IssueCheckoutOptions = {},
+): Promise<{ readonly path: string; readonly origin: OriginFetch }> {
+	const origin =
+		options.origin ??
+		(await fetchOriginFirst(command, directory, {
+			allowStaleBase: options.allowStaleBase,
+		}));
+	const terms: WorktreeOptions = {
+		allowStaleBase: options.allowStaleBase,
+		origin,
+	};
+	const path =
+		options.inRoot === true
+			? await switchRootBranch(command, directory, work, branch, terms)
+			: await ensureWorktree(command, directory, work, branch, terms);
+	return { path, origin };
+}
+
 /**
  * `git worktree add`, with `--relative-paths` when this git understands it.
  *
@@ -1331,8 +1407,9 @@ export function gitVersionAtLeast(
  * is missing — a repository with no commits, or a detached head — DevHub says
  * so rather than picking something.
  *
- * The fetch happens every time, and a fetch that fails is not worked around
- * quietly. It stops the worktree and is reported with git's own reason, and the
+ * The fetch happens every time — once, at the start of an assignment
+ * (`fetchOriginFirst`, handed on as `options.origin`), or here when nobody
+ * fetched first — and a fetch that fails is not worked around quietly. It stops the worktree and is reported with git's own reason, and the
  * step that asked for the branch offers the second answer: start from the
  * `origin` already on disk anyway. That is a decision with consequences — work
  * based on a copy that may be days old — so it is the person's to make, once,
@@ -1426,6 +1503,8 @@ async function fetchOrigin(
 	options: WorktreeOptions,
 	cancel?: CancellationToken,
 ): Promise<boolean> {
+	// Fetched already, at the start of this assignment: its answer stands.
+	if (options.origin !== undefined) return options.origin === "fetched";
 	const hasOrigin =
 		(await ask(
 			command,

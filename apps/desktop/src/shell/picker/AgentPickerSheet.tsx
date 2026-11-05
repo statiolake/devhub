@@ -76,6 +76,8 @@ export interface FolderAgentPickerProps {
   readonly failure?: string;
   /** Offers "Just open the editor", where the folder can be opened alone. */
   readonly onOpenEditor?: () => void;
+  /** Offers a "名前" field for the agent's name; see `AgentProfilePicker`. */
+  readonly nameField?: { readonly placeholder: string };
   /** Offers the repository's other worktrees' sessions; see `AgentProfilePicker`. */
   readonly onResumedElsewhere?: () => void;
   readonly onChoose: (choice: AgentChoice) => void;
@@ -93,6 +95,7 @@ export function FolderAgentPicker({
   step,
   failure,
   onOpenEditor,
+  nameField,
   onResumedElsewhere,
   onChoose,
   onCancel,
@@ -111,6 +114,7 @@ export function FolderAgentPicker({
       hint={hint}
       sessionsIn={place}
       onOpenEditor={onOpenEditor}
+      nameField={nameField}
       onResumedElsewhere={onResumedElsewhere}
       onChoose={onChoose}
       onCancel={onCancel}

@@ -36,6 +36,7 @@ import type {
 import type {
   AgentActionWire,
   AssignmentBranchWire,
+  OriginFetchWire,
   BranchListWire,
   GitHubLoginWire,
   IssueAssignment,
@@ -142,6 +143,14 @@ export interface PickerValue {
     place: WorkspacePlaceWire,
     signal?: AbortSignal,
   ) => Promise<AssignmentBranchWire>;
+  /**
+   * Fetch the clone's `origin` once, before the branch is asked about; see
+   * `fetchForAssignment`. Escape stops it.
+   */
+  readonly fetchForAssignment: (
+    place: WorkspacePlaceWire,
+    signal?: AbortSignal,
+  ) => Promise<OriginFetchWire>;
   readonly listBranches: (
     place: WorkspacePlaceWire,
   ) => Promise<readonly string[]>;
@@ -367,6 +376,12 @@ export function PickerProvider({ children }: { children: ReactNode }) {
           void bridge.cancelPickerLookup();
         });
         return bridge.assignmentBranch(url, place);
+      },
+      fetchForAssignment: (place, signal) => {
+        signal?.addEventListener("abort", () => {
+          void bridge.cancelPickerLookup();
+        });
+        return bridge.fetchForAssignment(place);
       },
       listBranches: (place) => bridge.listBranches(place),
       prepareIssueFolder: (request) => bridge.prepareIssueFolder(request),

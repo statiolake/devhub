@@ -207,7 +207,7 @@ names an agent, yourself included.
 ## Hand a GitHub Issue (or PR) to a new agent
 
     devhub --tell issue actions
-    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login-timeout --profile claude --gui --action issue_assignment --draft
+    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login-timeout --profile claude --gui --action issue_assignment --draft --name "123 login fix"
 
 - Read the Issue first (title/body, e.g. with \`gh issue view\`) and choose a
   short descriptive branch name: \`<number>-<a-few-words>\`, lowercase, words
@@ -225,6 +225,11 @@ names an agent, yourself included.
 - \`--prompt "..."\` adds your own instructions for the new agent (scope,
   constraints, what the person said). \`--editor-only\` (with \`--repo\` and
   \`--branch\`/\`--root\` only) opens the editor without an agent.
+- \`--name "..."\` names the new agent from the start, as \`agent new
+  --name\` (left out: DevHub's own label).
+- With \`--branch\`, \`origin\` is fetched once, first. If that fetch fails
+  the call stops with git's reason; add \`--offline\` only when the person
+  agreed to work from the copy on this machine.
 
 Then tell the person which agent took it (id, workspace, branch).
 

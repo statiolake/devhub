@@ -428,6 +428,8 @@ export interface PullRequestHead {
 	readonly repository: string;
 	/** Open, closed unmerged, or merged — absent when GitHub did not say. */
 	readonly state?: "open" | "closed" | "merged";
+	/** Its title, when GitHub said: what Assign Issue suggests naming the agent. */
+	readonly title?: string;
 }
 
 /**
@@ -452,6 +454,7 @@ interface GraphQlAnswer {
 				  })
 				| null;
 			readonly pullRequest?: {
+				readonly title?: string | null;
 				readonly headRefName?: string | null;
 				readonly state?: string | null;
 				readonly headRepository?: {
@@ -735,6 +738,7 @@ export async function readPullRequestHead(
 		{
 			query: `query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){ pullRequest(number:$number){
+    title
     headRefName
     state
     headRepository{ name owner{ login } }
@@ -762,8 +766,10 @@ export async function readPullRequestHead(
 	// remaining candidate, and it is the one that is right for every pull request
 	// that was not from a fork — which is nearly all of them.
 	const state = head?.state?.toUpperCase();
+	const title = head?.title ?? undefined;
 	return {
 		branch,
+		...(title === undefined || title.length === 0 ? {} : { title }),
 		owner: head?.headRepository?.owner.login ?? pullRequest.owner,
 		repository: head?.headRepository?.name ?? pullRequest.repository,
 		...(state === "MERGED"
@@ -790,16 +796,18 @@ export async function readPullRequestHead(
  * offered to the person anyway, as a row they can decline.
  *
  * Nothing is a perfectly ordinary answer: most Issues have no branch, which is
- * what the wizard's `feature/128-wip` exists for.
+ * what the wizard's `feature/128-wip` exists for. The Issue's title comes with
+ * it, in the same request: what Assign Issue suggests naming the agent.
  */
 export async function readIssueLinkedBranch(
 	issue: IssueReference,
 	token: string,
-): Promise<string | undefined> {
+): Promise<{ readonly branch?: string; readonly title?: string }> {
 	const answer = await post(
 		{
 			query: `query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){ issue(number:$number){
+    title
     linkedBranches(first:10){ nodes{ ref{ name } } }
   } }
 }`,
@@ -813,12 +821,18 @@ export async function readIssueLinkedBranch(
 	);
 	const failed = answer.errors?.[0]?.message;
 	if (failed !== undefined) throw new GitHubUnavailable(failed);
-	const nodes = answer.data?.repository?.issue?.linkedBranches?.nodes ?? [];
-	for (const node of nodes) {
+	const found = answer.data?.repository?.issue ?? undefined;
+	const title =
+		typeof found?.title === "string" && found.title.length > 0
+			? found.title
+			: undefined;
+	const titled = title === undefined ? {} : { title };
+	for (const node of found?.linkedBranches?.nodes ?? []) {
 		const name = node?.ref?.name ?? undefined;
-		if (name !== undefined && name.length > 0) return name;
+		if (name !== undefined && name.length > 0)
+			return { branch: name, ...titled };
 	}
-	return undefined;
+	return titled;
 }
 
 /** When the token last failed to read Projects; asked again after a while. */

@@ -410,7 +410,7 @@ GitHub ポーリングが active / suspended / idle のどれかが出る。
     devhub --tell --json sessions --all --meta parent=ORCH
     devhub --tell profiles
     devhub --tell issue actions
-    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login --profile claude --gui --action issue_assignment --send --meta parent=ORCH --meta issue=123
+    devhub --tell issue assign https://github.com/OWNER/REPO/issues/123 --repo ~/src/REPO --branch 123-fix-login --profile claude --gui --action issue_assignment --send --name "123 login fix" --meta parent=ORCH --meta issue=123
     devhub --tell workspace open ~/src/REPO
     devhub --tell --json workspace status W
     devhub --tell workspace close W --worktree keep --agents stop --terminals close

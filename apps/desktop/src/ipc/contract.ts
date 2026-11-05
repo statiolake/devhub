@@ -158,6 +158,8 @@ export interface AssignmentBranchWire {
 	 * head is gone is stopped before the branch question with that reason.
 	 */
 	readonly pullRequestState?: "open" | "closed" | "merged";
+	/** The Issue's or pull request's title, when GitHub said. */
+	readonly title?: string;
 }
 
 /**
@@ -194,7 +196,21 @@ export interface IssueFolderRequest {
 	 * only ever used deliberately.
 	 */
 	readonly allowStaleBase?: boolean;
+	/**
+	 * The fetch the flow began with (`fetchForAssignment`), handed on so that
+	 * `origin` is not fetched a second time: `fetched` reads the refs as
+	 * current, `on-disk` reads them as they are. Absent, the folder step
+	 * fetches first itself, as the command line's does.
+	 */
+	readonly origin?: OriginFetchWire;
 }
+
+/**
+ * What became of the fetch an Issue assignment starts with: `origin` fetched
+ * just now, or the copy on this machine taken as it is — the fetch failed and
+ * the person said to go on, or there is no `origin`.
+ */
+export type OriginFetchWire = "fetched" | "on-disk";
 
 /**
  * The second half: open the folder as the selected Workspace, start an agent
@@ -228,6 +244,12 @@ export interface IssueAgentAssignment extends IssueAssignmentBase {
 	readonly split: boolean;
 	/** TUI or GUI, as the agent row said when it was taken (⌘ flips it). */
 	readonly presentation: "tui" | "gui";
+	/**
+	 * The name to give the agent as it starts, as Rename… would: kept with
+	 * its session and shown wherever a given name is. Absent keeps DevHub's
+	 * own label.
+	 */
+	readonly name?: string;
 	/**
 	 * An earlier session of the profile's CLI in that folder, which
 	 * the agent goes on with and is then told about the Issue. Absent starts
@@ -1422,13 +1444,22 @@ export interface WorkspaceOpeningBridge {
 	 * Asked once the clone is known, because half the answer is about the clone:
 	 * a pull request's head branch is a fact of GitHub's, and whether it can be
 	 * checked out here — and whether it already is — is a fact of this
-	 * repository's remotes and worktrees. Throws what to do about it — no token,
-	 * no such pull request — because the step that asked shows the reason.
+	 * repository's remotes and worktrees. Read from the refs
+	 * `fetchForAssignment` left: `origin` is not fetched again here. Throws what
+	 * to do about it — no token, no such pull request — because the step that
+	 * asked shows the reason.
 	 */
 	assignmentBranch(
 		url: string,
 		place: WorkspacePlaceWire,
 	): Promise<AssignmentBranchWire>;
+	/**
+	 * Fetch the clone's `origin`, once, before anything about the branch is
+	 * asked: `assignmentBranch` and `prepareIssueFolder` read the refs it
+	 * leaves and do not fetch it again. Throws `git_fetch_failed` with git's
+	 * reason, for the flow to offer the copy on disk.
+	 */
+	fetchForAssignment(place: WorkspacePlaceWire): Promise<OriginFetchWire>;
 	listBranches(place: WorkspacePlaceWire): Promise<readonly string[]>;
 	/**
 	 * Make or find the folder the Issue is worked in, and answer with it —
@@ -2220,6 +2251,7 @@ export const CHANNELS = {
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
 	assignmentBranch: "devhub:assignment-branch",
+	fetchForAssignment: "devhub:fetch-for-assignment",
 	answerWorktreeClose: "devhub:answer-worktree-close",
 	closeWorkspace: "devhub:close-workspace",
 	runAgentAction: "devhub:run-agent-action",

@@ -26,6 +26,7 @@ import type {
   AssignmentBranchWire,
   IssueAssignment,
   IssueFolderRequest,
+  OriginFetchWire,
 } from "../../ipc/contract";
 import {
   wipBranchForIssue,
@@ -109,6 +110,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
     assignIssue,
     cloneParentDirectories,
     assignmentBranch,
+    fetchForAssignment,
     agentActions,
   } = usePicker();
 
@@ -121,6 +123,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
         assignIssue,
         cloneParentDirectories,
         assignmentBranch,
+        fetchForAssignment,
         agentActions,
       }),
     [
@@ -131,6 +134,7 @@ export function IssueAssignmentSheet({ onDismiss }: IssueAssignmentSheetProps) {
       cloneRepository,
       findIssueRepositories,
       assignmentBranch,
+      fetchForAssignment,
     ],
   );
 
@@ -155,6 +159,10 @@ interface FlowServices {
     place: WorkspacePlaceWire,
     signal?: AbortSignal,
   ) => Promise<AssignmentBranchWire>;
+  readonly fetchForAssignment: (
+    place: WorkspacePlaceWire,
+    signal?: AbortSignal,
+  ) => Promise<OriginFetchWire>;
   readonly agentActions: () => Promise<readonly AgentActionWire[]>;
 }
 
@@ -231,6 +239,8 @@ interface Work {
   readonly item: GitHubItem;
   /** Which of the person's actions the agent is being started for. */
   readonly actionId: string | undefined;
+  /** Its title, once GitHub has said: the name the agent question suggests. */
+  readonly title?: string;
 }
 
 /**
@@ -306,7 +316,7 @@ function repositoryStep(services: FlowServices, work: Work): WizardStep {
       return cloneDestinationStep(services, work, nothingCloned(item));
     }
     const only = repositories.length === 1 ? repositories[0] : undefined;
-    if (only) return branchStep(services, work, only.place);
+    if (only) return originStep(services, work, only.place);
     const answer = await input.ask({
       ...SHEET,
       title: `Which ${item.owner}/${item.repository}`,
@@ -338,7 +348,7 @@ function repositoryStep(services: FlowServices, work: Work): WizardStep {
       (repository) => placeLabel(repository.place) === answer.id,
     );
     return chosen
-      ? branchStep(services, work, chosen.place)
+      ? originStep(services, work, chosen.place)
       : cloneDestinationStep(services, work, nothingCloned(item));
   };
 }
@@ -353,6 +363,40 @@ function worktreeCount(places: number): string {
   const others = places - 1;
   if (others <= 0) return "No worktrees";
   return others === 1 ? "1 worktree" : `${String(others)} worktrees`;
+}
+
+/**
+ * Fetch the clone's `origin`, once, before anything about the branch is asked.
+ *
+ * Every answer the branch question offers depends on what `origin` has —
+ * whether the work's branch exists there, a pull request's head, which branch
+ * a new one starts from — so it is brought up to date first, and the result
+ * goes with the flow: the branch reading and the folder step take it and do
+ * not fetch again. A step of its own and one that asks nothing, so a branch
+ * question re-asked after a folder that could not be made does not fetch a
+ * second time, and Escape from it goes to the question before this.
+ *
+ * A fetch that fails is a question rather than the end: here is git's reason,
+ * and the copy on this machine is the other answer.
+ */
+function originStep(
+  services: FlowServices,
+  work: Work,
+  place: WorkspacePlaceWire,
+): WizardStep {
+  return async (input) => {
+    let origin: OriginFetchWire;
+    try {
+      origin = await input.working(
+        `Fetching ${folderName(place.path)}…`,
+        (signal) => services.fetchForAssignment(place, signal),
+      );
+    } catch (error: unknown) {
+      if (toAppError(error).code !== "git_fetch_failed") throw error;
+      return staleOriginStep(services, work, place, error);
+    }
+    return branchStep(services, work, place, origin);
+  };
 }
 
 /**
@@ -401,6 +445,7 @@ function branchStep(
   services: FlowServices,
   work: Work,
   place: WorkspacePlaceWire,
+  origin: OriginFetchWire,
 ): WizardStep {
   const { item } = work;
   const root = place.path;
@@ -427,6 +472,9 @@ function branchStep(
     // (`issueBranchPlan`); this holds the sheet to the same rule whatever main
     // sent, so "is on neither this machine…" is only ever said of a pull
     // request's head.
+    // Kept before the plan can be dropped below: the name it suggests.
+    const titled: Work =
+      plan.title === undefined ? work : { ...work, title: plan.title };
     if (!plan.reachable && plan.checkedOutAt === undefined) {
       // A pull request is work on its head branch and nothing else: no
       // `feature/<n>-wip` is offered for one. A head that cannot be had stops
@@ -474,7 +522,7 @@ function branchStep(
               answer.id === ROOT_NEW_BRANCH ||
               answer.id === ROOT_EXISTING_BRANCH,
           };
-    return prepareFolder(services, input, work, choice, false);
+    return prepareFolder(services, input, titled, choice, origin);
   };
 }
 
@@ -676,7 +724,7 @@ function cloneDestinationStep(
     // place, so the location question is asked over that one place and a new
     // worktree — which is the same question everybody else gets, from the same
     // step, rather than a second arrangement of it.
-    return branchStep(services, work, {
+    return originStep(services, work, {
       kind: "local",
       path: directory,
     });
@@ -697,42 +745,34 @@ interface FolderChoice {
  * Make or find the folder, then ask which agent — opening nothing.
  *
  * Run from inside the step that asked for it, so a failure re-asks that step
- * with the reason under it. The one failure that is a question rather than a
- * reason is the fetch a new branch starts with: `origin` as of the last
- * successful fetch is on disk, and whether to start from it is the person's
- * call.
+ * with the reason under it. `origin` is the fetch the flow began with, handed
+ * on so the folder step does not fetch again (`originStep`).
  */
 async function prepareFolder(
   services: FlowServices,
   input: WizardInput,
   work: Work,
   choice: FolderChoice,
-  allowStaleBase: boolean,
+  origin: OriginFetchWire,
 ): Promise<WizardStep> {
-  let folder: WorkspacePlaceWire;
-  try {
-    folder = await input.working(
-      choice.branch === undefined
-        ? `Reading ${baseName(choice.place.path)}…`
-        : choice.inRoot
-          ? `Switching ${baseName(choice.place.path)} to ${choice.branch}…`
-          : `Setting up the worktree for ${choice.branch}…`,
-      () =>
-        services.prepareIssueFolder({
-          issueUrl: gitHubItemUrl(work.item),
-          place: choice.place,
-          ...(choice.branch === undefined
-            ? {}
-            : choice.inRoot
-              ? { branch: choice.branch, inRoot: true }
-              : { branch: choice.branch }),
-          allowStaleBase,
-        }),
-    );
-  } catch (error: unknown) {
-    if (toAppError(error).code !== "git_fetch_failed") throw error;
-    return staleBaseStep(services, work, choice, error);
-  }
+  const folder = await input.working(
+    choice.branch === undefined
+      ? `Reading ${baseName(choice.place.path)}…`
+      : choice.inRoot
+        ? `Switching ${baseName(choice.place.path)} to ${choice.branch}…`
+        : `Setting up the worktree for ${choice.branch}…`,
+    () =>
+      services.prepareIssueFolder({
+        issueUrl: gitHubItemUrl(work.item),
+        place: choice.place,
+        ...(choice.branch === undefined
+          ? {}
+          : choice.inRoot
+            ? { branch: choice.branch, inRoot: true }
+            : { branch: choice.branch }),
+        origin,
+      }),
+  );
   return agentStep(services, work, folder);
 }
 
@@ -766,6 +806,9 @@ function agentStep(
       (controls) => (
         <FolderAgentPicker
           title={`Agent for ${itemLabel(item)}`}
+          // Empty unless the person types one: DevHub's own label otherwise.
+          // The Issue's title is the suggestion, the shape of a good name.
+          nameField={{ placeholder: work.title ?? itemLabel(item) }}
           place={folder}
           step={controls.step}
           failure={controls.failure}
@@ -794,39 +837,40 @@ function agentStep(
         split: agent.split,
         presentation: agent.presentation,
         ...(agent.resume === undefined ? {} : { resume: agent.resume }),
+        ...(agent.name === undefined ? {} : { name: agent.name }),
       }),
     );
     return undefined;
   };
 }
 
-/** The fetch failed: start from the copy on disk, or not at all. */
-function staleBaseStep(
+/** The fetch failed: go on with the copy on disk, or not at all. */
+function staleOriginStep(
   services: FlowServices,
   work: Work,
-  choice: FolderChoice,
+  place: WorkspacePlaceWire,
   failure: unknown,
 ): WizardStep {
-  const branch = choice.branch;
   return async (input) => {
     const answer = await input.ask({
       ...SHEET,
       title: "The remote could not be reached",
-      question: `${branch ?? "The branch"} cannot be started from the latest origin, because the fetch failed. Start it from the copy on this machine, or press Escape to go back.`,
+      question: `origin could not be fetched, so what ${folderName(place.path)} knows about its branches may be out of date. Go on with the copy on this machine, or press Escape to go back.`,
       items: [
         {
           id: USE_STALE_BASE,
           label: "Start from the copy on this machine",
-          detail: `${branch ?? "The branch"} starts from origin as of the last successful fetch`,
+          detail:
+            "Branches are found, and new ones started, from origin as of the last successful fetch",
           searchText: "yes anyway offline stale local",
         },
       ],
       note: <Wrong what={toAppError(failure).summary} />,
     });
-    // Escape is the other answer, and it is the runner's: back to the branch,
-    // where a branch that already exists needs no fetch at all.
+    // Escape is the other answer, and it is the runner's: back to the
+    // question before. Going on fetches nothing more.
     return answer.id === USE_STALE_BASE
-      ? prepareFolder(services, input, work, choice, true)
+      ? branchStep(services, work, place, "on-disk")
       : undefined;
   };
 }
