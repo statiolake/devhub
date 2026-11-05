@@ -634,6 +634,22 @@ describe("focus", () => {
     redraw(withSession(), false);
     expect(composer()).toHaveFocus();
   });
+
+  it("a press on the toolbar's empty stretch lands in the field, at the end; one on a picker does not", () => {
+    draw(withSession());
+    fireEvent.change(composer(), { target: { value: "hello" } });
+    const model = screen.getByRole("combobox", { name: "Model" });
+    model.focus();
+    const toolbar = document.querySelector<HTMLElement>(
+      ".conversation-composer-toolbar",
+    )!;
+    expect(fireEvent.mouseDown(toolbar)).toBe(false);
+    expect(composer()).toHaveFocus();
+    expect(composer().selectionStart).toBe(5);
+    model.focus();
+    expect(fireEvent.mouseDown(model)).toBe(true);
+    expect(composer()).not.toHaveFocus();
+  });
 });
 
 describe("the header", () => {

@@ -607,3 +607,56 @@ describe("the board's words", () => {
     expect(span(3 * 3_600_000)).toBe("3h");
   });
 });
+
+describe("the answer composer", () => {
+  function open() {
+    motion(true);
+    mount();
+    fireEvent.click(
+      screen.getByRole("button", { name: /本番マイグレーション/u }),
+    );
+    return screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Your answer to #1",
+    });
+  }
+
+  it("draws no hint line, only the field, the quick replies and Send", () => {
+    open();
+    const composer = document.querySelector(".orchestrator-composer")!;
+    expect(composer).not.toHaveTextContent(/Markdown|to send|relays/u);
+    expect(composer.querySelector(".orchestrator-composer-hint")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Send answer" }),
+    ).toBeInTheDocument();
+  });
+
+  it("a press on the box's padding or the frame lands in the field, at the end", () => {
+    const field = open();
+    fireEvent.change(field, { target: { value: "実行して" } });
+    for (const selector of [
+      ".conversation-composer-box",
+      ".orchestrator-composer",
+      ".orchestrator-options",
+    ]) {
+      screen.getByRole("button", { name: "Back to the board" }).focus();
+      expect(fireEvent.mouseDown(document.querySelector(selector)!)).toBe(
+        false,
+      );
+      expect(field).toHaveFocus();
+      expect(field.selectionStart).toBe(4);
+    }
+  });
+
+  it("a press on a quick reply does not take the keyboard into the field", () => {
+    const field = open();
+    const back = screen.getByRole("button", { name: "Back to the board" });
+    back.focus();
+    const reply = screen.getByRole("button", { name: "保留" });
+    expect(fireEvent.mouseDown(reply)).toBe(true);
+    expect(field).not.toHaveFocus();
+    expect(
+      fireEvent.mouseDown(screen.getByRole("button", { name: "Send answer" })),
+    ).toBe(true);
+    expect(field).not.toHaveFocus();
+  });
+});

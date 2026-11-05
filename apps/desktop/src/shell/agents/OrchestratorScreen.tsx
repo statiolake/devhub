@@ -32,6 +32,7 @@ import type {
   UnaccountedAgentWire,
 } from "../../ipc/contract";
 import type { AgentStatus, AppSnapshot } from "../../ipc/appShell";
+import { pressFocusesField } from "../conversation/fieldClick";
 import { useMessageKeys, SEND_KEY } from "../conversation/messageKeys";
 import { SendIcon } from "../conversation/icons";
 import { StatusMark } from "../components/sidebar/StatusMark";
@@ -929,7 +930,9 @@ function linkLabel(link: string): string {
 
 /**
  * The person's answer: free Markdown, with the question's options as quick
- * replies. ⌘Return sends, as in the conversation's composer.
+ * replies. ⌘Return sends, as in the conversation's composer. The field is
+ * the box: Send sits beside it, and a press anywhere else in the composer
+ * lands in it.
  */
 function AnswerComposer({
   escalation,
@@ -983,7 +986,14 @@ function AnswerComposer({
     field.style.height = `${String(Math.min(field.scrollHeight, 220))}px`;
   }, [text]);
   return (
-    <div className="orchestrator-composer conversation-composer">
+    <div
+      className="orchestrator-composer conversation-composer"
+      // The frame's padding and the gaps around the quick replies are the
+      // field's: a press there writes, one on a quick reply or Send does not.
+      onMouseDown={(event) => {
+        pressFocusesField(event, input.current);
+      }}
+    >
       {options.length > 0 ? (
         <div className="orchestrator-options" aria-label="Quick replies">
           {options.map((option) => (
@@ -1027,24 +1037,19 @@ function AnswerComposer({
             {...keys}
           />
         </div>
-        <div className="conversation-composer-toolbar">
-          <span className="orchestrator-composer-hint">
-            Markdown · {SEND_KEY} to send · the orchestrator relays it
-          </span>
-          <div className="conversation-composer-actions">
-            <button
-              type="button"
-              className="conversation-send"
-              aria-label="Send answer"
-              title={`Send (${SEND_KEY})`}
-              disabled={text.trim() === "" || sending}
-              onClick={() => {
-                send(text);
-              }}
-            >
-              <SendIcon />
-            </button>
-          </div>
+        <div className="conversation-composer-actions">
+          <button
+            type="button"
+            className="conversation-send"
+            aria-label="Send answer"
+            title={`Send (${SEND_KEY})`}
+            disabled={text.trim() === "" || sending}
+            onClick={() => {
+              send(text);
+            }}
+          >
+            <SendIcon />
+          </button>
         </div>
       </div>
     </div>

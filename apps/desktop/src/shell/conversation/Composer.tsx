@@ -105,6 +105,7 @@ import { DictationWaveform } from "./DictationWaveform";
 import { MicIcon, SendIcon, StopIcon } from "./icons";
 import { useDictation, type Dictation } from "./useDictation";
 import type { VoiceLanguage } from "../../ipc/voice";
+import { pressFocusesField } from "./fieldClick";
 import { SEND_KEY, useMessageKeys } from "./messageKeys";
 import { canSendNow as takesHeldMessage } from "./QueuedMessages";
 import { SettingPickers, type SettingPickerHandle } from "./SettingPickers";
@@ -736,11 +737,10 @@ export function Composer({
           attach([...event.dataTransfer.files]);
         }}
         data-dictating={dictation.analyser !== undefined || undefined}
-        // A click on the box's padding or toolbar gap is a click on the field.
+        // A press on the box's padding, the field's wrapper or the toolbar's
+        // empty stretch is a press on the field; one on a control is not.
         onMouseDown={(event) => {
-          if (event.target !== event.currentTarget) return;
-          event.preventDefault();
-          inputRef.current?.focus();
+          pressFocusesField(event, inputRef.current);
         }}
       >
         {dictation.analyser !== undefined ? (
