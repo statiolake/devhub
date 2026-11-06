@@ -9958,8 +9958,8 @@ export class AppController {
 					),
 				resumeWait: (id, note) =>
 					orchestrator().toWire(orchestrator().resume(id, note)),
-				link: (id, agentId) =>
-					orchestrator().toWire(orchestrator().link(id, agentId)),
+				link: (id, more) =>
+					orchestrator().toWire(orchestrator().link(id, more)),
 				rank: (id, rank) =>
 					orchestrator().toWire(orchestrator().rank(id, rank)),
 				configuredRoot: () => this.config.orchestrator.root,

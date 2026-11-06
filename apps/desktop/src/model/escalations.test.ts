@@ -14,7 +14,7 @@ import {
   escalationState,
   escalationsFromJson,
   lastAnswer,
-  linkAgent,
+  linkEscalation,
   noteWorking,
   openOptions,
   holdEscalation,
@@ -124,8 +124,34 @@ describe("the state is the thread", () => {
   });
 
   it("links an agent once", () => {
-    const linked = linkAgent(linkAgent(raised(), "a2", 5), "a2", 6);
+    const once = linkEscalation(raised(), { agentId: "a2" }, 5);
+    const linked = linkEscalation(once, { agentId: "a2" }, 6);
     expect(linked.agents).toEqual(["a1", "a2"]);
+    expect(linked).toBe(once);
+  });
+
+  it("adds links after it was raised, each once, checked as --link is", () => {
+    const linked = linkEscalation(
+      raised(),
+      { links: ["https://x.test/pr/1", "devhub:orchestrator"] },
+      5,
+    );
+    expect(linked.links).toEqual([
+      ...raised().links,
+      "https://x.test/pr/1",
+      "devhub:orchestrator",
+    ]);
+    expect(linked.updatedAt).toBe(5);
+    const again = linkEscalation(
+      linked,
+      { agentId: "a2", links: ["https://x.test/pr/1"] },
+      6,
+    );
+    expect(again.agents).toEqual(["a1", "a2"]);
+    expect(again.links).toEqual(linked.links);
+    expect(() =>
+      linkEscalation(raised(), { links: ["file:///etc/passwd"] }, 7),
+    ).toThrow(EscalationError);
   });
 
   it("reads #12, 12 and E12 as ids", () => {

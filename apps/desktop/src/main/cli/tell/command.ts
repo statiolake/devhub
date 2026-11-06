@@ -369,7 +369,10 @@ export type TellCommand =
 	| {
 			readonly verb: "escalation-link";
 			readonly id: number;
-			readonly agent: string;
+			/** Another agent it is about (`--agent`). */
+			readonly agent?: string;
+			/** More links it is about (`--link`, repeatable). */
+			readonly links?: readonly string[];
 	  }
 	| {
 			/** Ranked again, as things change: only what is given moves. */
@@ -792,7 +795,10 @@ orchestrator (the Orchestrator row: the board, escalations, events)
                  [--effort quick|normal|deep] [--rank-note <text>]
                                    rank it again as things change (a
                                    --rank-note of "" takes the note away)
-  escalation link <id> --agent <a> another agent it is about
+  escalation link <id> [--agent <a>] [--link <url>]...
+                                   more it is about, after it was raised:
+                                   another agent, and links (https: or
+                                   devhub:, as escalation new --link)
                                    (the person answers in DevHub only: no
                                    command writes an answer)
   orchestrator start --root <path> --profile <p> --gui|--tui [--prompt <text>|-]
@@ -1474,11 +1480,23 @@ function parseEscalation(
 			};
 		}
 		case "link": {
-			const flags = readFlags(rest, { values: ["--agent"], switches: [] });
+			const flags = readFlags(rest, {
+				values: ["--agent", "--link"],
+				switches: [],
+			});
 			const [id] = positionals(flags, ["<id>"]);
 			const agent = one(flags, "--agent");
-			if (agent === undefined) throw new Refusal("--agent is required.");
-			return { verb: "escalation-link", id: escalationId(id), agent };
+			const links = flags.values.get("--link") ?? [];
+			if (agent === undefined && links.length === 0)
+				throw new Refusal(
+					"escalation link takes --agent <a>, one or more --link <url>, or both.",
+				);
+			return {
+				verb: "escalation-link",
+				id: escalationId(id),
+				...(agent === undefined ? {} : { agent }),
+				...(links.length === 0 ? {} : { links }),
+			};
 		}
 		case "answer":
 			throw new Refusal(
@@ -2494,7 +2512,12 @@ export function tellCommandFrom(value: unknown): TellCommand {
 			return {
 				verb: "escalation-link",
 				id: integer(record["id"], "id", 1, 999_999_999),
-				agent: text(record, "agent"),
+				...(record["agent"] === undefined
+					? {}
+					: { agent: text(record, "agent") }),
+				...(record["links"] === undefined
+					? {}
+					: { links: textList(record, "links") }),
 			};
 		case "escalation-rank":
 			return {

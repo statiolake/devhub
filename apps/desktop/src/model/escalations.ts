@@ -675,16 +675,27 @@ export function closeEscalation(
   };
 }
 
-/** Another agent it is about. */
-export function linkAgent(
+/**
+ * More it is about, after it was raised (`escalation link`): another agent,
+ * and links (`https:` or `devhub:`, as `--link` takes them). Each kept once;
+ * nothing new leaves it as it is.
+ */
+export function linkEscalation(
   escalation: Escalation,
-  agentId: string,
+  more: { readonly agentId?: string; readonly links?: readonly string[] },
   now: number,
 ): Escalation {
-  if (escalation.agents.includes(agentId)) return escalation;
+  const links = (more.links ?? []).map(checkLink);
+  const newAgent =
+    more.agentId !== undefined && !escalation.agents.includes(more.agentId);
+  const newLinks = links.filter((one) => !escalation.links.includes(one));
+  if (!newAgent && newLinks.length === 0) return escalation;
   return {
     ...escalation,
-    agents: union(escalation.agents, [agentId], AGENTS_MAX, "agents"),
+    agents: newAgent
+      ? union(escalation.agents, [more.agentId!], AGENTS_MAX, "agents")
+      : escalation.agents,
+    links: union(escalation.links, newLinks, LINKS_MAX, "links"),
     updatedAt: now,
   };
 }

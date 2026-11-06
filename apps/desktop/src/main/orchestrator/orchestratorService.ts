@@ -489,8 +489,11 @@ export class OrchestratorService {
 		return this.ports.store.resume(id, note, this.#now());
 	}
 
-	link(id: number, agentId: string): Escalation {
-		return this.ports.store.link(id, agentId, this.#now());
+	link(
+		id: number,
+		more: { readonly agentId?: string; readonly links?: readonly string[] },
+	): Escalation {
+		return this.ports.store.link(id, more, this.#now());
 	}
 
 	/** The id `raise` will give the next one: its pictures' folder is named for it. */

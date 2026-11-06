@@ -800,7 +800,7 @@ devhub --tell link agent A | workspace W | file PATH[:L[:C]] | escalation ID | o
 devhub --tell escalation show ID [--json]           # the thread (acknowledges the answer)
 devhub --tell escalation list [--state needs_answer|in_progress|waiting|closed] [--json]
 devhub --tell escalation close ID [--note TEXT]
-devhub --tell escalation link ID --agent A
+devhub --tell escalation link ID [--agent A] [--link URL]...   # more it is about, after it was raised
 devhub --tell escalation hold ID [--note TEXT]      # park it in 対応中 (not an answer)
 devhub --tell escalation wait ID --trigger TEXT [--at DATETIME]   # park it in 待機中 on an outside condition
 devhub --tell escalation resume ID [--note TEXT]    # off its wait, to 対応中

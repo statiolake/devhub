@@ -633,7 +633,11 @@ export interface TellOrchestratorPorts {
 	wait(id: number, trigger: string, dueAt: number | undefined): EscalationWire;
 	/** Off its wait, to in_progress (`escalation resume`). */
 	resumeWait(id: number, note: string | undefined): EscalationWire;
-	link(id: number, agentId: string): EscalationWire;
+	/** More it is about (`escalation link`): an agent, links. */
+	link(
+		id: number,
+		more: { readonly agentId?: string; readonly links?: readonly string[] },
+	): EscalationWire;
 	/** Ranked again by the orchestrator. Not an answer: it writes no entry. */
 	rank(id: number, rank: TellEscalationRank): EscalationWire;
 	/**
@@ -1207,7 +1211,7 @@ export class TellService {
 				};
 			}
 			case "escalation-link":
-				return this.linkEscalation(command.id, command.agent);
+				return this.linkEscalation(command);
 			case "escalation-rank":
 				return this.rankEscalation(command);
 			case "orchestrator-start":
@@ -1488,11 +1492,22 @@ export class TellService {
 		};
 	}
 
-	private linkEscalation(id: number, name: string): TellAnswer {
-		const agent = this.agent(name);
-		const linked = this.ports.orchestrator.link(id, agent.id);
+	private linkEscalation(
+		command: Extract<TellCommand, { verb: "escalation-link" }>,
+	): TellAnswer {
+		const agent =
+			command.agent === undefined ? undefined : this.agent(command.agent);
+		const links = command.links ?? [];
+		const linked = this.ports.orchestrator.link(command.id, {
+			...(agent === undefined ? {} : { agentId: agent.id }),
+			...(links.length === 0 ? {} : { links }),
+		});
+		const what = [
+			...(agent === undefined ? [] : [`${agent.name} (${agent.id})`]),
+			...links,
+		].join(", ");
 		return {
-			message: `#${String(linked.id)} is about ${agent.name} (${agent.id}) too.`,
+			message: `#${String(linked.id)} is about ${what} too.`,
 			data: linked,
 		};
 	}

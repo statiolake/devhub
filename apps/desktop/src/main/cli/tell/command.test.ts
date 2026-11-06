@@ -692,3 +692,31 @@ describe("devhub --tell link", () => {
 		});
 	});
 });
+
+describe("devhub --tell escalation link", () => {
+	it("takes an agent, links, or both, after the escalation was raised", () => {
+		expect(told("escalation", "link", "12", "--agent", "aaaa")).toEqual({
+			verb: "escalation-link",
+			id: 12,
+			agent: "aaaa",
+		});
+		expect(
+			told(
+				"escalation",
+				"link",
+				"#12",
+				"--link",
+				"https://github.com/o/r/pull/3",
+				"--link",
+				"devhub:orchestrator",
+			),
+		).toEqual({
+			verb: "escalation-link",
+			id: 12,
+			links: ["https://github.com/o/r/pull/3", "devhub:orchestrator"],
+		});
+		expect(refusal("escalation", "link", "12")).toContain(
+			"--agent <a>, one or more --link <url>, or both",
+		);
+	});
+});

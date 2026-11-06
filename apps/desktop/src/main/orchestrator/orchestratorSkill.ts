@@ -381,6 +381,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     devhub --tell escalation show 12
     devhub --tell escalation list --state in_progress
     devhub --tell escalation link 12 --agent B
+    devhub --tell escalation link 12 --link https://github.com/acme/app/pull/130
     devhub --tell link file src/app.ts:12
     devhub --tell escalation close 12 --note "案 A で実装を再開"
     devhub --tell escalation hold 12 --note "B に追加調査を依頼中"
