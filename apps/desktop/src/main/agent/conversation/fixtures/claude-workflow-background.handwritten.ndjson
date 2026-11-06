@@ -1,0 +1,38 @@
+# HAND-WRITTEN, NOT A CAPTURE. What a Workflow run with many background
+# subagents was seen to make of stream-json, reduced to the lines that used to
+# stop the conversation with a protocol mismatch: a background list whose
+# tasks lack a description, repeat or have no id; task events whose fields
+# are objects; a subagent's stream with no message_start, for a call never
+# drawn; a tool_result for a call never seen; a line that is not JSON; an
+# unknown content block; background results after the turn ended; an answer
+# to a request DevHub never made; a result line in a shape DevHub does not
+# read. The next turn must work as ever.
+#
+# "> " DevHub wrote, "< " the CLI printed.
+< {"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000000077","cwd":"/home/testuser/project","model":"claude-opus-5","permissionMode":"acceptEdits","slash_commands":[],"claude_code_version":"2.1.300","tools":["Bash","Agent","Workflow"]}
+> {"type":"user","message":{"role":"user","content":"Run the review workflow"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"user","message":{"role":"user","content":"Run the review workflow"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a1","isReplay":true}
+< {"type":"assistant","message":{"id":"msg_w1","type":"message","role":"assistant","model":"claude-opus-5","content":[{"type":"tool_use","id":"toolu_wf","name":"Workflow","input":{"description":"Review every package","script":"for (const p of packages) agent(p)"}}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a2"}
+< {"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"wf_1","task_type":"local_workflow"},{"task_id":"wf_1","task_type":"local_workflow"},{"task_type":"local_agent","description":"no id"}],"session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"system","subtype":"task_started","task_id":"wf_1","tool_use_id":"toolu_wf","task_type":"local_workflow","description":{"phase":"spawning","agents":12},"session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_wf","content":"Workflow wf_1 started in the background","is_error":false}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a3"}
+< {"type":"system","subtype":"task_progress","task_id":"wf_1","status":{"done":3,"of":12},"usage":{"total_tokens":1200},"session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}},"parent_tool_use_id":"toolu_sub_a","session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Reviewing pkg-a"}},"parent_tool_use_id":"toolu_sub_a","session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"assistant","message":{"id":"msg_sa","type":"message","role":"assistant","model":"claude-haiku-5","content":[{"type":"text","text":"Reviewing pkg-a"}]},"parent_tool_use_id":"toolu_sub_a","session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a4"}
+< {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_never_seen","content":"3 files","is_error":false}]},"parent_tool_use_id":"toolu_sub_b","session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a5"}
+< [workflow] 3/12 agents finished
+< {"type":"assistant","message":{"id":"msg_w2","type":"message","role":"assistant","model":"claude-opus-5","content":[{"type":"workflow_status","state":"running"},{"type":"text","text":"The workflow is running in the background."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a6"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":4200,"num_turns":2,"result":"The workflow is running in the background.","session_id":"00000000-0000-4000-8000-000000000077","total_cost_usd":0.1,"usage":{"input_tokens":100,"output_tokens":20}}
+< {"type":"assistant","message":{"id":"msg_sc","type":"message","role":"assistant","model":"claude-haiku-5","content":[{"type":"text","text":"pkg-c looks fine"}]},"parent_tool_use_id":"toolu_sub_c","session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a7"}
+< {"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_late"}},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"stream_event","event":{"type":"content_block_delta","index":4,"delta":{"type":"text_delta","text":"late"}},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"stream_event","event":{"type":"message_stop"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"control_response","response":{"subtype":"success","request_id":"ghost:7","response":{}}}
+< {"type":"system","subtype":"task_notification","task_id":"wf_1","tool_use_id":"toolu_wf","status":"completed","summary":"12 of 12 agents finished","session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"result","subtype":"success","is_error":"no","session_id":"00000000-0000-4000-8000-000000000077"}
+< {"type":"system","subtype":"background_tasks_changed","tasks":[],"session_id":"00000000-0000-4000-8000-000000000077"}
+> {"type":"user","message":{"role":"user","content":"Summarize"},"parent_tool_use_id":null,"session_id":"","devhub_origin":"person"}
+< {"type":"user","message":{"role":"user","content":"Summarize"},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a8","isReplay":true}
+< {"type":"assistant","message":{"id":"msg_w3","type":"message","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"All twelve packages pass."}]},"parent_tool_use_id":null,"session_id":"00000000-0000-4000-8000-000000000077","uuid":"00000000-0000-4000-8000-0000000007a9"}
+< {"type":"result","subtype":"success","is_error":false,"duration_ms":900,"num_turns":1,"result":"All twelve packages pass.","session_id":"00000000-0000-4000-8000-000000000077","total_cost_usd":0.02,"usage":{"input_tokens":50,"output_tokens":8}}

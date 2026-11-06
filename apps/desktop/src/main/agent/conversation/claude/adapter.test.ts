@@ -29,7 +29,6 @@ import {
 	type UserEntry,
 } from "../../../../model/conversation.js";
 import {
-	ProtocolMismatch,
 	RESTARTED,
 	RESTART_MARK,
 	type ConversationCommand,
@@ -226,6 +225,28 @@ function inTurn(): ClaudeAdapter {
 	perform(adapter, { kind: "send", text: "go", images: [], origin: "person" });
 	adapter.received(echo("go", "u-go"));
 	return adapter;
+}
+
+/** The transcript's "DevHub could not follow" warnings: one per kind of oddity. */
+function skippedLines(adapter: ClaudeAdapter): string[] {
+	return adapter.transcript.entries.flatMap((each) =>
+		each.kind === "notice" && each.text.includes("could not follow")
+			? [each.text]
+			: [],
+	);
+}
+
+/** The adapter still takes lines, and a turn still ends, after an oddity. */
+function stillGoesOn(adapter: ClaudeAdapter): void {
+	adapter.received(result());
+	expect(adapter.transcript.state).toMatchObject({
+		phase: "ready",
+		turn: "none",
+	});
+	expect(adapter.transcript.entries.at(-1)).toMatchObject({
+		kind: "turn-end",
+		outcome: "completed",
+	});
 }
 
 /** `inTurn`, with a Bash call whose permission request `perm` is pending. */
@@ -902,11 +923,15 @@ describe("tool calls", () => {
 		});
 	});
 
-	it("refuse a result for a tool call nobody made", () => {
+	it("draw a result for a tool call nobody made on a call of its own, and go on", () => {
 		const adapter = inTurn();
-		expect(() => adapter.received(toolResult("toolu_ghost", "x"))).toThrow(
-			ProtocolMismatch,
-		);
+		adapter.received(toolResult("toolu_ghost", "x"));
+		expect(entry(adapter, "tool:toolu_ghost")).toMatchObject({
+			kind: "tool",
+			status: "succeeded",
+			parent: null,
+		});
+		stillGoesOn(adapter);
 	});
 
 	it("keep text and tool calls of one message in the order they were said", () => {
@@ -1210,13 +1235,27 @@ describe("permission requests", () => {
 		});
 	});
 
-	it("are refused in a malformed shape", () => {
+	it("are refused back to the CLI in a malformed shape, and the conversation goes on", () => {
 		const adapter = inTurn();
-		expect(() =>
-			adapter.received(canUseTool("p", { tool_name: 7, input: {} })),
-		).toThrow(
-			/control_request.request.tool_name: expected a string \(CLI 2.1.0\)/,
-		);
+		const step = adapter.received(canUseTool("p", { tool_name: 7, input: {} }));
+		// The CLI is not left waiting for an answer.
+		expect(step.replies.map((line) => JSON.parse(line))).toEqual([
+			{
+				type: "control_response",
+				response: {
+					subtype: "error",
+					request_id: "p",
+					error: 'DevHub does not serve the control request "can_use_tool"',
+				},
+			},
+		]);
+		expect(skippedLines(adapter)).toEqual([
+			expect.stringMatching(
+				/"control_request\/\(no type\)"|control_request.request.tool_name: expected a string \(CLI 2.1.0\)/,
+			),
+		]);
+		expect(adapter.transcript.requests).toEqual([]);
+		stillGoesOn(adapter);
 	});
 });
 
@@ -1368,18 +1407,18 @@ describe("settings", () => {
 		expect(adapter.transcript.session.mode.current).toBe("plan");
 	});
 
-	it("refuse a response to a request DevHub never made", () => {
+	it("ignore a response to a request DevHub never made", () => {
 		const adapter = inTurn();
-		expect(() =>
-			adapter.received(
-				json({
-					type: "control_response",
-					response: { subtype: "success", request_id: "x:9" },
-				}),
-			),
-		).toThrow(
-			/control_response.response.request_id: expected a request DevHub made/,
+		const before = adapter.transcript.entries.length;
+		const step = adapter.received(
+			json({
+				type: "control_response",
+				response: { subtype: "success", request_id: "x:9" },
+			}),
 		);
+		expect(step.events).toEqual([]);
+		expect(adapter.transcript.entries).toHaveLength(before);
+		stillGoesOn(adapter);
 	});
 });
 
@@ -1685,11 +1724,14 @@ describe("what DevHub does not know", () => {
 		]);
 	});
 
-	it("still breaks the conversation for a system event without a subtype", () => {
+	it("skips a system event without a subtype, says so once, and goes on", () => {
 		const adapter = inTurn();
-		expect(() =>
-			adapter.received(json({ type: "system", session_id: "s" })),
-		).toThrow(ProtocolMismatch);
+		adapter.received(json({ type: "system", session_id: "s" }));
+		adapter.received(json({ type: "system", session_id: "s" }));
+		expect(skippedLines(adapter)).toEqual([
+			expect.stringContaining('a "system" line'),
+		]);
+		stillGoesOn(adapter);
 	});
 
 	it("is not raised for the events DevHub knows and does not use", () => {
@@ -1971,77 +2013,114 @@ describe("an MCP server's elicitation", () => {
 		expect(adapter.transcript.requests).toEqual([]);
 	});
 
-	it("of a mode DevHub does not know is a mismatch, not a refusal", () => {
-		expect(() =>
-			elicit(inTurn(), { message: "Go on?", mode: "openai/form" }),
-		).toThrow(/control_request\.request\.mode/);
+	it("of a mode DevHub does not know is refused back to the CLI, and the conversation goes on", () => {
+		const adapter = inTurn();
+		const step = adapter.received(
+			json({
+				type: "control_request",
+				request_id: "el-1",
+				request: {
+					subtype: "elicitation",
+					mcp_server_name: "tickets",
+					message: "Go on?",
+					mode: "openai/form",
+				},
+			}),
+		);
+		expect(step.replies.map((line) => JSON.parse(line))).toMatchObject([
+			{ response: { subtype: "error", request_id: "el-1" } },
+		]);
+		expect(skippedLines(adapter)).toEqual([
+			expect.stringContaining("control_request.request.mode"),
+		]);
+		expect(adapter.transcript.requests).toEqual([]);
+		stillGoesOn(adapter);
 	});
 });
 
-describe("a line DevHub cannot read", () => {
-	it("of a known type in the wrong shape throws with the path and the CLI version", () => {
+describe("a line DevHub cannot follow", () => {
+	it("of a known type in the wrong shape is skipped, said with the path and the CLI version", () => {
 		const adapter = inTurn();
-		let thrown: unknown;
-		try {
-			adapter.received(
-				json({
-					type: "assistant",
-					message: { id: "m", content: "not an array" },
-				}),
-			);
-		} catch (error) {
-			thrown = error;
-		}
-		expect(thrown).toBeInstanceOf(ProtocolMismatch);
-		expect(thrown).toMatchObject({
-			path: "assistant.message.content",
-			expected: "an array",
-			agentVersion: "2.1.0",
+		const line = json({
+			type: "assistant",
+			message: { id: "m", content: "not an array" },
 		});
+		const step = adapter.received(line);
+		expect(step.events).toEqual([
+			{
+				type: "entry",
+				entry: expect.objectContaining({
+					kind: "notice",
+					level: "warning",
+					text: expect.stringContaining(
+						"assistant.message.content: expected an array (CLI 2.1.0)",
+					),
+					raw: JSON.parse(line),
+				}),
+			},
+		]);
+		stillGoesOn(adapter);
 	});
 
-	it("that is not JSON throws", () => {
+	it("that is not JSON is skipped, and the conversation goes on", () => {
 		const adapter = inTurn();
-		expect(() => adapter.received("{half a line")).toThrow(
-			/line: expected a line of JSON/,
-		);
+		adapter.received("{half a line");
+		expect(skippedLines(adapter)).toEqual([
+			expect.stringContaining("line: expected a line of JSON"),
+		]);
+		stillGoesOn(adapter);
 	});
 
-	it("leaves the adapter spent: nothing further is taken", () => {
+	it("is said once per kind, however often it comes", () => {
 		const adapter = inTurn();
-		expect(() => adapter.received("nope")).toThrow(ProtocolMismatch);
-		expect(() => adapter.received(result())).toThrow(/spent/);
-		expect(() => adapter.sent("{}")).toThrow(/spent/);
-		expect(() => adapter.encode({ kind: "interrupt" })).toThrow(/spent/);
+		for (let each = 0; each < 5; each += 1) adapter.received("nope");
+		expect(skippedLines(adapter)).toHaveLength(1);
+		expect(() => adapter.sent("{}")).toThrow(/sent line/);
 	});
 
-	it("includes a delta for a block that never started", () => {
+	it("never leaves the adapter spent: everything further is taken", () => {
+		const adapter = inTurn();
+		adapter.received("nope");
+		expect(() => adapter.encode({ kind: "interrupt" })).not.toThrow();
+		stillGoesOn(adapter);
+	});
+
+	it("includes a delta for a block that never started: stepped past, the complete message draws it", () => {
 		const adapter = inTurn();
 		adapter.received(stream({ type: "message_start", message: { id: "m" } }));
-		expect(() =>
-			adapter.received(
-				stream({
-					type: "content_block_delta",
-					index: 3,
-					delta: { type: "text_delta", text: "x" },
-				}),
-			),
-		).toThrow(
-			/stream_event.event\(content_block_delta\).index: expected a block that started/,
+		adapter.received(
+			stream({
+				type: "content_block_delta",
+				index: 0,
+				delta: { type: "text_delta", text: "x" },
+			}),
 		);
+		adapter.received(assistantLine("m", [{ type: "text", text: "whole" }]));
+		expect(entry(adapter, "assistant:m:0")).toMatchObject({
+			blocks: [{ kind: "text", markdown: "whole" }],
+		});
+		expect(skippedLines(adapter)).toEqual([]);
+		stillGoesOn(adapter);
 	});
 
-	it("includes a block with no message around it", () => {
+	it("includes a block with no message around it: stepped past", () => {
 		const adapter = inTurn();
-		expect(() =>
-			adapter.received(
-				stream({
-					type: "content_block_start",
-					index: 0,
-					content_block: { type: "text", text: "" },
-				}),
-			),
-		).toThrow(/expected a message_start before it/);
+		adapter.received(
+			stream({
+				type: "content_block_start",
+				index: 0,
+				content_block: { type: "text", text: "" },
+			}),
+		);
+		adapter.received(
+			stream({
+				type: "content_block_delta",
+				index: 0,
+				delta: { type: "text_delta", text: "x" },
+			}),
+		);
+		expect(skippedLines(adapter)).toEqual([]);
+		stillGoesOn(adapter);
 	});
 
 	it("includes a line in in.log that DevHub would never have written", () => {
@@ -3089,11 +3168,18 @@ describe("taking back the last turn", () => {
 		);
 	});
 
-	it("refuses a mark for a message that is not in the conversation", () => {
+	it("takes a mark for a message that is not in the conversation as a restart that rewinds nothing", () => {
 		const adapter = twoTurns();
-		expect(() =>
-			adapter.received(json({ type: "devhub_rewind", message: "user:nope" })),
-		).toThrow(/user:nope, which is not an entry/);
+		const before = adapter.transcript.entries.map((each) => each.id);
+		const step = adapter.received(
+			json({ type: "devhub_rewind", message: "user:nope" }),
+		);
+		expect(adapter.transcript.entries.map((each) => each.id)).toEqual(before);
+		// The new CLI is greeted all the same.
+		expect(
+			step.replies.map((line) => JSON.parse(line).request?.subtype),
+		).toContain("initialize");
+		expect(adapter.transcript.state).toMatchObject({ turn: "rewinding" });
 	});
 });
 
@@ -4494,11 +4580,13 @@ describe("the CLI's other system events", () => {
 		expect(notices(adapter)).toEqual([["info", "Pushed main"]]);
 	});
 
-	it("break the conversation for a repository change that does not say its kind", () => {
+	it("skip a repository change that does not say its kind, and go on", () => {
 		const adapter = inTurn();
-		expect(() =>
-			adapter.received(system("vcs_state_changed", { branch: "main" })),
-		).toThrow(ProtocolMismatch);
+		adapter.received(system("vcs_state_changed", { branch: "main" }));
+		expect(skippedLines(adapter)).toEqual([
+			expect.stringContaining("vcs_state_changed"),
+		]);
+		stillGoesOn(adapter);
 	});
 
 	it("draw a local command the CLI ran as that command and its output", () => {
@@ -5034,11 +5122,12 @@ describe("what works in the background", () => {
 			system("task_started", { task_id: "b1", tool_use_id: "toolu_bg" }),
 		);
 		expect(adapter.transcript.backgroundTasks[0]!.startedAt).toBeUndefined();
-		expect(() =>
-			adapter.received(
-				assistantLine("m2", [], null, { timestamp: "yesterday-ish" }),
-			),
-		).toThrow(/assistant.timestamp/);
+		adapter.received(
+			assistantLine("m2", [], null, { timestamp: "yesterday-ish" }),
+		);
+		expect(skippedLines(adapter)).toEqual([
+			expect.stringContaining("assistant.timestamp"),
+		]);
 	});
 
 	it("keeps an Agent whose turn ended with a task still working out of idle, and lets it go when the list does", () => {
@@ -5213,15 +5302,23 @@ describe("what works in the background", () => {
 		);
 	});
 
-	it("breaks the conversation for a list whose task does not say its kind", () => {
+	it("lists a task that does not say its kind, or its description, by what it does say", () => {
 		const adapter = inTurn();
-		expect(() =>
-			adapter.received(
-				system("background_tasks_changed", {
-					tasks: [{ task_id: "b1", description: "x" }],
-				}),
-			),
-		).toThrow(ProtocolMismatch);
+		adapter.received(
+			system("background_tasks_changed", {
+				tasks: [
+					{ task_id: "b1", description: "x" },
+					{ task_id: "w1", task_type: "local_workflow" },
+					{ description: "no id, so nothing to list" },
+					{ task_id: "b1", task_type: "local_bash", description: "again" },
+				],
+			}),
+		);
+		expect(adapter.transcript.backgroundTasks).toMatchObject([
+			{ id: "b1", kind: "task", title: "x" },
+			{ id: "w1", title: "w1" },
+		]);
+		expect(skippedLines(adapter)).toEqual([]);
 	});
 });
 
@@ -5428,16 +5525,19 @@ describe("the person's answer to AskUserQuestion", () => {
 		]);
 	});
 
-	it("breaks the conversation when an answered call's record carries no answers", () => {
+	it("ends the call without answers when an answered call's record carries none", () => {
 		const adapter = inTurn();
 		adapter.received(
 			assistantLine("m", [
 				toolUse("toolu_q", "AskUserQuestion", { questions: QUESTIONS }),
 			]),
 		);
-		expect(() => adapter.received(answered({ questions: QUESTIONS }))).toThrow(
-			/user.tool_use_result.answers/,
-		);
+		adapter.received(answered({ questions: QUESTIONS }));
+		expect(entry(adapter, "tool:toolu_q")).toMatchObject({
+			status: "succeeded",
+			asked: undefined,
+		});
+		stillGoesOn(adapter);
 	});
 });
 
@@ -6038,12 +6138,13 @@ describe("the MCP servers", () => {
 		expect(adapter.transcript.entries).toEqual([]);
 	});
 
-	it("refuses a server reported without its status", () => {
+	it("skips a server list reported without its status", () => {
 		const adapter = new ClaudeAdapter("boot");
 		handshake(adapter);
-		expect(() => adapter.received(status("boot:2", [{ name: SLACK }]))).toThrow(
-			ProtocolMismatch,
-		);
+		adapter.received(status("boot:2", [{ name: SLACK }]));
+		expect(skippedLines(adapter)).toEqual([
+			expect.stringContaining("control_response"),
+		]);
 	});
 });
 
@@ -6165,5 +6266,69 @@ describe("a subagent whose Agent call this transcript never drew", () => {
 		const live = played();
 		const replayed = played();
 		expect(replayed.transcript).toEqual(live.transcript);
+	});
+});
+
+describe("a Workflow run with many background subagents", () => {
+	const LINES = fixture("claude-workflow-background.handwritten.ndjson");
+
+	it("is followed to the end, and the next turn works as ever", () => {
+		const adapter = new ClaudeAdapter("boot");
+		// Every line taken: none throws, none leaves the adapter spent.
+		expect(() => play(adapter, LINES)).not.toThrow();
+		const { transcript } = adapter;
+		expect(transcript.state).toEqual({ phase: "ready", turn: "none" });
+		const ends = transcript.entries.filter((each) => each.kind === "turn-end");
+		expect(
+			ends.map((each) => each.kind === "turn-end" && each.outcome),
+		).toEqual(["completed", "completed", "completed"]);
+		expect(transcript.entries.at(-2)).toMatchObject({
+			kind: "assistant",
+			blocks: [{ kind: "text", markdown: "All twelve packages pass." }],
+		});
+		expect(transcript.backgroundTasks).toEqual([]);
+	});
+
+	it("draws what it could read, and puts what it could not somewhere", () => {
+		const adapter = new ClaudeAdapter("boot");
+		const listed: (readonly string[])[] = [];
+		for (const { side, line } of LINES) {
+			if (side === "sent") adapter.sent(line);
+			else adapter.received(line);
+			listed.push(adapter.transcript.backgroundTasks.map((each) => each.id));
+		}
+		// The workflow's task listed once, with no description of its own.
+		expect(listed).toContainEqual(["wf_1"]);
+		// The workflow ended with its notification.
+		expect(entry(adapter, "tool:toolu_wf")).toMatchObject({
+			status: "succeeded",
+		});
+		// Subagents whose calls were never drawn get a card of their own…
+		expect(entry(adapter, "tool:toolu_sub_a")).toMatchObject({
+			tool: "Agent",
+			spawns: { state: "unknown" },
+		});
+		expect(entry(adapter, "assistant:msg_sa:0")).toMatchObject({
+			parent: "tool:toolu_sub_a",
+			blocks: [{ kind: "text", markdown: "Reviewing pkg-a" }],
+		});
+		expect(entry(adapter, "tool:toolu_sub_c")).toMatchObject({
+			tool: "Agent",
+		});
+		// …and a result for a call never seen, a call of its own.
+		expect(entry(adapter, "tool:toolu_never_seen")).toMatchObject({
+			status: "succeeded",
+		});
+		// What could not be read at all is said once each, with the line.
+		expect(skippedLines(adapter)).toEqual([
+			expect.stringContaining('"(not JSON)" line'),
+			expect.stringContaining('"result/success" line'),
+		]);
+		expect(
+			adapter.transcript.entries.filter(
+				(each) =>
+					each.kind === "notice" && each.text.includes("workflow_status"),
+			),
+		).toHaveLength(1);
 	});
 });

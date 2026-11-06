@@ -20,10 +20,13 @@
  * # Failure
  *
  * A line of a type the adapter knows, in a shape it does not, throws
- * `ProtocolMismatch` naming where in the line it went wrong. The adapter does
- * not catch it: the one loop that feeds lines in turns it into a broken
- * conversation. After a throw the adapter is spent and refuses every further
- * call, because its bookkeeping may be half-updated.
+ * `ProtocolMismatch` naming where in the line it went wrong. An adapter may
+ * catch it for a line the CLI printed — Claude's does: a protocol oddity must
+ * not stop the agent, so it skips what it cannot follow, says so once per
+ * kind, and goes on. A throw that leaves the adapter reaches the one loop that
+ * feeds lines in, which turns it into a broken conversation; the adapter is
+ * then spent and refuses every further call, because its bookkeeping may be
+ * half-updated.
  */
 
 import type {

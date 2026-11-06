@@ -36,8 +36,12 @@
  *   `lost` for the round to show, and `reattach` — once a round — follows the
  *   journal again from where it stopped, with the same adapter.
  * - The adapter could not read a line (`ProtocolMismatch`, or a
- *   `TranscriptInvariantError` from its own fold). That is version skew and
- *   nothing retries it: the conversation turns `broken` and takes no input.
+ *   `TranscriptInvariantError` from its own fold) and threw. Claude's adapter
+ *   never does for a line the CLI printed: it skips what it cannot follow,
+ *   says so once per kind, and goes on (`ClaudeAdapter.received`), and an
+ *   event that does not fold here is skipped the same way (`#take`). What
+ *   still throws (an adapter that does not step past, a line of DevHub's own)
+ *   turns the conversation `broken`, and it takes no input.
  *
  * Anything else is a broken assumption of DevHub's own — a host that could
  * not even be opened, a bug — and it is not turned into either. It stops the
@@ -279,6 +283,8 @@ export class AgentConversation {
 	#attached = false;
 	#lost: HostLinkFailure | undefined;
 	#crashed: Error | undefined;
+	/** The kinds of event already said not to fold (`#take`), each said once. */
+	readonly #oddities = new Set<string>();
 	#rewind: PendingRewind | undefined;
 	/** Whether the Agent was idle after the last event: becoming idle writes a held message. */
 	#idle = false;
@@ -1031,7 +1037,23 @@ export class AgentConversation {
 	}
 
 	#take(step: AdapterStep): void {
-		for (const event of step.events) this.#apply(event);
+		for (const event of step.events) {
+			try {
+				this.#apply(event);
+			} catch (error: unknown) {
+				// The adapter folded this event into its own transcript already,
+				// so it fits the conversation as the CLI tells it; what it does
+				// not fit is something DevHub added here (a held message, a
+				// state of its own). One event that does not fold is skipped —
+				// said once per kind — and the conversation goes on.
+				if (!(error instanceof TranscriptInvariantError)) throw error;
+				if (this.#oddities.has(event.type)) continue;
+				this.#oddities.add(event.type);
+				console.warn(
+					`[devhub] a GUI Agent's conversation skipped a "${event.type}" event that does not fold into its transcript: ${error.message}`,
+				);
+			}
+		}
 	}
 
 	#apply(event: ConversationEvent): void {

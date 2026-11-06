@@ -495,6 +495,11 @@ export type SentLine =
  */
 export const ORIGIN_KEY = "devhub_origin";
 
+/** A string, or nothing: for fields read leniently, where another shape is no reading. */
+function softString(value: JsonValue | undefined): string | undefined {
+	return typeof value === "string" ? value : undefined;
+}
+
 /** Reads fields of one line, failing with that line's path and the CLI's version. */
 class Fields {
 	constructor(private readonly version: string | undefined) {}
@@ -1132,6 +1137,11 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 						text: `A stop hook failed: ${errors.join("; ")}`,
 					};
 		}
+		// Read leniently, field by field. These are many and concurrent under
+		// a workflow or a crowd of background subagents, each kind of task
+		// fills them its own way (a workflow's progress carries objects where
+		// a subagent's carries words), and none of them is the conversation:
+		// a field in a shape DevHub does not read is a field it does not have.
 		case "task_started":
 		case "task_progress":
 		case "task_updated":
@@ -1139,26 +1149,33 @@ function decodeSystem(raw: JsonObject, f: Fields): ClaudeLine {
 			return {
 				type: "task",
 				subtype,
-				taskId: f.optionalString(raw.task_id, `${at}.task_id`),
-				toolUseId: f.optionalString(raw.tool_use_id, `${at}.tool_use_id`),
-				status: f.optionalString(raw.status, `${at}.status`),
-				text:
-					f.optionalString(raw.summary, `${at}.summary`) ??
-					f.optionalString(raw.description, `${at}.description`),
+				taskId: softString(raw.task_id),
+				toolUseId: softString(raw.tool_use_id),
+				status: softString(raw.status),
+				text: softString(raw.summary) ?? softString(raw.description),
 				raw,
 			};
 		case "background_tasks_changed":
 			return {
 				type: "background_tasks",
-				tasks: f.array(raw.tasks, `${at}.tasks`).map((each, index) => {
-					const path = `${at}.tasks[${index}]`;
-					const task = f.object(each, path);
-					return {
-						taskId: f.string(task.task_id, `${path}.task_id`),
-						taskType: f.string(task.task_type, `${path}.task_type`),
-						description: f.string(task.description, `${path}.description`),
-					};
-				}),
+				tasks: (Array.isArray(raw.tasks) ? raw.tasks : []).flatMap(
+					(each: JsonValue) => {
+						const task =
+							typeof each === "object" && each !== null && !Array.isArray(each)
+								? (each as JsonObject)
+								: undefined;
+						const taskId = softString(task?.task_id);
+						// A task with no id cannot be listed, stopped or matched.
+						if (task === undefined || taskId === undefined) return [];
+						return [
+							{
+								taskId,
+								taskType: softString(task.task_type) ?? "task",
+								description: softString(task.description) ?? taskId,
+							},
+						];
+					},
+				),
 			};
 		// Known, and not drawn:
 		// - hook_*: a hook the owner configured (SessionStart and the like)

@@ -74,6 +74,7 @@ import {
 	type ToolOutputPart,
 	type Transcript,
 	type TranscriptEntry,
+	TranscriptInvariantError,
 	type Usage,
 	usedUpReset,
 	withRateLimits,
@@ -118,6 +119,79 @@ import {
 } from "./decode.js";
 
 type JsonObject = { readonly [key: string]: JsonValue };
+
+/** A JSON value as an object, or undefined. */
+function asObject(value: JsonValue | undefined): JsonObject | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as JsonObject)
+		: undefined;
+}
+
+/** A received line's `type` (and `subtype`), for the log; `(not JSON)` for a line that is not. */
+function rawTypeOf(line: string): string {
+	try {
+		const value = asObject(JSON.parse(line) as JsonValue);
+		if (value === undefined) return "(not an object)";
+		const type = typeof value.type === "string" ? value.type : "(no type)";
+		return typeof value.subtype === "string"
+			? `${type}/${value.subtype}`
+			: type;
+	} catch {
+		return "(not JSON)";
+	}
+}
+
+/**
+ * What a line DevHub could not decode still has to do, when it is one the
+ * conversation waits on: a turn's `result` still ends the turn (with what of
+ * it can be read), and a request of the CLI's is still answered — refused —
+ * so that the CLI is not left waiting for an answer that never comes. Any
+ * other line is skipped.
+ */
+function fallbackLine(line: string): ClaudeLine | undefined {
+	let raw: JsonObject | undefined;
+	try {
+		raw = asObject(JSON.parse(line) as JsonValue);
+	} catch {
+		return undefined;
+	}
+	if (raw === undefined) return undefined;
+	const text = (value: JsonValue | undefined) =>
+		typeof value === "string" ? value : undefined;
+	const number = (value: JsonValue | undefined) =>
+		typeof value === "number" ? value : undefined;
+	if (raw.type === "result") {
+		return {
+			type: "result",
+			isError: raw.is_error === true,
+			subtype: text(raw.subtype) ?? "unknown",
+			durationMs: number(raw.duration_ms),
+			result: text(raw.result),
+			modelTurns: number(raw.num_turns),
+			errors: Array.isArray(raw.errors)
+				? raw.errors.flatMap((each) => (typeof each === "string" ? [each] : []))
+				: [],
+			costUsd: number(raw.total_cost_usd),
+			usage: undefined,
+			contextWindows: {},
+		};
+	}
+	const requestId = text(raw.request_id);
+	if (raw.type === "control_request" && requestId !== undefined) {
+		const subtype = text(asObject(raw.request)?.subtype) ?? "(unreadable)";
+		return { type: "control_request_unserved", requestId, subtype, raw };
+	}
+	return undefined;
+}
+
+/** A received line as the transcript attaches it: its JSON, or the text itself. */
+function rawOf(line: string): JsonValue {
+	try {
+		return JSON.parse(line) as JsonValue;
+	} catch {
+		return line.length > 4_000 ? `${line.slice(0, 4_000)}…` : line;
+	}
+}
 
 /**
  * Commands DevHub answers with its own picker rather than sending (design
@@ -284,6 +358,9 @@ const SYNTHETIC_MODEL = "<synthetic>";
 
 /** The tools that start a subagent. */
 const SUBAGENT_TOOLS = new Set(["Task", "Agent"]);
+
+/** The call of a result whose call this transcript never drew (`orphanCall`). */
+const UNKNOWN_CALL = "A call DevHub did not see made";
 
 /** A subagent whose starting call this transcript never drew (`parentOf`), in the words its card has. */
 const EARLIER_SUBAGENT = "A subagent started earlier in this session";
@@ -706,8 +783,30 @@ export class ClaudeAdapter implements ProtocolAdapter {
 
 	received(line: string): AdapterStep {
 		return this.step(() => {
-			this.take(decodeReceived(line, this.current.session.agentVersion));
-			this.reportBackground();
+			// A line the CLI printed never stops the conversation. A protocol
+			// oddity — a shape DevHub does not read, events in an order it did
+			// not expect, an id it never saw — is the CLI being newer, or busier
+			// (many subagents and background tasks at once), than DevHub's
+			// reading of it; what the line carried is skipped, said once per
+			// kind, and the next line is read as usual. Only the CLI going away,
+			// or the link to it, ends a turn (`AgentConversation`).
+			let decoded: ClaudeLine | undefined;
+			try {
+				decoded = decodeReceived(line, this.current.session.agentVersion);
+			} catch (error: unknown) {
+				this.oddity(line, error);
+				decoded = fallbackLine(line);
+			}
+			try {
+				if (decoded !== undefined) this.take(decoded);
+			} catch (error: unknown) {
+				this.oddity(line, error);
+			}
+			try {
+				this.reportBackground();
+			} catch (error: unknown) {
+				this.oddity(line, error);
+			}
 		});
 	}
 
@@ -765,14 +864,6 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.events.push(event);
 	}
 
-	private mismatch(path: string, expected: string): never {
-		throw new ProtocolMismatch(
-			path,
-			expected,
-			this.current.session.agentVersion,
-		);
-	}
-
 	private controlRequest(request: JsonObject): string {
 		const id = `${this.bootId}:${this.nextRequest}`;
 		this.nextRequest += 1;
@@ -813,6 +904,37 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private tool(id: EntryId): ToolEntry | undefined {
 		const found = this.find(id);
 		return found?.kind === "tool" ? found : undefined;
+	}
+
+	/**
+	 * A call for a result whose call DevHub never saw made, drawn as a call of
+	 * an unknown tool so that the result has somewhere to go. Running until
+	 * the result, which follows at once, says how it ended.
+	 */
+	private orphanCall(id: EntryId, toolUseId: string, path: string): ToolEntry {
+		this.skipped(
+			"tool_result for a call never made",
+			`${path}.tool_use_id ${toolUseId} names no call DevHub saw`,
+		);
+		const entry: ToolEntry = {
+			kind: "tool",
+			id,
+			parent: null,
+			tool: UNKNOWN_CALL,
+			title: UNKNOWN_CALL,
+			input: {},
+			status: "running",
+			output: undefined,
+			spawns: undefined,
+			background: undefined,
+			outsideSandbox: false,
+			plan: undefined,
+			denial: undefined,
+			change: undefined,
+			asked: undefined,
+		};
+		this.emit({ type: "entry", entry });
+		return entry;
 	}
 
 	/**
@@ -977,7 +1099,20 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 */
 	private takeRewind(message: EntryId): void {
 		this.endBackground();
-		this.emit({ type: "rewound", from: message });
+		// The CLI that was asked has gone: nothing it asked is open any more.
+		this.closeOpenRequests();
+		// The mark is the host's, and the new CLI is up whatever it says: one
+		// for a message no longer here rewinds nothing, and the rest of the
+		// restart — the greeting above all — still happens.
+		const target = this.find(message);
+		if (target?.kind !== "user" || target.parent !== null) {
+			this.skipped(
+				"rewind to a message not in the conversation",
+				`${message}, which is not a message the person sent here`,
+			);
+		} else {
+			this.emit({ type: "rewound", from: message });
+		}
 		const cut = this.cutBefore.get(message);
 		this.lastUuid = cut ?? undefined;
 		const kept = new Set(this.current.entries.map((each) => each.id));
@@ -994,6 +1129,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		this.forgetEffort();
 		this.turn("rewinding");
 		this.replies.push(this.controlRequest({ subtype: "initialize" }));
+	}
+
+	/** Every request still open closed: the CLI that asked it was stopped. */
+	private closeOpenRequests(): void {
+		for (const request of this.current.requests) {
+			this.pending.delete(request.id);
+			this.emit({ type: "request-closed", request: request.id });
+		}
 	}
 
 	/**
@@ -1015,6 +1158,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	 */
 	private takeResume(session: string): void {
 		this.endBackground();
+		this.closeOpenRequests();
 		this.emit({ type: "session-switched", session });
 		// The CLI started on the other session takes that session's model,
 		// read from its history below (`takeAssistant`) until it names it,
@@ -1102,6 +1246,8 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	private reportBackground(): void {
 		const tasks: RunningTask[] = [];
 		for (const task of this.background) {
+			// The CLI listing one task twice (seen with many at once) is one task.
+			if (tasks.some((each) => each.id === task.taskId)) continue;
 			const call = this.tasks.get(task.taskId);
 			const tool = call === undefined ? undefined : this.tool(call);
 			if (tool?.spawns?.state === "idle") continue;
@@ -1266,6 +1412,55 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		if (this.unknownSeen.has(key)) return;
 		this.unknownSeen.add(key);
 		this.notice(level, text, raw);
+	}
+
+	/**
+	 * A line, or part of one, DevHub could not take, skipped. The events it
+	 * produced before the failure stand (they are folded already), and the
+	 * adapter goes on: half of one line's bookkeeping is a smaller harm than a
+	 * conversation that takes nothing further. Logged, and said in the
+	 * transcript with the line attached, once per kind and type of line.
+	 */
+	private oddity(line: string, error: unknown): void {
+		const type = rawTypeOf(line);
+		const kind =
+			error instanceof ProtocolMismatch
+				? `mismatch at ${error.path}`
+				: error instanceof TranscriptInvariantError
+					? "transcript invariant"
+					: error instanceof Error
+						? error.name
+						: "throw";
+		const key = `oddity:${type}:${kind}`;
+		if (this.unknownSeen.has(key)) return;
+		this.unknownSeen.add(key);
+		const message = error instanceof Error ? error.message : String(error);
+		console.warn(
+			`[devhub] claude ${this.versionName()}: protocol oddity (${kind}) on a "${type}" line, skipped; the conversation goes on: ${message}`,
+			...(error instanceof ProtocolMismatch ||
+			error instanceof TranscriptInvariantError ||
+			!(error instanceof Error)
+				? []
+				: [error.stack]),
+		);
+		this.notice(
+			"warning",
+			`claude ${this.versionName()} printed a "${type}" line DevHub could not follow (${message}); DevHub skipped it`,
+			rawOf(line),
+		);
+	}
+
+	/**
+	 * A protocol oddity DevHub knows how to step past by itself: logged once
+	 * per kind, and not said in the transcript — what follows draws fine.
+	 */
+	private skipped(kind: string, detail: string): void {
+		const key = `skipped:${kind}`;
+		if (this.unknownSeen.has(key)) return;
+		this.unknownSeen.add(key);
+		console.warn(
+			`[devhub] claude ${this.versionName()}: protocol oddity (${kind}), stepped past: ${detail}`,
+		);
 	}
 
 	private versionName(): string {
@@ -1434,10 +1629,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		const request = this.ours.get(line.requestId);
 		// DevHub's own answer to one of the CLI's requests, printed back.
 		if (request === undefined && this.answered.has(line.requestId)) return;
+		// An answer to nothing DevHub asked (a second answer to one already
+		// answered, or one to a request of an earlier CLI): nothing waits on it.
 		if (request === undefined) {
-			return this.mismatch(
-				"control_response.response.request_id",
-				"a request DevHub made",
+			return this.skipped(
+				"control_response for an unknown request",
+				`request ${line.requestId} is not one DevHub made, or it was answered already`,
 			);
 		}
 		this.ours.delete(line.requestId);
@@ -1585,20 +1782,27 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				if (parent === null) this.turn("running");
 				return;
 			}
-			case "block_start":
-				return this.openBlock(
-					this.streamingUnder(parent, "content_block_start"),
-					event.index,
-					event.block,
-					false,
-				);
+			case "block_start": {
+				const message = this.streamingUnder(parent, "content_block_start");
+				if (message === undefined) return;
+				if (message.slots.has(event.index)) {
+					return this.skipped(
+						"content_block_start twice",
+						`block ${String(event.index)} of message ${message.id} started again`,
+					);
+				}
+				return this.openBlock(message, event.index, event.block, false);
+			}
 			case "delta": {
 				const message = this.streamingUnder(parent, "content_block_delta");
+				if (message === undefined) return;
 				const slot = message.slots.get(event.index);
+				// A delta for a block that never started: the complete message
+				// that follows says what the block was.
 				if (slot === undefined) {
-					return this.mismatch(
-						"stream_event.event(content_block_delta).index",
-						"a block that started",
+					return this.skipped(
+						"content_block_delta before its block",
+						`block ${String(event.index)} of message ${message.id} did not start`,
 					);
 				}
 				const { delta } = event;
@@ -1615,11 +1819,14 @@ export class ClaudeAdapter implements ProtocolAdapter {
 							);
 						}
 						if (slot.kind !== delta.kind) {
-							return this.mismatch(
-								"stream_event.event(content_block_delta).delta.type",
-								`a delta for the ${slot.kind} block that started`,
+							return this.skipped(
+								"content_block_delta of another kind",
+								`a ${delta.kind} delta for the ${slot.kind} block ${String(event.index)} of message ${message.id}`,
 							);
 						}
+						// The block was made final already (its complete message
+						// came first): there is nothing streaming to add to.
+						if (slot.final) return;
 						return this.emit({
 							type: "text-delta",
 							entry: slot.entry,
@@ -1643,12 +1850,21 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		}
 	}
 
-	private streamingUnder(parent: EntryId | null, event: string): MessageState {
+	/**
+	 * The message streaming at `parent`, if one is. A block event with none —
+	 * its `message_start` lost, or a subagent's stream interleaved after its
+	 * message stopped — is stepped past: the complete message that follows
+	 * draws the block all the same.
+	 */
+	private streamingUnder(
+		parent: EntryId | null,
+		event: string,
+	): MessageState | undefined {
 		const message = this.streaming.get(parent);
 		if (message === undefined) {
-			return this.mismatch(
-				`stream_event.event(${event})`,
-				"a message_start before it",
+			this.skipped(
+				`${event} with no message streaming`,
+				`under ${parent ?? "the main conversation"}`,
 			);
 		}
 		return message;
@@ -1873,20 +2089,22 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	): void {
 		switch (slot.kind) {
 			case "unsaid": {
-				if (block.kind !== "thinking") {
-					return this.mismatch(
-						`${path}.type`,
-						"the thinking block that streamed",
+				// Whatever it is, it was not drawn yet: it is drawn now, as the
+				// complete message says it is.
+				if (block.kind !== "thinking")
+					this.skipped(
+						"final block of another kind",
+						`${path} is a ${block.kind} where a thinking block streamed`,
 					);
-				}
 				return this.openBlock(message, index, block, true);
 			}
 			case "text":
 			case "thinking": {
+				// The block that streamed stays as it streamed.
 				if (block.kind !== slot.kind)
-					return this.mismatch(
-						`${path}.type`,
-						`the ${slot.kind} block that streamed`,
+					return this.skipped(
+						"final block of another kind",
+						`${path} is a ${block.kind} where a ${slot.kind} block streamed`,
 					);
 				slot.final = true;
 				const segment = this.find(slot.entry) as AssistantEntry;
@@ -1905,13 +2123,25 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				});
 			}
 			case "tool": {
+				// The complete message names another call than the one that
+				// streamed: the streamed one stays, and the one named is drawn
+				// too, since its result names it.
 				if (block.kind !== "tool_use" || block.id !== slot.id) {
-					return this.mismatch(
-						`${path}`,
-						`the tool_use ${slot.id} that streamed`,
+					this.skipped(
+						"final block other than the tool_use that streamed",
+						`${path} is not the tool_use ${slot.id} that streamed`,
 					);
+					if (
+						block.kind === "tool_use" &&
+						this.tool(toolEntryId(block.id)) === undefined
+					) {
+						message.slots.delete(index);
+						return this.openBlock(message, index, block, true);
+					}
+					return;
 				}
-				const tool = this.tool(slot.entry)!;
+				const tool = this.tool(slot.entry);
+				if (tool === undefined) return;
 				return this.emit({
 					type: "entry",
 					entry: {
@@ -2152,9 +2382,11 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		when: "live" | "history",
 	): void {
 		const id = toolEntryId(block.toolUseId);
-		const tool = this.tool(id);
-		if (tool === undefined)
-			return this.mismatch(`${path}.tool_use_id`, "a tool call that was made");
+		// A result for a call DevHub never saw made — the call was in a
+		// stream it did not follow (a subagent's, a background task's), or
+		// the session lost it: drawn on a call of its own, so the result is
+		// not lost and the next line is read as usual.
+		const tool = this.tool(id) ?? this.orphanCall(id, block.toolUseId, path);
 		for (const part of block.parts) {
 			if (part.kind === "unknown") this.unknown(part.key, part.raw);
 		}
@@ -2178,9 +2410,9 @@ export class ClaudeAdapter implements ProtocolAdapter {
 		const asksQuestions =
 			tool.tool === ASK_USER_QUESTION && status === "succeeded";
 		if (asksQuestions && result.answered === undefined)
-			return this.mismatch(
-				"user.tool_use_result.answers",
-				"the answers to the questions an AskUserQuestion call asked",
+			this.skipped(
+				"AskUserQuestion result without answers",
+				`${path}: the answers are not in user.tool_use_result.answers`,
 			);
 		const asked =
 			asksQuestions && result.answered !== undefined
@@ -2288,9 +2520,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 				return;
 			}
 			if (end.kind !== "turn-end") {
-				throw new Error(
+				this.skipped(
+					"usage limit's turn end is another entry",
 					`${this.unresetLimit}, the end of a turn a usage limit stopped, is a ${end.kind} entry`,
 				);
+				this.unresetLimit = undefined;
+				return;
 			}
 			this.unresetLimit = undefined;
 			this.emit({ type: "entry", entry: { ...end, limit: { resetsAt } } });
@@ -2300,6 +2535,20 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	private takeResult(line: Extract<ClaudeLine, { type: "result" }>): void {
+		// A second result for a turn that has ended, with nothing written since
+		// that it could answer: the turn it ends is over already.
+		const { state } = this.current;
+		if (
+			state.phase === "ready" &&
+			state.turn === "none" &&
+			this.unanswered.length === 0 &&
+			this.current.entries.at(-1)?.kind === "turn-end"
+		) {
+			return this.skipped(
+				"result with no turn to end",
+				"a result line came after its turn had ended",
+			);
+		}
 		const outcome = this.interrupting
 			? "interrupted"
 			: line.isError

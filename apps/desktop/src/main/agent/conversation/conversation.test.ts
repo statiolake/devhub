@@ -35,7 +35,7 @@ import {
 } from "../../shell/agentWiring.js";
 import { CancellationToken } from "../../terminal/ports.js";
 import { ClaudeAdapter } from "./claude/adapter.js";
-import { RESTART_MARK } from "./protocolAdapter.js";
+import { ProtocolMismatch, RESTART_MARK } from "./protocolAdapter.js";
 import { observeConversation } from "./reading.js";
 import {
 	HandClock,
@@ -482,20 +482,41 @@ describe("a line printed while DevHub's write is still in flight", () => {
 });
 
 describe("a line the adapter cannot read", () => {
-	it("breaks the conversation where it lands: shown, and no further input taken", async () => {
+	it("is skipped by Claude's adapter: said once, and the conversation goes on", async () => {
+		const { host, conversation } = await turns(["first"]);
+		host.print(BRITTLE_LINE);
+		await settle();
+		const { transcript } = conversation.reading();
+		expect(transcript.state).toMatchObject({ phase: "ready" });
+		expect(transcript.entries.at(-1)).toMatchObject({
+			kind: "notice",
+			level: "warning",
+			text: expect.stringContaining(
+				"assistant.message.content: expected an array",
+			) as string,
+		});
+		await conversation.submit("second", []);
+		await settle();
+		expect(
+			conversation
+				.reading()
+				.transcript.entries.filter((each) => each.kind === "turn-end"),
+		).toHaveLength(2);
+		await conversation.stop();
+	});
+
+	it("breaks the conversation where it lands when an adapter throws: shown, and no further input taken", async () => {
 		const host = new FakeHost();
 		const { events, publish } = recording();
 		const conversation = new AgentConversation(
 			host,
-			new ClaudeAdapter("boot-a"),
+			new BrittleAdapter("boot-a"),
 			publish,
 			resumeOff(),
 		);
 		conversation.start();
 		await settle();
-		host.print(
-			'{"type":"assistant","message":{"id":"m","content":"not an array"}}',
-		);
+		host.print(BRITTLE_LINE);
 		await settle();
 		const { state } = conversation.reading().transcript;
 		expect(state).toEqual({
@@ -793,9 +814,30 @@ function answeringCli(
 	return cli;
 }
 
+/**
+ * A Claude adapter that throws, as an adapter that does not step past a line
+ * would, for the line `BRITTLE_LINE`: the conversation's own handling of a
+ * throw, which Claude's adapter no longer makes for anything the CLI prints.
+ */
+class BrittleAdapter extends ClaudeAdapter {
+	override received(line: string) {
+		if (line === BRITTLE_LINE)
+			throw new ProtocolMismatch(
+				"assistant.message.content",
+				"an array",
+				undefined,
+			);
+		return super.received(line);
+	}
+}
+
+const BRITTLE_LINE =
+	'{"type":"assistant","message":{"id":"m","content":"not an array"}}';
+
 async function turns(
 	texts: readonly string[],
 	version?: string,
+	adapter: ClaudeAdapter = new ClaudeAdapter("boot-a"),
 ): Promise<{
 	host: FakeHost;
 	conversation: AgentConversation;
@@ -805,7 +847,7 @@ async function turns(
 	const cli = answeringCli(host, version);
 	const conversation = new AgentConversation(
 		host,
-		new ClaudeAdapter("boot-a"),
+		adapter,
 		() => undefined,
 		resumeOff(),
 	);
@@ -1045,10 +1087,12 @@ describe("restarting a conversation its CLI stopped", () => {
 	});
 
 	it("is refused, saying why, once DevHub stopped reading the journal", async () => {
-		const { host, conversation } = await turns(["first"]);
-		host.print(
-			'{"type":"assistant","message":{"id":"m","content":"not an array"}}',
+		const { host, conversation } = await turns(
+			["first"],
+			undefined,
+			new BrittleAdapter("boot-a"),
 		);
+		host.print(BRITTLE_LINE);
 		await settle();
 		expect(await drawnAs(conversation.restart())).toMatchObject({
 			code: "conversation_stopped",
