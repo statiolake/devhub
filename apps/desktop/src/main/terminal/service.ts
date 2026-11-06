@@ -42,6 +42,7 @@ import type { TerminalTarget } from "./ports.js";
 import { TerminalSurfaces, terminalFailureFromPort } from "./surfaces.js";
 import type { TmuxTerminalRuntime } from "./tmux.js";
 import type { RuntimeId } from "../runtime/runtime.js";
+import { noteMainActivity } from "../diagnostics/eventLoopLag.js";
 
 /**
  * What a surface key means.
@@ -165,6 +166,7 @@ export function registerTerminalService(
 				const id = channel(channelId);
 				const request = validateAttachRequest(payload);
 				const target = targetFor(request.surfaceKey);
+				noteMainActivity(`terminal attach ${request.surfaceKey}`);
 				const label = viewLabel(event);
 				watch(event.sender);
 				const sender = event.sender;

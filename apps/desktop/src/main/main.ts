@@ -58,6 +58,7 @@ import { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/commo
 import { createRequire } from 'node:module';
 import { migrateUserDataDirectory } from './userDataMigration.js';
 import { installMainLog, mainLogPath } from './diagnostics/mainLog.js';
+import { startEventLoopLagMonitor } from './diagnostics/eventLoopLag.js';
 import { watchForFinderOpens } from './shell/openFromFinder.js';
 import { activeProfile } from '../model/profile.js';
 
@@ -125,6 +126,9 @@ migrateUserDataDirectory(userDataPath);
 // DevHub: main's console goes to <userData>/logs/devhub-main.log as well, from
 // here on — a packaged app's stdout is nobody's (diagnostics/mainLog.ts).
 installMainLog(mainLogPath(userDataPath));
+// DevHub: a line in that log whenever main's event loop was held up, and by
+// what (diagnostics/eventLoopLag.ts).
+startEventLoopLagMonitor();
 if (process.platform === 'win32') {
 	const userDataUNCHost = getUNCHost(userDataPath);
 	if (userDataUNCHost) {
