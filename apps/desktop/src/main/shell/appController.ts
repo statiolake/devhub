@@ -9574,6 +9574,10 @@ export class AppController {
 					...(state.assigned === undefined ? {} : { assigned: state.assigned }),
 					...(boards.length === 0 ? {} : { boards }),
 					...(state.problem === undefined ? {} : { problem: state.problem }),
+					...(state.problemAt === undefined
+						? {}
+						: { problemAt: state.problemAt }),
+					...(state.reading === undefined ? {} : { reading: state.reading }),
 				};
 			},
 			setTimer: (ms, run) => {

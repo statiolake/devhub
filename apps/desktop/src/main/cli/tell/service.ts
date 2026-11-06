@@ -4607,8 +4607,17 @@ export function answeredBy(
 
 /** `orchestrator status`'s GitHub line: polling, suspended by the pause, or idle and why. */
 function githubPollingLine(board: OrchestratorBoardWire): string {
-	const { state, lastAt, nextAt, rateLimit, boards, assigned, problem } =
-		board.github;
+	const {
+		state,
+		lastAt,
+		nextAt,
+		rateLimit,
+		boards,
+		assigned,
+		problem,
+		problemAt,
+		reading,
+	} = board.github;
 	const why =
 		state === "suspended"
 			? " (events paused: GitHub is not polled)"
@@ -4619,9 +4628,13 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 				: "";
 	return [
 		`GitHub polling: ${state}${why}`,
-		...(assigned === undefined
-			? []
-			: [`${String(assigned)} open items assigned to me on the Projects`]),
+		...(assigned !== undefined
+			? [`${String(assigned)} open items assigned to me on the Projects`]
+			: state === "idle"
+				? []
+				: [
+						`the population is not known yet${reading === undefined ? "" : `: reading ${reading}`}`,
+					]),
 		...(boards === undefined || boards.length === 0
 			? []
 			: [`Projects ${boards.map((one) => one.ref).join(" ")}`]),
@@ -4632,7 +4645,11 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 			: [
 					`rate limit ${String(rateLimit.remaining)}/${String(rateLimit.limit)} left`,
 				]),
-		...(problem === undefined ? [] : [problem]),
+		...(problem === undefined
+			? []
+			: [
+					`last error${problemAt === undefined ? "" : ` (since ${new Date(problemAt).toISOString()})`}: ${problem}`,
+				]),
 	].join(", ");
 }
 

@@ -682,7 +682,19 @@ export interface OrchestratorBoardWire {
 			readonly ref: string;
 			readonly title?: string;
 		}[];
+		/**
+		 * What went wrong at the last poll, each complaint saying where it is
+		 * from (`Project acme/7: …`, `pull request details: …`) in GitHub's
+		 * words.
+		 */
 		readonly problem?: string;
+		/** Since when `problem` has been so. */
+		readonly problemAt?: number;
+		/**
+		 * While the population is not known: what is being read (`Project
+		 * acme/7, page 2 (pages of 100)`).
+		 */
+		readonly reading?: string;
 	};
 	/**
 	 * The subjects that break the invariant now (`main/orchestrator/

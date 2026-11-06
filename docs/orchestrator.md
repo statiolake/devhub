@@ -690,7 +690,20 @@ resume` polls once (the rate limit permitting), then sends the person's
   no event itself. Typically a few points of GitHub's 5,000 an hour; the
   interval starts at `[orchestrator.github] interval` and only backs off
   (slower as the rate limit runs down, paused until it resets when low,
-  doubling after a failure). While paused it does not poll at all. Nothing is
+  doubling after a failure; a failed request also halves the page from then
+  on, down to 10, so a Project too big to answer in time is read in smaller
+  pages rather than asked the same again). While paused it does not poll at
+  all. It is never silently unread: until the population is known, the
+  board's GitHub card ("Reading") and `orchestrator status` ("the population
+  is not known yet: reading …") say what is being read — each Project not
+  read in full yet and its page (`Project acme/7, page 2 (pages of 100)`) —
+  and the last error ("Last error", `last error (since …)`) says where it
+  came from (`Project acme/7: …`, `pull request details: …`, `GitHub: …` for
+  the whole request) in GitHub's words. A Project GitHub answers as nothing
+  without a word (an owner it does not know, a Project the token cannot see)
+  is said as such, and a missing `read:project` scope says to run `gh auth
+refresh -s read:project`. "Assigned to me" is the count once known, else
+  why not: not polled, events paused, see Last error, or reading. Nothing is
   kept on disk: it reads state, not diffs, so a restart reads afresh (the
   `orchestrator-github.json` an earlier DevHub kept is no longer read).
 - **The Workspaces' pull requests** (the Sidebar's repository rounds): an

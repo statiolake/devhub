@@ -4776,6 +4776,21 @@ describe("the Orchestrator row from the command line", () => {
 		expect(status.message).toContain(
 			"GitHub polling: active, 5 open items assigned to me on the Projects, Projects acme/7 me/2",
 		);
+		ports.github = {
+			state: "active",
+			boards: [{ ref: "acme/7" }],
+			reading: "Project acme/7, page 2 (pages of 50)",
+			problem: "Project acme/7: Resource protected by SAML enforcement.",
+			problemAt: Date.UTC(2026, 10, 5, 3, 0, 0),
+		};
+		const failing = await viaSocket(
+			service,
+			["orchestrator", "status"],
+			undefined,
+		);
+		expect(failing.message).toContain(
+			"GitHub polling: active, the population is not known yet: reading Project acme/7, page 2 (pages of 50), Projects acme/7, last error (since 2026-11-05T03:00:00.000Z): Project acme/7: Resource protected by SAML enforcement.",
+		);
 	});
 
 	it("pauses events and delivers the held ones on resume: the person's words each alone, the rest as one", async () => {

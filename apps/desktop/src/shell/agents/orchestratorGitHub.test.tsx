@@ -172,8 +172,45 @@ describe("the GitHub pill", () => {
       },
     });
     const box = card();
-    expect(box).toHaveTextContent("Backing off: GitHub answered 502");
+    expect(box).toHaveTextContent("Backing off: see Last error");
+    expect(box).toHaveTextContent("Last errorGitHub answered 502");
     expect(box).toHaveTextContent(`Next poll${clockTime(NEXT)}`);
+  });
+
+  it("never says a bare not read yet: what is read, the last error and where, or why it is not polled", () => {
+    mount({
+      github: {
+        state: "active",
+        reading: "Project acme/7, page 2 (pages of 100)",
+      },
+    });
+    expect(card()).toHaveTextContent("Assigned to menot known yet: reading");
+    expect(card()).toHaveTextContent(
+      "ReadingProject acme/7, page 2 (pages of 100)",
+    );
+    expect(card()).not.toHaveTextContent("not read yet");
+    cleanup();
+    mount({
+      github: {
+        state: "active",
+        reading: "Project acme/7, page 1 (pages of 100)",
+        problem:
+          "Project acme/7: Your token has not been granted the required scopes",
+        problemAt: LAST,
+      },
+    });
+    expect(card()).toHaveTextContent("Assigned to menot known: see Last error");
+    expect(card()).toHaveTextContent(
+      `Last errorsince ${clockTime(LAST)}: Project acme/7: Your token has not been granted the required scopes`,
+    );
+    cleanup();
+    mount({ github: { state: "suspended" } });
+    expect(card()).toHaveTextContent(
+      "Assigned to menot known: events are paused",
+    );
+    cleanup();
+    mount({ github: { state: "idle" } });
+    expect(card()).toHaveTextContent("Assigned to menot polled");
   });
 
   it("says suspended, and idle with why", () => {

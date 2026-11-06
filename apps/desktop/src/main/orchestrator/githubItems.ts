@@ -20,7 +20,18 @@
  * token is `gh auth token`'s, read as the Workspace watcher reads it, and the
  * request goes through the same client, `postGraphQl`): a page (100) of each
  * Project's items, so a bigger Project is read a page a tick, and the
- * population is known once every Project has been read in full.
+ * population is known once every Project has been read in full. A request
+ * that fails halves the page from then on (down to `MIN_ITEMS_PER_PAGE`,
+ * until the source stops): a Project too big to answer in time is read in
+ * smaller pages, not asked the same again forever.
+ *
+ * **Never silently unread.** Until the population is known, `state()` says
+ * what is being read (`reading`: each Project not read in full yet, and the
+ * page it is on), and every complaint names where it is from (`problem`:
+ * `Project acme/7: …`, `pull request details: …`, GitHub's own words) — a
+ * Project GitHub answers as nothing (no such owner, no such Project, one the
+ * token cannot see) included, and a missing `read:project` scope says how
+ * to add it.
  *
  * **The interval** starts at `[orchestrator.github] interval` and only ever
  * backs off from it (`nextDelay`): slower as `remaining` falls, paused until
@@ -39,6 +50,7 @@ import {
 	parseInterval,
 	parseProjectRef,
 } from "../../model/orchestratorSettings.js";
+import type { GraphQlError } from "../shell/github.js";
 import type { EventItem } from "./events.js";
 import type { ItemFacts, PullFacts } from "./invariant.js";
 
@@ -113,6 +125,8 @@ export interface GitHubReading {
 
 /** One page of a Project. */
 export const ITEMS_PER_PAGE = 100;
+/** The smallest page a run of failures shrinks it to. */
+export const MIN_ITEMS_PER_PAGE = 10;
 /** How many pull requests have their details read each tick. */
 export const MAX_WATCHED_PULLS = 60;
 
@@ -140,6 +154,7 @@ export function githubQuery(
 		readonly after: string | null;
 	}[],
 	pulls: readonly string[],
+	perPage: number = ITEMS_PER_PAGE,
 ): { readonly query: string; readonly variables: Record<string, unknown> } {
 	const declarations: string[] = [];
 	const selections: string[] = [];
@@ -152,7 +167,7 @@ export function githubQuery(
 		variables[`a${at}`] = board.after;
 		selections.push(
 			`p${at}: repositoryOwner(login:$o${at}){ ... on ProjectV2Owner{ projectV2(number:$n${at}){ title
-    items(first:${String(ITEMS_PER_PAGE)}, after:$a${at}){ pageInfo{ hasNextPage endCursor } nodes{ ${CARD} } } } } }`,
+    items(first:${String(perPage)}, after:$a${at}){ pageInfo{ hasNextPage endCursor } nodes{ ${CARD} } } } } }`,
 		);
 	}
 	declarations.push("$pulls:[ID!]!", "$wantPulls:Boolean!");
@@ -265,31 +280,76 @@ export function parseDetails(node: Json): PullDetails | undefined {
 	};
 }
 
+/** What a missing `read:project` scope is fixed with. */
+export const PROJECT_SCOPE_HINT =
+	"run `gh auth refresh -s read:project` (Projects need the read:project scope)";
+
+/**
+ * One of GitHub's complaints, saying where it is from: the Project its
+ * `path` names (`p0` is the first registered), the pull request details,
+ * or the whole request.
+ */
+export function problemOf(
+	error: GraphQlError,
+	boards: readonly string[],
+): string {
+	const head = error.path?.[0];
+	const index =
+		typeof head === "string" ? /^p(\d+)$/u.exec(head)?.[1] : undefined;
+	const where =
+		index !== undefined && boards[Number(index)] !== undefined
+			? `Project ${boards[Number(index)]!}`
+			: head === "pulls"
+				? "pull request details"
+				: undefined;
+	const scope =
+		error.type === "INSUFFICIENT_SCOPES" ||
+		/read:project/u.test(error.message ?? "");
+	const message = error.message ?? error.type ?? "an error without a message";
+	return [
+		where === undefined ? `GitHub: ${message}` : `${where}: ${message}`,
+		...(scope ? [PROJECT_SCOPE_HINT] : []),
+	].join(" — ");
+}
+
 /** An answer, as the source reads it. Throws only when it has no data at all. */
 export function parseReading(
 	answer: {
 		readonly data?: unknown;
-		readonly errors?:
-			| readonly { readonly message?: string; readonly type?: string }[]
-			| null;
+		readonly errors?: readonly GraphQlError[] | null;
 	},
 	boards: readonly string[],
 ): GitHubReading {
 	const data = record(answer.data);
-	const problems = (answer.errors ?? []).flatMap((one) =>
-		one.message === undefined ? [] : [one.message],
-	);
+	const problems = (answer.errors ?? []).map((one) => problemOf(one, boards));
 	const viewer = login(data?.["viewer"]);
 	if (data === undefined || viewer === undefined)
-		throw new Error(problems[0] ?? "GitHub answered without data.");
+		throw new Error(
+			problems.length > 0
+				? problems.join("; ")
+				: "GitHub answered without data.",
+		);
 	const rate = record(data["rateLimit"]);
 	const pages = new Map<
 		string,
 		{ title: string; cards: BoardCard[]; next: string | null }
 	>();
 	for (const [index, board] of boards.entries()) {
-		const project = record(record(data[`p${String(index)}`])?.["projectV2"]);
-		if (project === undefined) continue;
+		const at = `p${String(index)}`;
+		const project = record(record(data[at])?.["projectV2"]);
+		if (project === undefined) {
+			// Said only when GitHub did not: an owner it does not know, or a
+			// Project the token cannot see, is answered as nothing at all.
+			if (
+				!(answer.errors ?? []).some(
+					(one) => one.path === undefined || one.path[0] === at,
+				)
+			)
+				problems.push(
+					`Project ${board}: GitHub answered no such Project (no owner ${JSON.stringify(parseProjectRef(board)?.owner ?? board)}, or no Project ${String(parseProjectRef(board)?.number ?? "")} this token can read)`,
+				);
+			continue;
+		}
 		const items = record(project["items"]);
 		const pageInfo = record(items?.["pageInfo"]);
 		pages.set(board, {
@@ -443,9 +503,7 @@ export interface GitHubSourcePorts {
 		token: string,
 	) => Promise<{
 		readonly data?: unknown;
-		readonly errors?:
-			| readonly { readonly message?: string; readonly type?: string }[]
-			| null;
+		readonly errors?: readonly GraphQlError[] | null;
 	}>;
 	readonly setTimer: (ms: number, run: () => void) => { cancel(): void };
 	/** A poll has been read: what `items` gives may have moved. */
@@ -476,6 +534,12 @@ interface BoardState {
 	/** The pass being read, page by page. */
 	partial: BoardCard[];
 	after: string | null;
+	/** Pages of the pass being read, read so far. */
+	pages: number;
+}
+
+function freshBoard(): BoardState {
+	return { complete: undefined, partial: [], after: null, pages: 0 };
 }
 
 export class GitHubItemSource {
@@ -488,7 +552,11 @@ export class GitHubItemSource {
 	#boards = new Map<string, BoardState>();
 	#pulls = new Map<string, PullDetails>();
 	#problem: string | undefined;
+	/** When `#problem` was first said. */
+	#problemAt: number | undefined;
 	#lastAt: number | undefined;
+	/** The page size: halved by each failure, for the rest of the run. */
+	#perPage = ITEMS_PER_PAGE;
 	#nextAt: number | undefined;
 	/** The poll a resume asked for, until it is done. */
 	#catchUp: Promise<void> | undefined;
@@ -543,6 +611,9 @@ export class GitHubItemSource {
 		this.#boards = new Map();
 		this.#pulls = new Map();
 		this.#failures = 0;
+		this.#perPage = ITEMS_PER_PAGE;
+		this.#problem = undefined;
+		this.#problemAt = undefined;
 		this.#nextAt = undefined;
 		this.#catchUp = undefined;
 		if (was !== "idle") this.ports.changed?.();
@@ -575,20 +646,40 @@ export class GitHubItemSource {
 		readonly lastAt?: number;
 		readonly nextAt?: number;
 		readonly rateLimit?: RateLimit;
+		/** What went wrong at the last poll, and where (`Project acme/7: …`). */
 		readonly problem?: string;
+		/** Since when that has been so. */
+		readonly problemAt?: number;
+		/**
+		 * Until the population is known: what is being read — each Project
+		 * not read in full yet, and its page (`Project acme/7, page 2`).
+		 */
+		readonly reading?: string;
 		/** The open items assigned to the viewer on the Projects, once read in full. */
 		readonly assigned?: number;
 		/** The registered Projects, with the titles GitHub gave. */
 		readonly projects: readonly ProjectSeen[];
 	} {
 		const items = this.#mode === "idle" ? undefined : this.items();
+		const reading =
+			this.#mode !== "active" || items !== undefined
+				? undefined
+				: this.#reading();
 		return {
 			mode: this.#mode,
 			running: this.#mode === "active",
 			...(this.#lastAt === undefined ? {} : { lastAt: this.#lastAt }),
 			...(this.#nextAt === undefined ? {} : { nextAt: this.#nextAt }),
 			...(this.#rate === undefined ? {} : { rateLimit: this.#rate }),
-			...(this.#problem === undefined ? {} : { problem: this.#problem }),
+			...(this.#problem === undefined
+				? {}
+				: {
+						problem: this.#problem,
+						...(this.#problemAt === undefined
+							? {}
+							: { problemAt: this.#problemAt }),
+					}),
+			...(reading === undefined ? {} : { reading }),
 			...(items === undefined
 				? {}
 				: {
@@ -601,6 +692,22 @@ export class GitHubItemSource {
 				return { ref, ...(title === undefined ? {} : { title }) };
 			}),
 		};
+	}
+
+	/** Each Project not read in full yet, and the page it is on. */
+	#reading(): string {
+		const pending = this.#boardRefs().filter(
+			(ref) => this.#boards.get(ref)?.complete === undefined,
+		);
+		const page = ` (pages of ${String(this.#perPage)})`;
+		return (
+			pending
+				.map(
+					(ref) =>
+						`Project ${ref}, page ${String((this.#boards.get(ref)?.pages ?? 0) + 1)}`,
+				)
+				.join("; ") + page
+		);
 	}
 
 	/**
@@ -681,8 +788,11 @@ export class GitHubItemSource {
 	}
 
 	#say(problem: string | undefined): void {
-		if (problem !== undefined && problem !== this.#problem)
+		if (problem !== undefined && problem !== this.#problem) {
 			this.ports.log?.(`[devhub] orchestrator GitHub items: ${problem}`);
+			this.#problemAt = this.#now();
+		}
+		if (problem === undefined) this.#problemAt = undefined;
 		this.#problem = problem;
 	}
 
@@ -697,6 +807,11 @@ export class GitHubItemSource {
 			this.#failures = 0;
 		} catch (error) {
 			this.#failures += 1;
+			// Too much to answer in time is one cause: ask for less.
+			this.#perPage = Math.max(
+				MIN_ITEMS_PER_PAGE,
+				Math.floor(this.#perPage / 2),
+			);
 			this.#say(error instanceof Error ? error.message : String(error));
 		} finally {
 			this.#inFlight = undefined;
@@ -729,19 +844,19 @@ export class GitHubItemSource {
 		const credentials = await this.ports.token();
 		if ("problem" in credentials) throw new Error(credentials.problem);
 		const boards = refs.map((ref) => {
-			const state =
-				this.#boards.get(ref) ??
-				({ complete: undefined, partial: [], after: null } as BoardState);
+			const state = this.#boards.get(ref) ?? freshBoard();
 			this.#boards.set(ref, state);
 			const parsed = parseProjectRef(ref)!;
 			return { owner: parsed.owner, number: parsed.number, after: state.after };
 		});
-		const request = githubQuery(boards, this.#watchedPulls());
+		const request = githubQuery(boards, this.#watchedPulls(), this.#perPage);
 		const answer = await this.ports.post(request, credentials.token);
 		// Stopped while it was asked: what it says is nobody's.
 		if (this.#mode === "idle") return;
 		const reading = parseReading(answer, refs);
-		this.#say(reading.problems[0]);
+		this.#say(
+			reading.problems.length === 0 ? undefined : reading.problems.join("; "),
+		);
 		this.#rate = reading.rateLimit ?? this.#rate;
 		this.#apply(reading, refs);
 	}
@@ -751,12 +866,7 @@ export class GitHubItemSource {
 			this.ports.log?.(
 				`[devhub] orchestrator GitHub items: the viewer is ${reading.viewer} now, not ${this.#viewer}`,
 			);
-			this.#boards = new Map(
-				refs.map((ref) => [
-					ref,
-					{ complete: undefined, partial: [], after: null },
-				]),
-			);
+			this.#boards = new Map(refs.map((ref) => [ref, freshBoard()]));
 			this.#pulls = new Map();
 		}
 		this.#viewer = reading.viewer;
@@ -766,6 +876,7 @@ export class GitHubItemSource {
 			if (page === undefined || state === undefined) continue;
 			state.title = page.title;
 			state.partial.push(...page.cards);
+			state.pages += 1;
 			if (page.next !== null) {
 				state.after = page.next;
 				continue;
@@ -773,6 +884,7 @@ export class GitHubItemSource {
 			state.complete = state.partial;
 			state.partial = [];
 			state.after = null;
+			state.pages = 0;
 		}
 		for (const [id, details] of reading.pulls) this.#pulls.set(id, details);
 		const named = new Set(this.#watchedPulls());

@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorWire, failureText } from "../../model/wire.js";
 import {
 	GitHubUnavailable,
+	postGraphQl,
 	readBranchStatus,
 	readGitHubLogin,
 	readGitHubToken,
@@ -824,5 +825,54 @@ describe("an Issue's Projects lanes", () => {
 	it("are nothing, not an error, when the request fails", async () => {
 		answers({ errors: [{ message: "API rate limit exceeded." }] });
 		expect(await readIssueProjects(ISSUE, "token")).toEqual({});
+	});
+});
+
+describe("postGraphQl", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it("fails, not hangs, when the answer's body stalls past the timeout", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((_url: string, init: { signal: AbortSignal }) =>
+				Promise.resolve({
+					ok: true,
+					status: 200,
+					json: () =>
+						new Promise((_resolve, reject) => {
+							init.signal.addEventListener("abort", () => {
+								reject(new Error("This operation was aborted"));
+							});
+						}),
+				}),
+			),
+		);
+		const asked = postGraphQl({ query: "{}", variables: {} }, "token");
+		const failed = expect(asked).rejects.toThrow(/could not be read/u);
+		await vi.advanceTimersByTimeAsync(21_000);
+		await failed;
+	});
+
+	it("says a 403 in GitHub's words: a secondary rate limit is not bad credentials", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: false,
+				status: 403,
+				json: () =>
+					Promise.resolve({
+						message: "You have exceeded a secondary rate limit.",
+					}),
+			}),
+		);
+		await expect(
+			postGraphQl({ query: "{}", variables: {} }, "token"),
+		).rejects.toThrow(
+			"GitHub answered 403: You have exceeded a secondary rate limit.",
+		);
 	});
 });

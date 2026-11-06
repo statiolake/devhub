@@ -468,12 +468,14 @@ interface GraphQlAnswer {
 			} | null;
 		} | null;
 	} | null;
-	readonly errors?:
-		| readonly {
-				readonly message?: string;
-				readonly type?: string;
-		  }[]
-		| null;
+	readonly errors?: readonly GraphQlError[] | null;
+}
+
+/** One of GitHub's complaints: `path` names the field it is about (`p0`, `projectV2`). */
+export interface GraphQlError {
+	readonly message?: string;
+	readonly type?: string;
+	readonly path?: readonly (string | number)[];
 }
 
 /**
@@ -919,9 +921,7 @@ export async function postGraphQl(
 	token: string,
 ): Promise<{
 	readonly data?: unknown;
-	readonly errors?:
-		| readonly { readonly message?: string; readonly type?: string }[]
-		| null;
+	readonly errors?: readonly GraphQlError[] | null;
 }> {
 	return post(body, token);
 }
@@ -936,37 +936,63 @@ async function post(body: unknown, token: string): Promise<GraphQlAnswer> {
 	const timer = setTimeout(() => {
 		controller.abort();
 	}, REQUEST_TIMEOUT_MS);
-	let response: Response;
+	// The answer is read inside the same timeout as the request: a body that
+	// stalls must fail, not hold its caller (one request at a time) forever.
 	try {
-		response = await fetch(ENDPOINT, {
-			method: "POST",
-			headers: {
-				authorization: `bearer ${token}`,
-				"content-type": "application/json",
-				// GitHub asks for one, and a request without it is answered less
-				// helpfully when something goes wrong.
-				"user-agent": "DevHub",
-			},
-			body: JSON.stringify(body),
-			signal: controller.signal,
-		});
-	} catch (error: unknown) {
-		// The reason is the network's, and it is said as it came: "fetch failed",
-		// a DNS name, a timeout. What must not appear is the request, which
-		// carries the token.
-		throw new GitHubUnavailable(
-			error instanceof Error ? error.message : "GitHub could not be reached.",
-		);
+		let response: Response;
+		try {
+			response = await fetch(ENDPOINT, {
+				method: "POST",
+				headers: {
+					authorization: `bearer ${token}`,
+					"content-type": "application/json",
+					// GitHub asks for one, and a request without it is answered less
+					// helpfully when something goes wrong.
+					"user-agent": "DevHub",
+				},
+				body: JSON.stringify(body),
+				signal: controller.signal,
+			});
+		} catch (error: unknown) {
+			// The reason is the network's, and it is said as it came: "fetch
+			// failed", a DNS name, a timeout. What must not appear is the
+			// request, which carries the token.
+			throw new GitHubUnavailable(
+				error instanceof Error ? error.message : "GitHub could not be reached.",
+			);
+		}
+		if (response.status === 401) {
+			throw new GitHubUnavailable(
+				"GitHub refused DevHub's credentials. Run `gh auth login` and try again.",
+			);
+		}
+		if (!response.ok) {
+			// A 403 is as often a secondary rate limit as a refusal: GitHub's
+			// own sentence says which.
+			const said = await Promise.resolve()
+				.then(() => response.json() as unknown)
+				.then((one: unknown) =>
+					typeof one === "object" &&
+					one !== null &&
+					typeof (one as { message?: unknown }).message === "string"
+						? (one as { message: string }).message.replace(/\.$/u, "")
+						: undefined,
+				)
+				.catch(() => undefined);
+			throw new GitHubUnavailable(
+				response.status === 403 && said === undefined
+					? "GitHub refused DevHub's credentials. Run `gh auth login` and try again."
+					: `GitHub answered ${String(response.status)}${said === undefined ? "" : `: ${said}`}.`,
+			);
+		}
+		try {
+			return (await response.json()) as GraphQlAnswer;
+		} catch (error: unknown) {
+			throw new GitHubUnavailable(
+				`GitHub's answer could not be read: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
 	} finally {
 		clearTimeout(timer);
 	}
-	if (response.status === 401 || response.status === 403) {
-		throw new GitHubUnavailable(
-			"GitHub refused DevHub's credentials. Run `gh auth login` and try again.",
-		);
-	}
-	if (!response.ok) {
-		throw new GitHubUnavailable(`GitHub answered ${String(response.status)}.`);
-	}
-	return (await response.json()) as GraphQlAnswer;
 }

@@ -242,6 +242,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* GitHub's own sentence, which can be long: wrapped, in the error ink. */
+.orchestrator-github-problem {
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
 /* A small switch, the Mac's: on is the accent, paused is the waiting ink. */
 .orchestrator-pause-track {
   position: relative;

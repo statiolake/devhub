@@ -3,9 +3,10 @@
  * — green active, grey suspended by the pause, hollow idle, amber backing
  * off (a failed poll, or a low rate limit) — and, on hover or focus, a small
  * card with what `orchestrator status` says of it: how many open items
- * (Issues, pull requests) of the registered Projects are assigned to me,
- * the Projects (links to them), the state and why, the last and next poll, the rate
- * limit left.
+ * (Issues, pull requests) of the registered Projects are assigned to me
+ * — or why that is not known — what is being read until it is, the last
+ * error and where it came from, the Projects (links to them), the state and
+ * why, the last and next poll, the rate limit left.
  *
  * The card is in this page, under the pill, and the pointer may move into
  * it to click a board: it closes a moment after the pointer leaves both.
@@ -26,6 +27,20 @@ export function clockTime(at: number): string {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+/**
+ * The population's size, or why it is not known: never a bare "not read
+ * yet" — paused, not polled, failing (the Last error says what) or still
+ * being read (Reading says what).
+ */
+export function assignedWords(github: OrchestratorBoardWire["github"]): string {
+  if (github.assigned !== undefined)
+    return `${String(github.assigned)} open items`;
+  if (github.state === "idle") return "not polled";
+  if (github.state === "suspended") return "not known: events are paused";
+  if (github.problem !== undefined) return "not known: see Last error";
+  return "not known yet: reading";
 }
 
 const HEALTH_LABEL = {
@@ -100,7 +115,7 @@ export function GitHubPill({
             <span className="orchestrator-github-dot" data-health={health} />
             <strong>{HEALTH_LABEL[health]}</strong>
             {health === "backing_off" && why !== undefined ? (
-              <span>: {why}</span>
+              <span>: {why === github.problem ? "see Last error" : why}</span>
             ) : health === "suspended" ? (
               <span>: events are paused, GitHub is not asked</span>
             ) : health === "idle" ? (
@@ -139,11 +154,24 @@ export function GitHubPill({
           )}
           <dl className="orchestrator-github-facts">
             <dt>Assigned to me</dt>
-            <dd>
-              {github.assigned === undefined
-                ? "not read yet"
-                : `${String(github.assigned)} open items`}
-            </dd>
+            <dd>{assignedWords(github)}</dd>
+            {github.reading === undefined ? null : (
+              <>
+                <dt>Reading</dt>
+                <dd>{github.reading}</dd>
+              </>
+            )}
+            {github.problem === undefined ? null : (
+              <>
+                <dt>Last error</dt>
+                <dd className="orchestrator-github-problem">
+                  {github.problemAt === undefined
+                    ? null
+                    : `since ${clockTime(github.problemAt)}: `}
+                  {github.problem}
+                </dd>
+              </>
+            )}
             {github.lastAt === undefined ? null : (
               <>
                 <dt>Last poll</dt>

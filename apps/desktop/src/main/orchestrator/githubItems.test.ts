@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
 	GitHubItemSource,
 	githubQuery,
+	ITEMS_PER_PAGE,
 	MAX_BACKOFF_MS,
+	MIN_ITEMS_PER_PAGE,
 	nextDelay,
 	parseReading,
+	PROJECT_SCOPE_HINT,
 } from "./githubItems.js";
 
 // --- fixtures: GitHub's answers, as JSON ---------------------------------------
@@ -306,13 +309,17 @@ describe("the GitHub items", () => {
 					boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }],
 				}),
 				errors: [
-					{ message: "Could not resolve to a ProjectV2 with the number 8." },
+					{
+						type: "NOT_FOUND",
+						message: "Could not resolve to a ProjectV2 with the number 8.",
+						path: ["p1", "projectV2"],
+					},
 				],
 			},
 			["acme/7", "acme/8"],
 		);
 		expect(reading.problems).toEqual([
-			"Could not resolve to a ProjectV2 with the number 8.",
+			"Project acme/8: Could not resolve to a ProjectV2 with the number 8.",
 		]);
 		expect(reading.pages.get("acme/7")?.cards).toHaveLength(1);
 		expect(() =>
@@ -346,6 +353,171 @@ describe("the GitHub items", () => {
 		await run.source.caughtUp();
 		expect(run.asked).toHaveLength(2);
 		expect(run.source.items()).toHaveLength(1);
+	});
+});
+
+/** A source whose GitHub answers each request with `respond`'s value (or throws). */
+function raw(
+	respond: (body: {
+		query: string;
+		variables: Record<string, unknown>;
+	}) => unknown,
+	projects = ["acme/7"],
+) {
+	const asked: { query: string; variables: Record<string, unknown> }[] = [];
+	const source = new GitHubItemSource({
+		settings: () => ({ projects, interval: "90s" }),
+		token: () => Promise.resolve({ token: "t" }),
+		post: (body) => {
+			const one = body as (typeof asked)[number];
+			asked.push(one);
+			return Promise.resolve(respond(one) as never);
+		},
+		setTimer: () => ({ cancel: () => undefined }),
+		now: () => Date.parse("2026-11-05T00:00:00Z"),
+	});
+	source.follow(true);
+	return { source, asked };
+}
+
+describe("the GitHub items, never silently unread", () => {
+	const scopes = {
+		type: "INSUFFICIENT_SCOPES",
+		message:
+			"Your token has not been granted the required scopes to execute this query. The 'projectV2' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo'] scopes.",
+	};
+
+	it("knows an empty Project at once: it has no page to wait for", async () => {
+		const run = world([{ boards: [{ cards: [] }] }]);
+		await run.ticks(1);
+		expect(run.source.items()).toEqual([]);
+		expect(run.source.state()).toMatchObject({ assigned: 0 });
+		expect(run.source.state().reading).toBeUndefined();
+	});
+
+	it("says what it is reading until the population is known", async () => {
+		const run = world(
+			[
+				{ boards: [{ cards: [], next: "c1" }, { cards: [] }] },
+				{ boards: [{ cards: [], next: "c2" }, { cards: [] }] },
+			],
+			["acme/7", "other/3"],
+		);
+		expect(run.source.state().reading).toBe(
+			`Project acme/7, page 1; Project other/3, page 1 (pages of ${String(ITEMS_PER_PAGE)})`,
+		);
+		await run.ticks(2);
+		expect(run.source.items()).toBeUndefined();
+		expect(run.source.state().assigned).toBeUndefined();
+		expect(run.source.state().reading).toBe(
+			`Project acme/7, page 3 (pages of ${String(ITEMS_PER_PAGE)})`,
+		);
+	});
+
+	it("names a Project GitHub answers as nothing, though GitHub says nothing of it", async () => {
+		// `repositoryOwner` of a login GitHub does not know is null, no error.
+		const run = raw(() => ({
+			data: { ...answer({ boards: [] }).data, p0: null },
+		}));
+		await run.source.tick();
+		expect(run.source.items()).toBeUndefined();
+		expect(run.source.state().problem).toBe(
+			'Project acme/7: GitHub answered no such Project (no owner "acme", or no Project 7 this token can read)',
+		);
+		expect(run.source.state().problemAt).toBe(
+			Date.parse("2026-11-05T00:00:00Z"),
+		);
+		expect(run.source.state().reading).toContain("Project acme/7, page 1");
+	});
+
+	it("names the Project a missing read:project scope is about, and how to add it", async () => {
+		const run = raw(() => ({
+			data: { ...answer({ boards: [] }).data, p0: { projectV2: null } },
+			errors: [{ ...scopes, path: ["p0", "projectV2"] }],
+		}));
+		await run.source.tick();
+		expect(run.source.items()).toBeUndefined();
+		expect(run.source.state().problem).toBe(
+			`Project acme/7: ${scopes.message} — ${PROJECT_SCOPE_HINT}`,
+		);
+	});
+
+	it("says the scope's fix when GitHub refuses the whole request for it", async () => {
+		const run = raw(() => ({ errors: [scopes] }));
+		await run.source.tick();
+		expect(run.source.state().problem).toBe(
+			`GitHub: ${scopes.message} — ${PROJECT_SCOPE_HINT}`,
+		);
+	});
+
+	it("names each Project and the details its complaints are about", () => {
+		const reading = parseReading(
+			{
+				...answer({ boards: [{ cards: [] }, { cards: [] }] }),
+				errors: [
+					{
+						type: "FORBIDDEN",
+						message: "Resource protected by organization SAML enforcement.",
+						path: ["p1", "projectV2"],
+					},
+					{
+						type: "NOT_FOUND",
+						message: "Could not resolve to a node with the global id of 'P1'",
+						path: ["pulls", 0],
+					},
+				],
+			},
+			["acme/7", "corp/2"],
+		);
+		expect(reading.problems).toEqual([
+			"Project corp/2: Resource protected by organization SAML enforcement.",
+			"pull request details: Could not resolve to a node with the global id of 'P1'",
+		]);
+	});
+
+	it("asks for smaller pages after a failure, and so gets through a Project too big to answer in time", async () => {
+		const run = raw((body) => {
+			if (body.query.includes(`items(first:${String(ITEMS_PER_PAGE)},`))
+				return {
+					data: null,
+					errors: [
+						{
+							message:
+								"Something went wrong while executing your query. This may be the result of a timeout.",
+						},
+					],
+				};
+			return answer({
+				boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }],
+			});
+		});
+		await run.source.tick();
+		expect(run.source.items()).toBeUndefined();
+		expect(run.source.state().problem).toMatch(/timeout/u);
+		await run.source.tick();
+		expect(run.asked[1]?.query).toContain(
+			`items(first:${String(ITEMS_PER_PAGE / 2)},`,
+		);
+		expect(run.source.items()).toHaveLength(1);
+		expect(run.source.state().problem).toBeUndefined();
+	});
+
+	it("shrinks the page no further than the floor", async () => {
+		const run = raw(() => {
+			throw new Error("GitHub answered 502.");
+		});
+		for (let index = 0; index < 8; index += 1) await run.source.tick();
+		expect(run.asked.at(-1)?.query).toContain(
+			`items(first:${String(MIN_ITEMS_PER_PAGE)},`,
+		);
+		expect(run.source.state().problem).toBe("GitHub answered 502.");
+	});
+
+	it("says nothing is being read while suspended", async () => {
+		const run = world([]);
+		run.source.follow(true, true);
+		expect(run.source.state()).toMatchObject({ mode: "suspended" });
+		expect(run.source.state().reading).toBeUndefined();
 	});
 });
 
