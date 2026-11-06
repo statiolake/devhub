@@ -45,6 +45,10 @@
  *   the probe's answer lands. Shown again within the grace, nothing happens.
  * - **Discard after a while.** Frozen for `discardAfterMs` (0: never), it is
  *   closed, and stays so until somebody asks for it.
+ * - **Freezing can be turned off.** With `freeze` false
+ *   (`general.workbench_freeze`) nothing is frozen — not on hiding, not on a
+ *   person's Sleep — so nothing is discarded either, and one frozen when it
+ *   turned off is thawed.
  *
  * SSH and dev container workbenches are not frozen or discarded
  * (`freezable: false`): they start when shown or asked for, and stay up.
@@ -159,6 +163,11 @@ export interface PlanFacts {
 	readonly now: number;
 	/** `general.workbench_discard_minutes` in ms; 0 for never. */
 	readonly discardAfterMs: number;
+	/**
+	 * `general.workbench_freeze`: false freezes nothing (so discards nothing)
+	 * and thaws whatever is frozen.
+	 */
+	readonly freeze: boolean;
 	/** Every wanted workbench, in the Sidebar's order. */
 	readonly workbenches: readonly WorkbenchFacts[];
 }
@@ -270,6 +279,7 @@ function decideOne(
 	facts: WorkbenchFacts,
 	now: number,
 	discardAfterMs: number,
+	freeze: boolean,
 ): WorkbenchAction | undefined {
 	const { folder, phase } = facts;
 	const wanted = facts.shown || facts.asked;
@@ -294,6 +304,7 @@ function decideOne(
 			) {
 				return { kind: "thaw", folder, why: "a connection is waiting" };
 			}
+			if (!freeze) return { kind: "thaw", folder, why: "freezing is off" };
 			if (discardAfterMs > 0 && now - phase.since >= discardAfterMs) {
 				return { kind: "discard", folder };
 			}
@@ -307,7 +318,7 @@ function decideOne(
 					facts.probe === undefined || now - facts.probe.at >= SETTLE_PROBE_MS;
 				return due && !facts.probing ? { kind: "probe", folder } : undefined;
 			}
-			if (!facts.freezable || facts.shown) return undefined;
+			if (!freeze || !facts.freezable || facts.shown) return undefined;
 			const reasons = AWAKE_RULES.filter((rule) => rule.holds(facts, now));
 			if (facts.freezeAsked && !reasons.some((rule) => rule.hard)) {
 				return { kind: "freeze", folder, why: "asked" };
@@ -333,10 +344,10 @@ function decideOne(
 
 /** What to do now. Pure: the same facts give the same actions. */
 export function decide(facts: PlanFacts): WorkbenchAction[] {
-	const { now, discardAfterMs, workbenches } = facts;
+	const { now, discardAfterMs, freeze, workbenches } = facts;
 	const actions: WorkbenchAction[] = [];
 	for (const one of workbenches) {
-		const action = decideOne(one, now, discardAfterMs);
+		const action = decideOne(one, now, discardAfterMs, freeze);
 		if (action !== undefined) actions.push(action);
 	}
 	// The budget: one background start, and only when nothing is starting —
@@ -362,18 +373,18 @@ export function decide(facts: PlanFacts): WorkbenchAction[] {
 
 /** When `decide` would answer differently with nothing else changing. */
 export function nextDecision(facts: PlanFacts): number | undefined {
-	const { now, discardAfterMs } = facts;
+	const { now, discardAfterMs, freeze } = facts;
 	const times: number[] = [];
 	for (const one of facts.workbenches) {
 		const { phase } = one;
-		if (phase.kind === "frozen" && discardAfterMs > 0) {
+		if (phase.kind === "frozen" && freeze && discardAfterMs > 0) {
 			times.push(phase.since + discardAfterMs);
 		}
 		if (phase.kind === "running") {
 			if (!one.settled) {
 				times.push((one.probe?.at ?? now) + SETTLE_PROBE_MS);
 				times.push(phase.since + SETTLE_TIMEOUT_MS);
-			} else if (!one.shown) {
+			} else if (freeze && !one.shown) {
 				if (one.probe !== undefined) times.push(one.probe.at + PROBE_FRESH_MS);
 				if (one.hiddenSince !== undefined) {
 					times.push(one.hiddenSince + FREEZE_GRACE_MS);

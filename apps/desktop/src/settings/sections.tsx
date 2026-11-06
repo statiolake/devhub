@@ -254,9 +254,20 @@ export function GeneralSection({
         heading="Editors"
         note="Each Workspace's editor area is its own VS Code editor. Every local editor starts at launch, the one on screen first and the others one at a time in the background. An editor that is not on screen is frozen at once: its processes are paused, so the Mac can compress or swap out their memory, and it resumes instantly, as it was, when you show it again or something connects to it. An editor that is debugging, running a task, running a command in one of its terminals, or talking over the network is not frozen. SSH and dev container editors are never frozen. Agents and terminal sessions keep running throughout."
       >
+        <SwitchRow
+          label="Freeze hidden editors"
+          help="Off, no editor is ever frozen — not when hidden, not by the Task Manager's Sleep — so none is discarded either, and one frozen now resumes at once. Editors then keep using CPU and memory while hidden. Default on."
+          checked={config.general.workbenchFreeze}
+          onChange={(workbenchFreeze) => {
+            update({
+              ...config,
+              general: { ...config.general, workbenchFreeze },
+            });
+          }}
+        />
         <Row
           label="Discard after (minutes)"
-          help="How long an editor may stay frozen before it is closed to free its memory entirely. It reopens where it was, unsaved changes included, when you press Enter on it. 0 never closes one. Default 60."
+          help="How long an editor may stay frozen before it is closed to free its memory entirely. It reopens where it was, unsaved changes included, when you press Enter on it. 0 never closes one. With freezing off nothing is frozen, so nothing is closed. Default 60."
         >
           <NumberField
             label="Discard after (minutes)"

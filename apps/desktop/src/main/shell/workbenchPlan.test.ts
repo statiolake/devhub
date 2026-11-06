@@ -73,7 +73,7 @@ function plan(
 	discardAfterMs = HOUR,
 	now = NOW,
 ): PlanFacts {
-	return { now, discardAfterMs, workbenches };
+	return { now, discardAfterMs, freeze: true, workbenches };
 }
 
 const kinds = (facts: PlanFacts) =>
@@ -610,6 +610,69 @@ describe("the races", () => {
 				]),
 			),
 		).toEqual(["probe a"]);
+	});
+});
+
+describe("with freezing off", () => {
+	const off = (workbenches: WorkbenchFacts[], now = NOW): PlanFacts => ({
+		...plan(workbenches, HOUR, now),
+		freeze: false,
+	});
+
+	it("never freezes a hidden one, nor probes it for a freeze", () => {
+		expect(kinds(off([wb("a")]))).toEqual([]);
+		expect(kinds(off([wb("a", { probe: undefined })]))).toEqual([]);
+		expect(
+			kinds(off([wb("a", { hiddenSince: NOW - FREEZE_GRACE_MS })])),
+		).toEqual([]);
+	});
+
+	it("ignores a person's Sleep", () => {
+		expect(kinds(off([wb("a", { freezeAsked: true })]))).toEqual([]);
+	});
+
+	it("thaws one frozen before it turned off, instead of discarding it", () => {
+		expect(decide(off([wb("a", { phase: frozen(NOW - 2 * HOUR) })]))).toEqual([
+			{ kind: "thaw", folder: "a", why: "freezing is off" },
+		]);
+		// A stronger reason still names itself.
+		expect(decide(off([wb("a", { phase: frozen(), shown: true })]))).toEqual([
+			{ kind: "thaw", folder: "a", why: "shown" },
+		]);
+	});
+
+	it("still probes a start until it has settled, and still starts in the background", () => {
+		expect(
+			kinds(
+				off([
+					wb("a", {
+						settled: false,
+						phase: running(NOW - 1_000),
+						probe: undefined,
+					}),
+				]),
+			),
+		).toEqual(["probe a"]);
+		expect(kinds(off([wb("a", { phase: { kind: "absent" } })]))).toEqual([
+			"start a",
+		]);
+	});
+
+	it("sets no freeze or discard deadline", () => {
+		expect(nextDecision(off([wb("a", { phase: frozen(NOW - 1_000) })]))).toBe(
+			undefined,
+		);
+		expect(
+			nextDecision(
+				off([
+					wb("a", {
+						trafficAt: NOW - 1_000,
+						hiddenSince: NOW - 1_000,
+						probe: { at: NOW - 500, busy: [] },
+					}),
+				]),
+			),
+		).toBeUndefined();
 	});
 });
 

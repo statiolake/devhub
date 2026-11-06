@@ -207,7 +207,9 @@ busy terminal, network traffic) but never past the hard reasons — it is on
 screen, asked for, closing, still starting, sharing its renderer, or a far
 one. It is offered only for a running local workbench that is not on screen.
 Frozen, it resumes instantly when shown, asked for or connected to, and is
-discarded after `general.workbench_discard_minutes`. A workbench row shows its
+discarded after `general.workbench_discard_minutes`. With
+`general.workbench_freeze = false` nothing is frozen, so Sleep is not offered
+(and a Sleep asked anyway freezes nothing). A workbench row shows its
 state: running, starting, frozen, discarding, discarded, not started,
 restarting or failed; watch a frozen one's memory there to see macOS compress
 and swap it.

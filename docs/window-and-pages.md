@@ -1383,6 +1383,14 @@ included):
   Started again, it opens through the ordinary open path, whose
   `registerFolderBackup` hands it the same backup folder, so VS Code restores
   its editors, layout and unsaved changes.
+- **Freezing can be turned off.** `general.workbench_freeze = false` (default
+  `true`; Settings → Editors, "Freeze hidden editors") is a fact of the plan
+  (`PlanFacts.freeze`): nothing is frozen — not on hiding, not on the Task
+  Manager's Sleep, which is then not offered — so nothing is discarded either,
+  since a discard follows a freeze, and a workbench frozen when it turns off
+  is thawed by the next plan (`why: freezing is off`). Background starts and
+  the probes until a start has settled go on as before. It applies live: an
+  accepted setting plans at once.
 
 **Everything that talks to a workbench goes through the lifecycle**
 (`AppController.holdWorkbench`): a file routed to it, a reattach, Scratch's

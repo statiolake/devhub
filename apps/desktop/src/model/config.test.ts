@@ -70,6 +70,21 @@ describe("parsing", () => {
     ).toBe("general.workbench_discard_minutes");
   });
 
+  it("freezes hidden editors unless told not to, and only takes a boolean", () => {
+    expect(parseConfig(MINIMAL).general.workbench_freeze).toBe(true);
+    const off = "version = 1\n[general]\nworkbench_freeze = false\n";
+    const config = parseConfig(off);
+    expect(config.general.workbench_freeze).toBe(false);
+    expect(parseConfig(configToToml(config)).general.workbench_freeze).toBe(
+      false,
+    );
+    expect(
+      pathOf(() =>
+        parseConfig('version = 1\n[general]\nworkbench_freeze = "no"\n'),
+      ),
+    ).toBe("general.workbench_freeze");
+  });
+
   it("knows no awake cap, hibernation time or default view any more", () => {
     for (const key of [
       "workbench_awake_max = 2",

@@ -213,6 +213,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			noticeSeconds: config.general.notice_seconds,
 			terminalIdleSeconds: config.general.terminal_idle_seconds,
 			workbenchDiscardMinutes: config.general.workbench_discard_minutes,
+			workbenchFreeze: config.general.workbench_freeze,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -369,6 +370,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			notice_seconds: wire.general.noticeSeconds,
 			terminal_idle_seconds: wire.general.terminalIdleSeconds,
 			workbench_discard_minutes: wire.general.workbenchDiscardMinutes,
+			workbench_freeze: wire.general.workbenchFreeze,
 		},
 		runtimes: {
 			shell: wire.runtimes.shell,

@@ -407,9 +407,17 @@ export interface GeneralConfig {
    * VS Code closes a window on quit, to free what it held. It starts again
    * when somebody asks for it. `0` never discards. A workbench that is not
    * on screen is frozen at once (SIGSTOP) unless it is in use; see
-   * `main/shell/workbenchPlan.ts`.
+   * `main/shell/workbenchPlan.ts`. Nothing is discarded while
+   * `workbench_freeze` is off, since a discard follows a freeze.
    */
   readonly workbench_discard_minutes: number;
+  /**
+   * Freeze (SIGSTOP) a workbench that is not on screen, and let the Task
+   * Manager's Sleep freeze one. `false` never freezes, so never discards
+   * either, and thaws a workbench that is frozen when it turns off. Default
+   * `true`. See `main/shell/workbenchPlan.ts`.
+   */
+  readonly workbench_freeze: boolean;
 }
 
 export interface RuntimeConfig {
@@ -791,6 +799,7 @@ export function defaultConfig(): Config {
       notice_seconds: DEFAULT_NOTICE_SECONDS,
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
       workbench_discard_minutes: DEFAULT_WORKBENCH_DISCARD_MINUTES,
+      workbench_freeze: true,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -2116,6 +2125,7 @@ export function interpretConfig(document: unknown): Config {
       "notice_seconds",
       "terminal_idle_seconds",
       "workbench_discard_minutes",
+      "workbench_freeze",
     ],
     "general",
   );
@@ -2236,6 +2246,12 @@ export function interpretConfig(document: unknown): Config {
         generalTable,
         "workbench_discard_minutes",
         DEFAULT_WORKBENCH_DISCARD_MINUTES,
+      ),
+      workbench_freeze: optionalBoolean(
+        generalTable,
+        "workbench_freeze",
+        "general",
+        true,
       ),
     },
     runtimes: {
@@ -2493,6 +2509,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       notice_seconds: config.general.notice_seconds,
       terminal_idle_seconds: config.general.terminal_idle_seconds,
       workbench_discard_minutes: config.general.workbench_discard_minutes,
+      workbench_freeze: config.general.workbench_freeze,
     },
     runtimes: {
       shell: config.runtimes.shell,

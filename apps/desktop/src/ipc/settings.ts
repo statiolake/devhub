@@ -107,6 +107,8 @@ export interface SettingsGeneralWire {
 	readonly terminalIdleSeconds: number;
 	/** `general.workbench_discard_minutes`. */
 	readonly workbenchDiscardMinutes: number;
+	/** `general.workbench_freeze`. */
+	readonly workbenchFreeze: boolean;
 }
 
 export interface SettingsRuntimeConfigWire {

@@ -106,6 +106,8 @@ export interface LifecycleInput {
 	readonly loading?: readonly string[];
 	/** `general.workbench_discard_minutes`, in ms; 0 for never. */
 	readonly discardAfterMs: number;
+	/** `general.workbench_freeze`: false freezes nothing and thaws the frozen. */
+	readonly freezing: boolean;
 	/** Somebody asked, with this plan, for this folder's workbench. */
 	readonly ask?: { readonly folder: string; readonly why: WakeReason };
 	/**
@@ -505,6 +507,7 @@ export class WorkbenchLifecycle {
 		const facts: PlanFacts = {
 			now,
 			discardAfterMs: input.discardAfterMs,
+			freeze: input.freezing,
 			workbenches: input.wanted.map((one) =>
 				this.factsOf(one, input.freeze === one.folder, shared.has(one.folder)),
 			),
@@ -522,9 +525,11 @@ export class WorkbenchLifecycle {
 				`asked to freeze, not frozen: ${
 					one === undefined
 						? "not wanted"
-						: one.phase.kind !== "running"
-							? `is ${one.phase.kind}`
-							: awakeReasons(one, now).join(", ")
+						: !facts.freeze
+							? "freezing is off"
+							: one.phase.kind !== "running"
+								? `is ${one.phase.kind}`
+								: awakeReasons(one, now).join(", ")
 				}`,
 			);
 		}
@@ -765,7 +770,9 @@ export class WorkbenchLifecycle {
 		for (const one of facts.workbenches) {
 			const note =
 				one.phase.kind === "running" && !one.shown && one.freezable
-					? awakeReasons(one, facts.now).join(", ")
+					? facts.freeze
+						? awakeReasons(one, facts.now).join(", ")
+						: "freezing is off"
 					: "";
 			if (note === (this.awakeNotes.get(one.folder) ?? "")) continue;
 			this.awakeNotes.set(one.folder, note);

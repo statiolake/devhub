@@ -33,7 +33,10 @@ interface Workspace {
 	wanted: boolean;
 }
 
-function harness(options: { discardAfterMs?: number } = {}) {
+function harness(
+	options: { discardAfterMs?: number; freezing?: boolean } = {},
+) {
+	let freezing = options.freezing ?? true;
 	const logs: string[] = [];
 	const life = new WorkbenchLifecycle(new EditorSupervisor(), (line) => {
 		logs.push(line);
@@ -66,6 +69,7 @@ function harness(options: { discardAfterMs?: number } = {}) {
 			views: [...views],
 			loading: [...loading],
 			discardAfterMs: options.discardAfterMs ?? HOUR,
+			freezing,
 			requests: [...requests],
 			...extra,
 		});
@@ -124,6 +128,11 @@ function harness(options: { discardAfterMs?: number } = {}) {
 		},
 		freeze(folder: string) {
 			return plan({ freeze: folder });
+		},
+		/** `general.workbench_freeze` changed. */
+		setFreezing(on: boolean) {
+			freezing = on;
+			return plan();
 		},
 		advance(ms: number) {
 			now += ms;
@@ -369,6 +378,43 @@ describe("discarding", () => {
 		app.settle("a");
 		app.settle("b");
 		app.advance(100 * HOUR);
+		expect(app.kind("b")).toBe("frozen");
+	});
+});
+
+describe("with freezing off", () => {
+	it("freezes nothing hidden, refuses a Sleep, and so discards nothing", () => {
+		const app = harness({ freezing: false });
+		app.select("a");
+		app.add("a", "b");
+		app.settle("a");
+		app.settle("b");
+		app.hideFor("b");
+		app.advance(FREEZE_GRACE_MS);
+		expect(app.kind("a")).toBe("running");
+		expect(of(app.freeze("a"), "freeze")).toEqual([]);
+		expect(app.logs.at(-1)).toContain(
+			"asked to freeze, not frozen: freezing is off",
+		);
+		app.advance(2 * HOUR);
+		expect(app.kind("a")).toBe("running");
+		expect(of(app.effects, "freeze")).toEqual([]);
+		expect(of(app.effects, "discard")).toEqual([]);
+	});
+
+	it("thaws a frozen one when it turns off, and freezes again when it turns on", () => {
+		const app = harness();
+		app.select("a");
+		app.add("a", "b");
+		app.settle("a");
+		app.settle("b");
+		expect(app.kind("b")).toBe("frozen");
+		expect(of(app.setFreezing(false), "thaw")).toEqual(["b"]);
+		expect(app.kind("b")).toBe("running");
+		app.advance(2 * HOUR);
+		expect(app.kind("b")).toBe("running");
+		app.setFreezing(true);
+		if (app.probes.has("b")) app.answer("b");
 		expect(app.kind("b")).toBe("frozen");
 	});
 });

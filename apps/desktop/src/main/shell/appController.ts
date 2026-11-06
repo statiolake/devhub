@@ -4352,8 +4352,9 @@ export class AppController {
 									workbench: {
 										state,
 										// What the lifecycle would refuse anyway, not offered:
-										// a far one, or the one on screen.
+										// a far one, the one on screen, or any with freezing off.
 										sleepable:
+											this.config.general.workbench_freeze &&
 											phase.kind === "running" &&
 											workspace.location.kind === "local" &&
 											workspace.editor.kind === "host" &&
@@ -7389,6 +7390,7 @@ export class AppController {
 				}),
 			],
 			discardAfterMs: minutes > 0 ? minutes * 60_000 : 0,
+			freezing: this.config.general.workbench_freeze,
 			requests: [...this.workbenchHolds.start.keys()],
 			holds: [...this.workbenchHolds.thaw.keys()],
 			sharedRenderers: [...renderers.values()]
@@ -10841,9 +10843,10 @@ export class AppController {
 		// `[agents] auto_compact_*` is read when a conversation changes; an
 		// idle one would not notice the setting turned on until too late.
 		this.agentWiring?.conversations.registry.reconsiderCacheKeeping();
-		// `general.workbench_discard_minutes` is read by a plan, and its
-		// deadline set by one: without a plan now, a frozen workbench kept the
-		// old discard deadline until something else happened to plan.
+		// `general.workbench_discard_minutes` and `workbench_freeze` are read
+		// by a plan, and its deadline set by one: without a plan now, a frozen
+		// workbench kept the old discard deadline until something else
+		// happened to plan, and one frozen when freezing turned off stayed so.
 		this.reconcileWorkbenches();
 	}
 

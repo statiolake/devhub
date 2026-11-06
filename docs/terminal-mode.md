@@ -12,7 +12,9 @@ How a workbench is started, frozen, thawed and discarded — and what that costs
 — is `docs/window-and-pages.md`, "What it costs". In short: the shown one
 starts at launch, every other local one starts after it in the background one
 at a time, and one that is not on screen is frozen (SIGSTOP) unless it is in
-use, and discarded after `general.workbench_discard_minutes` frozen.
+use, and discarded after `general.workbench_discard_minutes` frozen —
+unless `general.workbench_freeze = false`, which freezes (and so discards)
+nothing.
 
 SSH Workspaces' editors are their VS Code workbench on the host, and a dev
 container Workspace's is its workbench in the container, as before. Remote
