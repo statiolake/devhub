@@ -1813,10 +1813,19 @@ export class TellService {
 			/^[\w.-]+\/[\w.-]+#\d+$/u.test(ref.trim());
 		if (isItem) {
 			const found = this.ports.orchestrator.status({ item: ref });
-			if (found === undefined)
+			if (found === undefined) {
+				// Say why here, with what GitHub polling says now: "see another
+				// command" left the person guessing whether the item is off the
+				// Projects or the Projects were never read.
+				const github = this.ports.orchestrator.board().github;
+				const why =
+					github.assigned === undefined
+						? "the registered Projects have not been read (yet)"
+						: `it is not an open item of the registered Projects (${String(github.assigned)} assigned to me there)`;
 				throw new Error(
-					`DevHub has not read ${ref}: it reads the Issues and pull requests on the registered Projects ([orchestrator.github] projects; none registered: none, and the population is empty) while an orchestrator runs (devhub --tell orchestrator status says how GitHub polling stands).`,
+					`DevHub has not read ${ref}: ${why}. Only the Issues and pull requests on [orchestrator.github] projects are read, while an orchestrator runs. ${githubPollingLine(this.ports.orchestrator.board())}`,
 				);
+			}
 			return {
 				message: subjectText(found, undefined, now),
 				data: subjectJson(found, undefined),

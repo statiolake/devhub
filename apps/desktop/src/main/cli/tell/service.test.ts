@@ -4754,7 +4754,9 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		await expect(
 			viaSocket(service, ["status", "acme/app#404"], undefined),
-		).rejects.toThrow(/has not read acme\/app#404/u);
+		).rejects.toThrow(
+			/has not read acme\/app#404: the registered Projects have not been read \(yet\)\..*GitHub polling:/u,
+		);
 	});
 
 	it("lists what needs action on the board, and counts my items in status", async () => {
