@@ -1601,10 +1601,11 @@ body.is-resizing-rows {
 
 /* An asleep workbench: its last frame, top-left as it was laid, grey and dim,
    so coming back reads as the same editor rather than an empty pane. */
-/* An asleep (or never started) workbench: the whole editor area, dimmed, is
-   one control — Enter or a click wakes it. Quiet on purpose: a sleeping
-   editor is a state of the area, not a warning. It fades in on the motion
-   tokens rather than snapping, so a pass with Cmd+Q N/P reads as a glance. */
+/* A workbench that is not running — never started, stopped, or asleep: the
+   whole editor area, dimmed, is the pointer's target, and Enter or its Start
+   button starts it. Quiet on purpose: an editor that is not running is a
+   state of the area, not a warning. It fades in on the motion tokens rather
+   than snapping, so a pass with Cmd+Q N/P reads as a glance. */
 .surface-discarded {
   position: relative;
   width: 100%;
@@ -1641,13 +1642,19 @@ body.is-resizing-rows {
   position: absolute;
   inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: var(--space-3);
   margin: 0;
   padding: var(--space-6);
   color: var(--secondary);
   font-size: 13px;
   text-align: center;
+}
+
+.surface-discarded-line {
+  margin: 0;
 }
 
 .surface-discarded-title {
@@ -1657,13 +1664,6 @@ body.is-resizing-rows {
 
 .surface-discarded-hint {
   white-space: pre;
-}
-
-.surface-discarded:focus-visible
-  .surface-discarded-message
-  .surface-discarded-title {
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 @keyframes surface-discarded-in {

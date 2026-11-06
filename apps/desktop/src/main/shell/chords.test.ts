@@ -825,6 +825,22 @@ describe("the commands that act on what is selected", () => {
 		});
 		expect(run("close_workspace", snapshotOf())).toBeUndefined();
 	});
+
+	it("stops the selected Workspace's editor, from its row, its Agent or Scratch", () => {
+		// Whether there is one running to stop is the lifecycle's to answer.
+		expect(run("stop_editor", inTwo)).toEqual({
+			kind: "stop-editor",
+			workspaceId: "two",
+		});
+		expect(run("stop_editor", onAgent)).toEqual({
+			kind: "stop-editor",
+			workspaceId: "two",
+		});
+		expect(run("stop_editor", snapshotOf())).toEqual({
+			kind: "stop-editor",
+			workspaceId: SCRATCH_ID,
+		});
+	});
 });
 
 describe("the commands that need nothing at all", () => {
@@ -938,6 +954,9 @@ describe("the default table", () => {
 
 	it("keeps the case rule: lower acts inside, upper reaches further", () => {
 		expect(press("c", "KeyC")).toBe("add_agent");
+		// `e` shows the editor; `E` stops it — not a key hit by missing Shift.
+		expect(press("e", "KeyE")).toBe("focus_editor");
+		expect(press("E", "KeyE", { shift: true })).toBe("stop_editor");
 		expect(press("W", "KeyW", { shift: true })).toBe("close_workspace");
 		// Unshifted `w` is not a row: closing a workspace is not a key you can
 		// hit by missing Shift.

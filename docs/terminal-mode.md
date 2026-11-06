@@ -9,9 +9,10 @@ Workspace (or Scratch) and puts the keyboard in its workbench, from an Agent,
 its terminal or the Sidebar.
 
 How a workbench is started, frozen, thawed and discarded — and what that costs
-— is `docs/window-and-pages.md`, "What it costs". In short: the shown one
-starts at launch, every other local one starts after it in the background one
-at a time, and one that is not on screen is frozen (SIGSTOP) unless it is in
+— is `docs/window-and-pages.md`, "What it costs". In short: none starts until
+it is asked for — Enter (or Start) on its editor area's "Editor not running"
+placeholder, or a file DevHub is asked to open in it — and `Cmd+Q Shift+E`
+stops it again; one that is not on screen is frozen (SIGSTOP) unless it is in
 use, and discarded after `general.workbench_discard_minutes` frozen —
 unless `general.workbench_freeze = false`, which freezes (and so discards)
 nothing.
@@ -187,20 +188,22 @@ the jump is refused — not a pane that flashes and closes.
 The rule that picks _which Workspace_ is unchanged (`routeOpen`,
 `routeAgentOpen`); the file is always handed to that Workspace's workbench
 (`AppController.openRouted`), through the lifecycle (`holdWorkbench`): a frozen
-workbench is thawed and a discarded one started before the file reaches it.
-Scratch is a Workspace like any other.
+workbench is thawed and a discarded or not yet started one started before the
+file reaches it — a file is the one ask besides Enter that starts a workbench;
+`devhub <folder>` only selects the Workspace. Scratch is a Workspace like any
+other.
 
-| Entrance                                          | Where it opens                                       |
-| ------------------------------------------------- | ---------------------------------------------------- |
-| `devhub <file>` on this Mac                       | the containing Workspace's workbench, or Scratch's   |
-| `devhub -g <file>:<line>:<col>`                   | caret at the position                                |
-| `devhub --wait <file>`                            | `filesToWait`                                        |
-| `devhub <folder>`                                 | the Workspace selected, its workbench shown          |
-| Conversation file link, Send to Agent's reference | split beside the Agent, workbench in front           |
-| Finder Open With / Dock drop / `open -a`          | via `openFromCli`, as above                          |
-| `devhub` on an SSH host, an SSH Workspace         | that Workspace's remote workbench                    |
-| `devhub` in a dev container                       | the window attached to that container                |
-| VS Code's own open (`openInBrowserWindow`)        | DevHub's Workspace / Scratch rule                    |
+| Entrance                                          | Where it opens                                     |
+| ------------------------------------------------- | -------------------------------------------------- |
+| `devhub <file>` on this Mac                       | the containing Workspace's workbench, or Scratch's |
+| `devhub -g <file>:<line>:<col>`                   | caret at the position                              |
+| `devhub --wait <file>`                            | `filesToWait`                                      |
+| `devhub <folder>`                                 | the Workspace selected, its workbench not started  |
+| Conversation file link, Send to Agent's reference | split beside the Agent, workbench in front         |
+| Finder Open With / Dock drop / `open -a`          | via `openFromCli`, as above                        |
+| `devhub` on an SSH host, an SSH Workspace         | that Workspace's remote workbench                  |
+| `devhub` in a dev container                       | the window attached to that container              |
+| VS Code's own open (`openInBrowserWindow`)        | DevHub's Workspace / Scratch rule                  |
 
 ## Theme
 

@@ -12,11 +12,11 @@ import {
 	NETWORK_ACTIVE_MS,
 	PROBE_FRESH_MS,
 	SETTLE_PROBE_MS,
-	SETTLE_TIMEOUT_MS,
 	awakeReasons,
 	decide,
 	nextDecision,
 	placeholderOf,
+	stopRefusal,
 	workbenchStateOf,
 	type PlanFacts,
 	type WorkbenchFacts,
@@ -48,6 +48,7 @@ function wb(
 		connectionAt: undefined,
 		rendererShared: false,
 		freezeAsked: false,
+		stopAsked: false,
 		...overrides,
 	};
 }
@@ -289,7 +290,7 @@ describe("the grace after hiding", () => {
 		).toEqual([{ kind: "freeze", folder: "a", why: "asked" }]);
 	});
 
-	it("a background workbench never shown has no grace", () => {
+	it("a workbench started hidden and never shown has no grace", () => {
 		expect(
 			kinds(
 				plan(
@@ -362,8 +363,8 @@ describe("thawing", () => {
 
 describe("discarding", () => {
 	it("discards a workbench frozen for the discard time", () => {
-		expect(kinds(plan([wb("a", { phase: frozen(NOW - HOUR) })]))).toEqual([
-			"discard a",
+		expect(decide(plan([wb("a", { phase: frozen(NOW - HOUR) })]))).toEqual([
+			{ kind: "discard", folder: "a", stop: false },
 		]);
 		expect(kinds(plan([wb("a", { phase: frozen(NOW - HOUR + 1) })]))).toEqual(
 			[],
@@ -386,9 +387,7 @@ describe("discarding", () => {
 					wb("a", { phase: { kind: "discarded", frame: "" }, asked: true }),
 				]),
 			),
-		).toEqual([
-			{ kind: "start", folder: "a", cause: "wake", background: false },
-		]);
+		).toEqual([{ kind: "start", folder: "a", cause: "wake" }]);
 	});
 
 	it("a hold never starts a discarded or absent workbench", () => {
@@ -414,120 +413,41 @@ describe("discarding", () => {
 		).toEqual([]);
 	});
 
-	it("is never started again in the background", () => {
+	it("is never started again unasked", () => {
 		expect(
 			kinds(plan([wb("a", { phase: { kind: "discarded", frame: "" } })])),
 		).toEqual([]);
 	});
 });
 
-describe("starting, one at a time", () => {
-	it("starts the shown workbench first, and nothing else meanwhile", () => {
-		expect(
-			decide(
-				plan([
-					wb("a", { phase: absent }),
-					wb("b", { phase: absent, shown: true }),
-					wb("c", { phase: absent }),
-				]),
-			),
-		).toEqual([
-			{ kind: "start", folder: "b", cause: "start", background: false },
-		]);
-	});
-
-	it("starts the next in the background once the previous has settled", () => {
-		const facts = [
-			wb("a", { phase: running(NOW - 5_000), shown: true }),
-			wb("b", { phase: absent }),
-			wb("c", { phase: absent }),
-		];
-		expect(decide(plan(facts))).toEqual([
-			{ kind: "start", folder: "b", cause: "start", background: true },
-		]);
-	});
-
-	it("waits while a start is in flight or has not settled", () => {
-		expect(
-			kinds(
-				plan([
-					wb("a", { phase: starting, shown: true }),
-					wb("b", { phase: absent }),
-				]),
-			),
-		).toEqual([]);
-		expect(
-			kinds(
-				plan([
-					wb("a", {
-						phase: running(NOW - 5_000),
-						shown: true,
-						settled: false,
-						probing: true,
-					}),
-					wb("b", { phase: absent }),
-				]),
-			),
-		).toEqual([]);
-	});
-
-	it("does not wait for ever on a start that never says it settled", () => {
-		expect(
-			kinds(
-				plan([
-					wb("a", {
-						phase: running(NOW - SETTLE_TIMEOUT_MS),
-						shown: true,
-						settled: false,
-						probing: true,
-					}),
-					wb("b", { phase: absent }),
-				]),
-			),
-		).toEqual(["start b"]);
-	});
-
-	it("goes by recency, then by the Sidebar's order", () => {
+describe("starting only when asked", () => {
+	it("starts nothing at launch: not the shown one, not the others", () => {
 		expect(
 			kinds(
 				plan([
 					wb("a", { phase: absent }),
-					wb("b", { phase: absent }),
+					wb("b", { phase: absent, shown: true, hiddenSince: undefined }),
 					wb("c", { phase: absent, lastShownAt: NOW - 100 }),
 				]),
 			),
-		).toEqual(["start c"]);
-		expect(
-			kinds(plan([wb("a", { phase: absent }), wb("b", { phase: absent })])),
-		).toEqual(["start a"]);
-	});
-
-	it("does not start a remote or closing one in the background", () => {
-		expect(
-			kinds(
-				plan([
-					wb("ssh", { phase: absent, freezable: false }),
-					wb("c", { phase: absent, closing: true }),
-				]),
-			),
 		).toEqual([]);
 	});
 
-	it("the user's choice preempts a background start in flight", () => {
-		// b is starting in the background; the person switches to c.
+	it("starts nothing once another has settled, either", () => {
 		expect(
-			decide(
+			kinds(
 				plan([
-					wb("a", { phase: running(), shown: false }),
-					wb("b", { phase: starting }),
-					wb("c", { phase: absent, shown: true }),
-					wb("d", { phase: absent }),
+					wb("a", { phase: running(NOW - 5_000), shown: true }),
+					wb("b", { phase: absent }),
 				]),
-			),
-		).toEqual([
-			{ kind: "freeze", folder: "a", why: "hidden" },
-			{ kind: "start", folder: "c", cause: "start", background: false },
-		]);
+			).filter((kind) => kind.startsWith("start")),
+		).toEqual([]);
+	});
+
+	it("an ask (Enter, the placeholder's button) starts the shown one", () => {
+		expect(
+			decide(plan([wb("a", { phase: absent, shown: true, asked: true })])),
+		).toEqual([{ kind: "start", folder: "a", cause: "start" }]);
 	});
 
 	it("a request starts an absent workbench at once, shown or not", () => {
@@ -538,14 +458,91 @@ describe("starting, one at a time", () => {
 					wb("b", { phase: absent, asked: true }),
 				]),
 			),
-		).toEqual([
-			{ kind: "start", folder: "b", cause: "start", background: false },
-		]);
+		).toEqual([{ kind: "start", folder: "b", cause: "start" }]);
+	});
+
+	it("starts as many as are asked for, without waiting on each other", () => {
+		expect(
+			kinds(
+				plan([
+					wb("a", { phase: starting }),
+					wb("b", { phase: absent, asked: true }),
+					wb("c", { phase: absent, asked: true, freezable: false }),
+				]),
+			),
+		).toEqual(["start b", "start c"]);
+	});
+
+	it("does not start a closing one, even asked", () => {
+		expect(
+			kinds(plan([wb("a", { phase: absent, asked: true, closing: true })])),
+		).toEqual([]);
+	});
+});
+
+describe("stopping by hand", () => {
+	it("stops the shown, running one: discarded, as a person's stop", () => {
+		expect(
+			decide(
+				plan([
+					wb("a", { shown: true, hiddenSince: undefined, stopAsked: true }),
+				]),
+			),
+		).toEqual([{ kind: "discard", folder: "a", stop: true }]);
+	});
+
+	it("stops a frozen one, and one still settling", () => {
+		expect(
+			decide(plan([wb("a", { phase: frozen(), stopAsked: true })])),
+		).toEqual([{ kind: "discard", folder: "a", stop: true }]);
+		expect(
+			decide(
+				plan([wb("a", { settled: false, probe: undefined, stopAsked: true })]),
+			),
+		).toEqual([{ kind: "discard", folder: "a", stop: true }]);
+	});
+
+	it.each([
+		["not running", { phase: absent }, "it is not running"],
+		[
+			"discarded already",
+			{ phase: { kind: "discarded", frame: "" } as WorkbenchPhase },
+			"it is not running",
+		],
+		["starting", { phase: starting }, "it is still starting"],
+		[
+			"remote",
+			{ freezable: false },
+			"SSH and dev container editors are not stopped",
+		],
+		["closing", { closing: true }, "its Workspace is closing"],
+		["waited on by a request", { asked: true }, "DevHub is waiting on it"],
+		["held by DevHub", { held: true }, "DevHub is talking to it"],
+	] as const)("does not stop one %s, and says why", (_, o, why) => {
+		const facts = wb("a", { shown: true, stopAsked: true, ...o });
+		expect(stopRefusal(facts)).toBe(why);
+		expect(
+			decide(plan([facts])).filter((action) => action.kind === "discard"),
+		).toEqual([]);
+	});
+
+	it("Enter after the stop starts it again (a wake)", () => {
+		expect(
+			decide(
+				plan([
+					wb("a", {
+						phase: { kind: "discarded", frame: "data:f" },
+						shown: true,
+						asked: true,
+					}),
+				]),
+			),
+		).toEqual([{ kind: "start", folder: "a", cause: "wake" }]);
 	});
 });
 
 describe("the races", () => {
-	it("switching to a workbench during its background start: it is not frozen when it settles", () => {
+	it("switching to a workbench during its start: it is not frozen when it settles", () => {
 		const settledWhileShown = wb("b", {
 			phase: running(NOW - 4_000),
 			shown: true,
@@ -554,7 +551,7 @@ describe("the races", () => {
 		expect(kinds(plan([settledWhileShown]))).toEqual([]);
 	});
 
-	it("a background workbench that settles hidden is probed, then frozen", () => {
+	it("a workbench that settles hidden, never shown, is probed, then frozen", () => {
 		const settled = wb("b", {
 			phase: running(NOW - 4_000),
 			hiddenSince: undefined,
@@ -641,7 +638,7 @@ describe("with freezing off", () => {
 		]);
 	});
 
-	it("still probes a start until it has settled, and still starts in the background", () => {
+	it("still probes a start until it has settled, and starts nothing unasked", () => {
 		expect(
 			kinds(
 				off([
@@ -653,9 +650,7 @@ describe("with freezing off", () => {
 				]),
 			),
 		).toEqual(["probe a"]);
-		expect(kinds(off([wb("a", { phase: { kind: "absent" } })]))).toEqual([
-			"start a",
-		]);
+		expect(kinds(off([wb("a", { phase: { kind: "absent" } })]))).toEqual([]);
 	});
 
 	it("sets no freeze or discard deadline", () => {
@@ -701,14 +696,16 @@ describe("deadlines", () => {
 });
 
 describe("words", () => {
-	it("a frozen or running workbench has no placeholder; a discarded one does", () => {
+	it("a frozen or running workbench has no placeholder; a discarded or absent one does", () => {
 		expect(placeholderOf(frozen())).toBeUndefined();
 		expect(placeholderOf(running())).toBeUndefined();
 		expect(placeholderOf({ kind: "discarded", frame: "f" })).toEqual({
 			kind: "discarded",
 			frame: "f",
 		});
-		expect(placeholderOf(absent)).toEqual({ kind: "starting" });
+		// Not started: the same "not running" placeholder, with no frame.
+		expect(placeholderOf(absent)).toEqual({ kind: "discarded", frame: "" });
+		expect(placeholderOf(starting)).toEqual({ kind: "starting" });
 	});
 
 	it("the Task Manager says frozen and discarded", () => {

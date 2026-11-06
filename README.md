@@ -120,10 +120,13 @@ in every sense the workbench itself can observe, laid into DevHub's single
 window as a `WebContentsView`. Extensions, settings, the integrated terminal
 and the extension host are the real ones, on disk, with no "remote" semantics
 anywhere.
-A Workspace's editor area is its workbench. The one on screen starts at
-launch and the other local ones after it, one at a time in the background; one
-that is not on screen is frozen (its processes stopped, so the Mac compresses
-or swaps them out first) unless it is in use, thawed instantly when shown,
+A Workspace's editor area is its workbench. None starts until it is asked
+for: the editor area says "Editor not running — press Enter to start" (with a
+Start button) until Enter or the button starts it, or until DevHub is asked to
+open a file in it, and `Cmd+Q Shift+E` stops it again (closed as VS Code
+closes a window on quit, unsaved editors kept by hot exit). One that is
+running and not on screen is frozen (its processes stopped, so the Mac
+compresses or swaps them out first) unless it is in use, thawed instantly when shown,
 asked for or connected to, and discarded after a long while frozen. Files
 DevHub is asked to open go to the Workspace's workbench. See
 [`docs/terminal-mode.md`](docs/terminal-mode.md) and
@@ -359,8 +362,9 @@ row by its own rule, as when a person closes it.
 `--focus`, as on `terminal open`) changes the selected Workspace or Agent,
 what is shown, where the keyboard is, or brings DevHub to the front: what
 `workspace open`, `agent new`, `issue assign` or `agent resume` make appears in
-the Sidebar unselected, its workbench starting in the background
-(`open_folder` / `create_agent` with `focus: "none"`). `run` runs
+the Sidebar unselected, its workbench not started
+(`open_folder` / `create_agent` with `focus: "none"`) — no `--tell` command
+starts or stops a workbench. `run` runs
 only the palette commands that move nothing (`refresh_repositories`,
 `mark_agent_unread`). A person is doing something else.
 

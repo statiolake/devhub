@@ -16,8 +16,8 @@
  * reads the projection and the selection, updates the facts, asks `decide`,
  * moves each phase to match what it answers (so a second plan before anything
  * happens asks for nothing twice), and returns the effects to carry out:
- * open, probe, freeze, thaw, discard, dispose, report giving up, and the
- * placeholder for each slot. It reads no clock and runs no timer: every call
+ * open, probe, freeze, thaw, discard, dispose, report giving up or a stop
+ * that did not happen, and the placeholder for each slot. It reads no clock and runs no timer: every call
  * is given `now`, and `nextDeadline` says when it next needs a `plan`.
  *
  * Failures are bookkeeping, not policy, and stay here: an open nobody
@@ -39,6 +39,7 @@ import {
 	decide,
 	nextDecision,
 	placeholderOf,
+	stopRefusal,
 	workbenchStateOf,
 	type EditorPlaceholder,
 	type OpenCause,
@@ -60,14 +61,11 @@ export {
 export const CPU_QUIET_PERCENT = 10;
 
 /**
- * Who asked for a workbench, which starts a discarded one (an absent one
- * starts by being shown, or by its turn):
- *
- * - `asked`: Enter or a click on its placeholder.
- * - `opened`: the Workspace was opened (`Cmd+Q F`, a folder from the command
- *   line, VS Code's own open) — not as a side effect of starting an Agent.
+ * Who asked for a workbench, which starts an absent or discarded one: `asked`
+ * is Enter or the button on its placeholder. Nothing else asks — opening or
+ * selecting a Workspace shows its placeholder and starts nothing.
  */
-export type WakeReason = "asked" | "opened";
+export type WakeReason = "asked";
 
 /**
  * An open whose load has not been heard by then is settled anyway: up if its
@@ -124,6 +122,11 @@ export interface LifecycleInput {
 	/** A person asked for this one to be frozen now (the Task Manager's Sleep). */
 	readonly freeze?: string;
 	/**
+	 * A person asked for this one to be stopped now (`Cmd+Q Shift+E`):
+	 * discarded, shown or not, as a long frozen one is (`stopRefusal`).
+	 */
+	readonly stop?: string;
+	/**
 	 * Folders whose renderer process also hosts other contents — another
 	 * workbench, or one of DevHub's own pages. Never frozen.
 	 */
@@ -152,16 +155,26 @@ export type LifecycleEffect =
 			readonly reason: string;
 			readonly attempt: number;
 	  }
+	/** A person's stop that the plan did not carry out, and why. */
+	| {
+			readonly kind: "report-not-stopped";
+			readonly folder: string;
+			readonly reason: string;
+	  }
 	| { readonly kind: "thaw"; readonly folder: string }
 	| {
 			readonly kind: "open";
 			readonly folder: string;
 			readonly cause: OpenCause;
-			readonly background: boolean;
 	  }
 	| { readonly kind: "probe"; readonly folder: string }
 	| { readonly kind: "freeze"; readonly folder: string }
-	| { readonly kind: "discard"; readonly folder: string };
+	/** `stop`: a person's stop (`Cmd+Q Shift+E`), told if it does not happen. */
+	| {
+			readonly kind: "discard";
+			readonly folder: string;
+			readonly stop: boolean;
+	  };
 
 /** What a probe brings back: the renderer's answer, and main's CPU reading. */
 export interface ProbeAnswer {
@@ -191,6 +204,8 @@ interface WorkbenchRecord {
 	shown: boolean;
 	asked: boolean;
 	held: boolean;
+	/** Its discard is a person's stop: being shown does not call it off. */
+	stopping: boolean;
 }
 
 const ORDER: Record<LifecycleEffect["kind"], number> = {
@@ -199,6 +214,7 @@ const ORDER: Record<LifecycleEffect["kind"], number> = {
 	thaw: 1,
 	dispose: 2,
 	"report-gave-up": 3,
+	"report-not-stopped": 3,
 	open: 4,
 	probe: 5,
 	freeze: 6,
@@ -279,15 +295,17 @@ export class WorkbenchLifecycle {
 	}
 
 	/**
-	 * Whether a discard may still go ahead: nobody has shown or asked for it
-	 * since it began. Asked by the executor at the last moment before the
-	 * unload, from the facts as the latest plan left them.
+	 * Whether a discard may still go ahead: nobody has shown (unless it is a
+	 * person's stop, which is of the one on screen) or asked for it since it
+	 * began, and DevHub is not talking to it. Asked by the executor at the
+	 * last moment before the unload, from the facts as the latest plan left
+	 * them.
 	 */
 	mayDiscard(folder: string): boolean {
 		const record = this.records.get(folder);
 		return (
 			record?.phase.kind === "discarding" &&
-			!record.shown &&
+			(record.stopping || !record.shown) &&
 			!record.asked &&
 			!record.held
 		);
@@ -519,10 +537,29 @@ export class WorkbenchLifecycle {
 			discardAfterMs: input.discardAfterMs,
 			freeze: input.freezing,
 			workbenches: input.wanted.map((one) =>
-				this.factsOf(one, input.freeze === one.folder, shared.has(one.folder)),
+				this.factsOf(
+					one,
+					input.freeze === one.folder,
+					shared.has(one.folder),
+					input.stop === one.folder,
+				),
 			),
 		};
 		const actions = decide(facts);
+		if (input.stop !== undefined) {
+			const one = facts.workbenches.find((f) => f.folder === input.stop);
+			const reason = one === undefined ? "it has no editor" : stopRefusal(one);
+			if (reason === undefined) {
+				this.say(input.stop, "asked to stop");
+			} else {
+				this.say(input.stop, `asked to stop, not stopped: ${reason}`);
+				effects.push({
+					kind: "report-not-stopped",
+					folder: input.stop,
+					reason,
+				});
+			}
+		}
 		if (
 			input.freeze !== undefined &&
 			!actions.some(
@@ -548,14 +585,7 @@ export class WorkbenchLifecycle {
 			if (!record) continue;
 			switch (action.kind) {
 				case "start":
-					this.open(
-						action.folder,
-						record,
-						action.cause,
-						now,
-						effects,
-						action.background,
-					);
+					this.open(action.folder, record, action.cause, now, effects);
 					break;
 				case "probe":
 					record.probing = true;
@@ -589,9 +619,14 @@ export class WorkbenchLifecycle {
 						action.folder,
 						record,
 						{ kind: "discarding" },
-						`frozen since ${String(since)}`,
+						action.stop ? "asked to stop" : `frozen since ${String(since)}`,
 					);
-					effects.push({ kind: "discard", folder: action.folder });
+					record.stopping = action.stop;
+					effects.push({
+						kind: "discard",
+						folder: action.folder,
+						stop: action.stop,
+					});
 					break;
 				}
 			}
@@ -600,7 +635,7 @@ export class WorkbenchLifecycle {
 		this.lastFacts = {
 			...facts,
 			workbenches: input.wanted.map((one) =>
-				this.factsOf(one, false, shared.has(one.folder)),
+				this.factsOf(one, false, shared.has(one.folder), false),
 			),
 		};
 		this.noteAwake(this.lastFacts);
@@ -638,6 +673,7 @@ export class WorkbenchLifecycle {
 		one: WantedWorkbench,
 		freezeAsked: boolean,
 		rendererShared: boolean,
+		stopAsked: boolean,
 	): WorkbenchFacts {
 		const record = this.records.get(one.folder)!;
 		return {
@@ -657,6 +693,7 @@ export class WorkbenchLifecycle {
 			connectionAt: record.connectionAt,
 			rendererShared,
 			freezeAsked,
+			stopAsked,
 		};
 	}
 
@@ -666,20 +703,14 @@ export class WorkbenchLifecycle {
 		cause: OpenCause,
 		now: number,
 		effects: LifecycleEffect[],
-		background = false,
 	): void {
 		const frame = record.phase.kind === "discarded" ? record.phase.frame : "";
 		record.settled = false;
 		record.quietSince = undefined;
 		record.probe = undefined;
 		record.probing = false;
-		this.move(
-			folder,
-			record,
-			{ kind: "starting", cause, frame, since: now },
-			background ? "in the background" : undefined,
-		);
-		effects.push({ kind: "open", folder, cause, background });
+		this.move(folder, record, { kind: "starting", cause, frame, since: now });
+		effects.push({ kind: "open", folder, cause });
 	}
 
 	/**
@@ -720,6 +751,7 @@ export class WorkbenchLifecycle {
 				shown: false,
 				asked: false,
 				held: false,
+				stopping: false,
 			};
 			this.records.set(folder, record);
 		}
@@ -867,6 +899,7 @@ export class WorkbenchLifecycle {
 		const from = record.phase.kind;
 		record.phase = to;
 		if (to.kind !== "gave-up") record.reported = false;
+		if (to.kind !== "discarding") record.stopping = false;
 		this.say(
 			folder,
 			`${from} -> ${to.kind}${to.kind === "starting" ? ` (${to.cause})` : ""}${

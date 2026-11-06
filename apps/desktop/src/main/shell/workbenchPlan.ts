@@ -13,27 +13,30 @@
  * whenever a fact changes or an action completes, and at `nextDeadline`.
  *
  * ```text
- * absent     ─ shown / asked / requested ───────▶ starting (foreground)
- *            ─ its turn, nothing else starting ─▶ starting (background)
+ * absent     ─ asked / requested ───────────────▶ starting
  * starting   ─ loaded ──────────────────────────▶ running (lifecycle event)
  * running    ─ hidden 3 s, settled, nothing keeps it ▶ (probe) ─▶ frozen
+ *            ─ asked to stop ───────────────────▶ discarding ─▶ discarded
  * frozen     ─ shown / asked / requested / a connection waits ─▶ running
- *            ─ frozen `discardAfterMs` ─────────▶ discarding ─▶ discarded
+ *            ─ frozen `discardAfterMs` / asked to stop ▶ discarding ─▶ discarded
  * discarded  ─ asked / requested ───────────────▶ starting (wake)
  * ```
  *
  * The rules, each in one place:
  *
- * - **Shown, asked for or requested wins.** The shown workbench is never
- *   frozen, a frozen one that is shown or needed is thawed at once, and an
- *   absent one that is shown or needed starts at once, ahead of any
- *   background start — the user's choice preempts the queue.
- * - **One background start at a time.** At launch the shown workbench starts
- *   first; each other local one starts in the background only when no start
- *   is in flight and every started one has settled (`settled`: its window
- *   restored, its extensions registered, its CPU quiet for a few seconds, or
- *   `SETTLE_TIMEOUT_MS` gone by). Which one goes next is decided now, from
- *   recency and then the Sidebar's order — nothing is queued.
+ * - **Nothing starts until it is asked for.** Showing a workbench does not
+ *   start it: an absent or discarded one shown is its placeholder ("Editor
+ *   not running — press Enter to start") until somebody asks — Enter or the
+ *   placeholder's button — or a DevHub request that needs it waits on it (a
+ *   file routed to it). There is no start at launch and none in the
+ *   background.
+ * - **Shown, asked for or requested keeps it.** The shown workbench is never
+ *   frozen, and a frozen one that is shown or needed is thawed at once.
+ * - **A person can stop one.** Asked to stop (`Cmd+Q Shift+E`), a running or
+ *   frozen local workbench is discarded — shown or not — the way a long
+ *   frozen one is; the executor's last-moment checks and VS Code's unload are
+ *   the same. Not while a DevHub request or hold needs it, while it starts or
+ *   closes, or for a remote one (`stopRefusal`).
  * - **Freeze aggressively.** A running workbench that is not shown is frozen
  *   as soon as it has settled and nothing keeps it awake (`AWAKE_RULES`) —
  *   but one that was just hidden only `FREEZE_GRACE_MS` after it was hidden.
@@ -51,7 +54,7 @@
  *   turned off is thawed.
  *
  * SSH and dev container workbenches are not frozen or discarded
- * (`freezable: false`): they start when shown or asked for, and stay up.
+ * (`freezable: false`): they start when asked for, and stay up.
  */
 
 import type { EditorPlaceholderWire } from "../../ipc/contract.js";
@@ -77,15 +80,13 @@ export const PROBE_FRESH_MS = 15_000;
 export const SETTLE_PROBE_MS = 1_000;
 /** Its CPU quiet this long (and its window ready) is settled. */
 export const QUIET_MS = 3_000;
-/** Running this long counts as settled for the start budget, whatever it says. */
-export const SETTLE_TIMEOUT_MS = 60_000;
 
 /** Why a workbench is being opened, which is what its slot says meanwhile. */
 export type OpenCause = "start" | "restart" | "wake";
 
 /** Where one folder's workbench is. A folder with no record is `absent`. */
 export type WorkbenchPhase =
-	/** Not started in this run: waiting to be shown, asked for, or its turn. */
+	/** Not started in this run: waiting to be asked for. */
 	| { readonly kind: "absent" }
 	/** An open in flight, or a view that has not finished loading. */
 	| {
@@ -157,6 +158,8 @@ export interface WorkbenchFacts {
 	readonly rendererShared: boolean;
 	/** A person asked for it to be frozen now (the Task Manager's Sleep). */
 	readonly freezeAsked: boolean;
+	/** A person asked for it to be stopped now (`Cmd+Q Shift+E`). */
+	readonly stopAsked: boolean;
 }
 
 export interface PlanFacts {
@@ -177,12 +180,16 @@ export type WorkbenchAction =
 			readonly kind: "start";
 			readonly folder: string;
 			readonly cause: OpenCause;
-			readonly background: boolean;
 	  }
 	| { readonly kind: "probe"; readonly folder: string }
 	| { readonly kind: "freeze"; readonly folder: string; readonly why: string }
 	| { readonly kind: "thaw"; readonly folder: string; readonly why: string }
-	| { readonly kind: "discard"; readonly folder: string };
+	/** `stop`: a person asked (`Cmd+Q Shift+E`); otherwise frozen long enough. */
+	| {
+			readonly kind: "discard";
+			readonly folder: string;
+			readonly stop: boolean;
+	  };
 
 /**
  * What keeps a running workbench from being frozen, as data. `hard` ones
@@ -249,32 +256,28 @@ export function probeIsFresh(facts: WorkbenchFacts, now: number): boolean {
 	);
 }
 
-/** Whether this one counts against the start budget: a start not yet settled. */
-function unsettledStart(facts: WorkbenchFacts, now: number): boolean {
+/**
+ * Why a person's stop (`Cmd+Q Shift+E`) does not stop this one now; nothing
+ * when it does. Only a running or frozen local workbench is stopped, and not
+ * while DevHub needs it: a request waiting on it, a hold, its close.
+ */
+export function stopRefusal(facts: WorkbenchFacts): string | undefined {
 	const { phase } = facts;
-	if (phase.kind === "starting") return true;
-	return (
-		phase.kind === "running" &&
-		!facts.settled &&
-		now - phase.since < SETTLE_TIMEOUT_MS
-	);
+	if (phase.kind === "absent" || phase.kind === "discarded") {
+		return "it is not running";
+	}
+	if (phase.kind === "starting") return "it is still starting";
+	if (phase.kind !== "running" && phase.kind !== "frozen") {
+		return `it is ${phase.kind}`;
+	}
+	if (!facts.freezable) return "SSH and dev container editors are not stopped";
+	if (facts.closing) return "its Workspace is closing";
+	if (facts.asked) return "DevHub is waiting on it";
+	if (facts.held) return "DevHub is talking to it";
+	return undefined;
 }
 
-/** The order background starts go in: most recently shown, then the Sidebar's. */
-function backgroundOrder(
-	workbenches: readonly WorkbenchFacts[],
-): WorkbenchFacts[] {
-	return workbenches
-		.map((facts, index) => ({ facts, index }))
-		.sort(
-			(a, b) =>
-				(b.facts.lastShownAt ?? -Infinity) -
-					(a.facts.lastShownAt ?? -Infinity) || a.index - b.index,
-		)
-		.map(({ facts }) => facts);
-}
-
-/** One workbench's own move, apart from the start budget. */
+/** One workbench's own move. */
 function decideOne(
 	facts: WorkbenchFacts,
 	now: number,
@@ -282,16 +285,18 @@ function decideOne(
 	freeze: boolean,
 ): WorkbenchAction | undefined {
 	const { folder, phase } = facts;
-	const wanted = facts.shown || facts.asked;
+	if (facts.stopAsked && stopRefusal(facts) === undefined) {
+		return { kind: "discard", folder, stop: true };
+	}
 	switch (phase.kind) {
 		case "absent":
-			return wanted && !facts.closing
-				? { kind: "start", folder, cause: "start", background: false }
-				: undefined;
-		case "discarded":
 			// Shown alone is its placeholder; it starts only when asked for.
 			return facts.asked && !facts.closing
-				? { kind: "start", folder, cause: "wake", background: false }
+				? { kind: "start", folder, cause: "start" }
+				: undefined;
+		case "discarded":
+			return facts.asked && !facts.closing
+				? { kind: "start", folder, cause: "wake" }
 				: undefined;
 		case "frozen": {
 			if (facts.shown) return { kind: "thaw", folder, why: "shown" };
@@ -306,14 +311,14 @@ function decideOne(
 			}
 			if (!freeze) return { kind: "thaw", folder, why: "freezing is off" };
 			if (discardAfterMs > 0 && now - phase.since >= discardAfterMs) {
-				return { kind: "discard", folder };
+				return { kind: "discard", folder, stop: false };
 			}
 			return undefined;
 		}
 		case "running": {
 			if (!facts.settled) {
-				// Probed until it has settled, shown or not, local or not: the
-				// start budget waits on it.
+				// Probed until it has settled, shown or not, local or not: a
+				// freeze waits on it.
 				const due =
 					facts.probe === undefined || now - facts.probe.at >= SETTLE_PROBE_MS;
 				return due && !facts.probing ? { kind: "probe", folder } : undefined;
@@ -350,24 +355,6 @@ export function decide(facts: PlanFacts): WorkbenchAction[] {
 		const action = decideOne(one, now, discardAfterMs, freeze);
 		if (action !== undefined) actions.push(action);
 	}
-	// The budget: one background start, and only when nothing is starting —
-	// counting the foreground starts this same plan makes.
-	const starting =
-		workbenches.some((one) => unsettledStart(one, now)) ||
-		actions.some((action) => action.kind === "start");
-	if (!starting) {
-		const next = backgroundOrder(workbenches).find(
-			(one) => one.phase.kind === "absent" && one.freezable && !one.closing,
-		);
-		if (next !== undefined) {
-			actions.push({
-				kind: "start",
-				folder: next.folder,
-				cause: "start",
-				background: true,
-			});
-		}
-	}
 	return actions;
 }
 
@@ -383,7 +370,6 @@ export function nextDecision(facts: PlanFacts): number | undefined {
 		if (phase.kind === "running") {
 			if (!one.settled) {
 				times.push((one.probe?.at ?? now) + SETTLE_PROBE_MS);
-				times.push(phase.since + SETTLE_TIMEOUT_MS);
 			} else if (freeze && !one.shown) {
 				if (one.probe !== undefined) times.push(one.probe.at + PROBE_FRESH_MS);
 				if (one.hiddenSince !== undefined) {
@@ -415,7 +401,9 @@ export function placeholderOf(
 ): EditorPlaceholder | undefined {
 	switch (phase.kind) {
 		case "absent":
-			return { kind: "starting" };
+			// Not started: the same "not running" placeholder a discarded one
+			// shows, with no frame — Enter or its button starts it.
+			return { kind: "discarded", frame: "" };
 		case "starting":
 			return phase.cause === "restart"
 				? { kind: "restarting" }

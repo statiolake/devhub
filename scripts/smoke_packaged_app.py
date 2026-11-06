@@ -20,8 +20,10 @@ the main process died the moment the first workbench view committed its
 navigation, a second after the socket had answered. So after the reply the
 app is kept running until a workbench view reports that its page finished
 loading, and it has to still be alive when that happens. See
-`wait_for_workbench`. DevHub starts the workbench of the Workspace on screen
-at launch — Scratch's, on a fresh profile — so nothing has to ask for it.
+`wait_for_workbench`. DevHub starts no workbench until it is asked for, so
+the test asks the way `devhub <file>` does: it opens a file of its own
+(`ask_for_workbench`), which a fresh profile routes to Scratch's workbench and
+starts it.
 
 It also reads the bundle before starting it, for the faults a reply cannot
 rule out. An asset the workbench fetches by path — a wasm file, say — going
@@ -170,6 +172,21 @@ def wait_for_workbench(
 		if now >= deadline:
 			return "no workbench view finished loading in time"
 		time.sleep(0.25)
+
+
+def ask_for_workbench(socket_path: Path, path: Path) -> socket.socket:
+	"""Open `path` the way `devhub <file>` does, which starts the workbench it
+	is routed to — Scratch's, on a fresh profile. Nothing else starts one.
+
+	The connection is handed back open: the reply comes once the file is in
+	the workbench, and whether the workbench loads is `wait_for_workbench`'s
+	to watch, so the caller closes it when it is done waiting."""
+	path.write_text("DevHub smoke test\n")
+	client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+	client.connect(str(socket_path))
+	request = {"kind": "open", "path": str(path), "cwd": str(path.parent)}
+	client.sendall(json.dumps(request).encode() + b"\n")
+	return client
 
 
 def log_tail(log_path: Path, lines: int = 40) -> str:
@@ -414,7 +431,11 @@ def run_and_probe(
 		first_line = str(reply.get("message", "")).splitlines()[0:1]
 		print(f"    the control socket answered: {first_line[0] if first_line else reply}")
 
-		problem = wait_for_workbench(process, log_path, started + timeout, settle)
+		opener = ask_for_workbench(user_data / "devhub" / "control.sock", state / "smoke.txt")
+		try:
+			problem = wait_for_workbench(process, log_path, started + timeout, settle)
+		finally:
+			opener.close()
 		if problem is not None:
 			print(f"    {problem}", file=sys.stderr)
 			print(log_tail(log_path), file=sys.stderr)

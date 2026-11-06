@@ -1073,13 +1073,13 @@ pages to drift from it.
 **A place enters it once somebody does something there**, not when the
 selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
 
-| What happened while the place was shown                                                                                                                                                                                                                                                                                                                                             | Recorded?             |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                                                                                                                                                                                                                                              | yes, at the first one |
-| a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                                                                                                                                                                                                                                        | yes, at the first one |
-| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F`'s picker …), a click on a Sidebar row (a Workspace, an Agent, Scratch, the Orchestrator), `Cmd+Q Shift+O` (to the Orchestrator and back), a click on a `devhub:` link's chip (`model/devhubLink.ts`), `devhub --tell focus`, Enter or a click on a discarded editor's placeholder | yes, at once          |
-| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, the Sidebar walked from the keyboard (its Return included), `Cmd+Q Shift+J`, a selection repaired after a close, a command line that does not take focus                                                                                                                                                                              | no                    |
-| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                                                                                                                                | no                    |
+| What happened while the place was shown                                                                                                                                                                                                                                                                                                                                               | Recorded?             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| a key typed into it (not a chord's strokes, not a modifier alone, not `Cmd+[`/`Cmd+]`)                                                                                                                                                                                                                                                                                                | yes, at the first one |
+| a press of the left, middle or right button, or a scroll, in it (a drag starts with a press)                                                                                                                                                                                                                                                                                          | yes, at the first one |
+| arriving on purpose: a new Agent (`AppModel.addAgent`), an explicitly opened Workspace (`Cmd+Q F`'s picker …), a click on a Sidebar row (a Workspace, an Agent, Scratch, the Orchestrator), `Cmd+Q Shift+O` (to the Orchestrator and back), a click on a `devhub:` link's chip (`model/devhubLink.ts`), `devhub --tell focus`, Enter or a click on a not-running editor's placeholder | yes, at once          |
+| `Cmd+Q N`/`P`, `Cmd+Q 0`–`9`, the tab picker, the Sidebar walked from the keyboard (its Return included), `Cmd+Q Shift+J`, a selection repaired after a close, a command line that does not take focus                                                                                                                                                                                | no                    |
+| Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                                                                                                                                  | no                    |
 
 "In it" means its views: a workbench (and what it hosts), the Agents' page (a
 GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`, the
@@ -1294,22 +1294,22 @@ Each folder's workbench is in one phase at a time (`WorkbenchPhase` in
 
 | Phase                                     | What it is                                                           |
 | ----------------------------------------- | -------------------------------------------------------------------- |
-| _absent_                                  | not started in this run                                              |
+| _absent_                                  | not started in this run: its placeholder until it is asked for       |
 | _starting_ (cause start, restart or wake) | an open in flight, or a view whose page has not loaded               |
 | _running_                                 | its view loaded; _settled_ once it has finished starting             |
 | _frozen_                                  | every process of it stopped (SIGSTOP)                                |
 | _discarding_                              | thawed, being unloaded                                               |
-| _discarded_                               | closed; its placeholder shows the frame it left                      |
+| _discarded_                               | closed (frozen long, or stopped); its placeholder shows its frame    |
 | _restart-waiting_, _gave-up_, _parked_    | failed: backing off, given up on, unavailable until Retry or Locate… |
 
 ```text
-absent     ─ shown / asked / requested ─────────────────────▶ starting
-           ─ its turn in the background, nothing else starting ▶ starting
+absent     ─ asked (Enter, Start) / requested ───────────────▶ starting
 starting   ─ loaded ──────────────────────────────────────────▶ running
 running    ─ hidden 3 s, settled, nothing keeps it (fresh probe) ▶ frozen
+           ─ stopped (Cmd+Q Shift+E) ─────────────────────────▶ discarding ─▶ discarded
 frozen     ─ shown / asked / requested / held / a connection ─▶ running
-           ─ frozen workbench_discard_minutes ───────────────▶ discarding ─▶ discarded
-discarded  ─ asked (Enter, a click) / requested ─────────────▶ starting (wake)
+           ─ frozen workbench_discard_minutes / stopped ──────▶ discarding ─▶ discarded
+discarded  ─ asked (Enter, Start) / requested ───────────────▶ starting (wake)
 ```
 
 ### The planner and its driver
@@ -1318,7 +1318,8 @@ What every workbench should be doing is decided by one pure function,
 `decide` (`workbenchPlan.ts`), from facts and nothing else; it reads no clock
 and keeps nothing. The facts per workbench (`WorkbenchFacts`): its phase,
 local or not, shown, asked for (an ask, or a DevHub request waiting on it),
-held (DevHub talking to it, thaw only), closing, when it was last shown and
+held (DevHub talking to it, thaw only), closing, asked to freeze (Sleep) or to
+stop (`Cmd+Q Shift+E`), when it was last shown and
 when it was hidden, settled, the renderer's last answer about what a freeze
 would interrupt (`Probe`), when its sockets last carried traffic, when a
 connection last arrived for it, and whether its renderer process also draws
@@ -1328,7 +1329,8 @@ probe answered, traffic, a connection, an unload finished — and, on every
 `plan`, asks `decide`, moves each phase to match its answer (so a second plan
 asks nothing twice) and hands the effects to the one executor,
 `AppController.reconcileWorkbenches`: open, probe, freeze, thaw, discard,
-dispose, report giving up, and the placeholder for each slot. The executor
+dispose, report giving up or a stop that did not happen, and the placeholder
+for each slot. The executor
 runs a plan on every projection change, every event and every action that
 completes, and at `nextDeadline` (a probe due again, traffic or a grace
 running out, a discard due, a backoff over) — one timer, no others.
@@ -1336,20 +1338,36 @@ running out, a discard due, a backoff over) — one timer, no others.
 The rules (tested on fact fixtures in `workbenchPlan.test.ts`, races
 included):
 
-- **Shown, asked for or requested wins.** The shown workbench is never frozen,
-  a frozen one that is shown, asked for, requested, held or closing is thawed
-  at once, and an absent one that is shown or requested starts at once —
-  ahead of any background start.
-- **One background start at a time.** At launch the shown workbench starts
-  first. Each other _local_ one starts in the background only when nothing is
-  starting and every started one has **settled**: its window has reached
-  VS Code's last lifecycle phase (Eventually), its installed extensions are
-  registered, and its renderer's and window utilities' CPU (from
-  `app.getAppMetrics()`) has stayed under 10 % for three seconds — or it has
-  run 60 s, whatever it says (`SETTLE_TIMEOUT_MS`). Which goes next is decided
-  then and there: most recently shown, then the model's order. Nothing is
-  queued, so a workbench the person goes to before its turn simply starts,
-  and the background waits for it.
+- **Nothing starts until it is asked for.** Not at launch, not in the
+  background, not by opening or selecting a Workspace (`Cmd+Q F`, a folder
+  from the command line, VS Code's own open, `devhub --tell workspace open`,
+  a click on its row): its editor area is the placeholder ("Editor not
+  running — press Enter to start", and a Start button) until Enter or the
+  button asks for it (`wakeEditor`, an `asked` ask), or a DevHub request that
+  needs it running waits on it — a file routed to it (`devhub <file>`,
+  `devhub -`, `--wait`, a conversation's file link), Scratch's empty window,
+  a dev container reopened or rebuilt. Asked, it starts at once, however many
+  others are starting.
+- **Shown, asked for or requested keeps it.** The shown workbench is never
+  frozen, and a frozen one that is shown, asked for, requested, held or
+  closing is thawed at once.
+- **A person can stop one.** `Cmd+Q Shift+E` (`stop_editor`; `Cmd+Q E`,
+  `focus_editor`, is taken) stops the selected Workspace's workbench — the
+  Workspace's row or one of its Agents — whether it is on screen, hidden or
+  frozen: the plan is asked (`LifecycleInput.stop`) and discards it, closing
+  it exactly as a long frozen one is closed (below: thawed, unsaved editors
+  backed up by hot exit, the same last-moment checks), and the slot goes back
+  to the placeholder, with the frame it left; Enter starts it again (a
+  wake). It is not stopped while it is starting, while its Workspace closes,
+  while a DevHub request or hold needs it, or when it is SSH or a dev
+  container (`stopRefusal`), nor when the unload is called off (unsaved
+  editors with `files.hotExit` off, a veto): each of those is said, as a
+  notice (`editor_not_stopped`), and it keeps running.
+- **Settled.** A started workbench is probed every second until it has
+  settled: its window has reached VS Code's last lifecycle phase
+  (Eventually), its installed extensions are registered, and its renderer's
+  and window utilities' CPU (from `app.getAppMetrics()`) has stayed under
+  10 % for three seconds. Until then it is not frozen.
 - **Freeze aggressively.** A running local workbench that is not on screen is
   frozen as soon as it has settled and nothing keeps it awake. The keep-awake
   reasons are one table, `AWAKE_RULES`: shown, asked for, held by DevHub,
@@ -1369,9 +1387,9 @@ included):
   frozen workbench is never probed again, so without the grace a command
   started just before switching away was frozen while it ran — an
   output-heavy one then stalls on the pty's flow control. Shown again within
-  the grace, nothing was asked and nothing happens. A workbench preloaded in
-  the background and never shown has no grace: it freezes once it has
-  settled, on the probe that settled it. A probe answered after the person
+  the grace, nothing was asked and nothing happens. A workbench started
+  hidden (a request for it) and never shown has no grace: it freezes once it
+  has settled, on the probe that settled it. A probe answered after the person
   came back freezes nothing: the decision is made from the facts as they are
   when the answer lands. A busy one is probed again every 15 s.
 - **Discard after a while.** Frozen for `general.workbench_discard_minutes`
@@ -1388,16 +1406,17 @@ included):
   (`PlanFacts.freeze`): nothing is frozen — not on hiding, not on the Task
   Manager's Sleep, which is then not offered — so nothing is discarded either,
   since a discard follows a freeze, and a workbench frozen when it turns off
-  is thawed by the next plan (`why: freezing is off`). Background starts and
-  the probes until a start has settled go on as before. It applies live: an
-  accepted setting plans at once.
+  is thawed by the next plan (`why: freezing is off`). The probes until a
+  start has settled, and a person's stop, go on as before. It applies live:
+  an accepted setting plans at once.
 
 **Everything that talks to a workbench goes through the lifecycle**
 (`AppController.holdWorkbench`): a file routed to it, a reattach, Scratch's
 empty window, a container's file, a close asking about unsaved work. The
 request is a fact of the plan that follows at once — a frozen workbench is
 thawed then and there, before the request's first message — and with `start`
-a discarded or not yet started one is started and waited for; nothing freezes
+a discarded or not yet started one is started and waited for (the one start
+that is not Enter: what DevHub was asked to show in it needs it); nothing freezes
 it while the request stands. A close's questions (`thaw`) never start a
 workbench just to ask it.
 
@@ -1489,35 +1508,39 @@ freeze.
 **Remote workbenches are excluded from freezing and discarding for now.** An
 SSH or dev container workbench's extension host is on the far machine, and
 stopping the local renderer alone would stall its connection's heartbeat. They
-start when shown or asked for (never in the background), and stay up.
+start when asked for, like any other, and stay up: `Cmd+Q Shift+E` does not
+stop one.
 
 ### Placeholders, the Task Manager, the log
 
-The placeholder (`Discarded` in `SurfaceState.tsx`) is a discarded workbench's
-whole editor area: the frame it left, grey under a quiet scrim of `--canvas`,
-and one centred line — "VS Code is not running — press Enter to start". It
-fades in on `--motion-slow` / `--ease-standard` (none under reduced motion).
-The whole area is one control: it takes DOM focus when it appears and whenever
-the page gets the keyboard back (main puts the keys in the window's page while
-no workbench stands in the slot), Enter or a click calls `wakeEditor` (an ask,
-`asked`), and every other key does nothing — DevHub's `Cmd+Q` chords still
-work, since main takes them before any page. Started, it shows the "Starting
-VS Code…" spinner over the dim frame until the view has loaded, and the
-keyboard goes into the workbench when it arrives. A frozen workbench needs no
+The placeholder (`Discarded` in `SurfaceState.tsx`) is the whole editor area
+of a workbench that is not running — not started yet, stopped, or discarded:
+the frame it left (none for one never started), grey under a quiet scrim of
+`--canvas`, one centred line — "Editor not running — press Enter to start" —
+and a Start button under it. It fades in on `--motion-slow` /
+`--ease-standard` (none under reduced motion). The button takes DOM focus
+when it appears and whenever the page gets the keyboard back (main puts the
+keys in the window's page while no workbench stands in the slot); Enter, the
+button or a click anywhere on the area calls `wakeEditor` (an ask, `asked`),
+and every other key does nothing — DevHub's `Cmd+Q` chords still work, since
+main takes them before any page. Started, it shows the "Starting VS Code…"
+spinner (over the dim frame, if there is one) until the view has loaded, and
+the keyboard goes into the workbench when it arrives. A frozen workbench needs no
 placeholder: it is thawed the moment it is shown, and its view still holds its
 last frame.
 
 What the slot shows is the phase (`placeholderOf`), sent to the page whenever
 it changes (`editorPlaceholder`), so it cannot outlive its state: "Restarting
-the editor…" while restart-waiting or reopening after a failure, the frame
-under the "not running" line while discarded, and "Starting VS Code…" while
-not started yet or starting (the view `hidden` in the arrangement, a split
-keeping its Agent); the frame lives in memory only. Only a change is sent, so
+the editor…" while restart-waiting or reopening after a failure, the "not
+running" line (and the frame) while not started yet or discarded, and
+"Starting VS Code…" while starting (the view `hidden` in the arrangement, a
+split keeping its Agent); the frame lives in memory only. Only a change is sent, so
 the page, once it listens, asks for every placeholder standing
 (`replayEditorPlaceholders`, `WorkbenchLifecycle.standing`). A workbench that
 dies unasked is opened again after a backoff that doubles from 250 ms
 (`editorSupervisor.ts`), and after five failures in a row it is given up on
-and its Workspace made unavailable; one that dies while discarding is simply
+and its Workspace made unavailable (Retry or Locate… bring the placeholder
+back, and Enter starts it); one that dies while discarding is simply
 discarded.
 
 The Task Manager shows each workbench's phase (running, starting, frozen,

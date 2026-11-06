@@ -213,6 +213,11 @@ export type ChordEffect =
 	| { readonly kind: "restart-agent"; readonly agentId: string }
 	/** Close it, and delete the worktree if that is what it is. */
 	| { readonly kind: "close-workspace"; readonly workspaceId: string }
+	/**
+	 * Stop this Workspace's VS Code (`Cmd+Q Shift+E`): closed as a long frozen
+	 * one is discarded, back to the placeholder Enter starts it from.
+	 */
+	| { readonly kind: "stop-editor"; readonly workspaceId: string }
 	/** The newest of what was closed, opened again (`model/recentlyClosed.ts`). */
 	| { readonly kind: "reopen-closed" }
 	/** What was closed lately, as a list to choose from. */
@@ -551,6 +556,13 @@ export function resolveChord(
 					? { kind: "workspace", workspaceId: workspace.id }
 					: scratchContext(snapshot),
 			};
+
+		case "stop_editor":
+			// The selection's Workspace — an Agent's, beside it or not. Whether
+			// it is running, local and free to stop is the lifecycle's answer.
+			return workspace
+				? { kind: "stop-editor", workspaceId: workspace.id }
+				: undefined;
 
 		case "swap_split_focus": {
 			// Every pane on screen: the selection's own — one, or two side by

@@ -1998,8 +1998,8 @@ export class AppController {
 			snapshot: () => this.chordSnapshot(),
 			selectContext: (context, presentation, focus) => {
 				// Going somewhere shows it: a frozen workbench is thawed, one not
-				// started yet starts, a discarded one shows its placeholder until
-				// somebody asks (`workbenchPlan.ts`).
+				// started or discarded shows its placeholder until somebody asks
+				// (`workbenchPlan.ts`).
 				this.arrive(
 					intentFromWire({
 						type: "select_context",
@@ -2136,6 +2136,9 @@ export class AppController {
 			closeWorkspace: (workspaceId) => {
 				this.placeKeyboardOnSurface();
 				this.closeWorkspaceOrWorktree(workspaceId);
+			},
+			stopEditor: (workspaceId) => {
+				this.stopWorkbench(workspaceId);
 			},
 			reopenClosed: () => {
 				this.placeKeyboardOnSurface();
@@ -7263,6 +7266,29 @@ export class AppController {
 	/** The folder the next plan is asked to freeze (the Task Manager's Sleep). */
 	private workbenchFreeze: string | undefined;
 
+	/** The folder the next plan is asked to stop (`Cmd+Q Shift+E`). */
+	private workbenchStop: string | undefined;
+
+	/**
+	 * `Cmd+Q Shift+E`: the next plan is asked to stop this Workspace's
+	 * workbench — discarded as a long frozen one is, shown or not
+	 * (`workbenchPlan.ts`, `stopRefusal`), its slot back to the placeholder
+	 * Enter starts it from. A stop that does not happen is said.
+	 */
+	private stopWorkbench(workspaceId: string): void {
+		const folder = this.coordinator.model.workspace(
+			workspaceId as WorkspaceId,
+		)?.key;
+		if (folder === undefined) return;
+		this.workbenchStop = folder;
+		this.reconcileWorkbenches();
+	}
+
+	/** A person's stop that did not happen, and why: said, as a notice. */
+	private reportNotStopped(reason: string): void {
+		this.publishError(withDetail(errorWireAt("editor_not_stopped"), reason));
+	}
+
 	/**
 	 * DevHub's requests waiting on a workbench, by folder: `start` ones need it
 	 * running (`LifecycleInput.requests`), `thaw` ones need it not frozen
@@ -7279,8 +7305,8 @@ export class AppController {
 	 *
 	 * The request is a fact of the plan that follows at once: a frozen
 	 * workbench is thawed there and then (synchronously, before `work`), and
-	 * with `start` a discarded or not yet started one is started — ahead of
-	 * any background start — and waited for. Nothing can freeze it while the
+	 * with `start` a discarded or not yet started one is started and waited
+	 * for. Nothing can freeze it while the
 	 * request stands; when it is done, the plan decides again from what is true
 	 * then. `thaw` is for what only makes sense of a workbench that runs —
 	 * asking a close's questions — and starts nothing.
@@ -7375,6 +7401,8 @@ export class AppController {
 		this.workbenchAsk = undefined;
 		const freeze = this.workbenchFreeze;
 		this.workbenchFreeze = undefined;
+		const stop = this.workbenchStop;
+		this.workbenchStop = undefined;
 		const minutes = this.config.general.workbench_discard_minutes;
 		// A workbench whose renderer process also hosts any other contents —
 		// another workbench, or one of DevHub's own pages (Chromium decides the
@@ -7398,14 +7426,14 @@ export class AppController {
 			now,
 			// Every Workspace whose folder is there (asking for one that is gone
 			// is what put VS Code's "path does not exist" box on screen), in
-			// the model's order — the background starts' order after recency.
+			// the model's order.
 			wanted: model.workspaces
 				.filter((workspace) => workspace.state.kind !== "unavailable")
 				.map((workspace) => ({
 					folder: workspace.key,
 					surfaceKey: `workspace-editor:${workspace.id}`,
-					// Not SSH or a dev container: out of freezing, discarding and
-					// background starts for now (`docs/window-and-pages.md`).
+					// Not SSH or a dev container: out of freezing and discarding
+					// for now (`docs/window-and-pages.md`).
 					freezable:
 						workspace.location.kind === "local" &&
 						workspace.editor.kind === "host",
@@ -7434,6 +7462,7 @@ export class AppController {
 			stopped: this.freezer.frozenFolders(),
 			...(ask === undefined ? {} : { ask }),
 			...(freeze === undefined ? {} : { freeze }),
+			...(stop === undefined ? {} : { stop }),
 		});
 	}
 
@@ -7485,8 +7514,11 @@ export class AppController {
 			case "report-gave-up":
 				this.reportEditorGaveUp(effect.folder, effect.reason, effect.attempt);
 				break;
+			case "report-not-stopped":
+				this.reportNotStopped(effect.reason);
+				break;
 			case "open":
-				this.openWorkbench(effect.folder, effect.background);
+				this.openWorkbench(effect.folder);
 				break;
 			case "probe":
 				void this.probeWorkbench(effect.folder);
@@ -7495,7 +7527,7 @@ export class AppController {
 				this.freezeWorkbench(effect.folder);
 				break;
 			case "discard":
-				void this.discardWorkbench(effect.folder);
+				void this.discardWorkbench(effect.folder, effect.stop);
 				break;
 		}
 	}
@@ -7526,7 +7558,7 @@ export class AppController {
 	 * (`workbenchReady`); the phase is what says the open is in flight, so a
 	 * second plan never starts a second one.
 	 */
-	private openWorkbench(folder: string, background: boolean): void {
+	private openWorkbench(folder: string): void {
 		const attempt = withDeadline(
 			this.openEditorView(folder),
 			EDITOR_OPEN_TIMEOUT_MS,
@@ -7540,11 +7572,6 @@ export class AppController {
 				this.workbenchOpens.delete(folder);
 			}
 			if (failure === undefined) {
-				if (background) {
-					console.log(
-						`[devhub] workbench '${folder}' opened in the background`,
-					);
-				}
 				this.reconcileWorkbenches();
 				// A view no longer puts itself on screen when it is created, so
 				// its arrival is a moment to ask the arrangement again.
@@ -7680,23 +7707,26 @@ export class AppController {
 	}
 
 	/**
-	 * The `discard` effect: close one frozen workbench, keeping the frame it
-	 * shows for the page to stand in for it.
+	 * The `discard` effect: close one frozen workbench — or, for a person's
+	 * stop (`stop`, `Cmd+Q Shift+E`), one running or frozen, shown or not —
+	 * keeping the frame it shows for the page to stand in for it.
 	 *
 	 * It is thawed first, since a window that is to unload has to run. Each
 	 * way it may not go is one log line and an answer to the lifecycle, which
-	 * keeps it running (and so, hidden, frozen again soon): DevHub is
-	 * quitting, the editor is not running, somebody showed or asked for it
-	 * meanwhile (`mayDiscard`, asked at the last moment), it says it would
-	 * lose unsaved editors (hot exit off; no answer is a reason too), or the
-	 * unload was vetoed. Otherwise it is unloaded as VS Code unloads every
-	 * window on Cmd+Q (`UnloadReason.QUIT`: unsaved editors backed up, storage
-	 * written, extensions deactivated), and its view destroyed by the plan.
+	 * keeps it running (and so, hidden, frozen again soon) — and, for a stop,
+	 * a notice saying why: DevHub is quitting, the editor is not running,
+	 * somebody showed (not for a stop) or asked for it meanwhile
+	 * (`mayDiscard`, asked at the last moment), it says it would lose unsaved
+	 * editors (hot exit off; no answer is a reason too), or the unload was
+	 * vetoed. Otherwise it is unloaded as VS Code unloads every window on
+	 * Cmd+Q (`UnloadReason.QUIT`: unsaved editors backed up, storage written,
+	 * extensions deactivated), and its view destroyed by the plan.
 	 */
-	private async discardWorkbench(folder: string): Promise<void> {
+	private async discardWorkbench(folder: string, stop: boolean): Promise<void> {
 		this.thawWorkbench(folder);
 		const skip = (reason: string) => {
 			this.workbenches.discardSkipped(folder, reason, Date.now());
+			if (stop) this.reportNotStopped(reason);
 			this.reconcileWorkbenches();
 		};
 		const workspace = this.workspaceForEditorKey(folder);
@@ -7869,8 +7899,8 @@ export class AppController {
 	 */
 	noteLocation(location: WorkspaceLocation): void {
 		// A workbench DevHub is building itself — the lifecycle starting one
-		// for every Workspace, today's Scratch at midnight among them, or a
-		// discarded one again — is not a request to open anything: the Workspace is already in
+		// that was asked for, or a discarded one again — is not a request to
+		// open anything: the Workspace is already in
 		// the model, and "opening" it again would select it, moving the person
 		// off whatever they were in. Only a place VS Code asked for on its own
 		// is news.
@@ -7886,8 +7916,8 @@ export class AppController {
 	}
 
 	/**
-	 * `noteLocation`'s open, and then — once it has settled, so the selection
-	 * it makes is in place — the editor view and the ask that go with it.
+	 * `noteLocation`'s open. Like every other open it starts no workbench: the
+	 * Workspace is selected with its placeholder, and Enter starts it.
 	 */
 	private async openedByVsCode(location: WorkspaceLocation): Promise<void> {
 		await this.dispatchAwaiting({
@@ -7896,8 +7926,6 @@ export class AppController {
 				relocatedOnSameMachine(location, location.path),
 			),
 		});
-		// VS Code asked for it to be open: a discarded one starts again.
-		this.askForWorkbench(locationKey(location), "opened");
 	}
 
 	/**
@@ -7952,7 +7980,6 @@ export class AppController {
 			if (!openBefore.has(workspaceId)) this.placeBelow(workspaceId, anchor);
 		}
 		if (withAgent === undefined) {
-			if (opening === "explicit") this.openedOnPurpose(location);
 			await this.syncEditorView();
 			return outcomeWire(
 				opened,
@@ -8027,20 +8054,6 @@ export class AppController {
 		if (open === undefined)
 			throw new Error(`opening ${location.path} made no workspace`);
 		return open.id;
-	}
-
-	/**
-	 * A Workspace somebody opened on purpose: its editor starts or wakes now
-	 * if it is what the Workspace shows (the lifecycle ignores the ask when
-	 * the editor area shows the terminal). It is already a place in the
-	 * history: the open said `reason: "explicit"`.
-	 */
-	private openedOnPurpose(location: RequestedWorkspaceLocation): void {
-		const workspace = this.coordinator.model.workspace(
-			this.openedWorkspaceId(location),
-		);
-		if (workspace === undefined) return;
-		this.askForWorkbench(workspace.key, "opened");
 	}
 
 	/**

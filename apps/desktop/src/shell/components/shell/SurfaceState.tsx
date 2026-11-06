@@ -119,17 +119,19 @@ export function Waiting({ label }: { readonly label: string }) {
 }
 
 /**
- * A discarded workbench: closed after it had been frozen a while, to free
- * its memory. The frame it left (if any) under a quiet scrim across the whole
- * editor area, and one line saying how to bring it back.
+ * A workbench that is not running: never started in this run (nothing starts
+ * one until it is asked for), stopped by hand (`Cmd+Q Shift+E`), or closed
+ * after it had been frozen a while, to free its memory. The frame it left (if
+ * any) under a quiet scrim across the whole editor area, one line saying how
+ * to start it, and a Start button.
  *
- * Nothing starts it on its own (`workbenchPlan.ts`): only Enter here, or a
- * click anywhere on it, calls `onWake`. Every other key does nothing — and
- * DevHub's `Cmd+Q` chords still work, since main takes those before any page
- * sees them. The whole area is the one control, so it takes the keyboard when
- * it appears and again whenever the page gets it back: main puts the keys in
- * this page while no workbench stands in the slot, and they must land here
- * rather than on `body`.
+ * Nothing starts it on its own (`workbenchPlan.ts`): only Enter here, the
+ * button, or a click anywhere on the area calls `onWake`. Every other key does
+ * nothing — and DevHub's `Cmd+Q` chords still work, since main takes those
+ * before any page sees them. The button takes the keyboard when it appears
+ * and again whenever the page gets it back: main puts the keys in this page
+ * while no workbench stands in the slot, and they must land here rather than
+ * on `body`.
  */
 export function Discarded({
   frame,
@@ -138,10 +140,10 @@ export function Discarded({
   readonly frame: string;
   readonly onWake: () => void;
 }) {
-  const area = useRef<HTMLDivElement | null>(null);
+  const start = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     const take = () => {
-      area.current?.focus({ preventScroll: true });
+      start.current?.focus({ preventScroll: true });
     };
     take();
     window.addEventListener("focus", take);
@@ -149,29 +151,33 @@ export function Discarded({
       window.removeEventListener("focus", take);
     };
   }, []);
-  const title = "VS Code is not running";
+  const title = "Editor not running";
   const hint = "press Enter to start";
   return (
+    // The whole area is the pointer's target, and Enter anywhere in it; the
+    // button is the keyboard's and the reader's, and its click bubbles here.
     <div
-      ref={area}
       className="surface-discarded"
-      role="button"
-      tabIndex={0}
-      aria-label={`${title} — ${hint}`}
       onClick={onWake}
       onKeyDown={(event) => {
         if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
         if (event.metaKey || event.ctrlKey || event.altKey) return;
+        // Not also the button's own activation, which would start it twice.
         event.preventDefault();
         onWake();
       }}
     >
       {frame === "" ? null : <img src={frame} alt="" />}
       <div className="surface-discarded-scrim" aria-hidden="true" />
-      <p className="surface-discarded-message" aria-hidden="true">
-        <span className="surface-discarded-title">{title}</span>
-        <span className="surface-discarded-hint"> — {hint}</span>
-      </p>
+      <div className="surface-discarded-message">
+        <p className="surface-discarded-line">
+          <span className="surface-discarded-title">{title}</span>
+          <span className="surface-discarded-hint"> — {hint}</span>
+        </p>
+        <button ref={start} type="button" className="mac-button default">
+          Start
+        </button>
+      </div>
     </div>
   );
 }

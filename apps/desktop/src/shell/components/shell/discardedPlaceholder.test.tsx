@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 /**
- * The discarded editor's placeholder: the one place a discarded workbench is
- * started again from.
+ * The placeholder of an editor that is not running — never started (nothing
+ * starts one until it is asked for), stopped with `Cmd+Q Shift+E`, or
+ * discarded: the one place a workbench is started from.
  *
- * Nothing starts it on its own. The whole editor area, dimmed, is one control
- * that holds the keyboard: Enter or a click starts it, every other key does
- * nothing (DevHub's `Cmd+Q` chords are main's, taken before the page).
+ * Nothing starts it on its own. The whole editor area, dimmed, says how to
+ * start it and holds a Start button that has the keyboard: Enter, the button
+ * or a click anywhere on the area starts it, every other key does nothing
+ * (DevHub's `Cmd+Q` chords are main's, taken before the page).
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -20,41 +22,53 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Discarded, Waking } from "./SurfaceState";
 
-function discarded() {
+function discarded(frame = "data:image/png;base64,") {
   const onWake = vi.fn();
-  render(<Discarded frame="data:image/png;base64," onWake={onWake} />);
-  return { onWake, area: screen.getByRole("button") };
+  const { container } = render(<Discarded frame={frame} onWake={onWake} />);
+  return {
+    onWake,
+    button: screen.getByRole("button", { name: "Start" }),
+    area: container.querySelector(".surface-discarded") as HTMLElement,
+  };
 }
 
-describe("a discarded editor's placeholder", () => {
+describe("a not-running editor's placeholder", () => {
   afterEach(() => {
     cleanup();
   });
 
-  it("says it is not running and how to start it, across the whole area", () => {
+  it("says it is not running and how to start it, with a Start button", () => {
     const { area } = discarded();
-    expect(area).toHaveTextContent(
-      "VS Code is not running — press Enter to start",
-    );
-    expect(area).toHaveAccessibleName(
-      "VS Code is not running — press Enter to start",
-    );
+    expect(area).toHaveTextContent("Editor not running — press Enter to start");
+    expect(screen.getAllByRole("button")).toHaveLength(1);
   });
 
-  it("takes the keyboard when it appears, and again when the page gets it back", () => {
-    const { area } = discarded();
-    expect(area).toHaveFocus();
-    area.blur();
-    expect(area).not.toHaveFocus();
+  it("draws the frame a stopped or discarded one left, and none for one never started", () => {
+    expect(discarded().area.querySelector("img")).not.toBeNull();
+    cleanup();
+    expect(discarded("").area.querySelector("img")).toBeNull();
+  });
+
+  it("puts the keyboard on its button when it appears, and again when the page gets it back", () => {
+    const { button } = discarded();
+    expect(button).toHaveFocus();
+    button.blur();
+    expect(button).not.toHaveFocus();
     act(() => {
       window.dispatchEvent(new Event("focus"));
     });
-    expect(area).toHaveFocus();
+    expect(button).toHaveFocus();
   });
 
-  it("starts on Enter", () => {
-    const { onWake, area } = discarded();
-    fireEvent.keyDown(area, { key: "Enter" });
+  it("starts on Enter, once", () => {
+    const { onWake, button } = discarded();
+    fireEvent.keyDown(button, { key: "Enter" });
+    expect(onWake).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts on its button, once", () => {
+    const { onWake, button } = discarded();
+    fireEvent.click(button);
     expect(onWake).toHaveBeenCalledTimes(1);
   });
 
@@ -65,13 +79,13 @@ describe("a discarded editor's placeholder", () => {
   });
 
   it("does not start on any other key, a modified Enter, or Enter that ends a composition", () => {
-    const { onWake, area } = discarded();
+    const { onWake, button } = discarded();
     for (const key of [" ", "a", "Escape", "Tab", "ArrowDown", "e"]) {
-      fireEvent.keyDown(area, { key });
+      fireEvent.keyDown(button, { key });
     }
-    fireEvent.keyDown(area, { key: "Enter", metaKey: true });
-    fireEvent.keyDown(area, { key: "Enter", ctrlKey: true });
-    fireEvent.keyDown(area, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(button, { key: "Enter", metaKey: true });
+    fireEvent.keyDown(button, { key: "Enter", ctrlKey: true });
+    fireEvent.keyDown(button, { key: "Enter", isComposing: true });
     expect(onWake).not.toHaveBeenCalled();
   });
 });

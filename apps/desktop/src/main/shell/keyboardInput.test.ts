@@ -149,6 +149,7 @@ function host(zoomActs = true) {
 		closeAgent: record("closeAgent"),
 		restartAgent: record("restartAgent"),
 		closeWorkspace: record("closeWorkspace"),
+		stopEditor: record("stopEditor"),
 		reopenClosed: record("reopenClosed"),
 		openRecentlyClosed: record("openRecentlyClosed"),
 		reorderEntries: record("reorderEntries"),
@@ -301,6 +302,15 @@ describe("a chord, as Electron delivers it", () => {
 		const { calls, chordHost } = host();
 		type(chordHost, [PREFIX, input("KeyO", "O", { shift: true })]);
 		expect(calls).toEqual(["togglePlace orchestrator editor"]);
+	});
+
+	it("hands Shift+E to the editor's stop, and leaves the bare e to showing it", () => {
+		const { calls, chordHost } = host();
+		type(chordHost, [PREFIX, input("KeyE", "E", { shift: true })]);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]).toMatch(/^stopEditor /);
+		type(chordHost, [PREFIX, input("KeyE", "e")]);
+		expect(calls[1]).toMatch(/^selectContext /);
 	});
 
 	it("keeps the chord through the Shift that arrives before the key", () => {

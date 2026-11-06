@@ -55,7 +55,11 @@ function harness(
 	let selected: string | undefined;
 
 	const plan = (
-		extra: { ask?: { folder: string; why: WakeReason }; freeze?: string } = {},
+		extra: {
+			ask?: { folder: string; why: WakeReason };
+			freeze?: string;
+			stop?: string;
+		} = {},
 	) => {
 		const done = life.plan({
 			now,
@@ -135,6 +139,10 @@ function harness(
 		freeze(folder: string) {
 			return plan({ freeze: folder });
 		},
+		/** `Cmd+Q Shift+E` on this folder's Workspace. */
+		stop(folder: string) {
+			return plan({ stop: folder });
+		},
 		/** `general.workbench_freeze` changed. */
 		setFreezing(on: boolean) {
 			freezing = on;
@@ -161,8 +169,12 @@ function harness(
 			life.probed(folder, answer, now);
 			return plan();
 		},
-		/** Load, then answer probes a second apart until it has settled. */
+		/**
+		 * Ask for it if it is not started (nothing starts unasked), load it,
+		 * then answer probes a second apart until it has settled.
+		 */
 		settle(folder: string) {
+			if (life.phase(folder).kind === "absent") app.ask(folder);
 			if (life.phase(folder).kind === "starting") app.load(folder);
 			for (let i = 0; i <= QUIET_MS / SETTLE_PROBE_MS + 1; i += 1) {
 				if (probes.has(folder)) app.answer(folder);
@@ -195,51 +207,139 @@ const of = (
 ) => effects.flatMap((effect) => (effect.kind === kind ? [effect.folder] : []));
 
 describe("launch", () => {
-	it("starts the shown workbench first, then the others one at a time", () => {
+	it("starts nothing: the shown one and the others wait, with the not-running placeholder", () => {
 		const app = harness();
 		app.select("b");
-		expect(of(app.add("a", "b", "c"), "open")).toEqual(["b"]);
-		expect(of(app.plan(), "open")).toEqual([]);
-		app.settle("b");
-		expect(app.kind("a")).toBe("starting");
-		expect(app.kind("c")).toBe("absent");
-		app.settle("a");
-		expect(app.kind("c")).toBe("starting");
+		expect(of(app.add("a", "b", "c"), "open")).toEqual([]);
+		app.advance(HOUR);
+		expect(of(app.effects, "open")).toEqual([]);
+		for (const folder of ["a", "b", "c"]) {
+			expect(app.kind(folder)).toBe("absent");
+			expect(app.placeholders.get(folder)).toEqual({
+				kind: "discarded",
+				frame: "",
+			});
+		}
 	});
 
-	it("freezes a background one once it has settled, unless it was shown meanwhile", () => {
+	it("selecting another Workspace starts nothing either", () => {
 		const app = harness();
+		app.add("a", "b");
 		app.select("a");
-		app.add("a", "b", "c");
-		app.settle("a");
-		app.settle("b");
-		// b settled hidden: frozen on the quiet probe that settled it.
-		expect(app.kind("b")).toBe("frozen");
-		// c is starting in the background; the person goes to it.
-		expect(app.kind("c")).toBe("starting");
-		app.select("c");
-		app.settle("c");
-		expect(app.kind("c")).toBe("running");
+		app.select("b");
+		expect(of(app.effects, "open")).toEqual([]);
 	});
 
-	it("starts a workbench the person goes to ahead of its turn", () => {
+	it("Enter on the placeholder starts it, and only it", () => {
 		const app = harness();
-		app.select("a");
-		app.add("a", "b", "c", "d");
-		app.settle("a");
-		expect(app.kind("b")).toBe("starting");
-		expect(of(app.select("d"), "open")).toEqual(["d"]);
-		expect(app.kind("c")).toBe("absent");
+		app.select("b");
+		app.add("a", "b");
+		expect(of(app.ask("b"), "open")).toEqual(["b"]);
+		expect(app.placeholders.get("b")).toEqual({ kind: "starting" });
+		app.settle("b");
+		expect(app.kind("b")).toBe("running");
+		expect(app.placeholders.has("b")).toBe(false);
+		expect(app.kind("a")).toBe("absent");
 	});
 
-	it("never preloads a remote workbench, and starts it when shown", () => {
+	it("a request that needs it starts it, shown or not; a remote one too", () => {
 		const app = harness();
 		app.select("a");
 		app.add("a", "ssh-host");
+		expect(of(app.request("ssh-host"), "open")).toEqual(["ssh-host"]);
+	});
+
+	it("one started hidden is frozen once it has settled", () => {
+		const app = harness();
+		app.select("a");
+		app.add("a", "b");
+		app.settle("b");
+		expect(app.kind("b")).toBe("frozen");
+	});
+});
+
+describe("stopping by hand", () => {
+	function runningA() {
+		const app = harness();
+		app.select("a");
+		app.add("a", "b");
 		app.settle("a");
+		return app;
+	}
+
+	it("stops the shown one: discarded, its frame on the placeholder; Enter starts it again", () => {
+		const app = runningA();
+		expect(app.stop("a")).toContainEqual({
+			kind: "discard",
+			folder: "a",
+			stop: true,
+		});
+		expect(app.kind("a")).toBe("discarding");
+		// Shown, and still to go: a person's stop is of the one on screen.
+		expect(app.life.mayDiscard("a")).toBe(true);
+		app.life.discarded("a", "frame:a");
+		expect(of(app.plan(), "dispose")).toEqual(["a"]);
+		expect(app.kind("a")).toBe("discarded");
+		expect(app.placeholders.get("a")).toEqual({
+			kind: "discarded",
+			frame: "frame:a",
+		});
+		// Nothing starts it again but Enter.
+		expect(of(app.advance(HOUR), "open")).toEqual([]);
+		expect(of(app.ask("a"), "open")).toEqual(["a"]);
+		expect(app.placeholders.get("a")).toEqual({
+			kind: "waking",
+			frame: "frame:a",
+		});
+		app.settle("a");
+		expect(app.kind("a")).toBe("running");
+	});
+
+	it("stops a frozen one", () => {
+		const app = runningA();
+		app.settle("b");
+		expect(app.kind("b")).toBe("frozen");
+		expect(of(app.stop("b"), "discard")).toEqual(["b"]);
+	});
+
+	it("a request since the stop calls it off at the last moment", () => {
+		const app = runningA();
+		app.stop("a");
+		app.request("a");
+		expect(app.life.mayDiscard("a")).toBe(false);
+		app.life.discardSkipped("a", "asked for", app.now);
+		expect(app.kind("a")).toBe("running");
+	});
+
+	it("says why it did not stop one, and stops nothing", () => {
+		const app = runningA();
+		const done = app.stop("b");
+		expect(done).toContainEqual({
+			kind: "report-not-stopped",
+			folder: "b",
+			reason: "it is not running",
+		});
+		expect(of(done, "discard")).toEqual([]);
+		expect(app.logs.join("\n")).toContain(
+			"asked to stop, not stopped: it is not running",
+		);
+		app.add("ssh-host");
+		app.request("ssh-host");
+		app.load("ssh-host");
+		app.release("ssh-host");
+		expect(of(app.stop("ssh-host"), "report-not-stopped")).toEqual([
+			"ssh-host",
+		]);
+		expect(app.kind("ssh-host")).toBe("running");
+	});
+
+	it("a discard of a hidden one is still called off by its being shown", () => {
+		const app = runningA();
+		app.settle("b");
 		app.advance(HOUR);
-		expect(app.kind("ssh-host")).toBe("absent");
-		expect(of(app.select("ssh-host"), "open")).toEqual(["ssh-host"]);
+		expect(app.kind("b")).toBe("discarding");
+		app.select("b");
+		expect(app.life.mayDiscard("b")).toBe(false);
 	});
 });
 
@@ -499,6 +599,7 @@ describe("failures", () => {
 		const app = harness();
 		app.select("a");
 		app.add("a");
+		app.ask("a");
 		app.fail("a");
 		expect(app.life.phase("a")).toEqual({
 			kind: "restart-waiting",
@@ -514,6 +615,7 @@ describe("failures", () => {
 		const app = harness();
 		app.select("a");
 		app.add("a");
+		app.ask("a");
 		for (let attempt = 0; attempt <= MAX_EDITOR_RESTARTS; attempt += 1) {
 			app.fail("a");
 			app.advance(60_000);
@@ -522,7 +624,10 @@ describe("failures", () => {
 		expect(of(app.effects, "report-gave-up")).toEqual(["a"]);
 		app.set("a", { wanted: false });
 		expect(app.kind("a")).toBe("parked");
-		expect(of(app.set("a", { wanted: true }), "open")).toEqual(["a"]);
+		// Wanted again (Retry, Locate…): its placeholder, and Enter starts it.
+		expect(of(app.set("a", { wanted: true }), "open")).toEqual([]);
+		expect(app.kind("a")).toBe("absent");
+		expect(of(app.ask("a"), "open")).toEqual(["a"]);
 	});
 });
 
@@ -531,10 +636,16 @@ describe("placeholders", () => {
 		const app = harness();
 		app.select("a");
 		app.add("a", "b");
+		const notRunning = { kind: "discarded", frame: "" };
 		expect(app.life.standing()).toEqual([
-			{ surfaceKey: "surface:a", placeholder: { kind: "starting" } },
-			{ surfaceKey: "surface:b", placeholder: { kind: "starting" } },
+			{ surfaceKey: "surface:a", placeholder: notRunning },
+			{ surfaceKey: "surface:b", placeholder: notRunning },
 		]);
+		app.ask("a");
+		expect(app.life.standing()[0]).toEqual({
+			surfaceKey: "surface:a",
+			placeholder: { kind: "starting" },
+		});
 		app.load("a");
 		expect(app.life.standing().map((one) => one.surfaceKey)).toEqual([
 			"surface:b",

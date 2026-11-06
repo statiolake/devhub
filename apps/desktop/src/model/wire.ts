@@ -777,6 +777,7 @@ function defaultErrorModule(code: AppErrorCodeWire): AppErrorModuleWire {
     case "editor_unavailable":
     case "editor_restarting":
     case "editor_restart_exhausted":
+    case "editor_not_stopped":
       return "editor";
     case "agent_not_connected":
     case "agent_exited":
@@ -833,6 +834,8 @@ export function errorWireAt(
     // Pressing the chord again is the retry, and it goes further back.
     code === "closed_not_reopened" ||
     code === "send_to_agent_refused" ||
+    // Pressing the chord again is the retry, once what kept it is gone.
+    code === "editor_not_stopped" ||
     // Trying again opens the same missing file.
     code === "file_not_found"
       ? []

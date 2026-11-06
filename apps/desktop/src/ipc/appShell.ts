@@ -308,6 +308,12 @@ export type AppErrorCodeWire =
 	/** It kept dying, so DevHub stopped building it again. */
 	| "editor_restart_exhausted"
 	/**
+	 * `Cmd+Q Shift+E` did not stop the Workspace's VS Code: it is starting or
+	 * remote, DevHub needs it, it would lose unsaved editors (hot exit off),
+	 * or its unload was vetoed. The detail says which; it keeps running.
+	 */
+	| "editor_not_stopped"
+	/**
 	 * The colour theme `[appearance] theme_dark` / `theme_light` names could
 	 * not be found among the installed themes, or its file could not be read
 	 * (`main/shell/shellTheme.ts`).
@@ -544,6 +550,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 	editor_restarting: "The workbench stopped unexpectedly and is restarting.",
 	editor_restart_exhausted:
 		"The workbench kept stopping and will not be restarted again.",
+	editor_not_stopped: "The editor was not stopped.",
 	color_theme_unavailable:
 		"The colour theme named in DevHub's settings is not available, so VS Code's default theme is worn instead.",
 	agent_not_connected: "The agent surface is not connected.",

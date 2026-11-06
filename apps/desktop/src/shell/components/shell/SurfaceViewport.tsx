@@ -452,11 +452,12 @@ export function SurfaceViewport({ snapshot }: SurfaceViewportProps) {
     // is an Agent covering a workbench, not a workbench going away.
     surfaceState = "agent";
   } else if (placeholders.has(layout.editorKey)) {
-    // The workbench is starting, being rebuilt in this same slot, discarded,
-    // or starting again. The selection has not moved and must not: what
-    // changed is that there is nothing to show yet, which is a state of this
-    // area rather than a reason to leave it. A discarded one shows the frame
-    // it left, and waits for Enter or a click: nothing starts it on its own.
+    // The workbench is not started, starting, being rebuilt in this same
+    // slot, stopped or discarded, or starting again. The selection has not
+    // moved and must not: what changed is that there is nothing to show yet,
+    // which is a state of this area rather than a reason to leave it. One that
+    // is not running shows the frame it left, if any, and waits for Enter or
+    // its button: nothing starts it on its own.
     const placeholder = placeholders.get(layout.editorKey);
     const surfaceKey = layout.editorKey;
     editorKey = surfaceKey;
