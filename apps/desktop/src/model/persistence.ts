@@ -2935,6 +2935,12 @@ function decodeParsed(parsed: Extract<Parsed, { kind: "document" }>): Decoded {
 
 export class JsonStateStore {
   private writeChain: Promise<unknown> = Promise.resolve();
+  /**
+   * The text this store last put at `path`, already validated before it was
+   * written: a primary that still reads back as exactly this needs no second
+   * decode to be trusted as the backup.
+   */
+  private lastWritten: Buffer | undefined;
 
   /**
    * `prepare`: see `StatePreparation`. Absent in tests and tools that read a
@@ -3130,6 +3136,7 @@ export class JsonStateStore {
     } catch (error) {
       throw mapIoError(error, this.path);
     }
+    this.lastWritten = Buffer.from(text, "utf8");
   }
 
   /** The `.bak` is only ever a copy of a file that parsed. */
@@ -3139,7 +3146,13 @@ export class JsonStateStore {
     if (primary.kind === "unsafe") {
       fail("STATE_UNSAFE_PATH");
     }
-    const decoded = decodeState(primary.bytes);
+    // The file this store wrote last time, byte for byte: it was validated
+    // before it was written, and decoding it again — a parse and a full
+    // decode of the whole state, on main's thread, on every save — would
+    // only say so again.
+    const decoded = this.lastWritten?.equals(primary.bytes)
+      ? ({ kind: "state" } as const)
+      : decodeState(primary.bytes);
     if (decoded.kind === "newer_version") {
       fail("STATE_NEWER_VERSION");
     }

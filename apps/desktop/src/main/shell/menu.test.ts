@@ -59,8 +59,13 @@ class FakeMenu {
 	}
 	static setApplicationMenu = (menu: FakeMenu | null) => {
 		applied = menu;
+		installs += 1;
 	};
+	static getApplicationMenu = () => applied;
 }
+
+/** How many bars have been put up, by anybody. */
+let installs = 0;
 
 /** The menu currently on the bar, as the last caller left it. */
 let applied: FakeMenu | null = null;
@@ -75,7 +80,7 @@ vi.mock("../electron.js", () => ({
 	},
 }));
 
-const { installMenu } = await import("./menu.js");
+const { installMenu, refreshMenu } = await import("./menu.js");
 const { EDITING_COMMAND_GROUPS } = await import("./editingCommands.js");
 const { electron } = await import("../electron.js");
 
@@ -236,5 +241,26 @@ describe("an accelerator on a bar built by somebody else", () => {
 			triggeredByAccelerator: true,
 		});
 		expect(ran).toEqual(["Quit"]);
+	});
+});
+
+describe("refreshing the bar", () => {
+	it("leaves DevHub's own bar up when nothing it says has changed", () => {
+		const before = applied;
+		const count = installs;
+		refreshMenu();
+		refreshMenu();
+		expect(applied).toBe(before);
+		expect(installs).toBe(count);
+	});
+
+	it("puts DevHub's bar back once somebody else's replaced it", () => {
+		const theirs = FakeMenu.buildFromTemplate([
+			{ label: "Code", submenu: [{ label: "About Code" }] as never },
+		] as never);
+		electron.Menu.setApplicationMenu(theirs as never);
+		refreshMenu();
+		expect(applied).not.toBe(theirs);
+		expect(applied?.items.map((item) => item.label)).toContain("Edit");
 	});
 });

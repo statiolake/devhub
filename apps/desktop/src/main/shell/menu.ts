@@ -28,6 +28,7 @@
 import { electron } from "../electron.js";
 import { EDITING_COMMAND_GROUPS } from "./editingCommands.js";
 import type { AppSnapshotWire } from "../../ipc/appShell.js";
+import { noteMainActivity } from "../diagnostics/eventLoopLag.js";
 
 export interface MenuHost {
 	/** The model as the page sees it, or nothing before the first projection. */
@@ -313,13 +314,45 @@ function claimApplicationMenu(): void {
 /** Install the menu bar, and keep it saying what is true. */
 export function installMenu(next: MenuHost): void {
 	host = next;
+	installed = undefined;
 	claimApplicationMenu();
 	refreshMenu();
 }
 
+/**
+ * What the template is a function of, as one string.
+ *
+ * Everything else in it is fixed. A refresh used to run on every projection
+ * change — several times a second while an Agent works — and each one built
+ * and installed a whole native menu bar on main's thread, for a bar that said
+ * exactly what it said before.
+ */
+export function menuKey(
+	focused: ReturnType<MenuHost["focusedWindow"]>,
+	snapshot: AppSnapshotWire | undefined,
+): string {
+	const workspace = selectedWorkspace(snapshot);
+	return JSON.stringify([focused, workspace?.id, workspace?.label]);
+}
+
+/** The bar DevHub last installed, and what it was built from. */
+let installed:
+	| { readonly menu: Electron.Menu; readonly key: string }
+	| undefined;
+
 export function refreshMenu(): void {
 	if (!host) return;
-	electron.Menu.setApplicationMenu(
-		electron.Menu.buildFromTemplate(template(host)),
-	);
+	const key = menuKey(host.focusedWindow(), host.snapshot());
+	// Only skipped while DevHub's own bar is still the one up: the workbench
+	// replaces it wholesale, and coming back from that is a rebuild.
+	if (
+		installed?.key === key &&
+		electron.Menu.getApplicationMenu() === installed.menu
+	) {
+		return;
+	}
+	noteMainActivity("menu rebuild");
+	const menu = electron.Menu.buildFromTemplate(template(host));
+	electron.Menu.setApplicationMenu(menu);
+	installed = { menu, key };
 }

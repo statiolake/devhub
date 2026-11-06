@@ -60,6 +60,8 @@ const REH_COMMIT = rehCommit({
 /** And the directory it is installed under over there, `<commit>-<identity>`. */
 const REH_INSTALL_KEY = rehInstallKey(REH_COMMIT, devhubProduct.serverIdentity);
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
+import { noteMainActivity } from "../diagnostics/eventLoopLag.js";
+import { SaveCoalescer } from "./saveCoalescer.js";
 import { PaneActivityTracker } from "../terminal/paneActivity.js";
 import {
 	FailureOnce,
@@ -4187,6 +4189,7 @@ export class AppController {
 			return;
 		}
 		this.terminalActivityFailures.succeeded(machine);
+		noteMainActivity(`terminal activity round on ${machine}`);
 		let tracker = this.paneTrackers.get(machine);
 		if (tracker === undefined) {
 			tracker = new PaneActivityTracker();
@@ -5424,6 +5427,7 @@ export class AppController {
 					}
 				}
 				if (latest) {
+					noteMainActivity("snapshot publish");
 					this.send(CHANNELS.snapshotChanged, latest);
 					this.projectionChanged();
 					this.tellMemory.observe(
@@ -5507,6 +5511,7 @@ export class AppController {
 				await this.inspect(effect.token, effect.workspaceId);
 				return;
 			case "launch_agent":
+				noteMainActivity("agent launch");
 				await this.launchAgent(
 					effect.token,
 					effect.workspaceId,
@@ -5560,29 +5565,41 @@ export class AppController {
 		return `${this.stateStore.path}: ${failureText(error)}`;
 	}
 
-	private async persist(token: OperationToken): Promise<void> {
-		try {
-			// The Agents DevHub started with were seen before anybody could
-			// start one on a named session: they are not given a name back.
-			this.sweptAgents ??= new Map(
+	/**
+	 * The model's saves, one running and one waiting at most: a burst of
+	 * revisions (a busy Agent round) is one save after the one in progress,
+	 * not one save each. See `saveCoalescer.ts`.
+	 */
+	private readonly persistSaves = new SaveCoalescer(() => this.persistNow());
+
+	private async persistNow(): Promise<void> {
+		noteMainActivity("state save");
+		// The Agents DevHub started with were seen before anybody could
+		// start one on a named session: they are not given a name back.
+		this.sweptAgents ??= new Map(
+			this.state.workspaces.flatMap((workspace) =>
+				workspace.agents.map(
+					(agent) => [parseAgentId(agent.agent_id), undefined] as const,
+				),
+			),
+		);
+		if (!this.sessionMetaSeeded) {
+			this.sessionMetaSeeded = true;
+			this.sessionMeta.seed(
 				this.state.workspaces.flatMap((workspace) =>
-					workspace.agents.map(
-						(agent) => [parseAgentId(agent.agent_id), undefined] as const,
-					),
+					workspace.agents.map((agent) => agent.agent_id),
 				),
 			);
-			if (!this.sessionMetaSeeded) {
-				this.sessionMetaSeeded = true;
-				this.sessionMeta.seed(
-					this.state.workspaces.flatMap((workspace) =>
-						workspace.agents.map((agent) => agent.agent_id),
-					),
-				);
-			}
-			this.state = applySnapshot(this.state, this.coordinator.snapshot());
-			this.sweepSessionNames();
-			this.sessionMeta.sweep();
-			await this.saveState();
+		}
+		this.state = applySnapshot(this.state, this.coordinator.snapshot());
+		this.sweepSessionNames();
+		this.sessionMeta.sweep();
+		await this.saveState();
+	}
+
+	private async persist(token: OperationToken): Promise<void> {
+		try {
+			await this.persistSaves.request();
 		} catch (error) {
 			// A save that did not happen is reported as degraded, so the model can
 			// roll back a close that depended on it rather than believing it landed
@@ -6335,6 +6352,7 @@ export class AppController {
 		// round. Whether it is enough of an answer to take a notice down is
 		// `machineConditions`' decision and nobody else's.
 		this.machineConditions.succeeded(asked);
+		noteMainActivity(`agent round on ${asked}`);
 		if (agentId === undefined) {
 			this.accept({ type: "agents_reconciled", token, reconciliation });
 			return;
