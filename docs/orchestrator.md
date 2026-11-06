@@ -427,11 +427,15 @@ It is kept with the agent in `state.json`, and under its CLI session in
 Closed and `/resume` keep it. `agents` and `sessions` say `managed`,
 `agent status` (and `--json` `managed`) too.
 
-**In the Sidebar**, an Agent row carries small marks after its words
-(`AgentMarks`, off the board's `agentStates`), each said in words in the
-row's tooltip:
+**In the Sidebar**, a managed Agent's row wears a pale wash of the accent —
+the orchestrator's colour — over its whole width (`.agent-row.is-managed`,
+`--managed-tint`, light and dark), so the agents the person started
+themselves are the plain rows at a glance; hover still shows through it and a
+selected row is the selection fill alone. The tooltip says it in words
+("Managed by the orchestrator"). An Agent row also carries small marks after
+its words (`AgentMarks`, off the board's `agentStates`), each said in words in
+the row's tooltip:
 
-- the orchestrator's mark — managed ("Managed by the orchestrator");
 - an hourglass — one of the agents of a 待機中 escalation, stopped but fine
   ("Waiting (#12): <trigger>");
 - a warning, in the waiting ink — managed, needing action and not kept:

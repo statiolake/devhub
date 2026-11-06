@@ -382,7 +382,8 @@ Assign Issue — is not, and the orchestrator agent itself never is. The flag
 is a field of the agent, kept in `state.json` and under its CLI session in
 `session-meta.json` like its metadata, so a restart or a resume keeps it.
 `agents`, `agent status` and `sessions` say `managed`, and the Agent row
-carries the orchestrator's mark.
+wears a pale wash of the orchestrator's accent (its tooltip says "Managed by
+the orchestrator").
 
 **Metadata.** `agent meta`, and `--meta KEY=VALUE` on `agent new` and
 `issue assign`, keep an agent's own pairs — `role=reviewer`, `ticket=123`,

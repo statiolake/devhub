@@ -539,3 +539,59 @@ describe("an Agent that would not stop", () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * An Agent under the orchestrator's management is told apart by its whole
+ * row — a pale wash of the accent (`.agent-row.is-managed`) — not by a mark
+ * after its words; the tooltip still says it in words.
+ */
+describe("an Agent the orchestrator manages", () => {
+  function mountManaged(managed: boolean): void {
+    const value = {
+      dispatch: vi.fn().mockResolvedValue(undefined),
+      openExternalUrl: vi.fn(),
+      agentProfiles: {
+        sequence: 1,
+        availability: "available",
+        profiles: [{ id: "claude", displayName: "Claude" }],
+      },
+      usageLimits: { clis: [] },
+      repositoryStatus: { sequence: 1, workspaces: [] },
+    } as unknown as SidebarValue;
+    const snapshot = snapshotWithAgent(undefined);
+    const withAgent = {
+      ...snapshot,
+      workspaces: snapshot.workspaces.map((workspace) => ({
+        ...workspace,
+        agents: workspace.agents.map((agent) => ({
+          ...agent,
+          ...(managed ? { managed: true } : {}),
+        })),
+      })),
+    } as unknown as AppSnapshot;
+    render(
+      <SidebarContext.Provider value={value}>
+        <Sidebar snapshot={withAgent} />
+      </SidebarContext.Provider>,
+    );
+  }
+
+  it("tints the row and draws no mark for it", () => {
+    mountManaged(true);
+    const row = document.querySelector(".agent-row");
+    expect(row).toHaveClass("is-managed");
+    expect(row?.querySelector(".row-agent-marks")).toBeNull();
+    expect(row?.getAttribute("data-tooltip-lines")).toContain(
+      "Managed by the orchestrator",
+    );
+  });
+
+  it("leaves an Agent the person started plain", () => {
+    mountManaged(false);
+    const row = document.querySelector(".agent-row");
+    expect(row).not.toHaveClass("is-managed");
+    expect(row?.getAttribute("data-tooltip-lines")).not.toContain(
+      "Managed by the orchestrator",
+    );
+  });
+});

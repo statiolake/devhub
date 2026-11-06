@@ -139,6 +139,17 @@
     var(--primary) var(--ink-selection-inactive),
     transparent
   );
+  /* An Agent row under the orchestrator's management (`.agent-row.is-managed`):
+     a pale wash of the accent — the orchestrator's own colour, its badge and
+     its switch — so the agents the person started themselves read as the
+     plain ones at a glance. Fainter than the hover wash and the selection
+     fill, which are drawn under it (hover) or instead of it (selection); a
+     touch stronger in Dark, where the same share of a light accent reads as
+     less. */
+  --managed-tint: light-dark(
+    color-mix(in srgb, var(--accent) 7%, transparent),
+    color-mix(in srgb, var(--accent) 10%, transparent)
+  );
   /* System-adjacent semantics: orange and red as macOS renders them. */
   --waiting: light-dark(#b25000, #ff9f0a);
   --danger: light-dark(#c0392f, #ff6961);

@@ -597,7 +597,7 @@ function AgentTree({
             aria-selected={agentSelected}
           >
             <div
-              className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}`}
+              className={`sidebar-row agent-row${agentSelected ? " is-selected" : ""}${unreadShows(agent.status, agent.unread) ? " is-unread" : ""}${agent.managed === true ? " is-managed" : ""}`}
               data-control-state={agent.controlState.kind}
               // The one fact, for the rail — where the words are off and
               // the pointer is the only way to ask which Agent this is.
@@ -681,10 +681,7 @@ function AgentTree({
                     {note ? <span className="row-note">{note}</span> : null}
                   </span>
                 </button>
-                <AgentMarks
-                  agent={agent}
-                  orchestration={agentStates[agent.id]}
-                />
+                <AgentMarks orchestration={agentStates[agent.id]} />
                 {agent.controlState.kind === "stopping" ? null : (
                   <button
                     className="row-action-button agent-row-action"
@@ -711,22 +708,21 @@ function AgentTree({
 }
 
 /**
- * The orchestrator's marks on an Agent's row, after its words: under the
- * orchestrator's management (`Agent.managed`); one of a 待機中 escalation's
- * agents — stopped, but fine; needs action — managed, stopped, and nothing
- * settles it (missed); kept as it is by the orchestrator. Quiet, like the
- * row's other context, but for "needs action"; the tooltip says each in words
- * (`agentTooltipFacts`), off the board (`OrchestratorBoardWire.agentStates`).
+ * The orchestrator's marks on an Agent's row, after its words: one of a 待機中
+ * escalation's agents — stopped, but fine; needs action — managed, stopped,
+ * and nothing settles it (missed); kept as it is by the orchestrator. Quiet,
+ * like the row's other context, but for "needs action"; the tooltip says each
+ * in words (`agentTooltipFacts`), off the board
+ * (`OrchestratorBoardWire.agentStates`). Being under the orchestrator's
+ * management (`Agent.managed`) is not a mark: the whole row wears a pale wash
+ * of the accent (`.agent-row.is-managed`), and the tooltip says it in words.
  */
 function AgentMarks({
-  agent,
   orchestration,
 }: {
-  readonly agent: AgentSnapshot;
   readonly orchestration: AgentOrchestrationWire | undefined;
 }) {
   const marks: GlyphName[] = [
-    ...(agent.managed === true ? (["orchestrator"] as const) : []),
     ...(orchestration?.waiting === undefined
       ? []
       : (["orchestratorWaiting"] as const)),

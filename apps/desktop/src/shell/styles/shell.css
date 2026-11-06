@@ -2040,9 +2040,24 @@ body.is-resizing-rows {
   content: none;
 }
 
-/* The orchestrator's marks on an Agent's row (`AgentMarks`): managed, and
-   what its escalations say of it. Small and in the quiet ink, except
-   "needs action", which is the one thing here asking for a look. */
+/* An Agent under the orchestrator's management: the whole row in a pale wash
+   of the accent (`--managed-tint`), not a mark — the person tells the agents
+   they made themselves from the ones the orchestrator made by the column's
+   colour, at a glance. An image layer, so the hover wash (the colour, under
+   it) still shows through and adds; a selected row is the selection fill
+   alone, the same as every other row's. After `.sidebar-row:hover`, whose
+   shorthand would otherwise clear the layer. */
+.agent-row.is-managed {
+  background-image: linear-gradient(var(--managed-tint), var(--managed-tint));
+}
+
+.agent-row.is-managed.is-selected {
+  background-image: none;
+}
+
+/* The orchestrator's marks on an Agent's row (`AgentMarks`): what its
+   escalations say of it. Small and in the quiet ink, except "needs action",
+   which is the one thing here asking for a look. */
 .row-agent-marks {
   display: flex;
   flex: none;
