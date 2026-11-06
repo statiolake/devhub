@@ -478,7 +478,7 @@ managed agent linked to an item outside the population — closed or merged,
 not assigned to the viewer, on no registered Project — or to no item at all,
 **whatever it is doing**, for that reason alone: `outside_population
 (closed)`, `(unassigned)`, `(not_in_project)`, `(no_item)`. While the
-population is not known — GitHub not polled, or not every Project read in
+population is not known — GitHub not polled, or its search not read in
 full yet — only the status rule applies to agents, and no item is said.
 
 **Linked**, the one rule: an agent is linked to the item its meta `issue=`
@@ -702,38 +702,46 @@ A message whose text could not be read says so and where to read it
   (`— subjects_changed`) compares each 待機中 escalation's subjects' facts
   with the last look (its first look says nothing).
 - **GitHub** (`githubItems.ts`): read — never written — one request per
-  tick: a page (100) of the items of each Project still being read in the
-  pass (Issue and pull request cards, each with its state, assignees, its
-  lane, and for an Issue the pull requests that close it), and the review
-  decision, unresolved conversations and checks of the open pull requests
-  the last reading named (`nodes`). A **pass** reads every
-  registered Project from its first page to its last: a bigger Project takes
-  several requests, each asking only the Projects not read in full in that
-  pass yet, and the next page is asked as soon as the last one answered
-  (still one request at a time), so a Project of 500 items is known seconds
-  after launch rather than after five intervals. With no Project registered
-  it does not poll at all. That is
-  what the invariant's population and facts are read off (`items`); it says
-  no event itself. Typically a few points of GitHub's 5,000 an hour; once a
-  pass is complete the next waits the interval, which starts at
-  `[orchestrator.github] interval` and only backs off (slower as the rate
-  limit runs down — mid-pass too, the pages then go at the interval's pace —,
-  paused until it resets when low, doubling after a failure, mid-pass or
-  not; a failed request also halves the page from then
-  on, down to 10, so a Project too big to answer in time is read in smaller
-  pages rather than asked the same again). While paused it does not poll at
-  all. It is never silently unread: until the population is known, the
-  board's GitHub card ("Reading") and `orchestrator status` ("the population
-  is not known yet: reading …") say what is being read — each Project not
-  read in full yet and its page (`Project acme/7, page 2 (pages of 100)`) —
-  and the last error ("Last error", `last error (since …)`) says where it
-  came from (`Project acme/7: …`, `pull request details: …`, `GitHub: …` for
-  the whole request) in GitHub's words. A Project GitHub answers as nothing
-  without a word (an owner it does not know, a Project the token cannot see)
-  is said as such, and a missing `read:project` scope says to run `gh auth
-refresh -s read:project`. "Assigned to me" is the count once known, else
-  why not: not polled, events paused, see Last error, or reading. Nothing is
-  kept on disk: it reads state, not diffs, so a restart reads afresh (the
+  tick. The population is asked of GitHub directly: one search,
+  `is:open assignee:@me archived:false` (100 a page; one page, as a rule),
+  giving each open Issue and pull request assigned to the viewer with its
+  state, assignees, for an Issue the pull requests that close it, and the
+  Projects it is on (`projectItems`) with its lane (Status) on each; an item
+  is in the population when one of those is a registered Project. No
+  Project is read in full, so a Project of thousands of cards (Done, closed)
+  costs nothing more than a small one. The first page of a **pass** also
+  carries the extras: the review decision, unresolved conversations and
+  checks of the open pull requests the last pass named (`nodes`, at most
+  50), the items managed agents are linked to that the search did not give
+  (`resource(url:)`, at most 20 — so an agent's closed or unassigned item is
+  said as such, and one the search gave on no registered Project as
+  `not_in_project`), and a look at each registered Project (its title, or
+  that GitHub has none). Only when a pass found what its extras did not
+  cover yet (at launch: the pull requests just named) does one request of
+  extras alone follow it. **A pass is about one request** — a few points of
+  GitHub's 5,000 an hour, at the interval's pace — and further search pages
+  (rare) follow at once, one request at a time. With no Project registered
+  it does not poll at all. That is what the invariant's population and facts
+  are read off (`items`); it says no event itself. A complete pass waits the
+  interval, which starts at `[orchestrator.github] interval` and only backs
+  off (slower as the rate limit runs down — mid-pass too, the pages then go
+  at the interval's pace —, paused until it resets when low, doubling after
+  a failure). While paused it does not poll at all. It is never silently
+  unread: until the population is known, the board's GitHub card
+  ("Reading") and `orchestrator status` ("the population is not known yet:
+  …") say what is being read (the search and its page), and the last error
+  ("Last error", `last error (since …)`) says where it came from (a Project,
+  `searching`, a linked item, `pull request details`, or `GitHub` for the
+  whole request) in GitHub's words. A Project GitHub answers as nothing
+  without a word (an owner it does not know, a Project the token cannot
+  see) is said as such,
+  and a missing `read:project` scope (`projectItems` needs it) says to run
+  `gh auth refresh -s read:project`. "Last poll" is when the last request
+  was sent and how it went (ok, failed, in flight); "Next poll" when the
+  next is to be sent — never before the last ("right after this one" while
+  one is out). "Assigned to me" is the count once known, else why not: not
+  polled, events paused, see Last error, or reading. Nothing is kept on
+  disk: it reads state, not diffs, so a restart reads afresh (the
   `orchestrator-github.json` an earlier DevHub kept is no longer read).
 - **The Workspaces' pull requests** (the Sidebar's repository rounds): an
   agent's facts carry its Workspace's pull request — state, review decision,
@@ -770,7 +778,7 @@ delivery_interval = "5m"         # a batch at most this often (the default; at l
 
 [orchestrator.github]
 projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER: their open items assigned to me are the population; none: it is empty
-interval = "90s"                 # the base interval between passes (at least 30s); it only backs off
+interval = "90s"                 # the base interval between passes (~1 request each; at least 30s); it only backs off
 
 [[orchestrator.timers]]
 name = "sweep"                   # timer.elapsed carries it

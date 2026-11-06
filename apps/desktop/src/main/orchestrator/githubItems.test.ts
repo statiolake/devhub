@@ -4,114 +4,146 @@ import {
 	githubQuery,
 	ITEMS_PER_PAGE,
 	MAX_BACKOFF_MS,
-	MIN_ITEMS_PER_PAGE,
+	MAX_LINKED_ITEMS,
 	nextDelay,
 	parseReading,
 	PROJECT_SCOPE_HINT,
+	SEARCH_QUERY,
 } from "./githubItems.js";
+import { readInvariant, type InvariantAgent } from "./invariant.js";
 
-// --- fixtures: GitHub's answers, as JSON ---------------------------------------
+// --- fixtures: a GitHub that answers what is asked -----------------------------
 
 const ME = "me";
 const REPO = { nameWithOwner: "acme/app" };
+const START = Date.parse("2026-11-05T00:00:00Z");
 
 function url(number: number, kind: "issues" | "pull") {
 	return `https://github.com/acme/app/${kind}/${String(number)}`;
 }
 
-interface Card {
-	kind: "Issue" | "PullRequest" | "DraftIssue";
+interface Node {
+	kind: "Issue" | "PullRequest";
 	id: string;
 	number: number;
 	state?: string;
 	assignees?: string[];
-	lane?: string | null;
+	/** The Projects it is on (`owner/number`), each with its lane. */
+	boards?: { ref: string; lane?: string | null }[];
 	linked?: { id: string; number: number; state?: string }[];
 }
 
-function card(one: Card) {
+function node(one: Node) {
+	const boards = {
+		nodes: (one.boards ?? [{ ref: "acme/7" }]).map((board) => {
+			const [owner, number] = board.ref.split("/");
+			return {
+				status: board.lane === null ? null : { name: board.lane ?? "Todo" },
+				project: {
+					number: Number(number),
+					title: `Board ${board.ref}`,
+					owner: { login: owner },
+				},
+			};
+		}),
+	};
 	return {
-		status: one.lane === null ? null : { name: one.lane ?? "Todo" },
-		content:
-			one.kind === "DraftIssue"
-				? { __typename: "DraftIssue" }
-				: {
-						__typename: one.kind,
-						id: one.id,
-						number: one.number,
-						title: `#${String(one.number)}`,
-						url: url(one.number, one.kind === "Issue" ? "issues" : "pull"),
-						state: one.state ?? "OPEN",
-						isDraft: false,
-						repository: REPO,
-						assignees: {
-							nodes: (one.assignees ?? [ME]).map((login) => ({ login })),
-						},
-						...(one.kind === "Issue"
-							? {
-									closedByPullRequestsReferences: {
-										nodes: (one.linked ?? []).map((pull) => ({
-											id: pull.id,
-											number: pull.number,
-											title: `PR ${String(pull.number)}`,
-											url: url(pull.number, "pull"),
-											state: pull.state ?? "OPEN",
-											isDraft: false,
-											repository: REPO,
-										})),
-									},
-								}
-							: {}),
+		__typename: one.kind,
+		id: one.id,
+		number: one.number,
+		title: `#${String(one.number)}`,
+		url: url(one.number, one.kind === "Issue" ? "issues" : "pull"),
+		state: one.state ?? "OPEN",
+		isDraft: false,
+		repository: REPO,
+		assignees: {
+			nodes: (one.assignees ?? [ME]).map((login) => ({ login })),
+		},
+		projectItems: boards,
+		...(one.kind === "Issue"
+			? {
+					closedByPullRequestsReferences: {
+						nodes: (one.linked ?? []).map((pull) => ({
+							id: pull.id,
+							number: pull.number,
+							title: `PR ${String(pull.number)}`,
+							url: url(pull.number, "pull"),
+							state: pull.state ?? "OPEN",
+							isDraft: false,
+							repository: REPO,
+						})),
 					},
+				}
+			: {}),
 	};
 }
 
-interface Page {
-	cards: Card[];
-	next?: string;
+interface Details {
+	decision?: string;
+	unresolved?: number;
+	checks?: string;
 }
 
-interface Answer {
-	/** One page per Project, in the order of the settings. */
-	boards: Page[];
-	pulls?: {
-		id: string;
-		decision?: string;
-		unresolved?: number;
-		checks?: string;
-	}[];
+/** What GitHub holds; the fake answers each request from it. */
+interface GitHub {
+	/** The search's result, in order: paged by `ITEMS_PER_PAGE`, or by `pageSize`. */
+	assigned: Node[];
+	pageSize?: number;
+	/** Items read by URL. */
+	byUrl?: Record<string, Node>;
+	details?: Record<string, Details>;
+	/** Projects GitHub has; any other is answered as nothing. */
+	projects?: string[];
 	remaining?: number;
+	resetAt?: number;
+	/** Throw instead of answering. */
+	failing?: boolean;
 }
 
-function answer(state: Answer) {
-	return {
-		data: {
-			viewer: { login: ME },
-			rateLimit: {
-				cost: 2,
-				remaining: state.remaining ?? 4900,
-				limit: 5000,
-				resetAt: "2026-11-05T01:00:00Z",
+function answerFrom(
+	github: GitHub,
+	body: { query: string; variables: Record<string, unknown> },
+) {
+	const v = body.variables;
+	const data: Record<string, unknown> = {
+		viewer: { login: ME },
+		rateLimit: {
+			cost: 1,
+			remaining: github.remaining ?? 4900,
+			limit: 5000,
+			resetAt: new Date(github.resetAt ?? START + 3_600_000).toISOString(),
+		},
+	};
+	if ("q" in v) {
+		const size = github.pageSize ?? ITEMS_PER_PAGE;
+		const from = v["after"] === null ? 0 : Number(v["after"]);
+		const page = github.assigned.slice(from, from + size);
+		const more = from + size < github.assigned.length;
+		data["search"] = {
+			pageInfo: {
+				hasNextPage: more,
+				endCursor: more ? String(from + size) : null,
 			},
-			...Object.fromEntries(
-				state.boards.map((page, index) => [
-					`p${String(index)}`,
-					{
-						projectV2: {
-							title: `Board ${String(index)}`,
-							items: {
-								pageInfo: {
-									hasNextPage: page.next !== undefined,
-									endCursor: page.next ?? null,
-								},
-								nodes: page.cards.map(card),
-							},
-						},
-					},
-				]),
-			),
-			pulls: (state.pulls ?? []).map((one) => ({
-				id: one.id,
+			nodes: page.map(node),
+		};
+	}
+	for (let index = 0; `o${String(index)}` in v; index += 1) {
+		const ref = `${String(v[`o${String(index)}`])}/${String(v[`n${String(index)}`])}`;
+		data[`p${String(index)}`] = (
+			github.projects ?? ["acme/7", "corp/2"]
+		).includes(ref)
+			? { projectV2: { title: `Board ${ref}` } }
+			: null;
+	}
+	for (let index = 0; `u${String(index)}` in v; index += 1) {
+		const one = github.byUrl?.[String(v[`u${String(index)}`])];
+		data[`l${String(index)}`] = one === undefined ? null : node(one);
+	}
+	if (Array.isArray(v["pulls"]))
+		data["pulls"] = (v["pulls"] as string[]).map((id) => {
+			const one = github.details?.[id] ?? {};
+			return {
+				id,
 				state: "OPEN",
 				isDraft: false,
 				reviewDecision: one.decision ?? null,
@@ -133,290 +165,364 @@ function answer(state: Answer) {
 						},
 					],
 				},
-			})),
-		},
-	};
+			};
+		});
+	return { data };
 }
 
-/** A source answering from `answers`, one per tick, and what it asked. */
-function world(answers: Answer[], projects = ["acme/7"]) {
+/** A source over `github`, with a clock and timers the test runs. */
+function world(
+	github: GitHub,
+	options: { projects?: string[]; linked?: string[] } = {},
+) {
 	const asked: { query: string; variables: Record<string, unknown> }[] = [];
-	const pending: (() => void)[] = [];
-	/** Each timer's delay, in the order they were set. */
+	const clock = { now: START };
+	let pending: { ms: number; run: () => void } | undefined;
 	const delays: number[] = [];
-	const settings = { projects, interval: "90s" };
+	const settings = {
+		projects: options.projects ?? ["acme/7"],
+		interval: "90s",
+	};
+	const linked = { urls: options.linked ?? [] };
 	const source = new GitHubItemSource({
 		settings: () => settings,
+		linked: () => linked.urls,
 		token: () => Promise.resolve({ token: "t" }),
 		post: (body) => {
-			asked.push(body as (typeof asked)[number]);
-			const next = answers.shift();
-			if (next === undefined) throw new Error("no more answers");
-			return Promise.resolve(answer(next));
+			const one = body as (typeof asked)[number];
+			asked.push(one);
+			if (github.failing === true)
+				return Promise.reject(new Error("GitHub answered 502."));
+			return Promise.resolve(answerFrom(github, one));
 		},
 		setTimer: (ms, run) => {
 			delays.push(ms);
-			pending.push(run);
-			return { cancel: () => undefined };
+			const timer = { ms, run };
+			pending = timer;
+			return {
+				cancel: () => {
+					if (pending === timer) pending = undefined;
+				},
+			};
 		},
-		now: () => Date.parse("2026-11-05T00:00:00Z"),
+		now: () => clock.now,
 	});
 	source.follow(true);
 	return {
 		asked,
 		source,
-		pending,
 		delays,
 		settings,
-		async ticks(count: number) {
-			for (let index = 0; index < count; index += 1) await source.tick();
+		linked,
+		clock,
+		/** Wait out the pending timer and poll, as the app would. */
+		async next() {
+			const timer = pending;
+			if (timer === undefined) throw new Error("nothing scheduled");
+			clock.now += timer.ms;
+			pending = undefined;
+			await source.tick();
+		},
+		get pending() {
+			return pending;
 		},
 	};
 }
 
+const searches = (asked: { variables: Record<string, unknown> }[]) =>
+	asked.filter((one) => "q" in one.variables);
+
+// --- tests ---------------------------------------------------------------------
+
 describe("the GitHub items", () => {
-	it("asks one request: a page of each registered Project, and the details", () => {
-		const { query, variables } = githubQuery(
-			[{ owner: "acme", number: 7, after: null }],
-			["P9"],
+	it("asks GitHub for the population: one search, never a whole Project", () => {
+		const { query, variables } = githubQuery({
+			search: { after: null },
+			boards: [{ owner: "acme", number: 7 }],
+			linked: [url(5, "issues")],
+			pulls: ["P9"],
+		});
+		expect(query).toContain(
+			`search(type:ISSUE, query:$q, first:${String(ITEMS_PER_PAGE)}, after:$after)`,
 		);
+		expect(query).toContain("projectItems(first:20");
+		expect(query).toContain('fieldValueByName(name:"Status")');
 		expect(query).toContain("p0: repositoryOwner(login:$o0)");
-		expect(query).toContain("projectV2(number:$n0)");
+		expect(query).toContain("projectV2(number:$n0){ title }");
+		expect(query).not.toMatch(/projectV2\(number:\$n0\)\{ title\s+items/u);
+		expect(query).toContain("l0: resource(url:$u0)");
+		expect(query).toContain("pulls: nodes(ids:$pulls)");
 		expect(query).toContain("rateLimit");
-		expect(query).not.toContain("search(");
 		expect(variables).toMatchObject({
+			q: SEARCH_QUERY,
+			after: null,
 			o0: "acme",
 			n0: 7,
-			a0: null,
+			u0: url(5, "issues"),
 			pulls: ["P9"],
-			wantPulls: true,
 		});
+		expect(SEARCH_QUERY).toBe("is:open assignee:@me archived:false");
+		// A page alone carries nothing else.
+		const page = githubQuery({ search: { after: "c1" } });
+		expect(page.query).not.toContain("repositoryOwner");
+		expect(page.query).not.toContain("nodes(ids:");
+		expect(page.query).not.toContain("resource(");
 	});
 
-	it("gives a Project's Issues and pull requests alike, one item on two Projects with a lane on each", async () => {
-		const issue: Card = {
-			kind: "Issue",
-			id: "I1",
-			number: 123,
-			lane: "In Review",
-			linked: [{ id: "P130", number: 130 }],
-		};
+	it("gives the items on the registered Projects, one on two with a lane on each, and leaves out one on another Project only", async () => {
 		const run = world(
-			[
-				{
-					boards: [
-						{
-							cards: [
-								issue,
-								{
-									kind: "PullRequest",
-									id: "P9",
-									number: 9,
-									assignees: ["bob"],
-								},
-								{ kind: "DraftIssue", id: "D1", number: 0 },
-							],
-						},
-						{ cards: [{ ...issue, lane: "Doing" }] },
-					],
-				},
-			],
-			["acme/7", "other/3"],
+			{
+				assigned: [
+					{
+						kind: "Issue",
+						id: "I1",
+						number: 1,
+						boards: [
+							{ ref: "acme/7", lane: "In Progress" },
+							{ ref: "corp/2", lane: null },
+						],
+					},
+					{ kind: "Issue", id: "I2", number: 2, boards: [{ ref: "corp/2" }] },
+					{ kind: "Issue", id: "I3", number: 3, boards: [{ ref: "else/1" }] },
+					{ kind: "Issue", id: "I4", number: 4, boards: [] },
+				],
+			},
+			{ projects: ["acme/7", "CORP/2"] },
 		);
-		await run.ticks(1);
+		await run.next();
 		const items = run.source.items()!;
-		expect(items.map((one) => [one.kind, one.item.number])).toEqual([
-			["issue", 123],
-			["pr", 9],
-		]);
-		expect(items[0]?.projects).toEqual([
-			{ project: "acme/7", lane: "In Review" },
-			{ project: "other/3", lane: "Doing" },
-		]);
-		expect(items[1]?.assignedToMe).toBe(false);
-		expect(run.source.state()).toMatchObject({
-			assigned: 1,
+		expect(items.map((one) => one.item.number)).toEqual([1, 2]);
+		expect(items[0]).toMatchObject({
+			kind: "issue",
+			state: "open",
+			assignedToMe: true,
 			projects: [
-				{ ref: "acme/7", title: "Board 0" },
-				{ ref: "other/3", title: "Board 1" },
+				{ project: "acme/7", lane: "In Progress" },
+				{ project: "CORP/2", lane: null },
 			],
+		});
+		expect(run.source.state()).toMatchObject({
+			assigned: 2,
+			projects: [{ ref: "acme/7", title: "Board acme/7" }, { ref: "CORP/2" }],
 		});
 	});
 
-	it("reads the details of the pull requests the items name", async () => {
-		const page: Page = {
-			cards: [
+	it("gives a pull request as an item, with its details read once a pass", async () => {
+		const run = world({
+			assigned: [{ kind: "PullRequest", id: "P9", number: 9 }],
+			details: {
+				P9: { decision: "CHANGES_REQUESTED", unresolved: 2, checks: "FAILURE" },
+			},
+		});
+		await run.next();
+		// Known now, its details not yet: the extras alone follow at once.
+		expect(run.source.items()?.[0]).toMatchObject({
+			kind: "pr",
+			pull: { number: 9, state: "open", review: "none" },
+		});
+		expect(run.delays.at(-1)).toBe(0);
+		await run.next();
+		expect(run.asked[1]?.variables).toMatchObject({ pulls: ["P9"] });
+		expect(run.asked[1]?.variables).not.toHaveProperty("q");
+		expect(run.source.items()?.[0]?.pull).toEqual({
+			number: 9,
+			url: url(9, "pull"),
+			state: "open",
+			review: "changes_requested",
+			unresolved: 2,
+			checks: "failing",
+		});
+		// From then on, one request a pass: the search, carrying the details.
+		expect(run.delays.at(-1)).toBe(90_000);
+		await run.next();
+		expect(run.asked).toHaveLength(3);
+		expect(run.asked[2]?.variables).toMatchObject({
+			q: SEARCH_QUERY,
+			pulls: ["P9"],
+		});
+		expect(run.delays.at(-1)).toBe(90_000);
+	});
+
+	it("gives an Issue the pull request that closes it", async () => {
+		const run = world({
+			assigned: [
 				{
 					kind: "Issue",
 					id: "I1",
-					number: 123,
-					linked: [{ id: "P130", number: 130 }],
+					number: 1,
+					linked: [
+						{ id: "P1", number: 10, state: "CLOSED" },
+						{ id: "P2", number: 11 },
+					],
 				},
-				{ kind: "PullRequest", id: "P9", number: 9 },
 			],
-		};
-		const run = world([
-			{ boards: [page] },
-			{
-				boards: [page],
-				pulls: [
-					{ id: "P130", decision: "CHANGES_REQUESTED", unresolved: 2 },
-					{ id: "P9", decision: "APPROVED", checks: "SUCCESS" },
-				],
-			},
-		]);
-		await run.ticks(2);
-		// The second tick reads the details the first named.
-		expect(run.asked[1]?.variables["pulls"]).toEqual(["P130", "P9"]);
-		const items = run.source.items()!;
-		expect(items[0]?.pull).toMatchObject({
-			number: 130,
-			review: "changes_requested",
-			unresolved: 2,
-			checks: "none",
+			details: { P2: { decision: "APPROVED", checks: "SUCCESS" } },
 		});
-		expect(items[1]?.pull).toMatchObject({
-			number: 9,
+		await run.next();
+		await run.next();
+		expect(run.asked[1]?.variables).toMatchObject({ pulls: ["P2"] });
+		expect(run.source.items()?.[0]?.pull).toMatchObject({
+			number: 11,
 			review: "approved",
 			checks: "passing",
 		});
 	});
 
-	it("knows the population only once every page of every Project is read", async () => {
-		const run = world([
-			{
-				boards: [
-					{ cards: [{ kind: "Issue", id: "I1", number: 1 }], next: "c1" },
-				],
-			},
-			{ boards: [{ cards: [{ kind: "Issue", id: "I2", number: 2 }] }] },
-		]);
-		await run.ticks(1);
-		expect(run.source.items()).toBeUndefined();
-		expect(run.asked[0]?.variables["a0"]).toBeNull();
-		await run.ticks(1);
-		expect(run.asked[1]?.variables["a0"]).toBe("c1");
-		expect(run.source.items()?.map((one) => one.item.number)).toEqual([1, 2]);
-	});
-
-	it("reads the pages of a pass one after another, and waits the interval only between passes", async () => {
-		const issue = (number: number): Card => ({
-			kind: "Issue",
-			id: `I${String(number)}`,
-			number,
-		});
-		const run = world([
-			{ boards: [{ cards: [issue(1)], next: "c1" }] },
-			{ boards: [{ cards: [issue(2)], next: "c2" }] },
-			{ boards: [{ cards: [issue(3)] }] },
-			{ boards: [{ cards: [issue(1)], next: "c1" }] },
-		]);
-		// The first poll is at once (follow), then each page right after the last.
-		await run.ticks(3);
-		expect(run.delays).toEqual([0, 0, 0, 90_000]);
-		expect(run.asked.map((one) => one.variables["a0"])).toEqual([
-			null,
-			"c1",
-			"c2",
-		]);
-		expect(run.source.items()?.map((one) => one.item.number)).toEqual([
-			1, 2, 3,
-		]);
-		// The next pass starts afresh after the interval, and goes on at once.
-		await run.ticks(1);
-		expect(run.asked[3]?.variables["a0"]).toBeNull();
-		expect(run.delays.at(-1)).toBe(0);
-		// The last full pass stands while the next is read.
-		expect(run.source.items()).toHaveLength(3);
-	});
-
-	it("asks only the Projects still being read in a pass", async () => {
+	it("reads a linked item the search did not give by URL: a closed one is closed, an unassigned one unassigned", async () => {
+		const closed = url(5, "issues");
+		const theirs = url(6, "issues");
 		const run = world(
-			[
-				{ boards: [{ cards: [], next: "c1" }, { cards: [] }] },
-				{ boards: [{ cards: [] }] },
-			],
-			["acme/7", "other/3"],
+			{
+				assigned: [],
+				byUrl: {
+					[closed]: { kind: "Issue", id: "I5", number: 5, state: "CLOSED" },
+					[theirs]: {
+						kind: "Issue",
+						id: "I6",
+						number: 6,
+						assignees: ["someone"],
+						boards: [{ ref: "else/1" }],
+					},
+				},
+			},
+			{ linked: [closed, theirs] },
 		);
-		await run.ticks(2);
-		expect(run.asked[1]?.variables).toMatchObject({ o0: "acme", a0: "c1" });
-		expect(run.asked[1]?.variables).not.toHaveProperty("o1");
-		expect(run.delays).toEqual([0, 0, 90_000]);
-		expect(run.source.items()).toEqual([]);
+		await run.next();
+		expect(run.asked[0]?.variables).toMatchObject({ u0: closed, u1: theirs });
+		const items = run.source.items()!;
+		expect(
+			items.map((one) => [one.item.number, one.state, one.assignedToMe]),
+		).toEqual([
+			[5, "closed", true],
+			[6, "open", false],
+		]);
+		expect(run.source.state().assigned).toBe(0);
+		const agent = (issue: string): InvariantAgent => ({
+			id: `a-${issue}`,
+			name: "x",
+			ws: "w",
+			workspaceId: "w",
+			managed: true,
+			status: "working",
+			stopping: false,
+			issue,
+		});
+		const reading = readInvariant({
+			items,
+			agents: [agent(closed), agent(theirs)],
+			escalations: [],
+		});
+		expect(reading.needsAction.map((one) => one.breach)).toEqual([
+			{ clause: "outside_population", outside: "closed" },
+			{ clause: "outside_population", outside: "unassigned" },
+		]);
 	});
 
-	it("still backs off after a failure mid-pass, then reads on at once", async () => {
-		let fail = true;
-		const delays: number[] = [];
-		const answers: Answer[] = [
-			{ boards: [{ cards: [], next: "c1" }] },
-			{ boards: [{ cards: [] }] },
-		];
-		const source = new GitHubItemSource({
-			settings: () => ({ projects: ["acme/7"], interval: "90s" }),
-			token: () => Promise.resolve({ token: "t" }),
-			post: () => {
-				if (answers.length === 1 && fail) {
-					fail = false;
-					return Promise.reject(new Error("GitHub answered 502."));
-				}
-				return Promise.resolve(answer(answers.shift()!));
+	it("says a linked item on no registered Project is not in a Project, and reads no item the search gave by URL", async () => {
+		const elsewhere = url(3, "issues");
+		const mine = url(1, "issues");
+		const run = world(
+			{
+				assigned: [
+					{ kind: "Issue", id: "I1", number: 1 },
+					{ kind: "Issue", id: "I3", number: 3, boards: [{ ref: "else/1" }] },
+				],
+				byUrl: {},
 			},
-			setTimer: (ms) => {
-				delays.push(ms);
-				return { cancel: () => undefined };
-			},
-			now: () => Date.parse("2026-11-05T00:00:00Z"),
+			{ linked: [elsewhere, mine] },
+		);
+		await run.next();
+		// No search was read yet: both asked by URL once; neither is asked again.
+		await run.next();
+		expect(run.asked.slice(1).every((one) => !("u0" in one.variables))).toBe(
+			true,
+		);
+		const items = run.source.items()!;
+		expect(items.map((one) => [one.item.number, one.projects.length])).toEqual([
+			[1, 1],
+			[3, 0],
+		]);
+		const reading = readInvariant({
+			items,
+			agents: [
+				{
+					id: "a1",
+					name: "x",
+					ws: "w",
+					workspaceId: "w",
+					managed: true,
+					status: "working",
+					stopping: false,
+					issue: elsewhere,
+				},
+			],
+			escalations: [],
 		});
-		source.follow(true);
-		await source.tick();
-		await source.tick();
-		expect(source.state().problem).toBe("GitHub answered 502.");
-		expect(delays).toEqual([0, 0, 180_000]);
-		expect(source.state().reading).toContain("Project acme/7, page 2");
-		await source.tick();
-		expect(delays.at(-1)).toBe(90_000);
-		expect(source.items()).toEqual([]);
+		expect(reading.needsAction.map((one) => one.breach)).toContainEqual({
+			clause: "outside_population",
+			outside: "not_in_project",
+		});
+	});
+
+	it(`reads at most ${String(MAX_LINKED_ITEMS)} linked items a request`, async () => {
+		const many = Array.from({ length: 30 }, (_, index) =>
+			url(100 + index, "issues"),
+		);
+		const run = world({ assigned: [] }, { linked: many });
+		await run.next();
+		const variables = run.asked[0]!.variables;
+		expect(
+			Object.keys(variables).filter((key) => /^u\d+$/u.test(key)),
+		).toHaveLength(MAX_LINKED_ITEMS);
+	});
+
+	it("reads the search's further pages one after another, and knows the population only after the last", async () => {
+		const assigned = Array.from(
+			{ length: 5 },
+			(_, index): Node => ({
+				kind: "Issue",
+				id: `I${String(index)}`,
+				number: index + 1,
+			}),
+		);
+		const run = world({ assigned, pageSize: 2 });
+		expect(run.source.state().reading).toBe(
+			"searching the open items assigned to me, page 1",
+		);
+		await run.next();
+		expect(run.source.items()).toBeUndefined();
+		expect(run.source.state().reading).toBe(
+			"searching the open items assigned to me, page 2",
+		);
+		expect(run.delays.at(-1)).toBe(0);
+		await run.next();
+		await run.next();
+		expect(run.source.items()).toHaveLength(5);
+		expect(run.source.state().reading).toBeUndefined();
+		expect(run.delays.at(-1)).toBe(90_000);
+		expect(searches(run.asked).map((one) => one.variables["after"])).toEqual([
+			null,
+			"2",
+			"4",
+		]);
+		// The further pages carry nothing else.
+		expect(run.asked[1]?.query).not.toContain("repositoryOwner");
+		// The next pass starts over, after the interval.
+		await run.next();
+		expect(run.asked[3]?.variables["after"]).toBeNull();
+		expect(run.source.items()).toHaveLength(5);
 	});
 
 	it("has an empty population, and asks GitHub nothing, with no Project registered", () => {
-		const run = world([], []);
+		const run = world({ assigned: [] }, { projects: [] });
 		expect(run.source.items()).toEqual([]);
 		expect(run.source.state().mode).toBe("idle");
-		expect(run.pending).toHaveLength(0);
-	});
-
-	it("keeps going with what GitHub answered beside its complaints", () => {
-		const reading = parseReading(
-			{
-				...answer({
-					boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }],
-				}),
-				errors: [
-					{
-						type: "NOT_FOUND",
-						message: "Could not resolve to a ProjectV2 with the number 8.",
-						path: ["p1", "projectV2"],
-					},
-				],
-			},
-			["acme/7", "acme/8"],
-		);
-		expect(reading.problems).toEqual([
-			"Project acme/8: Could not resolve to a ProjectV2 with the number 8.",
-		]);
-		expect(reading.pages.get("acme/7")?.cards).toHaveLength(1);
-		expect(() =>
-			parseReading({ errors: [{ message: "Bad credentials" }] }, []),
-		).toThrow(/Bad credentials/u);
+		expect(run.pending).toBeUndefined();
 	});
 
 	it("runs only while there is an orchestrator, and forgets when it stops", async () => {
-		const run = world([
-			{ boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }] },
-		]);
-		expect(run.pending).toHaveLength(1);
-		await run.ticks(1);
+		const run = world({ assigned: [{ kind: "Issue", id: "I1", number: 1 }] });
+		await run.next();
 		expect(run.source.items()).toHaveLength(1);
 		run.source.follow(false);
 		expect(run.source.items()).toBeUndefined();
@@ -424,15 +530,13 @@ describe("the GitHub items", () => {
 	});
 
 	it("asks nothing while suspended, and polls once on resume", async () => {
-		const run = world([
-			{ boards: [{ cards: [] }] },
-			{ boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }] },
-		]);
-		await run.ticks(1);
+		const github: GitHub = { assigned: [] };
+		const run = world(github);
+		await run.next();
 		run.source.follow(true, true);
-		await run.ticks(1);
+		await run.source.tick();
 		expect(run.asked).toHaveLength(1);
-		expect(run.source.items()).toEqual([]);
+		github.assigned = [{ kind: "Issue", id: "I1", number: 1 }];
 		run.source.follow(true, false);
 		await run.source.caughtUp();
 		expect(run.asked).toHaveLength(2);
@@ -440,7 +544,117 @@ describe("the GitHub items", () => {
 	});
 });
 
-/** A source whose GitHub answers each request with `respond`'s value (or throws). */
+describe("the GitHub cost", () => {
+	it("is one request a pass, whatever the Projects hold", async () => {
+		const run = world(
+			{ assigned: [{ kind: "Issue", id: "I1", number: 1 }] },
+			{ projects: ["acme/7", "corp/2"] },
+		);
+		// An hour.
+		while (run.clock.now < START + 3_600_000) await run.next();
+		expect(run.asked.length).toBeLessThanOrEqual(3_600_000 / 90_000 + 1);
+	});
+
+	it("does not hammer GitHub after a rate-limit reset: a long run stays at the interval's pace", async () => {
+		const github: GitHub = {
+			assigned: [
+				{ kind: "PullRequest", id: "P9", number: 9 },
+				{
+					kind: "Issue",
+					id: "I1",
+					number: 1,
+					linked: [{ id: "P2", number: 2 }],
+				},
+			],
+			pageSize: 1,
+			remaining: 20,
+			resetAt: START + 600_000,
+		};
+		const run = world(github, { linked: [url(50, "issues")] });
+		await run.next();
+		// Low: paused until the reset.
+		expect(run.delays.at(-1)).toBeGreaterThanOrEqual(600_000);
+		expect(run.source.state().nextAt).toBeGreaterThanOrEqual(START + 600_000);
+		// After it, plenty left: six hours of polling.
+		github.remaining = 5000;
+		github.resetAt = START + 7 * 3_600_000;
+		const before = run.asked.length;
+		while (run.clock.now < START + 6 * 3_600_000) {
+			await run.next();
+			// Never a next poll before the last one sent.
+			const state = run.source.state();
+			expect(state.nextAt!).toBeGreaterThanOrEqual(state.lastAt!);
+			expect(state.lastOutcome).toBe("ok");
+		}
+		const passes = (6 * 3_600_000 - 600_000) / 90_000;
+		// Two pages a pass (two items a page of one), plus a request of extras now and then.
+		expect(run.asked.length - before).toBeLessThanOrEqual(passes * 2 + 4);
+		expect(run.delays.filter((ms) => ms === 0).length).toBeLessThanOrEqual(
+			passes + 4,
+		);
+	});
+
+	it("backs off after a failure, doubling, and reads on after it", async () => {
+		const github: GitHub = { assigned: [], failing: true };
+		const run = world(github);
+		await run.next();
+		expect(run.source.state()).toMatchObject({
+			problem: "GitHub answered 502.",
+			lastOutcome: "failed",
+		});
+		expect(run.delays.at(-1)).toBe(180_000);
+		await run.next();
+		expect(run.delays.at(-1)).toBe(360_000);
+		github.failing = false;
+		await run.next();
+		expect(run.source.state().problem).toBeUndefined();
+		expect(run.source.items()).toEqual([]);
+		expect(run.delays.at(-1)).toBe(90_000);
+	});
+
+	it("says the last poll as sent, in flight while it is out, and the next only after it", async () => {
+		let release: (() => void) | undefined;
+		const asked: unknown[] = [];
+		const clock = { now: START };
+		const source = new GitHubItemSource({
+			settings: () => ({ projects: ["acme/7"], interval: "90s" }),
+			token: () => Promise.resolve({ token: "t" }),
+			post: (body) => {
+				asked.push(body);
+				return new Promise((resolve) => {
+					release = () =>
+						resolve(
+							answerFrom(
+								{ assigned: [] },
+								body as Parameters<typeof answerFrom>[1],
+							),
+						);
+				});
+			},
+			setTimer: () => ({ cancel: () => undefined }),
+			now: () => clock.now,
+		});
+		source.follow(true);
+		const tick = source.tick();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(source.state()).toMatchObject({
+			lastAt: START,
+			lastOutcome: "in_flight",
+		});
+		expect(source.state().nextAt).toBeUndefined();
+		clock.now += 5_000;
+		release?.();
+		await tick;
+		expect(source.state()).toMatchObject({
+			lastAt: START,
+			lastOutcome: "ok",
+			nextAt: START + 5_000 + 90_000,
+		});
+	});
+});
+
+/** A source whose GitHub answers each request with `respond`'s value. */
 function raw(
 	respond: (body: {
 		query: string;
@@ -448,81 +662,46 @@ function raw(
 	}) => unknown,
 	projects = ["acme/7"],
 ) {
-	const asked: { query: string; variables: Record<string, unknown> }[] = [];
 	const source = new GitHubItemSource({
 		settings: () => ({ projects, interval: "90s" }),
 		token: () => Promise.resolve({ token: "t" }),
-		post: (body) => {
-			const one = body as (typeof asked)[number];
-			asked.push(one);
-			return Promise.resolve(respond(one) as never);
-		},
+		post: (body) =>
+			Promise.resolve(
+				respond(
+					body as { query: string; variables: Record<string, unknown> },
+				) as never,
+			),
 		setTimer: () => ({ cancel: () => undefined }),
-		now: () => Date.parse("2026-11-05T00:00:00Z"),
+		now: () => START,
 	});
 	source.follow(true);
-	return { source, asked };
+	return { source };
 }
 
 describe("the GitHub items, never silently unread", () => {
 	const scopes = {
 		type: "INSUFFICIENT_SCOPES",
 		message:
-			"Your token has not been granted the required scopes to execute this query. The 'projectV2' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo'] scopes.",
+			"Your token has not been granted the required scopes to execute this query. The 'projectItems' field requires one of the following scopes: ['read:project'], but your token has only been granted the: ['gist', 'read:org', 'repo'] scopes.",
 	};
 
-	it("knows an empty Project at once: it has no page to wait for", async () => {
-		const run = world([{ boards: [{ cards: [] }] }]);
-		await run.ticks(1);
-		expect(run.source.items()).toEqual([]);
-		expect(run.source.state()).toMatchObject({ assigned: 0 });
-		expect(run.source.state().reading).toBeUndefined();
-	});
-
-	it("says what it is reading until the population is known", async () => {
-		const run = world(
-			[
-				{ boards: [{ cards: [], next: "c1" }, { cards: [] }] },
-				{ boards: [{ cards: [], next: "c2" }, { cards: [] }] },
-			],
-			["acme/7", "other/3"],
-		);
-		expect(run.source.state().reading).toBe(
-			`Project acme/7, page 1; Project other/3, page 1 (pages of ${String(ITEMS_PER_PAGE)})`,
-		);
-		await run.ticks(2);
-		expect(run.source.items()).toBeUndefined();
-		expect(run.source.state().assigned).toBeUndefined();
-		expect(run.source.state().reading).toBe(
-			`Project acme/7, page 3 (pages of ${String(ITEMS_PER_PAGE)})`,
-		);
-	});
-
 	it("names a Project GitHub answers as nothing, though GitHub says nothing of it", async () => {
-		// `repositoryOwner` of a login GitHub does not know is null, no error.
-		const run = raw(() => ({
-			data: { ...answer({ boards: [] }).data, p0: null },
-		}));
+		const run = raw((body) => answerFrom({ assigned: [], projects: [] }, body));
 		await run.source.tick();
-		expect(run.source.items()).toBeUndefined();
 		expect(run.source.state().problem).toBe(
 			'Project acme/7: GitHub answered no such Project (no owner "acme", or no Project 7 this token can read)',
 		);
-		expect(run.source.state().problemAt).toBe(
-			Date.parse("2026-11-05T00:00:00Z"),
-		);
-		expect(run.source.state().reading).toContain("Project acme/7, page 1");
+		expect(run.source.state().problemAt).toBe(START);
 	});
 
-	it("names the Project a missing read:project scope is about, and how to add it", async () => {
-		const run = raw(() => ({
-			data: { ...answer({ boards: [] }).data, p0: { projectV2: null } },
-			errors: [{ ...scopes, path: ["p0", "projectV2"] }],
+	it("says a missing read:project scope while searching, and how to add it", async () => {
+		const run = raw((body) => ({
+			...answerFrom({ assigned: [] }, body),
+			errors: [{ ...scopes, path: ["search", "nodes", 0, "projectItems"] }],
 		}));
 		await run.source.tick();
-		expect(run.source.items()).toBeUndefined();
 		expect(run.source.state().problem).toBe(
-			`Project acme/7: ${scopes.message} — ${PROJECT_SCOPE_HINT}`,
+			`searching: ${scopes.message} — ${PROJECT_SCOPE_HINT}`,
 		);
 	});
 
@@ -532,12 +711,18 @@ describe("the GitHub items, never silently unread", () => {
 		expect(run.source.state().problem).toBe(
 			`GitHub: ${scopes.message} — ${PROJECT_SCOPE_HINT}`,
 		);
+		expect(run.source.items()).toBeUndefined();
 	});
 
-	it("names each Project and the details its complaints are about", () => {
+	it("names each Project, linked item and the details its complaints are about", () => {
 		const reading = parseReading(
 			{
-				...answer({ boards: [{ cards: [] }, { cards: [] }] }),
+				data: {
+					viewer: { login: ME },
+					p0: { projectV2: { title: "A" } },
+					p1: null,
+					l0: null,
+				},
 				errors: [
 					{
 						type: "FORBIDDEN",
@@ -546,59 +731,32 @@ describe("the GitHub items, never silently unread", () => {
 					},
 					{
 						type: "NOT_FOUND",
+						message: "Could not resolve to a resource with the URL",
+						path: ["l0"],
+					},
+					{
+						type: "NOT_FOUND",
 						message: "Could not resolve to a node with the global id of 'P1'",
 						path: ["pulls", 0],
 					},
 				],
 			},
-			["acme/7", "corp/2"],
+			{
+				search: false,
+				boards: ["acme/7", "corp/2"],
+				linked: [url(5, "issues")],
+			},
 		);
 		expect(reading.problems).toEqual([
 			"Project corp/2: Resource protected by organization SAML enforcement.",
+			`linked item ${url(5, "issues")}: Could not resolve to a resource with the URL`,
 			"pull request details: Could not resolve to a node with the global id of 'P1'",
 		]);
+		expect(reading.titles.get("acme/7")).toBe("A");
 	});
 
-	it("asks for smaller pages after a failure, and so gets through a Project too big to answer in time", async () => {
-		const run = raw((body) => {
-			if (body.query.includes(`items(first:${String(ITEMS_PER_PAGE)},`))
-				return {
-					data: null,
-					errors: [
-						{
-							message:
-								"Something went wrong while executing your query. This may be the result of a timeout.",
-						},
-					],
-				};
-			return answer({
-				boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }],
-			});
-		});
-		await run.source.tick();
-		expect(run.source.items()).toBeUndefined();
-		expect(run.source.state().problem).toMatch(/timeout/u);
-		await run.source.tick();
-		expect(run.asked[1]?.query).toContain(
-			`items(first:${String(ITEMS_PER_PAGE / 2)},`,
-		);
-		expect(run.source.items()).toHaveLength(1);
-		expect(run.source.state().problem).toBeUndefined();
-	});
-
-	it("shrinks the page no further than the floor", async () => {
-		const run = raw(() => {
-			throw new Error("GitHub answered 502.");
-		});
-		for (let index = 0; index < 8; index += 1) await run.source.tick();
-		expect(run.asked.at(-1)?.query).toContain(
-			`items(first:${String(MIN_ITEMS_PER_PAGE)},`,
-		);
-		expect(run.source.state().problem).toBe("GitHub answered 502.");
-	});
-
-	it("says nothing is being read while suspended", async () => {
-		const run = world([]);
+	it("says nothing is being read while suspended", () => {
+		const run = world({ assigned: [] });
 		run.source.follow(true, true);
 		expect(run.source.state()).toMatchObject({ mode: "suspended" });
 		expect(run.source.state().reading).toBeUndefined();
@@ -606,7 +764,7 @@ describe("the GitHub items, never silently unread", () => {
 });
 
 describe("the GitHub interval", () => {
-	const now = Date.parse("2026-11-05T00:00:00Z");
+	const now = START;
 	const rate = (remaining: number) => ({
 		cost: 2,
 		remaining,

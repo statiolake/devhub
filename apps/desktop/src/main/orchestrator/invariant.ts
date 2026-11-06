@@ -93,14 +93,15 @@ export interface PullFacts {
 
 /**
  * An item — an Issue or a pull request, one thing here — as last read: one
- * assigned to the viewer, or one an agent is linked to.
+ * assigned to the viewer on a registered Project, or one an agent is linked
+ * to (then possibly closed, unassigned, or on no registered Project).
  */
 export interface ItemFacts {
 	readonly item: EventItem;
 	readonly kind: "issue" | "pr";
 	readonly state: "open" | "closed" | "merged";
 	readonly assignedToMe: boolean;
-	/** Its lane (Status) on each watched Project it is on. */
+	/** Its lane (Status) on each registered Project it is on; empty: on none. */
 	readonly projects: readonly {
 		readonly project: string;
 		readonly lane: string | null;
@@ -344,13 +345,18 @@ function escalationFacts(
 }
 
 function inPopulation(item: ItemFacts): boolean {
-	return item.state === "open" && item.assignedToMe;
+	return outsideReason(item) === undefined;
 }
 
-/** Why an item is outside the population, as `outside_population` says it. */
+/**
+ * Why an item is outside the population, as `outside_population` says it:
+ * an item read only because an agent is linked to it may be on no
+ * registered Project (`projects` empty).
+ */
 function outsideReason(item: ItemFacts): OutsideReason | undefined {
 	if (item.state !== "open") return "closed";
 	if (!item.assignedToMe) return "unassigned";
+	if (item.projects.length === 0) return "not_in_project";
 	return undefined;
 }
 

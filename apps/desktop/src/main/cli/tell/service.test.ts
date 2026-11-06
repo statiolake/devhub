@@ -4808,7 +4808,10 @@ describe("the Orchestrator row from the command line", () => {
 		ports.github = {
 			state: "active",
 			boards: [{ ref: "acme/7" }],
-			reading: "Project acme/7, page 2 (pages of 50)",
+			reading: "searching the open items assigned to me, page 2",
+			lastAt: Date.UTC(2026, 10, 5, 3, 0, 0),
+			lastOutcome: "failed",
+			nextAt: Date.UTC(2026, 10, 5, 3, 3, 0),
 			problem: "Project acme/7: Resource protected by SAML enforcement.",
 			problemAt: Date.UTC(2026, 10, 5, 3, 0, 0),
 		};
@@ -4818,7 +4821,19 @@ describe("the Orchestrator row from the command line", () => {
 			undefined,
 		);
 		expect(failing.message).toContain(
-			"GitHub polling: active, the population is not known yet: reading Project acme/7, page 2 (pages of 50), Projects acme/7, last error (since 2026-11-05T03:00:00.000Z): Project acme/7: Resource protected by SAML enforcement.",
+			"GitHub polling: active, the population is not known yet: searching the open items assigned to me, page 2, Projects acme/7, last poll 2026-11-05T03:00:00.000Z (failed: Project acme/7: Resource protected by SAML enforcement.), next poll 2026-11-05T03:03:00.000Z, last error (since 2026-11-05T03:00:00.000Z): Project acme/7: Resource protected by SAML enforcement.",
+		);
+		// A request out, or the next right after it: never a next poll before the last.
+		ports.github = {
+			state: "active",
+			boards: [{ ref: "acme/7" }],
+			lastAt: Date.UTC(2026, 10, 5, 3, 0, 0),
+			lastOutcome: "in_flight",
+			nextAt: Date.UTC(2026, 10, 5, 2, 59, 0),
+		};
+		const out = await viaSocket(service, ["orchestrator", "status"], undefined);
+		expect(out.message).toContain(
+			"last poll 2026-11-05T03:00:00.000Z (in flight), next poll right after this one",
 		);
 	});
 

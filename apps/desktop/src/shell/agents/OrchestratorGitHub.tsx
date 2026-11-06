@@ -6,7 +6,8 @@
  * (Issues, pull requests) of the registered Projects are assigned to me
  * — or why that is not known — what is being read until it is, the last
  * error and where it came from, the Projects (links to them), the state and
- * why, the last and next poll, the rate limit left.
+ * why, the last poll (when it was sent, and how it went) and the next (when
+ * it is to be sent, never before the last: `pollTimes`), the rate limit left.
  *
  * The card is in this page, under the pill, and the pointer may move into
  * it to click a board: it closes a moment after the pointer leaves both.
@@ -21,7 +22,11 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { OrchestratorBoardWire } from "../../ipc/contract";
-import { githubHealth, projectUrl } from "../../model/orchestratorSettings";
+import {
+  githubHealth,
+  pollTimes,
+  projectUrl,
+} from "../../model/orchestratorSettings";
 import { devhub } from "./client";
 
 /** How long the card stays once the pointer has left the pill and it. */
@@ -110,6 +115,7 @@ export function GitHubPill({
       ? "no orchestrator is running"
       : "[orchestrator.github] projects names no Project: the population is empty";
   const boards = github.boards ?? [];
+  const polls = pollTimes(github);
   return (
     <span className="orchestrator-github-wrap" {...wrap}>
       <button
@@ -191,16 +197,25 @@ export function GitHubPill({
                 </dd>
               </>
             )}
-            {github.lastAt === undefined ? null : (
+            {polls.last === undefined ? null : (
               <>
                 <dt>Last poll</dt>
-                <dd>{clockTime(github.lastAt)}</dd>
+                <dd>
+                  {clockTime(polls.last.at)}
+                  {polls.last.outcome === "failed"
+                    ? ": failed, see Last error"
+                    : `: ${polls.last.outcome}`}
+                </dd>
               </>
             )}
-            {github.nextAt === undefined || github.state !== "active" ? null : (
+            {polls.next === undefined ? null : (
               <>
                 <dt>Next poll</dt>
-                <dd>{clockTime(github.nextAt)}</dd>
+                <dd>
+                  {typeof polls.next === "number"
+                    ? clockTime(polls.next)
+                    : polls.next}
+                </dd>
               </>
             )}
             {github.rateLimit === undefined ? null : (

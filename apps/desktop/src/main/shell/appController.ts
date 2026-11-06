@@ -9596,6 +9596,9 @@ export class AppController {
 				return {
 					state: state.mode,
 					...(state.lastAt === undefined ? {} : { lastAt: state.lastAt }),
+					...(state.lastOutcome === undefined
+						? {}
+						: { lastOutcome: state.lastOutcome }),
 					...(state.nextAt === undefined || state.mode !== "active"
 						? {}
 						: { nextAt: state.nextAt }),
@@ -9726,6 +9729,12 @@ export class AppController {
 	 */
 	private readonly githubItems = new GitHubItemSource({
 		settings: () => this.config.orchestrator.github,
+		// Read by URL when the search does not give them: why such an agent's
+		// item is outside the population.
+		linked: () =>
+			this.invariantAgents().flatMap((agent) =>
+				agent.managed && agent.issue !== undefined ? [agent.issue] : [],
+			),
 		token: async () => {
 			const credentials = await readGitHubToken(this.launchEnvironment);
 			return credentials.kind === "token"

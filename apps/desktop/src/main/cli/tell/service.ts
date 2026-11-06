@@ -42,6 +42,7 @@ import {
 	type DevhubLink,
 } from "../../../model/devhubLink.js";
 import { dueWords } from "../../../model/escalations.js";
+import { pollTimes } from "../../../model/orchestratorSettings.js";
 import {
 	TELL_USAGE,
 	type AgentWaitUntil,
@@ -4631,17 +4632,9 @@ export function answeredBy(
 
 /** `orchestrator status`'s GitHub line: polling, suspended by the pause, or idle and why. */
 function githubPollingLine(board: OrchestratorBoardWire): string {
-	const {
-		state,
-		lastAt,
-		nextAt,
-		rateLimit,
-		boards,
-		assigned,
-		problem,
-		problemAt,
-		reading,
-	} = board.github;
+	const { state, rateLimit, boards, assigned, problem, problemAt, reading } =
+		board.github;
+	const { last, next } = pollTimes(board.github);
 	const why =
 		state === "suspended"
 			? " (events paused: GitHub is not polled)"
@@ -4657,13 +4650,21 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 			: state === "idle"
 				? []
 				: [
-						`the population is not known yet${reading === undefined ? "" : `: reading ${reading}`}`,
+						`the population is not known yet${reading === undefined ? "" : `: ${reading}`}`,
 					]),
 		...(boards === undefined || boards.length === 0
 			? []
 			: [`Projects ${boards.map((one) => one.ref).join(" ")}`]),
-		...(lastAt === undefined ? [] : [`last ${new Date(lastAt).toISOString()}`]),
-		...(nextAt === undefined ? [] : [`next ${new Date(nextAt).toISOString()}`]),
+		...(last === undefined
+			? []
+			: [
+					`last poll ${new Date(last.at).toISOString()} (${last.outcome === "failed" && problem !== undefined ? `failed: ${problem}` : last.outcome})`,
+				]),
+		...(next === undefined
+			? []
+			: [
+					`next poll ${typeof next === "number" ? new Date(next).toISOString() : next}`,
+				]),
 		...(rateLimit === undefined
 			? []
 			: [

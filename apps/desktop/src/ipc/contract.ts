@@ -686,9 +686,14 @@ export interface OrchestratorBoardWire {
 	 */
 	readonly github: {
 		readonly state: "active" | "suspended" | "idle";
-		/** The last poll (ms since the epoch). */
+		/** When the last request was sent (ms since the epoch). */
 		readonly lastAt?: number;
-		/** When the next poll is due, while active. */
+		/** How it went: answered, failed (`problem` says why), or still out. */
+		readonly lastOutcome?: "ok" | "failed" | "in_flight";
+		/**
+		 * When the next request is to be sent, while active; never before
+		 * `lastAt` (`pollTimes` says both).
+		 */
 		readonly nextAt?: number;
 		/** What the last poll said of the rate limit. */
 		readonly rateLimit?: {
@@ -719,8 +724,8 @@ export interface OrchestratorBoardWire {
 		/** Since when `problem` has been so. */
 		readonly problemAt?: number;
 		/**
-		 * While the population is not known: what is being read (`Project
-		 * acme/7, page 2 (pages of 100)`).
+		 * While the population is not known: what is being read (`searching
+		 * the open items assigned to me, page 2`).
 		 */
 		readonly reading?: string;
 	};

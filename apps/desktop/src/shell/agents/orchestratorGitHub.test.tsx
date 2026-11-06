@@ -140,10 +140,42 @@ describe("the GitHub pill", () => {
       "https://github.com/orgs/acme/projects/7",
     );
     expect(within(box).getByRole("link", { name: "me/2" })).toBeVisible();
-    expect(box).toHaveTextContent(`Last poll${clockTime(LAST)}`);
+    expect(box).toHaveTextContent(`Last poll${clockTime(LAST)}: ok`);
     expect(box).toHaveTextContent(`Next poll${clockTime(NEXT)}`);
     expect(box).toHaveTextContent(
       `Rate limit${(4321).toLocaleString()} / ${(5000).toLocaleString()} left`,
+    );
+  });
+
+  it("says when the last request was sent and how it went, and never a next poll before it", () => {
+    mount({
+      github: { state: "active", lastAt: LAST, lastOutcome: "in_flight" },
+    });
+    expect(card()).toHaveTextContent(`Last poll${clockTime(LAST)}: in flight`);
+    expect(card()).toHaveTextContent("Next pollright after this one");
+    cleanup();
+    mount({
+      github: {
+        state: "active",
+        lastAt: LAST,
+        lastOutcome: "ok",
+        nextAt: LAST - 1_000,
+      },
+    });
+    expect(card()).toHaveTextContent("Next pollright after this one");
+    expect(card()).not.toHaveTextContent(clockTime(LAST - 1_000));
+    cleanup();
+    mount({
+      github: {
+        state: "active",
+        lastAt: LAST,
+        lastOutcome: "failed",
+        nextAt: NEXT,
+        problem: "GitHub answered 502",
+      },
+    });
+    expect(card()).toHaveTextContent(
+      `Last poll${clockTime(LAST)}: failed, see Last error`,
     );
   });
 
@@ -181,19 +213,19 @@ describe("the GitHub pill", () => {
     mount({
       github: {
         state: "active",
-        reading: "Project acme/7, page 2 (pages of 100)",
+        reading: "searching the open items assigned to me, page 2",
       },
     });
     expect(card()).toHaveTextContent("Assigned to menot known yet: reading");
     expect(card()).toHaveTextContent(
-      "ReadingProject acme/7, page 2 (pages of 100)",
+      "Readingsearching the open items assigned to me, page 2",
     );
     expect(card()).not.toHaveTextContent("not read yet");
     cleanup();
     mount({
       github: {
         state: "active",
-        reading: "Project acme/7, page 1 (pages of 100)",
+        reading: "searching the open items assigned to me, page 1",
         problem:
           "Project acme/7: Your token has not been granted the required scopes",
         problemAt: LAST,

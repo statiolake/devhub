@@ -336,6 +336,52 @@ export function githubHealth(github: {
 }
 
 /**
+ * The last and the next poll, as the board's GitHub card and `orchestrator
+ * status` say them: the last request's send time and how it went, and when
+ * the next is to be sent — never shown before the last: while one is out,
+ * or when the next follows it at once, "right after this one".
+ */
+export function pollTimes(github: {
+  readonly state: "active" | "suspended" | "idle";
+  readonly lastAt?: number;
+  readonly lastOutcome?: "ok" | "failed" | "in_flight";
+  readonly nextAt?: number;
+}): {
+  readonly last?: {
+    readonly at: number;
+    readonly outcome: "ok" | "failed" | "in flight";
+  };
+  /** A time, or `"right after this one"`. */
+  readonly next?: number | "right after this one";
+} {
+  const { lastAt, lastOutcome, nextAt } = github;
+  const last =
+    lastAt === undefined
+      ? undefined
+      : {
+          at: lastAt,
+          outcome:
+            lastOutcome === "in_flight"
+              ? ("in flight" as const)
+              : (lastOutcome ?? "ok"),
+        };
+  const next =
+    github.state !== "active"
+      ? undefined
+      : lastOutcome === "in_flight"
+        ? ("right after this one" as const)
+        : nextAt === undefined
+          ? undefined
+          : lastAt !== undefined && nextAt <= lastAt
+            ? ("right after this one" as const)
+            : nextAt;
+  return {
+    ...(last === undefined ? {} : { last }),
+    ...(next === undefined ? {} : { next }),
+  };
+}
+
+/**
  * `90s`, `5m`, `1h30m`, `2h` as milliseconds; undefined when it is none of
  * those. Bare numbers are refused: a unit is what makes `5` mean something.
  */
