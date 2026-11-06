@@ -9540,7 +9540,6 @@ export class AppController {
 			},
 			invariant: () => ({
 				items: this.githubItems.items(),
-				missing: (url) => this.githubItems.missing(url),
 				agents: this.invariantAgents(),
 			}),
 			publish: (board) => {
@@ -9698,14 +9697,6 @@ export class AppController {
 					};
 		},
 		post: postGraphQl,
-		linked: () =>
-			this.coordinator
-				.snapshot()
-				.workspaces.flatMap((workspace) => workspace.agents)
-				.flatMap((agent) => {
-					const url = agent.meta?.[ISSUE_LINK_KEY];
-					return url === undefined ? [] : [url];
-				}),
 		// What the invariant reads may have moved.
 		polled: () => this.orchestrator?.observe(),
 		changed: () => this.orchestrator?.publish(),

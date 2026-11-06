@@ -128,7 +128,7 @@ describe("the GitHub pill", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     const box = card();
     expect(box).toHaveTextContent("Active");
-    const boards = within(box).getByRole("list", { name: "Projects (lanes)" });
+    const boards = within(box).getByRole("list", { name: "Projects" });
     expect(boards).toHaveTextContent("acme/7 Roadmap");
     const link = within(box).getByRole("link", { name: "acme/7" });
     expect(link).toHaveAttribute(
@@ -157,7 +157,7 @@ describe("the GitHub pill", () => {
     });
     expect(card()).toHaveTextContent("Assigned to me5 open items");
     const boards = within(card()).getByRole("list", {
-      name: "Projects (lanes)",
+      name: "Projects",
     });
     expect(boards).toHaveTextContent("acme/7");
   });
@@ -182,7 +182,9 @@ describe("the GitHub pill", () => {
     expect(card()).not.toHaveTextContent("Next poll");
     cleanup();
     mount({ github: { state: "idle" } });
-    expect(card()).toHaveTextContent("Idle: not started yet");
+    expect(card()).toHaveTextContent(
+      "Idle: [orchestrator.github] projects names no Project: the population is empty",
+    );
     cleanup();
     mount({ orchestratorAgentId: undefined, github: { state: "idle" } });
     expect(card()).toHaveTextContent("Idle: no orchestrator is running");

@@ -653,7 +653,8 @@ export interface OrchestratorBoardWire {
 	/**
 	 * GitHub polling: `active`; `suspended` while events are paused (nothing
 	 * is asked of GitHub, the last reading is kept); `idle` with no
-	 * orchestrator.
+	 * orchestrator, or no `[orchestrator.github] projects` (the population is
+	 * then empty).
 	 */
 	readonly github: {
 		readonly state: "active" | "suspended" | "idle";
@@ -669,12 +670,12 @@ export interface OrchestratorBoardWire {
 			readonly resetAt: number;
 		};
 		/**
-		 * The open Issues and pull requests assigned to the viewer (the
-		 * population), once read in full.
+		 * The open Issues and pull requests of the Projects assigned to the
+		 * viewer (the population), once read in full.
 		 */
 		readonly assigned?: number;
 		/**
-		 * The Projects lanes are read from (`[orchestrator.github] projects`,
+		 * The registered Projects (`[orchestrator.github] projects`,
 		 * `OWNER/NUMBER`), with their title when DevHub has one.
 		 */
 		readonly boards?: readonly {

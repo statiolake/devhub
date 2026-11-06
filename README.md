@@ -430,8 +430,9 @@ hold ID [--note TEXT]`, or one of its agents going back to work moves it to
 (a date, a reply) is parked in 待機中 with `escalation wait ID --trigger
 TEXT [--at DATETIME]`, its trigger always in words; the orchestrator hears of
 it again at its time or when what it is about changes. DevHub holds the
-orchestrator to one invariant — every open item assigned to you on GitHub
-(an Issue or a pull request: one thing to DevHub) has a working agent, a
+orchestrator to one invariant — every open item assigned to you on the
+registered Projects (an Issue or a pull request card: one thing to DevHub;
+none registered, none) has a working agent, a
 要回答 or a 待機中 escalation, and every managed agent is working or on one
 of those — and says each subject that
 breaks it as a `needs_action` line — the subject and the clause it fails,

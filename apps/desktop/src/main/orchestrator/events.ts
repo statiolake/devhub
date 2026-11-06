@@ -171,7 +171,11 @@ export type NeedsActionClause =
 	| "outside_population";
 
 /** Why an agent's item is outside the population. */
-export type OutsideReason = "closed" | "unassigned" | "no_item";
+export type OutsideReason =
+	| "closed"
+	| "unassigned"
+	| "not_in_project"
+	| "no_item";
 
 export interface Breach {
 	readonly clause: NeedsActionClause;

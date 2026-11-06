@@ -4774,7 +4774,7 @@ describe("the Orchestrator row from the command line", () => {
 		);
 		expect(status.message).toContain("GitHub polling: active");
 		expect(status.message).toContain(
-			"GitHub polling: active, 5 open items assigned to me, lanes from acme/7 me/2",
+			"GitHub polling: active, 5 open items assigned to me on the Projects, Projects acme/7 me/2",
 		);
 	});
 

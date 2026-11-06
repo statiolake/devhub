@@ -1815,7 +1815,7 @@ export class TellService {
 			const found = this.ports.orchestrator.status({ item: ref });
 			if (found === undefined)
 				throw new Error(
-					`DevHub has not read ${ref}: it reads the open Issues and pull requests assigned to you, and the items agents are linked to, while an orchestrator runs (devhub --tell orchestrator status says how GitHub polling stands).`,
+					`DevHub has not read ${ref}: it reads the Issues and pull requests on the registered Projects ([orchestrator.github] projects; none registered: none, and the population is empty) while an orchestrator runs (devhub --tell orchestrator status says how GitHub polling stands).`,
 				);
 			return {
 				message: subjectText(found, undefined, now),
@@ -4613,16 +4613,18 @@ function githubPollingLine(board: OrchestratorBoardWire): string {
 		state === "suspended"
 			? " (events paused: GitHub is not polled)"
 			: state === "idle"
-				? " (no orchestrator)"
+				? board.orchestratorAgentId === undefined
+					? " (no orchestrator)"
+					: " (no [orchestrator.github] projects: the population is empty)"
 				: "";
 	return [
 		`GitHub polling: ${state}${why}`,
 		...(assigned === undefined
 			? []
-			: [`${String(assigned)} open items assigned to me`]),
+			: [`${String(assigned)} open items assigned to me on the Projects`]),
 		...(boards === undefined || boards.length === 0
 			? []
-			: [`lanes from ${boards.map((one) => one.ref).join(" ")}`]),
+			: [`Projects ${boards.map((one) => one.ref).join(" ")}`]),
 		...(lastAt === undefined ? [] : [`last ${new Date(lastAt).toISOString()}`]),
 		...(nextAt === undefined ? [] : [`next ${new Date(nextAt).toISOString()}`]),
 		...(rateLimit === undefined

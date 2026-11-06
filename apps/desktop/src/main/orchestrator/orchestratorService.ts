@@ -129,14 +129,13 @@ export interface OrchestratorServicePorts {
 	/** How GitHub polling stands, for the board's header. */
 	readonly github?: () => OrchestratorBoardWire["github"];
 	/**
-	 * What the invariant is read off (`invariant.ts`): the items GitHub gave
-	 * (undefined while not known in full), which linked URLs it has no item
-	 * for, and every agent but the orchestrator. Absent: no invariant is held
+	 * What the invariant is read off (`invariant.ts`): the registered
+	 * Projects' items (undefined while not known in full) and every agent but
+	 * the orchestrator. Absent: no invariant is held
 	 * (tests).
 	 */
 	readonly invariant?: () => {
 		readonly items: readonly ItemFacts[] | undefined;
-		readonly missing?: (url: string) => boolean;
 		readonly agents: readonly InvariantAgent[];
 	};
 	/**
@@ -814,7 +813,6 @@ export class OrchestratorService {
 			}));
 		const reading = readInvariant({
 			items: source.items,
-			...(source.missing === undefined ? {} : { missing: source.missing }),
 			agents: this.#invariantAgents,
 			escalations: this.ports.store
 				.all()

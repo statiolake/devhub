@@ -3,8 +3,8 @@
  * — green active, grey suspended by the pause, hollow idle, amber backing
  * off (a failed poll, or a low rate limit) — and, on hover or focus, a small
  * card with what `orchestrator status` says of it: how many open items
- * (Issues, pull requests) are assigned to me, the Projects lanes are read
- * from (links to them), the state and why, the last and next poll, the rate
+ * (Issues, pull requests) of the registered Projects are assigned to me,
+ * the Projects (links to them), the state and why, the last and next poll, the rate
  * limit left.
  *
  * The card is in this page, under the pill, and the pointer may move into
@@ -59,7 +59,7 @@ export function GitHubPill({
   const idleWhy =
     orchestratorAgentId === undefined
       ? "no orchestrator is running"
-      : "not started yet";
+      : "[orchestrator.github] projects names no Project: the population is empty";
   const boards = github.boards ?? [];
   return (
     <span
@@ -108,10 +108,7 @@ export function GitHubPill({
             ) : null}
           </div>
           {boards.length === 0 ? null : (
-            <ul
-              className="orchestrator-github-boards"
-              aria-label="Projects (lanes)"
-            >
+            <ul className="orchestrator-github-boards" aria-label="Projects">
               {boards.map((board) => {
                 const url = projectUrl(board.ref);
                 return (

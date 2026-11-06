@@ -3,10 +3,11 @@
  * it: what `needs_action` and `waiting.changed` say (`docs/orchestrator.md`,
  * "The invariant").
  *
- * **The population** is every open item assigned to the viewer on GitHub — an
- * Issue or a pull request, one thing here (`githubItems.ts`); the watched
- * Projects only give an item's lane. For each of them exactly one of these
- * holds, or it **needs action**:
+ * **The population** is every open item of the registered Projects
+ * (`[orchestrator.github] projects`) assigned to the viewer — an Issue or a
+ * pull request card, one thing here (`githubItems.ts`). With no Project
+ * registered it is empty. For each of them exactly one of these holds, or
+ * it **needs action**:
  *
  * - (a) an agent linked to it is working (status `working` or `background`,
  *   not stopping);
@@ -20,7 +21,8 @@
  * **Every managed agent** (the orchestrator is never one) is working, or is
  * one of the agents of a 要回答 or 待機中 escalation; one that is neither
  * needs action. So does one whose item is outside the population — closed,
- * not assigned to the viewer, or not on GitHub — or that has no item at all,
+ * not assigned to the viewer, on no registered Project — or that has no item
+ * at all,
  * whatever it is doing: for that reason alone. While the population is not
  * known (GitHub is not read, or not in full yet), only the first rule is
  * applied to agents, and no item is said.
@@ -141,13 +143,11 @@ export interface InvariantEscalation {
 
 export interface InvariantInput {
 	/**
-	 * Every item as last read — the open ones assigned to the viewer, and the
-	 * ones agents are linked to — undefined while the population is not known
-	 * (GitHub not read, or not in full yet).
+	 * Every item on the registered Projects as last read; undefined while the
+	 * population is not known (GitHub not read, or not every Project in full
+	 * yet). Empty with no Project registered: the population is empty.
 	 */
 	readonly items: readonly ItemFacts[] | undefined;
-	/** Whether GitHub was asked about a linked URL and has no item for it. */
-	readonly missing?: (url: string) => boolean;
 	/** Every agent but the orchestrator. */
 	readonly agents: readonly InvariantAgent[];
 	/** The open escalations. */
@@ -430,18 +430,13 @@ export function readInvariant(input: InvariantInput): InvariantReading {
 			standings.set(agent.id, { settled: true, ...common });
 			continue;
 		}
-		// Linked to a URL GitHub has no item for (deleted, or not visible).
-		const missing =
-			agent.issue !== undefined &&
-			item === undefined &&
-			input.missing?.(agent.issue) === true;
 		const outside: OutsideReason | undefined =
 			items === undefined
 				? undefined
-				: agent.issue === undefined || missing
+				: agent.issue === undefined
 					? "no_item"
 					: item === undefined
-						? undefined
+						? "not_in_project"
 						: outsideReason(item);
 		const breach: Breach | undefined =
 			outside !== undefined

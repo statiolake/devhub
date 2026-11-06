@@ -2,26 +2,25 @@
  * The GitHub source: the items — Issues and pull requests alike — the
  * invariant (`invariant.ts`) is read off, read and never written.
  *
- * **What is read.** Every open Issue or pull request assigned to the viewer,
- * GitHub-wide (`is:open assignee:@me`, as one search): the population. And
- * each item an agent is linked to (its meta `issue=`) that the search did not
- * return — closed, or no longer assigned — looked up by its URL, so the
- * invariant can say why it is outside. An Issue and a pull request are one
- * thing here, an **item**: a pull request assigned to the viewer is an item
- * as an Issue is, whether or not an Issue goes with it.
+ * **What is read.** The items of the registered Projects
+ * (`[orchestrator.github] projects`): each card that is an Issue or a pull
+ * request, with its state, assignees and its lane (Status) on that Project.
+ * The population is those that are open and assigned to the viewer; an item
+ * on several Projects is one item, with a lane on each. An Issue and a pull
+ * request are one thing here, an **item**: a pull request card is an item as
+ * an Issue is, whether or not an Issue goes with it. With no Project
+ * registered there is nothing to read, and the population is empty.
  *
- * For each item: its state, assignees, its lane on each watched Project
- * (`[orchestrator.github] projects`: the Projects are only where lanes are
- * read from, never what decides the population), and its pull request — a
- * pull request item's own, an Issue's the one that closes it (the open one,
- * else the latest) — with the review decision, unresolved conversations and
- * checks (`nodes(ids:)` for the pull requests the last reading named).
+ * For each item, its pull request — a pull request item's own, an Issue's
+ * the one that closes it (the open one, else the latest) — with the review
+ * decision, unresolved conversations and checks (`nodes(ids:)` for the open
+ * pull requests the last reading named).
  *
  * **One request per tick**, never two in flight, no `gh` subcommands (the
  * token is `gh auth token`'s, read as the Workspace watcher reads it, and the
- * request goes through the same client, `postGraphQl`). More than a page
- * (100) of assigned items is read a page a tick, and the population is known
- * once the whole of it has been read.
+ * request goes through the same client, `postGraphQl`): a page (100) of each
+ * Project's items, so a bigger Project is read a page a tick, and the
+ * population is known once every Project has been read in full.
  *
  * **The interval** starts at `[orchestrator.github] interval` and only ever
  * backs off from it (`nextDelay`): slower as `remaining` falls, paused until
@@ -41,7 +40,7 @@ import {
 	parseProjectRef,
 } from "../../model/orchestratorSettings.js";
 import type { EventItem } from "./events.js";
-import { issueUrlKey, type ItemFacts, type PullFacts } from "./invariant.js";
+import type { ItemFacts, PullFacts } from "./invariant.js";
 
 // --- what is read --------------------------------------------------------------
 
@@ -53,7 +52,7 @@ export interface ItemPull {
 	readonly draft: boolean;
 }
 
-/** One item (Issue or pull request) as one tick reads it. */
+/** One item (Issue or pull request) as one card reads it. */
 export interface ReadItem {
 	readonly kind: "issue" | "pr";
 	/** Its node id. */
@@ -62,14 +61,15 @@ export interface ReadItem {
 	readonly state: "OPEN" | "CLOSED" | "MERGED";
 	readonly draft: boolean;
 	readonly assignees: readonly string[];
-	/** Each Project it is on (`OWNER/NUMBER`) and its Status there. */
-	readonly projects: readonly {
-		readonly ref: string;
-		readonly title?: string;
-		readonly lane: string | null;
-	}[];
 	/** For an Issue: the pull requests that close it. */
 	readonly linked: readonly ItemPull[];
+}
+
+/** A card on a Project: its item and its lane there. */
+export interface BoardCard {
+	readonly item: ReadItem;
+	/** The Status field's option; null when none is set. */
+	readonly lane: string | null;
 }
 
 /** A pull request's review state. */
@@ -95,72 +95,72 @@ export interface RateLimit {
 export interface GitHubReading {
 	readonly viewer: string;
 	readonly rateLimit?: RateLimit;
-	/** One page of the items assigned to the viewer, and where the next starts. */
-	readonly assigned: readonly ReadItem[];
-	readonly next: string | null;
-	/** The linked items looked up by URL: undefined where GitHub has none. */
-	readonly looked: ReadonlyMap<string, ReadItem | undefined>;
+	/** Per Project (`owner/number`): the page read, and where the next starts. */
+	readonly pages: ReadonlyMap<
+		string,
+		{
+			readonly title: string;
+			readonly cards: readonly BoardCard[];
+			readonly next: string | null;
+		}
+	>;
 	readonly pulls: ReadonlyMap<string, PullDetails>;
-	/** GitHub's complaints that did not stop the answer. */
+	/** GitHub's complaints that did not stop the answer (a Project it cannot read). */
 	readonly problems: readonly string[];
 }
 
 // --- the query -------------------------------------------------------------------
 
-/** One page of the assigned items. */
+/** One page of a Project. */
 export const ITEMS_PER_PAGE = 100;
-/** How many linked items are looked up by URL in one tick. */
-export const MAX_LOOKUPS = 20;
 /** How many pull requests have their details read each tick. */
 export const MAX_WATCHED_PULLS = 60;
-/** The search the population is. */
-export const ASSIGNED_QUERY = "is:open assignee:@me archived:false";
 
-const PROJECTS = `projectItems(first:10){ nodes{
-    project{ number title owner{ ... on Organization{ login } ... on User{ login } } }
-    status: fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue{ name } } } }`;
+const CONTENT = `content{
+    __typename
+    ... on Issue{ id number title url state repository{ nameWithOwner }
+      assignees(first:10){ nodes{ login } }
+      closedByPullRequestsReferences(first:5, includeClosedPrs:true){
+        nodes{ id number title url state isDraft repository{ nameWithOwner } } } }
+    ... on PullRequest{ id number title url state isDraft repository{ nameWithOwner }
+      assignees(first:10){ nodes{ login } } } }`;
 
-const ITEM = `... on Issue{ __typename id number title url state repository{ nameWithOwner }
-    assignees(first:10){ nodes{ login } }
-    ${PROJECTS}
-    closedByPullRequestsReferences(first:5, includeClosedPrs:true){
-      nodes{ id number title url state isDraft repository{ nameWithOwner } } } }
-  ... on PullRequest{ __typename id number title url state isDraft repository{ nameWithOwner }
-    assignees(first:10){ nodes{ login } }
-    ${PROJECTS} }`;
+const CARD = `status: fieldValueByName(name:"Status"){ ... on ProjectV2ItemFieldSingleSelectValue{ name } }
+  ${CONTENT}`;
 
 const PULL_DETAILS = `id state isDraft reviewDecision
   reviewThreads(first:100){ nodes{ isResolved } }
   commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }`;
 
-/** The one request of a tick: a page of the assigned items, the lookups, the details. */
+/** The one request of a tick: each Project's next page, and the details. */
 export function githubQuery(
-	after: string | null,
-	lookups: readonly string[],
+	boards: readonly {
+		readonly owner: string;
+		readonly number: number;
+		readonly after: string | null;
+	}[],
 	pulls: readonly string[],
 ): { readonly query: string; readonly variables: Record<string, unknown> } {
-	const declarations = [
-		"$after:String",
-		"$pulls:[ID!]!",
-		"$wantPulls:Boolean!",
-	];
-	const variables: Record<string, unknown> = {
-		after,
-		pulls,
-		wantPulls: pulls.length > 0,
-	};
+	const declarations: string[] = [];
 	const selections: string[] = [];
-	for (const [index, url] of lookups.entries()) {
+	const variables: Record<string, unknown> = {};
+	for (const [index, board] of boards.entries()) {
 		const at = String(index);
-		declarations.push(`$u${at}:URI!`);
-		variables[`u${at}`] = url;
-		selections.push(`l${at}: resource(url:$u${at}){ ${ITEM} }`);
+		declarations.push(`$o${at}:String!`, `$n${at}:Int!`, `$a${at}:String`);
+		variables[`o${at}`] = board.owner;
+		variables[`n${at}`] = board.number;
+		variables[`a${at}`] = board.after;
+		selections.push(
+			`p${at}: repositoryOwner(login:$o${at}){ ... on ProjectV2Owner{ projectV2(number:$n${at}){ title
+    items(first:${String(ITEMS_PER_PAGE)}, after:$a${at}){ pageInfo{ hasNextPage endCursor } nodes{ ${CARD} } } } } }`,
+		);
 	}
+	declarations.push("$pulls:[ID!]!", "$wantPulls:Boolean!");
+	variables["pulls"] = pulls;
+	variables["wantPulls"] = pulls.length > 0;
 	const query = `query(${declarations.join(",")}){
   viewer{ login }
   rateLimit{ cost remaining limit resetAt }
-  assigned: search(type:ISSUE, query:${JSON.stringify(ASSIGNED_QUERY)}, first:${String(ITEMS_PER_PAGE)}, after:$after){
-    pageInfo{ hasNextPage endCursor } nodes{ ${ITEM} } }
   ${selections.join("\n  ")}
   pulls: nodes(ids:$pulls) @include(if:$wantPulls){ ... on PullRequest{ ${PULL_DETAILS} } }
 }`;
@@ -213,7 +213,7 @@ function itemState(value: unknown): "OPEN" | "CLOSED" | "MERGED" {
 	return state === "MERGED" ? "MERGED" : state === "CLOSED" ? "CLOSED" : "OPEN";
 }
 
-/** An Issue or a pull request node, as read; undefined for anything else. */
+/** An Issue or a pull request node, as read; undefined for anything else (a draft card). */
 export function parseItem(node: Json | undefined): ReadItem | undefined {
 	if (node === undefined) return undefined;
 	const type = str(node["__typename"]);
@@ -229,21 +229,6 @@ export function parseItem(node: Json | undefined): ReadItem | undefined {
 		assignees: nodes(node["assignees"]).flatMap((one) => {
 			const name = login(one);
 			return name === undefined ? [] : [name];
-		}),
-		projects: nodes(node["projectItems"]).flatMap((one) => {
-			const project = record(one["project"]);
-			const owner = login(project?.["owner"]);
-			const number = num(project?.["number"]);
-			if (project === undefined || owner === undefined || number === 0)
-				return [];
-			const title = str(project["title"]);
-			return [
-				{
-					ref: `${owner}/${String(number)}`,
-					...(title === undefined ? {} : { title }),
-					lane: str(record(one["status"])?.["name"]) ?? null,
-				},
-			];
 		}),
 		linked: nodes(node["closedByPullRequestsReferences"]).flatMap(
 			(pull): ItemPull[] => {
@@ -288,7 +273,7 @@ export function parseReading(
 			| readonly { readonly message?: string; readonly type?: string }[]
 			| null;
 	},
-	lookups: readonly string[],
+	boards: readonly string[],
 ): GitHubReading {
 	const data = record(answer.data);
 	const problems = (answer.errors ?? []).flatMap((one) =>
@@ -298,11 +283,29 @@ export function parseReading(
 	if (data === undefined || viewer === undefined)
 		throw new Error(problems[0] ?? "GitHub answered without data.");
 	const rate = record(data["rateLimit"]);
-	const search = record(data["assigned"]);
-	const pageInfo = record(search?.["pageInfo"]);
-	const looked = new Map<string, ReadItem | undefined>();
-	for (const [index, url] of lookups.entries())
-		looked.set(url, parseItem(record(data[`l${String(index)}`])));
+	const pages = new Map<
+		string,
+		{ title: string; cards: BoardCard[]; next: string | null }
+	>();
+	for (const [index, board] of boards.entries()) {
+		const project = record(record(data[`p${String(index)}`])?.["projectV2"]);
+		if (project === undefined) continue;
+		const items = record(project["items"]);
+		const pageInfo = record(items?.["pageInfo"]);
+		pages.set(board, {
+			title: str(project["title"]) ?? board,
+			cards: nodes(items).flatMap((node) => {
+				const item = parseItem(record(node["content"]));
+				return item === undefined
+					? []
+					: [{ item, lane: str(record(node["status"])?.["name"]) ?? null }];
+			}),
+			next:
+				pageInfo?.["hasNextPage"] === true
+					? (str(pageInfo["endCursor"]) ?? null)
+					: null,
+		});
+	}
 	const pulls = new Map<string, PullDetails>();
 	for (const one of Array.isArray(data["pulls"]) ? data["pulls"] : []) {
 		const node = record(one);
@@ -321,15 +324,7 @@ export function parseReading(
 						resetAt: Date.parse(str(rate["resetAt"]) ?? "") || 0,
 					},
 				}),
-		assigned: nodes(search).flatMap((node) => {
-			const item = parseItem(node);
-			return item === undefined ? [] : [item];
-		}),
-		next:
-			pageInfo?.["hasNextPage"] === true
-				? (str(pageInfo["endCursor"]) ?? null)
-				: null,
-		looked,
+		pages,
 		pulls,
 		problems,
 	};
@@ -452,8 +447,6 @@ export interface GitHubSourcePorts {
 			| readonly { readonly message?: string; readonly type?: string }[]
 			| null;
 	}>;
-	/** The URLs agents are linked to (their meta `issue=`). */
-	readonly linked: () => readonly string[];
 	readonly setTimer: (ms: number, run: () => void) => { cancel(): void };
 	/** A poll has been read: what `items` gives may have moved. */
 	readonly polled?: () => void;
@@ -465,15 +458,24 @@ export interface GitHubSourcePorts {
 
 /**
  * How the source stands: `active` polls; `suspended` (events paused) asks
- * nothing and keeps what it last read; `idle` (no orchestrator) has
- * forgotten it.
+ * nothing and keeps what it last read; `idle` (no orchestrator, or no
+ * Project registered) has forgotten it.
  */
 export type GitHubPolling = "active" | "suspended" | "idle";
 
-/** A watched Project, as the items read name it. */
+/** A registered Project, with the title GitHub gave it. */
 export interface ProjectSeen {
 	readonly ref: string;
 	readonly title?: string;
+}
+
+interface BoardState {
+	title?: string;
+	/** The last full pass; undefined until the first. */
+	complete: readonly BoardCard[] | undefined;
+	/** The pass being read, page by page. */
+	partial: BoardCard[];
+	after: string | null;
 }
 
 export class GitHubItemSource {
@@ -483,13 +485,7 @@ export class GitHubItemSource {
 	#failures = 0;
 	#rate: RateLimit | undefined;
 	#viewer: string | undefined;
-	/** The last full pass of the assigned items; undefined before the first. */
-	#assigned: readonly ReadItem[] | undefined;
-	/** The pass being read, page by page. */
-	#partial: ReadItem[] = [];
-	#after: string | null = null;
-	/** Linked items looked up by URL key: undefined where GitHub has none. */
-	#looked = new Map<string, ReadItem | undefined>();
+	#boards = new Map<string, BoardState>();
 	#pulls = new Map<string, PullDetails>();
 	#problem: string | undefined;
 	#lastAt: number | undefined;
@@ -504,16 +500,18 @@ export class GitHubItemSource {
 	}
 
 	/**
-	 * Poll while there is an orchestrator, suspended while its events are
-	 * paused; else stop and forget. Resuming polls at once (unless the rate
-	 * limit says to wait), and `caughtUp()` settles when that poll is read.
+	 * Poll while there is an orchestrator and a Project to read, suspended
+	 * while its events are paused; else stop and forget. Resuming polls at
+	 * once (unless the rate limit says to wait), and `caughtUp()` settles
+	 * when that poll is read.
 	 */
 	follow(active: boolean, paused = false): void {
-		const mode: GitHubPolling = !active
-			? "idle"
-			: paused
-				? "suspended"
-				: "active";
+		const mode: GitHubPolling =
+			!active || this.#boardRefs().length === 0
+				? "idle"
+				: paused
+					? "suspended"
+					: "active";
 		if (mode === this.#mode) return;
 		if (mode === "idle") {
 			this.stop();
@@ -542,10 +540,7 @@ export class GitHubItemSource {
 		this.#timer?.cancel();
 		this.#timer = undefined;
 		this.#viewer = undefined;
-		this.#assigned = undefined;
-		this.#partial = [];
-		this.#after = null;
-		this.#looked = new Map();
+		this.#boards = new Map();
 		this.#pulls = new Map();
 		this.#failures = 0;
 		this.#nextAt = undefined;
@@ -581,11 +576,12 @@ export class GitHubItemSource {
 		readonly nextAt?: number;
 		readonly rateLimit?: RateLimit;
 		readonly problem?: string;
-		/** The open items assigned to the viewer, once read in full. */
+		/** The open items assigned to the viewer on the Projects, once read in full. */
 		readonly assigned?: number;
-		/** The watched Projects, with the titles the items gave. */
+		/** The registered Projects, with the titles GitHub gave. */
 		readonly projects: readonly ProjectSeen[];
 	} {
+		const items = this.#mode === "idle" ? undefined : this.items();
 		return {
 			mode: this.#mode,
 			running: this.#mode === "active",
@@ -593,68 +589,60 @@ export class GitHubItemSource {
 			...(this.#nextAt === undefined ? {} : { nextAt: this.#nextAt }),
 			...(this.#rate === undefined ? {} : { rateLimit: this.#rate }),
 			...(this.#problem === undefined ? {} : { problem: this.#problem }),
-			...(this.#assigned === undefined
+			...(items === undefined
 				? {}
-				: { assigned: this.#assigned.length }),
-			projects: this.#projectRefs().map((ref) => {
-				const title = this.#all()
-					.flatMap((one) => one.projects)
-					.find((one) => one.ref.toLowerCase() === ref.toLowerCase())?.title;
+				: {
+						assigned: items.filter(
+							(one) => one.state === "open" && one.assignedToMe,
+						).length,
+					}),
+			projects: this.#boardRefs().map((ref) => {
+				const title = this.#boards.get(ref)?.title;
 				return { ref, ...(title === undefined ? {} : { title }) };
 			}),
 		};
 	}
 
-	#all(): readonly ReadItem[] {
-		return [
-			...(this.#assigned ?? []),
-			...[...this.#looked.values()].filter(
-				(one): one is ReadItem => one !== undefined,
-			),
-		];
-	}
-
 	/**
-	 * Every item as last read — the open ones assigned to the viewer, and the
-	 * linked ones looked up — with its lanes and its pull request; undefined
-	 * until the assigned items have been read in full (the population is not
-	 * known before).
+	 * Every item on the registered Projects as last read, with its lane on
+	 * each and its pull request; undefined until every Project has been read
+	 * in full (the population is not known before). With no Project
+	 * registered: none — the population is empty.
 	 */
 	items(): readonly ItemFacts[] | undefined {
+		const refs = this.#boardRefs();
+		if (refs.length === 0) return [];
 		const viewer = this.#viewer;
-		if (viewer === undefined || this.#assigned === undefined) return undefined;
-		const watched = new Set(
-			this.#projectRefs().map((one) => one.toLowerCase()),
-		);
-		const out: ItemFacts[] = [];
-		const seen = new Set<string>();
-		for (const one of this.#all()) {
-			if (seen.has(one.id)) continue;
-			seen.add(one.id);
-			const pull = pullOf(one);
-			out.push({
-				item: one.item,
-				kind: one.kind,
+		if (viewer === undefined) return undefined;
+		const byId = new Map<
+			string,
+			{ item: ReadItem; projects: { project: string; lane: string | null }[] }
+		>();
+		for (const ref of refs) {
+			const cards = this.#boards.get(ref)?.complete;
+			if (cards === undefined) return undefined;
+			for (const card of cards) {
+				const one = byId.get(card.item.id) ?? { item: card.item, projects: [] };
+				one.projects.push({ project: ref, lane: card.lane });
+				byId.set(card.item.id, one);
+			}
+		}
+		return [...byId.values()].map(({ item, projects }) => {
+			const pull = pullOf(item);
+			return {
+				item: item.item,
+				kind: item.kind,
 				state:
-					one.state === "OPEN"
+					item.state === "OPEN"
 						? "open"
-						: one.state === "MERGED"
+						: item.state === "MERGED"
 							? "merged"
 							: "closed",
-				assignedToMe: one.assignees.some((name) => same(name, viewer)),
-				projects: one.projects
-					.filter((project) => watched.has(project.ref.toLowerCase()))
-					.map((project) => ({ project: project.ref, lane: project.lane })),
+				assignedToMe: item.assignees.some((name) => same(name, viewer)),
+				projects,
 				...(pull === undefined ? {} : { pull: this.#pullFacts(pull) }),
-			});
-		}
-		return out;
-	}
-
-	/** A linked URL GitHub was asked about and has no item for. */
-	missing(url: string): boolean {
-		const key = issueUrlKey(url);
-		return this.#looked.has(key) && this.#looked.get(key) === undefined;
+			};
+		});
 	}
 
 	#pullFacts(pull: ItemPull): PullFacts {
@@ -677,7 +665,7 @@ export class GitHubItemSource {
 		};
 	}
 
-	#projectRefs(): string[] {
+	#boardRefs(): string[] {
 		return this.ports
 			.settings()
 			.projects.filter((ref) => parseProjectRef(ref) !== undefined);
@@ -721,71 +709,71 @@ export class GitHubItemSource {
 		this.#schedule(delay.ms);
 	}
 
-	/** The linked URLs the assigned items do not cover, to look up. */
-	#lookups(): string[] {
-		const assigned = new Set(
-			(this.#assigned ?? []).flatMap((one) =>
-				one.item.url === undefined ? [] : [issueUrlKey(one.item.url)],
-			),
-		);
-		const out = new Set<string>();
-		for (const url of this.ports.linked()) {
-			const key = issueUrlKey(url);
-			if (!assigned.has(key)) out.add(key);
-		}
-		return [...out].slice(0, MAX_LOOKUPS);
-	}
-
-	/** The pull requests whose details are read: those the items name. */
+	/** The open pull requests the items name: their details are read. */
 	#watchedPulls(): string[] {
 		const ids = new Set<string>();
-		for (const one of [...this.#all(), ...this.#partial]) {
-			const pull = pullOf(one);
-			if (pull !== undefined && pull.state === "OPEN") ids.add(pull.id);
-		}
+		for (const state of this.#boards.values())
+			for (const card of [...(state.complete ?? []), ...state.partial]) {
+				const pull = pullOf(card.item);
+				if (pull !== undefined && pull.state === "OPEN") ids.add(pull.id);
+			}
 		return [...ids].slice(0, MAX_WATCHED_PULLS);
 	}
 
 	async #read(): Promise<void> {
 		// A promise from the first line on: `tick` holds it as the one in flight.
 		await Promise.resolve();
+		const refs = this.#boardRefs();
+		for (const ref of [...this.#boards.keys()])
+			if (!refs.includes(ref)) this.#boards.delete(ref);
 		const credentials = await this.ports.token();
 		if ("problem" in credentials) throw new Error(credentials.problem);
-		const lookups = this.#lookups();
-		const request = githubQuery(this.#after, lookups, this.#watchedPulls());
+		const boards = refs.map((ref) => {
+			const state =
+				this.#boards.get(ref) ??
+				({ complete: undefined, partial: [], after: null } as BoardState);
+			this.#boards.set(ref, state);
+			const parsed = parseProjectRef(ref)!;
+			return { owner: parsed.owner, number: parsed.number, after: state.after };
+		});
+		const request = githubQuery(boards, this.#watchedPulls());
 		const answer = await this.ports.post(request, credentials.token);
 		// Stopped while it was asked: what it says is nobody's.
 		if (this.#mode === "idle") return;
-		const reading = parseReading(answer, lookups);
+		const reading = parseReading(answer, refs);
 		this.#say(reading.problems[0]);
 		this.#rate = reading.rateLimit ?? this.#rate;
-		this.#apply(reading);
+		this.#apply(reading, refs);
 	}
 
-	#apply(reading: GitHubReading): void {
+	#apply(reading: GitHubReading, refs: readonly string[]): void {
 		if (this.#viewer !== undefined && !same(this.#viewer, reading.viewer)) {
 			this.ports.log?.(
 				`[devhub] orchestrator GitHub items: the viewer is ${reading.viewer} now, not ${this.#viewer}`,
 			);
-			this.#assigned = undefined;
-			this.#partial = [];
-			this.#after = null;
-			this.#looked = new Map();
+			this.#boards = new Map(
+				refs.map((ref) => [
+					ref,
+					{ complete: undefined, partial: [], after: null },
+				]),
+			);
 			this.#pulls = new Map();
 		}
 		this.#viewer = reading.viewer;
-		this.#partial.push(...reading.assigned);
-		if (reading.next !== null) this.#after = reading.next;
-		else {
-			this.#assigned = this.#partial;
-			this.#partial = [];
-			this.#after = null;
+		for (const ref of refs) {
+			const page = reading.pages.get(ref);
+			const state = this.#boards.get(ref);
+			if (page === undefined || state === undefined) continue;
+			state.title = page.title;
+			state.partial.push(...page.cards);
+			if (page.next !== null) {
+				state.after = page.next;
+				continue;
+			}
+			state.complete = state.partial;
+			state.partial = [];
+			state.after = null;
 		}
-		// What is no longer linked is not kept.
-		const linked = new Set(this.ports.linked().map(issueUrlKey));
-		for (const key of [...this.#looked.keys()])
-			if (!linked.has(key)) this.#looked.delete(key);
-		for (const [url, item] of reading.looked) this.#looked.set(url, item);
 		for (const [id, details] of reading.pulls) this.#pulls.set(id, details);
 		const named = new Set(this.#watchedPulls());
 		for (const id of [...this.#pulls.keys()])

@@ -449,15 +449,16 @@ DevHub states one invariant and reports what breaks it
 (`main/orchestrator/invariant.ts`); what the orchestrator does about it is
 the orchestrator's.
 
-**The population** is every open **item** assigned to the viewer on GitHub —
-an Issue or a pull request, GitHub-wide (`is:open assignee:@me`). An Issue
-and a pull request are one thing here: a pull request with no Issue is an
-item as an Issue is, linked, escalated about and said the same way (`issue=`
-or `pr=` on its line is the only difference), and another person's pull
-request the viewer is assigned to review is an item like any other.
-`[orchestrator.github] projects` only names the Projects an item's lane is
-read from (a fact of the item); it never decides the population. For each
-item, exactly one of these holds:
+**The population** is every open **item** of the registered Projects
+(`[orchestrator.github] projects`) assigned to the viewer — an Issue card or
+a pull request card. An Issue and a pull request are one thing here: a pull
+request on the board with no Issue is an item as an Issue is, linked,
+escalated about and said the same way (`issue=` or `pr=` on its line is the
+only difference), and another person's pull request on the board that the
+viewer is assigned to review is an item like any other. An item on several
+Projects is one item, with a lane on each. **With no Project registered the
+population is empty** (`orchestrator status` says so). For each item,
+exactly one of these holds:
 
 - (a) an agent linked to it is working (`working` or `background`, not
   stopping; a maintenance turn is not work);
@@ -474,13 +475,11 @@ person's own and left out.
 待機中 escalation. An idle or waiting one with neither needs action,
 `idle_no_escalation` (it ended its turn and nobody picked it up). So does a
 managed agent linked to an item outside the population — closed or merged,
-not assigned to the viewer — or to no item at all (none linked, or one GitHub
-has no item for), **whatever it is doing**, for that reason alone:
-`outside_population (closed)`, `(unassigned)`, `(no_item)`. DevHub looks up
-each linked item the search did not return by its URL; until it has, and
-while the population is not known — GitHub not polled, or the assigned items
-not read in full yet — only the status rule applies to agents, and no item
-is said.
+not assigned to the viewer, on no registered Project — or to no item at all,
+**whatever it is doing**, for that reason alone: `outside_population
+(closed)`, `(unassigned)`, `(not_in_project)`, `(no_item)`. While the
+population is not known — GitHub not polled, or not every Project read in
+full yet — only the status rule applies to agents, and no item is said.
 
 **Linked**, the one rule: an agent is linked to the item its meta `issue=`
 names (by URL: an Issue's `/issues/N` or a pull request's `/pull/N`). DevHub
@@ -558,8 +557,9 @@ $ devhub --tell --json status acme/app#9
 
 An agent's has `"subject": "agent"`, `agent`, `item` (or null),
 `workspace` (the tooltip's facts), `needsAction`, `waiting` and
-`escalations`. An item DevHub has not read (not assigned to the viewer and
-no agent linked to it) is refused with what it does read.
+`escalations`. An item DevHub has not read (on no registered Project) is
+refused with what it does read; an agent linked to one stands as
+`outside_population (not_in_project)`.
 
 ## Events
 
@@ -593,7 +593,7 @@ work, with its own tools (`gh`), not by the orchestrator.
 
 The `needs_action` codes: an item's `no_agent` or `idle_no_escalation`
 (`issue=` or `pr=` names it, `ws=` its first agent's Workspace); a managed
-agent's `idle_no_escalation` or `outside_population (closed|unassigned|no_item)`
+agent's `idle_no_escalation` or `outside_population (closed|unassigned|not_in_project|no_item)`
 (`agent=` names it by its id's first block and name). `unsettled`, the type
 before, is a retired event pattern.
 
@@ -680,12 +680,12 @@ resume` polls once (the rate limit permitting), then sends the person's
   (`— subjects_changed`) compares each 待機中 escalation's subjects' facts
   with the last look (its first look says nothing).
 - **GitHub** (`githubItems.ts`): read — never written — one request per
-  tick: a page (100) of the open items assigned to the viewer (`search`
-  `is:open assignee:@me`: Issues and pull requests, each with its state,
-  assignees, its lane on each watched Project, and for an Issue the pull
-  requests that close it), each linked item the search did not return looked
-  up by URL (`resource`), and the review decision, unresolved conversations
-  and checks of the pull requests the last reading named (`nodes`). That is
+  tick: a page (100) of each registered Project's items (Issue and pull
+  request cards, each with its state, assignees, its lane, and for an Issue
+  the pull requests that close it; a bigger Project is read a page a tick),
+  and the review decision, unresolved conversations and checks of the open
+  pull requests the last reading named (`nodes`). With no Project registered
+  it does not poll at all. That is
   what the invariant's population and facts are read off (`items`); it says
   no event itself. Typically a few points of GitHub's 5,000 an hour; the
   interval starts at `[orchestrator.github] interval` and only backs off
@@ -728,7 +728,7 @@ delivery_interval = "5m"         # a batch at most this often (the default; at l
 reminder_interval = "1h"         # a needs_action subject said again this often while it stays so (the default; at least 5m)
 
 [orchestrator.github]
-projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER, an item's lane is read from (never the population)
+projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER: their open items assigned to me are the population; none: it is empty
 interval = "90s"                 # the base poll interval (at least 30s); it only backs off
 
 [[orchestrator.timers]]

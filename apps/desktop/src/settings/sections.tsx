@@ -759,7 +759,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="GitHub Projects"
-          help="The Projects boards an item's lane is read from (shown by devhub --tell status), as OWNER/NUMBER, comma-separated. The orchestrator's population is every open Issue or pull request assigned to you, whatever board it is on. DevHub only reads them."
+          help="The Projects boards whose open Issues and pull requests assigned to you are the orchestrator's population, as OWNER/NUMBER, comma-separated (none: the population is empty). DevHub only reads them."
         >
           <TextField
             label="Orchestrator GitHub projects"

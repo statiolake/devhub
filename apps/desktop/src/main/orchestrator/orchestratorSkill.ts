@@ -203,7 +203,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       # delivery_interval = "5m"                  # 束ねた配信の最短間隔 (人の言葉はすぐ)
       # reminder_interval = "1h"                  # 解消しない needs_action を言い直す間隔
       # [orchestrator.github]
-      # projects = ["my-org/7"]                  # lane を読む Project (OWNER/NUMBER)。母集団は決めない
+      # projects = ["my-org/7"]                  # 母集団になる Project (OWNER/NUMBER)。なければ母集団は空
       # interval = "90s"                          # 基本間隔 (最短 30s。ここから遅くなるだけ)
       # [[orchestrator.timers]]
       # name = "sweep"
@@ -254,8 +254,8 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   \`ws=\` は \`workspace status\` などに、\`esc=\` は \`escalation show\` に渡せる。
 - \`needs_action\` のコード: \`no_agent\` (母集団のアイテムに紐づくエージェントがいない)、
   \`idle_no_escalation\` (作業中でなく、要回答 / 待機中のエスカレーションもない)、
-  \`outside_population (closed|unassigned|no_item)\` (管理対象エージェントのアイテムが
-  閉じた / 自分にアサインされていない / アイテムがない)。
+  \`outside_population (closed|unassigned|not_in_project|no_item)\` (管理対象エージェントのアイテムが
+  閉じた / 自分にアサインされていない / 登録された Project にない / アイテムがない)。
 - **状態を知る 1 回の呼び出し**: \`devhub --tell --json status <issue=/pr= の値か URL、または agent=>\`。
   アイテムなら状態 (open / closed / merged)、自分へのアサイン、母集団か、watched Project ごとの
   lane、PR (状態、review decision、未解決の会話、checks)、紐づくエージェントとその状態
@@ -288,10 +288,10 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 対象とコードだけが並ぶ。何をもって「直った」とするか (\`status\` で見たどのレーン・状態なら誰に何を頼むか) が
 make-progress に書くこと。\`devhub --tell --json board\` の \`needsAction\` でいつでも今の一覧を取れる。
 
-GitHub は読むだけ (何も書かない)。母集団は自分にアサインされた open な Issue と PR (GitHub 全体、
-\`is:open assignee:@me\`) で、他人の PR のレビューも自分にアサインされていれば同じアイテムになる
-(レビュー依頼そのものはイベントにならない)。\`[orchestrator.github] projects\` は各アイテムの lane を読む
-Project の一覧で、母集団は決めない。1 tick 1 リクエストで、rate limit が減ると間隔が延びる。**ポーズ中は GitHub を一切ポーリングしない**。
+GitHub は読むだけ (何も書かない)。母集団は \`[orchestrator.github] projects\` に登録された Project の
+アイテム (Issue と PR のカード) のうち、open で自分にアサインされたもの。他人の PR のレビューも、
+その Project にあって自分にアサインされていれば同じアイテムになる (レビュー依頼そのものはイベントに
+ならない)。Project が 1 つもなければ母集団は空 (\`orchestrator status\` にもそう出る)。1 tick 1 リクエストで、rate limit が減ると間隔が延びる。**ポーズ中は GitHub を一切ポーリングしない**。
 resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届ける。\`orchestrator status\` と
 ボードのヘッダーに GitHub ポーリングが active / suspended / idle のどれかが出る。
 
@@ -516,7 +516,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
     レビュー依頼を人に出させる / エスカレーションを起こして紐付ける /
     レビュー待ちなら escalation wait --trigger "#130 が approve されたら"。
 
-    ## needs_action agent=… — outside_population (closed / unassigned / no_item)
+    ## needs_action agent=… — outside_population (closed / unassigned / not_in_project / no_item)
     担当エージェントに未 push の作業や開いた PR がないか聞く → なければ agent stop
     (必要なら workspace close をフラグを明示して)。続ける理由があるなら agent keep A --note 理由。
 

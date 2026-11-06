@@ -145,19 +145,15 @@ describe("the invariant", () => {
 				["agent a1b2c3d4-0000", { clause: "outside_population", outside }],
 			]);
 		}
-		// Not looked up yet: only the status rule.
-		expect(
-			keys(readInvariant({ items: [], agents: [agent()], escalations: [] })),
-		).toEqual([]);
-		const gone = readInvariant({
+		// On no registered Project (or none registered: the population is empty).
+		const off = readInvariant({
 			items: [],
-			missing: () => true,
 			agents: [agent()],
 			escalations: [],
 		});
-		expect(gone.needsAction[0]?.breach).toEqual({
+		expect(off.needsAction[0]?.breach).toEqual({
 			clause: "outside_population",
-			outside: "no_item",
+			outside: "not_in_project",
 		});
 	});
 

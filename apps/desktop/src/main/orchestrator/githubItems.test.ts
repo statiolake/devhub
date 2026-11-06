@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	ASSIGNED_QUERY,
 	GitHubItemSource,
 	githubQuery,
 	MAX_BACKOFF_MS,
@@ -17,55 +16,61 @@ function url(number: number, kind: "issues" | "pull") {
 	return `https://github.com/acme/app/${kind}/${String(number)}`;
 }
 
-interface Node {
-	kind: "Issue" | "PullRequest";
+interface Card {
+	kind: "Issue" | "PullRequest" | "DraftIssue";
 	id: string;
 	number: number;
 	state?: string;
 	assignees?: string[];
-	lanes?: [string, number, string | null][];
+	lane?: string | null;
 	linked?: { id: string; number: number; state?: string }[];
 }
 
-function node(one: Node) {
+function card(one: Card) {
 	return {
-		__typename: one.kind,
-		id: one.id,
-		number: one.number,
-		title: `#${String(one.number)}`,
-		url: url(one.number, one.kind === "Issue" ? "issues" : "pull"),
-		state: one.state ?? "OPEN",
-		isDraft: false,
-		repository: REPO,
-		assignees: { nodes: (one.assignees ?? [ME]).map((login) => ({ login })) },
-		projectItems: {
-			nodes: (one.lanes ?? []).map(([owner, number, lane]) => ({
-				project: { number, title: `Board ${owner}`, owner: { login: owner } },
-				status: lane === null ? null : { name: lane },
-			})),
-		},
-		...(one.kind === "Issue"
-			? {
-					closedByPullRequestsReferences: {
-						nodes: (one.linked ?? []).map((pull) => ({
-							id: pull.id,
-							number: pull.number,
-							title: `PR ${String(pull.number)}`,
-							url: url(pull.number, "pull"),
-							state: pull.state ?? "OPEN",
-							isDraft: false,
-							repository: REPO,
-						})),
+		status: one.lane === null ? null : { name: one.lane ?? "Todo" },
+		content:
+			one.kind === "DraftIssue"
+				? { __typename: "DraftIssue" }
+				: {
+						__typename: one.kind,
+						id: one.id,
+						number: one.number,
+						title: `#${String(one.number)}`,
+						url: url(one.number, one.kind === "Issue" ? "issues" : "pull"),
+						state: one.state ?? "OPEN",
+						isDraft: false,
+						repository: REPO,
+						assignees: {
+							nodes: (one.assignees ?? [ME]).map((login) => ({ login })),
+						},
+						...(one.kind === "Issue"
+							? {
+									closedByPullRequestsReferences: {
+										nodes: (one.linked ?? []).map((pull) => ({
+											id: pull.id,
+											number: pull.number,
+											title: `PR ${String(pull.number)}`,
+											url: url(pull.number, "pull"),
+											state: pull.state ?? "OPEN",
+											isDraft: false,
+											repository: REPO,
+										})),
+									},
+								}
+							: {}),
 					},
-				}
-			: {}),
 	};
 }
 
-interface Answer {
-	assigned: Node[];
+interface Page {
+	cards: Card[];
 	next?: string;
-	looked?: (Node | null)[];
+}
+
+interface Answer {
+	/** One page per Project, in the order of the settings. */
+	boards: Page[];
 	pulls?: {
 		id: string;
 		decision?: string;
@@ -85,17 +90,21 @@ function answer(state: Answer) {
 				limit: 5000,
 				resetAt: "2026-11-05T01:00:00Z",
 			},
-			assigned: {
-				pageInfo: {
-					hasNextPage: state.next !== undefined,
-					endCursor: state.next ?? null,
-				},
-				nodes: state.assigned.map(node),
-			},
 			...Object.fromEntries(
-				(state.looked ?? []).map((one, index) => [
-					`l${String(index)}`,
-					one === null ? null : node(one),
+				state.boards.map((page, index) => [
+					`p${String(index)}`,
+					{
+						projectV2: {
+							title: `Board ${String(index)}`,
+							items: {
+								pageInfo: {
+									hasNextPage: page.next !== undefined,
+									endCursor: page.next ?? null,
+								},
+								nodes: page.cards.map(card),
+							},
+						},
+					},
 				]),
 			),
 			pulls: (state.pulls ?? []).map((one) => ({
@@ -127,12 +136,12 @@ function answer(state: Answer) {
 }
 
 /** A source answering from `answers`, one per tick, and what it asked. */
-function world(answers: Answer[], linked: string[] = []) {
+function world(answers: Answer[], projects = ["acme/7"]) {
 	const asked: { query: string; variables: Record<string, unknown> }[] = [];
 	const pending: (() => void)[] = [];
-	let polled = 0;
+	const settings = { projects, interval: "90s" };
 	const source = new GitHubItemSource({
-		settings: () => ({ projects: ["acme/7"], interval: "90s" }),
+		settings: () => settings,
 		token: () => Promise.resolve({ token: "t" }),
 		post: (body) => {
 			asked.push(body as (typeof asked)[number]);
@@ -140,13 +149,9 @@ function world(answers: Answer[], linked: string[] = []) {
 			if (next === undefined) throw new Error("no more answers");
 			return Promise.resolve(answer(next));
 		},
-		linked: () => linked,
 		setTimer: (_ms, run) => {
 			pending.push(run);
 			return { cancel: () => undefined };
-		},
-		polled: () => {
-			polled += 1;
 		},
 		now: () => Date.parse("2026-11-05T00:00:00Z"),
 	});
@@ -155,7 +160,7 @@ function world(answers: Answer[], linked: string[] = []) {
 		asked,
 		source,
 		pending,
-		polled: () => polled,
+		settings,
 		async ticks(count: number) {
 			for (let index = 0; index < count; index += 1) await source.tick();
 		},
@@ -163,62 +168,90 @@ function world(answers: Answer[], linked: string[] = []) {
 }
 
 describe("the GitHub items", () => {
-	it("asks one request: the items assigned to me, the linked lookups, the details", () => {
-		const { query, variables } = githubQuery(null, [url(5, "issues")], ["P9"]);
-		expect(query).toContain(JSON.stringify(ASSIGNED_QUERY));
-		expect(query).toContain("l0: resource(url:$u0)");
+	it("asks one request: a page of each registered Project, and the details", () => {
+		const { query, variables } = githubQuery(
+			[{ owner: "acme", number: 7, after: null }],
+			["P9"],
+		);
+		expect(query).toContain("p0: repositoryOwner(login:$o0)");
+		expect(query).toContain("projectV2(number:$n0)");
 		expect(query).toContain("rateLimit");
+		expect(query).not.toContain("search(");
 		expect(variables).toMatchObject({
-			u0: url(5, "issues"),
+			o0: "acme",
+			n0: 7,
+			a0: null,
 			pulls: ["P9"],
 			wantPulls: true,
 		});
 	});
 
-	it("gives Issues and pull requests alike, lanes from the watched Projects only", async () => {
-		const run = world([
-			{
-				assigned: [
-					{
-						kind: "Issue",
-						id: "I1",
-						number: 123,
-						lanes: [
-							["acme", 7, "In Review"],
-							["other", 3, "Doing"],
-						],
-						linked: [{ id: "P130", number: 130 }],
-					},
-					{ kind: "PullRequest", id: "P9", number: 9 },
-				],
-			},
-		]);
+	it("gives a Project's Issues and pull requests alike, one item on two Projects with a lane on each", async () => {
+		const issue: Card = {
+			kind: "Issue",
+			id: "I1",
+			number: 123,
+			lane: "In Review",
+			linked: [{ id: "P130", number: 130 }],
+		};
+		const run = world(
+			[
+				{
+					boards: [
+						{
+							cards: [
+								issue,
+								{
+									kind: "PullRequest",
+									id: "P9",
+									number: 9,
+									assignees: ["bob"],
+								},
+								{ kind: "DraftIssue", id: "D1", number: 0 },
+							],
+						},
+						{ cards: [{ ...issue, lane: "Doing" }] },
+					],
+				},
+			],
+			["acme/7", "other/3"],
+		);
 		await run.ticks(1);
-		expect(
-			run.source.items()?.map((one) => [one.kind, one.item.number]),
-		).toEqual([
+		const items = run.source.items()!;
+		expect(items.map((one) => [one.kind, one.item.number])).toEqual([
 			["issue", 123],
 			["pr", 9],
 		]);
-		expect(run.source.items()?.[0]?.projects).toEqual([
+		expect(items[0]?.projects).toEqual([
 			{ project: "acme/7", lane: "In Review" },
+			{ project: "other/3", lane: "Doing" },
 		]);
+		expect(items[1]?.assignedToMe).toBe(false);
+		expect(run.source.state()).toMatchObject({
+			assigned: 1,
+			projects: [
+				{ ref: "acme/7", title: "Board 0" },
+				{ ref: "other/3", title: "Board 1" },
+			],
+		});
 	});
 
 	it("reads the details of the pull requests the items name", async () => {
-		const assigned: Node[] = [
-			{
-				kind: "Issue",
-				id: "I1",
-				number: 123,
-				linked: [{ id: "P130", number: 130 }],
-			},
-			{ kind: "PullRequest", id: "P9", number: 9 },
-		];
+		const page: Page = {
+			cards: [
+				{
+					kind: "Issue",
+					id: "I1",
+					number: 123,
+					linked: [{ id: "P130", number: 130 }],
+				},
+				{ kind: "PullRequest", id: "P9", number: 9 },
+			],
+		};
 		const run = world([
-			{ assigned },
+			{ boards: [page] },
 			{
-				assigned,
+				boards: [page],
 				pulls: [
 					{ id: "P130", decision: "CHANGES_REQUESTED", unresolved: 2 },
 					{ id: "P9", decision: "APPROVED", checks: "SUCCESS" },
@@ -242,69 +275,55 @@ describe("the GitHub items", () => {
 		});
 	});
 
-	it("knows the population only once every page is read", async () => {
+	it("knows the population only once every page of every Project is read", async () => {
 		const run = world([
-			{ assigned: [{ kind: "Issue", id: "I1", number: 1 }], next: "c1" },
-			{ assigned: [{ kind: "Issue", id: "I2", number: 2 }] },
+			{
+				boards: [
+					{ cards: [{ kind: "Issue", id: "I1", number: 1 }], next: "c1" },
+				],
+			},
+			{ boards: [{ cards: [{ kind: "Issue", id: "I2", number: 2 }] }] },
 		]);
 		await run.ticks(1);
 		expect(run.source.items()).toBeUndefined();
-		expect(run.asked[0]?.variables["after"]).toBeNull();
+		expect(run.asked[0]?.variables["a0"]).toBeNull();
 		await run.ticks(1);
-		expect(run.asked[1]?.variables["after"]).toBe("c1");
+		expect(run.asked[1]?.variables["a0"]).toBe("c1");
 		expect(run.source.items()?.map((one) => one.item.number)).toEqual([1, 2]);
-		expect(run.source.state().assigned).toBe(2);
 	});
 
-	it("looks up a linked item outside the population, and says which have none", async () => {
-		const closed = url(5, "issues");
-		const gone = url(6, "issues");
-		const run = world(
-			[
-				{ assigned: [] },
-				{
-					assigned: [],
-					looked: [
-						{
-							kind: "Issue",
-							id: "I5",
-							number: 5,
-							state: "CLOSED",
-							assignees: ["bob"],
-						},
-						null,
-					],
-				},
-			],
-			[closed, gone],
-		);
-		await run.ticks(2);
-		expect(run.asked[1]?.variables).toMatchObject({ u0: closed, u1: gone });
-		expect(run.source.items()).toEqual([
-			expect.objectContaining({ state: "closed", assignedToMe: false }),
-		]);
-		expect(run.source.missing(gone)).toBe(true);
-		expect(run.source.missing(closed)).toBe(false);
-		expect(run.polled()).toBe(2);
+	it("has an empty population, and asks GitHub nothing, with no Project registered", () => {
+		const run = world([], []);
+		expect(run.source.items()).toEqual([]);
+		expect(run.source.state().mode).toBe("idle");
+		expect(run.pending).toHaveLength(0);
 	});
 
 	it("keeps going with what GitHub answered beside its complaints", () => {
 		const reading = parseReading(
 			{
-				...answer({ assigned: [{ kind: "Issue", id: "I1", number: 1 }] }),
-				errors: [{ message: "Could not resolve to a node" }],
+				...answer({
+					boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }],
+				}),
+				errors: [
+					{ message: "Could not resolve to a ProjectV2 with the number 8." },
+				],
 			},
-			[],
+			["acme/7", "acme/8"],
 		);
-		expect(reading.problems).toEqual(["Could not resolve to a node"]);
-		expect(reading.assigned).toHaveLength(1);
+		expect(reading.problems).toEqual([
+			"Could not resolve to a ProjectV2 with the number 8.",
+		]);
+		expect(reading.pages.get("acme/7")?.cards).toHaveLength(1);
 		expect(() =>
 			parseReading({ errors: [{ message: "Bad credentials" }] }, []),
 		).toThrow(/Bad credentials/u);
 	});
 
 	it("runs only while there is an orchestrator, and forgets when it stops", async () => {
-		const run = world([{ assigned: [{ kind: "Issue", id: "I1", number: 1 }] }]);
+		const run = world([
+			{ boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }] },
+		]);
 		expect(run.pending).toHaveLength(1);
 		await run.ticks(1);
 		expect(run.source.items()).toHaveLength(1);
@@ -315,8 +334,8 @@ describe("the GitHub items", () => {
 
 	it("asks nothing while suspended, and polls once on resume", async () => {
 		const run = world([
-			{ assigned: [] },
-			{ assigned: [{ kind: "Issue", id: "I1", number: 1 }] },
+			{ boards: [{ cards: [] }] },
+			{ boards: [{ cards: [{ kind: "Issue", id: "I1", number: 1 }] }] },
 		]);
 		await run.ticks(1);
 		run.source.follow(true, true);

@@ -63,10 +63,10 @@ export interface OrchestratorConfig {
 
 export interface OrchestratorGitHubConfig {
   /**
-   * The GitHub Projects (v2) boards an item's lane (`Status`) is read from,
-   * as `OWNER/NUMBER` (`my-org/7`): a fact of the item, never what decides
-   * the population (every open Issue or pull request assigned to you). Read
-   * only; DevHub never moves a card.
+   * The GitHub Projects (v2) boards the orchestrator's population is read
+   * from, as `OWNER/NUMBER` (`my-org/7`): their open Issue and pull request
+   * cards assigned to you, each with its lane (`Status`). None: the
+   * population is empty. Read only; DevHub never moves a card.
    */
   readonly projects: readonly string[];
   /** The base poll interval (`90s`, `2m`); it only ever backs off from here. */
