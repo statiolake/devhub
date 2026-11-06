@@ -355,7 +355,10 @@ export class OrchestratorService {
 			now: () => this.#now(),
 			...(ports.kept === undefined ? {} : { kept: ports.kept }),
 		});
+		// An escalation linked, parked or closed changes what the invariant
+		// reads (`escalationAbout`): read it again, not on the next tick.
 		ports.store.onChange(() => {
+			this.#watchInvariant();
 			this.publish();
 		});
 	}

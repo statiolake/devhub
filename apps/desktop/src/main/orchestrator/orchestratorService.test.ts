@@ -313,11 +313,25 @@ describe("待機中 (escalation wait)", () => {
 });
 
 describe("the invariant", () => {
+	it("reads an escalation linked to the item at once: a 待機中 one about it stops no_agent", () => {
+		const run = world({ items: [issue()] });
+		run.later(61_000);
+		expect(run.sent).toEqual(["[needs_action] issue=acme/app#123 — no_agent"]);
+		const one = run.service.raise({ title: "待ち", markdown: "?" });
+		run.service.wait(one.id, { trigger: "B の返事" });
+		run.service.link(one.id, { links: [ISSUE_URL] });
+		expect(run.service.wire().needsAction).toEqual([]);
+		run.later(61_000);
+		expect(run.sent.filter((line) => line.includes("[needs_action]"))).toEqual([
+			"[needs_action] issue=acme/app#123 — no_agent",
+		]);
+	});
+
 	it("says an open item of mine nobody is on at once, and again at every delivery while it stays so", () => {
 		const run = world({ items: [issue()] });
-		// No grace: the first delivery after it is read carries it (the
-		// start's went before the first reading; the next waits to see that
-		// one taken, at most a minute here).
+		// No grace: every delivery while it stands carries it — the start's
+		// with init, then one per delivery (each waits to see the last one
+		// taken, at most a minute here).
 		run.later(61_000);
 		expect(run.sent).toEqual(["[needs_action] issue=acme/app#123 — no_agent"]);
 		run.later(61_000);
@@ -325,7 +339,10 @@ describe("the invariant", () => {
 			"[needs_action] issue=acme/app#123 — no_agent",
 			"[needs_action] issue=acme/app#123 — no_agent",
 		]);
+		// The start's delivery (with init) carries it too: the invariant is
+		// read whenever the escalations change, so it is read before then.
 		expect(run.of("needs_action").map((one) => one.fate)).toEqual([
+			"delivered",
 			"delivered",
 			"delivered",
 		]);
