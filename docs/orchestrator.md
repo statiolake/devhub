@@ -669,10 +669,26 @@ A message whose text could not be read says so and where to read it
   minutes by default; one that settled in between is on none. A delivery
   with nothing to carry is not sent. `orchestrator events` logs each line
   as it goes (`delivered`).
-- **Paused** (`orchestrator pause`, the board's Events switch): everything is
-  held, the person's words too, and GitHub is not polled. `orchestrator
-resume` polls once (the rate limit permitting), then sends the person's
-  words, then the rest as one message, at once.
+- **Paused** (`orchestrator pause`, the board's Events switch off): everything
+  is held, the person's words too, and GitHub is not polled; pausing sends
+  nothing. **Resuming delivers at once** (`orchestrator resume`, the switch
+  on): the person's held words, each alone, then what is pending and the
+  `needs_action` lines that stand now as one message — also when nothing
+  was pending but some subject needs action — whatever the interval, the
+  orchestrator's turn or the pickup wait; the interval then counts from
+  that delivery. GitHub polls again at once (the rate limit permitting),
+  alongside rather than before: the standing lines are read off the last
+  reading, and what the catch-up poll finds goes with the next delivery.
+- **The preview** (hover or focus the Events switch, or the pending count):
+  a card with exactly what the next delivery would send now — the person's
+  held words, each as its own message, then the batch as `event_prompt`
+  renders it (pending lines, stale ones left out, then the standing
+  `needs_action` lines, kept ones left out) — and when it goes: now, at the
+  interval's end, when the orchestrator's turn ends, or not while paused;
+  "Nothing to send" when nothing would. Main composes it with the delivery's
+  own `composeDelivery` (`EventDispatcher.preview`, on the board as
+  `nextDelivery`), reading only: nothing is marked delivered, logged or
+  scheduled.
 - **Kept in a log**: `orchestrator events` lists the last ones and what came
   of each (`delivered`, `pending`, `filtered`, `coalesced` into which,
   `dropped-stale`, `overflow`, `dropped` with no orchestrator).
@@ -807,7 +823,7 @@ devhub --tell escalation resume ID [--note TEXT]    # off its wait, to 対応中
 devhub --tell orchestrator start --root PATH --profile P --gui|--tui [--prompt -|TEXT]
 devhub --tell orchestrator status [--json]          # its agent, state, lane counts, pause, GitHub polling
 devhub --tell orchestrator stop | restart           # Stop Agent / Restart Session on it
-devhub --tell orchestrator pause | resume          # pause suspends GitHub polling; resume catches up and delivers, as one message
+devhub --tell orchestrator pause | resume          # pause suspends GitHub polling; resume delivers at once, as one message
 devhub --tell orchestrator events [--last N] [--json]   # recent events and what came of them
 devhub --tell orchestrator emit --type custom.NAME --text TEXT|-
 devhub --tell orchestrator timer list | set NAME INTERVAL | clear NAME   # for this session

@@ -246,6 +246,28 @@ describe("the person's answer", () => {
 		await run.service.events.resume();
 		expect(run.sent).toEqual(["esc=1「t」 への人の回答:\nはい"]);
 	});
+
+	it("is on the board's next delivery while paused, as resume sends it", () => {
+		const run = world();
+		const one = run.service.raise({ title: "t", markdown: "?" });
+		run.service.events.pause();
+		run.service.answer(one.id, "はい");
+		const next = run.service.wire().nextDelivery;
+		expect(next).toEqual({
+			human: ["esc=1「t」 への人の回答:\nはい"],
+			lines: 0,
+			more: 0,
+			when: { kind: "paused" },
+		});
+		expect(run.service.events.held()).toHaveLength(1);
+		run.service.events.resume();
+		expect(run.sent).toEqual(next?.human);
+		expect(run.service.wire().nextDelivery).toEqual({
+			human: [],
+			lines: 0,
+			more: 0,
+		});
+	});
 });
 
 describe("停滞 on the board", () => {

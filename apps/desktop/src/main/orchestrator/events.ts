@@ -36,9 +36,17 @@
  *    A delivery with nothing to carry is not sent.
  *
  * **Paused** holds everything, the person's words too, and the sources that
- * cost something (GitHub) are suspended (`paused`); `resume` lets them catch
- * up first, then sends the person's words, then everything else as one
- * message. With no orchestrator assigned there is nobody to tell, and an
+ * cost something (GitHub) are suspended (`paused`); `resume` sends at once
+ * the person's words, then everything else — pending and standing — as one
+ * message, whatever the interval, the orchestrator's turn or the pickup
+ * wait; the interval counts from there. The sources start again alongside:
+ * what their catch-up finds goes with the next delivery.
+ *
+ * What the next delivery would send is `preview()`: the same composition
+ * (`composeDelivery`) a delivery makes, read off the same state, with
+ * nothing marked, logged or changed — for the board's hover card.
+ *
+ * With no orchestrator assigned there is nobody to tell, and an
  * event is dropped (and kept in the log as dropped): the next start's `init`
  * sends it to the board anyway.
  *
@@ -216,13 +224,16 @@ export function customTypeProblem(type: string): boolean {
 	return !/^custom\.[a-z0-9][a-z0-9_-]{0,39}$/u.test(type);
 }
 
+/** An event that carries the person's own words. */
+export type HumanInputEvent = Extract<
+	OrchestratorEvent,
+	{ type: "escalation_answered" | "escalation.human_direct" }
+>;
+
 /** The person's own words: sent at once, as they typed them. */
 export function isHumanInput(
 	event: OrchestratorEvent,
-): event is Extract<
-	OrchestratorEvent,
-	{ type: "escalation_answered" | "escalation.human_direct" }
-> {
+): event is HumanInputEvent {
 	return (
 		event.type === "escalation_answered" ||
 		event.type === "escalation.human_direct"
@@ -533,8 +544,6 @@ export const PICKUP_TIMEOUT_MS = 60_000;
 const PICKUP_RETRY_MS = 2_000;
 /** The most lines one delivery carries; the rest are counted on a last line. */
 export const MAX_DELIVERY_LINES = 50;
-/** How long a resume waits for the sources to catch up before it delivers. */
-export const CATCH_UP_TIMEOUT_MS = 20_000;
 
 export interface EventDelivery {
 	/** The agent to tell, while one is assigned. */
@@ -560,10 +569,10 @@ export interface EventDelivery {
 	 */
 	readonly relevant?: (event: OrchestratorEvent) => boolean;
 	/**
-	 * The pause moved. On a resume, what it returns is awaited (at most
-	 * `CATCH_UP_TIMEOUT_MS`) before the held events go.
+	 * The pause moved: the sources that cost something follow it. A resume
+	 * does not wait for them.
 	 */
-	readonly paused?: (paused: boolean) => Promise<void> | void;
+	readonly paused?: (paused: boolean) => void;
 	/**
 	 * What every delivery carries besides what is pending, read just before
 	 * it goes: the invariant's `needs_action` lines (`InvariantWatch.due`).
@@ -587,8 +596,6 @@ interface PendingLine {
 
 export class EventDispatcher {
 	#paused = false;
-	/** Catching up after a resume: delivery waits for it. */
-	#catchingUp = false;
 	/** Pending, one line per subject, in the order the subjects came up. */
 	readonly #lines: PendingLine[] = [];
 	/** The person's words, held by a pause. */
@@ -652,7 +659,7 @@ export class EventDispatcher {
 			return entry;
 		}
 		if (isHumanInput(event)) {
-			if (this.#paused || this.#catchingUp) this.#human.push(entry);
+			if (this.#paused) this.#human.push(entry);
 			else this.#sendHuman(orchestrator, entry);
 			this.delivery.changed?.();
 			return entry;
@@ -690,39 +697,25 @@ export class EventDispatcher {
 	pause(): void {
 		if (this.#paused) return;
 		this.#paused = true;
-		void this.delivery.paused?.(true);
+		this.delivery.paused?.(true);
 		this.delivery.changed?.();
 	}
 
 	/**
-	 * Stop holding: let the suspended sources catch up, then send the
-	 * person's held words, then what is pending as one message. How many
-	 * lines went out.
+	 * Stop holding, and deliver at once: the person's held words, then what
+	 * is pending and what needs action now as one message — no batch window,
+	 * interval, pickup wait or turn to wait for: the person asked for them.
+	 * The interval counts from this delivery. How many lines went out.
 	 */
-	async resume(): Promise<number> {
+	resume(): number {
 		if (!this.#paused) return 0;
 		this.#paused = false;
-		this.delivery.changed?.();
-		const catchUp = this.delivery.paused?.(false);
-		if (catchUp !== undefined) {
-			this.#catchingUp = true;
-			let timer: { cancel(): void } | undefined;
-			await Promise.race([
-				catchUp.catch(() => undefined),
-				new Promise<void>((done) => {
-					timer = this.delivery.setTimer?.(CATCH_UP_TIMEOUT_MS, done);
-				}),
-			]);
-			timer?.cancel();
-			this.#catchingUp = false;
-		}
-		if (this.#paused) return 0;
+		this.delivery.paused?.(false);
 		const count = this.#lines.length + this.#human.length;
 		this.#releaseHuman();
-		// The person asked for them: no batch window, interval or pickup wait.
 		this.#awaiting = undefined;
 		this.#lastBatchAt = undefined;
-		const standing = this.flush();
+		const standing = this.#flush(true);
 		this.delivery.changed?.();
 		return count - this.#lines.length - this.#human.length + standing;
 	}
@@ -735,18 +728,21 @@ export class EventDispatcher {
 		}
 	}
 
-	/** Drop what no longer needs attention. */
-	#dropStale(): void {
+	/** The pending lines that no longer need attention: nothing is changed. */
+	#stale(): readonly PendingLine[] {
 		const relevant = this.delivery.relevant;
-		if (relevant === undefined) return;
-		const now = this.#now();
-		for (const line of [...this.#lines])
-			if (!relevant(line.entry.event)) {
-				line.entry.fate = "dropped-stale";
-				line.entry.reason = "no longer needs attention";
-				line.entry.settledAt = now;
-				this.#lines.splice(this.#lines.indexOf(line), 1);
-			}
+		if (relevant === undefined) return [];
+		return this.#lines.filter((line) => !relevant(line.entry.event));
+	}
+
+	/** Drop what no longer needs attention. */
+	#dropStale(now: number): void {
+		for (const line of this.#stale()) {
+			line.entry.fate = "dropped-stale";
+			line.entry.reason = "no longer needs attention";
+			line.entry.settledAt = now;
+			this.#lines.splice(this.#lines.indexOf(line), 1);
+		}
 	}
 
 	#intervalMs(): number {
@@ -781,9 +777,14 @@ export class EventDispatcher {
 	 * status moved) and by the batch timer. How many standing lines went.
 	 */
 	flush(): number {
+		return this.#flush(false);
+	}
+
+	/** `force`: a resume — the interval, the turn and the pickup do not hold it. */
+	#flush(force: boolean): number {
 		this.#timer?.cancel();
 		this.#timer = undefined;
-		if (this.#paused || this.#catchingUp) return 0;
+		if (this.#paused) return 0;
 		if (this.#human.length > 0) this.#releaseHuman();
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) {
@@ -794,29 +795,14 @@ export class EventDispatcher {
 		}
 		if (this.#lines.length === 0 && this.#standing().length === 0) return 0;
 		const now = this.#now();
-		// At most one batch per `delivery_interval`.
-		if (this.#lastBatchAt !== undefined) {
-			const wait = this.#lastBatchAt + this.#intervalMs() - now;
-			if (wait > 0) {
-				this.#retry(wait);
-				return 0;
-			}
-		}
-		if (this.delivery.busy?.(agentId) === true) {
-			if (this.#awaiting !== undefined) this.#awaiting.sawBusy = true;
+		const hold = force ? undefined : this.#hold(agentId, now);
+		if (hold !== undefined) {
+			if (hold.kind === "busy") {
+				if (this.#awaiting !== undefined) this.#awaiting.sawBusy = true;
+			} else this.#retry(hold.ms);
 			return 0;
 		}
-		// The last message may still be on its way into the queue the
-		// projection reads: wait to see it taken, for a while.
-		if (
-			this.#awaiting !== undefined &&
-			!this.#awaiting.sawBusy &&
-			now - this.#awaiting.at < PICKUP_TIMEOUT_MS
-		) {
-			this.#retry(PICKUP_RETRY_MS);
-			return 0;
-		}
-		this.#dropStale();
+		this.#dropStale(now);
 		const standing = this.#standing();
 		if (this.#lines.length === 0 && standing.length === 0) {
 			this.delivery.changed?.();
@@ -826,17 +812,15 @@ export class EventDispatcher {
 			...this.#lines.splice(0),
 			...standing.map((event) => this.#logged(event, now)),
 		];
-		const sent = lines.slice(0, MAX_DELIVERY_LINES);
-		const over = lines.slice(MAX_DELIVERY_LINES);
-		this.delivery.deliver(
-			agentId,
-			eventsMessage(
-				sent.map((line) => line.entry.event),
-				this.delivery.settings(),
-				now,
-				{ more: over.length },
-			),
+		const plan = composeDelivery(
+			[],
+			lines.map((line) => line.entry.event),
+			this.delivery.settings(),
+			now,
 		);
+		const sent = lines.slice(0, plan.events.length);
+		const over = lines.slice(plan.events.length);
+		if (plan.batch !== undefined) this.delivery.deliver(agentId, plan.batch);
 		for (const line of sent) {
 			line.entry.fate = "delivered";
 			line.entry.settledAt = now;
@@ -855,6 +839,74 @@ export class EventDispatcher {
 		// Still needing action at the next delivery: it is said again then.
 		if (standing.length > 0) this.#retry(Math.max(1_000, this.#intervalMs()));
 		return standing.length;
+	}
+
+	/**
+	 * What holds a batch now, if anything: the interval (`wait` until `at`),
+	 * the orchestrator's turn (`busy`), or the last message not yet seen
+	 * taken (`pickup`, looked at again in `ms`). Reads, changes nothing.
+	 */
+	#hold(
+		agentId: string,
+		now: number,
+	):
+		| { readonly kind: "wait" | "pickup"; readonly ms: number }
+		| { readonly kind: "busy" }
+		| undefined {
+		// At most one batch per `delivery_interval`.
+		if (this.#lastBatchAt !== undefined) {
+			const wait = this.#lastBatchAt + this.#intervalMs() - now;
+			if (wait > 0) return { kind: "wait", ms: wait };
+		}
+		if (this.delivery.busy?.(agentId) === true) return { kind: "busy" };
+		// The last message may still be on its way into the queue the
+		// projection reads: wait to see it taken, for a while.
+		if (
+			this.#awaiting !== undefined &&
+			!this.#awaiting.sawBusy &&
+			now - this.#awaiting.at < PICKUP_TIMEOUT_MS
+		)
+			return { kind: "pickup", ms: PICKUP_RETRY_MS };
+		return undefined;
+	}
+
+	/**
+	 * What the next delivery would send if it went now, and when it will go:
+	 * the person's held words, each its own message, then the batch — what is
+	 * pending (the stale left out) and the standing lines — composed as a
+	 * delivery composes it (`composeDelivery`). Nothing is marked, logged,
+	 * scheduled or changed.
+	 */
+	preview(): DeliveryPreview {
+		const now = this.#now();
+		const stale = new Set(this.#stale());
+		const plan = composeDelivery(
+			this.#human.flatMap((entry) =>
+				isHumanInput(entry.event) ? [entry.event] : [],
+			),
+			[
+				...this.#lines
+					.filter((line) => !stale.has(line))
+					.map((line) => line.entry.event),
+				...this.#standing(),
+			],
+			this.delivery.settings(),
+			now,
+		);
+		const agentId = this.delivery.orchestrator();
+		if (agentId === undefined) return { ...plan, when: { kind: "nobody" } };
+		if (this.#paused) return { ...plan, when: { kind: "paused" } };
+		if (plan.batch === undefined) return plan;
+		const hold = this.#hold(agentId, now);
+		return {
+			...plan,
+			when:
+				hold === undefined
+					? { kind: "now" }
+					: hold.kind === "wait"
+						? { kind: "at", at: now + hold.ms }
+						: { kind: "after_turn" },
+		};
 	}
 
 	#schedule(ms: number): void {
@@ -890,6 +942,62 @@ export function eventJson(event: OrchestratorEvent): Record<string, unknown> {
 /** The last line of a delivery that was cut at `MAX_DELIVERY_LINES`. */
 export function overflowLine(more: number): string {
 	return `…ほか ${String(more)} 件 (devhub --tell orchestrator events で確認)`;
+}
+
+/** What a delivery sends: see `composeDelivery`. */
+export interface DeliveryPlan {
+	/** The person's words, each a message of its own, sent first. */
+	readonly human: readonly string[];
+	/** The batch's events that go, in order: at most `MAX_DELIVERY_LINES`. */
+	readonly events: readonly OrchestratorEvent[];
+	/** How many more there were: counted on the batch's last line. */
+	readonly more: number;
+	/** The batch, as one message (`eventsMessage`); absent with no lines. */
+	readonly batch?: string;
+}
+
+/**
+ * When the next delivery goes: now (or within the batch window), at the
+ * interval's end, when the orchestrator has taken the last message or ended
+ * its turn, not while paused, never with no orchestrator.
+ */
+export type DeliveryWhen =
+	| { readonly kind: "now" }
+	| { readonly kind: "at"; readonly at: number }
+	| { readonly kind: "after_turn" }
+	| { readonly kind: "paused" }
+	| { readonly kind: "nobody" };
+
+/** `preview()`: the plan, and when it goes (absent: nothing to send). */
+export interface DeliveryPreview extends DeliveryPlan {
+	readonly when?: DeliveryWhen;
+}
+
+/**
+ * What one delivery sends, composed: `human` (the person's words) as their
+ * messages, then `lines` — pending and standing, in that order — as one
+ * message, cut at `MAX_DELIVERY_LINES`. Pure: a delivery and the preview
+ * both compose with it.
+ */
+export function composeDelivery(
+	human: readonly HumanInputEvent[],
+	lines: readonly OrchestratorEvent[],
+	prompts: {
+		readonly event_prompt: string;
+		readonly init_prompt: string | undefined;
+	},
+	now: number,
+): DeliveryPlan {
+	const events = lines.slice(0, MAX_DELIVERY_LINES);
+	const more = lines.length - events.length;
+	return {
+		human: human.flatMap((event) => humanMessages(event)),
+		events,
+		more,
+		...(events.length === 0
+			? {}
+			: { batch: eventsMessage(events, prompts, now, { more }) }),
+	};
 }
 
 /**

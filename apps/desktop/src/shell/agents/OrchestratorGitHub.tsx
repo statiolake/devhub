@@ -12,7 +12,14 @@
  * it to click a board: it closes a moment after the pointer leaves both.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+} from "react";
 import type { OrchestratorBoardWire } from "../../ipc/contract";
 import { githubHealth, projectUrl } from "../../model/orchestratorSettings";
 import { devhub } from "./client";
@@ -50,13 +57,12 @@ const HEALTH_LABEL = {
   backing_off: "Backing off",
 } as const;
 
-export function GitHubPill({
-  github,
-  orchestratorAgentId,
-}: {
-  readonly github: OrchestratorBoardWire["github"];
-  readonly orchestratorAgentId: string | undefined;
-}) {
+/**
+ * A header card's hover and focus: shown on enter or focus, gone a moment
+ * (`GITHUB_CARD_LINGER_MS`) after the pointer or focus has left the wrap and
+ * the card, at once on Escape. Spread `wrap` on the element holding both.
+ */
+export function useHoverCard() {
   const [shown, setShown] = useState(false);
   const linger = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const show = useCallback(() => {
@@ -70,6 +76,34 @@ export function GitHubPill({
     }, GITHUB_CARD_LINGER_MS);
   }, []);
   useEffect(() => () => clearTimeout(linger.current), []);
+  return {
+    shown,
+    wrap: {
+      onMouseEnter: show,
+      onMouseLeave: hide,
+      onFocus: show,
+      onBlur: (event: FocusEvent<HTMLElement>) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          hide();
+      },
+      onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+        if (event.key === "Escape" && shown) {
+          event.stopPropagation();
+          setShown(false);
+        }
+      },
+    },
+  };
+}
+
+export function GitHubPill({
+  github,
+  orchestratorAgentId,
+}: {
+  readonly github: OrchestratorBoardWire["github"];
+  readonly orchestratorAgentId: string | undefined;
+}) {
+  const { shown, wrap } = useHoverCard();
   const { health, why } = githubHealth(github);
   const idleWhy =
     orchestratorAgentId === undefined
@@ -77,22 +111,7 @@ export function GitHubPill({
       : "[orchestrator.github] projects names no Project: the population is empty";
   const boards = github.boards ?? [];
   return (
-    <span
-      className="orchestrator-github-wrap"
-      onMouseEnter={show}
-      onMouseLeave={hide}
-      onFocus={show}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-          hide();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && shown) {
-          event.stopPropagation();
-          setShown(false);
-        }
-      }}
-    >
+    <span className="orchestrator-github-wrap" {...wrap}>
       <button
         type="button"
         className="orchestrator-github"

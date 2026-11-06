@@ -45,6 +45,7 @@ import { historyDirectionOfButton } from "../historyButtons";
 import { focusIsOurs, reducedMotion, useNavStack } from "./navStack";
 import { RichText } from "./orchestratorRichText";
 import { FilesPage } from "./OrchestratorFiles";
+import { EventsSwitch } from "./OrchestratorDelivery";
 import { GitHubPill } from "./OrchestratorGitHub";
 import { dueText, EscalationNote, inProgressBefore } from "./EscalationNote";
 import { dueWords } from "../../model/escalations";
@@ -225,41 +226,15 @@ export function OrchestratorBoard({
           ) : null}
         </div>
         <div className="orchestrator-board-tools">
-          <button
-            type="button"
-            className="orchestrator-pause"
-            role="switch"
-            aria-checked={!board.paused}
+          <EventsSwitch
+            board={board}
             disabled={orchestrator === undefined}
-            title={
-              board.paused
-                ? "Events are held for the orchestrator. Resume delivers them, in order."
-                : "Each event (an answer, a stalled escalation, GitHub, an agent's turn, a timer) is sent to the orchestrator. Pause holds them."
-            }
-            onClick={() => {
+            onToggle={() => {
               void devhub()
                 .setOrchestratorPaused(!board.paused)
                 .catch(reportFailure);
             }}
-          >
-            <span className="orchestrator-pause-track" aria-hidden="true">
-              <span className="orchestrator-pause-knob" />
-            </span>
-            {/* The switch says on or off; the word is only what it is. */}
-            Events
-          </button>
-          {board.held > 0 ? (
-            <span
-              className="orchestrator-pending"
-              title={
-                board.paused
-                  ? "Events held by the pause. Resume delivers them as one message."
-                  : "Events waiting for the orchestrator's turn to end. They go out together, as one message."
-              }
-            >
-              {board.held} pending
-            </span>
-          ) : null}
+          />
           <GitHubPill
             github={board.github}
             orchestratorAgentId={board.orchestratorAgentId}

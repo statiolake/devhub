@@ -9585,11 +9585,10 @@ export class AppController {
 				// The escalation being read may have been retitled.
 				this.refreshWindowTitle();
 			},
-			// A paused orchestrator costs no GitHub quota: polling is suspended,
-			// and a resume waits for its catch-up poll before it delivers.
+			// A paused orchestrator costs no GitHub quota: polling is suspended.
+			// A resume polls at once, and delivers without waiting for it.
 			paused: (paused) => {
 				this.followGitHub(paused);
-				return paused ? undefined : this.githubItems.caughtUp();
 			},
 			github: () => {
 				const state = this.githubItems.state();
@@ -11811,12 +11810,12 @@ export class AppController {
 			this.orchestratorView = parsed;
 			this.refreshWindowTitle();
 		});
-		handle(CHANNELS.setOrchestratorPaused, async (_event, paused: unknown) => {
+		handle(CHANNELS.setOrchestratorPaused, (_event, paused: unknown) => {
 			if (typeof paused !== "boolean")
 				throw namedFailure(new Error("paused is true or false"));
 			const events = this.requireOrchestrator().events;
 			if (paused) events.pause();
-			else await events.resume();
+			else events.resume();
 		});
 		// The Files tab: the orchestrator's folder, read-only and confined to
 		// it (`orchestrator/orchestratorFiles.ts`).

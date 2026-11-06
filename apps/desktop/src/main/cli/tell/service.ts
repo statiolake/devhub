@@ -655,8 +655,8 @@ export interface TellOrchestratorPorts {
 		readonly prompt: string | undefined;
 	}): Promise<string>;
 	pause(): void;
-	/** How many held lines went out (after the suspended sources caught up). */
-	resume(): Promise<number>;
+	/** How many held lines went out: at once, the sources catching up alongside. */
+	resume(): number;
 	/** The last `last` events, oldest first, each with what came of it. */
 	events(last: number): readonly TellEventEntry[];
 	/** A `custom.*` event, as any source dispatches one. */
@@ -1226,11 +1226,11 @@ export class TellService {
 				this.ports.orchestrator.pause();
 				return {
 					message:
-						"The orchestrator's events are paused: each is held (one line per subject), GitHub polling is suspended, and 'orchestrator resume' catches up and delivers them as one message.",
+						"The orchestrator's events are paused: each is held (one line per subject), GitHub polling is suspended, and 'orchestrator resume' delivers them at once, as one message.",
 					data: { paused: true },
 				};
 			case "orchestrator-resume": {
-				const delivered = await this.ports.orchestrator.resume();
+				const delivered = this.ports.orchestrator.resume();
 				return {
 					message: `The orchestrator's events are delivered again${delivered === 0 ? "" : `; ${String(delivered)} held line(s) went out as one message`}.`,
 					data: { paused: false, delivered },

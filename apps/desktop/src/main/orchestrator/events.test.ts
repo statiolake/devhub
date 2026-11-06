@@ -3,6 +3,7 @@ import { DEFAULT_ORCHESTRATOR_EVENTS } from "../../model/orchestratorSettings.js
 import {
 	EventDispatcher,
 	MAX_DELIVERY_LINES,
+	composeDelivery,
 	eventLine,
 	eventsMessage,
 	humanMessages,
@@ -404,5 +405,141 @@ describe("the message", () => {
 				now,
 			),
 		).toMatch(/^i \[init\]/u);
+	});
+});
+
+describe("the preview", () => {
+	const answer = (text: string): OrchestratorEvent => ({
+		type: "escalation_answered",
+		escalationId: 3,
+		title: "t",
+		agents: [],
+		answers: [{ text }],
+	});
+
+	it("is exactly what the next delivery sends, and changes nothing", () => {
+		const standing = [needsActionIssue("idle_no_escalation")];
+		const { dispatcher, sent, advance } = world({
+			standing: () => standing,
+			relevant: (event) => event.type !== "waiting.changed",
+		});
+		dispatcher.dispatch({ type: "init" });
+		advance(300);
+		sent.length = 0;
+		dispatcher.dispatch({ type: "timer.elapsed", name: "t", interval: "5m" });
+		dispatcher.dispatch({
+			type: "waiting.changed",
+			escalationId: 4,
+			reasons: ["due"],
+			waitSince: 1,
+		});
+		const log = dispatcher.recent(200).map((entry) => ({ ...entry }));
+		const held = dispatcher.held();
+		const preview = dispatcher.preview();
+		// Nothing marked, logged or dropped by looking.
+		expect(dispatcher.recent(200)).toEqual(log);
+		expect(dispatcher.held()).toEqual(held);
+		expect(dispatcher.preview()).toEqual(preview);
+		expect(preview.human).toEqual([]);
+		expect(preview.batch).toBe(
+			"handle: [timer.elapsed] t\n[needs_action] issue=acme/app#123 — idle_no_escalation",
+		);
+		// The interval since the init delivery holds it till then.
+		expect(preview.when).toEqual({ kind: "at", at: 1_000_300 + 300_000 });
+		advance(300_000);
+		expect(sent).toEqual([preview.batch]);
+		expect(dispatcher.preview()).toMatchObject({
+			batch: "handle: [needs_action] issue=acme/app#123 — idle_no_escalation",
+		});
+	});
+
+	it("says nothing to send, and no time, when nothing would go", () => {
+		const { dispatcher } = world();
+		expect(dispatcher.preview()).toEqual({ human: [], events: [], more: 0 });
+	});
+
+	it("while paused: the person's words each alone, then the batch, as resume sends them", () => {
+		const { dispatcher, sent } = world({
+			standing: () => [needsActionIssue()],
+		});
+		dispatcher.pause();
+		dispatcher.dispatch(answer("一つ目"));
+		dispatcher.dispatch(answer("二つ目"));
+		dispatcher.dispatch({ type: "custom.x", text: "y" });
+		const preview = dispatcher.preview();
+		expect(preview.when).toEqual({ kind: "paused" });
+		expect(preview.human).toEqual([
+			"esc=3「t」 への人の回答:\n一つ目",
+			"esc=3「t」 への人の回答:\n二つ目",
+		]);
+		expect(sent).toEqual([]);
+		dispatcher.resume();
+		expect(sent).toEqual([...preview.human, preview.batch]);
+	});
+
+	it("is composed by the delivery's own composer, cut at the cap", () => {
+		const lines = Array.from(
+			{ length: MAX_DELIVERY_LINES + 2 },
+			(_, index): OrchestratorEvent => ({
+				type: "custom.x",
+				text: String(index),
+			}),
+		);
+		const plan = composeDelivery(
+			[],
+			lines,
+			{ event_prompt: "{EVENT}", init_prompt: undefined },
+			0,
+		);
+		expect(plan.events).toHaveLength(MAX_DELIVERY_LINES);
+		expect(plan.more).toBe(2);
+		expect(plan.batch?.split("\n").at(-1)).toMatch(/ほか 2 件/u);
+	});
+});
+
+describe("turning events on", () => {
+	it("delivers at once, past the interval and a busy orchestrator, and the interval counts from there", () => {
+		const { dispatcher, sent, state, advance } = world({ interval: "5m" });
+		dispatcher.dispatch({ type: "init" });
+		advance(300);
+		expect(sent).toHaveLength(1);
+		dispatcher.pause();
+		dispatcher.dispatch({ type: "custom.a", text: "a" });
+		advance(10_000);
+		state.busy = true;
+		expect(dispatcher.resume()).toBe(1);
+		expect(sent).toEqual([expect.any(String), "handle: [custom.a] — a"]);
+		state.busy = false;
+		dispatcher.dispatch({ type: "custom.b", text: "b" });
+		advance(299_000);
+		expect(sent).toHaveLength(2);
+		advance(1_000);
+		expect(sent.at(-1)).toBe("handle: [custom.b] — b");
+	});
+
+	it("sends the standing needs_action lines at once with nothing pending", () => {
+		const { dispatcher, sent } = world({
+			standing: () => [needsActionIssue()],
+		});
+		dispatcher.flush();
+		sent.length = 0;
+		dispatcher.pause();
+		dispatcher.resume();
+		expect(sent).toEqual([
+			"handle: [needs_action] issue=acme/app#123 — no_agent",
+		]);
+	});
+
+	it("off sends nothing", () => {
+		const { dispatcher, sent } = world({
+			standing: () => [needsActionIssue()],
+		});
+		dispatcher.dispatch({ type: "custom.a", text: "a" });
+		dispatcher.flush();
+		sent.length = 0;
+		dispatcher.dispatch({ type: "custom.b", text: "b" });
+		dispatcher.pause();
+		dispatcher.flush();
+		expect(sent).toEqual([]);
 	});
 });

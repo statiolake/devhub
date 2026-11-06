@@ -45,6 +45,7 @@ import type {
 	AgentOrchestrationWire,
 	EscalationWire,
 	OrchestratorBoardWire,
+	OrchestratorNextDeliveryWire,
 } from "../../ipc/contract.js";
 import {
 	board,
@@ -121,10 +122,10 @@ export interface OrchestratorServicePorts {
 	/** The board moved: push it. */
 	readonly publish: (board: OrchestratorBoardWire) => void;
 	/**
-	 * The pause moved: the sources that cost something follow it. On a resume
-	 * the promise is awaited before the held events go (a catch-up poll).
+	 * The pause moved: the sources that cost something follow it. A resume
+	 * delivers at once; what their catch-up finds goes with the next delivery.
 	 */
-	readonly paused?: (paused: boolean) => Promise<void> | void;
+	readonly paused?: (paused: boolean) => void;
 	/** How GitHub polling stands, for the board's header. */
 	readonly github?: () => OrchestratorBoardWire["github"];
 	/**
@@ -1053,6 +1054,7 @@ export class OrchestratorService {
 			},
 			paused: this.events.paused,
 			held: this.events.held().length,
+			nextDelivery: this.#nextDelivery(),
 			github: this.ports.github?.() ?? { state: "idle" },
 			needsAction: this.#invariant.needsAction(),
 			agentStates: this.#agentStates(),
@@ -1061,6 +1063,18 @@ export class OrchestratorService {
 			waiting: lanes.waiting.map(escalation),
 			closed: lanes.closed.slice(0, CLOSED_SHOWN).map(escalation),
 			graceMs: this.#graceMs,
+		};
+	}
+
+	/** The Events switch's hover card: what the next delivery would send. */
+	#nextDelivery(): OrchestratorNextDeliveryWire {
+		const preview = this.events.preview();
+		return {
+			human: preview.human,
+			...(preview.batch === undefined ? {} : { batch: preview.batch }),
+			lines: preview.events.length,
+			more: preview.more,
+			...(preview.when === undefined ? {} : { when: preview.when }),
 		};
 	}
 

@@ -624,6 +624,31 @@ export interface EscalationWire {
 }
 
 /**
+ * The next delivery, as it would go now (`EventDispatcher.preview`): the
+ * person's held words, each a message of its own, then the batch — the
+ * `event_prompt` with `{EVENT}` filled — and when it goes.
+ */
+export interface OrchestratorNextDeliveryWire {
+	readonly human: readonly string[];
+	/** The batch message; absent with no lines. */
+	readonly batch?: string;
+	/** How many lines the batch carries, and how many more were cut. */
+	readonly lines: number;
+	readonly more: number;
+	/**
+	 * `now` (within the batch window), `at` the interval's end,
+	 * `after_turn` once the orchestrator takes it, `paused` until resumed,
+	 * `nobody` with no orchestrator. Absent: nothing to send.
+	 */
+	readonly when?:
+		| { readonly kind: "now" }
+		| { readonly kind: "at"; readonly at: number }
+		| { readonly kind: "after_turn" }
+		| { readonly kind: "paused" }
+		| { readonly kind: "nobody" };
+}
+
+/**
  * The Orchestrator screen's board: the three lanes, the orchestrator, and
  * whether its events are paused. Pushed whenever any of it moves.
  */
@@ -648,6 +673,11 @@ export interface OrchestratorBoardWire {
 	 * finish its turn (they then go out together, as one message).
 	 */
 	readonly held: number;
+	/**
+	 * What the next delivery would send now, for the Events switch's hover
+	 * card. Always set by main; absent reads as nothing to send.
+	 */
+	readonly nextDelivery?: OrchestratorNextDeliveryWire;
 	/**
 	 * GitHub polling: `active`; `suspended` while events are paused (nothing
 	 * is asked of GitHub, the last reading is kept); `idle` with no
