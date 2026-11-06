@@ -29,8 +29,9 @@
  *
  * **Linked**, the one rule: an agent is linked to the item its meta `issue=`
  * names, by URL. DevHub writes that pair itself when `issue assign` (or the
- * window's Assign Issue) starts the agent on an Issue or a pull request; it
- * is not set by hand. The branch a Workspace is on does not link anything.
+ * window's Assign Issue) starts the agent on an Issue or a pull request, and
+ * `agent meta` / `--meta` set it by hand too, as that URL. The branch a
+ * Workspace is on does not link anything.
  *
  * **About an item**, for an escalation: one of its links is the item's URL,
  * or one of its agents — `--agent`, a `devhub:agent/` link, the agents of a
@@ -68,8 +69,9 @@ import type { KeptStore } from "./keptFile.js";
 
 /**
  * The meta key the item linkage is kept under: written by DevHub when `issue
- * assign` (or Assign Issue) starts an agent on an Issue or a pull request,
- * refused to `agent meta` and `--meta` (`cli/tell/service.ts`).
+ * assign` (or Assign Issue) starts an agent on an Issue or a pull request;
+ * `agent meta` and `--meta` may set it too, to an item URL only
+ * (`cli/tell/service.ts`).
  */
 export const ISSUE_LINK_KEY = "issue";
 

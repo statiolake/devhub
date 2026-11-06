@@ -42,7 +42,7 @@ DevHub から届いたメッセージの各行 (対象ごとに 1 行) は、そ
 [waiting.changed] は待機中のエスカレーションの条件が満たされたかもしれない合図 (— subjects_changed: 対象のアイテムやエージェントの状態が変わった、— due: --at の時刻が来た)。サブエージェントが escalation show でトリガーを読み、満たされていれば escalation resume して担当に再開を頼む。
 
 ## 5. DevHub の約束事 (ユーザーのルールではなく DevHub の仕組み)
-- アイテムの紐付けは 1 つの規則だけ: エージェントの meta issue=<アイテムの URL> (Issue でも PR でも)。issue assign がエージェントを始めるときに DevHub が書く。手では書けない。アイテムの作業 (PR のレビューも) は issue assign に Issue か PR の URL を渡して始める。
+- アイテムの紐付けは 1 つの規則だけ: エージェントの meta issue=<アイテムの URL> (Issue でも PR でも)。issue assign がエージェントを始めるときに DevHub が書く。issue assign 以外で始めたエージェントは agent meta A set issue <URL> で紐づける (値はアイテムの URL だけ)。アイテムの作業 (PR のレビューも) は issue assign に Issue か PR の URL を渡して始める。
 - 自分が始めるエージェントには必ず --managed を付ける (agent new / issue assign)。--meta parent=<自分の id> も付ける。
 - 権限確認 (permission prompt) は決して承認しない。承認できるのは人だけ。止まっていれば notify かエスカレーションで知らせる。
 - エスカレーションへの人の回答を書かない。回答は人が DevHub の画面でだけ書く。

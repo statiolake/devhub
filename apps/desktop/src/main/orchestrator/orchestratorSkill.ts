@@ -459,7 +459,7 @@ resume ですぐ 1 回読み、その結果も resume の 1 通に入れて届�
    タイマーの間隔 (例: 30 分ごとに棚卸し)。
 6. エスカレーションの言語と書き方 (上のテンプレートでよいか、長さ、図の好み)。
 7. エージェントの命名と meta タグ (例 \`parent=<orchestrator id>\`、
-   \`role=reviewer\`。\`issue=\` は DevHub が書く紐付けで、手では付けない)。meta は停止・クローズ後もセッションに
+   \`role=reviewer\`。\`issue=\` はアイテムへの紐付けで、issue assign が書く。それ以外で始めたエージェントは \`agent meta A set issue <URL>\` で付ける)。meta は停止・クローズ後もセッションに
    残り、\`sessions --meta\` で探せて、\`agent resume\` で引き継がれる。
 8. イベント種別ごとに何をしたいか (playbook の素案を一緒に作る)。
 9. 必要なら稼働時間 / 静かにしてほしい時間帯。

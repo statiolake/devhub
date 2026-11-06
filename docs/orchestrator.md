@@ -484,9 +484,10 @@ full yet — only the status rule applies to agents, and no item is said.
 **Linked**, the one rule: an agent is linked to the item its meta `issue=`
 names (by URL: an Issue's `/issues/N` or a pull request's `/pull/N`). DevHub
 writes that pair itself when `issue assign` — or the window's Assign Issue —
-starts an agent on an Issue or a pull request (`ISSUE_LINK_KEY`); it
-is refused to `agent meta`, `--meta` and `session meta` (the linkage is not
-set by hand), kept with the agent's other metadata across restarts and
+starts an agent on an Issue or a pull request (`ISSUE_LINK_KEY`). `agent
+meta`, `--meta` and `session meta` set it by hand too — to that URL only, so
+an agent started another way can be linked — and it is kept with the agent's
+other metadata across restarts and
 resumes, and listed by `agent status` as `meta issue=…`. The branch a
 Workspace is on links nothing.
 

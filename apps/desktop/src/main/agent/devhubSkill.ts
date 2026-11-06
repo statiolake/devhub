@@ -217,7 +217,8 @@ names an agent, yourself included.
   DevHub links a workspace to its Issue by it. For a pull request pass its own
   branch (\`gh pr view N --json headRefName\`). Either way the new agent is
   linked to the item (meta \`issue=<its URL>\`, written by DevHub): an Issue
-  and a pull request are the same kind of item to the orchestrator.
+  and a pull request are the same kind of item to the orchestrator. An agent
+  started another way is linked with \`agent meta A set issue <URL>\`.
 - \`--repo\` is the clone to work in (find it with \`workspaces\`, or ask the
   person). \`--branch\` makes (or opens) a worktree of the branch;
   \`--root\` works in the clone itself instead (with \`--branch\`: switched

@@ -2709,7 +2709,7 @@ describe("sessions and agent resume", () => {
 			session: "c1aa-0001",
 			meta: { parent: "orch-1", issue: "12" },
 		});
-		// The Issue linkage is DevHub's: never set or unset by hand.
+		// The item linkage is set by hand only as an item URL.
 		await expect(
 			viaSocket(
 				service,
@@ -2719,12 +2719,13 @@ describe("sessions and agent resume", () => {
 					"c1aa-0001",
 					"--profile",
 					"claude",
-					"unset",
+					"set",
 					"issue",
+					"12",
 				],
 				self,
 			),
-		).rejects.toThrow(/issue= is the item linkage DevHub writes/u);
+		).rejects.toThrow(/issue= links the agent to an item: it takes the URL/u);
 		const list = await viaSocket(
 			service,
 			["session", "meta", "x1dd-0001"],
@@ -3639,9 +3640,10 @@ describe("agent rename and agent meta", () => {
 		expect(ports.calls).toContain("meta aaaa1111-0000 ticket <unset>");
 	});
 
-	it("refuses the item linkage by hand, and keeps only an agent that needs action", async () => {
+	it("takes the item linkage by hand only as an item URL, and keeps only an agent that needs action", async () => {
 		const { service, ports } = setup();
-		for (const line of [
+		await viaSocket(
+			service,
 			[
 				"agent",
 				"meta",
@@ -3650,7 +3652,32 @@ describe("agent rename and agent meta", () => {
 				"issue",
 				"https://github.com/o/r/issues/1",
 			],
+			coordinator,
+		);
+		await viaSocket(
+			service,
+			[
+				"agent",
+				"meta",
+				"aaaa",
+				"set",
+				"issue",
+				"https://github.com/o/r/pull/2",
+			],
+			coordinator,
+		);
+		await viaSocket(
+			service,
 			["agent", "meta", "aaaa", "unset", "issue"],
+			coordinator,
+		);
+		expect(ports.calls.filter((call) => call.startsWith("meta "))).toHaveLength(
+			3,
+		);
+		ports.calls.length = 0;
+		for (const line of [
+			["agent", "meta", "aaaa", "set", "issue", "1"],
+			["agent", "meta", "aaaa", "set", "issue", "o/r#1"],
 			[
 				"agent",
 				"new",
@@ -3665,7 +3692,7 @@ describe("agent rename and agent meta", () => {
 			],
 		])
 			await expect(viaSocket(service, line, coordinator)).rejects.toThrow(
-				/issue= is the item linkage DevHub writes when 'issue assign'/u,
+				/issue= links the agent to an item: it takes the URL/u,
 			);
 		expect(ports.calls).toEqual([]);
 		await expect(

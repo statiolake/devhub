@@ -2208,7 +2208,7 @@ export class TellService {
 	private async meta(
 		command: Extract<TellCommand, { verb: "agent-meta" }>,
 	): Promise<TellAnswer> {
-		if (command.op !== "list") refuseLinkKey(command.key);
+		if (command.op === "set") checkLinkMeta(command.key, command.value);
 		const agent = this.agent(command.agent);
 		if (command.op !== "list" && command.key !== undefined)
 			await this.ports.setAgentMeta(
@@ -2302,7 +2302,7 @@ export class TellService {
 		// first of a list, because an agent calling this must get the same
 		// thing whatever the person's settings say. Checked before anything is
 		// done, so a refusal changes nothing.
-		for (const pair of command.meta ?? []) refuseLinkKey(pair.key);
+		for (const pair of command.meta ?? []) checkLinkMeta(pair.key, pair.value);
 		const missing: string[] = [];
 		if (command.workspace === undefined)
 			missing.push(
@@ -2341,7 +2341,7 @@ export class TellService {
 	): Promise<TellAnswer> {
 		// As `agent new`: every choice the window would make from settings or
 		// from the first row is an argument, all checked before anything runs.
-		for (const pair of command.meta ?? []) refuseLinkKey(pair.key);
+		for (const pair of command.meta ?? []) checkLinkMeta(pair.key, pair.value);
 		const missing: string[] = [];
 		if (command.repo === undefined)
 			missing.push(
@@ -3503,7 +3503,7 @@ export class TellService {
 			command.session,
 			command.profile,
 		);
-		if (command.op !== "list") refuseLinkKey(command.key);
+		if (command.op === "set") checkLinkMeta(command.key, command.value);
 		if (command.op !== "list" && session.liveAgentId !== undefined)
 			throw new Error(
 				`session ${session.id} is agent ${session.liveAgentId}'s, running now: use 'agent meta ${session.liveAgentId}'.`,
@@ -4813,11 +4813,22 @@ function needsActionLines(board: OrchestratorBoardWire, now: number): string[] {
 	];
 }
 
-/** The meta key DevHub keeps the Issue linkage under: never set by hand. */
-function refuseLinkKey(key: string | undefined): void {
-	if (key === ISSUE_LINK_KEY)
+/**
+ * The item linkage (`issue=`), set by hand as `issue assign` writes it: the
+ * URL of an Issue or a pull request, which is what the invariant compares.
+ */
+function checkLinkMeta(
+	key: string | undefined,
+	value: string | undefined,
+): void {
+	if (key !== ISSUE_LINK_KEY) return;
+	if (
+		!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+\/?$/u.test(
+			value?.trim() ?? "",
+		)
+	)
 		throw new Error(
-			`${ISSUE_LINK_KEY}= is the item linkage DevHub writes when 'issue assign' starts an agent on an Issue or a pull request: it is not set by hand. Start the agent with 'issue assign <url>' to link it.`,
+			`${ISSUE_LINK_KEY}= links the agent to an item: it takes the URL of an Issue or a pull request (https://github.com/OWNER/REPO/issues/N or …/pull/N), as 'issue assign' writes it; got ${JSON.stringify(value ?? "")}.`,
 		);
 }
 
