@@ -1418,6 +1418,35 @@ first, the renderer last, so the renderer resumes to an extension host that
 already answers. Every frozen workbench is thawed when DevHub quits (a
 stopped process ends on nothing but SIGKILL), and on Node's `exit`.
 
+**Only what is exclusively the workbench's is ever stopped.** Before it
+stops anything, main lists what must not be (`foreignPids`): main itself and
+its parent; every Electron process that is neither a renderer nor a utility
+process (`app.getAppMetrics()` type other than `Tab`/`Utility`: the GPU
+process above all, which draws every page of the window); and the process of
+every other WebContents in DevHub (`webContents.getAllWebContents()`): the
+shell, the Sidebar, the Agents page, the toasts, the picker, every terminal
+pane, every other workbench, every view the workbench attached. Chromium,
+not DevHub, decides which contents share a renderer process, so this is
+asked of the contents as they are, not assumed from their URLs. A foreign pid
+is never stopped and never walked into, even when main named it as the
+workbench's own (`freezeTargets`' `foreign`); a workbench whose renderer is
+foreign is not frozen at all, and the planner keeps one whose renderer also
+hosts anything else awake (`sharedRenderers`, from every live WebContents,
+not only the workbench views). A SIGSTOP on a shared process would stop the
+page in it with the workbench — the whole window, for the GPU process or the
+shell — and nothing would continue it.
+
+**Nothing stays stopped that the lifecycle does not know to be frozen.**
+Each plan is told which folders the freezer holds stopped
+(`LifecycleInput.stopped`); one whose phase is no longer `frozen` — it
+failed while frozen, its view went, it is no longer wanted — is thawed in that
+plan, before any dispose or open (`thawed: its processes were stopped while
+<phase>` in the log). A freeze of a folder the freezer still holds continues
+what the earlier one stopped first, so no record is dropped with its
+processes still stopped. Each completed freeze says what it stopped:
+`[devhub] workbench '<folder>' frozen: stopped <pids> (renderer <pid>,
+utilities <pids>)`.
+
 A stopped process cannot `accept()`, but the kernel still completes the
 handshake of a TCP connection to its listening socket and queues it. So while
 anything is frozen, `WorkbenchSensors` reads every listen queue twice a second,

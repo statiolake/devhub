@@ -123,8 +123,18 @@ export interface LifecycleInput {
 	readonly holds?: readonly string[];
 	/** A person asked for this one to be frozen now (the Task Manager's Sleep). */
 	readonly freeze?: string;
-	/** Folders whose renderer process also draws another live workbench. */
+	/**
+	 * Folders whose renderer process also hosts other contents — another
+	 * workbench, or one of DevHub's own pages. Never frozen.
+	 */
 	readonly sharedRenderers?: readonly string[];
+	/**
+	 * Folders whose processes are stopped now (`WorkbenchFreezer`). One that
+	 * is not `frozen` any more — it failed, its view went, it is no longer
+	 * wanted — is thawed by this plan: nothing stays stopped that the
+	 * lifecycle does not know to be frozen.
+	 */
+	readonly stopped?: readonly string[];
 }
 
 /** What the executor carries out, in this order. */
@@ -594,6 +604,20 @@ export class WorkbenchLifecycle {
 			),
 		};
 		this.noteAwake(this.lastFacts);
+
+		// Stopped processes with no frozen phase behind them: a failure, a
+		// dispose or a forgetting moved the phase without a thaw. They are
+		// continued now — before any dispose or open in this plan (`ORDER`) —
+		// so no process is left stopped that nothing would ever continue.
+		for (const folder of input.stopped ?? []) {
+			const kind = this.phase(folder).kind;
+			if (kind === "frozen") continue;
+			if (effects.some((e) => e.kind === "thaw" && e.folder === folder)) {
+				continue;
+			}
+			this.say(folder, `thawed: its processes were stopped while ${kind}`);
+			effects.push({ kind: "thaw", folder });
+		}
 
 		for (const [folder, record] of this.records) {
 			if (record.phase.kind === "gave-up" && !record.reported) {

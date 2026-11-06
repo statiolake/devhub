@@ -310,6 +310,8 @@ import {
 	SocketTrafficSampler,
 	WorkbenchFreezer,
 	WorkbenchSensors,
+	foreignPids,
+	sharedRendererFolders,
 	systemProcessDeps,
 	windowUtilitiesOf,
 	type WorkbenchPids,
@@ -706,6 +708,13 @@ function rehBundleDirectory(): string {
  * two answer `isDestroyed`. The third keeps the `WebContents` object, so a
  * check that asked only that question said yes about a dead process.
  */
+/** Every WebContents in DevHub that is not destroyed: pages, workbenches, the rest. */
+function liveContents(): Electron.WebContents[] {
+	return electron.webContents
+		.getAllWebContents()
+		.filter((contents) => !contents.isDestroyed());
+}
+
 function isLiveWorkbench(view: WorkbenchView): boolean {
 	return !view.isDestroyed() && !view.webContents.isCrashed();
 }
@@ -7348,15 +7357,24 @@ export class AppController {
 		const freeze = this.workbenchFreeze;
 		this.workbenchFreeze = undefined;
 		const minutes = this.config.general.workbench_discard_minutes;
-		// Two workbench views in one renderer process (Chromium's grouping):
-		// stopping it for one would stop the other.
-		const renderers = new Map<number, string[]>();
+		// A workbench whose renderer process also hosts any other contents —
+		// another workbench, or one of DevHub's own pages (Chromium decides the
+		// grouping): stopping it for the workbench would stop the rest with it.
+		const folderOfContents = new Map<number, string>();
 		for (const [folder, viewId] of shell.editorBindings()) {
 			const view = shell.getViewById(viewId);
 			if (!view || !isLiveWorkbench(view)) continue;
-			const pid = view.webContents.getOSProcessId();
-			renderers.set(pid, [...(renderers.get(pid) ?? []), folder]);
+			folderOfContents.set(view.webContents.id, folder);
 		}
+		const sharedRenderers = sharedRendererFolders(
+			liveContents().map((contents) => {
+				const folder = folderOfContents.get(contents.id);
+				return {
+					pid: contents.getOSProcessId(),
+					...(folder === undefined ? {} : { folder }),
+				};
+			}),
+		);
 		return this.workbenches.plan({
 			now,
 			// Every Workspace whose folder is there (asking for one that is gone
@@ -7393,9 +7411,8 @@ export class AppController {
 			freezing: this.config.general.workbench_freeze,
 			requests: [...this.workbenchHolds.start.keys()],
 			holds: [...this.workbenchHolds.thaw.keys()],
-			sharedRenderers: [...renderers.values()]
-				.filter((folders) => folders.length > 1)
-				.flat(),
+			sharedRenderers,
+			stopped: this.freezer.frozenFolders(),
 			...(ask === undefined ? {} : { ask }),
 			...(freeze === undefined ? {} : { freeze }),
 		});
@@ -7549,6 +7566,16 @@ export class AppController {
 			// `extension-host [<window id>]`, `file-watcher [<window id>]`,
 			// and a workbench's window id is its view's id.
 			windowUtilities: windowUtilitiesOf(UtilityProcess.getAll(), view.id),
+			// Whatever else main knows to be running something that is not
+			// this workbench: never stopped (`foreignPids`).
+			foreign: foreignPids({
+				main: process.pid,
+				parent: process.ppid,
+				electron: electron.app.getAppMetrics(),
+				otherContents: liveContents()
+					.filter((contents) => contents.id !== view.webContents.id)
+					.map((contents) => contents.getOSProcessId()),
+			}),
 		};
 	}
 

@@ -16,10 +16,13 @@ import {
 import {
 	SocketTrafficSampler,
 	WorkbenchFreezer,
+	foreignPids,
+	sharedRendererFolders,
 	systemProcessDeps,
 	windowUtilitiesOf,
 	type ProcessDeps,
 } from "./workbenchProcesses.js";
+import type { ProcessRow } from "../diagnostics/processTable.js";
 
 const run = promisify(execFile);
 
@@ -151,6 +154,116 @@ describe("freezing real processes", () => {
 		// Accepted once it runs: nothing waits any more.
 		await new Promise<void>((resolve) => socket.once("close", resolve));
 	}, 15_000);
+});
+
+/** A freezer over a fixed process table, recording every signal. */
+function fakeFreezer(rows: readonly ProcessRow[], electron: readonly number[]) {
+	const signals: string[] = [];
+	const freezer = new WorkbenchFreezer({
+		...deps,
+		processes: () => Promise.resolve(rows),
+		electronPids: () => electron,
+		fdLinks: () => Promise.resolve([]),
+		kill: (pid, signal) => {
+			signals.push(`${signal} ${String(pid)}`);
+		},
+		log: () => {},
+	});
+	return { freezer, signals };
+}
+
+const row = (pid: number, ppid: number): ProcessRow => ({
+	pid,
+	ppid,
+	rssKb: 1,
+	cpuPercent: 0,
+	comm: `p${String(pid)}`,
+	args: `p${String(pid)}`,
+});
+
+describe("what a freeze never stops", () => {
+	// 100 main, 101 GPU, 110 the Sidebar's renderer, 120 the workbench's
+	// renderer, 121 its extension host with 122 under it.
+	const rows = [
+		row(100, 1),
+		row(101, 100),
+		row(110, 100),
+		row(120, 100),
+		row(121, 100),
+		row(122, 121),
+	];
+	const electron = [100, 101, 110, 120, 121];
+
+	it("is main, its parent, the GPU process, or a process hosting other contents", () => {
+		expect(
+			foreignPids({
+				main: 100,
+				parent: 1,
+				electron: [
+					{ pid: 100, type: "Browser" },
+					{ pid: 101, type: "GPU" },
+					{ pid: 110, type: "Tab" },
+					{ pid: 120, type: "Tab" },
+					{ pid: 121, type: "Utility" },
+				],
+				otherContents: [110, 0],
+			}).sort((a, b) => a - b),
+		).toEqual([1, 100, 101, 110]);
+	});
+
+	it("refuses a workbench whose renderer also hosts one of DevHub's pages, stopping nothing", () => {
+		const { freezer, signals } = fakeFreezer(rows, electron);
+		expect(() =>
+			freezer.freeze("a", {
+				renderer: 120,
+				windowUtilities: [121],
+				foreign: [100, 101, 120],
+			}),
+		).toThrow(/shared/u);
+		expect(signals).toEqual([]);
+		expect(freezer.isFrozen("a")).toBe(false);
+	});
+
+	it("leaves out a foreign process named as one of its utilities", async () => {
+		const { freezer, signals } = fakeFreezer(rows, electron);
+		await freezer.freeze("a", {
+			renderer: 120,
+			windowUtilities: [121, 101],
+			foreign: [100, 101, 110],
+		});
+		expect(signals).toEqual(["SIGSTOP 120", "SIGSTOP 121", "SIGSTOP 122"]);
+	});
+
+	it("a second freeze of a frozen one continues what the first stopped", async () => {
+		const { freezer, signals } = fakeFreezer(rows, electron);
+		await freezer.freeze("a", { renderer: 120, windowUtilities: [121] });
+		signals.length = 0;
+		await freezer.freeze("a", { renderer: 120, windowUtilities: [] });
+		expect(signals.slice(0, 3)).toEqual([
+			"SIGCONT 122",
+			"SIGCONT 121",
+			"SIGCONT 120",
+		]);
+		freezer.thaw("a");
+		expect(freezer.pidsOf("a")).toEqual([]);
+	});
+});
+
+describe("shared renderers", () => {
+	it("are the workbenches whose process also hosts another workbench or a page", () => {
+		expect(
+			sharedRendererFolders([
+				{ pid: 110 }, // the Sidebar
+				{ pid: 110, folder: "/a" }, // shares with the Sidebar
+				{ pid: 130, folder: "/b" },
+				{ pid: 130, folder: "/c" }, // two workbenches in one
+				{ pid: 140, folder: "/d" }, // alone
+				{ pid: 0, folder: "/e" }, // no process up yet
+				{ pid: 0 },
+				{ pid: 110 },
+			]).sort(),
+		).toEqual(["/a", "/b", "/c"]);
+	});
 });
 
 describe("window utilities", () => {

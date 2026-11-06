@@ -82,6 +82,32 @@ describe("a workbench's freeze targets", () => {
 		).toEqual([121]);
 	});
 
+	it("never include a foreign process, even one named as the workbench's own", () => {
+		// 120 also hosts one of DevHub's pages (Chromium put both contents in
+		// one process); 101, the GPU process, named as a window utility.
+		expect(
+			freezeTargets({
+				processes,
+				renderer: 120,
+				windowUtilities: [121, 101],
+				electron,
+				foreign: [120, 101],
+			}),
+		).toEqual([121, 122, 123, 124]);
+	});
+
+	it("never walk into a foreign process under the workbench's tree", () => {
+		expect(
+			freezeTargets({
+				processes,
+				renderer: 120,
+				windowUtilities: [121],
+				electron,
+				foreign: [122],
+			}),
+		).toEqual([120, 121, 124]);
+	});
+
 	it("never start from pid 0, the root of every process", () => {
 		// `getOSProcessId()` is 0 for contents with no process up; on macOS
 		// `ps` lists `kernel_task` as 0, the parent of launchd.

@@ -65,6 +65,73 @@ export interface WorkbenchPids {
 	readonly renderer: number | undefined;
 	/** Its window's utility processes: extension hosts, the file watcher. */
 	readonly windowUtilities: readonly number[];
+	/**
+	 * Processes that are not exclusively this workbench's (`foreignPids`):
+	 * never stopped, never walked into. A renderer among them is a workbench
+	 * that is not frozen at all.
+	 */
+	readonly foreign?: readonly number[];
+}
+
+/**
+ * What main knows about one Electron process, for `foreignPids`: an
+ * `app.getAppMetrics()` entry's pid and type.
+ */
+export interface ElectronProcess {
+	readonly pid: number;
+	/** `ProcessMetric.type`: "Browser", "Tab", "GPU", "Utility", … */
+	readonly type: string;
+}
+
+/**
+ * The pids a freeze of one workbench must never stop, from what main knows:
+ *
+ * - main itself and its parent;
+ * - every Electron process that is neither a renderer ("Tab") nor a utility
+ *   — the GPU process, the zygote, anything Electron cannot name — whatever
+ *   any list says it is;
+ * - every process that hosts a WebContents other than the workbench's own:
+ *   one of DevHub's pages (the shell, the Sidebar, the Agents page, a
+ *   terminal pane, the toasts …), another workbench, a view the workbench
+ *   attached. Chromium decides which contents share a renderer process, and
+ *   a SIGSTOP on a shared one stops every page in it.
+ *
+ * `contents` is every live WebContents but the workbench's own, by its
+ * process; 0 (no process up) is nobody's.
+ */
+export function foreignPids(input: {
+	readonly main: number;
+	readonly parent: number;
+	readonly electron: readonly ElectronProcess[];
+	readonly otherContents: readonly number[];
+}): number[] {
+	const foreign = new Set<number>([input.main, input.parent]);
+	for (const one of input.electron) {
+		if (one.type !== "Tab" && one.type !== "Utility") foreign.add(one.pid);
+	}
+	for (const pid of input.otherContents) foreign.add(pid);
+	return [...foreign].filter((pid) => pid > 0);
+}
+
+/**
+ * The workbenches whose renderer process also hosts any other contents — a
+ * second workbench or one of DevHub's own pages — from every live
+ * WebContents by its process (`folder` for a workbench's, none for any
+ * other). They are not frozen: see `foreignPids`.
+ */
+export function sharedRendererFolders(
+	contents: readonly { readonly pid: number; readonly folder?: string }[],
+): string[] {
+	const byPid = new Map<number, (string | undefined)[]>();
+	for (const one of contents) {
+		if (one.pid <= 0) continue;
+		byPid.set(one.pid, [...(byPid.get(one.pid) ?? []), one.folder]);
+	}
+	return [...byPid.values()]
+		.filter((owners) => owners.length > 1)
+		.flatMap((owners) =>
+			owners.filter((folder): folder is string => folder !== undefined),
+		);
 }
 
 /** The window utilities of one window, from `UtilityProcess.getAll()`. */
@@ -160,6 +227,16 @@ export class WorkbenchFreezer {
 	 * of it to stop.
 	 */
 	freeze(folder: string, known: WorkbenchPids): Promise<void> {
+		const foreign = new Set(known.foreign ?? []);
+		// A renderer that also draws something else — one of DevHub's pages,
+		// another workbench — is not this workbench's to stop, and its
+		// extension hosts stopped under a renderer that runs would only make
+		// it wait on them.
+		if (known.renderer !== undefined && foreign.has(known.renderer)) {
+			throw new Error(
+				`its renderer process ${String(known.renderer)} is shared with another page`,
+			);
+		}
 		// Only real pids. `getOSProcessId()` answers 0 for contents with no
 		// process up, and `kill(0, …)` is not "nothing": it signals the whole
 		// process group — DevHub's main with every renderer and helper in it,
@@ -167,10 +244,13 @@ export class WorkbenchFreezer {
 		const first = [
 			...(known.renderer === undefined ? [] : [known.renderer]),
 			...known.windowUtilities,
-		].filter((pid) => pid > 0);
+		].filter((pid) => pid > 0 && !foreign.has(pid));
 		if (first.length === 0) {
 			throw new Error("it has no processes to stop");
 		}
+		// Frozen already: what that freeze stopped is continued first, so no
+		// record is ever dropped with its processes still stopped.
+		this.thaw(folder);
 		const record: Frozen = { pids: [], sockets: [] };
 		this.frozen.set(folder, record);
 		this.stop(record, first);
@@ -188,10 +268,14 @@ export class WorkbenchFreezer {
 			renderer: known.renderer,
 			windowUtilities: known.windowUtilities,
 			electron: this.deps.electronPids(),
+			...(known.foreign === undefined ? {} : { foreign: known.foreign }),
 		}).filter((pid) => !record.pids.includes(pid));
 		// Thawed while ps ran: what is under it keeps running.
 		if (this.frozen.get(folder) !== record) return;
 		this.stop(record, rest);
+		this.deps.log(
+			`[devhub] workbench '${folder}' frozen: stopped ${record.pids.join(", ")} (renderer ${String(known.renderer)}, utilities ${known.windowUtilities.join(", ") || "none"})`,
+		);
 		const sockets = await this.listening(record.pids).catch(
 			(error: unknown) => {
 				this.deps.log(
@@ -311,6 +395,7 @@ export class SocketTrafficSampler {
 					renderer: pids.renderer,
 					windowUtilities: pids.windowUtilities,
 					electron,
+					...(pids.foreign === undefined ? {} : { foreign: pids.foreign }),
 				}),
 			),
 		}));

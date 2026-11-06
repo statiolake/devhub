@@ -19,6 +19,11 @@
  * - tmux, wherever it turns up, with everything under it: a tmux started
  *   below an extension host is still a tmux server or client somebody else's
  *   panes depend on.
+ * - Anything `foreign`: a process that also serves something that is not this
+ *   workbench — a renderer that hosts one of DevHub's own pages as well (Chromium
+ *   may put several contents in one process), main, the GPU process — even
+ *   when main named it as the workbench's own. Stopping it would stop that
+ *   page, or the whole window, with it.
  *
  * The order is the order to stop them in: the renderer first, so it never
  * watches its extension host stop, then each utility with its tree, a parent
@@ -39,6 +44,11 @@ export interface FreezeTargetInput {
 	readonly windowUtilities: readonly number[];
 	/** Every Electron process (main, GPU, utilities, renderers): never walked into. */
 	readonly electron: readonly number[];
+	/**
+	 * Processes that are not exclusively this workbench's (`foreign` above):
+	 * never stopped, never walked into, even when named as its own.
+	 */
+	readonly foreign?: readonly number[];
 }
 
 /** Whether a process is tmux, server or client. */
@@ -59,14 +69,19 @@ export function freezeTargets(input: FreezeTargetInput): number[] {
 	}
 	// Only real pids: a renderer with no process up is 0, and on macOS pid 0
 	// is `kernel_task`, the root every walk down from it reaches everything.
+	const foreign = new Set(input.foreign ?? []);
 	const own = new Set<number>(
 		[
 			...(input.renderer === undefined ? [] : [input.renderer]),
 			...input.windowUtilities,
-		].filter((pid) => pid > 0),
+		].filter((pid) => pid > 0 && !foreign.has(pid)),
 	);
-	// An Electron process that is not this workbench's own is a wall.
-	const walls = new Set(input.electron.filter((pid) => !own.has(pid)));
+	// An Electron process that is not this workbench's own is a wall, and so
+	// is anything foreign.
+	const walls = new Set([
+		...input.electron.filter((pid) => !own.has(pid)),
+		...foreign,
+	]);
 	const order: number[] = [];
 	const seen = new Set<number>();
 	const visit = (pid: number) => {

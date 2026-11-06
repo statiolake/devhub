@@ -49,6 +49,8 @@ function harness(
 	const effects: LifecycleEffect[] = [];
 	/** Probes asked for and not yet answered. */
 	const probes = new Set<string>();
+	/** The fake freezer: folders whose processes the effects stopped. */
+	const stopped = new Set<string>();
 	let now = 1_000;
 	let selected: string | undefined;
 
@@ -71,9 +73,12 @@ function harness(
 			discardAfterMs: options.discardAfterMs ?? HOUR,
 			freezing,
 			requests: [...requests],
+			stopped: [...stopped],
 			...extra,
 		});
 		for (const effect of done) {
+			if (effect.kind === "freeze") stopped.add(effect.folder);
+			if (effect.kind === "thaw") stopped.delete(effect.folder);
 			if (effect.kind === "dispose") views.delete(effect.folder);
 			if (effect.kind === "open") loading.add(effect.folder);
 			if (effect.kind === "probe") probes.add(effect.folder);
@@ -93,6 +98,7 @@ function harness(
 		effects,
 		placeholders,
 		probes,
+		stopped,
 		plan,
 		get now() {
 			return now;
@@ -163,6 +169,12 @@ function harness(
 				now += SETTLE_PROBE_MS;
 				plan();
 			}
+		},
+		/** DevHub took its view down itself (`disposeEditorView`). */
+		takeDown(folder: string) {
+			views.delete(folder);
+			life.disposed(folder);
+			return plan();
 		},
 		fail(folder: string, reason = "The workbench process ended.") {
 			loading.delete(folder);
@@ -321,6 +333,47 @@ describe("freezing and thawing", () => {
 		app.life.freezeFailed("b", "no processes", app.now);
 		expect(app.kind("b")).toBe("running");
 		expect(of(app.plan(), "freeze")).toEqual([]);
+	});
+});
+
+describe("stopped processes", () => {
+	function frozenB() {
+		const app = harness();
+		app.select("a");
+		app.add("a", "b");
+		app.settle("a");
+		app.settle("b");
+		expect(app.kind("b")).toBe("frozen");
+		expect(app.stopped.has("b")).toBe(true);
+		return app;
+	}
+
+	it("a frozen one that fails is thawed before it is opened again", () => {
+		const app = frozenB();
+		const done = app.fail("b");
+		expect(of(done, "thaw")).toEqual(["b"]);
+		expect(app.stopped.has("b")).toBe(false);
+		expect(app.logs.join("\n")).toContain(
+			"thawed: its processes were stopped while restart-waiting",
+		);
+	});
+
+	it("a frozen one taken down by DevHub is thawed", () => {
+		const app = frozenB();
+		expect(of(app.takeDown("b"), "thaw")).toEqual(["b"]);
+		expect(app.stopped.has("b")).toBe(false);
+	});
+
+	it("a frozen one that is no longer wanted is thawed once", () => {
+		const app = frozenB();
+		expect(of(app.set("b", { wanted: false }), "thaw")).toEqual(["b"]);
+		expect(of(app.plan(), "thaw")).toEqual([]);
+	});
+
+	it("nothing is thawed that the lifecycle knows to be frozen", () => {
+		const app = frozenB();
+		expect(of(app.plan(), "thaw")).toEqual([]);
+		expect(app.kind("b")).toBe("frozen");
 	});
 });
 
