@@ -156,6 +156,9 @@ class FakeWindow {
 		) => {
 			if (event === "will-navigate") this.navigationListeners.push(listener);
 		},
+		once: () => undefined,
+		isDestroyed: () => false,
+		getURL: () => "",
 	};
 	/** Whether Electron has taken this window away — quitting does. */
 	destroyed = false;

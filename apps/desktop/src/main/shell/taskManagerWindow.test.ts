@@ -16,7 +16,13 @@ class FakeWindow {
 	closes = 0;
 	url = "";
 	readonly options: Electron.BrowserWindowConstructorOptions;
-	readonly webContents = { send: vi.fn(), isDestroyed: () => false };
+	readonly webContents = {
+		send: vi.fn(),
+		isDestroyed: () => false,
+		on: vi.fn(),
+		once: vi.fn(),
+		getURL: () => "",
+	};
 	private readonly handlers = new Map<string, () => void>();
 
 	constructor(options: Electron.BrowserWindowConstructorOptions) {

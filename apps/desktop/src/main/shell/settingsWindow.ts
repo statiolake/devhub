@@ -18,6 +18,8 @@
 
 import { randomUUID } from "node:crypto";
 import { electron } from "../electron.js";
+import { supervisePage } from "./pageRecovery.js";
+import { isQuitting } from "./shellWindow.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
 import {
 	SETTINGS_CHANNELS,
@@ -163,6 +165,7 @@ export function openSettingsWindow(): void {
 		},
 	});
 	void window.loadURL(`${SHELL_ORIGIN}/settings.html`);
+	supervisePage(window.webContents, "settings", isQuitting);
 	window.once("ready-to-show", () => {
 		window?.show();
 	});

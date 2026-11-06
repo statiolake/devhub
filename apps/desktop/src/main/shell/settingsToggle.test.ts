@@ -17,7 +17,13 @@ class FakeWindow {
 	shown = 0;
 	focuses = 0;
 	closes = 0;
-	readonly webContents = { send: vi.fn(), isDestroyed: () => false };
+	readonly webContents = {
+		send: vi.fn(),
+		isDestroyed: () => false,
+		on: vi.fn(),
+		once: vi.fn(),
+		getURL: () => "",
+	};
 	private readonly handlers = new Map<string, () => void>();
 
 	constructor() {

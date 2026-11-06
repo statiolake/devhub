@@ -43,9 +43,11 @@ import { electron } from "../electron.js";
 import {
 	beginQuit,
 	createShellWindow,
+	isQuitting,
 	openShellPage,
 	shellWindowIfCreated,
 } from "./shellWindow.js";
+import { installRendererRecovery } from "./pageRecovery.js";
 import {
 	applySettingsWindowPalette,
 	installSettingsWindow,
@@ -277,6 +279,9 @@ export async function bootstrapShell(
 		palette,
 		titleBar,
 	);
+	// The GPU process going, and waking up: every page repaints. The pages'
+	// own renderers are watched where each page is made (`supervisePage`).
+	installRendererRecovery(isQuitting);
 	const controller = await createAppController(userDataPath, cliArgs, settings);
 	// From here main has somewhere to put a failure nobody caught. Installed as
 	// early as there is a controller to publish through, because everything

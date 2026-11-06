@@ -19,6 +19,8 @@
  */
 
 import { electron } from "../electron.js";
+import { supervisePage } from "./pageRecovery.js";
+import { isQuitting } from "./shellWindow.js";
 import { WINDOW_TITLES } from "../../ipc/windowTitles.js";
 import {
 	formatBytes,
@@ -93,6 +95,7 @@ export function openTaskManagerWindow(): void {
 		},
 	});
 	void window.loadURL(`${SHELL_ORIGIN}/task-manager.html`);
+	supervisePage(window.webContents, "task-manager", isQuitting);
 	window.once("ready-to-show", () => {
 		window?.show();
 	});

@@ -45,6 +45,7 @@ import type {
 } from "../../ipc/contract.js";
 import { WINDOW_TITLES, type ShellWindowKind } from "../../ipc/windowTitles.js";
 import { ChromeView } from "./chromeView.js";
+import { supervisePage } from "./pageRecovery.js";
 import { PickerView } from "./pickerView.js";
 import { ToastsView } from "./toastsView.js";
 import { TooltipView } from "./tooltipView.js";
@@ -410,6 +411,19 @@ export class ShellWindow {
 			},
 		});
 
+		// A renderer gone or hung is reloaded, not left white. See
+		// `pageRecovery.ts`.
+		for (const [name, contents] of [
+			["shell", this.window.webContents],
+			["sidebar", this.sidebar.contents()],
+			["agents", this.agents.contents()],
+			["toasts", this.toasts.contents()],
+			["tooltip", this.tooltip.contents()],
+			["questions", this.picker.contents()],
+		] as const) {
+			supervisePage(contents, name, isQuitting);
+		}
+
 		this.pageUrl = pageUrl;
 		this.window.once("ready-to-show", () => this.window.show());
 		this.window.on("resize", () => this.layout());
@@ -642,6 +656,7 @@ export class ShellWindow {
 			);
 			view.adopt(this.window);
 			const contents = view.contents();
+			supervisePage(contents, `terminal:${id}`, isQuitting);
 			contents?.on("focus", () => {
 				this.picker.reclaimFrom(contents);
 				this.contentFocused({ kind: "terminal", terminalId: id });
@@ -687,6 +702,7 @@ export class ShellWindow {
 			);
 			view.adopt(this.window);
 			const contents = view.contents();
+			supervisePage(contents, `workspace-terminal:${workspaceId}`, isQuitting);
 			contents?.on("focus", () => {
 				this.picker.reclaimFrom(contents);
 				this.contentFocused({ kind: "editor" });

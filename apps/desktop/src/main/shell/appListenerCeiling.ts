@@ -48,8 +48,10 @@ import { electron } from "../electron.js";
  * - the agent host, started the first time an agent session is
  * - the GPU crash watcher `app.ts` installs on macOS, which is not a utility
  *   process but listens to the same event and so counts the same
+ * - DevHub's own GPU watcher (`installRendererRecovery`), which repaints every
+ *   page after the GPU process went
  */
-export const APPLICATION_WIDE_LISTENERS = 4;
+export const APPLICATION_WIDE_LISTENERS = 5;
 
 /**
  * Helpers a single workbench brings with it.

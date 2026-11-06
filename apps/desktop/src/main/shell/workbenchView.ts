@@ -282,12 +282,19 @@ export class WorkbenchView {
 		// window out of VS Code's table. Destroying contents whose renderer is
 		// already gone is exactly what `destroy` does for a live one — there is
 		// no renderer left to ask, so nothing can refuse.
-		this.contents.once("render-process-gone", () => {
-			console.log(
-				`[devhub] workbench view ${this.id}: its renderer is gone — it is not a window any more`,
-			);
-			this.destroy();
-		});
+		this.contents.once(
+			"render-process-gone",
+			(_event, details?: Electron.RenderProcessGoneDetails) => {
+				console.log(
+					`[devhub] workbench view ${this.id}: renderer gone (${details?.reason ?? "unknown"}, ${
+						details?.exitCode === undefined
+							? "no exit code"
+							: String(details.exitCode)
+					}) — it is not a window any more; the editor lifecycle starts it again`,
+				);
+				this.destroy();
+			},
+		);
 	}
 
 	/**
