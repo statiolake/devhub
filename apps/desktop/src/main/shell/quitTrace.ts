@@ -64,6 +64,18 @@ export function callerOf(stack: string | undefined): string {
 }
 
 let installed = false;
+/** When the process last took a SIGHUP, if it ever did. */
+let lastHangUp: number | undefined;
+
+/**
+ * When DevHub's main last took a SIGHUP, or undefined. One that came while
+ * workbenches could be frozen means the process group was hung up despite
+ * the anchor (`processGroupAnchor.ts`) — every renderer of the window went
+ * with it — so the freezer asks this before it stops anything again.
+ */
+export function hungUpAt(): number | undefined {
+	return lastHangUp;
+}
 
 /**
  * Wrap `app.quit` / `app.exit` and answer the shutdown signals. Once per
@@ -97,6 +109,7 @@ export function installQuitTrace(
 		[
 			"SIGHUP",
 			() => {
+				lastHangUp = Date.now();
 				log(
 					"[devhub] SIGHUP received — ignored: DevHub has no terminal to hang up. " +
 						"If a workbench is frozen, this is the kernel's orphaned-process-group SIGHUP " +
@@ -134,4 +147,5 @@ export function installQuitTrace(
 /** For tests: forget that the trace was installed. */
 export function resetQuitTraceForTests(): void {
 	installed = false;
+	lastHangUp = undefined;
 }

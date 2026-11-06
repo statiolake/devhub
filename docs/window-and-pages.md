@@ -1447,6 +1447,15 @@ processes still stopped. Each completed freeze says what it stopped:
 `[devhub] workbench '<folder>' frozen: stopped <pids> (renderer <pid>,
 utilities <pids>)`.
 
+**A hangup ends freezing for the run.** Stopped processes in DevHub's
+process group are what the kernel's orphaned-process-group rule hangs up
+(`processGroupAnchor.ts`), and the SIGHUP ends every renderer, the GPU and
+network processes and the extension hosts while main, which answers SIGHUP
+itself (`quitTrace.ts`), stays up behind a window whose pages are gone. A
+freeze needs the anchor holding, and none happens once main has taken a
+SIGHUP in this run (`hungUpAt`): one hangup means the anchor did not hold on
+this machine, and another freeze would do it again.
+
 A stopped process cannot `accept()`, but the kernel still completes the
 handshake of a TCP connection to its listening socket and queues it. So while
 anything is frozen, `WorkbenchSensors` reads every listen queue twice a second,

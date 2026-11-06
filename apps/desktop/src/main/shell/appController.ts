@@ -16,6 +16,7 @@
 
 import { APP_ROOT } from "./appRoot.js";
 import { processGroupAnchor } from "./processGroupAnchor.js";
+import { hungUpAt } from "./quitTrace.js";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -7626,6 +7627,14 @@ export class AppController {
 			// hangs up, DevHub's main with them: see `processGroupAnchor.ts`.
 			if (!processGroupAnchor().anchored()) {
 				throw new Error("DevHub's process group is not anchored");
+			}
+			// Hung up already: the group was orphaned with something stopped in
+			// it in spite of the anchor, and the kernel's SIGHUP ended every
+			// renderer of the window. Another freeze would only do it again.
+			if (hungUpAt() !== undefined) {
+				throw new Error(
+					"DevHub's process group was hung up in this run (SIGHUP) — freezing is off until DevHub restarts",
+				);
 			}
 			view.setFrozen(true);
 			void this.freezer
