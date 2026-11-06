@@ -39,16 +39,16 @@
  * A line names the subject and the clause it fails (`Breach`), never its
  * state: the state is read with `devhub --tell status` (`statusOf` here is
  * what it is built from). What the subject's state is still matters here, as
- * `facts`: a subject is said again when they change, and a keeping ends.
+ * `facts`: a keeping ends when they change.
  *
- * `InvariantWatch` keeps the time: a subject is said once it has needed
- * action for `NEEDS_ACTION_GRACE_MS`, again when its facts or its clause
- * change, and every `reminder_interval` while it stays so. An agent the
- * orchestrator chose to keep as it is (`agent keep A --note`) is not said
- * while its state stays what it was when it was kept; keepings are kept on
- * disk (`keptFile.ts`), and judged again once the state is known again. A 待機中 escalation
- * whose subjects' facts change is said (`waiting.changed`): what it waits on
- * may have come.
+ * `InvariantWatch` holds the last reading: every delivery carries one
+ * `needs_action` line per subject that needs action then (`due`), whatever
+ * was said before — the orchestrator is nagged every `delivery_interval`
+ * while it stays so. An agent the orchestrator chose to keep as it is
+ * (`agent keep A --note`) is left out while its state stays what it was
+ * when it was kept; keepings are kept on disk (`keptFile.ts`), and judged
+ * again once the state is known again. A 待機中 escalation whose subjects'
+ * facts change is said (`waiting.changed`): what it waits on may have come.
  */
 
 import { agentByIdOrPrefix, parseDevhubLink } from "../../model/devhubLink.js";
@@ -523,9 +523,6 @@ export function findItem(
 
 // --- the watch ---------------------------------------------------------------
 
-/** How long a subject must need action before it is said. */
-export const NEEDS_ACTION_GRACE_MS = 60_000;
-
 /** An agent the orchestrator chose to keep as it is, and why. */
 export interface KeptAgent {
 	readonly note: string;
@@ -544,8 +541,6 @@ export interface NeedsActionView {
 	readonly clause: string;
 	/** Since when it has needed action, as DevHub saw it. */
 	readonly since: number;
-	/** When it was last said; absent while in its grace. */
-	readonly toldAt?: number;
 	/** `agent keep`: why it is left as it is. */
 	readonly kept?: { readonly note: string; readonly at: number };
 }
@@ -553,9 +548,6 @@ export interface NeedsActionView {
 export interface InvariantWatchPorts {
 	readonly dispatch: (event: OrchestratorEvent) => void;
 	readonly now: () => number;
-	/** `[orchestrator] reminder_interval`, in ms. */
-	readonly reminderMs: () => number;
-	readonly graceMs?: number;
 	/** Where the keepings are kept across restarts; absent: in memory only. */
 	readonly kept?: KeptStore;
 }
@@ -573,11 +565,6 @@ function eventOf(subject: NeedsActionSubject): OrchestratorEvent {
 	};
 }
 
-/** What is compared to say a subject again: its clause and its facts. */
-function fingerprint(subject: NeedsActionSubject): string {
-	return [breachWords(subject.breach), ...subject.facts].join(" ");
-}
-
 /** What a keeping holds an agent to: its clause and its state. */
 function keepPrint(subject: NeedsActionSubject): string {
 	return [
@@ -587,10 +574,8 @@ function keepPrint(subject: NeedsActionSubject): string {
 }
 
 export class InvariantWatch {
-	/** Since when each subject has needed action. */
+	/** Since when each subject has needed action (for `status` and the board). */
 	readonly #since = new Map<string, number>();
-	/** When each was last said, and as what. */
-	readonly #told = new Map<string, { at: number; facts: string }>();
 	/** By `agent <id>`; kept on disk when the ports say where. */
 	readonly #kept = new Map<string, KeptAgent>();
 	/** Each 待機中 escalation's facts as last seen. */
@@ -619,35 +604,21 @@ export class InvariantWatch {
 		);
 	}
 
-	get #grace(): number {
-		return this.ports.graceMs ?? NEEDS_ACTION_GRACE_MS;
-	}
-
-	/** Everything is said again from now: a new orchestrator has heard none. */
-	reset(): void {
-		this.#told.clear();
-		this.#waiting.clear();
-	}
-
 	get reading(): InvariantReading {
 		return this.#reading;
 	}
 
 	/**
-	 * A new reading: what has needed action past the grace is said (first,
-	 * when its clause or facts moved, or as a reminder), and each 待機中
-	 * escalation whose subjects moved. `speak` false: the time is kept,
-	 * nothing is said (no orchestrator).
+	 * A new reading: the keepings are judged, and each 待機中 escalation
+	 * whose subjects moved is said. `speak` false: nothing is said (no
+	 * orchestrator).
 	 */
 	observe(reading: InvariantReading, speak: boolean): void {
 		const now = this.ports.now();
 		this.#reading = reading;
 		const keys = new Set(reading.needsAction.map((one) => one.key));
 		for (const key of [...this.#since.keys()])
-			if (!keys.has(key)) {
-				this.#since.delete(key);
-				this.#told.delete(key);
-			}
+			if (!keys.has(key)) this.#since.delete(key);
 		let keptMoved = false;
 		for (const [key, kept] of [...this.#kept]) {
 			// Not judged before the state is known again: GitHub's items not
@@ -667,22 +638,8 @@ export class InvariantWatch {
 			}
 		}
 		if (keptMoved) this.#saveKept();
-		for (const subject of reading.needsAction) {
-			const since = this.#since.get(subject.key) ?? now;
-			this.#since.set(subject.key, since);
-			if (!speak || now - since < this.#grace) continue;
-			if (this.#kept.has(subject.key)) continue;
-			const facts = fingerprint(subject);
-			const told = this.#told.get(subject.key);
-			if (
-				told !== undefined &&
-				told.facts === facts &&
-				now - told.at < this.ports.reminderMs()
-			)
-				continue;
-			this.#told.set(subject.key, { at: now, facts });
-			this.ports.dispatch(eventOf(subject));
-		}
+		for (const subject of reading.needsAction)
+			if (!this.#since.has(subject.key)) this.#since.set(subject.key, now);
 		const open = new Set(reading.waiting.map((one) => one.escalationId));
 		for (const id of [...this.#waiting.keys()])
 			if (!open.has(id)) this.#waiting.delete(id);
@@ -701,27 +658,14 @@ export class InvariantWatch {
 		}
 	}
 
-	/** When a grace or a reminder is up next, if any is. */
-	nextDue(): number | undefined {
-		const due: number[] = [];
-		for (const [key, since] of this.#since) {
-			if (this.#kept.has(key)) continue;
-			const told = this.#told.get(key);
-			due.push(
-				told === undefined
-					? since + this.#grace
-					: told.at + this.ports.reminderMs(),
-			);
-		}
-		return due.length === 0 ? undefined : Math.min(...due);
-	}
-
-	/** Whether the subject still needs action (for a pending line). */
-	stillNeedsAction(key: string): boolean {
-		return (
-			this.#reading.needsAction.some((one) => one.key === key) &&
-			!this.#kept.has(key)
-		);
+	/**
+	 * What a delivery says of the invariant: one `needs_action` per subject
+	 * that needs action now and is not kept.
+	 */
+	due(): readonly OrchestratorEvent[] {
+		return this.#reading.needsAction
+			.filter((subject) => !this.#kept.has(subject.key))
+			.map(eventOf);
 	}
 
 	/**
@@ -764,7 +708,6 @@ export class InvariantWatch {
 	}
 
 	#view(subject: NeedsActionSubject): NeedsActionView {
-		const told = this.#told.get(subject.key);
 		const kept = this.#kept.get(subject.key);
 		const event = eventOf(subject);
 		return {
@@ -773,7 +716,6 @@ export class InvariantWatch {
 			line: event.type === "needs_action" ? needsActionWords(event) : "",
 			clause: breachWords(subject.breach),
 			since: this.#since.get(subject.key) ?? this.ports.now(),
-			...(told === undefined ? {} : { toldAt: told.at }),
 			...(kept === undefined ? {} : { kept: { note: kept.note, at: kept.at } }),
 		};
 	}
@@ -781,11 +723,5 @@ export class InvariantWatch {
 	/** Every subject that needs action now. */
 	needsAction(): readonly NeedsActionView[] {
 		return this.#reading.needsAction.map((subject) => this.#view(subject));
-	}
-
-	/** Whether a subject has needed action past the grace. */
-	pastGrace(key: string): boolean {
-		const since = this.#since.get(key);
-		return since !== undefined && this.ports.now() - since >= this.#grace;
 	}
 }

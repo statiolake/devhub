@@ -434,7 +434,7 @@ row's tooltip:
 - the orchestrator's mark — managed ("Managed by the orchestrator");
 - an hourglass — one of the agents of a 待機中 escalation, stopped but fine
   ("Waiting (#12): <trigger>");
-- a warning, in the waiting ink — managed, needing action past the grace:
+- a warning, in the waiting ink — managed, needing action and not kept:
   stopped (or outside the population) with nothing settling it ("Needs
   action: <clause>");
 - a tick — kept as it is by the orchestrator (`agent keep`; "Kept as it is:
@@ -496,7 +496,7 @@ or one of its agents — `--agent`, a `devhub:agent/` link, the agents of a
 
 **Kept**: the orchestrator may decide a managed agent that needs action is to go
 on anyway (work outside the population that is still worth doing):
-`devhub --tell agent keep A --note TEXT`. It is not said again while its
+`devhub --tell agent keep A --note TEXT`. It is left out of every delivery while its
 state (its status, its item's, its pull request's: what `status` shows)
 stays what it was when it was kept; when they change (its item is
 assigned or closed, it goes idle after working, …) the keeping ends and it
@@ -512,8 +512,8 @@ known again (GitHub's items read, the agent read: not `unknown`), so a
 restart or a resume does not end it by itself.
 
 What breaks it now is in `devhub --tell board` (`needs action (N):`,
-`--json` `needsAction`: each subject's line, the clause, since when, when
-last said, its keeping), and each agent's standing in `agent status`
+`--json` `needsAction`: each subject's line, the clause, since when, its
+keeping), and each agent's standing in `agent status`
 (`invariant`: settled, or the clause it fails; the 待機中 escalation it is
 on; its keeping).
 
@@ -532,8 +532,8 @@ for the call:
   Project, its pull request (its own, or the one closing the Issue: state,
   review decision, unresolved conversations, checks), the agents linked to
   it (status, managed, the clause each fails, `agent keep`'s note), the
-  escalations about it (state, trigger, time), and the clause it fails,
-  since when and when last said;
+  escalations about it (state, trigger, time), and the clause it fails and
+  since when;
 - **an agent**: the same of the agent and of its item, its Workspace's facts
   as the Sidebar's tooltip has them (`workspace status`'s `review`: Issue,
   pull request, review decision, conversations, checks), the 待機中
@@ -548,7 +548,7 @@ $ devhub --tell --json status acme/app#9
             "pullRequest": { "number": 9, "url": "…", "state": "open",
                              "review": "changes_requested", "unresolved": 2, "checks": "failing" } },
   "needsAction": { "clause": "idle_no_escalation", "line": "pr=acme/app#9 ws=web — idle_no_escalation",
-                   "since": "2026-11-05T09:00:00.000Z", "toldAt": "2026-11-05T09:01:00.000Z" },
+                   "since": "2026-11-05T09:00:00.000Z" },
   "agents": [{ "id": "a1b2c3d4-…", "name": "PR 9 review", "ws": "web", "workspaceId": "…",
                "status": "idle", "managed": true, "linked": "https://github.com/acme/app/pull/9",
                "needsAction": "idle_no_escalation", "kept": null }],
@@ -580,16 +580,16 @@ work, with its own tools (`gh`), not by the orchestrator.
 
 ### The event types
 
-| type                      | when                                                                                                                                                                                                                               | example                                                                                                                                                                              |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `init`                    | the orchestrator has just started (or restarted)                                                                                                                                                                                   | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                                        |
-| `escalation_answered`     | the person answered an escalation (→ 対応中). Sent at once, as its own message: the person's words                                                                                                                                 | `esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                                                          |
-| `escalation.human_direct` | the person wrote to an open escalation's agent from its own composer and it went working (要回答 → 対応中). Sent at once, as its own message                                                                                       | `esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 に人が直接送ったメッセージ:` and, on the next line, what they wrote                                                             |
-| `needs_action`            | an item of the population, or a managed agent, breaks the invariant: after a minute's grace, again when its clause or its state changes (the line may be the same: `status` shows what moved), and every `reminder_interval` after | `[needs_action] issue=acme/web#123 ws=web — no_agent`, `[needs_action] agent=ab12cd34 (API fix) ws=web — idle_no_escalation`, `[needs_action] agent=… — outside_population (closed)` |
-| `waiting.changed`         | a 待機中 escalation may be ready: what it is about changed (`subjects_changed`), or its `--at` came (`due`, once per wait)                                                                                                         | `[waiting.changed] esc=12 — subjects_changed`, `[waiting.changed] esc=15 — due`                                                                                                      |
-| `usage.threshold`         | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                                                                             | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                          |
-| `timer.elapsed`           | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                                                                            | `[timer.elapsed] sweep`                                                                                                                                                              |
-| `custom.*`                | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                                                                                      | `[custom.deploy] — staging に deploy 完了`                                                                                                                                           |
+| type                      | when                                                                                                                                                                                        | example                                                                                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `init`                    | the orchestrator has just started (or restarted)                                                                                                                                            | `[init] — オーケストレーターが起動しました。devhub --tell board で現状を確認`                                                                                                        |
+| `escalation_answered`     | the person answered an escalation (→ 対応中). Sent at once, as its own message: the person's words                                                                                          | `esc=12「本番DBマイグレーション承認」 への人の回答 (選択肢「承認する」):` and, on the next line, `承認する`                                                                          |
+| `escalation.human_direct` | the person wrote to an open escalation's agent from its own composer and it went working (要回答 → 対応中). Sent at once, as its own message                                                | `esc=12「本番DBマイグレーション承認」 agent=a1b2c3d4 に人が直接送ったメッセージ:` and, on the next line, what they wrote                                                             |
+| `needs_action`            | an item of the population, or a managed agent, breaks the invariant: on every delivery while it does (every `delivery_interval`), unless it is kept (`agent keep`, until its state changes) | `[needs_action] issue=acme/web#123 ws=web — no_agent`, `[needs_action] agent=ab12cd34 (API fix) ws=web — idle_no_escalation`, `[needs_action] agent=… — outside_population (closed)` |
+| `waiting.changed`         | a 待機中 escalation may be ready: what it is about changed (`subjects_changed`), or its `--at` came (`due`, once per wait)                                                                  | `[waiting.changed] esc=12 — subjects_changed`, `[waiting.changed] esc=15 — due`                                                                                                      |
+| `usage.threshold`         | a plan window's use crossed one of `usage_thresholds` upward (once per threshold per window period; dropped if the window reset first)                                                      | `[usage.threshold] cli=claude window=5-hour pct=82 resets=19:20 — 5時間枠が80%を超えました`                                                                                          |
+| `timer.elapsed`           | a `[[orchestrator.timers]]` timer, or one `orchestrator timer set` made                                                                                                                     | `[timer.elapsed] sweep`                                                                                                                                                              |
+| `custom.*`                | `devhub --tell orchestrator emit --type custom.NAME --text …`                                                                                                                               | `[custom.deploy] — staging に deploy 完了`                                                                                                                                           |
 
 The `needs_action` codes: an item's `no_agent` or `idle_no_escalation`
 (`issue=` or `pr=` names it, `ws=` its first agent's Workspace); a managed
@@ -658,9 +658,16 @@ A message whose text could not be read says so and where to read it
   background work — shells, tasks, subagents it started (`background`) — does
   not hold a delivery: the router is never blocked by the subagents it
   started. After a delivery the next waits up to a minute to see it taken.
-- **Re-read before it goes** (`relevant`): a subject settled since, a wait no
-  longer 待機中, a window reset below its threshold — dropped as
-  `dropped-stale`.
+- **Re-read before it goes** (`relevant`): a wait no longer 待機中, a window
+  reset below its threshold — dropped as `dropped-stale`.
+- **The nag** (`standing`): `needs_action` is never pending. Every delivery
+  reads the invariant as it stands then and carries one line per subject
+  that needs action and is not kept (`InvariantWatch.due`): no grace, no
+  "said once", no reminder setting. While any does, a delivery is made every
+  `delivery_interval`, so an unresolved subject is said again every 5
+  minutes by default; one that settled in between is on none. A delivery
+  with nothing to carry is not sent. `orchestrator events` logs each line
+  as it goes (`delivered`).
 - **Paused** (`orchestrator pause`, the board's Events switch): everything is
   held, the person's words too, and GitHub is not polled. `orchestrator
 resume` polls once (the rate limit permitting), then sends the person's
@@ -673,10 +680,8 @@ resume` polls once (the rate limit permitting), then sends the person's
 
 - **The board** (`orchestratorService.ts`): the answers, the person's direct
   words, `waiting.changed` (`— due`); and the invariant, read off every projection
-  and every GitHub poll, its subjects timed by `InvariantWatch`: a subject is
-  said once it has needed action for a minute, again when its clause or state changes,
-  and every `reminder_interval` while it stays so; a new orchestrator (a
-  start, a restart) hears every one again. `waiting.changed`
+  and every GitHub poll (`InvariantWatch`); every delivery carries the
+  subjects that need action then (above: the nag). `waiting.changed`
   (`— subjects_changed`) compares each 待機中 escalation's subjects' facts
   with the last look (its first look says nothing).
 - **GitHub** (`githubItems.ts`): read — never written — one request per
@@ -737,8 +742,7 @@ event_prompt = "/make-progress {EVENT}"   # absent: DevHub's default (below)
 # init_prompt = "/start-orchestrating {EVENT}"   # absent: event_prompt with init
 # events = ["*", "!timer.*"]       # which types reach it (default: all)
 usage_thresholds = [80, 95]      # usage.threshold at these percents of a plan window (the default); [] never
-delivery_interval = "5m"         # a batch at most this often (the default; at least 10s); the person's words go at once
-reminder_interval = "1h"         # a needs_action subject said again this often while it stays so (the default; at least 5m)
+delivery_interval = "5m"         # a batch at most this often (the default; at least 10s), each saying every needs_action subject again; the person's words go at once
 
 [orchestrator.github]
 projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER: their open items assigned to me are the population; none: it is empty
@@ -766,7 +770,8 @@ always goes. The default is `["*"]`: every kind left is a signal. A pattern
 naming a removed type (`agent.turn_ended`, `github.lane_changed`,
 `github.reply`, `agent.*`, `github.*`, `workspace.*`, …:
 `RETIRED_EVENT_TYPES`) loads, is left out, and is said
-once as a retired setting; so is `wait_reminder_interval` (`RETIRED_KEYS`).
+once as a retired setting; so are `wait_reminder_interval` and
+`reminder_interval` (`RETIRED_KEYS`: there is one cadence, `delivery_interval`).
 They are in Settings ▸ General ▸ Orchestrator and validated with every other
 setting.
 

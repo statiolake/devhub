@@ -200,8 +200,7 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
       event_prompt = "/make-progress {EVENT}"
       # init_prompt = "/make-progress {EVENT}"   # 省略時は event_prompt に init が入る
       # events = ["*", "!timer.*"]                # 受け取るイベントの絞り込み (既定は全部)
-      # delivery_interval = "5m"                  # 束ねた配信の最短間隔 (人の言葉はすぐ)
-      # reminder_interval = "1h"                  # 解消しない needs_action を言い直す間隔
+      # delivery_interval = "5m"                  # 束ねた配信の最短間隔 (人の言葉はすぐ)。解消しない needs_action も毎回載る
       # [orchestrator.github]
       # projects = ["my-org/7"]                  # 母集団になる Project (OWNER/NUMBER)。なければ母集団は空
       # interval = "90s"                          # 基本間隔 (最短 30s。ここから遅くなるだけ)
@@ -228,8 +227,11 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
 - **配信は履歴ではない。いま対応が要るものの一覧で、対象ごとに 1 行**
   (アイテム = Issue か PR、エージェント、エスカレーション、タイマー、CLI の使用量枠、カスタムの種類+本文)。
   同じ対象の新しいものは古いものを置き換える: 行はその対象がいま対応を要する理由を書く
-  (差分ではない。状態は \`status\` で読む)。届ける直前に、もう対応の要らないもの (解消した対象、待機中でなくなった
+  (差分ではない。状態は \`status\` で読む)。届ける直前に、もう対応の要らないもの (待機中でなくなった
   エスカレーション、リセット済みの使用量枠) は落とされる。
+- **\`needs_action\` は配信のたびに、その時点で不変条件を満たしていない対象を全部載せる** (\`agent keep\` した
+  ものは除く)。猶予も「一度言ったら黙る」もない: 解消するか keep するまで、\`delivery_interval\` (既定 5m)
+  ごとに同じ行が届き続ける。途中で解消した対象は次の配信に載らない。載せるものが何もなければ配信しない。
 - オーケストレーターがターン中 (フォアグラウンド) の間は束ねた配信を待つ。バックグラウンドの
   シェル・タスク・サブエージェントが動いているだけなら待たずに届く。
 - 1 通は最大 50 行。超えた分は最後の行 \`…ほか N 件 (devhub --tell orchestrator events で確認)\`
@@ -271,14 +273,14 @@ CLI 全般は /devhub スキルと \`devhub --tell help\` を参照。
   一致したものが勝つ)。既定は全部。\`init\` は常に届く。
 - 実物は \`devhub --tell orchestrator events\` で見られる (届いた / 保留 /
   フィルタ / 置き換え / 落とした、の別つき)。終了時に保留中のものは失われるが、次の起動の
-  \`init\` で状態を取り直せばよい (起動のたびに、解消していない対象はすべて言い直される)。
+  \`init\` で状態を取り直せばよい (解消していない対象は次の配信にまた載る)。
 
 | type | いつ | 主な key |
 | --- | --- | --- |
 | \`init\` | オーケストレーターが起動 / 再起動した (整合性チェックの合図) | - |
 | \`escalation_answered\` | 人がエスカレーションに回答した (対応中へ)。人の言葉として単独ですぐ届く (上記) | esc |
 | \`escalation.human_direct\` | 人が未完了エスカレーションのエージェントと、その会話欄で直接やりとりし、エージェントが動き出した (要回答なら対応中へ)。人の言葉として単独ですぐ届く | esc, agent |
-| \`needs_action\` | 不変条件 (下記) を満たしていないアイテム (Issue / PR) か管理対象エージェントと、満たしていない条項のコード。猶予 1 分のあとに 1 回、状態が変わるたびにもう 1 回 (行は同じ。\`status\` で何が動いたか見る)、解消しないうちは \`[orchestrator] reminder_interval\` (既定 1h) ごとに | issue / pr / agent, ws, コード |
+| \`needs_action\` | 不変条件 (下記) を満たしていないアイテム (Issue / PR) か管理対象エージェントと、満たしていない条項のコード。解消しないうちは配信のたび (\`[orchestrator] delivery_interval\`、既定 5m ごと) に毎回。\`agent keep\` した対象は、状態が変わる (keep が解ける) まで載らない | issue / pr / agent, ws, コード |
 | \`waiting.changed\` | 待機中のエスカレーションの条件が満たされたかもしれない: 対象のアイテム (Issue / PR) やエージェントの状態が変わった (\`subjects_changed\`) か、\`--at\` の時刻が来た (\`due\`、待機 1 回につき 1 回)。行はどのエスカレーションかと、そのどちらかだけ | esc, 理由 |
 | \`usage.threshold\` | CLI のプラン枠の使用率が \`[orchestrator] usage_thresholds\` (既定 80, 95) を上向きに超えた | cli, window, pct, resets |
 | \`timer.elapsed\` | \`[[orchestrator.timers]]\` か \`orchestrator timer set\` のタイマー | 名前 |

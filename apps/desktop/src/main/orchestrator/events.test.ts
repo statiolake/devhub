@@ -39,6 +39,7 @@ function world(
 		busy?: boolean;
 		interval?: string;
 		relevant?: (event: OrchestratorEvent) => boolean;
+		standing?: () => readonly OrchestratorEvent[];
 	} = {},
 ) {
 	const sent: string[] = [];
@@ -61,6 +62,7 @@ function world(
 		},
 		busy: () => state.busy,
 		...(options.relevant === undefined ? {} : { relevant: options.relevant }),
+		...(options.standing === undefined ? {} : { standing: options.standing }),
 		now: () => state.now,
 		setTimer: (ms, run) => {
 			const timer = { at: state.now + ms, run };
@@ -311,6 +313,76 @@ describe("the dispatcher", () => {
 			},
 		});
 		expect(dispatcher.dispatch(needsActionIssue()).fate).toBe("dropped");
+	});
+});
+
+describe("the standing lines (needs_action)", () => {
+	it("carries them at every delivery while they stand, once per delivery_interval, and nothing when there is nothing", () => {
+		const standing = { now: [needsActionIssue()] };
+		const { dispatcher, sent, advance } = world({
+			interval: "5m",
+			standing: () => standing.now,
+		});
+		// No grace: the first look delivers.
+		dispatcher.flush();
+		expect(sent).toEqual([
+			"handle: [needs_action] issue=acme/app#123 — no_agent",
+		]);
+		advance(60_000);
+		dispatcher.flush();
+		expect(sent).toHaveLength(1);
+		// The nag: again at the next delivery, by its own timer.
+		advance(240_000);
+		expect(sent).toHaveLength(2);
+		advance(300_000);
+		expect(sent).toHaveLength(3);
+		// Settled: the next delivery has nothing, and nothing is sent.
+		standing.now = [];
+		advance(300_000);
+		dispatcher.flush();
+		expect(sent).toHaveLength(3);
+		expect(
+			dispatcher.recent(10).map((entry) => [entry.event.type, entry.fate]),
+		).toEqual([
+			["needs_action", "delivered"],
+			["needs_action", "delivered"],
+			["needs_action", "delivered"],
+		]);
+	});
+
+	it("goes with what is pending, as one message, and waits for a busy orchestrator", () => {
+		const { dispatcher, sent, state, advance } = world({
+			busy: true,
+			standing: () => [needsActionIssue("idle_no_escalation")],
+		});
+		dispatcher.dispatch({ type: "timer.elapsed", name: "t", interval: "5m" });
+		advance(300);
+		expect(sent).toEqual([]);
+		state.busy = false;
+		dispatcher.flush();
+		expect(sent).toEqual([
+			"handle: [timer.elapsed] t\n[needs_action] issue=acme/app#123 — idle_no_escalation",
+		]);
+	});
+
+	it("is held by a pause, and goes on resume", async () => {
+		const { dispatcher, sent } = world({
+			standing: () => [needsActionIssue()],
+		});
+		dispatcher.pause();
+		dispatcher.flush();
+		expect(sent).toEqual([]);
+		expect(await dispatcher.resume()).toBe(1);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("follows the events filter", () => {
+		const { dispatcher, sent } = world({
+			events: ["*", "!needs_action"],
+			standing: () => [needsActionIssue()],
+		});
+		dispatcher.flush();
+		expect(sent).toEqual([]);
 	});
 });
 

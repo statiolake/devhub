@@ -20,14 +20,20 @@
  *    pending subject replaces the older one (`merge`):
  *    a line says how the subject stands now, not what happened to it;
  * 4. just before delivery, drops what no longer needs attention (`relevant`:
- *    a subject settled since, a wait no longer waiting) as `dropped-stale`;
- * 5. delivers everything pending as **one** message — one line per subject
+ *    a wait no longer waiting, a usage window reset) as `dropped-stale`;
+ * 5. delivers everything pending, and **the invariant's `needs_action`
+ *    lines** (`standing`: every subject that needs action at that moment,
+ *    the kept ones left out), as **one** message — one line per subject
  *    (`eventLine`) as `{EVENT}`, at most `MAX_DELIVERY_LINES` and a last
  *    line counting the rest, and as JSON for `{EVENT_JSON}` only when the
  *    template has it — at most once per `[orchestrator] delivery_interval`,
  *    once the orchestrator can take it: not paused, not in a foreground
  *    turn, nothing of ours still queued for it (`busy`). Background work of
- *    its own (shells, tasks, subagents) does not hold it.
+ *    its own (shells, tasks, subagents) does not hold it. `needs_action` is
+ *    never pending: it is read at each delivery, so while a subject needs
+ *    action it is on every one — a delivery every `delivery_interval` while
+ *    any does (the nag) — and a subject that settled in between is on none.
+ *    A delivery with nothing to carry is not sent.
  *
  * **Paused** holds everything, the person's words too, and the sources that
  * cost something (GitHub) are suspended (`paused`); `resume` lets them catch
@@ -558,6 +564,12 @@ export interface EventDelivery {
 	 * `CATCH_UP_TIMEOUT_MS`) before the held events go.
 	 */
 	readonly paused?: (paused: boolean) => Promise<void> | void;
+	/**
+	 * What every delivery carries besides what is pending, read just before
+	 * it goes: the invariant's `needs_action` lines (`InvariantWatch.due`).
+	 * While there are any, a delivery is made every `delivery_interval`.
+	 */
+	readonly standing?: () => readonly OrchestratorEvent[];
 	/** These events have just gone out (queued for the orchestrator). */
 	readonly delivered?: (events: readonly OrchestratorEvent[]) => void;
 	/** The pause, or what is pending, changed. */
@@ -710,9 +722,9 @@ export class EventDispatcher {
 		// The person asked for them: no batch window, interval or pickup wait.
 		this.#awaiting = undefined;
 		this.#lastBatchAt = undefined;
-		this.flush();
+		const standing = this.flush();
 		this.delivery.changed?.();
-		return count - this.#lines.length - this.#human.length;
+		return count - this.#lines.length - this.#human.length + standing;
 	}
 
 	#releaseHuman(): void {
@@ -741,34 +753,58 @@ export class EventDispatcher {
 		return parseInterval(this.delivery.settings().delivery_interval) ?? 0;
 	}
 
+	/** The `needs_action` lines a delivery now would carry. */
+	#standing(): readonly OrchestratorEvent[] {
+		const events = this.delivery.settings().events;
+		return (this.delivery.standing?.() ?? []).filter((event) =>
+			eventAllowed(event.type, events),
+		);
+	}
+
+	/** Each standing line as a log entry: it went out with this delivery. */
+	#logged(event: OrchestratorEvent, now: number): PendingLine {
+		const entry: EventLogEntry = {
+			seq: ++this.#seq,
+			at: now,
+			event,
+			fate: "pending",
+		};
+		this.#log.push(entry);
+		if (this.#log.length > EVENT_LOG_SIZE)
+			this.#log.splice(0, this.#log.length - EVENT_LOG_SIZE);
+		return { subject: subjectOf(event), entry };
+	}
+
 	/**
-	 * Deliver what is pending if the orchestrator can take it now. Called on
-	 * every projection (its status moved) and by the batch timer.
+	 * Deliver what is pending, and the invariant's standing lines, if the
+	 * orchestrator can take them now. Called on every projection (its
+	 * status moved) and by the batch timer. How many standing lines went.
 	 */
-	flush(): void {
+	flush(): number {
 		this.#timer?.cancel();
 		this.#timer = undefined;
-		if (this.#paused || this.#catchingUp) return;
+		if (this.#paused || this.#catchingUp) return 0;
 		if (this.#human.length > 0) this.#releaseHuman();
-		if (this.#lines.length === 0) return;
 		const agentId = this.delivery.orchestrator();
 		if (agentId === undefined) {
+			if (this.#lines.length === 0) return 0;
 			for (const line of this.#lines.splice(0)) line.entry.fate = "dropped";
 			this.delivery.changed?.();
-			return;
+			return 0;
 		}
+		if (this.#lines.length === 0 && this.#standing().length === 0) return 0;
 		const now = this.#now();
 		// At most one batch per `delivery_interval`.
 		if (this.#lastBatchAt !== undefined) {
 			const wait = this.#lastBatchAt + this.#intervalMs() - now;
 			if (wait > 0) {
 				this.#retry(wait);
-				return;
+				return 0;
 			}
 		}
 		if (this.delivery.busy?.(agentId) === true) {
 			if (this.#awaiting !== undefined) this.#awaiting.sawBusy = true;
-			return;
+			return 0;
 		}
 		// The last message may still be on its way into the queue the
 		// projection reads: wait to see it taken, for a while.
@@ -778,14 +814,18 @@ export class EventDispatcher {
 			now - this.#awaiting.at < PICKUP_TIMEOUT_MS
 		) {
 			this.#retry(PICKUP_RETRY_MS);
-			return;
+			return 0;
 		}
 		this.#dropStale();
-		if (this.#lines.length === 0) {
+		const standing = this.#standing();
+		if (this.#lines.length === 0 && standing.length === 0) {
 			this.delivery.changed?.();
-			return;
+			return 0;
 		}
-		const lines = this.#lines.splice(0);
+		const lines = [
+			...this.#lines.splice(0),
+			...standing.map((event) => this.#logged(event, now)),
+		];
 		const sent = lines.slice(0, MAX_DELIVERY_LINES);
 		const over = lines.slice(MAX_DELIVERY_LINES);
 		this.delivery.deliver(
@@ -812,6 +852,9 @@ export class EventDispatcher {
 				: { at: now, sawBusy: false };
 		this.delivery.delivered?.(sent.map((line) => line.entry.event));
 		this.delivery.changed?.();
+		// Still needing action at the next delivery: it is said again then.
+		if (standing.length > 0) this.#retry(Math.max(1_000, this.#intervalMs()));
+		return standing.length;
 	}
 
 	#schedule(ms: number): void {

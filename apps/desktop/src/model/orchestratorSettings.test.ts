@@ -124,9 +124,8 @@ describe("[orchestrator] settings", () => {
     ).toMatchObject({ usage_thresholds: [70] });
   });
 
-  it("reads delivery_interval and reminder_interval, defaults them to 5m and 1h, and refuses what is not an interval", () => {
+  it("reads delivery_interval, defaults it to 5m, and refuses what is not an interval", () => {
     expect(interpretConfig({}).orchestrator.delivery_interval).toBe("5m");
-    expect(interpretConfig({}).orchestrator.reminder_interval).toBe("1h");
     expect(
       interpretConfig({ orchestrator: { delivery_interval: "90s" } })
         .orchestrator.delivery_interval,
@@ -138,28 +137,16 @@ describe("[orchestrator] settings", () => {
           delivery_interval: bad,
         }),
       ).toBe("delivery_interval");
-    for (const bad of ["1m", "soon"])
-      expect(
-        orchestratorProblem({
-          ...DEFAULT_ORCHESTRATOR,
-          reminder_interval: bad,
-        }),
-      ).toBe("reminder_interval");
     expect(
       configDocument(defaultConfig())["orchestrator"] ?? {},
     ).not.toHaveProperty("delivery_interval");
-    expect(
-      configDocument({
-        ...defaultConfig(),
-        orchestrator: { ...DEFAULT_ORCHESTRATOR, reminder_interval: "2h" },
-      })["orchestrator"],
-    ).toMatchObject({ reminder_interval: "2h" });
   });
 
-  it("loads a retired wait_reminder_interval and retired event patterns, leaves them out, and says so", () => {
+  it("loads a retired wait_reminder_interval, reminder_interval and retired event patterns, leaves them out, and says so", () => {
     const document = {
       orchestrator: {
         wait_reminder_interval: "30m",
+        reminder_interval: "1h",
         events: [
           "*",
           "!agent.turn_ended",
@@ -173,8 +160,12 @@ describe("[orchestrator] settings", () => {
       "*",
       "timer.*",
     ]);
+    expect(interpretConfig(document).orchestrator).not.toHaveProperty(
+      "reminder_interval",
+    );
     expect(retiredKeysIn(document).map((one) => one.key)).toEqual([
       "orchestrator.wait_reminder_interval",
+      "orchestrator.reminder_interval",
       'orchestrator.events "!agent.turn_ended"',
       'orchestrator.events "github.lane_changed"',
       'orchestrator.events "!github.reply"',

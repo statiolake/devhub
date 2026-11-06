@@ -70,9 +70,7 @@ import {
   ORCHESTRATOR_GITHUB_RULE,
   ORCHESTRATOR_DELIVERY_RULE,
   DEFAULT_DELIVERY_INTERVAL,
-  DEFAULT_REMINDER_INTERVAL,
   MIN_DELIVERY_INTERVAL_MS,
-  MIN_REMINDER_INTERVAL_MS,
   ORCHESTRATOR_PROMPT_RULE,
   ORCHESTRATOR_ROOT_RULE,
   ORCHESTRATOR_TIMER_RULE,
@@ -699,7 +697,7 @@ export function GeneralSection({
         </Row>
         <Row
           label="Delivery interval"
-          help="The most often a batch of events goes to the orchestrator, one line per subject. The person's answers and messages are not batched: they go at once."
+          help="The most often a batch of events goes to the orchestrator, one line per subject. Each batch says again every subject that still needs action (unless the orchestrator kept it as it is), so this is also how often it is reminded. The person's answers and messages are not batched: they go at once."
         >
           <TextField
             label="Orchestrator delivery interval"
@@ -722,36 +720,6 @@ export function GeneralSection({
                   ...config.orchestrator,
                   deliveryInterval:
                     next === "" ? DEFAULT_DELIVERY_INTERVAL : next,
-                },
-              });
-            }}
-          />
-        </Row>
-        <Row
-          label="Needs-action reminder"
-          help="How often a subject that needs action (an item — Issue or pull request — or a managed agent nothing settles) is said again while it stays so."
-        >
-          <TextField
-            label="Orchestrator needs-action reminder"
-            value={
-              config.orchestrator.reminderInterval === DEFAULT_REMINDER_INTERVAL
-                ? ""
-                : config.orchestrator.reminderInterval
-            }
-            placeholder={DEFAULT_REMINDER_INTERVAL}
-            mono
-            validate={(next) =>
-              next !== "" && intervalProblem(next, MIN_REMINDER_INTERVAL_MS)
-                ? ORCHESTRATOR_DELIVERY_RULE
-                : undefined
-            }
-            onCommit={(next) => {
-              update({
-                ...config,
-                orchestrator: {
-                  ...config.orchestrator,
-                  reminderInterval:
-                    next === "" ? DEFAULT_REMINDER_INTERVAL : next,
                 },
               });
             }}

@@ -26,8 +26,9 @@
  * `escalation_answered` carries the answer itself, so its delivery is the
  * reading (`#deliveredRead`).
  *
- * The invariant (`invariant.ts`) is read here on every projection, and its
- * unsettled subjects are said (`unsettled`). 待機中 (`escalation wait`): a
+ * The invariant (`invariant.ts`) is read here on every projection, and
+ * every delivery carries its subjects that need action then (`standing`:
+ * `needs_action`, the kept ones left out). 待機中 (`escalation wait`): a
  * waiting escalation that may be ready is said (`waiting.changed`) when its
  * subjects' facts moved, and once per wait when its time (`dueAt`) came. An
  * agent of one going working takes it out of 待機中 as it does out of 要回答.
@@ -63,7 +64,6 @@ import {
 import type { OrchestratorConfig } from "../../model/orchestratorSettings.js";
 import { workStatus } from "../../model/conversation.js";
 import { agentAtWork } from "../../model/domain.js";
-import { parseInterval } from "../../model/orchestratorSettings.js";
 import type { EscalationStore } from "./escalationStore.js";
 import {
 	customTypeProblem,
@@ -75,7 +75,6 @@ import {
 } from "./events.js";
 import {
 	InvariantWatch,
-	issueUrlKey,
 	readInvariant,
 	type AgentStanding,
 	type InvariantAgent,
@@ -225,7 +224,6 @@ export interface StatusNeedsAction {
 	readonly clause: string;
 	readonly line: string;
 	readonly since: number;
-	readonly toldAt?: number;
 	readonly kept?: { readonly note: string; readonly at: number };
 }
 
@@ -270,7 +268,6 @@ function needsActionOf(view: NeedsActionView): StatusNeedsAction {
 		clause: view.clause,
 		line: view.line,
 		since: view.since,
-		...(view.toldAt === undefined ? {} : { toldAt: view.toldAt }),
 		...(view.kept === undefined ? {} : { kept: view.kept }),
 	};
 }
@@ -329,6 +326,7 @@ export class OrchestratorService {
 			},
 			...(ports.busy === undefined ? {} : { busy: ports.busy }),
 			relevant: (event) => this.#relevant(event),
+			standing: () => this.#invariant.due(),
 			delivered: (events) => {
 				this.#deliveredRead(events);
 			},
@@ -355,8 +353,6 @@ export class OrchestratorService {
 				this.events.dispatch(event);
 			},
 			now: () => this.#now(),
-			reminderMs: () =>
-				parseInterval(this.ports.settings().reminder_interval) ?? 3_600_000,
 			...(ports.kept === undefined ? {} : { kept: ports.kept }),
 		});
 		ports.store.onChange(() => {
@@ -400,8 +396,8 @@ export class OrchestratorService {
 
 	/**
 	 * Whether a pending event still needs the orchestrator, by live state,
-	 * just before it goes: a subject settled since, a wait no longer waiting,
-	 * a window reset — these need nothing any more.
+	 * just before it goes: a wait no longer waiting, a window reset — these
+	 * need nothing any more.
 	 */
 	#relevant(event: OrchestratorEvent): boolean {
 		switch (event.type) {
@@ -411,12 +407,6 @@ export class OrchestratorService {
 					.find((escalation) => escalation.id === event.escalationId);
 				return one !== undefined && currentWait(one)?.at === event.waitSince;
 			}
-			case "needs_action":
-				return this.#invariant.stillNeedsAction(
-					event.subject.kind !== "agent"
-						? `item ${issueUrlKey(event.subject.item.url ?? "")}`
-						: `agent ${event.subject.agent.id}`,
-				);
 			case "usage.threshold":
 				return usageThresholdRelevant(
 					event,
@@ -445,8 +435,6 @@ export class OrchestratorService {
 	/** Assign the orchestrator agent, and tell it it has started. */
 	assign(agentId: string, initPrompt?: string): void {
 		this.ports.store.setOrchestrator(agentId);
-		// A new orchestrator has heard nothing: every subject is said again.
-		this.#invariant.reset();
 		if (initPrompt !== undefined) this.ports.deliver(agentId, initPrompt);
 		else this.events.dispatch({ type: "init" });
 	}
@@ -791,7 +779,7 @@ export class OrchestratorService {
 		}
 	}
 
-	/** The settings moved: the invariant's reminders follow them on the next look. */
+	/** The settings moved: what is read and delivered follows them now. */
 	settingsChanged(): void {
 		this.observe();
 	}
@@ -970,9 +958,6 @@ export class OrchestratorService {
 			...all
 				.map((one) => currentWait(one)?.dueAt)
 				.filter((at): at is number => at !== undefined),
-			...[this.#invariant.nextDue()].filter(
-				(at): at is number => at !== undefined,
-			),
 		]
 			.map((at) => at - now)
 			.filter((ms) => ms > 0);
@@ -1080,10 +1065,7 @@ export class OrchestratorService {
 			const standing = this.#invariant.standing(agent.id);
 			const kept = this.#invariant.kept(agent.id);
 			const breach = standing?.breach;
-			const needsAction =
-				breach !== undefined &&
-				kept === undefined &&
-				this.#invariant.pastGrace(`agent ${agent.id}`);
+			const needsAction = breach !== undefined && kept === undefined;
 			const state: AgentOrchestrationWire = {
 				...(standing?.waiting === undefined
 					? {}

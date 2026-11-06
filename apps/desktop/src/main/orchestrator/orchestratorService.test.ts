@@ -313,15 +313,22 @@ describe("待機中 (escalation wait)", () => {
 });
 
 describe("the invariant", () => {
-	it("says an open item of mine nobody is on, after the grace, as a batch line", () => {
+	it("says an open item of mine nobody is on at once, and again at every delivery while it stays so", () => {
 		const run = world({ items: [issue()] });
-		run.later(30_000);
-		expect(run.of("needs_action")).toHaveLength(0);
-		run.later(31_000);
-		expect(run.of("needs_action")).toHaveLength(1);
-		expect(run.sent.at(-1)).toBe(
+		// No grace: the first delivery after it is read carries it (the
+		// start's went before the first reading; the next waits to see that
+		// one taken, at most a minute here).
+		run.later(61_000);
+		expect(run.sent).toEqual(["[needs_action] issue=acme/app#123 — no_agent"]);
+		run.later(61_000);
+		expect(run.sent).toEqual([
 			"[needs_action] issue=acme/app#123 — no_agent",
-		);
+			"[needs_action] issue=acme/app#123 — no_agent",
+		]);
+		expect(run.of("needs_action").map((one) => one.fate)).toEqual([
+			"delivered",
+			"delivered",
+		]);
 		expect(run.service.wire().needsAction).toEqual([
 			expect.objectContaining({
 				kind: "issue",
@@ -336,7 +343,8 @@ describe("the invariant", () => {
 		run.invariant.links.set(WORKER, ISSUE_URL);
 		run.status(WORKER, "working");
 		run.later(120_000);
-		expect(run.of("needs_action")).toHaveLength(0);
+		// Nothing needs action: nothing is sent at all.
+		expect(run.sent).toEqual([]);
 		const one = run.service.raise({
 			title: "t",
 			markdown: "?",
@@ -346,14 +354,9 @@ describe("the invariant", () => {
 		run.status(WORKER, "idle");
 		run.later(120_000);
 		// The Issue waits; the idle managed agent is on no escalation.
-		expect(run.of("needs_action").map((entry) => entry.event)).toEqual([
-			expect.objectContaining({
-				subject: {
-					kind: "agent",
-					agent: expect.objectContaining({ id: WORKER }) as unknown,
-				},
-			}),
-		]);
+		expect(run.sent.at(-1)).toBe(
+			"[needs_action] agent=a1b2c3d4 (agent a1) ws=w — idle_no_escalation",
+		);
 		expect(run.service.wire().agentStates[WORKER]?.needsAction).toBe(
 			"idle_no_escalation",
 		);
@@ -372,7 +375,7 @@ describe("the invariant", () => {
 		});
 	});
 
-	it("says a managed agent whose Issue is closed or not mine, and keeps one with a reason", () => {
+	it("says a managed agent whose Issue is closed or not mine, and leaves out one kept with a reason until its facts change", () => {
 		const run = world({
 			items: [issue({ assignedToMe: false })],
 			managed: true,
@@ -391,21 +394,27 @@ describe("the invariant", () => {
 		expect(run.service.wire().agentStates[WORKER]?.kept?.note).toBe(
 			"他チームの依頼で続ける",
 		);
-		run.later(2 * 3_600_000);
-		expect(run.of("needs_action")).toHaveLength(1);
+		const said = run.of("needs_action").length;
+		run.sent.length = 0;
+		for (let index = 0; index < 5; index += 1) run.later(61_000);
+		// Kept, and nothing else to say: no delivery at all.
+		expect(run.of("needs_action")).toHaveLength(said);
+		expect(run.sent).toEqual([]);
 		// Its Issue closed: the facts moved, it is said again.
 		run.invariant.items = [issue({ assignedToMe: false, state: "closed" })];
-		run.later(1_000);
-		expect(run.of("needs_action")).toHaveLength(2);
+		run.later(61_000);
+		expect(run.of("needs_action")).toHaveLength(said + 1);
 		expect(run.service.standing(WORKER)?.kept).toBeUndefined();
 	});
 
-	it("says every subject again to a new orchestrator", () => {
+	it("carries the standing lines beside what is pending, as one message", () => {
 		const run = world({ items: [issue()] });
 		run.later(61_000);
-		expect(run.of("needs_action")).toHaveLength(1);
-		run.service.assign(ORCH);
+		run.sent.length = 0;
+		run.service.emit("custom.deploy", "staging");
 		run.later(61_000);
-		expect(run.of("needs_action")).toHaveLength(2);
+		expect(run.sent).toEqual([
+			"[custom.deploy] — staging\n[needs_action] issue=acme/app#123 — no_agent",
+		]);
 	});
 });

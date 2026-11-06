@@ -4690,7 +4690,6 @@ function subjectJson(
 					clause: found.needsAction.clause,
 					line: found.needsAction.line,
 					since: iso(found.needsAction.since),
-					toldAt: iso(found.needsAction.toldAt),
 				};
 	const agentJson = (
 		agent: (typeof found & { subject: "agent" })["agent"],
@@ -4752,7 +4751,7 @@ function subjectText(
 	const needs =
 		found.needsAction === undefined
 			? "needs action: no"
-			: `needs action: ${found.needsAction.clause} (for ${span(now - found.needsAction.since)}${found.needsAction.toldAt === undefined ? ", in its grace" : `, last said ${span(now - found.needsAction.toldAt)} ago`})`;
+			: `needs action: ${found.needsAction.clause} (for ${span(now - found.needsAction.since)})`;
 	const agentLine = (agent: (typeof found & { subject: "agent" })["agent"]) =>
 		`${agent.name} (${agent.id}) ws=${agent.ws} ${agent.status}${agent.managed ? ", managed" : ""}${agent.needsAction === undefined ? "" : `, needs action: ${agent.needsAction}`}${agent.kept === undefined ? "" : `, kept: ${agent.kept.note}`}`;
 	const escalations =
@@ -4800,7 +4799,7 @@ function needsActionLines(board: OrchestratorBoardWire, now: number): string[] {
 		`needs action (${String(list.length)}):`,
 		...list.map(
 			(one) =>
-				`  ${one.line}  [${span(now - one.since)}${one.toldAt === undefined ? ", in its grace" : ""}${one.kept === undefined ? "" : `, kept: ${one.kept.note}`}]`,
+				`  ${one.line}  [${span(now - one.since)}${one.kept === undefined ? "" : `, kept: ${one.kept.note}`}]`,
 		),
 	];
 }

@@ -247,8 +247,6 @@ describe("the watch", () => {
 		const made = new InvariantWatch({
 			dispatch: (event) => said.push(event),
 			now: () => clock.now,
-			reminderMs: () => 3_600_000,
-			graceMs: 60_000,
 		});
 		return { watch: made, said, clock };
 	}
@@ -258,55 +256,44 @@ describe("the watch", () => {
 			agents: [agent({ status: "idle" })],
 			escalations: [],
 		});
+	const due = (made: InvariantWatch) =>
+		made.due().map((one) => eventLine(one, 0));
 
-	it("says a subject after the grace by its clause, never its state", () => {
+	it("gives every subject that needs action now, by its clause, never its state, at once and each time", () => {
 		const { watch: made, said, clock } = watch();
 		made.observe(idle(), true);
-		expect(said).toEqual([]);
-		clock.now = 60_000;
-		made.observe(idle(), true);
-		expect(said.map((one) => eventLine(one, 0))).toEqual([
+		const lines = [
 			"[needs_action] issue=acme/app#123 ws=api — idle_no_escalation",
 			"[needs_action] agent=a1b2c3d4 (API fix) ws=api — idle_no_escalation",
-		]);
-		expect(made.needsAction()[0]).toMatchObject({
+		];
+		// No grace, and nothing remembered of having said it.
+		expect(due(made)).toEqual(lines);
+		clock.now = 300_000;
+		made.observe(idle(), true);
+		expect(due(made)).toEqual(lines);
+		// The watch dispatches none itself: the delivery asks.
+		expect(said).toEqual([]);
+		expect(made.needsAction()[0]).toEqual({
+			key: expect.any(String),
+			kind: "issue",
 			line: "issue=acme/app#123 ws=api — idle_no_escalation",
 			clause: "idle_no_escalation",
 			since: 0,
-			toldAt: 60_000,
 		});
 	});
 
-	it("says it again when its state changes, and as a reminder", () => {
-		const { watch: made, said, clock } = watch();
+	it("gives nothing for a subject that settled", () => {
+		const { watch: made } = watch();
 		made.observe(idle(), true);
-		clock.now = 60_000;
-		made.observe(idle(), true);
-		made.observe(idle(), true);
-		expect(said).toHaveLength(2);
-		clock.now = 70_000;
-		made.observe(idle("In Review"), true);
-		expect(said).toHaveLength(4);
-		clock.now = 70_000 + 3_600_000;
-		made.observe(idle("In Review"), true);
-		expect(said).toHaveLength(6);
-	});
-
-	it("forgets a subject that settles: needing action again is a new grace", () => {
-		const { watch: made, said, clock } = watch();
-		made.observe(idle(), true);
-		clock.now = 30_000;
 		made.observe(
 			readInvariant({ items: [issue()], agents: [agent()], escalations: [] }),
 			true,
 		);
-		clock.now = 70_000;
-		made.observe(idle(), true);
-		expect(said).toEqual([]);
+		expect(made.due()).toEqual([]);
 	});
 
-	it("keeps an agent as it is, with its note, until its state changes", () => {
-		const { watch: made, said, clock } = watch();
+	it("leaves out a kept agent, with its note, until its state changes", () => {
+		const { watch: made, clock } = watch();
 		const outside = (status: string) =>
 			readInvariant({
 				items: [issue({ assignedToMe: false })],
@@ -314,15 +301,16 @@ describe("the watch", () => {
 				escalations: [],
 			});
 		made.observe(outside("working"), true);
+		expect(due(made)).toHaveLength(1);
 		const kept = made.keep("a1b2c3d4-0000", "他チームの依頼で続ける");
 		expect(kept.note).toBe("他チームの依頼で続ける");
-		clock.now = 60_000 + 3_600_000;
+		clock.now = 3_600_000;
 		made.observe(outside("working"), true);
-		expect(said).toEqual([]);
+		expect(made.due()).toEqual([]);
 		expect(made.needsAction()[0]?.kept?.note).toBe("他チームの依頼で続ける");
 		// It went idle: its state moved, the keeping is over.
 		made.observe(outside("idle"), true);
-		expect(said.map((one) => one.type)).toEqual(["needs_action"]);
+		expect(made.due().map((one) => one.type)).toEqual(["needs_action"]);
 		expect(made.kept("a1b2c3d4-0000")).toBeUndefined();
 		expect(() => made.keep("nobody", "x")).toThrow(/does not need action/u);
 	});
@@ -340,7 +328,6 @@ describe("the watch", () => {
 			new InvariantWatch({
 				dispatch: () => undefined,
 				now: () => 0,
-				reminderMs: () => 3_600_000,
 				kept: store,
 			});
 		const outside = (status: string, known = true) =>
@@ -399,18 +386,26 @@ describe("the watch", () => {
 		]);
 	});
 
-	it("says nothing with nobody to tell, and everything again after a reset", () => {
-		const { watch: made, said, clock } = watch();
-		made.observe(idle(), false);
-		clock.now = 60_000;
-		made.observe(idle(), false);
+	it("says no wait with nobody to tell", () => {
+		const { watch: made, said } = watch();
+		const waiting = (review: "none" | "approved") =>
+			readInvariant({
+				items: [
+					issue({
+						pull: {
+							number: 130,
+							state: "open",
+							review,
+							unresolved: 0,
+							checks: "passing",
+						},
+					}),
+				],
+				agents: [agent({ status: "idle" })],
+				escalations: [escalation()],
+			});
+		made.observe(waiting("none"), false);
+		made.observe(waiting("approved"), false);
 		expect(said).toEqual([]);
-		made.observe(idle(), true);
-		expect(said).toHaveLength(2);
-		made.reset();
-		made.observe(idle(), true);
-		clock.now = 120_000;
-		made.observe(idle(), true);
-		expect(said).toHaveLength(4);
 	});
 });

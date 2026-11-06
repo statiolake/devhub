@@ -949,7 +949,9 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "appearance.color_scheme":
     "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
   "orchestrator.wait_reminder_interval":
-    "there is no 待機中 reminder any more: a waiting escalation comes back as `waiting.changed`, when its `--at` time comes or when what it waits on changes; `orchestrator.reminder_interval` is how often a `needs_action` subject is said again",
+    "there is no 待機中 reminder any more: a waiting escalation comes back as `waiting.changed`, when its `--at` time comes or when what it waits on changes; a `needs_action` subject that stays so is on every delivery (`orchestrator.delivery_interval`)",
+  "orchestrator.reminder_interval":
+    "there is one cadence: every delivery (`orchestrator.delivery_interval`, 5m by default) carries each `needs_action` subject that needs action then and is not kept (`agent keep`)",
   "general.workbench":
     "every Workspace's editor area is its own VS Code workbench now",
   "runtimes.herdr":
@@ -2361,12 +2363,6 @@ export function interpretConfig(document: unknown): Config {
         "delivery_interval",
         "orchestrator",
         DEFAULT_ORCHESTRATOR.delivery_interval,
-      ),
-      reminder_interval: optionalString(
-        orchestratorTable,
-        "reminder_interval",
-        "orchestrator",
-        DEFAULT_ORCHESTRATOR.reminder_interval,
       ),
       github: {
         projects: optionalStringArray(

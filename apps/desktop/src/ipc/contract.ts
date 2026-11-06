@@ -550,8 +550,6 @@ export interface NeedsActionWire {
 	readonly clause: string;
 	/** Since when it has needed action (ms since the epoch). */
 	readonly since: number;
-	/** When it was last said; absent while in its grace. */
-	readonly toldAt?: number;
 	/** `agent keep`: left as it is, and why. */
 	readonly kept?: { readonly note: string; readonly at: number };
 }
@@ -562,7 +560,7 @@ export interface AgentOrchestrationWire {
 		readonly escalationId: number;
 		readonly trigger: string;
 	};
-	/** Managed, and needing action past the grace: the clause it fails. */
+	/** Managed, needing action and not kept: the clause it fails. */
 	readonly needsAction?: string;
 	readonly kept?: { readonly note: string; readonly at: number };
 }
@@ -706,8 +704,8 @@ export interface OrchestratorBoardWire {
 	/**
 	 * What the escalations and the invariant say of each agent, for its row:
 	 * one of a 待機中 escalation's agents (and what it waits on), needing
-	 * action past the grace, or kept as it is by the orchestrator (and why). Absent
-	 * for an agent with none of these.
+	 * action, or kept as it is by the orchestrator (and why). Absent for an
+	 * agent with none of these.
 	 */
 	readonly agentStates: Readonly<Record<string, AgentOrchestrationWire>>;
 	/** Oldest question first. */

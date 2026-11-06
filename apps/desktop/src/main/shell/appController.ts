@@ -10814,8 +10814,7 @@ export class AppController {
 		// folder is Scratch from now on; the old one stays as an ordinary row.
 		// Not caught here: a failure goes to the main process's root.
 		void this.scratch.settingsAccepted(config.scratch.daily);
-		// `[[orchestrator.timers]]`, `reminder_interval` and
-		// `[orchestrator.github]` move with them.
+		// `[[orchestrator.timers]]` and `[orchestrator.github]` move with them.
 		this.orchestrator?.timers.sync();
 		this.orchestrator?.settingsChanged();
 		this.followGitHub();

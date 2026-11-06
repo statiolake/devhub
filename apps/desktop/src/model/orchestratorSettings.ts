@@ -47,14 +47,11 @@ export interface OrchestratorConfig {
   /**
    * The most often a batch of events goes to the orchestrator: `5m`. The
    * person's words (an answer, a message to an escalation's agent) are not
-   * batched and go at once.
+   * batched and go at once. Every delivery carries each `needs_action`
+   * subject that needs action then (not kept), so it is also how often an
+   * unresolved one is said again.
    */
   readonly delivery_interval: string;
-  /**
-   * How often a `needs_action` subject that stays so is said again: `1h`,
-   * `30m`.
-   */
-  readonly reminder_interval: string;
   /** `[orchestrator.github]`: the GitHub event source. */
   readonly github: OrchestratorGitHubConfig;
   /** `[[orchestrator.timers]]`: fixed timers, each a `timer.elapsed`. */
@@ -165,10 +162,6 @@ export const DEFAULT_GITHUB_INTERVAL = "90s";
 export const DEFAULT_DELIVERY_INTERVAL = "5m";
 /** The most often a batch may go. */
 export const MIN_DELIVERY_INTERVAL_MS = 10_000;
-/** `[orchestrator] reminder_interval` when it is not set. */
-export const DEFAULT_REMINDER_INTERVAL = "1h";
-/** The most often a `needs_action` subject may be said again. */
-export const MIN_REMINDER_INTERVAL_MS = 5 * 60_000;
 /** The fastest DevHub polls GitHub for events, whatever the settings say. */
 export const MIN_GITHUB_INTERVAL_MS = 30_000;
 /** The fastest a timer may fire. */
@@ -189,7 +182,6 @@ export const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   events: DEFAULT_ORCHESTRATOR_EVENTS,
   usage_thresholds: DEFAULT_USAGE_THRESHOLDS,
   delivery_interval: DEFAULT_DELIVERY_INTERVAL,
-  reminder_interval: DEFAULT_REMINDER_INTERVAL,
   github: { projects: [], interval: DEFAULT_GITHUB_INTERVAL },
   timers: [],
 };
@@ -203,7 +195,6 @@ export const ORCHESTRATOR_KEYS = [
   "events",
   "usage_thresholds",
   "delivery_interval",
-  "reminder_interval",
   "github",
   "timers",
 ] as const;
@@ -233,8 +224,6 @@ export function orchestratorProblem(
     return "usage_thresholds";
   if (intervalProblem(config.delivery_interval, MIN_DELIVERY_INTERVAL_MS))
     return "delivery_interval";
-  if (intervalProblem(config.reminder_interval, MIN_REMINDER_INTERVAL_MS))
-    return "reminder_interval";
   if (config.github.projects.some((one) => projectRefProblem(one)))
     return "github.projects";
   if (intervalProblem(config.github.interval, MIN_GITHUB_INTERVAL_MS))
@@ -396,7 +385,7 @@ export const ORCHESTRATOR_EVENTS_RULE =
 
 export const ORCHESTRATOR_GITHUB_RULE = `orchestrator.github.projects lists Projects boards as OWNER/NUMBER (my-org/7); orchestrator.github.interval is like 90s or 2m, at least ${String(MIN_GITHUB_INTERVAL_MS / 1000)}s.`;
 
-export const ORCHESTRATOR_DELIVERY_RULE = `orchestrator.delivery_interval is like 5m or 90s, at least ${String(MIN_DELIVERY_INTERVAL_MS / 1000)}s: the most often a batch of events goes. orchestrator.reminder_interval is like 1h or 30m, at least ${String(MIN_REMINDER_INTERVAL_MS / 60_000)}m: how often a needs_action subject is said again.`;
+export const ORCHESTRATOR_DELIVERY_RULE = `orchestrator.delivery_interval is like 5m or 90s, at least ${String(MIN_DELIVERY_INTERVAL_MS / 1000)}s: the most often a batch of events goes, and so how often a needs_action subject that stays so is said again.`;
 
 export const ORCHESTRATOR_TIMER_RULE = `Each [[orchestrator.timers]] has a name (letters, digits, - and _; each once) and an interval like 5m or 1h, at least ${String(MIN_TIMER_INTERVAL_MS / 1000)}s.`;
 
@@ -486,8 +475,6 @@ export function orchestratorDocument(
     document["usage_thresholds"] = [...config.usage_thresholds];
   if (config.delivery_interval !== DEFAULT_DELIVERY_INTERVAL)
     document["delivery_interval"] = config.delivery_interval;
-  if (config.reminder_interval !== DEFAULT_REMINDER_INTERVAL)
-    document["reminder_interval"] = config.reminder_interval;
   const github: Record<string, TomlValue> = {};
   if (config.github.projects.length > 0)
     github["projects"] = [...config.github.projects];

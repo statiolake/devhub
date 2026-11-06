@@ -251,7 +251,6 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			events: config.orchestrator.events,
 			usageThresholds: config.orchestrator.usage_thresholds,
 			deliveryInterval: config.orchestrator.delivery_interval,
-			reminderInterval: config.orchestrator.reminder_interval,
 			githubProjects: config.orchestrator.github.projects,
 			githubInterval: config.orchestrator.github.interval,
 			timers: config.orchestrator.timers,
@@ -408,7 +407,6 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			events: wire.orchestrator.events,
 			usage_thresholds: wire.orchestrator.usageThresholds,
 			delivery_interval: wire.orchestrator.deliveryInterval,
-			reminder_interval: wire.orchestrator.reminderInterval,
 			github: {
 				projects: wire.orchestrator.githubProjects,
 				interval: wire.orchestrator.githubInterval,
