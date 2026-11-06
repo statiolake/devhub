@@ -46,6 +46,14 @@ export interface TerminalSurfaceProps {
    * attachment and its scrollback while it waits its turn; it must not report
    * geometry, because a `display: none` host measures as nothing and the
    * fallback size would resize the pane behind the user's back.
+   *
+   * A surface that has *never* been on screen has neither yet: its emulator
+   * is made and its client attached the first time it is shown. An Agent
+   * started in the background used to build an xterm and a WebGL context and
+   * take its TUI's whole start-up redraw on this page's thread at once —
+   * while the person was typing into the Agent beside it — for a screen
+   * nobody was looking at. tmux keeps that screen, and the attach that comes
+   * with the first show draws it as it is then.
    */
   readonly hidden?: boolean;
 }
@@ -144,6 +152,9 @@ export function TerminalSurface({
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState<string>();
   const connectionRef = useRef(connection);
+  // Once true, stays true: see `hidden`.
+  const [shown, setShown] = useState(!hidden);
+  if (!hidden && !shown) setShown(true);
 
   clientRef.current = boundClient;
   hiddenRef.current = hidden;
@@ -168,7 +179,7 @@ export function TerminalSurface({
 
   useEffect(() => {
     const host = hostRef.current;
-    if (!host) return undefined;
+    if (!host || !shown) return undefined;
     let disposed = false;
     let attachSerial = 0;
     let receipt: TerminalReceipt | undefined;
@@ -518,9 +529,10 @@ export function TerminalSurface({
       controllerRef.current = null;
     };
     // The surface key is the mount identity, so unrelated snapshot revisions
-    // never remount the xterm or reconnect its PTY client.
+    // never remount the xterm or reconnect its PTY client. `shown` changes
+    // once, from false to true, the first time a pooled surface comes on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surfaceKey]);
+  }, [surfaceKey, shown]);
 
   useEffect(() => {
     // Coming back on screen is the first moment the host has a real box, so
