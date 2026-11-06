@@ -19,11 +19,14 @@
  * **One request per tick**, never two in flight, no `gh` subcommands (the
  * token is `gh auth token`'s, read as the Workspace watcher reads it, and the
  * request goes through the same client, `postGraphQl`): a page (100) of each
- * Project's items, so a bigger Project is read a page a tick, and the
- * population is known once every Project has been read in full. A request
- * that fails halves the page from then on (down to `MIN_ITEMS_PER_PAGE`,
- * until the source stops): a Project too big to answer in time is read in
- * smaller pages, not asked the same again forever.
+ * Project still being read in this **pass**, and the population is known
+ * once every Project has been read in full. A pass starts with every
+ * registered Project at its first page; a Project leaves it when its last
+ * page is read (or GitHub answers it as nothing), and the pass is complete
+ * when none is left. A request that fails halves the page from then on
+ * (down to `MIN_ITEMS_PER_PAGE`, until the source stops): a Project too big
+ * to answer in time is read in smaller pages, not asked the same again
+ * forever.
  *
  * **Never silently unread.** Until the population is known, `state()` says
  * what is being read (`reading`: each Project not read in full yet, and the
@@ -33,9 +36,14 @@
  * token cannot see) included, and a missing `read:project` scope says how
  * to add it.
  *
- * **The interval** starts at `[orchestrator.github] interval` and only ever
- * backs off from it (`nextDelay`): slower as `remaining` falls, paused until
- * `resetAt` when it is low, doubling after a failure.
+ * **The interval** is between passes, not pages: while a pass is mid-way,
+ * the next page is asked as soon as the last one answered (still one at a
+ * time); once it is complete, the next pass waits
+ * `[orchestrator.github] interval`. Either only ever backs off (`nextDelay`):
+ * slower as `remaining` falls (mid-pass too: then at the interval's pace),
+ * paused until `resetAt` when it is low, doubling after a failure. So a
+ * Project of 500 items is known a few requests after launch, not five
+ * intervals.
  *
  * **It says nothing itself**: no event comes from here. What it read is
  * state (`items`), and the invariant reads it on every poll (`polled`).
@@ -446,20 +454,25 @@ export const MAX_BACKOFF_MS = 15 * 60_000;
 
 /**
  * How long until the next tick: the base, slower as the rate limit runs
- * down, paused until it resets when it is low; never faster than the base.
+ * down, paused until it resets when it is low; never faster than the base —
+ * except mid-pass (`midPass`), when the rest of the pass is asked at once
+ * while the rate limit is healthy (at least half left) and nothing failed.
  */
 export function nextDelay(
 	baseMs: number,
 	rate: RateLimit | undefined,
 	now: number,
 	failures = 0,
+	midPass = false,
 ): { readonly ms: number; readonly why: string } {
 	if (failures > 0)
 		return {
 			ms: Math.min(MAX_BACKOFF_MS, baseMs * 2 ** Math.min(failures, 10)),
 			why: `backing off after ${String(failures)} failure(s)`,
 		};
-	if (rate === undefined) return { ms: baseMs, why: "base interval" };
+	const atOnce = { ms: 0, why: "reading the rest of the pass" };
+	if (rate === undefined)
+		return midPass ? atOnce : { ms: baseMs, why: "base interval" };
 	const floor = Math.max(100, rate.cost * 20);
 	if (rate.remaining <= floor && rate.resetAt > now)
 		return {
@@ -468,6 +481,7 @@ export function nextDelay(
 		};
 	const share = rate.limit > 0 ? rate.remaining / rate.limit : 1;
 	const factor = share < 0.1 ? 4 : share < 0.25 ? 2 : share < 0.5 ? 1.5 : 1;
+	if (midPass && factor === 1) return atOnce;
 	return {
 		ms: Math.round(baseMs * factor),
 		why:
@@ -555,6 +569,11 @@ export class GitHubItemSource {
 	/** When `#problem` was first said. */
 	#problemAt: number | undefined;
 	#lastAt: number | undefined;
+	/**
+	 * The Projects still to be read in the pass under way; undefined (or
+	 * empty) between passes: the next request starts one.
+	 */
+	#pass: Set<string> | undefined;
 	/** The page size: halved by each failure, for the rest of the run. */
 	#perPage = ITEMS_PER_PAGE;
 	#nextAt: number | undefined;
@@ -610,6 +629,7 @@ export class GitHubItemSource {
 		this.#viewer = undefined;
 		this.#boards = new Map();
 		this.#pulls = new Map();
+		this.#pass = undefined;
 		this.#failures = 0;
 		this.#perPage = ITEMS_PER_PAGE;
 		this.#problem = undefined;
@@ -820,7 +840,13 @@ export class GitHubItemSource {
 		this.ports.changed?.();
 		// Suspended or stopped meanwhile: no next tick until it is resumed.
 		if (this.#mode !== "active") return;
-		const delay = nextDelay(base, this.#rate, this.#now(), this.#failures);
+		const delay = nextDelay(
+			base,
+			this.#rate,
+			this.#now(),
+			this.#failures,
+			(this.#pass?.size ?? 0) > 0,
+		);
 		this.#schedule(delay.ms);
 	}
 
@@ -838,9 +864,16 @@ export class GitHubItemSource {
 	async #read(): Promise<void> {
 		// A promise from the first line on: `tick` holds it as the one in flight.
 		await Promise.resolve();
-		const refs = this.#boardRefs();
+		const registered = this.#boardRefs();
 		for (const ref of [...this.#boards.keys()])
-			if (!refs.includes(ref)) this.#boards.delete(ref);
+			if (!registered.includes(ref)) this.#boards.delete(ref);
+		// The pass under way: the Projects not read in full in it yet, and one
+		// registered meanwhile; between passes, every Project starts one.
+		const pass = this.#pass;
+		const refs =
+			pass === undefined || pass.size === 0
+				? registered
+				: registered.filter((ref) => pass.has(ref) || !this.#boards.has(ref));
 		const credentials = await this.ports.token();
 		if ("problem" in credentials) throw new Error(credentials.problem);
 		const boards = refs.map((ref) => {
@@ -870,6 +903,9 @@ export class GitHubItemSource {
 			this.#pulls = new Map();
 		}
 		this.#viewer = reading.viewer;
+		// A Project leaves the pass with its last page, or when GitHub answers
+		// it as nothing (said as a problem; the next pass asks it again).
+		this.#pass = new Set();
 		for (const ref of refs) {
 			const page = reading.pages.get(ref);
 			const state = this.#boards.get(ref);
@@ -879,6 +915,7 @@ export class GitHubItemSource {
 			state.pages += 1;
 			if (page.next !== null) {
 				state.after = page.next;
+				this.#pass.add(ref);
 				continue;
 			}
 			state.complete = state.partial;

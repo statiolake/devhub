@@ -685,17 +685,24 @@ resume` polls once (the rate limit permitting), then sends the person's
   (`— subjects_changed`) compares each 待機中 escalation's subjects' facts
   with the last look (its first look says nothing).
 - **GitHub** (`githubItems.ts`): read — never written — one request per
-  tick: a page (100) of each registered Project's items (Issue and pull
-  request cards, each with its state, assignees, its lane, and for an Issue
-  the pull requests that close it; a bigger Project is read a page a tick),
-  and the review decision, unresolved conversations and checks of the open
-  pull requests the last reading named (`nodes`). With no Project registered
+  tick: a page (100) of the items of each Project still being read in the
+  pass (Issue and pull request cards, each with its state, assignees, its
+  lane, and for an Issue the pull requests that close it), and the review
+  decision, unresolved conversations and checks of the open pull requests
+  the last reading named (`nodes`). A **pass** reads every
+  registered Project from its first page to its last: a bigger Project takes
+  several requests, each asking only the Projects not read in full in that
+  pass yet, and the next page is asked as soon as the last one answered
+  (still one request at a time), so a Project of 500 items is known seconds
+  after launch rather than after five intervals. With no Project registered
   it does not poll at all. That is
   what the invariant's population and facts are read off (`items`); it says
-  no event itself. Typically a few points of GitHub's 5,000 an hour; the
-  interval starts at `[orchestrator.github] interval` and only backs off
-  (slower as the rate limit runs down, paused until it resets when low,
-  doubling after a failure; a failed request also halves the page from then
+  no event itself. Typically a few points of GitHub's 5,000 an hour; once a
+  pass is complete the next waits the interval, which starts at
+  `[orchestrator.github] interval` and only backs off (slower as the rate
+  limit runs down — mid-pass too, the pages then go at the interval's pace —,
+  paused until it resets when low, doubling after a failure, mid-pass or
+  not; a failed request also halves the page from then
   on, down to 10, so a Project too big to answer in time is read in smaller
   pages rather than asked the same again). While paused it does not poll at
   all. It is never silently unread: until the population is known, the
@@ -746,7 +753,7 @@ delivery_interval = "5m"         # a batch at most this often (the default; at l
 
 [orchestrator.github]
 projects = ["my-org/7"]          # Projects (v2) boards, OWNER/NUMBER: their open items assigned to me are the population; none: it is empty
-interval = "90s"                 # the base poll interval (at least 30s); it only backs off
+interval = "90s"                 # the base interval between passes (at least 30s); it only backs off
 
 [[orchestrator.timers]]
 name = "sweep"                   # timer.elapsed carries it

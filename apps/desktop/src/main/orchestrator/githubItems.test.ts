@@ -142,6 +142,8 @@ function answer(state: Answer) {
 function world(answers: Answer[], projects = ["acme/7"]) {
 	const asked: { query: string; variables: Record<string, unknown> }[] = [];
 	const pending: (() => void)[] = [];
+	/** Each timer's delay, in the order they were set. */
+	const delays: number[] = [];
 	const settings = { projects, interval: "90s" };
 	const source = new GitHubItemSource({
 		settings: () => settings,
@@ -152,7 +154,8 @@ function world(answers: Answer[], projects = ["acme/7"]) {
 			if (next === undefined) throw new Error("no more answers");
 			return Promise.resolve(answer(next));
 		},
-		setTimer: (_ms, run) => {
+		setTimer: (ms, run) => {
+			delays.push(ms);
 			pending.push(run);
 			return { cancel: () => undefined };
 		},
@@ -163,6 +166,7 @@ function world(answers: Answer[], projects = ["acme/7"]) {
 		asked,
 		source,
 		pending,
+		delays,
 		settings,
 		async ticks(count: number) {
 			for (let index = 0; index < count; index += 1) await source.tick();
@@ -293,6 +297,86 @@ describe("the GitHub items", () => {
 		await run.ticks(1);
 		expect(run.asked[1]?.variables["a0"]).toBe("c1");
 		expect(run.source.items()?.map((one) => one.item.number)).toEqual([1, 2]);
+	});
+
+	it("reads the pages of a pass one after another, and waits the interval only between passes", async () => {
+		const issue = (number: number): Card => ({
+			kind: "Issue",
+			id: `I${String(number)}`,
+			number,
+		});
+		const run = world([
+			{ boards: [{ cards: [issue(1)], next: "c1" }] },
+			{ boards: [{ cards: [issue(2)], next: "c2" }] },
+			{ boards: [{ cards: [issue(3)] }] },
+			{ boards: [{ cards: [issue(1)], next: "c1" }] },
+		]);
+		// The first poll is at once (follow), then each page right after the last.
+		await run.ticks(3);
+		expect(run.delays).toEqual([0, 0, 0, 90_000]);
+		expect(run.asked.map((one) => one.variables["a0"])).toEqual([
+			null,
+			"c1",
+			"c2",
+		]);
+		expect(run.source.items()?.map((one) => one.item.number)).toEqual([
+			1, 2, 3,
+		]);
+		// The next pass starts afresh after the interval, and goes on at once.
+		await run.ticks(1);
+		expect(run.asked[3]?.variables["a0"]).toBeNull();
+		expect(run.delays.at(-1)).toBe(0);
+		// The last full pass stands while the next is read.
+		expect(run.source.items()).toHaveLength(3);
+	});
+
+	it("asks only the Projects still being read in a pass", async () => {
+		const run = world(
+			[
+				{ boards: [{ cards: [], next: "c1" }, { cards: [] }] },
+				{ boards: [{ cards: [] }] },
+			],
+			["acme/7", "other/3"],
+		);
+		await run.ticks(2);
+		expect(run.asked[1]?.variables).toMatchObject({ o0: "acme", a0: "c1" });
+		expect(run.asked[1]?.variables).not.toHaveProperty("o1");
+		expect(run.delays).toEqual([0, 0, 90_000]);
+		expect(run.source.items()).toEqual([]);
+	});
+
+	it("still backs off after a failure mid-pass, then reads on at once", async () => {
+		let fail = true;
+		const delays: number[] = [];
+		const answers: Answer[] = [
+			{ boards: [{ cards: [], next: "c1" }] },
+			{ boards: [{ cards: [] }] },
+		];
+		const source = new GitHubItemSource({
+			settings: () => ({ projects: ["acme/7"], interval: "90s" }),
+			token: () => Promise.resolve({ token: "t" }),
+			post: () => {
+				if (answers.length === 1 && fail) {
+					fail = false;
+					return Promise.reject(new Error("GitHub answered 502."));
+				}
+				return Promise.resolve(answer(answers.shift()!));
+			},
+			setTimer: (ms) => {
+				delays.push(ms);
+				return { cancel: () => undefined };
+			},
+			now: () => Date.parse("2026-11-05T00:00:00Z"),
+		});
+		source.follow(true);
+		await source.tick();
+		await source.tick();
+		expect(source.state().problem).toBe("GitHub answered 502.");
+		expect(delays).toEqual([0, 0, 180_000]);
+		expect(source.state().reading).toContain("Project acme/7, page 2");
+		await source.tick();
+		expect(delays.at(-1)).toBe(90_000);
+		expect(source.items()).toEqual([]);
 	});
 
 	it("has an empty population, and asks GitHub nothing, with no Project registered", () => {
@@ -538,6 +622,14 @@ describe("the GitHub interval", () => {
 
 	it("pauses until the reset when little is left", () => {
 		expect(nextDelay(90_000, rate(50), now).ms).toBe(605_000);
+	});
+
+	it("asks the rest of a pass at once, unless the rate limit says to slow down", () => {
+		expect(nextDelay(90_000, undefined, now, 0, true).ms).toBe(0);
+		expect(nextDelay(90_000, rate(4900), now, 0, true).ms).toBe(0);
+		expect(nextDelay(90_000, rate(1000), now, 0, true).ms).toBe(180_000);
+		expect(nextDelay(90_000, rate(50), now, 0, true).ms).toBe(605_000);
+		expect(nextDelay(90_000, undefined, now, 1, true).ms).toBe(180_000);
 	});
 
 	it("doubles after each failure, up to a ceiling", () => {
