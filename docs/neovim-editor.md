@@ -49,8 +49,9 @@ TUI Neovim in a tmux pane is gone.)
   host, and is forwarded to a socket here over the host's ControlMaster —
   `ssh -O forward -L <here>:<there>` (`Runtime.forwardUnixSocket`,
   `editor/neovimMachines.ts`). A dropped connection takes the forward with it;
-  the page says the connection dropped, and Retry forwards again and adopts
-  the Neovim that went on running. A closed connection only counts as Neovim
+  when its Neovim is still running there, the page says the connection
+  dropped and attaches again by itself (0.8 s, 2 s, 5 s, 10 s apart; then a
+  Retry button), forwarding again and adopting the same Neovim. A closed connection only counts as Neovim
   ending when its keeper pane is gone or dead: before, the drop unlinked the
   host's socket, so Retry started a second Neovim beside the orphaned first.
 - **A dev container**: not yet. A Workspace whose editor is attached to a
@@ -205,8 +206,8 @@ the cursor and its shapes, scrolling, splits and floats, resize, the completion 
 provider, GUI windows and `:DevhubTerminal`, file opens, reattaching after a
 DevHub restart. SSH, against an sshd on localhost (a Workspace on
 `ssh:<host>`, Neovim 0.11.5 and the same config on the host): the socket
-forward, the attach, and — after the ControlMaster is killed — Retry adopting
-the same Neovim with its unsaved edit. Not exercised in CI.
+forward, the attach, and — after the ControlMaster is killed — the page
+reconnecting by itself to the same Neovim, its unsaved edit still there. Not exercised in CI.
 
 ## Limitations (phase 1)
 

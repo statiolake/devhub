@@ -50,7 +50,15 @@ import type { AppAppearance } from "../../ipc/appShell";
 type Connection =
   | { readonly kind: "connecting" }
   | { readonly kind: "attached"; readonly version: string }
-  | { readonly kind: "failed"; readonly message: string };
+  | {
+      readonly kind: "failed";
+      readonly message: string;
+      /** Attach again by itself: the Neovim is still there (an SSH drop). */
+      readonly reconnect?: boolean;
+    };
+
+/** How long the page waits before each attempt to reconnect by itself. */
+const RECONNECT_DELAYS_MS = [800, 2000, 5000, 10000];
 
 /** The GUI-window content Lua asked for, by id; where it is is Neovim's. */
 interface GuiContent {
@@ -108,6 +116,7 @@ function NeovimSurface({
     current: 0,
   });
   const frames = useRef(new Map<number, HTMLIFrameElement>());
+  const reconnectAttempt = useRef(0);
 
   const settings = useMemo(
     () => ({
@@ -137,10 +146,10 @@ function NeovimSurface({
     const offRedraw = bridge.neovim.onRedraw((id, batches) => {
       if (id === workspaceId) editor.redraw(batches);
     });
-    const offEnded = bridge.neovim.onEnded((id, reason) => {
+    const offEnded = bridge.neovim.onEnded((id, reason, reconnect) => {
       if (id !== workspaceId) return;
       editor.reset();
-      setConnection({ kind: "failed", message: reason });
+      setConnection({ kind: "failed", message: reason, reconnect });
     });
     const offGui = bridge.neovim.onGuiWindow(
       (id, wire: NeovimGuiWindowWire) => {
@@ -187,9 +196,17 @@ function NeovimSurface({
       .then((result) => {
         if (cancelled) return;
         if (!result.ok) {
-          setConnection({ kind: "failed", message: result.message });
+          // While reconnecting by itself, a refused attach (the host still
+          // unreachable) is one more attempt, until they run out.
+          const again = reconnectAttempt.current > 0;
+          setConnection({
+            kind: "failed",
+            message: result.message,
+            reconnect: again,
+          });
           return;
         }
+        reconnectAttempt.current = 0;
         editor.attached(size);
         setConnection({ kind: "attached", version: result.version });
         editor.focus();
@@ -210,6 +227,26 @@ function NeovimSurface({
   useEffect(() => {
     editorRef.current?.updateSettings(settings);
   }, [settings]);
+
+  // An SSH drop: attach again by itself, a few times, further apart.
+  const autoReconnect =
+    connection.kind === "failed" && connection.reconnect === true;
+  useEffect(() => {
+    if (!autoReconnect) return undefined;
+    const delay = RECONNECT_DELAYS_MS[reconnectAttempt.current];
+    if (delay === undefined) {
+      reconnectAttempt.current = 0;
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      reconnectAttempt.current += 1;
+      setConnection({ kind: "connecting" });
+      setGeneration((g) => g + 1);
+    }, delay);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [autoReconnect, generation]);
 
   // A GUI window's page talks to its Lua side, and gives the keyboard back.
   useEffect(() => {

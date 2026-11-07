@@ -61,6 +61,33 @@ export class NeovimEditors {
 
 	constructor(private readonly options: NeovimEditorsOptions) {}
 
+	/**
+	 * Tell the page its connection ended: Neovim exited, or — on an SSH host
+	 * whose connection dropped — only the way to it went, and the page
+	 * attaches again by itself to the Neovim that went on running.
+	 */
+	private async ended(
+		target: WorkspaceTerminalTarget,
+		entry: { readonly page: NeovimPage },
+	): Promise<void> {
+		const remote = target.machine !== "local";
+		// A `:qa` closes the connection a moment before its pane goes.
+		if (remote) await new Promise((resolve) => setTimeout(resolve, 500));
+		const reconnect =
+			remote &&
+			(await this.options.neovims.stillRunning(target).catch(() => true));
+		if (entry.page.isDestroyed()) return;
+		const host = target.machine.replace(/^ssh:/, "");
+		entry.page.send(
+			NEOVIM_CHANNELS.ended,
+			target.workspaceId,
+			reconnect
+				? `The connection to ${host} dropped. Reconnecting to the Neovim that is still running there…`
+				: "Neovim exited. Retry starts it again.",
+			reconnect,
+		);
+	}
+
 	/** The page at `page` attaches as `request.workspaceId`'s UI. */
 	async attach(
 		page: NeovimPage,
@@ -87,15 +114,7 @@ export class NeovimEditors {
 				client.onClose(() => {
 					if (this.attached.get(workspaceId) !== mine) return;
 					this.attached.delete(workspaceId);
-					if (!mine.page.isDestroyed()) {
-						mine.page.send(
-							NEOVIM_CHANNELS.ended,
-							workspaceId,
-							target.machine === "local"
-								? "Neovim exited. Retry starts it again."
-								: `The connection to ${target.machine.replace(/^ssh:/, "")} dropped. Retry connects again and picks up the Neovim that went on running there.`,
-						);
-					}
+					void this.ended(target, mine);
 				});
 			}
 			entry.page = page;

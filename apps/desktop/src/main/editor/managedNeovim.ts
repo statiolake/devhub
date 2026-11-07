@@ -267,6 +267,8 @@ function delay(ms: number): Promise<void> {
 
 export class ManagedNeovims {
 	private readonly records = new Map<string, ServerRecord>();
+	/** The pane each Workspace's Neovim was last known in, for `stillRunning`. */
+	private readonly lastPanes = new Map<string, string>();
 	/** One jump at a time per Workspace: two must not start two Neovims. */
 	private readonly queues = new Map<string, Promise<unknown>>();
 	private readonly panes: EditorPanes;
@@ -299,6 +301,20 @@ export class ManagedNeovims {
 			files: this.files,
 			connect: this.connect,
 		};
+	}
+
+	/**
+	 * Whether the Neovim whose connection just closed is still running in
+	 * its pane — the connection to an SSH host dropped, and attaching again
+	 * would adopt it. A pane that cannot be asked about counts as running.
+	 */
+	async stillRunning(target: WorkspaceTerminalTarget): Promise<boolean> {
+		const paneId = this.lastPanes.get(target.workspaceId);
+		if (paneId === undefined) return false;
+		const state = await this.panes
+			.state(target, paneId)
+			.catch(() => "alive" as const);
+		return state === "alive";
 	}
 
 	/** The pane a Workspace's managed Neovim is in, while one is known. */
@@ -547,6 +563,9 @@ export class ManagedNeovims {
 
 	private remember(workspaceId: string, record: ServerRecord): ServerRecord {
 		this.records.set(workspaceId, record);
+		if (record.paneId !== undefined) {
+			this.lastPanes.set(workspaceId, record.paneId);
+		}
 		// A Neovim started now has the theme in its environment already; one
 		// adopted may have been started under another. Either is told, so
 		// `g:devhub_theme` is there from the first jump.

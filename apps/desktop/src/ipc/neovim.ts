@@ -116,7 +116,14 @@ export interface DevhubNeovimApi {
 	onRedraw(
 		listener: (workspaceId: string, batches: readonly unknown[]) => void,
 	): () => void;
-	onEnded(listener: (workspaceId: string, reason: string) => void): () => void;
+	/**
+	 * The connection ended. `reconnect`: only the way to Neovim went (an SSH
+	 * host's connection dropped) and it went on running, so attaching again
+	 * picks it up — the page does so by itself.
+	 */
+	onEnded(
+		listener: (workspaceId: string, reason: string, reconnect: boolean) => void,
+	): () => void;
 	onGuiWindow(
 		listener: (workspaceId: string, window: NeovimGuiWindowWire) => void,
 	): () => void;

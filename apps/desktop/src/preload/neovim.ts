@@ -55,7 +55,7 @@ const neovim: DevhubNeovimApi = {
 	onRedraw: (listener) =>
 		listen<[string, readonly unknown[]]>(NEOVIM_CHANNELS.redraw, listener),
 	onEnded: (listener) =>
-		listen<[string, string]>(NEOVIM_CHANNELS.ended, listener),
+		listen<[string, string, boolean]>(NEOVIM_CHANNELS.ended, listener),
 	onGuiWindow: (listener) =>
 		listen<[string, NeovimGuiWindowWire]>(NEOVIM_CHANNELS.guiWindow, listener),
 	onGuiWindows: (listener) =>
