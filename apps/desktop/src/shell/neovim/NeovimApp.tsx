@@ -313,6 +313,15 @@ function NeovimSurface({
     send("nvim_set_var", ["ui_cmdline_pos", [posRow, posCol]]);
   }, [attached, send, posRow, posCol]);
 
+  // Where each GUI buffer's content is drawn when it is in several windows:
+  // the current window if it is one of them, else the first.
+  const primaryWindow = new Map<number, number>();
+  for (const { id, win } of guiWindows.windows) {
+    if (!primaryWindow.has(id) || win === guiWindows.current) {
+      primaryWindow.set(id, win);
+    }
+  }
+
   const tabs = nvim?.tabline;
   const showTabs = tabs !== undefined && tabs.tabs.length > 1;
   const boxes = editor?.gridBoxes() ?? [];
@@ -345,79 +354,109 @@ function NeovimSurface({
       ) : null}
       <div className="nvim-host" ref={hostRef} aria-label={`${label} — Neovim`}>
         {nvim && cell
-          ? guiWindows.windows.map(({ id, win }) => {
-              const box = boxes.find((b) => b.win === win);
-              const content = guiContent.get(id);
-              if (!box || !content) return null;
-              const style = {
-                left: box.col * cell.width,
-                top: box.row * cell.height,
-                width: box.width * cell.width,
-                height: box.height * cell.height,
-                zIndex: box.z + 1,
-                background: cssColor(nvim.defaults.background),
-              };
-              const current = win === guiWindows.current;
-              return (
-                <div
-                  key={id}
-                  data-gui-id={id}
-                  className={[
-                    "nvim-gui-window",
-                    current ? "nvim-gui-current" : "",
-                    content.terminal === true ? "nvim-gui-terminal" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  style={style}
-                  onMouseDownCapture={() => {
-                    if (!current) send("nvim_set_current_win", [win]);
-                  }}
-                  onFocusCapture={() => {
-                    // A terminal focuses itself as it connects: the keyboard
-                    // stays where Neovim's cursor is until Neovim moves it.
-                    if (!current) editor?.focus();
-                  }}
-                  onKeyDownCapture={(event) => {
-                    if (
-                      event.ctrlKey &&
-                      (event.key === "w" || event.key === "W")
-                    ) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      send("nvim_input", ["<C-w>"]);
-                      editor?.focus();
-                    }
-                  }}
-                >
-                  {content.terminal === true ? (
-                    <TerminalSurface
-                      surfaceKey={workspaceTerminalSurfaceKey(workspaceId)}
-                      surfaceLabel={`${label} terminal`}
-                      appearance={terminalAppearance}
-                      hideTitle
-                      {...(content.hiddenRows
-                        ? { hiddenRows: content.hiddenRows }
-                        : {})}
-                    />
-                  ) : (
-                    <iframe
-                      title={content.title}
-                      ref={(frame) => {
-                        if (frame) frames.current.set(id, frame);
-                        else frames.current.delete(id);
+          ? guiWindowsInPaintOrder(guiWindows.windows, primaryWindow).map(
+              ({ id, win }) => {
+                const box = boxes.find((b) => b.win === win);
+                const content = guiContent.get(id);
+                if (!box || !content) return null;
+                if (primaryWindow.get(id) !== win) {
+                  // The same GUI buffer in a second window: its content lives
+                  // in one place (one page, one terminal client), so this one
+                  // says where, and a click takes the cursor there.
+                  return (
+                    <div
+                      key={`${String(id)}:${String(win)}`}
+                      className="nvim-gui-window nvim-gui-elsewhere"
+                      style={{
+                        left: box.col * cell.width,
+                        top: box.row * cell.height,
+                        width: box.width * cell.width,
+                        height: box.height * cell.height,
+                        zIndex: box.z + 1,
+                        background: cssColor(nvim.defaults.background),
                       }}
-                      sandbox="allow-scripts allow-forms allow-popups"
-                      {...(content.url !== undefined
-                        ? { src: content.url }
-                        : {
-                            srcDoc: guiDocument(content.html ?? "", nvim),
-                          })}
-                    />
-                  )}
-                </div>
-              );
-            })
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        send("nvim_set_current_win", [win]);
+                      }}
+                    >
+                      <span>
+                        {content.title || "GUI window"} is shown in another
+                        window
+                      </span>
+                    </div>
+                  );
+                }
+                const style = {
+                  left: box.col * cell.width,
+                  top: box.row * cell.height,
+                  width: box.width * cell.width,
+                  height: box.height * cell.height,
+                  zIndex: box.z + 1,
+                  background: cssColor(nvim.defaults.background),
+                };
+                const current = win === guiWindows.current;
+                return (
+                  <div
+                    key={id}
+                    data-gui-id={id}
+                    className={[
+                      "nvim-gui-window",
+                      current ? "nvim-gui-current" : "",
+                      content.terminal === true ? "nvim-gui-terminal" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    style={style}
+                    onMouseDownCapture={() => {
+                      if (!current) send("nvim_set_current_win", [win]);
+                    }}
+                    onFocusCapture={() => {
+                      // A terminal focuses itself as it connects: the keyboard
+                      // stays where Neovim's cursor is until Neovim moves it.
+                      if (!current) editor?.focus();
+                    }}
+                    onKeyDownCapture={(event) => {
+                      if (
+                        event.ctrlKey &&
+                        (event.key === "w" || event.key === "W")
+                      ) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        send("nvim_input", ["<C-w>"]);
+                        editor?.focus();
+                      }
+                    }}
+                  >
+                    {content.terminal === true ? (
+                      <TerminalSurface
+                        surfaceKey={workspaceTerminalSurfaceKey(workspaceId)}
+                        surfaceLabel={`${label} terminal`}
+                        appearance={terminalAppearance}
+                        hideTitle
+                        {...(content.hiddenRows
+                          ? { hiddenRows: content.hiddenRows }
+                          : {})}
+                      />
+                    ) : (
+                      <iframe
+                        title={content.title}
+                        ref={(frame) => {
+                          if (frame) frames.current.set(id, frame);
+                          else frames.current.delete(id);
+                        }}
+                        sandbox="allow-scripts allow-forms allow-popups"
+                        {...(content.url !== undefined
+                          ? { src: content.url }
+                          : {
+                              srcDoc: guiDocument(content.html ?? "", nvim),
+                            })}
+                      />
+                    )}
+                  </div>
+                );
+              },
+            )
           : null}
         {nvim && cell && editor ? (
           <>
@@ -445,6 +484,25 @@ function NeovimSurface({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Each GUI buffer's own window first, one per buffer and in a stable order,
+ * then its other windows: the element that holds a page keeps its place in
+ * the DOM when the buffer's current window changes, since moving an iframe
+ * reloads it.
+ */
+function guiWindowsInPaintOrder(
+  windows: readonly { readonly id: number; readonly win: number }[],
+  primary: ReadonlyMap<number, number>,
+): { readonly id: number; readonly win: number }[] {
+  const ids = [...new Set(windows.map((w) => w.id))];
+  const first = ids.flatMap((id) => {
+    const win = primary.get(id);
+    return win === undefined ? [] : [{ id, win }];
+  });
+  const rest = windows.filter((w) => primary.get(w.id) !== w.win);
+  return [...first, ...rest];
 }
 
 /** `appearance` with both terminal palettes on Neovim's default colours. */

@@ -286,6 +286,19 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* A GUI buffer's second window: where its content is, said quietly. */
+.nvim-gui-elsewhere {
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-tertiary);
+  font-size: 12px;
+  cursor: default;
+}
+
+.nvim-gui-elsewhere > span {
+  flex: none;
+}
+
 /* A terminal is the editor's own: Neovim's statusline frames it. */
 .nvim-gui-terminal,
 .nvim-gui-terminal.nvim-gui-current {

@@ -200,8 +200,8 @@ is fitted that many rows taller and those rows are clipped
 
 Verified against Neovim 0.9.5 and 0.11.5 (`neovimUi.real.test.ts`, and a
 DevHub run under Xvfb; on 0.11.5 with a real lazy.nvim config: devhub.nvim's
-theme, blink.cmp in insert and `:` mode, the snacks picker, fidget): typing, the cursor and its shapes, scrolling, splits and floats,
-resize, the completion menu, the command line, tab pages, the clipboard
+theme, blink.cmp in insert and `:` mode, the snacks picker, fidget): typing,
+the cursor and its shapes, scrolling, splits and floats, resize, the completion menu, the command line, tab pages, the clipboard
 provider, GUI windows and `:DevhubTerminal`, file opens, reattaching after a
 DevHub restart. SSH, against an sshd on localhost (a Workspace on
 `ssh:<host>`, Neovim 0.11.5 and the same config on the host): the socket
@@ -214,9 +214,13 @@ the same Neovim with its unsaved edit. Not exercised in CI.
 - No delivery of `nvim` to hosts; Neovim 0.9 or later is expected.
 - `ext_messages` off; messages are Neovim's own, in its message grid.
 - `ext_hlstate` off; no semantic styling of diagnostics yet.
-- A GUI window shown in two windows draws its content in the first only.
-- The keeper window shows in the `ws-` session's window list
-  (`1:devhub-nvim`) of a terminal attached to it.
+- A GUI buffer shown in two windows has its content (one page, one terminal
+  client) in one of them — the current window when it is one, else the
+  first — and the other says where it is; a click there moves the cursor in.
+- The keeper window is still a window of the `ws-` session: its entry in
+  the status line is made empty (`window-status-format` for that window
+  only), but `next-window` or `choose-tree` in a terminal on the session
+  still reach it. A keeper started before this change keeps its entry.
 
 ## Phase 2
 

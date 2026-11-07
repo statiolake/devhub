@@ -1570,6 +1570,29 @@ export function editorWindowArgs(
 }
 
 /**
+ * The keeper window's entry in the status line's window list, made empty:
+ * `window-status-format` is a window option, so this window alone is left
+ * out and the person's own windows keep their format.
+ */
+export function editorWindowStatusArgs(paneId: string): readonly string[] {
+	return [
+		"set-option",
+		"-w",
+		"-t",
+		paneId,
+		"window-status-format",
+		"",
+		";",
+		"set-option",
+		"-w",
+		"-t",
+		paneId,
+		"window-status-current-format",
+		"",
+	];
+}
+
+/**
  * One client queue that states each variable in the server's global
  * environment. Values travel as argv, never through a config file, so nothing
  * in them is parsed by tmux — except a trailing `;`, which tmux reads as the
@@ -2342,6 +2365,17 @@ export class TmuxTerminalRuntime {
 			if (!PANE_ID.test(paneId)) {
 				throw shapeFailure("new-window answered with no pane id");
 			}
+			// Kept out of the session's window list: the keeper is nobody's to
+			// switch to, and a terminal on this session would otherwise show
+			// it in the status line. Best effort — a status line that still
+			// names it is cosmetic.
+			await this.runTmux(
+				socket,
+				editorWindowStatusArgs(paneId),
+				this.contextHome,
+				cancel,
+				deadline,
+			).catch(() => undefined);
 			return paneId;
 		} finally {
 			release();
