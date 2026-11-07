@@ -161,6 +161,9 @@
   box-shadow:
     0 0 0 1px var(--line),
     0 12px 32px rgb(0 0 0 / 30%);
+  /* The grid's own font is set on the element (`fontOf`); this is the
+     token the rule stands on until it is. */
+  font-family: var(--font-mono);
   text-autospace: no-autospace;
   text-spacing-trim: space-all;
   font-variant-ligatures: none;
@@ -294,7 +297,6 @@
   justify-content: center;
   color: var(--ink-tertiary);
   font-size: 12px;
-  cursor: default;
 }
 
 .nvim-gui-elsewhere > span {
