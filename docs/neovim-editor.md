@@ -116,11 +116,15 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     `devicePixelRatio` 2; the text of a run is spread to the cell with
     `letterSpacing`), and measured again when the window moves to a screen of
     another density.
+  - A float with `winblend` shows what is under it only through its blank
+    cells, as Neovim's compositor does; under its text the ground is its
+    own background blended into the editor's.
   - Box-drawing characters (`│ ─ ╭ ╮ ╰ ╯ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ ┃ ━ ▏ ▕`) are drawn
     as lines through the whole cell, so window separators and float borders
     stay unbroken with any `linespace`.
   - A full repaint of a 164×43 screen with two windows and a float takes
-    about 6 ms; there is no glyph atlas, and none has been needed.
+    about 6 ms (15 000 cells at `devicePixelRatio` 2: about 4 ms); there is
+    no glyph atlas, and none has been needed.
 - The cursor follows `guicursor`: its shape, its highlight, and its blink
   (`blinkwait`/`blinkon`/`blinkoff`, restarted on every move). It glides to a
   new cell in 70 ms outside Insert mode (none with reduced motion).
@@ -132,8 +136,10 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   Printable keys arrive as text (`ime.ts`). `Cmd+Q` and the chords never get
   here: main's key router takes them first, as for every surface.
 - `ime.ts` — the hidden textarea's events as a state machine: the preedit is
-  drawn inline at the cursor, underlined, and only the committed text is sent
-  (once); the textarea sits on the cursor so the candidate window opens there.
+  drawn inline at the cursor, underlined, with the caret at its end (Neovim's
+  cursor is hidden meanwhile), and only the committed text is sent (once);
+  the textarea sits on the cursor, one unwrapped line in the grid's font, so
+  the candidate window opens under the end of the preedit.
   Paste (Cmd+V, the menu) goes to `nvim_paste`.
 - `mouse.ts` — `nvim_input_mouse` with the grid under the pointer (floats
   first), drags kept on the press's grid, wheel/trackpad pixels accumulated
