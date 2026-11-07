@@ -89,7 +89,12 @@ export interface NeovimGuiWindowWire {
 
 /** Every Neovim window showing a GUI window, and Neovim's current window. */
 export interface NeovimGuiWindowsWire {
-	readonly windows: readonly { readonly id: number; readonly win: number }[];
+	readonly windows: readonly {
+		readonly id: number;
+		readonly win: number;
+		/** A float with a border: the content goes inside its cells. */
+		readonly border?: boolean;
+	}[];
 	readonly current: number;
 	/** Every window of the current tab page, where Neovim says it is. */
 	readonly layout?: readonly {

@@ -424,11 +424,17 @@ function NeovimSurface({
                     </div>
                   );
                 }
+                // Inside a float's border: those cells are Neovim's to draw.
+                const inset = guiWindows.windows.some(
+                  (w) => w.id === id && w.win === win && w.border === true,
+                )
+                  ? 1
+                  : 0;
                 const style = {
-                  left: box.col * cell.width,
-                  top: box.row * cell.height,
-                  width: box.width * cell.width,
-                  height: box.height * cell.height,
+                  left: (box.col + inset) * cell.width,
+                  top: (box.row + inset) * cell.height,
+                  width: (box.width - 2 * inset) * cell.width,
+                  height: (box.height - 2 * inset) * cell.height,
                   zIndex: box.z + 1,
                   background: cssColor(nvim.defaults.background),
                 };

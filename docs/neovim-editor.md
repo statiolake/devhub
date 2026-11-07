@@ -177,7 +177,8 @@ gui.send(w, { kind = 'outline', … })     -- the page's devhub.onMessage(fn)
 gui.close(w)
 ```
 
-A GUI window is a scratch buffer (`buftype=nofile`, `filetype=devhub_gui`,
+In a float with a border (`:DevhubTerminal float`), the content goes inside
+the border, whose cells Neovim draws. A GUI window is a scratch buffer (`buftype=nofile`, `filetype=devhub_gui`,
 its id in `b:devhub_gui_id`) shown in an ordinary window or float; the page
 paints its web content (a sandboxed iframe) exactly over that window's grid.
 So `:vsplit`, `<C-w>hjkl`, `<C-w>=`, `:close`, `:q`, `:only` and tab pages

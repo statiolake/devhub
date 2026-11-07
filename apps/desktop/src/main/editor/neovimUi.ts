@@ -43,6 +43,8 @@ export interface NeovimClipboard {
 export interface GuiWindowReport {
 	readonly id: number;
 	readonly win: number;
+	/** A float with a border: its content goes inside the border's cells. */
+	readonly border?: boolean;
 }
 
 /** A window of the current tab page, where Neovim says it is. */
@@ -166,7 +168,13 @@ local function report()
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local buf = vim.api.nvim_win_get_buf(win)
     local ok, id = pcall(vim.api.nvim_buf_get_var, buf, "devhub_gui_id")
-    if ok then table.insert(list, { id = id, win = win }) end
+    if ok then
+      -- A float's border is cells of its grid: the content goes inside it.
+      local border = vim.api.nvim_win_get_config(win).border
+      local bordered = type(border) == "table" and #border > 0
+        and not (#border == 1 and (border[1] == "" or border[1] == " "))
+      table.insert(list, { id = id, win = win, border = bordered })
+    end
   end
   -- Where the current tab page's windows are: what a reattached UI is not
   -- always told again (a window that did not move gets no win_pos).
@@ -610,9 +618,19 @@ export class NeovimUi {
 				sink.guiWindows(
 					Array.isArray(list)
 						? list.flatMap((entry) => {
-								const e = entry as { id?: unknown; win?: unknown };
+								const e = entry as {
+									id?: unknown;
+									win?: unknown;
+									border?: unknown;
+								};
 								return typeof e.id === "number" && typeof e.win === "number"
-									? [{ id: e.id, win: e.win }]
+									? [
+											{
+												id: e.id,
+												win: e.win,
+												...(e.border === true ? { border: true } : {}),
+											},
+										]
 									: [];
 							})
 						: [],
