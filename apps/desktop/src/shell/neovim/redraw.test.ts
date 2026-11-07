@@ -86,6 +86,22 @@ describe("the redraw reducer", () => {
     });
   });
 
+  it("adds up how far each window scrolled, for the painter to glide", () => {
+    const state = initialUiState();
+    const changes = applyRedraw(state, [
+      ["grid_resize", [1, 80, 24], [2, 80, 22]],
+      ["win_pos", [2, 1000, 0, 0, 80, 22]],
+      ["win_viewport", [2, 1000, 3, 25, 4, 0, 200, 3]],
+      ["win_viewport", [2, 1000, 4, 26, 5, 0, 200, 1]],
+    ]);
+    expect(changes.scrolled.get(2)).toBe(4);
+    // 0.9 sends no scroll_delta: nothing to glide.
+    const old = applyRedraw(state, [
+      ["win_viewport", [2, 1000, 9, 31, 9, 0, 200]],
+    ]);
+    expect(old.scrolled.size).toBe(0);
+  });
+
   it("keeps a float that would run past the screen's edge on it", () => {
     const state = initialUiState();
     applyRedraw(state, [

@@ -179,6 +179,8 @@ export interface RedrawChanges {
   options: boolean;
   /** A `flush` arrived: what is in the state is a frame to draw. */
   flushed: boolean;
+  /** Screen rows each window grid scrolled (`win_viewport`'s scroll_delta). */
+  readonly scrolled: Map<number, number>;
 }
 
 export function emptyChanges(): RedrawChanges {
@@ -192,6 +194,7 @@ export function emptyChanges(): RedrawChanges {
     tabline: false,
     options: false,
     flushed: false,
+    scrolled: new Map(),
   };
 }
 
@@ -528,6 +531,13 @@ function applyEvent(
         curcol: num(args[5]),
         lineCount: num(args[6]),
       };
+      // 0.10+: how many screen rows the view scrolled, for a GUI that
+      // animates it (0.9 sends none).
+      const delta = num(args[7]);
+      if (delta !== 0) {
+        const grid = num(args[0]);
+        changes.scrolled.set(grid, (changes.scrolled.get(grid) ?? 0) + delta);
+      }
       return;
     }
     case "mode_info_set":

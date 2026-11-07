@@ -279,6 +279,10 @@ export class GridPainter {
           : [...grid.dirty];
       for (const row of rows) this.paintRow(entry, state, box, row);
       grid.dirty.clear();
+      const scrolled = changes.scrolled.get(box.grid) ?? 0;
+      if (scrolled !== 0 && !box.float && !fresh) {
+        this.glide(canvas, scrolled, grid.height);
+      }
     }
   }
 
@@ -320,6 +324,33 @@ export class GridPainter {
       col = end;
     }
     ctx.restore();
+  }
+
+  /**
+   * A window that scrolled a few rows slides into place (the wheel, `<C-e>`,
+   * a search nearby) instead of jumping. The canvas already holds the new
+   * rows; it starts where the old ones were and is clipped to its own box
+   * as it moves, so nothing slides over the statusline. Not for a jump of
+   * more than a third of the window (`<C-d>`, `G`), where a slide would
+   * show a band of nothing, nor with reduced motion.
+   */
+  private glide(canvas: HTMLCanvasElement, rows: number, height: number) {
+    if (Math.abs(rows) > Math.max(3, Math.floor(height / 3))) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (typeof canvas.animate !== "function") return;
+    const offset = rows * this.metrics.height;
+    const top = Math.max(0, -offset);
+    const bottom = Math.max(0, offset);
+    canvas.animate(
+      [
+        {
+          transform: `translateY(${String(offset)}px)`,
+          clipPath: `inset(${String(top)}px 0 ${String(bottom)}px 0)`,
+        },
+        { transform: "translateY(0)", clipPath: "inset(0 0 0 0)" },
+      ],
+      { duration: 90, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+    );
   }
 
   /** A box-drawing character as lines through the whole cell (`BOX`). */

@@ -130,6 +130,10 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   new cell in 70 ms outside Insert mode (none with reduced motion).
 - Each window gets an overlay scrollbar from `win_viewport`, shown while the
   view moves and faded out after.
+- A window that scrolls a few rows (0.10+: `win_viewport`'s `scroll_delta`;
+  at most a third of its height) slides into place in 90 ms, clipped to its
+  own box; a bigger jump (`<C-d>`, `G`) is not animated, nor anything with
+  reduced motion.
 - `keys.ts` — a `keydown` as key notation: `<C-…>`, `<M-…>` for Option when
   `[terminal] mac_option_is_meta` says it is Meta (left/right tracked as in
   DevHub's terminals), `<D-…>` for Cmd, named keys, `<lt>` and friends.
@@ -272,6 +276,6 @@ layout preset, and the Sidebar's terminal activity marks.
 
 **Also:** dev containers (Neovim in the container through `docker exec`, its
 socket reached by a relay like the `devhub` command's), delivering `nvim` to
-hosts like tmux and bash are, `ext_messages` on 0.10+, ligatures, smooth
-scrolling, a glyph-atlas (WebGL) painter if large redraws need it, and the
+hosts like tmux and bash are, `ext_messages` on 0.10+, ligatures, a
+glyph-atlas (WebGL) painter if large redraws need it, and the
 Sidebar following the current buffer.
