@@ -148,8 +148,8 @@ export type SurfaceArrangement =
 			readonly kind: "editor";
 			readonly editorKey: string;
 			readonly hidden?: true;
-			/** The editor area shows the Workspace's terminal, not its workbench. */
-			readonly view?: "terminal";
+			/** The editor area is the Workspace's Neovim (`general.editor`), not a workbench. */
+			readonly view?: "neovim";
 	  }
 	/** A workbench and an Agent's pane, split at `ratio` of the area. */
 	| {
@@ -158,8 +158,8 @@ export type SurfaceArrangement =
 			readonly ratio: number;
 			/** Being rebuilt: its rectangle is the page's until it has loaded. */
 			readonly hidden?: true;
-			/** The editor area shows the Workspace's terminal, not its workbench. */
-			readonly view?: "terminal";
+			/** The editor area is the Workspace's Neovim (`general.editor`), not a workbench. */
+			readonly view?: "neovim";
 	  }
 	/** An Agent over the whole area: the workbenches stay built, none shown. */
 	| { readonly kind: "agent" }
@@ -239,14 +239,14 @@ export interface LayoutInput {
 	 */
 	readonly terminals?: readonly string[];
 	/**
-	 * The editor area's terminal view: every Workspace terminal that has a
+	 * The Neovim editor: every Workspace's Neovim page that has a
 	 * view, by its Workspace's editor key. Drawn exactly where the workbench
 	 * is — the whole content area, or a split's left half — when the
 	 * arrangement says the editor area shows the terminal (`view`), and never
-	 * with the same Workspace's workbench. See `docs/terminal-mode.md`.
+	 * with the same Workspace's workbench. See `docs/neovim-editor.md`.
 	 * Optional so that every caller from before it still reads; absent is none.
 	 */
-	readonly editorTerminals?: readonly string[];
+	readonly neovims?: readonly string[];
 }
 
 /**
@@ -311,8 +311,8 @@ export type ChildIdentity =
 	  }
 	/** An Agent's terminal, with its Agent — see `model/agentTerminal.ts`. */
 	| { readonly kind: "terminal"; readonly terminalId: string }
-	/** The editor area's terminal view: a Workspace's own tmux session. */
-	| { readonly kind: "editorTerminal"; readonly editorKey: string }
+	/** The Neovim editor's page for a Workspace (`docs/neovim-editor.md`). */
+	| { readonly kind: "neovim"; readonly editorKey: string }
 	| { readonly kind: "toasts" }
 	| { readonly kind: "picker" }
 	| { readonly kind: "tooltip" };
@@ -837,45 +837,45 @@ export function onScreenEditor(input: LayoutInput): string | undefined {
 	const surface = input.state.surface;
 	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
 	return surface.hidden !== true &&
-		surface.view !== "terminal" &&
+		surface.view !== "neovim" &&
 		input.editors.includes(surface.editorKey)
 		? surface.editorKey
 		: undefined;
 }
 
 /**
- * Which Workspace terminal is in the editor area, if any: the arrangement
- * says the editor area shows the terminal (`view`). A question the
+ * Which Workspace's Neovim page is in the editor area, if any: the
+ * arrangement says the editor area is its Neovim (`view`). A question the
  * Workspace's own workbench is asking outranks it, as it outranks the
  * arrangement for `onScreenEditor`: the workbench is drawn so that what it
  * asks is seen against what it is about.
  */
-export function onScreenEditorTerminal(input: LayoutInput): string | undefined {
+export function onScreenNeovim(input: LayoutInput): string | undefined {
 	const surface = input.state.surface;
 	if (surface.kind !== "editor" && surface.kind !== "split") return undefined;
-	if (surface.view !== "terminal") return undefined;
+	if (surface.view !== "neovim") return undefined;
 	if (
 		input.asking === surface.editorKey &&
 		input.editors.includes(input.asking)
 	)
 		return undefined;
 	return surface.hidden !== true &&
-		(input.editorTerminals ?? []).includes(surface.editorKey)
+		(input.neovims ?? []).includes(surface.editorKey)
 		? surface.editorKey
 		: undefined;
 }
 
 /**
  * What is in the editor area as a child the keyboard can go to: the
- * workbench on screen, or the Workspace terminal the editor area shows.
+ * workbench on screen, or the Neovim page the editor area shows.
  */
 function editorChild(input: LayoutInput): ChildIdentity | undefined {
 	const editorKey = onScreenEditor(input);
 	if (editorKey !== undefined) return { kind: "editor", editorKey };
-	const terminalKey = onScreenEditorTerminal(input);
+	const terminalKey = onScreenNeovim(input);
 	return terminalKey === undefined
 		? undefined
-		: { kind: "editorTerminal", editorKey: terminalKey };
+		: { kind: "neovim", editorKey: terminalKey };
 }
 
 /**
@@ -1071,22 +1071,22 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 			visible: child.visible,
 		});
 	}
-	// The editor area's terminal views, in the workbenches' place and for
+	// The Neovim pages, in the workbenches' place and for
 	// their reasons: every one sized whether or not it is drawn, the one on
 	// screen last. When one is drawn no workbench is (the arrangement shows
 	// one or the other), so nothing above is ever under it on screen.
-	const onScreenTerminal = onScreenEditorTerminal(input);
-	for (const editorKey of input.editorTerminals ?? []) {
-		if (editorKey === onScreenTerminal) continue;
+	const onScreenNeovimKey = onScreenNeovim(input);
+	for (const editorKey of input.neovims ?? []) {
+		if (editorKey === onScreenNeovimKey) continue;
 		children.push({
-			identity: { kind: "editorTerminal", editorKey },
+			identity: { kind: "neovim", editorKey },
 			rect: editorRect,
 			visible: false,
 		});
 	}
-	if (onScreenTerminal !== undefined) {
+	if (onScreenNeovimKey !== undefined) {
 		children.push({
-			identity: { kind: "editorTerminal", editorKey: onScreenTerminal },
+			identity: { kind: "neovim", editorKey: onScreenNeovimKey },
 			rect: editorRect,
 			visible: true,
 		});
@@ -1193,7 +1193,7 @@ export function sameIdentity(
 	if (left.kind === "terminal" && right.kind === "terminal") {
 		return left.terminalId === right.terminalId;
 	}
-	if (left.kind === "editorTerminal" && right.kind === "editorTerminal") {
+	if (left.kind === "neovim" && right.kind === "neovim") {
 		return left.editorKey === right.editorKey;
 	}
 	return true;

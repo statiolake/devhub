@@ -636,6 +636,16 @@ export interface Runtime {
 	 */
 	forwardLoopbackPort(port: number): Promise<LoopbackForward>;
 
+	/**
+	 * A unix socket on this machine, reachable from this Mac: the path to
+	 * connect to here. On this Mac it is the same path; on a host it is
+	 * `ssh -O forward -L <here>:<there>` on the host's master, `here` being
+	 * `localPath` (its stale file removed first). Held until the master goes;
+	 * asked again after a reconnect. The Neovim editor's socket is the one
+	 * caller (`editor/neovimMachines.ts`).
+	 */
+	forwardUnixSocket(remotePath: string, localPath: string): Promise<string>;
+
 	readonly cadence: RuntimeCadence;
 	/**
 	 * This Mac woke up, so anything this machine was holding may be a corpse.

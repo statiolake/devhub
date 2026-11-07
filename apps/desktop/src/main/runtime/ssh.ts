@@ -30,7 +30,7 @@
 
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { createServer, connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -477,6 +477,20 @@ interface HeldForward {
 	readonly remotePath: string;
 }
 
+/**
+ * The `-L` spec that forwards a unix socket on the host to one here. Both
+ * ends are paths, so no port is chosen and nothing listens on TCP.
+ */
+export function unixSocketForwardSpec(
+	localPath: string,
+	remotePath: string,
+): string {
+	if (localPath.includes(":") || remotePath.includes(":")) {
+		throw new Error("a forwarded socket path cannot contain ':'");
+	}
+	return `${localPath}:${remotePath}`;
+}
+
 /** How long a probe of a local forward waits before calling it dead. */
 const FORWARD_PROBE_MS = 3000;
 
@@ -785,6 +799,31 @@ export class SshRuntime
 				}
 			},
 		};
+	}
+
+	/**
+	 * A unix socket on this host, as a unix socket here: `ssh -O forward -L
+	 * <local>:<remote>` on the master that is already up. Cancel-first, as
+	 * `#forward` is, and the local file removed first: ssh will not bind over
+	 * a socket file a previous forward left. See `Runtime.forwardUnixSocket`.
+	 */
+	async forwardUnixSocket(
+		remotePath: string,
+		localPath: string,
+	): Promise<string> {
+		await this.#ensureControlDirectory();
+		const spec = unixSocketForwardSpec(localPath, remotePath);
+		await this.#mux("cancel", "-L", spec);
+		await rm(localPath, { force: true });
+		const forwarded = await this.#mux("forward", "-L", spec);
+		if (forwarded.code !== 0) {
+			const said = lastLine(forwarded.stderr.toString("utf8"));
+			this.lastFailure = said;
+			throw new Error(
+				`DevHub could not forward ${remotePath} on ${this.#host} to this Mac: ${said}`,
+			);
+		}
+		return localPath;
 	}
 
 	/**

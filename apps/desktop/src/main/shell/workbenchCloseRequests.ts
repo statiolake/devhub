@@ -8,9 +8,7 @@
  * means: the one close path, `AppController.closeWorkspaceOrWorktree`. A
  * Workspace with nothing to lose closes; one with something to ask about —
  * unsaved editors, a busy Agent, a dirty worktree — raises the same sheet
- * the button does, and cancelling it leaves everything where it was. It is
- * the VS Code half of what the terminal view's shell `exit` already does in the
- * editor area (`editorTerminalExits.ts`).
+ * the button does, and cancelling it leaves everything where it was.
  *
  * The workbench half is the overlay's `devhubVim/electron-browser/
  * vimQuit.contribution.ts`. It asks twice, over one channel:

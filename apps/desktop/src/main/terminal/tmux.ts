@@ -1549,6 +1549,8 @@ export function editorWindowArgs(
 ): readonly string[] {
 	return [
 		"new-window",
+		// Never selected: the Neovim editor's keeper window is nobody's to see.
+		"-d",
 		"-P",
 		"-F",
 		"#{pane_id}",
@@ -1579,11 +1581,6 @@ export function themeEnvironmentArgs(
 			name,
 			(environment[name] ?? "").replace(/;$/, "\\;"),
 		]);
-}
-
-/** Bring a pane's window to the front of its session, and the pane in it. */
-export function activatePaneArgs(paneId: string): readonly string[] {
-	return ["select-window", "-t", paneId, ";", "select-pane", "-t", paneId];
 }
 
 export class TmuxTerminalRuntime {
@@ -2364,20 +2361,6 @@ export class TmuxTerminalRuntime {
 		} finally {
 			release();
 		}
-	}
-
-	/** Bring one of a Workspace's panes to the front: its window, then it. */
-	async activateEditorPane(
-		target: WorkspaceTerminalTarget,
-		paneId: string,
-		cancel = new CancellationToken(),
-	): Promise<void> {
-		await this.onWorkspacePane(
-			target,
-			paneId,
-			activatePaneArgs(paneId),
-			cancel,
-		);
 	}
 
 	/** Kill one of a Workspace's panes. One already gone is not a failure. */

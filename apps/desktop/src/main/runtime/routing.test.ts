@@ -86,6 +86,9 @@ class RecordingRuntime implements Runtime {
 	forwardLoopbackPort() {
 		return Promise.resolve({ to: undefined, close: () => Promise.resolve() });
 	}
+	forwardUnixSocket(remotePath: string) {
+		return Promise.resolve(remotePath);
+	}
 	resolveProgram(configured: string) {
 		return Promise.resolve({
 			kind: "command_name" as const,

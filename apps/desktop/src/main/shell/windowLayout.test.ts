@@ -22,7 +22,7 @@ import {
 	type TooltipPlacement,
 	type LayoutState,
 	onScreenEditor,
-	onScreenEditorTerminal,
+	onScreenNeovim,
 } from "./windowLayout.js";
 
 const WINDOW = { width: 1440, height: 900 };
@@ -268,7 +268,7 @@ describe("the child list", () => {
 				sidebar: 1,
 				editor: 2,
 				attached: 3,
-				editorTerminal: 3,
+				neovim: 3,
 				agents: 4,
 				terminal: 5,
 				toasts: 6,
@@ -947,9 +947,9 @@ describe("the Agent's terminal, with its Agent", () => {
 	});
 });
 
-describe("the editor area's terminal view", () => {
-	// A Workspace terminal view per Workspace whose terminal was shown, in the
-	// place its workbench goes (`docs/terminal-mode.md`); the arrangement says
+describe("the editor area's Neovim page", () => {
+	// A Neovim page per Workspace whose Neovim was shown, in the
+	// place its workbench goes (`docs/neovim-editor.md`); the arrangement says
 	// which of the two the editor area shows.
 	const showing = (
 		overrides: Partial<LayoutState> = {},
@@ -957,9 +957,9 @@ describe("the editor area's terminal view", () => {
 	) =>
 		input({
 			editors: ["/a"],
-			editorTerminals: ["/a", "/b"],
+			neovims: ["/a", "/b"],
 			state: state({
-				surface: { kind: "editor", editorKey: "/a", view: "terminal" },
+				surface: { kind: "editor", editorKey: "/a", view: "neovim" },
 				...overrides,
 			}),
 			...inputs,
@@ -968,17 +968,17 @@ describe("the editor area's terminal view", () => {
 		kind: "split" as const,
 		editorKey: "/a",
 		ratio: 0.5,
-		view: "terminal" as const,
+		view: "neovim" as const,
 	};
 
 	it("lays the selected Workspace's terminal where its workbench is, and not the workbench", () => {
 		const children = windowLayout(showing());
 		const terminals = children.filter(
-			(child) => child.identity.kind === "editorTerminal",
+			(child) => child.identity.kind === "neovim",
 		);
 		expect(terminals.map((child) => [child.identity, child.visible])).toEqual([
-			[{ kind: "editorTerminal", editorKey: "/b" }, false],
-			[{ kind: "editorTerminal", editorKey: "/a" }, true],
+			[{ kind: "neovim", editorKey: "/b" }, false],
+			[{ kind: "neovim", editorKey: "/a" }, true],
 		]);
 		// Hidden ones are sized too, so coming back is a move, not a reflow.
 		for (const child of terminals) {
@@ -996,17 +996,17 @@ describe("the editor area's terminal view", () => {
 	it("shows the workbench instead once the editor area shows the editor", () => {
 		const editor = showing({ surface: { kind: "editor", editorKey: "/a" } });
 		expect(onScreenEditor(editor)).toBe("/a");
-		expect(onScreenEditorTerminal(editor)).toBeUndefined();
+		expect(onScreenNeovim(editor)).toBeUndefined();
 		expect(keyboardChild(editor)).toEqual({ kind: "editor", editorKey: "/a" });
 		expect(keyboardChild(showing())).toEqual({
-			kind: "editorTerminal",
+			kind: "neovim",
 			editorKey: "/a",
 		});
 	});
 
 	it("gives way to a question its own workbench is asking", () => {
 		const asking = showing({}, { asking: "/a" });
-		expect(onScreenEditorTerminal(asking)).toBeUndefined();
+		expect(onScreenNeovim(asking)).toBeUndefined();
 		expect(onScreenEditor(asking)).toBe("/a");
 	});
 
@@ -1015,7 +1015,7 @@ describe("the editor area's terminal view", () => {
 			showing({ surface: splitTerminal, keyboard: "agents" }),
 		);
 		const shown = children.find(
-			(child) => child.identity.kind === "editorTerminal" && child.visible,
+			(child) => child.identity.kind === "neovim" && child.visible,
 		);
 		expect(shown?.rect).toEqual(
 			workbenchRect(WINDOW, state({ surface: splitTerminal })),
@@ -1031,22 +1031,22 @@ describe("the editor area's terminal view", () => {
 		const children = windowLayout(showing({ surface: { kind: "agent" } }));
 		expect(
 			children.filter(
-				(child) => child.identity.kind === "editorTerminal" && child.visible,
+				(child) => child.identity.kind === "neovim" && child.visible,
 			),
 		).toEqual([]);
-		expect(onScreenEditorTerminal(showing())).toBe("/a");
+		expect(onScreenNeovim(showing())).toBe("/a");
 	});
 
 	it("draws nothing for a Workspace whose terminal has no view yet", () => {
 		const children = windowLayout(
 			showing({
-				surface: { kind: "editor", editorKey: "/c", view: "terminal" },
+				surface: { kind: "editor", editorKey: "/c", view: "neovim" },
 			}),
 		);
 		expect(
 			children.some(
 				(child) =>
-					(child.identity.kind === "editorTerminal" ||
+					(child.identity.kind === "neovim" ||
 						child.identity.kind === "editor") &&
 					child.visible,
 			),
@@ -1055,7 +1055,7 @@ describe("the editor area's terminal view", () => {
 
 	it("takes the keyboard as the editor half, in the split and alone", () => {
 		expect(keyboardChild(showing({ surface: splitTerminal }))).toEqual({
-			kind: "editorTerminal",
+			kind: "neovim",
 			editorKey: "/a",
 		});
 		expect(
@@ -1069,7 +1069,7 @@ describe("the editor area's terminal view", () => {
 				showing({ surface: splitTerminal, keyboard: { terminal: "t1" } }),
 			),
 		).toEqual({
-			kind: "editorTerminal",
+			kind: "neovim",
 			editorKey: "/a",
 		});
 	});

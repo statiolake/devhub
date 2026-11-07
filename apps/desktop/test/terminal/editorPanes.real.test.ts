@@ -2,12 +2,11 @@
  * Terminal mode's tmux commands against a real tmux server, and the managed
  * Neovim's whole lifecycle against a real tmux and a real Neovim.
  *
- * The commands are the ones `TmuxTerminalRuntime.openEditorWindow` and
- * `activateEditorPane` build (`editorWindowArgs`, `activatePaneArgs`), run
- * here on a bare session of a server of this test's own, so what is checked
- * is what tmux does with exactly those words: a new window at the session's
- * next index running the program directly, the pane id printed, and a pane id
- * accepted as the target of `select-window`.
+ * The command is the one `TmuxTerminalRuntime.openEditorWindow` builds
+ * (`editorWindowArgs`), run here on a bare session of a server of this
+ * test's own, so what is checked is what tmux does with exactly those words:
+ * a new window at the session's next index running the program directly, not
+ * selected, and the pane id printed.
  *
  * The Neovim half is skipped where there is no Neovim; `DEVHUB_TEST_NVIM`
  * names one that is not on the PATH.
@@ -17,10 +16,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  activatePaneArgs,
-  editorWindowArgs,
-} from "../../src/main/terminal/tmux";
+import { editorWindowArgs } from "../../src/main/terminal/tmux";
 import {
   ManagedNeovims,
   type EditorPanes,
@@ -99,7 +95,7 @@ describe.skipIf(TMUX === undefined)(
       const row = panes(tmux).find((pane) => pane.paneId === paneId);
       expect(row).toMatchObject({
         windowIndex: 1,
-        windowActive: true,
+        windowActive: false,
         command: "sleep",
       });
       expect(row?.path).toBe(root);
@@ -117,21 +113,6 @@ describe.skipIf(TMUX === undefined)(
       expect(
         panes(tmux).find((pane) => pane.paneId === paneId)?.command,
       ).toMatch(/sh|sleep/u);
-    });
-
-    it("brings a pane's window to the front by the pane's id alone", () => {
-      const { tmux, session } = server();
-      const paneId = tmux(
-        editorWindowArgs(session, "/", ["sleep", "600"]),
-      ).trim();
-      tmux(["select-window", "-t", `${session}:0`]);
-      expect(
-        panes(tmux).find((pane) => pane.paneId === paneId)?.windowActive,
-      ).toBe(false);
-      tmux(activatePaneArgs(paneId));
-      expect(
-        panes(tmux).find((pane) => pane.paneId === paneId)?.windowActive,
-      ).toBe(true);
     });
   },
 );
@@ -170,10 +151,6 @@ function barePanes(
     state: (_target, paneId) => {
       const row = panes(tmux).find((pane) => pane.paneId === paneId);
       return Promise.resolve(row === undefined ? "gone" : "alive");
-    },
-    activate: (_target, paneId) => {
-      tmux(activatePaneArgs(paneId));
-      return Promise.resolve();
     },
     kill: (_target, paneId) => {
       try {
@@ -220,9 +197,10 @@ describe.skipIf(TMUX === undefined || NVIM === undefined)(
           await neovims.open(target, { path: join(root, "b.txt") }),
         ).toEqual({ started: false });
         expect(neovims.paneOf(target.workspaceId)).toBe(first);
+        // Never brought forward: the headless keeper is nobody's to see.
         expect(
           panes(tmux).find((pane) => pane.paneId === first)?.windowActive,
-        ).toBe(true);
+        ).toBe(false);
 
         // The person closes it.
         tmux(["kill-pane", "-t", first as string]);

@@ -120,10 +120,6 @@ function world() {
 			return Promise.resolve(paneId);
 		},
 		state: (_target, paneId) => Promise.resolve(panes.get(paneId) ?? "gone"),
-		activate: (_target, paneId) => {
-			log.push(`activate ${paneId}`);
-			return Promise.resolve();
-		},
 		kill: (_target, paneId) => {
 			log.push(`kill ${paneId}`);
 			panes.delete(paneId);
@@ -184,7 +180,7 @@ function world() {
 }
 
 describe("the first jump into a Workspace", () => {
-	it("starts Neovim in a new window of its session, brings it forward, and opens the file", async () => {
+	it("starts a headless Neovim in a hidden window of its session, and opens the file", async () => {
 		const w = world();
 		const neovims = w.make();
 		const result = await neovims.open(WORKSPACE, {
@@ -194,8 +190,7 @@ describe("the first jump into a Workspace", () => {
 		});
 		expect(result).toEqual({ started: true });
 		expect(w.log).toEqual([
-			`open ${WORKSPACE.workspaceId} /opt/homebrew/bin/nvim --listen ${SOCKET} -> %1`,
-			"activate %1",
+			`open ${WORKSPACE.workspaceId} env DEVHUB_NEOVIM_GUI=1 /opt/homebrew/bin/nvim --headless --listen ${SOCKET} -> %1`,
 		]);
 		expect(w.server()?.opens()).toEqual([["/src/widget/a b.ts", 12, 4, null]]);
 		expect(neovims.paneOf(WORKSPACE.workspaceId)).toBe("%1");
@@ -239,7 +234,7 @@ describe("the first jump into a Workspace", () => {
 });
 
 describe("a jump while that Neovim is alive", () => {
-	it("goes to it, and brings its pane forward again", async () => {
+	it("goes to it, and starts nothing", async () => {
 		const w = world();
 		const neovims = w.make();
 		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
@@ -249,7 +244,7 @@ describe("a jump while that Neovim is alive", () => {
 			line: 3,
 		});
 		expect(result).toEqual({ started: false });
-		expect(w.log).toEqual(["activate %1"]);
+		expect(w.log).toEqual([]);
 		expect(w.server()?.opens()[1]).toEqual(["/src/widget/b.ts", 3, null, null]);
 	});
 
@@ -290,7 +285,7 @@ describe("a jump after that Neovim has gone", () => {
 		const result = await neovims.open(WORKSPACE, { path: "/src/widget/b.ts" });
 		expect(result).toEqual({ started: true });
 		expect(w.log.filter((line) => line.startsWith("open"))).toEqual([
-			`open ${WORKSPACE.workspaceId} /opt/homebrew/bin/nvim --listen ${SOCKET} -> %2`,
+			`open ${WORKSPACE.workspaceId} env DEVHUB_NEOVIM_GUI=1 /opt/homebrew/bin/nvim --headless --listen ${SOCKET} -> %2`,
 		]);
 	});
 
@@ -333,7 +328,7 @@ describe("a DevHub that restarted under a running Neovim", () => {
 		const neovims = w.make();
 		const result = await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
 		expect(result).toEqual({ started: false });
-		expect(w.log).toEqual(["activate %7"]);
+		expect(w.log).toEqual([]);
 		expect(neovims.paneOf(WORKSPACE.workspaceId)).toBe("%7");
 	});
 

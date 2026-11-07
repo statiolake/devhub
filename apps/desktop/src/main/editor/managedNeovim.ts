@@ -1,14 +1,15 @@
 /**
- * The Neovim DevHub manages for each Workspace, for its terminal view.
+ * The Neovim DevHub manages for each Workspace: the Neovim editor's server.
  *
- * A file jump — a conversation's file link, `devhub <file>`, Finder's Open
- * With — needs an editor DevHub can address. While a Workspace's editor area
- * shows its terminal, that is no workbench, so DevHub keeps one Neovim server
- * per Workspace of its own: a
- * new tmux window in the Workspace's `ws-` session running `nvim --listen
- * <socket>`, opened on the first jump and reused while it lives. It is
- * separate from any Neovim the person runs in the same session; two of them is
- * fine. See `docs/terminal-mode.md`.
+ * With `[general] editor = "neovim"` a Workspace's editor area is DevHub's
+ * own GUI for a Neovim (`docs/neovim-editor.md`), and that Neovim is this:
+ * `nvim --headless --listen <socket>` on the Workspace's machine, in a
+ * window of the Workspace's `ws-` tmux session made with `-d`, so it is never
+ * the window anybody sees. tmux is only its keeper — what lets it outlive a
+ * DevHub restart and an SSH connection dropping, as an Agent does. Nothing
+ * from that pane is ever displayed: DevHub is the server's only UI, attached
+ * over the socket (`neovimUi.ts`). It is separate from any Neovim the person
+ * runs in a terminal; two of them is fine.
  *
  * # What is true, and how it is found out
  *
@@ -58,8 +59,6 @@ export interface EditorPanes {
 	): Promise<string>;
 	/** Whether `paneId` is one of this Workspace's panes, and running. */
 	state(target: WorkspaceTerminalTarget, paneId: string): Promise<PaneState>;
-	/** Bring the pane's window and the pane to the front of its session. */
-	activate(target: WorkspaceTerminalTarget, paneId: string): Promise<void>;
 	kill(target: WorkspaceTerminalTarget, paneId: string): Promise<void>;
 }
 
@@ -101,14 +100,30 @@ export interface NeovimOpen {
 	readonly waitMarkerPath?: string;
 }
 
+/**
+ * Where one machine's Neovim sockets are, and how to reach one from here.
+ * On this Mac the socket is connected to directly; on an SSH host `connect`
+ * forwards it over the host's ControlMaster first (`Runtime.forwardUnixSocket`).
+ */
+export interface NeovimSockets {
+	/** A directory on that machine only this user can enter. */
+	readonly directory: string;
+	readonly files: NeovimFiles;
+	readonly connect: (socketPath: string) => Promise<NeovimRpc>;
+}
+
 export interface ManagedNeovimOptions {
 	readonly panes: EditorPanes;
-	/** The `nvim` to start, resolved; rejects with the sentence to show. */
-	readonly nvim: () => Promise<string>;
-	/** Where the sockets go: DevHub's own, `0700`. See `socketDirectoryFor`. */
+	/** The `nvim` to start on the target's machine; rejects with the sentence to show. */
+	readonly nvim: (target: WorkspaceTerminalTarget) => Promise<string>;
+	/** This Mac's socket directory: DevHub's own, `0700`. See `socketDirectoryFor`. */
 	readonly socketDirectory: string;
 	readonly connect?: (socketPath: string) => Promise<NeovimRpc>;
 	readonly files?: NeovimFiles;
+	/** Another machine's sockets; this Mac's are the three fields above. */
+	readonly remoteSockets?: (
+		target: WorkspaceTerminalTarget,
+	) => Promise<NeovimSockets>;
 	/** How long a new Neovim has to open its socket. */
 	readonly startTimeoutMs?: number;
 	/** How often the socket is tried while it starts. */
@@ -126,7 +141,10 @@ export interface ManagedNeovimOptions {
 }
 
 interface ServerRecord {
+	/** On the server's machine. */
 	readonly socketPath: string;
+	/** That machine's disk, for its socket; wait markers are this Mac's. */
+	readonly files: NeovimFiles;
 	/** Absent for a server adopted whose pane could not be named. */
 	readonly paneId: string | undefined;
 	readonly client: NeovimRpc;
@@ -201,6 +219,23 @@ end
 const PANE_LUA = "return vim.env.TMUX_PANE";
 
 /**
+ * What the keeper pane runs: a headless Neovim on the socket, with the
+ * person's own config. `DEVHUB_NEOVIM_GUI=1` is there from the first line of
+ * their config, so it can tell DevHub's GUI from a terminal before any UI has
+ * attached (`g:devhub_gui` is set on attach, `neovimUi.ts`).
+ */
+export function neovimArgv(nvim: string, socketPath: string): string[] {
+	return [
+		"env",
+		"DEVHUB_NEOVIM_GUI=1",
+		nvim,
+		"--headless",
+		"--listen",
+		socketPath,
+	];
+}
+
+/**
  * Tell a Neovim the theme DevHub wears. `g:devhub_theme` is its name — what
  * `[appearance] theme_dark` / `theme_light` say — with `g:devhub_theme_kind`
  * (`dark`, `light`, `hc`), `g:devhub_theme_background` (`dark` / `light`) and
@@ -252,6 +287,19 @@ export class ManagedNeovims {
 		return join(this.options.socketDirectory, neovimSocketName(workspaceId));
 	}
 
+	private async sockets(
+		target: WorkspaceTerminalTarget,
+	): Promise<NeovimSockets> {
+		if (target.machine !== "local" && this.options.remoteSockets) {
+			return this.options.remoteSockets(target);
+		}
+		return {
+			directory: this.options.socketDirectory,
+			files: this.files,
+			connect: this.connect,
+		};
+	}
+
 	/** The pane a Workspace's managed Neovim is in, while one is known. */
 	paneOf(workspaceId: string): string | undefined {
 		return this.records.get(workspaceId)?.paneId;
@@ -271,9 +319,21 @@ export class ManagedNeovims {
 	}
 
 	/**
-	 * Open a file in the Workspace's managed Neovim, starting one in a new
-	 * window of its session if there is none alive, and bring its pane to the
-	 * front. Answers whether a new Neovim was started.
+	 * The Workspace's Neovim, started (headless, in a hidden window of its
+	 * session) if there is none alive: the connection the GUI attaches over.
+	 */
+	connection(
+		target: WorkspaceTerminalTarget,
+	): Promise<{ readonly client: NeovimRpc; readonly started: boolean }> {
+		return this.serially(target.workspaceId, async () => {
+			const { record, started } = await this.server(target);
+			return { client: record.client, started };
+		});
+	}
+
+	/**
+	 * Open a file in the Workspace's managed Neovim, starting one if there is
+	 * none alive. Answers whether a new Neovim was started.
 	 */
 	open(
 		target: WorkspaceTerminalTarget,
@@ -281,9 +341,6 @@ export class ManagedNeovims {
 	): Promise<{ readonly started: boolean }> {
 		return this.serially(target.workspaceId, async () => {
 			const { record, started } = await this.server(target);
-			if (record.paneId !== undefined) {
-				await this.panes.activate(target, record.paneId);
-			}
 			if (file.waitMarkerPath !== undefined) {
 				record.waitMarkers.add(file.waitMarkerPath);
 			}
@@ -317,7 +374,10 @@ export class ManagedNeovims {
 				await this.panes.kill(target, record.paneId).catch(() => undefined);
 			}
 			await this.forget(target.workspaceId, record);
-			await this.files.remove(this.socketPath(target.workspaceId));
+			const sockets = await this.sockets(target);
+			await sockets.files.remove(
+				join(sockets.directory, neovimSocketName(target.workspaceId)),
+			);
 		});
 	}
 
@@ -382,14 +442,18 @@ export class ManagedNeovims {
 	private async adopt(
 		target: WorkspaceTerminalTarget,
 	): Promise<ServerRecord | undefined> {
-		const socketPath = this.socketPath(target.workspaceId);
-		if (!(await this.files.exists(socketPath))) return undefined;
+		const sockets = await this.sockets(target);
+		const socketPath = join(
+			sockets.directory,
+			neovimSocketName(target.workspaceId),
+		);
+		if (!(await sockets.files.exists(socketPath))) return undefined;
 		let client: NeovimRpc;
 		try {
-			client = await this.connect(socketPath);
+			client = await sockets.connect(socketPath);
 		} catch (error) {
 			if (!isRefused(error)) throw error;
-			await this.files.remove(socketPath);
+			await sockets.files.remove(socketPath);
 			return undefined;
 		}
 		let paneId: string | undefined;
@@ -399,7 +463,7 @@ export class ManagedNeovims {
 				typeof answer === "string" && answer.length > 0 ? answer : undefined;
 		} catch {
 			client.close();
-			await this.files.remove(socketPath);
+			await sockets.files.remove(socketPath);
 			return undefined;
 		}
 		// A server on DevHub's socket is DevHub's by construction; one whose
@@ -413,6 +477,7 @@ export class ManagedNeovims {
 		}
 		return this.remember(target.workspaceId, {
 			socketPath,
+			files: sockets.files,
 			paneId,
 			client,
 			waitMarkers: new Set(),
@@ -420,22 +485,23 @@ export class ManagedNeovims {
 	}
 
 	private async start(target: WorkspaceTerminalTarget): Promise<ServerRecord> {
-		const socketPath = this.socketPath(target.workspaceId);
-		await this.files.ensurePrivateDirectory(this.options.socketDirectory);
-		await this.files.remove(socketPath);
-		const nvim = await this.options.nvim();
-		const paneId = await this.panes.open(target, [
-			nvim,
-			"--listen",
-			socketPath,
-		]);
+		const sockets = await this.sockets(target);
+		const socketPath = join(
+			sockets.directory,
+			neovimSocketName(target.workspaceId),
+		);
+		const nvim = await this.options.nvim(target);
+		await sockets.files.ensurePrivateDirectory(sockets.directory);
+		await sockets.files.remove(socketPath);
+		const paneId = await this.panes.open(target, neovimArgv(nvim, socketPath));
 		const deadline = Date.now() + this.startTimeoutMs;
 		for (;;) {
-			if (await this.files.exists(socketPath)) {
+			if (await sockets.files.exists(socketPath)) {
 				try {
-					const client = await this.connect(socketPath);
+					const client = await sockets.connect(socketPath);
 					return this.remember(target.workspaceId, {
 						socketPath,
+						files: sockets.files,
 						paneId,
 						client,
 						waitMarkers: new Set(),
@@ -508,7 +574,7 @@ export class ManagedNeovims {
 	/** Its socket and every wait marker it held: nothing waits on a dead editor. */
 	private async cleanUp(record: ServerRecord): Promise<void> {
 		await Promise.all([
-			this.files.remove(record.socketPath).catch(() => undefined),
+			record.files.remove(record.socketPath).catch(() => undefined),
 			...[...record.waitMarkers].map((marker) =>
 				this.files.remove(marker).catch(() => undefined),
 			),

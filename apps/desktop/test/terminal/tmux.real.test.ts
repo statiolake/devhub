@@ -607,6 +607,25 @@ describe.skipIf(TMUX === undefined)(
       );
     });
 
+    it("keeps a program in a hidden window of a workspace's session, and reads its pane back", async () => {
+      const test = fixture("editorwindow");
+      mkdirSync(join(test.home, "workspace"), { recursive: true });
+      const root = realpathSync(join(test.home, "workspace"));
+      const target = {
+        machine: "local" as const,
+        workspaceId: "00000000-0000-4000-8000-000000000043",
+        root,
+      };
+      const paneId = await test.runtime.openEditorWindow(target, [
+        "sleep",
+        "600",
+      ]);
+      expect(paneId).toMatch(/^%[0-9]+$/u);
+      expect(await test.runtime.editorPaneState(target, paneId)).toBe("alive");
+      await test.runtime.killEditorPane(target, paneId);
+      expect(await test.runtime.editorPaneState(target, paneId)).toBe("gone");
+    });
+
     it("creates and closes a workspace session by its own digest name", async () => {
       const test = fixture("workspace");
       mkdirSync(join(test.home, "workspace"), { recursive: true });

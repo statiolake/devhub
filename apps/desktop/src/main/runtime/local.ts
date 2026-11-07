@@ -468,6 +468,11 @@ export class LocalRuntime implements Runtime {
 		return Promise.resolve({ to: undefined, close: () => Promise.resolve() });
 	}
 
+	/** Already here: the socket is its own path. See `Runtime.forwardUnixSocket`. */
+	forwardUnixSocket(remotePath: string, _localPath: string): Promise<string> {
+		return Promise.resolve(remotePath);
+	}
+
 	/** Already here. See `Runtime.commandFromHere`. */
 	commandFromHere(command: MachineCommand): Promise<MachineCommand> {
 		return Promise.resolve(command);

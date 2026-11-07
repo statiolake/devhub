@@ -1,0 +1,314 @@
+/*
+ * The Neovim editor page. The grids are Neovim's colours; everything DevHub
+ * draws around them — the tab strip, the command line, the completion menu,
+ * the status — wears DevHub's own tokens.
+ */
+
+.neovim-page {
+  width: 100%;
+  height: 100%;
+  background: var(--surface);
+}
+
+.neovim-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+.nvim-host {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  cursor: text;
+}
+
+.nvim-grids {
+  position: absolute;
+  inset: 0;
+  font-variant-ligatures: none;
+}
+
+.nvim-grid {
+  position: absolute;
+  image-rendering: auto;
+}
+
+.nvim-float {
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--primary) 10%, transparent),
+    0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.nvim-cursor {
+  position: absolute;
+  pointer-events: none;
+  overflow: hidden;
+  white-space: pre;
+  text-align: center;
+  font: inherit;
+}
+
+.nvim-cursor-unfocused {
+  background: transparent !important;
+  color: transparent !important;
+  outline: 1px solid currentColor;
+  outline-color: var(--ink-secondary, gray);
+  outline-offset: -1px;
+}
+
+.nvim-preedit {
+  position: absolute;
+  z-index: 300;
+  pointer-events: none;
+  white-space: pre;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Where the IME's candidate window opens; nothing of it is seen. */
+.nvim-input {
+  position: absolute;
+  z-index: -1;
+  width: 1px;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  overflow: hidden;
+  resize: none;
+  opacity: 0;
+  caret-color: transparent;
+  outline: none;
+}
+
+.nvim-tabline {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  height: 30px;
+  padding: 0 8px;
+  align-items: stretch;
+  background: var(--chrome);
+  border-bottom: 1px solid var(--line-soft);
+  overflow-x: auto;
+}
+
+.nvim-tab {
+  max-width: 220px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  margin-top: 4px;
+  background: transparent;
+  color: var(--ink-secondary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  cursor: default;
+}
+
+.nvim-tab:hover {
+  background: var(--lift);
+}
+
+.nvim-tab-current {
+  background: var(--surface);
+  color: var(--primary);
+}
+
+.nvim-cmdline {
+  position: absolute;
+  z-index: 400;
+  top: 12px;
+  left: 50%;
+  width: min(640px, calc(100% - 32px));
+  padding: 8px 12px;
+  border-radius: 10px;
+  transform: translateX(-50%);
+  background: var(--raised, var(--surface));
+  color: var(--primary);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 12px 32px rgb(0 0 0 / 30%);
+  font-family: var(--mono-font, monospace);
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  animation: nvim-arrive 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.nvim-cmdline-block {
+  opacity: 0.8;
+}
+
+.nvim-cmdline-row {
+  display: flex;
+  gap: 8px;
+}
+
+.nvim-cmdline-firstc {
+  flex: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nvim-cmdline-cursor {
+  display: inline-block;
+  min-width: 2px;
+  margin-right: -2px;
+  border-left: 2px solid var(--accent);
+  color: var(--ink-secondary);
+}
+
+.nvim-pum {
+  position: absolute;
+  z-index: 450;
+  min-width: 180px;
+  max-width: 480px;
+  max-height: 280px;
+  padding: 4px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: var(--raised, var(--surface));
+  color: var(--primary);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 10px 28px rgb(0 0 0 / 30%);
+  font-family: var(--mono-font, monospace);
+  font-size: 12.5px;
+  animation: nvim-arrive 90ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.nvim-pum-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+.nvim-pum-selected {
+  background: var(--selection);
+  color: var(--ink-selection, var(--primary));
+}
+
+.nvim-pum-kind {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.nvim-kind-function {
+  color: #c586c0;
+}
+.nvim-kind-member {
+  color: #4fc1ff;
+}
+.nvim-kind-variable {
+  color: #9cdcfe;
+}
+.nvim-kind-type {
+  color: #4ec9b0;
+}
+.nvim-kind-keyword {
+  color: #569cd6;
+}
+.nvim-kind-snippet {
+  color: #d7ba7d;
+}
+.nvim-kind-module {
+  color: #dcdcaa;
+}
+.nvim-kind-constant {
+  color: #b5cea8;
+}
+.nvim-kind-text {
+  color: var(--ink-secondary);
+}
+
+.nvim-pum-word {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nvim-pum-menu {
+  flex: none;
+  color: var(--ink-tertiary);
+}
+
+.nvim-gui-window {
+  position: absolute;
+  display: flex;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+
+.nvim-gui-current {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.nvim-gui-window iframe {
+  flex: 1;
+  border: 0;
+  background: transparent;
+}
+
+.nvim-gui-window > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.nvim-status {
+  position: absolute;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-secondary);
+  pointer-events: none;
+}
+
+.nvim-status-failed {
+  background: var(--surface);
+  color: var(--primary);
+  pointer-events: auto;
+}
+
+.nvim-status-failed p {
+  max-width: 520px;
+  margin: 0;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+@keyframes nvim-arrive {
+  from {
+    opacity: 0;
+    transform: translate(var(--nvim-arrive-x, 0), -4px);
+  }
+}
+
+.nvim-cmdline {
+  --nvim-arrive-x: -50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nvim-cmdline,
+  .nvim-pum {
+    animation: none;
+  }
+}

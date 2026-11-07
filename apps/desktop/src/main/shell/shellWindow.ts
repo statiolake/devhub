@@ -270,19 +270,19 @@ export class ShellWindow {
 	 */
 	private readonly terminalViews = new Map<string, ChromeView>();
 	/**
-	 * The editor area's terminal view: one view per Workspace whose terminal
-	 * has been shown, by its editor key, on that Workspace's own tmux
-	 * session. The Agent terminal pane's page, named by a `workspace:`
-	 * fragment — the same terminal surface, not a second one. Made and ended
-	 * by `syncEditorTerminalViews`; kept, hidden, while the Workspace's
-	 * editor area shows its workbench.
+	 * The Neovim editor: one page per Workspace whose Neovim has been shown,
+	 * by its editor key — `neovim.html#<workspace id>`, DevHub's GUI for that
+	 * Workspace's headless Neovim (`docs/neovim-editor.md`). Made and ended
+	 * by `syncNeovimViews`; kept, hidden, while another Workspace is shown,
+	 * so coming back finds it attached and drawn.
 	 */
-	private readonly editorTerminalViews = new Map<string, ChromeView>();
-	/** Each editor terminal view's Workspace, by the same editor key. */
-	private readonly editorTerminalWorkspaces = new Map<string, string>();
+	private readonly neovimViews = new Map<string, ChromeView>();
+	/** Each Neovim page's Workspace, by the same editor key. */
+	private readonly neovimWorkspaces = new Map<string, string>();
 	/** Where the pages are served from, for the terminal panes made later. */
 	private readonly pageBase: string;
 	private readonly panePreload: string;
+	private readonly neovimPreload: string;
 
 	/**
 	 * The App Shell page's URL, held until `openPage` runs it.
@@ -330,6 +330,7 @@ export class ShellWindow {
 		const pageBase = pageUrl.slice(0, pageUrl.lastIndexOf("/"));
 		this.pageBase = pageBase;
 		this.panePreload = preloadFor("pane");
+		this.neovimPreload = preloadFor("neovim");
 
 		// DevHub names this window, and only DevHub. Electron hands a page's
 		// `document.title` to its window by default, which would let the
@@ -498,7 +499,7 @@ export class ShellWindow {
 		this.tooltip.openPage();
 		this.picker.openPage();
 		for (const view of this.terminalViews.values()) view.openPage();
-		for (const view of this.editorTerminalViews.values()) view.openPage();
+		for (const view of this.neovimViews.values()) view.openPage();
 		// A sheet is modal: any other contents of this window taking the
 		// keyboard while one stands — a renderer focusing itself, which no
 		// gate in main sees — gives it straight back. See
@@ -669,14 +670,14 @@ export class ShellWindow {
 	}
 
 	/**
-	 * Make a view for every Workspace terminal the editor area has shown, and
-	 * end the ones whose Workspace has gone (the terminal view).
+	 * Make a Neovim page for every Workspace whose Neovim the editor area has
+	 * shown, and end the ones whose Workspace has gone or went back to VS Code.
 	 *
 	 * Kept, like an Agent terminal's view, so that coming back to a Workspace
 	 * finds its terminal attached and where it was rather than reattaching and
 	 * reflowing. A click into one is the editor half taking the keyboard.
 	 */
-	syncEditorTerminalViews(
+	syncNeovimViews(
 		entries: readonly {
 			readonly editorKey: string;
 			readonly workspaceId: string;
@@ -687,28 +688,28 @@ export class ShellWindow {
 			entries.map((entry) => [entry.editorKey, entry.workspaceId]),
 		);
 		let changed = false;
-		for (const [key, view] of [...this.editorTerminalViews]) {
+		for (const [key, view] of [...this.neovimViews]) {
 			if (wanted.has(key)) continue;
-			this.editorTerminalViews.delete(key);
-			this.editorTerminalWorkspaces.delete(key);
+			this.neovimViews.delete(key);
+			this.neovimWorkspaces.delete(key);
 			view.dispose(this.window);
 			changed = true;
 		}
 		for (const [key, workspaceId] of wanted) {
-			if (this.editorTerminalViews.has(key)) continue;
+			if (this.neovimViews.has(key)) continue;
 			const view = new ChromeView(
-				this.panePreload,
-				`${this.pageBase}/pane.html#workspace:${encodeURIComponent(workspaceId)}`,
+				this.neovimPreload,
+				`${this.pageBase}/neovim.html#${encodeURIComponent(workspaceId)}`,
 			);
 			view.adopt(this.window);
 			const contents = view.contents();
-			supervisePage(contents, `workspace-terminal:${workspaceId}`, isQuitting);
+			supervisePage(contents, `neovim:${workspaceId}`, isQuitting);
 			contents?.on("focus", () => {
 				this.picker.reclaimFrom(contents);
 				this.contentFocused({ kind: "editor" });
 			});
-			this.editorTerminalViews.set(key, view);
-			this.editorTerminalWorkspaces.set(key, workspaceId);
+			this.neovimViews.set(key, view);
+			this.neovimWorkspaces.set(key, workspaceId);
 			if (this.pageOpened) view.openPage();
 			changed = true;
 		}
@@ -716,15 +717,13 @@ export class ShellWindow {
 	}
 
 	/**
-	 * Start a Workspace's editor-area terminal over, in place (terminal
-	 * mode): its page runs again, and attaching makes a fresh `ws-` session.
-	 * Whatever its old client was is already gone, or is stopped by the new
-	 * attach as a replacement. Nothing is done for a Workspace with no view.
+	 * Run a Workspace's Neovim page again from the start: it attaches again
+	 * and Neovim draws it from scratch. Nothing is done for one with no view.
 	 */
-	restartEditorTerminal(workspaceId: string): void {
+	restartNeovim(workspaceId: string): void {
 		if (!this.pageOpened) return;
-		for (const [key, id] of this.editorTerminalWorkspaces) {
-			if (id === workspaceId) this.editorTerminalViews.get(key)?.reloadPage();
+		for (const [key, id] of this.neovimWorkspaces) {
+			if (id === workspaceId) this.neovimViews.get(key)?.reloadPage();
 		}
 	}
 
@@ -733,7 +732,7 @@ export class ShellWindow {
 		const all: Electron.WebContents[] = [];
 		for (const view of [
 			...this.terminalViews.values(),
-			...this.editorTerminalViews.values(),
+			...this.neovimViews.values(),
 		]) {
 			const contents = view.contents();
 			if (contents) all.push(contents);
@@ -1213,9 +1212,9 @@ export class ShellWindow {
 					this.terminalViews.get(identity.terminalId)?.contents() ??
 					this.window.webContents
 				);
-			case "editorTerminal":
+			case "neovim":
 				return (
-					this.editorTerminalViews.get(identity.editorKey)?.contents() ??
+					this.neovimViews.get(identity.editorKey)?.contents() ??
 					this.window.webContents
 				);
 			case "toasts":
@@ -1495,7 +1494,7 @@ export class ShellWindow {
 			tooltip: this.tooltip.placement(),
 			attached: this.attachedPlacements(),
 			terminals: [...this.terminalViews.keys()],
-			editorTerminals: [...this.editorTerminalViews.keys()],
+			neovims: [...this.neovimViews.keys()],
 		};
 	}
 
@@ -1575,8 +1574,8 @@ export class ShellWindow {
 					?.place(this.window, child.rect, false);
 				continue;
 			}
-			if (child.identity.kind === "editorTerminal" && !child.visible) {
-				this.editorTerminalViews
+			if (child.identity.kind === "neovim" && !child.visible) {
+				this.neovimViews
 					.get(child.identity.editorKey)
 					?.place(this.window, child.rect, false);
 				continue;
@@ -1635,9 +1634,9 @@ export class ShellWindow {
 						.get(child.identity.terminalId)
 						?.place(this.window, child.rect, true);
 					break;
-				case "editorTerminal":
+				case "neovim":
 					if (!child.visible) break;
-					this.editorTerminalViews
+					this.neovimViews
 						.get(child.identity.editorKey)
 						?.place(this.window, child.rect, true);
 					break;

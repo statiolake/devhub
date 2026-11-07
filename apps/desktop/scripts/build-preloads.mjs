@@ -21,6 +21,7 @@ const PAGES = [
   "sidebar",
   "agents",
   "pane",
+  "neovim",
   "toasts",
   "tooltip",
   "picker",

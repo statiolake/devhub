@@ -13,10 +13,11 @@
  *
  * The wire is three message shapes: a request `[0, id, method, params]`, its
  * response `[1, id, error, result]`, and a notification `[2, method, params]`.
- * Neovim sends notifications only to a client that subscribed, and requests
- * only to one that registered as a channel; this does neither, so anything it
- * receives that is not a response is ignored (a request is answered with an
- * error rather than left hanging on Neovim's side).
+ * Neovim sends notifications to a client that attached as a UI (`redraw`) or
+ * that a plugin `rpcnotify`s, and requests to one a plugin `rpcrequest`s —
+ * the GUI editor (`neovimUi.ts`) is both. Each goes to the handler set with
+ * `onNotification` / `onRequest`; with no request handler a request is
+ * answered with an error rather than left hanging on Neovim's side.
  */
 
 import { connect as netConnect, type Socket } from "node:net";
@@ -29,7 +30,22 @@ export interface NeovimRpc {
 	onClose(listener: () => void): void;
 	readonly closed: boolean;
 	close(): void;
+	/** A notification to Neovim: no answer, kept in order with requests. */
+	notify?(method: string, params: readonly unknown[]): void;
+	/** Every notification Neovim sends on this connection (`redraw`, …). */
+	onNotification?(listener: NotificationListener): void;
+	/** What answers Neovim's `rpcrequest`s on this connection. */
+	onRequest?(handler: RequestHandler): void;
 }
+
+export type NotificationListener = (
+	method: string,
+	params: readonly unknown[],
+) => void;
+export type RequestHandler = (
+	method: string,
+	params: readonly unknown[],
+) => Promise<unknown>;
 
 /** Neovim answered a request with an error (`[type, message]`). */
 export class NeovimRpcError extends Error {
@@ -63,6 +79,8 @@ export class NeovimClient implements NeovimRpc {
 	private buffered: Uint8Array = new Uint8Array(0);
 	private readonly pending = new Map<number, Pending>();
 	private readonly closeListeners: (() => void)[] = [];
+	private readonly notificationListeners: NotificationListener[] = [];
+	private requestHandler: RequestHandler | undefined;
 	private ended = false;
 
 	private constructor(
@@ -138,6 +156,20 @@ export class NeovimClient implements NeovimRpc {
 		this.closeListeners.push(listener);
 	}
 
+	onNotification(listener: NotificationListener): void {
+		this.notificationListeners.push(listener);
+	}
+
+	onRequest(handler: RequestHandler): void {
+		this.requestHandler = handler;
+	}
+
+	/** A notification to Neovim (`[2, method, params]`): no answer comes. */
+	notify(method: string, params: readonly unknown[]): void {
+		if (this.ended) return;
+		this.socket.write(encode([2, method, [...params]]));
+	}
+
 	close(): void {
 		this.socket.destroy();
 		this.end(new Error("the connection to Neovim was closed by DevHub"));
@@ -197,9 +229,46 @@ export class NeovimClient implements NeovimRpc {
 			}
 			return;
 		}
+		if (kind === 2) {
+			const [, method, params] = message as [number, unknown, unknown];
+			if (typeof method !== "string") return;
+			const list = Array.isArray(params) ? (params as unknown[]) : [];
+			for (const listener of this.notificationListeners) {
+				listener(method, list);
+			}
+			return;
+		}
 		if (kind === 0) {
-			const [, id] = message as [number, number];
-			this.socket.write(encode([1, id, "DevHub answers no requests", null]));
+			const [, id, method, params] = message as [
+				number,
+				number,
+				unknown,
+				unknown,
+			];
+			const handler = this.requestHandler;
+			if (handler === undefined || typeof method !== "string") {
+				this.socket.write(encode([1, id, "DevHub answers no requests", null]));
+				return;
+			}
+			const list = Array.isArray(params) ? (params as unknown[]) : [];
+			handler(method, list).then(
+				(result) => {
+					if (!this.ended)
+						this.socket.write(encode([1, id, null, result ?? null]));
+				},
+				(error: unknown) => {
+					if (!this.ended) {
+						this.socket.write(
+							encode([
+								1,
+								id,
+								error instanceof Error ? error.message : String(error),
+								null,
+							]),
+						);
+					}
+				},
+			);
 		}
 	}
 }

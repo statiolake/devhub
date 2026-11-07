@@ -11,6 +11,7 @@
  * are unchanged, so the App Shell components are the same components.
  */
 
+import type { DevhubNeovimApi } from "./neovim.js";
 import type { ShellPalette } from "./palette.js";
 import type { DevhubTerminalApi } from "./terminal.js";
 import type { ConversationApi, FileRange } from "./conversation.js";
@@ -1900,6 +1901,25 @@ export interface PaneBridge
 		ProjectionBridge,
 		AppearanceBridge,
 		TerminalSurfaceBridge {}
+
+/**
+ * The Neovim editor — `neovim.html`, one view per Workspace whose editor
+ * area is its Neovim (`general.editor = "neovim"`), the Workspace named by
+ * the page's fragment (`neovim.html#<id>`).
+ *
+ * It draws Neovim's UI protocol itself (`shell/neovim/`) and sends back what
+ * the person did as Neovim API calls (`neovim`, `ipc/neovim.ts`). It reads
+ * the projection for its Workspace and the appearance for the font and the
+ * Option key, and draws the Workspace's terminal in a GUI window
+ * (`:DevhubTerminal`), so it has the terminal transport too.
+ */
+export interface NeovimBridge
+	extends PageBridge,
+		ProjectionBridge,
+		AppearanceBridge,
+		TerminalSurfaceBridge {
+	readonly neovim: DevhubNeovimApi;
+}
 
 /** `general.notice_seconds`, the one setting the notices page reads. */
 export interface NoticeSettingsWire {

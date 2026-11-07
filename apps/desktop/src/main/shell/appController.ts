@@ -346,6 +346,7 @@ import {
 	socketName,
 	workspaceTarget,
 	type TerminalPreflight,
+	type WorkspaceTerminalTarget,
 } from "../terminal/ports.js";
 import {
 	enclosingRoot,
@@ -641,7 +642,17 @@ import {
 } from "./inputSourceHelper.js";
 import type { Landing } from "./chords.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
-import { resolveExecutable } from "./runtimes.js";
+import { NeovimEditors } from "../editor/neovimEditors.js";
+import {
+	neovimMissingMessage,
+	remoteNeovimSockets,
+} from "../editor/neovimMachines.js";
+import {
+	NEOVIM_CHANNELS,
+	type NeovimAttachRequest,
+	type NeovimCall,
+	type NeovimGuiMessage,
+} from "../../ipc/neovim.js";
 import { listenForCloseRequests } from "./workbenchCloseRequests.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
@@ -1027,6 +1038,13 @@ export class AppController {
 	 * `editor/managedNeovim.ts`.
 	 */
 	private managedNeovims: ManagedNeovims | undefined;
+	/** The Neovim editor's UIs, over the managed Neovims (`neovimEditors.ts`). */
+	private neovimEditors: NeovimEditors | undefined;
+	/**
+	 * The Workspaces whose Neovim page has been shown since the editor became
+	 * Neovim: each keeps its page, hidden, while another is on screen.
+	 */
+	private readonly neovimShown = new Set<string>();
 	/** Theme: Preview… (`themePreview.ts`). */
 	private readonly themePreview = new ThemePreview({
 		theme: () => shellThemeIfInstalled(),
@@ -1499,6 +1517,19 @@ export class AppController {
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
 		this.managedNeovims = this.createManagedNeovims(userDataPath);
+		this.neovimEditors = new NeovimEditors({
+			neovims: this.managedNeovims,
+			target: (workspaceId) => this.neovimTarget(workspaceId),
+			clipboard: {
+				read: () => electron.clipboard.readText(),
+				write: (text) => {
+					electron.clipboard.writeText(text);
+				},
+			},
+			log: (line) => {
+				console.error(line);
+			},
+		});
 		// The theme, before any tmux server is brought up: a server is started
 		// with it, and told again on every change after (`themePublication.ts`).
 		this.publishTerminalTheme();
@@ -1705,19 +1736,47 @@ export class AppController {
 		this.scratch.start();
 	}
 
+	/** Whether Workspaces' editor areas are their Neovim (`general.editor`). */
+	private editorIsNeovim(): boolean {
+		return this.config.general.editor === "neovim";
+	}
+
 	/**
-	 * The managed Neovims of the terminal view, on this Mac's tmux. Built at
-	 * once — it costs nothing until a jump asks — and asked only for a
-	 * Workspace whose editor area shows its terminal (`opensInNeovim`).
+	 * Where a Workspace's Neovim runs: its own machine. A dev container is
+	 * not one yet (`docs/neovim-editor.md`, "Limitations").
+	 */
+	private neovimTarget(workspaceId: string): WorkspaceTerminalTarget {
+		const workspace = this.coordinator.model.workspace(
+			parseWorkspaceId(workspaceId),
+		);
+		if (!workspace) throw new Error("That Workspace is not open.");
+		if (workspace.editor.kind !== "host") {
+			throw new Error(
+				`The Neovim editor does not run in a dev container yet. Reopen ${workspace.root} on its own machine, or set [general] editor = "vscode".`,
+			);
+		}
+		return {
+			machine: runtimeIdFor(workspace.location),
+			workspaceId: workspace.id,
+			root: workspace.root,
+		};
+	}
+
+	/**
+	 * The managed Neovims: the Neovim editor's headless servers, one per
+	 * Workspace, kept by the tmux of the Workspace's machine. Built at once —
+	 * it costs nothing until a Workspace's Neovim page attaches or a file is
+	 * opened into one.
 	 */
 	private createManagedNeovims(userDataPath: string): ManagedNeovims {
-		const local = async () => {
+		const tmuxOf = async (machine: RuntimeId) => {
 			const wiring = this.terminalsWiring;
 			if (!wiring) throw new Error("the terminal runtime is not running");
-			const runtime = await wiring.local();
+			const runtime = await wiring.runtimes.for(runtimeById(machine));
 			if (!runtime.adapterAvailable) {
 				throw new Error(
-					runtime.unavailableReason ?? "there is no tmux on this Mac",
+					runtime.unavailableReason ??
+						`there is no tmux${runtimeById(machine).where}`,
 				);
 			}
 			return runtime;
@@ -1736,34 +1795,39 @@ export class AppController {
 		} catch (error: unknown) {
 			socketProblem = failureText(error);
 		}
+		const forwards = join(socketDirectory, "forwarded");
 		return new ManagedNeovims({
 			panes: {
 				open: async (target, argv) =>
-					(await local()).openEditorWindow(target, argv),
+					(await tmuxOf(target.machine)).openEditorWindow(target, argv),
 				state: async (target, paneId) =>
-					(await local()).editorPaneState(target, paneId),
-				activate: async (target, paneId) => {
-					await (await local()).activateEditorPane(target, paneId);
-				},
+					(await tmuxOf(target.machine)).editorPaneState(target, paneId),
 				kill: async (target, paneId) => {
-					await (await local()).killEditorPane(target, paneId);
+					await (await tmuxOf(target.machine)).killEditorPane(target, paneId);
 				},
 			},
-			// The person's own `nvim`, on the login PATH DevHub imported: the
-			// same lookup `runtimes.*` gets, so DevHub and a shell inside it
-			// cannot disagree about which Neovim there is.
-			nvim: async () => {
-				if (socketProblem !== undefined) throw new Error(socketProblem);
-				const resolved = await resolveExecutable(
+			// The person's own `nvim` on the Workspace's machine: on this Mac,
+			// on the login PATH DevHub imported (the lookup `runtimes.*` gets);
+			// on a host, `command -v` under its login environment.
+			nvim: async (target) => {
+				if (target.machine === "local" && socketProblem !== undefined) {
+					throw new Error(socketProblem);
+				}
+				const runtime = runtimeById(target.machine);
+				const resolved = await runtime.resolveProgram(
 					"nvim",
 					this.launchEnvironment.PATH ?? "",
 				);
 				if (resolved.kind === "unavailable") {
-					throw new Error(this.executableMissingMessage(resolved));
+					throw new Error(neovimMissingMessage(target.machine, resolved));
 				}
 				return resolved.value;
 			},
 			socketDirectory,
+			remoteSockets: async (target) => {
+				const runtime = runtimeById(target.machine);
+				return remoteNeovimSockets(runtime, forwards);
+			},
 			onExit: (workspaceId) => {
 				console.log(`[devhub] the managed Neovim of ${workspaceId} ended`);
 			},
@@ -4765,9 +4829,23 @@ export class AppController {
 			layout.kind === "workbench" || layout.kind === "split"
 				? this.editorKeyForSurfaceKey(layout.editorKey)
 				: undefined;
+		// The Neovim editor: the Workspace's Neovim page is its editor area,
+		// made the first time it is shown and kept while the setting holds.
+		const neovim = this.editorIsNeovim();
+		if (neovim && editorKey !== undefined) this.neovimShown.add(editorKey);
+		if (!neovim) this.neovimShown.clear();
+		const neovimPages = this.coordinator.model.workspaces.flatMap(
+			(workspace) =>
+				this.neovimShown.has(workspace.key)
+					? [{ editorKey: workspace.key, workspaceId: workspace.id }]
+					: [],
+		);
+		shell.syncNeovimViews(neovimPages);
+		const view = neovim ? { view: "neovim" as const } : {};
 		// Its phase, as the page draws it: anything standing in for the
 		// workbench means the workbench itself is not what is in the area.
 		const restarting =
+			!neovim &&
 			editorKey !== undefined &&
 			this.workbenches.placeholder(editorKey) !== undefined;
 		// Nothing is drawn in the content area until the model is ready, and a
@@ -4788,8 +4866,9 @@ export class AppController {
 									editorKey,
 									ratio: snapshot.splitRatio,
 									...hidden,
+									...view,
 								}
-							: { kind: "editor", editorKey, ...hidden };
+							: { kind: "editor", editorKey, ...hidden, ...view };
 		// Both panes of a split are drawn; which of them holds the keyboard is
 		// which half is selected. An Agent selected `beside` is the Agent half
 		// in front, and the workspace selected `beside` is the editor half.
@@ -7431,8 +7510,13 @@ export class AppController {
 			// Every Workspace whose folder is there (asking for one that is gone
 			// is what put VS Code's "path does not exist" box on screen), in
 			// the model's order.
+			// With the Neovim editor no Workspace wants one: none is started,
+			// and one running when the setting changed is closed.
 			wanted: model.workspaces
-				.filter((workspace) => workspace.state.kind !== "unavailable")
+				.filter(
+					(workspace) =>
+						workspace.state.kind !== "unavailable" && !this.editorIsNeovim(),
+				)
 				.map((workspace) => ({
 					folder: workspace.key,
 					surfaceKey: `workspace-editor:${workspace.id}`,
@@ -7858,13 +7942,14 @@ export class AppController {
 		});
 	}
 
-	/** A closing Workspace's managed Neovim, if it has one on this Mac. */
+	/** A closing Workspace's managed Neovim, if it has one. */
 	private async closeManagedNeovim(
 		workspace: Workspace | undefined,
 	): Promise<void> {
-		if (workspace === undefined || workspace.location.kind !== "local") return;
-		await this.managedNeovims?.close({
-			machine: "local",
+		if (workspace === undefined) return;
+		this.neovimShown.delete(workspace.key);
+		await this.neovimEditors?.close({
+			machine: runtimeIdFor(workspace.location),
 			workspaceId: workspace.id,
 			root: workspace.root,
 		});
@@ -11374,6 +11459,27 @@ export class AppController {
 	private registerIpc(): void {
 		const handle = electron.ipcMain.handle.bind(electron.ipcMain);
 		const receive = electron.ipcMain.on.bind(electron.ipcMain);
+
+		// The Neovim editor's page: attach, then calls in order, unanswered.
+		handle(NEOVIM_CHANNELS.attach, (event, request: NeovimAttachRequest) => {
+			const editors = this.neovimEditors;
+			if (!editors) return { ok: false, message: "DevHub is still starting." };
+			return editors.attach(event.sender, request);
+		});
+		receive(NEOVIM_CHANNELS.call, (_event, call: NeovimCall) => {
+			this.neovimEditors?.call(call);
+		});
+		handle(
+			NEOVIM_CHANNELS.request,
+			(_event, call: NeovimCall) =>
+				this.neovimEditors?.request(call) ?? {
+					ok: false,
+					message: "not started",
+				},
+		);
+		receive(NEOVIM_CHANNELS.guiMessage, (_event, message: NeovimGuiMessage) => {
+			this.neovimEditors?.guiMessage(message);
+		});
 
 		// "Send to Agent…" from an editor: the workbench that sent it is the
 		// Workspace it is about (`sendToAgent.ts`).
