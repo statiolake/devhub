@@ -65,6 +65,15 @@ Shipped application components
   `apps/desktop/src/shell/components/sidebar/icons.tsx`. The package itself is
   not a dependency and nothing else of it is redistributed.
 
+* Symbols Nerd Font Mono (`SymbolsNerdFontMono-Regular.ttf`, from Nerd Fonts
+  3.5.1's `NerdFontsSymbolsOnly.zip`, unmodified) — the font MIT; its glyphs
+  from Codicons and Font Awesome (CC BY 4.0), Material Design Icons
+  (Apache 2.0), Pomicons and Weather Icons (SIL OFL 1.1), Devicons, Octicons,
+  Seti UI, Font Awesome Extension, Powerline and the IEC power symbols (MIT)
+  and Font Logos; see `licenses/Nerd-Fonts-Symbols-Only.txt`, which carries
+  Nerd Fonts' table of the icon sets and every licence text. The App Shell
+  bundle carries it as the Neovim editor's icon font.
+
 Ported source
 -------------
 
@@ -125,3 +134,4 @@ Upstream source references
 * https://github.com/shikijs/textmate-grammars-themes
 * https://github.com/herdrdev/herdr
 * https://github.com/openai/codex
+* https://github.com/ryanoasis/nerd-fonts

@@ -128,9 +128,28 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   - A float with `winblend` shows what is under it only through its blank
     cells, as Neovim's compositor does; under its text the ground is its
     own background blended into the editor's.
-  - Box-drawing characters (`│ ─ ╭ ╮ ╰ ╯ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ ┃ ━ ▏ ▕`) are drawn
-    as lines through the whole cell, so window separators and float borders
-    stay unbroken with any `linespace`.
+  - Box drawing (U+2500–257F: light, heavy, double, dashed, rounded,
+    diagonal and half lines), block elements (U+2580–259F: eighths, halves,
+    quadrants, shades) and Powerline's separators (U+E0B0–E0BF: triangles,
+    arrows, half circles, slants) are drawn geometrically, not from a font
+    (`glyphs.ts`): rectangles on whole device pixels through the whole cell,
+    `linespace` included, so window separators, float borders (`rounded`,
+    `double`, heavy) and statusline separators join their neighbours like
+    native borders at any font and line height. Line thickness grows with
+    the font size.
+  - Nerd Font icons draw whatever `guifont` is: DevHub bundles Symbols Nerd
+    Font Mono (Nerd Fonts 3.5.1, `shell/neovim/fonts/`; MIT and its icon
+    sets' own licences, `distribution/licenses/Nerd-Fonts-Symbols-Only.txt`)
+    as "DevHub Nerd Symbols", with a `unicode-range` of the Nerd Font code
+    points only (the private-use areas and the IEC power symbols), first in
+    the font stack of the grids, the command line, the completion menu, the
+    tab strip, toasts and rich floats — it answers for icons and nothing
+    else. An icon is fitted to its cell (two when Neovim says it is wide)
+    and centred on the text; one followed by a blank cell of the same
+    background may spill into it at up to the Nerd Font's own size, as
+    kitty and WezTerm draw them, since devicons, lualine and completion
+    menus all put a space after their icons. A completion kind that starts
+    with an icon (lspkind) shows that icon in the popup menu.
   - A full repaint of a 164×43 screen with two windows and a float takes
     about 6 ms (15 000 cells at `devicePixelRatio` 2: about 4 ms); there is
     no glyph atlas, and none has been needed.
@@ -274,7 +293,7 @@ is fitted that many rows taller and those rows are clipped
 
 ## What works
 
-Verified against Neovim 0.9.5 and 0.11.5 (`neovimUi.real.test.ts`, and a
+Verified against Neovim 0.9.5, 0.11.5 and 0.12.6 (`neovimUi.real.test.ts`, and a
 DevHub run under Xvfb; on 0.11.5 with a real lazy.nvim config: devhub.nvim's
 theme, blink.cmp in insert and `:` mode, the snacks picker, fidget): typing,
 the cursor and its shapes, scrolling, splits and floats, resize, the completion menu, the command line, tab pages, the clipboard

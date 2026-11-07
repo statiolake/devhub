@@ -13,6 +13,7 @@
 
 import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
 import type { CellMetrics } from "./mouse";
+import { fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
 
 export interface FontSpec {
   readonly family: string;
@@ -25,9 +26,23 @@ export interface Metrics extends CellMetrics {
   readonly baseline: number;
   /** The font's own advance; `width` is it on whole device pixels. */
   readonly advance: number;
+  /** The font's ascent plus descent: the cell's height less `linespace`. */
+  readonly textHeight: number;
+  /** Where that text box starts in the cell (half the `linespace`). */
+  readonly textTop: number;
 }
 
 const FALLBACK_FAMILY = `Menlo, "SF Mono", Monaco, "DejaVu Sans Mono", monospace`;
+
+/**
+ * The Symbols Nerd Font Mono DevHub bundles (`fonts/`, declared in
+ * `neovim.css` with a `unicode-range` of the Nerd Font icon code points
+ * only). It comes first in every font stack of the page: it answers for
+ * nothing but icons, so the person's `guifont` keeps every other character,
+ * and the icons of nvim-web-devicons, lualine, blink.cmp and the rest draw
+ * whatever `guifont` says — a Nerd Font installed or not.
+ */
+export const ICON_FAMILY = `"DevHub Nerd Symbols"`;
 
 /** `guifont` (`Fira Code,Menlo:h13`) as a CSS family list and a size. */
 export function parseGuifont(
@@ -100,7 +115,12 @@ export function resolveColors(
 }
 
 export function fontOf(spec: FontSpec, attr?: HlAttr): string {
-  return `${attr?.italic === true ? "italic " : ""}${attr?.bold === true ? "bold " : ""}${String(spec.size)}px ${spec.family ? `${spec.family}, ${FALLBACK_FAMILY}` : FALLBACK_FAMILY}`;
+  return `${attr?.italic === true ? "italic " : ""}${attr?.bold === true ? "bold " : ""}${String(spec.size)}px ${ICON_FAMILY}, ${spec.family ? `${spec.family}, ${FALLBACK_FAMILY}` : FALLBACK_FAMILY}`;
+}
+
+/** `fontOf` without the icon font: what the cell is measured in. */
+function textFontOf(spec: FontSpec): string {
+  return `${String(spec.size)}px ${spec.family ? `${spec.family}, ${FALLBACK_FAMILY}` : FALLBACK_FAMILY}`;
 }
 
 /**
@@ -118,8 +138,10 @@ export function measureFont(spec: FontSpec, dpr = 1): Metrics {
       height: spec.size * 1.3,
       baseline: spec.size,
       advance: spec.size * 0.6,
+      textHeight: spec.size * 1.05,
+      textTop: spec.linespace / 2,
     };
-  ctx.font = fontOf(spec);
+  ctx.font = textFontOf(spec);
   const m = ctx.measureText("M");
   const ascent = m.fontBoundingBoxAscent || spec.size * 0.8;
   const descent = m.fontBoundingBoxDescent || spec.size * 0.25;
@@ -129,39 +151,9 @@ export function measureFont(spec: FontSpec, dpr = 1): Metrics {
     height: snap(Math.ceil(ascent + descent) + spec.linespace),
     baseline: snap(spec.linespace / 2 + ascent),
     advance: m.width,
+    textHeight: ascent + descent,
+    textTop: spec.linespace / 2,
   };
-}
-
-/**
- * Box-drawing characters drawn as lines, not glyphs: a font's `│` stops
- * short of the cell's top and bottom, so with any `linespace` window
- * separators and float borders turn into dashes. Each is the set of arms
- * from the cell's centre (n, e, s, w), `r` for a rounded corner, `h` heavy.
- */
-const BOX: Readonly<Record<string, string>> = {
-  "│": "ns",
-  "┃": "nsh",
-  "─": "ew",
-  "━": "ewh",
-  "┌": "es",
-  "┐": "sw",
-  "└": "ne",
-  "┘": "nw",
-  "╭": "esr",
-  "╮": "swr",
-  "╰": "ner",
-  "╯": "nwr",
-  "├": "nes",
-  "┤": "nsw",
-  "┬": "esw",
-  "┴": "new",
-  "┼": "nesw",
-  "▏": "l",
-  "▕": "R",
-};
-
-export function isBoxChar(c: string): boolean {
-  return BOX[c] !== undefined;
 }
 
 interface GridCanvas {
@@ -176,6 +168,20 @@ export class GridPainter {
   private font: FontSpec;
   private metrics: Metrics;
   private dpr: number;
+  /** The row's icons, drawn after its backgrounds (`paintRow`). */
+  private readonly icons: {
+    c: string;
+    x: number;
+    cells: number;
+    attr: HlAttr | undefined;
+    fg: number;
+    spill: boolean;
+  }[] = [];
+  /** Icons' ink boxes, by font and character. */
+  private readonly inks = new Map<
+    string,
+    { left: number; right: number; ascent: number; descent: number }
+  >();
 
   constructor(
     private readonly root: HTMLElement,
@@ -304,6 +310,7 @@ export class GridPainter {
     ctx.clip();
     ctx.clearRect(0, y, grid.width * cw, ch);
     const base = row * grid.width;
+    this.icons.length = 0;
     let col = 0;
     while (col < grid.width) {
       const hl = grid.hls[base + col] ?? 0;
@@ -314,6 +321,8 @@ export class GridPainter {
         state,
         box,
         grid.chars,
+        grid.hls,
+        grid.width,
         base,
         col,
         end,
@@ -323,6 +332,13 @@ export class GridPainter {
       );
       col = end;
     }
+    // After every background of the row: an icon may reach into the blank
+    // cell after it, which a later run would otherwise paint over.
+    for (const icon of this.icons) {
+      ctx.fillStyle = cssColor(icon.fg);
+      this.paintIcon(ctx, icon.c, icon.x, y, icon.cells, icon.attr, icon.spill);
+    }
+    this.icons.length = 0;
     ctx.restore();
   }
 
@@ -353,58 +369,89 @@ export class GridPainter {
     );
   }
 
-  /** A box-drawing character as lines through the whole cell (`BOX`). */
-  private paintBox(
+  /** Rectangles and paths from `glyphShapes`, in the foreground. */
+  private paintShapes(
     ctx: CanvasRenderingContext2D,
-    arms: string,
-    x: number,
-    y: number,
+    shapes: readonly Shape[],
     fg: number,
   ): void {
-    const { width: cw, height: ch } = this.metrics;
-    const lw = arms.includes("h") ? 2 : 1;
-    const lwDevice = Math.max(1, Math.round(lw * this.dpr));
-    // The line's centre where a line `lw` wide covers whole device pixels.
-    const snap = (v: number) =>
-      (Math.floor(v * this.dpr) + (lwDevice % 2) / 2) / this.dpr;
-    const cx = snap(x + cw / 2);
-    const cy = snap(y + ch / 2);
     ctx.save();
+    ctx.fillStyle = cssColor(fg);
     ctx.strokeStyle = cssColor(fg);
-    ctx.lineWidth = lw;
     ctx.lineCap = "butt";
-    ctx.beginPath();
-    if (arms === "l" || arms === "R") {
-      const lx = arms === "l" ? snap(x) : snap(x + cw - 1);
-      ctx.moveTo(lx, y);
-      ctx.lineTo(lx, y + ch);
-    } else if (arms.includes("r")) {
-      const r = Math.min(cw, ch) / 2;
-      const horizontal = arms.includes("e") ? x + cw : x;
-      const vertical = arms.includes("s") ? y + ch : y;
-      ctx.moveTo(horizontal, cy);
-      ctx.arcTo(cx, cy, cx, vertical, r);
-      ctx.lineTo(cx, vertical);
-    } else {
-      if (arms.includes("n")) {
-        ctx.moveTo(cx, y);
-        ctx.lineTo(cx, cy);
+    ctx.lineJoin = "miter";
+    for (const shape of shapes) {
+      if (shape.kind === "rect") {
+        ctx.globalAlpha = shape.alpha ?? 1;
+        ctx.fillRect(shape.x, shape.y, shape.w, shape.h);
+        ctx.globalAlpha = 1;
+        continue;
       }
-      if (arms.includes("s")) {
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(cx, y + ch);
+      ctx.beginPath();
+      for (const op of shape.path) {
+        if (op[0] === "M") ctx.moveTo(op[1], op[2]);
+        else if (op[0] === "L") ctx.lineTo(op[1], op[2]);
+        else if (op[0] === "T") ctx.arcTo(op[1], op[2], op[3], op[4], op[5]);
+        else if (op[0] === "E")
+          ctx.ellipse(op[1], op[2], op[3], op[4], 0, op[5], op[6]);
+        else ctx.closePath();
       }
-      if (arms.includes("w")) {
-        ctx.moveTo(x, cy);
-        ctx.lineTo(cx, cy);
-      }
-      if (arms.includes("e")) {
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(x + cw, cy);
+      if (shape.kind === "fill") ctx.fill();
+      else {
+        ctx.lineWidth = shape.lineWidth ?? 1;
+        ctx.stroke();
       }
     }
-    ctx.stroke();
     ctx.restore();
+  }
+
+  /**
+   * A Nerd Font icon in the bundled symbols font first, fitted to its cell
+   * — two when Neovim says it is wide — and centred on the text box, so an
+   * icon from a font of other metrics neither spills into its neighbour nor
+   * sits off the baseline.
+   */
+  private paintIcon(
+    ctx: CanvasRenderingContext2D,
+    c: string,
+    x: number,
+    y: number,
+    cells: number,
+    attr: HlAttr | undefined,
+    spill = false,
+  ): void {
+    const { width: cw, textHeight, textTop } = this.metrics;
+    const font = fontOf(this.font, attr);
+    ctx.font = font;
+    ctx.letterSpacing = "0px";
+    const key = `${font}\u0000${c}`;
+    let ink = this.inks.get(key);
+    if (!ink) {
+      const m = ctx.measureText(c);
+      ink = {
+        left: m.actualBoundingBoxLeft,
+        right: m.actualBoundingBoxRight,
+        ascent: m.actualBoundingBoxAscent,
+        descent: m.actualBoundingBoxDescent,
+      };
+      this.inks.set(key, ink);
+    }
+    const box = { w: cells * cw, h: textHeight };
+    const fit = fitIcon(ink, box, cells > 1);
+    ctx.save();
+    // An icon spilling into the blank after it starts on its own cell and
+    // takes only the room it needs, so the gap before the text stays.
+    const width = (ink.left + ink.right) * fit.scale;
+    const cx = spill ? x + Math.max(cw / 2, width / 2) : x + box.w / 2;
+    ctx.translate(cx, y + textTop + textHeight / 2);
+    ctx.scale(fit.scale, fit.scale);
+    ctx.fillText(c, fit.dx, fit.dy);
+    ctx.restore();
+  }
+
+  /** Fonts arrived (the icon font, a `guifont`): icon fits are measured again. */
+  fontsLoaded(): void {
+    this.inks.clear();
   }
 
   private paintRun(
@@ -412,6 +459,8 @@ export class GridPainter {
     state: NeovimUiState,
     box: GridBox,
     chars: readonly string[],
+    hls: ArrayLike<number>,
+    rowWidth: number,
     base: number,
     start: number,
     end: number,
@@ -458,19 +507,51 @@ export class GridPainter {
     for (let col = start; col < end; col += 1) {
       const c = chars[base + col] ?? " ";
       if (c === "") continue;
-      const box = BOX[c];
+      const wide = chars[base + col + 1] === "";
+      const kind = glyphKind(c);
       const simple =
-        box === undefined &&
+        kind === undefined &&
         c.length === 1 &&
         c.charCodeAt(0) < 0x2e80 &&
-        chars[base + col + 1] !== "";
+        !wide;
       if (simple) {
         if (text.length === 0) textStart = col;
         text += c;
       } else {
         flush();
-        if (box !== undefined) {
-          this.paintBox(ctx, box, col * cw, y, fg);
+        const cells = wide ? 2 : 1;
+        const shapes =
+          kind === "box" || kind === "block" || kind === "powerline"
+            ? glyphShapes(
+                c,
+                { x: col * cw, y, w: cells * cw, h: ch },
+                this.dpr,
+                this.font.size,
+              )
+            : undefined;
+        if (shapes !== undefined) {
+          this.paintShapes(ctx, shapes, fg);
+        } else if (kind === "icon") {
+          // An icon followed by a blank cell of the same background gets
+          // both cells, as kitty and WezTerm give it: nvim-web-devicons,
+          // lualine and the completion menus all put a space after their
+          // icons, and a Mono icon squeezed into one cell is half the size
+          // the Nerd Font draws it.
+          const next = base + col + 1;
+          const roomy =
+            !wide &&
+            col + 1 < rowWidth &&
+            chars[next] === " " &&
+            resolveColors(state.hl.get(hls[next] ?? 0), state.defaults).bg ===
+              bg;
+          this.icons.push({
+            c,
+            x: col * cw,
+            cells: roomy ? 2 : cells,
+            spill: roomy,
+            attr,
+            fg,
+          });
         } else if (c.trim().length > 0) {
           ctx.letterSpacing = "0px";
           ctx.fillText(c, col * cw, y + baseline);

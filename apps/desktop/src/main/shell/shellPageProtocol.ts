@@ -28,6 +28,8 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
 	".svg": "image/svg+xml",
 	".png": "image/png",
 	".woff2": "font/woff2",
+	// The Neovim editor's bundled Symbols Nerd Font Mono, as Nerd Fonts ships it.
+	".ttf": "font/ttf",
 };
 
 /**

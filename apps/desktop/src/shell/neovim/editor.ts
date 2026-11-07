@@ -22,6 +22,7 @@ import {
 } from "./redraw";
 import {
   GridPainter,
+  ICON_FAMILY,
   cssColor,
   fontOf,
   rgbOfCss,
@@ -100,6 +101,7 @@ export class NeovimEditor {
   private blink: Animation | undefined;
   private blinkKey = "";
   private stopWatchingDpr: () => void = () => {};
+  private stopWatchingFonts: () => void = () => {};
 
   constructor(
     private readonly host: HTMLElement,
@@ -134,6 +136,27 @@ export class NeovimEditor {
     });
     this.observer.observe(host);
     this.watchDevicePixelRatio();
+    this.watchFonts();
+  }
+
+  /**
+   * The bundled icon font is fetched on first use, so a canvas that drew an
+   * icon before it arrived drew a fallback's box: it is asked for at once,
+   * and every grid is drawn again when it (or any font) has loaded.
+   */
+  private watchFonts(): void {
+    const fonts = (document as { fonts?: FontFaceSet }).fonts;
+    if (!fonts) return;
+    const loaded = () => {
+      if (this.disposed) return;
+      this.painter.fontsLoaded();
+      this.paint(true);
+    };
+    fonts.addEventListener("loadingdone", loaded);
+    this.stopWatchingFonts = () => {
+      fonts.removeEventListener("loadingdone", loaded);
+    };
+    fonts.load(`12px ${ICON_FAMILY}`, "\uf015").then(loaded, () => {});
   }
 
   /** A move to a screen of another density re-measures and redraws. */
@@ -236,6 +259,7 @@ export class NeovimEditor {
     this.disposed = true;
     this.observer.disconnect();
     this.stopWatchingDpr();
+    this.stopWatchingFonts();
     for (const bar of this.scrollbars.values()) window.clearTimeout(bar.timer);
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     this.gridLayer.remove();

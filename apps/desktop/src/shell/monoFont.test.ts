@@ -120,6 +120,10 @@ describe("the monospace family", () => {
         const family = value.replace(/\s+/g, " ").trim();
         expect(
           family === "var(--font-mono)" ||
+            // The Neovim page's bundled icon font, whose `unicode-range` is
+            // the Nerd Font icons only: every other character is still the
+            // terminal's family.
+            family === '"DevHub Nerd Symbols", var(--font-mono)' ||
             family === "inherit" ||
             !/mono|Menlo|Consolas|Courier/i.test(family),
           `${path}: font-family: ${family}`,

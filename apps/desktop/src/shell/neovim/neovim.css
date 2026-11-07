@@ -4,10 +4,31 @@
  * the status — wears DevHub's own tokens.
  */
 
+/*
+ * Symbols Nerd Font Mono (Nerd Fonts 3.5.1, MIT and the icon sets' own
+ * licences: distribution/licenses/Nerd-Fonts-Symbols-Only.txt), for the Nerd
+ * Font icons only — the private-use areas and the IEC power symbols — so it
+ * can come first in every stack here (`ICON_FAMILY` in painter.ts) without
+ * touching any other character of `guifont`.
+ */
+@font-face {
+  font-family: "DevHub Nerd Symbols";
+  src: url("./fonts/SymbolsNerdFontMono-Regular.ttf") format("truetype");
+  font-display: block;
+  unicode-range: U+23FB-23FE, U+2B58, U+E000-F8FF, U+F0000-FFFFD;
+}
+
 .neovim-page {
   width: 100%;
   height: 100%;
   background: var(--surface);
+  /* The tab strip and anything else in the page's own face: icons first. */
+  font-family:
+    "DevHub Nerd Symbols",
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    sans-serif;
 }
 
 .neovim-surface {
@@ -163,7 +184,7 @@
     0 12px 32px rgb(0 0 0 / 30%);
   /* The grid's own font is set on the element (`fontOf`); this is the
      token the rule stands on until it is. */
-  font-family: var(--font-mono);
+  font-family: "DevHub Nerd Symbols", var(--font-mono);
   text-autospace: no-autospace;
   text-spacing-trim: space-all;
   font-variant-ligatures: none;
@@ -211,7 +232,7 @@
   box-shadow:
     0 0 0 1px var(--line),
     0 10px 28px rgb(0 0 0 / 30%);
-  font-family: var(--font-mono);
+  font-family: "DevHub Nerd Symbols", var(--font-mono);
   text-autospace: no-autospace;
   text-spacing-trim: space-all;
   font-size: 12.5px;
@@ -389,7 +410,8 @@
     0 0 0 1px var(--line),
     0 8px 24px rgb(0 0 0 / 28%);
   font:
-    13px / 1.4 system-ui,
+    13px / 1.4 "DevHub Nerd Symbols",
+    system-ui,
     sans-serif;
   pointer-events: auto;
   animation: nvim-toast-in 160ms ease-out;
@@ -465,7 +487,8 @@
   overflow: hidden auto;
   padding: 0 1ch;
   font:
-    13px / var(--nvim-line, 1.45) system-ui,
+    13px / var(--nvim-line, 1.45) "DevHub Nerd Symbols",
+    system-ui,
     sans-serif;
 }
 
@@ -499,7 +522,7 @@
 }
 
 .nvim-rich-float code {
-  font-family: var(--font-mono);
+  font-family: "DevHub Nerd Symbols", var(--font-mono);
   font-size: 12px;
   text-autospace: no-autospace;
   padding: 1px 4px;

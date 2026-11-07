@@ -39,6 +39,7 @@ import { NeovimEditor } from "./editor";
 import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
 import { charOffsetOfByte, type Chunks, type NeovimUiState } from "./redraw";
 import { cssColor, fontOf, resolveColors } from "./painter";
+import { glyphKind } from "./glyphs";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { InlineImages, RichFloats, Toasts } from "./DecorationViews";
 import {
@@ -858,9 +859,19 @@ function Cmdline({
   );
 }
 
-/** The kind letter Vim's completion gives, as a word and a colour. */
+/**
+ * The kind letter Vim's completion gives, as a word and a colour. A kind
+ * that starts with a Nerd Font icon (lspkind's `" Function"`, a config's
+ * own symbols) shows that icon, in the bundled symbols font.
+ */
 function kindOf(kind: string): { label: string; tone: string } {
-  const k = kind.trim().toLowerCase();
+  const trimmed = kind.trim();
+  const first = String.fromCodePoint(trimmed.codePointAt(0) ?? 0x20);
+  if (glyphKind(first) === "icon") {
+    const rest = trimmed.slice(first.length).trim();
+    return { label: first, tone: rest ? kindOf(rest).tone : "text" };
+  }
+  const k = trimmed.toLowerCase();
   const table: Record<string, [string, string]> = {
     f: ["ƒ", "function"],
     function: ["ƒ", "function"],
@@ -884,7 +895,7 @@ function kindOf(kind: string): { label: string; tone: string } {
   };
   const hit = table[k];
   if (hit) return { label: hit[0], tone: hit[1] };
-  return { label: kind.slice(0, 2), tone: "text" };
+  return { label: Array.from(trimmed).slice(0, 2).join(""), tone: "text" };
 }
 
 /** `ext_popupmenu`: the completion list, at its anchor cell. */

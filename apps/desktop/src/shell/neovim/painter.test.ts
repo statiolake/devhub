@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBoxChar, mixColors, parseGuifont } from "./painter";
+import { mixColors, parseGuifont } from "./painter";
 
 describe("guifont", () => {
   it("is a CSS family list and a size", () => {
@@ -17,15 +17,6 @@ describe("guifont", () => {
       size: 13.5,
     });
     expect(parseGuifont("")).toBeUndefined();
-  });
-});
-
-describe("box-drawing characters", () => {
-  it("are the separators and borders Neovim draws", () => {
-    for (const c of ["│", "─", "╭", "╯", "┴", "┼"])
-      expect(isBoxChar(c)).toBe(true);
-    expect(isBoxChar("a")).toBe(false);
-    expect(isBoxChar("|")).toBe(false);
   });
 });
 

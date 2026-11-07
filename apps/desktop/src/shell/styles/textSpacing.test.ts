@@ -51,6 +51,11 @@ const TYPESETTING =
 const MONOSPACE =
   /text-autospace:\s*no-autospace;[\s\S]*text-spacing-trim:\s*space-all;/;
 
+// The monospace face, perhaps behind the Neovim page's icon font (its
+// `unicode-range` is the Nerd Font icons only).
+const MONO_FACE =
+  /font-family:\s*(?:"DevHub Nerd Symbols",\s*)?var\(--font-mono\)/;
+
 describe("text spacing", () => {
   it("is turned on at the conversation's root", () => {
     const conversation = read("shell/conversation/conversation.css");
@@ -69,7 +74,7 @@ describe("text spacing", () => {
     let monospaced = 0;
     for (const path of stylesheets(SRC)) {
       for (const rule of rules(readFileSync(path, "utf8"))) {
-        if (!/font-family:\s*var\(--font-mono\)/.test(rule.body)) continue;
+        if (!MONO_FACE.test(rule.body)) continue;
         monospaced += 1;
         expect(rule.body, `${path}: ${rule.selector}`).toMatch(MONOSPACE);
       }
@@ -93,7 +98,7 @@ describe("text spacing", () => {
         const isControls =
           path.endsWith(join("styles", "tokens.css")) &&
           rule.selector === "button, input, textarea, select";
-        const isMonospace = /font-family:\s*var\(--font-mono\)/.test(rule.body);
+        const isMonospace = MONO_FACE.test(rule.body);
         expect(isRoot || isControls || isMonospace, where).toBe(true);
       }
     }
