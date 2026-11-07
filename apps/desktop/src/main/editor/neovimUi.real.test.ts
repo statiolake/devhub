@@ -429,4 +429,175 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		);
 		h.ui.client.close();
 	});
+	it("reports a view's items and cursor, a card's reserved rows round trip, and a decorated range", async () => {
+		const h = await attached(60, 20);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 3_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		const last = (kind: string) =>
+			h.gui.events.filter((e) => e.kind === kind).at(-1)?.payload as
+				| Record<string, unknown>
+				| undefined;
+		const list = (value: unknown): Record<string, unknown>[] =>
+			Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
+		// A view: one item per line, the second with a clickable badge.
+		await h.ui.request("nvim_exec_lua", [
+			`local gui = require('devhub_gui')
+			local buf = vim.api.nvim_create_buf(false, true)
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'one', 'two', 'three' })
+			_G.clicked = {}
+			_G.view = gui.view{ buf = buf, win = 'vsplit', keys = { { 'q', 'close' } },
+				items = function(lnum, line)
+					if lnum == 2 then
+						return { type = 'hstack', children = { { type = 'badge', text = line, tone = 'warn',
+							on_click = function(l) table.insert(_G.clicked, 'badge' .. l) end } } }
+					end
+				end,
+				on_click = function(l) table.insert(_G.clicked, 'item' .. l) end }`,
+			[],
+		]);
+		await waitFor(
+			() => list(last("layers")?.["views"]).length > 0,
+			"the view placed",
+		);
+		const view = last("view") as {
+			id: number;
+			items: unknown[];
+			keys: unknown;
+			hl: Record<string, unknown>;
+		};
+		expect(view.items).toMatchObject([
+			{ line: 1, text: "one" },
+			{
+				line: 2,
+				text: "two",
+				node: {
+					type: "hstack",
+					children: [
+						{ type: "badge", text: "two", hl: "DiagnosticWarn", action: 1 },
+					],
+				},
+			},
+			{ line: 3, text: "three" },
+		]);
+		expect(view.keys).toEqual([["q", "close"]]);
+		expect(Object.keys(view.hl)).toContain("Comment");
+		const placed = list(last("layers")?.["views"])[0] as {
+			win: number;
+			cursor: number;
+		};
+		expect(placed).toMatchObject({ id: view.id, cursor: 1, current: true });
+		// A click on the badge moves the cursor there and runs its function;
+		// one on the item runs the view's.
+		await h.ui.request("nvim_exec_lua", [
+			"local M = require('devhub_gui'); local id, win = ...; M._layers_click('view', id, win, 2, 1); M._layers_click('view', id, win, 2, nil)",
+			[view.id, placed.win],
+		]);
+		expect(
+			await h.ui.request("nvim_exec_lua", ["return _G.clicked", []]),
+		).toEqual(["badge2", "item2"]);
+		await waitFor(
+			() =>
+				(list(last("layers")?.["views"])[0] as { cursor?: number } | undefined)
+					?.cursor === 2,
+			"the cursor on the item",
+		);
+		// An edit re-renders it.
+		await h.ui.request("nvim_exec_lua", [
+			"vim.api.nvim_buf_set_lines(_G.view.buf, 0, 1, false, { 'ONE' })",
+			[],
+		]);
+		await waitFor(
+			() =>
+				list((last("view") as { items?: unknown })?.items)[0]?.["text"] ===
+				"ONE",
+			"the edit",
+		);
+
+		// An inline card under line 2 of a fresh window: two rows at first, as
+		// many as the page measures after.
+		await h.ui.request("nvim_exec_lua", [
+			`vim.cmd('only | enew')
+			vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'a', 'b', 'c', 'd' })
+			_G.card = require('devhub_gui').inline{ buf = 0, lnum = 2, component = { type = 'text', text = 'hi' } }`,
+			[],
+		]);
+		const card = () =>
+			list(last("layers")?.["inlines"])[0] as
+				| {
+						id: number;
+						row: number;
+						rows: number;
+						full: number;
+						clip: number;
+				  }
+				| undefined;
+		await waitFor(() => card() !== undefined, "the card placed");
+		expect(card()).toMatchObject({
+			row: 2,
+			col: 0,
+			rows: 2,
+			full: 2,
+			clip: 0,
+			active: false,
+		});
+		await h.ui.request("nvim_exec_lua", [
+			"require('devhub_gui')._inline_rows(...)",
+			[card()?.id, 4],
+		]);
+		await waitFor(() => card()?.full === 4, "the measured rows");
+		await h.until(
+			(state) => cursorGridText(state)[6] === "c",
+			"four reserved rows",
+		);
+		expect(cursorGridText(h.state).slice(0, 7)).toEqual([
+			"a",
+			"b",
+			"",
+			"",
+			"",
+			"",
+			"c",
+		]);
+		// Scrolled so that line 3 is the top: the card's last row is filler above it.
+		await h.ui.request("nvim_exec_lua", [
+			"vim.fn.winrestview({ lnum = 3, topline = 3, topfill = 1 })",
+			[],
+		]);
+		await waitFor(() => card()?.clip === 3, "the card clipped at the top");
+		expect(card()).toMatchObject({ row: 0, rows: 1, full: 4, clip: 3 });
+
+		// A decoration over lines 3–4.
+		await h.ui.request("nvim_exec_lua", [
+			"vim.fn.winrestview({ lnum = 1, topline = 1, topfill = 0 }); _G.deco = require('devhub_gui').decorate{ buf = 0, range = { 3, 4 }, style = 'dim', tag = 'NEW' }",
+			[],
+		]);
+		await waitFor(
+			() => list(last("layers")?.["decos"]).length > 0,
+			"the decoration placed",
+		);
+		expect(last("deco")).toMatchObject({ style: "dim", tag: "NEW" });
+		expect(list(last("layers")?.["decos"])[0]).toMatchObject({
+			row: 6,
+			rows: 2,
+			col: 0,
+		});
+		await h.ui.request("nvim_exec_lua", [
+			"_G.deco.clear(); _G.card.clear(); _G.view.close()",
+			[],
+		]);
+		await waitFor(
+			() =>
+				["deco_clear", "inline_clear", "view_clear"].every((k) =>
+					h.gui.events.some((e) => e.kind === k),
+				),
+			"everything cleared",
+		);
+		h.ui.client.close();
+	}, 20_000);
 });

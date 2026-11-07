@@ -37,11 +37,27 @@ import {
 } from "../model/pageModel";
 import { NeovimEditor } from "./editor";
 import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
-import { charOffsetOfByte, type Chunks, type NeovimUiState } from "./redraw";
+import {
+  charOffsetOfByte,
+  type Chunks,
+  type NeovimUiState,
+} from "./redraw";
 import { cssColor, fontOf, resolveColors } from "./painter";
 import { glyphKind } from "./glyphs";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { InlineImages, RichFloats, Toasts } from "./DecorationViews";
+import {
+  GuiViews,
+  InlineCards,
+  LineDecorations,
+  type LayerHost,
+} from "./LayerViews";
+import {
+  LAYER_EVENTS,
+  NO_LAYERS,
+  applyLayerEvent,
+  type Layers,
+} from "./layers";
 import {
   NO_DECORATIONS,
   applyGuiEvent,
@@ -124,6 +140,7 @@ function NeovimSurface({
     current: 0,
   });
   const [decorations, setDecorations] = useState<Decorations>(NO_DECORATIONS);
+  const [layers, setLayers] = useState<Layers>(NO_LAYERS);
   const frames = useRef(new Map<number, HTMLIFrameElement>());
   const reconnectAttempt = useRef(0);
 
@@ -204,11 +221,18 @@ function NeovimSurface({
         setTerminalNormal(undefined);
         return;
       }
+      if (LAYER_EVENTS.has(event.kind)) {
+        setLayers((before) =>
+          applyLayerEvent(before, event.kind, event.payload),
+        );
+        return;
+      }
       setDecorations((before) =>
         applyGuiEvent(before, event.kind, event.payload),
       );
     });
     setDecorations(NO_DECORATIONS);
+    setLayers(NO_LAYERS);
     let cancelled = false;
     const size = editor.fit();
     void bridge.neovim
@@ -406,6 +430,26 @@ function NeovimSurface({
   const tabs = nvim?.tabline;
   const showTabs = tabs !== undefined && tabs.tabs.length > 1;
   const boxes = editor?.gridBoxes() ?? [];
+  const fontFamily = editor?.font().family;
+  const layerHost: LayerHost | undefined =
+    nvim && cell
+      ? {
+          cell,
+          boxes,
+          mono: `${fontFamily ? `${fontFamily}, ` : ""}monospace`,
+          defaults: nvim.defaults,
+          lua: (fn, args) => {
+            send("nvim_exec_lua", [
+              "local M = package.loaded['devhub_gui']; local fn = ...; if M and M[fn] then M[fn](select(2, ...)) end",
+              [fn, ...args],
+            ]);
+          },
+          openLink,
+          refocus: () => {
+            editor?.focus();
+          },
+        }
+      : undefined;
 
   return (
     <div className="neovim-surface">
@@ -576,6 +620,13 @@ function NeovimSurface({
         {nvim && cell && editor ? (
           <>
             <InlineImages decorations={decorations} boxes={boxes} cell={cell} />
+            {layerHost ? (
+              <>
+                <LineDecorations layers={layers} host={layerHost} />
+                <InlineCards layers={layers} host={layerHost} />
+                <GuiViews layers={layers} host={layerHost} />
+              </>
+            ) : null}
             <RichFloats
               decorations={decorations}
               boxes={boxes}
@@ -973,3 +1024,4 @@ function Popupmenu({
     </div>
   );
 }
+

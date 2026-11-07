@@ -217,7 +217,38 @@ function RichFloat({
     if (!el) return;
     el.scrollTop = fraction * Math.max(0, el.scrollHeight - el.clientHeight);
   }, [fraction, markdown]);
-  const components: Components = {
+  const components = markdownComponents(dark, openLink);
+  return (
+    <div
+      ref={ref}
+      className={`nvim-rich-float ${dark ? "nvim-rich-dark" : "nvim-rich-light"}`}
+      style={style}
+      onMouseUp={() => {
+        // A plain click gives the keyboard back to Neovim; a selection stays
+        // (to be copied).
+        if (window.getSelection()?.isCollapsed !== false) refocus();
+      }}
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+        components={components}
+      >
+        {markdown}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+/**
+ * How a markdown body is drawn in the editor (a rich float, a component's
+ * `markdown`): links open in the browser, fenced code is coloured.
+ */
+export function markdownComponents(
+  dark: boolean,
+  openLink: (url: string) => void,
+): Components {
+  return {
     a: ({ href, children }) => (
       <a
         href={href}
@@ -248,29 +279,9 @@ function RichFloat({
       );
     },
   };
-  return (
-    <div
-      ref={ref}
-      className={`nvim-rich-float ${dark ? "nvim-rich-dark" : "nvim-rich-light"}`}
-      style={style}
-      onMouseUp={() => {
-        // A plain click gives the keyboard back to Neovim; a selection stays
-        // (to be copied).
-        if (window.getSelection()?.isCollapsed !== false) refocus();
-      }}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        components={components}
-      >
-        {markdown}
-      </ReactMarkdown>
-    </div>
-  );
 }
 
-function HighlightedCode({
+export function HighlightedCode({
   code,
   language,
   dark,
