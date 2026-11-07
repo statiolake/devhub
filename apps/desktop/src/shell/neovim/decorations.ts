@@ -1,5 +1,5 @@
 /**
- * What `devhub_gui`'s one-way events leave on the page: toasts, inline
+ * What `devhub_gui`'s one-way events leave on the page: notifications, inline
  * images, and floats whose markdown DevHub draws natively.
  *
  * Every one is attached to a Neovim object. An image sits in the `virt_lines`
@@ -12,13 +12,27 @@
 
 export type ToastLevel = "debug" | "info" | "warn" | "error";
 
+/**
+ * A notification (`gui.notify`, `vim.notify` when devhub.nvim replaces it,
+ * an LSP's progress): fidget-like, bottom right, grouped by its source.
+ */
 export interface Toast {
   readonly key: number;
+  /** Lua's key for it: a later notify with the same one updates it. */
+  readonly id: string | undefined;
+  /** Its source (an LSP client, a plugin): the heading it is under. */
+  readonly group: string;
   readonly title: string;
   readonly msg: string;
   readonly level: ToastLevel;
-  /** How long it stays, in ms. */
+  /** How long it stays, in ms (0: until it is updated or dismissed). */
   readonly timeout: number;
+  /** Work in progress: a spinner, a percentage, a tick when done. */
+  readonly progress:
+    | { readonly percent: number | undefined; readonly done: boolean }
+    | undefined;
+  /** Bumped by each update: its fade starts again. */
+  readonly rev: number;
 }
 
 /** An image's rows in one window: `row` is from the window's top. */
@@ -61,8 +75,14 @@ export const NO_DECORATIONS: Decorations = {
   nextToast: 1,
 };
 
-/** At most this many toasts at once; the oldest goes first. */
-const MAX_TOASTS = 4;
+/** At most this many notifications at once; the oldest goes first. */
+const MAX_TOASTS = 8;
+
+/** A level's time on screen; work in progress stays until it is done. */
+function timeoutOf(level: ToastLevel, progress: Toast["progress"]): number {
+  if (progress) return progress.done ? 2000 : 0;
+  return level === "error" ? 8000 : level === "warn" ? 6000 : 4000;
+}
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -147,15 +167,37 @@ export function applyGuiEvent(
       const title = typeof p["title"] === "string" ? p["title"] : "";
       if (msg === "" && title === "") return state;
       const lvl = level(p["level"]);
+      const id = typeof p["key"] === "string" ? p["key"] : undefined;
+      const percent = num(p, "percent");
+      const progress =
+        p["progress"] === true || percent !== undefined
+          ? {
+              percent:
+                percent !== undefined
+                  ? Math.min(100, Math.max(0, percent))
+                  : undefined,
+              done: p["done"] === true,
+            }
+          : undefined;
+      const before =
+        id !== undefined ? state.toasts.find((t) => t.id === id) : undefined;
       const toast: Toast = {
-        key: state.nextToast,
+        key: before?.key ?? state.nextToast,
+        id,
+        group: typeof p["group"] === "string" ? p["group"] : "",
         title,
         msg,
         level: lvl,
-        timeout:
-          num(p, "timeout") ??
-          (lvl === "error" ? 8000 : lvl === "warn" ? 6000 : 4000),
+        timeout: num(p, "timeout") ?? timeoutOf(lvl, progress),
+        progress,
+        rev: (before?.rev ?? 0) + 1,
       };
+      if (before) {
+        return {
+          ...state,
+          toasts: state.toasts.map((t) => (t === before ? toast : t)),
+        };
+      }
       return {
         ...state,
         toasts: [...state.toasts, toast].slice(-MAX_TOASTS),
@@ -208,4 +250,17 @@ export function richScrollFraction(place: RichPlace): number {
   const scrollable = place.lines - place.height;
   if (scrollable <= 0) return 0;
   return Math.min(1, Math.max(0, (place.topline - 1) / scrollable));
+}
+
+/** Notifications by source, in the order each source first spoke. */
+export function toastGroups(
+  toasts: readonly Toast[],
+): { readonly group: string; readonly toasts: readonly Toast[] }[] {
+  const groups = new Map<string, Toast[]>();
+  for (const toast of toasts) {
+    const list = groups.get(toast.group);
+    if (list) list.push(toast);
+    else groups.set(toast.group, [toast]);
+  }
+  return [...groups].map(([group, list]) => ({ group, toasts: list }));
 }

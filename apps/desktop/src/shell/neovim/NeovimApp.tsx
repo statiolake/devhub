@@ -40,6 +40,7 @@ import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
 import {
   charOffsetOfByte,
   type Chunks,
+  type GridBox,
   type NeovimUiState,
 } from "./redraw";
 import { cssColor, fontOf, resolveColors } from "./painter";
@@ -642,7 +643,11 @@ function NeovimSurface({
           </>
         ) : null}
       </div>
-      <Toasts toasts={decorations.toasts} dismiss={dismiss} />
+      <Toasts
+        toasts={decorations.toasts}
+        dismiss={dismiss}
+        bottom={toastBottom(editor, boxes)}
+      />
       {connection.kind === "connecting" ? (
         <div className="nvim-status">Starting Neovim…</div>
       ) : null}
@@ -1025,3 +1030,18 @@ function Popupmenu({
   );
 }
 
+/**
+ * Where notifications sit: just above the lowest window's status line, so
+ * the status line and the command line stay readable.
+ */
+function toastBottom(
+  editor: NeovimEditor | null,
+  boxes: readonly GridBox[],
+): number {
+  if (!editor) return 12;
+  const cell = editor.cellMetrics();
+  const windows = boxes.filter((b) => !b.float && b.win !== undefined);
+  if (windows.length === 0) return 12;
+  const lowest = Math.max(...windows.map((b) => b.row + b.height));
+  return Math.max(6, editor.areaSize().height - (lowest + 1) * cell.height + 6);
+}

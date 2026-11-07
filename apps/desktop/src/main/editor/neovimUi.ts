@@ -303,8 +303,11 @@ M._event = gui_event
 
 local LEVELS = { [0] = "debug", [1] = "debug", [2] = "info", [3] = "warn", [4] = "error" }
 
---- A native toast: notify{ title = "…", msg = "…", level = "info" | "warn" |
---- "error" | vim.log.levels.*, timeout = ms }; or notify("text").
+--- A notification, fidget-like (bottom right, grouped by source, fading):
+--- notify{ msg = "…", title = "…", level = "info" | "warn" | "error" |
+--- "debug" | vim.log.levels.*, group = "source", key = "id", timeout = ms,
+--- progress = true, percent = 0..100, done = bool }; or notify("text").
+--- A key updates the notification it named (a progress, an LSP's work).
 function M.notify(opts)
   if type(opts) ~= "table" then opts = { msg = opts } end
   local level = opts.level
@@ -315,6 +318,11 @@ function M.notify(opts)
     msg = tostring(opts.msg or opts.body or ""),
     level = level,
     timeout = type(opts.timeout) == "number" and opts.timeout or nil,
+    group = opts.group and tostring(opts.group) or nil,
+    key = opts.key and tostring(opts.key) or nil,
+    progress = (opts.progress == true or opts.percent ~= nil) or nil,
+    percent = type(opts.percent) == "number" and opts.percent or nil,
+    done = opts.done == true or nil,
   })
 end
 
