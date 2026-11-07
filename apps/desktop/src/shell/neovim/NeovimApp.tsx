@@ -59,6 +59,7 @@ interface GuiContent {
   readonly html?: string;
   readonly url?: string;
   readonly terminal?: boolean;
+  readonly hiddenRows?: { readonly top: number; readonly bottom: number };
 }
 
 export function NeovimApp({ workspaceId }: { readonly workspaceId: string }) {
@@ -155,7 +156,14 @@ function NeovimSurface({
                 ? { html: wire.content.html }
                 : {}),
               ...(wire.content.kind === "url" ? { url: wire.content.url } : {}),
-              ...(wire.content.kind === "terminal" ? { terminal: true } : {}),
+              ...(wire.content.kind === "terminal"
+                ? {
+                    terminal: true,
+                    ...(wire.content.hiddenRows
+                      ? { hiddenRows: wire.content.hiddenRows }
+                      : {}),
+                  }
+                : {}),
             });
           return next;
         });
@@ -281,6 +289,18 @@ function NeovimSurface({
     [bridge, workspaceId],
   );
 
+  // A terminal in a Neovim window wears Neovim's ground, not the terminal
+  // theme's: it is part of the editor, under Neovim's statusline.
+  const nvimBackground = nvim?.defaults.background;
+  const nvimForeground = nvim?.defaults.foreground;
+  const terminalAppearance = useMemo(
+    () =>
+      appearance && nvimBackground !== undefined && nvimForeground !== undefined
+        ? withGround(appearance, nvimBackground, nvimForeground)
+        : appearance,
+    [appearance, nvimBackground, nvimForeground],
+  );
+
   const cell = editor?.cellMetrics();
   // Where the command line bar is, for plugins that draw beside it.
   const [posRow, posCol] =
@@ -342,11 +362,13 @@ function NeovimSurface({
                 <div
                   key={id}
                   data-gui-id={id}
-                  className={
-                    current
-                      ? "nvim-gui-window nvim-gui-current"
-                      : "nvim-gui-window"
-                  }
+                  className={[
+                    "nvim-gui-window",
+                    current ? "nvim-gui-current" : "",
+                    content.terminal === true ? "nvim-gui-terminal" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   style={style}
                   onMouseDownCapture={() => {
                     if (!current) send("nvim_set_current_win", [win]);
@@ -372,8 +394,11 @@ function NeovimSurface({
                     <TerminalSurface
                       surfaceKey={workspaceTerminalSurfaceKey(workspaceId)}
                       surfaceLabel={`${label} terminal`}
-                      appearance={appearance}
+                      appearance={terminalAppearance}
                       hideTitle
+                      {...(content.hiddenRows
+                        ? { hiddenRows: content.hiddenRows }
+                        : {})}
                     />
                   ) : (
                     <iframe
@@ -420,6 +445,32 @@ function NeovimSurface({
       ) : null}
     </div>
   );
+}
+
+/** `appearance` with both terminal palettes on Neovim's default colours. */
+function withGround(
+  appearance: AppAppearance,
+  background: number,
+  foreground: number,
+): AppAppearance {
+  const bg = hexColor(background);
+  const fg = hexColor(foreground);
+  const theme = appearance.terminalTheme;
+  const ground = (palette: typeof theme.dark) => ({
+    ...palette,
+    background: bg,
+    foreground: fg,
+    cursor: fg,
+    cursorText: bg,
+  });
+  return {
+    ...appearance,
+    terminalTheme: { light: ground(theme.light), dark: ground(theme.dark) },
+  };
+}
+
+function hexColor(rgb: number): string {
+  return `#${rgb.toString(16).padStart(6, "0")}`;
 }
 
 /** A tab's name as Neovim gives it (a path): its last part. */

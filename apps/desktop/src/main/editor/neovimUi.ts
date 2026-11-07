@@ -60,6 +60,9 @@ export interface GuiOpenReport {
 	readonly html?: string;
 	readonly url?: string;
 	readonly terminal?: boolean;
+	/** A terminal's tmux status line, which the window does not show. */
+	readonly statusRows?: number;
+	readonly statusTop?: boolean;
 }
 
 /**
@@ -216,6 +219,11 @@ function M.open(opts)
   end
   local handle = { id = id, buf = buf }
   M._open[id] = { id = id, title = opts.title or "", html = opts.html, url = opts.url, terminal = opts.terminal == true }
+  if opts.terminal then
+    local rows, top = M._tmux_status()
+    M._open[id].status_rows = rows
+    M._open[id].status_top = top
+  end
   vim.rpcnotify(M._chan, "devhub_gui_open", M._open[id])
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = group, buffer = buf, once = true,
@@ -248,6 +256,21 @@ end
 function M._receive(id, message)
   local fn = M._handlers[id]
   if fn then fn(message) end
+end
+
+--- How many rows the tmux status line of this Neovim's session takes, and
+--- whether it is at the top: a terminal GUI window leaves them out, since
+--- Neovim's own statusline already says where it is.
+function M._tmux_status()
+  if not vim.env.TMUX then return 0, false end
+  local cmd = { vim.env.DEVHUB_TMUX or "tmux", "display-message", "-p" }
+  if vim.env.TMUX_PANE then vim.list_extend(cmd, { "-t", vim.env.TMUX_PANE }) end
+  table.insert(cmd, "#{status}\t#{status-position}")
+  local ok, out = pcall(vim.fn.system, cmd)
+  if not ok or vim.v.shell_error ~= 0 then return 0, false end
+  local status, position = out:match("^(%w+)\t(%w+)")
+  local rows = status == "on" and 1 or tonumber(status or "") or 0
+  return rows, position == "top"
 end
 
 --- :DevhubTerminal [float]: the Workspace's terminal in a window, toggled.
@@ -594,6 +617,12 @@ export class NeovimUi {
 					...(typeof open["html"] === "string" ? { html: open["html"] } : {}),
 					...(typeof open["url"] === "string" ? { url: open["url"] } : {}),
 					...(open["terminal"] === true ? { terminal: true } : {}),
+					...(typeof open["status_rows"] === "number"
+						? {
+								statusRows: open["status_rows"],
+								statusTop: open["status_top"] === true,
+							}
+						: {}),
 				});
 				return;
 			}
