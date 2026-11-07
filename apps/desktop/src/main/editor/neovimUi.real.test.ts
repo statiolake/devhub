@@ -79,7 +79,12 @@ interface Harness {
 	readonly ui: NeovimUi;
 	readonly state: NeovimUiState;
 	readonly clipboard: { text: string };
-	readonly gui: { opened: unknown[]; windows: unknown[]; sent: unknown[] };
+	readonly gui: {
+		opened: unknown[];
+		windows: unknown[];
+		sent: unknown[];
+		events: { kind: string; payload: unknown }[];
+	};
 	/** Wait until `check` holds of the state after a flush. */
 	until(check: (state: NeovimUiState) => boolean, what: string): Promise<void>;
 }
@@ -92,6 +97,7 @@ async function attached(cols = 60, rows = 20): Promise<Harness> {
 		opened: [] as unknown[],
 		windows: [] as unknown[],
 		sent: [] as unknown[],
+		events: [] as { kind: string; payload: unknown }[],
 	};
 	const waiters: (() => void)[] = [];
 	const sink: NeovimUiSink = {
@@ -103,6 +109,7 @@ async function attached(cols = 60, rows = 20): Promise<Harness> {
 		guiOpen: (open) => gui.opened.push(open),
 		guiClose: () => undefined,
 		guiSend: (id, message) => gui.sent.push({ id, message }),
+		guiEvent: (kind, payload) => gui.events.push({ kind, payload }),
 	};
 	const ui = new NeovimUi(client, {
 		read: () => clipboard.text,
@@ -332,6 +339,94 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			}
 			await new Promise((resolve) => setTimeout(resolve, 20));
 		}
+		h.ui.client.close();
+	});
+
+	it("sends toasts, and places an image and a rich float where their windows show them", async () => {
+		const h = await attached(60, 20);
+		const hasBase64 = (await h.ui.request("nvim_exec_lua", [
+			"return vim.base64 ~= nil",
+			[],
+		])) as boolean;
+		await h.ui.request("nvim_exec_lua", [
+			"require('devhub_gui').notify{ title = 'Build', msg = 'done', level = vim.log.levels.WARN }",
+			[],
+		]);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 5_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		await waitFor(
+			() => h.gui.events.some((e) => e.kind === "notify"),
+			"notify",
+		);
+		expect(h.gui.events.find((e) => e.kind === "notify")?.payload).toEqual({
+			title: "Build",
+			msg: "done",
+			level: "warn",
+		});
+		const lastPlace = () =>
+			h.gui.events.filter((e) => e.kind === "place").at(-1)?.payload as
+				| {
+						images: { row: number; rows: number }[] | object;
+						rich: { topline: number; border: boolean }[] | object;
+				  }
+				| undefined;
+		if (hasBase64) {
+			await h.ui.request("nvim_exec_lua", [
+				"vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'a', 'b', 'c', 'd' }); local M = require('devhub_gui'); M.image(0, 2, M._demo_image(), { height_rows = 3 })",
+				[],
+			]);
+			await waitFor(() => {
+				const images = lastPlace()?.images;
+				return Array.isArray(images) && images.length > 0;
+			}, "the image placed");
+			const image = h.gui.events.find((e) => e.kind === "image")?.payload as {
+				src: string;
+			};
+			expect(image.src.startsWith("data:image/png;base64,iVBOR")).toBe(true);
+			// Under line 2, from the window's top: rows 2, 3, 4.
+			expect(lastPlace()?.images).toMatchObject([
+				{ row: 2, col: 0, rows: 3, full: 3 },
+			]);
+			// The rows are virt_lines: Neovim leaves them blank in its grid.
+			await h.until(
+				(state) => cursorGridText(state)[5] === "c",
+				"the reserved rows",
+			);
+			expect(cursorGridText(h.state).slice(0, 6)).toEqual([
+				"a",
+				"b",
+				"",
+				"",
+				"",
+				"c",
+			]);
+		}
+		await h.ui.request("nvim_exec_lua", [
+			"local buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# Hi', '```lua', 'x = 1', '```' }); local win = vim.api.nvim_open_win(buf, false, { relative = 'editor', row = 1, col = 1, width = 20, height = 4, border = 'rounded' }); _G.rich_win = win; require('devhub_gui').rich_float(win, { '# Hi', '```lua', 'x = 1', '```' })",
+			[],
+		]);
+		await waitFor(
+			() =>
+				h.gui.events.some((e) => e.kind === "rich") &&
+				Array.isArray(lastPlace()?.rich) &&
+				(lastPlace()?.rich as unknown[]).length > 0,
+			"the rich float placed",
+		);
+		expect(lastPlace()?.rich).toMatchObject([{ topline: 1, border: true }]);
+		await h.ui.request("nvim_exec_lua", [
+			"vim.api.nvim_win_close(_G.rich_win, true)",
+			[],
+		]);
+		await waitFor(
+			() => h.gui.events.some((e) => e.kind === "rich_clear"),
+			"the rich float cleared",
+		);
 		h.ui.client.close();
 	});
 });

@@ -32,6 +32,11 @@ export interface NeovimUiSink {
 	guiSend(id: number, message: unknown): void;
 	/** The current buffer's file name (`""` for none), for the window title. */
 	bufferChanged?(name: string): void;
+	/**
+	 * A one-way GUI event from `devhub_gui`: a toast (`notify`), an image or
+	 * a rich float and where they are (`image`, `rich`, `place`, `*_clear`).
+	 */
+	guiEvent?(kind: string, payload: unknown): void;
 }
 
 /** This Mac's clipboard, for `g:clipboard`. */
@@ -161,6 +166,11 @@ function M._replay()
   for _, open in pairs(M._open) do vim.rpcnotify(M._chan, "devhub_gui_open", open) end
   M._report()
   vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
+  for id, image in pairs(M._images or {}) do M._event("image", { id = id, src = image.src }) end
+  for id, rich in pairs(M._rich or {}) do M._event("rich", { id = id, markdown = rich.markdown }) end
+  if M._place then vim.schedule(M._place) end
+  -- Attached: what the config asked for before (devhub.nvim's gui queue).
+  vim.api.nvim_exec_autocmds("User", { pattern = "DevhubGui", modeline = false })
 end
 
 local function report()
@@ -279,6 +289,226 @@ function M._receive(id, message)
   if fn then fn(message) end
 end
 
+--- One-way GUI events (a toast, an image, a rich float), on one method.
+local function gui_event(kind, payload)
+  vim.rpcnotify(M._chan, "devhub_gui_event", kind, payload)
+end
+M._event = gui_event
+
+local LEVELS = { [0] = "debug", [1] = "debug", [2] = "info", [3] = "warn", [4] = "error" }
+
+--- A native toast: notify{ title = "…", msg = "…", level = "info" | "warn" |
+--- "error" | vim.log.levels.*, timeout = ms }; or notify("text").
+function M.notify(opts)
+  if type(opts) ~= "table" then opts = { msg = opts } end
+  local level = opts.level
+  if type(level) == "number" then level = LEVELS[level] or "info" end
+  if level ~= "debug" and level ~= "warn" and level ~= "error" then level = "info" end
+  gui_event("notify", {
+    title = opts.title and tostring(opts.title) or "",
+    msg = tostring(opts.msg or opts.body or ""),
+    level = level,
+    timeout = type(opts.timeout) == "number" and opts.timeout or nil,
+  })
+end
+
+-- Decorations DevHub paints over a window's text area, anchored to Neovim
+-- objects: an image in the virt_lines rows of an extmark, a rich rendering
+-- of a float's markdown. Where each is on the screen is told again whenever
+-- a window scrolls, moves, folds or closes; the page only follows.
+M._images = M._images or {}
+M._rich = M._rich or {}
+local image_ns = vim.api.nvim_create_namespace("devhub_gui_image")
+M._image_ns = image_ns
+
+local MIME = { png = "image/png", jpg = "image/jpeg", jpeg = "image/jpeg", gif = "image/gif",
+               svg = "image/svg+xml", webp = "image/webp" }
+
+--- An image under line line (1-based) of buf: src is a path on this
+--- Neovim's machine or an https URL. opts.height_rows (default 8) rows are
+--- reserved with an extmark's virt_lines, and DevHub paints the image there.
+--- Answers a handle with :clear().
+function M.image(buf, line, src, opts)
+  opts = opts or {}
+  if buf == 0 or buf == nil then buf = vim.api.nvim_get_current_buf() end
+  local rows = math.max(1, math.floor(opts.height_rows or 8))
+  local data = src
+  if not (src:match("^https://") or src:match("^data:image/")) then
+    local path = vim.fn.fnamemodify(vim.fn.expand(src), ":p")
+    local file = io.open(path, "rb")
+    if not file then error("devhub gui.image: cannot read " .. path) end
+    local bytes = file:read("*a")
+    file:close()
+    if not vim.base64 then error("devhub gui.image: needs Neovim 0.10 or later") end
+    local mime = MIME[(path:match("%.(%w+)$") or ""):lower()] or "image/png"
+    data = "data:" .. mime .. ";base64," .. vim.base64.encode(bytes)
+  end
+  local virt = {}
+  for _ = 1, rows do table.insert(virt, { { " ", "Normal" } }) end
+  local mark = vim.api.nvim_buf_set_extmark(buf, image_ns, line - 1, 0, { virt_lines = virt })
+  M._next = M._next + 1
+  local id = M._next
+  M._images[id] = { id = id, buf = buf, mark = mark, rows = rows, src = data }
+  gui_event("image", { id = id, src = data })
+  vim.schedule(M._place)
+  return { id = id, buf = buf, mark = mark, clear = function() M.image_clear(id) end }
+end
+
+function M.image_clear(id)
+  local image = M._images[type(id) == "table" and id.id or id]
+  if not image then return end
+  M._images[image.id] = nil
+  pcall(vim.api.nvim_buf_del_extmark, image.buf, image_ns, image.mark)
+  gui_event("image_clear", { id = image.id })
+  vim.schedule(M._place)
+end
+
+--- Draw a float's markdown natively (LSP hover, signature help). The float
+--- stays Neovim's: its keys scroll and close it, and DevHub follows its
+--- topline. devhub.nvim's open_floating_preview hook calls this.
+function M.rich_float(win, markdown)
+  if not vim.api.nvim_win_is_valid(win) then return end
+  if type(markdown) == "table" then markdown = table.concat(markdown, "\n") end
+  M._next = M._next + 1
+  local id = M._next
+  vim.w[win].devhub_rich = id
+  M._rich[id] = { id = id, win = win, markdown = markdown }
+  gui_event("rich", { id = id, markdown = markdown })
+  vim.schedule(M._place)
+  return id
+end
+
+local function text_area(win)
+  local info = vim.fn.getwininfo(win)[1]
+  if not info then return nil end
+  return info
+end
+
+--- Where every image and rich float is now, on the current tab page.
+function M._place()
+  local images, rich = {}, {}
+  local tab_wins = {}
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do tab_wins[win] = true end
+  for id, image in pairs(M._images) do
+    local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, image.buf, image_ns, image.mark, {})
+    if not ok or not pos[1] then
+      M._images[id] = nil
+      gui_event("image_clear", { id = id })
+    else
+      local lnum = pos[1] + 1
+      for _, win in ipairs(vim.fn.win_findbuf(image.buf)) do
+        local info = tab_wins[win] and text_area(win)
+        -- Not botline: it is stale until the next redraw; screenpos is not.
+        if info and lnum >= info.topline
+          and vim.api.nvim_win_call(win, function() return vim.fn.foldclosed(lnum) end) == -1 then
+          local text = vim.api.nvim_buf_get_lines(image.buf, lnum - 1, lnum, false)[1] or ""
+          local sp = vim.fn.screenpos(win, lnum, math.max(1, #text))
+          if sp.row > 0 then
+            local bottom = info.winrow - 1 + info.height
+            local visible = math.min(image.rows, bottom - sp.row)
+            if visible > 0 then
+              -- From the window's top: the page places it on the window's box.
+              table.insert(images, { id = id, win = win, row = sp.row - (info.winrow - 1), col = info.textoff,
+                width = info.width - info.textoff, rows = visible, full = image.rows })
+            end
+          end
+        end
+      end
+    end
+  end
+  for id, r in pairs(M._rich) do
+    if not vim.api.nvim_win_is_valid(r.win) or vim.w[r.win].devhub_rich ~= id then
+      M._rich[id] = nil
+      gui_event("rich_clear", { id = id })
+    else
+      local info = text_area(r.win)
+      if info then
+        local b = vim.api.nvim_win_get_config(r.win).border
+        table.insert(rich, { id = id, win = r.win, topline = info.topline,
+          lines = vim.api.nvim_buf_line_count(info.bufnr), height = info.height,
+          border = type(b) == "table" and #b > 0 and not (#b == 1 and (b[1] == "" or b[1] == " ")) })
+      end
+    end
+  end
+  gui_event("place", { images = images, rich = rich })
+end
+
+vim.api.nvim_create_autocmd({ "WinScrolled", "WinResized", "WinClosed", "WinNew", "BufWinEnter",
+  "TabEnter", "VimResized", "TextChanged", "TextChangedI", "CursorMoved", "CursorMovedI" }, {
+  group = group,
+  callback = function()
+    if next(M._images) == nil and next(M._rich) == nil then return end
+    vim.schedule(M._place)
+  end,
+})
+
+--- :DevhubImageDemo: an image under a line of a markdown buffer.
+vim.api.nvim_create_user_command("DevhubImageDemo", function(o)
+  local path = o.args ~= "" and o.args or M._demo_image()
+  vim.cmd("enew")
+  local buf = vim.api.nvim_get_current_buf()
+  vim.bo[buf].buftype = "nofile"
+  vim.bo[buf].filetype = "markdown"
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    "# Inline images", "", "An image DevHub paints in the rows an extmark reserves:", "",
+    "![demo](" .. path .. ")", "", "It follows scrolling, folds (zfk on the line above) and window moves.",
+    "Neovim still owns the buffer: the rows are virt_lines, the cursor jumps over them.", "",
+  })
+  M.image(buf, 5, path, { height_rows = 10 })
+end, { nargs = "?", complete = "file", desc = "Show an inline image under a line (DevHub GUI)" })
+
+--- A small PNG for the demo, written once: a 64x40 gradient.
+function M._demo_image()
+  local path = vim.fn.stdpath("cache") .. "/devhub-image-demo.png"
+  if vim.fn.filereadable(path) == 1 then return path end
+  local w, h = 64, 40
+  local raw = {}
+  for y = 0, h - 1 do
+    table.insert(raw, "\0")
+    for x = 0, w - 1 do
+      local r = math.floor(40 + 180 * x / (w - 1))
+      local g = math.floor(90 + 120 * y / (h - 1))
+      local b = 230 - math.floor(120 * x / (w - 1))
+      if ((x - 32) ^ 2 + (y - 20) ^ 2) < 120 then r, g, b = 250, 250, 250 end
+      table.insert(raw, string.char(r, g, b))
+    end
+  end
+  raw = table.concat(raw)
+  -- zlib "stored" blocks: no compression library needed.
+  local function u32(n) return string.char(bit.band(bit.rshift(n, 24), 255), bit.band(bit.rshift(n, 16), 255),
+    bit.band(bit.rshift(n, 8), 255), bit.band(n, 255)) end
+  local crc_table = {}
+  for i = 0, 255 do
+    local c = i
+    for _ = 1, 8 do c = bit.band(c, 1) == 1 and bit.bxor(0xEDB88320, bit.rshift(c, 1)) or bit.rshift(c, 1) end
+    crc_table[i] = c
+  end
+  local function crc(s)
+    local c = 0xFFFFFFFF
+    for i = 1, #s do c = bit.bxor(crc_table[bit.band(bit.bxor(c, s:byte(i)), 255)], bit.rshift(c, 8)) end
+    return bit.bxor(c, 0xFFFFFFFF) % 4294967296
+  end
+  local a, b2 = 1, 0
+  for i = 1, #raw do a = (a + raw:byte(i)) % 65521; b2 = (b2 + a) % 65521 end
+  local blocks, pos = {}, 1
+  while pos <= #raw do
+    local chunk = raw:sub(pos, pos + 65534)
+    pos = pos + #chunk
+    local n = #chunk
+    table.insert(blocks, string.char(pos > #raw and 1 or 0, n % 256, math.floor(n / 256),
+      (65535 - n) % 256, math.floor((65535 - n) / 256)) .. chunk)
+  end
+  local zdata = "\120\1" .. table.concat(blocks) .. u32(b2 * 65536 + a)
+  local function chunk(kind, body) return u32(#body) .. kind .. body .. u32(crc(kind .. body)) end
+  local png = "\137PNG\r\n\26\n" .. chunk("IHDR", u32(w) .. u32(h) .. "\8\2\0\0\0") .. chunk("IDAT", zdata)
+    .. chunk("IEND", "")
+  vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+  local file = assert(io.open(path, "wb"))
+  file:write(png)
+  file:close()
+  return path
+end
+
 --- How many rows the tmux status line of this Neovim's session takes, and
 --- whether it is at the top: a terminal GUI window leaves them out, since
 --- Neovim's own statusline already says where it is.
@@ -317,7 +547,15 @@ function M.terminal(how)
   end
   local buf_how = how == "float" and "float" or "botright split"
   M._terminal = M.open({ title = "terminal", terminal = true, win = buf_how })
-  vim.bo[M._terminal.buf].bufhidden = "hide"
+  local term = M._terminal
+  vim.bo[term.buf].bufhidden = "hide"
+  vim.bo[term.buf].modifiable = false
+  -- Terminal-normal mode (<C-\><C-n> in the terminal): i, a, I, A and <CR>
+  -- go back into it, as in a :terminal buffer.
+  for _, lhs in ipairs({ "i", "a", "I", "A", "<CR>" }) do
+    vim.keymap.set("n", lhs, function() gui_event("terminal_insert", { id = term.id }) end,
+      { buffer = term.buf, desc = "DevHub: back into the terminal" })
+  end
   if buf_how ~= "float" then vim.cmd("resize " .. math.floor(vim.o.lines * 0.35)) end
 end
 
@@ -657,6 +895,11 @@ export class NeovimUi {
 				});
 				return;
 			}
+			case "devhub_gui_event":
+				if (typeof params[0] === "string") {
+					sink.guiEvent?.(params[0], plainHandles(params[1]));
+				}
+				return;
 			case "devhub_buffer":
 				sink.bufferChanged?.(bufferTitle(params[0], params[1]));
 				return;

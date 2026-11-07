@@ -40,6 +40,13 @@ import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
 import { charOffsetOfByte, type Chunks, type NeovimUiState } from "./redraw";
 import { cssColor, fontOf, resolveColors } from "./painter";
 import { TerminalSurface } from "../terminal/TerminalSurface";
+import { InlineImages, RichFloats, Toasts } from "./DecorationViews";
+import {
+  NO_DECORATIONS,
+  applyGuiEvent,
+  dismissToast,
+  type Decorations,
+} from "./decorations";
 import { workspaceTerminalSurfaceKey } from "../../ipc/terminal";
 import type {
   NeovimGuiWindowWire,
@@ -115,6 +122,7 @@ function NeovimSurface({
     windows: [],
     current: 0,
   });
+  const [decorations, setDecorations] = useState<Decorations>(NO_DECORATIONS);
   const frames = useRef(new Map<number, HTMLIFrameElement>());
   const reconnectAttempt = useRef(0);
 
@@ -189,6 +197,17 @@ function NeovimSurface({
         .get(message.id)
         ?.contentWindow?.postMessage({ devhubGui: message.message }, "*");
     });
+    const offEvent = bridge.neovim.onGuiEvent((event) => {
+      if (event.workspaceId !== workspaceId) return;
+      if (event.kind === "terminal_insert") {
+        setTerminalNormal(undefined);
+        return;
+      }
+      setDecorations((before) =>
+        applyGuiEvent(before, event.kind, event.payload),
+      );
+    });
+    setDecorations(NO_DECORATIONS);
     let cancelled = false;
     const size = editor.fit();
     void bridge.neovim
@@ -219,6 +238,7 @@ function NeovimSurface({
       offGui();
       offWindows();
       offSend();
+      offEvent();
       editor.dispose();
       editorRef.current = null;
     };
@@ -302,9 +322,22 @@ function NeovimSurface({
   const currentGui = guiWindows.windows.find(
     (w) => w.win === guiWindows.current,
   );
+  // A terminal window in terminal-normal mode: the cursor is in it, the
+  // keyboard is Neovim's (<C-w>k, :q, …) until i/a give it back.
+  const [terminalNormal, setTerminalNormal] = useState<number | undefined>();
+  const escapeRef = useRef<{ id: number; replaying: boolean } | undefined>(
+    undefined,
+  );
+  const normalHere =
+    currentGui !== undefined && terminalNormal === currentGui.id;
+  useEffect(() => {
+    if (terminalNormal !== undefined && currentGui?.id !== terminalNormal) {
+      setTerminalNormal(undefined);
+    }
+  }, [currentGui, terminalNormal]);
   useEffect(() => {
     if (!editor) return;
-    if (currentGui === undefined) {
+    if (currentGui === undefined || normalHere) {
       if (document.activeElement !== editor.input) editor.focus();
       return;
     }
@@ -317,7 +350,7 @@ function NeovimSurface({
     } else {
       frames.current.get(currentGui.id)?.focus();
     }
-  }, [editor, currentGui, guiContent]);
+  }, [editor, currentGui, guiContent, normalHere]);
 
   const send = useCallback(
     (method: string, params: readonly unknown[]) => {
@@ -358,6 +391,16 @@ function NeovimSurface({
       primaryWindow.set(id, win);
     }
   }
+
+  const dismiss = useCallback((key: number) => {
+    setDecorations((before) => dismissToast(before, key));
+  }, []);
+  const openLink = useCallback(
+    (url: string) => {
+      void bridge.openExternalUrl(url);
+    },
+    [bridge],
+  );
 
   const tabs = nvim?.tabline;
   const showTabs = tabs !== undefined && tabs.tabs.length > 1;
@@ -447,12 +490,17 @@ function NeovimSurface({
                       "nvim-gui-window",
                       current ? "nvim-gui-current" : "",
                       content.terminal === true ? "nvim-gui-terminal" : "",
+                      current && terminalNormal === id
+                        ? "nvim-gui-terminal-normal"
+                        : "",
                     ]
                       .filter(Boolean)
                       .join(" ")}
                     style={style}
                     onMouseDownCapture={() => {
                       if (!current) send("nvim_set_current_win", [win]);
+                      // A click into a terminal is typing into it again.
+                      if (terminalNormal === id) setTerminalNormal(undefined);
                     }}
                     onFocusCapture={() => {
                       // A terminal focuses itself as it connects: the keyboard
@@ -460,6 +508,28 @@ function NeovimSurface({
                       if (!current) editor?.focus();
                     }}
                     onKeyDownCapture={(event) => {
+                      if (content.terminal === true) {
+                        // Neovim's :terminal model: keys go to the shell
+                        // (<C-w> deletes a word there); <C-\><C-n> leaves
+                        // for terminal-normal mode, i/a come back.
+                        if (terminalEscape(event, escapeRef, id)) {
+                          setTerminalNormal(id);
+                          editor?.focus();
+                          return;
+                        }
+                        // Cmd+C copies the terminal's selection: DevHub's
+                        // menu leaves the editing keys to this page, and the
+                        // emulator answers the copy command, not the key.
+                        if (
+                          event.metaKey &&
+                          !event.shiftKey &&
+                          (event.key === "c" || event.key === "C")
+                        ) {
+                          event.preventDefault();
+                          document.execCommand("copy");
+                        }
+                        return;
+                      }
                       if (
                         event.ctrlKey &&
                         (event.key === "w" || event.key === "W")
@@ -469,18 +539,6 @@ function NeovimSurface({
                         send("nvim_input", ["<C-w>"]);
                         editor?.focus();
                         return;
-                      }
-                      // Cmd+C copies the terminal's selection: DevHub's menu
-                      // leaves the editing keys to this page, and the
-                      // emulator answers the copy command, not the key.
-                      if (
-                        content.terminal === true &&
-                        event.metaKey &&
-                        !event.shiftKey &&
-                        (event.key === "c" || event.key === "C")
-                      ) {
-                        event.preventDefault();
-                        document.execCommand("copy");
                       }
                     }}
                   >
@@ -516,11 +574,20 @@ function NeovimSurface({
           : null}
         {nvim && cell && editor ? (
           <>
+            <InlineImages decorations={decorations} boxes={boxes} cell={cell} />
+            <RichFloats
+              decorations={decorations}
+              boxes={boxes}
+              cell={cell}
+              state={nvim}
+              openLink={openLink}
+            />
             <Cmdline state={nvim} editor={editor} />
             <Popupmenu state={nvim} editor={editor} send={send} />
           </>
         ) : null}
       </div>
+      <Toasts toasts={decorations.toasts} dismiss={dismiss} />
       {connection.kind === "connecting" ? (
         <div className="nvim-status">Starting Neovim…</div>
       ) : null}
@@ -559,6 +626,50 @@ function guiWindowsInPaintOrder(
   });
   const rest = windows.filter((w) => primary.get(w.id) !== w.win);
   return [...first, ...rest];
+}
+
+/**
+ * <C-\\><C-n> in a terminal window, Neovim's own way out of a terminal: true
+ * when this key completes it. A <C-\\> followed by anything else reaches the
+ * shell after all, ahead of that key (replayed into the emulator).
+ */
+function terminalEscape(
+  event: React.KeyboardEvent,
+  pending: { current: { id: number; replaying: boolean } | undefined },
+  id: number,
+): boolean {
+  const state = pending.current;
+  if (state?.replaying === true) return false;
+  const ctrlOnly = event.ctrlKey && !event.metaKey && !event.altKey;
+  if (state !== undefined && state.id === id) {
+    if (["Control", "Shift"].includes(event.key)) return false;
+    pending.current = undefined;
+    if (ctrlOnly && (event.key === "n" || event.key === "N")) {
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    }
+    const target = event.target as HTMLElement;
+    pending.current = { id, replaying: true };
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "\\",
+        code: "Backslash",
+        keyCode: 220,
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    pending.current = undefined;
+    return false;
+  }
+  if (ctrlOnly && (event.code === "Backslash" || event.key === "\\")) {
+    event.preventDefault();
+    event.stopPropagation();
+    pending.current = { id, replaying: false };
+  }
+  return false;
 }
 
 /** `appearance` with both terminal palettes on Neovim's default colours. */

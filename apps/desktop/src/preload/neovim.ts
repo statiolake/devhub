@@ -11,6 +11,7 @@ import {
 	NEOVIM_CHANNELS,
 	type DevhubNeovimApi,
 	type NeovimAttachResult,
+	type NeovimGuiEvent,
 	type NeovimGuiMessage,
 	type NeovimGuiWindowWire,
 	type NeovimGuiWindowsWire,
@@ -65,6 +66,8 @@ const neovim: DevhubNeovimApi = {
 		),
 	onGuiSend: (listener) =>
 		listen<[NeovimGuiMessage]>(NEOVIM_CHANNELS.guiSend, listener),
+	onGuiEvent: (listener) =>
+		listen<[NeovimGuiEvent]>(NEOVIM_CHANNELS.guiEvent, listener),
 	guiMessage: (message) => {
 		ipcRenderer.send(NEOVIM_CHANNELS.guiMessage, message);
 	},

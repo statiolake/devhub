@@ -363,3 +363,185 @@
     transition: none;
   }
 }
+
+/* devhub_gui.notify: native toasts, top right of the editor. */
+.nvim-toasts {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, calc(100% - 32px));
+  pointer-events: none;
+}
+
+.nvim-toast {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--raised, var(--surface));
+  color: var(--primary);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 8px 24px rgb(0 0 0 / 28%);
+  font:
+    13px / 1.4 system-ui,
+    sans-serif;
+  pointer-events: auto;
+  animation: nvim-toast-in 160ms ease-out;
+}
+
+@keyframes nvim-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nvim-toast {
+    animation: none;
+  }
+}
+
+.nvim-toast-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--surface);
+  background: var(--accent);
+}
+
+.nvim-toast-warn .nvim-toast-icon {
+  background: #d9a23a;
+}
+
+.nvim-toast-error .nvim-toast-icon {
+  background: #e0565b;
+}
+
+.nvim-toast-debug .nvim-toast-icon {
+  background: var(--ink-secondary, gray);
+}
+
+.nvim-toast-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.nvim-toast-title {
+  font-weight: 600;
+}
+
+/* devhub_gui.image: an image in the virt_lines rows of an extmark. */
+.nvim-inline-image {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nvim-inline-image img {
+  display: block;
+  max-width: 100%;
+  object-fit: contain;
+  object-position: left top;
+  border-radius: 6px;
+}
+
+/* A float's markdown, drawn natively over its text area. */
+.nvim-rich-float {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 0 1ch;
+  font:
+    13px / var(--nvim-line, 1.45) system-ui,
+    sans-serif;
+}
+
+.nvim-rich-float > :first-child {
+  margin-top: 2px;
+}
+
+.nvim-rich-float p,
+.nvim-rich-float ul,
+.nvim-rich-float ol {
+  margin: 0 0 6px;
+}
+
+.nvim-rich-float ul,
+.nvim-rich-float ol {
+  padding-left: 18px;
+}
+
+.nvim-rich-float h1,
+.nvim-rich-float h2,
+.nvim-rich-float h3 {
+  margin: 4px 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nvim-rich-float hr {
+  margin: 6px 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, currentcolor 20%, transparent);
+}
+
+.nvim-rich-float code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-autospace: no-autospace;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentcolor 10%, transparent);
+}
+
+.nvim-rich-float a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.nvim-rich-code {
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  overflow-x: auto;
+  line-height: 1.4;
+  background: color-mix(in srgb, currentcolor 7%, transparent);
+}
+
+.nvim-rich-code code {
+  padding: 0;
+  background: none;
+}
+
+/* Terminal-normal mode: the keyboard is Neovim's, the terminal waits. */
+.nvim-gui-terminal-normal {
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.nvim-gui-terminal-normal::after {
+  content: "-- TERMINAL NORMAL --  i to type";
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font:
+    11px / 18px system-ui,
+    sans-serif;
+  color: var(--ink-secondary, gray);
+  background: var(--raised, var(--surface));
+  pointer-events: none;
+}

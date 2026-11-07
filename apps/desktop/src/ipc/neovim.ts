@@ -31,6 +31,8 @@ export const NEOVIM_CHANNELS = {
 	guiMessage: "devhub:neovim:gui-message",
 	/** main → page: Lua sent a GUI window a message. */
 	guiSend: "devhub:neovim:gui-send",
+	/** main → page: a toast, an inline image, a rich float, and where they are. */
+	guiEvent: "devhub:neovim:gui-event",
 } as const;
 
 /** What the page asks for when it attaches. */
@@ -113,6 +115,18 @@ export interface NeovimGuiMessage {
 	readonly message: unknown;
 }
 
+/**
+ * A one-way event from `devhub_gui` (`docs/neovim-editor.md`): `notify`
+ * (a toast), `image`/`image_clear`, `rich`/`rich_clear` (a float's markdown)
+ * and `place` (where every image and rich float is now). The page checks the
+ * payload's shape; anything it does not understand is ignored.
+ */
+export interface NeovimGuiEvent {
+	readonly workspaceId: string;
+	readonly kind: string;
+	readonly payload: unknown;
+}
+
 /** The bridge member the Neovim page has (`window.devhub.neovim`). */
 export interface DevhubNeovimApi {
 	attach(request: NeovimAttachRequest): Promise<NeovimAttachResult>;
@@ -136,5 +150,6 @@ export interface DevhubNeovimApi {
 		listener: (workspaceId: string, windows: NeovimGuiWindowsWire) => void,
 	): () => void;
 	onGuiSend(listener: (message: NeovimGuiMessage) => void): () => void;
+	onGuiEvent(listener: (event: NeovimGuiEvent) => void): () => void;
 	guiMessage(message: NeovimGuiMessage): void;
 }

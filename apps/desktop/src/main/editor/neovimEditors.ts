@@ -21,6 +21,7 @@ import {
 	type NeovimAttachRequest,
 	type NeovimAttachResult,
 	type NeovimCall,
+	type NeovimGuiEvent,
 	type NeovimGuiMessage,
 	type NeovimGuiWindowWire,
 	type NeovimRequestResult,
@@ -177,6 +178,10 @@ export class NeovimEditors {
 							current,
 							layout,
 						});
+					},
+					guiEvent: (kind, payload) => {
+						const out: NeovimGuiEvent = { workspaceId, kind, payload };
+						send(NEOVIM_CHANNELS.guiEvent, out);
 					},
 					guiSend: (id, value) => {
 						const out: NeovimGuiMessage = { workspaceId, id, message: value };
