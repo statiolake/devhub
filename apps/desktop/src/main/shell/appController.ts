@@ -7960,6 +7960,9 @@ export class AppController {
 	): Promise<void> {
 		if (workspace === undefined) return;
 		this.neovimShown.delete(workspace.key);
+		// A host is only asked about a Neovim the editor could have started
+		// there: with VS Code, closing a remote Workspace touches no socket.
+		if (workspace.location.kind !== "local" && !this.editorIsNeovim()) return;
 		await this.neovimEditors?.close({
 			machine: runtimeIdFor(workspace.location),
 			workspaceId: workspace.id,

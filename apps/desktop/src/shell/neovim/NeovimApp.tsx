@@ -110,7 +110,7 @@ function NeovimSurface({
 
   const settings = useMemo(
     () => ({
-      fontFamily: appearance?.terminalFontFamily ?? "",
+      monoFamily: appearance?.terminalFontFamily ?? "",
       fontSize: appearance?.terminalFontSize ?? 13,
       macOptionIsMeta: appearance?.terminalMacOptionIsMeta ?? false,
     }),

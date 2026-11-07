@@ -61,7 +61,7 @@ export interface NeovimPort {
 
 export interface EditorSettings {
   /** DevHub's own monospace, used unless `guifont` says otherwise. */
-  readonly fontFamily: string;
+  readonly monoFamily: string;
   readonly fontSize: number;
   readonly macOptionIsMeta: MacOptionIsMeta;
 }
@@ -194,7 +194,7 @@ export class NeovimEditor {
     const guifont = parseGuifont(this.state?.options.get("guifont"));
     const linespace = this.state?.options.get("linespace");
     return {
-      family: guifont?.family ?? this.settings.fontFamily,
+      family: guifont?.family ?? this.settings.monoFamily,
       size: guifont?.size ?? this.settings.fontSize,
       linespace: typeof linespace === "number" ? linespace : 2,
     };
