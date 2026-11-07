@@ -124,6 +124,8 @@ export class NeovimEditor {
 
   attached(size: { cols: number; rows: number }): void {
     this.size = size;
+    // The view may have been laid out while the attach was in flight.
+    this.resize();
   }
 
   subscribe(listener: () => void): () => void {
