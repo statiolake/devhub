@@ -137,12 +137,14 @@ export function RichFloats({
   cell,
   state,
   openLink,
+  refocus,
 }: {
   readonly decorations: Decorations;
   readonly boxes: readonly GridBox[];
   readonly cell: Cell;
   readonly state: NeovimUiState;
   readonly openLink: (url: string) => void;
+  readonly refocus: () => void;
 }) {
   return (
     <>
@@ -179,6 +181,7 @@ export function RichFloats({
               ["--nvim-line" as string]: `${String(cell.height)}px`,
             }}
             openLink={openLink}
+            refocus={refocus}
           />
         );
       })}
@@ -199,12 +202,14 @@ function RichFloat({
   dark,
   style,
   openLink,
+  refocus,
 }: {
   readonly markdown: string;
   readonly fraction: number;
   readonly dark: boolean;
   readonly style: React.CSSProperties;
   readonly openLink: (url: string) => void;
+  readonly refocus: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -248,9 +253,10 @@ function RichFloat({
       ref={ref}
       className={`nvim-rich-float ${dark ? "nvim-rich-dark" : "nvim-rich-light"}`}
       style={style}
-      onMouseDown={(event) => {
-        // The float stays Neovim's: a click is not a drag into the grid.
-        event.stopPropagation();
+      onMouseUp={() => {
+        // A plain click gives the keyboard back to Neovim; a selection stays
+        // (to be copied).
+        if (window.getSelection()?.isCollapsed !== false) refocus();
       }}
     >
       <ReactMarkdown

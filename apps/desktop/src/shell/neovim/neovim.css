@@ -462,7 +462,7 @@
 .nvim-rich-float {
   position: absolute;
   box-sizing: border-box;
-  overflow: hidden;
+  overflow: hidden auto;
   padding: 0 1ch;
   font:
     13px / var(--nvim-line, 1.45) system-ui,
@@ -516,7 +516,8 @@
   margin: 2px 0 6px;
   padding: 6px 8px;
   border-radius: 6px;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.4;
   background: color-mix(in srgb, currentcolor 7%, transparent);
 }

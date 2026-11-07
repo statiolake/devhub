@@ -145,6 +145,11 @@ map_unless_mapped("t", "<D-v>", [[<C-\><C-n>"+pi]])
 map_unless_mapped("v", "<D-c>", '"+y')
 map_unless_mapped("v", "<D-x>", '"+d')
 map_unless_mapped("n", "<D-c>", '"+yy')
+-- With nothing selected, Cut and Copy take the line, as a Mac editor does
+-- (an unmapped <D-x> would reach Neovim as a plain x).
+map_unless_mapped("n", "<D-x>", '"+dd')
+map_unless_mapped("i", "<D-c>", '<C-o>"+yy')
+map_unless_mapped("i", "<D-x>", '<C-o>"+dd')
 map_unless_mapped({ "n", "v" }, "<D-a>", "<Esc>ggVG")
 map_unless_mapped("i", "<D-a>", "<Esc>ggVG")
 map_unless_mapped("n", "<D-z>", "u")

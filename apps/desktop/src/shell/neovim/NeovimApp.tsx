@@ -581,6 +581,9 @@ function NeovimSurface({
               cell={cell}
               state={nvim}
               openLink={openLink}
+              refocus={() => {
+                editor.focus();
+              }}
             />
             <Cmdline state={nvim} editor={editor} />
             <Popupmenu state={nvim} editor={editor} send={send} />

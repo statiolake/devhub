@@ -600,8 +600,13 @@ export class NeovimEditor {
         at.col,
       ]);
     };
+    // A GUI window and a rich float are DevHub's: their own clicks and wheel.
+    const ownedByGui = (event: Event) =>
+      (event.target as HTMLElement).closest(
+        ".nvim-gui-window, .nvim-rich-float",
+      ) !== null;
     layer.addEventListener("mousedown", (event) => {
-      if ((event.target as HTMLElement).closest(".nvim-gui-window")) return;
+      if (ownedByGui(event)) return;
       event.preventDefault();
       this.focus();
       const button = mouseButton(event.button);
@@ -629,7 +634,7 @@ export class NeovimEditor {
     layer.addEventListener(
       "wheel",
       (event) => {
-        if ((event.target as HTMLElement).closest(".nvim-gui-window")) return;
+        if (ownedByGui(event)) return;
         event.preventDefault();
         const at = target(event);
         for (const step of this.wheel.steps(
