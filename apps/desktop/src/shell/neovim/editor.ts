@@ -548,6 +548,23 @@ export class NeovimEditor {
         isComposing: e.isComposing,
       });
     });
+    // The Edit menu clicked with the mouse: its roles are editing commands
+    // aimed at this textarea, which has nothing to copy. They mean what
+    // Cmd+C/X/Z/Shift+Z mean here (SETUP_LUA's <D-…> maps); Paste is above.
+    const menuKey = (event: Event, keys: string) => {
+      event.preventDefault();
+      this.send(keys);
+    };
+    input.addEventListener("copy", (event) => {
+      menuKey(event, "<D-c>");
+    });
+    input.addEventListener("cut", (event) => {
+      menuKey(event, "<D-x>");
+    });
+    input.addEventListener("beforeinput", (event) => {
+      if (event.inputType === "historyUndo") menuKey(event, "<D-z>");
+      else if (event.inputType === "historyRedo") menuKey(event, "<D-Z>");
+    });
     input.addEventListener("focus", () => {
       this.port.call("nvim_ui_set_focus", [true]);
       this.placeCursor();
