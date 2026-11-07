@@ -53,6 +53,34 @@
   font: inherit;
 }
 
+.nvim-cursor-glide {
+  transition:
+    left 70ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    top 70ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Each window's scrollbar (`win_viewport`), seen while the view moves. */
+.nvim-scrollbar {
+  position: absolute;
+  width: 6px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+
+.nvim-scrollbar-active {
+  opacity: 1;
+  transition: opacity 80ms ease;
+}
+
+.nvim-scrollbar-thumb {
+  position: absolute;
+  right: 1px;
+  width: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
 .nvim-cursor-unfocused {
   background: transparent !important;
   color: transparent !important;
@@ -312,5 +340,9 @@
   .nvim-cmdline,
   .nvim-pum {
     animation: none;
+  }
+
+  .nvim-cursor-glide {
+    transition: none;
   }
 }

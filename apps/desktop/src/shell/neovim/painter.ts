@@ -23,6 +23,8 @@ export interface FontSpec {
 
 export interface Metrics extends CellMetrics {
   readonly baseline: number;
+  /** The font's own advance; `width` is it on whole device pixels. */
+  readonly advance: number;
 }
 
 const FALLBACK_FAMILY = `Menlo, "SF Mono", Monaco, "DejaVu Sans Mono", monospace`;
@@ -87,7 +89,13 @@ export function fontOf(spec: FontSpec, attr?: HlAttr): string {
   return `${attr?.italic === true ? "italic " : ""}${attr?.bold === true ? "bold " : ""}${String(spec.size)}px ${spec.family ? `${spec.family}, ${FALLBACK_FAMILY}` : FALLBACK_FAMILY}`;
 }
 
-export function measureFont(spec: FontSpec): Metrics {
+/**
+ * The cell, on whole device pixels: a cell that starts between two device
+ * pixels is a cell whose text the compositor resamples, which is blur on a
+ * Retina screen. `advance` is the font's own, which the painter spreads to
+ * the cell's width with `letterSpacing`.
+ */
+export function measureFont(spec: FontSpec, dpr = 1): Metrics {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   if (!ctx)
@@ -95,17 +103,51 @@ export function measureFont(spec: FontSpec): Metrics {
       width: spec.size * 0.6,
       height: spec.size * 1.3,
       baseline: spec.size,
+      advance: spec.size * 0.6,
     };
   ctx.font = fontOf(spec);
   const m = ctx.measureText("M");
   const ascent = m.fontBoundingBoxAscent || spec.size * 0.8;
   const descent = m.fontBoundingBoxDescent || spec.size * 0.25;
-  const height = Math.ceil(ascent + descent) + spec.linespace;
+  const snap = (value: number) => Math.max(1, Math.round(value * dpr)) / dpr;
   return {
-    width: m.width,
-    height,
-    baseline: Math.round(spec.linespace / 2 + ascent),
+    width: snap(m.width),
+    height: snap(Math.ceil(ascent + descent) + spec.linespace),
+    baseline: snap(spec.linespace / 2 + ascent),
+    advance: m.width,
   };
+}
+
+/**
+ * Box-drawing characters drawn as lines, not glyphs: a font's `│` stops
+ * short of the cell's top and bottom, so with any `linespace` window
+ * separators and float borders turn into dashes. Each is the set of arms
+ * from the cell's centre (n, e, s, w), `r` for a rounded corner, `h` heavy.
+ */
+const BOX: Readonly<Record<string, string>> = {
+  "│": "ns",
+  "┃": "nsh",
+  "─": "ew",
+  "━": "ewh",
+  "┌": "es",
+  "┐": "sw",
+  "└": "ne",
+  "┘": "nw",
+  "╭": "esr",
+  "╮": "swr",
+  "╰": "ner",
+  "╯": "nwr",
+  "├": "nes",
+  "┤": "nsw",
+  "┬": "esw",
+  "┴": "new",
+  "┼": "nesw",
+  "▏": "l",
+  "▕": "R",
+};
+
+export function isBoxChar(c: string): boolean {
+  return BOX[c] !== undefined;
 }
 
 interface GridCanvas {
@@ -119,15 +161,27 @@ export class GridPainter {
   private readonly canvases = new Map<number, GridCanvas>();
   private font: FontSpec;
   private metrics: Metrics;
-  private readonly dpr: number;
+  private dpr: number;
 
   constructor(
     private readonly root: HTMLElement,
     font: FontSpec,
   ) {
     this.font = font;
-    this.metrics = measureFont(font);
     this.dpr = window.devicePixelRatio || 1;
+    this.metrics = measureFont(font, this.dpr);
+  }
+
+  /**
+   * The window moved to a screen of another density: the cell is measured
+   * again and every canvas redrawn at it. Answers whether it had changed.
+   */
+  syncDevicePixelRatio(): boolean {
+    const dpr = window.devicePixelRatio || 1;
+    if (dpr === this.dpr) return false;
+    this.dpr = dpr;
+    this.metrics = measureFont(this.font, dpr);
+    return true;
   }
 
   cell(): Metrics {
@@ -143,7 +197,7 @@ export class GridPainter {
       return false;
     }
     this.font = font;
-    this.metrics = measureFont(font);
+    this.metrics = measureFont(font, this.dpr);
     return true;
   }
 
@@ -254,6 +308,60 @@ export class GridPainter {
     ctx.restore();
   }
 
+  /** A box-drawing character as lines through the whole cell (`BOX`). */
+  private paintBox(
+    ctx: CanvasRenderingContext2D,
+    arms: string,
+    x: number,
+    y: number,
+    fg: number,
+  ): void {
+    const { width: cw, height: ch } = this.metrics;
+    const lw = arms.includes("h") ? 2 : 1;
+    const lwDevice = Math.max(1, Math.round(lw * this.dpr));
+    // The line's centre where a line `lw` wide covers whole device pixels.
+    const snap = (v: number) =>
+      (Math.floor(v * this.dpr) + (lwDevice % 2) / 2) / this.dpr;
+    const cx = snap(x + cw / 2);
+    const cy = snap(y + ch / 2);
+    ctx.save();
+    ctx.strokeStyle = cssColor(fg);
+    ctx.lineWidth = lw;
+    ctx.lineCap = "butt";
+    ctx.beginPath();
+    if (arms === "l" || arms === "R") {
+      const lx = arms === "l" ? snap(x) : snap(x + cw - 1);
+      ctx.moveTo(lx, y);
+      ctx.lineTo(lx, y + ch);
+    } else if (arms.includes("r")) {
+      const r = Math.min(cw, ch) / 2;
+      const horizontal = arms.includes("e") ? x + cw : x;
+      const vertical = arms.includes("s") ? y + ch : y;
+      ctx.moveTo(horizontal, cy);
+      ctx.arcTo(cx, cy, cx, vertical, r);
+      ctx.lineTo(cx, vertical);
+    } else {
+      if (arms.includes("n")) {
+        ctx.moveTo(cx, y);
+        ctx.lineTo(cx, cy);
+      }
+      if (arms.includes("s")) {
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx, y + ch);
+      }
+      if (arms.includes("w")) {
+        ctx.moveTo(x, cy);
+        ctx.lineTo(cx, cy);
+      }
+      if (arms.includes("e")) {
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(x + cw, cy);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   private paintRun(
     ctx: CanvasRenderingContext2D,
     state: NeovimUiState,
@@ -277,6 +385,10 @@ export class GridPainter {
     ctx.fillStyle = cssColor(fg);
     ctx.font = fontOf(this.font, attr);
     ctx.textBaseline = "alphabetic";
+    // A run is one string; the gap between the font's advance and the
+    // cell's (whole device pixels) is spread between its letters, so every
+    // glyph still starts on its cell.
+    ctx.letterSpacing = `${String(cw - this.metrics.advance)}px`;
     let text = "";
     let textStart = start;
     const flush = () => {
@@ -287,7 +399,9 @@ export class GridPainter {
     for (let col = start; col < end; col += 1) {
       const c = chars[base + col] ?? " ";
       if (c === "") continue;
+      const box = BOX[c];
       const simple =
+        box === undefined &&
         c.length === 1 &&
         c.charCodeAt(0) < 0x2e80 &&
         chars[base + col + 1] !== "";
@@ -296,11 +410,18 @@ export class GridPainter {
         text += c;
       } else {
         flush();
-        if (c.trim().length > 0) ctx.fillText(c, col * cw, y + baseline);
+        if (box !== undefined) {
+          this.paintBox(ctx, box, col * cw, y, fg);
+        } else if (c.trim().length > 0) {
+          ctx.letterSpacing = "0px";
+          ctx.fillText(c, col * cw, y + baseline);
+          ctx.letterSpacing = `${String(cw - this.metrics.advance)}px`;
+        }
         textStart = col + 1;
       }
     }
     flush();
+    ctx.letterSpacing = "0px";
     if (
       attr?.underline ||
       attr?.undercurl ||

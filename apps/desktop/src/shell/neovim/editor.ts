@@ -87,6 +87,19 @@ export class NeovimEditor {
   private dropComposition = false;
   private readonly observer: ResizeObserver;
   private disposed = false;
+  /** Each window's scrollbar, by grid. */
+  private readonly scrollbars = new Map<
+    number,
+    {
+      readonly track: HTMLDivElement;
+      readonly thumb: HTMLDivElement;
+      key: string;
+      timer: number;
+    }
+  >();
+  private blink: Animation | undefined;
+  private blinkKey = "";
+  private stopWatchingDpr: () => void = () => {};
 
   constructor(
     private readonly host: HTMLElement,
@@ -116,6 +129,26 @@ export class NeovimEditor {
       this.resize();
     });
     this.observer.observe(host);
+    this.watchDevicePixelRatio();
+  }
+
+  /** A move to a screen of another density re-measures and redraws. */
+  private watchDevicePixelRatio(): void {
+    const query = matchMedia(
+      `(resolution: ${String(window.devicePixelRatio || 1)}dppx)`,
+    );
+    const changed = () => {
+      if (this.disposed) return;
+      if (this.painter.syncDevicePixelRatio()) {
+        this.paint(true);
+        this.resize();
+      }
+      this.watchDevicePixelRatio();
+    };
+    query.addEventListener("change", changed, { once: true });
+    this.stopWatchingDpr = () => {
+      query.removeEventListener("change", changed);
+    };
   }
 
   /** The grid size that fits the view now, for the attach. */
@@ -198,6 +231,8 @@ export class NeovimEditor {
   dispose(): void {
     this.disposed = true;
     this.observer.disconnect();
+    this.stopWatchingDpr();
+    for (const bar of this.scrollbars.values()) window.clearTimeout(bar.timer);
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     this.gridLayer.remove();
   }
@@ -228,8 +263,97 @@ export class NeovimEditor {
     this.boxes = layoutGrids(this.state);
     this.host.style.background = cssColor(this.state.defaults.background);
     this.painter.paint(this.state, changes, this.boxes, forceAll);
+    this.placeScrollbars();
     this.placeCursor();
     for (const listener of this.listeners) listener();
+  }
+
+  /**
+   * A thin scrollbar at each window's right edge, from `win_viewport`: shown
+   * while the view moves, gone a moment after, like an overlay scrollbar.
+   * Not for a window whose whole buffer is on screen, nor for floats.
+   */
+  private placeScrollbars(): void {
+    const cell = this.painter.cell();
+    const seen = new Set<number>();
+    for (const box of this.boxes) {
+      if (box.float || box.win === undefined) continue;
+      const viewport = this.state.windows.get(box.grid)?.viewport;
+      if (!viewport || viewport.lineCount <= 0) continue;
+      const shown = Math.max(1, viewport.botline - viewport.topline);
+      if (shown >= viewport.lineCount && viewport.topline === 0) continue;
+      seen.add(box.grid);
+      let bar = this.scrollbars.get(box.grid);
+      if (!bar) {
+        const track = document.createElement("div");
+        track.className = "nvim-scrollbar";
+        const thumb = document.createElement("div");
+        thumb.className = "nvim-scrollbar-thumb";
+        track.append(thumb);
+        this.gridLayer.append(track);
+        bar = { track, thumb, key: "", timer: 0 };
+        this.scrollbars.set(box.grid, bar);
+      }
+      // The window's text rows: its grid without the statusline, which
+      // Neovim draws on the grid only when the window has one of its own.
+      const height = box.height * cell.height;
+      const top = Math.min(1, viewport.topline / viewport.lineCount);
+      const size = Math.max(
+        Math.min(1, shown / viewport.lineCount),
+        24 / Math.max(1, height),
+      );
+      const t = bar.track.style;
+      t.left = `${String((box.col + box.width) * cell.width - 8)}px`;
+      t.top = `${String(box.row * cell.height)}px`;
+      t.height = `${String(height)}px`;
+      t.zIndex = String(box.z + 1);
+      bar.thumb.style.top = `${String(Math.min(1 - size, top) * 100)}%`;
+      bar.thumb.style.height = `${String(size * 100)}%`;
+      const key = `${String(viewport.topline)}:${String(viewport.lineCount)}`;
+      if (key !== bar.key) {
+        const first = bar.key === "";
+        bar.key = key;
+        if (!first) {
+          bar.track.classList.add("nvim-scrollbar-active");
+          window.clearTimeout(bar.timer);
+          const track = bar.track;
+          bar.timer = window.setTimeout(() => {
+            track.classList.remove("nvim-scrollbar-active");
+          }, 900);
+        }
+      }
+    }
+    for (const [grid, bar] of this.scrollbars) {
+      if (seen.has(grid)) continue;
+      window.clearTimeout(bar.timer);
+      bar.track.remove();
+      this.scrollbars.delete(grid);
+    }
+  }
+
+  /**
+   * The cursor blinks as `guicursor` says (`blinkwait`, `blinkon`,
+   * `blinkoff`; Neovim's default blinks only in a terminal), starting over
+   * whenever it moves.
+   */
+  private placeBlink(on: number, off: number, wait: number, key: string): void {
+    if (key === this.blinkKey) return;
+    this.blinkKey = key;
+    this.blink?.cancel();
+    this.blink = undefined;
+    if (on <= 0 || off <= 0 || typeof this.cursor.animate !== "function") {
+      return;
+    }
+    const period = on + off;
+    this.blink = this.cursor.animate(
+      [
+        { opacity: 1, offset: 0 },
+        { opacity: 1, offset: on / period },
+        { opacity: 0, offset: on / period },
+        { opacity: 0, offset: 1 },
+      ],
+      { duration: period, delay: wait, iterations: Infinity },
+    );
   }
 
   private cursorBox(): { x: number; y: number } | undefined {
@@ -303,6 +427,18 @@ export class NeovimEditor {
       s.height = `${String(cell.height)}px`;
       this.cursor.textContent = char === "" ? " " : char;
     }
+    this.placeBlink(
+      focused ? (mode?.blinkon ?? 0) : 0,
+      mode?.blinkoff ?? 0,
+      mode?.blinkwait ?? 0,
+      `${String(at.x)},${String(at.y)},${this.state.mode.name},${String(focused)}`,
+    );
+    // Moves glide, briefly — not in Insert mode, where it would trail the
+    // typing — and the stylesheet drops it for reduced motion.
+    this.cursor.classList.toggle(
+      "nvim-cursor-glide",
+      !this.state.mode.name.startsWith("insert"),
+    );
     this.cursor.style.zIndex = String(
       (this.boxes.find((b) => b.grid === grid)?.z ?? 0) + 1,
     );

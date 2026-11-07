@@ -97,6 +97,8 @@ export interface ModeInfo {
   /** 0 is the default colours reversed. */
   readonly attrId: number;
   readonly blinkon: number;
+  readonly blinkoff: number;
+  readonly blinkwait: number;
 }
 
 export interface PopupmenuItem {
@@ -296,6 +298,8 @@ function modeInfoOf(entry: unknown): ModeInfo {
     cellPercentage: num(m["cell_percentage"], 100) || 100,
     attrId: num(m["attr_id"]),
     blinkon: num(m["blinkon"]),
+    blinkoff: num(m["blinkoff"]),
+    blinkwait: num(m["blinkwait"]),
   };
 }
 

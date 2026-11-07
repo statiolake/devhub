@@ -89,12 +89,26 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   `busy_start/stop`, `flush`, and the popupmenu, command line and tab line.
   `layoutGrids` stacks the grids: grid 1, the windows, floats by `zindex`
   against their anchor grid, the message grid on top.
-- `painter.ts` — a 2D canvas per grid, repainted a dirty row at a time on the
-  animation frame after a `flush`; runs of one highlight, wide characters cell
-  by cell, underline/undercurl/underdouble/dotted/dashed/strikethrough in the
-  special colour, `reverse`, float `blend`. Floats get a shadow and rounded
-  corners. Ligatures off. The font is `guifont` if set, else DevHub's terminal
-  font (Settings > Terminal); `linespace` is honoured.
+- `painter.ts` — a 2D canvas per grid, repainted a dirty row at a time on
+  the animation frame after a `flush`; runs of one highlight, wide characters
+  cell by cell, underline/undercurl/underdouble/dotted/dashed/strikethrough in
+  the special colour, `reverse`, float `blend`. Floats get a shadow and
+  rounded corners. Ligatures off. The font is `guifont` if set, else DevHub's
+  terminal font (Settings > Terminal); `linespace` is honoured.
+  - The cell is measured on whole device pixels (crisp at
+    `devicePixelRatio` 2; the text of a run is spread to the cell with
+    `letterSpacing`), and measured again when the window moves to a screen of
+    another density.
+  - Box-drawing characters (`│ ─ ╭ ╮ ╰ ╯ ┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼ ┃ ━ ▏ ▕`) are drawn
+    as lines through the whole cell, so window separators and float borders
+    stay unbroken with any `linespace`.
+  - A full repaint of a 164×43 screen with two windows and a float takes
+    about 6 ms; there is no glyph atlas, and none has been needed.
+- The cursor follows `guicursor`: its shape, its highlight, and its blink
+  (`blinkwait`/`blinkon`/`blinkoff`, restarted on every move). It glides to a
+  new cell in 70 ms outside Insert mode (none with reduced motion).
+- Each window gets an overlay scrollbar from `win_viewport`, shown while the
+  view moves and faded out after.
 - `keys.ts` — a `keydown` as key notation: `<C-…>`, `<M-…>` for Option when
   `[terminal] mac_option_is_meta` says it is Meta (left/right tracked as in
   DevHub's terminals), `<D-…>` for Cmd, named keys, `<lt>` and friends.
@@ -153,7 +167,13 @@ that window to a function, or run `gg`, `G`, `:write` in it.
 window (a split at the bottom by default) that DevHub fills with the
 Workspace's DevHub terminal — its tmux session, on the Workspace's machine. It
 is a Neovim window for layout and navigation, and a terminal for input; the
-same command toggles it.
+same command toggles it. It wears Neovim's default colours rather than the
+terminal theme's, so it reads as part of the editor, and it leaves out the
+session's tmux status line — Neovim's statusline is right under it. The
+keeper window is started with `$DEVHUB_TMUX` (the tmux that runs the server),
+through which `devhub_gui` reads `status` and `status-position`; the terminal
+is fitted that many rows taller and those rows are clipped
+(`TerminalSurface`'s `hiddenRows`), so the shell keeps every row it shows.
 
 ### Integrations
 
@@ -182,8 +202,6 @@ against a real host in CI.
 - No delivery of `nvim` to hosts; Neovim 0.9 or later is expected.
 - `ext_messages` off; messages are Neovim's own, in its message grid.
 - `ext_hlstate` off; no semantic styling of diagnostics yet.
-- The 2D canvas painter has no glyph atlas; it is fast enough for typing and
-  scrolling, not measured for huge redraws.
 - A GUI window shown in two windows draws its content in the first only.
 - Cmd+C/Cmd+X in visual mode depend on the `<D-c>` mapping; with the app
   menu taking Cmd+C first, `"+y` is the reliable way.
