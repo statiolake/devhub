@@ -8,8 +8,16 @@
 	"serverApplicationName": "devhub-server",
 	"tmuxVersion": "3.7c",
 	"tmuxDownloadUrlTemplate": "https://github.com/statiolake/devhub/releases/download/tmux-${tmuxVersion}/devhub-tmux-${os}-${arch}-${tmuxVersion}.tar.gz",
+	"tmuxDownloadSha256": {
+		"linux-arm64": "9e78915320c69e70a201e3da625e2b65299d52664e3004d9cf851fd10366147e",
+		"linux-x64": "7ce618f16e435a4749e13d5f82fe33936f117e7123e4fab060e65fe06e5e04b7"
+	},
 	"bashVersion": "5.3.20",
 	"bashDownloadUrlTemplate": "https://github.com/statiolake/devhub/releases/download/bash-${bashVersion}/devhub-bash-${os}-${arch}-${bashVersion}.tar.gz",
+	"bashDownloadSha256": {
+		"linux-arm64": "12ed6fdc0af911c55e700ca0ffde68657f76882f566a9bab6ef683b3ecfb50fa",
+		"linux-x64": "e6aec52011d0952aebb91ec95a3dc406e5f50245260fbc0158ce2c31c2cc2283"
+	},
 	"darwinBundleIdentifier": "net.statiolake.devhub",
 	"urlProtocol": "devhub",
 	"win32MutexName": "devhub",
