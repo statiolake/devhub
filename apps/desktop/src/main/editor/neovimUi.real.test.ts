@@ -13,13 +13,18 @@ import { existsSync, rmSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { NeovimClient } from "./neovimRpc.js";
-import { NeovimUi, type NeovimUiSink } from "./neovimUi.js";
+import {
+	NeovimUi,
+	type NeovimUiSink,
+	type WindowLayoutReport,
+} from "./neovimUi.js";
 import { makeSocketDir } from "../../model/testScratch.js";
 import {
 	applyRedraw,
 	gridRowText,
 	initialUiState,
 	layoutGrids,
+	placeUnplacedWindows,
 	type NeovimUiState,
 } from "../../shell/neovim/redraw.js";
 
@@ -156,31 +161,66 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
-	it("gets every cell again when a new UI attaches to a Neovim that had one", async () => {
-		const h = await attached();
-		h.ui.call("nvim_input", ["ifirst<CR>second<Esc>"]);
-		await h.until((s) => cursorGridText(s)[1] === "second", "the typed lines");
-		h.ui.client.close();
-		const client = await NeovimClient.connect(lastSocket);
-		const state = initialUiState();
-		const ui = new NeovimUi(client, { read: () => "", write: () => undefined });
-		await ui.attach(
-			{
-				redraw: (batches) => applyRedraw(state, batches),
-				guiWindows: () => undefined,
-				guiOpen: () => undefined,
-				guiClose: () => undefined,
-				guiSend: () => undefined,
-			},
-			60,
-			20,
-		);
-		for (let i = 0; i < 100 && cursorGridText(state)[1] !== "second"; i += 1) {
-			await new Promise((resolve) => setTimeout(resolve, 20));
-		}
-		expect(cursorGridText(state).slice(0, 3)).toEqual(["first", "second", "~"]);
-		client.close();
-	});
+	it(
+		"gets every cell again when a new UI attaches to a Neovim that had one",
+		{ timeout: 15_000 },
+		async () => {
+			const h = await attached();
+			h.ui.call("nvim_input", [
+				"ifirst<CR>second<Esc>:vsplit|vsplit|split<CR>:vertical resize 12<CR>",
+			]);
+			await h.until(
+				(s) => cursorGridText(s)[1] === "second",
+				"the typed lines",
+			);
+			h.ui.client.close();
+			const client = await NeovimClient.connect(lastSocket);
+			const state = initialUiState();
+			let layout: readonly WindowLayoutReport[] = [];
+			const ui = new NeovimUi(client, {
+				read: () => "",
+				write: () => undefined,
+			});
+			await ui.attach(
+				{
+					redraw: (batches) => applyRedraw(state, batches),
+					guiWindows: (_windows, _current, reported) => {
+						layout = reported;
+					},
+					guiOpen: () => undefined,
+					guiClose: () => undefined,
+					guiSend: () => undefined,
+				},
+				60,
+				20,
+			);
+			for (
+				let i = 0;
+				i < 100 && cursorGridText(state)[1] !== "second";
+				i += 1
+			) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			expect(cursorGridText(state).slice(0, 3)).toEqual([
+				"first",
+				"second",
+				"~",
+			]);
+			// Every window placed again: by win_pos, or — the current one, which
+			// did not move — from where Lua reports it.
+			for (let i = 0; i < 100 && state.windows.size < 5; i += 1) {
+				if (layout.length > 0) placeUnplacedWindows(state, layout);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			const placed = layoutGrids(state).filter((box) => box.win !== undefined);
+			expect(placed).toHaveLength(4);
+			// The same windows, not new ones.
+			expect(placed.map((box) => box.win).sort()).toEqual([
+				1000, 1001, 1002, 1003,
+			]);
+			client.close();
+		},
+	);
 
 	it("scrolls the grid as the buffer scrolls", async () => {
 		const h = await attached(40, 10);

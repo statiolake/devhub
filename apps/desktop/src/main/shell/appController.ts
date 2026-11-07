@@ -643,6 +643,7 @@ import {
 import type { Landing } from "./chords.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
 import { NeovimEditors } from "../editor/neovimEditors.js";
+import { editorForOpen, neovimOpenOf } from "../editor/neovimOpen.js";
 import {
 	neovimMissingMessage,
 	remoteNeovimSockets,
@@ -9002,8 +9003,9 @@ export class AppController {
 		reason?: "explicit",
 	): Promise<string> {
 		if (destination.kind === "scratch") {
-			openFileInWorkbench(
-				await this.scratchWorkbench(),
+			await this.openInEditor(
+				this.scratchWorkspace(),
+				async () => this.scratchWorkbench(),
 				machine,
 				target,
 				position,
@@ -9046,13 +9048,14 @@ export class AppController {
 			presentation: besideAgent ? "beside" : "full",
 			...(reason === undefined ? {} : { reason }),
 		});
-		openFileInWorkbench(
+		await this.openInEditor(
+			workspace,
 			// The view is filed under the Workspace's key, not its root. For a
 			// local folder those are the same string; for one on a host the key
 			// carries the machine, and asking for the bare path finds nothing —
 			// which reached the person as "the workbench for <path> is not
 			// running" about a window that was on screen.
-			await this.selectedWorkbench(workspace.key),
+			() => this.selectedWorkbench(workspace.key),
 			machine,
 			target,
 			position,
@@ -9067,6 +9070,40 @@ export class AppController {
 			? `, beside the Agent ${besideAgent.displayName}`
 			: "";
 		return `${target.path}${at(position)} is open in the workspace at ${root}${beside}: ${because(destination.reason)}`;
+	}
+
+	/**
+	 * Hand a file to the Workspace's editor: its workbench, or — with
+	 * `general.editor = "neovim"` — its Neovim, `:drop`ped there over RPC
+	 * (started first if it is not running). The one place an open is
+	 * branched on the editor kind.
+	 */
+	private async openInEditor(
+		workspace: Workspace,
+		workbench: () => Promise<ICodeWindow>,
+		machine: RuntimeId,
+		target: ResolvedPath,
+		position: FileSelection | undefined,
+		waitMarkerPath: string | undefined,
+	): Promise<void> {
+		if (editorForOpen(this.config.general.editor) === "neovim") {
+			const editors = this.neovimEditors;
+			if (!editors)
+				throw new Error("DevHub's Neovim editor is not running yet.");
+			await editors.open(
+				this.neovimTarget(workspace.id),
+				neovimOpenOf(target, position, waitMarkerPath),
+			);
+			shellWindow().focusSurface();
+			return;
+		}
+		openFileInWorkbench(
+			await workbench(),
+			machine,
+			target,
+			position,
+			waitMarkerPath,
+		);
 	}
 
 	/**

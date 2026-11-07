@@ -5,6 +5,7 @@ import {
   gridRowText,
   initialUiState,
   layoutGrids,
+  placeUnplacedWindows,
 } from "./redraw";
 
 const rows = (id: number, state = initialUiState()) => {
@@ -183,6 +184,28 @@ describe("the redraw reducer", () => {
     ]);
     expect(state.popupmenu).toBeUndefined();
     expect(state.cmdline).toEqual([]);
+  });
+
+  it("places a window grid Neovim did not place, from Lua's layout, and no other", () => {
+    const state = initialUiState();
+    applyRedraw(state, [
+      ["grid_resize", [1, 80, 24], [2, 40, 22], [3, 39, 22]],
+      ["win_pos", [2, 1000, 0, 0, 40, 22]],
+      ["win_viewport", [3, 1001, 0, 10, 0, 0, 10, 0]],
+    ]);
+    expect(layoutGrids(state).map((b) => b.grid)).toEqual([1, 2]);
+    const layout = [
+      { win: 1000, row: 5, col: 5, width: 1, height: 1 },
+      { win: 1001, row: 0, col: 41, width: 39, height: 22 },
+    ];
+    expect(placeUnplacedWindows(state, layout)).toBe(true);
+    const boxes = layoutGrids(state);
+    expect(boxes.map((b) => [b.grid, b.row, b.col])).toEqual([
+      [1, 0, 0],
+      [2, 0, 0],
+      [3, 0, 41],
+    ]);
+    expect(placeUnplacedWindows(state, layout)).toBe(false);
   });
 
   it("reads the cursor shape of the current mode", () => {

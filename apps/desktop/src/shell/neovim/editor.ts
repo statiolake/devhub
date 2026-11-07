@@ -15,6 +15,7 @@ import {
   emptyChanges,
   initialUiState,
   layoutGrids,
+  placeUnplacedWindows,
   type GridBox,
   type NeovimUiState,
   type RedrawChanges,
@@ -150,6 +151,18 @@ export class NeovimEditor {
   redraw(batches: readonly unknown[]): void {
     applyRedraw(this.state, batches, this.pending);
     if (this.pending.flushed && this.frame === 0) {
+      this.frame = requestAnimationFrame(() => {
+        this.frame = 0;
+        this.paint();
+      });
+    }
+  }
+
+  /** Where Lua says the windows are: places grids Neovim did not. */
+  placeWindows(layout: Parameters<typeof placeUnplacedWindows>[1]): void {
+    if (!placeUnplacedWindows(this.state, layout)) return;
+    this.pending.layout = true;
+    if (this.frame === 0) {
       this.frame = requestAnimationFrame(() => {
         this.frame = 0;
         this.paint();

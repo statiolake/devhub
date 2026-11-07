@@ -134,10 +134,11 @@ export class NeovimEditors {
 							});
 						}
 					},
-					guiWindows: (windows, current) => {
+					guiWindows: (windows, current, layout) => {
 						send(NEOVIM_CHANNELS.guiWindows, workspaceId, {
 							windows,
 							current,
+							layout,
 						});
 					},
 					guiSend: (id, value) => {

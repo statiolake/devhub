@@ -22,7 +22,11 @@ import type { NeovimRpc } from "./neovimRpc.js";
 export interface NeovimUiSink {
 	redraw(batches: readonly unknown[]): void;
 	/** `require('devhub_gui').open{…}`, a window change, or a close. */
-	guiWindows(windows: readonly GuiWindowReport[], current: number): void;
+	guiWindows(
+		windows: readonly GuiWindowReport[],
+		current: number,
+		layout: readonly WindowLayoutReport[],
+	): void;
 	guiOpen(open: GuiOpenReport): void;
 	guiClose(id: number): void;
 	guiSend(id: number, message: unknown): void;
@@ -39,6 +43,15 @@ export interface NeovimClipboard {
 export interface GuiWindowReport {
 	readonly id: number;
 	readonly win: number;
+}
+
+/** A window of the current tab page, where Neovim says it is. */
+export interface WindowLayoutReport {
+	readonly win: number;
+	readonly row: number;
+	readonly col: number;
+	readonly width: number;
+	readonly height: number;
 }
 
 export interface GuiOpenReport {
@@ -122,16 +135,32 @@ local M = package.loaded["devhub_gui"] or {}
 package.loaded["devhub_gui"] = M
 M._chan = chan
 M._handlers = M._handlers or {}
+M._open = M._open or {}
 M._next = M._next or 0
 
+--- Every GUI window still open, told again (a new DevHub, a reloaded page).
+function M._replay()
+  for _, open in pairs(M._open) do vim.rpcnotify(M._chan, "devhub_gui_open", open) end
+  M._report()
+end
+
 local function report()
-  local list = {}
+  local list, layout = {}, {}
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     local buf = vim.api.nvim_win_get_buf(win)
     local ok, id = pcall(vim.api.nvim_buf_get_var, buf, "devhub_gui_id")
     if ok then table.insert(list, { id = id, win = win }) end
   end
-  vim.rpcnotify(M._chan, "devhub_gui_windows", list, vim.api.nvim_get_current_win())
+  -- Where the current tab page's windows are: what a reattached UI is not
+  -- always told again (a window that did not move gets no win_pos).
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_config(win).relative == "" then
+      local pos = vim.api.nvim_win_get_position(win)
+      table.insert(layout, { win = win, row = pos[1], col = pos[2],
+        width = vim.api.nvim_win_get_width(win), height = vim.api.nvim_win_get_height(win) })
+    end
+  end
+  vim.rpcnotify(M._chan, "devhub_gui_windows", list, vim.api.nvim_get_current_win(), layout)
 end
 M._report = report
 
@@ -176,13 +205,13 @@ function M.open(opts)
     pcall(function() vim.wo[win][option] = value end)
   end
   local handle = { id = id, buf = buf }
-  vim.rpcnotify(M._chan, "devhub_gui_open", {
-    id = id, title = opts.title or "", html = opts.html, url = opts.url, terminal = opts.terminal == true,
-  })
+  M._open[id] = { id = id, title = opts.title or "", html = opts.html, url = opts.url, terminal = opts.terminal == true }
+  vim.rpcnotify(M._chan, "devhub_gui_open", M._open[id])
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = group, buffer = buf, once = true,
     callback = function()
       M._handlers[id] = nil
+      M._open[id] = nil
       vim.rpcnotify(M._chan, "devhub_gui_close", id)
       vim.schedule(report)
     end,
@@ -355,6 +384,27 @@ function withPlainHandles(batches: readonly unknown[]): unknown[] {
 	);
 }
 
+function layoutReport(value: unknown): WindowLayoutReport[] {
+	if (!Array.isArray(value)) return [];
+	return value.flatMap((entry) => {
+		const e = (entry ?? {}) as Record<string, unknown>;
+		const n = (key: string) =>
+			typeof e[key] === "number" ? e[key] : undefined;
+		const win = n("win");
+		const row = n("row");
+		const col = n("col");
+		const width = n("width");
+		const height = n("height");
+		return win === undefined ||
+			row === undefined ||
+			col === undefined ||
+			width === undefined ||
+			height === undefined
+			? []
+			: [{ win, row, col, width, height }];
+	});
+}
+
 /** The text DevHub hands `g:clipboard`'s paste: `[lines, regtype]`. */
 export function clipboardPaste(text: string): [string[], string] {
 	const normal = text.replaceAll("\r\n", "\n");
@@ -411,6 +461,16 @@ export class NeovimUi {
 			{ version?: { major?: number; minor?: number; patch?: number } },
 		];
 		const channel = info[0];
+		// A Neovim at a prompt (hit-enter, more, confirm) answers nothing but
+		// fast calls until it is dismissed, and nothing is attached to see it.
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			const mode = (await this.client.request("nvim_get_mode", [])) as
+				| { readonly blocking?: boolean }
+				| undefined;
+			if (mode?.blocking !== true) break;
+			await this.client.request("nvim_input", ["<Esc>"]);
+			await new Promise((resolve) => setTimeout(resolve, 30));
+		}
 		const v = info[1]?.version ?? {};
 		const version = `${String(v.major ?? 0)}.${String(v.minor ?? 0)}.${String(v.patch ?? 0)}`;
 		if (this.attached) {
@@ -425,9 +485,11 @@ export class NeovimUi {
 		// without multigrid frees them; the real attach then gets every cell.
 		this.priming = true;
 		try {
+			// At another size, so every window moves or resizes and is placed
+			// again (`win_pos`) at the real attach: an unmoved one would not be.
 			await this.client.request("nvim_ui_attach", [
-				Math.max(1, Math.floor(cols)),
-				Math.max(1, Math.floor(rows)),
+				Math.max(20, Math.floor(cols / 2)),
+				Math.max(6, Math.floor(rows / 2)),
 				{ rgb: true, ext_linegrid: true },
 			]);
 			await this.client.request("nvim_command", ["redraw!"]);
@@ -445,7 +507,7 @@ export class NeovimUi {
 		// told again: the page knew none of them.
 		await this.client
 			.request("nvim_exec_lua", [
-				"local M = package.loaded['devhub_gui']; if M and M._report then M._report() end",
+				"local M = package.loaded['devhub_gui']; if M and M._replay then M._replay() end",
 				[],
 			])
 			.catch(() => undefined);
@@ -498,6 +560,7 @@ export class NeovimUi {
 							})
 						: [],
 					typeof current === "number" ? current : 0,
+					layoutReport(plainHandles(params[2])),
 				);
 				return;
 			}

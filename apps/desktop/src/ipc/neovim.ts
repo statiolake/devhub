@@ -83,6 +83,14 @@ export interface NeovimGuiWindowWire {
 export interface NeovimGuiWindowsWire {
 	readonly windows: readonly { readonly id: number; readonly win: number }[];
 	readonly current: number;
+	/** Every window of the current tab page, where Neovim says it is. */
+	readonly layout?: readonly {
+		readonly win: number;
+		readonly row: number;
+		readonly col: number;
+		readonly width: number;
+		readonly height: number;
+	}[];
 }
 
 /** A message between a GUI window's page and its Lua side. */

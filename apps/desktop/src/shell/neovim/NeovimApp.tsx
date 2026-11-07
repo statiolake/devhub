@@ -161,7 +161,9 @@ function NeovimSurface({
       },
     );
     const offWindows = bridge.neovim.onGuiWindows((id, windows) => {
-      if (id === workspaceId) setGuiWindows(windows);
+      if (id !== workspaceId) return;
+      setGuiWindows(windows);
+      if (windows.layout) editor.placeWindows(windows.layout);
     });
     const offSend = bridge.neovim.onGuiSend((message) => {
       if (message.workspaceId !== workspaceId) return;

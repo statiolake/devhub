@@ -137,6 +137,8 @@ export interface TabState {
 
 export interface NeovimUiState {
   readonly grids: Map<number, Grid>;
+  /** Which window each grid is, as `win_pos` and `win_viewport` say. */
+  readonly gridWins: Map<number, number>;
   readonly windows: Map<number, WindowState>;
   readonly hl: Map<number, HlAttr>;
   defaults: { foreground: number; background: number; special: number };
@@ -196,6 +198,7 @@ export function initialUiState(
 ): NeovimUiState {
   return {
     grids: new Map(),
+    gridWins: new Map(),
     windows: new Map(),
     hl: new Map(),
     defaults: { ...fallback },
@@ -424,6 +427,7 @@ function applyEvent(
     case "grid_destroy": {
       const id = num(args[0]);
       state.grids.delete(id);
+      state.gridWins.delete(id);
       state.windows.delete(id);
       changes.grids.add(id);
       changes.layout = true;
@@ -454,6 +458,7 @@ function applyEvent(
       return;
     case "win_pos": {
       const grid = num(args[0]);
+      state.gridWins.set(grid, num(args[1]));
       gridOrNew(state, grid);
       setWindow(state, grid, {
         kind: "window",
@@ -509,6 +514,7 @@ function applyEvent(
       return;
     }
     case "win_viewport": {
+      state.gridWins.set(num(args[0]), num(args[1]));
       const window = state.windows.get(num(args[0]));
       if (!window) return;
       window.viewport = {
@@ -666,6 +672,41 @@ function setWindow(
   } else {
     state.windows.set(grid, { grid, placement, hidden: false });
   }
+}
+
+/**
+ * Place the window grids Neovim did not place, from where Lua says their
+ * windows are. A UI that attaches to a Neovim another UI had is not sent
+ * `win_pos` for a window that did not move — the current one, typically —
+ * so its grid would have nowhere to be drawn. Windows already placed by
+ * `win_pos` are left to it. Answers whether anything was placed.
+ */
+export function placeUnplacedWindows(
+  state: NeovimUiState,
+  layout: readonly {
+    readonly win: number;
+    readonly row: number;
+    readonly col: number;
+    readonly width: number;
+    readonly height: number;
+  }[],
+): boolean {
+  let placed = false;
+  for (const [grid, win] of state.gridWins) {
+    if (state.windows.has(grid) || !state.grids.has(grid)) continue;
+    const at = layout.find((one) => one.win === win);
+    if (!at) continue;
+    setWindow(state, grid, {
+      kind: "window",
+      win,
+      row: at.row,
+      col: at.col,
+      width: at.width,
+      height: at.height,
+    });
+    placed = true;
+  }
+  return placed;
 }
 
 /** A grid's top-left, in cells of grid 1, and how it stacks. */
