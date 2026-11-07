@@ -1393,6 +1393,21 @@ included):
   has settled, on the probe that settled it. A probe answered after the person
   came back freezes nothing: the decision is made from the facts as they are
   when the answer lands. A busy one is probed again every 15 s.
+- **A hidden workbench gives back its TextMate worker.** The worker's
+  Oniguruma heap is a WebAssembly memory that grows to what the largest file
+  it tokenized needed (70 MB resident after ~460 KB of TypeScript) and never
+  shrinks. The renderer ends the worker when it answers the probe of a hidden
+  workbench (once per hiding, so before the freeze), and every 30 s while its
+  page stays hidden if the worker has sent nothing for 30 s (freezing off, or
+  something keeping it awake); never while the page is shown
+  (`devhubActivity/browser/hiddenTokenizerWorker.ts`,
+  `patches/vscode/0015-textmate-worker-can-be-released.patch`). Models keep
+  their tokens; each binds to a new worker, which tokenizes it from scratch,
+  when it next needs one — an edit, an editor opening it, lines it is asked
+  for — and one the old worker had not finished binds again as soon as the
+  page is shown. The main thread's own Oniguruma heap (~40 MB after large
+  files) stays: `vscode-oniguruma` loads its WebAssembly once per page and
+  every grammar holds scanners in it.
 - **Discard after a while.** Frozen for `general.workbench_discard_minutes`
   (default 60, `0` never), it is thawed and closed as VS Code unloads every
   window on Cmd+Q (`UnloadReason.QUIT`: unsaved editors backed up by hot exit,

@@ -15,7 +15,15 @@
 //   that discards backs them up and reopening restores them).
 // - `ready`: the window has restored (phase Eventually) and the installed
 //   extensions are registered.
+//
+// Asked of a hidden workbench, it is also the moment to give back the
+// TextMate worker before the freeze (../browser/hiddenTokenizerWorker.ts).
 
+import { addDisposableListener } from '../../../../base/browser/dom.js';
+import { mainWindow } from '../../../../base/browser/window.js';
+import { timeout } from '../../../../base/common/async.js';
+import { Emitter } from '../../../../base/common/event.js';
+import { Disposable } from '../../../../base/common/lifecycle.js';
 import { devhubTerminalLauncher } from '../../../../base/common/platform.js';
 import { ipcRenderer } from '../../../../base/parts/sandbox/electron-browser/globals.js';
 import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
@@ -23,10 +31,18 @@ import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase 
 import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { IFilesConfigurationService } from '../../../services/filesConfiguration/common/filesConfigurationService.js';
 import { ILifecycleService, LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
+import { ITextMateTokenizationService } from '../../../services/textMate/browser/textMateTokenizationFeature.js';
 import { IWorkingCopyService } from '../../../services/workingCopy/common/workingCopyService.js';
 import { IDebugService, State } from '../../debug/common/debug.js';
 import { ITaskService } from '../../tasks/common/taskService.js';
 import { ITerminalService } from '../../terminal/browser/terminal.js';
+import { HiddenTokenizerWorker, PageVisibility } from '../browser/hiddenTokenizerWorker.js';
+
+/**
+ * A worker ended before the reply is given this long to go — its thread
+ * frees the heap as it ends — before main may stop the renderer.
+ */
+const WORKER_END_MS = 100;
 
 /** What a freeze would interrupt; asked only of a restored window. */
 async function busyOf(accessor: ServicesAccessor): Promise<string[]> {
@@ -49,7 +65,7 @@ function unsavedOf(accessor: ServicesAccessor): string[] {
 		: accessor.get(IWorkingCopyService).modifiedWorkingCopies.map(workingCopy => workingCopy.name);
 }
 
-class DevhubActivity implements IWorkbenchContribution {
+class DevhubActivity extends Disposable implements IWorkbenchContribution {
 	static readonly ID = 'workbench.contrib.devhubActivity';
 
 	private extensionsRegistered = false;
@@ -58,7 +74,16 @@ class DevhubActivity implements IWorkbenchContribution {
 		@IInstantiationService instantiationService: IInstantiationService,
 		@ILifecycleService lifecycleService: ILifecycleService,
 		@IExtensionService extensionService: IExtensionService,
+		@ITextMateTokenizationService textMateService: ITextMateTokenizationService,
 	) {
+		super();
+		const onDidChangeVisibility = this._register(new Emitter<void>());
+		this._register(addDisposableListener(mainWindow.document, 'visibilitychange', () => onDidChangeVisibility.fire()));
+		const page: PageVisibility = {
+			get hidden() { return mainWindow.document.visibilityState === 'hidden'; },
+			onDidChange: onDidChangeVisibility.event,
+		};
+		const tokenizerWorker = this._register(new HiddenTokenizerWorker(textMateService, page));
 		extensionService.whenInstalledExtensionsRegistered().then(() => this.extensionsRegistered = true);
 		ipcRenderer.on('vscode:devhubActivity', async (_event: unknown, ...args: unknown[]) => {
 			// Until its window has restored, a workbench is starting: nothing of
@@ -67,6 +92,9 @@ class DevhubActivity implements IWorkbenchContribution {
 			const busy = restored ? await instantiationService.invokeFunction(busyOf) : [];
 			const unsaved = restored ? instantiationService.invokeFunction(unsavedOf) : [];
 			const ready = lifecycleService.phase >= LifecyclePhase.Eventually && this.extensionsRegistered;
+			if (ready && tokenizerWorker.beforeFreeze()) {
+				await timeout(WORKER_END_MS);
+			}
 			ipcRenderer.send('vscode:devhubActivityReply', args[0], { busy, unsaved, ready });
 		});
 	}
