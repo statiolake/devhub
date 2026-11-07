@@ -21,6 +21,8 @@ vscode-reh-*/
 # dependencies. Kept between runs so a second one reuses the verified
 # downloads; hundreds of megabytes of upstream sources and object files.
 tmux-build/
+# ...and where scripts/build_bash.py does the same for bash.
+bash-build/
 
 # Throwaway spike scratch (captures, logs, sample folders)
 .spike/

@@ -81,8 +81,10 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -91,6 +93,23 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # darwin-arm64 cannot be published from here.
 TARGETS = ("linux-x64", "linux-arm64", "darwin-arm64")
 PUBLISHED_TARGETS = ("linux-x64", "linux-arm64")
+
+
+class Pinned(Protocol):
+	"""Anything fetched by `fetch`: a file name, where it comes from, and its digest.
+
+	A `Source` is one; so is one of bash's upstream patches (`build_bash.py`),
+	which is a file to apply rather than a tree to build.
+	"""
+
+	@property
+	def archive(self) -> str: ...
+
+	@property
+	def url(self) -> str: ...
+
+	@property
+	def sha256(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -247,7 +266,7 @@ def compiler(os_name: str) -> str:
 	return musl
 
 
-def fetch(source: Source, cache: Path) -> Path:
+def fetch(source: Pinned, cache: Path) -> Path:
 	"""Download one pinned archive, or reuse the one already verified.
 
 	A cached file is checksummed again rather than trusted for being present:
@@ -486,20 +505,13 @@ def stage(binary: Path, terminfo: Path, licenses: dict[str, Path], into: Path) -
 		shutil.copy2(path, into / "licenses" / f"{name}.txt")
 
 
-def verify(staged: Path, os_name: str, version: str) -> None:
-	"""Ask the binary two questions before it goes anywhere.
+def check_static(binary: Path, os_name: str) -> None:
+	"""Refuse a Linux binary `file` does not call statically linked.
 
-	What is being caught is a build that linked against the machine it was
-	built on — the failure that only appears on someone else's host, weeks
-	later, as "not found" from a shell that will not say what was not found.
-	`file` names the linkage and `tmux -V` proves the thing runs and is the
-	version that was pinned.
-
-	On macOS the linkage assertion is inverted into a refusal to publish: the
-	binary *is* dynamic, that is not fixable, and the only correct outcome is
-	that nobody mistakes the tarball for a release artefact.
+	Shared with `build_bash.py`: the failure it catches — a build that linked
+	against the machine it was built on — is the same for every tool DevHub
+	puts on a host, and shows up the same way, weeks later, on someone else's.
 	"""
-	binary = staged / "bin" / "tmux"
 	described = subprocess.run(
 		["file", str(binary)], capture_output=True, text=True, check=True
 	).stdout
@@ -515,9 +527,26 @@ def verify(staged: Path, os_name: str, version: str) -> None:
 	else:
 		print(
 			f"  NOT PUBLISHABLE: a {os_name} build links dynamically against the "
-			"system libraries. This tarball is a self-test of build_tmux.py and "
-			"must not be uploaded to a release."
+			f"system libraries. This tarball is a self-test of {binary.name}'s "
+			"build script and must not be uploaded to a release."
 		)
+
+
+def verify(staged: Path, os_name: str, version: str) -> None:
+	"""Ask the binary two questions before it goes anywhere.
+
+	What is being caught is a build that linked against the machine it was
+	built on — the failure that only appears on someone else's host, weeks
+	later, as "not found" from a shell that will not say what was not found.
+	`file` names the linkage and `tmux -V` proves the thing runs and is the
+	version that was pinned.
+
+	On macOS the linkage assertion is inverted into a refusal to publish: the
+	binary *is* dynamic, that is not fixable, and the only correct outcome is
+	that nobody mistakes the tarball for a release artefact.
+	"""
+	binary = staged / "bin" / "tmux"
+	check_static(binary, os_name)
 
 	reported = subprocess.run(
 		[str(binary), "-V"], capture_output=True, text=True, check=True
@@ -549,6 +578,24 @@ def check_layout(tarball: Path) -> str:
 
 	Returns the top-level directory's name.
 	"""
+	root = check_tool_layout(tarball, "tmux", (source.name for source in SOURCES))
+	with tarfile.open(tarball) as archive:
+		names = archive.getnames()
+	if not any(name.startswith(f"{root}/terminfo/") for name in names):
+		raise SystemExit(
+			f"{tarball.name} carries no terminfo database; a static ncurses on a "
+			"bare host has nothing to read."
+		)
+	return root
+
+
+def check_tool_layout(tarball: Path, tool: str, licenses: Iterable[str]) -> str:
+	"""What every tool's tarball must be, whatever else it carries.
+
+	One top-level directory, `bin/<tool>` in it and executable, and a
+	`licenses/<name>.txt` for each upstream whose code is in the binary. Shared
+	with `build_bash.py`; returns the top-level directory's name.
+	"""
 	with tarfile.open(tarball) as archive:
 		members = archive.getmembers()
 
@@ -556,25 +603,19 @@ def check_layout(tarball: Path) -> str:
 	if len(roots) != 1:
 		raise SystemExit(
 			f"{tarball.name} has {len(roots)} top-level entries ({sorted(roots)}); "
-			"`tar --strip-components 1` needs exactly one."
+			"the install moves exactly one directory into place."
 		)
 	root = roots.pop()
 
 	by_name = {member.name: member for member in members}
-	binary = by_name.get(f"{root}/bin/tmux")
+	binary = by_name.get(f"{root}/bin/{tool}")
 	if binary is None or not binary.isfile():
-		raise SystemExit(f"{tarball.name} has no {root}/bin/tmux")
+		raise SystemExit(f"{tarball.name} has no {root}/bin/{tool}")
 	if binary.mode & 0o111 != 0o111:
-		raise SystemExit(f"{root}/bin/tmux is mode {binary.mode:o}, not executable")
+		raise SystemExit(f"{root}/bin/{tool} is mode {binary.mode:o}, not executable")
 
-	if not any(name.startswith(f"{root}/terminfo/") for name in by_name):
-		raise SystemExit(
-			f"{tarball.name} carries no terminfo database; a static ncurses on a "
-			"bare host has nothing to read."
-		)
-
-	for source in SOURCES:
-		expected = f"{root}/licenses/{source.name}.txt"
+	for name in licenses:
+		expected = f"{root}/licenses/{name}.txt"
 		if expected not in by_name:
 			raise SystemExit(f"{tarball.name} is missing {expected}")
 

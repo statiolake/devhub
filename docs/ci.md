@@ -73,6 +73,7 @@ Decide ──> Build: REH linux-x64    ─┐
                                     └─> Build: DevHub.app ──> Test: packaged app ──> Publish: nightly release
 
 Decide: tmux ──> Build: tmux linux-x64, linux-arm64 ──> Publish: tmux release
+Decide: bash ──> Build: bash linux-x64, linux-arm64 ──> Publish: bash release
 ```
 
 - **Decide** stops a scheduled run when `main` has not moved since the last
@@ -117,6 +118,11 @@ Decide: tmux ──> Build: tmux linux-x64, linux-arm64 ──> Publish: tmux re
   after the tests pass.
 - **tmux** is independent of everything above: it is built, once, when the
   version pinned in `scripts/build_tmux.py` has no release yet.
+- **bash** is the same again for the static bash Claude Code gets on a host
+  with neither bash nor zsh (`scripts/build_bash.py`, release
+  `bash-<version>`). Each publish job writes the tarballs' digests to its
+  summary in the form `product-overrides.json` takes them
+  (`tmuxDownloadSha256`, `bashDownloadSha256`).
 
 ## Shared setup
 
@@ -147,4 +153,4 @@ script provisions a VS Code no cache can have.
 | speech recogniser | — (`--without-whisper`) | built (cached) |
 | zip | — | yes |
 | app tests | on the test build | on the unpacked release zip |
-| releases | — | `reh`, `nightly`, `tmux-<version>` |
+| releases | — | `reh`, `nightly`, `tmux-<version>`, `bash-<version>` |

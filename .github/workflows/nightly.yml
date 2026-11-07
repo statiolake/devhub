@@ -7,6 +7,7 @@
 #   Decide ──> Build: REH <target> (x4, parallel) ──> Publish: prebuilt REH
 #                                  └──> Build: DevHub.app ──> Test: packaged app ──> Publish: nightly release
 #   Decide: tmux ──> Build: tmux <target> (x2) ──> Publish: tmux release
+#   Decide: bash ──> Build: bash <target> (x2) ──> Publish: bash release
 #
 # 18:00 UTC is 03:00 the next morning in JST, so the build that runs is the one
 # for the day's work. A scheduled run first asks scripts/nightly-build-needed.sh
@@ -34,7 +35,9 @@
 # for the same reason: DevHub runs every terminal and every Agent inside tmux on
 # the machine the Workspace is on, must not require the host to have one, and
 # must not use the host's if it does. That one answers to the tmux version
-# pinned in scripts/build_tmux.py and to nothing else here.
+# pinned in scripts/build_tmux.py and to nothing else here. A fourth publishes a
+# statically linked bash on the same shape again, for Claude Code on a host
+# with neither bash nor zsh (scripts/build_bash.py).
 name: Nightly
 
 on:
@@ -46,6 +49,13 @@ on:
           though their release already exists. What this is for: a change to
           scripts/build_tmux.py that does not move the tmux version — a
           terminfo entry added, a configure flag corrected.
+        type: boolean
+        default: false
+      force_bash:
+        description: >-
+          Rebuild and replace the bash tarballs for the pinned version, even
+          though their release already exists — for a change to
+          scripts/build_bash.py that does not move the bash version.
         type: boolean
         default: false
   schedule:
@@ -588,3 +598,178 @@ jobs:
               --notes "A statically linked tmux, with libevent and ncurses and a small terminfo database, for the machines DevHub runs terminals and Agents on. DevHub installs it into \`~/.devhub-server/tmux/<version>/\` by itself and never uses a tmux the host already has; see docs/remote-ssh.md for the URL and for installing one by hand." \
               dist/*.tar.gz
           fi
+
+      # The pins the app checks downloads against, in the form
+      # apps/desktop/product-overrides.json takes them (`tmuxDownloadSha256`).
+      - name: Record the digests
+        env:
+          TAG: ${{ needs.tmux-decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#tmux-}"
+          sep=""
+          {
+            echo "Digests for \`tmuxDownloadSha256\` in apps/desktop/product-overrides.json:"
+            echo '```json'
+            printf '"tmuxDownloadSha256": {'
+            for f in dist/*.tar.gz; do
+              name="$(basename "$f")"
+              platform="${name#devhub-tmux-}"
+              platform="${platform%-"$version".tar.gz}"
+              printf '%s\n  "%s": "%s"' "$sep" "$platform" "$(sha256sum "$f" | cut -d' ' -f1)"
+              sep=","
+            done
+            printf '\n}\n'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # bash: for Claude Code, which will not start without bash or zsh, on a host
+  # that has neither (busybox `sh` is not accepted). DevHub delivers it the way
+  # it delivers tmux and uses it only for that host's Claude Agents.
+  #
+  # tmux's three jobs again, keyed on the bash version (with its patch level)
+  # pinned in scripts/build_bash.py, and released on its own tag so that neither
+  # tool's bump republishes the other. See scripts/build_bash.py and
+  # docs/remote-ssh.md, "bash for Claude Code".
+  # ---------------------------------------------------------------------------
+
+  bash-decide:
+    name: "Decide: a new bash to build?"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.decision.outputs.needed }}
+      tag: ${{ steps.decision.outputs.tag }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Decide
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force_bash }}
+        run: |
+          set -euo pipefail
+          version="$(scripts/build_bash.py --print-version)"
+          tag="bash-${version}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "$FORCE" = "true" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "asked to rebuild $tag"
+          elif gh release view "$tag" >/dev/null 2>&1; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "$tag is already published"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "no $tag yet"
+          fi
+
+  bash:
+    name: "Build: bash ${{ matrix.target }}"
+    needs: bash-decide
+    if: needs.bash-decide.outputs.needed == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # musl, for the reason the tmux job gives: bash calls getpwuid at startup.
+      - name: Install the musl toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools build-essential patch
+
+      - name: Build the bash tarball
+        run: scripts/build_bash.py ${{ matrix.target }} --out-dir dist
+
+      - name: Hand the tarball to the publishing job
+        uses: actions/upload-artifact@v4
+        with:
+          name: bash-${{ matrix.target }}
+          path: dist/*.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+
+  bash-publish:
+    name: "Publish: bash release"
+    needs: [bash-decide, bash]
+    if: >-
+      always()
+      && needs.bash-decide.result == 'success'
+      && needs.bash-decide.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Collect the tarballs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bash-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # No checkout here either, so `gh` is told the repository.
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.bash-decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=(dist/*.tar.gz)
+          if [ ${#tarballs[@]} -eq 0 ]; then
+            echo "every bash leg failed: there is nothing to publish for $TAG." >&2
+            echo "Read the red legs above; the release is left as it was." >&2
+            exit 1
+          fi
+          ls -l dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.tar.gz --clobber
+          else
+            gh release create "$TAG" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "bash ${TAG#bash-}" \
+              --notes "A statically linked bash (musl, every upstream patch applied) for Claude Code on hosts that have neither bash nor zsh. DevHub installs it into \`~/.devhub-server/bash/<version>/\` by itself, only on such a host, and uses it only for Claude Agents there; see docs/remote-ssh.md." \
+              dist/*.tar.gz
+          fi
+
+      # The pins the app checks downloads against, in the form
+      # apps/desktop/product-overrides.json takes them (`bashDownloadSha256`).
+      - name: Record the digests
+        env:
+          TAG: ${{ needs.bash-decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#bash-}"
+          sep=""
+          {
+            echo "Digests for \`bashDownloadSha256\` in apps/desktop/product-overrides.json:"
+            echo '```json'
+            printf '"bashDownloadSha256": {'
+            for f in dist/*.tar.gz; do
+              name="$(basename "$f")"
+              platform="${name#devhub-bash-}"
+              platform="${platform%-"$version".tar.gz}"
+              printf '%s\n  "%s": "%s"' "$sep" "$platform" "$(sha256sum "$f" | cut -d' ' -f1)"
+              sep=","
+            done
+            printf '\n}\n'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
