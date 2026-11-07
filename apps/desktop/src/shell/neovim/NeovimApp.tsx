@@ -340,6 +340,11 @@ function NeovimSurface({
                   onMouseDownCapture={() => {
                     if (!current) send("nvim_set_current_win", [win]);
                   }}
+                  onFocusCapture={() => {
+                    // A terminal focuses itself as it connects: the keyboard
+                    // stays where Neovim's cursor is until Neovim moves it.
+                    if (!current) editor?.focus();
+                  }}
                   onKeyDownCapture={(event) => {
                     if (
                       event.ctrlKey &&

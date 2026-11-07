@@ -40,6 +40,8 @@ export interface NeovimEditorsOptions {
 	readonly clipboard: NeovimClipboard;
 	/** A failure to say in the log. */
 	readonly log?: (line: string) => void;
+	/** A Workspace's current buffer changed (`bufferName`). */
+	readonly onBuffer?: (workspaceId: string) => void;
 }
 
 interface Attached {
@@ -55,6 +57,7 @@ function message(error: unknown): string {
 
 export class NeovimEditors {
 	private readonly attached = new Map<string, Attached>();
+	private readonly buffers = new Map<string, string>();
 
 	constructor(private readonly options: NeovimEditorsOptions) {}
 
@@ -105,6 +108,10 @@ export class NeovimEditors {
 			}
 			const { version } = await known.ui.attach(
 				{
+					bufferChanged: (name) => {
+						this.buffers.set(workspaceId, name);
+						this.options.onBuffer?.(workspaceId);
+					},
 					redraw: (batches) => {
 						send(NEOVIM_CHANNELS.redraw, workspaceId, batches);
 					},
@@ -188,6 +195,12 @@ export class NeovimEditors {
 	/** `devhub <file>` and the rest, into the Workspace's Neovim. */
 	open(target: WorkspaceTerminalTarget, file: NeovimOpen): Promise<unknown> {
 		return this.options.neovims.open(target, file);
+	}
+
+	/** The file the Workspace's Neovim is in, for the window title. */
+	bufferName(workspaceId: string): string | undefined {
+		const name = this.buffers.get(workspaceId);
+		return name === undefined || name === "" ? undefined : name;
 	}
 
 	/** Whether a page is attached as this Workspace's UI. */

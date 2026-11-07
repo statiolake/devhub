@@ -1530,6 +1530,9 @@ export class AppController {
 			log: (line) => {
 				console.error(line);
 			},
+			onBuffer: () => {
+				this.refreshWindowTitle();
+			},
 		});
 		// The theme, before any tmux server is brought up: a server is started
 		// with it, and told again on every change after (`themePublication.ts`).
@@ -1735,6 +1738,15 @@ export class AppController {
 		this.repositoryStatus.start();
 		this.watchForWake();
 		this.scratch.start();
+	}
+
+	/** The selected Workspace's Neovim's current file, for the title. */
+	private neovimTitleElement(
+		selection: ReturnType<AppController["snapshot"]>["selection"],
+	): string | undefined {
+		const context = selection.context;
+		if (context.kind !== "workspace") return undefined;
+		return this.neovimEditors?.bufferName(context.workspaceId);
 	}
 
 	/** Whether Workspaces' editor areas are their Neovim (`general.editor`). */
@@ -4784,10 +4796,9 @@ export class AppController {
 		const title = shellTitleFor({
 			selection: snapshot.selection,
 			workspaces: snapshot.workspaces,
-			editorElement: editorElement(
-				shell.revealedTitle(),
-				vscodeProduct.nameLong,
-			),
+			editorElement: this.editorIsNeovim()
+				? this.neovimTitleElement(snapshot.selection)
+				: editorElement(shell.revealedTitle(), vscodeProduct.nameLong),
 			orchestratorWorkspaceId: snapshot.orchestratorWorkspaceId,
 			orchestratorView: this.orchestratorTitleView(),
 			repositories: this.lastRepositoryStatus.workspaces,

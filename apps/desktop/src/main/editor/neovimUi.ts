@@ -30,7 +30,7 @@ export interface NeovimUiSink {
 	guiOpen(open: GuiOpenReport): void;
 	guiClose(id: number): void;
 	guiSend(id: number, message: unknown): void;
-	/** The window title Neovim would set (`set_title`'s text is in redraw too). */
+	/** The current buffer's file name (`""` for none), for the window title. */
 	bufferChanged?(name: string): void;
 }
 
@@ -142,6 +142,7 @@ M._next = M._next or 0
 function M._replay()
   for _, open in pairs(M._open) do vim.rpcnotify(M._chan, "devhub_gui_open", open) end
   M._report()
+  vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
 end
 
 local function report()
@@ -165,6 +166,15 @@ end
 M._report = report
 
 local group = vim.api.nvim_create_augroup("devhub_gui", { clear = true })
+-- The current buffer's name, for DevHub's window title.
+vim.api.nvim_create_autocmd({ "BufEnter", "BufFilePost", "WinEnter" }, {
+  group = group,
+  callback = function()
+    vim.schedule(function()
+      vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
+    end)
+  end,
+})
 vim.api.nvim_create_autocmd({ "WinEnter", "WinNew", "WinClosed", "BufWinEnter", "TabEnter", "VimResized" }, {
   group = group,
   callback = function() vim.schedule(report) end,
@@ -405,6 +415,17 @@ function layoutReport(value: unknown): WindowLayoutReport[] {
 	});
 }
 
+/**
+ * What the window title calls the current buffer: its file's name, or
+ * nothing for one that is not a file (a GUI window, a terminal, help).
+ */
+export function bufferTitle(name: unknown, buftype: unknown): string {
+	if (typeof name !== "string" || name === "") return "";
+	if (buftype !== "" && buftype !== undefined) return "";
+	if (name.startsWith("devhub://")) return "";
+	return name.split("/").at(-1) ?? "";
+}
+
 /** The text DevHub hands `g:clipboard`'s paste: `[lines, regtype]`. */
 export function clipboardPaste(text: string): [string[], string] {
 	const normal = text.replaceAll("\r\n", "\n");
@@ -576,6 +597,9 @@ export class NeovimUi {
 				});
 				return;
 			}
+			case "devhub_buffer":
+				sink.bufferChanged?.(bufferTitle(params[0], params[1]));
+				return;
 			case "devhub_gui_close":
 				if (typeof params[0] === "number") sink.guiClose(params[0]);
 				return;

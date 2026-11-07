@@ -54,7 +54,7 @@ describe("a Neovim socket on an SSH host", () => {
 		const message = neovimMissingMessage("ssh:build-box", {
 			kind: "unavailable",
 			configured: "nvim",
-			lookup: { kind: "search", directories: ["/usr/bin", "/bin"] },
+			lookup: { kind: "path", directories: ["/usr/bin", "/bin"] },
 			where: " on build-box",
 		});
 		expect(message).toContain("Neovim on build-box");
