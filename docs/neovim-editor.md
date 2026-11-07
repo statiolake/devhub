@@ -155,6 +155,7 @@ same command toggles it.
   Workspace's Neovim (`:drop`, the cursor placed, folds opened) and show its
   editor area. `AppController.openInEditor` is the one place that branches on
   the editor kind (`editor/neovimOpen.ts`).
+- The window title names the file the selected Workspace's Neovim is in.
 - Closing a Workspace kills its Neovim. Quitting DevHub does not: it is
   adopted next time.
 
@@ -176,7 +177,6 @@ against a real host in CI.
 - The 2D canvas painter has no glyph atlas; it is fast enough for typing and
   scrolling, not measured for huge redraws.
 - A GUI window shown in two windows draws its content in the first only.
-- The window title does not follow the current file yet.
 - Cmd+C/Cmd+X in visual mode depend on the `<D-c>` mapping; with the app
   menu taking Cmd+C first, `"+y` is the reliable way.
 - The keeper window shows in the `ws-` session's window list
@@ -218,4 +218,4 @@ layout preset, and the Sidebar's terminal activity marks.
 socket reached by a relay like the `devhub` command's), delivering `nvim` to
 hosts like tmux and bash are, `ext_messages` on 0.10+, ligatures, smooth
 scrolling, a glyph-atlas (WebGL) painter if large redraws need it, and the
-window title and Sidebar following the current buffer.
+Sidebar following the current buffer.
