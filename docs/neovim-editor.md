@@ -88,9 +88,15 @@ snippet (`SETUP_LUA`) that:
   the page as `<D-…>` keys. Cmd+V stays the Edit menu's Paste, which the
   page hands to `nvim_paste` (one undoable change, in any mode). In a
   terminal window Cmd+C copies the terminal's selection, and a GUI window's
-  page answers Cmd+C/X/A/Z on its own selection. The chords still come
-  first;
-- defines the `devhub_gui` Lua module and `:DevhubTerminal`, `:DevhubGuiDemo`.
+  page answers Cmd+C/X/A/Z on its own selection. With nothing selected,
+  Cmd+C and Cmd+X take the line (in Normal and Insert mode): an unmapped
+  `<D-x>` would reach Neovim as a plain `x`. The Edit menu clicked with the
+  mouse does the same: its Copy, Cut, Undo and Redo arrive at the page's
+  hidden textarea as `copy`/`cut` events and `historyUndo`/`historyRedo`
+  input, which the page sends as `<D-c>`, `<D-x>`, `<D-z>`, `<D-Z>` (Select
+  All from the menu does nothing yet). The chords still come first;
+- defines the `devhub_gui` Lua module and `:DevhubTerminal`, `:DevhubGuiDemo`,
+  `:DevhubImageDemo`; once attached it fires `User DevhubGui`.
 
 **Attaching again** (a reloaded page, a restarted DevHub) needs care: Neovim
 keeps its window grids and assumes a new multigrid UI has them too. So the
@@ -194,11 +200,60 @@ DevHub restart.
 `:DevhubGuiDemo` opens an Outline beside the current window: its buttons jump
 that window to a function, or run `gg`, `G`, `:write` in it.
 
+### Toasts, inline images and rich floats
+
+The same rule, for things smaller than a window. `devhub_gui` sends them as
+one-way events on one RPC method (`devhub_gui_event`; main forwards them on
+`devhub:neovim:gui-event`; `shell/neovim/decorations.ts` is the page's
+reducer, `DecorationViews.tsx` draws them). A payload of the wrong shape is
+ignored, so anything odd leaves Neovim's own grid showing; a page that
+attaches again is told every image and rich float again.
+
+```lua
+local gui = require('devhub_gui')          -- or require('devhub').gui (devhub.nvim)
+gui.notify{ title = 'Build', msg = 'done', level = 'warn' }   -- a native toast
+local img = gui.image(0, 5, '~/shot.png', { height_rows = 10 }) -- under line 5
+img.clear()
+gui.rich_float(win, markdown_lines)        -- what devhub.nvim's LSP hook calls
+```
+
+- **notify** — a toast at the top right of the editor, by level (`info`,
+  `warn`, `error`, `debug` or `vim.log.levels.*`), gone after 4–8 s or a
+  click. Not `ext_messages`: Neovim's messages stay Neovim's.
+- **image** — an extmark's `virt_lines` reserve `height_rows` blank rows
+  under the line, so Neovim lays them out (the cursor steps over them,
+  `:vsplit` shows them twice) and DevHub paints the image there. A path is
+  read on Neovim's machine and sent as a `data:` URL (an SSH host's file
+  works; 0.10+ for `vim.base64`); an `https:` URL is passed as it is. Where
+  it is — the row under the line's last screen row, the text column, from
+  the window's top — is worked out again (`screenpos`, `getwininfo`) on
+  every `WinScrolled`, `WinResized`, `CursorMoved`, `TextChanged`, window
+  open/close and tab change, for every window of the tab page showing the
+  buffer; a closed fold hides it, a window's bottom clips it.
+  `:DevhubImageDemo [path]` opens a markdown buffer with one (with no path,
+  a small generated PNG).
+- **rich_float** — the window's markdown drawn natively over its text area
+  (inside its border): `react-markdown` with GFM, fenced code coloured by
+  the conversation view's highlighter, links opened in the browser. The
+  window stays Neovim's: `K K` goes into it, its keys scroll it (the content
+  follows its `topline` as a fraction) and close it (`w:devhub_rich` is how
+  the content knows it still belongs there). Its colours are the float's own
+  (`NormalFloat`, read from its grid). devhub.nvim installs the hook on
+  `vim.lsp.util.open_floating_preview` (hover, signature help); a config can
+  call it for any float.
+
 **`:DevhubTerminal`** (`:DevhubTerminal float`) is the same idea: a Neovim
 window (a split at the bottom by default) that DevHub fills with the
 Workspace's DevHub terminal — its tmux session, on the Workspace's machine. It
 is a Neovim window for layout and navigation, and a terminal for input; the
-same command toggles it. It wears Neovim's default colours rather than the
+same command toggles it. Keys follow Neovim's own `:terminal`: in the
+terminal they all go to the shell, `<C-w>` included (delete-word works);
+`<C-\><C-n>` leaves for terminal-normal mode, where the cursor stays in the
+window but the keyboard is Neovim's (`<C-w>k`, `:q`, a "TERMINAL NORMAL"
+pill says so), and `i`, `a`, `I`, `A`, `<CR>` or a click go back in. Moving
+into the window with `<C-w>j` puts the keyboard in the terminal at once. A
+`<C-\>` followed by anything else reaches the shell after all.
+It wears Neovim's default colours rather than the
 terminal theme's, so it reads as part of the editor, and it leaves out the
 session's tmux status line — Neovim's statusline is right under it. The
 keeper window is started with `$DEVHUB_TMUX` (the tmux that runs the server),
@@ -235,8 +290,13 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
 - No delivery of `nvim` to hosts; Neovim 0.9 or later is expected.
 - `ext_messages` off (see The attach); messages are Neovim's own, in its
   message grid.
-- In `:DevhubTerminal`, `<C-w>` belongs to Neovim (window commands), so a
-  shell's delete-word on `<C-w>` is not reachable there.
+- A GUI window's web page still gives `<C-w>` to Neovim (it has no shell
+  to want it); only the terminal follows the `:terminal` model.
+- An image does not take part in the 90 ms scroll slide: it jumps to its
+  new place when Neovim reports it.
+- A rich float's rendering is usually shorter than Neovim's text of it, so
+  the float can be taller than its content; when it is longer, the float
+  scrolls itself (the wheel) as well as following Neovim's topline.
 - `ext_hlstate` off; no semantic styling of diagnostics yet.
 - A GUI buffer shown in two windows has its content (one page, one terminal
   client) in one of them — the current window when it is one, else the
@@ -248,8 +308,12 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
 
 ## Phase 2
 
-**GUI plugin bridge for devhub.nvim.** `devhub_gui` becomes the API plugins
-use, shipped in devhub.nvim (`require('devhub').gui`), with the same rule —
+**GUI plugin bridge for devhub.nvim.** Started: `require('devhub').gui`
+(devhub.nvim) forwards `open`, `send`, `on_message`, `close`, `notify`,
+`image` and `rich_float` to the `devhub_gui` DevHub injects — one
+implementation, owned by the end that speaks the RPC — queues calls made
+before the attach until `User DevhubGui`, and does nothing outside DevHub
+(`notify` falls back to `vim.notify`). Still to come, with the same rule —
 every surface is a Neovim object:
 
 ```lua
