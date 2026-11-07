@@ -39,6 +39,7 @@ import {
 import {
 	ConfigError,
 	type Config,
+	type EditorKind,
 	type WorkspaceSource,
 } from "../../model/config.js";
 import { resolveRuntimes, runtimeHealth } from "./runtimes.js";
@@ -217,6 +218,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			terminalIdleSeconds: config.general.terminal_idle_seconds,
 			workbenchDiscardMinutes: config.general.workbench_discard_minutes,
 			workbenchFreeze: config.general.workbench_freeze,
+			editor: config.general.editor,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -374,6 +376,8 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			terminal_idle_seconds: wire.general.terminalIdleSeconds,
 			workbench_discard_minutes: wire.general.workbenchDiscardMinutes,
 			workbench_freeze: wire.general.workbenchFreeze,
+			// Checked by `validateConfig` on the save, like every other value.
+			editor: wire.general.editor as EditorKind,
 		},
 		runtimes: {
 			shell: wire.runtimes.shell,

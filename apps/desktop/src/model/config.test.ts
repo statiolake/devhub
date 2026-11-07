@@ -85,6 +85,19 @@ describe("parsing", () => {
     ).toBe("general.workbench_freeze");
   });
 
+  it("has VS Code as the editor unless told Neovim, and refuses anything else", () => {
+    expect(parseConfig(MINIMAL).general.editor).toBe("vscode");
+    const neovim = parseConfig('version = 1\n[general]\neditor = "neovim"\n');
+    expect(neovim.general.editor).toBe("neovim");
+    expect(parseConfig(configToToml(neovim)).general.editor).toBe("neovim");
+    expect(
+      codeOf(() => parseConfig('version = 1\n[general]\neditor = "emacs"\n')),
+    ).toBe("invalid_editor");
+    expect(
+      pathOf(() => parseConfig("version = 1\n[general]\neditor = 1\n")),
+    ).toBe("general.editor");
+  });
+
   it("knows no awake cap, hibernation time or default view any more", () => {
     for (const key of [
       "workbench_awake_max = 2",

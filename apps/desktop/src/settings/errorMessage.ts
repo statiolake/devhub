@@ -113,6 +113,8 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return "A font size is 9 to 24, a line height 1 to 2, an inset 0 to 64, and a sidebar density Compact or Comfortable.";
     case "invalid_mac_option_is_meta":
       return 'Option is Meta in DevHub\'s terminals with `true`, the left Option only with `"left"`, or never with `false`.';
+    case "invalid_editor":
+      return 'The editor is `"vscode"` (each Workspace\'s own VS Code editor) or `"neovim"` (DevHub\'s Neovim GUI).';
     case "invalid_string":
       return "That value cannot contain a null character.";
     case "invalid_keybinding":

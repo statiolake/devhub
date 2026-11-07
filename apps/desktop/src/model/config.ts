@@ -418,7 +418,20 @@ export interface GeneralConfig {
    * `true`. See `main/shell/workbenchPlan.ts`.
    */
   readonly workbench_freeze: boolean;
+  /**
+   * What a Workspace's editor area is: `"vscode"`, its own VS Code
+   * workbench (the default), or `"neovim"`, DevHub's own GUI drawing a
+   * headless Neovim on the Workspace's machine through Neovim's UI protocol.
+   * Applies live: switching closes one surface and starts the other. See
+   * `docs/neovim-editor.md`.
+   */
+  readonly editor: EditorKind;
 }
+
+/** The kinds of editor area there are, and the only values `general.editor` takes. */
+export const EDITOR_KINDS = ["vscode", "neovim"] as const;
+export type EditorKind = (typeof EDITOR_KINDS)[number];
+export const DEFAULT_EDITOR: EditorKind = "vscode";
 
 export interface RuntimeConfig {
   readonly shell: string;
@@ -800,6 +813,7 @@ export function defaultConfig(): Config {
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
       workbench_discard_minutes: DEFAULT_WORKBENCH_DISCARD_MINUTES,
       workbench_freeze: true,
+      editor: DEFAULT_EDITOR,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -839,6 +853,7 @@ export type ValidationCode =
   | "forbidden_tmux_argument"
   | "invalid_appearance"
   | "invalid_mac_option_is_meta"
+  | "invalid_editor"
   | "invalid_keybinding"
   | "unknown_command"
   | "invalid_font_family"
@@ -1495,6 +1510,9 @@ export function validateConfig(config: Config): void {
   if (orchestratorKey !== undefined) {
     fail("invalid_orchestrator", `orchestrator.${orchestratorKey}`);
   }
+  if (!(EDITOR_KINDS as readonly string[]).includes(config.general.editor)) {
+    fail("invalid_editor", "general.editor");
+  }
   if (
     !(AGENT_PRESENTATIONS as readonly string[]).includes(
       config.agents.default_presentation,
@@ -2126,6 +2144,7 @@ export function interpretConfig(document: unknown): Config {
       "terminal_idle_seconds",
       "workbench_discard_minutes",
       "workbench_freeze",
+      "editor",
     ],
     "general",
   );
@@ -2253,6 +2272,12 @@ export function interpretConfig(document: unknown): Config {
         "general",
         true,
       ),
+      editor: optionalString(
+        generalTable,
+        "editor",
+        "general",
+        DEFAULT_EDITOR,
+      ) as EditorKind,
     },
     runtimes: {
       shell: optionalString(runtimesTable, "shell", "runtimes", DEFAULT_SHELL),
@@ -2510,6 +2535,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       terminal_idle_seconds: config.general.terminal_idle_seconds,
       workbench_discard_minutes: config.general.workbench_discard_minutes,
       workbench_freeze: config.general.workbench_freeze,
+      editor: config.general.editor,
     },
     runtimes: {
       shell: config.runtimes.shell,

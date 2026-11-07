@@ -109,6 +109,8 @@ export interface SettingsGeneralWire {
 	readonly workbenchDiscardMinutes: number;
 	/** `general.workbench_freeze`. */
 	readonly workbenchFreeze: boolean;
+	/** `general.editor`: `"vscode"` or `"neovim"`. */
+	readonly editor: string;
 }
 
 export interface SettingsRuntimeConfigWire {
@@ -399,6 +401,7 @@ export type SettingsDiagnosticCodeWire =
 	| "forbidden_tmux_argument"
 	| "invalid_appearance"
 	| "invalid_mac_option_is_meta"
+	| "invalid_editor"
 	| "invalid_keybinding"
 	| "unknown_command"
 	| "invalid_font_family"

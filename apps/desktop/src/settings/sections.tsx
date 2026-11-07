@@ -254,6 +254,22 @@ export function GeneralSection({
         heading="Editors"
         note="Each Workspace's editor area is its own VS Code editor. None starts until you ask: press Enter (or click Start) in its editor area, and stop it again with Cmd+Q Shift+E. An editor that is not on screen is frozen at once: its processes are paused, so the Mac can compress or swap out their memory, and it resumes instantly, as it was, when you show it again or something connects to it. An editor that is debugging, running a task, running a command in one of its terminals, or talking over the network is not frozen. SSH and dev container editors are never frozen. Agents and terminal sessions keep running throughout."
       >
+        <Row
+          label="Editor"
+          help="VS Code gives each Workspace its own VS Code editor. Neovim draws a Neovim running on the Workspace's machine (your own config) in DevHub's own GUI, with no VS Code started. Switching applies at once: the other kind of editor is closed. Default VS Code."
+        >
+          <Popup
+            label="Editor"
+            value={config.general.editor}
+            options={[
+              ["vscode", "VS Code"],
+              ["neovim", "Neovim"],
+            ]}
+            onChange={(editor) => {
+              update({ ...config, general: { ...config.general, editor } });
+            }}
+          />
+        </Row>
         <SwitchRow
           label="Freeze hidden editors"
           help="Off, no editor is ever frozen — not when hidden, not by the Task Manager's Sleep — so none is discarded either, and one frozen now resumes at once. Editors then keep using CPU and memory while hidden. Default on."
