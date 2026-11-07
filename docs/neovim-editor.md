@@ -64,9 +64,15 @@ TUI Neovim in a tmux pane is gone.)
 
 `main/editor/neovimUi.ts` attaches with `rgb`, `ext_linegrid`,
 `ext_multigrid`, `ext_popupmenu`, `ext_cmdline` and `ext_tabline`.
-`ext_messages` stays off: in 0.9 it is experimental and takes the message area
-away, so messages are drawn by Neovim in its message grid. Before attaching it
-runs a Lua snippet (`SETUP_LUA`) that:
+`ext_messages` stays off, on 0.11 too: it is still marked experimental there,
+and it hands the GUI every prompt Neovim would otherwise draw and wait on —
+the hit-enter prompt, `confirm()`, the swap-file question, `:s///c` — which
+a GUI that renders them as toasts has to get exactly right or leave the
+person stuck in an invisible prompt. Neovim's own message grid
+(`msg_set_pos`, `cmdheight`, `messagesopt`) handles all of them, and a
+config's `vim.notify` replacement (fidget, snacks) already draws floats. So
+messages stay Neovim's, in its message grid. Before attaching it runs a Lua
+snippet (`SETUP_LUA`) that:
 
 - sets `g:devhub_gui` (and the pane has `$DEVHUB_NEOVIM_GUI=1` from the first
   line of the config); `has('gui_running')` is 1 for an RPC UI already;
@@ -209,11 +215,14 @@ DevHub restart. SSH, against an sshd on localhost (a Workspace on
 forward, the attach, and — after the ControlMaster is killed — the page
 reconnecting by itself to the same Neovim, its unsaved edit still there. Not exercised in CI.
 
-## Limitations (phase 1)
+## Limitations
 
 - Dev containers: refused with a sentence.
 - No delivery of `nvim` to hosts; Neovim 0.9 or later is expected.
-- `ext_messages` off; messages are Neovim's own, in its message grid.
+- `ext_messages` off (see The attach); messages are Neovim's own, in its
+  message grid.
+- In `:DevhubTerminal`, `<C-w>` belongs to Neovim (window commands), so a
+  shell's delete-word on `<C-w>` is not reachable there.
 - `ext_hlstate` off; no semantic styling of diagnostics yet.
 - A GUI buffer shown in two windows has its content (one page, one terminal
   client) in one of them — the current window when it is one, else the
