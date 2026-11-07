@@ -91,7 +91,9 @@ export class NeovimEditors {
 						mine.page.send(
 							NEOVIM_CHANNELS.ended,
 							workspaceId,
-							"Neovim exited. Retry starts it again.",
+							target.machine === "local"
+								? "Neovim exited. Retry starts it again."
+								: `The connection to ${target.machine.replace(/^ssh:/, "")} dropped. Retry connects again and picks up the Neovim that went on running there.`,
 						);
 					}
 				});

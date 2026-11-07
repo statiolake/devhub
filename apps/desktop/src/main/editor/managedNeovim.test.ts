@@ -277,7 +277,7 @@ describe("a jump after that Neovim has gone", () => {
 		w.panes.delete("%1");
 		w.listening.get(SOCKET)?.exit();
 		w.listening.delete(SOCKET);
-		await Promise.resolve();
+		await new Promise((resolve) => setTimeout(resolve, 0));
 		// Heard at once: the socket and the wait marker it held are cleaned up
 		// without waiting for the next jump.
 		expect(neovims.paneOf(WORKSPACE.workspaceId)).toBeUndefined();
@@ -287,6 +287,23 @@ describe("a jump after that Neovim has gone", () => {
 		expect(w.log.filter((line) => line.startsWith("open"))).toEqual([
 			`open ${WORKSPACE.workspaceId} env DEVHUB_NEOVIM_GUI=1 /opt/homebrew/bin/nvim --headless --listen ${SOCKET} -> %2`,
 		]);
+	});
+
+	it("keeps a running one whose connection only dropped, and adopts it again", async () => {
+		const w = world();
+		const neovims = w.make();
+		await neovims.open(WORKSPACE, { path: "/src/widget/a.ts" });
+		w.log.length = 0;
+		// An SSH host's master went away: this connection closed, while the
+		// Neovim goes on listening in its pane.
+		w.server()?.exit();
+		w.listening.set(SOCKET, new FakeServer("%1"));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(w.files.has(SOCKET)).toBe(true);
+		const result = await neovims.open(WORKSPACE, { path: "/src/widget/b.ts" });
+		expect(result).toEqual({ started: false });
+		expect(w.log).toEqual([]);
+		expect(neovims.paneOf(WORKSPACE.workspaceId)).toBe("%1");
 	});
 
 	it("does not trust a connection whose pane has gone", async () => {

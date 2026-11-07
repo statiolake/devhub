@@ -49,7 +49,10 @@ TUI Neovim in a tmux pane is gone.)
   host, and is forwarded to a socket here over the host's ControlMaster —
   `ssh -O forward -L <here>:<there>` (`Runtime.forwardUnixSocket`,
   `editor/neovimMachines.ts`). A dropped connection takes the forward with it;
-  Retry forwards again and adopts the Neovim that went on running.
+  the page says the connection dropped, and Retry forwards again and adopts
+  the Neovim that went on running. A closed connection only counts as Neovim
+  ending when its keeper pane is gone or dead: before, the drop unlinked the
+  host's socket, so Retry started a second Neovim beside the orphaned first.
 - **A dev container**: not yet. A Workspace whose editor is attached to a
   container says so ("does not run in a dev container yet").
 - **No `nvim`**: the page says which machine lacks it and what to do
@@ -200,8 +203,10 @@ DevHub run under Xvfb; on 0.11.5 with a real lazy.nvim config: devhub.nvim's
 theme, blink.cmp in insert and `:` mode, the snacks picker, fidget): typing, the cursor and its shapes, scrolling, splits and floats,
 resize, the completion menu, the command line, tab pages, the clipboard
 provider, GUI windows and `:DevhubTerminal`, file opens, reattaching after a
-DevHub restart. SSH: the forward is built and unit-tested; not yet exercised
-against a real host in CI.
+DevHub restart. SSH, against an sshd on localhost (a Workspace on
+`ssh:<host>`, Neovim 0.11.5 and the same config on the host): the socket
+forward, the attach, and — after the ControlMaster is killed — Retry adopting
+the same Neovim with its unsaved edit. Not exercised in CI.
 
 ## Limitations (phase 1)
 

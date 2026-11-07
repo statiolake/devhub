@@ -141,6 +141,7 @@ export interface ManagedNeovimOptions {
 }
 
 interface ServerRecord {
+	readonly target: WorkspaceTerminalTarget;
 	/** On the server's machine. */
 	readonly socketPath: string;
 	/** That machine's disk, for its socket; wait markers are this Mac's. */
@@ -476,6 +477,7 @@ export class ManagedNeovims {
 			paneId = undefined;
 		}
 		return this.remember(target.workspaceId, {
+			target,
 			socketPath,
 			files: sockets.files,
 			paneId,
@@ -500,6 +502,7 @@ export class ManagedNeovims {
 				try {
 					const client = await sockets.connect(socketPath);
 					return this.remember(target.workspaceId, {
+						target,
 						socketPath,
 						files: sockets.files,
 						paneId,
@@ -549,14 +552,36 @@ export class ManagedNeovims {
 		// `g:devhub_theme` is there from the first jump.
 		void this.tellTheme(workspaceId, record);
 		record.client.onClose(() => {
-			// The server ended — `:q`, its pane killed, a crash. Forgotten now,
-			// so the next jump starts one rather than asking a dead socket.
+			// The connection ended. Forgotten now, so the next jump connects
+			// again rather than asking a closed one.
 			if (this.records.get(workspaceId) !== record) return;
 			this.records.delete(workspaceId);
-			void this.cleanUp(record);
-			this.options.onExit?.(workspaceId);
+			void this.connectionClosed(workspaceId, record);
 		});
 		return record;
+	}
+
+	/**
+	 * A closed connection is the server ending — `:q`, its pane killed, a
+	 * crash — or only the way to it: an SSH host's master went away and
+	 * took the forward with it, while the Neovim went on running in the
+	 * host's tmux. Only an ended server's socket is removed; a live one is
+	 * left for the next attach to adopt, as it is after a DevHub restart.
+	 * A pane that cannot be asked about (the host unreachable) counts as
+	 * alive: removing the socket of a running Neovim orphans it.
+	 */
+	private async connectionClosed(
+		workspaceId: string,
+		record: ServerRecord,
+	): Promise<void> {
+		if (record.paneId !== undefined) {
+			const state = await this.panes
+				.state(record.target, record.paneId)
+				.catch(() => "alive" as const);
+			if (state === "alive") return;
+		}
+		await this.cleanUp(record);
+		this.options.onExit?.(workspaceId);
 	}
 
 	private async forget(
