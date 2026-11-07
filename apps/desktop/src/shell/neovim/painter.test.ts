@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBoxChar, parseGuifont } from "./painter";
+import { isBoxChar, mixColors, parseGuifont } from "./painter";
 
 describe("guifont", () => {
   it("is a CSS family list and a size", () => {
@@ -26,5 +26,13 @@ describe("box-drawing characters", () => {
       expect(isBoxChar(c)).toBe(true);
     expect(isBoxChar("a")).toBe(false);
     expect(isBoxChar("|")).toBe(false);
+  });
+});
+
+describe("winblend", () => {
+  it("mixes a colour into what is under it", () => {
+    expect(mixColors(0xffffff, 0x000000, 0)).toBe(0xffffff);
+    expect(mixColors(0xffffff, 0x000000, 100)).toBe(0x000000);
+    expect(mixColors(0xff0000, 0x0000ff, 50)).toBe(0x800080);
   });
 });

@@ -77,6 +77,17 @@ export function cssColor(rgb: number, alpha = 1): string {
     : `rgba(${String(r)},${String(g)},${String(b)},${String(alpha)})`;
 }
 
+/** `rgb` blended `percent` of the way to `under`, as `winblend` does. */
+export function mixColors(rgb: number, under: number, percent: number): number {
+  const t = Math.max(0, Math.min(100, percent)) / 100;
+  const channel = (shift: number) => {
+    const a = (rgb >> shift) & 0xff;
+    const b = (under >> shift) & 0xff;
+    return Math.round(a + (b - a) * t) << shift;
+  };
+  return channel(16) | channel(8) | channel(0);
+}
+
 /** A highlight's colours on the default ones, `reverse` applied. */
 export function resolveColors(
   attr: HlAttr | undefined,
@@ -385,6 +396,20 @@ export class GridPainter {
     const x1 = end * cw;
     ctx.fillStyle = cssColor(bg, 1 - blend / 100);
     ctx.fillRect(x0, y, x1 - x0, ch);
+    if (blend > 0) {
+      // Neovim's compositor shows what is under a blended float only
+      // through its blank cells; under its text it is the float's. A cell
+      // with text gets a ground of its own — its background blended into
+      // the editor's — so the two texts never overprint (fidget's
+      // notifications are `winblend` 100).
+      ctx.fillStyle = cssColor(mixColors(bg, state.defaults.background, blend));
+      for (let col = start; col < end; col += 1) {
+        const c = chars[base + col] ?? " ";
+        if (c === "" || c === " ") continue;
+        const wide = chars[base + col + 1] === "";
+        ctx.fillRect(col * cw, y, (wide ? 2 : 1) * cw, ch);
+      }
+    }
     ctx.fillStyle = cssColor(fg);
     ctx.font = fontOf(this.font, attr);
     ctx.textBaseline = "alphabetic";
