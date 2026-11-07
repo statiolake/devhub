@@ -51,9 +51,10 @@ TUI Neovim in a tmux pane is gone.)
   `editor/neovimMachines.ts`). A dropped connection takes the forward with it;
   when its Neovim is still running there, the page says the connection
   dropped and attaches again by itself (0.8 s, 2 s, 5 s, 10 s apart; then a
-  Retry button), forwarding again and adopting the same Neovim. A closed connection only counts as Neovim
-  ending when its keeper pane is gone or dead: before, the drop unlinked the
-  host's socket, so Retry started a second Neovim beside the orphaned first.
+  Retry button), forwarding again and adopting the same Neovim. A closed
+  connection only counts as Neovim ending when its keeper pane is gone or
+  dead: before, the drop unlinked the host's socket, so Retry started a
+  second Neovim beside the orphaned first.
 - **A dev container**: not yet. A Workspace whose editor is attached to a
   container says so ("does not run in a dev container yet").
 - **No `nvim`**: the page says which machine lacks it and what to do
@@ -85,8 +86,10 @@ snippet (`SETUP_LUA`) that:
   `+`. DevHub's key router answers Cmd+A/C/X/Z with editing commands on its
   own pages, but not on this one (`editingCommands.ts`): there they reach
   the page as `<D-…>` keys. Cmd+V stays the Edit menu's Paste, which the
-  page hands to `nvim_paste` (one undoable change, in any mode). The chords
-  still come first;
+  page hands to `nvim_paste` (one undoable change, in any mode). In a
+  terminal window Cmd+C copies the terminal's selection, and a GUI window's
+  page answers Cmd+C/X/A/Z on its own selection. The chords still come
+  first;
 - defines the `devhub_gui` Lua module and `:DevhubTerminal`, `:DevhubGuiDemo`.
 
 **Attaching again** (a reloaded page, a restarted DevHub) needs care: Neovim
