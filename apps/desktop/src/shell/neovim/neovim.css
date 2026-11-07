@@ -96,6 +96,7 @@
   white-space: pre;
   text-decoration: underline;
   text-underline-offset: 3px;
+  box-shadow: inset -2px 0 0 currentColor;
 }
 
 /* Where the IME's candidate window opens; nothing of it is seen. */
@@ -108,6 +109,7 @@
   margin: 0;
   overflow: hidden;
   resize: none;
+  white-space: pre;
   opacity: 0;
   caret-color: transparent;
   outline: none;

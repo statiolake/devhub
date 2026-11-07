@@ -119,11 +119,15 @@ export class NeovimEditor {
     this.input.setAttribute("autocomplete", "off");
     this.input.setAttribute("autocorrect", "off");
     this.input.spellcheck = false;
+    // One line, in the grid's font: the caret the IME's candidate window
+    // follows then sits at the end of the preedit, as the overlay draws it.
+    this.input.setAttribute("wrap", "off");
     this.input.setAttribute("aria-label", "Neovim");
     this.gridLayer.append(this.cursor, this.preedit, this.input);
     host.append(this.gridLayer);
     this.painter = new GridPainter(this.gridLayer, this.fontSpec());
     this.gridLayer.style.font = fontOf(this.painter.fontSpec());
+    this.input.style.font = this.gridLayer.style.font;
     this.bindInput();
     this.observer = new ResizeObserver(() => {
       this.resize();
@@ -250,6 +254,7 @@ export class NeovimEditor {
   private applyFont(): void {
     if (this.painter.setFont(this.fontSpec())) {
       this.gridLayer.style.font = fontOf(this.painter.fontSpec());
+      this.input.style.font = this.gridLayer.style.font;
       this.paint(true);
       this.resize();
     }
@@ -376,8 +381,12 @@ export class NeovimEditor {
     const at = this.cursorBox();
     const cell = this.painter.cell();
     const mode = currentModeInfo(this.state);
+    // While the IME composes, the preedit overlay carries the caret.
     const hidden =
-      at === undefined || this.state.busy || this.state.cmdline.length > 0;
+      at === undefined ||
+      this.state.busy ||
+      this.state.cmdline.length > 0 ||
+      this.ime.preedit.length > 0;
     this.cursor.style.display = hidden ? "none" : "";
     if (at === undefined) return;
     const { grid, row, col } = this.state.cursor;
@@ -494,7 +503,7 @@ export class NeovimEditor {
       }
     }
     if (step.clear) this.input.value = "";
-    this.placePreedit();
+    this.placeCursor();
   }
 
   private bindInput(): void {
