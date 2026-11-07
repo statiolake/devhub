@@ -23,6 +23,7 @@ import {
 import {
   GridPainter,
   cssColor,
+  fontOf,
   rgbOfCss,
   parseGuifont,
   resolveColors,
@@ -109,6 +110,7 @@ export class NeovimEditor {
     this.gridLayer.append(this.cursor, this.preedit, this.input);
     host.append(this.gridLayer);
     this.painter = new GridPainter(this.gridLayer, this.fontSpec());
+    this.gridLayer.style.font = fontOf(this.painter.fontSpec());
     this.bindInput();
     this.observer = new ResizeObserver(() => {
       this.resize();
@@ -141,6 +143,16 @@ export class NeovimEditor {
   areaSize(): { width: number; height: number } {
     const rect = this.host.getBoundingClientRect();
     return { width: rect.width, height: rect.height };
+  }
+
+  /** The grid size Neovim was last asked for. */
+  gridSize(): { cols: number; rows: number } {
+    return this.size.cols > 0 ? this.size : this.fit();
+  }
+
+  /** The font the grids are painted in. */
+  font(): FontSpec {
+    return this.painter.fontSpec();
   }
 
   gridBoxes(): readonly GridBox[] {
@@ -202,7 +214,7 @@ export class NeovimEditor {
 
   private applyFont(): void {
     if (this.painter.setFont(this.fontSpec())) {
-      this.gridLayer.style.font = `${String(this.painter.fontSpec().size)}px ${this.painter.fontSpec().family}`;
+      this.gridLayer.style.font = fontOf(this.painter.fontSpec());
       this.paint(true);
       this.resize();
     }
@@ -315,7 +327,7 @@ export class NeovimEditor {
     this.preedit.style.lineHeight = `${String(cell.height)}px`;
     this.preedit.style.background = cssColor(this.state.defaults.background);
     this.preedit.style.color = cssColor(this.state.defaults.foreground);
-    this.preedit.style.font = `${String(this.painter.fontSpec().size)}px ${this.painter.fontSpec().family}`;
+    this.preedit.style.font = fontOf(this.painter.fontSpec());
   }
 
   private resize(): void {

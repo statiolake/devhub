@@ -785,6 +785,13 @@ export function layoutGrids(state: NeovimUiState): GridBox[] {
       let col = anchor.col + p.anchorCol;
       if (p.anchor === "NE" || p.anchor === "SE") col -= grid.width;
       if (p.anchor === "SW" || p.anchor === "SE") row -= grid.height;
+      // Kept on the screen, as Neovim's own compositor keeps a float that
+      // would run past an edge (a hover near the right, a menu at the bottom).
+      const screen = boxes.get(1);
+      if (screen) {
+        row = Math.min(row, screen.height - grid.height);
+        col = Math.min(col, screen.width - grid.width);
+      }
       box = {
         grid: window.grid,
         row: Math.max(0, Math.round(row)),

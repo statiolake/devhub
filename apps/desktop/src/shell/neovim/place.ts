@@ -31,3 +31,40 @@ export function popupmenuPlace(
   const height = Math.min(wanted, above);
   return { left, top: anchorTop - height - 2, maxHeight: height };
 }
+
+/** The command line's text row and the columns it spans, in grid cells. */
+export interface CmdlinePlace {
+  /** The row the command line's text is on (0-based). */
+  readonly row: number;
+  /** The column its first character (`:`, `/`, …) is in. */
+  readonly col: number;
+  readonly cols: number;
+}
+
+/**
+ * Where the command line bar is: near the top, centred, on whole cells, so
+ * its text lines up with the grid under it. Cell-aligned on purpose: plugins
+ * that draw next to the command line (blink.cmp's menu for `:`) are told
+ * where it is through `g:ui_cmdline_pos` (`cmdlineUiPos`), and their floats
+ * are cells.
+ */
+export function cmdlinePlace(
+  gridCols: number,
+  cellWidth: number,
+): CmdlinePlace {
+  const cols = Math.max(
+    10,
+    Math.min(Math.floor(680 / Math.max(1, cellWidth)), gridCols - 4),
+  );
+  return { row: 1, col: Math.max(0, Math.floor((gridCols - cols) / 2)), cols };
+}
+
+/**
+ * `g:ui_cmdline_pos` — `[row, col]`, (1, 0)-indexed, the convention
+ * noice.nvim started and blink.cmp reads — for a command line at `place`.
+ * It names the row under the bar's text, so a menu a plugin opens "below
+ * the command line" clears the bar's padding instead of covering it.
+ */
+export function cmdlineUiPos(place: CmdlinePlace): [number, number] {
+  return [place.row + 2, place.col];
+}

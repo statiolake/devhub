@@ -114,6 +114,13 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   select), the command line as a palette-like bar (firstc, cursor, special
   char, `cmdline_block` for multiline), and tab pages as a native tab strip
   (click switches via `nvim_set_current_tabpage`).
+- The command line bar sits on whole cells in the grid's font, and Neovim is
+  told where: `g:ui_cmdline_pos` (`[row, col]`, the convention noice.nvim
+  started), which blink.cmp's `:` completion menu reads, so its float opens
+  under the bar's text instead of at the bottom where Neovim's own command
+  line would be.
+- Floats are kept on the screen as Neovim's own compositor keeps them: one
+  that would run past the right or bottom edge is moved in.
 
 ### GUI windows: GUI surfaces live inside Neovim windows
 
@@ -161,8 +168,9 @@ same command toggles it.
 
 ## What works
 
-Verified against Neovim 0.9.5 (`neovimUi.real.test.ts`, and a DevHub run under
-Xvfb): typing, the cursor and its shapes, scrolling, splits and floats,
+Verified against Neovim 0.9.5 and 0.11.5 (`neovimUi.real.test.ts`, and a
+DevHub run under Xvfb; on 0.11.5 with a real lazy.nvim config: devhub.nvim's
+theme, blink.cmp in insert and `:` mode, the snacks picker, fidget): typing, the cursor and its shapes, scrolling, splits and floats,
 resize, the completion menu, the command line, tab pages, the clipboard
 provider, GUI windows and `:DevhubTerminal`, file opens, reattaching after a
 DevHub restart. SSH: the forward is built and unit-tested; not yet exercised

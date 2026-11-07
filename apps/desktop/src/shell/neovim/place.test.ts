@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { popupmenuPlace } from "./place";
+import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
 
 describe("where the completion menu goes", () => {
   const area = { width: 800, height: 600 };
@@ -20,5 +20,19 @@ describe("where the completion menu goes", () => {
 
   it("stays inside the right edge", () => {
     expect(popupmenuPlace(area, 100, 790, 16, 5).left).toBe(600);
+  });
+});
+
+describe("where the command line goes", () => {
+  it("is centred on whole cells near the top", () => {
+    const place = cmdlinePlace(200, 8);
+    expect(place).toEqual({ row: 1, col: 57, cols: 85 });
+    expect(cmdlineUiPos(place)).toEqual([3, 57]);
+  });
+
+  it("fits a narrow grid", () => {
+    const place = cmdlinePlace(40, 8);
+    expect(place.cols).toBe(36);
+    expect(place.col).toBe(2);
   });
 });

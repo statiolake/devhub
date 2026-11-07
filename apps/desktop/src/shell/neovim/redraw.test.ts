@@ -86,6 +86,18 @@ describe("the redraw reducer", () => {
     });
   });
 
+  it("keeps a float that would run past the screen's edge on it", () => {
+    const state = initialUiState();
+    applyRedraw(state, [
+      ["grid_resize", [1, 80, 24], [2, 80, 22], [4, 30, 6]],
+      ["win_pos", [2, 1000, 0, 0, 80, 22]],
+      // A hover at the right edge, a menu under the last line.
+      ["win_float_pos", [4, 1001, "NW", 2, 21, 70, true, 50]],
+    ]);
+    const float = layoutGrids(state).find((b) => b.grid === 4);
+    expect([float?.row, float?.col]).toEqual([18, 50]);
+  });
+
   it("places windows on grid 1 and floats against their anchor, stacked by zindex", () => {
     const state = initialUiState();
     applyRedraw(state, [

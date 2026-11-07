@@ -36,9 +36,9 @@ import {
   useRaiseFailure,
 } from "../model/pageModel";
 import { NeovimEditor } from "./editor";
-import { popupmenuPlace } from "./place";
+import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
 import { charOffsetOfByte, type Chunks, type NeovimUiState } from "./redraw";
-import { cssColor, resolveColors } from "./painter";
+import { cssColor, fontOf, resolveColors } from "./painter";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { workspaceTerminalSurfaceKey } from "../../ipc/terminal";
 import type {
@@ -281,9 +281,20 @@ function NeovimSurface({
     [bridge, workspaceId],
   );
 
+  const cell = editor?.cellMetrics();
+  // Where the command line bar is, for plugins that draw beside it.
+  const [posRow, posCol] =
+    editor && cell
+      ? cmdlineUiPos(cmdlinePlace(editor.gridSize().cols, cell.width))
+      : [0, 0];
+  const attached = connection.kind === "attached";
+  useEffect(() => {
+    if (!attached || posRow === 0) return;
+    send("nvim_set_var", ["ui_cmdline_pos", [posRow, posCol]]);
+  }, [attached, send, posRow, posCol]);
+
   const tabs = nvim?.tabline;
   const showTabs = tabs !== undefined && tabs.tabs.length > 1;
-  const cell = editor?.cellMetrics();
   const boxes = editor?.gridBoxes() ?? [];
 
   return (
@@ -385,7 +396,7 @@ function NeovimSurface({
           : null}
         {nvim && cell && editor ? (
           <>
-            <Cmdline state={nvim} />
+            <Cmdline state={nvim} editor={editor} />
             <Popupmenu state={nvim} editor={editor} send={send} />
           </>
         ) : null}
@@ -444,6 +455,10 @@ function guiDocument(html: string, state: NeovimUiState): string {
   return prelude + html;
 }
 
+/** The command line bar's padding around its cells, as `neovim.css` rounds it. */
+const CMDLINE_PAD_X = 12;
+const CMDLINE_PAD_Y = 8;
+
 function chunkText(chunks: Chunks): string {
   return chunks.map(([, text]) => text).join("");
 }
@@ -477,8 +492,19 @@ function ChunkSpans({
   );
 }
 
-/** `ext_cmdline`: a palette-like bar near the top, the cursor in it. */
-function Cmdline({ state }: { readonly state: NeovimUiState }) {
+/**
+ * `ext_cmdline`: a palette-like bar near the top, the cursor in it. It sits
+ * on whole cells in the grid's own font (`cmdlinePlace`), so what plugins
+ * draw beside the command line — told where it is by `g:ui_cmdline_pos` —
+ * lines up with its text.
+ */
+function Cmdline({
+  state,
+  editor,
+}: {
+  readonly state: NeovimUiState;
+  readonly editor: NeovimEditor;
+}) {
   const line = state.cmdline.at(-1);
   if (!line && !state.cmdlineBlock) return null;
   const block = state.cmdlineBlock ?? [];
@@ -486,6 +512,18 @@ function Cmdline({ state }: { readonly state: NeovimUiState }) {
   const cursorAt = line ? charOffsetOfByte(text, line.pos) : 0;
   const before = text.slice(0, cursorAt);
   const after = text.slice(cursorAt);
+  const cell = editor.cellMetrics();
+  const font = editor.font();
+  const place = cmdlinePlace(editor.gridSize().cols, cell.width);
+  const style: React.CSSProperties = {
+    left: place.col * cell.width - CMDLINE_PAD_X,
+    top: place.row * cell.height - CMDLINE_PAD_Y,
+    width: place.cols * cell.width + 2 * CMDLINE_PAD_X,
+    padding: `${String(CMDLINE_PAD_Y)}px ${String(CMDLINE_PAD_X)}px`,
+    font: fontOf(font),
+    lineHeight: `${String(cell.height)}px`,
+    ["--nvim-cell" as string]: `${String(cell.width)}px`,
+  };
   const label =
     line?.firstc === ":"
       ? "Command"
@@ -499,7 +537,12 @@ function Cmdline({ state }: { readonly state: NeovimUiState }) {
               ? "Input"
               : "Command";
   return (
-    <div className="nvim-cmdline" role="dialog" aria-label={label}>
+    <div
+      className="nvim-cmdline"
+      role="dialog"
+      aria-label={label}
+      style={style}
+    >
       {block.map((chunks, index) => (
         <div key={index} className="nvim-cmdline-block">
           <ChunkSpans chunks={chunks} state={state} />
@@ -574,8 +617,12 @@ function Popupmenu({
   const cell = editor.cellMetrics();
   const command = menu.grid === -1;
   const box = editor.gridBoxes().find((b) => b.grid === menu.grid);
+  const bar = cmdlinePlace(editor.gridSize().cols, cell.width);
   const style: React.CSSProperties = command
-    ? { left: "50%", top: 56, transform: "translateX(-50%)" }
+    ? {
+        left: (bar.col + menu.col) * cell.width - 6,
+        top: (bar.row + 1) * cell.height + CMDLINE_PAD_Y + 4,
+      }
     : popupmenuPlace(
         editor.areaSize(),
         ((box?.row ?? 0) + menu.row) * cell.height,
