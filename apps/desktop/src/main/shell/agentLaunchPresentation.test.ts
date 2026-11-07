@@ -45,7 +45,17 @@ const WORKSPACE = workspaceId("00000000-0000-4000-8000-0000000000d1");
 const AGENT = agentId("550e8400-e29b-41d4-a716-4466554400d0");
 const HOME = "/home/testuser";
 
-function wired() {
+/** A host with neither bash nor zsh, given DevHub's bash. */
+const DELIVERED_BASH = `${HOME}/.devhub-server/bash/5.3.20/bin/bash`;
+const ON_DELIVERED_BASH = {
+	CLAUDE_CODE_SHELL: DELIVERED_BASH,
+	SHELL: DELIVERED_BASH,
+};
+
+function wired(
+	claudeShell: () => Promise<Readonly<Record<string, string>>> = () =>
+		Promise.resolve({}),
+) {
 	const model = new AppModel(
 		new Workspace(
 			WORKSPACE,
@@ -57,6 +67,7 @@ function wired() {
 	const respawnAgent = vi.fn(() => Promise.resolve());
 	const agentPanePid = vi.fn(() => Promise.resolve(4242));
 	const makeDirectory = vi.fn(() => Promise.resolve());
+	const askedForShell = vi.fn(claudeShell);
 	const wiring = wireAgents({
 		runtimeFor: () =>
 			Promise.resolve({
@@ -70,6 +81,7 @@ function wired() {
 			({
 				home: () => Promise.resolve(HOME),
 				makeDirectory,
+				claudeShell: askedForShell,
 				where: "",
 			}) as unknown as Runtime,
 		report: () => {
@@ -82,7 +94,15 @@ function wired() {
 	});
 	const adapter = agents();
 	if (!adapter) throw new Error("the Agent adapter was not registered");
-	return { adapter, wiring, model, launchAgent, respawnAgent, makeDirectory };
+	return {
+		adapter,
+		wiring,
+		model,
+		launchAgent,
+		respawnAgent,
+		makeDirectory,
+		askedForShell,
+	};
 }
 
 function profile(kind: AgentProfileKind): AgentProfile {
@@ -276,5 +296,154 @@ describe("restarting a terminal Agent", () => {
 			SessionNotResumable,
 		);
 		expect(respawnAgent).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * The shell Claude Code insists on (`runtime/agentShell.ts`): asked of the
+ * Agent's machine, and what it answers goes into that Agent's environment
+ * and nobody else's.
+ */
+describe("a Claude Agent on a machine with neither bash nor zsh", () => {
+	it("runs a terminal claude on DevHub's bash, for its own process", async () => {
+		const { adapter, launchAgent } = wired(() =>
+			Promise.resolve(ON_DELIVERED_BASH),
+		);
+
+		const result = await adapter.launch(
+			WORKSPACE,
+			AGENT,
+			profile("claude"),
+			"tui",
+			"/srv/api",
+		);
+
+		expect(result).toEqual({ kind: "started" });
+		expect(launchAgent).toHaveBeenCalledWith(
+			expect.anything(),
+			{
+				file: "claude",
+				args: ["--model", "opus"],
+				env: { ...ON_DELIVERED_BASH, EXAMPLE: "1" },
+			},
+			expect.anything(),
+		);
+	});
+
+	// The host's environment is the session's, and survives the CLI being
+	// started again (`RESTART_SCRIPT`), so this is the one place it is set.
+	it("runs a GUI claude's host on DevHub's bash", async () => {
+		const { adapter, launchAgent } = wired(() =>
+			Promise.resolve(ON_DELIVERED_BASH),
+		);
+
+		await adapter.launch(
+			WORKSPACE,
+			AGENT,
+			profile("claude"),
+			"gui",
+			"/srv/api",
+		);
+
+		expect(launchAgent).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				file: "/bin/sh",
+				env: { ...ON_DELIVERED_BASH, EXAMPLE: "1" },
+			}),
+			expect.anything(),
+		);
+	});
+
+	// A profile that names its own shell has said which it wants.
+	it("leaves a shell the profile states itself alone", async () => {
+		const { adapter, launchAgent } = wired(() =>
+			Promise.resolve(ON_DELIVERED_BASH),
+		);
+		const own = AgentProfile.create(
+			agentProfileId("claude"),
+			"Claude",
+			"claude",
+			"claude",
+			[],
+			new Map([["CLAUDE_CODE_SHELL", "/opt/bin/bash"]]),
+			"tui",
+		);
+
+		await adapter.launch(WORKSPACE, AGENT, own, "tui", "/srv/api");
+
+		expect(launchAgent).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				env: { CLAUDE_CODE_SHELL: "/opt/bin/bash", SHELL: DELIVERED_BASH },
+			}),
+			expect.anything(),
+		);
+	});
+
+	// DevHub's sentence, not Claude Code's "No suitable shell found" from
+	// inside a session that then ends: nothing is launched at all.
+	it("does not start, and says why in DevHub's words, when there is no shell to be had", async () => {
+		const refusal =
+			"Claude Code needs bash or zsh on nas, and nas has neither (busybox sh is not enough).";
+		const { adapter, launchAgent } = wired(() =>
+			Promise.reject(new Error(refusal)),
+		);
+
+		const result = await adapter.launch(
+			WORKSPACE,
+			AGENT,
+			profile("claude"),
+			"tui",
+			"/srv/api",
+		);
+
+		expect(result).toMatchObject({ kind: "failed" });
+		expect(result.kind === "failed" ? result.detail : "").toContain(refusal);
+		expect(launchAgent).not.toHaveBeenCalled();
+	});
+
+	// Only Claude Code asks for a particular shell.
+	it("does not ask about a shell for a Codex Agent", async () => {
+		const { adapter, askedForShell } = wired(() =>
+			Promise.reject(new Error("not asked")),
+		);
+
+		const result = await adapter.launch(
+			WORKSPACE,
+			AGENT,
+			profile("codex"),
+			"tui",
+			"/srv/api",
+		);
+
+		expect(result).toEqual({ kind: "started" });
+		expect(askedForShell).not.toHaveBeenCalled();
+	});
+
+	it("restarts a terminal claude on DevHub's bash too", async () => {
+		vi.mocked(terminalSession).mockResolvedValueOnce("S-now");
+		const setup = wired(() => Promise.resolve(ON_DELIVERED_BASH));
+		setup.model.addAgent(
+			WORKSPACE,
+			AGENT,
+			AgentProfile.create(
+				agentProfileId("claude"),
+				"Claude",
+				"claude",
+				"claude",
+				[],
+				new Map(),
+			),
+			"tui",
+		);
+
+		await setup.wiring.restartTerminal(AGENT);
+
+		expect(setup.respawnAgent).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ env: ON_DELIVERED_BASH }),
+			expect.anything(),
+		);
 	});
 });

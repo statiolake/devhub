@@ -787,6 +787,72 @@ links dynamically against libSystem. It exists so that the layout, the terminfo
 step and the version pins can be checked without waiting for a runner, and the
 build says so on its own output.
 
+## bash for Claude Code
+
+Claude Code will not start without bash or zsh. It takes `$SHELL` if that is a
+bash or a zsh, then looks for `zsh` and `bash` on `PATH` and in the usual
+directories, and accepts `CLAUDE_CODE_SHELL` only when it names a bash or a
+zsh. busybox `sh` is not accepted, so on a Synology NAS — busybox only, no
+package manager, no sudo, no internet — a Claude Agent ended at once with the
+CLI's "No suitable shell found. Claude CLI requires a Posix shell
+environment…", which says nothing its owner could act on.
+
+So DevHub delivers a bash as well, by the same mechanism as tmux
+(`main/runtime/toolDelivery.ts`): one static tarball per platform on a release
+of this repository, downloaded and cached here per profile (`<userData>/bash/`),
+checked against the digest `product-overrides.json` states
+(`bashDownloadSha256`), and unpacked on the host from a stream on a `tar`
+stdin, never fetched by the host.
+
+```
+devhub-bash-linux-x64/
+  bin/bash            statically linked (musl), mode 0755
+  licenses/bash.txt   GPL-3.0
+```
+
+installed at
+
+```
+~/.devhub-server/bash/<version>/bin/bash
+```
+
+**Only where it is needed, and only for the Agent.** When DevHub starts a
+Claude Agent on a host — a terminal one or a GUI one, and when a terminal one
+is restarted — it first asks the host, under its login environment, for the
+shell Claude Code would find: `$SHELL` if it is a bash or a zsh, else `zsh` or
+`bash` by `command -v`, else `/bin`, `/usr/bin`, `/usr/local/bin`,
+`/opt/homebrew/bin` (`main/runtime/agentShell.ts`). A host with one is left as
+it is and nothing is installed. A host with neither gets the delivered bash,
+and that Agent's process — and only it — gets `CLAUDE_CODE_SHELL` and `SHELL`
+pointing at it. The login shell, tmux's `default-shell` and every terminal stay
+busybox `sh`. A profile that sets either variable itself keeps its own. A found
+shell is remembered for the connection; "none" is asked again at the next
+Agent's start, so a bash installed meanwhile is used. On this Mac nothing
+changes: it has zsh.
+
+**When there is none to be had** — an architecture DevHub publishes no bash for
+(only `linux-x64` and `linux-arm64` are), a release that is not there, no route
+from this Mac for the download — the Agent does not start, and its row says, in
+DevHub's words, which host, why, and the fix: install bash on the host (with
+Entware on a Synology, `opkg install bash`, with `/opt/bin` on the login
+`PATH`), after which DevHub finds it and uses it instead.
+
+**Published as its own release**, `bash-<version>`, built by
+`scripts/build_bash.py` (which reuses `build_tmux.py`'s fetching, pinning,
+static-link check and packing) in the nightly's `bash-decide` / `bash` /
+`bash-publish` jobs, on the same two runners. The version is bash's release
+plus its patch level — every official upstream patch is applied, each pinned by
+sha256 — so `5.3.20` is bash 5.3 with patches 001–020, and `bash --version` on
+the host says so. Separate from tmux's release so that neither tool's bump
+republishes the other. The publish job writes the digests to its summary in the
+form `bashDownloadSha256` takes; until they are in `product-overrides.json` the
+download is taken unpinned over HTTPS from a tag that never moves.
+
+To build one locally (`sudo apt-get install -y musl-tools build-essential
+patch` on Ubuntu): `scripts/build_bash.py linux-x64`. To install one by hand, as
+for tmux: unpack `devhub-bash-<platform>-<version>.tar.gz` and move its one
+directory to `~/.devhub-server/bash/<version>`.
+
 ## Pointing one host somewhere else
 
 There is no setting for this, per host or otherwise. Which servers a DevHub
@@ -1251,7 +1317,12 @@ nc -U ~/.devhub/terminal/control-<tag>.sock` answers a line of JSON. If it
 11. A host with no `tmux`: git, the branch and the Issue row still work, and
     only the terminal and the Agent refuse, with the sentence naming `tmux` and
     the host.
-12. **Reconnecting.** `ssh -O exit <host>` from a terminal on the Mac, or a real
+12. A host with neither bash nor zsh (a Synology NAS): a Claude Agent starts,
+    `~/.devhub-server/bash/<version>/bin/bash --version` answers there, and
+    `tr '\0' '\n' < /proc/<pid>/environ | grep SHELL` for the CLI shows both
+    `SHELL` and `CLAUDE_CODE_SHELL` pointing at it — while a terminal on the
+    same host still runs busybox `sh`.
+13. **Reconnecting.** `ssh -O exit <host>` from a terminal on the Mac, or a real
     sleep and wake: the workbench notices, reconnects through a fresh
     `resolve()`, and the extension host on the host is the *same process* —
     `.<key>.pid` has not changed and the log has not grown. A workbench that

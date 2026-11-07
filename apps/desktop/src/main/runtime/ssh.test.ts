@@ -60,7 +60,7 @@ import {
 	unauthenticatedFailure,
 	unreachableFailure,
 } from "./ssh.js";
-import { tmuxTopLevelDirectory, type TmuxDelivery } from "./tmuxDelivery.js";
+import { toolTopLevelDirectory, type ToolDelivery } from "./toolDelivery.js";
 import {
 	isPermanent,
 	rehTopLevelDirectory,
@@ -216,7 +216,8 @@ const FAKE_ENVIRONMENT: Readonly<Record<string, string | undefined>> = {
  * tarball refuses because nothing in these cases installs a tmux, and a test
  * that started to should say so rather than quietly build one.
  */
-const FAKE_TMUX: TmuxDelivery = {
+const FAKE_TMUX: ToolDelivery = {
+	tool: "tmux",
 	version: "3.7c",
 	directory: ".devhub-server/tmux",
 	tarball: () => Promise.reject(new Error("no tmux is installed in this test")),
@@ -1052,7 +1053,7 @@ describe("the tmux DevHub installs on a host", () => {
 		version: string,
 		binary = `#!/bin/sh\necho "tmux ${version}"\n`,
 	): Promise<Uint8Array> {
-		const top = tmuxTopLevelDirectory(platform);
+		const top = toolTopLevelDirectory("tmux", platform);
 		const root = join(workshop, `${top}-${version}`);
 		await mkdir(join(root, top, "bin"), { recursive: true });
 		await mkdir(join(root, top, "terminfo", "x"), { recursive: true });
@@ -1075,22 +1076,23 @@ describe("the tmux DevHub installs on a host", () => {
 	function delivery(
 		version: string,
 		bytes: (platform: string) => Promise<Uint8Array>,
-	): TmuxDelivery {
+	): ToolDelivery {
 		return {
+			tool: "tmux",
 			version,
 			directory: ".devhub-server/tmux",
 			tarball: async (platform) => {
 				asked.push(platform);
 				return {
 					bytes: await bytes(platform),
-					topLevelDirectory: tmuxTopLevelDirectory(platform),
+					topLevelDirectory: toolTopLevelDirectory("tmux", platform),
 					verifiedSha256: undefined,
 				};
 			},
 		};
 	}
 
-	function runtimeWith(tmux: TmuxDelivery): SshRuntime {
+	function runtimeWith(tmux: ToolDelivery): SshRuntime {
 		return new SshRuntime({
 			host: "build-box.example.com",
 			controlDirectory: control,
@@ -1206,6 +1208,167 @@ describe("the tmux DevHub installs on a host", () => {
 });
 
 /**
+ * The shell Claude Code gets on a host (`agentShell.ts`), by the same install
+ * as tmux.
+ *
+ * The machine these run on has a bash, so a host with neither is stood in by
+ * overriding the probe and nothing else: the delivery, the unpack and the
+ * question asked of what came out are the real ones.
+ */
+describe("the bash DevHub installs for Claude Code on a host", () => {
+	let remoteHome: string;
+	let workshop: string;
+	let asked: string[];
+
+	beforeEach(async () => {
+		remoteHome = await mkdtemp("/tmp/devhub-bash-home-");
+		workshop = await mkdtemp("/tmp/devhub-bash-build-");
+		asked = [];
+	});
+	afterEach(async () => {
+		await rm(remoteHome, { recursive: true, force: true });
+		await rm(workshop, { recursive: true, force: true });
+	});
+
+	/** A real `devhub-bash-<platform>-<version>.tar.gz`, built here. */
+	async function bashTarball(
+		platform: string,
+		binary = '#!/bin/sh\necho "GNU bash, version 5.3.20(1)-release"\n',
+	): Promise<Uint8Array> {
+		const top = toolTopLevelDirectory("bash", platform);
+		const root = join(workshop, top);
+		await mkdir(join(root, top, "bin"), { recursive: true });
+		await writeFile(join(root, top, "bin", "bash"), binary, { mode: 0o755 });
+		await chmod(join(root, top, "bin", "bash"), 0o755);
+		const archive = join(workshop, `${top}.tar.gz`);
+		const tar = spawnSync("tar", ["czf", archive, "-C", root, top]);
+		if (tar.status !== 0) throw new Error(`tar exited ${String(tar.status)}`);
+		return new Uint8Array(await readFile(archive));
+	}
+
+	function bashDelivery(
+		bytes: (platform: string) => Promise<Uint8Array>,
+	): ToolDelivery {
+		return {
+			tool: "bash",
+			version: "5.3.20",
+			directory: ".devhub-server/bash",
+			tarball: async (platform) => {
+				asked.push(platform);
+				return {
+					bytes: await bytes(platform),
+					topLevelDirectory: toolTopLevelDirectory("bash", platform),
+					verifiedSha256: undefined,
+				};
+			},
+		};
+	}
+
+	/** A host whose probe found neither bash nor zsh. */
+	class BareHost extends SshRuntime {
+		probes = 0;
+		protected override probeAgentShell(): Promise<string | undefined> {
+			this.probes += 1;
+			return Promise.resolve(undefined);
+		}
+	}
+
+	function bareHost(bash: ToolDelivery | undefined): BareHost {
+		return new BareHost({
+			host: "nas.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: { ...FAKE_ENVIRONMENT, HOME: remoteHome },
+			tmux: FAKE_TMUX,
+			...(bash === undefined ? {} : { bash }),
+		});
+	}
+
+	const installed = () => `${remoteHome}/.devhub-server/bash/5.3.20/bin/bash`;
+
+	// This machine has a bash, so the real probe finds it and nothing is
+	// delivered: a host with its own is left as it is.
+	it("adds nothing on a host with a bash of its own", async () => {
+		const runtime = new SshRuntime({
+			host: "build-box.example.com",
+			controlDirectory: control,
+			sshPath: join(bin, "ssh"),
+			localEnvironment: { ...FAKE_ENVIRONMENT, HOME: remoteHome },
+			tmux: FAKE_TMUX,
+			bash: bashDelivery(() => Promise.reject(new Error("not asked"))),
+		});
+		expect(await runtime.claudeShell()).toEqual({});
+		expect(asked).toEqual([]);
+	});
+
+	it("unpacks it under ~/.devhub-server/bash/<version> and names it for that Agent", async () => {
+		const runtime = bareHost(bashDelivery((p) => bashTarball(p)));
+		expect(await runtime.claudeShell()).toEqual({
+			CLAUDE_CODE_SHELL: installed(),
+			SHELL: installed(),
+		});
+		expect((await stat(installed())).mode & 0o111).toBeGreaterThan(0);
+		// Once per machine: a second Agent asks the probe again (a bash the
+		// person installed meanwhile would be theirs to use) but downloads
+		// nothing.
+		await runtime.claudeShell();
+		expect(asked).toHaveLength(1);
+		expect(runtime.probes).toBe(2);
+		// And a second DevHub finds the install and asks for no tarball.
+		await bareHost(bashDelivery((p) => bashTarball(p))).claudeShell();
+		expect(asked).toHaveLength(1);
+	});
+
+	it("refuses with the host, the reason and the fix when there is no bash for it", async () => {
+		const runtime = bareHost(
+			bashDelivery(() =>
+				Promise.reject(new Error("github.com answered 404 Not Found")),
+			),
+		);
+		const refusal = runtime.claudeShell();
+		await expect(refusal).rejects.toThrow(
+			/Claude Code needs bash or zsh on nas\.example\.com/u,
+		);
+		await expect(refusal).rejects.toThrow(/could not get the bash 5\.3\.20/u);
+		await expect(refusal).rejects.toThrow(/404 Not Found/u);
+		await expect(refusal).rejects.toThrow(/opkg install bash/u);
+	});
+
+	it("refuses when what came out will not run there", async () => {
+		const runtime = bareHost(
+			bashDelivery((p) => bashTarball(p, "ELF not for this machine\n")),
+		);
+		await expect(runtime.claudeShell()).rejects.toThrow(
+			/--version did not answer/u,
+		);
+	});
+
+	it("tries the delivery again after a failure", async () => {
+		let broken = true;
+		const runtime = bareHost(
+			bashDelivery(async (p) => {
+				if (broken) throw new Error("no route to host");
+				return bashTarball(p);
+			}),
+		);
+		await expect(runtime.claudeShell()).rejects.toThrow(/no route to host/u);
+		broken = false;
+		expect(await runtime.claudeShell()).toEqual({
+			CLAUDE_CODE_SHELL: installed(),
+			SHELL: installed(),
+		});
+	});
+
+	// A runtime with no bash delivery is DevHub's bug, and telling someone to
+	// install bash about it would send them to the wrong place.
+	it("calls a runtime built without a bash delivery a bug", async () => {
+		await expect(bareHost(undefined).claudeShell()).rejects.toThrow(
+			/without a bash delivery, which is a bug in DevHub/u,
+		);
+	});
+});
+
+/**
  * DevHub's one tmux config, on the machine tmux reads it.
  *
  * The contract suite already says the rule — a path on that machine with the
@@ -1234,6 +1397,7 @@ describe("carrying the tmux config to a host", () => {
 			sshPath: join(bin, "ssh"),
 			localEnvironment: { ...FAKE_ENVIRONMENT, HOME: remoteHome },
 			tmux: {
+				tool: "tmux",
 				version: "3.7c",
 				directory: ".devhub-server/tmux",
 				tarball: () => Promise.reject(new Error("not asked for here")),

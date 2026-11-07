@@ -103,7 +103,7 @@ import type {
 	Runtime,
 	RuntimeReading,
 } from "./runtime.js";
-import type { TmuxDelivery } from "./tmuxDelivery.js";
+import type { HostTool, ToolDelivery } from "./toolDelivery.js";
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
 import {
 	configArguments,
@@ -598,12 +598,13 @@ export class ContainerHost
 	}
 
 	/**
-	 * No tmux goes into a container: a Workspace's terminals run where its
-	 * folder is. Something asking for one is DevHub routing a Workspace's
-	 * process to its editor's far end, which is the bug this refuses.
+	 * No tmux, and no bash, goes into a container: a Workspace's terminals
+	 * and Agents run where its folder is. Something asking for one is DevHub
+	 * routing a Workspace's process to its editor's far end, which is the bug
+	 * this refuses.
 	 */
-	protected override delivery(): TmuxDelivery {
-		throw notAWorkspaceMachine(this.machineName, "tmux");
+	protected override delivery(tool: HostTool): ToolDelivery {
+		throw notAWorkspaceMachine(this.machineName, tool);
 	}
 
 	/** One `docker`, with its output bounded like every other command. */
@@ -1435,6 +1436,13 @@ export class ContainerHost
 	/** Nor tmux. See `delivery`. */
 	override tmuxProgram(): Promise<never> {
 		return Promise.reject(notAWorkspaceMachine(this.machineName, "tmux"));
+	}
+
+	/** Nor an Agent's shell: no Agent runs in one. See `delivery`. */
+	override claudeShell(): Promise<never> {
+		return Promise.reject(
+			notAWorkspaceMachine(this.machineName, "an Agent's shell"),
+		);
 	}
 
 	/**

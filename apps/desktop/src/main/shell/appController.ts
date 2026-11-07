@@ -34,6 +34,10 @@ const devhubProduct = vscodeProduct as unknown as {
 	readonly tmuxVersion?: string;
 	readonly tmuxDownloadUrlTemplate?: string;
 	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
+	/** The bash a host with neither bash nor zsh gets, for Claude Code. */
+	readonly bashVersion?: string;
+	readonly bashDownloadUrlTemplate?: string;
+	readonly bashDownloadSha256?: Readonly<Record<string, string>>;
 	/**
 	 * The VS Code commit whose remote extension host this build connects to,
 	 * stated by a source run as well — see `rehCommit`.
@@ -444,9 +448,9 @@ import {
 	rehInstallKey,
 } from "../runtime/remoteServer.js";
 import {
-	ReleaseTmuxDelivery,
-	tmuxInstallDirectory,
-} from "../runtime/tmuxDelivery.js";
+	ReleaseToolDelivery,
+	toolInstallDirectory,
+} from "../runtime/toolDelivery.js";
 import type {
 	Runtime,
 	RuntimeId,
@@ -12291,14 +12295,29 @@ export async function createAppController(
 		// `product-overrides.json`, because the release the app installs from is a fact about the build and not a
 		// thing a person configures — and read here for the same reason the
 		// profile is passed in at all.
-		tmux: new ReleaseTmuxDelivery({
+		tmux: new ReleaseToolDelivery({
+			tool: "tmux",
 			version: devhubProduct.tmuxVersion ?? "",
-			directory: tmuxInstallDirectory(
+			directory: toolInstallDirectory(
 				vscodeProduct.serverDataFolderName ?? ".vscode-server",
+				"tmux",
 			),
 			urlTemplate: devhubProduct.tmuxDownloadUrlTemplate ?? "",
 			sha256: devhubProduct.tmuxDownloadSha256 ?? {},
 			cacheDirectory: join(userDataPath, "tmux"),
+		}),
+		// And the bash a host with neither bash nor zsh is given for Claude
+		// Code, by the same mechanism, from the same kind of release.
+		bash: new ReleaseToolDelivery({
+			tool: "bash",
+			version: devhubProduct.bashVersion ?? "",
+			directory: toolInstallDirectory(
+				vscodeProduct.serverDataFolderName ?? ".vscode-server",
+				"bash",
+			),
+			urlTemplate: devhubProduct.bashDownloadUrlTemplate ?? "",
+			sha256: devhubProduct.bashDownloadSha256 ?? {},
+			cacheDirectory: join(userDataPath, "bash"),
 		}),
 		// And the remote extension hosts this DevHub carries. Out of the app
 		// itself and never off the network: a packaged app has them in

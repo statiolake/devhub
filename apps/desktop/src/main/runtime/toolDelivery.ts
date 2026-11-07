@@ -1,14 +1,22 @@
 /**
- * The tmux DevHub puts on a machine, fetched here and never there.
+ * The programs DevHub puts on a machine, fetched here and never there.
  *
- * DevHub runs every terminal and every Agent inside tmux on the machine the
- * Workspace lives on, and it runs *its own* tmux there — never one it found.
- * The reasons are in `docs/remote-ssh.md` and at the top of
- * `scripts/build_tmux.py`: tmux's control output differs between versions in
- * ways that surface as an Agent whose output is subtly wrong rather than as an
- * error, and the host this exists for — a Synology NAS with no tmux in the
- * image, no package manager and no sudo — is a host where "install tmux" is not
- * an instruction its owner can follow.
+ * Two of them, by one mechanism:
+ *
+ * - **tmux.** DevHub runs every terminal and every Agent inside tmux on the
+ *   machine the Workspace lives on, and it runs *its own* tmux there — never
+ *   one it found. tmux's control output differs between versions in ways that
+ *   surface as an Agent whose output is subtly wrong rather than as an error
+ *   (`docs/remote-ssh.md`, `scripts/build_tmux.py`).
+ * - **bash**, for Claude Code only, and only where the host has neither bash
+ *   nor zsh. Claude Code refuses to start without one of the two — busybox `sh`
+ *   is not accepted — and the host this exists for, a Synology NAS with no
+ *   package manager and no sudo, has neither (`scripts/build_bash.py`,
+ *   `agentShell.ts`).
+ *
+ * "Install it" is not an instruction the owner of such a host can follow, so
+ * DevHub publishes each as one static tarball per platform on a release of
+ * this repository and installs it the same way.
  *
  * **This Mac fetches; the host receives.** The tarball is downloaded here, over
  * this DevHub's own network, and handed to the host as bytes on the stdin of a
@@ -18,38 +26,43 @@
  * the far end downloads would have to be right about all three. The far end
  * unpacks a stream, which is the one thing every one of them can do.
  *
- * The cache is per-DevHub-profile and keyed on the exact tarball name, so a
- * second host of the same platform costs no second download, and a version bump
- * fetches beside the old one rather than over it.
+ * The cache is per-DevHub-profile and keyed on the exact tarball name — which
+ * names the tool, the platform and the version — so a second host of the same
+ * platform costs no second download, and a version bump fetches beside the old
+ * one rather than over it.
  */
 
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-/** Where a machine's tmux comes from, as far as a `Runtime` is concerned. */
-export interface TmuxDelivery {
+/** What DevHub delivers. The name is the binary's and the tarball's. */
+export type HostTool = "tmux" | "bash";
+
+/** Where one tool comes from, as far as a `Runtime` is concerned. */
+export interface ToolDelivery {
+	readonly tool: HostTool;
 	/** The version DevHub installs, which is the directory it installs into. */
 	readonly version: string;
 	/**
 	 * Where the version directories go, relative to the host's `$HOME`.
 	 *
-	 * `.devhub-server/tmux` — beside the remote extension host, under the same
-	 * `serverDataFolderName`, and versioned for the same reason the server is
-	 * keyed on a commit: two DevHubs of different ages on one host each find
+	 * `.devhub-server/<tool>` — beside the remote extension host, under the
+	 * same `serverDataFolderName`, and versioned for the same reason the server
+	 * is keyed on a commit: two DevHubs of different ages on one host each find
 	 * their own and neither disturbs the other.
 	 */
 	readonly directory: string;
 	/** The tarball for one `<os>-<arch>`, from the cache or from the release. */
-	tarball(platform: string): Promise<TmuxTarball>;
+	tarball(platform: string): Promise<ToolTarball>;
 }
 
-export interface TmuxTarball {
+export interface ToolTarball {
 	readonly bytes: Uint8Array;
 	/**
 	 * The single directory inside the archive.
 	 *
-	 * `scripts/build_tmux.py` names it after the platform and nothing else, so
+	 * The build names it after the tool and the platform and nothing else, so
 	 * the unpack can move that one directory into place rather than needing
 	 * `tar --strip-components`, which is not in every host's `tar`.
 	 */
@@ -58,14 +71,16 @@ export interface TmuxTarball {
 	readonly verifiedSha256: string | undefined;
 }
 
-export interface ReleaseTmuxDeliveryOptions {
+export interface ReleaseToolDeliveryOptions {
+	readonly tool: HostTool;
 	readonly version: string;
-	/** `product.json`'s `serverDataFolderName`, plus `/tmux`. */
+	/** `toolInstallDirectory(serverDataFolderName, tool)`. */
 	readonly directory: string;
-	/** `product.json`'s `tmuxDownloadUrlTemplate`. */
+	/** `product.json`'s `<tool>DownloadUrlTemplate`. */
 	readonly urlTemplate: string;
 	/**
-	 * The digest of each platform's tarball, by `<os>-<arch>`.
+	 * The digest of each platform's tarball, by `<os>-<arch>`
+	 * (`product.json`'s `<tool>DownloadSha256`).
 	 *
 	 * A platform named here is a platform whose bytes must match, and a download
 	 * that does not is thrown away rather than installed. A platform *not* named
@@ -82,53 +97,78 @@ export interface ReleaseTmuxDeliveryOptions {
 }
 
 /**
- * The three names the URL template takes, substituted here and nowhere else.
+ * The three names a URL template takes, substituted here and nowhere else:
+ * `${<tool>Version}` (`${tmuxVersion}`, `${bashVersion}`), `${os}`, `${arch}`.
  *
  * `${version}` and `${commit}` mean VS Code's version and commit in VS Code's
- * own `serverDownloadUrlTemplate`, so this template deliberately does not
+ * own `serverDownloadUrlTemplate`, so these templates deliberately do not
  * reuse them: one name, one meaning, across one `product.json`.
  */
-export function tmuxDownloadUrl(
+export function toolDownloadUrl(
 	template: string,
+	tool: HostTool,
 	platform: string,
 	version: string,
 ): string {
 	const [os = "", arch = ""] = platform.split("-");
 	return template
-		.replaceAll("${tmuxVersion}", version)
+		.replaceAll(`\${${tool}Version}`, version)
 		.replaceAll("${os}", os)
 		.replaceAll("${arch}", arch);
 }
 
 /**
- * Where the version directories go on a machine, relative to its `$HOME`.
+ * Where a tool's version directories go on a machine, relative to its
+ * `$HOME`.
  *
  * Beside the remote extension host, under the same `serverDataFolderName`, and
  * one statement of it: the runtime reads it off the delivery it was given
  * rather than knowing it, so there is no second copy to be right about when
  * `product.json` says something else.
  */
-export function tmuxInstallDirectory(serverDataFolderName: string): string {
-	return `${serverDataFolderName}/tmux`;
+export function toolInstallDirectory(
+	serverDataFolderName: string,
+	tool: HostTool,
+): string {
+	return `${serverDataFolderName}/${tool}`;
 }
 
-/** The single directory inside the tarball for one platform. */
-export function tmuxTopLevelDirectory(platform: string): string {
-	return `devhub-tmux-${platform}`;
+/** The single directory inside a tool's tarball for one platform. */
+export function toolTopLevelDirectory(
+	tool: HostTool,
+	platform: string,
+): string {
+	return `devhub-${tool}-${platform}`;
 }
 
 /** The name a platform's tarball has, on the release and in the cache. */
-export function tmuxTarballName(platform: string, version: string): string {
-	return `devhub-tmux-${platform}-${version}.tar.gz`;
+export function toolTarballName(
+	tool: HostTool,
+	platform: string,
+	version: string,
+): string {
+	return `devhub-${tool}-${platform}-${version}.tar.gz`;
 }
 
-export class ReleaseTmuxDelivery implements TmuxDelivery {
+/**
+ * What the installed binary is asked, to prove it runs on that machine.
+ *
+ * Asked before an install (an answer means there is nothing to do) and after
+ * one (no answer means what came out cannot run there).
+ */
+export function toolVersionArgument(tool: HostTool): string {
+	return tool === "tmux" ? "-V" : "--version";
+}
+
+export class ReleaseToolDelivery implements ToolDelivery {
+	readonly tool: HostTool;
 	readonly version: string;
 	readonly directory: string;
-	readonly #options: ReleaseTmuxDeliveryOptions;
-	readonly #fetching = new Map<string, Promise<TmuxTarball>>();
+	readonly #options: ReleaseToolDeliveryOptions;
+	readonly #fetching = new Map<string, Promise<ToolTarball>>();
 
-	constructor(options: ReleaseTmuxDeliveryOptions) {
+	constructor(options: ReleaseToolDeliveryOptions) {
+		this.tool = options.tool;
 		this.version = options.version;
 		this.directory = options.directory;
 		this.#options = options;
@@ -141,7 +181,7 @@ export class ReleaseTmuxDelivery implements TmuxDelivery {
 	 * platform coming up together must produce one download rather than two
 	 * that race onto the same cache file.
 	 */
-	tarball(platform: string): Promise<TmuxTarball> {
+	tarball(platform: string): Promise<ToolTarball> {
 		const existing = this.#fetching.get(platform);
 		if (existing) return existing;
 		const pending = this.#obtain(platform);
@@ -157,18 +197,29 @@ export class ReleaseTmuxDelivery implements TmuxDelivery {
 		return pending;
 	}
 
-	async #obtain(platform: string): Promise<TmuxTarball> {
+	async #obtain(platform: string): Promise<ToolTarball> {
+		if (this.version === "" || this.#options.urlTemplate === "") {
+			// A build whose `product.json` states nothing for this tool: there is
+			// no URL to fetch, and a request for `devhub--linux-x64-.tar.gz` would
+			// arrive as a 404 that says nothing about why.
+			throw new Error(
+				`this build of DevHub states no ${this.tool} release to install ` +
+					`(product.json has no ${this.tool}Version or ` +
+					`${this.tool}DownloadUrlTemplate)`,
+			);
+		}
 		const pinned = this.#options.sha256[platform];
 		const cached = join(
 			this.#options.cacheDirectory,
-			tmuxTarballName(platform, this.version),
+			toolTarballName(this.tool, platform, this.version),
 		);
 		const fromCache = await readFile(cached).catch(() => undefined);
 		if (fromCache !== undefined && matches(fromCache, pinned)) {
 			return this.#tarballOf(platform, fromCache, pinned);
 		}
-		const url = tmuxDownloadUrl(
+		const url = toolDownloadUrl(
 			this.#options.urlTemplate,
+			this.tool,
 			platform,
 			this.version,
 		);
@@ -176,9 +227,9 @@ export class ReleaseTmuxDelivery implements TmuxDelivery {
 		const bytes = await fetchBytes(url);
 		if (!matches(bytes, pinned)) {
 			throw new Error(
-				`the tmux ${this.version} tarball for ${platform} downloaded from ` +
-					`${url} is not what this build of DevHub is pinned to: it hashes ` +
-					`to ${sha256Of(bytes)} and the pin says ${String(pinned)}`,
+				`the ${this.tool} ${this.version} tarball for ${platform} downloaded ` +
+					`from ${url} is not what this build of DevHub is pinned to: it ` +
+					`hashes to ${sha256Of(bytes)} and the pin says ${String(pinned)}`,
 			);
 		}
 		// Written under a temporary name and renamed, so a download interrupted
@@ -194,13 +245,13 @@ export class ReleaseTmuxDelivery implements TmuxDelivery {
 		platform: string,
 		bytes: Uint8Array,
 		pinned: string | undefined,
-	): TmuxTarball {
+	): ToolTarball {
 		return {
 			// A plain `Uint8Array` whichever way it arrived: `readFile` gives a
 			// `Buffer` and `fetch` does not, and a caller that could be handed
 			// either is a caller that will one day be right about only one.
 			bytes: new Uint8Array(bytes),
-			topLevelDirectory: tmuxTopLevelDirectory(platform),
+			topLevelDirectory: toolTopLevelDirectory(this.tool, platform),
 			verifiedSha256: pinned,
 		};
 	}

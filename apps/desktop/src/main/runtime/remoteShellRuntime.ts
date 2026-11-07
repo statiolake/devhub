@@ -101,7 +101,18 @@ import {
 	type UserTmuxConfig,
 	type Watcher,
 } from "./runtime.js";
-import type { TmuxDelivery } from "./tmuxDelivery.js";
+import {
+	toolVersionArgument,
+	type HostTool,
+	type ToolDelivery,
+} from "./toolDelivery.js";
+import {
+	agentShellProbe,
+	claudeShellDecision,
+	needsDeliveredBash,
+	parseAgentShellProbe,
+	type DeliveredBash,
+} from "./agentShell.js";
 
 /**
  * The prefix every message composed into a remote script carries.
@@ -415,17 +426,18 @@ export abstract class RemoteShellRuntime {
 	protected abstract get machineName(): string;
 
 	/**
-	 * Where this machine's tmux comes from — an invariant, not a case.
+	 * Where this machine's tmux — or bash — comes from: an invariant, not a
+	 * case.
 	 *
 	 * The registry is the only thing that builds a runtime and it always passes
-	 * one, so a runtime without one is a construction bug and nothing the far
+	 * both, so a runtime without one is a construction bug and nothing the far
 	 * machine did. A subclass that has none throws rather than falling back to
 	 * the path it *would* have been given: a guessed install directory is a
 	 * second statement of a product fact, and the failure it produces would
 	 * arrive as "that machine has no tmux" — a sentence about the wrong machine
 	 * entirely.
 	 */
-	protected abstract delivery(): TmuxDelivery;
+	protected abstract delivery(tool: HostTool): ToolDelivery;
 
 	/**
 	 * DevHub's control socket, made answerable at `remoteSocketPath`.
@@ -461,6 +473,9 @@ export abstract class RemoteShellRuntime {
 	#remote: Promise<RemoteMachine> | undefined;
 	#launcher: Promise<TerminalLauncher> | undefined;
 	#tmux: Promise<TmuxProgram> | undefined;
+	#bash: Promise<string> | undefined;
+	/** The bash or zsh this machine was found to have; see `probeAgentShell`. */
+	#agentShell: string | undefined;
 
 	/**
 	 * `$HOME` on that machine, and the check that it is a machine DevHub speaks.
@@ -714,7 +729,7 @@ export abstract class RemoteShellRuntime {
 		// Outside the catch below: a missing delivery is not something the next
 		// window should retry, and reporting it as "tmux is unavailable on that
 		// machine" would send whoever reads it to look at the machine.
-		const delivery = this.delivery();
+		const delivery = this.delivery("tmux");
 		this.#tmux ??= this.#installTmux(delivery);
 		try {
 			return await this.#tmux;
@@ -726,21 +741,128 @@ export abstract class RemoteShellRuntime {
 		}
 	}
 
-	async #installTmux(delivery: TmuxDelivery): Promise<TmuxProgram> {
+	async #installTmux(delivery: ToolDelivery): Promise<TmuxProgram> {
+		const { directory, program } = await this.#installTool(delivery);
+		return {
+			kind: "resolved",
+			path: program,
+			environment: { TERMINFO: posix.join(directory, "terminfo") },
+		};
+	}
+
+	/**
+	 * The environment a Claude Agent on this machine adds to its own, for the
+	 * shell Claude Code insists on (`agentShell.ts`).
+	 *
+	 * Empty when the machine has a bash or a zsh. When it has neither, DevHub's
+	 * own bash — delivered like tmux, under `~/.devhub-server/bash/<version>` —
+	 * as `CLAUDE_CODE_SHELL` and `SHELL`, for that Agent's process only. When
+	 * that bash cannot be had either, a throw whose sentence names the machine,
+	 * the reason and what to install, so the Agent's start fails with that
+	 * rather than with Claude Code's own "No suitable shell found".
+	 */
+	async claudeShell(): Promise<Readonly<Record<string, string>>> {
+		const found = await this.probeAgentShell();
+		let delivered: DeliveredBash | undefined;
+		if (needsDeliveredBash(found)) delivered = await this.#deliveredBash();
+		const decision = claudeShellDecision(this.machineName, found, delivered);
+		switch (decision.kind) {
+			case "host":
+				return {};
+			case "delivered":
+				return decision.environment;
+			case "refused":
+				throw new Error(decision.message);
+		}
+	}
+
+	/**
+	 * The bash or zsh Claude Code would find on this machine by itself, or
+	 * `undefined` for none.
+	 *
+	 * Asked under the login environment, because `$SHELL` and `PATH` are what
+	 * the CLI reads and the login environment is what it runs in. A shell that
+	 * was found is remembered for the life of this runtime: it is one round
+	 * trip, and a machine does not lose its bash. "None" is not remembered, so
+	 * a person who installs one (`opkg install bash`) has it used at the next
+	 * Agent's start rather than at the next DevHub's.
+	 *
+	 * Protected so that a test can stand in a machine with neither: the one
+	 * this suite runs on always has one.
+	 */
+	protected async probeAgentShell(): Promise<string | undefined> {
+		if (this.#agentShell !== undefined) return this.#agentShell;
+		const { login } = await this.describeRemote();
+		const result = await this.run({
+			argv: ["/bin/sh", "-c", agentShellProbe()],
+			env: login,
+			deadline: OperationDeadline.in(PROBE_TIMEOUT_MS),
+			cancel: new CancellationToken(),
+			limits: PROBE_LIMITS,
+		});
+		// The probe always exits 0, so anything else is the connection's
+		// failure — and taking it for "no shell" would install a bash on a
+		// machine that has one.
+		if (result.code !== 0) {
+			throw new Error(
+				`DevHub could not ask ${this.machineName} which shells it has: ` +
+					lastLine(result.stderr.toString("utf8")),
+			);
+		}
+		const found = parseAgentShellProbe(result.stdout.toString("utf8"));
+		this.#agentShell = found;
+		return found;
+	}
+
+	/** DevHub's bash on this machine, installed once; tried again after a failure. */
+	async #deliveredBash(): Promise<DeliveredBash> {
+		// Outside the catch: a runtime built without a bash delivery is DevHub's
+		// bug, and a sentence telling someone to install bash would be wrong.
+		const delivery = this.delivery("bash");
+		this.#bash ??= this.#installTool(delivery).then(({ program }) => program);
+		try {
+			return { kind: "installed", path: await this.#bash };
+		} catch (failure: unknown) {
+			this.#bash = undefined;
+			return { kind: "failed", reason: describeFailure(failure) };
+		}
+	}
+
+	/**
+	 * One of DevHub's tools on this machine — `<home>/<directory>/<version>`,
+	 * with the binary at `bin/<tool>` — put there now if it is not already.
+	 *
+	 * Four steps, and every one of them names the machine when it fails: ask
+	 * the version already there, fetch the tarball *here*, unpack it *there*
+	 * from a stream on stdin, and ask the version again. The last step is the
+	 * one that makes the first meaningful — an unpack that wrote something that
+	 * will not run is caught on the way in rather than at first use.
+	 *
+	 * Idempotent by the same question it starts with: a version directory whose
+	 * binary answers is an install that has happened, whether this DevHub did
+	 * it, an older one did, or somebody unpacked the tarball by hand.
+	 */
+	async #installTool(
+		delivery: ToolDelivery,
+	): Promise<{ readonly directory: string; readonly program: string }> {
+		const { tool, version } = delivery;
 		const { home, platform, architecture } = await this.describeRemote();
 		const target = `${platformName(platform)}-${architecture}`;
-		const directory = posix.join(home, delivery.directory, delivery.version);
-		const program = posix.join(directory, "bin", "tmux");
-		const environment = { TERMINFO: posix.join(directory, "terminfo") };
-		if (await this.#tmuxAnswers(program)) {
-			return { kind: "resolved", path: program, environment };
-		}
+		const directory = posix.join(home, delivery.directory, version);
+		const program = posix.join(directory, "bin", tool);
+		const answers = async () =>
+			(
+				await this.sh(
+					`exec ${shellQuote(program)} ${toolVersionArgument(tool)} >/dev/null`,
+				)
+			).code === 0;
+		if (await answers()) return { directory, program };
 		let tarball;
 		try {
 			tarball = await delivery.tarball(target);
 		} catch (failure: unknown) {
 			throw new Error(
-				`DevHub could not get the tmux ${delivery.version} it installs on ` +
+				`DevHub could not get the ${tool} ${version} it installs on ` +
 					`${this.machineName} (${target}): ${describeFailure(failure)}`,
 				{ cause: failure },
 			);
@@ -766,24 +888,18 @@ export abstract class RemoteShellRuntime {
 		);
 		if (unpack.code !== 0) {
 			throw new Error(
-				`DevHub could not unpack tmux ${delivery.version} into ${directory} ` +
+				`DevHub could not unpack ${tool} ${version} into ${directory} ` +
 					`on ${this.machineName}: ${lastLine(unpack.stderr.toString("utf8"))}`,
 			);
 		}
-		if (!(await this.#tmuxAnswers(program))) {
+		if (!(await answers())) {
 			throw new Error(
-				`DevHub unpacked tmux ${delivery.version} into ${directory} on ` +
-					`${this.machineName}, but ${program} -V did not answer — the binary ` +
-					`that came out cannot run on that machine`,
+				`DevHub unpacked ${tool} ${version} into ${directory} on ` +
+					`${this.machineName}, but ${program} ${toolVersionArgument(tool)} ` +
+					`did not answer — the binary that came out cannot run on that machine`,
 			);
 		}
-		return { kind: "resolved", path: program, environment };
-	}
-
-	/** Whether there is a tmux at this path that this machine can run. */
-	async #tmuxAnswers(program: string): Promise<boolean> {
-		const result = await this.sh(`exec ${shellQuote(program)} -V`);
-		return result.code === 0;
+		return { directory, program };
 	}
 
 	/**
@@ -893,7 +1009,7 @@ export abstract class RemoteShellRuntime {
 	 */
 	async userTmuxConfig(localPath: string): Promise<UserTmuxConfig> {
 		const { home } = await this.describeRemote();
-		const directory = posix.join(home, this.delivery().directory);
+		const directory = posix.join(home, this.delivery("tmux").directory);
 		const remotePath = posix.join(directory, "tmux.conf");
 		const text = await readFile(localPath, "utf8").catch(() => undefined);
 		if (text === undefined) {

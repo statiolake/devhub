@@ -86,7 +86,7 @@ import type {
 	RuntimeId,
 	RuntimeReading,
 } from "./runtime.js";
-import type { TmuxDelivery } from "./tmuxDelivery.js";
+import type { HostTool, ToolDelivery } from "./toolDelivery.js";
 
 export {
 	errnoFromMessage,
@@ -264,7 +264,13 @@ export interface SshRuntimeOptions {
 	 * stays importable by things that have no app around them — the PTY test
 	 * program among them — for the same reason the control directory is.
 	 */
-	readonly tmux?: TmuxDelivery;
+	readonly tmux?: ToolDelivery;
+	/**
+	 * Where the bash DevHub installs on this host comes from, should it have
+	 * neither bash nor zsh for Claude Code (`agentShell.ts`). Injected for the
+	 * same reason as `tmux`.
+	 */
+	readonly bash?: ToolDelivery;
 	/** For tests: how a local port for a `-L` forward is picked. */
 	readonly freePort?: () => Promise<number>;
 }
@@ -486,7 +492,7 @@ export class SshRuntime
 	readonly #sshPath: string;
 	readonly #ptyFactory: PtyFactory;
 	readonly #localEnvironment: Readonly<Record<string, string | undefined>>;
-	readonly #tmuxDelivery: TmuxDelivery | undefined;
+	readonly #deliveries: Partial<Record<HostTool, ToolDelivery>>;
 	readonly #freePort: () => Promise<number>;
 
 	readonly #latencies: number[] = [];
@@ -517,7 +523,7 @@ export class SshRuntime
 		this.#sshPath = options.sshPath ?? "ssh";
 		this.#ptyFactory = options.ptyFactory ?? openPty;
 		this.#localEnvironment = options.localEnvironment ?? process.env;
-		this.#tmuxDelivery = options.tmux;
+		this.#deliveries = { tmux: options.tmux, bash: options.bash };
 		this.#freePort = options.freePort ?? freeLocalPort;
 		if (!fitsControlPath(this.#controlDirectory)) {
 			throw new Error(
@@ -548,20 +554,20 @@ export class SshRuntime
 	}
 
 	/**
-	 * Where this host's tmux comes from — an invariant, not a case.
+	 * Where this host's tmux or bash comes from — an invariant, not a case.
 	 *
 	 * `runtimeFor` is the only thing that builds an `SshRuntime` and it always
-	 * passes one, so a runtime without one is a construction bug and nothing a
+	 * passes both, so a runtime without one is a construction bug and nothing a
 	 * host did. It throws rather than falling back to the path it *would* have
 	 * been given: a guessed `~/.devhub-server/tmux` is a second statement of a
 	 * product fact, and the failure it produces would arrive as "that host has
 	 * no tmux" — a sentence about the wrong machine entirely.
 	 */
-	protected override delivery(): TmuxDelivery {
-		const delivery = this.#tmuxDelivery;
+	protected override delivery(tool: HostTool): ToolDelivery {
+		const delivery = this.#deliveries[tool];
 		if (delivery === undefined) {
 			throw new Error(
-				`the runtime for ${this.#host} was built without a tmux delivery, ` +
+				`the runtime for ${this.#host} was built without a ${tool} delivery, ` +
 					`which is a bug in DevHub and not a fact about that host`,
 			);
 		}

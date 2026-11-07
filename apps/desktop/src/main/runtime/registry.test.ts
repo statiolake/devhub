@@ -27,7 +27,7 @@ import {
 } from "./registry.js";
 import type { RehDelivery } from "./remoteServer.js";
 import type { DevContainerCli, DockerCli } from "./container.js";
-import { tmuxInstallDirectory, type TmuxDelivery } from "./tmuxDelivery.js";
+import { toolInstallDirectory, type ToolDelivery } from "./toolDelivery.js";
 
 /**
  * A tmux nobody asks for.
@@ -44,10 +44,17 @@ const TARGET: ContainerTarget = {
 	),
 };
 
-const NO_TMUX: TmuxDelivery = {
+const NO_TMUX: ToolDelivery = {
+	tool: "tmux",
 	version: "0",
-	directory: tmuxInstallDirectory(".devhub-server"),
+	directory: toolInstallDirectory(".devhub-server", "tmux"),
 	tarball: () => Promise.reject(new Error("no tarball in this test")),
+};
+
+const NO_BASH: ToolDelivery = {
+	...NO_TMUX,
+	tool: "bash",
+	directory: toolInstallDirectory(".devhub-server", "bash"),
 };
 
 /** A remote extension host nobody asks for, for the same reason. */
@@ -86,6 +93,7 @@ beforeAll(async () => {
 		userDataDirectory,
 		home: homedir(),
 		tmux: NO_TMUX,
+		bash: NO_BASH,
 		reh: NO_REH,
 		docker: NO_DOCKER,
 		devcontainer: NO_DEVCONTAINER,
@@ -139,6 +147,7 @@ describe("runtimeFor", () => {
 			userDataDirectory,
 			home: homedir(),
 			tmux: NO_TMUX,
+			bash: NO_BASH,
 			reh: NO_REH,
 			docker: NO_DOCKER,
 			devcontainer: NO_DEVCONTAINER,
@@ -151,6 +160,7 @@ describe("runtimeFor", () => {
 				userDataDirectory,
 				home: homedir(),
 				tmux: NO_TMUX,
+				bash: NO_BASH,
 				reh: NO_REH,
 				docker: NO_DOCKER,
 				devcontainer: NO_DEVCONTAINER,

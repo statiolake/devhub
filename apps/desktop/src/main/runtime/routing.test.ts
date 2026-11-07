@@ -100,6 +100,10 @@ class RecordingRuntime implements Runtime {
 		return Promise.resolve(NO_USER_TMUX_CONFIG);
 	}
 
+	claudeShell(): Promise<Readonly<Record<string, string>>> {
+		return Promise.resolve({});
+	}
+
 	tmuxProgram(): Promise<TmuxProgram> {
 		return Promise.resolve({
 			kind: "resolved" as const,

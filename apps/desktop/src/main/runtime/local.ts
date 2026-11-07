@@ -204,6 +204,14 @@ export class LocalRuntime implements Runtime {
 	}
 
 	/**
+	 * Nothing: this Mac has zsh, and Claude Code finds it by itself. A person's
+	 * own `SHELL` is theirs, and DevHub has no shell of its own here to offer.
+	 */
+	claudeShell(): Promise<Readonly<Record<string, string>>> {
+		return Promise.resolve({});
+	}
+
+	/**
 	 * The config file itself, because this is the machine it is on.
 	 *
 	 * The whole of the local arm: DevHub's config directory is here, so the path

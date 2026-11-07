@@ -40,7 +40,7 @@ import { LocalRuntime } from "./local.js";
 import type { Runtime, RuntimeId } from "./runtime.js";
 import type { RehDelivery, RemoteServerHost } from "./remoteServer.js";
 import { chooseControlDirectory, SshRuntime } from "./ssh.js";
-import type { TmuxDelivery } from "./tmuxDelivery.js";
+import type { ToolDelivery } from "./toolDelivery.js";
 
 /**
  * This machine. One instance, because there is one of it.
@@ -107,7 +107,13 @@ export interface RuntimeProfile {
 	 * of one product fact — the release the app was built against — rather than
 	 * a thing each host could be given a different answer to.
 	 */
-	readonly tmux: TmuxDelivery;
+	readonly tmux: ToolDelivery;
+	/**
+	 * Where the bash DevHub installs on a host with neither bash nor zsh comes
+	 * from — for Claude Code, which will not start without one of the two
+	 * (`agentShell.ts`). Beside `tmux` and for the same reasons.
+	 */
+	readonly bash: ToolDelivery;
 	/**
 	 * Where the remote extension host DevHub installs on a machine comes from.
 	 *
@@ -192,6 +198,7 @@ export function runtimeFor(location: WorkspaceLocation): Runtime {
 					profile.home,
 				),
 				tmux: profile.tmux,
+				bash: profile.bash,
 			});
 			SSH.set(location.host, runtime);
 			return runtime;

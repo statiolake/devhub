@@ -406,7 +406,10 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 			run = new McpSignInRun({
 				machine: runtime,
 				program: agent.profile.command,
-				env: Object.fromEntries(agent.profile.env),
+				env: {
+					...(await agentShellEnvironment(agent.profile.kind, () => runtime)),
+					...Object.fromEntries(agent.profile.env),
+				},
 				cwd: workspace.root,
 				server,
 				show: (signIn) => {
@@ -601,7 +604,13 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 					withDevhubSkill(profile, await options.devhubSkill?.(machine)),
 					options.orchestratorSkill?.(machine, agentId),
 				);
-				const cli = terminalCommand(profile, skilled.args);
+				// Claude Code's shell, decided on the Agent's machine before
+				// anything is made for it: a host with no bash or zsh refuses here,
+				// in DevHub's words, rather than in the CLI's inside the session.
+				const shell = await agentShellEnvironment(profile.kind, () =>
+					options.machineRuntime(machine),
+				);
+				const cli = underShell(terminalCommand(profile, skilled.args), shell);
 				// The one place the two presentations differ at launch: a GUI
 				// Agent's session runs its CLI under the host, in structured mode.
 				// Everything else about the session — its markers, its tmux, its
@@ -622,7 +631,10 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 							await claudeHistory(runtime, profile, workspaceRoot, resumed),
 						);
 					}
-					command = hostSessionCommand(directory, guiAgentCli(skilled));
+					command = hostSessionCommand(
+						directory,
+						underShell(guiAgentCli(skilled), shell),
+					);
 				}
 				await sessions.launch({
 					machine,
@@ -940,12 +952,15 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 			),
 			options.orchestratorSkill?.(machine, agentId),
 		);
+		const shell = await agentShellEnvironment(profile.kind, () =>
+			options.machineRuntime(machine),
+		);
 		await sessions.respawn({
 			machine,
 			agentId,
 			workspaceId: workspace.id,
 			root: workspace.root,
-			command: terminalCommand(profile, skilled.args),
+			command: underShell(terminalCommand(profile, skilled.args), shell),
 		});
 	};
 
@@ -967,6 +982,30 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 		restartTerminal,
 		pasteToTerminal,
 	};
+}
+
+/**
+ * What an Agent's process adds to its environment for its shell: Claude
+ * Code's bash or zsh where the machine has neither (`Runtime.claudeShell`),
+ * and nothing for any other kind of Agent, which asks for no particular shell.
+ */
+export function agentShellEnvironment(
+	kind: AgentProfile["kind"],
+	/** Asked for only for a Claude Agent. */
+	runtime: () => Pick<Runtime, "claudeShell">,
+): Promise<Readonly<Record<string, string>>> {
+	return kind === "claude" ? runtime().claudeShell() : Promise.resolve({});
+}
+
+/**
+ * `cli` with `shell`'s variables under its own: a profile that states
+ * `SHELL` or `CLAUDE_CODE_SHELL` itself has said which it wants, and keeps it.
+ */
+export function underShell(
+	cli: AgentSessionCommand,
+	shell: Readonly<Record<string, string>>,
+): AgentSessionCommand {
+	return { ...cli, env: { ...shell, ...cli.env } };
 }
 
 /**
