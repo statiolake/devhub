@@ -21,22 +21,13 @@ SSH Workspaces' editors are their VS Code workbench on the host, and a dev
 container Workspace's is its workbench in the container, as before. Remote
 workbenches are excluded from freezing and discarding for now.
 
-## Retained, not in use: the terminal view
+## The other editor: Neovim
 
-The editor area used to be able to show the Workspace's own `ws-` tmux session
-instead, drawn by DevHub's terminal surface, with file opens going to a managed
-Neovim in that session. That code is **retained in the tree, not in use**:
-nothing shows the view or routes a file to it any more.
-
-- `main/shell/shellWindow.ts` (`syncEditorTerminalViews`, the `editorTerminal`
-  child kind of `windowLayout.ts`, `SurfaceArrangement.view`) — no caller asks
-  for a terminal view.
-- `main/shell/editorTerminalExits.ts` — unreferenced.
-- `main/editor/managedNeovim.ts` (below) — built, given the theme, and closed
-  with its Workspace, but never asked to open a file.
-
-What `devhub <file>`, a conversation file link and Send to Agent's reference
-open in is always the Workspace's workbench (below, "File-open routing").
+With `[general] editor = "neovim"` the editor area is DevHub's own GUI for a
+headless Neovim instead of a workbench — see
+[`neovim-editor.md`](neovim-editor.md). The terminal view this area could once
+show (the Workspace's `ws-` session in a terminal surface, with a TUI Neovim
+in it) is gone; its slot in the layout is the Neovim page's.
 
 ## The Option key
 
@@ -86,30 +77,28 @@ keybindings by key code, so they work with Option on a Mac regardless.
 mac_option_is_meta = "left"   # left Option is Meta (ESC-prefixed); right Option composes
 ```
 
-## The managed Neovim server (retained, not in use)
+## The managed Neovim server
 
-A file jump needs an editor that DevHub can address. DevHub keeps **one
-Neovim per Workspace of its own** — separate from any Neovim the person starts
-in the same session (duplicates are fine and expected).
+The Neovim editor's server ([`neovim-editor.md`](neovim-editor.md)): DevHub
+keeps **one Neovim per Workspace of its own** — separate from any Neovim the
+person starts in a terminal (duplicates are fine and expected).
 
 ### Where it runs
 
-The first jump into a Workspace opens a **new tmux window** in that Workspace's
-`ws-` session (`new-window -P -F '#{pane_id}' -c <root> -- <nvim> --listen
-<socket>`), not a split of the active window. A split would shrink whatever
-the person has open — usually a shell they were typing in — to half its width,
-and take the editor down to half the area it is for; a window is the full
-editor area, appears in the person's window list like any other, and leaves
-their layout alone. Later jumps `select-window` + `select-pane` on its pane, so
-it is in front however the person has moved around since.
+The first attach or file open for a Workspace opens a **new, unselected tmux
+window** in that Workspace's `ws-` session (`new-window -d -n devhub-nvim -P
+-F '#{pane_id}' -c <root> -- env DEVHUB_NEOVIM_GUI=1 <nvim> --headless
+--listen <socket>`), on the Workspace's machine. Nothing in it is ever shown:
+DevHub attaches to the socket as Neovim's only UI. tmux keeps it alive across
+DevHub restarts and SSH reconnects.
 
 Then DevHub selects the Workspace (beside the asking Agent, for a conversation
 link, exactly as the VS Code routing does), puts the keyboard in the editor
-area — its terminal view — and opens the file over RPC.
+area — its Neovim page — and opens the file over RPC.
 
 ### The socket
 
-`<userData>/devhub/nvim/<digest>.sock`, where the digest is the first twelve
+On this Mac, `<userData>/devhub/nvim/<digest>.sock`, where the digest is the first twelve
 hex digits of the SHA-256 of the Workspace id: one per Workspace, stable across
 DevHub restarts, and DevHub's alone (the directory is `0700`). A path that
 would exceed the platform's `sun_path` (104 bytes on macOS) falls back to
@@ -151,7 +140,7 @@ client, waitMarkers }` per Workspace. Every jump re-establishes the truth
 before using it:
 
 1. **Alive** — the record's connection is open _and_ the pane is still one of
-   that Workspace's marked panes on DevHub's tmux server: activate the pane,
+   that Workspace's marked panes on DevHub's tmux server: use it,
    open the file.
 2. **Not known, but a server answers on the socket** — DevHub restarted while
    Neovim kept running in tmux (sessions outlive DevHub, so this is the normal
@@ -186,7 +175,8 @@ the jump is refused — not a pane that flashes and closes.
 ## File-open routing
 
 The rule that picks _which Workspace_ is unchanged (`routeOpen`,
-`routeAgentOpen`); the file is always handed to that Workspace's workbench
+`routeAgentOpen`); with `general.editor = "neovim"` the file goes to that
+Workspace's Neovim (`AppController.openInEditor`), and otherwise to its workbench
 (`AppController.openRouted`), through the lifecycle (`holdWorkbench`): a frozen
 workbench is thawed and a discarded or not yet started one started before the
 file reaches it — a file is the one ask besides Enter that starts a workbench;
@@ -220,8 +210,3 @@ The programs inside the terminal are told the theme too — `DEVHUB_THEME`,
 `DEVHUB_FZF_COLORS` and the rest in every new pane's environment, a
 `theme.json` that is rewritten on every change, and `User DevhubTheme` in the
 managed Neovim — see `docs/window-and-pages.md`, "Terminal programs".
-
-## Open questions
-
-- **The terminal view.** Retained, not in use (above). Delete it, or bring it
-  back as something other than the editor area?

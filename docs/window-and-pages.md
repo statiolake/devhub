@@ -105,7 +105,7 @@ says so, because the next page is the one that will not know.
 
 ## The pages, and what each of them may say
 
-Nine entries, nine preloads, nine bridges. There is no `?window=` role and
+Ten entries, ten preloads, ten bridges. There is no `?window=` role and
 no runtime question about which page this is: **which page this is, is which
 file main loaded.** (An Agent terminal's page is loaded once per terminal;
 the fragment, `pane.html#<id>`, names which terminal — an instance, not a
@@ -117,6 +117,7 @@ role.)
 | the Sidebar           | `sidebar.html`      | the leading column: workspaces and their agents, the rail, the row menu, the drag-reorder, the resize handle    | the projection, the appearance, the agent profiles, the repository status, its own rectangle, `menuCommand`, `openModal`, `closeWorkspace`, `openExternalUrl`, `previewLayout`, `focusSurface`, `showContextMenu`, `showTooltip`, `hideTooltip`, `releaseTooltip`                              |
 | the Agents            | `agents.html`       | every running Agent's pane, all mounted, the selected one not hidden: a terminal, or a GUI Agent's conversation | the projection, the appearance, the repository status, the agent actions, the terminal transport, the conversation transport (`conversation`), `openModal`, `openExternalUrl`, `writeClipboard`                                                                                                |
 | an Agent's terminal   | `pane.html`         | an Agent's own terminal, on the right: a terminal surface and nothing else, no header                           | the projection, the appearance, the terminal transport, `openExternalUrl`, `writeClipboard`                                                                                                                                                                                                    |
+| the Neovim editor     | `neovim.html`       | a Workspace's Neovim, drawn from its UI protocol, in the editor area (`general.editor = "neovim"`)              | the projection, the appearance, the terminal transport, `neovim` (attach, calls, GUI windows) — [neovim-editor.md](neovim-editor.md)                                                                                                                                                           |
 | the notices           | `toasts.html`       | what the application has to say, over whatever is on screen, and the notice center                              | `nativeError`, `appCondition`, `actionStarted`, `menuCommand`, `noticeSettings`, `reportListening`, `reportNoticeRetired`, `reportToastsSize`, `retryApp`, `openSettings`, `focusSurface`                                                                                                      |
 | the tooltip           | `tooltip.html`      | one box with a row's facts in it, over whatever is on screen; its GitHub pages are links                        | `tooltipText` in; `tooltipSize`, `tooltipPointer`, `openExternalUrl` (GitHub pages only) and `writeClipboard` (a row's paths) out. **Nothing else** — in particular not the anchor or the side, which are the owner's.                                                                         |
 | the questions         | `picker.html`       | every sheet DevHub stops on, over every workbench                                                               | `modalsChanged` **(only here)**, the projection, the appearance (for the monospace family alone), the agent profiles and actions, a folder's earlier Agent sessions and their previews, every way of opening a Workspace, the two ends of a reviewed message, the worktree close, `closeModal` |
@@ -369,7 +370,7 @@ There are three kinds of thing main says, not two. A _projection_ describes the
 model and goes to every page that draws from it. A _failure_ is an event and
 goes to the one page that draws failures. A _palette_ is neither: it is how
 everything in the window is painted, and it goes to every page DevHub draws
-chrome on — which is all nine (every terminal pane among them, and the
+chrome on — which is all ten (every terminal pane among them, and the
 Settings and Task Manager windows, which are told by their own windows'
 `apply…Palette`).
 
@@ -1082,8 +1083,8 @@ selection passes over it — so Back skips what `Cmd+Q N`/`P` only flicked past:
 | Back and Forward themselves (the arrows, keys, side buttons, swipes)                                                                                                                                                                                                                                                                                                                  | no                    |
 
 "In it" means its views: a workbench (and what it hosts), the Agents' page (a
-GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`, the
-Workspace's terminal view included) — `isDestinationSurface` in
+GUI conversation or a TUI's xterm) and a terminal pane (`pane.html`) and the Neovim
+editor (`neovim.html`) — `isDestinationSurface` in
 `historyKeys.ts`. The Sidebar is choosing where to go, not being somewhere, and
 the window's own page holds the title bar's arrows, so neither counts; nor do
 the modals, the notices, the tooltip, Settings or a Web Inspector. Main sees

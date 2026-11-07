@@ -1551,6 +1551,8 @@ export function editorWindowArgs(
 		"new-window",
 		// Never selected: the Neovim editor's keeper window is nobody's to see.
 		"-d",
+		"-n",
+		"devhub-nvim",
 		"-P",
 		"-F",
 		"#{pane_id}",

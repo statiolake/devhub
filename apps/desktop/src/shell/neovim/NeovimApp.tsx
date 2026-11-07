@@ -36,6 +36,7 @@ import {
   useRaiseFailure,
 } from "../model/pageModel";
 import { NeovimEditor } from "./editor";
+import { popupmenuPlace } from "./place";
 import { charOffsetOfByte, type Chunks, type NeovimUiState } from "./redraw";
 import { cssColor, resolveColors } from "./painter";
 import { TerminalSurface } from "../terminal/TerminalSurface";
@@ -570,10 +571,13 @@ function Popupmenu({
   const box = editor.gridBoxes().find((b) => b.grid === menu.grid);
   const style: React.CSSProperties = command
     ? { left: "50%", top: 56, transform: "translateX(-50%)" }
-    : {
-        left: ((box?.col ?? 0) + menu.col) * cell.width - 6,
-        top: ((box?.row ?? 0) + menu.row + 1) * cell.height + 2,
-      };
+    : popupmenuPlace(
+        editor.areaSize(),
+        ((box?.row ?? 0) + menu.row) * cell.height,
+        ((box?.col ?? 0) + menu.col) * cell.width - 6,
+        cell.height,
+        menu.items.length,
+      );
   return (
     <div
       className="nvim-pum"

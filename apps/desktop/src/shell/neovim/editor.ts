@@ -135,6 +135,12 @@ export class NeovimEditor {
     return this.painter.cell();
   }
 
+  /** The editor's own size, in the page's pixels. */
+  areaSize(): { width: number; height: number } {
+    const rect = this.host.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  }
+
   gridBoxes(): readonly GridBox[] {
     return this.boxes;
   }
