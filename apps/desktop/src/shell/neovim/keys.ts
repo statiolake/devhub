@@ -161,6 +161,11 @@ export function keyToNeovim(
       (event.metaKey ? "D-" : "");
     return wrap(mods, /[a-z]/i.test(lower) ? lower : key);
   }
+  // Chrome on a Mac reports Cmd+Shift+Z as "z": the Shift is put back, so
+  // `<D-Z>` (redo) is not `<D-z>` (undo).
+  if (event.metaKey && event.shiftKey && /^[a-z]$/.test(key)) {
+    key = key.toUpperCase();
+  }
   const mods = (meta ? "M-" : "") + (event.metaKey ? "D-" : "");
   return wrap(mods, key);
 }

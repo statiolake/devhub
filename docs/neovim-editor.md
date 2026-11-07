@@ -69,7 +69,14 @@ runs a Lua snippet (`SETUP_LUA`) that:
 - points `g:clipboard` at DevHub: `+` and `*` are this Mac's clipboard over
   `rpcrequest`/`rpcnotify` on the UI's channel, so a yank on an SSH host lands
   on the Mac;
-- maps `<D-v>`, `<D-c>`, `<D-s>` unless the person mapped them;
+- maps the Mac's editing keys unless the person mapped them: `<D-c>` yanks
+  the selection (the line in Normal mode) to `+`, `<D-x>` cuts it, `<D-a>`
+  selects all, `<D-z>`/`<D-Z>` undo and redo, `<D-s>` writes, `<D-v>` puts
+  `+`. DevHub's key router answers Cmd+A/C/X/Z with editing commands on its
+  own pages, but not on this one (`editingCommands.ts`): there they reach
+  the page as `<D-…>` keys. Cmd+V stays the Edit menu's Paste, which the
+  page hands to `nvim_paste` (one undoable change, in any mode). The chords
+  still come first;
 - defines the `devhub_gui` Lua module and `:DevhubTerminal`, `:DevhubGuiDemo`.
 
 **Attaching again** (a reloaded page, a restarted DevHub) needs care: Neovim
@@ -203,8 +210,6 @@ against a real host in CI.
 - `ext_messages` off; messages are Neovim's own, in its message grid.
 - `ext_hlstate` off; no semantic styling of diagnostics yet.
 - A GUI window shown in two windows draws its content in the first only.
-- Cmd+C/Cmd+X in visual mode depend on the `<D-c>` mapping; with the app
-  menu taking Cmd+C first, `"+y` is the reliable way.
 - The keeper window shows in the `ws-` session's window list
   (`1:devhub-nvim`) of a terminal attached to it.
 

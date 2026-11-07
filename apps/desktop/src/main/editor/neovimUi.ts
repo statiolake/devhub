@@ -129,10 +129,23 @@ local function map_unless_mapped(modes, lhs, rhs)
     end
   end
 end
+-- The Mac's editing keys, as a Mac editor answers them (DevHub's menu
+-- leaves them to this page, editingCommands.ts). Cmd+V is the menu's Paste,
+-- which DevHub hands to nvim_paste; these are for a mapping-less call.
 map_unless_mapped({ "i", "c" }, "<D-v>", "<C-r><C-o>+")
 map_unless_mapped("n", "<D-v>", '"+p')
+map_unless_mapped("t", "<D-v>", [[<C-\><C-n>"+pi]])
 map_unless_mapped("v", "<D-c>", '"+y')
-map_unless_mapped("n", "<D-s>", "<Cmd>write<CR>")
+map_unless_mapped("v", "<D-x>", '"+d')
+map_unless_mapped("n", "<D-c>", '"+yy')
+map_unless_mapped({ "n", "v" }, "<D-a>", "<Esc>ggVG")
+map_unless_mapped("i", "<D-a>", "<Esc>ggVG")
+map_unless_mapped("n", "<D-z>", "u")
+map_unless_mapped("i", "<D-z>", "<C-o>u")
+map_unless_mapped("n", "<D-Z>", "<C-r>")
+map_unless_mapped("i", "<D-Z>", "<C-o><C-r>")
+map_unless_mapped({ "n", "v" }, "<D-s>", "<Cmd>write<CR>")
+map_unless_mapped("i", "<D-s>", "<Esc><Cmd>write<CR>")
 
 local M = package.loaded["devhub_gui"] or {}
 package.loaded["devhub_gui"] = M

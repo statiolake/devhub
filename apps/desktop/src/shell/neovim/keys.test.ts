@@ -57,6 +57,12 @@ describe("a key as Neovim's key notation", () => {
       undefined,
     ],
     ["Cmd+s", key("s", "KeyS", { metaKey: true }), false, "<D-s>"],
+    [
+      "Cmd+Shift+z, reported lowercase",
+      key("z", "KeyZ", { metaKey: true, shiftKey: true }),
+      false,
+      "<D-Z>",
+    ],
     ["Cmd+\\", key("\\", "Backslash", { metaKey: true }), false, "<D-Bslash>"],
     [
       "Cmd+|",

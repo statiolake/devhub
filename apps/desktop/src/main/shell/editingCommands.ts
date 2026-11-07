@@ -124,10 +124,23 @@ export function editingCommandFor(
 	// Case-folded, and with Shift compared separately: Cmd+Z and Cmd+Shift+Z are
 	// two commands, so this is the one place that wants the raw flag rather than
 	// the character it would otherwise be folded into.
-	return EDITING_COMMAND_GROUPS.flat().find(
-		(command) =>
-			command.key !== undefined &&
-			command.key.toLowerCase() === stroke.key?.toLowerCase() &&
-			(command.shift ?? false) === stroke.shift,
+	const command = EDITING_COMMAND_GROUPS.flat().find(
+		(one) =>
+			one.key !== undefined &&
+			one.key.toLowerCase() === stroke.key?.toLowerCase() &&
+			(one.shift ?? false) === stroke.shift,
 	);
+	// The Neovim editor is one of DevHub's pages, and a whole editor with
+	// its own keys: Cmd+C, Cmd+X, Cmd+A and Cmd+Z reach it as `<D-c>` and
+	// friends, which Neovim maps (`neovimUi.ts`) — yank the selection, select
+	// all, undo. Paste stays a command: the page hands the pasted text to
+	// `nvim_paste`, which pastes it as one undoable change in any mode.
+	if (command && isNeovimEditor(surfaceUrl) && command.role !== "paste") {
+		return undefined;
+	}
+	return command;
+}
+
+function isNeovimEditor(surfaceUrl: string): boolean {
+	return surfaceUrl.startsWith(`${SHELL_ORIGIN}/neovim.html`);
 }
