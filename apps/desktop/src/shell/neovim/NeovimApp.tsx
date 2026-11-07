@@ -468,6 +468,19 @@ function NeovimSurface({
                         event.stopPropagation();
                         send("nvim_input", ["<C-w>"]);
                         editor?.focus();
+                        return;
+                      }
+                      // Cmd+C copies the terminal's selection: DevHub's menu
+                      // leaves the editing keys to this page, and the
+                      // emulator answers the copy command, not the key.
+                      if (
+                        content.terminal === true &&
+                        event.metaKey &&
+                        !event.shiftKey &&
+                        (event.key === "c" || event.key === "C")
+                      ) {
+                        event.preventDefault();
+                        document.execCommand("copy");
                       }
                     }}
                   >
@@ -599,6 +612,18 @@ function guiDocument(html: string, state: NeovimUiState): string {
     if (event.ctrlKey && (event.key === "w" || event.key === "W")) {
       event.preventDefault();
       parent.postMessage({ devhubKey: "<C-w>" }, "*");
+      return;
+    }
+    // The Mac's editing keys reach this page as keys (DevHub's menu leaves
+    // them to the Neovim editor): answered here, on this page's selection.
+    if (event.metaKey && !event.ctrlKey && !event.altKey) {
+      const k = event.key.toLowerCase();
+      const command = k === "c" ? "copy" : k === "x" ? "cut" : k === "a" ? "selectAll"
+        : k === "z" ? (event.shiftKey ? "redo" : "undo") : undefined;
+      if (command) {
+        event.preventDefault();
+        document.execCommand(command);
+      }
     }
   }, true);
   addEventListener("pointerdown", () => parent.postMessage({ devhubFocus: true }, "*"), true);
