@@ -38,6 +38,9 @@ export function parseGuifont(
   const family = (faces ?? "")
     .split(",")
     .map((face) => face.trim().replaceAll("_", " "))
+    // A weight in the name (Neovide's "Hiragino Sans W3") is no CSS family:
+    // the family is what a fallback can find.
+    .map((face) => face.replace(/^(Hiragino .+?) W\d$/, "$1"))
     .filter((face) => face.length > 0)
     .map((face) => (/^[\w-]+$/.test(face) ? face : `"${face}"`))
     .join(", ");
