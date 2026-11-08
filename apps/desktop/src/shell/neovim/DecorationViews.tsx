@@ -121,7 +121,7 @@ function ToastView({
       }}
     >
       <span className="nvim-toast-msg">{toast.msg || toast.title}</span>
-      {toast.msg !== "" && toast.title !== "" ? (
+      {toast.msg !== "" && toast.title !== "" && toast.title !== toast.group ? (
         <span className="nvim-toast-title">{toast.title}</span>
       ) : null}
       {progress?.percent !== undefined && !progress.done ? (

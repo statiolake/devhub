@@ -43,7 +43,7 @@ import {
   type GridBox,
   type NeovimUiState,
 } from "./redraw";
-import { cssColor, fontOf, resolveColors } from "./painter";
+import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
 import { glyphKind } from "./glyphs";
 import { TerminalSurface } from "../terminal/TerminalSurface";
 import { InlineImages, RichFloats, Toasts } from "./DecorationViews";
@@ -437,7 +437,7 @@ function NeovimSurface({
       ? {
           cell,
           boxes,
-          mono: `${fontFamily ? `${fontFamily}, ` : ""}monospace`,
+          mono: `${ICON_FAMILY}, ${fontFamily ? `${fontFamily}, ` : ""}monospace`,
           defaults: nvim.defaults,
           lua: (fn, args) => {
             send("nvim_exec_lua", [

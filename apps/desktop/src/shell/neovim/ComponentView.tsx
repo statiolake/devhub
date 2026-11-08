@@ -91,6 +91,9 @@ function runStyle(attrs: HlAttrs | undefined): CSSProperties {
   };
 }
 
+/** The colour of a checked box, a bar, a line, unless a node names one. */
+const ACCENT = "DiagnosticInfo";
+
 const FONT_SIZE: Record<Size, number> = { xs: 10.5, sm: 11.5, md: 13, lg: 15 };
 
 function clickable(
@@ -157,7 +160,6 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
         ...grow,
         ...runStyle(node.hl !== undefined ? hl.get(node.hl) : undefined),
         ...(node.size ? { fontSize: FONT_SIZE[node.size] } : {}),
-        ...(node.mono === true ? { fontFamily: theme.mono } : {}),
         ...(node.bold === true ? { fontWeight: 600 } : {}),
       };
       const className = [
@@ -206,7 +208,6 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
             ...grow,
             color,
             background: ground ?? tint(color, 18),
-            ...(node.mono === true ? { fontFamily: theme.mono } : {}),
           }}
           {...title}
           {...extra}
@@ -217,7 +218,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
     }
     case "kbd":
       return (
-        <kbd className="nvc-kbd" style={{ fontFamily: theme.mono }} {...extra}>
+        <kbd className="nvc-kbd" {...extra}>
           {node.text}
         </kbd>
       );
@@ -240,21 +241,17 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
           {...extra}
         >
           {node.icon !== undefined ? (
-            <span className="nvc-icon" style={{ fontFamily: theme.mono }}>
-              {node.icon}
-            </span>
+            <span className="nvc-icon">{node.icon}</span>
           ) : null}
           {node.text}
           {node.key !== undefined ? (
-            <kbd className="nvc-kbd" style={{ fontFamily: theme.mono }}>
-              {node.key}
-            </kbd>
+            <kbd className="nvc-kbd">{node.key}</kbd>
           ) : null}
         </span>
       );
     }
     case "checkbox": {
-      const accent = fgOf(hl, "Function") ?? rgbCss(theme.fg);
+      const accent = fgOf(hl, node.hl ?? ACCENT) ?? rgbCss(theme.fg);
       const on = node.state !== false;
       return (
         <span className="nvc-checkbox-row" style={grow} {...title} {...extra}>
@@ -289,7 +286,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
       );
     }
     case "progress": {
-      const color = fgOf(hl, node.hl ?? "Function") ?? rgbCss(theme.fg);
+      const color = fgOf(hl, node.hl ?? ACCENT) ?? rgbCss(theme.fg);
       return (
         <span className="nvc-progress-row" style={grow} {...title} {...extra}>
           <span
@@ -320,7 +317,6 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
         <span
           className="nvc-icon"
           style={{
-            fontFamily: theme.mono,
             ...(fgOf(hl, node.hl) ? { color: fgOf(hl, node.hl) } : {}),
             ...(node.size ? { fontSize: FONT_SIZE[node.size] } : {}),
           }}
@@ -370,7 +366,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
     case "sparkline": {
       const width = node.width ?? 64;
       const height = node.height ?? 16;
-      const color = fgOf(hl, node.hl ?? "Function") ?? rgbCss(theme.fg);
+      const color = fgOf(hl, node.hl ?? ACCENT) ?? rgbCss(theme.fg);
       return (
         <svg
           className="nvc-chart"
@@ -436,7 +432,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
               <polyline
                 key={i}
                 fill="none"
-                stroke={fgOf(hl, s.hl ?? "Function") ?? rgbCss(theme.fg)}
+                stroke={fgOf(hl, s.hl ?? ACCENT) ?? rgbCss(theme.fg)}
                 strokeWidth={1.5}
                 strokeLinejoin="round"
                 points={linePoints(s.values, width, height, range)
@@ -453,7 +449,7 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
                     <i
                       style={{
                         background:
-                          fgOf(hl, s.hl ?? "Function") ?? rgbCss(theme.fg),
+                          fgOf(hl, s.hl ?? ACCENT) ?? rgbCss(theme.fg),
                       }}
                     />
                     {s.label}
@@ -486,7 +482,6 @@ function RunView({ run }: { readonly run: Run }) {
   const theme = useTheme();
   const style: CSSProperties = {
     ...runStyle(run.hl !== undefined ? theme.hl.get(run.hl) : undefined),
-    ...(run.mono === true ? { fontFamily: theme.mono } : {}),
     ...(run.bold === true ? { fontWeight: 600 } : {}),
     ...(run.italic === true ? { fontStyle: "italic" } : {}),
     ...(run.strike === true ? { textDecoration: "line-through" } : {}),

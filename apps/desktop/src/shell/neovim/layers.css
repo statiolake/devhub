@@ -11,7 +11,8 @@
   flex-direction: column;
   overflow: hidden;
   font:
-    13px / 1.45 system-ui,
+    13px / 1.45 "DevHub Nerd Symbols",
+    system-ui,
     sans-serif;
 }
 
@@ -54,6 +55,7 @@
 
 .nvim-view-plain {
   display: block;
+  font-family: var(--nvim-grid-font);
   white-space: pre;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -96,7 +98,8 @@
   right: 14px;
   padding: 4px 0;
   font:
-    13px / 1.45 system-ui,
+    13px / 1.45 "DevHub Nerd Symbols",
+    system-ui,
     sans-serif;
 }
 
@@ -127,7 +130,8 @@
   padding: 0 8px;
   border-radius: 999px;
   font:
-    600 11.5px system-ui,
+    600 11.5px "DevHub Nerd Symbols",
+    system-ui,
     sans-serif;
   white-space: nowrap;
 }
@@ -193,9 +197,6 @@
   letter-spacing: 0.08em;
   font-size: 10.5px;
   font-weight: 600;
-}
-
-.nvc-mono {
 }
 
 .nvc-markdown {
@@ -412,4 +413,11 @@
   display: block;
   max-width: 100%;
   border-radius: 6px;
+}
+
+/* The grid's own face (guifont, icons first), for mono text, keys and icons. */
+.nvc-mono,
+.nvc-kbd,
+.nvc-icon {
+  font-family: var(--nvim-grid-font);
 }

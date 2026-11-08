@@ -175,6 +175,7 @@ function GuiView({
     color: rgbCss(theme.fg),
     ["--nvim-ring" as string]: ring,
     ["--nvim-ground" as string]: rgbCss(theme.bg),
+    ["--nvim-grid-font" as string]: host.mono,
     ["--nvim-cursorline" as string]:
       cursorLine !== undefined
         ? rgbCss(cursorLine)
@@ -254,10 +255,7 @@ function GuiView({
                   }}
                 />
               ) : (
-                <span
-                  className="nvim-view-plain"
-                  style={{ fontFamily: host.mono }}
-                >
+                <span className="nvim-view-plain">
                   {item.text === "" ? " " : item.text}
                 </span>
               )}
@@ -272,9 +270,7 @@ function GuiView({
               {key.split("/").map((part, i) => (
                 <span key={i}>
                   {i > 0 ? "/" : null}
-                  <kbd className="nvc-kbd" style={{ fontFamily: host.mono }}>
-                    {part}
-                  </kbd>
+                  <kbd className="nvc-kbd">{part}</kbd>
                 </span>
               ))}
               <span>{label}</span>
@@ -298,14 +294,19 @@ export function InlineCards({
   readonly layers: Layers;
   readonly host: LayerHost;
 }) {
-  const reported = useRef(new Map<number, number>());
+  // What was last asked for each card, as "reserved>measured": asked once
+  // per change of either, so a card is never asked about twice while Lua
+  // applies it, and is asked again when Lua's rows change under it.
+  const reported = useRef(new Map<number, string>());
   const report = (id: number, full: number, rows: number) => {
     if (rows === full) {
-      reported.current.set(id, rows);
+      // Settled: a later change of Lua's rows is asked about afresh.
+      reported.current.delete(id);
       return;
     }
-    if (reported.current.get(id) === rows) return;
-    reported.current.set(id, rows);
+    const key = `${String(full)}>${String(rows)}`;
+    if (reported.current.get(id) === key) return;
+    reported.current.set(id, key);
     host.lua("_inline_rows", [id, rows]);
   };
   const { cell } = host;
@@ -333,6 +334,7 @@ export function InlineCards({
           content={content}
           host={host}
           active={place.active}
+          full={place.full}
           offset={-place.clip * cell.height}
           onHeight={
             measures
@@ -379,6 +381,7 @@ export function InlineCards({
           content={content}
           host={host}
           active={false}
+          full={m.full}
           offset={0}
           onHeight={(px) => {
             report(m.id, m.full, rowsFor(px, cell.height));
@@ -401,6 +404,7 @@ function InlineCard({
   content,
   host,
   active,
+  full,
   offset,
   onHeight,
   onClick,
@@ -409,6 +413,8 @@ function InlineCard({
   readonly content: InlineContent;
   readonly host: LayerHost;
   readonly active: boolean;
+  /** The rows Lua reserved: measured again when they change. */
+  readonly full: number;
   readonly offset: number;
   readonly onHeight: ((px: number) => void) | undefined;
   readonly onClick: () => void;
@@ -429,7 +435,7 @@ function InlineCard({
     return () => {
       observer.disconnect();
     };
-  }, [content]);
+  }, [content, full]);
   const theme = themeFor(host, content.hl, onAction);
   return (
     <div
@@ -440,6 +446,7 @@ function InlineCard({
         color: rgbCss(theme.fg),
         ["--nvim-ring" as string]: ringColor(content.hl, theme.fg),
         ["--nvim-ground" as string]: rgbCss(theme.bg),
+        ["--nvim-grid-font" as string]: host.mono,
         ["--nvim-muted" as string]:
           fgOf(content.hl, "Comment") ?? rgbCss(theme.fg, 0.55),
       }}

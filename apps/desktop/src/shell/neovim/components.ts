@@ -117,6 +117,7 @@ export interface CheckboxNode extends Common {
   readonly type: "checkbox";
   readonly state: boolean | "mixed";
   readonly label?: string | undefined;
+  readonly hl?: string | undefined;
 }
 
 export interface ProgressNode extends Common {
@@ -402,6 +403,7 @@ export function parseNode(
         type: "checkbox",
         state: state === "mixed" ? "mixed" : state === true,
         label: str(r, "label"),
+        hl: str(r, "hl"),
       };
     }
     case "progress": {
