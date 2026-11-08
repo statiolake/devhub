@@ -354,6 +354,54 @@ export function fillerStart(
   return width - start >= Math.min(8, width) ? start : undefined;
 }
 
+/**
+ * The character a window's `fillchars` names for `item` (its own, else
+ * the global one), or `undefined` when neither names it.
+ */
+export function fillOf(
+  theme: PaintTheme,
+  win: number | undefined,
+  item: string,
+): string | undefined {
+  const value =
+    (win !== undefined ? theme.winFillchars.get(win) : undefined) ??
+    theme.fillchars;
+  for (const part of value.split(",")) {
+    if (part.startsWith(`${item}:`)) return part.slice(item.length + 1);
+  }
+  return undefined;
+}
+
+/**
+ * Fill characters that draw a line: a hyphen and box drawing's horizontal
+ * lines, light, heavy, double and dashed.
+ */
+const LINE_FILLS = new Set([..."-─━═╌╍┄┅┈┉"]);
+
+/** Whether a fold's fill character draws a line (`fold:─`, `fold:-`). */
+export function isLineFill(fill: string | undefined): boolean {
+  return fill !== undefined && LINE_FILLS.has(fill);
+}
+
+/**
+ * A closed fold's fill (`fillchars` `fold:`) to the end of its row: from
+ * some column on, nothing but `fill` in a highlight made of `Folded`
+ * (`isFolded`), at least two cells. Answers that column, or `undefined`.
+ */
+export function foldFillStart(
+  chars: readonly string[],
+  base: number,
+  width: number,
+  fill: string,
+  isFolded: (col: number) => boolean,
+): number | undefined {
+  const filled = (col: number) => chars[base + col] === fill && isFolded(col);
+  if (width === 0 || !filled(width - 1)) return undefined;
+  let start = width - 1;
+  while (start > 0 && filled(start - 1)) start -= 1;
+  return width - start >= 2 ? start : undefined;
+}
+
 /** What a one-column float is to a menu beside it. */
 export type ScrollbarPart = "thumb" | "gutter";
 

@@ -287,6 +287,13 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
       `foldtext` is empty (the line itself, content).
     - Wide characters take their two cells in the match; a CJK word in a
       proportional face is about as wide as its cells.
+  - A closed fold's fill, when the person's `fold:` character draws a line
+    (`─`, `-`, heavy, double or dashed), is one hairline fading out over
+    about a dozen cells (260 px; mock C1 of round 6): it leads from the
+    fold's words into the lines it stands for without ruling a line across
+    the editor that reads as a separator. Box drawing's own line (its
+    thickness and place), in the fill's colour. Any other fill —
+    Neovim's default `·`, the person's — is drawn as Neovim says.
   - The underline family and strikethrough (`strokes.ts`) are drawn as type
     is: as thick as the face asks, on whole device pixels under the
     baseline; undercurl a true wave whose phase is the row's (runs side by
@@ -1075,8 +1082,8 @@ flat `gui.view` panels were declined (the current panels stay); its
 terminal inside Neovim is no longer offered; Neovim's own `:terminal` is a
 grid like any other). Proposed, not built (mocks first, the person picks):
 a feathered translucent backdrop behind fidget's lines, a fold's fill as
-a fading hairline when its fill character is a line, a very short slide
-of the lines `dd`/`p`/`o` move.
+a fading hairline when its fill character is a line (built in round 8),
+a very short slide of the lines `dd`/`p`/`o` move.
 
 Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):

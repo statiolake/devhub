@@ -4,6 +4,9 @@ import {
   NO_THEME,
   fillChosen,
   fillerStart,
+  fillOf,
+  foldFillStart,
+  isLineFill,
   floatScrollbars,
   isEndOfBuffer,
   separatorsOf,
@@ -198,5 +201,36 @@ describe("the colorscheme's answer", () => {
     expect(themeOf(undefined)).toBe(NO_THEME);
     expect(themeOf([1, 2])).toBe(NO_THEME);
     expect(sameTheme(themeOf({ groups: {} }), NO_THEME)).toBe(true);
+  });
+});
+
+describe("a closed fold's fill", () => {
+  it("is the run of the fill character in Folded to the row's end", () => {
+    const chars = [..."+-- 4 lines: x ─────"];
+    const folded = () => true;
+    expect(foldFillStart(chars, 0, chars.length, "─", folded)).toBe(15);
+    expect(
+      foldFillStart(chars, 0, chars.length, "─", (c) => c < 18),
+    ).toBeUndefined();
+    expect(foldFillStart(chars, 0, chars.length, "·", folded)).toBeUndefined();
+  });
+
+  it("is a line only when its character draws one", () => {
+    expect(isLineFill("─")).toBe(true);
+    expect(isLineFill("-")).toBe(true);
+    expect(isLineFill("·")).toBe(false);
+    expect(isLineFill(" ")).toBe(false);
+    expect(isLineFill(undefined)).toBe(false);
+  });
+
+  it("is read from the window's fillchars, else the global one", () => {
+    const theme = {
+      ...NO_THEME,
+      fillchars: "vert:│,fold:─",
+      winFillchars: new Map([[1001, "fold:·"]]),
+    };
+    expect(fillOf(theme, 1000, "fold")).toBe("─");
+    expect(fillOf(theme, 1001, "fold")).toBe("·");
+    expect(fillOf(theme, 1000, "diff")).toBeUndefined();
   });
 });

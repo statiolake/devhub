@@ -29,8 +29,11 @@ import {
 import {
   NO_THEME,
   fillChosen,
+  fillOf,
   fillerStart,
   floatScrollbars,
+  foldFillStart,
+  isLineFill,
   isEndOfBuffer,
   isSeparatorLine,
   sameTheme,
@@ -219,6 +222,12 @@ const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 const FILLER_STEP = 6;
 
 /** A selection's or search match's corners (`chrome.ts`). */
+
+/**
+ * How far a closed fold's line fill fades out (`paintFoldFill`): about a
+ * dozen cells, the same in a window of any width.
+ */
+const FOLD_FADE = 260;
 
 /**
  * A float's outer corners' radius (DevHub's frame); a border of lines has
@@ -1401,6 +1410,13 @@ export class GridPainter {
     ) {
       this.skip.add(0);
     }
+    const foldFill =
+      !box.float && box.grid !== 1
+        ? this.foldFillOf(state, box, grid, base)
+        : undefined;
+    if (foldFill !== undefined) {
+      for (let col = foldFill; col < grid.width; col += 1) this.skip.add(col);
+    }
     // Decorations (virtual text, a fold's text) found where Lua says they
     // are: their words are set in the UI face after the row's text, inside
     // their cells (`decor.ts`), so the cells' own glyphs are not drawn.
@@ -1451,6 +1467,9 @@ export class GridPainter {
     this.icons.length = 0;
     for (const words of this.words) {
       this.paintWords(ctx, state, grid, base, words, y, baseline);
+    }
+    if (foldFill !== undefined) {
+      this.paintFoldFill(ctx, state, grid, base, foldFill, y);
     }
     this.words.length = 0;
     ctx.restore();
@@ -1517,6 +1536,66 @@ export class GridPainter {
       x += piece.width * scale;
     }
     ctx.restore();
+  }
+
+  /**
+   * Where a closed fold's fill starts on this row, when the person's fill
+   * character draws a line (`fold:─`, `fold:-`): a dotted or blank fill
+   * (`fold:·`, Neovim's default) is theirs as it is.
+   */
+  private foldFillOf(
+    state: NeovimUiState,
+    box: GridBox,
+    grid: {
+      readonly chars: readonly string[];
+      readonly hls: ArrayLike<number>;
+      readonly width: number;
+    },
+    base: number,
+  ): number | undefined {
+    const fill = fillOf(this.theme, box.win, "fold");
+    if (fill === undefined || !isLineFill(fill)) return undefined;
+    return foldFillStart(grid.chars, base, grid.width, fill, (col) =>
+      this.hasGroup(state, grid.hls[base + col] ?? 0, "Folded"),
+    );
+  }
+
+  /**
+   * A closed fold's line fill as one hairline fading out: it leads from
+   * the fold's words into the lines it stands for, without ruling a line
+   * across the editor that reads as a separator. Box drawing's own line
+   * (its thickness and place in the cell, `glyphShapes`), in the fill's
+   * colour, from the middle of its first cell, fading over `FOLD_FADE`.
+   */
+  private paintFoldFill(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    grid: { readonly hls: ArrayLike<number>; readonly width: number },
+    base: number,
+    start: number,
+    y: number,
+  ): void {
+    const { width: cw, height: ch } = this.metrics;
+    const shapes = glyphShapes(
+      "─",
+      { x: 0, y, w: cw, h: ch },
+      this.dpr,
+      this.font.size,
+    );
+    const line = shapes?.find((shape) => shape.kind === "rect");
+    if (!line || line.kind !== "rect") return;
+    const fg = resolveColors(
+      state.hl.get(grid.hls[base + start] ?? 0),
+      state.defaults,
+    ).fg;
+    const x0 = start * cw + cw / 2;
+    const x1 = Math.min(grid.width * cw, x0 + FOLD_FADE);
+    if (x1 <= x0) return;
+    const fade = ctx.createLinearGradient(x0, 0, x1, 0);
+    fade.addColorStop(0, cssColor(fg));
+    fade.addColorStop(1, cssColor(fg, 0));
+    ctx.fillStyle = fade;
+    ctx.fillRect(x0, line.y, x1 - x0, line.h);
   }
 
   private wordsFont(attr: HlAttr | undefined, size: number): string {
