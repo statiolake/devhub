@@ -209,12 +209,31 @@ export function themeOf(answer: unknown): PaintTheme {
 export function fillChosen(
   theme: PaintTheme,
   win: number | undefined,
-  item: "eob" | "diff",
+  item: "eob" | "diff" | "foldopen" | "foldclose" | "foldsep",
 ): boolean {
   const value =
     (win !== undefined ? theme.winFillchars.get(win) : undefined) ??
     theme.fillchars;
   return value.split(",").some((part) => part.startsWith(`${item}:`));
+}
+
+/** A fold column's cell: a fold that is open or closed, or a fold's extent. */
+export type FoldMark = "open" | "closed" | "sep";
+
+/**
+ * A fold column's (`FoldColumn`, `CursorLineFold`) default character as
+ * what it marks — `fillchars`' `foldopen:-`, `foldclose:+`, `foldsep:│` —
+ * unless the window's `fillchars` chose that one (then it is the
+ * person's, and kept).
+ */
+export function foldMark(
+  c: string,
+  chosen: (item: "foldopen" | "foldclose" | "foldsep") => boolean,
+): FoldMark | undefined {
+  if (c === "-") return chosen("foldopen") ? undefined : "open";
+  if (c === "+") return chosen("foldclose") ? undefined : "closed";
+  if (c === "│" || c === "|") return chosen("foldsep") ? undefined : "sep";
+  return undefined;
 }
 
 /** What a highlight's cells are to the painter, by the groups it is made of. */

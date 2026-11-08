@@ -28,6 +28,7 @@ import {
   fillChosen,
   fillerStart,
   floatScrollbars,
+  foldMark,
   hlRole,
   isEndOfBuffer,
   isSeparatorLine,
@@ -262,6 +263,15 @@ export class GridPainter {
   private font: FontSpec;
   private metrics: Metrics;
   private theme: PaintTheme = NO_THEME;
+  /**
+   * The grid the pointer is over, and the cursor's row last painted: a
+   * fold column's open folds show their chevron there (VS Code shows them
+   * on hover and on the cursor's line); closed folds always do.
+   */
+  private hover: number | undefined;
+  private foldCursor: { grid: number; row: number } | undefined;
+  /** Whether the last paint met a fold column at all. */
+  private folds = false;
   /** Each highlight's role (`hlRole`), worked out once per definition. */
   private readonly roles = new Map<number, HlRole>();
   /** The status lines and winbars (`barsOf`), and what they were last. */
@@ -370,6 +380,7 @@ export class GridPainter {
       const entry = this.canvases.get(grid);
       if (entry) entry.canvas.style.display = "none";
     }
+    this.followFoldCursor(state);
     const corners = this.placeClusters(state, shown);
     const scrollbars = floatScrollbars(state, shown);
     this.placeBars(state, shown);
@@ -865,6 +876,7 @@ export class GridPainter {
     this.paintBars(ctx, state, box, row, y);
     this.paintPills(ctx, state, box, row, y);
     if (!box.float && box.grid !== 1) this.paintFiller(ctx, state, box, row, y);
+    if (!box.float && box.grid !== 1) this.paintFolds(ctx, state, box, row, y);
     if (
       !box.float &&
       box.grid !== 1 &&
@@ -1090,6 +1102,96 @@ export class GridPainter {
     ctx.stroke();
     ctx.restore();
     for (let col = start; col < grid.width; col += 1) this.skip.add(col);
+  }
+
+  /**
+   * The pointer moved onto another grid (or off them): a fold column's
+   * open folds show on the grid it is over. Answers the grids whose rows
+   * want repainting.
+   */
+  setHover(grid: number | undefined): number[] {
+    if (grid === this.hover) return [];
+    const before = this.hover;
+    this.hover = grid;
+    if (!this.folds) return [];
+    return [before, grid].filter((g): g is number => g !== undefined);
+  }
+
+  /** The cursor moved to another row: its fold chevrons, and the old row's. */
+  private followFoldCursor(state: NeovimUiState): void {
+    const now = { grid: state.cursor.grid, row: state.cursor.row };
+    const before = this.foldCursor;
+    if (before?.grid === now.grid && before.row === now.row) return;
+    this.foldCursor = now;
+    if (!this.folds) return;
+    for (const at of [before, now]) {
+      if (at) state.grids.get(at.grid)?.dirty.add(at.row);
+    }
+  }
+
+  /**
+   * A fold column (`FoldColumn`, `CursorLineFold` cells) as VS Code's
+   * gutter: a closed fold a chevron pointing right, always; an open fold a
+   * chevron pointing down, on the cursor's row and while the pointer is
+   * over the window; a fold's extent (`│`) not drawn. Clicks and `za` stay
+   * Neovim's; a person's own `foldopen:`/`foldclose:`/`foldsep:` is kept.
+   */
+  private paintFolds(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    box: GridBox,
+    row: number,
+    y: number,
+  ): void {
+    const grid = state.grids.get(box.grid);
+    if (!grid) return;
+    const base = row * grid.width;
+    const { width: cw, height: ch } = this.metrics;
+    const shown =
+      this.hover === box.grid ||
+      (state.cursor.grid === box.grid && state.cursor.row === row);
+    // The fold column is at the window's left, after the sign column: stop
+    // at the first cell of another kind past it.
+    let seen = false;
+    for (let col = 0; col < Math.min(grid.width, 24); col += 1) {
+      const hl = grid.hls[base + col] ?? 0;
+      const fold =
+        this.hasGroup(state, hl, "FoldColumn") ||
+        this.hasGroup(state, hl, "CursorLineFold");
+      if (!fold) {
+        if (seen) break;
+        continue;
+      }
+      seen = true;
+      this.folds = true;
+      const mark = foldMark(grid.chars[base + col] ?? "", (item) =>
+        fillChosen(this.theme, box.win, item),
+      );
+      if (!mark) continue;
+      this.skip.add(col);
+      if (mark === "sep" || (mark === "open" && !shown)) continue;
+      const fg = resolveColors(state.hl.get(hl), state.defaults).fg;
+      const cx = col * cw + cw / 2;
+      const cy = y + ch / 2;
+      const r = Math.max(2, Math.min(cw * 0.3, ch * 0.22));
+      ctx.save();
+      ctx.strokeStyle = cssColor(fg);
+      ctx.lineWidth = Math.max(1.25, Math.round(this.font.size / 9));
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      if (mark === "closed") {
+        ctx.moveTo(cx - r / 2, cy - r);
+        ctx.lineTo(cx + r / 2, cy);
+        ctx.lineTo(cx - r / 2, cy + r);
+      } else {
+        ctx.moveTo(cx - r, cy - r / 2);
+        ctx.lineTo(cx, cy + r / 2);
+        ctx.lineTo(cx + r, cy - r / 2);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   /** A highlight's role (`hlRole`: a selection's, a pill's), kept. */

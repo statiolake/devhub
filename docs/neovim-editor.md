@@ -221,6 +221,12 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) on
     a menu's right edge is an overlay scrollbar: the gutter not drawn, the
     thumb a thin bar.
+  - A fold column (`foldcolumn`, cells in `FoldColumn`/`CursorLineFold`)
+    is VS Code's gutter: a closed fold's `+` a chevron pointing right,
+    always; an open fold's `-` a chevron pointing down, on the cursor's row
+    and while the pointer is over the window; a fold's extent (`│`) not
+    drawn. Clicks and `za`/`zc`/`zo` are Neovim's as before; a person's own
+    `foldopen:`/`foldclose:`/`foldsep:` is drawn as they set it.
   - Status lines and winbars are bars (`chrome.ts`'s `barsOf`,
     `barLayout`): the runs not in the bar's commonest colour are pills,
     and Powerline's filled separators (U+E0B0, E0B2, … even code points)
@@ -620,12 +626,18 @@ ENTER`): a terminal row at the bottom of the editor. With `ext_messages`
    a mode chip; until then, draw the row as a status bar of DevHub's
    (smaller type, no cell grid). High risk: hit-enter prompts must stay
    answerable.
-7. _Sign, number and fold columns_: cells with spaces between; diagnostics
-   signs as letters or icons in a two-cell column. Draw sign icons centred
-   in the column, line numbers right-aligned in a lighter weight, fold
-   markers as chevrons, and the `foldcolumn`'s `│` as nothing. Low risk
-   (`statuscolumn` output is kept as text; only glyphs DevHub recognises
-   change).
+7. _Sign, number and fold columns_ — fold column done (round 2): its
+   default `-`/`+` are chevrons (an open fold's only on the cursor's row
+   and under the pointer, as VS Code's `showFoldingControls: mouseover`),
+   its `│` nothing; found by highlight name (`ext_hlstate`), so a
+   `statuscolumn` that draws its own fold marks keeps them. Nothing is
+   added when `foldcolumn` is 0: a chevron needs a column Neovim reserves,
+   and inventing one in the number column would put a GUI-only target in
+   a cell Neovim thinks is a digit's. Signs were left: gitsigns' bars are
+   already drawn geometrically, continuous across `linespace`, and
+   diagnostics' signs are the config's icons, centred by the icon fitting.
+   Line numbers keep their weight (a lighter weight read as disabled
+   against the code).
 8. _Indent guides and `listchars`_ (`│`, `▏`, `·`, `→`): drawn geometrically
    already, but a guide is a cell-centred line broken by `linespace`
    nowhere and coloured by its highlight; draw them hairline and dimmer,

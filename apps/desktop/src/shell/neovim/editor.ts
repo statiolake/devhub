@@ -275,6 +275,23 @@ export class NeovimEditor {
     }
   }
 
+  /** The pointer is over another grid: its fold column's chevrons show. */
+  private hoverGrid(grid: number | undefined): void {
+    const dirty = this.painter.setHover(grid);
+    if (dirty.length === 0) return;
+    for (const id of dirty) {
+      const g = this.state.grids.get(id);
+      if (!g) continue;
+      for (let row = 0; row < g.height; row += 1) g.dirty.add(row);
+    }
+    if (this.frame === 0) {
+      this.frame = requestAnimationFrame(() => {
+        this.frame = 0;
+        this.paint();
+      });
+    }
+  }
+
   /** Neovim went away: what is drawn stays, nothing is sent. */
   reset(): void {
     this.wheel.reset();
@@ -789,6 +806,12 @@ export class NeovimEditor {
       const at = target(event);
       this.dragging = { button, target: at };
       mouse(button, "press", event, at);
+    });
+    layer.addEventListener("mousemove", (event) => {
+      this.hoverGrid(ownedByGui(event) ? undefined : target(event).grid);
+    });
+    layer.addEventListener("mouseleave", () => {
+      this.hoverGrid(undefined);
     });
     window.addEventListener("mousemove", (event) => {
       const drag = this.dragging;

@@ -7,6 +7,7 @@ import {
   fillChosen,
   fillerStart,
   floatScrollbars,
+  foldMark,
   hlRole,
   isEndOfBuffer,
   separatorsOf,
@@ -373,5 +374,20 @@ describe("a menu's scrollbar drawn as floats", () => {
         box(3, 2, 1103),
       ]),
     ]).toEqual([]);
+  });
+});
+
+describe("a fold column", () => {
+  it("is chevrons for the default characters, the person's own kept", () => {
+    const none = () => false;
+    expect(foldMark("-", none)).toBe("open");
+    expect(foldMark("+", none)).toBe("closed");
+    expect(foldMark("│", none)).toBe("sep");
+    expect(foldMark("2", none)).toBeUndefined();
+    const theme = themeOf({ groups: {}, wins: { "1001": "foldopen:v" } });
+    const chosen = (item: "foldopen" | "foldclose" | "foldsep") =>
+      fillChosen(theme, 1001, item);
+    expect(foldMark("-", chosen)).toBeUndefined();
+    expect(foldMark("+", chosen)).toBe("closed");
   });
 });
