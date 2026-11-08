@@ -1086,6 +1086,52 @@ describe("TerminalSurface off screen", () => {
     expect(harness.client.detach).not.toHaveBeenCalled();
   });
 
+  it("lets its client go once more arrives while hidden than it keeps, and reads nothing more of it", async () => {
+    const { harness } = await connectedThenHidden();
+    const id = harness.receipts[0].attachmentId;
+    const chunk = new Uint8Array(32 * 1024).fill(0x79);
+    // Four frames of the largest size main sends are what is kept.
+    for (let sequence = 1; sequence <= 4; sequence += 1) {
+      act(() => harness.handlers[0](frame(id, sequence, chunk)));
+    }
+    await waitFor(() =>
+      expect(harness.client.acknowledge).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sequence: 4, attachmentId: id }),
+      ),
+    );
+    expect(harness.client.detach).not.toHaveBeenCalled();
+    act(() => harness.handlers[0](frame(id, 5, chunk)));
+    expect(harness.client.detach).toHaveBeenCalledWith(
+      expect.objectContaining({ attachmentId: id }),
+    );
+    // What the client still had on the way is passed over, not acknowledged.
+    act(() => harness.handlers[0](frame(id, 6, chunk)));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(harness.client.acknowledge).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sequence: 5 }),
+    );
+    expect(harness.client.acknowledge).not.toHaveBeenCalledWith(
+      expect.objectContaining({ sequence: 6 }),
+    );
+    // Nor is its end: the pane still shows what it drew, and is connected.
+    act(() =>
+      harness.handlers[0](
+        raw(3, {
+          ...fixture.exited,
+          attachmentId: id,
+          sequence: 7,
+          reason: "detached",
+        }),
+      ),
+    );
+    expect(harness.client.attach).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/disconnected/i)).not.toBeInTheDocument();
+    expect(mocks.terminals[0].writes).toEqual([]);
+  });
+
   it("attaches a new client when it is shown after more than it keeps, without saying it is connecting, and the keys typed meanwhile reach it", async () => {
     const { harness, view } = await connectedThenHidden();
     const id = harness.receipts[0].attachmentId;

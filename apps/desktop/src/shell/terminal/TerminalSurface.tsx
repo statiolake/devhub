@@ -62,7 +62,12 @@ export interface TerminalSurfaceProps {
    * was most of this page's thread with four Agents streaming
    * (docs/process-model.md, phase 6). Coming back draws what was missed —
    * the frames themselves while they are few (`HIDDEN_TAIL_BYTES`), else an
-   * attach of a new client, which tmux draws from scratch.
+   * attach of a new client, which tmux draws from scratch. Once there is
+   * more than that, the client it has is no use to it, and it lets it go
+   * there and then: tmux stops drawing for it, the pty host stops reading
+   * it, and this page stops receiving and acknowledging its frames (phase
+   * 6d). The program in the pane is not held back by it either way; tmux
+   * keeps its screen and history for the client attached on reveal.
    */
   readonly hidden?: boolean;
   /**
@@ -109,12 +114,12 @@ const MAX_HANDSHAKE_BUFFER_BYTES = 256 * 1024;
  *
  * Under this, coming back writes the frames it missed, in order, which is the
  * exact stream and costs one parse of at most this much (a few ms). Over it,
- * they are dropped as they come, and coming back attaches a new client
- * instead: tmux starts that client's terminal from nothing — the modes, the
- * cursor, the whole screen — so nothing that was skipped can be missing from
- * it, and the cost is one screen however much was missed. The bytes a busy
- * TUI sends while it sits in the background for a while, or one screen of a
- * stream, fit; a build log does not.
+ * the client is let go, and coming back attaches a new one instead: tmux
+ * starts that client's terminal from nothing — the modes, the cursor, the
+ * whole screen — so nothing that was skipped can be missing from it, and the
+ * cost is one screen however much was missed. The bytes a busy TUI sends
+ * while it sits in the background for a while, or one screen of a stream,
+ * fit; a build log does not.
  */
 const HIDDEN_TAIL_BYTES = 128 * 1024;
 
@@ -449,20 +454,25 @@ export function TerminalSurface({
         if (frame.attachmentId !== frameReceipt.attachmentId) {
           throw new Error("terminal frame attachment identity changed");
         }
+        // A client this surface let go of (one parked with more than it
+        // keeps): what it still sends, its end included, is not news.
+        if (detachedAttachmentIds.has(frame.attachmentId)) return;
         if (frame.type === "output") {
           if (parked) {
             // Acknowledged now, not drawn: tmux is not held back by a view
             // nobody is looking at. Kept to draw on reveal while it is small.
-            if (!missedTooMuch) {
-              if (missedBytes + frame.bytes.byteLength > HIDDEN_TAIL_BYTES) {
-                missedTooMuch = true;
-                missed = [];
-                missedBytes = 0;
-              } else {
-                missed.push(frame.bytes);
-                missedBytes += frame.bytes.byteLength;
-              }
+            if (missedBytes + frame.bytes.byteLength > HIDDEN_TAIL_BYTES) {
+              // Too much to draw from: the reveal attaches a new client, so
+              // this one is let go now rather than read for nothing until
+              // then. What it still has on the way is passed over.
+              missedTooMuch = true;
+              missed = [];
+              missedBytes = 0;
+              detachExact(frameReceipt);
+              return;
             }
+            missed.push(frame.bytes);
+            missedBytes += frame.bytes.byteLength;
             void clientRef.current
               .acknowledge({
                 schemaVersion: TERMINAL_PROTOCOL_VERSION,
