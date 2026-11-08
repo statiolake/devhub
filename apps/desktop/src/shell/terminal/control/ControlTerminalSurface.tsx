@@ -5,6 +5,7 @@ import "../terminal.css";
 import "./control.css";
 import "./popup.css";
 import "./prompt.css";
+import "./menu.css";
 import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
 import { GridPainter, rgbOfCss } from "../../neovim/painter";
@@ -118,6 +119,7 @@ export function ControlTerminalSurface({
     visible(on: boolean): void;
     colors(c: ReturnType<typeof colorsOf>): void;
     selectWindow(id: number): void;
+    windowMenu(id: number, x: number): void;
     focus(): void;
   } | null>(null);
   const live = useRef({
@@ -145,12 +147,16 @@ export function ControlTerminalSurface({
     const promptLine = document.createElement("div");
     promptLine.className = "control-prompt";
     promptLine.hidden = true;
+    const menuEl = document.createElement("div");
+    menuEl.className = "control-menu";
+    menuEl.setAttribute("role", "menu");
+    menuEl.hidden = true;
     const input = document.createElement("textarea");
     input.className = "control-input";
     input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
     input.autocapitalize = "off";
     input.spellcheck = false;
-    host.append(grids, lines, popupFrame, promptLine, cursor, input);
+    host.append(grids, lines, popupFrame, promptLine, menuEl, cursor, input);
 
     const appearanceNow = live.current.appearance;
     const fontSize = appearanceNow?.terminalFontSize ?? 13;
@@ -295,6 +301,7 @@ export function ControlTerminalSurface({
         }
       }
       drawPrompt(width, height);
+      drawMenu(width, height);
       // While a popup is open its cursor is the one shown, over it.
       const inset = popup?.border === true ? 1 : 0;
       const pane =
@@ -396,6 +403,100 @@ export function ControlTerminalSurface({
       const left = caret.offsetLeft - line.offsetLeft;
       line.scrollLeft = Math.max(0, left - line.clientWidth + 2 * width);
     };
+
+    // A menu (`menu.css`): where tmux would put it, kept inside the panes.
+    let menuShown = "";
+    const drawMenu = (width: number, height: number) => {
+      const menu = view.menu;
+      menuEl.hidden = menu === undefined;
+      if (menu === undefined) {
+        menuShown = "";
+        return;
+      }
+      const key = JSON.stringify(menu);
+      if (key !== menuShown) {
+        menuShown = key;
+        const rows: HTMLElement[] = [];
+        if (menu.title !== "")
+          rows.push(
+            Object.assign(document.createElement("div"), {
+              className: "control-menu-title",
+              textContent: menu.title,
+            }),
+          );
+        menu.items.forEach((item, index) => {
+          if (item.name === undefined) {
+            rows.push(
+              Object.assign(document.createElement("div"), {
+                className: "control-menu-rule",
+              }),
+            );
+            return;
+          }
+          const row = document.createElement("div");
+          row.className = "control-menu-item";
+          row.setAttribute("role", "menuitem");
+          row.dataset.index = String(index);
+          row.setAttribute("aria-selected", String(index === menu.choice));
+          if (item.disabled === true) row.setAttribute("aria-disabled", "true");
+          row.append(
+            Object.assign(document.createElement("span"), {
+              className: "control-menu-name",
+              textContent: item.name,
+            }),
+          );
+          if (item.key !== undefined)
+            row.append(
+              Object.assign(document.createElement("span"), {
+                className: "control-menu-key",
+                textContent: item.key,
+              }),
+            );
+          rows.push(row);
+        });
+        menuEl.replaceChildren(...rows);
+        menuEl.style.minWidth = `${String(menu.width * width)}px`;
+      }
+      // `-x W`: over the window's tab, which is DevHub's status line.
+      let left = 0;
+      if (menu.x === "W") {
+        const id = menu.window ?? view.window;
+        const tab = shell?.querySelector<HTMLElement>(
+          `.control-window[data-window="${String(id)}"]`,
+        );
+        if (tab !== null && tab !== undefined)
+          left =
+            tab.getBoundingClientRect().left -
+            host.getBoundingClientRect().left;
+      } else left = menu.x * width;
+      const room = host.clientHeight;
+      const tall = menuEl.offsetHeight;
+      const top = Math.max(0, Math.min(menu.y * height, room - tall));
+      menuEl.style.left = `${String(Math.max(0, Math.min(left, host.clientWidth - menuEl.offsetWidth)))}px`;
+      menuEl.style.top = `${String(top)}px`;
+      menuEl
+        .querySelector<HTMLElement>('[aria-selected="true"]')
+        ?.scrollIntoView({ block: "nearest" });
+    };
+    // The mouse on a menu: an item chooses, anywhere else closes it.
+    const onMenuMouseDown = (event: MouseEvent) => {
+      if (view.menu === undefined) return;
+      event.preventDefault();
+      event.stopPropagation();
+      input.focus();
+      const row = (event.target as HTMLElement).closest<HTMLElement>(
+        ".control-menu-item",
+      );
+      if (row !== null && menuEl.contains(row) && event.button === 0)
+        send({
+          kind: "menu",
+          action: "choose",
+          index: Number(row.dataset.index),
+        });
+      else if (!menuEl.contains(event.target as Node))
+        send({ kind: "menu", action: "close" });
+    };
+    host.addEventListener("mousedown", onMenuMouseDown, true);
 
     const schedule = (changes: ReturnType<typeof applyControl>) => {
       pendingChanges.push(changes);
@@ -588,6 +689,17 @@ export function ControlTerminalSurface({
       event.preventDefault();
       input.focus();
       if (hit === undefined) return;
+      // A right-click the program does not take is tmux's MouseDown3Pane.
+      if (event.button === 2 && !hit.reports) {
+        send({
+          kind: "mouse-menu",
+          pane: hit.pane.pane,
+          x: hit.pane.x + hit.x,
+          y: hit.pane.y + hit.y,
+          meta: event.altKey,
+        });
+        return;
+      }
       if (!hit.pane.active) send({ kind: "select-pane", pane: hit.pane.pane });
       if (hit.reports)
         send({
@@ -627,6 +739,8 @@ export function ControlTerminalSurface({
     grids.addEventListener("wheel", onWheel, { passive: false });
     const focusInput = () => input.focus();
     host.addEventListener("click", focusInput);
+    const noContextMenu = (event: Event) => event.preventDefault();
+    host.addEventListener("contextmenu", noContextMenu);
 
     const observer = new ResizeObserver(() => {
       if (live.current.hidden) return;
@@ -661,6 +775,17 @@ export function ControlTerminalSurface({
         send({ kind: "select-window", window: id });
         input.focus();
       },
+      windowMenu(id, x) {
+        input.focus();
+        const at = grids.getBoundingClientRect();
+        send({
+          kind: "mouse-menu",
+          window: id,
+          x: Math.max(0, Math.floor((x - at.left) / cell().width)),
+          y: Math.max(0, view.rows - 1),
+          meta: false,
+        });
+      },
       focus() {
         input.focus();
       },
@@ -675,6 +800,8 @@ export function ControlTerminalSurface({
       observer.disconnect();
       if (noticeTimer !== undefined) clearTimeout(noticeTimer);
       host.removeEventListener("click", focusInput);
+      host.removeEventListener("contextmenu", noContextMenu);
+      host.removeEventListener("mousedown", onMenuMouseDown, true);
       host.removeEventListener("paste", markTyped, true);
       if (receipt !== undefined) void detach(receipt);
       receipt = undefined;
@@ -705,6 +832,7 @@ export function ControlTerminalSurface({
           ...(palette
             ? {
                 "--terminal-foreground": palette.foreground,
+                "--terminal-selection": palette.selectionBackground,
                 color: palette.foreground,
               }
             : {}),
@@ -734,7 +862,12 @@ export function ControlTerminalSurface({
               className="control-window"
               aria-current={w.active ? "true" : undefined}
               onMouseDown={(event) => event.preventDefault()}
+              data-window={w.id}
               onClick={() => controllerRef.current?.selectWindow(w.id)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                controllerRef.current?.windowMenu(w.id, event.clientX);
+              }}
             >
               <span className="control-window-index">{w.index}</span>
               {w.name}

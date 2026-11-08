@@ -71,6 +71,45 @@ export function parseCommands(text: string): string[][] {
 	return commands.filter((command) => command.length > 0);
 }
 
+/**
+ * A command's flags as tmux's `args_parse` reads them: `valued` take a value
+ * (inline or the next word), `bare` do not; the words after them are `rest`.
+ * A flag the command does not know is a refusal.
+ */
+export function readFlags(
+	words: readonly string[],
+	valued: string,
+	bare: string,
+):
+	| { flags: Map<string, string>; count: Map<string, number>; rest: string[] }
+	| undefined {
+	const flags = new Map<string, string>();
+	const count = new Map<string, number>();
+	let i = 0;
+	for (; i < words.length; i++) {
+		const word = words[i];
+		if (word === "--") {
+			i++;
+			break;
+		}
+		if (!word.startsWith("-") || word.length < 2) break;
+		for (let j = 1; j < word.length; j++) {
+			const flag = word[j];
+			if (bare.includes(flag)) {
+				count.set(flag, (count.get(flag) ?? 0) + 1);
+				continue;
+			}
+			if (!valued.includes(flag)) return undefined;
+			const inline = word.slice(j + 1);
+			const value = inline.length > 0 ? inline : words[++i];
+			if (value === undefined) return undefined;
+			flags.set(flag, value);
+			break;
+		}
+	}
+	return { flags, count, rest: words.slice(i) };
+}
+
 /** `display-popup`'s arguments, as tmux's `args_parse` reads them. */
 export interface PopupArgs {
 	/** `-E` once: closed when the command exits; twice: only when it succeeds. */

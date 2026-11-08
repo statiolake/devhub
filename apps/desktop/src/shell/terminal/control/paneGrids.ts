@@ -95,6 +95,8 @@ export interface ControlView {
     | undefined;
   /** The `command-prompt` or `confirm-before` open now: one line at the foot. */
   prompt: Omit<Extract<ControlToPage, { kind: "prompt" }>, "kind"> | undefined;
+  /** The `display-menu` open now. */
+  menu: Omit<Extract<ControlToPage, { kind: "menu" }>, "kind"> | undefined;
   readonly modes: Map<number, PaneModes>;
   /** Each pane's own style ids, as highlights of the one table. */
   readonly hlIds: Map<string, number>;
@@ -118,6 +120,7 @@ export function newControlView(fallback: {
     cursors: new Map(),
     popup: undefined,
     prompt: undefined,
+    menu: undefined,
     modes: new Map(),
     hlIds: new Map(),
   };
@@ -241,6 +244,16 @@ export function applyControl(
     }
     case "prompt-closed":
       view.prompt = undefined;
+      changes.cursor = true;
+      return changes;
+    case "menu": {
+      const { kind: _, ...menu } = message;
+      view.menu = menu;
+      changes.cursor = true;
+      return changes;
+    }
+    case "menu-closed":
+      if (view.menu?.id === message.id) view.menu = undefined;
       changes.cursor = true;
       return changes;
     case "notice":

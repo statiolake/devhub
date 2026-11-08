@@ -76,10 +76,13 @@ function page() {
   let ended: string | undefined;
   const notices: string[] = [];
   let prompt: Extract<ControlToPage, { kind: "prompt" }> | undefined;
+  let menu: Extract<ControlToPage, { kind: "menu" }> | undefined;
   const post = (message: ControlToPage) => {
     if (message.kind === "layout") layout = message;
     else if (message.kind === "prompt") prompt = message;
     else if (message.kind === "prompt-closed") prompt = undefined;
+    else if (message.kind === "menu") menu = message;
+    else if (message.kind === "menu-closed") menu = undefined;
     else if (message.kind === "ended") ended = message.reason;
     else if (message.kind === "notice") notices.push(message.text);
     else if (message.kind === "pane") {
@@ -102,6 +105,9 @@ function page() {
     },
     get prompt() {
       return prompt;
+    },
+    get menu() {
+      return menu;
     },
   };
 }
@@ -252,6 +258,52 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     );
     expect(tmux(socket, "list-sessions", "-F", "#{session_name}").trim()).toBe(
       "p",
+    );
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
+  it("asks tmux's menus, by key and by a right-click, and runs the item as tmux would", async () => {
+    const socket = `devhub-menu-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "m", "-x", "80", "-y", "24", "sh");
+    tmux(socket, "split-window", "-t", "m", "sh");
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "m"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+    });
+    await until("two panes", () => view.layout?.panes.length === 2);
+    const [top, bottom] = view.layout?.panes ?? [];
+    expect(bottom.active).toBe(true);
+    // tmux's own `>`: the pane menu, its title expanded by tmux.
+    client.receive({ kind: "keys", keys: ["C-q", ">"] });
+    const menu = await until("the menu", () => view.menu);
+    expect(menu.title).toBe(`1 (%${String(bottom.pane)})`);
+    expect(menu.items.find((i) => i.key === "z")?.name).toBe("Zoom");
+    client.receive({ kind: "keys", keys: ["Escape"] });
+    await until("the menu closed", () => view.menu === undefined);
+    // A right-click on the other pane: its menu, and its Zoom zooms it.
+    client.receive({
+      kind: "mouse-menu",
+      pane: top.pane,
+      x: 3,
+      y: 2,
+      meta: false,
+    });
+    expect((await until("the pane's menu", () => view.menu)).title).toBe(
+      `0 (%${String(top.pane)})`,
+    );
+    client.receive({ kind: "keys", keys: ["z"] });
+    await until("the zoom", () =>
+      view.layout?.windows[0]?.zoomed === true &&
+      view.layout.panes[0]?.pane === top.pane
+        ? true
+        : undefined,
     );
     client.stop();
     await until("the end", () => view.ended);

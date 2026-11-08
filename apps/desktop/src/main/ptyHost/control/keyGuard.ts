@@ -21,6 +21,7 @@
  * `controlClient.ts` reads the bindings and sends.
  */
 
+import { ifShellOf, menuOf, type IfShellArgs, type MenuArgs } from "./menu.js";
 import { promptOf, type PromptArgs } from "./prompt.js";
 import { popupOf, type PopupArgs } from "./tmuxCommand.js";
 
@@ -96,6 +97,13 @@ export interface KeyRoute {
 	 * it (`prompt.ts`), not sent.
 	 */
 	readonly prompt?: PromptArgs;
+	/** A binding that is one `display-menu`: DevHub asks it (`menu.ts`). */
+	readonly menu?: MenuArgs;
+	/**
+	 * A binding that is one `if-shell -F` with a command that would wait in
+	 * it: tmux decides the format, DevHub runs the arm (`controlClient.ts`).
+	 */
+	readonly conditional?: IfShellArgs;
 	/**
 	 * tmux may be in a table other than the root one (a repeat, a
 	 * `switch-client -T`) after a refusal: it is to be put back in it.
@@ -140,6 +148,11 @@ export class KeyRouter {
 		this.#repeatMs = repeatMs;
 	}
 
+	/** The command bound to `key` in `table`, if any. */
+	binding(table: string, key: string): string | undefined {
+		return this.#bindings.get(table)?.get(key)?.command;
+	}
+
 	/** A prefix is held: the key after it is looked up in the prefix table. */
 	get holdingPrefix(): boolean {
 		return this.#pending !== undefined;
@@ -179,11 +192,21 @@ export class KeyRouter {
 		const popup = waiting === undefined ? undefined : popupOf(binding.command);
 		const prompt =
 			waiting === undefined ? undefined : promptOf(binding.command);
-		if (popup !== undefined || prompt !== undefined) {
+		const menu = waiting === undefined ? undefined : menuOf(binding.command);
+		const conditional =
+			waiting === undefined ? undefined : ifShellOf(binding.command);
+		if (
+			popup !== undefined ||
+			prompt !== undefined ||
+			menu !== undefined ||
+			conditional !== undefined
+		) {
 			return {
 				send: [],
 				...(popup === undefined ? {} : { popup }),
 				...(prompt === undefined ? {} : { prompt }),
+				...(menu === undefined ? {} : { menu }),
+				...(conditional === undefined ? {} : { conditional }),
 				resetTable: table !== "root" && keys.length === 1,
 			};
 		}

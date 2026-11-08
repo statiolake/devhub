@@ -92,6 +92,15 @@ export interface SessionPane {
  */
 export const NVIM_NAMED_OSC = "\u001b]6973;devhub-nvim\u0007";
 
+/** A menu's item as the page draws it; no name is a separator. */
+export interface MenuItem {
+	readonly name?: string;
+	/** tmux's name of the key that chooses it. */
+	readonly key?: string;
+	/** Shown, not chosen (a name tmux was given beginning `-`). */
+	readonly disabled?: boolean;
+}
+
 /** The modes of a pane the page encodes input by. */
 export interface PaneModes {
 	/** 0 off, else the tracking mode: 9, 1000, 1002 or 1003. */
@@ -162,6 +171,27 @@ export type ControlToPage =
 	  }
 	| { readonly kind: "prompt-closed" }
 	/**
+	 * A `display-menu` DevHub asks (`ptyHost/control/menu.ts`): its items
+	 * expanded by tmux, and where tmux would put it, in cells of the window
+	 * (`x` `"W"`: over `window`'s tab, or the shown window's). While one is
+	 * open the keys are its.
+	 */
+	| {
+			readonly kind: "menu";
+			readonly id: number;
+			readonly title: string;
+			readonly items: readonly MenuItem[];
+			/** The item the keys are on; -1 none. */
+			readonly choice: number;
+			readonly x: number | "W";
+			readonly y: number;
+			/** In cells, as tmux sizes it: its widest line, and four. */
+			readonly width: number;
+			readonly height: number;
+			readonly window?: number;
+	  }
+	| { readonly kind: "menu-closed"; readonly id: number }
+	/**
 	 * Something DevHub did not do and says so quietly: a binding whose
 	 * command tmux does not draw for a control client (`keyGuard.ts`).
 	 */
@@ -179,6 +209,25 @@ export type PageToControl =
 	  }
 	| { readonly kind: "resize"; readonly cols: number; readonly rows: number }
 	| { readonly kind: "select-pane"; readonly pane: number }
+	/** The open menu: an item clicked, or a click outside it. */
+	| {
+			readonly kind: "menu";
+			readonly action: "choose" | "close";
+			readonly index?: number;
+	  }
+	/**
+	 * A right-click the pane's program did not take, or one on a window's
+	 * tab: tmux's `MouseDown3Pane` / `MouseDown3Status` binding runs.
+	 */
+	| {
+			readonly kind: "mouse-menu";
+			readonly pane?: number;
+			readonly window?: number;
+			/** The cell, in the window. */
+			readonly x: number;
+			readonly y: number;
+			readonly meta: boolean;
+	  }
 	| { readonly kind: "select-window"; readonly window: number }
 	| { readonly kind: "visible"; readonly visible: boolean }
 	| { readonly kind: "ack"; readonly seq: number }
@@ -272,6 +321,30 @@ export function validateControlRequest(value: unknown): ControlRequest {
 			break;
 		case "select-pane":
 			message = { kind: "select-pane", pane: count(m.pane) };
+			break;
+		case "menu":
+			if (m.action !== "choose" && m.action !== "close")
+				throw new TerminalFailure("invalid_request");
+			message = {
+				kind: "menu",
+				action: m.action,
+				...(m.index === undefined ? {} : { index: count(m.index, 10_000) }),
+			};
+			break;
+		case "mouse-menu":
+			if (
+				typeof m.meta !== "boolean" ||
+				(m.pane === undefined) === (m.window === undefined)
+			)
+				throw new TerminalFailure("invalid_request");
+			message = {
+				kind: "mouse-menu",
+				x: count(m.x, 10_000),
+				y: count(m.y, 10_000),
+				meta: m.meta,
+				...(m.pane === undefined ? {} : { pane: count(m.pane) }),
+				...(m.window === undefined ? {} : { window: count(m.window) }),
+			};
 			break;
 		case "select-window":
 			message = { kind: "select-window", window: count(m.window) };

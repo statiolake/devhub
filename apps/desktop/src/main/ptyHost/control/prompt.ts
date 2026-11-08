@@ -23,7 +23,7 @@
  * and input, the history, `status-keys`, `word-separators`) and sends.
  */
 
-import { parseCommands } from "./tmuxCommand.js";
+import { parseCommands, readFlags } from "./tmuxCommand.js";
 
 /** tmux's prompt types (`-T`): each has its own history. */
 export type PromptType = "command" | "search" | "target" | "window-target";
@@ -60,41 +60,6 @@ const TYPES = new Set<PromptType>([
 	"target",
 	"window-target",
 ]);
-
-/** Flags with a value, and bare ones, as tmux's `args_parse` takes them. */
-function readFlags(
-	words: readonly string[],
-	valued: string,
-	bare: string,
-):
-	| { flags: Map<string, string>; count: Map<string, number>; rest: string[] }
-	| undefined {
-	const flags = new Map<string, string>();
-	const count = new Map<string, number>();
-	let i = 0;
-	for (; i < words.length; i++) {
-		const word = words[i];
-		if (word === "--") {
-			i++;
-			break;
-		}
-		if (!word.startsWith("-") || word.length < 2) break;
-		for (let j = 1; j < word.length; j++) {
-			const flag = word[j];
-			if (bare.includes(flag)) {
-				count.set(flag, (count.get(flag) ?? 0) + 1);
-				continue;
-			}
-			if (!valued.includes(flag)) return undefined;
-			const inline = word.slice(j + 1);
-			const value = inline.length > 0 ? inline : words[++i];
-			if (value === undefined) return undefined;
-			flags.set(flag, value);
-			break;
-		}
-	}
-	return { flags, count, rest: words.slice(i) };
-}
 
 /** The binding's text with `-b` after the command's name. */
 function withBackground(binding: string): string {

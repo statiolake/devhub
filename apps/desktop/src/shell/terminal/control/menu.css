@@ -1,0 +1,100 @@
+/* A `display-menu` DevHub asks (`ptyHost/control/menu.ts`): a float in the
+   popup's frame (`popup.css`'s border, radius and shadow), its items in the
+   UI's type, each key right-aligned in the terminal's. Its look is here
+   alone, as tokens, as the mock has it (`docs/terminal-mode.md`, phase 3). */
+
+.control-terminal {
+  --menu-ground: var(--terminal-background, Canvas);
+  --menu-row: 22px;
+  --menu-key: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 55%,
+    transparent
+  );
+  --menu-title: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 60%,
+    transparent
+  );
+  /* A disabled item (`-name`): there, and quiet. */
+  --menu-disabled: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 38%,
+    transparent
+  );
+  --menu-rule: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 12%,
+    transparent
+  );
+  /* The item the keys are on: the selection's colour, Neovim's Visual. */
+  --menu-chosen: var(
+    --terminal-selection,
+    color-mix(
+      in srgb,
+      var(--terminal-foreground, currentColor) 14%,
+      transparent
+    )
+  );
+}
+
+.control-menu {
+  position: absolute;
+  /* Over a popup's grid (50) and the prompt (45). */
+  z-index: 70;
+  box-sizing: border-box;
+  min-width: 160px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 4px 0;
+  border: 1px solid var(--popup-border);
+  border-radius: var(--popup-radius);
+  background: var(--menu-ground);
+  box-shadow: var(--popup-shadow);
+  color: var(--terminal-foreground, currentColor);
+  font: 13px / var(--menu-row) var(--font-ui, system-ui, sans-serif);
+  user-select: none;
+}
+
+.control-menu[hidden] {
+  display: none;
+}
+
+.control-menu-title {
+  padding: 2px 12px 4px;
+  color: var(--menu-title);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.control-menu-item {
+  display: flex;
+  gap: 24px;
+  padding: 0 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.control-menu-item[aria-selected="true"] {
+  background: var(--menu-chosen);
+}
+
+.control-menu-item[aria-disabled="true"] {
+  color: var(--menu-disabled);
+}
+
+.control-menu-name {
+  flex: 1;
+}
+
+.control-menu-key {
+  color: var(--menu-key);
+  font: 11px / var(--menu-row) var(--terminal-font, monospace);
+}
+
+.control-menu-rule {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--menu-rule);
+}

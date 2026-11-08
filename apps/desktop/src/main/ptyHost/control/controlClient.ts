@@ -42,6 +42,17 @@ import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
 import { KeyRouter, parseBindings, waitingCommand } from "./keyGuard.js";
 import { PopupJob, popupInput, type PopupPty } from "./popup.js";
 import {
+	MenuSession,
+	ifShellOf,
+	keptItems,
+	menuOf,
+	plainText,
+	menuPosition,
+	type IfShellArgs,
+	type MenuArgs,
+	type MenuStep,
+} from "./menu.js";
+import {
 	PromptSession,
 	promptOf,
 	untilControl,
@@ -108,6 +119,28 @@ const FIELD = "\u001f";
 const PANE_FACTS = "devhub-pane";
 const PANE_FACTS_FORMAT = `#{pane_in_mode}${FIELD}#{@devhub-nvim}`;
 const NAMED = new TextEncoder().encode(NVIM_NAMED_OSC);
+
+/** Where a click that opened something was: its target, and its cell. */
+interface MouseAt {
+	/** `%pane` or `@window`: what `-t =` names. */
+	readonly target: string;
+	readonly x: number;
+	readonly y: number;
+	readonly window?: number;
+}
+
+/**
+ * A format for `display-message -p` expanded as `format_single` would,
+ * without `strftime`: `display-message` runs it first, and `%%` is `%`.
+ */
+function noTime(format: string): string {
+	return format.replace(/%/g, "%%");
+}
+
+/** A menu title as the page draws it: centred by the page, styles dropped. */
+function plainTitle(title: string): string {
+	return plainText(title);
+}
 
 interface Pane {
 	readonly id: TmuxId;
@@ -177,8 +210,24 @@ export class ControlClient {
 	#popupOpening: string[] | undefined;
 	/** The prompt open now (`prompt.ts`): the keys are its. */
 	#prompt: PromptSession | undefined;
-	/** Keys and text typed while a prompt was being opened: its, once it is. */
-	#promptOpening: (string | { text: string })[] | undefined;
+	/**
+	 * Keys and text typed while DevHub works out a binding it does itself (a
+	 * prompt, a menu, an `if-shell -F`): the prompt's or menu's once it is
+	 * open, else the panes'.
+	 */
+	#opening: (string | { text: string })[] | undefined;
+	/** The menu open now (`menu.ts`): the keys are its. */
+	#menu:
+		| {
+				readonly id: number;
+				readonly session: MenuSession;
+				readonly select?: readonly string[];
+				readonly at: { readonly x: number | "W"; readonly y: number };
+				/** A window's tab it was opened on (`-x W` is over it). */
+				readonly window?: number;
+		  }
+		| undefined;
+	#menuSerial = 0;
 	/** What Tab completes to, read once: commands and aliases, options. */
 	#completions: Promise<{ commands: string[]; options: string[] }> | undefined;
 
@@ -219,6 +268,14 @@ export class ControlClient {
 			case "resize":
 				this.#resize(message.cols, message.rows);
 				return;
+			case "menu":
+				if (message.action === "close") this.#menuStep({ kind: "close" });
+				else if (this.#menu !== undefined)
+					this.#menuStep(this.#menu.session.choose(message.index ?? -1));
+				return;
+			case "mouse-menu":
+				this.#mouseMenu(message);
+				return;
 			case "select-pane":
 				void this.#command(["select-pane", "-t", `%${String(message.pane)}`]);
 				return;
@@ -234,6 +291,7 @@ export class ControlClient {
 				if (message.visible) {
 					this.#popup?.redraw();
 					this.#postPrompt();
+					this.#postMenu();
 					for (const pane of this.#panes.values()) pane.all = true;
 					this.#postLayout();
 					this.#schedule();
@@ -303,10 +361,24 @@ export class ControlClient {
 			case "reply":
 				if (event.own)
 					this.#replies.shift()?.({ ok: event.ok, lines: event.lines });
-				// A command tmux ran for this client failed (a prompt's
-				// template): tmux would say so in the status line.
-				else if (!event.ok && event.lines.length > 0)
-					this.#o.post({ kind: "notice", text: event.lines.join(" ") });
+				// A command tmux ran for this client (a prompt's template, a
+				// menu's item) failed, or said something: tmux would say so in
+				// the status line.
+				else {
+					const said = event.lines.filter((line) =>
+						line.startsWith("%message "),
+					);
+					for (const line of said)
+						this.#o.post({
+							kind: "notice",
+							text: line.slice("%message ".length),
+						});
+					if (!event.ok && event.lines.length > said.length)
+						this.#o.post({
+							kind: "notice",
+							text: event.lines.filter((l) => !said.includes(l)).join(" "),
+						});
+				}
 				return;
 			case "output": {
 				const pane = this.#panes.get(event.pane);
@@ -421,8 +493,18 @@ export class ControlClient {
 			this.#popupOpening.push(...keys);
 			return;
 		}
-		if (this.#promptOpening !== undefined) {
-			this.#promptOpening.push(...keys);
+		if (this.#opening !== undefined) {
+			this.#opening.push(...keys);
+			return;
+		}
+		if (this.#menu !== undefined) {
+			for (const [index, key] of keys.entries()) {
+				this.#menuStep(this.#menu.session.key(key));
+				if (this.#menu === undefined) {
+					this.#keys(keys.slice(index + 1));
+					return;
+				}
+			}
 			return;
 		}
 		if (this.#prompt !== undefined) {
@@ -457,7 +539,12 @@ export class ControlClient {
 		for (const [index, key] of keys.entries()) {
 			const route = this.#router.route(key, Date.now());
 			send.push(...route.send);
-			if (route.popup !== undefined || route.prompt !== undefined) {
+			if (
+				route.popup !== undefined ||
+				route.prompt !== undefined ||
+				route.menu !== undefined ||
+				route.conditional !== undefined
+			) {
 				flush();
 				if (route.resetTable === true) {
 					void this.#command([
@@ -472,6 +559,10 @@ export class ControlClient {
 				if (route.popup !== undefined) void this.#openPopup(route.popup, rest);
 				else if (route.prompt !== undefined)
 					void this.#openPrompt(route.prompt, rest);
+				else if (route.menu !== undefined)
+					void this.#openMenu(route.menu, rest);
+				else if (route.conditional !== undefined)
+					void this.#hold(rest, this.#conditional(route.conditional));
 				return;
 			}
 			if (route.refused !== undefined) {
@@ -665,8 +756,11 @@ export class ControlClient {
 	 * `word-separators` and the top buffer for its keys. `rest`: keys typed
 	 * after the binding's, which are the prompt's.
 	 */
-	async #openPrompt(args: PromptArgs, rest: readonly string[]): Promise<void> {
-		this.#promptOpening = [...rest];
+	#openPrompt(args: PromptArgs, rest: readonly string[]): Promise<void> {
+		return this.#hold(rest, this.#preparePrompt(args));
+	}
+
+	async #preparePrompt(args: PromptArgs): Promise<void> {
 		const active = this.#activePane();
 		const target = active === undefined ? [] : ["-t", `%${String(active)}`];
 		const texts = args.prompts.flatMap((p) => [p.prompt, p.input]);
@@ -682,13 +776,10 @@ export class ControlClient {
 			this.#command(["show-buffer"]),
 			this.#readCompletions(),
 		]);
-		const waiting = this.#promptOpening;
-		this.#promptOpening = undefined;
 		if (this.#ended) return;
 		const [keys, separators, ...expanded] = facts.lines.join("\n").split(FIELD);
 		if (!facts.ok) {
 			this.#o.post({ kind: "notice", text: facts.lines.join(" ") });
-			this.#replayOpening(waiting);
 			return;
 		}
 		const session = new PromptSession(
@@ -715,16 +806,273 @@ export class ControlClient {
 		// template as the answer changes.
 		if (args.mode === "incremental") void this.#run([args.replay]);
 		this.#postPrompt();
-		this.#replayOpening(waiting);
 	}
 
-	/** Keys and text typed while a prompt opened, in order. */
+	/** Keys and text typed while a binding was worked out, in order. */
 	#replayOpening(waiting: readonly (string | { text: string })[]): void {
 		for (const item of waiting) {
 			if (typeof item === "string") this.#keys([item]);
-			else if (!this.#promptText(new TextEncoder().encode(item.text)))
-				this.#keys([]);
+			else {
+				const bytes = new TextEncoder().encode(item.text);
+				if (this.#promptText(bytes)) continue;
+				const pane = this.#activePane();
+				if (pane !== undefined) this.#sendBytes(pane, bytes);
+			}
 		}
+	}
+
+	/** Hold the keys typed while `work` runs; then they go where they now go. */
+	async #hold(rest: readonly string[], work: Promise<void>): Promise<void> {
+		if (this.#opening !== undefined) {
+			// Held already: the outer hold replays them all.
+			this.#opening.push(...rest);
+			await work;
+			return;
+		}
+		this.#opening = [...rest];
+		await work;
+		const waiting = this.#opening;
+		this.#opening = undefined;
+		this.#replayOpening(waiting);
+	}
+
+	/**
+	 * A command DevHub does itself if tmux would wait on the client for it:
+	 * a popup, a prompt or a menu is opened, an `if-shell -F` decided, any
+	 * other waiting command refused; the rest is tmux's to run.
+	 * `mouse`: where a click opened it, for `-t =` and `-x M`.
+	 */
+	async #dispatch(command: string, mouse?: MouseAt): Promise<void> {
+		const popup = popupOf(command);
+		if (popup !== undefined) return this.#openPopup(popup, []);
+		const prompt = promptOf(command);
+		if (prompt !== undefined) return this.#openPrompt(prompt, []);
+		const menu = menuOf(command);
+		if (menu !== undefined) return this.#openMenu(menu, [], mouse);
+		const conditional = ifShellOf(command);
+		if (conditional !== undefined && waitingCommand(command) !== undefined)
+			return this.#conditional(conditional, mouse);
+		const waiting = waitingCommand(command);
+		if (waiting !== undefined) {
+			this.#o.post({
+				kind: "notice",
+				text: `${waiting} is not available in control mode yet.`,
+			});
+			return;
+		}
+		// What a click opened is only its menu; a mouse binding's other arm
+		// (`send -M`) is the page's (it reports the click to the program).
+		if (mouse !== undefined) return;
+		await this.#runText(command);
+	}
+
+	/** tmux decides an `if-shell -F`'s format at its target; the arm is run. */
+	async #conditional(args: IfShellArgs, mouse?: MouseAt): Promise<void> {
+		const target = this.#resolveTarget(args.target, mouse);
+		const answer = await this.#command([
+			"display-message",
+			"-p",
+			...(target === undefined ? [] : ["-t", target]),
+			"--",
+			noTime(args.condition),
+		]);
+		if (!answer.ok || this.#ended) return;
+		const value = answer.lines.join("\n");
+		const arm = value !== "" && value !== "0" ? args.then : args.otherwise;
+		if (arm !== undefined) await this.#dispatch(arm, mouse);
+	}
+
+	/** `-t =` is the mouse's pane (or window); other targets are tmux's. */
+	#resolveTarget(
+		target: string | undefined,
+		mouse?: MouseAt,
+	): string | undefined {
+		if (target === "=" && mouse !== undefined) return mouse.target;
+		return target;
+	}
+
+	/**
+	 * A command list as text, run by tmux as a binding's is, with one answer
+	 * whatever it holds: `confirm-before -b` parses it (expanding formats, so
+	 * a `#` is doubled) and runs it once `y` is typed into its prompt, on the
+	 * client's queue with no state of its own.
+	 */
+	async #runText(command: string): Promise<void> {
+		let line: string;
+		try {
+			line = commandLine([
+				"confirm-before",
+				"-b",
+				"-c",
+				"y",
+				command.replace(/#/g, "##"),
+			]);
+		} catch (failure: unknown) {
+			this.#o.post({
+				kind: "notice",
+				text: failure instanceof Error ? failure.message : String(failure),
+			});
+			return;
+		}
+		await this.#run([line, this.#typeInto(["y"])]);
+	}
+
+	/**
+	 * Ask a `display-menu` (`menu.ts`): its title, item names and commands
+	 * expanded by tmux against its target pane, placed by tmux's rules.
+	 */
+	async #openMenu(
+		args: MenuArgs,
+		rest: readonly string[],
+		mouse?: MouseAt,
+	): Promise<void> {
+		const work = (async () => {
+			const active = this.#activePane();
+			const target =
+				this.#resolveTarget(args.target, mouse) ??
+				(active === undefined ? undefined : `%${String(active)}`);
+			const texts = [
+				args.title,
+				...args.items.flatMap((item) => [item.name, item.command]),
+			];
+			const facts = await this.#command([
+				"display-message",
+				"-p",
+				...(target === undefined ? [] : ["-t", target]),
+				"--",
+				["#{pane_id}", "#{window_id}", ...texts.map(noTime)].join(FIELD),
+			]);
+			if (!facts.ok || this.#ended) {
+				if (!facts.ok)
+					this.#o.post({ kind: "notice", text: facts.lines.join(" ") });
+				return;
+			}
+			const [paneText, windowText, title, ...expanded] = facts.lines
+				.join("\n")
+				.split(FIELD);
+			const items = keptItems(
+				args,
+				args.items.map((_, i) => ({
+					name: expanded[2 * i] ?? "",
+					command: expanded[2 * i + 1] ?? "",
+				})),
+			);
+			if (items.length === 0) return;
+			const session = new MenuSession(title ?? "", items, args.startingChoice);
+			const paneId = Number((paneText ?? "").slice(1));
+			const box = this.#shownPanes().find((p) => p.pane === paneId) ?? {
+				x: 0,
+				y: 0,
+				width: this.#cols,
+				height: this.#rows,
+			};
+			const at = menuPosition(args.x, args.y, session.width, session.height, {
+				cols: this.#cols,
+				rows: this.#rows,
+				pane: box,
+				...(mouse === undefined ? {} : { mouse }),
+			});
+			// tmux runs the item with the menu's target as the current pane;
+			// a control client's commands have its active pane: the target is
+			// selected first when it is not that (a right-click elsewhere).
+			const window = Number((windowText ?? "").slice(1));
+			const select =
+				paneId === active
+					? undefined
+					: window === this.#activeWindow || mouse?.window === undefined
+						? ["select-pane", "-t", `%${String(paneId)}`]
+						: ["select-window", "-t", `@${String(window)}`];
+			this.#menu = {
+				id: ++this.#menuSerial,
+				session,
+				at,
+				...(select === undefined ? {} : { select }),
+				...(mouse?.window === undefined ? {} : { window: mouse.window }),
+			};
+			this.#postMenu();
+		})();
+		await this.#hold(rest, work);
+	}
+
+	#postMenu(): void {
+		const menu = this.#menu;
+		if (menu === undefined || this.#ended) return;
+		const place = menu.at;
+		this.#o.post({
+			kind: "menu",
+			id: menu.id,
+			title: plainTitle(menu.session.title),
+			items: menu.session.items,
+			choice: menu.session.choice,
+			x: place.x,
+			y: place.y,
+			width: menu.session.width,
+			height: menu.session.height,
+			...(menu.window === undefined ? {} : { window: menu.window }),
+		});
+	}
+
+	#menuStep(step: MenuStep): void {
+		const menu = this.#menu;
+		if (menu === undefined) return;
+		switch (step.kind) {
+			case "unchanged":
+				return;
+			case "changed":
+				this.#postMenu();
+				return;
+			case "close":
+				this.#closeMenu();
+				return;
+			case "run":
+				this.#closeMenu();
+				void (async () => {
+					if (menu.select !== undefined) await this.#command(menu.select);
+					if (step.command !== "") await this.#dispatch(step.command);
+				})();
+				return;
+		}
+	}
+
+	#closeMenu(): void {
+		const menu = this.#menu;
+		if (menu === undefined) return;
+		this.#menu = undefined;
+		if (!this.#ended) this.#o.post({ kind: "menu-closed", id: menu.id });
+	}
+
+	/**
+	 * A right-click the page did not give the pane's program: tmux's
+	 * `MouseDown3Pane` (or, on a window's tab, `MouseDown3Status`) binding,
+	 * with the click as its mouse.
+	 */
+	#mouseMenu(at: {
+		pane?: number;
+		window?: number;
+		x: number;
+		y: number;
+		meta: boolean;
+	}): void {
+		if (
+			this.#menu !== undefined ||
+			this.#prompt !== undefined ||
+			this.#popup !== undefined
+		)
+			return;
+		const key = `${at.meta ? "M-" : ""}${at.window !== undefined ? "MouseDown3Status" : "MouseDown3Pane"}`;
+		const command = this.#router.binding("root", key);
+		if (command === undefined) return;
+		const target =
+			at.window !== undefined ? `@${String(at.window)}` : `%${String(at.pane)}`;
+		void this.#hold(
+			[],
+			this.#dispatch(command, {
+				target,
+				x: at.x,
+				y: at.y,
+				...(at.window === undefined ? {} : { window: at.window }),
+			}),
+		);
 	}
 
 	async #readCompletions(): Promise<{ commands: string[]; options: string[] }> {
@@ -759,8 +1107,8 @@ export class ControlClient {
 	/** Text for the prompt (an IME's, a paste), if one is open or opening. */
 	#promptText(bytes: Uint8Array): boolean {
 		const text = new TextDecoder().decode(bytes);
-		if (this.#promptOpening !== undefined) {
-			this.#promptOpening.push({ text });
+		if (this.#opening !== undefined) {
+			this.#opening.push({ text });
 			return true;
 		}
 		const prompt = this.#prompt;
@@ -813,23 +1161,11 @@ export class ControlClient {
 	 */
 	#answer(args: PromptArgs, keys: readonly (readonly string[])[]): void {
 		if (args.bare) {
+			// What is typed at `:` is a command: one that would wait on the
+			// client is DevHub's, as a key's binding is.
 			const typed = keys.find((k) => k[0] === "-l")?.[1] ?? "";
-			const popup = popupOf(typed);
-			if (popup !== undefined) {
-				void this.#openPopup(popup, []);
-				return;
-			}
-			const prompt = promptOf(typed);
-			if (prompt !== undefined) {
-				void this.#openPrompt(prompt, []);
-				return;
-			}
-			const waiting = waitingCommand(typed);
-			if (waiting !== undefined) {
-				this.#o.post({
-					kind: "notice",
-					text: `${waiting} is not available in control mode yet.`,
-				});
+			if (waitingCommand(typed) !== undefined) {
+				void this.#hold([], this.#dispatch(typed));
 				return;
 			}
 		}
@@ -874,7 +1210,8 @@ export class ControlClient {
 
 	/**
 	 * Commands, already written as tmux reads them, on one line: tmux runs
-	 * them in order with nothing between, and answers each.
+	 * them in order with nothing between, and answers each, up to the first
+	 * that fails: tmux skips the rest of the line, which get no answer.
 	 */
 	#run(
 		commands: readonly string[],
@@ -884,7 +1221,19 @@ export class ControlClient {
 			commands.map(
 				(_, i) =>
 					new Promise<{ ok: boolean; lines: readonly string[] }>((resolve) => {
-						this.#replies.push(resolve);
+						this.#replies.push((reply) => {
+							resolve(reply);
+							if (!reply.ok) {
+								if (reply.lines.length > 0)
+									this.#o.post({ kind: "notice", text: reply.lines.join(" ") });
+								// The line's later commands, next in the queue, never run.
+								for (const skipped of this.#replies.splice(
+									0,
+									commands.length - 1 - i,
+								))
+									skipped({ ok: false, lines: [] });
+							}
+						});
 						if (i === commands.length - 1) {
 							try {
 								this.#o.process.write(`${commands.join(" ; ")}\n`);
@@ -1290,6 +1639,7 @@ export class ControlClient {
 		}
 		this.#popup?.close();
 		this.#prompt = undefined;
+		this.#menu = undefined;
 		for (const check of this.#modeChecks.values()) {
 			(this.#o.timers ?? NODE_TIMERS).clear(check);
 		}

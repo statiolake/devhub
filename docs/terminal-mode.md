@@ -566,6 +566,38 @@ wait is refused. An error from the command, and a `display-message` to the
 client, are said in the notice, where tmux would put them in its status
 line. tmux's completion menus (`-t` targets, window lists) are not drawn.
 
+**`display-menu` is DevHub's** (`main/ptyHost/control/menu.ts`), a binding
+that is one, or one `if-shell -F` that holds one (tmux's right-click binding
+on a pane is `if -F -t= '#{||:#{mouse_any_flag},…}' {…} { display-menu … }`:
+tmux decides the format at its target with `display-message -p`, and DevHub
+takes the arm). The title, every item's name and its command are expanded by
+tmux against the menu's target pane, as `menu_add_item` expands them (with
+`%` doubled, since `display-message` runs `strftime` first and
+`format_single` does not); items are kept as tmux keeps them (no item whose
+name expands to nothing, `-name` shown and not chosen, no separator first or
+twice); the keys are `menu_key_cb`'s (an item's key, Up/Down and `k`/`j`,
+Home/End and `g`/`G`, PPage/NPage, Enter, Escape/`q`/`C-c`/`C-g`); `-x`/`-y`
+are placed by `cmd_display_menu_get_pos`'s rules (`C`, `P`, `R`, `M`, numbers,
+`#{popup_*}`), except that `W`/`S` name tmux's status line, which is DevHub's
+window strip below the panes: `-x W` is over the window's tab, `-y W`/`S` the
+panes' foot. The page draws it as a float in the popup's frame
+(`menu.css`), keys right-aligned without tmux's brackets, the chosen item in
+the selection colour; a click on an item chooses it, a click outside closes
+it, and nothing needs the mouse. A right-click that the pane's program does
+not take runs tmux's `MouseDown3Pane` with the click as its mouse (`-t =` is
+that pane, `-x M -y M` the cell), and one on a window's tab its
+`MouseDown3Status`. The chosen item's command is tmux's: one that would wait
+(a prompt in the window menu's Rename) is DevHub's again, the rest is run as
+text by `confirm-before -b -c y <command>` and a typed `y` — tmux parses and
+runs it as a binding's, on the client's queue with no state, and it answers
+once whatever the command holds. tmux runs an item with the menu's target as
+the current pane; a control client's commands have its active one, so the
+target is selected first when it is another (a right-click on another pane):
+the one difference, chosen over an item acting on the wrong pane. Items that
+read the mouse's word or line (`#{mouse_word}`) expand to nothing, since a
+format DevHub asks tmux for has no mouse event, and are left out as tmux
+leaves out any empty item.
+
 The rest, until phase 3 draws them, is not let do that
 (`main/ptyHost/control/keyGuard.ts`):
 
