@@ -377,6 +377,41 @@ deleted together — no setting is kept for compatibility, and a
 `tmux_control_mode` left in a settings file is then refused like any
 unknown key.
 
+### What waits on a control client, until DevHub draws it
+
+A control client cannot answer what tmux would draw for a normal one, and
+some of it waits on the client: a `display-popup` holds the client's
+command queue until its command exits (an fzf popup nobody can see never
+does), `display-menu` and `display-panes` take the next key, and a
+`command-prompt` or `confirm-before` waits for an answer typed into a prompt
+that is never shown; every command DevHub sends after it waits too. Copy
+mode and the choosers do not wait, but take every key into a mode nobody
+sees.
+
+Until phase 3 draws them, nothing is let do that
+(`main/ptyHost/control/keyGuard.ts`):
+
+- DevHub keeps its own copy of where tmux is in its key tables, from the
+  bindings `list-keys` gives (read at attach, and again while a prefix waits
+  if they are more than 5 s old), the prefix and `prefix2`, `repeat-time`,
+  repeats and `switch-client -T`. The prefix is held until the key after it
+  says which binding it is; a binding whose command waits on the client
+  (the commands above, their aliases, inside an `if-shell` too) is not sent,
+  and the page says so quietly ("C-q m: display-popup is not available in
+  control mode yet"). A table tmux was already in is reset. Keys typed
+  before the bindings were first read wait for them.
+- A pane left in a mode (copy mode, a chooser) once the binding that entered
+  it has finished — 250 ms after its last mode change, since tmux says so
+  while the binding still runs — is taken out of it (`copy-mode -q`), and
+  that is said. prefix+y / Y, which enter copy mode, select by the prompt
+  marks and `copy-pipe-and-cancel` in one binding, are done by then and are
+  untouched.
+
+Running a popup's command somewhere else (a temporary split or window) was
+considered and not done: such a command runs as the popup's pane's, and the
+person's `bind m` moves "the current pane" (`tmux move-pane` with no `-s`),
+which in a split is the split itself.
+
 ### Phases
 
 1. **Engine** — done (above).

@@ -1,5 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { TMUX, killTmuxServer } from "../tmuxSockets";
@@ -19,20 +21,31 @@ beforeAll(async () => {
   lib = await LibGhosttyVt.load(readFileSync(WASM));
 });
 
+/** The person's prefix, and bindings tmux does not draw for a control client. */
+const CONF = join(mkdtempSync(join(tmpdir(), "devhub-control-")), "tmux.conf");
+writeFileSync(
+  CONF,
+  [
+    "unbind C-b",
+    "set -g prefix C-q",
+    "bind C-q send-prefix",
+    'bind m display-popup -E "sleep 30"',
+    'bind W confirm-before -p "kill? (y/n)" kill-session',
+    "bind y copy-mode \\; send-keys -X cancel",
+    "",
+  ].join("\n"),
+);
+
 const sockets: string[] = [];
 afterEach(() => {
   for (const socket of sockets.splice(0)) killTmuxServer(socket);
 });
 
 function tmux(socket: string, ...args: string[]): string {
-  return execFileSync(
-    TMUX ?? "tmux",
-    ["-L", socket, "-f", "/dev/null", ...args],
-    {
-      encoding: "utf8",
-      env: { ...process.env, LANG: "C.UTF-8" },
-    },
-  );
+  return execFileSync(TMUX ?? "tmux", ["-L", socket, "-f", CONF, ...args], {
+    encoding: "utf8",
+    env: { ...process.env, LANG: "C.UTF-8" },
+  });
 }
 
 function controlProcess(socket: string, session: string): ControlProcess {
@@ -61,9 +74,11 @@ function page() {
   const screens = new Map<number, string[]>();
   let layout: Extract<ControlToPage, { kind: "layout" }> | undefined;
   let ended: string | undefined;
+  const notices: string[] = [];
   const post = (message: ControlToPage) => {
     if (message.kind === "layout") layout = message;
     else if (message.kind === "ended") ended = message.reason;
+    else if (message.kind === "notice") notices.push(message.text);
     else {
       const rows = screens.get(message.pane) ?? [];
       for (const row of message.frame.dirty)
@@ -75,6 +90,7 @@ function page() {
   return {
     post,
     screens,
+    notices,
     get layout() {
       return layout;
     },
@@ -157,13 +173,60 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
         view.layout.panes.reduce((w, p) => w + p.width, 0) === 59,
     );
 
-    // Prefix and a binding, through send-keys -K: C-b z zooms the pane.
-    client.receive({ kind: "keys", keys: ["C-b", "z"] });
+    // Prefix and a binding, through send-keys -K: C-q z zooms the pane.
+    client.receive({ kind: "keys", keys: ["C-q", "z"] });
     await until(
       "the zoom",
       () => view.layout?.panes.length === 1 && view.layout.windows[0]?.zoomed,
     );
 
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+  it("refuses the bindings that would wait on it, and is never held by them", async () => {
+    const socket = `devhub-guard-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "g", "-x", "80", "-y", "24", "sh");
+    tmux(socket, "send-keys", "-t", "g", "PS1='$ '; clear", "Enter");
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "g"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+    });
+    const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
+    // A popup and a confirm are said, not run: the client answers on.
+    client.receive({ kind: "keys", keys: ["C-q", "m", "C-q", "W"] });
+    await until("two notices", () => view.notices.length === 2);
+    expect(view.notices[0]).toContain("display-popup");
+    expect(view.notices[1]).toContain("confirm-before");
+    client.receive({
+      kind: "bytes",
+      bytes: new TextEncoder().encode("echo still-here\r"),
+    });
+    await until("the client still answering", () =>
+      view.screens.get(pane)?.some((row) => row === "still-here"),
+    );
+    // Copy mode left behind is left; one a binding leaves by itself is not said.
+    client.receive({ kind: "keys", keys: ["C-q", "y"] });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(view.notices).toHaveLength(2);
+    client.receive({ kind: "keys", keys: ["C-q", "["] });
+    await until("the copy-mode notice", () => view.notices.length === 3);
+    expect(view.notices[2]).toContain("copy-mode");
+    expect(
+      tmux(
+        socket,
+        "display-message",
+        "-p",
+        "-t",
+        "g",
+        "#{pane_in_mode}",
+      ).trim(),
+    ).toBe("0");
     client.stop();
     await until("the end", () => view.ended);
   }, 20000);

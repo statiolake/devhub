@@ -37,6 +37,7 @@ import type {
 	WindowInfo,
 } from "../../../ipc/terminalControl.js";
 import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
+import { KeyRouter, parseBindings } from "./keyGuard.js";
 import {
 	ControlParser,
 	commandLine,
@@ -78,6 +79,12 @@ export interface ControlClientOptions {
 }
 
 const MAX_UNACKED = 4;
+/** How long a binding that enters a mode has to leave it by itself. */
+const MODE_SETTLE_MS = 250;
+const NODE_TIMERS = {
+	set: (fn: () => void, ms: number): unknown => setTimeout(fn, ms),
+	clear: (handle: unknown) => clearTimeout(handle as NodeJS.Timeout),
+};
 const FIELD = "\u001f";
 
 interface Pane {
@@ -127,6 +134,15 @@ export class ControlClient {
 	#colors:
 		| { foreground: number; background: number; palette?: readonly number[] }
 		| undefined;
+	readonly #router = new KeyRouter(new Map(), [], 500);
+	#bindingsAt = 0;
+	/** A pane's pending mode check (`pane-mode-changed`), by pane. */
+	readonly #modeChecks = new Map<TmuxId, unknown>();
+	/**
+	 * Keys typed before the bindings were first read: they wait, since a key
+	 * routed with no bindings known is a popup sent unseen.
+	 */
+	#keysBeforeBindings: string[] | undefined = [];
 
 	constructor(options: ControlClientOptions) {
 		this.#o = options;
@@ -148,15 +164,7 @@ export class ControlClient {
 		if (this.#ended) return;
 		switch (message.kind) {
 			case "keys":
-				if (message.keys.length === 0) return;
-				void this.#command([
-					"send-keys",
-					"-K",
-					"-c",
-					this.#clientName,
-					"--",
-					...message.keys,
-				]);
+				this.#keys(message.keys);
 				return;
 			case "bytes": {
 				const pane = message.pane ?? this.#activePane();
@@ -229,6 +237,10 @@ export class ControlClient {
 			"#{client_name}",
 		]);
 		this.#clientName = name.lines[0] ?? "";
+		await this.#readBindings();
+		const waiting = this.#keysBeforeBindings ?? [];
+		this.#keysBeforeBindings = undefined;
+		this.#keys(waiting);
 		await this.#refresh();
 	}
 
@@ -295,12 +307,124 @@ export class ControlClient {
 			case "pause":
 				void this.#continue(event.pane);
 				return;
+			case "pane-mode-changed": {
+				// tmux says so while the binding that entered the mode is still
+				// running (prefix+y: copy-mode, select, copy-pipe-and-cancel), so
+				// the pane is asked once that has had time to finish.
+				// One check per pane, from its last change.
+				const timers = this.#o.timers ?? NODE_TIMERS;
+				const previous = this.#modeChecks.get(event.pane);
+				if (previous !== undefined) timers.clear(previous);
+				this.#modeChecks.set(
+					event.pane,
+					timers.set(() => {
+						this.#modeChecks.delete(event.pane);
+						void this.#leaveMode(event.pane);
+					}, MODE_SETTLE_MS),
+				);
+				return;
+			}
 			case "exit":
 				this.#end(event.reason.length > 0 ? event.reason : "detached");
 				return;
 			default:
 				return;
 		}
+	}
+
+	/**
+	 * Keys through the client's key tables, each looked up first
+	 * (`keyGuard.ts`): a binding that would wait on the client is not sent.
+	 */
+	#keys(keys: readonly string[]): void {
+		if (this.#keysBeforeBindings !== undefined) {
+			this.#keysBeforeBindings.push(...keys);
+			return;
+		}
+		let send: string[] = [];
+		const flush = () => {
+			if (send.length > 0)
+				void this.#command([
+					"send-keys",
+					"-K",
+					"-c",
+					this.#clientName,
+					"--",
+					...send,
+				]);
+			send = [];
+		};
+		for (const key of keys) {
+			const route = this.#router.route(key, Date.now());
+			send.push(...route.send);
+			if (route.refused !== undefined) {
+				flush();
+				if (route.resetTable === true) {
+					void this.#command([
+						"switch-client",
+						"-c",
+						this.#clientName,
+						"-T",
+						"root",
+					]);
+				}
+				this.#o.post({
+					kind: "notice",
+					text: `${route.refused.keys}: ${route.refused.command} is not available in control mode yet.`,
+				});
+			}
+		}
+		flush();
+		// The bindings can change (a source-file, a bind typed at a prompt):
+		// they are read again while the prefix waits for its key.
+		if (this.#router.holdingPrefix && Date.now() - this.#bindingsAt > 5000)
+			void this.#readBindings();
+	}
+
+	async #readBindings(): Promise<void> {
+		this.#bindingsAt = Date.now();
+		const keys = await this.#command(["list-keys"]);
+		const options = await this.#command([
+			"display-message",
+			"-p",
+			["#{prefix}", "#{prefix2}", "#{repeat-time}"].join(FIELD),
+		]);
+		if (!keys.ok || !options.ok) return;
+		const [prefix, prefix2, repeat] = (options.lines[0] ?? "").split(FIELD);
+		const prefixes = [prefix, prefix2].filter(
+			(p): p is string => p !== undefined && p !== "" && p !== "None",
+		);
+		this.#router.update(
+			parseBindings(keys.lines),
+			prefixes,
+			Number(repeat) || 500,
+		);
+	}
+
+	/**
+	 * A pane left in a mode tmux does not draw for this client (copy mode, a
+	 * chooser) takes every key there unseen: once the command that entered it
+	 * has finished, it is taken out of it, and that is said. A binding that
+	 * enters copy mode and leaves it in one go (prefix+y's copy of the last
+	 * command's output) is done by the time this asks, and is untouched.
+	 */
+	async #leaveMode(paneId: TmuxId): Promise<void> {
+		if (this.#ended || !this.#panes.has(paneId)) return;
+		const target = `%${String(paneId)}`;
+		const state = await this.#command([
+			"display-message",
+			"-p",
+			"-t",
+			target,
+			"#{pane_in_mode}" + FIELD + "#{pane_mode}",
+		]);
+		const [inMode, mode] = (state.lines[0] ?? "").split(FIELD);
+		if (!state.ok || inMode !== "1") return;
+		await this.#command(["copy-mode", "-q", "-t", target]);
+		this.#o.post({
+			kind: "notice",
+			text: `${mode !== undefined && mode !== "" ? mode : "This mode"} is not available in control mode yet.`,
+		});
 	}
 
 	/** Write a command; its answer is the next reply of this client's. */
@@ -641,6 +765,10 @@ export class ControlClient {
 			timers.clear(this.#flushTimer);
 			this.#flushTimer = undefined;
 		}
+		for (const check of this.#modeChecks.values()) {
+			(this.#o.timers ?? NODE_TIMERS).clear(check);
+		}
+		this.#modeChecks.clear();
 		for (const resolve of this.#replies.splice(0))
 			resolve({ ok: false, lines: [] });
 		for (const pane of this.#panes.values()) pane.vt.dispose();

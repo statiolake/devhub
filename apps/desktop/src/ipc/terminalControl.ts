@@ -99,6 +99,11 @@ export type ControlToPage =
 			readonly frame: VtFrame;
 			readonly modes: PaneModes;
 	  }
+	/**
+	 * Something DevHub did not do and says so quietly: a binding whose
+	 * command tmux does not draw for a control client (`keyGuard.ts`).
+	 */
+	| { readonly kind: "notice"; readonly text: string }
 	| { readonly kind: "ended"; readonly reason: string };
 
 export type PageToControl =
