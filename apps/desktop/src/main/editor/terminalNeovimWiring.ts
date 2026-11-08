@@ -45,6 +45,9 @@ export function wireTerminalNeovims(
 		ports: {
 			read: async (terminal, announce) => {
 				const tmux = await options.tmuxOf(terminal.machine);
+				// Written once per run, so a terminal that outlived the last
+				// DevHub runs this one's `nvim`, not the one it left.
+				if (announce) await tmux.ensureNeovimShim();
 				const output = await tmux.terminalNeovimReading(
 					terminal.terminalId,
 					announce,

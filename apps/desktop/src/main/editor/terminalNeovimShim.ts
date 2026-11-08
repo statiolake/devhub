@@ -21,7 +21,9 @@
  * it reads the config or opens a file, so a swap-file question or a config
  * error is drawn, never answered blind by a headless Neovim. Its stdin and
  * stdout are the embedder's channel, which nothing uses: a FIFO held open by
- * Neovim itself (EOF there would end it) and `/dev/null`.
+ * Neovim itself (EOF there would end it) and `/dev/null`. Neovim 0.9 waits for
+ * an `--embed` UI on stdin alone, so there it is `--headless` instead, without
+ * the wait.
  *
  * # How DevHub learns of it — tmux, on every machine
  *
@@ -137,7 +139,16 @@ fi
 # its keys are the GUI's. A hangup (the pane killed) still ends both.
 trap '' INT QUIT TSTP
 "$shim_tmux" set-option -p -t "$TMUX_PANE" ${NVIM_SOCKET_OPTION} "$socket" 2>/dev/null
-DEVHUB_NEOVIM_GUI=1 "$real" --embed --listen "$socket" "$@" <&3 >/dev/null 3>&- &
+# Neovim 0.9 waits for an --embed UI on stdin alone, and answers nothing on
+# its socket meanwhile; it starts headless instead, without that wait.
+case $("$real" --version 2>/dev/null | sed -n 1p) in
+"NVIM v0."[0-9]"."*)
+	DEVHUB_NEOVIM_GUI=1 "$real" --headless --listen "$socket" "$@" </dev/null >/dev/null 3>&- &
+	;;
+*)
+	DEVHUB_NEOVIM_GUI=1 "$real" --embed --listen "$socket" "$@" <&3 >/dev/null 3>&- &
+	;;
+esac
 pid=$!
 exec 3>&-
 waited=0

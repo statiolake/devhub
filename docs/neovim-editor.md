@@ -595,7 +595,9 @@ and runs it with the person's arguments, in the pane, as `nvim --embed
 --listen <socket> args…`: the pane's environment (`GIT_*`), cwd, exit status
 and life are a TUI's; only who draws it changes. `--embed` waits for the UI
 before reading the config or a file, so a swap-file question or a config
-error is shown, not answered blind. It runs the real `nvim` untouched
+error is shown, not answered blind. Neovim 0.9 waits for an `--embed` UI on
+stdin alone and answers nothing on its socket meanwhile, so there it starts
+`--headless` instead, without that wait. It runs the real `nvim` untouched
 outside a DevHub Agent terminal (no `$TMUX_PANE`, another session), with the
 overlay off, inside a DevHub GUI Neovim (`$DEVHUB_NEOVIM_GUI`), with stdin
 or stdout not a terminal, for non-editing arguments (`--headless`, `-es`,
