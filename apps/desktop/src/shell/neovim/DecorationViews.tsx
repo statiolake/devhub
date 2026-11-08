@@ -8,6 +8,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -22,6 +23,7 @@ import type { Surface } from "./chrome";
 import { markPieces, type MdMark } from "./components";
 import type { GridBox } from "./redraw";
 import { toastGroups, type Decorations, type Toast } from "./decorations";
+import { veilMargin, veilMask, veilSigma, type VeilLine } from "./veil";
 
 interface Cell {
   readonly width: number;
@@ -29,31 +31,41 @@ interface Cell {
 }
 
 /**
- * Notifications: compact lines at the bottom right, above the status line,
- * under the name of their source; each source a small card in the floats'
- * colours (`surface`, as `gui.popup` wears them), so it reads over any
- * text. The cards of a stack share one width (the widest's, within
- * bounds) and one right edge, as VS Code's and Zed's notifications do; a
- * line leads with its mark (the level, a spinner, a tick) and its text
- * starts after it. A line whose time is up fades and folds away; a card
- * whose every line is leaving fades as one. Work in progress spins (on its
- * line only), shows its percentage, and ticks when done.
+ * Notifications, in fidget's place and spirit: quiet lines at the bottom
+ * right, the lowest on the row over the status line, their right edge a
+ * cell in from the window's (the status line's file name's edge). No card,
+ * no rule, no words for levels: a source's name on its own line over its
+ * messages, half a line between sources, every line on the editor's own
+ * line pitch so it interleaves with the code's rhythm instead of crossing
+ * it. Text in the UI face at the editor's size — prose has no columns, and
+ * a monospace line over code reads as more code — in tones the scheme
+ * already has: the source in `Normal`, a message in `Comment` (an aside),
+ * a title in `Comment` toward the ground; a warning or error tints its
+ * message with the diagnostic's colour. Work in progress is a ring as long
+ * as its percentage (a turning arc without one), a check in `DiagnosticOk`
+ * when done. Under the lines, a backdrop as long as each line (`veil.ts`).
  */
 export function Toasts({
   toasts,
   dismiss,
   bottom = 12,
+  right = 12,
   surface,
-  font,
+  cell,
+  fontSize,
 }: {
   readonly toasts: readonly Toast[];
   readonly dismiss: (key: number) => void;
-  /** Pixels from the editor's bottom: above Neovim's status line. */
+  /** Pixels from the editor's bottom: the status line's top. */
   readonly bottom?: number;
-  /** The colorscheme's floats' colours; DevHub's own until known. */
+  /** Pixels from the editor's right: a cell in from the window's edge. */
+  readonly right?: number;
+  /** The colorscheme's colours; DevHub's own until known. */
   readonly surface?: Surface | undefined;
-  /** The grid's own face (fidget is text in the editor's font). */
-  readonly font?: string | undefined;
+  /** The editor's cell: the pitch of the lines and their widest. */
+  readonly cell?: Cell | undefined;
+  /** The editor's font size: the lines' size. */
+  readonly fontSize?: number | undefined;
 }) {
   const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set());
   const leave = useCallback((id: string) => {
@@ -64,35 +76,99 @@ export function Toasts({
     // Forget lines that are gone (a render-time prune, no effect needed).
     setLeaving(new Set([...leaving].filter((id) => live.has(id))));
   }
+  const line = cell?.height ?? 18;
+  const sigma = veilSigma(line);
+  const margin = veilMargin(sigma);
+  const stackRef = useRef<HTMLDivElement>(null);
+  const veilRef = useRef<HTMLDivElement>(null);
+  const any = toasts.length > 0;
+  useEffect(() => {
+    if (!any) return undefined;
+    // The veil follows the lines every frame while there are any: lines
+    // fade, fold and move in CSS, and the shape moves with them.
+    let frame = 0;
+    let last = "";
+    const follow = () => {
+      frame = requestAnimationFrame(follow);
+      const stack = stackRef.current;
+      const veil = veilRef.current;
+      if (!stack || !veil) return;
+      const origin = veil.getBoundingClientRect();
+      const lines: VeilLine[] = [];
+      for (const el of stack.querySelectorAll<HTMLElement>(
+        ".nvim-toast-source, .nvim-toast-text",
+      )) {
+        const r = el.getBoundingClientRect();
+        let opacity = 1;
+        for (
+          let up: HTMLElement | null = el;
+          up && up !== stack;
+          up = up.parentElement
+        ) {
+          opacity *= Number(getComputedStyle(up).opacity);
+        }
+        lines.push({
+          x: r.left - origin.left,
+          y: r.top - origin.top,
+          w: r.width,
+          h: Math.min(r.height, line),
+          opacity,
+        });
+      }
+      const mask =
+        veilMask(lines, origin.width, origin.height, sigma) ?? "none";
+      if (mask === last) return;
+      last = mask;
+      veil.style.maskImage = mask;
+      veil.style.visibility = mask === "none" ? "hidden" : "visible";
+    };
+    follow();
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [any, line, sigma]);
   return (
     <div
       className="nvim-toasts"
       aria-live="polite"
       style={{
         bottom,
+        right,
         ...surfaceStyle(surface),
-        ...(font ? { ["--nvim-toast-font" as string]: font } : {}),
+        ["--nvim-line" as string]: `${String(line)}px`,
+        ...(cell ? { maxWidth: 48 * cell.width } : {}),
+        ...(fontSize ? { fontSize } : {}),
       }}
     >
-      {toastGroups(toasts).map(({ group, toasts: list }) => (
-        <div
-          key={group}
-          className={`nvim-toast-group${list.every((t) => leaving.has(toastId(t))) ? " nvim-toast-group-leaving" : ""}`}
-        >
-          {group !== "" ? (
-            <div className="nvim-toast-source">{group}</div>
-          ) : null}
-          {list.map((toast) => (
-            <ToastView
-              key={toastId(toast)}
-              toast={toast}
-              leaving={leaving.has(toastId(toast))}
-              leave={leave}
-              dismiss={dismiss}
-            />
-          ))}
-        </div>
-      ))}
+      <div
+        className="nvim-toast-veil"
+        ref={veilRef}
+        aria-hidden
+        style={{ inset: `-${String(margin)}px -${String(margin)}px 0` }}
+      />
+      <div className="nvim-toast-stack" ref={stackRef}>
+        {toastGroups(toasts).map(({ group, toasts: list }) => (
+          <div
+            key={group}
+            className={`nvim-toast-group${list.every((t) => leaving.has(toastId(t))) ? " nvim-toast-group-leaving" : ""}`}
+          >
+            <div className="nvim-toast-group-body">
+              {group !== "" ? (
+                <div className="nvim-toast-source">{group}</div>
+              ) : null}
+              {list.map((toast) => (
+                <ToastView
+                  key={toastId(toast)}
+                  toast={toast}
+                  leaving={leaving.has(toastId(toast))}
+                  leave={leave}
+                  dismiss={dismiss}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -114,25 +190,20 @@ function surfaceStyle(surface: Surface | undefined): Record<string, string> {
     const c = css(v);
     if (c !== undefined) out[name] = c;
   };
-  set("--nvim-toast-fg", surface.fg);
+  set("--nvim-toast-ground", surface.ground ?? surface.bg);
+  set("--nvim-toast-fg", surface.text ?? surface.fg);
   set("--nvim-toast-muted", surface.muted);
-  set("--nvim-toast-info", surface.info);
   set("--nvim-toast-warn", surface.warn);
   set("--nvim-toast-error", surface.error);
   set("--nvim-toast-ok", surface.ok);
   return out;
 }
 
-/** fidget's annotation for a notification's level, after its message. */
-const LEVEL_NOTE: Record<Toast["level"], string> = {
-  debug: "DEBUG",
-  info: "INFO",
-  warn: "WARN",
-  error: "ERROR",
-};
-
-/** How long a notification takes to fade, at the end of its time. */
-const FADE_MS = 400;
+/**
+ * A line's time ends with its fade (600 ms, slow enough to go unnoticed)
+ * and then its gap closing (300 ms): nothing moves while its text shows.
+ */
+const LEAVE_MS = 900;
 
 function ToastView({
   toast,
@@ -151,7 +222,7 @@ function ToastView({
       () => {
         leave(toastId(toast));
       },
-      Math.max(0, toast.timeout - FADE_MS),
+      Math.max(0, toast.timeout - LEAVE_MS),
     );
     const gone = window.setTimeout(() => {
       dismiss(toast.key);
@@ -162,15 +233,6 @@ function ToastView({
     };
   }, [toast, leave, dismiss]);
   const progress = toast.progress;
-  const mark = progress ? (
-    progress.done ? (
-      <span className="nvim-toast-done">✔</span>
-    ) : (
-      <span className="nvim-toast-spinner" />
-    )
-  ) : (
-    <span className="nvim-toast-note">{LEVEL_NOTE[toast.level]}</span>
-  );
   return (
     <div
       className={`nvim-toast nvim-toast-${toast.level}${toast.rev > 1 ? " nvim-toast-updated" : ""}${leaving ? " nvim-toast-leaving" : ""}`}
@@ -181,22 +243,68 @@ function ToastView({
       }}
     >
       <div className="nvim-toast-line">
-        <span className="nvim-toast-msg">{toast.msg || toast.title}</span>
-        {toast.msg !== "" &&
-        toast.title !== "" &&
-        toast.title !== toast.group ? (
-          <span className="nvim-toast-title">{toast.title}</span>
-        ) : null}
-        {progress?.percent !== undefined && !progress.done ? (
-          <span className="nvim-toast-percent">
-            ({Math.round(progress.percent)}%)
-          </span>
-        ) : null}
-        <span className="nvim-toast-mark" aria-hidden>
-          {mark}
+        <span className="nvim-toast-text">
+          <span className="nvim-toast-msg">{toast.msg || toast.title}</span>
+          {toast.msg !== "" &&
+          toast.title !== "" &&
+          toast.title !== toast.group ? (
+            <span className="nvim-toast-title">{toast.title}</span>
+          ) : null}
+          {progress ? <ProgressMark progress={progress} /> : null}
         </span>
       </div>
     </div>
+  );
+}
+
+/**
+ * Work in progress, in a cap-high box after the text: a faint ring with an
+ * arc as long as the percentage ("how far", drawn rather than printed); an
+ * arc turning once in 1.2 s when there is no percentage; a check in
+ * `DiagnosticOk` when done, the one change of state worth a colour.
+ */
+function ProgressMark({
+  progress,
+}: {
+  readonly progress: NonNullable<Toast["progress"]>;
+}) {
+  // r = 5 less half the stroke; the stroke is a tenth of an em (the UI
+  // face's regular stem) in the box's units (a cap is about 0.7 em).
+  const r = 4.3;
+  const around = 2 * Math.PI * r;
+  const percent = progress.percent;
+  return (
+    <svg className="nvim-toast-mark" viewBox="0 0 10 10" aria-hidden>
+      {progress.done ? (
+        <path
+          className="nvim-toast-check"
+          d="M1.4 5.4 L4 8 L8.8 2.2"
+          fill="none"
+          strokeWidth={1.6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      ) : percent !== undefined ? (
+        <g transform="rotate(-90 5 5)">
+          <circle className="nvim-toast-track" cx={5} cy={5} r={r} />
+          <circle
+            className="nvim-toast-arc"
+            cx={5}
+            cy={5}
+            r={r}
+            strokeDasharray={`${String((Math.min(100, Math.max(0, percent)) / 100) * around)} ${String(around)}`}
+          />
+        </g>
+      ) : (
+        <circle
+          className="nvim-toast-arc nvim-toast-turning"
+          cx={5}
+          cy={5}
+          r={r}
+          strokeDasharray={`${String(0.75 * around)} ${String(around)}`}
+        />
+      )}
+    </svg>
   );
 }
 

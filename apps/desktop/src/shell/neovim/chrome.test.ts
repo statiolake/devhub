@@ -25,6 +25,8 @@ describe("the surface notifications wear", () => {
     expect(theme.surface).toEqual({
       bg: 0x252526,
       fg: 0xd4d4d4,
+      ground: NORMAL,
+      text: 0xd4d4d4,
       warn: 0xcca700,
     });
     expect(

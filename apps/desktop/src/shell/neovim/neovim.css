@@ -488,62 +488,111 @@
   }
 }
 
-/* devhub_gui.notify, in fidget's spirit: quiet lines at the bottom right,
-   right-aligned, in the editor's own face and colours, above Neovim's
-   status line. No card and no edge: each line's text sits on the editor's
-   own ground (fidget's window in Normal), just enough to read over code. */
+/* devhub_gui.notify, in fidget's spirit (`Toasts`): quiet lines at the
+   bottom right on the editor's line pitch, in the UI face at the editor's
+   size, in the scheme's own tones; no card and no edge. */
 .nvim-toasts {
-  --nvim-toast-ground: var(--nvim-editor-ground, var(--surface));
+  --nvim-toast-ground-c: var(
+    --nvim-toast-ground,
+    var(--nvim-editor-ground, var(--surface))
+  );
   --nvim-toast-ink: var(--nvim-toast-fg, var(--primary));
+  --nvim-toast-msg: var(
+    --nvim-toast-muted,
+    color-mix(in srgb, var(--nvim-toast-ink) 60%, transparent)
+  );
+  /* A title: the message's tone 62 % of the way toward the ground. */
+  --nvim-toast-sec: color-mix(
+    in srgb,
+    var(--nvim-toast-msg) 38%,
+    var(--nvim-toast-ground-c)
+  );
 
   position: absolute;
   right: 12px;
   z-index: 600;
+  max-width: min(520px, calc(100% - 24px));
+  pointer-events: none;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: var(--nvim-line, 18px);
+  font-weight: 400;
+}
+
+/* The backdrop (`veil.ts`): the code under the lines, blurred by a pixel
+   (the fine detail that competes with the letters) and tinted 45 % toward
+   the editor's ground, in the lines' own shape. Under empty ground it
+   changes nothing. */
+.nvim-toast-veil {
+  position: absolute;
+  visibility: hidden;
+  background: color-mix(in srgb, var(--nvim-toast-ground-c) 45%, transparent);
+  backdrop-filter: blur(1px);
+  mask-repeat: no-repeat;
+  mask-size: 100% 100%;
+}
+
+.nvim-toast-stack {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  max-width: min(520px, calc(100% - 24px));
-  pointer-events: none;
-  font: 12px / 1.45 var(--nvim-toast-font, var(--font-mono, monospace));
 }
 
 .nvim-toast-group {
+  display: grid;
+  grid-template-rows: 1fr;
+  justify-items: end;
+  min-width: 0;
+  max-width: 100%;
+  transition:
+    opacity 600ms ease-in,
+    grid-template-rows 300ms ease-in-out 600ms;
+}
+
+.nvim-toast-group-body {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  min-height: 0;
   min-width: 0;
   max-width: 100%;
-  color: var(--nvim-toast-ink);
-  animation: nvim-toast-in 160ms ease-out;
-  transition: opacity 400ms ease-in;
+  overflow: hidden;
 }
 
-/* Every line of it is leaving: the group goes as one. */
+/* Sources apart by half a line: grouping by space alone. */
+.nvim-toast-group + .nvim-toast-group > .nvim-toast-group-body {
+  padding-top: calc(var(--nvim-line, 18px) / 2);
+}
+
+/* Every line of it is leaving: the group goes as one, then its gap. */
 .nvim-toast-group-leaving {
+  grid-template-rows: 0fr;
   opacity: 0;
 }
 
 .nvim-toast-source {
   max-width: 100%;
-  padding-left: 1ch;
-  background: var(--nvim-toast-ground);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
+  color: var(--nvim-toast-ink);
+  animation: nvim-toast-enter 240ms ease-out;
 }
 
-/* A line folds away when its time is up (unless its card goes with it). */
+/* A line comes in by fading while the lines above move up by its height
+   (the same curve: no jolt); it leaves by fading slowly, and only then
+   does its gap close. */
 .nvim-toast {
   display: grid;
   grid-template-rows: 1fr;
   min-width: 0;
-  pointer-events: auto;
-  animation: nvim-toast-in 160ms ease-out;
-  transition:
-    grid-template-rows 300ms ease-in 100ms,
-    opacity 300ms ease-in;
   max-width: 100%;
+  pointer-events: auto;
+  animation: nvim-toast-enter 240ms ease-out;
+  transition:
+    opacity 600ms ease-in,
+    grid-template-rows 300ms ease-in-out 600ms;
 }
 
 .nvim-toast-updated {
@@ -560,34 +609,26 @@
   opacity: 1;
 }
 
-.nvim-toast-line {
-  display: flex;
-  justify-content: flex-end;
-  align-items: baseline;
-  gap: 1ch;
-  padding-left: 1ch;
-  background: var(--nvim-toast-ground);
-  min-height: 0;
-  overflow: hidden;
-  color: color-mix(in srgb, var(--nvim-toast-ink) 82%, transparent);
-}
-
-@keyframes nvim-toast-in {
+@keyframes nvim-toast-enter {
   from {
+    grid-template-rows: 0fr;
     opacity: 0;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .nvim-toast,
-  .nvim-toast-group {
-    animation: none;
-    transition: none;
-  }
+.nvim-toast-line {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 0;
+  overflow: hidden;
+}
 
-  .nvim-toast-spinner::after {
-    animation: none;
-  }
+.nvim-toast-text {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--nvim-toast-msg);
 }
 
 .nvim-toast-msg {
@@ -598,85 +639,100 @@
   white-space: nowrap;
 }
 
-.nvim-toast-title,
-.nvim-toast-percent {
-  flex: none;
-  color: var(
-    --nvim-toast-muted,
-    color-mix(in srgb, var(--nvim-toast-ink) 55%, transparent)
+/* A warning or an error: its message takes the diagnostic's colour,
+   65 % into the message's tone. Nothing is added. */
+.nvim-toast-warn .nvim-toast-text {
+  color: color-mix(
+    in srgb,
+    var(--nvim-toast-warn, #d9a23a) 65%,
+    var(--nvim-toast-msg)
   );
+}
+
+.nvim-toast-error .nvim-toast-text {
+  color: color-mix(
+    in srgb,
+    var(--nvim-toast-error, #e0565b) 65%,
+    var(--nvim-toast-msg)
+  );
+}
+
+.nvim-toast-debug .nvim-toast-text {
+  color: var(--nvim-toast-sec);
 }
 
 /* The title follows the message (fidget's "message  title"). */
-.nvim-toast-percent {
-  font-variant-numeric: tabular-nums;
+.nvim-toast-title {
+  flex: none;
+  margin-left: 0.4em;
+  color: var(--nvim-toast-sec);
+  white-space: nowrap;
 }
 
+/* Progress, in a cap-high box half an em after the text. */
 .nvim-toast-mark {
   flex: none;
+  align-self: baseline;
+  width: 1cap;
+  height: 1cap;
+  margin-left: 0.5em;
+  overflow: visible;
 }
 
-/* fidget's annotation: the level's word, in its colour. */
-.nvim-toast-note {
-  color: var(--nvim-toast-info, var(--accent));
+.nvim-toast-track,
+.nvim-toast-arc {
+  fill: none;
+  stroke: var(--nvim-toast-msg);
+  stroke-width: 1.4;
+  stroke-linecap: round;
 }
 
-.nvim-toast-warn .nvim-toast-note {
-  color: var(--nvim-toast-warn, #d9a23a);
+.nvim-toast-track {
+  stroke-opacity: 0.25;
 }
 
-.nvim-toast-error .nvim-toast-note {
-  color: var(--nvim-toast-error, #e0565b);
+.nvim-toast-turning {
+  transform-origin: 5px 5px;
+  animation: nvim-toast-turn 1.2s linear infinite;
 }
 
-.nvim-toast-debug .nvim-toast-note {
-  color: var(
-    --nvim-toast-muted,
-    color-mix(in srgb, var(--nvim-toast-ink) 45%, transparent)
-  );
+@keyframes nvim-toast-turn {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.nvim-toast-done {
-  color: var(--nvim-toast-ok, #6cc485);
+.nvim-toast-check {
+  stroke: var(--nvim-toast-ok, #6cc485);
+  animation: nvim-toast-done 200ms ease-out;
 }
 
-/* fidget's dots, one frame after another. */
-.nvim-toast-spinner::after {
-  content: "⠋";
-  color: var(--nvim-toast-info, var(--accent));
-  animation: nvim-toast-spin 0.8s steps(1) infinite;
+@keyframes nvim-toast-done {
+  from {
+    opacity: 0;
+  }
 }
 
-@keyframes nvim-toast-spin {
-  0% {
-    content: "⠋";
+/* Reduced motion: fades only, and a still arc. */
+@media (prefers-reduced-motion: reduce) {
+  .nvim-toast,
+  .nvim-toast-source {
+    animation-name: nvim-toast-fade;
   }
-  10% {
-    content: "⠙";
+
+  .nvim-toast,
+  .nvim-toast-group {
+    transition: opacity 600ms ease-in;
   }
-  20% {
-    content: "⠹";
+
+  .nvim-toast-turning {
+    animation: none;
   }
-  30% {
-    content: "⠸";
-  }
-  40% {
-    content: "⠼";
-  }
-  50% {
-    content: "⠴";
-  }
-  60% {
-    content: "⠦";
-  }
-  70% {
-    content: "⠧";
-  }
-  80% {
-    content: "⠇";
-  }
-  90% {
-    content: "⠏";
+}
+
+@keyframes nvim-toast-fade {
+  from {
+    opacity: 0;
   }
 }
 

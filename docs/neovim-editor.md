@@ -429,21 +429,53 @@ local img = gui.image(0, 5, '~/shot.png', { height_rows = 10 }) -- under line 5
 img.clear()
 ```
 
-- **notify** — in fidget's spirit: quiet lines at the bottom right, just
-  above the lowest window's status line, right-aligned, in the editor's
-  own face, under the name of their source (`group`), by level (`info`,
-  `warn`, `error`, `debug` or `vim.log.levels.*`), fading after 4–8 s (or
-  a click). Each message is followed by its title, its percentage and
-  fidget's mark (a dots spinner, a check, or the level's word in its
-  colour, `DiagnosticInfo`/`Warn`/`Error`); the text sits on the editor's
-  ground (`Normal`, as fidget's window), so it reads over code with no box
-  around it: no card, no edge. A line whose time is up fades and folds
-  away. A `key` updates the notification it named in place, so work in
-  progress (`progress = true`, `percent`, `done`) spins, shows its
-  percentage and ticks when done (gone 2 s later). devhub.nvim's
-  `setup{ notify = true }` makes `vim.notify` this (its `title` is the
-  source) and shows `LspProgress` (0.10+) the way fidget does. Not
-  `ext_messages`: Neovim's messages stay Neovim's.
+- **notify** — in fidget's spirit (round 7, the person's pick of four
+  mocks): quiet lines at the bottom right under the name of their source
+  (`group`), by level (`info`, `warn`, `error`, `debug` or
+  `vim.log.levels.*`), fading after 4–8 s (or a click). A `key` updates
+  the notification it named in place, so work in progress
+  (`progress = true`, `percent`, `done`) shows how far it is and ticks
+  when done (gone 2 s later). devhub.nvim's `setup{ notify = true }` makes
+  `vim.notify` this (its `title` is the source) and shows `LspProgress`
+  (0.10+) the way fidget does. Not `ext_messages`: Neovim's messages stay
+  Neovim's. Each choice and its reason (`DecorationViews.tsx`,
+  `veil.ts`):
+  - _Place._ The lowest line on the row over the lowest window's status
+    line; the right edge a cell in from the window's, the edge the status
+    line's file name keeps: out of the reading path, next to what already
+    says what the editor is doing, and no new alignment line.
+  - _Type._ The UI face at the editor's size and weight: monospace exists
+    so code columns line up, prose has none, and a monospace line over
+    code reads as more code; the editor's size adds no new size. Lines on
+    the editor's line pitch, so they interleave with the code's rhythm.
+  - _Tones._ The source in `Normal`, a message in `Comment` (an aside, as
+    the scheme already marks asides), a title `Comment` 62 % toward the
+    ground; a warning or error mixes its `Diagnostic*` colour 65 % into
+    the message. Nothing brighter than the code, no level words, no marks
+    for levels.
+  - _Progress._ A ring in a cap-high box half an em after the text: a
+    faint track (25 %) and an arc as long as the percentage — "how far"
+    drawn, not printed; an arc turning once in 1.2 s without a
+    percentage (no braille frames every 80 ms); a check in `DiagnosticOk`
+    when done, the one change worth a colour. Stroke a tenth of an em.
+  - _Grouping._ By space alone: half a line between sources; no card, no
+    rule, no shadow.
+  - _Width._ At most 48 cells, then an ellipsis: it stays in its corner.
+  - _Backdrop._ Under the text only, in the text's shape: each line a
+    capsule as long as that line (1.5 σ past its ends, ½ σ above and
+    below), the capsules unioned and feathered together with σ = ¼ line,
+    so a short line between two long ones keeps a short region and the
+    whole reads as a soft cover with no rectangle, no hull and no edge.
+    Inside it the code is blurred by 1 px (the fine detail that competes
+    with the letters) and tinted 45 % toward `Normal`'s ground — over
+    empty ground that changes no pixel, so there it is invisible. The
+    shape follows the lines every frame while they come, move and go.
+    Softening is for this alone: high in volume, transient.
+  - _Motion._ A line comes in by fading (240 ms, ease-out) while the
+    lines above move up by its height on the same curve; it leaves by
+    fading slowly (600 ms, ease-in) and only then does its gap close
+    (300 ms): nothing moves while its text shows. Reduced motion: fades
+    only, a still arc.
 - **image** — an extmark's `virt_lines` reserve `height_rows` blank rows
   under the line, so Neovim lays them out (the cursor steps over them,
   `:vsplit` shows them twice) and DevHub paints the image there. A path is
@@ -795,14 +827,20 @@ layout preset, and the Sidebar's terminal activity marks.
 
 **Toward a GUI editor: what still looks like a terminal.**
 
-_The principle (binding since round 5)._ Neovim is the modal editing
-engine — buffers, modes, motions, keymaps, layout, plugins' logic; DevHub
-is its presentation. The goal is not VS Code's or Zed's feature set or
-look: it is to remove the compromises a terminal forces on expressing
-things simply, and to render what Neovim and the person's config express,
-faithfully and more precisely. DevHub adds no features and no adornments
-of its own. Simple, quiet and beautiful: nothing competes for attention or
-interrupts thought.
+_The principle (binding since round 5, restated in round 7)._ Neovim is
+the modal editing engine — buffers, modes, motions, keymaps, layout,
+plugins' logic; DevHub is its presentation. The goal is not VS Code's or
+Zed's feature set, and none of their clutter: it is to remove everything
+that still looks like a terminal — the compromises cells force on
+expressing things simply — and to render what Neovim and the person's
+config express, faithfully and more precisely. VS Code, Zed and other
+modern editors are the normal reference for how a GUI editor draws a
+thing; DevHub adds no features and no adornments of its own. Simple,
+quiet and beautiful: nothing competes for attention or interrupts
+thought. Every design decision states its meaning — the intent it serves,
+in terms of the editor's own metrics and highlight groups — and is
+recorded here; "VS Code does it" or "looks modern" is a reference, not a
+reason. A matter of taste is mocked first and the person picks.
 
 - Do: draw what cells only approximate as what it means — a separator as
   a true line between two grounds, a selection as a continuous fill with
@@ -811,10 +849,11 @@ interrupts thought.
   border as a line with the editor showing through its gaps, underlines
   and undercurl as a typesetter strokes them. Proper vertical centring and
   bar height in status lines.
-- Do: keep the main window square — selections, matches, the cursor,
-  status line and winbar runs, virtual text, `MatchParen`, tabs, the
-  message panel. Rounded corners only on floats and popups: they are
-  literally lifted off the main window.
+- Do: draw the main window's own marks as the person's highlights say —
+  selections, matches, the cursor, status line and winbar runs, virtual
+  text, `MatchParen`, tabs, the message panel — as round 5 left them.
+  Floats and popups are rounded (they are lifted off the window), and what
+  is inside a rounded element follows its rounding (a menu's selected row).
 - Do: soften only what is high in volume and transient and would draw too
   much attention if crisp (fidget's progress). Anything persistently just
   there stays crisp — truncated lines, hovers, floats, menus, the status

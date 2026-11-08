@@ -35,6 +35,9 @@ export interface PaintTheme {
 export interface Surface {
   readonly bg?: number;
   readonly fg?: number;
+  /** `Normal`'s ground and ink: the editor's own, under and in its text. */
+  readonly ground?: number;
+  readonly text?: number;
   readonly muted?: number;
   readonly info?: number;
   readonly warn?: number;
@@ -101,6 +104,8 @@ export function themeOf(answer: unknown): PaintTheme {
   const surfaceEntries = Object.entries({
     bg: colour("NormalFloat", "bg") ?? colour("Normal", "bg"),
     fg: colour("NormalFloat", "fg") ?? colour("Normal", "fg"),
+    ground: colour("Normal", "bg"),
+    text: colour("Normal", "fg"),
     muted: colour("Comment", "fg"),
     info: colour("DiagnosticInfo", "fg"),
     warn: colour("DiagnosticWarn", "fg"),

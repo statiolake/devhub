@@ -676,8 +676,10 @@ function NeovimSurface({
         toasts={decorations.toasts}
         dismiss={dismiss}
         bottom={toastBottom(editor, boxes)}
+        right={toastRight(editor, boxes)}
         surface={editor?.surface()}
-        font={layerHost?.mono}
+        cell={editor?.cellMetrics()}
+        fontSize={editor?.font().size}
       />
       {connection.kind === "connecting" ? (
         <div className="nvim-status">Starting Neovim…</div>
@@ -1165,8 +1167,9 @@ function Popupmenu({
 }
 
 /**
- * Where notifications sit: just above the lowest window's status line, so
- * the status line and the command line stay readable.
+ * Where notifications sit: the lowest line on the row over the lowest
+ * window's status line, so the status line and the command line stay
+ * readable and the lines stand on the editor's rows.
  */
 function toastBottom(
   editor: NeovimEditor | null,
@@ -1182,5 +1185,21 @@ function toastBottom(
     Math.max(...windows.map((b) => b.row + b.height)),
     editor.messagePanelRow() ?? Number.POSITIVE_INFINITY,
   );
-  return Math.max(6, editor.areaSize().height - lowest * cell.height + 6);
+  return Math.max(0, editor.areaSize().height - lowest * cell.height);
+}
+
+/**
+ * Where notifications end on the right: a cell in from the rightmost
+ * window's edge, the edge the status line's right-hand text keeps.
+ */
+function toastRight(
+  editor: NeovimEditor | null,
+  boxes: readonly GridBox[],
+): number {
+  if (!editor) return 12;
+  const cell = editor.cellMetrics();
+  const windows = boxes.filter((b) => !b.float && b.win !== undefined);
+  if (windows.length === 0) return cell.width;
+  const edge = Math.max(...windows.map((b) => b.col + b.width));
+  return Math.max(0, editor.areaSize().width - edge * cell.width) + cell.width;
 }
