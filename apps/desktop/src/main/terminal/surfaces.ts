@@ -94,6 +94,8 @@ export interface AttachSurfaceRequest {
 	 * frames then go to the page's port to the host, not to `sink`.
 	 */
 	readonly route?: HostedRoute;
+	/** A tmux control client the page draws pane by pane (`AttachContext.control`). */
+	readonly control?: boolean;
 }
 
 export interface TerminalSurfacesOptions {
@@ -171,6 +173,7 @@ export class TerminalSurfaces {
 					spawn: (launch) => runtime.spawnPty(launch),
 					plan: (launch) => runtime.ptyPlan(launch),
 					...(request.route === undefined ? {} : { route: request.route }),
+					...(request.control === true ? { control: true } : {}),
 					file: runtime.tmuxPath(),
 					args: runtime.attachArgv(exact.name),
 					// The client runs from the launch home: a workspace folder

@@ -5,6 +5,8 @@
  * pane's dirty rows as libghostty-vt read them, and the page's input.
  */
 
+import { TerminalFailure, validateIdentity } from "./terminal.js";
+
 /** A cell's look, apart from its text. Colours are 24-bit RGB; absent is the default. */
 export interface VtStyle {
 	readonly fg?: number;
@@ -126,4 +128,120 @@ export interface ControlRequest {
 	readonly attachmentId: string;
 	readonly targetGeneration: number;
 	readonly message: PageToControl;
+}
+
+const MAX_KEYS = 256;
+const MAX_KEY_LENGTH = 64;
+const MAX_BYTES = 1 << 20;
+
+function record(value: unknown): Record<string, unknown> {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
+		throw new TerminalFailure("invalid_request");
+	}
+	return value as Record<string, unknown>;
+}
+
+function count(value: unknown, max = 100_000): number {
+	if (
+		typeof value !== "number" ||
+		!Number.isInteger(value) ||
+		value < 0 ||
+		value > max
+	) {
+		throw new TerminalFailure("invalid_request");
+	}
+	return value;
+}
+
+function rgb(value: unknown): number {
+	return count(value, 0xffffff);
+}
+
+/** A page's control request, whole: its identity and a message of a known shape. */
+export function validateControlRequest(value: unknown): ControlRequest {
+	const request = record(value);
+	const identity = validateIdentity({
+		schemaVersion: 1,
+		...request,
+		message: undefined,
+	});
+	const m = record(request.message);
+	let message: PageToControl;
+	switch (m.kind) {
+		case "keys": {
+			const keys = m.keys;
+			if (
+				!Array.isArray(keys) ||
+				keys.length > MAX_KEYS ||
+				!keys.every(
+					(k) =>
+						typeof k === "string" &&
+						k.length > 0 &&
+						k.length <= MAX_KEY_LENGTH &&
+						!/[\r\n]/.test(k),
+				)
+			) {
+				throw new TerminalFailure("invalid_request");
+			}
+			message = { kind: "keys", keys: keys as string[] };
+			break;
+		}
+		case "bytes": {
+			if (!(m.bytes instanceof Uint8Array) || m.bytes.length > MAX_BYTES)
+				throw new TerminalFailure("invalid_request");
+			message = {
+				kind: "bytes",
+				bytes: m.bytes,
+				...(m.pane === undefined ? {} : { pane: count(m.pane) }),
+			};
+			break;
+		}
+		case "resize":
+			message = {
+				kind: "resize",
+				cols: count(m.cols, 10_000),
+				rows: count(m.rows, 10_000),
+			};
+			break;
+		case "select-pane":
+			message = { kind: "select-pane", pane: count(m.pane) };
+			break;
+		case "select-window":
+			message = { kind: "select-window", window: count(m.window) };
+			break;
+		case "visible":
+			if (typeof m.visible !== "boolean")
+				throw new TerminalFailure("invalid_request");
+			message = { kind: "visible", visible: m.visible };
+			break;
+		case "ack":
+			message = { kind: "ack", seq: count(m.seq, Number.MAX_SAFE_INTEGER) };
+			break;
+		case "colors": {
+			const palette = m.palette;
+			if (
+				palette !== undefined &&
+				(!Array.isArray(palette) || palette.length !== 256)
+			) {
+				throw new TerminalFailure("invalid_request");
+			}
+			message = {
+				kind: "colors",
+				foreground: rgb(m.foreground),
+				background: rgb(m.background),
+				...(palette === undefined
+					? {}
+					: { palette: (palette as unknown[]).map(rgb) }),
+			};
+			break;
+		}
+		default:
+			throw new TerminalFailure("invalid_request");
+	}
+	return {
+		surfaceKey: identity.surfaceKey,
+		attachmentId: identity.attachmentId,
+		targetGeneration: identity.targetGeneration,
+		message,
+	};
 }

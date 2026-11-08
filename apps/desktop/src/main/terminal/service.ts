@@ -216,6 +216,7 @@ export function registerTerminalService(
 					...(ptyHost?.available === true
 						? { route: { page: sender, channelId: id } }
 						: {}),
+					...(request.mode === "control" ? { control: true } : {}),
 				});
 				const hosted = attachments.hostedGeneration(receipt.attachmentId);
 				return {

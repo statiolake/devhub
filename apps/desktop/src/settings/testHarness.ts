@@ -52,7 +52,7 @@ export function testConfig(
       githubInterval: "90s",
       timers: [],
     },
-    terminal: { macOptionIsMeta: false },
+    terminal: { macOptionIsMeta: false, tmuxControlMode: false },
     agents: {
       defaultPresentation: "tui",
       resumeAfterLimit: true,

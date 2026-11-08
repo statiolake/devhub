@@ -582,6 +582,13 @@ export interface ScratchConfig {
 export interface TerminalConfig {
   /** `[terminal] mac_option_is_meta`. See `model/macOption.ts`. */
   readonly macOptionIsMeta: MacOptionIsMeta;
+  /**
+   * `[terminal] tmux_control_mode`: terminals are tmux control clients that
+   * DevHub draws pane by pane (`docs/terminal-mode.md`). Default `false`.
+   * The key exists only while both terminals do: it is deleted, not kept,
+   * when control mode is the only one.
+   */
+  readonly tmuxControlMode: boolean;
 }
 
 export interface ProjectsConfig {
@@ -828,7 +835,10 @@ export function defaultConfig(): Config {
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
     themes: [],
-    terminal: { macOptionIsMeta: DEFAULT_MAC_OPTION_IS_META },
+    terminal: {
+      macOptionIsMeta: DEFAULT_MAC_OPTION_IS_META,
+      tmuxControlMode: false,
+    },
     keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
     scratch: { daily: DEFAULT_SCRATCH_DAILY },
@@ -1565,6 +1575,9 @@ export function validateConfig(config: Config): void {
   if (!isMacOptionIsMeta(config.terminal.macOptionIsMeta)) {
     fail("invalid_mac_option_is_meta", "terminal.mac_option_is_meta");
   }
+  if (typeof config.terminal.tmuxControlMode !== "boolean") {
+    fail("invalid_type", "terminal.tmux_control_mode");
+  }
   validateKeybindings(config.keybindings);
   validateWorkspaceSources(config.workspaceSources);
   if (scratchDailyProblem(config.scratch.daily)) {
@@ -2198,7 +2211,15 @@ export function interpretConfig(document: unknown): Config {
   );
 
   const terminalTable = requireTable(table["terminal"] ?? {}, "terminal");
-  checkKeys(terminalTable, ["mac_option_is_meta"], "terminal");
+  checkKeys(
+    terminalTable,
+    ["mac_option_is_meta", "tmux_control_mode"],
+    "terminal",
+  );
+  const tmuxControlMode = terminalTable["tmux_control_mode"] ?? false;
+  if (typeof tmuxControlMode !== "boolean") {
+    fail("invalid_type", "terminal.tmux_control_mode");
+  }
   const macOptionIsMeta =
     terminalTable["mac_option_is_meta"] ?? DEFAULT_MAC_OPTION_IS_META;
   if (!isMacOptionIsMeta(macOptionIsMeta)) {
@@ -2357,7 +2378,7 @@ export function interpretConfig(document: unknown): Config {
       ),
     },
     themes: customThemesFromValue(table["themes"]),
-    terminal: { macOptionIsMeta },
+    terminal: { macOptionIsMeta, tmuxControlMode },
     keybindings: {
       prefix: optionalString(
         keybindingsTable,
@@ -2566,7 +2587,12 @@ export function configDocument(config: Config): Record<string, TomlValue> {
             ]),
           ),
         }),
-    terminal: { mac_option_is_meta: config.terminal.macOptionIsMeta },
+    terminal: {
+      mac_option_is_meta: config.terminal.macOptionIsMeta,
+      // Written only when on: a file that never asked for it stays without
+      // a key that is to be deleted.
+      ...(config.terminal.tmuxControlMode ? { tmux_control_mode: true } : {}),
+    },
     keybindings: {
       prefix: config.keybindings.prefix,
       // Written even when empty, so the table a person edits by hand is a table

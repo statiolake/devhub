@@ -15,6 +15,7 @@
  * the main process, the preload, and the page alike.
  */
 
+import type { ControlRequest } from "./terminalControl.js";
 import {
 	FRAME_HEADER_BYTES,
 	FRAME_KINDS,
@@ -192,6 +193,12 @@ export interface TerminalAttachRequest extends TerminalSize {
 	 * after resolving the active semantic surface.
 	 */
 	readonly targetGeneration: 0;
+	/**
+	 * `"control"`: a tmux control client (`tmux -C`) the page draws pane by
+	 * pane (`[terminal] tmux_control_mode`, `docs/terminal-mode.md`), rather
+	 * than a client on a PTY whose bytes go to xterm.js.
+	 */
+	readonly mode?: "control";
 }
 
 export interface TerminalAttachReceipt {
@@ -349,6 +356,11 @@ export interface DevhubTerminalApi {
 	acknowledge(
 		channelId: string,
 		request: TerminalAckRequest,
+	): Promise<TerminalResult<void>>;
+	/** A control client's request (`terminalControl.ts`); only for one in the pty host. */
+	control(
+		channelId: string,
+		request: ControlRequest,
 	): Promise<TerminalResult<void>>;
 	detach(
 		channelId: string,
@@ -534,17 +546,19 @@ export function validateInputBytes(value: unknown): Uint8Array {
 
 export function validateAttachRequest(value: unknown): TerminalAttachRequest {
 	if (!isRecord(value)) throw new TerminalFailure("invalid_request");
-	if (
-		!exactKeys(value, [
-			"schemaVersion",
-			"surfaceKey",
-			"targetGeneration",
-			"cols",
-			"rows",
-			"pixelWidth",
-			"pixelHeight",
-		])
-	) {
+	const keys = [
+		"schemaVersion",
+		"surfaceKey",
+		"targetGeneration",
+		"cols",
+		"rows",
+		"pixelWidth",
+		"pixelHeight",
+	];
+	if (!exactKeys(value, "mode" in value ? [...keys, "mode"] : keys)) {
+		throw new TerminalFailure("invalid_request");
+	}
+	if ("mode" in value && value.mode !== "control") {
 		throw new TerminalFailure("invalid_request");
 	}
 	validateSchema(value.schemaVersion);
@@ -563,6 +577,7 @@ export function validateAttachRequest(value: unknown): TerminalAttachRequest {
 		surfaceKey,
 		targetGeneration: 0,
 		...size,
+		...(value.mode === "control" ? { mode: "control" as const } : {}),
 	};
 }
 
@@ -573,7 +588,9 @@ export interface AttachmentIdentity {
 	readonly targetGeneration: number;
 }
 
-function validateIdentity(value: Record<string, unknown>): AttachmentIdentity {
+export function validateIdentity(
+	value: Record<string, unknown>,
+): AttachmentIdentity {
 	validateSchema(value.schemaVersion);
 	return {
 		surfaceKey: validateSurfaceKey(value.surfaceKey),

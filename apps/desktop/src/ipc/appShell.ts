@@ -267,6 +267,12 @@ export interface AppAppearanceWire {
 	 * moments — when a terminal is built, and live whenever settings change.
 	 */
 	readonly terminalMacOptionIsMeta: boolean | "left";
+	/**
+	 * `[terminal] tmux_control_mode`: a terminal surface attaches a tmux
+	 * control client and draws its panes (`docs/terminal-mode.md`). Read when
+	 * a surface attaches; a change applies at its next attach.
+	 */
+	readonly terminalTmuxControlMode: boolean;
 }
 /** `open_microphone_settings` opens System Settings at Privacy & Security → Microphone. */
 export type AppErrorActionWire =

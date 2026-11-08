@@ -31,7 +31,13 @@ import {
 	type FrameSink,
 	type PtyAttachment,
 } from "../terminal/attachments.js";
-import type { Pty, PtyFactory } from "../terminal/pty.js";
+import type { Pty, PtyFactory, PtyLaunch } from "../terminal/pty.js";
+import {
+	validateControlRequest,
+	type ControlRequest,
+} from "../../ipc/terminalControl.js";
+import { ControlClient, type ControlProcess } from "./control/controlClient.js";
+import type { LibGhosttyVt } from "./vt/libghosttyVt.js";
 import type {
 	FromPtyHost,
 	OpenSpec,
@@ -63,6 +69,18 @@ interface Client {
 export interface PtyHostOptions {
 	readonly post: (message: FromPtyHost) => void;
 	readonly spawn: PtyFactory;
+	/** A tmux control client's child, on pipes (`OpenSpec.control`). */
+	readonly spawnPipes?: (launch: PtyLaunch) => ControlProcess;
+	/** The pane engine, loaded once, at the first control client. */
+	readonly loadVt?: () => Promise<LibGhosttyVt>;
+}
+
+interface Control {
+	readonly client: ControlClient;
+	readonly page: number;
+	readonly surfaceKey: string;
+	readonly viewLabel: string;
+	readonly targetGeneration: number;
 }
 
 function failureOf(failure: unknown): TerminalResult<void> {
@@ -77,13 +95,15 @@ export class PtyHost {
 	readonly #options: PtyHostOptions;
 	readonly #pages = new Map<number, Page>();
 	readonly #clients = new Map<string, Client>();
+	readonly #controls = new Map<string, Control>();
+	#vt: Promise<LibGhosttyVt> | undefined;
 
 	constructor(options: PtyHostOptions) {
 		this.#options = options;
 	}
 
 	get clientCount(): number {
-		return this.#clients.size;
+		return this.#clients.size + this.#controls.size;
 	}
 
 	receive(message: ToPtyHost, ports: readonly HostPort[] = []): void {
@@ -98,10 +118,13 @@ export class PtyHost {
 				this.#pageGone(message.page);
 				return;
 			case "open":
-				this.#open(message.rid, message.spec);
+				if (message.spec.control === true)
+					void this.#openControl(message.rid, message.spec);
+				else this.#open(message.rid, message.spec);
 				return;
 			case "stop":
 				this.#clients.get(message.id)?.attachment.stop(message.reason);
+				this.#controls.get(message.id)?.client.stop();
 				return;
 		}
 	}
@@ -111,6 +134,7 @@ export class PtyHost {
 		for (const client of [...this.#clients.values()]) {
 			client.attachment.stop(reason);
 		}
+		for (const control of [...this.#controls.values()]) control.client.stop();
 	}
 
 	#addPage(page: number, viewLabel: string, port: HostPort): void {
@@ -134,6 +158,9 @@ export class PtyHost {
 		entry.closed = true;
 		for (const client of [...this.#clients.values()]) {
 			if (client.page === page) client.attachment.stop("detached");
+		}
+		for (const control of [...this.#controls.values()]) {
+			if (control.page === page) control.client.stop();
 		}
 		entry.port.close();
 	}
@@ -209,6 +236,82 @@ export class PtyHost {
 		this.#options.post({ type: "opened", rid });
 	}
 
+	/**
+	 * A tmux control client: its child on pipes, its panes' engines, its news
+	 * to the page's port. Its end is said to main as a PTY client's is.
+	 */
+	async #openControl(rid: number, spec: OpenSpec): Promise<void> {
+		const page = this.#pages.get(spec.page);
+		const fail = (message: string) =>
+			this.#options.post({ type: "open-failed", rid, message });
+		if (page === undefined || page.closed) return fail("the page is gone");
+		const { spawnPipes, loadVt } = this.#options;
+		if (spawnPipes === undefined || loadVt === undefined)
+			return fail("this host runs no control clients");
+		let vt: LibGhosttyVt;
+		try {
+			this.#vt ??= loadVt();
+			vt = await this.#vt;
+		} catch (failure: unknown) {
+			this.#vt = undefined;
+			return fail(failure instanceof Error ? failure.message : String(failure));
+		}
+		if (page.closed) return fail("the page is gone");
+		let child: ControlProcess;
+		try {
+			child = spawnPipes(spec.launch);
+		} catch (failure: unknown) {
+			return fail(failure instanceof Error ? failure.message : String(failure));
+		}
+		const client = new ControlClient({
+			process: child,
+			vt,
+			cols: spec.size.cols,
+			rows: spec.size.rows,
+			post: (message) => {
+				if (page.closed) return;
+				page.port.postMessage({
+					type: "control",
+					channelId: spec.channelId,
+					attachmentId: spec.id,
+					last: message.kind === "ended",
+					message,
+				});
+			},
+			ended: (reason) => {
+				if (this.#controls.get(spec.id)?.client !== client) return;
+				this.#controls.delete(spec.id);
+				this.#options.post({
+					type: "ended",
+					id: spec.id,
+					reason: reason === "detached" ? "detached" : "eof",
+				});
+			},
+		});
+		this.#controls.set(spec.id, {
+			client,
+			page: spec.page,
+			surfaceKey: spec.surfaceKey,
+			viewLabel: page.viewLabel,
+			targetGeneration: spec.targetGeneration,
+		});
+		this.#options.post({ type: "opened", rid });
+	}
+
+	#ownedControl(page: Page, request: ControlRequest): ControlClient {
+		const control = this.#controls.get(request.attachmentId);
+		if (
+			control === undefined ||
+			this.#pages.get(control.page) !== page ||
+			control.surfaceKey !== request.surfaceKey ||
+			control.viewLabel !== page.viewLabel ||
+			control.targetGeneration !== request.targetGeneration
+		) {
+			throw new TerminalFailure("wrong_attachment");
+		}
+		return control.client;
+	}
+
 	#owned(
 		page: Page,
 		request: {
@@ -253,6 +356,11 @@ export class PtyHost {
 				case "ack": {
 					const request = validateAckRequest(message.request);
 					this.#owned(page, request).acknowledge(request.sequence);
+					break;
+				}
+				case "control": {
+					const request = validateControlRequest(message.request);
+					this.#ownedControl(page, request).receive(request.message);
 					break;
 				}
 				default:

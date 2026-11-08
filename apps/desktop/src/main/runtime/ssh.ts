@@ -741,7 +741,7 @@ export class SshRuntime
 				file: this.#sshPath,
 				args: [
 					...sshOptionArgv(this.#controlDirectory),
-					"-tt",
+					request.pipes === true ? "-T" : "-tt",
 					this.#host,
 					"--",
 					script,
@@ -753,6 +753,7 @@ export class SshRuntime
 				pixelWidth: request.pixelWidth,
 				pixelHeight: request.pixelHeight,
 				env: this.#localEnvironment,
+				...(request.pipes === true ? { pipes: true } : {}),
 			},
 			ended: release,
 		};

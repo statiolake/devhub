@@ -74,6 +74,12 @@ export interface PtyLaunch {
 	readonly pixelWidth: number;
 	readonly pixelHeight: number;
 	readonly env: Readonly<Record<string, string | undefined>>;
+	/**
+	 * Run on plain pipes, not a terminal: a tmux control client, whose
+	 * commands a terminal would echo and cut at its line length. A machine
+	 * that wraps the launch (an SSH host) opens no terminal for it either.
+	 */
+	readonly pipes?: boolean;
 }
 
 /** The narrow PTY the attachment logic owns. */

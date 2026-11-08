@@ -5,7 +5,11 @@
  * tmux server's, so a host that ends takes only its clients with it.
  */
 
-import { openPty } from "../terminal/pty.js";
+import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { openPty, type PtyLaunch } from "../terminal/pty.js";
+import type { ControlProcess } from "./control/controlClient.js";
+import { LibGhosttyVt } from "./vt/libghosttyVt.js";
 import { PtyHost, type HostPort } from "./host.js";
 import type { ToPtyHost } from "./protocol.js";
 
@@ -22,9 +26,45 @@ if (parent === undefined) {
 	throw new Error("the pty host runs only as an Electron utility process");
 }
 const port: ParentPort = parent;
+/** A tmux control client on pipes: no terminal, so nothing echoes or wraps. */
+function spawnPipes(launch: PtyLaunch): ControlProcess {
+	const child = spawn(launch.file, [...launch.args], {
+		cwd: launch.cwd,
+		env: launch.env,
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	child.stderr.on("data", (chunk: Buffer) => {
+		console.error("[devhub] tmux control client:", chunk.toString().trimEnd());
+	});
+	// A write after the child has gone is the end, said by `exit`, not a failure.
+	child.stdin.on("error", () => undefined);
+	return {
+		write: (text) => {
+			child.stdin.write(text);
+		},
+		onData: (listener) => {
+			child.stdout.on("data", (chunk: Buffer) =>
+				listener(new Uint8Array(chunk)),
+			);
+		},
+		onExit: (listener) => {
+			child.on("exit", (code) => listener(code ?? undefined));
+			child.on("error", () => listener(undefined));
+		},
+		kill: () => {
+			child.kill();
+		},
+	};
+}
+
+/** `out/vt/ghostty-vt.wasm`, beside `out/main` (`scripts/build-native.mjs`). */
+const VT_WASM = new URL("../../vt/ghostty-vt.wasm", import.meta.url);
+
 const host = new PtyHost({
 	post: (message) => port.postMessage(message),
 	spawn: openPty,
+	spawnPipes,
+	loadVt: async () => LibGhosttyVt.load(await readFile(VT_WASM)),
 });
 
 port.on("message", ({ data, ports }) => {

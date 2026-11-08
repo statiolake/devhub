@@ -756,6 +756,30 @@ describe("parsing", () => {
     });
   });
 
+  describe("terminal.tmux_control_mode", () => {
+    it("is off unless the file says otherwise, and is written only when on", () => {
+      expect(defaultConfig().terminal.tmuxControlMode).toBe(false);
+      expect(parseConfig(MINIMAL).terminal.tmuxControlMode).toBe(false);
+      expect(configToToml(parseConfig(MINIMAL))).not.toContain(
+        "tmux_control_mode",
+      );
+      const on = parseConfig(
+        "version = 1\n[terminal]\ntmux_control_mode = true\n",
+      );
+      expect(on.terminal.tmuxControlMode).toBe(true);
+      expect(configToToml(on)).toContain("tmux_control_mode = true");
+      expect(parseConfig(configToToml(on)).terminal.tmuxControlMode).toBe(true);
+    });
+
+    it("refuses anything but a boolean, naming the key", () => {
+      const text = 'version = 1\n[terminal]\ntmux_control_mode = "yes"\n';
+      expect(codeOf(() => parseConfig(text))).toBe("invalid_type");
+      expect(pathOf(() => parseConfig(text))).toBe(
+        "terminal.tmux_control_mode",
+      );
+    });
+  });
+
   describe("terminal.mac_option_is_meta", () => {
     it("is off unless the file says otherwise", () => {
       expect(defaultConfig().terminal.macOptionIsMeta).toBe(false);

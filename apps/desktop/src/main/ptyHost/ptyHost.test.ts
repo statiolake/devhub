@@ -121,6 +121,7 @@ class FakePage implements HostedPage {
 				this.#replies.get(data.rid)?.(data.result);
 				return;
 			}
+			if (data.type === "control") return;
 			const list = this.frames.get(data.channelId) ?? [];
 			list.push(decodeTerminalFrame(data.frame));
 			this.frames.set(data.channelId, list);

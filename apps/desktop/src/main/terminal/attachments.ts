@@ -158,6 +158,12 @@ export interface AttachContext {
 	readonly plan?: (launch: PtyLaunch) => PtyPlan | undefined;
 	/** Where the page is reached from the pty host; absent: frames go to `sink`. */
 	readonly route?: HostedRoute;
+	/**
+	 * A tmux control client (`tmux -C`, `docs/terminal-mode.md`): it runs in
+	 * the pty host, on pipes, and the page draws its panes. Never in this
+	 * process: without the host it is refused.
+	 */
+	readonly control?: boolean;
 }
 
 /**
@@ -652,6 +658,8 @@ export interface HostedRoute {
 export interface HostedOpen extends PtyAttachmentSpec {
 	readonly route: HostedRoute;
 	readonly launch: PtyLaunch;
+	/** A tmux control client: `launch` is run on pipes and drawn by the page. */
+	readonly control?: boolean;
 }
 
 /**
@@ -894,7 +902,8 @@ export class AttachmentManager {
 	private launchOf(context: AttachContext): PtyLaunch {
 		return {
 			file: context.file,
-			args: context.args,
+			args: context.control === true ? controlArgv(context.args) : context.args,
+			...(context.control === true ? { pipes: true } : {}),
 			cwd: context.cwd,
 			cols: context.size.cols,
 			rows: context.size.rows,
@@ -988,6 +997,8 @@ export class AttachmentManager {
 			route === undefined ||
 			context.plan === undefined
 		) {
+			if (context.control === true)
+				throw new TerminalFailure("pty_unavailable");
 			return this.attach(permit, context);
 		}
 		if (!this.isCurrent(permit)) throw new TerminalFailure("stale_target");
@@ -999,7 +1010,11 @@ export class AttachmentManager {
 			// so, in the shape every failure to open one takes.
 			plan = undefined;
 		}
-		if (plan === undefined) return this.attach(permit, context);
+		if (plan === undefined) {
+			if (context.control === true)
+				throw new TerminalFailure("pty_unavailable");
+			return this.attach(permit, context);
+		}
 		this.replaceSurface(context.surfaceKey);
 		const id = this.nextId();
 		const targetGeneration = this.nextGeneration();
@@ -1024,6 +1039,7 @@ export class AttachmentManager {
 				size: context.size,
 				route,
 				launch: plan.launch,
+				...(context.control === true ? { control: true } : {}),
 			});
 		} catch (failure: unknown) {
 			entry.ended("childExited");
@@ -1147,4 +1163,14 @@ export class AttachmentManager {
 		this.generation = generation >= MAX_TARGET_GENERATION ? 1 : generation + 1;
 		return generation;
 	}
+}
+
+/**
+ * The attach argv as a control client's: `-C` before `attach-session`, the
+ * rest (the socket, the config, the exact session) as it was.
+ */
+export function controlArgv(args: readonly string[]): readonly string[] {
+	const at = args.indexOf("attach-session");
+	if (at < 0) throw new TerminalFailure("invalid_request");
+	return [...args.slice(0, at), "-C", ...args.slice(at)];
 }

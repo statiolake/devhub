@@ -43,6 +43,8 @@ export interface TerminalAppearance {
   readonly terminalTheme: TerminalTheme;
   /** `[terminal] mac_option_is_meta`. See `../surfaces/optionKey.ts`. */
   readonly terminalMacOptionIsMeta: boolean | "left";
+  /** `[terminal] tmux_control_mode`: the control-mode surface (`control/`). */
+  readonly terminalTmuxControlMode?: boolean;
 }
 
 /**

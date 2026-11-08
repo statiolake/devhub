@@ -14,6 +14,7 @@ import type {
 	TerminalSize,
 } from "../../ipc/terminal.js";
 import type { PtyLaunch } from "../terminal/pty.js";
+import type { ControlToPage } from "../../ipc/terminalControl.js";
 
 /** One client to start: its identity, its page, and what to run. */
 export interface OpenSpec {
@@ -27,6 +28,8 @@ export interface OpenSpec {
 	/** The page's channel id for this surface: what its frames are sent under. */
 	readonly channelId: string;
 	readonly launch: PtyLaunch;
+	/** A tmux control client (`control/controlClient.ts`), run on pipes. */
+	readonly control?: boolean;
 }
 
 export type ToPtyHost =
@@ -54,7 +57,8 @@ export type FromPtyHost =
 	  };
 
 export type PageToPtyHost = {
-	readonly type: "input" | "resize" | "ack";
+	/** `control`: a `ControlRequest`, for a control client. */
+	readonly type: "input" | "resize" | "ack" | "control";
 	readonly rid: number;
 	/** The request as the page sent it; validated by the host. */
 	readonly request: unknown;
@@ -74,6 +78,15 @@ export type PtyHostToPage =
 			readonly last: boolean;
 			/** `encodeTerminalFrame`'s bytes, as main's frames are. */
 			readonly frame: Uint8Array;
+	  }
+	| {
+			/** A control client's news for the page that drew it. */
+			readonly type: "control";
+			readonly channelId: string;
+			readonly attachmentId: string;
+			/** Its end: nothing follows it on this channel. */
+			readonly last: boolean;
+			readonly message: ControlToPage;
 	  }
 	| {
 			readonly type: "reply";

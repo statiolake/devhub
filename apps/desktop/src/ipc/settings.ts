@@ -180,7 +180,11 @@ export interface SettingsConfigWire {
 	 * Option is in DevHub's own terminals. See `MacOptionIsMeta` in
 	 * `model/config.ts`.
 	 */
-	readonly terminal: { readonly macOptionIsMeta: boolean | "left" };
+	readonly terminal: {
+		readonly macOptionIsMeta: boolean | "left";
+		/** `tmux_control_mode`: no control in Settings, carried so a save keeps it. */
+		readonly tmuxControlMode: boolean;
+	};
 	readonly keybindings: SettingsKeybindingsWire;
 	readonly workspaceSources: readonly SettingsWorkspaceSourceWire[];
 	/** `[scratch]`: where Scratch is, `daily = "~/junk/YYYYMMDD"`. */

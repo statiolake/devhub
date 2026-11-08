@@ -236,7 +236,10 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			...theme,
 			palette: [...theme.palette],
 		})),
-		terminal: { macOptionIsMeta: config.terminal.macOptionIsMeta },
+		terminal: {
+			macOptionIsMeta: config.terminal.macOptionIsMeta,
+			tmuxControlMode: config.terminal.tmuxControlMode,
+		},
 		keybindings: {
 			prefix: config.keybindings.prefix,
 			chords: { ...config.keybindings.chords },
@@ -397,7 +400,10 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			...theme,
 			palette: [...theme.palette],
 		})),
-		terminal: { macOptionIsMeta: wire.terminal.macOptionIsMeta },
+		terminal: {
+			macOptionIsMeta: wire.terminal.macOptionIsMeta,
+			tmuxControlMode: wire.terminal.tmuxControlMode === true,
+		},
 		keybindings: {
 			prefix: wire.keybindings.prefix,
 			chords: { ...wire.keybindings.chords },

@@ -41,6 +41,7 @@ import {
 	type TerminalResizeRequest,
 	type TerminalResult,
 } from "../ipc/terminal.js";
+import type { ControlRequest } from "../ipc/terminalControl.js";
 import type { PageToPtyHost, PtyHostToPage } from "../main/ptyHost/protocol.js";
 
 interface Channel {
@@ -129,8 +130,14 @@ ipcRenderer.on(
 			) {
 				return;
 			}
-			channel.sequence = data.sequence;
 			if (data.last) channel.ended = true;
+			if (data.type === "control") {
+				// A control client's news is a message, not frame bytes: its surface
+				// reads it as such (`shell/terminal/control/`).
+				channel.listener(data.message);
+				return;
+			}
+			channel.sequence = data.sequence;
 			channel.listener(data.frame);
 		};
 		port.start();
@@ -249,6 +256,12 @@ export const terminalApi: DevhubTerminalApi = {
 			channelId,
 			request,
 		) as Promise<TerminalResult<void>>;
+	},
+
+	control: (channelId, request: ControlRequest) => {
+		const channel = hostedChannel(channelId);
+		if (channel === undefined) return Promise.resolve(restarted());
+		return toHost(channel, "control", request);
 	},
 
 	acknowledge: (channelId, request: TerminalAckRequest) => {

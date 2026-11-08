@@ -20,7 +20,7 @@ async function open(macOptionIsMeta: boolean | "left") {
   const config = testConfig();
   const { saves, client } = testClient({
     ...config,
-    terminal: { macOptionIsMeta },
+    terminal: { macOptionIsMeta, tmuxControlMode: false },
   });
   render(<SettingsApp client={client} />);
   fireEvent.click(await screen.findByRole("tab", { name: "Terminal" }));

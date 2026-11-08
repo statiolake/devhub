@@ -361,7 +361,17 @@ path to patch.
 
 `[terminal] tmux_control_mode = true` selects the control-mode terminal;
 the xterm.js path stays the default until the new one does everything the
-old one does. The key exists only for that transition: when control mode
+old one does. It reaches the pages with the appearance
+(`terminalTmuxControlMode`); a surface reads it when it attaches and asks
+main for a control client (`mode: "control"` on the attach). Main runs that
+client only in the pty host — the attach argv with `-C`, on pipes, and over
+SSH with `ssh -T` rather than `-tt`, since a terminal would echo the
+commands and cut them at its line length — and refuses it where the host is
+not available. Written to `settings.toml` only when on.
+
+Where it stands: the key is accepted, the main-process and pty-host side is
+in, and the page's control-mode surface is next. Until it lands the key has
+no visible effect: every surface still draws with xterm.js. The key exists only for that transition: when control mode
 becomes the only terminal (phase 4), the key and the xterm.js path are
 deleted together — no setting is kept for compatibility, and a
 `tmux_control_mode` left in a settings file is then refused like any
