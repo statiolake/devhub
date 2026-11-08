@@ -30,6 +30,7 @@ import {
 } from "./components";
 import type {
   DecoContent,
+  DecoPlace,
   InlineContent,
   Layers,
   PopupContent,
@@ -61,6 +62,15 @@ export interface LayerHost {
   readonly openLink: (url: string) => void;
   /** Give the keyboard back to Neovim. */
   readonly refocus: () => void;
+  /** Move what rides the windows' text to it (`riders.ts`). */
+  readonly ride: () => void;
+}
+
+/** Riders laid out again: placed on the text before the frame is drawn. */
+function useRide(host: LayerHost): void {
+  useLayoutEffect(() => {
+    host.ride();
+  });
 }
 
 function themeFor(
@@ -314,6 +324,7 @@ export function InlineCards({
     reported.current.set(id, key);
     host.lua("_inline_rows", [id, rows]);
   };
+  useRide(host);
   const { cell } = host;
   const measured = new Set<number>();
   const cards: ReactNode[] = layers.placedInlines.map((place) => {
@@ -327,6 +338,8 @@ export function InlineCards({
       <div
         key={`${String(place.id)}:${String(place.win)}`}
         className="nvim-inline-slot"
+        data-ride-win={place.win}
+        data-ride-base={place.base}
         style={{
           left: (box.col + place.col) * cell.width,
           top: (box.row + place.row) * cell.height,
@@ -339,12 +352,11 @@ export function InlineCards({
           content={content}
           host={host}
           active={place.active}
-          full={place.full}
-          offset={-place.clip * cell.height}
+          full={place.rows}
           onHeight={
             measures
               ? (px) => {
-                  report(place.id, place.full, rowsFor(px, cell.height));
+                  report(place.id, place.rows, rowsFor(px, cell.height));
                 }
               : undefined
           }
@@ -387,7 +399,6 @@ export function InlineCards({
           host={host}
           active={false}
           full={m.full}
-          offset={0}
           onHeight={(px) => {
             report(m.id, m.full, rowsFor(px, cell.height));
           }}
@@ -410,7 +421,6 @@ function InlineCard({
   host,
   active,
   full,
-  offset,
   onHeight,
   onClick,
   onAction,
@@ -420,7 +430,6 @@ function InlineCard({
   readonly active: boolean;
   /** The rows Lua reserved: measured again when they change. */
   readonly full: number;
-  readonly offset: number;
   readonly onHeight: ((px: number) => void) | undefined;
   readonly onClick: () => void;
   readonly onAction: (action: number) => void;
@@ -447,7 +456,6 @@ function InlineCard({
       ref={ref}
       className={`nvim-inline-card${active ? " nvim-inline-active" : ""}`}
       style={{
-        top: offset,
         color: rgbCss(theme.fg),
         ["--nvim-ring" as string]: ringColor(content.hl, theme.fg),
         ["--nvim-ground" as string]: rgbCss(theme.bg),
@@ -475,6 +483,7 @@ export function LineDecorations({
   readonly layers: Layers;
   readonly host: LayerHost;
 }) {
+  useRide(host);
   const { cell } = host;
   return (
     <>
@@ -487,6 +496,7 @@ export function LineDecorations({
             key={`${String(place.id)}:${String(place.win)}:${String(index)}`}
             content={content}
             host={host}
+            place={place}
             style={{
               left: (box.col + place.col) * cell.width,
               top: (box.row + place.row) * cell.height,
@@ -504,12 +514,15 @@ export function LineDecorations({
 function Decoration({
   content,
   host,
+  place,
   style,
 }: {
   readonly content: DecoContent;
   readonly host: LayerHost;
+  readonly place: DecoPlace;
   readonly style: CSSProperties;
 }) {
+  const ride = { "data-ride-win": place.win, "data-ride-base": place.base };
   const normal = content.hl.get("Normal");
   const bg = normal?.bg ?? host.defaults.background;
   const color =
@@ -533,6 +546,7 @@ function Decoration({
     return (
       <div
         className="nvim-deco nvim-deco-dim"
+        {...ride}
         style={{ ...style, background: rgbCss(bg, 0.55) }}
       >
         {tag}
@@ -541,7 +555,7 @@ function Decoration({
   }
   if (content.style === "tag") {
     return (
-      <div className="nvim-deco" style={style}>
+      <div className="nvim-deco" {...ride} style={style}>
         {tag}
       </div>
     );
@@ -549,6 +563,7 @@ function Decoration({
   return (
     <div
       className="nvim-deco nvim-deco-highlight"
+      {...ride}
       style={{
         ...style,
         background: `color-mix(in srgb, ${color} 10%, transparent)`,
@@ -579,6 +594,7 @@ export function Popups({
   /** The editor's size, in pixels. */
   readonly area: { readonly width: number; readonly height: number };
 }) {
+  useRide(host);
   return (
     <>
       {layers.placedPopups.map((place) => {
@@ -667,11 +683,12 @@ function Popup({
     edges();
   }, [scroll]);
   const maxWidth = popupMaxWidth(content.maxWidth, cell.width, area.width);
+  const anchorY = (box.row + place.row) * cell.height;
   const layout = size
     ? placePopup({
         anchor: {
           x: (box.col + place.col) * cell.width,
-          y: (box.row + place.row) * cell.height,
+          y: anchorY,
         },
         cellHeight: cell.height,
         size,
@@ -694,6 +711,9 @@ function Popup({
   return (
     <div
       className={`nvim-popup${place.focused ? " nvim-popup-focused" : ""}`}
+      data-ride-win={place.win}
+      data-ride-base={place.base}
+      data-ride-cut={`anchor:${String(anchorY - (layout?.top ?? 0))}`}
       style={{
         left: layout?.left ?? 0,
         top: layout?.top ?? 0,

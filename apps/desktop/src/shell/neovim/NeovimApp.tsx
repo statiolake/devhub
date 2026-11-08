@@ -233,6 +233,10 @@ function NeovimSurface({
     });
     const offEvent = bridge.neovim.onGuiEvent((event) => {
       if (event.workspaceId !== workspaceId) return;
+      // Where Lua placed something is counted from the rows its window had
+      // scrolled when the placement came, not when it is drawn.
+      const scrolled = editor.scrolledRows();
+      const rowsOf = (win: number) => scrolled.get(win) ?? 0;
       if (event.kind === "terminal_insert") {
         setTerminalNormal(undefined);
         return;
@@ -244,12 +248,12 @@ function NeovimSurface({
       }
       if (LAYER_EVENTS.has(event.kind)) {
         setLayers((before) =>
-          applyLayerEvent(before, event.kind, event.payload),
+          applyLayerEvent(before, event.kind, event.payload, rowsOf),
         );
         return;
       }
       setDecorations((before) =>
-        applyGuiEvent(before, event.kind, event.payload),
+        applyGuiEvent(before, event.kind, event.payload, rowsOf),
       );
     });
     setDecorations(NO_DECORATIONS);
@@ -452,6 +456,9 @@ function NeovimSurface({
   const showTabs = tabs !== undefined && tabs.tabs.length > 1;
   const boxes = editor?.gridBoxes() ?? [];
   const fontFamily = editor?.font().family;
+  const ride = useCallback(() => {
+    editorRef.current?.placeRiders();
+  }, []);
   const layerHost: LayerHost | undefined =
     nvim && cell
       ? {
@@ -469,6 +476,7 @@ function NeovimSurface({
           refocus: () => {
             editor?.focus();
           },
+          ride,
         }
       : undefined;
 
@@ -651,7 +659,12 @@ function NeovimSurface({
           : null}
         {nvim && cell && editor ? (
           <>
-            <InlineImages decorations={decorations} boxes={boxes} cell={cell} />
+            <InlineImages
+              decorations={decorations}
+              boxes={boxes}
+              cell={cell}
+              ride={ride}
+            />
             {layerHost ? (
               <>
                 <LineDecorations layers={layers} host={layerHost} />

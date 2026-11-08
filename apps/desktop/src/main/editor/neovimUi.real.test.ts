@@ -469,9 +469,7 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			};
 			expect(image.src.startsWith("data:image/png;base64,iVBOR")).toBe(true);
 			// Under line 2, from the window's top: rows 2, 3, 4.
-			expect(lastPlace()?.images).toMatchObject([
-				{ row: 2, col: 0, rows: 3, full: 3 },
-			]);
+			expect(lastPlace()?.images).toMatchObject([{ row: 2, col: 0, rows: 3 }]);
 			// The rows are virt_lines: Neovim leaves them blank in its grid.
 			await h.until(
 				(state) => cursorGridText(state)[5] === "c",
@@ -671,8 +669,6 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 						id: number;
 						row: number;
 						rows: number;
-						full: number;
-						clip: number;
 				  }
 				| undefined;
 		await waitFor(() => card() !== undefined, "the card placed");
@@ -680,15 +676,13 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			row: 2,
 			col: 0,
 			rows: 2,
-			full: 2,
-			clip: 0,
 			active: false,
 		});
 		await h.ui.request("nvim_exec_lua", [
 			"require('devhub_gui')._inline_rows(...)",
 			[card()?.id, 4],
 		]);
-		await waitFor(() => card()?.full === 4, "the measured rows");
+		await waitFor(() => card()?.rows === 4, "the measured rows");
 		await h.until(
 			(state) => cursorGridText(state)[6] === "c",
 			"four reserved rows",
@@ -702,13 +696,21 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			"",
 			"c",
 		]);
-		// Scrolled so that line 3 is the top: the card's last row is filler above it.
+		// Scrolled so that line 3 is the top: the card's last row is filler
+		// above it, the rest above the window (the page cuts it there).
 		await h.ui.request("nvim_exec_lua", [
 			"vim.fn.winrestview({ lnum = 3, topline = 3, topfill = 1 })",
 			[],
 		]);
-		await waitFor(() => card()?.clip === 3, "the card clipped at the top");
-		expect(card()).toMatchObject({ row: 0, rows: 1, full: 4, clip: 3 });
+		await waitFor(() => card()?.row === -3, "the card above the top");
+		expect(card()).toMatchObject({ row: -3, rows: 4 });
+		// A window's height above: still placed, as the page shows that much
+		// beyond Neovim's view while it scrolls in pixels.
+		await h.ui.request("nvim_exec_lua", [
+			"vim.fn.winrestview({ lnum = 4, topline = 4, topfill = 0 })",
+			[],
+		]);
+		await waitFor(() => card()?.row === -5, "the card further above");
 
 		// A decoration over lines 3–4.
 		await h.ui.request("nvim_exec_lua", [

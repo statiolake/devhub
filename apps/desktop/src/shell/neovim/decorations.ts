@@ -34,17 +34,19 @@ export interface Toast {
   readonly rev: number;
 }
 
-/** An image's rows in one window: `row` is from the window's top. */
+/**
+ * An image's rows in one window: `row` is from the window's top, above or
+ * below the window too, which the page cuts the image to (`riders.ts`).
+ */
 export interface ImagePlace {
   readonly id: number;
   readonly win: number;
   readonly row: number;
+  /** The rows its window had scrolled when this came (`riders.ts`). */
+  readonly base: number;
   readonly col: number;
   readonly width: number;
-  /** The rows of it that are in the window. */
   readonly rows: number;
-  /** The rows it has (a part below the window is clipped). */
-  readonly full: number;
 }
 
 export interface Decorations {
@@ -86,17 +88,19 @@ function list(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-function imagePlace(value: unknown): ImagePlace[] {
+function imagePlace(
+  value: unknown,
+  rowsOf: (win: number) => number,
+): ImagePlace[] {
   const r = record(value);
   if (!r) return [];
-  const [id, win, row, col, width, rows, full] = [
+  const [id, win, row, col, width, rows] = [
     "id",
     "win",
     "row",
     "col",
     "width",
     "rows",
-    "full",
   ].map((k) => num(r, k));
   if (
     id === undefined ||
@@ -105,11 +109,10 @@ function imagePlace(value: unknown): ImagePlace[] {
     col === undefined ||
     width === undefined ||
     rows === undefined ||
-    full === undefined ||
     rows <= 0
   )
     return [];
-  return [{ id, win, row, col, width, rows, full }];
+  return [{ id, win, row, base: rowsOf(win), col, width, rows }];
 }
 
 function level(value: unknown): ToastLevel {
@@ -123,6 +126,8 @@ export function applyGuiEvent(
   state: Decorations,
   kind: string,
   payload: unknown,
+  /** The rows window `win` has scrolled, as the page has heard. */
+  rowsOf: (win: number) => number = () => 0,
 ): Decorations {
   const p = record(payload);
   if (!p) return state;
@@ -187,7 +192,7 @@ export function applyGuiEvent(
     case "place":
       return {
         ...state,
-        placedImages: list(p["images"]).flatMap(imagePlace),
+        placedImages: list(p["images"]).flatMap((v) => imagePlace(v, rowsOf)),
       };
     default:
       return state;

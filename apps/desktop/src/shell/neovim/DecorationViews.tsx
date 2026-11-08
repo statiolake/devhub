@@ -7,6 +7,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -192,16 +193,23 @@ function ToastView({
   );
 }
 
-/** Each image in the rows its extmark reserves, in every window showing it. */
+/**
+ * Each image in the rows its extmark reserves, in every window showing it,
+ * on its text as that scrolls and cut to the window (`riders.ts`).
+ */
 export function InlineImages({
   decorations,
   boxes,
   cell,
+  ride,
 }: {
   readonly decorations: Decorations;
   readonly boxes: readonly GridBox[];
   readonly cell: Cell;
+  /** Move them to their text (`riders.ts`) once laid out. */
+  readonly ride: () => void;
 }) {
+  useLayoutEffect(ride);
   return (
     <>
       {decorations.placedImages.map((place) => {
@@ -212,6 +220,8 @@ export function InlineImages({
           <div
             key={`${String(place.id)}:${String(place.win)}`}
             className="nvim-inline-image"
+            data-ride-win={place.win}
+            data-ride-base={place.base}
             style={{
               left: (box.col + place.col) * cell.width,
               top: (box.row + place.row) * cell.height,
@@ -224,7 +234,7 @@ export function InlineImages({
               src={src}
               alt=""
               draggable={false}
-              style={{ height: place.full * cell.height }}
+              style={{ height: place.rows * cell.height }}
             />
           </div>
         );

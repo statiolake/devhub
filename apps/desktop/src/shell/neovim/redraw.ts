@@ -94,6 +94,12 @@ export interface WindowState {
     readonly curcol: number;
     readonly lineCount: number;
   };
+  /**
+   * The screen rows the window has scrolled since it was first seen (the
+   * sum of `scroll_delta`): what Lua placed is moved by the rows scrolled
+   * after it came (`riders.ts`).
+   */
+  scrolledRows?: number;
 }
 
 /** Cells on each side of a grid's text area. */
@@ -593,6 +599,7 @@ function applyEvent(
         const grid = num(args[0]);
         changes.scrolled.set(grid, (changes.scrolled.get(grid) ?? 0) + delta);
       }
+      window.scrolledRows = (window.scrolledRows ?? 0) + delta;
       return;
     }
     case "win_viewport_margins": {

@@ -661,20 +661,10 @@ local function tab_windows(buf)
   return out
 end
 
---- The screen rows (from the window's top) of line lnum in win: its first
---- and its last, or nil when it is not in view.
-local function line_rows(win, info, lnum)
-  if lnum < info.topline then return nil end
-  local folded = vim.api.nvim_win_call(win, function() return vim.fn.foldclosed(lnum) end)
-  local text = vim.api.nvim_buf_get_lines(info.bufnr, lnum - 1, lnum, false)[1] or ""
-  local first = vim.fn.screenpos(win, lnum, 1)
-  if first.row == 0 then return nil end
-  local last = folded == -1 and vim.fn.screenpos(win, lnum, math.max(1, #text)) or first
-  local top = info.winrow - 1
-  return first.row - top - 1, (last.row > 0 and last.row or first.row) - top - 1, folded ~= -1
-end
+local line_rows = M._line_rows
 
 function M._place_layers()
+  M._drawn()
   local views, inlines, measure, decos, popups = {}, {}, {}, {}, {}
   local current = vim.api.nvim_get_current_win()
   for id, view in pairs(M._views) do
@@ -699,23 +689,14 @@ function M._place_layers()
         if info then
           local width = info.width - info.textoff
           local _, last, folded = line_rows(win, info, lnum)
-          local row, visible, clip
           if last and not folded then
-            row = last + 1
-            visible = math.min(card.rows, info.height - row)
-            clip = 0
-          elseif lnum == info.topline - 1 then
-            -- The line is just above the top, its rows partly in view (topfill).
-            local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
-            local fill = math.min(view.topfill or 0, card.rows)
-            if fill > 0 then row, visible, clip = 0, math.min(fill, info.height), card.rows - fill end
-          end
-          if row and visible and visible > 0 then
+            -- Its rows under the line, from the window's top (beyond it
+            -- too); the page cuts it to the window.
             shown = true
             local cursor = vim.api.nvim_win_get_cursor(win)[1]
             local range = card.range or { lnum, lnum }
-            table.insert(inlines, { id = id, win = win, row = row, col = info.textoff, width = width,
-              rows = visible, full = card.rows, clip = clip,
+            table.insert(inlines, { id = id, win = win, row = last + 1, col = info.textoff,
+              width = width, rows = card.rows,
               active = card.focus == true or (win == current and cursor >= range[1] and cursor <= (range[2] or range[1])) })
           elseif not shown and #measure < 64 then
             table.insert(measure, { id = id, width = width, full = card.rows })
@@ -736,24 +717,29 @@ function M._place_layers()
         local info = vim.fn.getwininfo(win)[1]
         if info then
           local top, bottom
-          -- Not topline + height: closed folds (a diff's) hide any number of lines.
-          local from = math.max(first, info.topline)
-          for lnum = from, math.min(last, from + 2000) do
+          -- Its first and last rows in reach (line_rows: beyond the window
+          -- too, the page cuts); not topline + height: closed folds (a
+          -- diff's) hide any number of lines.
+          local from = math.max(first, info.topline - 4 * info.height)
+          local to = math.min(last, info.botline + 4 * info.height)
+          for lnum = from, to do
             local a, b = line_rows(win, info, lnum)
             if a then
-              top = top or a
+              top, bottom = a, b
+              break
+            end
+          end
+          for lnum = to, from, -1 do
+            if not top then break end
+            local _, b = line_rows(win, info, lnum)
+            if b then
               bottom = b
-            elseif top then
               break
             end
           end
           if top then
-            top = math.max(0, top)
-            bottom = math.min(bottom, info.height - 1)
-            if bottom >= top then
-              table.insert(decos, { id = id, win = win, row = top, rows = bottom - top + 1,
-                col = info.textoff, width = info.width - info.textoff })
-            end
+            table.insert(decos, { id = id, win = win, row = top, rows = bottom - top + 1,
+              col = info.textoff, width = info.width - info.textoff })
           end
         end
       end

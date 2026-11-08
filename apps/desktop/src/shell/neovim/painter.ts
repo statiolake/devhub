@@ -296,8 +296,19 @@ export class GridPainter {
       readonly ground: HTMLDivElement;
       readonly frames: readonly HTMLDivElement[];
       readonly labels?: HTMLDivElement;
+      /** Its members' grids, as last laid out. */
+      grids: readonly number[];
     }
   >();
+  /**
+   * Floats at a buffer position (`bufpos`), by window: they ride their
+   * anchor window's text while it scrolls in pixels (`rideFloats`).
+   */
+  private bufposFloats: ReadonlySet<number> = new Set();
+  /** The rows each window grid has scrolled, as painted (`riders.ts`). */
+  private readonly painted = new Map<number, number>();
+  /** Each riding float's shift, by grid (pixels, down positive). */
+  private readonly floatShifts = new Map<number, number>();
   private font: FontSpec;
   private metrics: Metrics;
   private theme: PaintTheme = NO_THEME;
@@ -412,6 +423,9 @@ export class GridPainter {
     }
     for (const id of this.scrolls.keys()) {
       if (!onScreen.has(id)) this.dropScroll(id);
+    }
+    for (const [grid, rows] of changes.scrolled) {
+      this.painted.set(grid, (this.painted.get(grid) ?? 0) + rows);
     }
     const all = forceAll || changes.colors;
     if (changes.colors) this.roles.clear();
@@ -815,6 +829,61 @@ export class GridPainter {
     return this.scrolls.get(grid)?.view.off ?? 0;
   }
 
+  /** The rows a window grid has scrolled, as painted so far. */
+  paintedRows(grid: number): number {
+    return this.painted.get(grid) ?? 0;
+  }
+
+  /** The floats (by window) that are at a buffer position (`bufpos`). */
+  setBufposFloats(wins: ReadonlySet<number>): void {
+    this.bufposFloats = wins;
+  }
+
+  /** How far a float riding its anchor's text is moved (`rideFloats`). */
+  floatShift(grid: number): number {
+    return this.floatShifts.get(grid) ?? 0;
+  }
+
+  /**
+   * A float at a buffer position (a hover, a diagnostic, a signature from
+   * a plugin's `relative='win'` with `bufpos`) is where Neovim puts it in
+   * its anchor window's grid; while that window's display is moved from
+   * the grid (`smoothScroll.ts`), the float is moved with it, its frame
+   * and shadow too, so it stays on its text. Other floats stay put, as
+   * Neovim keeps them.
+   */
+  private rideFloats(state: NeovimUiState, boxes: readonly GridBox[]): void {
+    const shifts = new Map<number, number>();
+    for (const box of boxes) {
+      if (!box.float || box.win === undefined) continue;
+      if (!this.bufposFloats.has(box.win)) continue;
+      const p = state.windows.get(box.grid)?.placement;
+      if (p?.kind !== "float") continue;
+      const off = this.scrolls.get(p.anchorGrid)?.view.off ?? 0;
+      if (off !== 0) shifts.set(box.grid, -off);
+    }
+    const move = (el: HTMLElement, dy: number | undefined) => {
+      const t = dy === undefined ? "" : `translateY(${String(dy)}px)`;
+      if (el.style.transform !== t) el.style.transform = t;
+    };
+    for (const grid of new Set([
+      ...this.floatShifts.keys(),
+      ...shifts.keys(),
+    ])) {
+      const entry = this.canvases.get(grid);
+      if (entry) move(entry.canvas, shifts.get(grid));
+    }
+    for (const cluster of this.clusters.values()) {
+      const grid = cluster.grids.find((g) => shifts.has(g));
+      const dy = grid === undefined ? undefined : shifts.get(grid);
+      move(cluster.ground, dy);
+      for (const layer of cluster.frames) move(layer, dy);
+      if (cluster.labels) move(cluster.labels, dy);
+    }
+    this.floatShifts.clear();
+    for (const [grid, dy] of shifts) this.floatShifts.set(grid, dy);
+  }
+
   /**
    * One frame of every window's pixel scrolling: the displays moved, and
    * what to ask Neovim. Answers whether any is still moving.
@@ -844,6 +913,7 @@ export class GridPainter {
       this.placeScroll(state, box);
       if (this.scrolls.has(grid)) moving = true;
     }
+    this.rideFloats(state, boxes);
     return moving;
   }
 
@@ -1078,6 +1148,7 @@ export class GridPainter {
       live.add(key);
       const known = this.clusters.get(key);
       if (known) {
+        known.grids = cluster.members.map((m) => m.grid);
         // Over the canvases, which may have come since.
         if (known.labels && known.labels !== this.root.lastElementChild)
           this.root.append(known.labels);
@@ -1166,6 +1237,7 @@ export class GridPainter {
         ground: el,
         frames: [...frames.values()],
         ...(over ? { labels: over } : {}),
+        grids: cluster.members.map((m) => m.grid),
       });
     }
     for (const [key, entry] of this.clusters) {

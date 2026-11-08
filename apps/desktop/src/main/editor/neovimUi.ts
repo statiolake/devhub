@@ -382,14 +382,63 @@ function M.image_clear(id)
   vim.schedule(M._place)
 end
 
-local function text_area(win)
-  local info = vim.fn.getwininfo(win)[1]
-  if not info then return nil end
-  return info
+--- Where line lnum is in window win (info: its getwininfo): the rows of its
+--- first and last screen line from the window's top, and whether it is a
+--- closed fold's line; nil when it is hidden in a fold or further than a
+--- window's height from the window. Beyond the window too: the page shows
+--- up to a window above or below Neovim's view while it scrolls in pixels
+--- (Neovim a line or more ahead), and what is there must be placed. Off
+--- the window the rows are counted with nvim_win_text_height (0.10+) from
+--- topline's first row; a line's fill (diff filler, virt_lines above it
+--- and below the line before) is above it, as Neovim counts it.
+function M._line_rows(win, info, lnum)
+  local folded = vim.api.nvim_win_call(win, function() return vim.fn.foldclosed(lnum) end)
+  if folded ~= -1 and folded ~= lnum then return nil end
+  local top = info.winrow
+  if lnum >= info.topline and lnum <= info.botline then
+    local first = vim.fn.screenpos(win, lnum, 1)
+    if first.row > 0 then
+      local text = vim.api.nvim_buf_get_lines(info.bufnr, lnum - 1, lnum, false)[1] or ""
+      local last = folded == -1 and vim.fn.screenpos(win, lnum, math.max(1, #text)) or first
+      return first.row - top, (last.row > 0 and last.row or first.row) - top, folded ~= -1
+    end
+  end
+  if not vim.api.nvim_win_text_height then return nil end
+  local reach = info.height
+  if lnum < info.topline - 4 * reach or lnum > info.botline + 4 * reach then return nil end
+  local anchor = vim.fn.screenpos(win, info.topline, 1)
+  if anchor.row == 0 then return nil end
+  local height = function(a, b)
+    return vim.api.nvim_win_text_height(win, { start_row = a - 1, end_row = b - 1 })
+  end
+  -- The first row of topline's block: its fill, partly shown (topfill).
+  local block = anchor.row - top - height(info.topline, info.topline).fill
+  local first
+  if lnum < info.topline then
+    first = block - height(lnum, info.topline - 1).all
+  else
+    first = block + height(info.topline, lnum - 1).all
+  end
+  local own = height(lnum, lnum)
+  first = first + own.fill
+  local last = first + math.max(1, own.all - own.fill) - 1
+  if last < -reach or first >= info.height + reach then return nil end
+  return first, last, folded ~= -1
 end
 
---- Where every image is now, on the current tab page.
+--- Before a placement is taken: what Neovim has not drawn yet is drawn,
+--- so the placement reaches the page after the redraw of the state it is
+--- taken in (a scroll can come between a scheduled placement and its
+--- redraw; the page counts a placement from the redraws it has heard).
+function M._drawn()
+  if not vim.api.nvim_get_mode().blocking then vim.cmd("redraw") end
+end
+
+--- Where every image is now, on the current tab page: rows from the
+--- window's top (beyond it too, M._line_rows). Sent after the redraw that
+--- shows this state: the page moves them by what it has drawn since.
 function M._place()
+  M._drawn()
   local images = {}
   local tab_wins = {}
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do tab_wins[win] = true end
@@ -401,21 +450,14 @@ function M._place()
     else
       local lnum = pos[1] + 1
       for _, win in ipairs(vim.fn.win_findbuf(image.buf)) do
-        local info = tab_wins[win] and text_area(win)
-        -- Not botline: it is stale until the next redraw; screenpos is not.
-        if info and lnum >= info.topline
-          and vim.api.nvim_win_call(win, function() return vim.fn.foldclosed(lnum) end) == -1 then
-          local text = vim.api.nvim_buf_get_lines(image.buf, lnum - 1, lnum, false)[1] or ""
-          local sp = vim.fn.screenpos(win, lnum, math.max(1, #text))
-          if sp.row > 0 then
-            local bottom = info.winrow - 1 + info.height
-            local visible = math.min(image.rows, bottom - sp.row)
-            if visible > 0 then
-              -- From the window's top: the page places it on the window's box.
-              table.insert(images, { id = id, win = win, row = sp.row - (info.winrow - 1), col = info.textoff,
-                width = info.width - info.textoff, rows = visible, full = image.rows })
-            end
-          end
+        local info = tab_wins[win] and vim.fn.getwininfo(win)[1]
+        local _, last, folded = nil, nil, nil
+        if info then _, last, folded = M._line_rows(win, info, lnum) end
+        if last and not folded then
+          -- From the window's top: the page places it on the window's box
+          -- and cuts it to the window.
+          table.insert(images, { id = id, win = win, row = last + 1, col = info.textoff,
+            width = info.width - info.textoff, rows = image.rows })
         end
       end
     end

@@ -56,15 +56,14 @@ describe("buffer-backed GUI layers on the page", () => {
         {
           id: 1,
           win: 1000,
-          row: 5,
+          row: -2,
+          base: 0,
           col: 4,
           width: 70,
-          rows: 3,
-          full: 6,
-          clip: 3,
+          rows: 6,
           active: true,
         },
-        { id: 2, win: 1000, row: 5, col: 4, width: 70, rows: 0, full: 6 },
+        { id: 2, win: 1000, row: 5, base: 0, col: 4, width: 70, rows: 0 },
       ],
       measure: [{ id: 9, width: 70, full: 2 }],
       decos: {},
@@ -76,12 +75,11 @@ describe("buffer-backed GUI layers on the page", () => {
       {
         id: 1,
         win: 1000,
-        row: 5,
+        row: -2,
+        base: 0,
         col: 4,
         width: 70,
-        rows: 3,
-        full: 6,
-        clip: 3,
+        rows: 6,
         active: true,
       },
     ]);
@@ -106,10 +104,13 @@ describe("buffer-backed GUI layers on the page", () => {
       inlines: {},
       measure: {},
       decos: {},
-      popups: [{ id: 4, win: 1000, row: 3, col: 7, focused: true }, { id: 5 }],
+      popups: [
+        { id: 4, win: 1000, row: 3, base: 0, col: 7, focused: true },
+        { id: 5 },
+      ],
     });
     expect(state.placedPopups).toEqual([
-      { id: 4, win: 1000, row: 3, col: 7, focused: true },
+      { id: 4, win: 1000, row: 3, base: 0, col: 7, focused: true },
     ]);
     state = applyLayerEvent(state, "popup_scroll", {
       id: 4,

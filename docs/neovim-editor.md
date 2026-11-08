@@ -262,6 +262,20 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   put, a click lands on the line under the pointer. Not for floats or the
   message grid, not on 0.9, and with reduced motion only the wheel's own
   movement.
+- What sits on a window's text rides it (`riders.ts`): inline images and
+  cards, decorations and popups (the page's DOM) are drawn where their line
+  is shown, moved by a transform each frame and cut to the window's text
+  area. Lua places them in rows from the window's top, beyond the window
+  too (up to a window's height, counted with `nvim_win_text_height`: the
+  display shows that much past Neovim's view while Neovim leads), after
+  the redraw of the state it counted in (`M._drawn`); the page counts a
+  placement from the rows the window had scrolled when it came and moves
+  it by the rows painted since, so a placement a redraw behind or ahead of
+  the canvas still lands on its line. A Neovim float at a buffer position
+  (`relative='win'` with `bufpos`, asked once per float with
+  `nvim_win_get_config`) moves with its anchor window's display, frame and
+  shadow too; a float at a fixed cell (`relative='cursor'` is one) stays,
+  as Neovim keeps it.
 - `keys.ts` — a `keydown` as key notation: `<C-…>`, `<M-…>` for Option when
   `[terminal] mac_option_is_meta` says it is Meta (left/right tracked as in
   DevHub's terminals), `<D-…>` for Cmd, named keys, `<lt>` and friends.
@@ -547,10 +561,10 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   from DevHub's palette: leave it off in DevHub.
 - A GUI window's web page still gives `<C-w>` to Neovim (it has no shell
   to want it); only the terminal follows the `:terminal` model.
-- An image, an inline card, a decoration and a float anchored to a buffer
-  position do not take part in pixel scrolling: they are where Neovim
-  puts them, which while the wheel turns is up to its lead (a line or
-  two) from the text they belong to, exact again at rest.
+- A float at a buffer position whose line is in the part of the display
+  only the ghost covers (Neovim a line ahead) is where Neovim clamps it, at
+  its window's edge, until Neovim's view reaches the line; images, cards
+  and decorations are placed there exactly.
 - A view is laid out by the browser and scrolled in pixels; Neovim's own
   `topline` in that window is not what is shown (only the cursor line
   is). Items are all drawn (no virtualisation; a view keeps its first 5000

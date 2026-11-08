@@ -42,6 +42,7 @@ import {
   inexact,
   type ScrollRequest,
 } from "./smoothScroll";
+import { rideAnchor, rideArea, rideStyle } from "./riders";
 import {
   IDLE,
   imeStep,
@@ -106,6 +107,8 @@ export class NeovimEditor {
   private size = { cols: 0, rows: 0 };
   private boxes: GridBox[] = [];
   /** The border text each float's labels were last asked for, by window. */
+  /** Floats anchored in a window, by window: at a buffer position? */
+  private readonly anchorsAsked = new Map<number, boolean>();
   private readonly labelsAsked = new Map<number, string>();
   private readonly listeners = new Set<() => void>();
   private dragging: { button: string; target: MouseTarget } | undefined;
@@ -407,6 +410,7 @@ export class NeovimEditor {
     this.host.style.background = cssColor(this.state.defaults.background);
     this.painter.paint(this.state, changes, this.boxes, forceAll);
     this.askFloatLabels();
+    this.askFloatAnchors();
     this.placeScrollbars();
     this.placeCursor();
     this.scrollFrame();
@@ -428,6 +432,7 @@ export class NeovimEditor {
       },
     );
     this.placeCursorScroll();
+    this.placeRiders();
     if (moving && this.scrollTick === 0) {
       this.scrollTick = requestAnimationFrame(() => {
         this.scrollTick = 0;
@@ -471,8 +476,9 @@ export class NeovimEditor {
   private placeCursorScroll(): void {
     const { grid, row } = this.state.cursor;
     const off = this.painter.scrollOffset(grid);
+    const ride = off === 0 ? this.painter.floatShift(grid) : -off;
     this.cursor.style.transform =
-      off === 0 ? "" : `translateY(${String(-off)}px)`;
+      ride === 0 ? "" : `translateY(${String(ride)}px)`;
     const box = this.boxes.find((b) => b.grid === grid);
     const m = this.state.margins.get(grid);
     const ch = this.painter.cell().height;
@@ -483,6 +489,63 @@ export class NeovimEditor {
       (y >= (m?.top ?? 0) * ch - 0.5 &&
         y + ch <= (box.height - (m?.bottom ?? 0)) * ch + 0.5);
     this.cursor.style.visibility = shown ? "" : "hidden";
+  }
+
+  /**
+   * What rides the windows' text (`riders.ts`: inline images and cards,
+   * decorations, popups) where that text is shown: every frame a window
+   * scrolls, and when the page lays them out again (a layout effect, so
+   * before the frame is drawn).
+   */
+  /**
+   * The rows each window (by window) has scrolled as the page has heard
+   * it: what Lua placed is counted from there (Lua's placements come after
+   * the redraw that shows the state they were taken in).
+   */
+  scrolledRows(): Map<number, number> {
+    const rows = new Map<number, number>();
+    for (const [grid, win] of this.state.gridWins) {
+      rows.set(win, this.state.windows.get(grid)?.scrolledRows ?? 0);
+    }
+    return rows;
+  }
+
+  placeRiders(): void {
+    if (this.disposed) return;
+    const ch = this.painter.cell().height;
+    for (const el of this.host.querySelectorAll<HTMLElement>(
+      "[data-ride-win]",
+    )) {
+      const win = Number(el.dataset["rideWin"]);
+      const box = this.boxes.find((b) => b.win === win);
+      if (!box) continue;
+      const m = this.state.margins.get(box.grid);
+      const area = {
+        top: (box.row + (m?.top ?? 0)) * ch,
+        bottom: (box.row + box.height - (m?.bottom ?? 0)) * ch,
+      };
+      const rows =
+        this.painter.paintedRows(box.grid) - Number(el.dataset["rideBase"]);
+      const off = this.painter.scrollOffset(box.grid);
+      const cut = el.dataset["rideCut"] ?? "area";
+      const ride = cut.startsWith("anchor:")
+        ? rideAnchor(
+            parseFloat(el.style.top) + Number(cut.slice(7)),
+            rows,
+            off,
+            ch,
+            area,
+          )
+        : rideArea(
+            parseFloat(el.style.top),
+            parseFloat(el.style.height),
+            rows,
+            off,
+            ch,
+            area,
+          );
+      Object.assign(el.style, rideStyle(ride));
+    }
   }
 
   /**
@@ -553,6 +616,52 @@ export class NeovimEditor {
     for (const win of this.labelsAsked.keys()) {
       if (!open.has(win)) this.labelsAsked.delete(win);
     }
+  }
+
+  /**
+   * Whether each float anchored in a window (`relative='win'`) is at a
+   * buffer position (`bufpos`): those ride the window's text while it
+   * scrolls in pixels (`GridPainter.rideFloats`); a float at a fixed cell
+   * of the window (`relative='cursor'` is one) stays put, as in Neovim.
+   * Asked once per float, from `nvim_win_get_config`.
+   */
+  private askFloatAnchors(): void {
+    const request = this.port.request?.bind(this.port);
+    if (!request) return;
+    const open = new Set<number>();
+    for (const box of this.boxes) {
+      if (!box.float || box.win === undefined) continue;
+      const p = this.state.windows.get(box.grid)?.placement;
+      if (p?.kind !== "float" || p.anchorGrid === 1) continue;
+      open.add(box.win);
+      if (this.anchorsAsked.has(box.win)) continue;
+      const win = box.win;
+      this.anchorsAsked.set(win, false);
+      request("nvim_win_get_config", [win]).then(
+        (config) => {
+          if (this.disposed || !this.anchorsAsked.has(win)) return;
+          const bufpos = (config as { bufpos?: unknown } | null)?.bufpos;
+          this.anchorsAsked.set(win, Array.isArray(bufpos));
+          this.syncBufposFloats();
+          this.scrollFrame();
+        },
+        () => {
+          // Closed meanwhile: nothing rides.
+        },
+      );
+    }
+    for (const win of this.anchorsAsked.keys()) {
+      if (!open.has(win)) this.anchorsAsked.delete(win);
+    }
+    this.syncBufposFloats();
+  }
+
+  private syncBufposFloats(): void {
+    this.painter.setBufposFloats(
+      new Set(
+        [...this.anchorsAsked].filter(([, at]) => at).map(([win]) => win),
+      ),
+    );
   }
 
   /**

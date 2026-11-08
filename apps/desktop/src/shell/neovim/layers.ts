@@ -62,19 +62,20 @@ export interface ViewPlace {
   readonly current: boolean;
 }
 
-/** An inline card's reserved rows in one window, from the window's top. */
+/**
+ * An inline card's reserved rows in one window, from the window's top,
+ * above or below the window too, which the page cuts it to (`riders.ts`).
+ */
 export interface InlinePlace {
   readonly id: number;
   readonly win: number;
   readonly row: number;
+  /** The rows its window had scrolled when this came (`riders.ts`). */
+  readonly base: number;
   readonly col: number;
   readonly width: number;
-  /** The rows of it that are in the window. */
-  readonly rows: number;
   /** The rows reserved for it. */
-  readonly full: number;
-  /** Rows of it above the window's top (scrolled past). */
-  readonly clip: number;
+  readonly rows: number;
   /** The cursor is on its anchor line(s): its keys work now. */
   readonly active: boolean;
 }
@@ -86,10 +87,12 @@ export interface InlineMeasure {
   readonly full: number;
 }
 
+/** A decoration's rows in one window, as an inline card's. */
 export interface DecoPlace {
   readonly id: number;
   readonly win: number;
   readonly row: number;
+  readonly base: number;
   readonly rows: number;
   readonly col: number;
   readonly width: number;
@@ -112,6 +115,8 @@ export interface PopupPlace {
   readonly id: number;
   readonly win: number;
   readonly row: number;
+  /** As an inline card's (`riders.ts`). */
+  readonly base: number;
   readonly col: number;
   /** It has the keys (j/k scroll it, q closes it). */
   readonly focused: boolean;
@@ -223,6 +228,8 @@ export function applyLayerEvent(
   state: Layers,
   kind: string,
   payload: unknown,
+  /** The rows window `win` has scrolled, as the page has heard. */
+  rowsOf: (win: number) => number = () => 0,
 ): Layers {
   const p = rec(payload);
   if (!p) return state;
@@ -338,20 +345,10 @@ export function applyLayerEvent(
         placedInlines: luaList(p["inlines"]).flatMap((v) => {
           const r = rec(v);
           const n = r
-            ? ints(r, [
-                "id",
-                "win",
-                "row",
-                "col",
-                "width",
-                "rows",
-                "full",
-              ] as const)
+            ? ints(r, ["id", "win", "row", "col", "width", "rows"] as const)
             : undefined;
           if (!r || !n || n.rows <= 0) return [];
-          return [
-            { ...n, clip: int(r, "clip") ?? 0, active: r["active"] === true },
-          ];
+          return [{ ...n, base: rowsOf(n.win), active: r["active"] === true }];
         }),
         measureInlines: luaList(p["measure"]).flatMap((v) => {
           const r = rec(v);
@@ -363,14 +360,16 @@ export function applyLayerEvent(
           const n = r
             ? ints(r, ["id", "win", "row", "rows", "col", "width"] as const)
             : undefined;
-          return n && n.rows > 0 ? [n] : [];
+          return n && n.rows > 0 ? [{ ...n, base: rowsOf(n.win) }] : [];
         }),
         placedPopups: luaList(p["popups"]).flatMap((v) => {
           const r = rec(v);
           const n = r
             ? ints(r, ["id", "win", "row", "col"] as const)
             : undefined;
-          return r && n ? [{ ...n, focused: r["focused"] === true }] : [];
+          return r && n
+            ? [{ ...n, base: rowsOf(n.win), focused: r["focused"] === true }]
+            : [];
         }),
       };
     default:

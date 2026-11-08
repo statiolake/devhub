@@ -85,13 +85,21 @@ describe("devhub_gui's events on the page", () => {
     });
     state = applyGuiEvent(state, "place", {
       images: [
-        { id: 3, win: 1000, row: 2, col: 4, width: 40, rows: 3, full: 8 },
+        { id: 3, win: 1000, row: -2, base: 0, col: 4, width: 40, rows: 8 },
         { id: 3, win: 1001, row: 2 },
       ],
     });
     expect(state.placedImages).toEqual([
-      { id: 3, win: 1000, row: 2, col: 4, width: 40, rows: 3, full: 8 },
+      { id: 3, win: 1000, row: -2, base: 0, col: 4, width: 40, rows: 8 },
     ]);
+    // Counted from the rows its window had scrolled when it came.
+    state = applyGuiEvent(
+      state,
+      "place",
+      { images: [{ id: 3, win: 1000, row: 4, col: 4, width: 40, rows: 8 }] },
+      (win) => (win === 1000 ? 17 : 0),
+    );
+    expect(state.placedImages[0]?.base).toBe(17);
     state = applyGuiEvent(state, "image_clear", { id: 3 });
     expect(state.images.size).toBe(0);
   });
