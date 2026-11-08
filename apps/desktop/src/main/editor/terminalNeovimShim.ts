@@ -54,10 +54,16 @@
  * Neovim 0.12's `:restart` replaces the server with one it starts itself, on
  * the same socket: the script keeps the pane, and its exit status is the
  * last server's (`neovimRestart.ts`).
+ *
+ * # What tmux writes into the pane
+ *
+ * Once the UI is attached the pane's tty is read for that Neovim:
+ * `send-prefix`, a `send-keys` binding, `paste-buffer` (`terminalNeovimTtyKeys.ts`).
  */
 
 import { shellQuote } from "../runtime/quote.js";
 import { NVIM_STATE_VARIABLE, followRestartSh } from "./neovimRestart.js";
+import { ttyKeysShim } from "./terminalNeovimTtyKeys.js";
 
 /** The pane option the script names its socket in. */
 export const NVIM_SOCKET_OPTION = "@devhub-nvim";
@@ -148,7 +154,7 @@ if ! mkfifo "$dir/i" || ! exec 3<>"$dir/i"; then
 	rm -rf "$dir"
 	exec "$real" "$@"
 fi
-# Ctrl-C, Ctrl-\\ and Ctrl-Z typed at the pane under the GUI are not Neovim's:
+${ttyKeysShim()}# Ctrl-C, Ctrl-\\ and Ctrl-Z typed at the pane under the GUI are not Neovim's:
 # its keys are the GUI's. A hangup (the pane killed) still ends both.
 trap '' INT QUIT TSTP
 "$shim_tmux" set-option -p -t "$TMUX_PANE" ${NVIM_SOCKET_OPTION} "$socket" 2>/dev/null
@@ -179,6 +185,8 @@ while kill -0 "$pid" 2>/dev/null; do
 	waited=$((waited + 1))
 	sleep 0.1
 done
+# What tmux writes into this pane is that Neovim's input.
+kill -0 "$pid" 2>/dev/null && start_tty_keys
 wait "$pid"
 status=$?
 # :restart (0.12): the server it started takes over on the same socket, the
@@ -186,6 +194,7 @@ status=$?
 # the last of them ends, with its status (neovimRestart.ts).
 state=$dir
 ${followRestartSh()}
+stop_tty_keys
 cleanup
 exit "$status"
 `;

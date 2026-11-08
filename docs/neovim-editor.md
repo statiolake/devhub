@@ -718,6 +718,24 @@ back for the `devhub-nvim` window's Neovim, wherever they were. Over the
 Workspace's terminal the overlay is the editor half (`Cmd+Q E`, `Cmd+Q O`);
 over an Agent's, that terminal.
 
+**What tmux writes into the pane is that Neovim's input**
+(`main/editor/terminalNeovimTtyKeys.ts`). The prefix twice (`bind C-q
+send-prefix`), a `send-keys` binding, `paste-buffer`, a `devhub tell` typed
+into the terminal: tmux writes those into the pane's tty, which the Neovim
+does not read. So once DevHub's UI is attached the shim puts the tty in raw
+mode and runs a bare `nvim -l` beside it that reads the tty and hands each
+key to the Neovim over its socket — `nvim_input` in `<>` notation (`\x11`
+is `<C-q>`), a bracketed paste as one `nvim_paste`. Like Neovim's own TUI it
+asks tmux for bracketed paste (which `paste-buffer -p`, tmux's `]`, honours)
+and modifyOtherKeys (honoured with `extended-keys on`), and reads every
+encoding tmux answers with: legacy bytes, CSI u (`extended-keys-format
+csi-u`), xterm's `CSI 27;m;c~`, cursor and function keys with modifiers, ESC
+before a key as Alt. It is the shim's own doing, so it works the same on an
+SSH host, and nothing comes twice: keys typed in the overlay go over RPC, and
+a key the terminal page would hand to the pane is taken from the page. When
+the Neovim exits the shim ends the reader and gives the tty and tmux's modes
+back before it exits with the Neovim's status.
+
 Limits: DevHub's terminals only (an Agent's own pane, `ag-`, gets the TUI);
 nothing drawn by tmux over a pane (`display-popup`, `display-menu`) shows
 over an overlay; a binding of the person's own that opens a prompt is not
