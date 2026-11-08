@@ -449,6 +449,23 @@ every byte; xterm.js' path drops what tmux coalesced away).
 
 ### Handoff: where phases 3 and 4 start
 
+**State (phase 3 under way).** The Neovim overlay, an SSH host, the reload
+port and the side-by-side measurement are done (above). Of phase 3,
+`display-popup` is done (below, "What waits on a control client"); next, in
+this order: `command-prompt` / `confirm-before`, `display-menu`, the
+choosers, copy mode. The look of each follows the mock sent for review
+(`tmux-chrome/phase3/mock.html` in the work's scratch area: a float in one
+frame for popup, menu and chooser; a one-line prompt at the terminal's
+foot; copy mode in place with tmux's `[n/m]` badge); keep each look in one
+CSS module of tokens, as `popup.css` is, so a change after the review stays
+small, and remove each guard as its piece lands. A prompt's answer, a
+menu's item and a chooser's choice are run as commands of the control
+client; tmux expands every format (`display-message -p -t <pane>`) and
+keeps the prompt history (`show-prompt-history`). Before phase 4 deletes
+the xterm.js path: the `cat` throughput (1.8 s against 1.1 s) and the GPU
+process's compositing (36–40% against 9%) are to be profiled and measured
+on the Mac.
+
 - **Popups.** A popup's command runs as the popup's pane's: `$TMUX_PANE`
   and "the current pane" are the pane that opened it, which is what the
   person's `bind m` (`tmux move-pane` with no `-s`) relies on. Settled by
