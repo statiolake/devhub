@@ -648,8 +648,18 @@ overlay and the keys are the shell's again.
 Limits: Agent terminals only (an Agent's own pane, `ag-`, gets the TUI);
 nothing drawn by tmux over a pane (`display-popup`, `display-menu`) shows
 over an overlay; a binding of the person's own that opens a prompt is not
-known as one; the shim must come first on the PATH, so a shell startup file
-that puts another `nvim`'s directory in front (Homebrew's, say) shadows it.
+known as one; in bash or fish, a startup file that puts another `nvim`'s
+directory in front of the PATH shadows the shim.
+
+**zsh keeps it first.** A startup file that puts Homebrew's directory in
+front (`export PATH=/opt/homebrew/bin:$PATH`, `brew shellenv`, macOS's
+`path_helper`) would put Homebrew's `nvim` ahead of DevHub's. So a pane's
+zsh is pointed at DevHub's own `.zshenv` first (`ZDOTDIR`, beside the shim):
+it gives `ZDOTDIR` back at once — the person's, or none — and sources the
+person's `.zshenv`, so zsh reads every file of theirs where it always would,
+and it adds one `precmd` hook that puts the shim's directory back in front of
+the PATH before each prompt if anything moved it. A zsh started from the pane
+is an ordinary one.
 
 ## What works
 
@@ -931,8 +941,8 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
     person's. Scrollbars a plugin draws (a menu's) are kept, drawn thin.
 15. ~~_The matching bracket_~~ — round 4 boxed `MatchParen`'s cells with a
     hairline, as VS Code's; taken back in round 5: the highlight as it is.
-**Also:** dev containers (Neovim in the container through `docker exec`, its
-socket reached by a relay like the `devhub` command's), delivering `nvim` to
-hosts like tmux and bash are, `ext_messages` on 0.10+, ligatures, a
-glyph-atlas (WebGL) painter if large redraws need it, and the
-Sidebar following the current buffer.
+    **Also:** dev containers (Neovim in the container through `docker exec`, its
+    socket reached by a relay like the `devhub` command's), delivering `nvim` to
+    hosts like tmux and bash are, `ext_messages` on 0.10+, ligatures, a
+    glyph-atlas (WebGL) painter if large redraws need it, and the
+    Sidebar following the current buffer.

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -13,7 +13,7 @@ import {
 	type KeyInput,
 	type TerminalNeovimReading,
 } from "./terminalNeovims.js";
-import { neovimShimScript } from "./terminalNeovimShim.js";
+import { neovimShimScript, neovimShimZshenv } from "./terminalNeovimShim.js";
 
 const pane = (fields: string) => fields.split(" ").join("\t");
 const OUTPUT = [
@@ -234,4 +234,30 @@ describe("DevHub's nvim", () => {
 		}).toString();
 		expect(output).toBe("real a b c\n");
 	});
+
+	it.runIf(existsSync("/bin/zsh") || existsSync("/usr/bin/zsh"))(
+		"stays first on a zsh's PATH whatever the person's startup files do",
+		() => {
+			const directory = mkdtempSync(join(tmpdir(), "nvim-zsh-"));
+			const home = join(directory, "home");
+			const zsh = join(directory, "shim", "zsh");
+			execFileSync("mkdir", ["-p", home, zsh]);
+			writeFileSync(join(zsh, ".zshenv"), neovimShimZshenv());
+			writeFileSync(
+				join(home, ".zshenv"),
+				"export PATH=/brew/bin:$PATH; export MARK=env\n",
+			);
+			writeFileSync(join(home, ".zshrc"), "export RC=rc\n");
+			const output = execFileSync("zsh", ["-i"], {
+				input: 'print -r -- "<$path[1]|$MARK|$RC|${ZDOTDIR-none}>"\n',
+				env: {
+					HOME: home,
+					ZDOTDIR: zsh,
+					DEVHUB_NVIM_SHIM: "/shim",
+					PATH: "/shim:/usr/bin:/bin",
+				},
+			}).toString();
+			expect(output).toContain("</shim|env|rc|none>");
+		},
+	);
 });

@@ -102,7 +102,11 @@ import {
 	NVIM_OVERLAY_OPTION,
 	NVIM_SOCKET_OPTION,
 	NVIM_UI_OPTION,
+	NVIM_SHIM_VARIABLE,
+	NVIM_SHIM_ZSH_DIRECTORY,
+	USER_ZDOTDIR_VARIABLE,
 	neovimShimScript,
+	neovimShimZshenv,
 } from "../editor/terminalNeovimShim.js";
 import {
 	CLIENT_FORMAT as NEOVIM_CLIENT_FORMAT,
@@ -3816,6 +3820,25 @@ export class TmuxTerminalRuntime {
 				spec.workspaceId,
 				spec.agentId,
 			),
+			...this.neovimShimEnvironment(),
+		};
+	}
+
+	/**
+	 * While DevHub's `nvim` is wanted and written: where it is, and zsh
+	 * pointed at the file that keeps it first on the PATH
+	 * (`neovimShimZshenv`), with the `ZDOTDIR` it is to give back.
+	 */
+	private neovimShimEnvironment(): Record<string, string> {
+		const shim = this.neovimShim;
+		if (!this.neovimShimReady || shim?.wanted() !== true) return {};
+		const userZdotdir = this.context.environment["ZDOTDIR"];
+		return {
+			[NVIM_SHIM_VARIABLE]: shim.directory,
+			ZDOTDIR: join(shim.directory, NVIM_SHIM_ZSH_DIRECTORY),
+			...(userZdotdir === undefined
+				? {}
+				: { [USER_ZDOTDIR_VARIABLE]: userZdotdir }),
 		};
 	}
 
@@ -3873,7 +3896,14 @@ export class TmuxTerminalRuntime {
 		if (shim === undefined || !shim.wanted()) return false;
 		this.neovimShimWritten ??= (async () => {
 			try {
-				await this.host.makeDirectory(shim.directory);
+				await this.host.makeDirectory(
+					join(shim.directory, NVIM_SHIM_ZSH_DIRECTORY),
+				);
+				await this.host.writeTextFile(
+					join(shim.directory, NVIM_SHIM_ZSH_DIRECTORY, ".zshenv"),
+					neovimShimZshenv(),
+					0o644,
+				);
 				await this.host.writeTextFile(
 					join(shim.directory, "nvim"),
 					neovimShimScript({
