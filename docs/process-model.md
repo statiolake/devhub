@@ -14,13 +14,14 @@ and which come next.
 
 ## What runs where today
 
-| Process                                                     | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **main** (Electron's browser process, VS Code's main in it) | the window, its child views, menus, focus (`shell/`); the chord layer, a `before-input-event` handler on every web contents (`shell/keyboard.ts`); the terminal service: one node-pty tmux client per attached terminal surface, output coalesced and sent as frames, every input, resize and ack an `invoke` (`terminal/service.ts`, `attachments.ts`); tmux control and polling: the agent round and the terminal activity round (`terminal/tmux.ts`, `shell/agentWiring.ts`); every Neovim's msgpack-RPC socket, its redraws decoded and relayed (`editor/neovimRpc.ts`, `neovimUi.ts`, `neovimEditors.ts`); every GUI Agent's conversation — the journal followed with `tail`, the protocol adapter, the fold, the events to the page (`agent/conversation/`, `shell/conversationIpc.ts`); `state.json` (`shell/saveCoalescer.ts`); the Orchestrator (invariant, events, timers, GitHub polling); repository status (git), usage readers, Task Manager sampling, the `devhub` CLI's control socket, voice |
-| **process host** (utility process, new)                     | starts every bounded command main runs — tmux, git, ssh, the GUI Agents' host scripts — and reports how each ended (`main/processHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| DevHub's pages (one renderer each)                          | the window's own page, the Sidebar, **the Agents page (every Agent's pane: terminal Agents' xterms and GUI Agents' conversations, all in one renderer)**, an Agent's terminal pane, one Neovim page per Workspace, notices, questions, tooltip; Settings and Task Manager windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| VS Code                                                     | a renderer per workbench, its extension host, file watcher, shared process, pty host, language servers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| outside Electron                                            | DevHub's tmux server (every terminal and every Agent's session), the GUI Agents' hosts and CLIs, Neovim (`nvim --headless --listen`, kept by tmux)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Process                                                     | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **main** (Electron's browser process, VS Code's main in it) | the window, its child views, menus, focus (`shell/`); the chord layer, a `before-input-event` handler on every web contents (`shell/keyboard.ts`); the terminal service: one node-pty tmux client per attached terminal surface, output coalesced and sent as frames, every input, resize and ack an `invoke` (`terminal/service.ts`, `attachments.ts`); tmux control and polling: the agent round and the terminal activity round (`terminal/tmux.ts`, `shell/agentWiring.ts`); every Neovim's msgpack-RPC socket, its redraws decoded and relayed (`editor/neovimRpc.ts`, `neovimUi.ts`, `neovimEditors.ts`); a proxy per GUI Agent's conversation (`agent/conversation/handle.ts`, `agentEngine/client.ts`): the facts the engine pushes, the requests, the host of an Agent on another machine; `state.json` (`shell/saveCoalescer.ts`); the Orchestrator (invariant, events, timers, GitHub polling); repository status (git), usage readers, Task Manager sampling, the `devhub` CLI's control socket, voice |
+| **process host** (utility process, new)                     | starts every bounded command main runs — tmux, git, ssh, the GUI Agents' host scripts — and reports how each ended (`main/processHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **conversation engine** (utility process, new)              | every GUI Agent's `AgentConversation`: the journal followed (an Agent on this machine), the protocol adapter, the fold, the held messages, the usage-limit and cache keepers; the Agents page's snapshot and events over a `MessagePort` (`main/agentEngine/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| DevHub's pages (one renderer each)                          | the window's own page, the Sidebar, **the Agents page (every Agent's pane: terminal Agents' xterms and GUI Agents' conversations, all in one renderer)**, an Agent's terminal pane, one Neovim page per Workspace, notices, questions, tooltip; Settings and Task Manager windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| VS Code                                                     | a renderer per workbench, its extension host, file watcher, shared process, pty host, language servers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| outside Electron                                            | DevHub's tmux server (every terminal and every Agent's session), the GUI Agents' hosts and CLIs, Neovim (`nvim --headless --listen`, kept by tmux)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ### The data paths
 
@@ -37,11 +38,15 @@ and which come next.
 - **Neovim.** page → `send(neovim:call)` → main → socket → nvim; a redraw:
   nvim → socket → main decodes msgpack in JS → `send(neovim:redraw)`
   (structured clone) → page.
-- **A GUI Agent.** CLI → `out` (the journal) → `tail` → main reads lines →
-  adapter (JSON decode, protocol) → fold (`applyEvent`, twice: the adapter's
-  copy and the conversation's) → events → the Agents page → folded a third
-  time there → React. DevHub's replies and the person's words: main →
-  `sh` host script (a spawn per write) → the FIFO.
+- **A GUI Agent.** CLI → `out` (the journal) → `tail` → the conversation
+  engine reads lines → adapter (JSON decode, protocol) → fold
+  (`TranscriptFold`, twice: the adapter's and the conversation's, each a
+  map lookup and a write per event) → events, batched → the Agents page
+  over its port → folded a third time there → React. Main is told the
+  conversation's facts (status, activity, session, MCP servers) when they
+  change. DevHub's replies and the person's words: page → main (`invoke`) →
+  engine → `sh` host script → the FIFO. (An Agent on another machine: its
+  journal and writes go through main's runtime, as before.)
 - **State.** every model change asks for a save; a save serialises the
   whole model and fsyncs on main.
 
@@ -161,7 +166,7 @@ whose four cores were saturated by tmux and the streams.
   model's arrangement, and the chord router. It hands each page a
   `MessagePort` to the process that serves it and then stays out of the
   stream.
-- **Agent engine** (utility process): `AgentConversation`, the adapters, the
+- **Agent engine** (utility process, done in phase 4): `AgentConversation`, the adapters, the
   journals and the writes. Pages attach to it directly; main gets the facts
   its rounds use (status, activity, requests, session) when they change.
 - **Pty host** (utility process): the tmux clients' ptys, the frames and
@@ -180,6 +185,9 @@ whose four cores were saturated by tmux and the streams.
 | 1     | A hidden GUI Agent's pane folds but does not draw (finding 1)                               | `95d740fe` |
 | 2     | The process host: every `runBounded` child starts in a utility process (finding 2)          | `ea17b90c` |
 | 3     | Conversation events go to the page as one batch per turn of main's loop (finding 3)         | `05a2cf10` |
+| 4a    | The fold costs the same per event however long the transcript (`TranscriptFold`, finding 4) | `b485855a` |
+| 4b    | The conversation engine: every GUI Agent's conversation in a utility process (finding 4)    | `3ca4cc42` |
+| 4c    | The Agents page does not render a conversation again when only the page around it changed   | `8130666e` |
 
 **Phase 1.** `useConversation` keeps folding every event of a hidden pane
 (so a bad event is still refused where it arrives) and publishes nothing;
@@ -200,6 +208,81 @@ journals' `tail`, `ssh -T`) and node-pty's tmux clients, which are phase 5's.
 **Phase 3.** `devhub:conversation:events` carries a
 `ConversationEventBatch`; the preload hands each event to its attachment in
 order, so the page's fold is unchanged.
+
+**Phase 4a.** `applyEvent` copied the entries array for every event that
+touched it and found the entry by scanning, so each event cost O(n) in the
+transcript's length. `TranscriptFold` owns its array between snapshots and
+changes it in place, with an id → index map beside it; a snapshot makes the
+array the snapshot's for good, so a copy happens once per snapshot (the
+page: once per frame it draws; a hidden pane: never), not once per event. It
+checks an event before changing anything, so one that does not fold leaves
+it as it was. Measured in isolation, a delta at 200 000 entries went from
+1.6 ms to 0.1 µs (`model/transcriptFold.test.ts` holds the cost per event
+at 200 000 entries to that at 2 000). The adapter's fold and the
+conversation's both stay: the conversation's observers (an edit's rewind,
+the held message, the usage-limit and cache keepers) look at the transcript
+after each event of a step, and DevHub's own events fold only there.
+
+**Phase 4b.** `main/agentEngine/`: `engine.ts` runs each Agent's
+`AgentConversation` as it ran in main; `entry.ts` is the utility process;
+`client.ts` is main's side, and `protocol.ts` the typed messages of all
+three (main, engine, page). Main holds a `ConversationHandle` per
+conversation (`agent/conversation/handle.ts`): `facts()` — the round's
+observation, the session, the MCP servers — pushed by the engine when they
+change (once per turn of its loop at most); every other call a message; the
+transcript (`snapshot()`, for `agent read`) a request. The Agents page gets a
+`MessagePort` to the engine from main on its first attach
+(`CONVERSATION_CHANNELS.port`) and takes the snapshot and the batched
+events from there; drafts, held insertions and every request stay main's.
+For an Agent on this machine the engine follows the journal and writes to
+the host itself, asking main only where the host is and what its CLI is;
+for one on another machine main keeps the host and forwards its lines.
+Failures cross with their class (`HostLinkFailure` with its code and offset,
+the named conversation failures). An engine that dies fails its calls as
+`ConversationStopped`, every conversation reads as unknown with the reason,
+a new engine starts at once and replays them from their journals, and the
+page attaches again; after three exits in a minute it is given up on and the
+conversations run in main, as they also do with
+`DEVHUB_CONVERSATIONS_IN_MAIN=1` and in tests (`localHandle`).
+
+**Phase 4c.** Found while measuring 4b with a long transcript: the Agents
+page renders every pane for each app snapshot, and the conversation's
+element was new each time, so React rendered a long transcript again for
+every snapshot, hidden or not. `ConversationPane` keeps the element while
+its props are the same.
+
+### After phase 4
+
+Same machine and workload as above, a run of each on the same day. "before"
+is origin/main before phase 4 (`66b3b983`), "fold only" phase 4a with the
+conversations kept in main (`DEVHUB_CONVERSATIONS_IN_MAIN=1`), "after" 4a +
+4b, "+4c" the long transcript with 4c as well. **long** is one GUI Agent on
+the stand-in CLI at 6 000 lines/s for 150 s (a transcript of a few hundred
+thousand lines), hidden, while the terminal Agent is typed into.
+
+| scenario | main thread CPU     | main JS busy             | lag p99 / max (ms)                     | terminal key→paint p50 / p99 (ms)                              | Neovim key→paint p50 / p99 (ms) | conversation engine |
+| -------- | ------------------- | ------------------------ | -------------------------------------- | -------------------------------------------------------------- | ------------------------------- | ------------------- |
+| a idle   | 9% → 9% → **9%**    | 1.0% → 1.0% → **1.0%**   | 0.9 / 2.6 → 1 / 9.4 → **1 / 3.5**      | 8.8 / 22.1 → 8.5 / 14.7 → **8.6 / 19.2**                       | 10.6 / 22 → **10.6 / 18.1**     | —                   |
+| c replay | 24% → 22% → **13%** | 13.1% → 10.9% → **3.3%** | 3.7 / 128 → 2.8 / 6 → **3.2 / 14.2**   | 8.4 / 20.6 → 8.5 / 27.2 → **8.5 / 23.4**                       | 10.4 / 20.6 → **10.8 / 12.5**   | 21%                 |
+| c steady | 30% → 22% → **13%** | 20.1% → 10.7% → **3.3%** | 4.1 / 110 → 4 / 157 → **2.2 / 113**    | 9.1 / 22.5 → 8.4 / 21.1 → **8.4 / 14.2**                       | 10.7 / 20.8 → **10.6 / 19.1**   | 19%                 |
+| long     | 87% → 21% → **11%** | 88.2% → 12.5% → **2.6%** | 130 / 170 → 4.5 / 220 → **3.8 / 143**  | 2569 / 3985 → 4801 / 6248 → 4570 / 7732 → **322 / 1133** (+4c) | 16.9 / 143 → **9.8 / 25.9**     | 26%                 |
+| f all    | 27% → 23% → **12%** | 27.1% → 18.3% → **6.0%** | 10.5 / 206 → 13 / 40.5 → **7.1 / 166** | 47.7 / 232 → 40.1 / 748 → **22.8 / 387**                       | 20.9 / 29.1 → **20.4 / 62.8**   | —                   |
+
+- Main's JavaScript under GUI Agents: 13–20% busy → **3%** (c), 27% → **6%**
+  (f). The conversation code is gone from main's profile; what is left on
+  it is the model's rounds and `_send` (under 1%).
+- With a long transcript main went from 87% (`indexOfEntry` 43%,
+  `replaceAt` 14%, `putEntry` 9%) to **11%**, and its loop's p99 from
+  130 ms to **4 ms**.
+- The terminal Agent's keys with a long transcript were not main's: the
+  Agents page renderer was at 115–120% in every run, rendering the hidden
+  conversation for each app snapshot. With main out of the way more events
+  reached it and the keys got slower (4.6 s) until 4c (**0.3 s** p50). The
+  renderer is still at ~100% there: phase 6.
+- The engine itself runs at 20–30% of a core with two Agents replaying or
+  one streaming at 6 000 lines/s; its largest items are the adapter's MCP
+  bookkeeping (`publishMcp`, `mcpWorking`, ~5% each of what main spent in
+  the long run before), JSON decoding and the folds.
 
 ### After
 
@@ -231,22 +314,11 @@ complete.
 
 ### Next
 
-4. **The agent engine in a utility process** (findings 3–4; the largest
-   item left on main under GUI Agents: 25–40% of main's time during a
-   replay is the adapter, the fold and their sends). The seam is
-   `AgentConversation` itself: its host (`ConversationHost`) is already an
-   async interface, and `ConversationRegistry` is the one place main makes
-   them. Main keeps a proxy with the same methods; the synchronous readers
-   (`reading()` in the agent round, `session`, `mcp.servers` for sign-in)
-   read facts the engine pushes when they change, and the readers of
-   entries (`agent read`, the attach snapshot, rewind targets) become
-   requests. The Agents page attaches to the engine over a `MessagePort`
-   main hands it, so a transcript never passes main. The journal's `tail`
-   and the host writes run in the engine for a local Agent and through main's
-   runtime for SSH and containers until phase 5 gives those a home too.
-   Separately, `applyEvent` should stop copying and scanning the whole
-   entries array per event (an id→index map kept beside it); that helps the
-   engine and the page alike.
+4. **Done** (phase 4 above). Left of it: the engine's own cost under a fast
+   stream (the Claude adapter compares its MCP state as JSON for each event
+   it emits and rebuilds `working` from every server), and a remote Agent's
+   journal, which still passes main's runtime until phase 5 gives SSH and
+   containers a home outside main too.
 5. **The pty host** (findings 2 and 5). node-pty's tmux clients, the frames,
    acks and input, with a `MessagePort` per page; the tmux control commands
    and their rounds; the Neovim sockets and msgpack decoding, keeping the
