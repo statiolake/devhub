@@ -73,6 +73,22 @@ export function electronHostLauncher(): HostProcess {
 	};
 }
 
+/**
+ * An environment as a plain object. Main's own `process.env` is what a
+ * machine's commands default to (`SshRuntime`'s), and in Electron's browser
+ * process it is a host object a utility process's `postMessage` refuses to
+ * clone ("[object Object] could not be cloned"): every command for an SSH
+ * host failed that way until this copy.
+ */
+function plainEnv(
+	env: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+	const plain: Record<string, string> = {};
+	for (const [name, value] of Object.entries(env))
+		if (value !== undefined) plain[name] = value;
+	return plain;
+}
+
 interface Pending {
 	readonly settle: (outcome: ChildOutcome) => void;
 	readonly onOutput: ((chunk: Uint8Array) => void) | undefined;
@@ -163,7 +179,11 @@ export function processHostRunner(
 			});
 			pending.set(id, { settle, onOutput });
 			const target = hostNow();
-			target.postMessage({ type: "run", id, request });
+			target.postMessage({
+				type: "run",
+				id,
+				request: { ...request, env: plainEnv(request.env) },
+			});
 			return {
 				outcome,
 				kill: () => {

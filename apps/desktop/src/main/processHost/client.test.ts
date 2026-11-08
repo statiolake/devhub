@@ -99,6 +99,19 @@ describe("commands started by the process host", () => {
 		expect(host.asked.map((each) => each.type)).toEqual(["run"]);
 	});
 
+	it("are handed to the host with a plain copy of their environment", async () => {
+		const host = inProcessHost();
+		runner = processHostRunner(() => host);
+		setChildRunner(runner);
+		await sh("true");
+		const [asked] = host.asked;
+		if (asked?.type !== "run") throw new Error("no run was asked for");
+		// Main's `process.env` is a host object Electron cannot clone.
+		expect(asked.request.env).not.toBe(process.env);
+		expect(Object.getPrototypeOf(asked.request.env)).toBe(Object.prototype);
+		expect(asked.request.env["PATH"]).toBe(process.env["PATH"]);
+	});
+
 	it("keep the caps, and an overflow that fails is the caller's failure", async () => {
 		runner = processHostRunner(() => inProcessHost());
 		setChildRunner(runner);

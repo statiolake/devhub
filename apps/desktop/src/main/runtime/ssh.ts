@@ -541,7 +541,12 @@ export class SshRuntime
 		this.#controlDirectory = options.controlDirectory;
 		this.#sshPath = options.sshPath ?? "ssh";
 		this.#ptyFactory = options.ptyFactory ?? openPty;
-		this.#localEnvironment = options.localEnvironment ?? process.env;
+		// A copy, once: main's `process.env` is a host object, slow to read
+		// whole and refused by a utility process's `postMessage`, and every
+		// command and pty for this host carries it to the process host or the
+		// pty host. Taken when the host is first reached, which is after the
+		// login environment was adopted into it (`startRuntimes`).
+		this.#localEnvironment = options.localEnvironment ?? { ...process.env };
 		this.#deliveries = { tmux: options.tmux, bash: options.bash };
 		this.#freePort = options.freePort ?? freeLocalPort;
 		if (!fitsControlPath(this.#controlDirectory)) {
