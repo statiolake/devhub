@@ -14,14 +14,7 @@
 import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
 import type { CellMetrics } from "./mouse";
 import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
-import {
-  boxArms,
-  fitIcon,
-  glyphKind,
-  glyphShapes,
-  lightThickness,
-  type Shape,
-} from "./glyphs";
+import { boxArms, fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
 import {
   floatClusters,
   framePieces,
@@ -31,23 +24,13 @@ import {
 } from "./floats";
 import {
   NO_THEME,
-  barLayout,
-  barsOf,
   fillChosen,
   fillerStart,
   floatScrollbars,
-  foldMark,
-  hlRole,
   isEndOfBuffer,
-  isIndentGuide,
   isSeparatorLine,
   sameTheme,
   separatorsOf,
-  shapedSpans,
-  spanCorners,
-  spanNotches,
-  type Bars,
-  type HlRole,
   type PaintTheme,
   type Separator,
 } from "./chrome";
@@ -226,7 +209,6 @@ const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 const FILLER_STEP = 6;
 
 /** A selection's or search match's corners (`chrome.ts`). */
-const SHAPE_RADIUS = 3;
 
 /** A float's outer corners' radius (DevHub's frame); a border of lines has none. */
 const FLOAT_RADIUS = 6;
@@ -318,26 +300,10 @@ export class GridPainter {
   private font: FontSpec;
   private metrics: Metrics;
   private theme: PaintTheme = NO_THEME;
-  /**
-   * The grid the pointer is over, and the cursor's row last painted: a
-   * fold column's open folds show their chevron there (VS Code shows them
-   * on hover and on the cursor's line); closed folds always do.
-   */
-  private hover: number | undefined;
-  private foldCursor: { grid: number; row: number } | undefined;
-  /** Whether the last paint met a fold column at all. */
-  private folds = false;
-  /** Each highlight's role (`hlRole`), worked out once per definition. */
-  private readonly roles = new Map<number, HlRole>();
-  /** The status lines and winbars (`barsOf`), and what they were last. */
-  private bars: Bars = new Map();
-  private barsKey = "";
   /** Grid 1's columns between two windows (`separatorsOf`). */
   private separators: readonly Separator[] = [];
   private separatorsKey = "";
-  /** `rowGrounds`, by grid and row, for the paint under way. */
-  private readonly grounds = new Map<number, Int32Array>();
-  /** The row's cells whose glyph is not drawn (a bar's joints). */
+  /** The row's cells whose glyph is not drawn (`~`, a filler's `-`). */
   private readonly skip = new Set<number>();
   private dpr: number;
   /** The row's icons, drawn after its backgrounds (`paintRow`). */
@@ -397,7 +363,6 @@ export class GridPainter {
   setTheme(theme: PaintTheme): boolean {
     if (sameTheme(theme, this.theme)) return false;
     this.theme = theme;
-    this.roles.clear();
     return true;
   }
 
@@ -417,7 +382,6 @@ export class GridPainter {
     boxes: readonly GridBox[],
     forceAll: boolean,
   ): void {
-    this.grounds.clear();
     const onScreen = new Set(boxes.map((box) => box.grid));
     for (const [id, canvas] of this.canvases) {
       if (!state.grids.has(id)) {
@@ -434,17 +398,14 @@ export class GridPainter {
       this.painted.set(grid, (this.painted.get(grid) ?? 0) + rows);
     }
     const all = forceAll || changes.colors;
-    if (changes.colors) this.roles.clear();
     const hidden = underFrames(boxes);
     const shown = boxes.filter((box) => !hidden.has(box.grid));
     for (const grid of hidden) {
       const entry = this.canvases.get(grid);
       if (entry) entry.canvas.style.display = "none";
     }
-    this.followFoldCursor(state);
     const corners = this.placeClusters(state, shown);
     const scrollbars = floatScrollbars(state, shown);
-    this.placeBars(state, shown);
     this.placeSeparators(state, shown);
     for (const box of shown) {
       const grid = state.grids.get(box.grid);
@@ -471,16 +432,6 @@ export class GridPainter {
       canvas.style.top = `${String((box.row + crop.top) * this.metrics.height)}px`;
       canvas.style.zIndex = String(box.z);
       canvas.classList.toggle("nvim-float", box.float);
-      // Messages scrolled up over the windows (`:ls`, an error's trace, a
-      // hit-enter prompt) are a panel risen from the bottom, as an editor's
-      // output panel: a hairline and a shadow along its top edge.
-      const placement = state.windows.get(box.grid)?.placement;
-      canvas.classList.toggle(
-        "nvim-msg-panel",
-        placement?.kind === "message" &&
-          placement.scrolled &&
-          box.row < (state.grids.get(1)?.height ?? 0) - this.theme.cmdheight,
-      );
       const round = corners.get(box.grid);
       canvas.style.borderRadius =
         round && box.lined !== true ? radii(round, FLOAT_RADIUS) : "";
@@ -536,7 +487,7 @@ export class GridPainter {
       const rows =
         fresh || all
           ? Array.from({ length: grid.height }, (_, row) => row)
-          : this.withNeighbours(grid.dirty, grid.height);
+          : [...grid.dirty];
       for (const row of rows) this.paintRow(entry, state, box, row);
       grid.dirty.clear();
       if (smooth) this.placeScroll(state, box);
@@ -985,24 +936,6 @@ export class GridPainter {
   }
 
   /**
-   * Where the status lines and winbars are; when that changed, the rows
-   * they were and are on are repainted.
-   */
-  private placeBars(state: NeovimUiState, boxes: readonly GridBox[]): void {
-    const bars = barsOf(state, boxes, this.theme.cmdheight);
-    const key = JSON.stringify([...bars].map(([g, rows]) => [g, [...rows]]));
-    if (key === this.barsKey) return;
-    for (const map of [this.bars, bars]) {
-      for (const [grid, rows] of map) {
-        const dirty = state.grids.get(grid)?.dirty;
-        for (const row of rows.keys()) dirty?.add(row);
-      }
-    }
-    this.bars = bars;
-    this.barsKey = key;
-  }
-
-  /**
    * The window separators and the grounds on their sides; when those
    * changed (a split, `NormalNC` on the window left), grid 1's rows they
    * were and are on are repainted.
@@ -1036,21 +969,6 @@ export class GridPainter {
     const w = Math.min(4, cw);
     const side = (cw - w) / 2;
     return `inset(1px ${String(side)}px 1px ${String(side)}px round ${String(w / 2)}px)`;
-  }
-
-  /**
-   * The rows to repaint for `dirty`: with shaped colours about, the rows
-   * next to each too — a selection's corners there depend on it.
-   */
-  private withNeighbours(dirty: ReadonlySet<number>, height: number) {
-    if (this.theme.shaped.size === 0) return [...dirty];
-    const rows = new Set<number>();
-    for (const row of dirty) {
-      if (row > 0) rows.add(row - 1);
-      rows.add(row);
-      if (row + 1 < height) rows.add(row + 1);
-    }
-    return [...rows];
   }
 
   /**
@@ -1402,13 +1320,8 @@ export class GridPainter {
       this.paintGround(ctx, state, box, grid.chars, base, run, y);
     }
     if (box.grid === 1) this.paintSeparators(ctx, state, grid, base, row, y);
-    this.paintShaped(ctx, state, box, row, y);
     this.skip.clear();
-    this.paintBars(ctx, state, box, row, y);
-    this.paintPills(ctx, state, box, row, y);
-    this.paintBrackets(ctx, state, box, row, y);
     if (!box.float && box.grid !== 1) this.paintFiller(ctx, state, box, row, y);
-    if (!box.float && box.grid !== 1) this.paintFolds(ctx, state, box, row, y);
     if (
       !box.float &&
       box.grid !== 1 &&
@@ -1503,154 +1416,6 @@ export class GridPainter {
   }
 
   /**
-   * A status line or winbar as a bar (`barLayout`): its segments of other
-   * colours as pills, a little inside the row and rounded at their ends,
-   * and Powerline's filled separators between them as the bar's ground.
-   */
-  private paintBars(
-    ctx: CanvasRenderingContext2D,
-    state: NeovimUiState,
-    box: GridBox,
-    row: number,
-    y: number,
-  ): void {
-    const spans = this.bars.get(box.grid)?.get(row);
-    const grid = state.grids.get(box.grid);
-    if (!spans || !grid) return;
-    const { width: cw, height: ch, textHeight } = this.metrics;
-    const chars = grid.chars.slice(row * grid.width, (row + 1) * grid.width);
-    const grounds = this.rowGrounds(state, box, row);
-    // As tall as the text and a pixel more each side, never the whole row.
-    const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
-    const h = snap(Math.min(ch - 2, textHeight + 2));
-    const top = snap(y + (ch - h) / 2);
-    const r = Math.min(h / 2, cw);
-    for (const span of spans) {
-      const bar = barLayout(chars, grounds, span);
-      if (bar.pills.length === 0 && bar.joints.length === 0) continue;
-      ctx.fillStyle = cssColor(bar.ground);
-      for (const pill of bar.pills) {
-        ctx.fillRect(pill.start * cw, y, (pill.end - pill.start) * cw, ch);
-      }
-      for (const col of bar.joints) {
-        ctx.fillRect(col * cw, y, cw, ch);
-        this.skip.add(col);
-      }
-      for (const pill of bar.pills) {
-        const x0 = pill.start * cw;
-        const x1 = pill.end * cw;
-        const left = pill.roundLeft ? r : 0;
-        const right = pill.roundRight ? r : 0;
-        ctx.fillStyle = cssColor(pill.bg);
-        ctx.beginPath();
-        ctx.roundRect(x0, top, x1 - x0, h, [left, right, right, left]);
-        ctx.fill();
-      }
-    }
-  }
-
-  /**
-   * Text Neovim adds to a line in a colour of its own (`PaintTheme.pills`:
-   * diagnostics' virtual text, inlay hints) as a pill: a little inside the
-   * row, rounded at its ends, the ground beside it around it. Its cells are
-   * where Neovim put them, so the cursor and `$` land as before.
-   */
-  private paintPills(
-    ctx: CanvasRenderingContext2D,
-    state: NeovimUiState,
-    box: GridBox,
-    row: number,
-    y: number,
-  ): void {
-    if (this.theme.pills.size === 0) return;
-    const grounds = this.rowGrounds(state, box, row);
-    const isPill = this.cellsOf(state, box, row, "pill");
-    const spans = shapedSpans(grounds, isPill);
-    if (spans.length === 0) return;
-    const { width: cw, height: ch, textHeight } = this.metrics;
-    const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
-    const h = snap(Math.min(ch - 2, textHeight + 2));
-    const top = snap(y + (ch - h) / 2);
-    const r = Math.min(h / 2, cw * 0.75);
-    for (const span of spans) {
-      const x0 = span.start * cw;
-      const x1 = span.end * cw;
-      const left = span.start > 0 ? grounds[span.start - 1] : undefined;
-      const right = grounds[span.end];
-      const beside =
-        left !== undefined && left >= 0 && !isPill(span.start - 1)
-          ? left
-          : right !== undefined && right >= 0 && !isPill(span.end)
-            ? right
-            : state.defaults.background;
-      ctx.fillStyle = cssColor(beside);
-      ctx.fillRect(x0, y, x1 - x0, ch);
-      ctx.fillStyle = cssColor(span.bg);
-      ctx.beginPath();
-      ctx.roundRect(x0, top, x1 - x0, h, r);
-      ctx.fill();
-    }
-  }
-
-  /**
-   * A matching bracket (`PaintTheme.brackets`, `MatchParen`) as VS Code's
-   * `editorBracketMatch`: its ground in a box a little inside the cell,
-   * rounded, with a hairline in the bracket's own colour around it; the
-   * ground beside it around the box. Each cell its own box: brackets on
-   * rows one above the other are not one shape.
-   */
-  private paintBrackets(
-    ctx: CanvasRenderingContext2D,
-    state: NeovimUiState,
-    box: GridBox,
-    row: number,
-    y: number,
-  ): void {
-    if (this.theme.brackets.size === 0) return;
-    const grid = state.grids.get(box.grid);
-    if (!grid) return;
-    const isBracket = this.cellsOf(state, box, row, "bracket");
-    const grounds = this.rowGrounds(state, box, row);
-    const { width: cw, height: ch, textHeight } = this.metrics;
-    const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
-    const h = snap(Math.min(ch, textHeight + 4));
-    const top = snap(y + (ch - h) / 2);
-    const line = 1 / this.dpr;
-    const base = row * grid.width;
-    for (let col = 0; col < grid.width; col += 1) {
-      if (!isBracket(col)) continue;
-      const left = col > 0 ? grounds[col - 1] : undefined;
-      const right = grounds[col + 1];
-      const beside =
-        left !== undefined && left >= 0 && !isBracket(col - 1)
-          ? left
-          : right !== undefined && right >= 0 && !isBracket(col + 1)
-            ? right
-            : state.defaults.background;
-      const x0 = col * cw;
-      ctx.fillStyle = cssColor(beside);
-      ctx.fillRect(x0, y, cw, ch);
-      const colors = resolveColors(
-        state.hl.get(grid.hls[base + col] ?? 0),
-        state.defaults,
-      );
-      ctx.beginPath();
-      ctx.roundRect(
-        x0 + line / 2,
-        top + line / 2,
-        cw - line,
-        h - line,
-        Math.min(3, cw / 3),
-      );
-      ctx.fillStyle = cssColor(colors.bg);
-      ctx.fill();
-      ctx.strokeStyle = cssColor(colors.fg, 0.45);
-      ctx.lineWidth = line;
-      ctx.stroke();
-    }
-  }
-
-  /**
    * A diff's filler row (`-` in `DiffDelete`, the default `diff:`) as a
    * hatched band, as GUI diff views mark lines that are not there: thin
    * diagonals in its foreground, continuous from row to row.
@@ -1694,223 +1459,9 @@ export class GridPainter {
     for (let col = start; col < grid.width; col += 1) this.skip.add(col);
   }
 
-  /**
-   * The pointer moved onto another grid (or off them): a fold column's
-   * open folds show on the grid it is over. Answers the grids whose rows
-   * want repainting.
-   */
-  setHover(grid: number | undefined): number[] {
-    if (grid === this.hover) return [];
-    const before = this.hover;
-    this.hover = grid;
-    if (!this.folds) return [];
-    return [before, grid].filter((g): g is number => g !== undefined);
-  }
-
-  /** The cursor moved to another row: its fold chevrons, and the old row's. */
-  private followFoldCursor(state: NeovimUiState): void {
-    const now = { grid: state.cursor.grid, row: state.cursor.row };
-    const before = this.foldCursor;
-    if (before?.grid === now.grid && before.row === now.row) return;
-    this.foldCursor = now;
-    if (!this.folds) return;
-    for (const at of [before, now]) {
-      if (at) state.grids.get(at.grid)?.dirty.add(at.row);
-    }
-  }
-
-  /**
-   * A fold column (`FoldColumn`, `CursorLineFold` cells) as VS Code's
-   * gutter: a closed fold a chevron pointing right, always; an open fold a
-   * chevron pointing down, on the cursor's row and while the pointer is
-   * over the window; a fold's extent (`│`) not drawn. Clicks and `za` stay
-   * Neovim's; a person's own `foldopen:`/`foldclose:`/`foldsep:` is kept.
-   */
-  private paintFolds(
-    ctx: CanvasRenderingContext2D,
-    state: NeovimUiState,
-    box: GridBox,
-    row: number,
-    y: number,
-  ): void {
-    const grid = state.grids.get(box.grid);
-    if (!grid) return;
-    const base = row * grid.width;
-    const { width: cw, height: ch } = this.metrics;
-    const shown =
-      this.hover === box.grid ||
-      (state.cursor.grid === box.grid && state.cursor.row === row);
-    // The fold column is at the window's left, after the sign column: stop
-    // at the first cell of another kind past it.
-    let seen = false;
-    for (let col = 0; col < Math.min(grid.width, 24); col += 1) {
-      const hl = grid.hls[base + col] ?? 0;
-      const fold =
-        this.hasGroup(state, hl, "FoldColumn") ||
-        this.hasGroup(state, hl, "CursorLineFold");
-      if (!fold) {
-        if (seen) break;
-        continue;
-      }
-      seen = true;
-      this.folds = true;
-      const mark = foldMark(grid.chars[base + col] ?? "", (item) =>
-        fillChosen(this.theme, box.win, item),
-      );
-      if (!mark) continue;
-      this.skip.add(col);
-      if (mark === "sep" || (mark === "open" && !shown)) continue;
-      const fg = resolveColors(state.hl.get(hl), state.defaults).fg;
-      const cx = col * cw + cw / 2;
-      const cy = y + ch / 2;
-      const r = Math.max(2, Math.min(cw * 0.3, ch * 0.22));
-      ctx.save();
-      ctx.strokeStyle = cssColor(fg);
-      ctx.lineWidth = Math.max(1.25, Math.round(this.font.size / 9));
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      if (mark === "closed") {
-        ctx.moveTo(cx - r / 2, cy - r);
-        ctx.lineTo(cx + r / 2, cy);
-        ctx.lineTo(cx - r / 2, cy + r);
-      } else {
-        ctx.moveTo(cx - r, cy - r / 2);
-        ctx.lineTo(cx, cy + r / 2);
-        ctx.lineTo(cx + r, cy - r / 2);
-      }
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-
-  /** A highlight's role (`hlRole`: a selection's, a pill's), kept. */
-  private roleOf(state: NeovimUiState, hl: number): HlRole {
-    if (this.roles.has(hl)) return this.roles.get(hl);
-    const role = hlRole(state.hl.get(hl)?.groups, this.theme);
-    this.roles.set(hl, role);
-    return role;
-  }
-
   /** Whether a highlight is made of `group` (`ext_hlstate`). */
   private hasGroup(state: NeovimUiState, hl: number, group: string) {
     return state.hl.get(hl)?.groups?.includes(group) === true;
-  }
-
-  /** Which of a row's cells have `role` (none past the grid's rows). */
-  private cellsOf(
-    state: NeovimUiState,
-    box: GridBox,
-    row: number,
-    role: Exclude<HlRole, undefined>,
-  ): (col: number) => boolean {
-    const grid = state.grids.get(box.grid);
-    if (!grid || row < 0 || row >= grid.height) return () => false;
-    const base = row * grid.width;
-    return (col) =>
-      col >= 0 &&
-      col < grid.width &&
-      this.roleOf(state, grid.hls[base + col] ?? 0) === role;
-  }
-
-  /**
-   * The backgrounds of one row's cells, `reverse` applied; kept for the
-   * paint (a row is asked for by its neighbours' shapes too).
-   */
-  private rowGrounds(state: NeovimUiState, box: GridBox, row: number) {
-    const key = box.grid * 65536 + row;
-    const known = this.grounds.get(key);
-    if (known) return known;
-    const grid = state.grids.get(box.grid);
-    const out = new Int32Array(grid?.width ?? 0);
-    this.grounds.set(key, out);
-    if (!grid || row < 0 || row >= grid.height) return out.fill(-1);
-    const base = row * grid.width;
-    for (let col = 0; col < grid.width; col += 1) {
-      const attr = state.hl.get(grid.hls[base + col] ?? 0);
-      // A blended cell is no selection to shape.
-      out[col] =
-        box.float && (attr?.blend ?? 0) > 0
-          ? -1
-          : resolveColors(attr, state.defaults).bg;
-    }
-    return out;
-  }
-
-  /**
-   * Selections and search matches (`PaintTheme.shaped`) as one rounded
-   * shape over the rows they span: each run's cells take the ground beside
-   * it, and the run is filled over that with its corners rounded where the
-   * row above or below does not continue it.
-   */
-  private paintShaped(
-    ctx: CanvasRenderingContext2D,
-    state: NeovimUiState,
-    box: GridBox,
-    row: number,
-    y: number,
-  ): void {
-    if (this.theme.shaped.size === 0) return;
-    const grounds = this.rowGrounds(state, box, row);
-    const isShaped = this.cellsOf(state, box, row, "shaped");
-    const spans = shapedSpans(grounds, isShaped);
-    if (spans.length === 0) return;
-    const above = shapedSpans(
-      this.rowGrounds(state, box, row - 1),
-      this.cellsOf(state, box, row - 1, "shaped"),
-    );
-    const below = shapedSpans(
-      this.rowGrounds(state, box, row + 1),
-      this.cellsOf(state, box, row + 1, "shaped"),
-    );
-    const { width: cw, height: ch } = this.metrics;
-    const r = Math.max(0, Math.min(SHAPE_RADIUS, cw / 2, ch / 2));
-    for (const span of spans) {
-      const x0 = span.start * cw;
-      const x1 = span.end * cw;
-      const left = span.start > 0 ? grounds[span.start - 1] : -1;
-      const right = span.end < grounds.length ? grounds[span.end] : -1;
-      const beside =
-        left !== undefined && left >= 0 && !isShaped(span.start - 1)
-          ? left
-          : right !== undefined && right >= 0 && !isShaped(span.end)
-            ? right
-            : state.defaults.background;
-      ctx.fillStyle = cssColor(beside);
-      ctx.fillRect(x0, y, x1 - x0, ch);
-      const c = spanCorners(span, above, below);
-      ctx.fillStyle = cssColor(span.bg);
-      ctx.beginPath();
-      ctx.roundRect(x0, y, x1 - x0, ch, [
-        c.tl ? r : 0,
-        c.tr ? r : 0,
-        c.br ? r : 0,
-        c.bl ? r : 0,
-      ]);
-      ctx.fill();
-      // The inside corners where the row above or below runs on past this
-      // one: the selection's colour, cut round by the ground beside.
-      const n = spanNotches(span, above, below);
-      const notch = (
-        on: boolean,
-        x: number,
-        top: number,
-        cx: number,
-        cy: number,
-      ) => {
-        if (!on || r <= 0) return;
-        ctx.fillStyle = cssColor(span.bg);
-        ctx.fillRect(x, top, r, r);
-        ctx.fillStyle = cssColor(beside);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
-      };
-      notch(n.tl, x0 - r, y, x0 - r, y + r);
-      notch(n.tr, x1, y, x1 + r, y + r);
-      notch(n.bl, x0 - r, y + ch - r, x0 - r, y + ch - r);
-      notch(n.br, x1, y + ch - r, x1 + r, y + ch - r);
-    }
   }
 
   /** Rectangles and paths from `glyphShapes`, in the foreground. */
@@ -2073,13 +1624,6 @@ export class GridPainter {
         continue;
       }
       const wide = chars[base + col + 1] === "";
-      if (isIndentGuide(c, attr?.groups)) {
-        flush();
-        const t = lightThickness(this.font.size, this.dpr) / this.dpr;
-        ctx.fillRect(col * cw, y, t, ch);
-        textStart = col + 1;
-        continue;
-      }
       const kind = glyphKind(c);
       const simple =
         kind === undefined &&

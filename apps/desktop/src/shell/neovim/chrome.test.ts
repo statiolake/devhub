@@ -2,53 +2,16 @@ import { describe, expect, it } from "vitest";
 import { initialUiState, type GridBox } from "./redraw";
 import {
   NO_THEME,
-  barLayout,
-  barsOf,
   fillChosen,
   fillerStart,
   floatScrollbars,
-  foldMark,
-  hlRole,
   isEndOfBuffer,
   separatorsOf,
   sameTheme,
-  shapedSpans,
-  spanCorners,
-  spanNotches,
   themeOf,
-  isIndentGuide,
 } from "./chrome";
 
-const VISUAL = 0x264f78;
-const SEARCH = 0x613214;
 const NORMAL = 0x1e1e1e;
-
-describe("the colorscheme's shaped colours", () => {
-  it("are Visual's and the searches' backgrounds", () => {
-    const theme = themeOf({
-      groups: {
-        Visual: { bg: VISUAL },
-        Search: { bg: SEARCH, fg: 0xffffff },
-        IncSearch: { reverse: true, fg: SEARCH },
-        CurSearch: [],
-      },
-      finals: { Visual: "Visual", Search: "MySearch" },
-    });
-    expect([...theme.shaped].sort()).toEqual(
-      ["MySearch", "Search", "Visual"].sort(),
-    );
-    // By name: a real line in Visual's colour is no selection.
-    expect(hlRole(["String"], theme)).toBeUndefined();
-    expect(hlRole(["Comment", "Visual"], theme)).toBe("shaped");
-    expect(hlRole(["MySearch"], theme)).toBe("shaped");
-  });
-
-  it("are none from an answer of another shape", () => {
-    expect(themeOf(undefined)).toBe(NO_THEME);
-    expect(themeOf([1, 2])).toBe(NO_THEME);
-    expect(sameTheme(themeOf({ groups: {} }), NO_THEME)).toBe(true);
-  });
-});
 
 describe("the surface notifications wear", () => {
   it("is the floats' colours, else Normal's, with the diagnostics'", () => {
@@ -67,135 +30,6 @@ describe("the surface notifications wear", () => {
     expect(
       sameTheme(theme, themeOf({ groups: { Normal: { bg: NORMAL } } })),
     ).toBe(false);
-  });
-});
-
-describe("shaped spans", () => {
-  it("are runs of one shaped colour", () => {
-    const row = [NORMAL, VISUAL, VISUAL, SEARCH, NORMAL, VISUAL];
-    const shaped = new Set([VISUAL, SEARCH]);
-    expect(shapedSpans(row, (col) => shaped.has(row[col] ?? 0))).toEqual([
-      { start: 1, end: 3, bg: VISUAL },
-      { start: 3, end: 4, bg: SEARCH },
-      { start: 5, end: 6, bg: VISUAL },
-    ]);
-  });
-
-  it("round only the outline of a selection of several lines", () => {
-    // ··XXXX
-    // XXXXXX
-    // XXX···
-    const top = { start: 2, end: 6 };
-    const middle = { start: 0, end: 6 };
-    const bottom = { start: 0, end: 3 };
-    expect(spanCorners(top, [], [middle])).toEqual({
-      tl: true,
-      tr: true,
-      br: false,
-      bl: false,
-    });
-    expect(spanCorners(middle, [top], [bottom])).toEqual({
-      tl: true,
-      tr: false,
-      br: true,
-      bl: false,
-    });
-    expect(spanCorners(bottom, [middle], [])).toEqual({
-      tl: false,
-      tr: false,
-      br: true,
-      bl: true,
-    });
-  });
-
-  it("fill the inside corners where a neighbour runs on", () => {
-    const top = { start: 2, end: 6 };
-    const middle = { start: 0, end: 6 };
-    const bottom = { start: 0, end: 3 };
-    // The top line's left end sits on the middle one, which runs on left.
-    expect(spanNotches(top, [], [middle])).toEqual({
-      tl: false,
-      tr: false,
-      br: false,
-      bl: true,
-    });
-    // The bottom line ends where the middle one runs on right.
-    expect(spanNotches(bottom, [middle], [])).toEqual({
-      tl: false,
-      tr: true,
-      br: false,
-      bl: false,
-    });
-    expect(spanNotches(middle, [top], [bottom])).toEqual({
-      tl: false,
-      tr: false,
-      br: false,
-      bl: false,
-    });
-  });
-});
-
-describe("a status line as a bar", () => {
-  const BAR = 0x303030;
-  const MODE = 0x569cd6;
-  const BRANCH = 0x444444;
-
-  it("is its commonest colour, with the other runs as pills", () => {
-    // " NORMAL  main  file.ts " — lualine's sections, Powerline joints.
-    const chars = [..." NORMAL \ue0b0 main \ue0b0 file.ts        "];
-    const bgs = chars.map((_, col) =>
-      col < 8 ? MODE : col === 8 ? BRANCH : col < 15 ? BRANCH : BAR,
-    );
-    const bar = barLayout(chars, bgs, { start: 0, end: chars.length });
-    expect(bar.ground).toBe(BAR);
-    expect(bar.joints).toEqual([8, 15]);
-    expect(bar.pills).toEqual([
-      { start: 0, end: 8, bg: MODE, roundLeft: true, roundRight: true },
-      { start: 9, end: 15, bg: BRANCH, roundLeft: true, roundRight: true },
-    ]);
-  });
-
-  it("rounds touching runs of other colours as one pill", () => {
-    const chars = [..." A  B     "];
-    const bgs = [MODE, MODE, MODE, BRANCH, BRANCH, BAR, BAR, BAR, BAR, BAR];
-    expect(barLayout(chars, bgs, { start: 0, end: 10 }).pills).toEqual([
-      { start: 0, end: 3, bg: MODE, roundLeft: true, roundRight: false },
-      { start: 3, end: 5, bg: BRANCH, roundLeft: false, roundRight: true },
-    ]);
-  });
-
-  it("is under each window, but not on the command line's rows", () => {
-    const state = initialUiState({
-      foreground: 0,
-      background: 0,
-      special: 0,
-    });
-    state.grids.set(1, {
-      id: 1,
-      width: 20,
-      height: 10,
-      chars: [],
-      hls: new Int32Array(200),
-      dirty: new Set(),
-    });
-    state.margins.set(3, { top: 1, right: 0, bottom: 0, left: 0 });
-    const win = (grid: number, row: number, height: number): GridBox => ({
-      grid,
-      row,
-      col: 0,
-      width: 20,
-      height,
-      z: 1,
-      float: false,
-      win: 1000 + grid,
-    });
-    // Two windows stacked, the lower one's status line on row 8; with
-    // `laststatus=0` the row under it would be the command line's.
-    const bars = barsOf(state, [win(2, 0, 4), win(3, 5, 3)], 1);
-    expect([...(bars.get(1)?.keys() ?? [])]).toEqual([4, 8]);
-    expect([...(bars.get(3)?.keys() ?? [])]).toEqual([0]);
-    const none = barsOf(state, [win(2, 0, 4), win(3, 5, 4)], 1);
-    expect([...(none.get(1)?.keys() ?? [])]).toEqual([4]);
   });
 });
 
@@ -268,45 +102,6 @@ describe("the end of the buffer", () => {
     expect(
       fillChosen(themeOf({ groups: {}, fillchars: "eob: " }), 1000, "eob"),
     ).toBe(true);
-  });
-});
-
-describe("text Neovim adds to a line", () => {
-  it("is a pill when its colorscheme gives it a ground", () => {
-    const theme = themeOf({
-      groups: {
-        Visual: { bg: VISUAL },
-        DiagnosticVirtualTextError: { fg: 0xdb4b4b, bg: 0x362c3d },
-        DiagnosticVirtualTextWarn: { fg: 0xe0af68 },
-        LspInlayHint: { bg: VISUAL },
-      },
-      finals: { LspInlayHint: "Visual" },
-    });
-    // A group whose links end at a selection's is a selection.
-    expect([...theme.pills].sort()).toEqual([
-      "DiagnosticVirtualTextError",
-      "LspInlayHint",
-    ]);
-    expect(hlRole(["LspInlayHint", "Visual"], theme)).toBe("shaped");
-    expect(hlRole(["DiagnosticVirtualTextError"], theme)).toBe("pill");
-  });
-});
-
-describe("a matching bracket", () => {
-  it("is MatchParen's box when it has a ground, a selection over it first", () => {
-    const theme = themeOf({
-      groups: {
-        MatchParen: { bg: 0x1f3e4b, bold: true },
-        Visual: { bg: VISUAL },
-      },
-      finals: {},
-    });
-    expect([...theme.brackets]).toEqual(["MatchParen"]);
-    expect(hlRole(["MatchParen"], theme)).toBe("bracket");
-    expect(hlRole(["MatchParen", "Visual"], theme)).toBe("shaped");
-    // Only a colour of the text (`reverse`, or fg alone): left as text.
-    const plain = themeOf({ groups: { MatchParen: { fg: 0xff0000 } } });
-    expect(plain.brackets.size).toBe(0);
   });
 });
 
@@ -396,32 +191,10 @@ describe("a menu's scrollbar drawn as floats", () => {
   });
 });
 
-describe("a fold column", () => {
-  it("is chevrons for the default characters, the person's own kept", () => {
-    const none = () => false;
-    expect(foldMark("-", none)).toBe("open");
-    expect(foldMark("+", none)).toBe("closed");
-    expect(foldMark("│", none)).toBe("sep");
-    expect(foldMark("2", none)).toBeUndefined();
-    const theme = themeOf({ groups: {}, wins: { "1001": "foldopen:v" } });
-    const chosen = (item: "foldopen" | "foldclose" | "foldsep") =>
-      fillChosen(theme, 1001, item);
-    expect(foldMark("-", chosen)).toBeUndefined();
-    expect(foldMark("+", chosen)).toBe("closed");
-  });
-});
-
-describe("isIndentGuide", () => {
-  it("knows a guide plugin's line by its group, whatever the character", () => {
-    expect(isIndentGuide("│", ["IblIndent"])).toBe(true);
-    expect(isIndentGuide("▎", ["Normal", "IblScope"])).toBe(true);
-    expect(isIndentGuide("╎", ["MiniIndentscopeSymbol"])).toBe(true);
-    expect(isIndentGuide("│", ["SnacksIndent3"])).toBe(true);
-  });
-
-  it("leaves the same characters alone elsewhere", () => {
-    expect(isIndentGuide("│", ["WinSeparator"])).toBe(false);
-    expect(isIndentGuide("│", undefined)).toBe(false);
-    expect(isIndentGuide("x", ["IblIndent"])).toBe(false);
+describe("the colorscheme's answer", () => {
+  it("is nothing from an answer of another shape", () => {
+    expect(themeOf(undefined)).toBe(NO_THEME);
+    expect(themeOf([1, 2])).toBe(NO_THEME);
+    expect(sameTheme(themeOf({ groups: {} }), NO_THEME)).toBe(true);
   });
 });

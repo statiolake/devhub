@@ -69,13 +69,6 @@
   will-change: transform;
 }
 
-/* Messages scrolled up over the windows: a panel risen from the bottom. */
-.nvim-grid.nvim-msg-panel {
-  box-shadow:
-    0 -1px 0 color-mix(in srgb, var(--primary) 16%, transparent),
-    0 -10px 24px rgb(0 0 0 / 22%);
-}
-
 /*
  * Floats: one shadow per panel of them (`floats.ts`: floats edge to edge
  * are one panel, a float alone is one too), under the union of their
@@ -230,7 +223,6 @@
   max-width: 220px;
   padding: 0 12px;
   border: 0;
-  border-radius: 6px 6px 0 0;
   margin-top: 4px;
   background: transparent;
   color: var(--secondary);
@@ -252,9 +244,6 @@
 .nvim-tab-current:hover {
   background: var(--nvim-editor-ground, var(--surface));
   color: var(--primary);
-  box-shadow:
-    inset 1px 0 0 var(--line-soft),
-    inset -1px 0 0 var(--line-soft);
 }
 
 .nvim-cmdline {
@@ -868,32 +857,4 @@
   color: var(--secondary);
   background: var(--raised, var(--surface));
   pointer-events: none;
-}
-
-/* The window border a drag resizes (Neovim does), lit after a moment as
-   VS Code's sash; at once and kept while dragged. */
-.nvim-sash {
-  position: absolute;
-  pointer-events: none;
-  z-index: 40;
-  border-radius: 2px;
-  background: var(--accent);
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.nvim-sash-on {
-  opacity: 0.9;
-  transition-delay: 300ms;
-}
-
-.nvim-sash-dragged {
-  opacity: 0.9;
-  transition-delay: 0ms;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nvim-sash {
-    transition: none;
-  }
 }
