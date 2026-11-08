@@ -38,6 +38,7 @@ import {
   entry,
   fakeActions,
   installResizeObserver,
+  topLevel,
 } from "./surfaceTestKit";
 import {
   assistant,
@@ -638,11 +639,8 @@ describe("every entry kind", () => {
         { id: "sent:2", text: "and the tests", images: [], origin: "person" },
       ],
     });
-    const bubbles = () => [
-      ...document.querySelectorAll(
-        '.conversation-transcript > [data-kind="user"]',
-      ),
-    ];
+    const bubbles = () =>
+      topLevel().filter((each) => each.dataset.kind === "user");
     expect(bubbles().map((each) => each.textContent)).toEqual([
       expect.stringContaining("fix the build"),
       "and the tests",
@@ -782,11 +780,8 @@ describe("every entry kind", () => {
     expect(subagent).toContainElement(entry("inner"));
     expect(subagent).toContainElement(entry("inner-answer"));
     expect(entry("deep")).toContainElement(entry("deepest"));
-    const topLevel = document.querySelector(".conversation-transcript")!;
     expect(
-      [...topLevel.children].map((child) =>
-        child.getAttribute("data-entry-id"),
-      ),
+      topLevel().map((child) => child.getAttribute("data-entry-id")),
     ).toEqual(["task"]);
 
     redraw(

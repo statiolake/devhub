@@ -21,7 +21,7 @@ import { cleanup, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ToolEntry, TranscriptEntry } from "../../model/conversation";
 import { claudeLines, claudeTranscript } from "./adapterFixtures";
-import { draw, entry, installResizeObserver } from "./surfaceTestKit";
+import { draw, entry, installResizeObserver, topLevel } from "./surfaceTestKit";
 
 beforeAll(installResizeObserver);
 afterEach(cleanup);
@@ -60,11 +60,11 @@ const SENT_MESSAGES = CAPTURE.filter(
 describe("a real claude session, as the page draws it", () => {
   it("draws every message the person sent, in order, at the top level", () => {
     draw(SESSION);
-    const said = [
-      ...document.querySelectorAll(
-        ".conversation-transcript > .conversation-entry[data-kind=user]",
-      ),
-    ].map((user) => user.querySelector(".conversation-user-text")?.textContent);
+    const said = topLevel()
+      .filter((each) => each.dataset.kind === "user")
+      .map(
+        (user) => user.querySelector(".conversation-user-text")?.textContent,
+      );
     expect(SENT_MESSAGES.length).toBeGreaterThanOrEqual(3);
     expect(said).toEqual(SENT_MESSAGES);
   });
@@ -155,12 +155,8 @@ describe("a real claude session, as the page draws it", () => {
         JSON.stringify(tool.input).includes("touch note.txt"),
     );
     expect(subagent).toContainElement(entry(touch.id));
-    const topLevel = [
-      ...document.querySelectorAll(
-        ".conversation-transcript > .conversation-entry",
-      ),
-    ].map((each) => each.getAttribute("data-entry-id"));
-    expect(topLevel).not.toContain(touch.id);
+    const ids = topLevel().map((each) => each.getAttribute("data-entry-id"));
+    expect(ids).not.toContain(touch.id);
   });
 
   it("draws the permission card the subagent's Bash raised, inside the subagent, until it is answered", () => {

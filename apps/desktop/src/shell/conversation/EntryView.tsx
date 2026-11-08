@@ -15,15 +15,18 @@
 import {
   createContext,
   memo,
+  useCallback,
   useContext,
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
 import {
   workState,
+  type EntryId,
   type AnswerEntry,
   type AssistantBlock,
   type AssistantEntry,
@@ -42,6 +45,7 @@ import {
   type TurnEndEntry,
   type UserEntry,
 } from "../../model/conversation";
+import type { ValueStore } from "../model/publishedValue";
 import { CopyButton } from "./CopyButton";
 import { REWIND_NOTE } from "./Composer";
 import {
@@ -63,17 +67,51 @@ import { SubagentMessage } from "./SubagentMessage";
 import {
   SubagentCardActions,
   SubagentElsewhere,
-  useSubagentPlacement,
+  useSubagentPlace,
 } from "./SubagentPanes";
 
-export const EntryTreeContext = createContext<EntryTree | undefined>(undefined);
+/**
+ * The entry tree the surface draws, which every tool call reads its own
+ * children and requests from: a store (`publishedValue.tsx`), not the tree
+ * itself in a context, so a new tree each frame does not make React look
+ * through the whole transcript for its readers, nor draw every tool call
+ * again to look its children up — only those whose part of it changed.
+ */
+export const EntryTreeContext = createContext<
+  ValueStore<EntryTree> | undefined
+>(undefined);
 
-function useEntryTree(): EntryTree {
-  const tree = useContext(EntryTreeContext);
-  if (!tree) {
+/** A tool call's part of the tree: its children, its requests, whether it shows the plan. */
+interface ToolPart {
+  readonly childEntries: readonly TranscriptEntry[];
+  readonly requests: readonly PendingRequest[];
+  readonly planShown: boolean;
+}
+
+function useToolPart(id: EntryId): ToolPart {
+  const store = useContext(EntryTreeContext);
+  if (!store) {
     throw new Error("a tool call was drawn outside a ConversationSurface");
   }
-  return tree;
+  const last = useRef<ToolPart | undefined>(undefined);
+  const read = useCallback((): ToolPart => {
+    const tree = store.get();
+    const childEntries = tree.children.get(id) ?? NO_ENTRIES;
+    const requests = tree.requests.get(id) ?? NO_REQUESTS;
+    const planShown = tree.latestPlan === id;
+    const before = last.current;
+    if (
+      before?.childEntries === childEntries &&
+      before.requests === requests &&
+      before.planShown === planShown
+    ) {
+      return before;
+    }
+    const part = { childEntries, requests, planShown };
+    last.current = part;
+    return part;
+  }, [store, id]);
+  return useSyncExternalStore(store.subscribe, read);
 }
 
 /** The deepest level that still indents. */
@@ -568,8 +606,7 @@ const ToolView = memo(function ToolView({
 }) {
   const spawns = entry.spawns;
   const subagent = useDisclosure(spawns?.state === "running");
-  const { placeOf } = useSubagentPlacement();
-  const place = placeOf(entry.id);
+  const place = useSubagentPlace(entry.id);
   return (
     <div
       className="conversation-tool-entry"
@@ -660,8 +697,8 @@ function DenialLine({ denial }: { readonly denial: Denial | undefined }) {
 
 /**
  * Looks up the tool call's own children and requests, and hands them down as
- * props: the lookup runs whenever the tree does, and the drawing only when
- * what it drew has changed.
+ * props: the lookup runs whenever the tree is committed (`EntryTreeContext`),
+ * and the drawing only when what it drew has changed.
  */
 function ToolEntryView({
   entry,
@@ -670,14 +707,14 @@ function ToolEntryView({
   readonly entry: ToolEntry;
   readonly depth: number;
 }) {
-  const tree = useEntryTree();
+  const { childEntries, requests, planShown } = useToolPart(entry.id);
   return (
     <ToolView
       entry={entry}
-      childEntries={tree.children.get(entry.id) ?? NO_ENTRIES}
-      requests={tree.requests.get(entry.id) ?? NO_REQUESTS}
+      childEntries={childEntries}
+      requests={requests}
       depth={depth}
-      planShown={tree.latestPlan === entry.id}
+      planShown={planShown}
     />
   );
 }
@@ -897,6 +934,15 @@ export function limitResumeLine(
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether the entry draws anything. A completed turn's end is not drawn at
+ * all — not even as an empty entry, which would still take the gap between
+ * entries (see `TurnEndView`).
+ */
+export function isDrawn(entry: TranscriptEntry): boolean {
+  return !(entry.kind === "turn-end" && entry.outcome === "completed");
+}
+
 export const EntryView = memo(function EntryView({
   entry,
   depth,
@@ -904,9 +950,7 @@ export const EntryView = memo(function EntryView({
   readonly entry: TranscriptEntry;
   readonly depth: number;
 }) {
-  // A completed turn's end is not drawn at all — not even as an empty entry,
-  // which would still take the gap between entries (see `TurnEndView`).
-  if (entry.kind === "turn-end" && entry.outcome === "completed") return null;
+  if (!isDrawn(entry)) return null;
   return (
     <div
       className="conversation-entry"

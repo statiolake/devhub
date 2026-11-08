@@ -15,9 +15,7 @@
  */
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -34,6 +32,7 @@ import type {
   OrchestratorBoardWire,
   RepositoryStatusWire,
 } from "../../ipc/contract";
+import { createPublishedContext } from "../model/publishedValue";
 import { devhub } from "./client";
 import {
   useAppearance,
@@ -66,10 +65,18 @@ export interface AgentsValue {
   readonly board: OrchestratorBoardWire;
 }
 
-export const AgentsContext = createContext<AgentsValue | null>(null);
+/**
+ * Handed down as a published value, not a context of its own: it changes with
+ * every app snapshot, and a context changing makes React look through a whole
+ * conversation's transcript for its readers each time (`publishedValue.tsx`).
+ */
+const Agents = createPublishedContext<AgentsValue>();
+
+/** What `useAgents` reads under it: `AgentsProvider`'s, or a test's. */
+export const AgentsValueProvider = Agents.Provider;
 
 export function useAgents(): AgentsValue {
-  const value = useContext(AgentsContext);
+  const value = Agents.useValue();
   if (!value) {
     throw new Error("useAgents must be used inside AgentsProvider");
   }
@@ -155,7 +162,5 @@ export function AgentsProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return (
-    <AgentsContext.Provider value={value}>{children}</AgentsContext.Provider>
-  );
+  return <AgentsValueProvider value={value}>{children}</AgentsValueProvider>;
 }

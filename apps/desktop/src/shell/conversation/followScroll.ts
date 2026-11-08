@@ -49,6 +49,7 @@ import {
   useState,
   type RefObject,
 } from "react";
+import { isChunk, topLevelEntry } from "./chunkElements";
 
 /** How close to the end still counts as the end: sub-pixel scroll positions. */
 export const BOTTOM_SLACK_PX = 2;
@@ -113,27 +114,41 @@ interface Anchor {
 }
 
 /**
- * The first top-level entry whose bottom is below the scroller's top edge.
- * Entries are in document order, so their offsets ascend: a binary search.
+ * The first element of `elements` whose bottom is below `top`. They are in
+ * document order, so their offsets ascend: a binary search.
  */
-function anchorOf(
-  scroller: HTMLElement,
-  content: HTMLElement,
-): Anchor | undefined {
-  const entries = content.children;
-  const top = scroller.scrollTop;
+function firstBelow(
+  elements: HTMLCollection,
+  top: number,
+): HTMLElement | undefined {
   let low = 0;
-  let high = entries.length - 1;
+  let high = elements.length - 1;
   let found: HTMLElement | undefined;
   while (low <= high) {
     const middle = (low + high) >> 1;
-    const element = entries[middle] as HTMLElement;
+    const element = elements[middle] as HTMLElement;
     if (element.offsetTop + element.offsetHeight > top) {
       found = element;
       high = middle - 1;
     } else {
       low = middle + 1;
     }
+  }
+  return found;
+}
+
+/**
+ * The first top-level entry whose bottom is below the scroller's top edge,
+ * looking into the chunk it is in (`chunkElements.ts`).
+ */
+function anchorOf(
+  scroller: HTMLElement,
+  content: HTMLElement,
+): Anchor | undefined {
+  const top = scroller.scrollTop;
+  let found = firstBelow(content.children, top);
+  while (found !== undefined && isChunk(found)) {
+    found = firstBelow(found.children, top);
   }
   const entry = found?.dataset.entryId;
   if (!found || entry === undefined) return undefined;
@@ -145,12 +160,8 @@ function restore(
   content: HTMLElement,
   anchor: Anchor,
 ): void {
-  for (const element of content.children) {
-    if ((element as HTMLElement).dataset.entryId === anchor.entry) {
-      scroller.scrollTop = (element as HTMLElement).offsetTop + anchor.offset;
-      return;
-    }
-  }
+  const element = topLevelEntry(content, anchor.entry);
+  if (element) scroller.scrollTop = element.offsetTop + anchor.offset;
 }
 
 export interface FollowScroll {

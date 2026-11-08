@@ -11,7 +11,9 @@
  * each entry is `content-visibility: auto`, so the browser skips laying out
  * and painting what is off screen, while Cmd+F, a drag selection and a copy
  * still reach every word of it and the scroll is the browser's own, pixel for
- * pixel. See `conversation.css`.
+ * pixel. See `conversation.css`. The top-level entries are drawn in chunks
+ * (`entryChunks.tsx`), so what an entry added costs does not grow with the
+ * transcript.
  *
  * Around the transcript: the header (usage, the way out to a terminal) above
  * it, and below it a line naming the requests still waiting and the composer
@@ -47,6 +49,7 @@ import {
   type UserEntry,
 } from "../../model/conversation";
 import { isImeComposing } from "../accessibility/ime";
+import { usePublishedStore } from "../model/publishedValue";
 import { Composer, inputRefusal, type ComposerInsertion } from "./Composer";
 import { SkillWordsProvider } from "./skillTokens";
 import {
@@ -60,10 +63,10 @@ import {
 import {
   CompactingView,
   EntryTreeContext,
-  EntryView,
   LimitResumeView,
   SendingView,
 } from "./EntryView";
+import { ChunkedEntries } from "./entryChunks";
 import { FindBar, type FindBarHandle } from "./FindBar";
 import { entryTree, NO_ENTRIES, type EntryTree } from "./entryTree";
 import { markScrollIntent, useFollowScroll } from "./followScroll";
@@ -166,6 +169,8 @@ export function ConversationSurface({
     previousTree.current = next;
     return next;
   }, [transcript]);
+  // What the tool calls read their children from (`EntryTreeContext`).
+  const treeStore = usePublishedStore(tree);
 
   // The conversation's file links (`pathLinks.tsx`): asked about in batches,
   // remembered for as long as the surface is mounted, and a word that named
@@ -441,7 +446,7 @@ export function ConversationSurface({
             <SkillWordsProvider commands={transcript.session.commands}>
               <PathLinksProvider value={pathLinks}>
                 <IssueRepositoryProvider value={issueRepository}>
-                  <EntryTreeContext.Provider value={tree}>
+                  <EntryTreeContext.Provider value={treeStore}>
                     <SubagentLayoutProvider value={subagents}>
                       <section
                         ref={surface}
@@ -479,13 +484,7 @@ export function ConversationSurface({
                                   className="conversation-transcript conversation-selectable"
                                   ref={content}
                                 >
-                                  {topLevel.map((entry) => (
-                                    <EntryView
-                                      key={entry.id}
-                                      entry={entry}
-                                      depth={0}
-                                    />
-                                  ))}
+                                  <ChunkedEntries entries={topLevel} />
                                   {transcript.sending.map((message) => (
                                     <SendingView
                                       key={message.id}

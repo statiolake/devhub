@@ -13,15 +13,15 @@ const CSS = readFileSync(
   "utf8",
 );
 
-/** The declarations of the rule whose selector is exactly `selector`. */
+/** The declarations of the rule whose selector list starts with exactly `selector`. */
 function declarations(selector: string): Readonly<Record<string, string>> {
-  const rules = [...CSS.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter(
-    ([, head]) =>
-      head!
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/\s+/g, " ")
-        .trim() === selector,
-  );
+  const rules = [...CSS.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter(([, head]) => {
+    const list = head!
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return list === selector || list.startsWith(`${selector}, `);
+  });
   expect(rules, `one rule for ${selector}`).toHaveLength(1);
   return Object.fromEntries(
     rules[0]![2]!

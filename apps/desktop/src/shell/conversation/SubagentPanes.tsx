@@ -38,8 +38,10 @@ import {
   type ReactNode,
   useRef,
   useState,
+  useSyncExternalStore,
   type RefObject,
 } from "react";
+import { usePublishedStore, type ValueStore } from "../model/publishedValue";
 import {
   workState,
   type EntryId,
@@ -166,7 +168,22 @@ export function useSubagentLayout(
   surface: RefObject<HTMLElement | null>,
 ): SubagentLayout {
   const wide = useWide(surface);
-  const subagents = useMemo(() => subagentsOf(transcript), [transcript]);
+  // The same list while the calls in it are the same: every tool call reads
+  // this layout, and a new one each frame drew every one of them again
+  // (docs/process-model.md, phase 6c).
+  const previousSubagents = useRef<readonly SubagentEntry[]>(NO_SUBAGENTS);
+  const subagents = useMemo(() => {
+    const next = subagentsOf(transcript);
+    const before = previousSubagents.current;
+    if (
+      next.length === before.length &&
+      next.every((each, index) => each === before[index])
+    ) {
+      return before;
+    }
+    previousSubagents.current = next;
+    return next;
+  }, [transcript]);
   const [maximizedId, maximize] = useState<EntryId | undefined>(undefined);
   const [chosen, setChosen] = useState<ReadonlyMap<EntryId, boolean>>(
     () => new Map(),
@@ -203,32 +220,72 @@ export function useSubagentLayout(
   );
   if (column !== storedColumn) changeColumn(column);
 
-  return {
-    wide,
-    all: subagents,
-    listed,
-    maximized,
-    beside,
-    placeOf,
-    maximize,
-    setBeside,
-    column,
-    changeColumn,
-  };
+  return useMemo(
+    () => ({
+      wide,
+      all: subagents,
+      listed,
+      maximized,
+      beside,
+      placeOf,
+      maximize,
+      setBeside,
+      column,
+      changeColumn,
+    }),
+    [wide, subagents, listed, maximized, beside, placeOf, setBeside, column],
+  );
 }
 
-const SubagentLayoutContext = createContext<SubagentLayout | undefined>(
-  undefined,
-);
+/**
+ * The layout, handed down as a store (`publishedValue.tsx`): it changes as
+ * the subagents run, which is every frame of a busy conversation, and every
+ * tool call reads where its subagent is drawn — by its own subscription
+ * (`useSubagentPlace`), so only a call whose place changed draws again.
+ */
+const SubagentLayoutContext = createContext<
+  ValueStore<SubagentLayout> | undefined
+>(undefined);
 
-export const SubagentLayoutProvider = SubagentLayoutContext.Provider;
+export function SubagentLayoutProvider({
+  value,
+  children,
+}: {
+  readonly value: SubagentLayout;
+  readonly children: ReactNode;
+}) {
+  const store = usePublishedStore(value);
+  return (
+    <SubagentLayoutContext.Provider value={store}>
+      {children}
+    </SubagentLayoutContext.Provider>
+  );
+}
 
-export function useSubagentPlacement(): SubagentLayout {
-  const layout = useContext(SubagentLayoutContext);
-  if (!layout) {
+function useLayoutStore(): ValueStore<SubagentLayout> {
+  const store = useContext(SubagentLayoutContext);
+  if (!store) {
     throw new Error("a subagent was drawn outside a ConversationSurface");
   }
-  return layout;
+  return store;
+}
+
+/** The whole layout, drawn again whenever any of it changes. */
+export function useSubagentPlacement(): SubagentLayout {
+  const store = useLayoutStore();
+  return useSyncExternalStore(store.subscribe, store.get);
+}
+
+/** Where the call `id`'s subagent is drawn, drawn again only when that changes. */
+export function useSubagentPlace(id: EntryId): SubagentPlace {
+  const store = useLayoutStore();
+  return useSyncExternalStore(store.subscribe, () => store.get().placeOf(id));
+}
+
+/** Whether the pane is wide enough for the column. */
+function useSubagentsWide(): boolean {
+  const store = useLayoutStore();
+  return useSyncExternalStore(store.subscribe, () => store.get().wide);
 }
 
 // ---------------------------------------------------------------------------
@@ -244,12 +301,13 @@ export function SubagentCardActions({
 }: {
   readonly entry: SubagentEntry;
 }) {
-  const layout = useSubagentPlacement();
+  const store = useLayoutStore();
+  const wide = useSubagentsWide();
   const label = entry.spawns.label;
-  const beside = layout.placeOf(entry.id) === "beside";
+  const beside = useSubagentPlace(entry.id) === "beside";
   return (
     <div className="conversation-subagent-actions">
-      {layout.wide && !SUBAGENT_ENDED[entry.spawns.state] ? (
+      {wide && !SUBAGENT_ENDED[entry.spawns.state] ? (
         <IconAction
           label={`Show ${label} beside the conversation`}
           tip={
@@ -258,7 +316,7 @@ export function SubagentCardActions({
               : "Show beside the conversation"
           }
           pressed={beside}
-          onPress={() => layout.setBeside(entry.id, !beside)}
+          onPress={() => store.get().setBeside(entry.id, !beside)}
         >
           <ColumnIcon />
         </IconAction>
@@ -267,7 +325,7 @@ export function SubagentCardActions({
         <IconAction
           label={`Maximize ${label}`}
           tip="Fill the pane with this subagent"
-          onPress={() => layout.maximize(entry.id)}
+          onPress={() => store.get().maximize(entry.id)}
         >
           <MaximizeIcon />
         </IconAction>

@@ -25,7 +25,7 @@ import type {
 } from "../../ipc/contract";
 import type { SmartButtonsSpot } from "../../model/smartButtons";
 import { AgentPane } from "./AgentPane";
-import { AgentsContext, type AgentsValue } from "./AgentsContext";
+import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import {
   easeOutCubic,
   SNAP_IN_MS,
@@ -191,7 +191,7 @@ function mount({
   } as unknown as AgentsValue;
   const shown = agent(over);
   render(
-    <AgentsContext.Provider value={value}>
+    <AgentsValueProvider value={value}>
       <div className="agent-pane">
         <div data-surface-key="agent:a-1">
           {shown.presentation === "gui" ? (
@@ -201,7 +201,7 @@ function mount({
         {status ? <div className="agent-injection-status" /> : null}
         <SmartButtons agent={shown} stored={stored} />
       </div>
-    </AgentsContext.Provider>,
+    </AgentsValueProvider>,
   );
   return { runAgentAction, dispatch };
 }
@@ -287,7 +287,7 @@ describe("which Smart Buttons are drawn", () => {
   it("draws nothing at all when no action may be automatic and none is offered", () => {
     const runAgentAction = vi.fn();
     render(
-      <AgentsContext.Provider
+      <AgentsValueProvider
         value={
           {
             repositoryStatus: { sequence: 1, workspaces: [DIRTY] },
@@ -303,7 +303,7 @@ describe("which Smart Buttons are drawn", () => {
         <div className="agent-pane">
           <SmartButtons agent={agent()} stored={undefined} />
         </div>
-      </AgentsContext.Provider>,
+      </AgentsValueProvider>,
     );
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
@@ -331,7 +331,7 @@ describe("a GUI Agent on screen with no composer under it", () => {
     }) as unknown as AgentsValue;
   function shell(withComposer: boolean, context: AgentsValue) {
     return (
-      <AgentsContext.Provider value={context}>
+      <AgentsValueProvider value={context}>
         <div className="agent-pane">
           <div data-surface-key="agent:a-1">
             {withComposer ? (
@@ -343,7 +343,7 @@ describe("a GUI Agent on screen with no composer under it", () => {
             stored={undefined}
           />
         </div>
-      </AgentsContext.Provider>
+      </AgentsValueProvider>
     );
   }
 
@@ -388,14 +388,14 @@ describe("a GUI Agent on screen with no composer under it", () => {
     } as unknown as AppSnapshot;
     expect(() =>
       render(
-        <AgentsContext.Provider value={value()}>
+        <AgentsValueProvider value={value()}>
           <AgentPane
             snapshot={snapshot}
             appearance={undefined}
             activeKey="agent:a-1"
             presentation="gui"
           />
-        </AgentsContext.Provider>,
+        </AgentsValueProvider>,
       ),
     ).not.toThrow();
     expect(hiddenBox()).toHaveAttribute("data-waiting");
@@ -996,14 +996,14 @@ describe("the box in an Agent's pane", () => {
       reportFailure: vi.fn(),
     } as unknown as AgentsValue;
     const pane = (stored: SmartButtonsSpot | undefined) => (
-      <AgentsContext.Provider value={value}>
+      <AgentsValueProvider value={value}>
         <AgentPane
           snapshot={snapshotWith(stored)}
           appearance={undefined}
           activeKey="agent:a-1"
           presentation="tui"
         />
-      </AgentsContext.Provider>
+      </AgentsValueProvider>
     );
     const { container, rerender } = render(pane(undefined));
     const drawn = () =>
@@ -1162,12 +1162,12 @@ function tree(over: Partial<AgentWire>, menuTop = 100) {
   } as unknown as AgentsValue;
   const shown = agent(over);
   return (
-    <AgentsContext.Provider value={value}>
+    <AgentsValueProvider value={value}>
       <div className="agent-pane">
         <div data-surface-key="agent:a-1" />
         <SmartButtons agent={shown} stored={undefined} />
       </div>
-    </AgentsContext.Provider>
+    </AgentsValueProvider>
   );
 }
 

@@ -21,7 +21,7 @@ import {
   type OrchestratorFileWire,
   type OrchestratorFolderWire,
 } from "../../ipc/contract";
-import { AgentsContext, type AgentsValue } from "./AgentsContext";
+import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import { codeBlock } from "./OrchestratorFiles";
 import { OrchestratorBoard } from "./OrchestratorScreen";
 import { forgetOrchestratorMemory } from "./orchestratorMemory";
@@ -96,7 +96,7 @@ async function settle() {
 
 function mount() {
   render(
-    <AgentsContext.Provider
+    <AgentsValueProvider
       value={
         {
           board: { ...EMPTY_BOARD, orchestratorAgentId: "orch" },
@@ -108,7 +108,7 @@ function mount() {
       <OrchestratorBoard
         snapshot={{ workspaces: [] } as unknown as AppSnapshot}
       />
-    </AgentsContext.Provider>,
+    </AgentsValueProvider>,
   );
 }
 

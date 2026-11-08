@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../ipc/appShell";
 import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
 import type { VoiceApi, VoiceUpdate } from "../../ipc/voice";
-import { AgentsContext, type AgentsValue } from "./AgentsContext";
+import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import { forgetOrchestratorMemory, memory } from "./orchestratorMemory";
 import { OrchestratorBoard } from "./OrchestratorScreen";
 
@@ -168,7 +168,7 @@ function open(voice: VoiceApi | undefined): HTMLTextAreaElement {
     removeEventListener: () => undefined,
   })) as unknown as typeof window.matchMedia;
   render(
-    <AgentsContext.Provider
+    <AgentsValueProvider
       value={
         {
           board: BOARD,
@@ -180,7 +180,7 @@ function open(voice: VoiceApi | undefined): HTMLTextAreaElement {
       <OrchestratorBoard
         snapshot={{ workspaces: [] } as unknown as AppSnapshot}
       />
-    </AgentsContext.Provider>,
+    </AgentsValueProvider>,
   );
   fireEvent.click(
     screen.getByRole("button", { name: /本番マイグレーション/u }),

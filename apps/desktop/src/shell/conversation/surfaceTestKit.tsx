@@ -6,6 +6,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 import type { Transcript } from "../../model/conversation";
+import { topLevelElements } from "./chunkElements";
 import type { ConversationActions } from "./ConversationContext";
 import type { IssueRepository } from "./issueLinks";
 import { ConversationSurface } from "./ConversationSurface";
@@ -125,6 +126,13 @@ export function entry(id: string): HTMLElement {
   );
   if (!element) throw new Error(`no entry ${id} was drawn`);
   return element;
+}
+
+/** What the conversation's transcript draws at its top level, in order, chunks looked into. */
+export function topLevel(): HTMLElement[] {
+  const transcript = document.querySelector(".conversation-transcript");
+  if (!transcript) throw new Error("no transcript is drawn");
+  return [...topLevelElements(transcript)];
 }
 
 /** A setting's picker in the composer's toolbar, by the word it is named with. */

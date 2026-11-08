@@ -18,13 +18,7 @@
  * no provider — is the author's text, as text, with a quiet 見つかりません.
  */
 
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   baseName,
   parseDevhubLink,
@@ -35,6 +29,7 @@ import {
 } from "../../model/devhubLink";
 import type { AgentStatus } from "../../ipc/appShell";
 import { StatusMark } from "../components/sidebar/StatusMark";
+import { createPublishedContext } from "../model/publishedValue";
 
 export interface DevhubLinks {
   readonly places: LinkPlaces;
@@ -45,13 +40,15 @@ export interface DevhubLinks {
   readonly reportFailure: (error: unknown) => void;
 }
 
-const DevhubLinksContext = createContext<DevhubLinks | undefined>(undefined);
+/**
+ * A published value (`publishedValue.tsx`): it changes with every app
+ * snapshot, and a transcript holds many links.
+ */
+const Links = createPublishedContext<DevhubLinks>();
 
-export const DevhubLinksProvider = DevhubLinksContext.Provider;
+export const DevhubLinksProvider = Links.Provider;
 
-export function useDevhubLinks(): DevhubLinks | undefined {
-  return useContext(DevhubLinksContext);
-}
+export const useDevhubLinks: () => DevhubLinks | undefined = Links.useValue;
 
 const KIND_LABEL: Record<ResolvedLink["kind"], string> = {
   agent: "Agent",

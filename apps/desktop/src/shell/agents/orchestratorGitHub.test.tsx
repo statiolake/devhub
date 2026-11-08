@@ -18,7 +18,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../ipc/appShell";
 import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
-import { AgentsContext, type AgentsValue } from "./AgentsContext";
+import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import { clockTime, GITHUB_CARD_LINGER_MS } from "./OrchestratorGitHub";
 import { OrchestratorBoard } from "./OrchestratorScreen";
 import { forgetOrchestratorMemory } from "./orchestratorMemory";
@@ -39,7 +39,7 @@ afterEach(() => {
 
 function mount(board: Partial<OrchestratorBoardWire>) {
   render(
-    <AgentsContext.Provider
+    <AgentsValueProvider
       value={
         {
           board: { ...EMPTY_BOARD, orchestratorAgentId: "orch", ...board },
@@ -62,7 +62,7 @@ function mount(board: Partial<OrchestratorBoardWire>) {
           } as unknown as AppSnapshot
         }
       />
-    </AgentsContext.Provider>,
+    </AgentsValueProvider>,
   );
 }
 

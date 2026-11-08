@@ -14,8 +14,9 @@
  *   change to its text, and millions of them slow every change down.
  *   `rangesWithin` makes ranges for just the matches on view, when the page
  *   paints them.
- * - The transcript is searched by section: each child of its root (an entry)
- *   has its own text and matches. When the conversation grows or an entry is
+ * - The transcript is searched by section: each child of its root (an entry,
+ *   looked for in the root's chunks too: `chunkElements.ts`) has its own text
+ *   and matches. When the conversation grows or an entry is
  *   drawn again, only those sections are read and searched again
  *   (`refresh`); the rest keep theirs, and the current match stays put.
  *
@@ -31,6 +32,7 @@
  * growing.
  */
 
+import { isChunk, isTopLevel } from "./chunkElements";
 import { SectionText } from "./findInTranscript";
 
 /** The longest a slice of searching runs before it lets the page go on. */
@@ -111,6 +113,16 @@ interface Section {
   /** Where the search goes on from in the text. */
   from: number;
   complete: boolean;
+}
+
+/** The root's children, a chunk's in its place: the sections' tops, in order. */
+function sectionTops(root: Node): Node[] {
+  const tops: Node[] = [];
+  for (const child of root.childNodes) {
+    if (isChunk(child)) tops.push(...sectionTops(child));
+    else tops.push(child);
+  }
+  return tops;
 }
 
 function freshSection(top: Node): Section {
@@ -194,7 +206,7 @@ export class TranscriptSearch {
     private readonly schedule: Schedule = nextTask,
     private readonly now: () => number = () => performance.now(),
   ) {
-    this.#sections = Array.from(root.childNodes, freshSection);
+    this.#sections = sectionTops(root).map(freshSection);
     this.#observer = new MutationObserver((records) => this.#changed(records));
     this.#observer.observe(root, {
       childList: true,
@@ -441,13 +453,17 @@ export class TranscriptSearch {
     if (this.#current !== undefined) this.#indexOfCurrent();
     let resync = false;
     const drawn = new Set<Node>();
+    const isTop = (node: Node) => isTopLevel(node, this.root);
     for (const record of records) {
-      if (record.target === this.root) {
+      if (
+        record.target === this.root ||
+        (isChunk(record.target) && isTop(record.target))
+      ) {
         resync = true;
         continue;
       }
       let top: Node | null = record.target;
-      while (top !== null && top.parentNode !== this.root) top = top.parentNode;
+      while (top !== null && !isTop(top)) top = top.parentNode;
       // Not in the transcript any more: its section goes when the root's
       // children are taken in.
       if (top !== null) drawn.add(top);
@@ -456,8 +472,7 @@ export class TranscriptSearch {
       const kept = new Map(
         this.#sections.map((section) => [section.top, section]),
       );
-      this.#sections = Array.from(
-        this.root.childNodes,
+      this.#sections = sectionTops(this.root).map(
         (top) => kept.get(top) ?? freshSection(top),
       );
       const current = this.#current;

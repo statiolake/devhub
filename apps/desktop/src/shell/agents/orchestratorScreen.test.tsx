@@ -21,7 +21,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppSnapshot } from "../../ipc/appShell";
 import { EMPTY_BOARD, type OrchestratorBoardWire } from "../../ipc/contract";
 import { installHistoryButtons } from "../historyButtons";
-import { AgentsContext, type AgentsValue } from "./AgentsContext";
+import { AgentsValueProvider, type AgentsValue } from "./AgentsContext";
 import { forgetOrchestratorMemory } from "./orchestratorMemory";
 import {
   escalationBase,
@@ -148,13 +148,13 @@ function mount(
 ) {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   render(
-    <AgentsContext.Provider
+    <AgentsValueProvider
       value={
         { board, dispatch, reportFailure: vi.fn() } as unknown as AgentsValue
       }
     >
       <OrchestratorBoard snapshot={{ workspaces } as unknown as AppSnapshot} />
-    </AgentsContext.Provider>,
+    </AgentsValueProvider>,
   );
   return dispatch;
 }
@@ -794,7 +794,7 @@ function mountScreen(
 ) {
   const dispatch = vi.fn().mockResolvedValue(undefined);
   const view = (shown: boolean, now: OrchestratorBoardWire) => (
-    <AgentsContext.Provider
+    <AgentsValueProvider
       value={
         {
           board: now,
@@ -808,7 +808,7 @@ function mountScreen(
           snapshot={{ workspaces } as unknown as AppSnapshot}
         />
       ) : null}
-    </AgentsContext.Provider>
+    </AgentsValueProvider>
   );
   const { rerender } = render(view(true, board));
   return {

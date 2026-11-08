@@ -28,7 +28,7 @@ import {
   codexTranscript,
   type ClaudeLine,
 } from "./adapterFixtures";
-import { draw, entry, installResizeObserver } from "./surfaceTestKit";
+import { draw, entry, installResizeObserver, topLevel } from "./surfaceTestKit";
 
 beforeAll(() => {
   installResizeObserver();
@@ -78,9 +78,7 @@ function markOf(id: string): HTMLElement {
 }
 
 function topLevelIds(): (string | null)[] {
-  return [...document.querySelector(".conversation-transcript")!.children].map(
-    (child) => child.getAttribute("data-entry-id"),
-  );
+  return topLevel().map((child) => child.getAttribute("data-entry-id"));
 }
 
 describe("a Claude subagent (Task)", () => {

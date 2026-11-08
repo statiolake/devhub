@@ -257,7 +257,27 @@
   contain-intrinsic-size: auto 120px;
 }
 
-.conversation-entry + .conversation-entry {
+/* In the conversation's own transcript that is done a chunk at a time
+   (`entryChunks.tsx`): the page keeps an observer of its own on everything it
+   may skip and works out where each one is every frame, which for thousands
+   of entries was a fifth of the page's thread while it streamed. The entries
+   of a chunk on view are drawn as they are. */
+.conversation-chunk {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 6000px;
+}
+
+.conversation-chunk > .conversation-entry {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
+/* The top-level entries are in chunks (`entryChunks.tsx`): the first entry of
+   a chunk after another is spaced as the entry after the last drawn one of
+   the chunk before, whose kind is the chunk's `data-after`. A chunk is a
+   plain block, so its first entry's margin is the gap between chunks. */
+.conversation-entry + .conversation-entry,
+.conversation-chunk + .conversation-chunk > .conversation-entry:first-child {
   margin-top: var(--space-3);
 }
 
@@ -265,11 +285,19 @@
    before. What the Agent did in a row — one call after another — stays
    together as a list. */
 .conversation-entry
-  + .conversation-entry:is([data-kind="user"], [data-kind="answer"]) {
+  + .conversation-entry:is([data-kind="user"], [data-kind="answer"]),
+.conversation-chunk
+  + .conversation-chunk
+  > .conversation-entry:first-child:is(
+    [data-kind="user"],
+    [data-kind="answer"]
+  ) {
   margin-top: var(--space-5);
 }
 
-.conversation-entry[data-kind="tool"] + .conversation-entry[data-kind="tool"] {
+.conversation-entry[data-kind="tool"] + .conversation-entry[data-kind="tool"],
+.conversation-chunk[data-after="tool"]
+  > .conversation-entry[data-kind="tool"]:first-child {
   margin-top: 2px;
 }
 
@@ -2118,7 +2146,12 @@
 }
 
 .conversation-entry
-  + .conversation-entry:has(> .conversation-notice[data-level="info"]) {
+  + .conversation-entry:has(> .conversation-notice[data-level="info"]),
+.conversation-chunk
+  + .conversation-chunk
+  > .conversation-entry:first-child:has(
+    > .conversation-notice[data-level="info"]
+  ) {
   margin-top: var(--space-1);
 }
 

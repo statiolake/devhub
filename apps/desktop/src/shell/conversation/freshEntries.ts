@@ -19,44 +19,124 @@
  */
 
 import { useLayoutEffect, useRef, type RefObject } from "react";
+import { isChunk } from "./chunkElements";
 
 /** More new entries than this at once is a load, not output arriving. */
 export const FRESH_LIMIT = 4;
 
+/** The transcript's drawn children that are entries (or "sending" bubbles), by id. */
+function entriesIn(nodes: Iterable<Node>, into: Map<string, HTMLElement>) {
+  for (const node of nodes) {
+    if (isChunk(node)) entriesIn((node as Element).children, into);
+    else if (node instanceof HTMLElement && node.dataset.entryId !== undefined)
+      into.set(node.dataset.entryId, node);
+  }
+}
+
+/**
+ * What arrives is read off the transcript's own mutations — its children and
+ * its chunks' (`chunkElements.ts`) — so a draw costs what it added, not a walk
+ * of every entry: with thousands of entries that walk was a frame's worth of
+ * work in a few dozen draws.
+ */
 export function useFreshEntries(
   content: RefObject<HTMLElement | null>,
   revision: unknown,
 ): void {
-  const known = useRef<Set<string> | undefined>(undefined);
+  const watch = useRef<
+    | {
+        readonly observer: MutationObserver;
+        /** How many entries are drawn; `undefined` until the first draw. */
+        count: number | undefined;
+      }
+    | undefined
+  >(undefined);
   useLayoutEffect(() => {
     const element = content.current;
     if (!element) return;
+    const observer = new MutationObserver(() => undefined);
+    const observe = (target: Node) =>
+      observer.observe(target, { childList: true });
+    const observeChunks = (parent: Element) => {
+      for (const child of parent.children) {
+        if (!isChunk(child)) continue;
+        observe(child);
+        observeChunks(child);
+      }
+    };
+    observe(element);
+    observeChunks(element);
     const present = new Map<string, HTMLElement>();
-    for (const child of element.children) {
-      const id = (child as HTMLElement).dataset.entryId;
-      if (id !== undefined) present.set(id, child as HTMLElement);
+    entriesIn(element.children, present);
+    watch.current = {
+      observer,
+      count: present.size === 0 ? undefined : present.size,
+    };
+    if (present.size > 0) settle(element);
+    return () => {
+      observer.disconnect();
+      watch.current = undefined;
+    };
+  }, [content]);
+  useLayoutEffect(() => {
+    const element = content.current;
+    const state = watch.current;
+    if (!element || !state) return;
+    const records = state.observer.takeRecords();
+    if (records.length === 0) return;
+    const added = new Map<string, HTMLElement>();
+    const removed = new Map<string, HTMLElement>();
+    for (const record of records) {
+      const observe = (node: Node) => {
+        if (!isChunk(node)) return;
+        state.observer.observe(node, { childList: true });
+        for (const child of (node as Element).children) observe(child);
+      };
+      for (const node of record.addedNodes) observe(node);
+      entriesIn(record.addedNodes, added);
+      entriesIn(record.removedNodes, removed);
     }
-    const before = known.current;
+    // An entry drawn again in the same draw (moved, or drawn anew under its
+    // id) is neither new nor gone, nor is one drawn and gone within it.
+    const arrived: HTMLElement[] = [];
+    let delta = 0;
+    for (const [id, node] of added) {
+      if (removed.has(id) || !node.isConnected) continue;
+      arrived.push(node);
+      delta += 1;
+    }
+    for (const id of removed.keys()) if (!added.has(id)) delta -= 1;
+    const before = state.count;
+    const count = (before ?? 0) + delta;
     // Nothing drawn yet, or emptied: whatever comes next is a load.
-    known.current = present.size === 0 ? undefined : new Set(present.keys());
-    if (known.current === undefined) delete element.dataset.settled;
-    else if (element.dataset.settled === undefined) {
-      // Style what is there first, so the mark finds it already drawn and
-      // none of it starts a transition. Once per load.
-      void element.offsetHeight;
-      element.dataset.settled = "";
+    state.count = count <= 0 ? undefined : count;
+    if (state.count === undefined) {
+      delete element.dataset.settled;
+      return;
     }
-    if (before === undefined) return;
-    const arrived = [...present].filter(([id]) => !before.has(id));
+    if (before === undefined) {
+      settle(element);
+      return;
+    }
     if (arrived.length === 0 || arrived.length > FRESH_LIMIT) return;
-    const echoed = [...before].some(
-      (id) => id.startsWith("sending:") && !present.has(id),
+    const echoed = [...removed.keys()].some(
+      (id) => id.startsWith("sending:") && !added.has(id),
     );
-    for (const [, child] of arrived) {
+    for (const child of arrived) {
       if (echoed && child.dataset.kind === "user") continue;
       child.dataset.fresh = "";
     }
   }, [content, revision]);
+}
+
+/**
+ * Mark the transcript drawn, once per load. What is there is styled first, so
+ * the mark finds it already drawn and none of it starts a transition.
+ */
+function settle(element: HTMLElement): void {
+  if (element.dataset.settled !== undefined) return;
+  void element.offsetHeight;
+  element.dataset.settled = "";
 }
 
 /**
