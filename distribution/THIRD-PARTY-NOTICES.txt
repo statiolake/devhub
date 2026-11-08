@@ -21,8 +21,8 @@ Shipped application components
 * React 19.1.1 and React DOM 19.1.1 — MIT; see `licenses/React-MIT.txt`.
 * `@xterm/xterm` 6.0.0, `@xterm/addon-fit` 0.11.0, `@xterm/addon-webgl` 0.19.0
   and `@xterm/addon-clipboard` 0.2.0 — MIT; see `licenses/Xterm-MIT.txt`.
-* libghostty-vt, Ghostty's terminal core compiled to WebAssembly (the build
-  `@gkoreli/ghostty-vt-js` 0.6.0 publishes, `0.1.0-dev`) — MIT; see
+* libghostty-vt 1.0.0, Ghostty's terminal core, compiled to WebAssembly from
+  the `vt-1.0.0` tag (`scripts/build_libghostty_vt.py`) — MIT; see
   `licenses/Ghostty-MIT.txt`.
 * js-base64 3.9.3 — BSD 3-Clause; see `licenses/js-base64-BSD-3-Clause.txt`.
   `@xterm/addon-clipboard` depends on it, and the App Shell bundle carries it.

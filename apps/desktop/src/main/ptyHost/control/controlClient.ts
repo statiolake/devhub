@@ -29,7 +29,14 @@
  * is not on screen.
  */
 
-import type { LibGhosttyVt, VtFrame, VtPane } from "../vt/libghosttyVt.js";
+import type {
+	ControlToPage,
+	PageToControl,
+	PaneBox,
+	PaneModes,
+	WindowInfo,
+} from "../../../ipc/terminalControl.js";
+import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
 import {
 	ControlParser,
 	commandLine,
@@ -41,6 +48,8 @@ import {
 	type TmuxId,
 } from "./tmuxControl.js";
 
+export type { ControlToPage, PageToControl, PaneBox, PaneModes, WindowInfo };
+
 /** The child running `tmux -C attach-session`. */
 export interface ControlProcess {
 	write(text: string): void;
@@ -48,75 +57,6 @@ export interface ControlProcess {
 	onExit(listener: (code?: number) => void): void;
 	kill(): void;
 }
-
-export interface WindowInfo {
-	readonly id: TmuxId;
-	readonly index: number;
-	readonly name: string;
-	readonly active: boolean;
-	/** Its panes' rectangles, as shown (a zoomed pane alone), in cells. */
-	readonly zoomed: boolean;
-}
-
-export interface PaneBox {
-	readonly pane: TmuxId;
-	readonly x: number;
-	readonly y: number;
-	readonly width: number;
-	readonly height: number;
-	readonly active: boolean;
-}
-
-/** The modes of a pane the page encodes input by. */
-export interface PaneModes {
-	/** 0 off, else the tracking mode: 9, 1000, 1002 or 1003. */
-	readonly mouse: number;
-	readonly sgrMouse: boolean;
-	readonly bracketedPaste: boolean;
-	readonly focusEvents: boolean;
-	readonly alternateScreen: boolean;
-}
-
-export type ControlToPage =
-	| {
-			readonly kind: "layout";
-			readonly cols: number;
-			readonly rows: number;
-			readonly session: string;
-			readonly windows: readonly WindowInfo[];
-			/** The shown window, and its panes as shown. */
-			readonly window: TmuxId | undefined;
-			readonly panes: readonly PaneBox[];
-	  }
-	| {
-			readonly kind: "pane";
-			readonly seq: number;
-			readonly pane: TmuxId;
-			readonly frame: VtFrame;
-			readonly modes: PaneModes;
-	  }
-	| { readonly kind: "ended"; readonly reason: string };
-
-export type PageToControl =
-	/** tmux key names, through the client's key tables (prefix, bindings). */
-	| { readonly kind: "keys"; readonly keys: readonly string[] }
-	/** Bytes straight to a pane (text, a paste, a mouse report); the active pane if none. */
-	| {
-			readonly kind: "bytes";
-			readonly pane?: TmuxId;
-			readonly bytes: Uint8Array;
-	  }
-	| { readonly kind: "resize"; readonly cols: number; readonly rows: number }
-	| { readonly kind: "select-pane"; readonly pane: TmuxId }
-	| { readonly kind: "select-window"; readonly window: TmuxId }
-	| { readonly kind: "visible"; readonly visible: boolean }
-	| { readonly kind: "ack"; readonly seq: number }
-	| {
-			readonly kind: "colors";
-			readonly foreground: number;
-			readonly background: number;
-			readonly palette?: readonly number[];
-	  };
 
 export interface ControlClientOptions {
 	readonly process: ControlProcess;

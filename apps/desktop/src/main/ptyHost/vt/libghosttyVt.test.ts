@@ -25,7 +25,7 @@ function pane(cols = 20, rows = 4): VtPane {
 
 describe("libghostty-vt binding", () => {
 	it("loads the vendored build and says which it is", () => {
-		expect(lib.version).toBe("0.1.0-dev");
+		expect(lib.version).toBe("1.0.0");
 	});
 
 	it("reads every row on the first read, then only what changed", () => {
@@ -121,5 +121,23 @@ describe("libghostty-vt binding", () => {
 		expect(p.scrollbackRows).toBeGreaterThanOrEqual(750);
 		expect(p.scrollbackRows).toBeLessThanOrEqual(1100);
 		p.dispose();
+	});
+});
+
+describe("the committed module", () => {
+	it("is the build BUILD.json records", async () => {
+		const { createHash } = await import("node:crypto");
+		const record = JSON.parse(
+			readFileSync(
+				new URL("../../../../vendor/libghostty-vt/BUILD.json", import.meta.url),
+				"utf8",
+			),
+		) as { tag: string; sha256: string; bytes: number };
+		const bytes = readFileSync(WASM);
+		expect(record.tag).toBe("vt-1.0.0");
+		expect(bytes.length).toBe(record.bytes);
+		expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+			record.sha256,
+		);
 	});
 });

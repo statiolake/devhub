@@ -1,0 +1,14 @@
+{
+  "tag": "vt-1.0.0",
+  "commit": "0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec",
+  "zig": "0.17.0",
+  "ziglang_pypi": "0.17.0.post0",
+  "flags": [
+    "-Demit-lib-vt",
+    "-Dtarget=wasm32-freestanding",
+    "-Doptimize=ReleaseFast",
+    "-Dstrip=true"
+  ],
+  "bytes": 1293332,
+  "sha256": "50318201b1c5652895010880aae740d4082dc722984834b96afd8038def508e9"
+}

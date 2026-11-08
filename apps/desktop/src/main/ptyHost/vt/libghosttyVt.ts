@@ -1,7 +1,8 @@
 /**
- * DevHub's binding of libghostty-vt, Ghostty's terminal core compiled to
- * wasm32 (`apps/desktop/vendor/libghostty-vt/`): one engine per tmux pane in
- * the control-mode terminal (`docs/terminal-mode.md`).
+ * DevHub's binding of libghostty-vt 1.0, Ghostty's terminal core compiled to
+ * wasm32 (`apps/desktop/vendor/libghostty-vt/`, built by
+ * `scripts/build_libghostty_vt.py`): one engine per tmux pane in the
+ * control-mode terminal (`docs/terminal-mode.md`).
  *
  * The engine is fed a pane's `%output` and read for the painter: each dirty
  * row's cells — the text, a style DevHub interns into an id, the width — and
@@ -10,35 +11,39 @@
  * at load and reused by every call, and the memory's views are taken again
  * whenever it has grown (growing detaches the old ones).
  *
- * **What is checked at load.** The build's version and the layouts of the
+ * **What is checked at load.** The library's version and the layouts of the
  * structs read here come from the module itself (`ghostty_build_info`,
  * `ghostty_type_json`); a version this binding was not written for, or a
  * layout that moved, is a refusal (`VtLoadError`), not wrong colours. The
- * option and data numbers below are that build's — `0.1.0-dev`, from before
- * the 1.0 tag — and are the one thing to change for the release build.
+ * numbers below are `include/ghostty/vt/*.h` at the `vt-1.0.0` tag.
  */
 
-/** The build this binding was written against. */
-export const SUPPORTED_VERSIONS: readonly string[] = ["0.1.0-dev"];
+import type {
+	VtCursor,
+	VtFrame,
+	VtRow,
+	VtStyle,
+} from "../../../ipc/terminalControl.js";
+
+export type { VtCursor, VtFrame, VtRow, VtStyle };
+
+/** The library versions this binding was written against. */
+export const SUPPORTED_VERSIONS: readonly string[] = ["1.0.0"];
 
 const enum TerminalOption {
-	ColorForeground = 11,
-	ColorBackground = 12,
-	ColorCursor = 13,
-	ColorPalette = 14,
-	ScrollbackMaxBytes = 27,
-	ScrollbackMaxLines = 28,
-	Mode = 34,
+	ColorForeground = 12,
+	ColorBackground = 13,
+	ColorCursor = 14,
+	ColorPalette = 15,
+	ScrollbackMaxBytes = 28,
+	ScrollbackMaxLines = 29,
+	Mode = 35,
 }
 
 const enum TerminalData {
-	Cols = 1,
-	Rows = 2,
 	CursorX = 3,
 	CursorY = 4,
 	ActiveScreen = 6,
-	CursorVisible = 7,
-	Title = 12,
 	ScrollbackRows = 15,
 	Mode = 37,
 }
@@ -55,14 +60,12 @@ const enum RenderData {
 }
 
 const enum RowData {
-	Dirty = 1,
 	Cells = 3,
 }
 
 const enum RowCellsData {
 	Raw = 1,
 	Style = 2,
-	GraphemesLen = 3,
 	GraphemesBuf = 4,
 	Bg = 5,
 	Fg = 6,
@@ -70,74 +73,26 @@ const enum RowCellsData {
 }
 
 const enum CellData {
-	Codepoint = 1,
 	Wide = 3,
 }
 
 const enum BuildInfo {
-	Version = 5,
+	VersionString = 5,
 }
 
 /** `GhosttyRenderStateDirty`. */
 const enum Dirty {
-	None = 0,
+	False = 0,
 	Full = 2,
 }
 
 /** `GhosttyCellWide`. */
 const enum Wide {
-	Wide = 1,
 	SpacerTail = 2,
 	SpacerHead = 3,
 }
 
 const SUCCESS = 0;
-
-/** A cell's look, apart from its text. Colours are 24-bit RGB; absent is the default. */
-export interface VtStyle {
-	readonly fg?: number;
-	readonly bg?: number;
-	readonly bold?: boolean;
-	readonly italic?: boolean;
-	readonly faint?: boolean;
-	readonly blink?: boolean;
-	readonly inverse?: boolean;
-	readonly invisible?: boolean;
-	readonly strikethrough?: boolean;
-	readonly overline?: boolean;
-	/** `GhosttySgrUnderline`: 1 single, 2 double, 3 curly, 4 dotted, 5 dashed. */
-	readonly underline?: number;
-}
-
-/** One row as the painter takes it. */
-export interface VtRow {
-	readonly y: number;
-	/** Each cell's text: `""` for the right half of a wide character. */
-	readonly cells: string[];
-	/** Each cell's style id (`VtFrame.styles`); 0 is the default look. */
-	readonly styles: Uint32Array;
-}
-
-export interface VtCursor {
-	readonly x: number;
-	readonly y: number;
-	readonly visible: boolean;
-	readonly blinking: boolean;
-	/** `GhosttyCursorVisualStyle`: 0 bar, 1 block, 2 underline, 3 hollow block. */
-	readonly shape: number;
-}
-
-/** What changed since the last read. */
-export interface VtFrame {
-	readonly cols: number;
-	readonly rows: number;
-	/** Every row is in `rows`: the screen was cleared, resized or switched. */
-	readonly full: boolean;
-	readonly dirty: readonly VtRow[];
-	readonly cursor: VtCursor | undefined;
-	/** Styles first used in this frame, by id. */
-	readonly styles: readonly (readonly [number, VtStyle])[];
-}
 
 export class VtLoadError extends Error {}
 
@@ -147,7 +102,7 @@ interface FieldLayout {
 }
 interface StructLayout {
 	readonly size: number;
-	readonly fields: Readonly<Record<string, FieldLayout>>;
+	readonly fields: Readonly<Record<string, FieldLayout | undefined>>;
 }
 
 type Fn = (...args: (number | bigint)[]) => number;
@@ -155,19 +110,15 @@ type Exports = Readonly<Record<string, Fn>> & {
 	readonly memory: WebAssembly.Memory;
 };
 
-/** The style fields read, at the offsets this binding assumes they are. */
-const STYLE_FIELDS: Readonly<Record<string, number>> = {
-	bold: 56,
-	italic: 57,
-	faint: 58,
-	blink: 59,
-	inverse: 60,
-	invisible: 61,
-	strikethrough: 62,
-	overline: 63,
-	underline: 64,
+/** The struct fields read, where this binding reads them. */
+const LAYOUTS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+	GhosttyStyle: { flags: 12 },
+	GhosttyTerminalModeConfig: { mode: 0, value: 2 },
+	GhosttyCodepointBuffer: { ptr: 0, cap: 4, len: 8 },
 };
-const STYLE_SIZE = 72;
+const STYLE_SIZE = 16;
+/** `GhosttyStyleFlags`: bits 0–7 are the attributes, then the underline style. */
+const UNDERLINE_SHIFT = 8;
 
 /** Scratch block layout (offsets into one allocation). */
 const S = {
@@ -179,11 +130,10 @@ const S = {
 	bg: 36,
 	flag: 40,
 	modeConfig: 44,
-	keys: 64,
-	values: 96,
-	written: 128,
+	y: 48,
+	codepoints: 64,
 	style: 192,
-	graphemes: 512,
+	graphemes: 256,
 	size: 1024,
 } as const;
 const GRAPHEME_CAP = (S.size - S.graphemes) / 4;
@@ -201,28 +151,23 @@ export class LibGhosttyVt {
 		this.version = version;
 		this.#u8 = new Uint8Array(ex.memory.buffer);
 		this.#dv = new DataView(ex.memory.buffer);
-		this.#scratch = ex.ghostty_wasm_alloc_u8_array(S.size);
+		this.#scratch = ex.ghostty_wasm_alloc(S.size);
+		// The grapheme buffer's pointer and capacity never change.
+		this.views().dv.setUint32(
+			this.#scratch + S.codepoints,
+			this.#scratch + S.graphemes,
+			true,
+		);
+		this.views().dv.setUint32(
+			this.#scratch + S.codepoints + 4,
+			GRAPHEME_CAP,
+			true,
+		);
 	}
 
 	static async load(bytes: BufferSource): Promise<LibGhosttyVt> {
-		// The module logs through its import before `load` has its exports.
-		const loaded: { memory?: WebAssembly.Memory } = {};
-		const instance = await WebAssembly.instantiate(bytes, {
-			env: {
-				log: (pointer: number, length: number) => {
-					const memory = loaded.memory;
-					if (memory === undefined) return;
-					console.error(
-						"[devhub] libghostty-vt:",
-						new TextDecoder().decode(
-							new Uint8Array(memory.buffer, pointer, length),
-						),
-					);
-				},
-			},
-		});
-		const ex = instance.instance.exports as unknown as Exports;
-		loaded.memory = ex.memory;
+		const { instance } = await WebAssembly.instantiate(bytes, {});
+		const ex = instance.exports as unknown as Exports;
 		for (const name of REQUIRED_EXPORTS) {
 			if (typeof ex[name] !== "function") {
 				throw new VtLoadError(`libghostty-vt has no ${name}`);
@@ -231,7 +176,7 @@ export class LibGhosttyVt {
 		const version = readVersion(ex);
 		if (!SUPPORTED_VERSIONS.includes(version)) {
 			throw new VtLoadError(
-				`libghostty-vt ${version} is not a build this binding knows (${SUPPORTED_VERSIONS.join(", ")})`,
+				`libghostty-vt ${version} is not a version this binding knows (${SUPPORTED_VERSIONS.join(", ")})`,
 			);
 		}
 		checkLayouts(ex);
@@ -271,8 +216,9 @@ export class LibGhosttyVt {
 	handle(fn: (out: number) => number, what: string): number {
 		const out = this.#scratch + S.out;
 		const result = fn(out);
-		if (result !== SUCCESS)
+		if (result !== SUCCESS) {
 			throw new Error(`${what} failed (${String(result)})`);
+		}
 		return this.views().dv.getUint32(out, true);
 	}
 }
@@ -280,8 +226,8 @@ export class LibGhosttyVt {
 const REQUIRED_EXPORTS = [
 	"ghostty_build_info",
 	"ghostty_type_json",
-	"ghostty_wasm_alloc_u8_array",
-	"ghostty_wasm_free_u8_array",
+	"ghostty_wasm_alloc",
+	"ghostty_wasm_free",
 	"ghostty_terminal_new",
 	"ghostty_terminal_free",
 	"ghostty_terminal_set",
@@ -293,12 +239,12 @@ const REQUIRED_EXPORTS = [
 	"ghostty_render_state_free",
 	"ghostty_render_state_update",
 	"ghostty_render_state_get",
-	"ghostty_render_state_set",
+	"ghostty_render_state_clean",
 	"ghostty_render_state_row_iterator_new",
 	"ghostty_render_state_row_iterator_free",
 	"ghostty_render_state_row_iterator_next",
+	"ghostty_render_state_row_iterator_next_dirty",
 	"ghostty_render_state_row_get",
-	"ghostty_render_state_row_set",
 	"ghostty_render_state_row_cells_new",
 	"ghostty_render_state_row_cells_free",
 	"ghostty_render_state_row_cells_next",
@@ -307,10 +253,11 @@ const REQUIRED_EXPORTS = [
 ] as const;
 
 function readVersion(ex: Exports): string {
-	const out = ex.ghostty_wasm_alloc_u8_array(16);
+	const out = ex.ghostty_wasm_alloc(16);
 	try {
-		if (ex.ghostty_build_info(BuildInfo.Version, out) !== SUCCESS)
+		if (ex.ghostty_build_info(BuildInfo.VersionString, out) !== SUCCESS) {
 			return "unknown";
+		}
 		const dv = new DataView(ex.memory.buffer);
 		const pointer = dv.getUint32(out, true);
 		const length = dv.getUint32(out + 4, true);
@@ -318,7 +265,7 @@ function readVersion(ex: Exports): string {
 			new Uint8Array(ex.memory.buffer, pointer, length),
 		);
 	} finally {
-		ex.ghostty_wasm_free_u8_array(out, 16);
+		ex.ghostty_wasm_free(out, 16);
 	}
 }
 
@@ -327,20 +274,20 @@ function checkLayouts(ex: Exports): void {
 	const bytes = new Uint8Array(ex.memory.buffer);
 	let end = pointer;
 	while (bytes[end] !== 0) end++;
-	const layouts = JSON.parse(
+	const json = JSON.parse(
 		new TextDecoder().decode(bytes.subarray(pointer, end)),
-	) as Record<string, StructLayout | undefined>;
-	const style = layouts.GhosttyStyle;
-	if (style?.size !== STYLE_SIZE)
-		throw new VtLoadError("GhosttyStyle's size moved");
-	for (const [name, offset] of Object.entries(STYLE_FIELDS)) {
-		if (style.fields[name]?.offset !== offset) {
-			throw new VtLoadError(`GhosttyStyle.${name} moved`);
+	) as { types?: Record<string, StructLayout | undefined> };
+	for (const [name, fields] of Object.entries(LAYOUTS)) {
+		const layout = json.types?.[name];
+		if (layout === undefined) throw new VtLoadError(`${name} is not described`);
+		if (name === "GhosttyStyle" && layout.size !== STYLE_SIZE) {
+			throw new VtLoadError("GhosttyStyle's size moved");
 		}
-	}
-	const mode = layouts.GhosttyTerminalModeConfig;
-	if (mode?.fields.mode?.offset !== 0 || mode.fields.value?.offset !== 2) {
-		throw new VtLoadError("GhosttyTerminalModeConfig moved");
+		for (const [field, offset] of Object.entries(fields)) {
+			if (layout.fields[field]?.offset !== offset) {
+				throw new VtLoadError(`${name}.${field} moved`);
+			}
+		}
 	}
 }
 
@@ -353,7 +300,7 @@ const GRAPHEME_CLUSTERING = 2027;
 
 /**
  * One pane's engine. Mode 2027 (grapheme clustering) is on and kept on, since
- * that is how tmux lays text out whatever the program asks (`ensureClustering`).
+ * that is how tmux lays text out whatever the program asks (`write`).
  */
 export class VtPane {
 	readonly #lib: LibGhosttyVt;
@@ -419,10 +366,9 @@ export class VtPane {
 		if (this.#disposed || bytes.length === 0) return;
 		const ex = this.#lib.ex;
 		if (bytes.length > this.#inputCap) {
-			if (this.#input !== 0)
-				ex.ghostty_wasm_free_u8_array(this.#input, this.#inputCap);
+			if (this.#input !== 0) ex.ghostty_wasm_free(this.#input, this.#inputCap);
 			this.#inputCap = Math.max(bytes.length, 16384);
-			this.#input = ex.ghostty_wasm_alloc_u8_array(this.#inputCap);
+			this.#input = ex.ghostty_wasm_alloc(this.#inputCap);
 		}
 		this.#lib.views().u8.set(bytes, this.#input);
 		// What follows a reset is laid out with clustering on again, so the chunk
@@ -468,8 +414,9 @@ export class VtPane {
 				TerminalData.Mode,
 				s + S.modeConfig,
 			) !== SUCCESS
-		)
+		) {
 			return false;
+		}
 		return this.#lib.views().u8[s + S.modeConfig + 2] !== 0;
 	}
 
@@ -510,7 +457,7 @@ export class VtPane {
 		if (colors.cursor !== undefined)
 			rgb(TerminalOption.ColorCursor, colors.cursor);
 		if (colors.palette !== undefined && colors.palette.length === 256) {
-			const pointer = ex.ghostty_wasm_alloc_u8_array(768);
+			const pointer = ex.ghostty_wasm_alloc(768);
 			const { u8 } = this.#lib.views();
 			colors.palette.forEach((value, i) => {
 				u8[pointer + i * 3] = (value >> 16) & 0xff;
@@ -518,7 +465,7 @@ export class VtPane {
 				u8[pointer + i * 3 + 2] = value & 0xff;
 			});
 			ex.ghostty_terminal_set(this.#term, TerminalOption.ColorPalette, pointer);
-			ex.ghostty_wasm_free_u8_array(pointer, 768);
+			ex.ghostty_wasm_free(pointer, 768);
 		}
 	}
 
@@ -531,39 +478,36 @@ export class VtPane {
 		const { ex, s } = lib;
 		ex.ghostty_render_state_update(this.#render, this.#term);
 		ex.ghostty_render_state_get(this.#render, RenderData.Dirty, s + S.u32);
-		let { u8, dv } = lib.views();
-		const dirtyKind = dv.getUint32(s + S.u32, true);
+		const dirtyKind = lib.views().dv.getUint32(s + S.u32, true);
 		const full = all || dirtyKind === Dirty.Full;
 		const rows: VtRow[] = [];
-		if (full || dirtyKind !== Dirty.None) {
-			dv.setUint32(s + S.out, this.#rowIter, true);
+		if (full || dirtyKind !== Dirty.False) {
+			lib.views().dv.setUint32(s + S.out, this.#rowIter, true);
 			ex.ghostty_render_state_get(
 				this.#render,
 				RenderData.RowIterator,
 				s + S.out,
 			);
-			let y = 0;
-			while (
-				ex.ghostty_render_state_row_iterator_next(this.#rowIter) !== 0 &&
-				y < this.#rows
-			) {
-				({ u8, dv } = lib.views());
-				u8[s + S.flag] = 0;
-				ex.ghostty_render_state_row_get(
-					this.#rowIter,
-					RowData.Dirty,
-					s + S.flag,
-				);
-				if (full || lib.views().u8[s + S.flag] !== 0) {
-					rows.push(this.#readRow(y));
-					lib.views().u8[s + S.flag] = 0;
-					ex.ghostty_render_state_row_set(this.#rowIter, 0, s + S.flag);
+			if (all) {
+				let y = 0;
+				while (
+					ex.ghostty_render_state_row_iterator_next(this.#rowIter) !== 0 &&
+					y < this.#rows
+				) {
+					rows.push(this.#readRow(y++));
 				}
-				y++;
+			} else {
+				while (
+					ex.ghostty_render_state_row_iterator_next_dirty(
+						this.#rowIter,
+						s + S.y,
+					) !== 0
+				) {
+					const y = lib.views().dv.getUint16(s + S.y, true);
+					if (y < this.#rows) rows.push(this.#readRow(y));
+				}
 			}
-			({ dv } = lib.views());
-			dv.setUint32(s + S.u32, Dirty.None, true);
-			ex.ghostty_render_state_set(this.#render, 0, s + S.u32);
+			ex.ghostty_render_state_clean(this.#render);
 		}
 		const styles = this.#newStyles;
 		this.#newStyles = [];
@@ -585,8 +529,7 @@ export class VtPane {
 		ex.ghostty_render_state_row_iterator_free(this.#rowIter);
 		ex.ghostty_render_state_free(this.#render);
 		ex.ghostty_terminal_free(this.#term);
-		if (this.#input !== 0)
-			ex.ghostty_wasm_free_u8_array(this.#input, this.#inputCap);
+		if (this.#input !== 0) ex.ghostty_wasm_free(this.#input, this.#inputCap);
 	}
 
 	#readRow(y: number): VtRow {
@@ -595,8 +538,7 @@ export class VtPane {
 		const cols = this.#cols;
 		const cells = new Array<string>(cols).fill(" ");
 		const styles = new Uint32Array(cols);
-		let { dv } = lib.views();
-		dv.setUint32(s + S.out, this.#rowCells, true);
+		lib.views().dv.setUint32(s + S.out, this.#rowCells, true);
 		ex.ghostty_render_state_row_get(this.#rowIter, RowData.Cells, s + S.out);
 		let x = 0;
 		while (
@@ -608,47 +550,38 @@ export class VtPane {
 				RowCellsData.Raw,
 				s + S.raw,
 			);
-			({ dv } = lib.views());
-			const raw = dv.getBigUint64(s + S.raw, true);
+			const raw = lib.views().dv.getBigUint64(s + S.raw, true);
 			ex.ghostty_cell_get(raw, CellData.Wide, s + S.u32b);
-			({ dv } = lib.views());
-			const wide = dv.getUint32(s + S.u32b, true);
-			if (wide === Wide.SpacerTail || wide === Wide.SpacerHead) {
-				cells[x] = wide === Wide.SpacerTail ? "" : " ";
-			} else {
-				cells[x] = this.#readText(raw);
-			}
+			const wide = lib.views().dv.getUint32(s + S.u32b, true);
+			if (wide === Wide.SpacerTail) cells[x] = "";
+			else if (wide !== Wide.SpacerHead) cells[x] = this.#readText();
 			styles[x] = this.#readStyle();
 			x++;
 		}
 		return { y, cells, styles };
 	}
 
-	#readText(raw: bigint): string {
+	/** The cell's text, whole: one codepoint or a grapheme cluster. */
+	#readText(): string {
 		const lib = this.#lib;
 		const { ex, s } = lib;
-		lib.views().dv.setUint32(s + S.u32, 0, true);
 		ex.ghostty_render_state_row_cells_get(
 			this.#rowCells,
-			RowCellsData.GraphemesLen,
-			s + S.u32,
+			RowCellsData.GraphemesBuf,
+			s + S.codepoints,
 		);
-		const length = lib.views().dv.getUint32(s + S.u32, true);
-		if (length > 1 && length <= GRAPHEME_CAP) {
-			ex.ghostty_render_state_row_cells_get(
-				this.#rowCells,
-				RowCellsData.GraphemesBuf,
-				s + S.graphemes,
-			);
-			const { dv } = lib.views();
-			const points: number[] = [];
-			for (let i = 0; i < length; i++)
-				points.push(dv.getUint32(s + S.graphemes + i * 4, true));
-			return String.fromCodePoint(...points);
-		}
-		ex.ghostty_cell_get(raw, CellData.Codepoint, s + S.u32);
-		const codepoint = lib.views().dv.getUint32(s + S.u32, true);
-		return codepoint === 0 ? " " : String.fromCodePoint(codepoint);
+		const { dv } = lib.views();
+		const length = Math.min(
+			dv.getUint32(s + S.codepoints + 8, true),
+			GRAPHEME_CAP,
+		);
+		if (length === 0) return " ";
+		if (length === 1)
+			return String.fromCodePoint(dv.getUint32(s + S.graphemes, true));
+		const points: number[] = [];
+		for (let i = 0; i < length; i++)
+			points.push(dv.getUint32(s + S.graphemes + i * 4, true));
+		return String.fromCodePoint(...points);
 	}
 
 	#readStyle(): number {
@@ -672,33 +605,26 @@ export class VtPane {
 			RowCellsData.HasStyling,
 			s + S.flag,
 		);
-		let { u8, dv } = lib.views();
-		const styled = u8[s + S.flag] !== 0;
+		const styled = lib.views().u8[s + S.flag] !== 0;
 		if (!fgOk && !bgOk && !styled) return 0;
 		let flags = 0;
-		let underline = 0;
 		if (styled) {
-			u8.fill(0, s + S.style, s + S.style + STYLE_SIZE);
-			dv.setUint32(s + S.style, STYLE_SIZE, true);
 			ex.ghostty_render_state_row_cells_get(
 				this.#rowCells,
 				RowCellsData.Style,
 				s + S.style,
 			);
-			({ u8, dv } = lib.views());
-			const at = s + S.style;
-			for (let bit = 0; bit < 8; bit++)
-				if (u8[at + 56 + bit] !== 0) flags |= 1 << bit;
-			underline = dv.getInt32(at + STYLE_FIELDS.underline, true);
+			flags = lib.views().dv.getUint16(s + S.style + 12, true);
 		}
+		const { u8 } = lib.views();
 		const fg = fgOk ? rgbAt(u8, s + S.fg) : -1;
 		const bg = bgOk ? rgbAt(u8, s + S.bg) : -1;
-		const key = `${String(fg)},${String(bg)},${String(flags)},${String(underline)}`;
+		const key = `${String(fg)},${String(bg)},${String(flags)}`;
 		let id = this.#styleIds.get(key);
 		if (id === undefined) {
 			id = this.#styleIds.size + 1;
 			this.#styleIds.set(key, id);
-			this.#newStyles.push([id, styleOf(fg, bg, flags, underline)]);
+			this.#newStyles.push([id, styleOf(fg, bg, flags)]);
 		}
 		return id;
 	}
@@ -768,8 +694,9 @@ function* resetEnds(bytes: Uint8Array): Generator<number> {
 			yield i + 2;
 			continue;
 		}
-		if (decrst.every((byte, k) => bytes[i + 1 + k] === byte))
+		if (decrst.every((byte, k) => bytes[i + 1 + k] === byte)) {
 			yield i + 1 + decrst.length;
+		}
 	}
 }
 
@@ -777,12 +704,7 @@ function rgbAt(u8: Uint8Array, at: number): number {
 	return (u8[at] << 16) | (u8[at + 1] << 8) | u8[at + 2];
 }
 
-function styleOf(
-	fg: number,
-	bg: number,
-	flags: number,
-	underline: number,
-): VtStyle {
+function styleOf(fg: number, bg: number, flags: number): VtStyle {
 	const style: { -readonly [K in keyof VtStyle]: VtStyle[K] } = {};
 	if (fg >= 0) style.fg = fg;
 	if (bg >= 0) style.bg = bg;
@@ -794,6 +716,7 @@ function styleOf(
 	if (flags & 32) style.invisible = true;
 	if (flags & 64) style.strikethrough = true;
 	if (flags & 128) style.overline = true;
+	const underline = (flags >> UNDERLINE_SHIFT) & 0x7;
 	if (underline > 0) style.underline = underline;
 	return style;
 }

@@ -246,24 +246,31 @@ client), the tmux server at 7.4% CPU against 19.1%, and key-to-echo p99 of
 
 ### The engine: libghostty-vt
 
-The per-pane engine is **libghostty-vt** (Ghostty's terminal core, MIT,
-compiled to wasm32), not headless xterm.js. Both were measured on the same
-inputs, under Electron 43's V8 (`ELECTRON_RUN_AS_NODE`), 200×50 panes, on a
-shared 4-core Linux machine (absolute numbers are noisy; the ratios held
-across runs). The painter's input is the same for both: per cell a
-codepoint, a width, a resolved foreground and background and the style
-flags — what `paintRow` needs.
+The per-pane engine is **libghostty-vt** 1.0.0 (Ghostty's terminal core,
+MIT, compiled to wasm32), not headless xterm.js. Both were measured on the
+same inputs, under Electron 43's V8 (`ELECTRON_RUN_AS_NODE`), 200×50 panes,
+on a 4-core Linux machine at load ~1. Each engine produces what the painter
+takes — per dirty row, each cell's text (a grapheme whole, `""` for a wide
+character's right half) and an interned style id, and the cursor — so the
+read cost is DevHub's real one, not a library's best case.
 
-| | xterm.js 6.0.0 headless | libghostty-vt (wasm, ReleaseSmall) |
+| | xterm.js 6.0.0 headless | libghostty-vt 1.0.0 (ReleaseFast, `simd128`) |
 | --- | --- | --- |
-| parse, colored `ls -lR` log | 53 MB/s | 43 MB/s |
-| parse, full-screen truecolor TUI redraws | 83 MB/s | 26 MB/s |
-| parse, CJK / emoji / combining text | 42 MB/s | 24 MB/s |
-| read a whole 200×50 viewport for the painter | 0.14 ms | 1.2 ms |
-| one echoed key: write + read its dirty row | 2.5 µs p50 / 23 µs p99 | 15 µs p50 / 74 µs p99 |
-| memory per pane, 10 000 lines of scrollback | 31.5 MiB RSS | 17 MiB RSS (31 MiB of wasm memory reserved) |
-| start-up | 11 ms to load the module | 4.5 ms to compile and instantiate |
-| **cell widths that agree with tmux 3.7c** (20 graphemes: CJK, emoji with skin tones, ZWJ families, flags, VS16, combining marks, ZWSP) | **14–16 of 20** in every mode (default, `unicode11`, `unicode-graphemes`) | **20 of 20** (mode 2027 on), 14 legacy |
+| parse, colored `ls -lR` log (13.6 MB) | 68 MB/s | 45 MB/s |
+| parse, full-screen truecolor TUI redraws (16 MB) | 92 MB/s | 53 MB/s |
+| parse, CJK / emoji / combining text (8 MB) | 48 MB/s | 34 MB/s |
+| the same three with a frame read every 256 KiB | 59 / 60 / 47 MB/s | 39 / 27 / 26 MB/s |
+| read a whole 200×50 viewport for the painter | 1.15 ms p50, 2.4 p99 | 2.8 ms p50, 7.0 p99 |
+| one echoed key: write + read its dirty row | 9.5 µs p50, 95 µs p99 | 27 µs p50, 140 µs p99 |
+| memory per pane, 10 000 lines of scrollback | 30.6 MiB RSS | 16.0 MiB RSS |
+| start-up | 11 ms to load the module | 7.5 ms to compile, instantiate and check it |
+| **cell widths that agree with tmux 3.7c** (20 graphemes: CJK, emoji with skin tones, ZWJ families, flags, VS16, combining marks, ZWSP) | **14–16 of 20** in every mode (default, `unicode11`, `unicode-graphemes`) | **20 of 20** |
+
+A first round ran on the only wasm reachable then (npm's
+`@gkoreli/ghostty-vt-js` 0.6.0: a pre-1.0 snapshot, ReleaseSmall): the
+official ReleaseFast build parses the TUI stream twice as fast (26 → 53
+MB/s) and the CJK text 1.4 times as fast, and the width agreement and the
+memory are the same.
 
 Why libghostty-vt, in the order that decided it:
 
@@ -291,12 +298,14 @@ Why libghostty-vt, in the order that decided it:
    field.
 3. **Half the memory per pane.** It matters with many panes and long
    scrollback.
-4. **Speed is enough, and it is the build's.** This wasm is size-optimised
-   with SIMD off; even so a full viewport costs 1.2 ms (a 60 Hz frame has
-   16.7), an echo 15 µs against milliseconds of tmux round trip, and parsing
-   runs off the page (phase 2 runs the engines beside the control client,
-   not in the renderer). A ReleaseFast build is measured again when it is
-   built from the release (below).
+4. **Speed is enough.** xterm.js parses 1.3–1.7 times faster and reads a
+   viewport in less time, and that is what libghostty-vt costs. It stays
+   within budget: a full viewport is 2.8 ms of a 60 Hz frame's 16.7, an echo
+   27 µs against milliseconds of tmux round trip, and parsing runs off the
+   page (phase 2 runs the engines beside the control client, not in the
+   renderer). A pane's output in control mode is the program's own bytes,
+   not tmux repainting a whole client, so the rates above are far beyond
+   what a pane produces outside a `cat` of a large file.
 
 What it costs: DevHub owns a small binding over a C ABI (pointers, a wasm
 memory that grows and never shrinks — a closed pane's memory is reused by
@@ -315,19 +324,27 @@ copy mode searches the pane's text itself).
 
 ### Where the wasm comes from
 
-The plan is the release's own build, `vt-1.0.0` built with the Zig its
-`build.zig.zon` names (`pip install ziglang==<that version>`), ReleaseFast.
-That build needs the Ghostty sources (github.com/ghostty-org/ghostty) and
-its pinned dependencies, which Ghostty serves only from
-`deps.files.ghostty.org` (`uucode` is not optional). Neither was reachable
-from the machine this was done on (`release.files.ghostty.org` and
-`ziglang.org` were blocked too). Until it is, DevHub uses the wasm that
-`@gkoreli/ghostty-vt-js@0.6.0` publishes on npm: an unpatched build of the
-libghostty-vt C ABI (200 exports, `env.log` its only import, MIT), which
-reports itself as `0.1.0-dev`, ReleaseSmall, no SIMD — a snapshot from
-before the 1.0 tag, so its option numbers are not 1.0's. Its sha256 is
-`7cf0d42c8737137cb49293326e1d69b90de44b3800b9c52f6ba33e252fe171d7`. Moving
-to the release build changes the binding's constants and nothing above it.
+`scripts/build_libghostty_vt.py` builds it from Ghostty's `vt-1.0.0` tag
+(commit `0fa3d577`, checked after the shallow clone) with the Zig the tag's
+`build.zig.zon` requires (0.17.0, from PyPI's `ziglang`): `-Demit-lib-vt
+-Dtarget=wasm32-freestanding -Doptimize=ReleaseFast -Dstrip=true`. The
+wasm target's default CPU enables `simd128` (`src/build/Config.zig`;
+`ghostty_build_info`'s SIMD flag is false because it describes Ghostty's
+C++ SIMD dependencies, which do not build for wasm). Dependencies are
+downloaded by the script, hashed by `zig fetch` and compared with the hash
+Ghostty's manifests name, unpacked by that hash and given to `zig build
+--system` with an empty cache, the offline route PACKAGING-LIBGHOSTTY.md
+documents; Zig's own fetcher is not used, since it could not speak through
+the proxy of the machine this was built on. The result is 1.26 MB.
+
+The module is committed (`apps/desktop/vendor/libghostty-vt/`, with
+`BUILD.json`: tag, commit, Zig, flags, sha256, which a test checks), not
+downloaded at build time the way tmux and bash are fetched onto SSH hosts
+(`product-overrides.json`): those are per-platform binaries a DevHub
+installs on another machine at run time; this is one file, the same
+everywhere, that every build needs, small enough to keep in the tree, and
+reproduced byte for byte by the script. `build:native` copies it into
+`out/vt/`, which the packaged app carries.
 
 ### The font, once
 
