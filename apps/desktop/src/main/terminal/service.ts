@@ -88,6 +88,15 @@ function ok<T>(value: T): TerminalResult<T> {
  */
 function refuse<T>(failure: unknown): TerminalResult<T> {
 	if (failure instanceof TerminalFailure) {
+		// The wire carries the code and summary only; why is said here.
+		if (failure.cause !== undefined) {
+			console.error(
+				`[devhub] terminal ${failure.code}:`,
+				failure.cause instanceof Error
+					? (failure.cause.stack ?? failure.cause.message)
+					: String(failure.cause),
+			);
+		}
 		return { ok: false, error: failure.toWire() };
 	}
 	throw failure;

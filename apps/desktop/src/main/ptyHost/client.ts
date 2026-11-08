@@ -173,8 +173,15 @@ export class PtyHostClient implements HostedPtys {
 			case "open-failed": {
 				const pending = this.#pending.get(message.rid);
 				this.#pending.delete(message.rid);
+				// Said in the log and on the surface: the host's own words are
+				// the only thing that names why (a module it could not load, a
+				// program that would not start, a page it did not know).
+				this.#log(
+					`[devhub] pty host could not open a terminal client: ${message.message}`,
+				);
 				pending?.reject(
 					new TerminalFailure("pty_unavailable", {
+						summary: `The terminal client could not be attached: ${message.message}`,
 						cause: new Error(message.message),
 					}),
 				);
