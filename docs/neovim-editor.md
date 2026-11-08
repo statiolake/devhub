@@ -571,7 +571,11 @@ or a key does, and what a plugin sees stay the same. Done: geometric box
 drawing, blocks and Powerline separators; floats framed, cut at their line,
 titled with labels; panels of floats under one shadow; native popupmenu,
 command line, tab line, hover popups, notifications; smooth scroll and
-cursor; and, from the list below, 1–5 and 9–11. The yardstick for chrome
+cursor; and, from the list below, 1–5 and 9–11 (round 1), then 7's fold
+column and 6's message panel, with 3–5 matched by highlight name
+(`ext_hlstate`) instead of colour (round 2; round 2 also gave
+notifications a card, signature help its active parameter and the tab
+strip a current tab joined to the editor). The yardstick for chrome
 (separators, bars, menus, scrollbars) is VS Code and Zed; the text area
 stays cell-aware, as a modal editor's is. Verified on 0.11.5 and 0.12.6
 with a real config (splits, floats and panels, the command line, the
