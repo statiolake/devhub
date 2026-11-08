@@ -406,13 +406,43 @@ Measured in the app (Xvfb, the person's tmux.conf, zsh, a busy 4-core
 machine at load 6): key to paint p50 6.3 ms, p90 9.0 ms, max 17.3 ms over 40
 keys (keydown to the painter's first glyph after it).
 
+### The two paths, side by side
+
+Measured on one machine in one run of the app (Xvfb, software compositing,
+4 cores at load 0.4–1.5, the person's tmux.conf, zsh, one Workspace terminal
+192×60), switching `tmux_control_mode` between runs. Key to paint is the
+keydown in the terminal's page to the first draw after it: the painter's
+first canvas call, or xterm.js' rows changing (its DOM renderer: WebGL is not
+available under Xvfb, so the old path's WebGL renderer is not what this
+measures). "Streaming" is three panes beside the typing one, each writing 500
+lines of 100 columns a second; CPU is per process kind over 20 s, in % of
+one core. Throughput is `cat` of a 29.7 MB, 300 000-line file until the
+shell's next command runs.
+
+| | xterm.js path | control mode |
+| --- | --- | --- |
+| key to paint, idle (60 keys) | p50 7.5, p90 13.3, p99 19.9 ms | p50 6.2–6.4, p90 7.2–12.1, p99 18.0–20.6 ms |
+| key to paint beside 3 streaming panes (120 keys) | p50 7.4, p90 14.9, p99 21.2 ms | p50 6.1–6.8, p90 15.8–17.6, p99 21.7–22.4 ms |
+| CPU while streaming: renderers | 29.9–30.4% | 17.3–18.6% |
+| … GPU process (compositing) | 9.0–9.2% | 36.0–39.5% |
+| … pty host / tmux server / main | 4.8 / 2.4–2.6 / 2.7–2.9% | 5.5–5.7 / 1.3 / 2.0–2.1% |
+| `cat` 29.7 MB | 1.06–1.10 s | 1.74–1.85 s |
+| CPU during the `cat` (first 8 s): pty host / tmux server | 6.0–6.9 / 13.1–13.9% | 16.5–18.2 / 15.4–16.9% |
+
+What it says: keys reach the screen as fast or faster in control mode, and
+the page's own work under streaming is down by 40%; tmux does less (it no
+longer redraws a client's whole window). Against that, every frame the
+painter draws is a canvas the compositor uploads, and in software that is
+the GPU process's 36–40% of a core; a `cat` of a large file takes 0.7 s
+longer, the time the pty host's engine spends parsing it (the engine reads
+every byte; xterm.js' path drops what tmux coalesced away).
+
 ### Next (phase 2 still open)
 
-- The old path's key-to-paint, throughput and CPU on the same machine, for
-  the comparison.
-- A page that reloads (only in development) is not handed a new port to the
-  pty host, so its attach fails with "the page is gone" until DevHub
-  restarts; the xterm.js surface shares it.
+- The painter's frames cost the compositor more than xterm.js' DOM rows
+  under Xvfb (below); to be measured again on the person's Mac, where
+  xterm.js draws with WebGL and both composite on the GPU, before the
+  xterm.js path is deleted.
 - `faint` is drawn mixed, not with a font weight; the cursor is a block
   over the text (difference blend), not the text drawn in the cursor's
   colour as Neovim's is.
