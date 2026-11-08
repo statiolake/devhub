@@ -783,6 +783,15 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
     stays the size Neovim gave it, and what the display needs beyond it is
     the ghost of what Neovim drew before. `scrolloff` and the last row's
     padding stay behaviour, kept.
+14. _Scrollbar marks_ — done (round 4): diagnostics, the search's
+    matches, git's hunks and the cursor along each window's scrollbar, as
+    VS Code's overview ruler (The page, above). No minimap: a minimap of
+    a modal editor's buffer is a second view to keep in step for little.
+15. _The matching bracket_ — done (round 4): `MatchParen`'s cells (by
+    group name, when it has a ground) are a box a little inside the cell,
+    rounded, with a hairline in the bracket's colour, as VS Code's
+    `editorBracketMatch`; each cell its own box. Without a ground (a
+    colorscheme's bold or coloured text alone) the text stays as it is.
 
 **Also:** dev containers (Neovim in the container through `docker exec`, its
 socket reached by a relay like the `devhub` command's), delivering `nvim` to

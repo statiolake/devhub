@@ -292,6 +292,24 @@ describe("text Neovim adds to a line", () => {
   });
 });
 
+describe("a matching bracket", () => {
+  it("is MatchParen's box when it has a ground, a selection over it first", () => {
+    const theme = themeOf({
+      groups: {
+        MatchParen: { bg: 0x1f3e4b, bold: true },
+        Visual: { bg: VISUAL },
+      },
+      finals: {},
+    });
+    expect([...theme.brackets]).toEqual(["MatchParen"]);
+    expect(hlRole(["MatchParen"], theme)).toBe("bracket");
+    expect(hlRole(["MatchParen", "Visual"], theme)).toBe("shaped");
+    // Only a colour of the text (`reverse`, or fg alone): left as text.
+    const plain = themeOf({ groups: { MatchParen: { fg: 0xff0000 } } });
+    expect(plain.brackets.size).toBe(0);
+  });
+});
+
 describe("a diff's filler row", () => {
   it("is the dashes in DiffDelete's highlight from the text column on", () => {
     const chars = [..."    ----------"];

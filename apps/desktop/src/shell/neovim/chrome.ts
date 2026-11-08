@@ -50,6 +50,12 @@ export interface PaintTheme {
    * ground.
    */
   readonly pills: ReadonlySet<string>;
+  /**
+   * The groups whose cells are a matching bracket (`MatchParen`, when it
+   * has a ground): a box with a hairline around it, as VS Code draws
+   * `editorBracketMatch`, one cell at a time.
+   */
+  readonly brackets: ReadonlySet<string>;
   /** The global `fillchars`. */
   readonly fillchars: string;
   /** Each window's own `fillchars` (`:setlocal`), by window id. */
@@ -78,6 +84,7 @@ export interface Surface {
 export const NO_THEME: PaintTheme = {
   shaped: new Set(),
   pills: new Set(),
+  brackets: new Set(),
   fillchars: "",
   winFillchars: new Map(),
   cmdheight: 1,
@@ -130,6 +137,7 @@ return out`;
 export const THEME_GROUPS: readonly string[] = [
   ...SHAPED_GROUPS,
   ...PILL_GROUPS,
+  "MatchParen",
   "Normal",
   "NormalFloat",
   "Comment",
@@ -168,6 +176,8 @@ export function themeOf(answer: unknown): PaintTheme {
   const shaped = named(SHAPED_GROUPS);
   const pills = named(PILL_GROUPS);
   for (const name of shaped) pills.delete(name);
+  const brackets = named(["MatchParen"]);
+  for (const name of [...shaped, ...pills]) brackets.delete(name);
   const cmdheight = typeof out["cmdheight"] === "number" ? out["cmdheight"] : 1;
   const fillchars =
     typeof out["fillchars"] === "string" ? out["fillchars"] : "";
@@ -193,6 +203,7 @@ export function themeOf(answer: unknown): PaintTheme {
   return {
     shaped,
     pills,
+    brackets,
     fillchars,
     winFillchars,
     cmdheight,
@@ -263,7 +274,7 @@ export function isIndentGuide(
 }
 
 /** What a highlight's cells are to the painter, by the groups it is made of. */
-export type HlRole = "shaped" | "pill" | undefined;
+export type HlRole = "shaped" | "pill" | "bracket" | undefined;
 
 export function hlRole(
   groups: readonly string[] | undefined,
@@ -272,6 +283,7 @@ export function hlRole(
   if (!groups) return undefined;
   if (groups.some((g) => theme.shaped.has(g))) return "shaped";
   if (groups.some((g) => theme.pills.has(g))) return "pill";
+  if (groups.some((g) => theme.brackets.has(g))) return "bracket";
   return undefined;
 }
 
@@ -287,6 +299,7 @@ export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
       JSON.stringify([...b.winFillchars]) &&
     sameSet(a.shaped, b.shaped) &&
     sameSet(a.pills, b.pills) &&
+    sameSet(a.brackets, b.brackets) &&
     JSON.stringify(a.surface) === JSON.stringify(b.surface)
   );
 }

@@ -1375,6 +1375,7 @@ export class GridPainter {
     this.skip.clear();
     this.paintBars(ctx, state, box, row, y);
     this.paintPills(ctx, state, box, row, y);
+    this.paintBrackets(ctx, state, box, row, y);
     if (!box.float && box.grid !== 1) this.paintFiller(ctx, state, box, row, y);
     if (!box.float && box.grid !== 1) this.paintFolds(ctx, state, box, row, y);
     if (
@@ -1557,6 +1558,64 @@ export class GridPainter {
       ctx.beginPath();
       ctx.roundRect(x0, top, x1 - x0, h, r);
       ctx.fill();
+    }
+  }
+
+  /**
+   * A matching bracket (`PaintTheme.brackets`, `MatchParen`) as VS Code's
+   * `editorBracketMatch`: its ground in a box a little inside the cell,
+   * rounded, with a hairline in the bracket's own colour around it; the
+   * ground beside it around the box. Each cell its own box: brackets on
+   * rows one above the other are not one shape.
+   */
+  private paintBrackets(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    box: GridBox,
+    row: number,
+    y: number,
+  ): void {
+    if (this.theme.brackets.size === 0) return;
+    const grid = state.grids.get(box.grid);
+    if (!grid) return;
+    const isBracket = this.cellsOf(state, box, row, "bracket");
+    const grounds = this.rowGrounds(state, box, row);
+    const { width: cw, height: ch, textHeight } = this.metrics;
+    const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
+    const h = snap(Math.min(ch, textHeight + 4));
+    const top = snap(y + (ch - h) / 2);
+    const line = 1 / this.dpr;
+    const base = row * grid.width;
+    for (let col = 0; col < grid.width; col += 1) {
+      if (!isBracket(col)) continue;
+      const left = col > 0 ? grounds[col - 1] : undefined;
+      const right = grounds[col + 1];
+      const beside =
+        left !== undefined && left >= 0 && !isBracket(col - 1)
+          ? left
+          : right !== undefined && right >= 0 && !isBracket(col + 1)
+            ? right
+            : state.defaults.background;
+      const x0 = col * cw;
+      ctx.fillStyle = cssColor(beside);
+      ctx.fillRect(x0, y, cw, ch);
+      const colors = resolveColors(
+        state.hl.get(grid.hls[base + col] ?? 0),
+        state.defaults,
+      );
+      ctx.beginPath();
+      ctx.roundRect(
+        x0 + line / 2,
+        top + line / 2,
+        cw - line,
+        h - line,
+        Math.min(3, cw / 3),
+      );
+      ctx.fillStyle = cssColor(colors.bg);
+      ctx.fill();
+      ctx.strokeStyle = cssColor(colors.fg, 0.45);
+      ctx.lineWidth = line;
+      ctx.stroke();
     }
   }
 
