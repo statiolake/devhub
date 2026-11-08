@@ -164,6 +164,14 @@
   transition: opacity 80ms ease;
 }
 
+/* Marks along a window's scrollbar (marks.ts): faint, over the text's
+   last pixels as the scrollbar is; the thumb over them while it shows. */
+.nvim-scrollbar-marks {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
 .nvim-scrollbar-thumb {
   position: absolute;
   right: 1px;

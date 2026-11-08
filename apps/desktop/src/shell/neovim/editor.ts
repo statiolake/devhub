@@ -38,6 +38,10 @@ import { cmdlineLayout, textCells } from "./cmdline";
 import { cmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
 import { rideAnchor, rideArea, rideStyle } from "./riders";
+import { markRects, NO_MARKS, parseMarks, type ScrollMarks } from "./marks";
+
+/** The width of a scrollbar's marks, as the scrollbar's track (CSS). */
+const MARKS_WIDTH = 8;
 import {
   IDLE,
   imeStep,
@@ -116,10 +120,16 @@ export class NeovimEditor {
     {
       readonly track: HTMLDivElement;
       readonly thumb: HTMLDivElement;
+      /** The marks along it (`marks.ts`), always shown. */
+      readonly marks: HTMLCanvasElement;
       key: string;
+      marksKey: string;
       timer: number;
     }
   >();
+  /** What the scrollbars mark (`marks.ts`), and a count of its changes. */
+  private marks: ScrollMarks = NO_MARKS;
+  private marksVersion = 0;
   /** A pending ask for the colorscheme's groups (`askTheme`). */
   private themeTimer = 0;
   private blink: Animation | undefined;
@@ -406,7 +416,6 @@ export class NeovimEditor {
     this.painter.paint(this.state, changes, this.boxes, forceAll);
     this.askFloatLabels();
     this.askFloatAnchors();
-    this.placeScrollbars();
     this.placeCursor();
     this.scrollFrame();
     for (const listener of this.listeners) listener();
@@ -427,6 +436,7 @@ export class NeovimEditor {
       },
     );
     this.placeCursorScroll();
+    this.placeScrollbars();
     this.placeRiders();
     if (moving && this.scrollTick === 0) {
       this.scrollTick = requestAnimationFrame(() => {
@@ -676,9 +686,65 @@ export class NeovimEditor {
     );
   }
 
+  /** A scrollbar's marks, drawn again when they or its size changed. */
+  private placeMarks(
+    canvas: HTMLCanvasElement,
+    bar: { marksKey: string; track: HTMLDivElement },
+    box: GridBox,
+    viewport: { readonly curline: number; readonly lineCount: number },
+    height: number,
+  ): void {
+    const width = MARKS_WIDTH;
+    const dpr = window.devicePixelRatio || 1;
+    const win = box.win ?? -1;
+    const key = [
+      this.marksVersion,
+      win,
+      viewport.curline,
+      viewport.lineCount,
+      height,
+      dpr,
+    ].join(":");
+    const c = canvas.style;
+    c.left = bar.track.style.left;
+    c.top = bar.track.style.top;
+    c.zIndex = bar.track.style.zIndex;
+    c.width = `${String(width)}px`;
+    c.height = `${String(height)}px`;
+    if (key === bar.marksKey) return;
+    bar.marksKey = key;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const rects = markRects(
+      this.marks.wins.get(win),
+      this.marks.colors,
+      viewport.lineCount,
+      viewport.curline + 1,
+      width,
+      height,
+      cssColor(this.state.defaults.foreground, 0.55),
+    );
+    for (const r of rects) {
+      ctx.fillStyle = r.color;
+      ctx.fillRect(r.x, Math.min(r.y, height - r.h), r.w, r.h);
+    }
+  }
+
+  /** A `marks` event from Lua: what the scrollbars mark. */
+  setMarks(payload: unknown): void {
+    this.marks = parseMarks(payload);
+    this.marksVersion += 1;
+    this.placeScrollbars();
+  }
+
   /**
    * A thin scrollbar at each window's right edge, from `win_viewport`: shown
-   * while the view moves, gone a moment after, like an overlay scrollbar.
+   * while the view moves, gone a moment after, like an overlay scrollbar;
+   * its thumb follows the display in pixels. Its marks (`marks.ts`) stay.
    * Not for a window whose whole buffer is on screen, nor for floats.
    */
   private placeScrollbars(): void {
@@ -698,14 +764,20 @@ export class NeovimEditor {
         const thumb = document.createElement("div");
         thumb.className = "nvim-scrollbar-thumb";
         track.append(thumb);
-        this.gridLayer.append(track);
-        bar = { track, thumb, key: "", timer: 0 };
+        const marks = document.createElement("canvas");
+        marks.className = "nvim-scrollbar-marks";
+        this.gridLayer.append(marks, track);
+        bar = { track, thumb, marks, key: "", marksKey: "", timer: 0 };
         this.scrollbars.set(box.grid, bar);
       }
       // The window's text rows: its grid without the statusline, which
       // Neovim draws on the grid only when the window has one of its own.
       const height = box.height * cell.height;
-      const top = Math.min(1, viewport.topline / viewport.lineCount);
+      const rows = this.painter.scrollOffset(box.grid) / cell.height;
+      const top = Math.max(
+        0,
+        Math.min(1, (viewport.topline + rows) / viewport.lineCount),
+      );
       const size = Math.max(
         Math.min(1, shown / viewport.lineCount),
         24 / Math.max(1, height),
@@ -717,6 +789,7 @@ export class NeovimEditor {
       t.zIndex = String(box.z + 1);
       bar.thumb.style.top = `${String(Math.min(1 - size, top) * 100)}%`;
       bar.thumb.style.height = `${String(size * 100)}%`;
+      this.placeMarks(bar.marks, bar, box, viewport, height);
       const key = `${String(viewport.topline)}:${String(viewport.lineCount)}`;
       if (key !== bar.key) {
         const first = bar.key === "";
@@ -735,6 +808,7 @@ export class NeovimEditor {
       if (seen.has(grid)) continue;
       window.clearTimeout(bar.timer);
       bar.track.remove();
+      bar.marks.remove();
       this.scrollbars.delete(grid);
     }
   }

@@ -181,6 +181,7 @@ function M._replay()
   vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
   for id, image in pairs(M._images or {}) do M._event("image", { id = id, src = image.src }) end
   if M._place then vim.schedule(M._place) end
+  if M._schedule_marks then M._schedule_marks() end
   -- Attached: what the config asked for before (devhub.nvim's gui queue).
   vim.api.nvim_exec_autocmds("User", { pattern = "DevhubGui", modeline = false })
 end
@@ -464,6 +465,109 @@ function M._place()
   end
   gui_event("place", { images = images })
 end
+
+-- Scrollbar marks ------------------------------------------------------------
+
+--- What each window's scrollbar marks, as VS Code's overview ruler: the
+--- lines with diagnostics (by their worst severity), the search's matches
+--- while 'hlsearch' shows them, and the changed lines git sees (gitsigns'
+--- hunks, when it is there); the cursor's line the page has from
+--- win_viewport. Lines are 1-based; the colours are the groups' own.
+local MARK_GROUPS = { "DiagnosticError", "DiagnosticWarn", "DiagnosticInfo", "DiagnosticHint",
+  "Search", "GitSignsAdd", "GitSignsChange", "GitSignsDelete", "Added", "Changed", "Removed" }
+local MAX_MARKS = 4000
+local SEARCH_LINES = 100000
+local search_cache = {}
+
+local function search_lines(buf, pattern)
+  local tick = vim.api.nvim_buf_get_changedtick(buf)
+  local key = pattern .. "\0" .. tick
+  local cached = search_cache[buf]
+  if cached and cached.key == key then return cached.lines end
+  local lines = {}
+  if vim.api.nvim_buf_line_count(buf) <= SEARCH_LINES then
+    local ok, found = pcall(vim.fn.matchbufline, buf, pattern, 1, "$")
+    if ok then
+      local last = -1
+      for _, m in ipairs(found) do
+        if m.lnum ~= last then
+          table.insert(lines, m.lnum)
+          last = m.lnum
+          if #lines >= MAX_MARKS then break end
+        end
+      end
+    end
+  end
+  search_cache[buf] = { key = key, lines = lines }
+  return lines
+end
+
+function M._marks()
+  local wins = {}
+  local pattern = vim.v.hlsearch == 1 and vim.fn.getreg("/") or ""
+  local ok_gs, gitsigns = pcall(require, "gitsigns")
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_config(win).relative == "" then
+      local buf = vim.api.nvim_win_get_buf(win)
+      local diag = {}
+      local worst = {}
+      for _, d in ipairs(vim.diagnostic.get(buf)) do
+        local l = d.lnum + 1
+        if not worst[l] or d.severity < worst[l] then worst[l] = d.severity end
+      end
+      for l, sev in pairs(worst) do
+        if #diag >= MAX_MARKS then break end
+        table.insert(diag, { l, sev })
+      end
+      local git = {}
+      if ok_gs and type(gitsigns.get_hunks) == "function" then
+        local ok, hunks = pcall(gitsigns.get_hunks, buf)
+        if ok and type(hunks) == "table" then
+          for _, h in ipairs(hunks) do
+            local add = h.added or {}
+            local kind = h.type == "add" and 1 or h.type == "delete" and 3 or 2
+            table.insert(git, { math.max(1, add.start or 1), math.max(1, add.count or 1), kind })
+            if #git >= MAX_MARKS then break end
+          end
+        end
+      end
+      local search = pattern ~= "" and search_lines(buf, pattern) or {}
+      wins[tostring(win)] = { diag = diag, git = git, search = search }
+    end
+  end
+  local colors = {}
+  for _, name in ipairs(MARK_GROUPS) do
+    local hl = vim.api.nvim_get_hl(0, { name = name, link = false })
+    colors[name] = { fg = hl.fg, bg = hl.bg }
+  end
+  gui_event("marks", { wins = wins, colors = colors })
+end
+
+local marks_due = false
+local marks_state = ""
+local function schedule_marks()
+  if marks_due then return end
+  marks_due = true
+  vim.defer_fn(function()
+    marks_due = false
+    pcall(M._marks)
+  end, 120)
+end
+M._schedule_marks = schedule_marks
+vim.api.nvim_create_autocmd({ "DiagnosticChanged", "BufWinEnter", "WinNew", "WinClosed", "TabEnter",
+  "TextChanged", "InsertLeave", "ColorScheme" }, { group = group, callback = schedule_marks })
+vim.api.nvim_create_autocmd("User", { group = group, pattern = "GitSignsUpdate", callback = schedule_marks })
+-- A search, n, :nohlsearch: no event says so; when Neovim is idle the
+-- pattern and whether it shows are compared with what was sent.
+pcall(vim.api.nvim_create_autocmd, "SafeState", {
+  group = group,
+  callback = function()
+    local now = vim.v.hlsearch .. "\0" .. vim.fn.getreg("/")
+    if now == marks_state then return end
+    marks_state = now
+    schedule_marks()
+  end,
+})
 
 -- A window's fillchars changed (:setlocal, a filetype's): the page asks
 -- its theme again, so a person's eob: or diff: shows at once.

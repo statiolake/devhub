@@ -239,7 +239,18 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   fades over 120 ms of its phase). A block's corners are a little rounded. It glides to a
   new cell in 70 ms outside Insert mode (none with reduced motion).
 - Each window gets an overlay scrollbar from `win_viewport`, shown while the
-  view moves and faded out after.
+  view moves and faded out after; its thumb follows the display in pixels.
+  Along it, always shown, marks as VS Code's overview ruler (`marks.ts`):
+  git's changed lines on the left (gitsigns' hunks, in `GitSignsAdd`/
+  `Change`/`Delete` or `Added`/`Changed`/`Removed`), the search's matches
+  in the middle while `hlsearch` shows them (`Search`'s ground; buffers up
+  to 100 000 lines, `matchbufline`, cached per pattern and change), the
+  diagnostics on the right (the worst on top), the cursor across. Lua sends
+  the lines (`M._marks`, after `DiagnosticChanged`, `GitSignsUpdate`, edits,
+  window changes, and — no event says a search or `:nohlsearch` happened —
+  when Neovim is idle and the pattern or `v:hlsearch` differ from what was
+  sent); the cursor's line is `win_viewport`'s. Only drawn: clicks go to
+  the text under them.
 - A window scrolls in pixels (`smoothScroll.ts`; 0.10+, which says how far
   a window scrolled in `win_viewport`'s `scroll_delta`): the trackpad and
   the wheel move its text pixel for pixel while Neovim's `topline` stays a
