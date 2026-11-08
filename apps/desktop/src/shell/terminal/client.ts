@@ -24,6 +24,7 @@ import {
   type TerminalResizeRequest,
   type TerminalResult,
 } from "../../ipc/terminal";
+import type { ControlRequest } from "../../ipc/terminalControl";
 
 export type {
   TerminalAckRequest,
@@ -50,6 +51,8 @@ export interface TerminalClient {
   resize(request: TerminalResizeRequest): Promise<void>;
   acknowledge(request: TerminalAckRequest): Promise<void>;
   detach(request: TerminalDetachRequest): Promise<void>;
+  /** A request to a control client (`control/`); only for one in the pty host. */
+  control(request: ControlRequest): Promise<void>;
 }
 
 /**
@@ -95,6 +98,9 @@ export function createTerminalClient(
     },
     async detach(request) {
       unwrap(await transport.detach(channelId, request));
+    },
+    async control(request) {
+      unwrap(await transport.control(channelId, request));
     },
   };
 }

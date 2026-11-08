@@ -209,6 +209,7 @@ function clientHarness(
   let releaseFirstAttach: (() => void) | undefined;
   const client: TerminalClient = {
     channelId: "channel-1",
+    control: vi.fn(async () => undefined),
     attach: vi.fn(async (request, onFrame) => {
       void request;
       const index = attachCount++;
@@ -1194,6 +1195,7 @@ describe("TerminalSurface whose session ends (reattachOnExit)", () => {
     const receipts: ReturnType<typeof receipt>[] = [];
     const client: TerminalClient = {
       channelId: "channel-1",
+      control: vi.fn(async () => undefined),
       attach: vi.fn(async (_request, onFrame) => {
         const index = receipts.length;
         const next = receipt(index.toString(16).padStart(32, "0"), 42 + index);

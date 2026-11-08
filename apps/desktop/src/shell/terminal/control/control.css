@@ -1,0 +1,132 @@
+/* The control-mode terminal (`ControlTerminalSurface.tsx`). The panes are
+   the Neovim painter's canvases (`.nvim-grids`); what is drawn here is only
+   what sits between and over them. */
+
+.control-terminal {
+  position: relative;
+}
+
+/* Between two panes tmux leaves one cell: a hairline down its middle says
+   where one pane ends, and nothing else is drawn there. */
+.control-borders {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  pointer-events: none;
+}
+
+.control-border-v,
+.control-border-h {
+  position: absolute;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+  color: var(--terminal-foreground, var(--text));
+}
+
+.control-border-v {
+  width: 1px;
+}
+
+.control-border-h {
+  height: 1px;
+}
+
+/* The active pane's cursor. Its shape is the program's (`DECSCUSR`):
+   0 bar, 1 block, 2 underline, 3 hollow block. */
+.control-cursor {
+  position: absolute;
+  /* Over the panes' canvases, which the painter stacks at their z. */
+  z-index: 5;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.control-cursor[data-shape="1"] {
+  background: var(--control-cursor);
+  mix-blend-mode: difference;
+}
+
+.control-cursor[data-shape="0"] {
+  border-left: 2px solid var(--control-cursor);
+}
+
+.control-cursor[data-shape="2"] {
+  border-bottom: 2px solid var(--control-cursor);
+}
+
+.control-cursor[data-shape="3"],
+.control-terminal:not(:focus-within) .control-cursor {
+  background: none;
+  mix-blend-mode: normal;
+  border: 1px solid var(--control-cursor);
+}
+
+/* The keys' and the IME's textarea: at the cursor, so a composition's
+   candidates open there, and invisible. */
+.control-input {
+  position: absolute;
+  width: 1px;
+  height: 1em;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  opacity: 0;
+  resize: none;
+  outline: none;
+  caret-color: transparent;
+}
+
+/* Provisional: the session's windows, until phase 4's tabs are designed
+   (docs/terminal-mode.md). The active one stands out; the rest are quiet. */
+.control-windows {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding-top: 2px;
+  font: 12px var(--font-ui, system-ui, sans-serif);
+}
+
+.control-window {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  cursor: default;
+  font: inherit;
+  opacity: 0.55;
+}
+
+.control-window[aria-current="true"] {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  opacity: 1;
+}
+
+.control-window-index {
+  min-width: 1.4em;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 4px;
+  font-size: 10px;
+  text-align: center;
+}
+
+/* What DevHub did not do, said quietly (`keyGuard.ts`). */
+.control-notice {
+  position: absolute;
+  z-index: 2;
+  right: 12px;
+  bottom: 36px;
+  max-width: 60%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(
+    in srgb,
+    var(--terminal-background, #000) 80%,
+    currentColor
+  );
+  font: 12px var(--font-ui, system-ui, sans-serif);
+  pointer-events: none;
+}

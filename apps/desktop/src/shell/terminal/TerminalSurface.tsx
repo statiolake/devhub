@@ -3,6 +3,7 @@ import "./terminal.css";
 import { useColorScheme } from "../appearance";
 import { Failure, Waiting } from "../components/shell/SurfaceState";
 import { openXtermSession, type XtermSession } from "../surfaces/xtermSession";
+import { ControlTerminalSurface } from "./control/ControlTerminalSurface";
 import { perfProbe } from "../perfProbe";
 import {
   activePalette,
@@ -189,7 +190,21 @@ function validateStarted(
   }
 }
 
-export function TerminalSurface({
+/**
+ * A terminal surface: in tmux control mode, DevHub's own panes
+ * (`control/ControlTerminalSurface.tsx`, `[terminal] tmux_control_mode`);
+ * otherwise one xterm.js on one tmux client. Keyed by which, so a change of
+ * the setting mounts the other one rather than reusing this one's state.
+ */
+export function TerminalSurface(props: TerminalSurfaceProps) {
+  return props.appearance?.terminalTmuxControlMode === true ? (
+    <ControlTerminalSurface key="control" {...props} />
+  ) : (
+    <XtermTerminalSurface key="xterm" {...props} />
+  );
+}
+
+function XtermTerminalSurface({
   surfaceKey,
   surfaceLabel,
   appearance,

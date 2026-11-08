@@ -369,13 +369,57 @@ SSH with `ssh -T` rather than `-tt`, since a terminal would echo the
 commands and cut them at its line length — and refuses it where the host is
 not available. Written to `settings.toml` only when on.
 
-Where it stands: the key is accepted, the main-process and pty-host side is
-in, and the page's control-mode surface is next. Until it lands the key has
-no visible effect: every surface still draws with xterm.js. The key exists only for that transition: when control mode
-becomes the only terminal (phase 4), the key and the xterm.js path are
-deleted together — no setting is kept for compatibility, and a
-`tmux_control_mode` left in a settings file is then refused like any
-unknown key.
+### The surface
+
+With the key on, every terminal surface — a Workspace's, an Agent's — is
+`shell/terminal/control/ControlTerminalSurface.tsx`; `TerminalSurface`
+picks it by the setting and mounts the other one when it changes.
+
+- **Drawing.** Each pane of the shown window is a grid of the Neovim
+  editor's `GridPainter` at the rectangle tmux's layout gives it
+  (`paneGrids.ts`): the pane's dirty rows from its engine, its styles as
+  highlights (faint ink is mixed half way to its ground, hidden ink is its
+  ground). Between panes tmux leaves one cell; a hairline runs down its
+  middle. The active pane's cursor takes the program's shape. The theme's
+  colours are sent to the engines (the 16 ANSI colours, the cube and the
+  greys), and its foreground and background are the painter's defaults.
+- **Keys.** By tmux's names (`controlKeys.ts`), so the prefix and the
+  bindings are tmux's; Option is Meta per `mac_option_is_meta`, by the
+  physical key. Text an IME commits, and a dead key's character, go to the
+  active pane as bytes; a paste is bracketed when the pane's program asked.
+  Keys typed while a client is being attached are held for it.
+- **Mouse.** A click selects its pane; a pane whose program asked for SGR
+  mouse reports gets presses, releases and the wheel. Scrolling back
+  through history is copy mode's (phase 3).
+- **Connection.** As the xterm.js surface (b73a4f71): a session that ended
+  is made again every time, and said to be disconnected only when one made
+  again ends within 3 s with nothing typed (a key or a paste, not the
+  stream); Retry and every connect put the keys in the terminal when it is
+  on screen and nothing outside it has them. A surface never shown is not
+  attached; a hidden one tells its client, which stops sending rows.
+- **The window strip** under the panes is provisional — the session's
+  windows, the index in a small keycap, the active one standing out — until
+  phase 4's tabs are designed from a mock.
+
+Measured in the app (Xvfb, the person's tmux.conf, zsh, a busy 4-core
+machine at load 6): key to paint p50 6.3 ms, p90 9.0 ms, max 17.3 ms over 40
+keys (keydown to the painter's first glyph after it).
+
+### Next (phase 2 still open)
+
+- The Neovim overlay on exact pane rectangles: `terminalNeovims` places it
+  from the xterm.js page's screen report and the client's size; the control
+  surface knows each pane's rectangle itself and should report those.
+- An SSH host's terminal in control mode, run end to end (the plan is
+  `ssh -T`; not yet tried against a host).
+- The old path's key-to-paint, throughput and CPU on the same machine, for
+  the comparison.
+- A page that reloads (only in development) is not handed a new port to the
+  pty host, so its attach fails with "the page is gone" until DevHub
+  restarts; the xterm.js surface shares it.
+- `faint` is drawn mixed, not with a font weight; the cursor is a block
+  over the text (difference blend), not the text drawn in the cursor's
+  colour as Neovim's is.
 
 ### What waits on a control client, until DevHub draws it
 
