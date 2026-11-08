@@ -73,10 +73,13 @@ vi.mock("@xterm/xterm", () => {
       registerOscHandler: () => ({ dispose: vi.fn() }),
     };
 
+    private textarea: HTMLTextAreaElement | undefined;
+
     open(host: HTMLElement) {
       const element = document.createElement("div");
       element.className = "xterm";
-      element.append(document.createElement("textarea"));
+      this.textarea = document.createElement("textarea");
+      element.append(this.textarea);
       host.append(element);
     }
 
@@ -98,7 +101,10 @@ vi.mock("@xterm/xterm", () => {
       callback?.();
     }
 
-    focus() {}
+    focus() {
+      // Where xterm puts the keys: its hidden textarea.
+      this.textarea?.focus();
+    }
 
     clearSelection() {}
   }
@@ -1176,5 +1182,244 @@ describe("TerminalSurface off screen", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     // Nothing of what was missed is drawn: the new client draws the screen.
     expect(mocks.terminals[0].writes).toEqual([]);
+  });
+});
+
+describe("TerminalSurface whose session ends (reattachOnExit)", () => {
+  const KEY = "workspace-terminal:00000000-0000-4000-8000-00000000005c";
+
+  /** A client whose every attach is a new attachment, as main's are. */
+  function endlessHarness() {
+    const handlers: Array<(value: unknown) => void> = [];
+    const receipts: ReturnType<typeof receipt>[] = [];
+    const client: TerminalClient = {
+      channelId: "channel-1",
+      attach: vi.fn(async (_request, onFrame) => {
+        const index = receipts.length;
+        const next = receipt(index.toString(16).padStart(32, "0"), 42 + index);
+        receipts.push(next);
+        handlers.push(onFrame);
+        onFrame(started(next.attachmentId, next.targetGeneration));
+        return next;
+      }),
+      input: vi.fn(async () => undefined),
+      resize: vi.fn(async () => undefined),
+      acknowledge: vi.fn(async () => undefined),
+      detach: vi.fn(async () => undefined),
+    };
+    /** The session the latest client shows ends. */
+    const end = () => {
+      const last = receipts.length - 1;
+      act(() =>
+        handlers[last](
+          raw(3, {
+            ...fixture.exited,
+            attachmentId: receipts[last].attachmentId,
+            sequence: 1,
+            reason: "eof",
+          }),
+        ),
+      );
+    };
+    const connected = async (attaches: number) => {
+      await waitFor(() =>
+        expect(client.resize).toHaveBeenCalledTimes(attaches),
+      );
+      expect(client.attach).toHaveBeenCalledTimes(attaches);
+    };
+    return { client, end, connected };
+  }
+
+  function surface(client: TerminalClient) {
+    return render(
+      <TerminalSurface
+        surfaceKey={KEY}
+        surfaceLabel="Scratch"
+        client={client}
+        hideTitle
+        reattachOnExit
+      />,
+    );
+  }
+
+  /** `exit` and Return, typed: keys, then what xterm makes of them. */
+  const typeExit = () =>
+    act(() => {
+      const textarea = document.querySelector("textarea");
+      if (!textarea) throw new Error("no terminal input");
+      fireEvent.keyDown(textarea, { key: "Enter" });
+      mocks.terminals[0].emitData("exit\r");
+    });
+
+  it("makes the session again every time it is exited, however fast", async () => {
+    const harness = endlessHarness();
+    surface(harness.client);
+    await harness.connected(1);
+    for (let exits = 1; exits <= 5; exits += 1) {
+      // `exit` typed the moment the new shell is there, with no pause.
+      typeExit();
+      harness.end();
+      await harness.connected(exits + 1);
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    }
+  });
+
+  it("makes it again when it ends by itself after it has been up a while", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const harness = endlessHarness();
+    surface(harness.client);
+    await harness.connected(1);
+    for (let ends = 1; ends <= 3; ends += 1) {
+      vi.advanceTimersByTime(3_000);
+      harness.end();
+      await harness.connected(ends + 1);
+    }
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("says it is not connected when a session made again ends at once, untouched", async () => {
+    const harness = endlessHarness();
+    surface(harness.client);
+    await harness.connected(1);
+    // The first end is made again whatever it was…
+    harness.end();
+    await harness.connected(2);
+    // …and one that then ends straight away with nothing typed is a shell
+    // that cannot start: no loop.
+    harness.end();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
+    );
+    expect(harness.client.attach).toHaveBeenCalledTimes(2);
+    // Retry is the person asking; its session ending is made again.
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await harness.connected(3);
+    harness.end();
+    await harness.connected(4);
+  });
+
+  it("does not count the terminal's own replies as typing", async () => {
+    const harness = endlessHarness();
+    surface(harness.client);
+    await harness.connected(1);
+    harness.end();
+    await harness.connected(2);
+    // What xterm answers tmux's queries on attach comes through onData too.
+    act(() => mocks.terminals[0].emitData("\u001b[?62;22c"));
+    harness.end();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
+    );
+    expect(harness.client.attach).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives the keys back to the terminal after a reattach on exit", async () => {
+    const harness = endlessHarness();
+    const { container } = surface(harness.client);
+    await harness.connected(1);
+    const textarea = container.querySelector("textarea");
+    typeExit();
+    harness.end();
+    await harness.connected(2);
+    expect(document.activeElement).toBe(textarea);
+  });
+});
+
+describe("TerminalSurface after Retry", () => {
+  const KEY = "workspace-terminal:00000000-0000-4000-8000-00000000005c";
+
+  async function disconnected() {
+    const harness = clientHarness();
+    const view = render(
+      <TerminalSurface
+        surfaceKey={KEY}
+        surfaceLabel="Scratch"
+        client={harness.client}
+        hideTitle
+      />,
+    );
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    act(() =>
+      harness.handlers[0](
+        raw(3, {
+          ...fixture.exited,
+          attachmentId: harness.receipts[0].attachmentId,
+          sequence: 1,
+          reason: "eof",
+        }),
+      ),
+    );
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    // The failure gives Retry the keys, so Return presses it.
+    expect(document.activeElement).toBe(retry);
+    return {
+      harness,
+      retry,
+      textarea: view.container.querySelector("textarea"),
+    };
+  }
+
+  /** Keys typed the instant Retry is pressed, and once it is connected. */
+  async function typesAtOnce(
+    harness: ReturnType<typeof clientHarness>,
+    textarea: HTMLTextAreaElement | null,
+  ) {
+    const type = (key: string) =>
+      act(() => {
+        if (!textarea) throw new Error("no terminal input");
+        fireEvent.keyDown(textarea, { key });
+        mocks.terminals[0].emitData(key);
+      });
+    // Before the new client is there: the keys are already the terminal's,
+    // and what is typed waits for the client.
+    expect(document.activeElement).toBe(textarea);
+    type("l");
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(document.activeElement).toBe(textarea);
+    type("s");
+    await waitFor(() => expect(harness.client.input).toHaveBeenCalledTimes(2));
+    expect(harness.client.input).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        attachmentId: harness.receipts[1].attachmentId,
+        inputSequence: 1,
+        bytes: [0x6c],
+      }),
+    );
+    expect(harness.client.input).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        attachmentId: harness.receipts[1].attachmentId,
+        inputSequence: 2,
+        bytes: [0x73],
+      }),
+    );
+  }
+
+  it("is typed into at once after Return on Retry", async () => {
+    const { harness, retry, textarea } = await disconnected();
+    // A button's Return is its click; jsdom has no default action for keys.
+    fireEvent.keyDown(retry, { key: "Enter" });
+    fireEvent.click(retry);
+    await typesAtOnce(harness, textarea);
+  });
+
+  it("is typed into at once after a click on Retry", async () => {
+    const { harness, retry, textarea } = await disconnected();
+    retry.focus();
+    fireEvent.click(retry);
+    await typesAtOnce(harness, textarea);
+  });
+
+  it("does not take the keys from something outside it", async () => {
+    const { harness, retry } = await disconnected();
+    const elsewhere = document.createElement("input");
+    document.body.append(elsewhere);
+    fireEvent.click(retry);
+    elsewhere.focus();
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(2));
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
   });
 });

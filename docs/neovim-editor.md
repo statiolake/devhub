@@ -32,7 +32,11 @@ untouched. There is no separate switch for Neovim over terminals: it is what
 There is no editor surface apart from the terminal, no "Editor not running"
 placeholder and nothing to start: the terminal attaches as the area is shown,
 and a session that ended (its last window closed) is made and attached again
-at once. `Cmd+Q Shift+E` stops nothing here and says so; `:q` ends a Neovim.
+at once — every time, however soon after the last. The pane says it is not
+connected only when a session made again ends within 3 s with nothing typed
+into it, which is a shell that cannot start. After that reattach, or a Retry
+by Return or click, the keys are the terminal's, and keys typed meanwhile
+reach the new shell. `Cmd+Q Shift+E` stops nothing here and says so; `:q` ends a Neovim.
 
 ## Architecture
 

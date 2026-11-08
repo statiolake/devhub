@@ -73,13 +73,25 @@ export interface TerminalSurfaceProps {
   /**
    * A session that ended (its last window closed, a detach) is attached
    * again at once — made again — instead of the pane saying it
-   * disconnected: a Workspace's terminal is a place, not a process. Once
-   * every few seconds at most, so a shell that cannot start is still said.
+   * disconnected: a Workspace's terminal is a place, not a process. Every
+   * time it ends, however soon after the last: the pane is said to be
+   * disconnected only when a session made again ends by itself straight
+   * away (`REATTACH_ON_EXIT_MS`), which is a shell that cannot start.
    */
   readonly reattachOnExit?: boolean;
 }
 
-/** How soon after one reattach on exit another is refused. */
+/**
+ * How long a session made again on exit has to have been connected before its
+ * own end is attached again without the person having typed into it.
+ *
+ * A session the person typed into ended because of what they typed — `exit`,
+ * `:q` — however fast, and is made again every time. One that ends sooner
+ * than this with nothing typed, right after it was made again, is a shell
+ * that cannot start, and attaching it again would loop. This used to be a
+ * clock between any two reattaches, which said "not connected" to a person
+ * who typed `exit` twice within it.
+ */
 const REATTACH_ON_EXIT_MS = 3_000;
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -210,8 +222,8 @@ export function TerminalSurface({
   const [shown, setShown] = useState(!hidden);
   if (!hidden && !shown) setShown(true);
 
-  const reattachRef = useRef({ wanted: reattachOnExit, last: 0 });
-  reattachRef.current.wanted = reattachOnExit;
+  const reattachRef = useRef(reattachOnExit);
+  reattachRef.current = reattachOnExit;
   clientRef.current = boundClient;
   hiddenRef.current = hidden;
   connectionRef.current = connection;
@@ -248,8 +260,23 @@ export function TerminalSurface({
           nextSequence: number;
           tail: Promise<void>;
           failed: boolean;
+          /** When this client was connected, for `REATTACH_ON_EXIT_MS`. */
+          readonly connectedAt: number;
+          /**
+           * The person typed into this client: a key or a paste, not
+           * `onData`, which also carries the terminal's own replies to what
+           * tmux asks it on every attach.
+           */
+          typed: boolean;
         }
       | undefined;
+    /**
+     * The client there is was attached because the one before it ended
+     * (`reattachOnExit`). Its own end is attached again only once it was
+     * typed into or connected for `REATTACH_ON_EXIT_MS`. Any other attach —
+     * Retry, a reveal — clears it: that is the person asking.
+     */
+    let reattachedOnExit = false;
     /**
      * Off screen since the last `reveal`. Its own flag rather than
      * `hiddenRef`, which a render changes before the effect that reveals the
@@ -263,11 +290,14 @@ export function TerminalSurface({
     /** More arrived while parked than `missed` keeps. */
     let missedTooMuch = false;
     /**
-     * Keys typed while a reveal attaches a new client: the pane is on screen
-     * and looks connected, so they are the person's, and they go to the new
-     * client once it is there. `undefined` outside such an attach.
+     * Keys typed while a reveal, a Retry or a reattach on exit attaches a new
+     * client: the pane is on screen and the person is at it, so they are
+     * theirs, and they go to the new client once it is there. `undefined`
+     * outside such an attach.
      */
     let heldInput: string[] | undefined;
+    /** A key or a paste while the client being attached was not there yet. */
+    let typedWhileAttaching = false;
     let session: XtermSession;
     try {
       session = openXtermSession(host, {
@@ -364,15 +394,24 @@ export function TerminalSurface({
      * `quiet` is a reveal's: the pane is on screen showing what it last drew,
      * so it says nothing about connecting — the new client's first frame
      * replaces that screen — and keys typed meanwhile wait for the client.
+     * `onExit` is a reattach because the session ended (`reattachOnExit`).
+     * `hold` keeps the keys typed meanwhile for the client, as `quiet` does:
+     * the person is at the pane, a Retry or an `exit` ago.
      */
-    const attach = async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    const attach = async ({
+      quiet = false,
+      onExit = false,
+      hold = false,
+    }: { quiet?: boolean; onExit?: boolean; hold?: boolean } = {}) => {
       const serial = ++attachSerial;
+      reattachedOnExit = onExit;
+      typedWhileAttaching = false;
       // A new client's terminal is drawn by tmux from nothing, so whatever an
       // earlier one sent while parked is moot.
       missed = [];
       missedBytes = 0;
       missedTooMuch = false;
-      heldInput = quiet ? [] : undefined;
+      heldInput = quiet || hold ? [] : undefined;
       const previousReceipt = receipt;
       if (previousReceipt && !receiptDetached) detachExact(previousReceipt);
       receipt = undefined;
@@ -493,13 +532,21 @@ export function TerminalSurface({
             summary: frame.error.summary,
           });
         } else if (frame.type === "exited") {
-          const reattach = reattachRef.current;
-          const now = Date.now();
-          if (reattach.wanted && now - reattach.last > REATTACH_ON_EXIT_MS) {
-            reattach.last = now;
+          const ended =
+            inputQueue?.attachmentId === frameReceipt.attachmentId
+              ? inputQueue
+              : undefined;
+          const lived =
+            ended !== undefined &&
+            (ended.typed ||
+              Date.now() - ended.connectedAt >= REATTACH_ON_EXIT_MS);
+          if (reattachRef.current && (!reattachedOnExit || lived)) {
             detachExact(frameReceipt);
             setConnection("connecting");
-            queueMicrotask(() => controllerRef.current?.retry());
+            queueMicrotask(() => {
+              if (disposed || serial !== attachSerial) return;
+              void attach({ onExit: true, hold: true });
+            });
             return;
           }
           setConnection("disconnected");
@@ -598,12 +645,15 @@ export function TerminalSurface({
           nextSequence: 0,
           tail: Promise.resolve(),
           failed: false,
+          connectedAt: Date.now(),
+          typed: typedWhileAttaching,
         };
         const held = heldInput ?? [];
         heldInput = undefined;
         for (const data of held) sendInput(data);
         setConnection("connected");
         setReconnecting(false);
+        focusIfUnclaimed();
         await sendResize(returnedReceipt, session.geometry, serial);
       } catch (attachError: unknown) {
         clearHandshakeWatchdog();
@@ -669,13 +719,41 @@ export function TerminalSurface({
     });
 
     const focusTerminal = () => terminal.focus();
+    /**
+     * A client just connected: the keys go to the terminal again, when it is
+     * on screen and nothing outside it has them. What had them inside it was
+     * Retry — Return on it or a click — or the pane's own textarea; the
+     * button goes with the failure it was on, and the keys went with it to
+     * `body`, where typing reached nothing and only a click brought them
+     * back. In a view that does not have the keyboard this only places the
+     * caret, for when it does.
+     */
+    function focusIfUnclaimed() {
+      if (hiddenRef.current) return;
+      const active = document.activeElement;
+      const shell = host?.parentElement;
+      if (
+        active === null ||
+        active === document.body ||
+        (shell?.contains(active) ?? false)
+      ) {
+        terminal.focus();
+      }
+    }
     host.addEventListener("click", focusTerminal);
+    // Capture: xterm stops the keys it handles at its textarea.
+    const markTyped = () => {
+      if (inputQueue) inputQueue.typed = true;
+      else typedWhileAttaching = true;
+    };
+    host.addEventListener("keydown", markTyped, true);
+    host.addEventListener("paste", markTyped, true);
     void attach();
     if (!hiddenRef.current) terminal.focus();
 
     controllerRef.current = {
       retry() {
-        void attach();
+        void attach({ hold: true });
       },
       park() {
         parked = true;
@@ -705,6 +783,8 @@ export function TerminalSurface({
       disposed = true;
       attachSerial += 1;
       host.removeEventListener("click", focusTerminal);
+      host.removeEventListener("keydown", markTyped, true);
+      host.removeEventListener("paste", markTyped, true);
       dataDisposable.dispose();
       if (receipt && !receiptDetached) detachExact(receipt);
       receipt = undefined;
@@ -788,7 +868,12 @@ export function TerminalSurface({
             {
               label: "Retry",
               primary: true,
-              run: () => controllerRef.current?.retry(),
+              run: () => {
+                controllerRef.current?.retry();
+                // The keys leave the button now, not once the client is
+                // there: what is typed straight after goes to the terminal.
+                sessionRef.current?.focus();
+              },
             },
           ]}
         />
