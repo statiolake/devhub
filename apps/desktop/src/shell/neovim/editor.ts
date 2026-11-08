@@ -103,6 +103,8 @@ export class NeovimEditor {
   private readonly painter: GridPainter;
   private readonly gridLayer: HTMLDivElement;
   private readonly cursor: HTMLDivElement;
+  /** The character under a block cursor, painted as the grid paints it. */
+  private readonly cursorCell: HTMLCanvasElement;
   private readonly preedit: HTMLCanvasElement;
   readonly input: HTMLTextAreaElement;
   private ime: ImeState = IDLE;
@@ -153,6 +155,8 @@ export class NeovimEditor {
     this.gridLayer.className = "nvim-grids";
     this.cursor = document.createElement("div");
     this.cursor.className = "nvim-cursor";
+    this.cursorCell = document.createElement("canvas");
+    this.cursor.append(this.cursorCell);
     this.preedit = document.createElement("canvas");
     this.preedit.className = "nvim-preedit";
     this.input = document.createElement("textarea");
@@ -800,9 +804,7 @@ export class NeovimEditor {
     if (at === undefined) return;
     const { grid, row, col } = this.state.cursor;
     const g = this.state.grids.get(grid);
-    const index = g ? row * g.width + col : -1;
-    const char = g && index >= 0 ? (g.chars[index] ?? " ") : " ";
-    const wide = g !== undefined && g.chars[index + 1] === "";
+    const wide = g !== undefined && g.chars[row * g.width + col + 1] === "";
     const attr =
       mode && mode.attrId > 0 ? this.state.hl.get(mode.attrId) : undefined;
     const colors =
@@ -821,8 +823,6 @@ export class NeovimEditor {
     const s = this.cursor.style;
     s.left = `${String(at.x)}px`;
     s.background = cssColor(colors.bg);
-    s.color = cssColor(colors.fg);
-    s.lineHeight = `${String(cell.height)}px`;
     const focused = this.hasKeyboard();
     // Without the keyboard: a block is hollow, a bar or an underline faint.
     this.cursor.classList.toggle(
@@ -837,19 +837,28 @@ export class NeovimEditor {
       s.top = `${String(at.y)}px`;
       s.width = `${String(Math.max(1, Math.round(cell.width * pct)))}px`;
       s.height = `${String(cell.height)}px`;
-      this.cursor.textContent = "";
     } else if (shape === "horizontal") {
       const h = Math.max(1, Math.round(cell.height * pct));
       s.top = `${String(at.y + cell.height - h)}px`;
       s.width = `${String(width)}px`;
       s.height = `${String(h)}px`;
-      this.cursor.textContent = "";
     } else {
       s.top = `${String(at.y)}px`;
       s.width = `${String(width)}px`;
       s.height = `${String(cell.height)}px`;
-      this.cursor.textContent = char === "" ? " " : char;
+      // Its character as the grid draws it, not as text in the page: the
+      // page's line box rounds the font's ascent and descent its own way,
+      // half a pixel off the painter's baseline, and knows nothing of the
+      // cell's bold or italic, its wide cells or box drawing.
+      this.painter.paintCursorCell(
+        this.cursorCell,
+        this.state,
+        this.state.cursor,
+        colors.fg,
+        colors.bg,
+      );
     }
+    this.cursorCell.style.display = shape === "block" ? "" : "none";
     this.placeBlink(
       focused ? (mode?.blinkon ?? 0) : 0,
       mode?.blinkoff ?? 0,

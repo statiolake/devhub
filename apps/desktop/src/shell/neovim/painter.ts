@@ -1077,6 +1077,65 @@ export class GridPainter {
   }
 
   /**
+   * The cell under a block cursor, drawn as its row draws it (`paintRun`:
+   * the cell's face, the grid's baseline and cell, box drawing and icons as
+   * shapes) in the cursor's colours, so its character sits on exactly the
+   * pixels it has off the cursor. Two cells for a wide character.
+   */
+  paintCursorCell(
+    canvas: HTMLCanvasElement,
+    state: NeovimUiState,
+    cursor: {
+      readonly grid: number;
+      readonly row: number;
+      readonly col: number;
+    },
+    fg: number,
+    bg: number,
+  ): void {
+    const { width: cw, height: ch, baseline } = this.metrics;
+    const grid = state.grids.get(cursor.grid);
+    const { row, col } = cursor;
+    const inside = grid !== undefined && row < grid.height && col < grid.width;
+    const base = inside ? row * grid.width : 0;
+    const cells = inside && grid.chars[base + col + 1] === "" ? 2 : 1;
+    const w = Math.ceil(cells * cw * this.dpr);
+    const h = Math.ceil(ch * this.dpr);
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    canvas.style.width = `${String(cells * cw)}px`;
+    canvas.style.height = `${String(ch)}px`;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.fillStyle = cssColor(bg);
+    ctx.fillRect(0, 0, cells * cw, ch);
+    if (!inside) return;
+    ctx.translate(-col * cw, 0);
+    this.skip.clear();
+    this.icons.length = 0;
+    this.paintRun(
+      ctx,
+      state,
+      grid.chars,
+      grid.hls,
+      grid.width,
+      base,
+      col,
+      col + cells,
+      grid.hls[base + col] ?? 0,
+      0,
+      baseline,
+      fg,
+    );
+    for (const icon of this.icons) {
+      ctx.fillStyle = cssColor(icon.fg);
+      this.paintIcon(ctx, icon.c, icon.x, 0, icon.cells, icon.attr, icon.spill);
+    }
+    this.icons.length = 0;
+  }
+
+  /**
    * An IME's preedit, drawn as the grid draws text: the grid's font, its
    * baseline and cell, each character on its cells (`preeditLayout`), so the
    * composition sits where the committed text will; underlined across its
@@ -2071,10 +2130,14 @@ export class GridPainter {
     hl: number,
     y: number,
     baseline: number,
+    /** The text's colour instead of the highlight's (the cursor's). */
+    ink?: number,
   ): void {
     const { width: cw, height: ch } = this.metrics;
     const attr = state.hl.get(hl);
-    const { fg, bg, sp } = resolveColors(attr, state.defaults);
+    const colors = resolveColors(attr, state.defaults);
+    const { bg, sp } = colors;
+    const fg = ink ?? colors.fg;
     const x0 = start * cw;
     const x1 = end * cw;
     ctx.fillStyle = cssColor(fg);

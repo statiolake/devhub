@@ -304,7 +304,13 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     no glyph atlas, and none has been needed.
 - The cursor follows `guicursor`: its shape, its highlight, and its blink
   (`blinkwait`/`blinkon`/`blinkoff`, restarted on every move; each edge
-  fades over 120 ms of its phase). Square, as the cell. It glides to a
+  fades over 120 ms of its phase). Square, as the cell. The character
+  under a block is painted as its row paints it (`paintCursorCell`: the
+  cell's face, the grid's baseline, box drawing and icons as shapes) in
+  the cursor's colours, on exactly the device pixels it has off the cursor
+  — as page text it sat half a pixel or a pixel off the row's baseline,
+  depending on font and size (the line box rounds ascent and descent its
+  own way), and lost bold, italic and wide cells. It glides to a
   new cell in 70 ms outside Insert mode (none with reduced motion).
 - A window scrolls in pixels (`smoothScroll.ts`; 0.10+, which says how far
   a window scrolled in `win_viewport`'s `scroll_delta`): the trackpad and

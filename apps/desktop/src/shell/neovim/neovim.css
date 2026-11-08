@@ -145,15 +145,20 @@
   position: absolute;
   pointer-events: none;
   overflow: hidden;
-  white-space: pre;
-  text-align: center;
-  font: inherit;
+}
+
+.nvim-cursor > canvas {
+  display: block;
 }
 
 .nvim-cursor-glide {
   transition:
     left 70ms cubic-bezier(0.2, 0.8, 0.2, 1),
     top 70ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.nvim-cursor-unfocused > canvas {
+  visibility: hidden;
 }
 
 .nvim-cursor-unfocused {
