@@ -13,13 +13,11 @@ import {
 	type ConversationApi,
 	type ConversationAttachment,
 	type ConversationCommandWire,
+	type ConversationEventBatch,
 	type ConversationEventListener,
 	type ConversationInsertListener,
 } from "../ipc/conversation.js";
-import type {
-	ConversationEvent,
-	RewindOutcome,
-} from "../model/conversation.js";
+import type { RewindOutcome } from "../model/conversation.js";
 
 const listeners = new Map<string, ConversationEventListener>();
 const inserts = new Map<string, ConversationInsertListener>();
@@ -32,9 +30,11 @@ ipcRenderer.on(
 );
 
 ipcRenderer.on(
-	CONVERSATION_CHANNELS.event,
-	(_event, agentId: string, revision: number, event: ConversationEvent) => {
-		listeners.get(agentId)?.(revision, event);
+	CONVERSATION_CHANNELS.events,
+	(_event, batch: ConversationEventBatch) => {
+		for (const [agentId, revision, event] of batch) {
+			listeners.get(agentId)?.(revision, event);
+		}
 	},
 );
 

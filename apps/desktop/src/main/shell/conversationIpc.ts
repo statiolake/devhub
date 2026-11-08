@@ -17,6 +17,7 @@ import {
 	attachedImages,
 	entryId,
 	pendingId,
+	type ConversationEvent,
 	type ImageRef,
 	type PendingId,
 	type RewindOutcome,
@@ -36,6 +37,8 @@ import type { PastSessionWire } from "../../ipc/contract.js";
 
 export interface ConversationIpcOptions {
 	readonly ipcMain: IpcMain;
+	/** When the queued events are sent: after this turn of the loop (`setImmediate`); tests pass their own. */
+	readonly defer?: (send: () => void) => void;
 	readonly conversations: GuiConversations;
 	/** Each GUI Agent's unsent draft, handed out with the attachment and kept as the page reports it. */
 	readonly drafts: AgentDrafts;
@@ -144,8 +147,17 @@ export function registerConversationIpc(
 		});
 	};
 
-	options.conversations.registry.onEvent((agentId, revision, event) => {
-		if (!attached.has(agentId)) return;
+	/**
+	 * The events not yet sent, sent together once this turn of the loop is
+	 * over (`ConversationEventBatch`). Order is kept: one queue for every
+	 * Agent. An attachment's answer can overtake the events queued before it
+	 * was read; each of those is already in the snapshot it answered with, and
+	 * the page drops it by its revision.
+	 */
+	let queued: [AgentId, number, ConversationEvent][] = [];
+	const flush = () => {
+		const batch = queued;
+		queued = [];
 		const page = options.agentsPage();
 		// A page that went away took its attachments with it; the one that
 		// replaces it attaches afresh.
@@ -153,7 +165,12 @@ export function registerConversationIpc(
 			attached.clear();
 			return;
 		}
-		page.send(CONVERSATION_CHANNELS.event, agentId, revision, event);
+		page.send(CONVERSATION_CHANNELS.events, batch);
+	};
+	options.conversations.registry.onEvent((agentId, revision, event) => {
+		if (!attached.has(agentId)) return;
+		if (queued.length === 0) (options.defer ?? setImmediate)(flush);
+		queued.push([agentId, revision, event]);
 	});
 
 	/** Every request: from the Agents page, about an Agent, or refused in the app's own shape. */

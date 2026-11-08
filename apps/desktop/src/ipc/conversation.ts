@@ -51,14 +51,27 @@ export const CONVERSATION_CHANNELS = {
 	embedSignature: "devhub:conversation:embed-signature",
 	cliDefaults: "devhub:conversation:cli-defaults",
 	setCliDefault: "devhub:conversation:set-cli-default",
-	/** main → page: `(agentId, revision, event)`. */
-	event: "devhub:conversation:event",
+	/**
+	 * main → page: `(batch)`, a `ConversationEventBatch` — every event of the
+	 * attached conversations since the last batch, in the order main folded
+	 * them. One message per turn of main's loop rather than one per event: a
+	 * journal replayed after a restart is thousands of events, and their
+	 * sends alone were 7% of main's time.
+	 */
+	events: "devhub:conversation:events",
 	/**
 	 * main → page: `(agentId, text)` — words for the Agent's composer, after
 	 * its draft and not sent ("Send to Agent…", `main/shell/sendToAgent.ts`).
 	 */
 	insert: "devhub:conversation:insert",
 } as const;
+
+/** What one `events` message carries: `[agentId, revision, event]`, oldest first. */
+export type ConversationEventBatch = readonly (readonly [
+	agentId: string,
+	revision: number,
+	event: ConversationEvent,
+])[];
 
 /** A file an answer embeds, as read from the Agent's machine. */
 export interface EmbedFileWire {

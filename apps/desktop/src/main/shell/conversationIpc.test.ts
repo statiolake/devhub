@@ -28,7 +28,7 @@ function fakePage() {
 	return page;
 }
 
-function harness() {
+function harness(defer?: (send: () => void) => void) {
 	const handlers = new Map<
 		string,
 		(event: { sender: unknown }, ...args: unknown[]) => unknown
@@ -52,6 +52,7 @@ function harness() {
 	const unused = () => Promise.reject(new Error("not in this test"));
 	const options: ConversationIpcOptions = {
 		ipcMain,
+		...(defer === undefined ? {} : { defer }),
 		conversations,
 		drafts: { get: () => "half a thought" } as unknown as AgentDrafts,
 		agentsPage: () => page as unknown as WebContents,
@@ -70,7 +71,7 @@ function harness() {
 	const ipc = registerConversationIpc(options);
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: page }, ...args);
-	return { ipc, page, invoke };
+	return { ipc, page, invoke, conversations };
 }
 
 describe("words for a GUI Agent's composer", () => {
@@ -94,5 +95,54 @@ describe("words for a GUI Agent's composer", () => {
 		await invoke(CONVERSATION_CHANNELS.attach, AGENT);
 		ipc.insert(AGENT, "now");
 		expect(page.sent).toEqual([[CONVERSATION_CHANNELS.insert, AGENT, "now"]]);
+	});
+});
+
+describe("a conversation's events", () => {
+	const event = (text: string) =>
+		({ type: "text-delta", entry: "a1", block: 0, text }) as never;
+
+	it("go to the page together, once the turn of the loop that made them is over, in order", async () => {
+		const due: (() => void)[] = [];
+		const { page, invoke, conversations } = harness((send) => due.push(send));
+		let publish: (revision: number, event: never) => void = () => undefined;
+		conversations.registry.open(AGENT, (made) => {
+			publish = made;
+			return { start: () => undefined } as unknown as AgentConversation;
+		});
+		await invoke(CONVERSATION_CHANNELS.attach, AGENT);
+		publish(4, event("a"));
+		publish(5, event("b"));
+		expect(page.sent).toEqual([]);
+		expect(due).toHaveLength(1);
+		due.shift()!();
+		expect(page.sent).toEqual([
+			[
+				CONVERSATION_CHANNELS.events,
+				[
+					[AGENT, 4, event("a")],
+					[AGENT, 5, event("b")],
+				],
+			],
+		]);
+		publish(6, event("c"));
+		due.shift()!();
+		expect(page.sent.at(-1)).toEqual([
+			CONVERSATION_CHANNELS.events,
+			[[AGENT, 6, event("c")]],
+		]);
+	});
+
+	it("of an Agent the page has not attached are not sent", async () => {
+		const due: (() => void)[] = [];
+		const { page, conversations } = harness((send) => due.push(send));
+		let publish: (revision: number, event: never) => void = () => undefined;
+		conversations.registry.open(AGENT, (made) => {
+			publish = made;
+			return { start: () => undefined } as unknown as AgentConversation;
+		});
+		publish(4, event("a"));
+		expect(due).toEqual([]);
+		expect(page.sent).toEqual([]);
 	});
 });
