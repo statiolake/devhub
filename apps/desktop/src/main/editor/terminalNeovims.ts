@@ -1,15 +1,19 @@
 /**
- * Neovims started in DevHub's terminals, drawn over their panes.
+ * Neovims in DevHub's terminals, drawn over their panes.
  *
- * With `[general] neovim_terminal_overlay = true`, `nvim` in an Agent's
- * terminal is DevHub's `nvim` (`terminalNeovimShim.ts`): the person's Neovim,
- * running in that pane as its foreground program, with DevHub as its only
- * UI. This is DevHub's half — which panes have one, where each pane is on the
+ * With `[general] editor = "neovim"`, a Workspace's editor area is its
+ * terminal (its `ws-` session), and every Neovim in a DevHub terminal is
+ * drawn by DevHub over its pane: `nvim` typed in an Agent's terminal or the
+ * Workspace's is DevHub's `nvim` (`terminalNeovimShim.ts`), the person's
+ * Neovim running in that pane as its foreground program with DevHub as its
+ * only UI; and the Workspace's own `devhub-nvim` window, where files DevHub
+ * opens go (`managedNeovim.ts`), names its Neovim's socket the same way.
+ * This is DevHub's half — which panes have one, where each pane is on the
  * screen, and whether the keys are its.
  *
  * # One reading of tmux, for all three
  *
- * While an Agent's terminal is on screen its session is read every so often
+ * While a terminal is on screen its session is read every so often
  * (150 ms here, slower on a host): every pane's place in its window, which
  * window and pane are active, zoom and modes, the socket a pane's `nvim` named
  * (`@devhub-nvim`), and the DevHub client's size, key table and prefix. tmux
@@ -43,6 +47,7 @@
  */
 
 import type { RuntimeId } from "../runtime/runtime.js";
+import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 
 /** A pane of the terminal's session, as one reading has it. */
 export interface TerminalNeovimPane {
@@ -339,6 +344,11 @@ const PROMPT_ENDS = new Set(["Enter", "Escape"]);
 export interface OverlayTerminal {
 	readonly terminalId: string;
 	readonly machine: RuntimeId;
+	/**
+	 * A Workspace's terminal: its `ws-` session is the one read. Absent: an
+	 * Agent's terminal, whose `tm-` session is named by `terminalId`.
+	 */
+	readonly workspace?: WorkspaceTerminalTarget;
 }
 
 /** What DevHub does to tmux and to the machine on the overlays' behalf. */
@@ -415,16 +425,24 @@ interface Watch {
 	readonly overlays: Map<string, Overlay>;
 }
 
+function deadKey(paneId: string, socket: string): string {
+	return `${paneId}\t${socket}`;
+}
+
 export class TerminalNeovims {
 	private readonly watches = new Map<string, Watch>();
 	private readonly byKey = new Map<string, Overlay>();
 	/** Each terminal page's screen, kept from its first report on. */
 	private readonly screens = new Map<string, TerminalScreen>();
-	/** Sockets that could not be attached to: a stale option, not a Neovim. */
+	/**
+	 * Panes' sockets that could not be attached to, or whose Neovim ended: a
+	 * stale option, not a Neovim. By pane and socket, as a managed Neovim
+	 * started again in a new pane listens on the same socket path.
+	 */
 	private readonly dead = new Set<string>();
 	private serial = 1;
 	private disposed = false;
-	/** `[general] neovim_terminal_overlay`: off, no new overlay is made. */
+	/** `[general] editor = "neovim"`: off, no new overlay is made. */
 	private enabled = false;
 
 	constructor(private readonly options: TerminalNeovimsOptions) {}
@@ -439,8 +457,9 @@ export class TerminalNeovims {
 	}
 
 	/**
-	 * The Agent terminals there are, and which are on screen. Only those on
-	 * screen are read; one that is gone takes its overlays with it.
+	 * The terminals there are — Agents' and Workspaces' — and which are on
+	 * screen. Only those on screen are read; one that is gone takes its
+	 * overlays with it.
 	 */
 	setTerminals(
 		terminals: readonly OverlayTerminal[],
@@ -518,6 +537,33 @@ export class TerminalNeovims {
 		return overlay?.attached === true ? overlay.key : undefined;
 	}
 
+	/**
+	 * The overlay tmux shows on the terminal's active pane, whether or not it
+	 * has the keys: the Neovim the terminal is in, for the window's title.
+	 */
+	shownOverlay(terminalId: string): string | undefined {
+		const watch = this.watches.get(terminalId);
+		return watch === undefined ? undefined : this.activeOverlay(watch)?.key;
+	}
+
+	/**
+	 * DevHub just made one of the terminal's panes the active one (a file
+	 * opened in its `devhub-nvim` window): the keys go to the overlay there
+	 * as soon as a reading shows it, whoever had them before. A pane whose UI
+	 * ended while its Neovim ran on (an SSH host's connection dropped) is
+	 * tried again: the open just reached that Neovim.
+	 */
+	reclaim(terminalId: string): void {
+		const watch = this.watches.get(terminalId);
+		if (watch === undefined) return;
+		for (const pane of watch.reading?.panes ?? []) {
+			this.dead.delete(deadKey(pane.paneId, pane.socket));
+		}
+		watch.lend = undefined;
+		this.options.changed();
+		if (watch.onScreen) this.schedule(watch, 0);
+	}
+
 	/** Where an overlay's page attaches: the socket, reached from here. */
 	async connection(key: string): Promise<{
 		readonly socketPath: string;
@@ -557,7 +603,7 @@ export class TerminalNeovims {
 	ended(key: string): void {
 		const overlay = this.byKey.get(key);
 		if (overlay === undefined) return;
-		this.dead.add(overlay.socket);
+		this.dead.add(deadKey(overlay.paneId, overlay.socket));
 		this.byKey.delete(key);
 		const watch = this.watches.get(overlay.terminal.terminalId);
 		watch?.overlays.delete(overlay.paneId);
@@ -761,7 +807,11 @@ export class TerminalNeovims {
 		}
 		for (const pane of reading.panes) {
 			if (!this.enabled) break;
-			if (pane.socket === "" || this.dead.has(pane.socket)) continue;
+			if (
+				pane.socket === "" ||
+				this.dead.has(deadKey(pane.paneId, pane.socket))
+			)
+				continue;
 			if (watch.overlays.has(pane.paneId)) continue;
 			const overlay: Overlay = {
 				key: `${OVERLAY_KEY_PREFIX}${String(this.serial)}`,

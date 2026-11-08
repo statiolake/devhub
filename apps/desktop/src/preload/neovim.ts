@@ -1,8 +1,8 @@
 /**
  * The Neovim editor's bridge — `neovim.html`.
  *
- * One view per Workspace whose editor area is its Neovim. See `NeovimBridge`
- * in `ipc/contract.ts`, and `shell/neovim/NeovimApp.tsx`.
+ * One view per Neovim drawn over a terminal pane. See `NeovimBridge` in
+ * `ipc/contract.ts`, and `shell/neovim/NeovimApp.tsx`.
  *
  * A Workspace's UI runs in one of two places, and this is the only code that
  * knows which. Mostly in the Neovim host (`main/neovimHost/`): main hands the

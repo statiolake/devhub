@@ -182,6 +182,30 @@ describe("TerminalNeovims", () => {
 		neovims.dispose();
 	});
 
+	it("gives the keys back on a DevHub open, and tries a pane whose UI ended again", async () => {
+		const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
+		await vi.waitFor(() => {
+			expect(neovims.views()).toHaveLength(1);
+		});
+		neovims.attached("tnv:1");
+		expect(neovims.shownOverlay("t")).toBe("tnv:1");
+		neovims.terminalFocused("t");
+		expect(neovims.keyboardOverlay("t")).toBeUndefined();
+		neovims.reclaim("t");
+		expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+		// Its UI ended (the connection to a host dropped) with the pane
+		// still naming the socket: not drawn again by itself…
+		neovims.ended("tnv:1");
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		expect(neovims.views()).toEqual([]);
+		// …until an open reaches that Neovim.
+		neovims.reclaim("t");
+		await vi.waitFor(() => {
+			expect(neovims.views()).toHaveLength(1);
+		});
+		neovims.dispose();
+	});
+
 	it("keeps the keys in the terminal for a prompt until it is answered", async () => {
 		const { neovims } = setup(parseTerminalNeovimReading(OUTPUT));
 		await vi.waitFor(() => {
@@ -221,7 +245,7 @@ describe("DevHub's nvim", () => {
 			neovimShimScript({
 				directory: shim,
 				tmux: "/bin/false",
-				sessionPrefix: "tm-",
+				sessionPrefixes: ["tm-", "ws-"],
 			}),
 			{ mode: 0o755 },
 		);

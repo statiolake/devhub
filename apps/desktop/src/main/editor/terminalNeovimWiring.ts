@@ -30,6 +30,8 @@ export interface TerminalNeovimWiringOptions {
 	readonly forwardDirectory: string;
 	readonly shell: () => ShellWindow | undefined;
 	readonly theme: () => PublishedTheme | undefined;
+	/** Told after the window is, whenever an overlay or the keys move. */
+	readonly changed?: () => void;
 }
 
 export function wireTerminalNeovims(
@@ -41,6 +43,7 @@ export function wireTerminalNeovims(
 	const neovims: TerminalNeovims = new TerminalNeovims({
 		changed: () => {
 			options.shell()?.syncTerminalNeovims(neovims.views());
+			options.changed?.();
 		},
 		ports: {
 			read: async (terminal, announce) => {
@@ -49,7 +52,9 @@ export function wireTerminalNeovims(
 				// DevHub runs this one's `nvim`, not the one it left.
 				if (announce) await tmux.ensureNeovimShim();
 				const output = await tmux.terminalNeovimReading(
-					terminal.terminalId,
+					terminal.workspace === undefined
+						? { terminalId: terminal.terminalId }
+						: { workspace: terminal.workspace },
 					announce,
 				);
 				return output === undefined

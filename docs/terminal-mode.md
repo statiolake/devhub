@@ -23,11 +23,17 @@ workbenches are excluded from freezing and discarding for now.
 
 ## The other editor: Neovim
 
-With `[general] editor = "neovim"` the editor area is DevHub's own GUI for a
-headless Neovim instead of a workbench — see
-[`neovim-editor.md`](neovim-editor.md). The terminal view this area could once
-show (the Workspace's `ws-` session in a terminal surface, with a TUI Neovim
-in it) is gone; its slot in the layout is the Neovim page's.
+With `[general] editor = "neovim"` the editor area is the Workspace's
+terminal instead of a workbench: its `ws-` tmux session in a terminal page
+(`pane.html#ws:<workspace id>`), which is what DevHub lands on at startup and
+when a Workspace is opened or selected. Every Neovim in it — `nvim` typed in
+a pane, `git commit`'s, and the `devhub-nvim` window files DevHub opens go
+to — is DevHub's GUI drawn over its pane; see
+[`neovim-editor.md`](neovim-editor.md). There is no separate Neovim editor
+page, no placeholder and nothing to start or stop: `Cmd+Q E` puts the keys
+in the terminal (or the Neovim over its active pane), and `Cmd+Q Shift+E`
+says there is nothing to stop. A session whose last window closed is made and
+attached again at once.
 
 ## The Option key
 
@@ -79,22 +85,28 @@ mac_option_is_meta = "left"   # left Option is Meta (ESC-prefixed); right Option
 
 ## The managed Neovim server
 
-The Neovim editor's server ([`neovim-editor.md`](neovim-editor.md)): DevHub
-keeps **one Neovim per Workspace of its own** — separate from any Neovim the
-person starts in a terminal (duplicates are fine and expected).
+Where files DevHub opens go ([`neovim-editor.md`](neovim-editor.md)): DevHub
+keeps **one Neovim per Workspace of its own**, in the Workspace's
+`devhub-nvim` tmux window — separate from any Neovim the person starts in a
+terminal, and never one of those (a `git commit` waiting on its editor is
+never handed another file).
 
 ### Where it runs
 
-The first attach or file open for a Workspace opens a **new, unselected tmux
-window** in that Workspace's `ws-` session (`new-window -d -n devhub-nvim -P
--F '#{pane_id}' -c <root> -- env DEVHUB_NEOVIM_GUI=1 <nvim> --headless
---listen <socket>`), on the Workspace's machine. Nothing in it is ever shown:
-DevHub attaches to the socket as Neovim's only UI. tmux keeps it alive across
-DevHub restarts and SSH reconnects.
+The first file open for a Workspace opens a **new tmux window** in that
+Workspace's `ws-` session (`new-window -d -n devhub-nvim -P -F
+'#{pane_id}' -c <root> -- env DEVHUB_NEOVIM_GUI=1 <nvim> --headless
+--listen <socket>`), on the Workspace's machine. tmux keeps it alive across
+DevHub restarts and SSH reconnects. The pane draws nothing (the Neovim is
+headless); DevHub draws it, over that pane, like any Neovim in a terminal.
 
 Then DevHub selects the Workspace (beside the asking Agent, for a conversation
-link, exactly as the VS Code routing does), puts the keyboard in the editor
-area — its Neovim page — and opens the file over RPC.
+link, exactly as the VS Code routing does), opens the file over RPC, and
+shows the window: one tmux queue names the socket on the pane
+(`@devhub-nvim`, which is what the overlay reads), `select-window`s it and
+`select-pane`s it (`showEditorPaneArgs`). The keyboard goes to the Neovim
+drawn there, wherever it was. `:q` ends it and its window closes; the next
+open makes it again.
 
 ### The socket
 
@@ -176,7 +188,9 @@ the jump is refused — not a pane that flashes and closes.
 
 The rule that picks _which Workspace_ is unchanged (`routeOpen`,
 `routeAgentOpen`); with `general.editor = "neovim"` the file goes to that
-Workspace's Neovim (`AppController.openInEditor`), and otherwise to its workbench
+Workspace's `devhub-nvim` window, shown in its terminal
+(`AppController.openInEditor`; Scratch is selected first, as a workbench's
+start would), and otherwise to its workbench
 (`AppController.openRouted`), through the lifecycle (`holdWorkbench`): a frozen
 workbench is thawed and a discarded or not yet started one started before the
 file reaches it — a file is the one ask besides Enter that starts a workbench;

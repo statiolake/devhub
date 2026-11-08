@@ -1589,7 +1589,8 @@ export function editorWindowArgs(
 ): readonly string[] {
 	return [
 		"new-window",
-		// Never selected: the Neovim editor's keeper window is nobody's to see.
+		// Not selected here: a file's open selects it once the file is in it
+		// (`showEditorPane`), so a failed start leaves the person where they were.
 		"-d",
 		"-n",
 		"devhub-nvim",
@@ -1609,25 +1610,30 @@ export function editorWindowArgs(
 }
 
 /**
- * The keeper window's entry in the status line's window list, made empty:
- * `window-status-format` is a window option, so this window alone is left
- * out and the person's own windows keep their format.
+ * The `devhub-nvim` window made the one its session shows, with its pane
+ * active, and its pane naming its Neovim's socket (`@devhub-nvim`), so the
+ * terminal draws DevHub's GUI over it (`editor/terminalNeovims.ts`) exactly
+ * as it does over a pane's `nvim`.
  */
-export function editorWindowStatusArgs(paneId: string): readonly string[] {
+export function showEditorPaneArgs(
+	paneId: string,
+	socketPath: string,
+): readonly string[] {
 	return [
 		"set-option",
-		"-w",
+		"-p",
 		"-t",
 		paneId,
-		"window-status-format",
-		"",
+		NVIM_SOCKET_OPTION,
+		socketPath,
 		";",
-		"set-option",
-		"-w",
+		"select-window",
 		"-t",
 		paneId,
-		"window-status-current-format",
-		"",
+		";",
+		"select-pane",
+		"-t",
+		paneId,
 	];
 }
 
@@ -2076,6 +2082,8 @@ export class TmuxTerminalRuntime {
 		target: TerminalTarget,
 		cancel: CancellationToken,
 	): Promise<void> {
+		// Before any session is made: its panes' PATH is stated as it is.
+		await this.ensureNeovimShim();
 		const deadline = OperationDeadline.in(this.timeoutMs);
 		await this.ensureVersion(socket, cancel, deadline);
 		await this.ensureServer(socket, cancel, deadline);
@@ -2379,10 +2387,10 @@ export class TmuxTerminalRuntime {
 
 	/**
 	 * Start `argv` in a new window of a Workspace's own (`ws-`) session, made
-	 * first when it is not there: the terminal view's managed Neovim
-	 * (`editor/managedNeovim.ts`). A window and not a split, so the editor has
-	 * the whole editor area and the person's layout is left alone. Answers the
-	 * new pane's id (`%12`).
+	 * first when it is not there: its `devhub-nvim` window, the managed
+	 * Neovim files DevHub opens go to (`editor/managedNeovim.ts`). A window
+	 * and not a split, so the editor has the whole terminal and the person's
+	 * layout is left alone. Answers the new pane's id (`%12`).
 	 */
 	async openEditorWindow(
 		target: WorkspaceTerminalTarget,
@@ -2416,17 +2424,6 @@ export class TmuxTerminalRuntime {
 			if (!PANE_ID.test(paneId)) {
 				throw shapeFailure("new-window answered with no pane id");
 			}
-			// Kept out of the session's window list: the keeper is nobody's to
-			// switch to, and a terminal on this session would otherwise show
-			// it in the status line. Best effort — a status line that still
-			// names it is cosmetic.
-			await this.runTmux(
-				socket,
-				editorWindowStatusArgs(paneId),
-				this.contextHome,
-				cancel,
-				deadline,
-			).catch(() => undefined);
 			return paneId;
 		} finally {
 			release();
@@ -2452,6 +2449,24 @@ export class TmuxTerminalRuntime {
 		} finally {
 			release();
 		}
+	}
+
+	/**
+	 * Show a Workspace's `devhub-nvim` pane: its window selected, the pane
+	 * active, its Neovim's socket named for the overlay (`showEditorPaneArgs`).
+	 */
+	async showEditorPane(
+		target: WorkspaceTerminalTarget,
+		paneId: string,
+		socketPath: string,
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		await this.onWorkspacePane(
+			target,
+			paneId,
+			showEditorPaneArgs(paneId, socketPath),
+			cancel,
+		);
 	}
 
 	/** Kill one of a Workspace's panes. One already gone is not a failure. */
@@ -3909,7 +3924,7 @@ export class TmuxTerminalRuntime {
 					neovimShimScript({
 						directory: shim.directory,
 						tmux: this.tmuxPath(),
-						sessionPrefix: terminalSessionName(""),
+						sessionPrefixes: [terminalSessionName(""), "ws-"],
 					}),
 					0o755,
 				);
@@ -3926,14 +3941,17 @@ export class TmuxTerminalRuntime {
 	}
 
 	/**
-	 * One reading of an Agent terminal's session for the Neovims drawn over
-	 * its panes (`editor/terminalNeovims.ts`): every pane, then DevHub's
-	 * client, marked. The overlay's server option is stated in the same
-	 * queue, so a server started since is told too. `undefined`: no such
-	 * session (yet, or any more).
+	 * One reading of a terminal's session for the Neovims drawn over its
+	 * panes (`editor/terminalNeovims.ts`): an Agent terminal's `tm-`
+	 * session, by its id, or a Workspace's `ws-` one. Every pane, then
+	 * DevHub's client, marked. The overlay's server option is stated in the
+	 * same queue, so a server started since is told too. `undefined`: no
+	 * such session (yet, or any more).
 	 */
 	async terminalNeovimReading(
-		terminalId: string,
+		terminal:
+			| { readonly terminalId: string }
+			| { readonly workspace: WorkspaceTerminalTarget },
 		announce: boolean,
 		cancel = new CancellationToken(),
 	): Promise<string | undefined> {
@@ -3941,7 +3959,12 @@ export class TmuxTerminalRuntime {
 		try {
 			const socket = this.socket();
 			const deadline = OperationDeadline.in(this.timeoutMs);
-			const session = `=${terminalSessionName(terminalId)}`;
+			const name =
+				"workspace" in terminal
+					? await this.workspaceSessionOf(terminal.workspace, cancel, deadline)
+					: terminalSessionName(terminal.terminalId);
+			if (name === undefined) return undefined;
+			const session = `=${name}`;
 			const output = await this.runTmux(
 				socket,
 				[
@@ -3965,11 +3988,43 @@ export class TmuxTerminalRuntime {
 				cancel,
 				deadline,
 			);
-			if (!output.success) return undefined;
+			if (!output.success) {
+				if ("workspace" in terminal) {
+					this.workspaceSessions.delete(terminal.workspace.workspaceId);
+				}
+				return undefined;
+			}
 			return output.stdout.toString("utf8");
 		} finally {
 			release();
 		}
+	}
+
+	/**
+	 * Which session is a Workspace's (`ws-`, by its root's digest), found
+	 * once and kept until a reading of it fails; `undefined` while it has
+	 * none. Read several times a second while it is on screen, so the list
+	 * of sessions is not.
+	 */
+	private readonly workspaceSessions = new Map<string, string>();
+
+	private async workspaceSessionOf(
+		target: WorkspaceTerminalTarget,
+		cancel: CancellationToken,
+		deadline: OperationDeadline,
+	): Promise<string | undefined> {
+		const known = this.workspaceSessions.get(target.workspaceId);
+		if (known !== undefined) return known;
+		const sessions = await this.listSessions(this.socket(), cancel, deadline);
+		const identity = this.targetIdentity(
+			workspaceTarget(target.machine, target.workspaceId, target.root),
+			sessions,
+		);
+		if (!sessions.some((session) => session.name === identity.sessionName)) {
+			return undefined;
+		}
+		this.workspaceSessions.set(target.workspaceId, identity.sessionName);
+		return identity.sessionName;
 	}
 
 	/** The overlay is off: a `nvim` started from now on is the person's TUI. */

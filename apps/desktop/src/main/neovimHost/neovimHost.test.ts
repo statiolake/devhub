@@ -6,7 +6,7 @@
  * main runs itself, what main sent it.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
 	NEOVIM_CHANNELS,
@@ -175,10 +175,11 @@ class FakePage implements NeovimHostPage {
 	}
 }
 
-const WS = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+/** An overlay's key: every Neovim page is one (`terminalNeovims.ts`). */
+const WS = "tnv:1";
 const TARGET: WorkspaceTerminalTarget = {
 	machine: "local",
-	workspaceId: WS,
+	workspaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
 	root: "/ws",
 };
 const REQUEST = { workspaceId: WS, cols: 80, rows: 24 };
@@ -239,16 +240,27 @@ function world() {
 		now: () => now,
 	});
 	let server = 1;
+	const closed: string[] = [];
 	const neovims = {
-		connection: () =>
-			Promise.resolve({ socketPath: "/sock", server, started: false }),
-		stillRunning: () => Promise.resolve(false),
-		close: () => Promise.resolve(),
+		close: (target: WorkspaceTerminalTarget) => {
+			closed.push(target.workspaceId);
+			return Promise.resolve();
+		},
 	} as unknown as ManagedNeovims;
+	const overlays = {
+		connection: () =>
+			Promise.resolve({
+				socketPath: "/sock",
+				server,
+				machine: "local" as const,
+			}),
+		attached: vi.fn(),
+		ended: vi.fn(),
+	};
 	const buffers: string[] = [];
 	const editors = new NeovimEditors({
 		neovims,
-		target: () => TARGET,
+		overlays,
 		clipboard: clip,
 		host: client,
 		connect: connect("main"),
@@ -263,6 +275,8 @@ function world() {
 		clipboard,
 		logs,
 		buffers,
+		overlays,
+		closed,
 		newServer: () => {
 			server += 1;
 		},
@@ -319,7 +333,7 @@ describe("a Neovim editor's UI in the Neovim host", () => {
 		const page = new FakePage(1);
 		await w.editors.attach(page, REQUEST);
 		const other = new FakePage(2);
-		await w.editors.attach(other, { ...REQUEST, workspaceId: "other" });
+		await w.editors.attach(other, { ...REQUEST, workspaceId: "tnv:2" });
 		other.toHost({
 			type: "call",
 			call: { workspaceId: WS, method: "nvim_input", params: ["x"] },
@@ -347,18 +361,15 @@ describe("a Neovim editor's UI in the Neovim host", () => {
 		expect(w.buffers).toEqual(["a.ts"]);
 	});
 
-	it("says when its connection ended, and a new server is a new connection", async () => {
+	it("ends its overlay when its connection ended, and a new server is a new connection", async () => {
 		const w = world();
 		const page = new FakePage(1);
 		await w.editors.attach(page, REQUEST);
+		expect(w.overlays.attached).toHaveBeenCalledWith(WS);
 		w.last().nvim.close();
 		await settle();
-		expect(page.ended()).toEqual([
-			[
-				NEOVIM_CHANNELS.ended,
-				[WS, "Neovim exited. Retry starts it again.", false],
-			],
-		]);
+		expect(w.overlays.ended).toHaveBeenCalledWith(WS);
+		expect(page.ended()).toEqual([]);
 		w.newServer();
 		await w.editors.attach(page, REQUEST);
 		expect(w.connections).toHaveLength(2);
@@ -367,14 +378,20 @@ describe("a Neovim editor's UI in the Neovim host", () => {
 		expect(w.connections).toHaveLength(2);
 	});
 
-	it("is let go without a word when its Workspace closes", async () => {
+	it("refuses a page that is not an overlay's", async () => {
 		const w = world();
-		const page = new FakePage(1);
-		await w.editors.attach(page, REQUEST);
+		const reply = await w.editors.attach(new FakePage(1), {
+			...REQUEST,
+			workspaceId: TARGET.workspaceId,
+		});
+		expect(reply.ok).toBe(false);
+		expect(w.connections).toEqual([]);
+	});
+
+	it("closes the Workspace's managed Neovim when its Workspace closes", async () => {
+		const w = world();
 		await w.editors.close(TARGET);
-		await settle();
-		expect(w.last().nvim.closed).toBe(true);
-		expect(page.ended()).toEqual([]);
+		expect(w.closed).toEqual([TARGET.workspaceId]);
 	});
 });
 

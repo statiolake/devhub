@@ -16,7 +16,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { editorWindowArgs } from "../../src/main/terminal/tmux";
+import {
+  editorWindowArgs,
+  showEditorPaneArgs,
+} from "../../src/main/terminal/tmux";
 import {
   ManagedNeovims,
   type EditorPanes,
@@ -148,6 +151,10 @@ function barePanes(
           ]),
         ).trim(),
       ),
+    show: (_target, paneId, socketPath) => {
+      tmux(showEditorPaneArgs(paneId, socketPath));
+      return Promise.resolve();
+    },
     state: (_target, paneId) => {
       const row = panes(tmux).find((pane) => pane.paneId === paneId);
       return Promise.resolve(row === undefined ? "gone" : "alive");
@@ -197,10 +204,19 @@ describe.skipIf(TMUX === undefined || NVIM === undefined)(
           await neovims.open(target, { path: join(root, "b.txt") }),
         ).toEqual({ started: false });
         expect(neovims.paneOf(target.workspaceId)).toBe(first);
-        // Never brought forward: the headless keeper is nobody's to see.
+        // Brought forward, its pane naming the socket the overlay attaches to.
         expect(
           panes(tmux).find((pane) => pane.paneId === first)?.windowActive,
-        ).toBe(false);
+        ).toBe(true);
+        expect(
+          tmux([
+            "display-message",
+            "-p",
+            "-t",
+            first as string,
+            "#{@devhub-nvim}",
+          ]).trim(),
+        ).toBe(neovims.socketPath(target.workspaceId));
 
         // The person closes it.
         tmux(["kill-pane", "-t", first as string]);

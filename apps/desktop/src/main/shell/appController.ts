@@ -662,6 +662,7 @@ import {
 	wireTerminalNeovims,
 } from "../editor/terminalNeovimWiring.js";
 import { editorForOpen, neovimOpenOf } from "../editor/neovimOpen.js";
+import { workspaceTerminalPageId } from "../../ipc/terminal.js";
 import {
 	neovimMissingMessage,
 	remoteNeovimSockets,
@@ -1596,11 +1597,14 @@ export class AppController {
 			forwardDirectory: this.neovimForwards,
 			shell: () => shellWindowIfCreated(),
 			theme: () => themePublicationIfInstalled()?.current(),
+			// Which Neovim the Workspace's terminal shows is in the title.
+			changed: () => {
+				this.refreshWindowTitle();
+			},
 		});
 		this.neovimEditors = new NeovimEditors({
 			overlays: this.terminalNeovims,
 			neovims: this.managedNeovims,
-			target: (workspaceId) => this.neovimTarget(workspaceId),
 			clipboard,
 			...(this.neovimHost === undefined ? {} : { host: this.neovimHost }),
 			log: (line) => {
@@ -1835,13 +1839,19 @@ export class AppController {
 		this.scratch.start();
 	}
 
-	/** The selected Workspace's Neovim's current file, for the title. */
+	/**
+	 * The current file of the Neovim the selected Workspace's terminal shows
+	 * (its active pane's), for the title.
+	 */
 	private neovimTitleElement(
 		selection: ReturnType<AppController["snapshot"]>["selection"],
 	): string | undefined {
 		const context = selection.context;
 		if (context.kind !== "workspace") return undefined;
-		return this.neovimEditors?.bufferName(context.workspaceId);
+		const key = this.terminalNeovims?.shownOverlay(
+			workspaceTerminalPageId(context.workspaceId),
+		);
+		return key === undefined ? undefined : this.neovimEditors?.bufferName(key);
 	}
 
 	/** Whether Workspaces' editor areas are their Neovim (`general.editor`). */
@@ -1909,6 +1919,11 @@ export class AppController {
 			panes: {
 				open: async (target, argv) =>
 					(await tmuxOf(target.machine)).openEditorWindow(target, argv),
+				show: async (target, paneId, socketPath) => {
+					await (
+						await tmuxOf(target.machine)
+					).showEditorPane(target, paneId, socketPath);
+				},
 				state: async (target, paneId) =>
 					(await tmuxOf(target.machine)).editorPaneState(target, paneId),
 				kill: async (target, paneId) => {
@@ -2315,6 +2330,13 @@ export class AppController {
 				this.closeWorkspaceOrWorktree(workspaceId);
 			},
 			stopEditor: (workspaceId) => {
+				// The Neovim editor is the Workspace's terminal: nothing to stop.
+				if (this.editorIsNeovim()) {
+					this.reportNotStopped(
+						"the Neovim editor is the Workspace's terminal, which keeps running; quit a Neovim in it with :q",
+					);
+					return;
+				}
 				this.stopWorkbench(workspaceId);
 			},
 			reopenClosed: () => {
@@ -4280,19 +4302,22 @@ export class AppController {
 	//#endregion
 
 	/**
-	 * Tell the Neovims over terminal panes which terminals there are and
-	 * which one is on screen, and the setting as it is now. Turned off, the
-	 * overlays there are stay until their Neovims exit, and each machine's
-	 * server is told, so a `nvim` started from then on is the TUI.
+	 * Tell the Neovims over terminal panes which terminals there are — every
+	 * Agent's, and every Workspace's whose terminal has a page — and which
+	 * are on screen, and whether the editor is Neovim (`general.editor`).
+	 * Turned to VS Code, the overlays there are stay until their Neovims exit,
+	 * and each machine's server is told, so a `nvim` started from then on is
+	 * the TUI.
 	 */
 	private syncTerminalNeovims(
 		shell: ReturnType<typeof shellWindow>,
-		onScreen: string | undefined,
+		workspaceTerminals: readonly string[],
+		onScreen: readonly string[],
 	): void {
 		const overlays = this.terminalNeovims;
 		if (overlays === undefined) return;
 		shell.setTerminalNeovimHooks(overlays);
-		const on = this.config.general.neovim_terminal_overlay;
+		const on = this.editorIsNeovim();
 		if (this.terminalNeovimsOn && !on) {
 			void this.terminalsWiring?.runtimes
 				.live()
@@ -4304,11 +4329,28 @@ export class AppController {
 		}
 		this.terminalNeovimsOn = on;
 		overlays.setEnabled(on);
+		const workspaces = workspaceTerminals.flatMap((workspaceId) => {
+			try {
+				const target = this.neovimTarget(workspaceId);
+				return [
+					{
+						terminalId: workspaceTerminalPageId(workspaceId),
+						machine: target.machine,
+						workspace: target,
+					},
+				];
+			} catch {
+				return [];
+			}
+		});
 		overlays.setTerminals(
-			overlayTerminals(this.coordinator.model.agentTerminals(), (one) =>
-				this.machineOfAgent(one.agentId),
-			),
-			new Set(onScreen === undefined ? [] : [onScreen]),
+			[
+				...overlayTerminals(this.coordinator.model.agentTerminals(), (one) =>
+					this.machineOfAgent(one.agentId),
+				),
+				...workspaces,
+			],
+			new Set(onScreen),
 		);
 	}
 
@@ -5004,8 +5046,9 @@ export class AppController {
 			layout.kind === "workbench" || layout.kind === "split"
 				? this.editorKeyForSurfaceKey(layout.editorKey)
 				: undefined;
-		// The Neovim editor: the Workspace's Neovim page is its editor area,
-		// made the first time it is shown and kept while the setting holds.
+		// The Neovim editor: the Workspace's terminal is its editor area, its
+		// page made the first time it is shown and kept while the setting
+		// holds, with every Neovim in it drawn over its pane.
 		const neovim = this.editorIsNeovim();
 		if (neovim && editorKey !== undefined) this.neovimShown.add(editorKey);
 		if (!neovim) this.neovimShown.clear();
@@ -5015,7 +5058,7 @@ export class AppController {
 					? [{ editorKey: workspace.key, workspaceId: workspace.id }]
 					: [],
 		);
-		shell.syncNeovimViews(neovimPages);
+		shell.syncEditorTerminals(neovimPages);
 		const view = neovim ? { view: "neovim" as const } : {};
 		// Its phase, as the page draws it: anything standing in for the
 		// workbench means the workbench itself is not what is in the area.
@@ -5071,7 +5114,20 @@ export class AppController {
 		shell.syncTerminalViews(
 			model.agentTerminals().map((one) => one.terminalId),
 		);
-		this.syncTerminalNeovims(shell, terminal?.terminalId);
+		const editorWorkspace =
+			neovim && editorKey !== undefined && surface.kind !== "none"
+				? neovimPages.find((page) => page.editorKey === editorKey)?.workspaceId
+				: undefined;
+		this.syncTerminalNeovims(
+			shell,
+			neovimPages.map((page) => page.workspaceId),
+			[
+				...(terminal === undefined ? [] : [terminal.terminalId]),
+				...(editorWorkspace === undefined
+					? []
+					: [workspaceTerminalPageId(editorWorkspace)]),
+			],
+		);
 		// A GUI Agent on screen is drawn by the Conversations view, the rest
 		// by the Agents view (`LayoutState.conversation`); the Orchestrator's
 		// board stays the Agents view's, left of its GUI Agent's conversation.
@@ -9232,6 +9288,10 @@ export class AppController {
 		reason?: "explicit",
 	): Promise<string> {
 		if (destination.kind === "scratch") {
+			// The workbench's start selects Scratch; the Neovim editor has none.
+			if (this.editorIsNeovim()) {
+				await this.dispatchAwaiting({ type: "new_window" });
+			}
 			await this.openInEditor(
 				this.scratchWorkspace(),
 				async () => this.scratchWorkbench(),
@@ -9323,6 +9383,9 @@ export class AppController {
 				this.neovimTarget(workspace.id),
 				neovimOpenOf(target, position, waitMarkerPath),
 			);
+			// Its `devhub-nvim` window is the one the terminal shows now: the
+			// keys go to the Neovim drawn over it, whoever had them.
+			this.terminalNeovims?.reclaim(workspaceTerminalPageId(workspace.id));
 			shellWindow().focusSurface();
 			return;
 		}

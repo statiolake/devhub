@@ -219,7 +219,6 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			workbenchDiscardMinutes: config.general.workbench_discard_minutes,
 			workbenchFreeze: config.general.workbench_freeze,
 			editor: config.general.editor,
-			neovimTerminalOverlay: config.general.neovim_terminal_overlay,
 		},
 		runtimes: {
 			shell: config.runtimes.shell,
@@ -379,7 +378,6 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			workbench_freeze: wire.general.workbenchFreeze,
 			// Checked by `validateConfig` on the save, like every other value.
 			editor: wire.general.editor as EditorKind,
-			neovim_terminal_overlay: wire.general.neovimTerminalOverlay,
 		},
 		runtimes: {
 			shell: wire.runtimes.shell,

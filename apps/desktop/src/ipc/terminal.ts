@@ -417,6 +417,25 @@ export function workspaceTerminalSurfaceKey(workspaceId: string): string {
 	return `${WORKSPACE_TERMINAL_SURFACE_PREFIX}${workspaceId}`;
 }
 
+/**
+ * What a Workspace's terminal page (`pane.html#ws:<id>`) is called where an
+ * Agent's terminal is called by its id: the page's fragment, and the
+ * terminal the Neovims over its panes belong to (`editor = "neovim"`, the
+ * editor area). Its surface is `workspaceTerminalSurfaceKey`.
+ */
+export const WORKSPACE_TERMINAL_PAGE_PREFIX = "ws:";
+
+export function workspaceTerminalPageId(workspaceId: string): string {
+	return `${WORKSPACE_TERMINAL_PAGE_PREFIX}${workspaceId}`;
+}
+
+/** The Workspace a terminal page id names, or `undefined` for an Agent's terminal. */
+export function workspaceOfTerminalPage(id: string): string | undefined {
+	return id.startsWith(WORKSPACE_TERMINAL_PAGE_PREFIX)
+		? id.slice(WORKSPACE_TERMINAL_PAGE_PREFIX.length)
+		: undefined;
+}
+
 /** The surface key for an Agent, from its Agent id. */
 export function agentSurfaceKey(agentId: string): string {
 	return `${AGENT_SURFACE_PREFIX}${agentId}`;

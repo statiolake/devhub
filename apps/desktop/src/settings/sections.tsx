@@ -256,7 +256,7 @@ export function GeneralSection({
       >
         <Row
           label="Editor"
-          help="VS Code gives each Workspace its own VS Code editor. Neovim draws a Neovim running on the Workspace's machine (your own config) in DevHub's own GUI, with no VS Code started. Switching applies at once: the other kind of editor is closed. Default VS Code."
+          help="VS Code gives each Workspace its own VS Code editor. Neovim makes each Workspace's editor area its terminal, with no VS Code started: nvim typed in any DevHub terminal (or run by git commit and $EDITOR) is your Neovim drawn in DevHub's GUI over its pane, and files DevHub opens go to the Workspace's devhub-nvim window. Switching applies at once. Default VS Code."
         >
           <Popup
             label="Editor"
@@ -270,17 +270,6 @@ export function GeneralSection({
             }}
           />
         </Row>
-        <SwitchRow
-          label="Neovim over terminals"
-          help="nvim in an Agent's terminal — typed, or run by git commit and $EDITOR — opens your Neovim in DevHub's GUI over that pane instead of its TUI, and the command waits for it as an editor does. Terminals opened after this is turned on get it. Default off."
-          checked={config.general.neovimTerminalOverlay}
-          onChange={(neovimTerminalOverlay) => {
-            update({
-              ...config,
-              general: { ...config.general, neovimTerminalOverlay },
-            });
-          }}
-        />
         <SwitchRow
           label="Freeze hidden editors"
           help="Off, no editor is ever frozen — not when hidden, not by the Task Manager's Sleep — so none is discarded either, and one frozen now resumes at once. Editors then keep using CPU and memory while hidden. Default on."

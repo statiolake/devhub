@@ -1893,11 +1893,13 @@ export interface TerminalSurfaceBridge {
 }
 
 /**
- * One Agent's terminal pane — `pane.html`, one view per Agent terminal, the
- * terminal named by the page's fragment (`pane.html#<id>`).
+ * One terminal pane — `pane.html`, one view per Agent terminal, the
+ * terminal named by the page's fragment (`pane.html#<id>`), and with
+ * `general.editor = "neovim"` one per Workspace whose editor area it is
+ * (`pane.html#ws:<workspace id>`, its `ws-` session).
  *
  * The page is a terminal surface on that session and nothing else: no header,
- * no buttons. It reads the projection for its Agent's name and the appearance
+ * no buttons. It reads the projection for its name and the appearance
  * for its font, like the Agents page, and asks nothing of its own; closing is
  * main's (`Cmd+Q X`, the shell exiting, `--tell terminal close`).
  */
@@ -1923,15 +1925,15 @@ export interface TerminalScreenWire {
 }
 
 /**
- * The Neovim editor — `neovim.html`, one view per Workspace whose editor
- * area is its Neovim (`general.editor = "neovim"`), the Workspace named by
- * the page's fragment (`neovim.html#<id>`).
+ * A Neovim DevHub draws — `neovim.html`, one view per Neovim over a terminal
+ * pane (`general.editor = "neovim"`), named by the page's fragment
+ * (`neovim.html#tnv:<n>`, `main/editor/terminalNeovims.ts`).
  *
  * It draws Neovim's UI protocol itself (`shell/neovim/`) and sends back what
  * the person did as Neovim API calls (`neovim`, `ipc/neovim.ts`). It reads
- * the projection for its Workspace and the appearance for the font and the
- * Option key, and draws the Workspace's terminal in a GUI window
- * (`:DevhubTerminal`), so it has the terminal transport too.
+ * the projection and the appearance for the font and the Option key, and
+ * draws a terminal in a GUI window (`:DevhubTerminal`), so it has the
+ * terminal transport too.
  */
 export interface NeovimBridge
 	extends PageBridge,

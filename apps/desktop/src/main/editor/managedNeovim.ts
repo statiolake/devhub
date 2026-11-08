@@ -1,15 +1,18 @@
 /**
- * The Neovim DevHub manages for each Workspace: the Neovim editor's server.
+ * The Neovim DevHub manages for each Workspace: where files DevHub opens go.
  *
- * With `[general] editor = "neovim"` a Workspace's editor area is DevHub's
- * own GUI for a Neovim (`docs/neovim-editor.md`), and that Neovim is this:
- * `nvim --headless --listen <socket>` on the Workspace's machine, in a
- * window of the Workspace's `ws-` tmux session made with `-d`, so it is never
- * the window anybody sees. tmux is only its keeper — what lets it outlive a
- * DevHub restart and an SSH connection dropping, as an Agent does. Nothing
- * from that pane is ever displayed: DevHub is the server's only UI, attached
- * over the socket (`neovimUi.ts`). It is separate from any Neovim the person
- * runs in a terminal; two of them is fine.
+ * With `[general] editor = "neovim"` a Workspace's editor area is its
+ * terminal (its `ws-` tmux session, `docs/neovim-editor.md`), and
+ * `devhub <file>`, a conversation's file link and Send to Agent's reference
+ * open in this: `nvim --headless --listen <socket>` on the Workspace's
+ * machine, in the session's one `devhub-nvim` window, made when it is not
+ * there. Each open selects that window and names the socket on its pane
+ * (`EditorPanes.show`), and the terminal draws DevHub's GUI over the pane
+ * as it does over any `nvim` (`terminalNeovims.ts`); the pane itself draws
+ * nothing. tmux keeps it across a DevHub restart and an SSH connection
+ * dropping, as it keeps an Agent. It is never a Neovim the person started
+ * in a terminal, and never one of those is used for an open: a `git commit`
+ * waiting on its editor gets no other file.
  *
  * # What is true, and how it is found out
  *
@@ -57,6 +60,15 @@ export interface EditorPanes {
 		target: WorkspaceTerminalTarget,
 		argv: readonly string[],
 	): Promise<string>;
+	/**
+	 * Make the pane's window the one the session shows, the pane active, and
+	 * name its Neovim's socket (on its machine) for the overlay.
+	 */
+	show(
+		target: WorkspaceTerminalTarget,
+		paneId: string,
+		socketPath: string,
+	): Promise<void>;
 	/** Whether `paneId` is one of this Workspace's panes, and running. */
 	state(target: WorkspaceTerminalTarget, paneId: string): Promise<PaneState>;
 	kill(target: WorkspaceTerminalTarget, paneId: string): Promise<void>;
@@ -273,8 +285,6 @@ function delay(ms: number): Promise<void> {
 
 export class ManagedNeovims {
 	private readonly records = new Map<string, ServerRecord>();
-	/** The pane each Workspace's Neovim was last known in, for `stillRunning`. */
-	private readonly lastPanes = new Map<string, string>();
 	/** One jump at a time per Workspace: two must not start two Neovims. */
 	private readonly queues = new Map<string, Promise<unknown>>();
 	private readonly panes: EditorPanes;
@@ -310,20 +320,6 @@ export class ManagedNeovims {
 		};
 	}
 
-	/**
-	 * Whether the Neovim whose connection just closed is still running in
-	 * its pane — the connection to an SSH host dropped, and attaching again
-	 * would adopt it. A pane that cannot be asked about counts as running.
-	 */
-	async stillRunning(target: WorkspaceTerminalTarget): Promise<boolean> {
-		const paneId = this.lastPanes.get(target.workspaceId);
-		if (paneId === undefined) return false;
-		const state = await this.panes
-			.state(target, paneId)
-			.catch(() => "alive" as const);
-		return state === "alive";
-	}
-
 	/** The pane a Workspace's managed Neovim is in, while one is known. */
 	paneOf(workspaceId: string): string | undefined {
 		return this.records.get(workspaceId)?.paneId;
@@ -343,24 +339,9 @@ export class ManagedNeovims {
 	}
 
 	/**
-	 * The Workspace's Neovim, started (headless, in a hidden window of its
-	 * session) if there is none alive: the socket on this Mac the GUI opens
-	 * its own connection to (`neovimUiSessions.ts`), and which server it is.
-	 */
-	connection(target: WorkspaceTerminalTarget): Promise<{
-		readonly socketPath: string;
-		readonly server: number;
-		readonly started: boolean;
-	}> {
-		return this.serially(target.workspaceId, async () => {
-			const { record, started } = await this.server(target);
-			return { socketPath: record.localPath, server: record.serial, started };
-		});
-	}
-
-	/**
 	 * Open a file in the Workspace's managed Neovim, starting one if there is
-	 * none alive. Answers whether a new Neovim was started.
+	 * none alive, and show its window. Answers whether a new Neovim was
+	 * started.
 	 */
 	open(
 		target: WorkspaceTerminalTarget,
@@ -381,6 +362,11 @@ export class ManagedNeovims {
 					file.waitMarkerPath ?? null,
 				],
 			]);
+			// One adopted whose pane could not be named is still opened in,
+			// and only not brought to the front.
+			if (record.paneId !== undefined) {
+				await this.panes.show(target, record.paneId, record.socketPath);
+			}
 			return { started };
 		});
 	}
@@ -580,9 +566,6 @@ export class ManagedNeovims {
 
 	private remember(workspaceId: string, record: ServerRecord): ServerRecord {
 		this.records.set(workspaceId, record);
-		if (record.paneId !== undefined) {
-			this.lastPanes.set(workspaceId, record.paneId);
-		}
 		// A Neovim started now has the theme in its environment already; one
 		// adopted may have been started under another. Either is told, so
 		// `g:devhub_theme` is there from the first jump.

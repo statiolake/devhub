@@ -101,6 +101,8 @@ function world() {
 	/** Who is listening on each socket path. */
 	const listening = new Map<string, FakeServer>();
 	const log: string[] = [];
+	/** Each window shown, as `<pane> <socket>`. */
+	const shown: string[] = [];
 	let next = 1;
 	let failStart = false;
 	let nvim: string | undefined = "/opt/homebrew/bin/nvim";
@@ -118,6 +120,10 @@ function world() {
 			files.add(socket);
 			listening.set(socket, new FakeServer(paneId));
 			return Promise.resolve(paneId);
+		},
+		show: (_target, paneId, socketPath) => {
+			shown.push(`${paneId} ${socketPath}`);
+			return Promise.resolve();
 		},
 		state: (_target, paneId) => Promise.resolve(panes.get(paneId) ?? "gone"),
 		kill: (_target, paneId) => {
@@ -168,6 +174,7 @@ function world() {
 		files,
 		listening,
 		log,
+		shown,
 		make,
 		server: () => listening.get(SOCKET),
 		failNextStart: () => {
@@ -180,7 +187,7 @@ function world() {
 }
 
 describe("the first jump into a Workspace", () => {
-	it("starts a headless Neovim in a hidden window of its session, and opens the file", async () => {
+	it("starts a headless Neovim in its session's devhub-nvim window, opens the file and shows the window", async () => {
 		const w = world();
 		const neovims = w.make();
 		const result = await neovims.open(WORKSPACE, {
@@ -194,6 +201,10 @@ describe("the first jump into a Workspace", () => {
 		]);
 		expect(w.server()?.opens()).toEqual([["/src/widget/a b.ts", 12, 4, null]]);
 		expect(neovims.paneOf(WORKSPACE.workspaceId)).toBe("%1");
+		// After the file is in it: the overlay over that pane draws it.
+		expect(w.shown).toEqual([`%1 ${SOCKET}`]);
+		await neovims.open(WORKSPACE, { path: "/src/widget/b.ts" });
+		expect(w.shown).toEqual([`%1 ${SOCKET}`, `%1 ${SOCKET}`]);
 	});
 
 	it("says which nvim is missing, and starts nothing", async () => {

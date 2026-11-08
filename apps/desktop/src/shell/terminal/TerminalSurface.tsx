@@ -78,7 +78,17 @@ export interface TerminalSurfaceProps {
    * it still gets every row the view shows.
    */
   readonly hiddenRows?: { readonly top: number; readonly bottom: number };
+  /**
+   * A session that ended (its last window closed, a detach) is attached
+   * again at once — made again — instead of the pane saying it
+   * disconnected: a Workspace's terminal is a place, not a process. Once
+   * every few seconds at most, so a shell that cannot start is still said.
+   */
+  readonly reattachOnExit?: boolean;
 }
+
+/** How soon after one reattach on exit another is refused. */
+const REATTACH_ON_EXIT_MS = 3_000;
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
 
@@ -183,6 +193,7 @@ export function TerminalSurface({
   hideTitle = false,
   hidden = false,
   hiddenRows,
+  reattachOnExit = false,
 }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   // One client per mounted surface: its channel id is what makes a frame this
@@ -230,6 +241,8 @@ export function TerminalSurface({
   const [shown, setShown] = useState(!hidden);
   if (!hidden && !shown) setShown(true);
 
+  const reattachRef = useRef({ wanted: reattachOnExit, last: 0 });
+  reattachRef.current.wanted = reattachOnExit;
   clientRef.current = boundClient;
   hiddenRef.current = hidden;
   connectionRef.current = connection;
@@ -512,6 +525,15 @@ export function TerminalSurface({
             summary: frame.error.summary,
           });
         } else if (frame.type === "exited") {
+          const reattach = reattachRef.current;
+          const now = Date.now();
+          if (reattach.wanted && now - reattach.last > REATTACH_ON_EXIT_MS) {
+            reattach.last = now;
+            detachExact(frameReceipt);
+            setConnection("connecting");
+            queueMicrotask(() => controllerRef.current?.retry());
+            return;
+          }
           setConnection("disconnected");
           setError("The terminal session disconnected. Retry to reconnect.");
           detachExact(frameReceipt);

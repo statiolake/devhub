@@ -111,8 +111,6 @@ export interface SettingsGeneralWire {
 	readonly workbenchFreeze: boolean;
 	/** `general.editor`: `"vscode"` or `"neovim"`. */
 	readonly editor: string;
-	/** `general.neovim_terminal_overlay`. */
-	readonly neovimTerminalOverlay: boolean;
 }
 
 export interface SettingsRuntimeConfigWire {

@@ -1,6 +1,10 @@
 /**
- * One Agent's terminal pane: a terminal surface on that terminal's tmux
- * session, filling the view. No header, no close button, no focus mark.
+ * One terminal pane: a terminal surface on a tmux session, filling the view.
+ * No header, no close button, no focus mark. Either an Agent's terminal
+ * (`pane.html#<terminal id>`, its `tm-` session), or — with
+ * `[general] editor = "neovim"` — a Workspace's editor area
+ * (`pane.html#ws:<workspace id>`, its `ws-` session), which is attached again
+ * by itself when its session ends: a Workspace's terminal is a place.
  *
  * # Where this view is
  *
@@ -36,7 +40,11 @@ import type {
   AgentWire,
   AppSnapshot,
 } from "../../ipc/appShell";
-import { paneTerminalSurfaceKey } from "../../ipc/terminal";
+import {
+  paneTerminalSurfaceKey,
+  workspaceOfTerminalPage,
+  workspaceTerminalSurfaceKey,
+} from "../../ipc/terminal";
 import type { TerminalScreenWire } from "../../ipc/contract";
 import { useTerminalScreenReport } from "./screenReport";
 
@@ -56,19 +64,34 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
     ),
   );
   if (state.status !== "ready") return null;
-  const found = findTerminal(state.snapshot, terminalId);
+  const workspaceId = workspaceOfTerminalPage(terminalId);
+  const workspace =
+    workspaceId === undefined
+      ? undefined
+      : state.snapshot.workspaces.find((one) => one.id === workspaceId);
+  const found =
+    workspaceId === undefined
+      ? findTerminal(state.snapshot, terminalId)
+      : undefined;
   // The pane outlives its terminal by at most one projection: main takes the
   // view away once the terminal is gone from the model.
-  if (!found) return null;
-  const name = `${found.agent.displayName}'s terminal`;
+  if (!found && !workspace) return null;
+  const name = found
+    ? `${found.agent.displayName}'s terminal`
+    : `${workspace?.label ?? "Workspace"} terminal`;
   return (
     <div className="app-shell pane-page">
       <div className="pane-body">
         <TerminalSurface
-          surfaceKey={paneTerminalSurfaceKey(terminalId)}
+          surfaceKey={
+            workspaceId === undefined
+              ? paneTerminalSurfaceKey(terminalId)
+              : workspaceTerminalSurfaceKey(workspaceId)
+          }
           surfaceLabel={name}
           appearance={appearance}
           hideTitle
+          reattachOnExit={workspaceId !== undefined}
         />
       </div>
     </div>
