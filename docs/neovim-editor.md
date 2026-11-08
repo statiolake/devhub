@@ -211,6 +211,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     no `eob:` of the person's (`isEndOfBuffer`).
   - Diagnostics' virtual text and inlay hints with a ground of their own
     are pills; a diff's filler rows (the default `diff:` `-`) are hatched.
+  - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) is
+    an overlay scrollbar: the gutter not drawn, the thumb a thin bar.
   - Status lines and winbars are bars (`chrome.ts`'s `barsOf`,
     `barLayout`): the runs not in the bar's commonest colour are pills,
     and Powerline's filled separators (U+E0B0, E0B2, … even code points)
@@ -573,11 +575,14 @@ least risky first within a band):
    without it: empty space past the end, as GUI editors show. A person who
    set `eob:` (even `eob:~`) keeps their markers. `:set fillchars=eob:x`
    in one window only is not seen until highlights or the layout change.
-5. _Float scrollbars drawn by plugins as cells_ (snacks, blink.cmp,
-   nvim-cmp: a column of `█`/`▐` thumbs in `PmenuThumb`/`PmenuSbar`):
-   recognise a one-column float or column of thumb glyphs at a float's
-   right edge and draw it as DevHub's overlay scrollbar (thin, rounded,
-   fading), clicks passed through as before. Medium risk (heuristic).
+5. _Float scrollbars drawn by plugins as cells_ — done for scrollbars
+   that are floats (blink.cmp's and nvim-cmp's: one cell wide,
+   unfocusable, blank cells in a colour): the one with another over it is
+   the gutter and is not drawn (the menu's ground shows), the other the
+   thumb, drawn as a thin rounded bar in the middle of its cell
+   (`floatScrollbars`, a `clip-path` on its canvas). Clicks are as
+   before. Thumbs drawn as glyphs inside a float (`█`, `▐`) are left as
+   text: telling them from content is a guess.
 6. _The message area and `cmdheight` row_ (`-- INSERT --`, the ruler, `Press
 ENTER`): a terminal row at the bottom of the editor. With `ext_messages`
    (0.10+, see The attach) the row goes away and messages become toasts and

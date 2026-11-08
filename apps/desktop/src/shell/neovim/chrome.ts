@@ -512,3 +512,38 @@ export function fillerStart(
   // colours from the text column on; still, a short run is left alone.
   return width - start >= Math.min(8, width) ? start : undefined;
 }
+
+/** What a one-column float is to a menu beside it. */
+export type ScrollbarPart = "thumb" | "gutter";
+
+/**
+ * Completion menus' and docs' scrollbars drawn as floats (blink.cmp,
+ * nvim-cmp: a one-cell-wide, unfocusable float of blank cells in a colour,
+ * the thumb over the gutter). Answers each such float's part: the one with
+ * another over it is the gutter, the rest thumbs.
+ */
+export function floatScrollbars(
+  state: NeovimUiState,
+  boxes: readonly GridBox[],
+): Map<number, ScrollbarPart> {
+  const bars = boxes.filter((box) => {
+    if (!box.float || box.width !== 1 || box.crop || box.frame) return false;
+    const placement = state.windows.get(box.grid)?.placement;
+    if (placement?.kind !== "float" || placement.focusable) return false;
+    const grid = state.grids.get(box.grid);
+    return grid !== undefined && grid.chars.every((c) => c === " " || c === "");
+  });
+  const out = new Map<number, ScrollbarPart>();
+  for (const bar of bars) {
+    const over = bars.some(
+      (other) =>
+        other !== bar &&
+        other.col === bar.col &&
+        other.z > bar.z &&
+        other.row >= bar.row &&
+        other.row + other.height <= bar.row + bar.height,
+    );
+    out.set(bar.grid, over ? "gutter" : "thumb");
+  }
+  return out;
+}

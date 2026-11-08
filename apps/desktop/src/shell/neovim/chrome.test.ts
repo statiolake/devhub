@@ -5,6 +5,7 @@ import {
   barLayout,
   barsOf,
   fillerStart,
+  floatScrollbars,
   isEndOfBuffer,
   separatorsOf,
   sameTheme,
@@ -283,5 +284,57 @@ describe("a diff's filler row", () => {
       themeOf({ groups: { DiffDelete: { bg: DELETE } }, fillchars: "diff:╱" })
         .diffDelete,
     ).toBeUndefined();
+  });
+});
+
+describe("a menu's scrollbar drawn as floats", () => {
+  it("is the gutter under, the thumb over", () => {
+    const state = initialUiState({ foreground: 0, background: 0, special: 0 });
+    const float = (grid: number, height: number, text = " ") => {
+      state.grids.set(grid, {
+        id: grid,
+        width: 1,
+        height,
+        chars: Array.from({ length: height }, () => text),
+        hls: new Int32Array(height),
+        dirty: new Set(),
+      });
+      state.windows.set(grid, {
+        grid,
+        hidden: false,
+        placement: {
+          kind: "float",
+          win: 1000 + grid,
+          anchor: "NW",
+          anchorGrid: 1,
+          anchorRow: 0,
+          anchorCol: 15,
+          focusable: false,
+          zindex: 0,
+        },
+      });
+    };
+    float(2, 10);
+    float(3, 2);
+    float(4, 3, "x");
+    const box = (grid: number, height: number, z: number): GridBox => ({
+      grid,
+      row: 4,
+      col: 18,
+      width: 1,
+      height,
+      z,
+      float: true,
+      win: 1000 + grid,
+    });
+    const parts = floatScrollbars(state, [
+      box(2, 10, 1102),
+      box(3, 2, 1103),
+      box(4, 3, 1104),
+    ]);
+    expect([...parts]).toEqual([
+      [2, "gutter"],
+      [3, "thumb"],
+    ]);
   });
 });

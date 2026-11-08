@@ -26,6 +26,7 @@ import {
   barLayout,
   barsOf,
   fillerStart,
+  floatScrollbars,
   isEndOfBuffer,
   isSeparatorLine,
   sameTheme,
@@ -358,6 +359,7 @@ export class GridPainter {
       if (entry) entry.canvas.style.display = "none";
     }
     const corners = this.placeClusters(state, shown);
+    const scrollbars = floatScrollbars(state, shown);
     this.placeBars(state, shown);
     this.placeSeparators(state, shown);
     for (const box of shown) {
@@ -389,6 +391,16 @@ export class GridPainter {
       canvas.style.borderRadius =
         round && box.lined !== true ? radii(round, FLOAT_RADIUS) : "";
       canvas.classList.toggle("nvim-framed", box.frame !== undefined);
+      // A menu's scrollbar drawn as floats: the thumb a thin rounded bar
+      // in the middle of its cell, the gutter left to the menu's ground,
+      // as an overlay scrollbar.
+      const part = scrollbars.get(box.grid);
+      canvas.style.clipPath =
+        part === "thumb"
+          ? this.thumbClip()
+          : part === "gutter"
+            ? "inset(50%)"
+            : "";
       if (
         entry.width !== grid.width ||
         entry.height !== grid.height ||
@@ -464,6 +476,14 @@ export class GridPainter {
     for (const sep of [...this.separators, ...separators]) dirty?.add(sep.row);
     this.separators = separators;
     this.separatorsKey = key;
+  }
+
+  /** A float scrollbar's thumb (`floatScrollbars`) as a thin rounded bar. */
+  private thumbClip(): string {
+    const { width: cw } = this.metrics;
+    const w = Math.min(4, cw);
+    const side = (cw - w) / 2;
+    return `inset(1px ${String(side)}px 1px ${String(side)}px round ${String(w / 2)}px)`;
   }
 
   /**
