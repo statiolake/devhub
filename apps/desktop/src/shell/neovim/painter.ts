@@ -14,6 +14,7 @@
 import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
 import type { CellMetrics } from "./mouse";
 import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
+import { strokesFor, type Stroke, type StrokeKind } from "./strokes";
 import { boxArms, fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
 import {
   floatClusters,
@@ -1582,6 +1583,28 @@ export class GridPainter {
     }
   }
 
+  /** One stroke of `strokesFor`, in the current stroke style. */
+  private paintStroke(ctx: CanvasRenderingContext2D, stroke: Stroke): void {
+    ctx.lineWidth = stroke.width;
+    ctx.lineCap = stroke.round ? "round" : "butt";
+    ctx.beginPath();
+    if (stroke.points) {
+      stroke.points.forEach(([px, py], i) => {
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+    } else if (stroke.y !== undefined) {
+      const x0 = stroke.x0 ?? 0;
+      ctx.setLineDash(stroke.dash ? [...stroke.dash] : []);
+      ctx.lineDashOffset = stroke.dash ? x0 : 0;
+      ctx.moveTo(x0, stroke.y);
+      ctx.lineTo(stroke.x1 ?? x0, stroke.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineCap = "butt";
+  }
+
   /** A run's text, glyphs and lines, over the grounds. */
   private paintRun(
     ctx: CanvasRenderingContext2D,
@@ -1686,42 +1709,27 @@ export class GridPainter {
       attr?.underdashed ||
       attr?.strikethrough
     ) {
-      ctx.strokeStyle = cssColor(sp);
-      ctx.lineWidth = 1;
-      const uy = y + baseline + 2.5;
-      ctx.beginPath();
-      if (attr.undercurl) {
-        const amp = 1.5;
-        ctx.moveTo(x0, uy);
-        for (let x = x0; x < x1; x += 2) {
-          ctx.lineTo(
-            x + 1,
-            uy + (Math.floor((x - x0) / 2) % 2 === 0 ? -amp : amp),
-          );
+      const kinds: StrokeKind[] = [];
+      if (attr.undercurl) kinds.push("undercurl");
+      else if (attr.underdouble) kinds.push("underdouble");
+      else if (attr.underdotted) kinds.push("underdotted");
+      else if (attr.underdashed) kinds.push("underdashed");
+      else if (attr.underline) kinds.push("underline");
+      if (attr.strikethrough) kinds.push("strikethrough");
+      for (const kind of kinds) {
+        ctx.strokeStyle = cssColor(kind === "strikethrough" ? fg : sp);
+        for (const stroke of strokesFor(
+          kind,
+          x0,
+          x1,
+          y,
+          ch,
+          baseline,
+          this.font.size,
+          this.dpr,
+        )) {
+          this.paintStroke(ctx, stroke);
         }
-      } else if (
-        attr.underline ||
-        attr.underdouble ||
-        attr.underdotted ||
-        attr.underdashed
-      ) {
-        if (attr.underdotted) ctx.setLineDash([1, 2]);
-        else if (attr.underdashed) ctx.setLineDash([3, 2]);
-        ctx.moveTo(x0, uy);
-        ctx.lineTo(x1, uy);
-        if (attr.underdouble) {
-          ctx.moveTo(x0, uy + 2);
-          ctx.lineTo(x1, uy + 2);
-        }
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-      if (attr.strikethrough) {
-        ctx.strokeStyle = cssColor(fg);
-        ctx.beginPath();
-        ctx.moveTo(x0, y + ch / 2);
-        ctx.lineTo(x1, y + ch / 2);
-        ctx.stroke();
       }
     }
   }
