@@ -473,7 +473,18 @@ function NeovimSurface({
       : undefined;
 
   return (
-    <div className="neovim-surface">
+    <div
+      className="neovim-surface"
+      style={
+        nvim
+          ? {
+              ["--nvim-editor-ground" as string]: cssColor(
+                nvim.defaults.background,
+              ),
+            }
+          : undefined
+      }
+    >
       {showTabs ? (
         <div className="nvim-tabline" role="tablist">
           {tabs.tabs.map((tab) => (

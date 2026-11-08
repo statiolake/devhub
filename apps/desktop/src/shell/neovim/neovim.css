@@ -165,7 +165,7 @@
   background: transparent !important;
   color: transparent !important;
   outline: 1px solid currentColor;
-  outline-color: var(--ink-secondary, gray);
+  outline-color: var(--secondary);
   outline-offset: -1px;
 }
 
@@ -196,11 +196,12 @@
   display: flex;
   flex: none;
   gap: 2px;
-  height: 30px;
+  height: 31px;
   padding: 0 8px;
   align-items: stretch;
-  background: var(--chrome);
-  border-bottom: 1px solid var(--line-soft);
+  /* The strip's bottom line is its ground's last pixel row, so the current
+     tab, the editor's ground, covers it and joins the editor. */
+  background: linear-gradient(to top, var(--line-soft) 1px, var(--chrome) 1px);
   overflow-x: auto;
 }
 
@@ -211,7 +212,7 @@
   border-radius: 6px 6px 0 0;
   margin-top: 4px;
   background: transparent;
-  color: var(--ink-secondary);
+  color: var(--secondary);
   font: inherit;
   font-size: 12px;
   white-space: nowrap;
@@ -220,12 +221,19 @@
 }
 
 .nvim-tab:hover {
-  background: var(--lift);
+  background: var(--wash);
+  color: var(--primary);
 }
 
-.nvim-tab-current {
-  background: var(--surface);
+/* The current tab is the editor's own ground, joined to it as an editor's
+   tab is: over the strip's bottom line, with a hairline each side. */
+.nvim-tab-current,
+.nvim-tab-current:hover {
+  background: var(--nvim-editor-ground, var(--surface));
   color: var(--primary);
+  box-shadow:
+    inset 1px 0 0 var(--line-soft),
+    inset -1px 0 0 var(--line-soft);
 }
 
 .nvim-cmdline {
@@ -335,7 +343,7 @@
 
 .nvim-pum-selected {
   background: var(--selection);
-  color: var(--ink-selection, var(--primary));
+  color: var(--primary);
 }
 
 .nvim-pum-kind {
@@ -372,7 +380,7 @@
   color: #b5cea8;
 }
 .nvim-kind-text {
-  color: var(--ink-secondary);
+  color: var(--secondary);
 }
 
 .nvim-pum-word {
@@ -383,7 +391,7 @@
 
 .nvim-pum-menu {
   flex: none;
-  color: var(--ink-tertiary);
+  color: var(--tertiary);
 }
 
 .nvim-gui-window {
@@ -401,7 +409,7 @@
 .nvim-gui-elsewhere {
   align-items: center;
   justify-content: center;
-  color: var(--ink-tertiary);
+  color: var(--tertiary);
   font-size: 12px;
 }
 
@@ -435,7 +443,7 @@
   gap: 12px;
   align-items: center;
   justify-content: center;
-  color: var(--ink-secondary);
+  color: var(--secondary);
   pointer-events: none;
 }
 
@@ -830,7 +838,7 @@
   font:
     11px / 18px system-ui,
     sans-serif;
-  color: var(--ink-secondary, gray);
+  color: var(--secondary);
   background: var(--raised, var(--surface));
   pointer-events: none;
 }

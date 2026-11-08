@@ -269,7 +269,9 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   above near the bottom, kind icons, scrolls to the selected item, click to
   select), the command line as a palette-like bar (firstc, cursor, special
   char, `cmdline_block` for multiline), and tab pages as a native tab strip
-  (click switches via `nvim_set_current_tabpage`).
+  (click switches via `nvim_set_current_tabpage`; `gt`/`gT` are Neovim's):
+  the current tab wears the editor's ground and joins it, over the strip's
+  bottom line, as an editor's tab does.
 - The command line's text is laid out on cells as Neovim's own command line
   holds it (`cmdline.ts`): `cmdline_pos` is a byte offset, a wide character
   takes two cells, a combining mark joins the one before, the text wraps at
