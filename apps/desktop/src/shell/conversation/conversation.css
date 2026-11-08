@@ -857,7 +857,6 @@
   line-height: 1;
   vertical-align: baseline;
   white-space: nowrap;
-  cursor: pointer;
 }
 
 .devhub-link:hover {
@@ -909,7 +908,6 @@
   color: inherit;
   font-size: inherit;
   white-space: normal;
-  cursor: default;
 }
 
 .devhub-link-missing {
@@ -4136,7 +4134,7 @@ button.conversation-setting-face:focus-visible {
   background: var(--wash);
   box-shadow: none;
   color: var(--tertiary);
-  cursor: default;
+  cursor: auto;
   font-size: 0.9em;
 }
 

@@ -190,6 +190,8 @@ function Chip({
   return (
     <button
       type="button"
+      // A link to a place in DevHub, so it has a link's hand (tokens.css).
+      role="link"
       className="devhub-link"
       data-kind={target.kind}
       onClick={(event) => {
