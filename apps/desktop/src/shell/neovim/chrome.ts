@@ -1,7 +1,8 @@
 /**
  * What of a grid is editor chrome drawn as a GUI editor draws it, rather
  * than as cells: selections and search matches as rounded shapes, status
- * lines and winbars as bars with pills. Pure — rows of colours in, spans out — so the
+ * lines and winbars as bars with pills, window separators as a line between
+ * two windows' grounds. Pure — rows of colours in, spans out — so the
  * decisions are tested without a canvas (`chrome.test.ts`); `painter.ts`
  * draws them.
  *
@@ -297,4 +298,99 @@ export function barsOf(
     }
   }
   return bars;
+}
+
+/** The colour most of `bgs` have. */
+function commonest(bgs: readonly number[]): number | undefined {
+  const counts = new Map<number, number>();
+  let best: number | undefined;
+  let most = 0;
+  for (const bg of bgs) {
+    const n = (counts.get(bg) ?? 0) + 1;
+    counts.set(bg, n);
+    if (n > most) {
+      most = n;
+      best = bg;
+    }
+  }
+  return best;
+}
+
+/** The background a grid's cell is drawn in. */
+export type BgOf = (grid: number, index: number) => number;
+
+/** A vertical separator's cell of grid 1, between what is either side. */
+export interface Separator {
+  readonly row: number;
+  readonly col: number;
+  /** The grounds on each side of it. */
+  readonly left: number;
+  readonly right: number;
+}
+
+/**
+ * The cells of grid 1 in a column right of a window or left of one, and
+ * the grounds either side: a window's is the colour most of its cells next
+ * to the column have (its `Normal`, its sign column's), so a cursor line
+ * does not bleed into it; elsewhere (a status line beside) that cell's.
+ * The separator's two halves continue what is beside them and only its
+ * line is left between.
+ */
+export function separatorsOf(
+  boxes: readonly GridBox[],
+  width: number,
+  height: number,
+  bgOf: BgOf,
+): Separator[] {
+  const windows = boxes.filter((box) => !box.float && box.win !== undefined);
+  const at = (row: number, col: number) =>
+    windows.find(
+      (b) =>
+        b.row <= row &&
+        row < b.row + b.height &&
+        b.col <= col &&
+        col < b.col + b.width,
+    );
+  // A window's ground along its first and last columns.
+  const edges = new Map<number, { first: number; last: number }>();
+  const edgeOf = (box: GridBox) => {
+    let edge = edges.get(box.grid);
+    if (!edge) {
+      const first: number[] = [];
+      const last: number[] = [];
+      for (let row = 0; row < box.height; row += 1) {
+        first.push(bgOf(box.grid, row * box.width));
+        last.push(bgOf(box.grid, row * box.width + box.width - 1));
+      }
+      edge = { first: commonest(first) ?? 0, last: commonest(last) ?? 0 };
+      edges.set(box.grid, edge);
+    }
+    return edge;
+  };
+  const columns = new Set<number>();
+  for (const box of windows) {
+    if (box.col + box.width < width) columns.add(box.col + box.width);
+    if (box.col > 0) columns.add(box.col - 1);
+  }
+  const out: Separator[] = [];
+  for (const col of [...columns].sort((a, b) => a - b)) {
+    for (let row = 0; row < height; row += 1) {
+      if (at(row, col)) continue;
+      const l = at(row, col - 1);
+      const r = at(row, col + 1);
+      if (!l && !r) continue;
+      out.push({
+        row,
+        col,
+        left: l ? edgeOf(l).last : bgOf(1, row * width + col - 1),
+        right: r ? edgeOf(r).first : bgOf(1, row * width + col + 1),
+      });
+    }
+  }
+  return out;
+}
+
+/** A separator's character: a vertical line, light or heavy, or `|`. */
+export function isSeparatorLine(c: string): boolean {
+  return c === "│" || c === "┃" || c === "|" || c === "║";
 }

@@ -205,6 +205,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     the row above or below does not go on, and its inside corners filled
     round where it does, so a selection of several lines is one outline.
     A row is repainted with its neighbours while such colours are about.
+  - A window separator's cell is drawn as the two sides meeting
+    (`separatorsOf`): each half in the ground beside it, its line between.
   - Status lines and winbars are bars (`chrome.ts`'s `barsOf`,
     `barLayout`): the runs not in the bar's commonest colour are pills,
     and Powerline's filled separators (U+E0B0, E0B2, … even code points)
@@ -535,12 +537,14 @@ command line, tab line, hover popups, notifications; smooth scroll and
 cursor. Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):
 
-1. _Window separators_ (`│` in a whole cell column): the line runs through
-   the middle of a cell of `WinSeparator`'s ground, a half-cell band each
-   side. Draw a 1px line on the column's centre over the neighbouring
-   windows' grounds (each half of the column in its window's `Normal`
-   background), so splits meet edge to edge like editor groups; clicks and
-   drags on the column stay Neovim's (`:help vertical-separator`). Low risk.
+1. _Window separators_ (`│` in a whole cell column) — done: each half of
+   the column is drawn in the ground of what is beside it (a window's
+   commonest colour along that edge — its `Normal`, `NormalNC`, sign
+   column — so a cursor line does not bleed in; a status line's cell
+   where one is), and the line, already a device pixel or so through the
+   middle, is all that is left between: splits meet edge to edge like
+   editor groups. A blank separator (`vert: `) is a band by choice and
+   stays one. Clicks and drags on the column stay Neovim's.
 2. _Statusline and winbar as cell rows_ — done: a status line (grid 1's
    row under a window, not the command line's `cmdheight` rows) and a
    winbar (a window's top margin) is a bar of its commonest colour; runs of

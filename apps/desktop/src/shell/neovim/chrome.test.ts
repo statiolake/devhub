@@ -4,6 +4,7 @@ import {
   NO_THEME,
   barLayout,
   barsOf,
+  separatorsOf,
   sameTheme,
   shapedSpans,
   spanCorners,
@@ -160,5 +161,53 @@ describe("a status line as a bar", () => {
     expect([...(bars.get(3)?.keys() ?? [])]).toEqual([0]);
     const none = barsOf(state, [win(2, 0, 4), win(3, 5, 4)], 1);
     expect([...(none.get(1)?.keys() ?? [])]).toEqual([4]);
+  });
+});
+
+describe("a window separator", () => {
+  const box = (
+    grid: number,
+    row: number,
+    col: number,
+    width: number,
+    height: number,
+  ): GridBox => ({
+    grid,
+    row,
+    col,
+    width,
+    height,
+    z: 1,
+    float: false,
+    win: 1000 + grid,
+  });
+
+  it("takes each side's ground from the window there, else grid 1", () => {
+    // Window 2 left (rows 0–3), window 3 right (rows 0–1) over its status
+    // line on row 2 and window 4 (row 3); the column is 5.
+    const LEFT = 0x111111;
+    const RIGHT = 0x222222;
+    const STATUS = 0x333333;
+    const CURSORLINE = 0x444444;
+    const bgOf = (grid: number, index: number) =>
+      grid === 1
+        ? STATUS
+        : grid === 2
+          ? index === 4
+            ? CURSORLINE
+            : LEFT
+          : RIGHT;
+    const seps = separatorsOf(
+      [box(2, 0, 0, 5, 4), box(3, 0, 6, 4, 2), box(4, 3, 6, 4, 1)],
+      10,
+      5,
+      bgOf,
+    );
+    expect(seps).toEqual([
+      { row: 0, col: 5, left: LEFT, right: RIGHT },
+      { row: 1, col: 5, left: LEFT, right: RIGHT },
+      { row: 2, col: 5, left: LEFT, right: STATUS },
+      { row: 3, col: 5, left: LEFT, right: RIGHT },
+    ]);
   });
 });

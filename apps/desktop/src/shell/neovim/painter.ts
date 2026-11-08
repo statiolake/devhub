@@ -25,12 +25,15 @@ import {
   NO_THEME,
   barLayout,
   barsOf,
+  isSeparatorLine,
   sameTheme,
+  separatorsOf,
   shapedSpans,
   spanCorners,
   spanNotches,
   type Bars,
   type PaintTheme,
+  type Separator,
 } from "./chrome";
 import {
   SIDES,
@@ -253,6 +256,9 @@ export class GridPainter {
   /** The status lines and winbars (`barsOf`), and what they were last. */
   private bars: Bars = new Map();
   private barsKey = "";
+  /** Grid 1's columns between two windows (`separatorsOf`). */
+  private separators: readonly Separator[] = [];
+  private separatorsKey = "";
   /** The row's cells whose glyph is not drawn (a bar's joints). */
   private readonly skip = new Set<number>();
   private dpr: number;
@@ -345,6 +351,7 @@ export class GridPainter {
     }
     const corners = this.placeClusters(state, shown);
     this.placeBars(state, shown);
+    this.placeSeparators(state, shown);
     for (const box of shown) {
       const grid = state.grids.get(box.grid);
       if (!grid) continue;
@@ -421,6 +428,34 @@ export class GridPainter {
     }
     this.bars = bars;
     this.barsKey = key;
+  }
+
+  /**
+   * The window separators and the grounds on their sides; when those
+   * changed (a split, `NormalNC` on the window left), grid 1's rows they
+   * were and are on are repainted.
+   */
+  private placeSeparators(
+    state: NeovimUiState,
+    boxes: readonly GridBox[],
+  ): void {
+    const base = state.grids.get(1);
+    const separators = separatorsOf(
+      boxes,
+      base?.width ?? 0,
+      base?.height ?? 0,
+      (grid, index) => {
+        const g = state.grids.get(grid);
+        const attr = state.hl.get(g?.hls[index] ?? 0);
+        return resolveColors(attr, state.defaults).bg;
+      },
+    );
+    const key = JSON.stringify(separators);
+    if (key === this.separatorsKey) return;
+    const dirty = state.grids.get(1)?.dirty;
+    for (const sep of [...this.separators, ...separators]) dirty?.add(sep.row);
+    this.separators = separators;
+    this.separatorsKey = key;
   }
 
   /**
@@ -784,6 +819,7 @@ export class GridPainter {
     for (const run of runs) {
       this.paintGround(ctx, state, box, grid.chars, base, run, y);
     }
+    if (box.grid === 1) this.paintSeparators(ctx, grid.chars, base, row, y);
     this.paintShaped(ctx, state, box, row, y);
     this.skip.clear();
     this.paintBars(ctx, state, box, row, y);
@@ -810,6 +846,32 @@ export class GridPainter {
     }
     this.icons.length = 0;
     ctx.restore();
+  }
+
+  /**
+   * A window separator's cell (a vertical line, `│` by default) as the two
+   * windows meeting: each half in the ground of the window on its side, the
+   * line (drawn over, a device pixel or so) alone between them, as editor
+   * groups meet. A blank separator (`vert: `) is a band by choice: left.
+   */
+  private paintSeparators(
+    ctx: CanvasRenderingContext2D,
+    chars: readonly string[],
+    base: number,
+    row: number,
+    y: number,
+  ): void {
+    const { width: cw, height: ch } = this.metrics;
+    for (const sep of this.separators) {
+      if (sep.row !== row) continue;
+      if (!isSeparatorLine(chars[base + sep.col] ?? "")) continue;
+      const x = sep.col * cw;
+      const mid = Math.round((x + cw / 2) * this.dpr) / this.dpr;
+      ctx.fillStyle = cssColor(sep.left);
+      ctx.fillRect(x, y, mid - x, ch);
+      ctx.fillStyle = cssColor(sep.right);
+      ctx.fillRect(mid, y, x + cw - mid, ch);
+    }
   }
 
   /**
