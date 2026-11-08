@@ -1,12 +1,15 @@
 /**
- * The Neovim editor page's wire: `neovim.html` and main.
+ * The Neovim editor page's wire: `neovim.html`, main, and the Neovim host.
  *
  * The page is a GUI for one headless Neovim (`docs/neovim-editor.md`). Main
- * owns the connection — the socket, the attach, the clipboard and GUI-window
- * requests Neovim makes — and forwards Neovim's `redraw` batches to the page
- * as they arrived (ext handles already turned into numbers); the page sends
- * back what the person did as Neovim API calls. Nothing here interprets
- * the UI protocol: that is `shell/neovim/redraw.ts`.
+ * finds or starts the Neovim and answers the attach; the UI's own connection
+ * — the socket, the attach, the clipboard and GUI-window requests Neovim
+ * makes — is the Neovim host's (`main/neovimHost/`), which forwards Neovim's
+ * `redraw` batches to the page over the page's port as they arrived (ext
+ * handles already turned into numbers), and takes back what the person did
+ * as Neovim API calls on the same port. With the host given up on, main
+ * holds the connection and the same messages go over IPC. Nothing here
+ * interprets the UI protocol: that is `shell/neovim/redraw.ts`.
  *
  * Nothing here may import Electron, Node or the DOM: the file is compiled
  * into the main process, the preload and the page alike.
@@ -33,6 +36,10 @@ export const NEOVIM_CHANNELS = {
 	guiSend: "devhub:neovim:gui-send",
 	/** main → page: a toast, an inline image, a rich float, and where they are. */
 	guiEvent: "devhub:neovim:gui-event",
+	/** main → page: a port to the Neovim host (transferred), with its generation. */
+	port: "devhub:neovim:port",
+	/** main → page: the Neovim host of this generation ended; its port is dead. */
+	restarted: "devhub:neovim:restarted",
 } as const;
 
 /** What the page asks for when it attaches. */
@@ -51,6 +58,15 @@ export type NeovimAttachResult =
 			readonly where: string;
 	  }
 	| { readonly ok: false; readonly message: string };
+
+/**
+ * The attach as main answers the preload: `hosted` is the generation of the
+ * Neovim host whose port carries this Workspace's UI from now on; absent, it
+ * is main's and its calls are IPC.
+ */
+export type NeovimAttachReply = NeovimAttachResult & {
+	readonly hosted?: number;
+};
 
 /** One API call the page makes: `nvim_input`, `nvim_input_mouse`, … */
 export interface NeovimCall {
@@ -126,6 +142,44 @@ export interface NeovimGuiEvent {
 	readonly kind: string;
 	readonly payload: unknown;
 }
+
+/** What the UI's connection says to its page, on its port or (from main) as IPC. */
+export type NeovimPageEvent =
+	| {
+			readonly type: "redraw";
+			readonly workspaceId: string;
+			readonly batches: readonly unknown[];
+	  }
+	| {
+			readonly type: "gui-window";
+			readonly workspaceId: string;
+			readonly window: NeovimGuiWindowWire;
+	  }
+	| {
+			readonly type: "gui-windows";
+			readonly workspaceId: string;
+			readonly windows: NeovimGuiWindowsWire;
+	  }
+	| { readonly type: "gui-send"; readonly message: NeovimGuiMessage }
+	| { readonly type: "gui-event"; readonly event: NeovimGuiEvent };
+
+/** What the page sends the Neovim host on its port; `request` is answered by `rid`. */
+export type PageToNeovimHost =
+	| { readonly type: "call"; readonly call: NeovimCall }
+	| {
+			readonly type: "request";
+			readonly rid: number;
+			readonly call: NeovimCall;
+	  }
+	| { readonly type: "gui-message"; readonly message: NeovimGuiMessage };
+
+export type NeovimHostToPage =
+	| NeovimPageEvent
+	| {
+			readonly type: "reply";
+			readonly rid: number;
+			readonly result: NeovimRequestResult;
+	  };
 
 /** The bridge member the Neovim page has (`window.devhub.neovim`). */
 export interface DevhubNeovimApi {

@@ -113,7 +113,7 @@ async function attached(cols = 60, rows = 20): Promise<Harness> {
 		guiEvent: (kind, payload) => gui.events.push({ kind, payload }),
 	};
 	const ui = new NeovimUi(client, {
-		read: () => clipboard.text,
+		read: () => Promise.resolve(clipboard.text),
 		write: (text) => {
 			clipboard.text = text;
 		},
@@ -186,7 +186,7 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			const state = initialUiState();
 			let layout: readonly WindowLayoutReport[] = [];
 			const ui = new NeovimUi(client, {
-				read: () => "",
+				read: () => Promise.resolve(""),
 				write: () => undefined,
 			});
 			await ui.attach(

@@ -1,12 +1,13 @@
 /**
  * DevHub as a Neovim's UI: the attach, and what Neovim asks of its GUI.
  *
- * One `NeovimUi` per connection to a Workspace's headless Neovim
- * (`managedNeovim.ts`). It runs `SETUP_LUA` on the server — which tells the
- * person's config it is in DevHub's GUI (`g:devhub_gui`), points the
- * clipboard at this Mac's, and provides the `devhub_gui` Lua module and
- * `:DevhubTerminal` — then attaches with the `ext_*` options the page draws
- * natively, and forwards every `redraw` to the page. Neovim's requests on
+ * One `NeovimUi` per UI connection to a Workspace's headless Neovim
+ * (`neovimUiSessions.ts`; the server is `managedNeovim.ts`'s). It runs
+ * `SETUP_LUA` on the server — which tells the person's config it is in
+ * DevHub's GUI (`g:devhub_gui`), points the clipboard at this Mac's, and
+ * provides the `devhub_gui` Lua module and `:DevhubTerminal` — then attaches
+ * with the `ext_*` options the page draws natively, and forwards every
+ * `redraw` to the page. Neovim's requests on
  * the same channel (the clipboard's paste) are answered here; its
  * notifications about GUI windows are forwarded.
  *
@@ -19,7 +20,7 @@ import { MsgpackExt, decode } from "./msgpack.js";
 import { LAYERS_LUA } from "./neovimGuiLayers.js";
 import type { NeovimRpc } from "./neovimRpc.js";
 
-/** What the GUI hears from its Neovim, through main. */
+/** What the GUI hears from its Neovim (`neovimUiSessions.ts` sends it on). */
 export interface NeovimUiSink {
 	redraw(batches: readonly unknown[]): void;
 	/** `require('devhub_gui').open{…}`, a window change, or a close. */
@@ -41,9 +42,12 @@ export interface NeovimUiSink {
 	guiEvent?(kind: string, payload: unknown): void;
 }
 
-/** This Mac's clipboard, for `g:clipboard`. */
+/**
+ * This Mac's clipboard, for `g:clipboard`. Main's: the Neovim host asks main
+ * for it (a utility process has no clipboard of its own).
+ */
 export interface NeovimClipboard {
-	read(): string;
+	read(): Promise<string>;
 	write(text: string): void;
 }
 
@@ -732,10 +736,6 @@ export class NeovimUi {
 		client.onRequest?.((method, params) => this.requested(method, params));
 	}
 
-	get isAttached(): boolean {
-		return this.attached;
-	}
-
 	/** Attach (again) as the UI, the page at `sink` hearing what it draws. */
 	async attach(
 		sink: NeovimUiSink,
@@ -906,7 +906,7 @@ export class NeovimUi {
 		_params: readonly unknown[],
 	): Promise<unknown> {
 		if (method === "devhub_clipboard_get") {
-			return Promise.resolve(clipboardPaste(this.clipboard.read()));
+			return this.clipboard.read().then(clipboardPaste);
 		}
 		return Promise.reject(new Error(`DevHub does not answer ${method}`));
 	}

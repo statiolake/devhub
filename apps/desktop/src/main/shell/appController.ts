@@ -373,6 +373,10 @@ import {
 import { EngineClient, electronEngineLauncher } from "../agentEngine/client.js";
 import { enginePagePorts } from "../agentEngine/pagePorts.js";
 import { PtyHostClient, electronPtyHostLauncher } from "../ptyHost/client.js";
+import {
+	NeovimHostClient,
+	electronNeovimHostLauncher,
+} from "../neovimHost/client.js";
 import { EscalationStore } from "../orchestrator/escalationStore.js";
 import {
 	OrchestratorService,
@@ -1088,6 +1092,11 @@ export class AppController {
 	 * `DEVHUB_TERMINALS_IN_MAIN=1` runs them in main instead.
 	 */
 	private ptyHost: PtyHostClient | undefined;
+	/**
+	 * Where the Neovim editors' UIs run (`neovimHost/`): a utility process,
+	 * the pages over ports. `DEVHUB_NEOVIM_IN_MAIN=1` runs them in main.
+	 */
+	private neovimHost: NeovimHostClient | undefined;
 	/** The Agents page's conversations, once registered: where words for a composer go. */
 	private conversationIpc: ConversationIpc | undefined;
 	/** "Send to Agent…" from the editors. See `sendToAgent.ts`. */
@@ -1542,15 +1551,24 @@ export class AppController {
 		});
 		const terminalRuntimes = this.terminalsWiring.runtimes;
 		this.managedNeovims = this.createManagedNeovims(userDataPath);
+		const clipboard = {
+			read: () => Promise.resolve(electron.clipboard.readText()),
+			write: (text: string) => {
+				electron.clipboard.writeText(text);
+			},
+		};
+		this.neovimHost =
+			process.env["DEVHUB_NEOVIM_IN_MAIN"] === "1"
+				? undefined
+				: new NeovimHostClient({
+						launch: electronNeovimHostLauncher,
+						clipboard,
+					});
 		this.neovimEditors = new NeovimEditors({
 			neovims: this.managedNeovims,
 			target: (workspaceId) => this.neovimTarget(workspaceId),
-			clipboard: {
-				read: () => electron.clipboard.readText(),
-				write: (text) => {
-					electron.clipboard.writeText(text);
-				},
-			},
+			clipboard,
+			...(this.neovimHost === undefined ? {} : { host: this.neovimHost }),
 			log: (line) => {
 				console.error(line);
 			},
@@ -4441,7 +4459,9 @@ export class AppController {
 		this.terminalsWiring?.service.dispose();
 		this.ptyHost?.dispose();
 		// The managed Neovims too: they run on in tmux, and the next DevHub
-		// adopts them by their sockets.
+		// adopts them by their sockets. Their UIs' connections go first.
+		this.neovimEditors?.dispose();
+		this.neovimHost?.dispose();
 		this.managedNeovims?.dispose();
 		// The conversations stop being followed; their hosts run on in tmux,
 		// and the next DevHub replays them from their journals.

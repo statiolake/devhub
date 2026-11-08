@@ -21,15 +21,32 @@ wants none, `planWorkbenches`), and one that was running is closed; back to
 ## Architecture
 
 ```
- neovim.html (one view per Workspace)            main                    the Workspace's machine
- ┌───────────────────────────────┐      ┌─────────────────────┐      ┌──────────────────────────┐
- │ redraw.ts  (pure reducer)     │◀─────│ NeovimEditors       │◀─────│ nvim --headless --listen │
- │ painter.ts (a canvas per grid)│redraw│  NeovimUi (attach,  │ rpc  │   kept by a hidden tmux  │
- │ widgets: pum, cmdline, tabs,  │─────▶│  clipboard, GUI     │─────▶│   window (new-window -d) │
- │  GUI windows (iframe, xterm)  │calls │  windows)           │      │   socket: local, or      │
- │ keys.ts ime.ts mouse.ts       │      │ ManagedNeovims      │      │   ssh -O forward -L      │
- └───────────────────────────────┘      └─────────────────────┘      └──────────────────────────┘
+ neovim.html (one view per Workspace)      Neovim host (utility process)     the Workspace's machine
+ ┌───────────────────────────────┐ port ┌──────────────────────────┐      ┌──────────────────────────┐
+ │ redraw.ts  (pure reducer)     │◀─────│ NeovimUiSessions         │◀─────│ nvim --headless --listen │
+ │ painter.ts (a canvas per grid)│redraw│  NeovimUi (attach,       │ rpc  │   kept by a hidden tmux  │
+ │ widgets: pum, cmdline, tabs,  │─────▶│  GUI windows), msgpack   │─────▶│   window (new-window -d) │
+ │  GUI windows (iframe, xterm)  │calls └──────────────────────────┘      │   socket: local, or      │
+ │ keys.ts ime.ts mouse.ts       │        ▲ attach, ended, clipboard      │   ssh -O forward -L      │
+ └───────────────────────────────┘        │                    ┌──────────┴───────────────┐
+          │ attach (invoke)        ┌──────┴──────────────┐      │ (a second connection:    │
+          └───────────────────────▶│ main: NeovimEditors │─────▶│  lifecycle, file jumps,  │
+                                   │  ManagedNeovims     │ rpc  │  theme)                  │
+                                   └─────────────────────┘      └──────────────────────────┘
 ```
+
+The UI's connection is its own: main's `ManagedNeovims` keeps one
+connection per server for its lifecycle (it closing is Neovim having
+exited), the file jumps and the theme; the UI opens a second one to the
+same socket (on an SSH host, the same forward) and runs in the Neovim host
+(`main/neovimHost/`), which sends every redraw to the page over the page's
+`MessagePort` and takes its calls back on it. Main answers the attach (which
+Neovim, which socket), hands the port out, and answers the clipboard, which a
+utility process has none of. A host that ends is restarted and the pages
+reconnect by themselves; after three ends in a minute, or with
+`DEVHUB_NEOVIM_IN_MAIN=1`, the same code (`editor/neovimUiSessions.ts`) runs
+in main and the page's calls and redraws are IPC (`docs/process-model.md`,
+phase 5c).
 
 ### The process
 
@@ -266,8 +283,8 @@ that window to a function, or run `gg`, `G`, `:write` in it.
 ### Notifications and inline images
 
 The same rule, for things smaller than a window. `devhub_gui` sends them as
-one-way events on one RPC method (`devhub_gui_event`; main forwards them on
-`devhub:neovim:gui-event`; `shell/neovim/decorations.ts` is the page's
+one-way events on one RPC method (`devhub_gui_event`; the Neovim host forwards them as
+`gui-event` on the page's port; `shell/neovim/decorations.ts` is the page's
 reducer, `DecorationViews.tsx` draws them). A payload of the wrong shape is
 ignored, so anything odd leaves Neovim's own grid showing; a page that
 attaches again is told every image again.

@@ -15,7 +15,6 @@ import { CancellationToken } from "../terminal/ports.js";
 import { OperationDeadline } from "../terminal/command.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import { PROBE_LIMITS } from "../runtime/remoteShellRuntime.js";
-import { NeovimClient } from "./neovimRpc.js";
 import type { NeovimFiles, NeovimSockets } from "./managedNeovim.js";
 import {
 	runtimeUnavailableMessage,
@@ -86,14 +85,13 @@ export async function remoteNeovimSockets(
 	return {
 		directory,
 		files,
-		connect: async (socketPath) => {
+		reach: async (socketPath) => {
 			const { mkdir } = await import("node:fs/promises");
 			await mkdir(forwardDirectory, { recursive: true, mode: 0o700 });
-			const local = await runtime.forwardUnixSocket(
+			return runtime.forwardUnixSocket(
 				socketPath,
 				forwardedSocketPath(forwardDirectory, runtime.id, socketPath),
 			);
-			return NeovimClient.connect(local);
 		},
 	};
 }

@@ -102,14 +102,16 @@ export interface NeovimOpen {
 
 /**
  * Where one machine's Neovim sockets are, and how to reach one from here.
- * On this Mac the socket is connected to directly; on an SSH host `connect`
- * forwards it over the host's ControlMaster first (`Runtime.forwardUnixSocket`).
+ * On this Mac the socket is connected to directly; on an SSH host `reach`
+ * forwards it over the host's ControlMaster first (`Runtime.forwardUnixSocket`)
+ * and answers the forward's socket, here.
  */
 export interface NeovimSockets {
 	/** A directory on that machine only this user can enter. */
 	readonly directory: string;
 	readonly files: NeovimFiles;
-	readonly connect: (socketPath: string) => Promise<NeovimRpc>;
+	/** A socket on this Mac that reaches the one at `socketPath` there. */
+	readonly reach: (socketPath: string) => Promise<string>;
 }
 
 export interface ManagedNeovimOptions {
@@ -148,6 +150,10 @@ interface ServerRecord {
 	readonly files: NeovimFiles;
 	/** Absent for a server adopted whose pane could not be named. */
 	readonly paneId: string | undefined;
+	/** On this Mac: `socketPath`, or the forward of a host's. The UI connects here too. */
+	readonly localPath: string;
+	/** Which server this is, among every one this DevHub has known. */
+	readonly serial: number;
 	readonly client: NeovimRpc;
 	readonly waitMarkers: Set<string>;
 }
@@ -276,6 +282,7 @@ export class ManagedNeovims {
 	private readonly connect: (socketPath: string) => Promise<NeovimRpc>;
 	private readonly startTimeoutMs: number;
 	private readonly pollMs: number;
+	private nextSerial = 1;
 
 	constructor(private readonly options: ManagedNeovimOptions) {
 		this.panes = options.panes;
@@ -299,7 +306,7 @@ export class ManagedNeovims {
 		return {
 			directory: this.options.socketDirectory,
 			files: this.files,
-			connect: this.connect,
+			reach: (socketPath) => Promise.resolve(socketPath),
 		};
 	}
 
@@ -337,14 +344,17 @@ export class ManagedNeovims {
 
 	/**
 	 * The Workspace's Neovim, started (headless, in a hidden window of its
-	 * session) if there is none alive: the connection the GUI attaches over.
+	 * session) if there is none alive: the socket on this Mac the GUI opens
+	 * its own connection to (`neovimUiSessions.ts`), and which server it is.
 	 */
-	connection(
-		target: WorkspaceTerminalTarget,
-	): Promise<{ readonly client: NeovimRpc; readonly started: boolean }> {
+	connection(target: WorkspaceTerminalTarget): Promise<{
+		readonly socketPath: string;
+		readonly server: number;
+		readonly started: boolean;
+	}> {
 		return this.serially(target.workspaceId, async () => {
 			const { record, started } = await this.server(target);
-			return { client: record.client, started };
+			return { socketPath: record.localPath, server: record.serial, started };
 		});
 	}
 
@@ -466,8 +476,10 @@ export class ManagedNeovims {
 		);
 		if (!(await sockets.files.exists(socketPath))) return undefined;
 		let client: NeovimRpc;
+		let localPath: string;
 		try {
-			client = await sockets.connect(socketPath);
+			localPath = await sockets.reach(socketPath);
+			client = await this.connect(localPath);
 		} catch (error) {
 			if (!isRefused(error)) throw error;
 			await sockets.files.remove(socketPath);
@@ -497,6 +509,8 @@ export class ManagedNeovims {
 			socketPath,
 			files: sockets.files,
 			paneId,
+			localPath,
+			serial: this.nextSerial++,
 			client,
 			waitMarkers: new Set(),
 		});
@@ -516,12 +530,15 @@ export class ManagedNeovims {
 		for (;;) {
 			if (await sockets.files.exists(socketPath)) {
 				try {
-					const client = await sockets.connect(socketPath);
+					const localPath = await sockets.reach(socketPath);
+					const client = await this.connect(localPath);
 					return this.remember(target.workspaceId, {
 						target,
 						socketPath,
 						files: sockets.files,
 						paneId,
+						localPath,
+						serial: this.nextSerial++,
 						client,
 						waitMarkers: new Set(),
 					});
