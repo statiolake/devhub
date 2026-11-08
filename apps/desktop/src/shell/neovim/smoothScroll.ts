@@ -33,8 +33,12 @@ const FRAME_MS = 16;
 /** How long after the last wheel event the display settles. */
 export const WHEEL_IDLE_MS = 110;
 
-/** How long a request that Neovim scrolls by its own wheel may stay unseen. */
-const REQUEST_TIMEOUT_MS = 250;
+/**
+ * How long a request may stay unseen before another may go: Neovim's own
+ * wheel does not always scroll (the first turn in a terminal leaves
+ * Terminal mode), and says nothing when it does not.
+ */
+const REQUEST_TIMEOUT_MS = 60;
 
 /** One window's display, in pixels from Neovim's `topline` (down positive). */
 export interface ScrollView {
@@ -191,8 +195,11 @@ export function step(
   dpr: number,
 ): ScrollRequest | undefined {
   const snap = (v: number) => Math.round(v * dpr) / dpr;
-  if (view.pending !== 0 && now - view.pendingAt > REQUEST_TIMEOUT_MS) {
-    answered(view, false);
+  if (
+    view.pending !== 0 &&
+    now - view.pendingAt > Math.max(REQUEST_TIMEOUT_MS, 2 * view.rtt)
+  ) {
+    view.pending = 0;
   }
   const { lo, hi } = coverage(view);
   // Still catching up with a flick that went past what Neovim has drawn.
