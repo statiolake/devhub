@@ -52,16 +52,13 @@ export function openRowMenu(
 }
 
 /**
- * What a right-click on a Workspace offers: the two ways to reopen its editor
- * when it is in a dev container, and — on every Workspace but Scratch, which
- * is today's folder and is never closed — the close the row's own button is,
- * last and apart. Empty for Scratch outside a dev container.
+ * What a right-click on a Workspace offers: on every Workspace but Scratch,
+ * which is today's folder and is never closed, the close the row's own button
+ * is. Empty for Scratch.
  */
 export function workspaceMenuItems(
   workspace: WorkspaceSnapshot,
   actions: {
-    readonly reopenInContainer: (workspaceId: string) => void;
-    readonly reopenLocally: (workspaceId: string) => void;
     /** The row's close (`onCloseWorkspace`): one path, whatever the state. */
     readonly close: (workspace: WorkspaceSnapshot) => void;
     /** Closing deletes the folder (`closingDeletesWorktree`), and says so. */
@@ -70,30 +67,6 @@ export function workspaceMenuItems(
   },
 ): RowMenuItem[] {
   const items: RowMenuItem[] = [];
-  if (workspace.editor.kind === "devContainer") {
-    items.push(
-      {
-        // The way back in when the editor could not open because its
-        // container was never built, or was removed: build it, then open the
-        // editor in it — what Retry, which only starts a container, cannot do.
-        id: "reopen-in-container",
-        label: "Reopen Editor in Container",
-        run: () => {
-          actions.reopenInContainer(workspace.id);
-        },
-      },
-      {
-        // The way out when an editor in a dev container cannot open — a
-        // container never built, a Docker that is not running — and the same
-        // act as the editor's own Reopen Folder Locally.
-        id: "reopen-locally",
-        label: "Reopen Editor Locally",
-        run: () => {
-          actions.reopenLocally(workspace.id);
-        },
-      },
-    );
-  }
   if (!actions.fixed) {
     items.push({
       // The ellipsis is the row button's promise: a question may follow.

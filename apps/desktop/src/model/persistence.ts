@@ -51,7 +51,6 @@ import {
   validDisplayName,
   Workspace,
   AVAILABLE,
-  devContainerConfigPath,
   EDITOR_ON_HOST,
   sshHost,
   workspaceLocation,
@@ -2021,13 +2020,14 @@ function editorRecord(
   }
 }
 
-function editorFromRecord(record: EditorRecord | undefined): EditorAttachment {
-  return record === undefined
-    ? EDITOR_ON_HOST
-    : {
-        kind: "devContainer",
-        configPath: devContainerConfigPath(record.config_path),
-      };
+/**
+ * A Workspace's editor is on its own machine. An older file may say it was
+ * attached to a dev container — VS Code's Reopen in Container — and that
+ * attachment went with VS Code (docs/without-vscode.md): it is read, and
+ * dropped, and the next save no longer states it.
+ */
+function editorFromRecord(_record: EditorRecord | undefined): EditorAttachment {
+  return EDITOR_ON_HOST;
 }
 
 function decodeEditor(where: string, value: unknown): EditorRecord {

@@ -63,21 +63,7 @@ import {
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { openByteStream, type StreamLaunch } from "./byteStream.js";
-import {
-	isPermanent,
-	LIBC_PROBE,
-	parseLibc,
-	permanent,
-	rehTargetFor,
-	remoteServerPaths,
-	serverInstalledScript,
-	sourceBuildRefusal,
-	unpackServerScript,
-	unsupportedServerPlatform,
-	type Libc,
-	type RehDelivery,
-	type RemoteServerPaths,
-} from "./remoteServer.js";
+import { LIBC_PROBE, parseLibc, type Libc } from "./libc.js";
 import { shellQuote } from "./quote.js";
 import {
 	NO_USER_TMUX_CONFIG,
@@ -362,16 +348,11 @@ export function unsupportedPlatformFailure(
 	machine: string,
 	uname: string,
 ): NamedFailure {
-	// Permanent: an architecture is not a thing that changes while a workbench
-	// waits, so a resolve that retried this would retry it five times and then
-	// say the same sentence.
-	return permanent(
-		new NamedFailure(
-			withSummary(
-				errorWireAt("workspace_unavailable"),
-				`DevHub supports Linux and macOS hosts, and ${machine} reports ` +
-					`${uname.length === 0 ? "nothing" : uname}.`,
-			),
+	return new NamedFailure(
+		withSummary(
+			errorWireAt("workspace_unavailable"),
+			`DevHub supports Linux and macOS hosts, and ${machine} reports ` +
+				`${uname.length === 0 ? "nothing" : uname}.`,
 		),
 	);
 }
@@ -906,87 +887,6 @@ export abstract class RemoteShellRuntime {
 		return { directory, program };
 	}
 
-	/**
-	 * The remote extension host this DevHub carries, installed here — and
-	 * where.
-	 *
-	 * One install for every kind of machine, an SSH host's and a dev
-	 * container's alike, because every step of it is a question asked over
-	 * `sh` and a stream on its stdin, which is what both of them have:
-	 *
-	 * 1. Is the server for this DevHub's key already here and finished? Then
-	 *    nothing is read and nothing is sent. The key names DevHub's patches as
-	 *    well as its VS Code (`rehInstallKey`), so "already here" cannot be a
-	 *    server some other DevHub built from other patches.
-	 * 2. Which server does this machine need — Linux, its architecture, and its
-	 *    C library (`LIBC_PROBE`). A machine DevHub carries no server for is
-	 *    refused here, by name, before a hundred megabytes go anywhere.
-	 * 3. The tarball, out of this DevHub's own bundle, checked against the
-	 *    hash its statement gives.
-	 * 4. Unpacked over there from stdin, its `node` run once on that machine,
-	 *    and only then moved into place (`unpackServerScript`).
-	 *
-	 * The far machine never reaches the network. That is the point: it may
-	 * have no route out at all, and DevHub already reaches it.
-	 */
-	protected async installRemoteServer(
-		delivery: RehDelivery,
-	): Promise<RemoteServerPaths> {
-		const key = delivery.installKey;
-		// Permanent for as long as this DevHub is running: a build that states no
-		// key cannot be given one, so there is nothing a later attempt would find.
-		if (key === undefined) {
-			throw permanent(new Error(sourceBuildRefusal(this.machineName)));
-		}
-		const { home, platform, architecture } = await this.describeRemote();
-		const paths = remoteServerPaths({
-			home,
-			dataFolderName: delivery.dataFolderName,
-			applicationName: delivery.applicationName,
-			key,
-		});
-		const present = await this.sh(serverInstalledScript(paths));
-		if (present.code === 0) return paths;
-		const machine = {
-			system: platform,
-			architecture,
-			libc: platform === "Linux" ? await this.#libc() : undefined,
-		};
-		const target = rehTargetFor(machine);
-		if (target === undefined) {
-			throw permanent(
-				new Error(unsupportedServerPlatform(this.machineName, machine)),
-			);
-		}
-		let tarball;
-		try {
-			tarball = await delivery.tarball(target);
-		} catch (failure: unknown) {
-			// The delivery knows whether what refused is going to go on refusing
-			// (a server this DevHub does not carry: permanent), and that opinion
-			// has to survive being wrapped in a sentence that names the machine.
-			const wrapped = new Error(
-				`DevHub could not install the remote extension host on ` +
-					`${this.machineName} (${target}): ${describeFailure(failure)}`,
-				{ cause: failure },
-			);
-			throw isPermanent(failure) ? permanent(wrapped) : wrapped;
-		}
-		const unpack = await this.sh(
-			unpackServerScript(paths, tarball.topLevelDirectory, tarball.sha256),
-			{ stdin: tarball.bytes, timeoutMs: INSTALL_TIMEOUT_MS },
-		);
-		if (unpack.code !== 0) {
-			throw new Error(
-				`DevHub could not install the remote extension host (${target}) into ` +
-					`${paths.install} on ${this.machineName}: ` +
-					`${lastLine(unpack.stderr.toString("utf8"))}`,
-			);
-		}
-		return paths;
-	}
-
-	/** Which C library this (Linux) machine runs against, asked once. */
 	#libcAnswer: Promise<Libc> | undefined;
 	#libc(): Promise<Libc> {
 		const pending = (this.#libcAnswer ??= this.sh(LIBC_PROBE).then((result) =>
@@ -1262,30 +1162,22 @@ export abstract class RemoteShellRuntime {
 	}
 
 	/**
-	 * The `devhub-terminal` a workbench *on that machine* runs, installed once.
+	 * DevHub's own programs on that machine — the `devhub` command, the
+	 * terminal launcher's asking program and the `/devhub` skill naming them —
+	 * installed once, with the socket they talk to made answerable over there
+	 * by `publishControlSocket`. So there is one protocol and one answering
+	 * side.
 	 *
-	 * The problem this solves, stated exactly: a remote window's pty host runs on
-	 * the far machine, so the profile's `path` is a path over there, and the
-	 * process it starts can reach neither DevHub's launcher nor DevHub's control
-	 * socket. Both halves are carried across rather than reinvented — the
-	 * launcher script is `terminalLauncherScript`, the same text, with the far
-	 * machine's own paths in it, and the socket is DevHub's own, made answerable
-	 * over there by `publishControlSocket`. So there is one protocol and one
-	 * answering side, and "a terminal is a session DevHub named" is one sentence
-	 * rather than two implementations that agree for now.
+	 * The Node that runs them is DevHub's own, delivered like tmux and bash
+	 * (`ToolDelivery`, nodejs.org's Linux build at the version `product.json`
+	 * pins, under `~/<serverDataFolderName>/node/<version>`): a `command -v
+	 * node` would find whatever a login shell happened to have on its PATH,
+	 * which is a different Node on every machine and none at all on some. It
+	 * is glibc's, so a musl machine is refused by name.
 	 *
-	 * The Node that runs it is the REH's own (`~/<serverDataFolderName>/bin/
-	 * <key>/node`). It is the one Node a machine with a workbench on it is
-	 * certain to have, it is the same server the client connects to, and it needs no
-	 * probing — a `command -v node` would find whatever a login shell happened
-	 * to have on its PATH, which is a different Node on every machine and none at
-	 * all on some.
-	 *
-	 * The program is one bundled file (`readTerminalEntryBundle`), so this is
-	 * three writes at the first window on a machine, once per DevHub start, on a
-	 * connection that is already multiplexed. It is written as a file rather
-	 * than inlined into a remote shell command because that would put the
-	 * program's text into the remote shell's argv where `ps` reads it.
+	 * The programs are one bundled file each, written as files rather than
+	 * inlined into a remote shell command because that would put their text
+	 * into the remote shell's argv where `ps` reads it.
 	 */
 	async terminalLauncher(
 		spec: TerminalLauncherSpec,
@@ -1297,15 +1189,16 @@ export abstract class RemoteShellRuntime {
 	async #installLauncher(
 		spec: TerminalLauncherSpec,
 	): Promise<TerminalLauncher> {
-		if (spec.serverInstallKey === undefined) {
+		const { platform } = await this.describeRemote();
+		if (platform === "Linux" && (await this.#libc()) === "musl") {
 			throw new Error(
-				`this DevHub states no commit or no server identity for the remote extension host — a packaged build's product.json states both, and apps/desktop/scripts/dev.sh writes both for a source run — so there is no ${spec.serverDataFolderName} directory on ${this.machineName} it can name, which is the same reason it can open no workbench there`,
+				`${this.machineName} runs on musl (Alpine), and the Node DevHub installs there for its \`devhub\` command is glibc's`,
 			);
 		}
+		const { program: node } = await this.#installTool(this.delivery("node"));
 		const paths = remoteTerminalPaths({
 			home: await this.home(),
-			serverDataFolderName: spec.serverDataFolderName,
-			serverInstallKey: spec.serverInstallKey,
+			node,
 			controlSocketPath: spec.controlSocketPath,
 			entryName: spec.entryName,
 			cliEntryName: spec.cliEntryName,

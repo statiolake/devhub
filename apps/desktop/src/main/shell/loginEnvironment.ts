@@ -41,9 +41,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
-import type { TerminalLauncher } from "../runtime/runtime.js";
-import type { AppErrorWire } from "../../ipc/appShell.js";
-import { errorWireAt, failureText, withDetail } from "../../model/wire.js";
+import { failureText } from "../../model/wire.js";
 
 /** How long the login shell gets before DevHub stops waiting for it. */
 export const LOGIN_ENVIRONMENT_TIMEOUT_MS = 10_000;
@@ -211,36 +209,6 @@ export function launchEnvironment(
 	processEnvironment: Readonly<Record<string, string | undefined>>,
 ): Readonly<Record<string, string | undefined>> {
 	return Object.freeze(withoutDevHubRuntime(processEnvironment));
-}
-
-/**
- * What one window is told its DevHub terminal is.
- *
- * Per window, because a workbench's integrated terminal runs where its pty
- * host runs: a window on a host must name the launcher written *there*, and
- * naming this Mac's would be a path that machine has never heard of.
- *
- * It travels as a field of the window configuration
- * (`devhubTerminalLauncher`, through `cli`: `../services/windowTerminal.ts`),
- * which the patched `platform.ts` reads. It used to travel as a `DEVHUB_TERMINAL` entry in
- * `userEnv`, and it never arrived: VS Code's preload does
- * `Object.assign(process.env, userEnv)`, but the `process` a sandboxed
- * renderer's preload sees materialises `env` from a snapshot, so the
- * assignment landed on a copy and every window read null while its own
- * configuration held the right path. One channel now, and it is the one that
- * carries per-window facts already.
- *
- * `undefined` is how "this machine has no DevHub terminal" is said: the patch
- * refuses to invent a launcher for it, and the person is told separately —
- * see `AppController.windowTerminalLauncher`.
- */
-export function windowTerminalLauncher(
-	launcher: TerminalLauncher | undefined,
-): string | undefined {
-	if (launcher === undefined || launcher.unreachable !== undefined) {
-		return undefined;
-	}
-	return launcher.path;
 }
 
 /**
@@ -457,22 +425,4 @@ function variablesOf(parsed: unknown): Readonly<Record<string, string>> {
 
 function errorText(error: unknown): string {
 	return failureText(error);
-}
-
-/**
- * What is said when the `devhub` command could not be put in a dev container.
- *
- * Its own code and not `terminal_launcher_unavailable`, because an attached
- * window's DevHub terminal is not in the container: it is the Workspace's own
- * session, run by this Mac's launcher on this Mac's pty host
- * (`devhubTerminalLocal`). What fails in the container — the relay that
- * publishes the control socket, the remote extension host whose `node` runs
- * it — is the container's `devhub` command, and saying "this window has no
- * DevHub terminal" sent the reader looking for a terminal that worked.
- *
- * The detail is the runtime's own sentence, which already names the
- * container, so nothing is put in front of it.
- */
-export function containerCommandUnavailable(reason: string): AppErrorWire {
-	return withDetail(errorWireAt("dev_container_command_unavailable"), reason);
 }

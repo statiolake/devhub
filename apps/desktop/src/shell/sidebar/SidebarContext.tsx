@@ -62,9 +62,6 @@ export interface SidebarValue {
   readonly closeWorkspace: (workspaceId: string) => void;
   /** Hand a destination a row named to the user's browser. */
   readonly openExternalUrl: (url: string) => void;
-  /** Reopen a Workspace's editor on its own machine, out of its dev container. */
-  readonly reopenEditorLocally: (workspaceId: string) => void;
-  readonly reopenEditorInContainer: (workspaceId: string) => void;
   /** Carry an Agent on in its other presentation (the row menu's Continue in …). */
   readonly continueAgent: (agentId: string) => void;
   /** Hand a failure to main. What arrived is never raised again. */
@@ -157,20 +154,6 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
     [bridge, reportFailure],
   );
 
-  const reopenEditorLocally = useCallback(
-    (workspaceId: string) => {
-      void bridge.reopenEditorLocally(workspaceId).catch(reportFailure);
-    },
-    [bridge, reportFailure],
-  );
-
-  const reopenEditorInContainer = useCallback(
-    (workspaceId: string) => {
-      void bridge.reopenEditorInContainer(workspaceId).catch(reportFailure);
-    },
-    [bridge, reportFailure],
-  );
-
   const continueAgent = useCallback(
     (agentId: string) => {
       void bridge.continueAgent(agentId).catch(reportFailure);
@@ -190,8 +173,6 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       board,
       closeWorkspace,
       openExternalUrl,
-      reopenEditorLocally,
-      reopenEditorInContainer,
       continueAgent,
       reportFailure,
     }),
@@ -202,8 +183,6 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
       closeWorkspace,
       dispatch,
       openExternalUrl,
-      reopenEditorLocally,
-      reopenEditorInContainer,
       continueAgent,
       reportFailure,
       repositoryStatus,

@@ -11,12 +11,8 @@
  *   `ri_resident_size`), on Linux each DevHub process's `/proc/<pid>/status`
  *   (`VmRSS + VmSwap`, `VmRSS`); `ps`'s resident set for both where neither
  *   can be read;
- * - `app.getAppMetrics()` for which processes are Electron's own, with VS
- *   Code's own names for the utility processes it started
- *   (`UtilityProcess.getAll()`), which is what says which extension host is
- *   which workbench's: `extension-host [<window id>]` and `file-watcher
- *   [<window id>]`, and a workbench's window id is its view's id
- *   (`WorkbenchView.id`);
+ * - `app.getAppMetrics()` for which processes are Electron's own, named by
+ *   the `serviceName` each utility process was started with;
  * - one tmux client for every marked pane's pid and every client's
  *   (`TmuxTerminalRuntime.processPanes`);
  * - the system's memory (`systemMemory.ts`).
@@ -31,7 +27,6 @@
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { UtilityProcess } from "code-oss-dev/out/vs/platform/utilityProcess/electron-main/utilityProcess.js";
 import { electron } from "../electron.js";
 import type { TaskSnapshotWire } from "../../ipc/taskManager.js";
 import {
@@ -177,15 +172,16 @@ export async function takeTaskReading(
 			return NO_TMUX;
 		}),
 	]);
-	const utilities = UtilityProcess.getAll();
-	const names = new Map(utilities.map((one) => [one.pid, one.name]));
-	const windowUtilities = utilitiesByWindow(utilities);
+	// A workbench's own utility processes (its extension host, its file
+	// watcher) were VS Code's to name; DevHub has no workbench any more
+	// (docs/without-vscode.md), so there are none to attribute.
+	const windowUtilities = utilitiesByWindow([]);
 	const electronProcesses: ElectronProcess[] = electron.app
 		.getAppMetrics()
 		.map((metric) => ({
 			pid: metric.pid,
 			type: metric.type,
-			name: names.get(metric.pid) ?? metric.name ?? metric.serviceName,
+			name: metric.name ?? metric.serviceName,
 		}));
 	const processes = parseProcessTables(stat, args);
 	// The tmux client `processPanes` runs is this reading too; it is started

@@ -37,7 +37,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** What DevHub delivers. The name is the binary's and the tarball's. */
-export type HostTool = "tmux" | "bash";
+export type HostTool = "tmux" | "bash" | "node";
 
 /** Where one tool comes from, as far as a `Runtime` is concerned. */
 export interface ToolDelivery {
@@ -133,12 +133,19 @@ export function toolInstallDirectory(
 	return `${serverDataFolderName}/${tool}`;
 }
 
-/** The single directory inside a tool's tarball for one platform. */
+/**
+ * The single directory inside a tool's tarball for one platform: DevHub's
+ * own builds name it after the tool and the platform; Node's is nodejs.org's
+ * own tarball, which names it after the version too.
+ */
 export function toolTopLevelDirectory(
 	tool: HostTool,
 	platform: string,
+	version: string,
 ): string {
-	return `devhub-${tool}-${platform}`;
+	return tool === "node"
+		? `node-v${version}-${platform}`
+		: `devhub-${tool}-${platform}`;
 }
 
 /** The name a platform's tarball has, on the release and in the cache. */
@@ -251,7 +258,11 @@ export class ReleaseToolDelivery implements ToolDelivery {
 			// `Buffer` and `fetch` does not, and a caller that could be handed
 			// either is a caller that will one day be right about only one.
 			bytes: new Uint8Array(bytes),
-			topLevelDirectory: toolTopLevelDirectory(this.tool, platform),
+			topLevelDirectory: toolTopLevelDirectory(
+				this.tool,
+				platform,
+				this.version,
+			),
 			verifiedSha256: pinned,
 		};
 	}

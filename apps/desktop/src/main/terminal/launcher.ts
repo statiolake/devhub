@@ -364,7 +364,7 @@ export interface RemoteTerminalPaths {
 	readonly cli: string;
 	/** The CLI's bundle, beside the asking program's. */
 	readonly cliEntry: string;
-	/** The REH's bundled `node`, which is the Node that is certainly there. */
+	/** DevHub's own `node` on that machine (`ToolDelivery`'s `node`). */
 	readonly node: string;
 	/**
 	 * The `/devhub` skill's root for Agents on that machine — the directory
@@ -378,18 +378,12 @@ export interface RemoteTerminalPaths {
 }
 
 /**
- * Where all of it goes on the far machine, from its `$HOME` and two facts.
- *
- * `~/.devhub-server/bin/<key>/node` is the REH tarball's own layout
- * (`docs/remote-ssh.md`, `scripts/build_reh.py`) and the key is the one this
- * DevHub states (`rehInstallKey`) — the same directory the connection installed the server into,
- * so the Node that runs the asking program is the Node the workbench is already
- * running on. Anything else would be a second Node to be right about.
+ * Where all of it goes on the far machine, from its `$HOME`, the `node`
+ * DevHub installed there, and the control socket's tag.
  */
 export function remoteTerminalPaths(request: {
 	readonly home: string;
-	readonly serverDataFolderName: string;
-	readonly serverInstallKey: string;
+	readonly node: string;
 	readonly controlSocketPath: string;
 	readonly entryName: string;
 	readonly cliEntryName: string;
@@ -415,13 +409,7 @@ export function remoteTerminalPaths(request: {
 			REMOTE_CLI_NAME,
 		),
 		cliEntry: posix.join(entryRoot, request.cliEntryName),
-		node: posix.join(
-			request.home,
-			request.serverDataFolderName,
-			"bin",
-			request.serverInstallKey,
-			"node",
-		),
+		node: request.node,
 	};
 }
 

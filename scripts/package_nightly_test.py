@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""What the packaged app's generated entry point may and may not say.
-
-A packaged DevHub launched with `DEVHUB_PROFILE=x` joined the *default*
-instance ("Sending env to running instance... Terminating.") because the entry
-spelled `Application Support/DevHub` itself instead of asking the profile
-module. These tests pin the fix where it can regress: in the generated source.
+"""What packaging copies of the main process's dependencies.
 
     python3 -m unittest discover -s scripts -p "*_test.py"
 """
@@ -12,21 +7,15 @@ module. These tests pin the fix where it can regress: in the generated source.
 from __future__ import annotations
 
 import importlib.util
-import json
-import shutil
-import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent
 
 
 def _package_nightly():
 	"""The script, imported by path: its file name is not an identifier."""
-	spec = importlib.util.spec_from_file_location(
-		"package_nightly", SCRIPTS / "package-nightly.py"
-	)
+	spec = importlib.util.spec_from_file_location("package_nightly", SCRIPTS / "package-nightly.py")
 	assert spec is not None and spec.loader is not None
 	module = importlib.util.module_from_spec(spec)
 	spec.loader.exec_module(module)
@@ -36,213 +25,27 @@ def _package_nightly():
 package_nightly = _package_nightly()
 
 
-class GeneratedEntry(unittest.TestCase):
-	def setUp(self) -> None:
-		self.source = package_nightly.ENTRY_SOURCE
+class PackageNames(unittest.TestCase):
+	def test_a_bare_or_deep_specifier_is_its_package(self) -> None:
+		self.assertEqual(package_nightly.package_name("node-pty"), "node-pty")
+		self.assertEqual(package_nightly.package_name("minimist/index.js"), "minimist")
+		self.assertEqual(package_nightly.package_name("@scope/pkg/sub"), "@scope/pkg")
 
-	def test_derives_the_directories_from_the_profile_module(self) -> None:
-		self.assertIn(
-			f'import {{ currentProfile }} from "{package_nightly.PROFILE_MODULE}";',
-			self.source,
-		)
-		self.assertIn("currentProfile(homedir(), process.env)", self.source)
-		self.assertIn("profile.userDataDirectory", self.source)
-		self.assertIn("profile.extensionsDirectory", self.source)
-
-	def test_spells_no_directory_of_its_own(self) -> None:
-		self.assertNotIn("Application Support", self.source)
-		self.assertNotIn('"DevHub"', self.source)
-
-	def test_the_profile_module_it_imports_is_one_the_bundle_ships(self) -> None:
-		# assemble_app_directory copies apps/desktop/out into Resources/app/out,
-		# so the entry's relative import has to resolve inside that copy.
-		relative = package_nightly.PROFILE_MODULE.removeprefix("./")
-		compiled = package_nightly.DESKTOP_DIR / relative
-		source = compiled.with_suffix(".ts").as_posix().replace("/out/", "/src/")
-		self.assertTrue(
-			Path(source).is_file(), f"{source} is the module the entry depends on"
-		)
-
-	def test_explicit_arguments_still_win(self) -> None:
-		self.assertIn("process.argv.some", self.source)
+	def test_relative_builtin_and_electron_are_not_dependencies(self) -> None:
+		for specifier in ("./x.js", "../y.js", "node:fs", "electron", "original-fs"):
+			self.assertIsNone(package_nightly.package_name(specifier), specifier)
 
 
-class DownloadedBuiltins(unittest.TestCase):
-	"""The half of VS Code's built-in set product.json downloads.
+class PrebuildFilter(unittest.TestCase):
+	def test_keeps_only_this_platforms_prebuild(self) -> None:
+		ignore = package_nightly.ignore_other_platforms("darwin-arm64")
+		dropped = ignore("/x/node_modules/node-pty/prebuilds", ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"])
+		self.assertEqual(dropped, {"darwin-x64", "linux-x64", "win32-x64"})
 
-	Without js-debug there is no debug adapter for `node`, `node-terminal` or
-	`extensionHost`, and nothing else about the app looks wrong — so packaging a
-	set that is missing one has to be an error here rather than a dead F5 later.
-	"""
-
-	def setUp(self) -> None:
-		root = Path(tempfile.mkdtemp())
-		self.addCleanup(shutil.rmtree, root, True)
-		self.vscode = root / "vscode"
-		self.vscode.mkdir()
-		(self.vscode / "product.json").write_text(
-			json.dumps({"builtInExtensions": [{"name": "ms-vscode.js-debug", "version": "1.117.0"}]})
-		)
-		self.staged = root / "extensions"
-		self.staged.mkdir()
-		patcher = mock.patch.object(package_nightly, "VSCODE_DIR", self.vscode)
-		patcher.start()
-		self.addCleanup(patcher.stop)
-
-	def _stage(self, version: str) -> None:
-		extension = self.staged / "ms-vscode.js-debug"
-		extension.mkdir()
-		(extension / "package.json").write_text(json.dumps({"version": version}))
-
-	def test_a_staged_set_at_the_pinned_version_passes(self) -> None:
-		self._stage("1.117.0")
-		package_nightly.check_downloaded_builtins(self.staged)
-
-	def test_a_missing_one_is_refused(self) -> None:
-		with self.assertRaises(SystemExit):
-			package_nightly.check_downloaded_builtins(self.staged)
-
-	def test_a_stale_version_is_refused(self) -> None:
-		self._stage("1.100.0")
-		with self.assertRaises(SystemExit):
-			package_nightly.check_downloaded_builtins(self.staged)
-
-	def test_the_real_product_json_names_a_javascript_debugger(self) -> None:
-		# The rule this whole check exists for: DevHub's built-in set is VS
-		# Code's, and VS Code's includes the debugger it downloads.
-		product = json.loads((package_nightly.REPO_ROOT / "vscode" / "product.json").read_text())
-		names = {extension["name"] for extension in product.get("builtInExtensions", [])}
-		self.assertIn("ms-vscode.js-debug", names)
-
-
-class ProductJson(unittest.TestCase):
-	"""The packaged app's product.json, written over vscode/product.json."""
-
-	def setUp(self) -> None:
-		root = Path(tempfile.mkdtemp())
-		self.addCleanup(shutil.rmtree, root, True)
-		self.vscode = root / "vscode"
-		self.vscode.mkdir()
-		(self.vscode / "product.json").write_text(json.dumps({"nameShort": "Code - OSS"}))
-		self.out = root / "out"
-		self.out.mkdir()
-		(self.out / "nls.keys.json").write_text('[["vs/a",["k"]]]')
-		(self.out / "nls.messages.json").write_text('["m"]')
-		self.target = root / "product.json"
-		for patcher in (
-			mock.patch.object(package_nightly, "VSCODE_DIR", self.vscode),
-			mock.patch.object(
-				package_nightly, "packaged_metadata", return_value={"commit": "c" * 40}
-			),
-		):
-			patcher.start()
-			self.addCleanup(patcher.stop)
-
-	def written(self) -> dict:
-		package_nightly.write_product_json(self.target, self.out)
-		return json.loads(self.target.read_text())
-
-	def test_stamps_the_nls_metadata_hash_of_the_tree_it_ships(self) -> None:
-		from product_metadata import nls_metadata_hash
-
-		product = self.written()
-		self.assertEqual(product["commit"], "c" * 40)
-		self.assertEqual(product["nlsMetadataHash"], nls_metadata_hash(self.out, "c" * 40))
-
-	def test_a_moved_message_table_is_a_new_hash(self) -> None:
-		before = self.written()["nlsMetadataHash"]
-		(self.out / "nls.messages.json").write_text('["m", "n"]')
-		self.assertNotEqual(self.written()["nlsMetadataHash"], before)
-
-	def test_a_tree_without_a_message_table_is_an_error(self) -> None:
-		(self.out / "nls.keys.json").unlink()
-		with self.assertRaises(OSError):
-			package_nightly.write_product_json(self.target, self.out)
-
-
-class RemoteServers(unittest.TestCase):
-	"""The four servers go into Contents/Resources/reh, or packaging stops."""
-
-	def setUp(self) -> None:
-		from build_reh import TARGETS, tarball_name, write_statement
-		from product_metadata import reh_identity, vscode_commit
-
-		self.root = Path(tempfile.mkdtemp(prefix="package-reh-"))
-		self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
-		self.reh = self.root / "reh"
-		self.reh.mkdir()
-		self.app = self.root / "DevHub.app"
-		self.targets = TARGETS
-		for target in TARGETS:
-			(self.reh / tarball_name(target)).write_bytes(target.encode())
-			write_statement(self.reh, target, vscode_commit(), reh_identity())
-
-	def test_copies_every_server_and_its_statement_into_the_bundle(self) -> None:
-		package_nightly.bundle_remote_servers(self.app, self.reh)
-		bundled = sorted(p.name for p in (self.app / "Contents" / "Resources" / "reh").iterdir())
-		self.assertEqual(
-			bundled,
-			sorted(
-				[f"devhub-reh-{t}.tar.gz" for t in self.targets]
-				+ [f"devhub-reh-{t}.json" for t in self.targets]
-			),
-		)
-
-	def test_refuses_to_package_without_one_of_them(self) -> None:
-		(self.reh / "devhub-reh-alpine-arm64.json").unlink()
-		with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
-			package_nightly.bundle_remote_servers(self.app, self.reh)
-		self.assertFalse((self.app / "Contents" / "Resources" / "reh").exists())
-
-
-class VSCodeStamps(unittest.TestCase):
-	"""The per-tree stamps scripts/provision-vscode.sh writes, as read here."""
-
-	def setUp(self) -> None:
-		self.dir = Path(tempfile.mkdtemp())
-		self.addCleanup(shutil.rmtree, self.dir)
-		self.stamp = self.dir / "devhub-bundle.stamp"
-
-	def problem(self, text: str | None, *, ci: bool = False) -> str | None:
-		if text is not None:
-			self.stamp.write_text(text)
-		return package_nightly.bundle_stamp_problem(self.stamp, "abc", ci=ci)
-
-	def test_current_bundles_are_accepted(self) -> None:
-		self.assertIsNone(self.problem("abc full"))
-		self.assertIsNone(self.problem("abc fast"))
-		self.assertIsNone(self.problem("abc full", ci=True))
-
-	def test_missing_stale_or_old_format_is_refused(self) -> None:
-		self.assertIn("not bundled", self.problem(None) or "")
-		self.assertIn("not bundled", self.problem("old full") or "")
-		# The single stamp that preceded these held the state alone.
-		self.assertIn("not bundled", self.problem("abc") or "")
-		self.assertIn("not bundled", self.problem("abc slow") or "")
-
-	def test_ci_refuses_a_fast_bundle(self) -> None:
-		self.assertIn("DEVHUB_FAST_VSCODE_BUNDLE=0", self.problem("abc fast", ci=True) or "")
-
-	def test_only_an_explicit_fast_bundle_is_allowed_under_ci(self) -> None:
-		# The per-push CI asks for the fast bundle by name; the nightly never does.
-		must = package_nightly.must_ship_full_bundle
-		self.assertTrue(must({"CI": "true"}))
-		self.assertTrue(must({"CI": "true", "DEVHUB_FAST_VSCODE_BUNDLE": "0"}))
-		self.assertFalse(must({"CI": "true", "DEVHUB_FAST_VSCODE_BUNDLE": "1"}))
-		self.assertFalse(must({}))
-
-	def test_main_process_tree_prefers_a_current_compile(self) -> None:
-		vscode = self.dir / "vscode"
-		(vscode / "out" / "vs").mkdir(parents=True)
-		compile_stamp = self.dir / "devhub-compile.stamp"
-		tree = package_nightly.main_process_vscode_tree
-		self.assertEqual(tree(compile_stamp, vscode, "abc"), vscode / "out-build")
-		compile_stamp.write_text("old")
-		self.assertEqual(tree(compile_stamp, vscode, "abc"), vscode / "out-build")
-		compile_stamp.write_text("abc")
-		self.assertEqual(tree(compile_stamp, vscode, "abc"), vscode / "out")
-		shutil.rmtree(vscode / "out")
-		self.assertEqual(tree(compile_stamp, vscode, "abc"), vscode / "out-build")
+	def test_drops_node_ptys_sources(self) -> None:
+		ignore = package_nightly.ignore_other_platforms("linux-x64")
+		dropped = ignore("/x/node_modules/node-pty", ["lib", "prebuilds", "src", "binding.gyp", "package.json"])
+		self.assertEqual(dropped, {"src", "binding.gyp"})
 
 
 if __name__ == "__main__":

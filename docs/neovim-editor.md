@@ -1,9 +1,8 @@
 # The Neovim editor: DevHub as a GUI for Neovim
 
-With `[general] editor = "neovim"` a Workspace's editor area is not a VS Code
-workbench but **its terminal**: the Workspace's `ws-` tmux session, which is
-what DevHub shows when it starts and when a Workspace is opened or selected.
-Neovim is something opened inside it, and every Neovim there is DevHub's own
+A Workspace's editor area is **its terminal**: the Workspace's `ws-` tmux
+session, which is what DevHub shows when it starts and when a Workspace is
+opened or selected. Neovim is something opened inside it, and every Neovim there is DevHub's own
 GUI for it, drawn through Neovim's UI protocol exactly over its tmux pane:
 
 - `nvim` typed in a pane — of the Workspace's terminal or an Agent's — or run
@@ -16,18 +15,9 @@ Neovim owns the buffers, the windows and their layout, the modes, the
 plugins and the language servers; DevHub draws, and adds GUI-native widgets
 that are attached to Neovim objects and follow them.
 
-```toml
-[general]
-editor = "neovim"   # "vscode" (the default): each Workspace's own VS Code
-```
-
-Settings > General > Editors > Editor is the same switch. It applies at once:
-with "neovim" no workbench is started for any Workspace (the lifecycle plan
-wants none, `planWorkbenches`), and one that was running is closed; back to
-"vscode", the terminals are taken out of the editor area and the workbenches
-start as before (on Enter, or a file opened into them). The VS Code path is
-untouched. There is no separate switch for Neovim over terminals: it is what
-`editor = "neovim"` is (`neovim_terminal_overlay` is gone, and refused).
+It is the only editor there is: the `general.editor` setting that chose
+between it and a VS Code workbench is retired with VS Code
+(`docs/without-vscode.md`).
 
 There is no editor surface apart from the terminal, no "Editor not running"
 placeholder and nothing to start: the terminal attaches as the area is shown,
@@ -36,7 +26,7 @@ at once — every time, however soon after the last. The pane says it is not
 connected only when a session made again ends within 3 s with nothing typed
 into it, which is a shell that cannot start. After that reattach, or a Retry
 by Return or click, the keys are the terminal's, and keys typed meanwhile
-reach the new shell. `Cmd+Q Shift+E` stops nothing here and says so; `:q` ends a Neovim.
+reach the new shell. `:q` ends a Neovim.
 
 ## Architecture
 

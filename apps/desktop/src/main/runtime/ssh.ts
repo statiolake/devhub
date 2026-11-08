@@ -31,7 +31,6 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
-import { createServer, connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
@@ -71,15 +70,6 @@ import {
 	remoteScript,
 	SCRIPT_MARKER,
 } from "./remoteShellRuntime.js";
-import {
-	newConnectionToken,
-	permanent,
-	parseStartedServer,
-	startServerScript,
-	type RehDelivery,
-	type RemoteServerEndpoint,
-	type RemoteServerHost,
-} from "./remoteServer.js";
 import type {
 	ExecRequest,
 	ExecResult,
@@ -276,8 +266,8 @@ export interface SshRuntimeOptions {
 	 * same reason as `tmux`.
 	 */
 	readonly bash?: ToolDelivery;
-	/** For tests: how a local port for a `-L` forward is picked. */
-	readonly freePort?: () => Promise<number>;
+	/** Where the Node DevHub installs on this host comes from, for its `devhub`. */
+	readonly node?: ToolDelivery;
 }
 
 /**
@@ -398,30 +388,24 @@ export function sshOptionArgv(
  * who meets it twice in two wordings will conclude they are two problems.
  */
 export function unauthenticatedFailure(host: string): NamedFailure {
-	// Permanent: DevHub's ssh runs with `BatchMode=yes` and has no pane to
-	// prompt in, so a second attempt asks the same question of the same closed
-	// mouth. What changes it is a key, which is a thing a person does.
-	return permanent(
-		new NamedFailure(
-			withSummary(
-				errorWireAt("workspace_unavailable"),
-				`DevHub cannot run commands on ${host} without a password. Set up a ` +
-					`key for ${host} — ssh-copy-id ${host} — and reopen the workspace.`,
-			),
+	// DevHub's ssh runs with `BatchMode=yes` and has no pane to prompt in, so
+	// what changes this is a key, which is a thing a person does.
+	return new NamedFailure(
+		withSummary(
+			errorWireAt("workspace_unavailable"),
+			`DevHub cannot run commands on ${host} without a password. Set up a ` +
+				`key for ${host} — ssh-copy-id ${host} — and reopen the workspace.`,
 		),
 	);
 }
 
 export function hostKeyFailure(host: string): NamedFailure {
-	// Permanent, for the same reason: accepting a host key is something a
-	// person does in a terminal, not something the next attempt does.
-	return permanent(
-		new NamedFailure(
-			withSummary(
-				errorWireAt("workspace_unavailable"),
-				`The host key for ${host} is not known to DevHub. Run ssh ${host} ` +
-					`once in a terminal to accept it.`,
-			),
+	// Accepting a host key is something a person does in a terminal.
+	return new NamedFailure(
+		withSummary(
+			errorWireAt("workspace_unavailable"),
+			`The host key for ${host} is not known to DevHub. Run ssh ${host} ` +
+				`once in a terminal to accept it.`,
 		),
 	);
 }
@@ -496,13 +480,7 @@ export function unixSocketForwardSpec(
 	return `${localPath}:${remotePath}`;
 }
 
-/** How long a probe of a local forward waits before calling it dead. */
-const FORWARD_PROBE_MS = 3000;
-
-export class SshRuntime
-	extends RemoteShellRuntime
-	implements Runtime, RemoteServerHost
-{
+export class SshRuntime extends RemoteShellRuntime implements Runtime {
 	readonly id: RuntimeId;
 	readonly where: string;
 
@@ -512,7 +490,6 @@ export class SshRuntime
 	readonly #ptyFactory: PtyFactory;
 	readonly #localEnvironment: Readonly<Record<string, string | undefined>>;
 	readonly #deliveries: Partial<Record<HostTool, ToolDelivery>>;
-	readonly #freePort: () => Promise<number>;
 
 	readonly #latencies: number[] = [];
 	/**
@@ -530,7 +507,6 @@ export class SshRuntime
 	#muxFallbacks = 0;
 	/** The `-L` forwards this runtime is holding, by their far end's path. */
 	readonly #forwards = new Map<string, HeldForward>();
-	#server: Promise<RemoteServerEndpoint> | undefined;
 	#controlDirectoryMade: Promise<unknown> | undefined;
 
 	constructor(options: SshRuntimeOptions) {
@@ -547,8 +523,11 @@ export class SshRuntime
 		// pty host. Taken when the host is first reached, which is after the
 		// login environment was adopted into it (`startRuntimes`).
 		this.#localEnvironment = options.localEnvironment ?? { ...process.env };
-		this.#deliveries = { tmux: options.tmux, bash: options.bash };
-		this.#freePort = options.freePort ?? freeLocalPort;
+		this.#deliveries = {
+			tmux: options.tmux,
+			bash: options.bash,
+			node: options.node,
+		};
 		if (!fitsControlPath(this.#controlDirectory)) {
 			throw new Error(
 				`the ssh control socket ${controlPathOf(this.#controlDirectory)} is ` +
@@ -886,149 +865,6 @@ export class SshRuntime
 		};
 	}
 
-	/**
-	 * The remote extension host on this host, and a local port that reaches it.
-	 *
-	 * Four steps, and the order is the whole of it: install the server if it is
-	 * not there, start it (or adopt the one that is running) and read its token
-	 * back out of its own file, forward its socket to a local port, and check
-	 * that the port answers. The check is not ceremony — `ssh -O forward` can
-	 * report success and bind nothing, which is the same failure
-	 * `publishControlSocket` learned the hard way about `-R`.
-	 *
-	 * Cached, and that is load-bearing rather than thrift. VS Code calls
-	 * `resolve()` again on every reconnect, so without this a laptop lid closed
-	 * and opened would restart the extension host on the far machine, and every
-	 * language server and every extension's state with it. What is cached is
-	 * *verified* on each ask: the held forward is probed, and a forward that no
-	 * longer answers is cancelled and made again rather than handed back.
-	 */
-	async remoteServer(delivery: RehDelivery): Promise<RemoteServerEndpoint> {
-		const held = this.#server;
-		if (held !== undefined) {
-			const endpoint = await held.catch(() => undefined);
-			if (endpoint !== undefined && (await this.#portAnswers(endpoint.port))) {
-				return endpoint;
-			}
-			// It was ours and it is not answering, so it is ours to take away:
-			// leaving it registered would make `resumed()` go on refusing to drop
-			// a master that is already a corpse.
-			await this.#dropForwards();
-			this.#server = undefined;
-		}
-		const pending = this.#openRemoteServer(delivery);
-		pending.catch(() => {
-			if (this.#server === pending) this.#server = undefined;
-		});
-		this.#server = pending;
-		return pending;
-	}
-
-	async #openRemoteServer(
-		delivery: RehDelivery,
-	): Promise<RemoteServerEndpoint> {
-		const paths = await this.installRemoteServer(delivery);
-		const { login } = await this.describeRemote();
-		const started = await this.sh(startServerScript(paths), {
-			stdin: Buffer.from(newConnectionToken(), "utf8"),
-		});
-		if (started.code !== 0) {
-			throw new Error(
-				`DevHub could not start the remote extension host on ${this.#host}: ` +
-					`${lastLine(started.stderr.toString("utf8"))}`,
-			);
-		}
-		const answer = parseStartedServer(started.stdout.toString("utf8"));
-		if (answer === undefined) {
-			throw new Error(
-				`DevHub started the remote extension host on ${this.#host} but could ` +
-					`not read the socket and token back from it, so there is nothing ` +
-					`to connect to`,
-			);
-		}
-		const port = await this.#forward(answer.socket);
-		return {
-			port,
-			connectionToken: answer.token,
-			// Only what the person's own ssh config already forwards. DevHub
-			// opens no agent channel of its own: an agent socket is a key, and
-			// forwarding one is the person's decision to make in their config
-			// rather than DevHub's to make on their behalf.
-			extensionHostEnv:
-				login["SSH_AUTH_SOCK"] === undefined
-					? undefined
-					: { SSH_AUTH_SOCK: login["SSH_AUTH_SOCK"] },
-		};
-	}
-
-	/**
-	 * A local port that reaches a socket on the host, made and checked.
-	 *
-	 * `ssh -O forward -L <port>:<remote socket>` on the master that is already
-	 * up, so no second connection and no reconnect. `-L` to a *unix socket* on
-	 * the far end is OpenSSH's own (6.7 and later), and it is why nothing here
-	 * has to scrape a port number out of the server's log: the socket's name is
-	 * one DevHub chose.
-	 *
-	 * Cancel-first for the same reason `publishControlSocket` cancels first: a
-	 * ControlMaster outlives the DevHub that started it, and OpenSSH answers a
-	 * second `-O forward` for a pair it already forwards with success while
-	 * binding nothing. The pair is the forward's *name* to OpenSSH, so the
-	 * cancel has to name it identically or it cancels nothing and reports that
-	 * it has.
-	 */
-	async #forward(remoteSocketPath: string): Promise<number> {
-		const port = await this.#freePort();
-		const spec = `${String(port)}:${remoteSocketPath}`;
-		await this.#mux("cancel", "-L", spec);
-		const forwarded = await this.#mux("forward", "-L", spec);
-		if (forwarded.code !== 0) {
-			const said = lastLine(forwarded.stderr.toString("utf8"));
-			this.lastFailure = said;
-			throw new Error(
-				`DevHub could not forward ${remoteSocketPath} on ${this.#host} to a ` +
-					`local port: ${said}`,
-			);
-		}
-		if (!(await this.#portAnswers(port))) {
-			await this.#mux("cancel", "-L", spec);
-			const said =
-				`ssh reported the forward of ${remoteSocketPath} on ${this.#host} ` +
-				`succeeded, but nothing answers on 127.0.0.1:${String(port)}`;
-			this.lastFailure = said;
-			throw new Error(said);
-		}
-		this.#forwards.set(remoteSocketPath, {
-			port,
-			remotePath: remoteSocketPath,
-		});
-		return port;
-	}
-
-	/** Whether something on this Mac answers on a forwarded port. */
-	async #portAnswers(port: number): Promise<boolean> {
-		return new Promise<boolean>((resolve) => {
-			let settled = false;
-			const done = (answer: boolean, socket: Socket): void => {
-				if (settled) return;
-				settled = true;
-				socket.destroy();
-				resolve(answer);
-			};
-			const socket = connect({ host: "127.0.0.1", port });
-			socket.setTimeout(FORWARD_PROBE_MS);
-			socket.on("connect", () => {
-				done(true, socket);
-			});
-			socket.on("timeout", () => {
-				done(false, socket);
-			});
-			socket.on("error", () => {
-				done(false, socket);
-			});
-		});
-	}
-
 	/** Take away every forward this runtime is holding, and forget them. */
 	async #dropForwards(): Promise<void> {
 		const held = [...this.#forwards.values()];
@@ -1177,9 +1013,8 @@ export class SshRuntime
 	 * down it, and the ordering is real — a power event delivered *after* the
 	 * workbench has already reconnected through a brand-new forward would
 	 * otherwise destroy the very thing the reconnection just built. A forward
-	 * that has stopped answering is not held for long: `remoteServer` probes it
-	 * on the next `resolve()` and cancels it when it does not answer, which is
-	 * what lets this go back to dropping the master.
+	 * that has stopped answering is cancelled by its owner, which is what lets
+	 * this go back to dropping the master.
 	 */
 	resumed(): void {
 		if (this.#sessions.held > 0 || this.#sessions.waiting > 0) return;
@@ -1216,7 +1051,6 @@ export class SshRuntime
 		this.forgetRemote();
 		this.forgetLauncher();
 		await this.#dropForwards();
-		this.#server = undefined;
 		const result = await this.#exitMaster();
 		const said = result.stderr.toString("utf8");
 		if (result.code !== 0 && !/no such file|no controlpath/iu.test(said)) {
@@ -1308,38 +1142,6 @@ export class SshRuntime
 		this.#latencies.push(Date.now() - startedAt);
 		if (this.#latencies.length > LATENCY_SAMPLES) this.#latencies.shift();
 	}
-}
-
-/**
- * A local port nothing is on, as of a moment ago.
- *
- * The kernel is asked for one — bind to port 0, read the number, let it go —
- * rather than a number being picked out of a range and hoped for. There is a
- * window between letting it go and `ssh -O forward` taking it, and nothing
- * closes that window: SO_REUSEADDR means a port in `TIME_WAIT` is handed out,
- * and holding the socket open until ssh binds would make it the thing ssh
- * collides with. What makes it safe is not the window being small but the
- * check afterwards — `#forward` connects to the port it was given, and a
- * forward that did not bind is a failure with a sentence rather than a
- * workbench dialling something else.
- */
-function freeLocalPort(): Promise<number> {
-	return new Promise<number>((resolve, reject) => {
-		const server = createServer();
-		server.on("error", reject);
-		server.listen({ host: "127.0.0.1", port: 0 }, () => {
-			const address = server.address();
-			if (address === null || typeof address === "string") {
-				server.close();
-				reject(new Error("the kernel did not name the port it just bound"));
-				return;
-			}
-			const { port } = address;
-			server.close(() => {
-				resolve(port);
-			});
-		});
-	});
 }
 
 function basenameOf(path: string): string {

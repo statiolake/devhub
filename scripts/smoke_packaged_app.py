@@ -1,57 +1,42 @@
 #!/usr/bin/env python3
-"""Launch a packaged DevHub.app and make it answer on its control socket.
+"""Launch DevHub and make it answer on its control socket, then open a file.
 
-A packaged app can look completely healthy and still be useless. It opens its
-window, it boots the workbench, it starts the extension host — and answers
-nothing, because its main thread is parked inside a synchronous macOS call and
-Electron has stopped pumping libuv behind it. Timers stop, sockets stop, the
-`devhub` command hangs forever. Nothing about the bundle's contents says so, so
-the only way to know is to start the app and ask it something.
+A packaged app can look completely healthy and still be useless: its main
+thread parked inside a synchronous macOS call, Electron no longer pumping libuv
+behind it, timers and sockets silent, the `devhub` command hanging forever.
+Nothing about the bundle's contents says so, so the only way to know is to
+start the app and ask it something.
 
-That is what this does: it starts the bundle against a throwaway user-data
-directory, sends the `version` request the `devhub` CLI sends, and requires a
-reply. A reply means the main process is still running its event loop after
-startup, which is the property that keeps breaking.
+That is what this does: it starts DevHub against throwaway state, sends the
+`version` request the `devhub` CLI sends and requires a reply, then opens a
+file the way `devhub <file>` does — which starts Scratch's Neovim and drops
+the file into it — requires that reply too, and requires the app to still be
+running `--settle` seconds later.
 
-A reply is not the end of startup, though. The control socket opens before
-VS Code's own application starts and before the first workbench view loads,
-and a crash there passed this test for a whole VS Code bump: on Electron 43
-the main process died the moment the first workbench view committed its
-navigation, a second after the socket had answered. So after the reply the
-app is kept running until a workbench view reports that its page finished
-loading, and it has to still be alive when that happens. See
-`wait_for_workbench`. DevHub starts no workbench until it is asked for, so
-the test asks the way `devhub <file>` does: it opens a file of its own
-(`ask_for_workbench`), which a fresh profile routes to Scratch's workbench and
-starts it.
+It also reads a bundle before starting it, for the faults a reply cannot rule
+out: a dependency, a native helper or the libghostty wasm missing from
+`Resources/app` takes one feature down and leaves the rest of the app
+answering. See `check_app_layout`.
 
-It also reads the bundle before starting it, for the faults a reply cannot
-rule out. An asset the workbench fetches by path — a wasm file, say — going
-missing takes one feature down and leaves the rest of the app answering
-normally, so no question asked of a running DevHub would ever find it. See
-`check_bundle_layout`.
-
-It starts the app under its own profile, `smoke`, and that is not a detail.
-A DevHub launched on the *default* profile is the user's DevHub: it reads
+It starts the app under its own profile, `smoke`, and that is not a detail. A
+DevHub launched on the *default* profile is the user's DevHub: it reads
 `~/.config/devhub`, it attaches to the tmux socket `devhub`, and on startup it
-reaps every DevHub-marked Agent session that its own state file does not know
-about. A throwaway `--user-data-dir` gives it an empty state file, so the
-reaping is total: every Agent the person is actually running dies. `smoke` is
-what keeps the test off all of it — the profile name derives the tmux socket
-(`devhub-smoke`), the data directories and the bundle identifier — and
-`XDG_CONFIG_HOME` under the same throwaway directory moves the config directory
-with it. See apps/desktop/src/model/profile.ts.
+reaps every DevHub-marked Agent session its own state file does not know
+about. `smoke` keeps the test off all of it — the profile name derives the tmux
+socket (`devhub-smoke`) and the data directories — and `XDG_CONFIG_HOME` and
+HOME under the same throwaway directory move the rest. See
+apps/desktop/src/model/profile.ts.
 
-Run it standalone against any bundle:
+    scripts/smoke_packaged_app.py path/to/DevHub.app      a macOS bundle
+    scripts/smoke_packaged_app.py --layout DIR            a `Resources/app`
+                                                          laid out by
+                                                          package-nightly.py
+                                                          --layout-only, run by
+                                                          npm's Electron (Linux)
+    scripts/smoke_packaged_app.py --source                this checkout (dev.sh)
 
-    scripts/smoke_packaged_app.py path/to/DevHub.app
-
-or against a source run — `apps/desktop/scripts/dev.sh`, what `pnpm dev`
-starts — which is how it runs where no bundle can be built (Linux, under
-`xvfb-run`; see scripts/test-local.sh). The startup checks are the same; the
-bundle-layout checks are the bundle's own and are left out:
-
-    scripts/smoke_packaged_app.py --source [--electron-arg=--no-sandbox]
+`--electron-arg=--no-sandbox` passes an argument to Electron (`--layout`,
+`--source`).
 """
 
 from __future__ import annotations
@@ -104,89 +89,38 @@ def probe(socket_path: Path, deadline: float) -> dict:
 	raise TimeoutError(last_error)
 
 
-# What the workbench fetches by absolute resource path, rather than importing.
-# A missing module fails loudly at startup; these fail quietly and late, in the
-# one feature that needed them — which is how a nightly shipped with syntax
-# highlighting entirely gone and nothing in the app to say so.
-FETCHED_ASSETS = (
-	"vscode-oniguruma/release/onig.wasm",
-	"@vscode/tree-sitter-wasm/wasm/tree-sitter.wasm",
-)
+def ask_to_open(socket_path: Path, path: Path, deadline: float) -> dict:
+	"""Open `path` the way `devhub <file>` does, and wait for the answer.
 
-# What the app starts as a process, rather than importing. Same silence as the
-# fetched assets: search returns nothing, or a terminal never opens, and the
-# window is otherwise perfectly healthy.
-SPAWNED_BINARIES = (
-	f"@vscode/ripgrep-universal/bin/darwin-{'arm64' if platform.machine() == 'arm64' else 'x64'}/rg",
-	"node-pty/build/Release/spawn-helper",
-)
-
-# A built workbench does not fetch the assets above out of `node_modules`. It
-# computes `node_modules.asar.unpacked`, because a fetch wants a real file and
-# the archive is where those files are *not*. Which of the two names it compiles
-# to is decided by `isBuilt`, so this is precisely the difference a source run
-# cannot show you: in `pnpm dev` every one of these paths resolves either way.
-UNPACKED_DIR = "node_modules.asar.unpacked"
-
-# Under `Contents/Resources/app`, where packaging copies `apps/desktop/out`.
-# The path `inputSourceHelperPath` in main/shell/inputSourceHelper.ts computes.
-DEVHUB_SPAWNED_BINARY = "out/native/devhub-input-source"
-
-
-# What `WorkbenchView` (apps/desktop/src/main/shell/workbenchView.ts) prints
-# once a workbench's page has loaded: the first workbench a fresh DevHub opens
-# is Scratch's, the Workspace on screen, so a startup that gets this far has
-# created a view, navigated it and survived the commit.
-WORKBENCH_LOADED = re.compile(r"\[devhub\] workbench view \d+: its page has finished loading")
-
-def workbench_loaded(log_text: str) -> bool:
-	"""Whether the app's output says a workbench view finished loading its page."""
-	return WORKBENCH_LOADED.search(log_text) is not None
-
-
-def wait_for_workbench(
-	process: subprocess.Popen, log_path: Path, deadline: float, settle: float
-) -> str | None:
-	"""None once a workbench has loaded and the app outlived it by `settle`
-	seconds; otherwise why not.
-
-	The settle period is there because "loaded" is said from the main process
-	while the renderer is still starting the workbench, and the main process
-	can still go down underneath it.
-	"""
-	loaded_at: float | None = None
-	while True:
-		now = time.monotonic()
-		code = process.poll()
-		if code is not None:
-			stage = "after a workbench loaded" if loaded_at is not None else "before any workbench loaded"
-			return f"the app exited {stage} (exit status {code}; a negative status is the signal that ended it)"
-		if loaded_at is None:
-			try:
-				if workbench_loaded(log_path.read_text(errors="replace")):
-					loaded_at = now
-			except OSError:
-				pass
-		if loaded_at is not None and now - loaded_at >= settle:
-			return None
-		if now >= deadline:
-			return "no workbench view finished loading in time"
-		time.sleep(0.25)
-
-
-def ask_for_workbench(socket_path: Path, path: Path) -> socket.socket:
-	"""Open `path` the way `devhub <file>` does, which starts the workbench it
-	is routed to — Scratch's, on a fresh profile. Nothing else starts one.
-
-	The connection is handed back open: the reply comes once the file is in
-	the workbench, and whether the workbench loads is `wait_for_workbench`'s
-	to watch, so the caller closes it when it is done waiting."""
+	On a fresh profile the file is routed to Scratch, whose Neovim is started
+	and handed the file over RPC; the answer comes once it is there."""
 	path.write_text("DevHub smoke test\n")
 	client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-	client.connect(str(socket_path))
-	request = {"kind": "open", "path": str(path), "cwd": str(path.parent)}
-	client.sendall(json.dumps(request).encode() + b"\n")
-	return client
+	client.settimeout(max(deadline - time.monotonic(), 1.0))
+	try:
+		client.connect(str(socket_path))
+		request = {"kind": "open", "path": str(path), "cwd": str(path.parent)}
+		client.sendall(json.dumps(request).encode() + b"\n")
+		buffered = b""
+		while b"\n" not in buffered:
+			chunk = client.recv(4096)
+			if not chunk:
+				raise ConnectionError("the app closed the connection without replying")
+			buffered += chunk
+		return json.loads(buffered.split(b"\n", 1)[0])
+	finally:
+		client.close()
+
+
+def outlives(process: subprocess.Popen, settle: float) -> str | None:
+	"""None once the app has kept running `settle` seconds; otherwise why not."""
+	until = time.monotonic() + settle
+	while time.monotonic() < until:
+		code = process.poll()
+		if code is not None:
+			return f"the app exited after opening the file (exit status {code}; a negative status is the signal that ended it)"
+		time.sleep(0.25)
+	return None
 
 
 def log_tail(log_path: Path, lines: int = 40) -> str:
@@ -196,71 +130,80 @@ def log_tail(log_path: Path, lines: int = 40) -> str:
 		return "(no output)"
 
 
-def check_bundle_layout(app: Path) -> list[str]:
-	"""Faults that a running app would not report, so the app cannot be asked.
+def check_app_layout(app_dir: Path, platform_name: str) -> list[str]:
+	"""Faults in `Resources/app` that a running app would not report.
 
-	Every check below is about the same failure: a file the workbench fetches
-	from a path it computes. Nothing throws when that path is wrong — the fetch
-	404s inside the feature that wanted it, the feature turns itself off, and
-	the app looks healthy. So the bundle is inspected instead of interrogated.
+	`platform_name` is node-pty's prebuild directory: `darwin-arm64`,
+	`linux-x64`.
 	"""
 	faults = []
-	code_oss = app / "Contents" / "Resources" / "app" / "node_modules" / "code-oss-dev"
-
-	# The archive and its sidecar are a pair; neither is meaningful alone. A
-	# missing sidecar in particular is silent — every module still imports, and
-	# only the spawned and fetched things break.
-	if not (code_oss / "node_modules.asar").is_file():
-		faults.append("node_modules.asar is missing: the app has no modules to resolve")
-	if not (code_oss / UNPACKED_DIR).is_dir():
-		faults.append(f"{UNPACKED_DIR} is missing: nothing spawnable or fetchable survived packing")
-
-	for asset in FETCHED_ASSETS:
-		if not (code_oss / UNPACKED_DIR / asset).is_file():
-			faults.append(f"the workbench fetches {asset}, and it is not in {UNPACKED_DIR}")
-
-	# Everything the app spawns has to be a real file: Electron's asar layer is
-	# in its file system, not in its process spawner, so an executable left
-	# inside the archive fails with ENOTDIR at the moment the feature is used.
-	for spawned in SPAWNED_BINARIES:
-		path = code_oss / UNPACKED_DIR / spawned
-		if not path.is_file():
-			faults.append(f"the app spawns {spawned}, and it is not in {UNPACKED_DIR}")
-		elif not os.access(path, os.X_OK):
-			faults.append(f"the app spawns {spawned}, and it is not executable")
-
-	# DevHub's own helper, which switches the input source while a chord is
-	# armed. It lives with DevHub's code rather than in the archive, and a
-	# bundle without it starts fine and says so only at the first chord.
-	helper = app / "Contents" / "Resources" / "app" / DEVHUB_SPAWNED_BINARY
-	if not helper.is_file():
-		faults.append(f"the app spawns {DEVHUB_SPAWNED_BINARY}, and it is not in the bundle")
-	elif not os.access(helper, os.X_OK):
-		faults.append(f"the app spawns {DEVHUB_SPAWNED_BINARY}, and it is not executable")
-
-	# The archive is only reachable if product.json says this is a built app,
-	# and `commit` is what says it — `isBuilt = Boolean(commit)` in
-	# src/vs/amdX.ts. Without it the workbench resolves vscode-textmate,
-	# vscode-oniguruma and xterm out of a `node_modules` the bundle does not
-	# have, and highlighting and the terminal go quietly missing. The value has
-	# to be the VS Code the build was made from; DevHub's own hash answers a
-	# different question and belongs in `hostCommit`.
-	product_file = code_oss / "product.json"
+	manifest = app_dir / "package.json"
+	if not manifest.is_file():
+		return [f"{manifest} is missing: Electron has nothing to load"]
+	main = app_dir / json.loads(manifest.read_text()).get("main", "")
+	if not main.is_file():
+		faults.append(f"package.json's main, {main}, is missing")
+	for required in ("out/vt/ghostty-vt.wasm", "out/main/cli/devhubCliEntry.js", "dist/shell/index.html"):
+		if not (app_dir / required).is_file():
+			faults.append(f"{required} is missing")
+	prebuild = app_dir / "node_modules" / "node-pty" / "prebuilds" / platform_name
+	if not (prebuild / "pty.node").is_file():
+		faults.append(f"node-pty has no prebuild for {platform_name}: no terminal can start")
+	if platform_name.startswith("darwin"):
+		helper = prebuild / "spawn-helper"
+		if not os.access(helper, os.X_OK):
+			faults.append("node-pty's spawn-helper is missing or not executable: no terminal can start")
+		input_source = app_dir / "out" / "native" / "devhub-input-source"
+		if not os.access(input_source, os.X_OK):
+			faults.append("out/native/devhub-input-source is missing or not executable")
+	product_file = app_dir / "product.json"
 	product = json.loads(product_file.read_text()) if product_file.is_file() else {}
 	if not product.get("commit"):
-		faults.append(
-			"product.json states no commit: the workbench will look for its "
-			"modules outside node_modules.asar"
-		)
-	if not product.get("hostCommit"):
-		faults.append("product.json states no hostCommit: the app cannot say which DevHub it is")
-	if product.get("commit") == product.get("hostCommit") and product.get("commit"):
-		faults.append(
-			"product.json puts DevHub's own hash in commit: that field is the "
-			"VS Code the build was made from"
-		)
-
+		faults.append("product.json states no commit: the app cannot say which DevHub it is")
 	return faults
+
+
+# What `check_app_layout` cannot see: whether the packed node-pty loads and
+# drives a PTY, and whether the packed wasm instantiates — asked of the app's
+# own Electron, run as Node, against the packed tree and nothing else.
+EXERCISE = """
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+const root = process.argv[2];
+const require = createRequire(root + "/out/main/main.js");
+const where = require.resolve("node-pty");
+if (!where.startsWith(root + "/node_modules/")) throw new Error("node-pty resolved outside the app: " + where);
+const { nodePty } = await import(root + "/out/main/terminal/pty.js");
+const output = await new Promise((resolve, reject) => {
+	const pty = nodePty().spawn("/bin/sh", ["-c", "echo pty-ok"], { cols: 80, rows: 24, env: process.env });
+	let seen = "";
+	pty.onData((data) => { seen += data; });
+	pty.onExit(() => resolve(seen));
+	setTimeout(() => reject(new Error("the PTY never exited")), 10000);
+});
+if (!output.includes("pty-ok")) throw new Error("the PTY printed " + JSON.stringify(output));
+const { LibGhosttyVt } = await import(root + "/out/main/ptyHost/vt/libghosttyVt.js");
+const vt = await LibGhosttyVt.load(readFileSync(root + "/out/vt/ghostty-vt.wasm"));
+console.log("node-pty from " + where.slice(root.length + 1) + " ran a PTY; libghostty-vt " + vt.version + " instantiated");
+"""
+
+
+def exercise_app(electron: Path, app_dir: Path) -> str | None:
+	"""Run `EXERCISE` in `electron` as Node; None, or what failed."""
+	with tempfile.TemporaryDirectory(prefix="devhub-exercise-") as scratch:
+		script = Path(scratch) / "exercise.mjs"
+		script.write_text(EXERCISE)
+		result = subprocess.run(
+			[str(electron), str(script), str(app_dir)],
+			env={**os.environ, "ELECTRON_RUN_AS_NODE": "1", "NODE_OPTIONS": ""},
+			capture_output=True,
+			text=True,
+			timeout=60,
+		)
+	if result.returncode != 0:
+		return (result.stderr or result.stdout).strip()
+	print(f"    {result.stdout.strip()}")
+	return None
 
 
 # The profile this test runs the app under. Anything but the default: see the
@@ -294,8 +237,6 @@ def launch_command(
 		str(executable),
 		"--user-data-dir",
 		str(user_data_directory(state)),
-		"--extensions-dir",
-		str(state / "extensions"),
 	]
 	return argv, environment
 
@@ -308,28 +249,31 @@ def source_launch_command(
 ) -> tuple[list[str], dict[str, str]]:
 	"""How to start a source run so that it owns nothing a live DevHub owns.
 
-	`dev.sh` derives the editor's directories from the profile and HOME rather
-	than taking them on the command line, so HOME moves into the throwaway state
+	`dev.sh` derives the user-data directory from the profile and HOME rather
+	than taking it on the command line, so HOME moves into the throwaway state
 	along with the config directory, and the profile is `smoke` as for a
 	bundle; the tmux socket directory moves too, so the server the app starts
-	can be ended with it. `dev.sh` would otherwise try to build a remote
-	extension host first.
+	can be ended with it.
 	"""
 	environment = dict(os.environ if base_environment is None else base_environment)
 	environment["DEVHUB_PROFILE"] = SMOKE_PROFILE
 	environment["XDG_CONFIG_HOME"] = str(state / "config")
 	environment["HOME"] = str(state / "home")
-	environment["DEVHUB_SKIP_REH_BUILD"] = "1"
 	environment["TMUX_TMPDIR"] = str(state / "tmux")
 	argv = [str(repo / "apps" / "desktop" / "scripts" / "dev.sh"), *(electron_args or [])]
 	return argv, environment
 
 
 def source_electron(repo: Path) -> Path:
-	"""The Electron `dev.sh` boots, as it names it."""
-	if sys.platform == "darwin":
-		return repo / "vscode" / ".build" / "devhub-electron" / "DevHub.app" / "Contents" / "MacOS" / "DevHub"
-	return repo / "vscode" / ".build" / "electron" / "code-oss"
+	"""npm's Electron, as apps/desktop/scripts/electron-path.sh names it."""
+	return Path(
+		subprocess.run(
+			[str(repo / "apps" / "desktop" / "scripts" / "electron-path.sh")],
+			check=True,
+			capture_output=True,
+			text=True,
+		).stdout.strip()
+	)
 
 
 def source_user_data_directory(repo: Path, environment: dict[str, str]) -> Path:
@@ -353,9 +297,6 @@ def source_user_data_directory(repo: Path, environment: dict[str, str]) -> Path:
 
 
 def smoke_source(repo: Path, timeout: float, settle: float, electron_args: list[str]) -> int:
-	if not source_electron(repo).is_file():
-		print(f"no Electron at {source_electron(repo)}: run scripts/provision-vscode.sh", file=sys.stderr)
-		return 1
 	if not (repo / "apps" / "desktop" / "out" / "main" / "main.js").is_file():
 		print("apps/desktop is not built: run 'pnpm --filter @devhub/desktop build'", file=sys.stderr)
 		return 1
@@ -373,19 +314,41 @@ def smoke(app: Path, timeout: float, settle: float = 5.0) -> int:
 	if not executable.is_file():
 		print(f"not a DevHub bundle: {executable} does not exist", file=sys.stderr)
 		return 1
-
-	faults = check_bundle_layout(app)
+	arch = "arm64" if platform.machine() == "arm64" else "x64"
+	faults = check_app_layout(app / "Contents" / "Resources" / "app", f"darwin-{arch}")
 	if faults:
 		for fault in faults:
 			print(f"    {fault}", file=sys.stderr)
 		return 1
-	print(
-		f"    the archive is paired with its sidecar, and everything the app "
-		f"fetches or spawns is in it ({len(FETCHED_ASSETS) + len(SPAWNED_BINARIES) + 1} checked)"
-	)
-
+	print("    Resources/app has its entry, its dependencies, its helpers and its wasm")
 	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
 	argv, environment = launch_command(executable, state)
+	return run_and_probe(argv, environment, state, user_data_directory(state), timeout, settle)
+
+
+def smoke_layout(repo: Path, app_dir: Path, timeout: float, settle: float, electron_args: list[str]) -> int:
+	"""A `Resources/app` laid out by `package-nightly.py --layout-only`, run by
+	npm's Electron: the packaged app's tree, on any platform."""
+	arch = "arm64" if platform.machine() in ("arm64", "aarch64") else "x64"
+	faults = check_app_layout(app_dir, f"{sys.platform}-{arch}")
+	if faults:
+		for fault in faults:
+			print(f"    {fault}", file=sys.stderr)
+		return 1
+	print("    the layout has its entry, its dependencies and its wasm")
+	electron = source_electron(repo)
+	problem = exercise_app(electron, app_dir)
+	if problem is not None:
+		print(f"    {problem}", file=sys.stderr)
+		return 1
+	state = Path(tempfile.mkdtemp(prefix="devhub-smoke-"))
+	argv, environment = launch_command(electron, state)
+	argv = [argv[0], str(app_dir), *argv[1:], *electron_args]
+	environment["HOME"] = str(state / "home")
+	environment["TMUX_TMPDIR"] = str(state / "tmux")
+	for directory in ("HOME", "XDG_CONFIG_HOME", "TMUX_TMPDIR"):
+		Path(environment[directory]).mkdir(parents=True, exist_ok=True)
+	print(f"    {app_dir} under npm's Electron, the {SMOKE_PROFILE} profile")
 	return run_and_probe(argv, environment, state, user_data_directory(state), timeout, settle)
 
 
@@ -397,8 +360,8 @@ def run_and_probe(
 	timeout: float,
 	settle: float,
 ) -> int:
-	"""Start the app, require a reply on its control socket and a workbench
-	it outlives, and take it and its state down again whatever happened."""
+	"""Start the app, require a reply on its control socket and an opened
+	file it outlives, and take it and its state down again whatever happened."""
 	# A file rather than a pipe: nothing reads a pipe while the app runs, and
 	# an app that fills one blocks on its own console.log.
 	log_path = state / "app.log"
@@ -431,16 +394,25 @@ def run_and_probe(
 		first_line = str(reply.get("message", "")).splitlines()[0:1]
 		print(f"    the control socket answered: {first_line[0] if first_line else reply}")
 
-		opener = ask_for_workbench(user_data / "devhub" / "control.sock", state / "smoke.txt")
 		try:
-			problem = wait_for_workbench(process, log_path, started + timeout, settle)
-		finally:
-			opener.close()
+			opened = ask_to_open(
+				user_data / "devhub" / "control.sock", state / "smoke.txt", started + timeout
+			)
+		except (OSError, ConnectionError, json.JSONDecodeError) as error:
+			print(f"    opening a file got no answer ({error})", file=sys.stderr)
+			print(log_tail(log_path), file=sys.stderr)
+			return 1
+		if not opened.get("ok"):
+			print(f"    opening a file failed: {opened.get('message')}", file=sys.stderr)
+			print(log_tail(log_path), file=sys.stderr)
+			return 1
+		print(f"    a file opened in the editor: {opened.get('message')}")
+		problem = outlives(process, settle)
 		if problem is not None:
 			print(f"    {problem}", file=sys.stderr)
 			print(log_tail(log_path), file=sys.stderr)
 			return 1
-		print(f"    a workbench view loaded, and the app was still running {settle:.0f}s later")
+		print(f"    and the app was still running {settle:.0f}s later")
 		return 0
 	finally:
 		# A stalled app cannot run its own SIGTERM handler — that needs the very
@@ -471,6 +443,11 @@ def main() -> int:
 		help="start this checkout's source run (apps/desktop/scripts/dev.sh) instead of a bundle",
 	)
 	parser.add_argument(
+		"--layout",
+		type=Path,
+		help="start a Resources/app laid out by package-nightly.py --layout-only, with npm's Electron",
+	)
+	parser.add_argument(
 		"--electron-arg",
 		action="append",
 		default=[],
@@ -486,18 +463,20 @@ def main() -> int:
 		"--settle",
 		type=float,
 		default=5.0,
-		help="how long the app must keep running after a workbench view has loaded",
+		help="how long the app must keep running after the file has opened",
 	)
 	args = parser.parse_args()
+	repo = Path(__file__).resolve().parent.parent
+	if args.layout is not None:
+		return smoke_layout(repo, args.layout.resolve(), args.timeout, args.settle, args.electron_arg)
 	if args.source:
 		if args.app is not None:
 			parser.error("--source starts this checkout; it takes no bundle")
-		repo = Path(__file__).resolve().parent.parent
 		return smoke_source(repo, args.timeout, args.settle, args.electron_arg)
 	if args.app is None:
 		parser.error("name a DevHub.app bundle, or pass --source")
 	if args.electron_arg:
-		parser.error("--electron-arg is for --source")
+		parser.error("--electron-arg is for --source and --layout")
 	return smoke(args.app.resolve(), args.timeout, args.settle)
 
 

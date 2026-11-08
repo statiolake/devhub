@@ -1,15 +1,12 @@
 /**
- * Bring up the App Shell before the first workbench asks for a window.
- *
- * Ordering matters and is the whole reason this is a separate step: the shim
- * turns `new BrowserWindow(workbench options)` into a view *inside* the shell,
- * so the shell has to exist first.
+ * Bring up the App Shell: the settings, the theme, the window, the controller
+ * and its runtimes, the control socket, and the quit path — in that order,
+ * which is load-bearing at every step (see below). `main.ts` calls it once,
+ * on `ready`.
  */
 
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
+import { join } from "node:path";
 import { APP_ROOT } from "./appRoot.js";
 import { createAppController } from "./appController.js";
 import { installMainFailureRoot } from "./mainFailureRoot.js";
@@ -52,10 +49,6 @@ import {
 	installTerminalLauncher,
 	terminalLauncherPath,
 } from "../terminal/launcher.js";
-import {
-	workbenchSettingsPlan,
-	type SettingsProblem,
-} from "../workbenchDefaults.js";
 import { activeProfile } from "../../model/profile.js";
 import {
 	customThemesOf,
@@ -63,74 +56,13 @@ import {
 	titleBarModeOf,
 } from "../../model/config.js";
 import { RunningSettings } from "./runningSettings.js";
-import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
-import {
-	forwardRemotePort,
-	remotePortsConfiguration,
-	resolveRemoteEndpoint,
-} from "./resolveRemote.js";
 
 /** How long a quit waits for the runtimes to let go before leaving anyway. */
 const SHUTDOWN_DEADLINE_MS = 3_000;
 
-/**
- * Write the settings DevHub cannot contribute as defaults; see the module.
- *
- * A file that would not parse is the one outcome that is neither written nor
- * thrown: it is returned, so the caller can say so on screen once there is a
- * screen. Startup carries on without it — the workbench reads the same file
- * with the same parser and has its own answer for it, and an editor that will
- * not open is a far worse thing to do to somebody about a stray comma than a
- * terminal profile that is missing until they fix it.
- */
-function ensureWorkbenchDefaults(
-	userDataPath: string,
-): SettingsProblem | undefined {
-	const file = join(userDataPath, "User", "settings.json");
-
-	let existing: string | undefined;
-	try {
-		existing = readFileSync(file, "utf8");
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-			throw error;
-		}
-		existing = undefined;
-	}
-
-	const plan = workbenchSettingsPlan(existing);
-	if (plan.kind === "unreadable") {
-		console.error(
-			`[devhub] ${file}:${String(plan.problem.line)}:${String(plan.problem.column)} is not valid JSON; workbench defaults not written`,
-		);
-		return plan.problem;
-	}
-	if (plan.kind === "answered") return undefined;
-
-	mkdirSync(dirname(file), { recursive: true });
-	writeFileSync(file, plan.text);
-	console.log(`[devhub] wrote workbench defaults: ${plan.keys.join(", ")}`);
-	return undefined;
-}
-
-/** What a broken `User/settings.json` says on screen, and where it is. */
-function unreadableSettingsError(
-	userDataPath: string,
-	problem: SettingsProblem,
-): AppErrorWire {
-	const file = join(userDataPath, "User", "settings.json");
-	return withDetail(
-		errorWireAt("workbench_settings_unreadable"),
-		`${file}, line ${String(problem.line)}, column ${String(problem.column)}. DevHub left the file alone, so the defaults it writes there are missing until the file is valid.`,
-	);
-}
-
-export async function bootstrapShell(
-	userDataPath: string,
-	cliArgs: NativeParsedArgs,
-): Promise<void> {
+export async function bootstrapShell(userDataPath: string): Promise<void> {
 	// First, so that it holds before the first background workbench is frozen:
 	// a freeze waits for it (`processGroupAnchor.ts`).
 	processGroupAnchor();
@@ -164,7 +96,6 @@ export async function bootstrapShell(
 		// naming that machine — see `Runtime.terminalLauncher`.
 		machine: "local",
 	});
-	const settingsProblem = ensureWorkbenchDefaults(userDataPath);
 
 	// The settings DevHub runs on, loaded before anything is made from them:
 	// the window is made with `appearance.title_bar` and in the colour theme
@@ -235,16 +166,11 @@ export async function bootstrapShell(
 	// The GPU process going, and waking up: every page repaints. The pages'
 	// own renderers are watched where each page is made (`supervisePage`).
 	installRendererRecovery(isQuitting);
-	const controller = await createAppController(userDataPath, cliArgs, settings);
+	const controller = await createAppController(userDataPath, settings);
 	// From here main has somewhere to put a failure nobody caught. Installed as
 	// early as there is a controller to publish through, because everything
 	// after this line is a thing that can fail.
 	installMainFailureRoot(controller);
-	if (settingsProblem) {
-		controller.noteStartupFailure(
-			unreadableSettingsError(userDataPath, settingsProblem),
-		);
-	}
 	shellTheme().onDidChange(() => {
 		const next = shellTheme().palette();
 		shellWindowIfCreated()?.applyPalette(next);
@@ -301,39 +227,12 @@ export async function bootstrapShell(
 		waitEnded: (waitMarkerPath) => controller.waitEndedFromCli(waitMarkerPath),
 		addAgent: (profileId, args, cwd) =>
 			controller.addAgentFromCli(profileId, args, cwd),
-		installExtensions: (targets, force, cwd) =>
-			controller.installExtensionsFromCli(targets, force, cwd),
-		uninstallExtensions: (ids, force) =>
-			controller.uninstallExtensionsFromCli(ids, force),
-		listExtensions: (showVersions) =>
-			controller.listExtensionsFromCli(showVersions),
 		version: () => controller.versionFromCli(),
 		metrics: () => controller.metricsFromCli(),
 		tell: (command, origin, machine, as) =>
 			controller.tellFromCli(command, origin, machine, as),
 		terminalProfile: (machine, root, workspace) =>
 			controller.terminalProfileFor(machine, root, workspace),
-		// Not on the controller: resolving an authority needs the runtime
-		// registry and the REH delivery and nothing about windows, workspaces or
-		// the model. See `resolveRemote.ts`.
-		resolveRemote: (machine, attempt) =>
-			resolveRemoteEndpoint(machine, attempt),
-		// The resolver's `tunnelFactory`, for the same reason. See
-		// `runtime/portForward.ts`.
-		forwardPort: (machine, host, port, localPort, requireLocalPort) =>
-			forwardRemotePort(machine, host, port, localPort, requireLocalPort),
-		devContainerPorts: (machine) => remotePortsConfiguration(machine),
-		// A workbench's own dev container commands: see `extensions/devhub-remote`.
-		devContainerConfigs: (window) =>
-			controller.devContainerConfigsForWindow(window),
-		devContainerBuildLog: (window, configPath) =>
-			controller.devContainerBuildLogForWindow(window, configPath),
-		reattachEditor: (window, to, rebuild) =>
-			controller.reattachEditorFromWindow(
-				window,
-				"kind" in to ? { kind: "host" } : { configPath: to.configPath },
-				rebuild,
-			),
 	});
 
 	// macOS: the dock icon brings the shell back after its window was hidden.
@@ -427,9 +326,6 @@ export async function bootstrapShell(
 		preloadPath: join(preloadDirectory, "taskManager.js"),
 		snapshot: () => controller.taskManagerSnapshot(),
 		commandOf,
-		sleepWorkbench: (workspaceId) => {
-			controller.sleepWorkbenchFromTaskManager(workspaceId);
-		},
 		stopAgent: (agentId) => {
 			controller.stopAgentFromTaskManager(agentId);
 		},

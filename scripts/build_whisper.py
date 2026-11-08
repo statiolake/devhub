@@ -79,9 +79,8 @@ does not name that commit. The model is pinned by the SHA-1 whisper.cpp's own
 download that does not hash to it is deleted, not used.
 
 Both are cached under `~/.cache/devhub/whisper/` (`$XDG_CACHE_HOME`,
-`DEVHUB_WHISPER_CACHE` overrides), as the remote extension hosts are
-(`scripts/build_reh.py`): the model by its name, the binary by a key over the
-commit and the build flags. A second build is a copy.
+`DEVHUB_WHISPER_CACHE` overrides): the model by its name, the binary by a key
+over the commit and the build flags. A second build is a copy.
 
     scripts/build_whisper.py [--out-dir dist/whisper] [--no-cache]
 

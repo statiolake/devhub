@@ -52,32 +52,6 @@ describe("parsing", () => {
     expect(config).toEqual(defaultConfig());
   });
 
-  it("discards an editor frozen for 60 minutes unless told otherwise, 0 being never", () => {
-    expect(parseConfig(MINIMAL).general.workbench_discard_minutes).toBe(60);
-    const off = "version = 1\n[general]\nworkbench_discard_minutes = 0\n";
-    expect(parseConfig(off).general.workbench_discard_minutes).toBe(0);
-    expect(
-      pathOf(() =>
-        parseConfig("version = 1\n[general]\nworkbench_discard_minutes = -1\n"),
-      ),
-    ).toBe("general.workbench_discard_minutes");
-  });
-
-  it("freezes hidden editors unless told not to, and only takes a boolean", () => {
-    expect(parseConfig(MINIMAL).general.workbench_freeze).toBe(true);
-    const off = "version = 1\n[general]\nworkbench_freeze = false\n";
-    const config = parseConfig(off);
-    expect(config.general.workbench_freeze).toBe(false);
-    expect(parseConfig(configToToml(config)).general.workbench_freeze).toBe(
-      false,
-    );
-    expect(
-      pathOf(() =>
-        parseConfig('version = 1\n[general]\nworkbench_freeze = "no"\n'),
-      ),
-    ).toBe("general.workbench_freeze");
-  });
-
   it('refuses neovim_terminal_overlay: Neovim over terminals is what editor = "neovim" is', () => {
     expect(
       pathOf(() =>
@@ -86,17 +60,24 @@ describe("parsing", () => {
     ).toBe("general.neovim_terminal_overlay");
   });
 
-  it("has VS Code as the editor unless told Neovim, and refuses anything else", () => {
-    expect(parseConfig(MINIMAL).general.editor).toBe("vscode");
-    const neovim = parseConfig('version = 1\n[general]\neditor = "neovim"\n');
-    expect(neovim.general.editor).toBe("neovim");
-    expect(parseConfig(configToToml(neovim)).general.editor).toBe("neovim");
-    expect(
-      codeOf(() => parseConfig('version = 1\n[general]\neditor = "emacs"\n')),
-    ).toBe("invalid_editor");
-    expect(
-      pathOf(() => parseConfig("version = 1\n[general]\neditor = 1\n")),
-    ).toBe("general.editor");
+  it("retires the editor and the workbench keys with VS Code: loaded, ignored, said, dropped", () => {
+    for (const line of [
+      'editor = "vscode"',
+      'editor = "neovim"',
+      "workbench_freeze = false",
+      "workbench_discard_minutes = 0",
+    ]) {
+      const text = `version = 1\n[general]\n${line}\n`;
+      const config = parseConfig(text);
+      expect(config).toEqual(defaultConfig());
+      const key = `general.${line.split(" ")[0] ?? ""}`;
+      expect(configToToml(config)).not.toContain(
+        `${line.split(" ")[0] ?? ""} =`,
+      );
+      expect(retiredKeysIn(parseConfigText(text))).toEqual([
+        { key, replacement: expect.stringContaining("no VS Code") },
+      ]);
+    }
   });
 
   it("knows no awake cap, hibernation time or default view any more", () => {
@@ -740,7 +721,7 @@ describe("parsing", () => {
 
   describe("general.workbench", () => {
     it("is retired: loaded, ignored, said once, and dropped by the next save", () => {
-      // Every Workspace's editor area is its VS Code workbench now, so a file
+      // Every Workspace's editor is its Neovim now, so a file
       // that still says which one DevHub is in is not refused over it.
       const text = 'version = 1\n[general]\nworkbench = "terminal"\n';
       const config = parseConfig(text);
@@ -749,7 +730,7 @@ describe("parsing", () => {
         {
           key: "general.workbench",
           replacement: expect.stringContaining(
-            "its own VS Code workbench",
+            "no VS Code",
           ) as unknown as string,
         },
       ]);

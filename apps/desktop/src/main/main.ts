@@ -1,854 +1,144 @@
-/*---------------------------------------------------------------------------------------------
- *  DevHub's copy of VS Code's outer bootstrap.
- *
- *  Upstream: vscode/src/main.ts
- *  Pinned at: microsoft/vscode a44adf7f53e00964ab890f9f8758a334f1fc15bc (tag 1.136.1)
- *
- *  This is the file Electron runs (apps/desktop/package.json "main"). It exists
- *  to substitute the things below and nothing else. Keep it as close to upstream as
- *  possible; a VS Code bump re-applies exactly this list:
- *
- *    1. `./shimEntry.js` is imported first, before anything else — including
- *       'electron'. It installs DevHub's `BrowserWindow` on the electron module
- *       before the ESM namespace for it is minted. Order is load-bearing.
- *    2. Imports are rebased from relative paths onto `code-oss-dev/out/...`,
- *       and the NLS bundle paths point at the submodule's own `out/` rather
- *       than at this file's directory, which is now DevHub's.
- *    3. `devhub-app:` joins the privileged schemes: the App Shell page is
- *       DevHub's own resource, on a scheme DevHub owns and serves.
- *    4. The final dynamic import of VS Code's `CodeMain` loads DevHub's copy
- *       (./codeMain.js) instead.
- *    5. `app.setName('DevHub')`. In development Electron guesses an app's name
- *       from package.json, so without this it calls DevHub "@devhub/desktop".
- *    6. `migrateUserDataDirectory` runs the moment the user-data path is
- *       resolved, before anything derives a path from it. See its own file.
- *    7. `registerListeners`' `open-file` handler is DevHub's
- *       (`shell/openFromFinder.ts`), because upstream's parks the paths for an
- *       `openFirstWindow` DevHub has replaced.
- *    8. Right after that, main's console is teed into
- *       `<userData>/logs/devhub-main.log` (`diagnostics/mainLog.ts`).
- *
- *  Everything else is upstream, including the copyright below.
- *--------------------------------------------------------------------------------------------*/
-
-// Installs the BrowserWindow shim. MUST stay the first import in this file.
-import './shimEntry.js';
-
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
-import * as path from 'node:path';
-import * as fs from 'original-fs';
-import * as os from 'node:os';
-import { performance } from 'node:perf_hooks';
-import { configurePortable } from 'code-oss-dev/out/bootstrap-node.js';
-import { bootstrapESM } from 'code-oss-dev/out/bootstrap-esm.js';
-import { app, protocol, crashReporter, Menu, contentTracing } from 'electron';
-import minimist from 'minimist';
-import { product } from 'code-oss-dev/out/bootstrap-meta.js';
-import { parse } from 'code-oss-dev/out/vs/base/common/jsonc.js';
-import { getUserDataPath } from 'code-oss-dev/out/vs/platform/environment/node/userDataPath.js';
-import * as perf from 'code-oss-dev/out/vs/base/common/performance.js';
-import { resolveNLSConfiguration } from 'code-oss-dev/out/vs/base/node/nls.js';
-import { getUNCHost, addUNCHostToAllowlist } from 'code-oss-dev/out/vs/base/node/unc.js';
-import { INLSConfiguration } from 'code-oss-dev/out/vs/nls.js';
-import { NativeParsedArgs } from 'code-oss-dev/out/vs/platform/environment/common/argv.js';
-import { createRequire } from 'node:module';
-import { migrateUserDataDirectory } from './userDataMigration.js';
-import { installMainLog, mainLogPath } from './diagnostics/mainLog.js';
-import { startEventLoopLagMonitor } from './diagnostics/eventLoopLag.js';
-import { processHostRunner } from './processHost/client.js';
-import { setChildRunner } from './terminal/command.js';
-import { setStreamRunner } from './runtime/byteStream.js';
-import { watchForFinderOpens } from './shell/openFromFinder.js';
-import { activeProfile } from '../model/profile.js';
-
 /**
- * VS Code resolves its NLS bundles relative to the file that asks for them.
- * Upstream that is `vscode/out/`; here it is DevHub's own `out/main/`, so the
- * submodule's directory is resolved explicitly instead.
+ * The file Electron runs (apps/desktop/package.json "main", and the packaged
+ * app's `Resources/app/package.json`): DevHub's main process, from the first
+ * line.
+ *
+ * It used to be a copy of VS Code's `src/main.ts`, which booted VS Code's
+ * main process — its ESM bootstrap, its DI container, its single-instance
+ * server — with DevHub's shell started inside it. DevHub no longer has VS
+ * Code (docs/without-vscode.md); the copy is in `retired-vscode/`. What is
+ * left is what was DevHub's in it, in the order it has to happen:
+ *
+ *   1. `./shimEntry.js` first: the quit trace and the microphone permission,
+ *      before anything can quit or ask.
+ *   2. The profile's user-data directory, its one-time migration, the main
+ *      log and the event-loop monitor — before anything derives a path or
+ *      writes a line.
+ *   3. The app's name and `userData` path, then the single-instance lock,
+ *      which Electron takes in that directory: two DevHubs of one profile are
+ *      one DevHub, two profiles are two.
+ *   4. `devhub-app:`, the pages' scheme, registered as privileged before
+ *      `ready`, as Electron requires.
+ *   5. Finder's `open-file`, listened for before `ready` (it fires earlier).
+ *   6. On `ready`: the process host, then the shell (`bootstrapShell`), then
+ *      the shell is told it may serve everything (`markReady`).
  */
-const vscodeOutDir = path.dirname(createRequire(import.meta.url).resolve('code-oss-dev/out/main.js'));
 
-perf.mark('code/didStartMain');
+// The quit trace and the microphone permission. MUST stay the first import.
+import "./shimEntry.js";
 
-perf.mark('code/willLoadMainBundle', {
-	// When built, the main bundle is a single JS file with all
-	// dependencies inlined. As such, we mark `willLoadMainBundle`
-	// as the start of the main bundle loading process.
-	startTime: Math.floor(performance.timeOrigin)
+import minimist from "minimist";
+import { electron } from "./electron.js";
+import { migrateUserDataDirectory } from "./userDataMigration.js";
+import { installMainLog, mainLogPath } from "./diagnostics/mainLog.js";
+import { startEventLoopLagMonitor } from "./diagnostics/eventLoopLag.js";
+import { processHostRunner } from "./processHost/client.js";
+import { setChildRunner } from "./terminal/command.js";
+import { setStreamRunner } from "./runtime/byteStream.js";
+import { watchForFinderOpens } from "./shell/openFromFinder.js";
+import { bootstrapShell } from "./shell/bootstrapShell.js";
+import { appController } from "./shell/appController.js";
+import { shellWindowIfCreated } from "./shell/shellWindow.js";
+import { activeProfile } from "../model/profile.js";
+
+const { app, protocol, Menu } = electron;
+
+const args = minimist(process.argv.slice(1), {
+	string: ["user-data-dir"],
 });
-perf.mark('code/didLoadMainBundle');
 
-// Enable portable support
-const portable = configurePortable(product);
-
-const args = parseCLIArgs();
-// Configure static command line arguments
-const argvConfig = configureCommandlineSwitchesSync(args);
-// Enable sandbox globally unless
-// 1) disabled via command line using either
-//    `--no-sandbox` or `--disable-chromium-sandbox` argument.
-// 2) argv.json contains `disable-chromium-sandbox: true`.
-if (args['sandbox'] &&
-	!args['disable-chromium-sandbox'] &&
-	!argvConfig['disable-chromium-sandbox']) {
-	app.enableSandbox();
-} else if (app.commandLine.hasSwitch('no-sandbox') &&
-	!app.commandLine.hasSwitch('disable-gpu-sandbox')) {
-	// Disable GPU sandbox whenever --no-sandbox is used.
-	app.commandLine.appendSwitch('disable-gpu-sandbox');
-} else {
-	app.commandLine.appendSwitch('no-sandbox');
-	app.commandLine.appendSwitch('disable-gpu-sandbox');
-}
-
-// Which DevHub this is. Unset means the one DevHub has always been, on the
-// paths it has always used; anything else is a second, fully separate DevHub —
-// see model/profile.ts, which derives every one of its locations.
-const devhubProfile = activeProfile();
-// The profile's config directory, for the built-in devhub-init extension
-// (`<configDirectory>/init.ts`) in the extension host, which inherits this
-// process's environment: one derivation, here. Children DevHub spawns itself
-// do not get it (DEVHUB_* is DevHub's runtime: shell/loginEnvironment.ts).
-process.env['DEVHUB_CONFIG_DIR'] = devhubProfile.configDirectory;
-
-// Set userData path before app 'ready' event
-//
-// A non-default profile brings its own user-data directory, because that
-// directory is what makes a VS Code single-instance: two DevHubs sharing it is
-// exactly the "the second one does not start" that a profile is asked for to
-// avoid. An explicit --user-data-dir still wins, for the scratch runs that pass
-// one.
-const userDataPath = devhubProfile.isDefault || args['user-data-dir']
-	? getUserDataPath(args, product.nameShort ?? 'code-oss-dev')
-	: devhubProfile.userDataDirectory;
+// 2. Which DevHub this is (model/profile.ts derives every location from it).
+// An explicit --user-data-dir still wins, for the scratch runs that pass one.
+const profile = activeProfile();
+const userDataPath =
+	typeof args["user-data-dir"] === "string" && args["user-data-dir"] !== ""
+		? args["user-data-dir"]
+		: profile.userDataDirectory;
 migrateUserDataDirectory(userDataPath);
-// DevHub: main's console goes to <userData>/logs/devhub-main.log as well, from
-// here on — a packaged app's stdout is nobody's (diagnostics/mainLog.ts).
+// Main's console goes to <userData>/logs/devhub-main.log as well, from here
+// on — a packaged app's stdout is nobody's (diagnostics/mainLog.ts).
 installMainLog(mainLogPath(userDataPath));
-// DevHub: a line in that log whenever main's event loop was held up, and by
-// what (diagnostics/eventLoopLag.ts).
+// A line in that log whenever main's event loop was held up, and by what.
 startEventLoopLagMonitor();
-if (process.platform === 'win32') {
-	const userDataUNCHost = getUNCHost(userDataPath);
-	if (userDataUNCHost) {
-		addUNCHostToAllowlist(userDataUNCHost); // enables to use UNC paths in userDataPath
-	}
-}
-// DevHub is not "@devhub/desktop", which is what Electron calls an app whose
-// name it has to guess from package.json. Set before `setPath` below so nothing
-// derived from the name can be computed from the wrong one.
-//
-// This names what Electron and JavaScript produce, and only that. The menu
-// bar, the Dock tile, Mission Control and the window switcher all read the
-// running bundle's Info.plist, which no call from inside the process can
-// reach — so DevHub is run from a bundle of its own in both modes: the
-// packaged app is one (scripts/package-nightly.py), and a source run boots a
-// branded clone of VS Code's Electron (step 5b of scripts/provision-vscode.sh).
-app.setName(devhubProfile.applicationName);
 
-app.setPath('userData', userDataPath);
+// 3. Electron's name for the app. The menu bar, the Dock and the window
+// switcher read the running bundle's Info.plist instead, which is DevHub's in
+// both modes: the packaged app (scripts/package-nightly.py) and, on a Mac,
+// the branded clone of npm's Electron a source run boots (dev.sh).
+app.setName(profile.applicationName);
+app.setPath("userData", userDataPath);
 
-// Resolve code cache path
-const codeCachePath = getCodeCachePath();
+if (!app.requestSingleInstanceLock()) {
+	// Another DevHub of this profile is running: it is the one the person
+	// means. The `devhub` command reaches it over its control socket; a second
+	// launch from the Dock or a shell brings it to the front (below) and ends.
+	console.log(
+		"[devhub] another DevHub of this profile is running; handing over to it",
+	);
+	app.exit(0);
+} else {
+	app.on("second-instance", () => {
+		shellWindowIfCreated()?.raiseFromAppActivation();
+	});
 
-// Disable default menu (https://github.com/electron/electron/issues/35512)
-Menu.setApplicationMenu(null);
+	// No default menu: the shell sets DevHub's own (`shell/menu.ts`).
+	Menu.setApplicationMenu(null);
 
-// Configure crash reporter
-perf.mark('code/willStartCrashReporter');
-// If a crash-reporter-directory is specified we store the crash reports
-// in the specified directory and don't upload them to the crash server.
-//
-// Appcenter crash reporting is enabled if
-// * enable-crash-reporter runtime argument is set to 'true'
-// * --disable-crash-reporter command line parameter is not set
-//
-// Disable crash reporting in all other cases.
-if (args['crash-reporter-directory'] || (argvConfig['enable-crash-reporter'] && !args['disable-crash-reporter'])) {
-	configureCrashReporter();
-}
-perf.mark('code/didStartCrashReporter');
+	// 4. The pages' own scheme, served from one directory only
+	// (shell/shellPageProtocol.ts).
+	protocol.registerSchemesAsPrivileged([
+		{
+			scheme: "devhub-app",
+			privileges: {
+				secure: true,
+				standard: true,
+				supportFetchAPI: true,
+				corsEnabled: true,
+				codeCache: true,
+			},
+		},
+	]);
 
-// Set logs path before app 'ready' event if running portable
-// to ensure that no 'logs' folder is created on disk at a
-// location outside of the portable directory
-// (https://github.com/microsoft/vscode/issues/56651)
-if (portable.isPortable) {
-	app.setAppLogsPath(path.join(userDataPath, 'logs'));
-}
+	// 5. macOS: a file dropped on a DevHub that is not running yet arrives as
+	// `open-file` before `ready`; `openFromFinder.ts` queues it until there is
+	// a shell to open it in.
+	watchForFinderOpens();
 
-// Register custom schemes with privileges
-protocol.registerSchemesAsPrivileged([
-	{
-		scheme: 'vscode-webview',
-		privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, allowServiceWorkers: true, codeCache: true }
-	},
-	{
-		scheme: 'vscode-file',
-		privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true, codeCache: true }
-	},
-	{
-		scheme: 'vscode-remote-resource',
-		privileges: { secure: true, supportFetchAPI: true, corsEnabled: true }
-	},
-	{
-		scheme: 'vscode-managed-remote-resource',
-		privileges: { secure: true, supportFetchAPI: true, corsEnabled: true }
-	},
-	// DevHub: the App Shell page's own scheme. It is not VS Code's, and it is
-	// served from one directory only (shell/shellPageProtocol.ts).
-	{
-		scheme: 'devhub-app',
-		privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true, codeCache: true }
-	}
-]);
+	// DevHub is the app, not its window: closing the window hides it on macOS
+	// (`shellWindow.ts`), and the app stays until it is quit. Elsewhere the
+	// last window closing is the end, as Electron's default would have it.
+	app.on("window-all-closed", () => {
+		if (process.platform !== "darwin") app.quit();
+	});
 
-// Global app listeners
-registerListeners();
-
-/**
- * We can resolve the NLS configuration early if it is defined
- * in argv.json before `app.ready` event. Otherwise we can only
- * resolve NLS after `app.ready` event to resolve the OS locale.
- */
-let nlsConfigurationPromise: Promise<INLSConfiguration> | undefined = undefined;
-
-// Use the most preferred OS language for language recommendation.
-// The API might return an empty array on Linux, such as when
-// the 'C' locale is the user's only configured locale.
-// No matter the OS, if the array is empty, default back to 'en'.
-const osLocale = processZhLocale((app.getPreferredSystemLanguages()?.[0] ?? 'en').toLowerCase());
-const userLocale = getUserDefinedLocale(argvConfig);
-if (userLocale) {
-	nlsConfigurationPromise = resolveNLSConfiguration({
-		userLocale,
-		osLocale,
-		commit: product.commit,
-		nlsMetadataHash: product.nlsMetadataHash,
-		userDataPath,
-		nlsMetadataPath: vscodeOutDir
+	app.once("ready", () => {
+		void onReady().catch((error: unknown) => {
+			console.error("[devhub] startup failed:", error);
+			app.exit(1);
+		});
 	});
 }
 
-// Pass in the locale to Electron so that the
-// Windows Control Overlay is rendered correctly on Windows.
-// For now, don't pass in the locale on macOS due to
-// https://github.com/microsoft/vscode/issues/167543.
-// If the locale is `qps-ploc`, the Microsoft
-// Pseudo Language Language Pack is being used.
-// In that case, use `en` as the Electron locale.
-
-if (process.platform === 'win32' || process.platform === 'linux') {
-	const electronLocale = (!userLocale || userLocale === 'qps-ploc') ? 'en' : userLocale;
-	app.commandLine.appendSwitch('lang', electronLocale);
-}
-
-// Load our code once ready
-app.once('ready', function () {
-	if (args['trace']) {
-		let traceOptions: Electron.TraceConfig | Electron.TraceCategoriesAndOptions;
-		if (args['trace-memory-infra']) {
-			const customCategories = args['trace-category-filter']?.split(',') || [];
-			customCategories.push('disabled-by-default-memory-infra', 'disabled-by-default-memory-infra.v8.code_stats');
-			traceOptions = {
-				included_categories: customCategories,
-				excluded_categories: ['*'],
-				memory_dump_config: {
-					allowed_dump_modes: ['light', 'detailed'],
-					triggers: [
-						{
-							type: 'periodic_interval',
-							mode: 'detailed',
-							min_time_between_dumps_ms: 10000
-						},
-						{
-							type: 'periodic_interval',
-							mode: 'light',
-							min_time_between_dumps_ms: 1000
-						}
-					]
-				}
-			};
-		} else {
-			traceOptions = {
-				categoryFilter: args['trace-category-filter'] || '*',
-				traceOptions: args['trace-options'] || 'record-until-full,enable-sampling'
-			};
-		}
-
-		contentTracing.startRecording(traceOptions).finally(() => onReady());
-	} else {
-		onReady();
-	}
-});
-
-async function onReady() {
-	perf.mark('code/mainAppReady');
-
-	// DevHub: tmux, git and the Agents' host scripts are started by a utility
-	// process from here on, not on main's thread (processHost/client.ts), and
-	// so are the long-lived streams, a remote Agent's journal among them,
-	// unless `DEVHUB_BYTESTREAMS_IN_MAIN=1`. Let go of it last: what shutting
-	// down still runs starts in main again.
+async function onReady(): Promise<void> {
+	// tmux, git and the Agents' host scripts are started by a utility process
+	// from here on, not on main's thread (processHost/client.ts), and so are
+	// the long-lived streams, a remote Agent's journal among them, unless
+	// `DEVHUB_BYTESTREAMS_IN_MAIN=1`. Let go of it last: what shutting down
+	// still runs starts in main again.
 	const processHost = processHostRunner();
 	setChildRunner(processHost);
-	if (process.env['DEVHUB_BYTESTREAMS_IN_MAIN'] !== '1') {
+	if (process.env["DEVHUB_BYTESTREAMS_IN_MAIN"] !== "1") {
 		setStreamRunner(processHost);
 	}
-	app.once('quit', () => {
+	app.once("quit", () => {
 		setChildRunner(undefined);
 		setStreamRunner(undefined);
 		processHost.dispose();
 	});
 
-	try {
-		const [, nlsConfig] = await Promise.all([
-			mkdirpIgnoreError(codeCachePath),
-			resolveNlsConfiguration()
-		]);
-
-		await startup(codeCachePath, nlsConfig);
-	} catch (error) {
-		console.error(error);
-	}
+	await bootstrapShell(userDataPath);
+	// Everything the shell projects is available once its runtimes are. Until
+	// then the page shows "Connecting…" rather than an empty shell that looks
+	// like a state.
+	appController().markReady();
 }
-
-/**
- * Main startup routine
- */
-async function startup(codeCachePath: string | undefined, nlsConfig: INLSConfiguration): Promise<void> {
-	process.env['VSCODE_NLS_CONFIG'] = JSON.stringify(nlsConfig);
-	process.env['VSCODE_CODE_CACHE_PATH'] = codeCachePath || '';
-
-	// Bootstrap ESM
-	await bootstrapESM();
-
-	// Load Main
-	await import('./codeMain.js');
-	perf.mark('code/didRunMainBundle');
-}
-
-function configureCommandlineSwitchesSync(cliArgs: NativeParsedArgs) {
-	const SUPPORTED_ELECTRON_SWITCHES = [
-
-		// alias from us for --disable-gpu
-		'disable-hardware-acceleration',
-
-		// override for the color profile to use
-		'force-color-profile',
-
-		// disable LCD font rendering, a Chromium flag
-		'disable-lcd-text',
-
-		// bypass any specified proxy for the given semi-colon-separated list of hosts
-		'proxy-bypass-list',
-
-		'remote-debugging-port'
-	];
-
-	if (process.platform === 'linux') {
-
-		// Force enable screen readers on Linux via this flag
-		SUPPORTED_ELECTRON_SWITCHES.push('force-renderer-accessibility');
-
-		// override which password-store is used on Linux
-		SUPPORTED_ELECTRON_SWITCHES.push('password-store');
-	}
-
-	const SUPPORTED_MAIN_PROCESS_SWITCHES = [
-
-		// Persistently enable proposed api via argv.json: https://github.com/microsoft/vscode/issues/99775
-		'enable-proposed-api',
-
-		// Log level to use. Default is 'info'. Allowed values are 'error', 'warn', 'info', 'debug', 'trace', 'off'.
-		'log-level',
-
-		// Use an in-memory storage for secrets
-		'use-inmemory-secretstorage',
-
-		// Enables display tracking to restore maximized windows under RDP: https://github.com/electron/electron/issues/47016
-		'enable-rdp-display-tracking',
-	];
-
-	// Read argv config
-	const argvConfig = readArgvConfigSync();
-
-	Object.keys(argvConfig).forEach(argvKey => {
-		const argvValue = argvConfig[argvKey];
-
-		// Append Electron flags to Electron
-		if (SUPPORTED_ELECTRON_SWITCHES.indexOf(argvKey) !== -1) {
-			if (argvValue === true || argvValue === 'true') {
-				if (argvKey === 'disable-hardware-acceleration') {
-					app.disableHardwareAcceleration(); // needs to be called explicitly
-				} else {
-					app.commandLine.appendSwitch(argvKey);
-				}
-			} else if (typeof argvValue === 'string' && argvValue) {
-				if (argvKey === 'password-store') {
-					// Password store
-					// TODO@TylerLeonhardt: Remove this migration in 3 months
-					let migratedArgvValue = argvValue;
-					if (argvValue === 'gnome' || argvValue === 'gnome-keyring') {
-						migratedArgvValue = 'gnome-libsecret';
-					}
-					app.commandLine.appendSwitch(argvKey, migratedArgvValue);
-				} else {
-					app.commandLine.appendSwitch(argvKey, argvValue);
-				}
-			}
-		}
-
-		// Append main process flags to process.argv
-		else if (SUPPORTED_MAIN_PROCESS_SWITCHES.indexOf(argvKey) !== -1) {
-			switch (argvKey) {
-				case 'enable-proposed-api':
-					if (Array.isArray(argvValue)) {
-						argvValue.forEach(id => id && typeof id === 'string' && process.argv.push('--enable-proposed-api', id));
-					} else {
-						console.error(`Unexpected value for \`enable-proposed-api\` in argv.json. Expected array of extension ids.`);
-					}
-					break;
-
-				case 'log-level':
-					if (typeof argvValue === 'string') {
-						process.argv.push('--log', argvValue);
-					} else if (Array.isArray(argvValue)) {
-						for (const value of argvValue) {
-							process.argv.push('--log', value);
-						}
-					}
-					break;
-
-				case 'use-inmemory-secretstorage':
-					if (argvValue) {
-						process.argv.push('--use-inmemory-secretstorage');
-					}
-					break;
-
-				case 'enable-rdp-display-tracking':
-					if (argvValue) {
-						process.argv.push('--enable-rdp-display-tracking');
-					}
-					break;
-			}
-		}
-	});
-
-	// Following features are enabled from the runtime:
-	// `NetAdapterMaxBufSizeFeature` - Specify the max buffer size for NetToMojoPendingBuffer, refs https://github.com/microsoft/vscode/issues/268800
-	// `DocumentPolicyIncludeJSCallStacksInCrashReports` - https://www.electronjs.org/docs/latest/api/web-frame-main#framecollectjavascriptcallstack-experimental
-	// `EarlyEstablishGpuChannel` - Refs https://issues.chromium.org/issues/40208065
-	// `EstablishGpuChannelAsync` - Refs https://issues.chromium.org/issues/40208065
-	// `GlobalShortcutsPortal` - Enables Electron's `globalShortcut` (system-wide keybindings) on Linux Wayland via the XDG global shortcuts portal (no-op elsewhere)
-	const featuresToEnable =
-		`NetAdapterMaxBufSizeFeature:NetAdapterMaxBufSize/8192,DocumentPolicyIncludeJSCallStacksInCrashReports,EarlyEstablishGpuChannel,EstablishGpuChannelAsync${process.platform === 'linux' ? ',GlobalShortcutsPortal' : ''},${app.commandLine.getSwitchValue('enable-features')}`;
-	app.commandLine.appendSwitch('enable-features', featuresToEnable);
-
-	// Following features are disabled from the runtime:
-	// `CalculateNativeWinOcclusion` - Disable native window occlusion tracker (https://groups.google.com/a/chromium.org/g/embedder-dev/c/ZF3uHHyWLKw/m/VDN2hDXMAAAJ)
-	const featuresToDisable =
-		`CalculateNativeWinOcclusion,${app.commandLine.getSwitchValue('disable-features')}`;
-	app.commandLine.appendSwitch('disable-features', featuresToDisable);
-
-	// Blink features to configure.
-	// `FontMatchingCTMigration` - Siwtch font matching on macOS to Appkit (Refs https://github.com/microsoft/vscode/issues/224496#issuecomment-2270418470).
-	// `StandardizedBrowserZoom` - Disable zoom adjustment for bounding box (https://github.com/microsoft/vscode/issues/232750#issuecomment-2459495394)
-	const blinkFeaturesToDisable =
-		`FontMatchingCTMigration,StandardizedBrowserZoom,${app.commandLine.getSwitchValue('disable-blink-features')}`;
-	app.commandLine.appendSwitch('disable-blink-features', blinkFeaturesToDisable);
-
-	// Support JS Flags
-	const jsFlags = getJSFlags(cliArgs, argvConfig);
-	if (jsFlags) {
-		app.commandLine.appendSwitch('js-flags', jsFlags);
-	}
-
-	// Use portal version 4 that supports current_folder option
-	// to address https://github.com/microsoft/vscode/issues/213780
-	// Runtime sets the default version to 3, refs https://github.com/electron/electron/pull/44426
-	app.commandLine.appendSwitch('xdg-portal-required-version', '4');
-
-	// Increase the maximum number of active WebGL contexts as each terminal may
-	// use up to 2
-	app.commandLine.appendSwitch('max-active-webgl-contexts', '32');
-
-	return argvConfig;
-}
-
-interface IArgvConfig {
-	[key: string]: string | string[] | boolean | undefined;
-	readonly locale?: string;
-	readonly 'disable-lcd-text'?: boolean;
-	readonly 'proxy-bypass-list'?: string;
-	readonly 'disable-hardware-acceleration'?: boolean;
-	readonly 'force-color-profile'?: string;
-	readonly 'enable-crash-reporter'?: boolean;
-	readonly 'crash-reporter-id'?: string;
-	readonly 'enable-proposed-api'?: string[];
-	readonly 'log-level'?: string | string[];
-	readonly 'disable-chromium-sandbox'?: boolean;
-	readonly 'use-inmemory-secretstorage'?: boolean;
-	readonly 'enable-rdp-display-tracking'?: boolean;
-	readonly 'remote-debugging-port'?: string;
-	readonly 'js-flags'?: string;
-}
-
-function readArgvConfigSync(): IArgvConfig {
-
-	// Read or create the argv.json config file sync before app('ready')
-	const argvConfigPath = getArgvConfigPath();
-	let argvConfig: IArgvConfig | undefined = undefined;
-	try {
-		argvConfig = parse(fs.readFileSync(argvConfigPath).toString());
-	} catch (error) {
-		if (error && error.code === 'ENOENT') {
-			createDefaultArgvConfigSync(argvConfigPath);
-		} else {
-			console.warn(`Unable to read argv.json configuration file in ${argvConfigPath}, falling back to defaults (${error})`);
-		}
-	}
-
-	// Fallback to default
-	if (!argvConfig) {
-		argvConfig = {};
-	}
-
-	return argvConfig;
-}
-
-function createDefaultArgvConfigSync(argvConfigPath: string): void {
-	try {
-
-		// Ensure argv config parent exists
-		const argvConfigPathDirname = path.dirname(argvConfigPath);
-		if (!fs.existsSync(argvConfigPathDirname)) {
-			fs.mkdirSync(argvConfigPathDirname);
-		}
-
-		// Default argv content
-		const defaultArgvConfigContent = [
-			'// This configuration file allows you to pass permanent command line arguments to VS Code.',
-			'// Only a subset of arguments is currently supported to reduce the likelihood of breaking',
-			'// the installation.',
-			'//',
-			'// PLEASE DO NOT CHANGE WITHOUT UNDERSTANDING THE IMPACT',
-			'//',
-			'// NOTE: Changing this file requires a restart of VS Code.',
-			'{',
-			'	// Use software rendering instead of hardware accelerated rendering.',
-			'	// This can help in cases where you see rendering issues in VS Code.',
-			'	// "disable-hardware-acceleration": true',
-			'}'
-		];
-
-		// Create initial argv.json with default content
-		fs.writeFileSync(argvConfigPath, defaultArgvConfigContent.join('\n'));
-	} catch (error) {
-		console.error(`Unable to create argv.json configuration file in ${argvConfigPath}, falling back to defaults (${error})`);
-	}
-}
-
-function getArgvConfigPath(): string {
-	const vscodePortable = process.env['VSCODE_PORTABLE'];
-	if (vscodePortable) {
-		return path.join(vscodePortable, 'argv.json');
-	}
-
-	let dataFolderName = product.dataFolderName;
-	if (process.env['VSCODE_DEV']) {
-		dataFolderName = `${dataFolderName}-dev`;
-	}
-
-	return path.join(os.homedir(), dataFolderName!, 'argv.json');
-}
-
-function configureCrashReporter(): void {
-	let crashReporterDirectory = args['crash-reporter-directory'];
-	let submitURL = '';
-	if (crashReporterDirectory) {
-		crashReporterDirectory = path.normalize(crashReporterDirectory);
-
-		if (!path.isAbsolute(crashReporterDirectory)) {
-			console.error(`The path '${crashReporterDirectory}' specified for --crash-reporter-directory must be absolute.`);
-			app.exit(1);
-		}
-
-		if (!fs.existsSync(crashReporterDirectory)) {
-			try {
-				fs.mkdirSync(crashReporterDirectory, { recursive: true });
-			} catch (error) {
-				console.error(`The path '${crashReporterDirectory}' specified for --crash-reporter-directory does not seem to exist or cannot be created.`);
-				app.exit(1);
-			}
-		}
-
-		// Crashes are stored in the crashDumps directory by default, so we
-		// need to change that directory to the provided one
-		console.log(`Found --crash-reporter-directory argument. Setting crashDumps directory to be '${crashReporterDirectory}'`);
-		app.setPath('crashDumps', crashReporterDirectory);
-	}
-
-	// Otherwise we configure the crash reporter from product.json
-	else {
-		const appCenter = product.appCenter;
-		if (appCenter) {
-			const isWindows = (process.platform === 'win32');
-			const isLinux = (process.platform === 'linux');
-			const isDarwin = (process.platform === 'darwin');
-			const crashReporterId = argvConfig['crash-reporter-id'];
-			const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-			if (crashReporterId && uuidPattern.test(crashReporterId)) {
-				if (isWindows) {
-					switch (process.arch) {
-						case 'x64':
-							submitURL = appCenter['win32-x64'];
-							break;
-						case 'arm64':
-							submitURL = appCenter['win32-arm64'];
-							break;
-					}
-				} else if (isDarwin) {
-					if (product.darwinUniversalAssetId) {
-						submitURL = appCenter['darwin-universal'];
-					} else {
-						switch (process.arch) {
-							case 'x64':
-								submitURL = appCenter['darwin'];
-								break;
-							case 'arm64':
-								submitURL = appCenter['darwin-arm64'];
-								break;
-						}
-					}
-				} else if (isLinux) {
-					submitURL = appCenter['linux-x64'];
-				}
-				submitURL = submitURL.concat('&uid=', crashReporterId, '&iid=', crashReporterId, '&sid=', crashReporterId);
-				// Send the id for child node process that are explicitly starting crash reporter.
-				// For vscode this is ExtensionHost process currently.
-				const argv = process.argv;
-				const endOfArgsMarkerIndex = argv.indexOf('--');
-				if (endOfArgsMarkerIndex === -1) {
-					argv.push('--crash-reporter-id', crashReporterId);
-				} else {
-					// if the we have an argument "--" (end of argument marker)
-					// we cannot add arguments at the end. rather, we add
-					// arguments before the "--" marker.
-					argv.splice(endOfArgsMarkerIndex, 0, '--crash-reporter-id', crashReporterId);
-				}
-			}
-		}
-	}
-
-	// Start crash reporter for all processes
-	const productName = (product.crashReporter ? product.crashReporter.productName : undefined) || product.nameShort;
-	const companyName = (product.crashReporter ? product.crashReporter.companyName : undefined) || 'Microsoft';
-	const uploadToServer = Boolean(!process.env['VSCODE_DEV'] && submitURL && !crashReporterDirectory);
-	crashReporter.start({
-		companyName,
-		productName: process.env['VSCODE_DEV'] ? `${productName} Dev` : productName,
-		submitURL,
-		uploadToServer,
-		compress: true,
-		ignoreSystemCrashHandler: true
-	});
-}
-
-function getJSFlags(cliArgs: NativeParsedArgs, argvConfig: IArgvConfig): string | null {
-	const jsFlags: string[] = [];
-
-	// Add any existing JS flags we already got from the command line
-	if (cliArgs['js-flags']) {
-		jsFlags.push(cliArgs['js-flags']);
-	}
-
-	// Add JS flags from runtime arguments (argv.json)
-	if (typeof argvConfig['js-flags'] === 'string' && argvConfig['js-flags']) {
-		jsFlags.push(argvConfig['js-flags']);
-	}
-
-	return jsFlags.length > 0 ? jsFlags.join(' ') : null;
-}
-
-function parseCLIArgs(): NativeParsedArgs {
-	return minimist(process.argv, {
-		string: [
-			'user-data-dir',
-			'locale',
-			'js-flags',
-			'crash-reporter-directory'
-		],
-		boolean: [
-			'disable-chromium-sandbox',
-		],
-		default: {
-			'sandbox': true
-		},
-		alias: {
-			'no-sandbox': 'sandbox'
-		}
-	});
-}
-
-function registerListeners(): void {
-
-	/**
-	 * macOS: when someone drops a file to the not-yet running VSCode, the open-file event fires even before
-	 * the app-ready event. We listen very early for open-file and remember this upon startup as path to open.
-	 *
-	 * DevHub: substitution 7. Upstream parks the paths in `globalThis.macOpenFiles`
-	 * for `CodeApplication.openFirstWindow` to consume, and DevHub replaces that
-	 * method with one that opens no window at all — so the array had no reader
-	 * and grew for the life of the process. `shell/openFromFinder.ts` is the
-	 * reader instead: same early listener, same queue-until-there-is-somebody-to-tell,
-	 * and the answer is DevHub's own `devhub <path>` rule rather than a new window.
-	 */
-	watchForFinderOpens();
-
-	/**
-	 * macOS: react to open-url requests.
-	 */
-	const openUrls: string[] = [];
-	const onOpenUrl =
-		function (event: { preventDefault: () => void }, url: string) {
-			event.preventDefault();
-
-			openUrls.push(url);
-		};
-
-	app.on('will-finish-launching', function () {
-		app.on('open-url', onOpenUrl);
-	});
-
-	(globalThis as { getOpenUrls?: () => string[] }).getOpenUrls = function () {
-		app.removeListener('open-url', onOpenUrl);
-
-		return openUrls;
-	};
-}
-
-function getCodeCachePath(): string | undefined {
-
-	// explicitly disabled via CLI args
-	if (process.argv.indexOf('--no-cached-data') > 0) {
-		return undefined;
-	}
-
-	// running out of sources
-	if (process.env['VSCODE_DEV']) {
-		return undefined;
-	}
-
-	// require commit id
-	const commit = product.commit;
-	if (!commit) {
-		return undefined;
-	}
-
-	return path.join(userDataPath, 'CachedData', commit);
-}
-
-async function mkdirpIgnoreError(dir: string | undefined): Promise<string | undefined> {
-	if (typeof dir === 'string') {
-		try {
-			await fs.promises.mkdir(dir, { recursive: true });
-
-			return dir;
-		} catch (error) {
-			// ignore
-		}
-	}
-
-	return undefined;
-}
-
-//#region NLS Support
-
-function processZhLocale(appLocale: string): string {
-	if (appLocale.startsWith('zh')) {
-		const region = appLocale.split('-')[1];
-
-		// On Windows and macOS, Chinese languages returned by
-		// app.getPreferredSystemLanguages() start with zh-hans
-		// for Simplified Chinese or zh-hant for Traditional Chinese,
-		// so we can easily determine whether to use Simplified or Traditional.
-		// However, on Linux, Chinese languages returned by that same API
-		// are of the form zh-XY, where XY is a country code.
-		// For China (CN), Singapore (SG), and Malaysia (MY)
-		// country codes, assume they use Simplified Chinese.
-		// For other cases, assume they use Traditional.
-		if (['hans', 'cn', 'sg', 'my'].includes(region)) {
-			return 'zh-cn';
-		}
-
-		return 'zh-tw';
-	}
-
-	return appLocale;
-}
-
-/**
- * Resolve the NLS configuration
- */
-async function resolveNlsConfiguration(): Promise<INLSConfiguration> {
-
-	// First, we need to test a user defined locale.
-	// If it fails we try the app locale.
-	// If that fails we fall back to English.
-
-	const nlsConfiguration = nlsConfigurationPromise ? await nlsConfigurationPromise : undefined;
-	if (nlsConfiguration) {
-		return nlsConfiguration;
-	}
-
-	// Try to use the app locale which is only valid
-	// after the app ready event has been fired.
-
-	let userLocale = app.getLocale();
-	if (!userLocale) {
-		return {
-			userLocale: 'en',
-			osLocale,
-			resolvedLanguage: 'en',
-			defaultMessagesFile: path.join(vscodeOutDir, 'nls.messages.json'),
-
-			// NLS: below 2 are a relic from old times only used by vscode-nls and deprecated
-			locale: 'en',
-			availableLanguages: {}
-		};
-	}
-
-	// See above the comment about the loader and case sensitiveness
-	userLocale = processZhLocale(userLocale.toLowerCase());
-
-	return resolveNLSConfiguration({
-		userLocale,
-		osLocale,
-		commit: product.commit,
-		nlsMetadataHash: product.nlsMetadataHash,
-		userDataPath,
-		nlsMetadataPath: vscodeOutDir
-	});
-}
-
-/**
- * Language tags are case insensitive however an ESM loader is case sensitive
- * To make this work on case preserving & insensitive FS we do the following:
- * the language bundles have lower case language tags and we always lower case
- * the locale we receive from the user or OS.
- */
-function getUserDefinedLocale(argvConfig: IArgvConfig): string | undefined {
-	const locale = args['locale'];
-	if (locale) {
-		return locale.toLowerCase(); // a directly provided --locale always wins
-	}
-
-	return typeof argvConfig?.locale === 'string' ? argvConfig.locale.toLowerCase() : undefined;
-}
-
-//#endregion

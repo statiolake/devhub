@@ -1,41 +1,18 @@
-# The editor area: a Workspace's VS Code workbench
+# The editor area: a Workspace's terminal
 
-Every Workspace's editor area is its own VS Code workbench — a patched VS Code
-1.141 window per Workspace, with its own extension host. There is no other view
-and nothing to switch: `[general] default_view`, the per-Workspace remembered
-view and the `Cmd+Q E` terminal/editor toggle are gone. `Cmd+Q E` is
-`focus_editor` again ("Show the editor", `model/commands.ts`): it selects the
-Workspace (or Scratch) and puts the keyboard in its workbench, from an Agent,
-its terminal or the Sidebar.
-
-How a workbench is started, frozen, thawed and discarded — and what that costs
-— is `docs/window-and-pages.md`, "What it costs". In short: none starts until
-it is asked for — Enter (or Start) on its editor area's "Editor not running"
-placeholder, or a file DevHub is asked to open in it — and `Cmd+Q Shift+E`
-stops it again; one that is not on screen is frozen (SIGSTOP) unless it is in
-use, and discarded after `general.workbench_discard_minutes` frozen —
-unless `general.workbench_freeze = false`, which freezes (and so discards)
-nothing.
-
-SSH Workspaces' editors are their VS Code workbench on the host, and a dev
-container Workspace's is its workbench in the container, as before. Remote
-workbenches are excluded from freezing and discarding for now.
-
-## The other editor: Neovim
-
-With `[general] editor = "neovim"` the editor area is the Workspace's
-terminal instead of a workbench: its `ws-` tmux session in a terminal page
-(`pane.html#ws:<workspace id>`), which is what DevHub lands on at startup and
-when a Workspace is opened or selected. Every Neovim in it — `nvim` typed in
-a pane, `git commit`'s, and the `devhub-nvim` window files DevHub opens go
-to — is DevHub's GUI drawn over its pane; see
-[`neovim-editor.md`](neovim-editor.md). There is no separate Neovim editor
-page, no placeholder and nothing to start or stop: `Cmd+Q E` puts the keys
-in the terminal (or the Neovim over its active pane), and `Cmd+Q Shift+E`
-says there is nothing to stop. A session whose last window closed is made and
-attached again at once. Since the terminal is the editor area, Neovim offers
-no terminal of DevHub's inside it (`:DevhubTerminal` is gone); Neovim's own
+Every Workspace's editor area is its terminal: its `ws-` tmux session in a
+terminal page (`pane.html#ws:<workspace id>`), which is what DevHub lands on
+at startup and when a Workspace is opened or selected. Every Neovim in it —
+`nvim` typed in a pane, `git commit`'s, and the `devhub-nvim` window files
+DevHub opens go to — is DevHub's GUI drawn over its pane; see
+[`neovim-editor.md`](neovim-editor.md). There is no separate editor page, no
+placeholder and nothing to start or stop: `Cmd+Q E` (`focus_editor`) puts the
+keys in the terminal (or the Neovim over its active pane). A session whose
+last window closed is made and attached again at once. Neovim's own
 `:terminal` is drawn as any other window's grid.
+
+(It used to be a VS Code workbench per Workspace; that went with VS Code,
+`docs/without-vscode.md`.)
 
 ## The Option key
 

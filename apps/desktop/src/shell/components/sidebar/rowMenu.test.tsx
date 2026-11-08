@@ -263,23 +263,6 @@ describe("what a right-click on a Workspace offers", () => {
     ...over,
   });
 
-  it("offers the two ways to reopen a dev container's editor, then Close Workspace…", () => {
-    const a = actions();
-    const items = workspaceMenuItems(workspace(), a);
-    expect(labels(items)).toEqual([
-      "Reopen Editor in Container",
-      "Reopen Editor Locally",
-      "Close Workspace…",
-    ]);
-    for (const item of items) item.run();
-    expect(a.reopenInContainer).toHaveBeenCalledWith("w-1");
-    expect(a.reopenLocally).toHaveBeenCalledWith("w-1");
-    expect(a.close).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "w-1" }),
-    );
-    expect(items.at(-1)?.separated).toBe(true);
-  });
-
   it("offers only the close on an ordinary Workspace, and says Worktree where closing deletes the folder", () => {
     const local = workspace({ editor: { kind: "local" } } as never);
     expect(labels(workspaceMenuItems(local, actions()))).toEqual([
@@ -350,20 +333,6 @@ describe("the menu is main's to draw", () => {
     expect(showContextMenu).toHaveBeenCalledTimes(1);
     expect(dispatch).not.toHaveBeenCalled();
     expect(openModal).not.toHaveBeenCalled();
-  });
-
-  it("asks for a dev-container Workspace's menu and reopens the one chosen", async () => {
-    const { reopenEditorLocally } = mount(true);
-    answer = "reopen-locally";
-    const row = document.querySelector(".workspace-row:not(.is-scratch)");
-    await act(async () => {
-      fireEvent.contextMenu(row as Element, { clientX: 5, clientY: 6 });
-      await Promise.resolve();
-    });
-    expect(showContextMenu).toHaveBeenCalledWith(
-      expect.objectContaining({ at: { x: 5, y: 6 } }),
-    );
-    expect(reopenEditorLocally).toHaveBeenCalledWith("w-1");
   });
 
   it("continues the Agent in its other presentation through main", async () => {

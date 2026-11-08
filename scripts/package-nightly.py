@@ -1,130 +1,47 @@
 #!/usr/bin/env python3
-"""Assemble a runnable, unsigned DevHub.app for macOS Apple Silicon.
+"""Assemble a runnable DevHub.app for macOS Apple Silicon.
 
-DevHub is built the way VS Code is built, and this is the one place the two
-layouts are written down side by side. Everything that differs between a
-`pnpm dev` run and the app this script produces follows from one flag.
-
-    dev (apps/desktop/scripts/dev.sh)   packaged (this script)
-    ---------------------------------   ----------------------------------
-    VSCODE_DEV=1                        unset
-    vscode/out/, module by module       vscode/out-vscode-min/, one bundle
-                                        per process
-    apps/desktop/out/main/main.js       the same, esbuild-bundled into
-    imports 94 deep module paths        code-oss-dev/out/main.js
-    product.json + product.overrides    product.json alone, written by
-    merged at runtime by bootstrap-     write_product_json
-    meta.ts (it reads VSCODE_DEV)
-    isBuilt false                       isBuilt true
-    named "DevHub Dev", per upstream    named "DevHub"
-
-The last line is the reason the rest exists. Upstream renames the product when
-`VSCODE_DEV` is set, on the reasoning that only a developer's checkout runs out
-of sources — and that reasoning is right. What was wrong was DevHub shipping a
-checkout: the packaged app set `VSCODE_DEV` itself so VS Code could find its
-modules, and inherited a name that was then true of the nightly too.
-
-The obstacle to bundling was never the pipeline. It was that DevHub's main
-process imports deep module paths (`code-oss-dev/out/vs/platform/.../windows.js`)
-which a bundled tree does not have. But upstream's `src/main.ts` is a bundle
-entry point for exactly the same reason, and DevHub's `main.ts` is that file's
-replacement — so it is bundled the same way and put in the same place. See
-`bundle_main_process`.
-
-The layout inside the bundle, and why:
+A source run (apps/desktop/scripts/dev.sh) and the packaged app run the same
+thing: npm's Electron at the version apps/desktop/package.json pins, loading
+`apps/desktop` — `out/main/main.js`, the module tree tsgo emitted, and the
+pages Vite built. Packaging copies that tree into the bundle as it is; nothing
+is bundled again and nothing is archived, so there is one layout to reason
+about and Node's own resolver finds every dependency in every process.
 
     DevHub.app/Contents/
-      MacOS/DevHub                  VS Code's own Electron, renamed
+      MacOS/DevHub                  npm's Electron, renamed
       Frameworks/DevHub Helper*.app renamed with it — Electron finds its child
-                                    processes by the main bundle's name, so the
-                                    two names cannot drift apart
-      Resources/DevHub.icns         rendered from assets/icon-master.svg, and
-                                    installed by the same rename that gives the
-                                    bundle its name — a source run's bundle gets
-                                    it from there too
-      Resources/reh/                the four remote extension hosts, one per
-                                    Linux platform, with their statements —
-                                    built by scripts/build_reh.py, copied in
-                                    by bundle_remote_servers; DevHub copies
-                                    the one a far machine needs over to it
+                                    processes by the main bundle's name
+      Info.plist                    DevHub's names, version, document types
+                                    (scripts/darwin_bundle.py)
+      Resources/DevHub.icns
+      Resources/licenses/           DevHub's, Electron's, the third parties'
       Resources/whisper/            the speech recogniser the GUI Agent
-                                    composer dictates with — whisper.cpp and
-                                    its model, built and fetched at build
-                                    time by scripts/build_whisper.py, never
-                                    at runtime; copied in by bundle_whisper
-      Resources/app/                what Electron loads
-        package.json                "main" -> devhub-main.js
-        devhub-main.js              generated entry: the environment and the
-                                    directories dev.sh sets, set here instead,
-                                    because a double-clicked app gets neither a
-                                    shell nor arguments. It derives them from
-                                    out/model/profile.js, so a packaged run
-                                    honours DEVHUB_PROFILE like every other one
-        out/  dist/                 apps/desktop, minus its tests
-        node_modules/
-          minimist/                 the one real dependency of the main process
-          code-oss-dev/             the submodule, materialised
-            out/                    the patched dev compile, minus tests and
-                                    minus inline source maps
-            product.json            patched to say DevHub
-            extensions/             the built-in set, production-bundled by
-                                    VS Code's own `compile-extensions-build`,
-                                    plus DevHub's own bridge and ssh-remote
-                                    resolver. This is
-                                    `appRoot/extensions`, which is exactly
-                                    where VS Code looks for built-ins, so the
-                                    packaged app needs no `--builtin-
-                                    extensions-dir` the way dev.sh does
-            node_modules.asar       VS Code's *production* dependency closure,
-                                    copied from the tree npm already built for
-                                    this Electron, then collapsed into one
-                                    archive
-            node_modules.asar.unpacked
-                                    the part of that closure that has to stay
-                                    real files: native addons, spawned
-                                    executables, `.wasm`
-            node_modules/           what is left out of the archive entirely —
-                                    see pack_node_modules_asar.mjs
+                                    composer dictates with (build_whisper.py)
+      Resources/app/                what Electron loads (`APP_ROOT`)
+        package.json                "main": "out/main/main.js"
+        product.json                apps/desktop/product.json + version, commit
+        out/  dist/                 apps/desktop's build, minus its tests
+        node_modules/               what `out/` imports, resolved by Node from
+                                    apps/desktop and copied as real files —
+                                    node-pty with this platform's prebuild only
 
-Nothing here is a symlink: a link into the developer's checkout would leave the
-zip working only on the machine that made it.
-
-`code-oss-dev/node_modules` is an archive, the same one upstream ships and by
-the same rules: `node_modules.asar` for what can be read out of an archive, and
-`node_modules.asar.unpacked` for what cannot. See
-scripts/pack_node_modules_asar.mjs for the three sets and why each exists.
-
-The line that has to hold for this to work is `spawn`. Electron's asar layer is
-in its file system, not in its process spawner, so an executable inside the
-archive fails with ENOTDIR. VS Code spawns several — ripgrep for search,
-node-pty's `spawn-helper` for terminals — and reaches them by paths it computes
-itself from `__dirname`; upstream's answer is a convention its source hard-codes
-at every such place, rewriting the segment `node_modules.asar` in the computed
-path to `node_modules.asar.unpacked`. That is why the archive has to be named
-exactly that, and why the unpack list is not a tuning knob: a spawned file
-missing from it is a feature that fails at runtime, not a bigger archive.
-
-An earlier round of this work recorded the opposite conclusion — that Electron
-"no longer resolves modules out of a sibling `node_modules.asar`", making the
-archive unusable. That is not the case on Electron 42, and probably never was
-the whole story: Node's own resolver indeed cannot see into the archive, but
-resolving out of it was never Node's job. Upstream installs an ESM resolution
-hook (`enableASARSupport` in `src/bootstrap-esm.ts`) that locates the package
-inside the archive and re-runs resolution rooted there. Measured on 42.7.0 with
-the hook wired: `fs` reads, `require`, and bare `import` all resolve out of the
-archive; `spawn` works from `.unpacked` and fails from inside, exactly as the
-design assumes. The earlier measurement was almost certainly taken with that
-hook disabled, which was the state DevHub's own patch had left it in.
+`out/vt/ghostty-vt.wasm` (libghostty-vt, the control-mode terminal's engine)
+and `out/native/` (DevHub's helpers) travel inside `out/`.
 
 Usage:
     scripts/package-nightly.py [--out-dir DIR] [--zip] [--zip-name NAME]
                                [--zip-level 0-9|ditto]
-                               [--reh-dir DIR | --without-reh]
                                [--whisper-dir DIR | --without-whisper]
+    scripts/package-nightly.py --layout-only DIR
 
-Requires an already-built tree; every missing input names the command that
-produces it. The result is unsigned beyond an ad-hoc signature, which is the
-minimum macOS accepts for a modified bundle on Apple Silicon.
+`--layout-only DIR` writes only `Resources/app` (into DIR), on any platform:
+it is how the packaged layout is checked on Linux
+(scripts/check_packaged_layout.py). Everything else needs macOS.
+
+Requires a built `apps/desktop` (`pnpm run build:packages`). The result is
+signed ad hoc, which is the minimum macOS accepts for a modified bundle on
+Apple Silicon; it is not notarized.
 """
 
 from __future__ import annotations
@@ -132,7 +49,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -140,28 +56,8 @@ from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VSCODE_DIR = REPO_ROOT / "vscode"
 DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
-BRIDGE_DIR = REPO_ROOT / "extensions" / "devhub-bridge"
-REMOTE_DIR = REPO_ROOT / "extensions" / "devhub-remote"
-COPILOT_DIR = REPO_ROOT / "extensions" / "devhub-copilot"
 
-# Everything DevHub says about itself that VS Code reads out of product.json —
-# its name, its data folders, its extension gallery, and which build this is —
-# comes from product_metadata.py. The packaged app gets it merged into
-# product.json below; a source run gets it through vscode/product.overrides.json,
-# which apps/desktop/scripts/dev.sh writes by running that same module. Neither
-# path restates a value the other one owns.
-#
-# Renaming the Electron bundle after those same names is a source run's problem
-# too — macOS names an application from the bundle it runs in — so that rename
-# lives in darwin_bundle.py and both callers import it from there.
-from darwin_bundle import (  # noqa: E402
-	APP_NAME,
-	BASE_APP,
-	rebrand,
-	sign,
-)
 import build_cache  # noqa: E402
 from build_whisper import (  # noqa: E402
 	DEFAULT_OUT_DIR as WHISPER_BUILD_DIR,
@@ -169,20 +65,7 @@ from build_whisper import (  # noqa: E402
 	ensure as ensure_whisper,
 	install_problems as whisper_install_problems,
 )
-from build_reh import DEFAULT_OUT_DIR as REH_BUILD_DIR, TARGETS as REH_TARGETS, bundle_problems  # noqa: E402
-from product_metadata import (  # noqa: E402
-	devhub_commit,
-	devhub_version,
-	nls_metadata_hash,
-	packaged_metadata,
-	reh_identity,
-	vscode_commit,
-)
-
-# The inline `//# sourceMappingURL=data:...` tail every file of the dev compile
-# carries. It is about half the weight of `out/` and means nothing without the
-# sources, which are not shipped.
-INLINE_SOURCE_MAP = re.compile(rb"\n//# sourceMappingURL=data:[^\n]*\n?$")
+from product_metadata import devhub_commit, devhub_version, packaged_product  # noqa: E402
 
 
 def fail(message: str) -> "None":
@@ -202,19 +85,7 @@ def step(message: str) -> None:
 # --- inputs ----------------------------------------------------------------
 
 
-def toolchain_node_bin() -> Path:
-	"""The Node that VS Code's build insists on, as provisioned beside the repo."""
-	version = (VSCODE_DIR / ".nvmrc").read_text().strip()
-	machine = os.uname().machine
-	arch = "arm64" if machine in ("arm64", "aarch64") else "x64"
-	home = REPO_ROOT / "vscode-toolchain" / f"node-v{version}-darwin-{arch}" / "bin"
-	if not (home / "node").exists():
-		fail(f"no Node toolchain at {home} — run scripts/provision-vscode.sh")
-	return home
-
-
 def _newest_mtime(root: Path) -> float:
-	"""The most recently written file anywhere under `root`, or 0 if there is none."""
 	newest = 0.0
 	for path in root.rglob("*"):
 		if path.is_file():
@@ -222,269 +93,37 @@ def _newest_mtime(root: Path) -> float:
 	return newest
 
 
-def check_compiled_output_is_current() -> None:
-	"""Refuse to ship a compile older than the source it was made from.
-
-	`out/` and `dist/` are build output that packaging copies verbatim; nothing
-	here rebuilds them. So an edit that was never compiled ships as the
-	*previous* compile, and nothing about the result says so — the app starts,
-	it answers, and only whatever the change was supposed to do is quietly
-	missing. That is how a packaged build once shipped without the
-	workbench default that turns off extension signature verification, and
-	answered every gallery install with "Signature verification was not
-	executed".
-
-	Comparing timestamps is coarse, and it will occasionally ask for a rebuild
-	that changes nothing. That is the cheap side of the trade: a rebuild costs
-	seconds, and shipping yesterday's compile costs however long it takes
-	someone to stop believing the source in front of them.
-	"""
-	for source, built, command in (
-		(DESKTOP_DIR / "src", DESKTOP_DIR / "out", "pnpm --filter @devhub/desktop build"),
-		(DESKTOP_DIR / "src", DESKTOP_DIR / "dist", "pnpm --filter @devhub/desktop build"),
-		(REMOTE_DIR / "src", REMOTE_DIR / "dist", "pnpm --filter devhub-remote build"),
-		(COPILOT_DIR / "src", COPILOT_DIR / "dist", "pnpm --filter devhub-copilot build"),
-	):
-		if not source.is_dir() or not built.is_dir():
-			continue
-		if _newest_mtime(source) > _newest_mtime(built):
-			fail(
-				f"{built} is older than {source}\n"
-				f"       it would ship the previous compile — rebuild with: {command}"
-			)
-
-
 def check_inputs() -> None:
-	required = [
-		# The Electron this app is built around is BASE_APP, the bundle
-		# `npm run electron` unpacks under vscode/.build — not the `electron`
-		# npm package, which nothing here reads and which VS Code dropped from
-		# its devDependencies in 1.136.1. Asking for the package was asking a
-		# question about a directory that had stopped meaning anything.
-		(BASE_APP, "scripts/provision-vscode.sh"),
-		(VSCODE_DIR / "out-vscode-min" / "main.js", "scripts/provision-vscode.sh"),
-		(DESKTOP_DIR / "out" / "main" / "main.js", "pnpm --filter @devhub/desktop build"),
-		(DESKTOP_DIR / "dist" / "shell" / "index.html", "pnpm --filter @devhub/desktop build"),
-		# The helper that switches the input source while a chord is armed. A
-		# bundle without it starts, and loses chords under an input method.
-		(DESKTOP_DIR / "out" / "native" / "devhub-input-source", "pnpm --filter @devhub/desktop build"),
-		# The Task Manager's footprints. A bundle without it shows the resident
-		# set, which hides what is compressed or swapped out.
-		(DESKTOP_DIR / "out" / "native" / "devhub-footprint", "pnpm --filter @devhub/desktop build"),
-		# Holds DevHub's process group un-orphaned while workbenches are frozen.
-		# A bundle without it never freezes a workbench.
-		(DESKTOP_DIR / "out" / "native" / "devhub-pgrp-anchor", "pnpm --filter @devhub/desktop build"),
-		# Without this the packaged app has no `ssh-remote` resolver, and every
-		# SSH Workspace opens a workbench that waits for an authority nothing
-		# answers. It is a built-in for the same reason the bridge is: a person
-		# cannot be without it.
-		(REMOTE_DIR / "dist" / "extension.js", "pnpm --filter devhub-remote build"),
-		# Copilot, and the language server it starts: the extension's build
-		# stages it in `server/`, because no extension's node_modules ships.
-		# Without either the app opens with no Copilot and says so only in the
-		# extension host log.
-		(COPILOT_DIR / "dist" / "extension.js", "pnpm --filter devhub-copilot build"),
-		(COPILOT_DIR / "server" / "language-server.js", "pnpm --filter devhub-copilot build"),
-	]
-	for path, command in required:
-		if not path.exists():
-			fail(f"missing {path}\n       produce it with: {command}")
+	"""A built apps/desktop, and not one older than its sources.
 
-	check_compiled_output_is_current()
-
-	problem = bundle_stamp_problem(
-		BUNDLE_STAMP, vscode_source_state(), ci=must_ship_full_bundle(os.environ)
-	)
-	if problem:
-		fail(problem)
-
-
-# What scripts/provision-vscode.sh stamps each VS Code tree with. Each holds the
-# source state (see vscode_source_state); the bundle's adds how it was made.
-COMPILE_STAMP = VSCODE_DIR / ".build" / "devhub-compile.stamp"
-BUNDLE_STAMP = VSCODE_DIR / ".build" / "devhub-bundle.stamp"
-
-
-def vscode_source_state() -> str:
-	"""The state provision-vscode.sh stamps: the submodule HEAD plus the patches
-	and the overlay, so a bumped submodule with unchanged patches is stale too.
-	Asked of `scripts/vscode-submodule.sh source-state`, the one definition the
-	stamps are written with."""
-	return subprocess.run(
-		[str(REPO_ROOT / "scripts" / "vscode-submodule.sh"), "source-state"],
-		capture_output=True, check=True, text=True,
-	).stdout.strip()
-
-
-def _read_stamp(stamp: Path) -> list[str]:
-	try:
-		return stamp.read_text().split()
-	except OSError:
-		return []
-
-
-def must_ship_full_bundle(env) -> bool:
-	"""Whether a fast bundle is refused: under CI, unless the run said in so
-	many words that it wants one (`DEVHUB_FAST_VSCODE_BUNDLE=1`). Only the
-	per-push CI says that — its bundle is smoke-tested and thrown away, never
-	released — and the nightly never does."""
-	return bool(env.get("CI")) and env.get("DEVHUB_FAST_VSCODE_BUNDLE") != "1"
-
-
-def bundle_stamp_problem(stamp: Path, state: str, *, ci: bool) -> str | None:
-	"""Why out-vscode-min cannot be packaged, or None when it can.
-
-	The stamp reads "<state> full" (`npm run core-ci`, what the nightly ships)
-	or "<state> fast" (the desktop bundle alone, without `--mangle-privates` —
-	the local default; see step 4b of scripts/provision-vscode.sh). CI must
-	ship the full one, so a fast bundle there is refused rather than released.
+	`out/` and `dist/` are copied verbatim; nothing here rebuilds them. So an
+	edit that was never compiled would ship as the *previous* compile, and
+	nothing about the result would say so.
 	"""
-	fields = _read_stamp(stamp)
-	if len(fields) != 2 or fields[0] != state or fields[1] not in ("full", "fast"):
-		return (
-			"vscode/out-vscode-min was not bundled from the current submodule, patches/vscode/* and patches/vscode-overlay/"
-			"\n       run: scripts/provision-vscode.sh --for app"
-		)
-	if ci and fields[1] != "full":
-		return (
-			"vscode/out-vscode-min is a fast local bundle (DEVHUB_FAST_VSCODE_BUNDLE=1);"
-			" CI ships the full core-ci one"
-			"\n       run: DEVHUB_FAST_VSCODE_BUNDLE=0 scripts/provision-vscode.sh --for app"
-		)
-	return None
-
-
-def main_process_vscode_tree(compile_stamp: Path, vscode_dir: Path, state: str) -> Path:
-	"""The per-module VS Code tree DevHub's main process is bundled against.
-
-	DevHub's main imports `code-oss-dev/out/vs/...`. When `npm run compile`'s
-	vscode/out is current — always in CI, which provisions everything — that
-	is the tree, as it always was. A `pnpm build` provisions only the bundle
-	(`--for app`) and skips that compile; it then uses out-build, the esbuild
-	transpile of the same source that the bundle step makes beside
-	out-vscode-min (and that upstream's own `core-ci` makes too).
-	"""
-	fields = _read_stamp(compile_stamp)
-	if fields == [state] and (vscode_dir / "out" / "vs").is_dir():
-		return vscode_dir / "out"
-	return vscode_dir / "out-build"
-
-
-def build_builtin_extensions() -> Path:
-	"""Production-bundle the built-in extension set with VS Code's own task.
-
-	The extension directories in the checkout carry every dev dependency of
-	every extension — 3.5 GB of it. `compile-extensions-build` is the task
-	upstream's own packaging uses: esbuild bundles each extension and only its
-	production dependencies land in `.build/extensions`.
-
-	It covers both halves of VS Code's built-in set. Its first step is
-	`bundle-marketplace-extensions-build`, which walks
-	`product.builtInExtensions` — js-debug and its companions, the ones upstream
-	downloads rather than carries in the repository — and writes each one into
-	`.build/extensions` as a real directory: out of `.build/builtInExtensions`
-	when provisioning has already fetched it, straight from the network
-	otherwise.
-	"""
-	env = dict(os.environ, PATH=f"{toolchain_node_bin()}:{os.environ['PATH']}")
-	staged = VSCODE_DIR / ".build" / "extensions"
-	stamp = VSCODE_DIR / ".build" / "extensions.devhub-stamp"
-	key = build_cache.extensions_key(
-		vscode_commit=vscode_commit(),
-		patches_dir=REPO_ROOT / "patches" / "vscode",
-		overlay_dir=REPO_ROOT / "patches" / "vscode-overlay",
-		extensions_dir=VSCODE_DIR / "extensions",
-		build_dir=VSCODE_DIR / "build",
-		product_json=VSCODE_DIR / "product.json",
-		node_version=(VSCODE_DIR / ".nvmrc").read_text().strip(),
-	)
-	reuse, why = build_cache.stamp_decision(stamp, staged, key)
-	if reuse:
-		print(f"    reused compile-extensions-build ({why})")
-		return staged
-	stamp.unlink(missing_ok=True)
-	print(f"    rebuilt compile-extensions-build ({why})")
-	run(["npm", "run", "gulp", "compile-extensions-build"], cwd=VSCODE_DIR, env=env)
-	if not staged.is_dir():
-		fail(f"compile-extensions-build produced no {staged}")
-	build_cache.write_stamp(stamp, key)
-	return staged
-
-
-def check_downloaded_builtins(staged: Path) -> None:
-	"""Refuse to package a built-in set missing the half product.json downloads.
-
-	Nothing about their absence looks like a failure: the app starts, every
-	editor works, and only F5 quietly does nothing — with no js-debug there is
-	no debug adapter for `node`, `node-terminal` or `extensionHost` for it to
-	reach. That symptom is a long way from this script, so the check is here.
-	The way to get there is `--skip-extension-build` over a `.build/extensions`
-	built before these were part of the set, or from a different product.json.
-	"""
-	product = json.loads((VSCODE_DIR / "product.json").read_text())
-	for extension in product.get("builtInExtensions", []):
-		name = extension["name"]
-		manifest = staged / name / "package.json"
-		if not manifest.is_file():
+	for required in (
+		DESKTOP_DIR / "out" / "main" / "main.js",
+		DESKTOP_DIR / "out" / "preload" / "shell.js",
+		DESKTOP_DIR / "out" / "vt" / "ghostty-vt.wasm",
+		DESKTOP_DIR / "dist" / "shell" / "index.html",
+	):
+		if not required.exists():
+			fail(f"missing {required}\n       produce it with: pnpm run build:packages")
+	for built in (DESKTOP_DIR / "out", DESKTOP_DIR / "dist"):
+		if _newest_mtime(DESKTOP_DIR / "src") > _newest_mtime(built):
 			fail(
-				f"product.builtInExtensions names {name}, but {staged / name} has no "
-				"package.json — rebuild the set without --skip-extension-build"
-			)
-		version = json.loads(manifest.read_text()).get("version")
-		if version != extension["version"]:
-			fail(
-				f"{name} in {staged} is {version}, but product.json pins "
-				f"{extension['version']} — rebuild the set without --skip-extension-build"
+				f"{built} is older than {DESKTOP_DIR / 'src'}\n"
+				"       it would ship the previous compile — rebuild with: pnpm run build:packages"
 			)
 
 
-def production_dependencies() -> list[Path]:
-	"""VS Code's production dependency closure, as npm reports it.
+# --- the main process's dependencies ---------------------------------------
 
-	The same query `vscode/build/lib/dependencies.ts` runs for the real
-	packaging step. The directories are copied out of the checkout rather than
-	installed fresh: the native modules there are already built against exactly
-	this Electron.
-	"""
-	env = dict(
-		os.environ,
-		PATH=f"{toolchain_node_bin()}:{os.environ['PATH']}",
-		NODE_ENV="production",
-	)
-	# `npm ls` exits non-zero on any peer-dependency complaint while still
-	# printing the tree, so the output is used regardless of the status.
-	result = subprocess.run(
-		["npm", "ls", "--all", "--omit=dev", "--parseable"],
-		cwd=VSCODE_DIR, env=env, capture_output=True, text=True,
-	)
-	paths = [Path(line) for line in result.stdout.splitlines() if line.strip()]
-	modules = [p for p in paths if "node_modules" in p.parts]
-	if not modules:
-		fail(f"npm ls listed no production dependencies\n{result.stderr}")
-	return modules
+# Node's builtins and Electron's: never copied.
+NOT_A_DEPENDENCY = {"electron", "original-fs"}
 
-
-# Everything the packaged app gets from somewhere other than node_modules:
-# Node's own builtins, Electron's, and the submodule, which is materialised by
-# hand a few steps further down.
-NOT_A_DEPENDENCY = {"electron", "original-fs", "fs", "code-oss-dev"}
-
-# The two native modules DevHub's copy of VS Code's bootstrap imports inside
-# `if (isWindows)`. They belong to VS Code, not to this app, they cannot be
-# reached from the packaged `out/`, and nothing on macOS ever asks for them.
-# Any *other* unresolvable import is a packaging bug and stops the build.
-WINDOWS_ONLY = {"@vscode/windows-mutex", "windows-foreground-love"}
-
-# What the compiled main process imports, according to a parser rather than a
-# pattern. `preProcessFile` is TypeScript's own module scanner: it reads static
-# imports, dynamic `import()`, re-exports and `require`, and it knows the
-# difference between code and the comments and string literals around it.
-#
-# A regex could not. It read the words `from "clean"` out of a sentence in a doc
-# comment and spent the rest of the build looking for a package by that name.
-# The scan decides what gets copied into the app, so anything it gets wrong is
-# either a missing dependency at runtime or a build that stops — and it cannot
-# tell prose from code without parsing it.
+# What the compiled tree imports, according to a parser rather than a pattern:
+# TypeScript's own module scanner reads static imports, dynamic `import()`,
+# re-exports and `require`, and knows code from the comments around it.
 SCAN_HELPER = """
 const fs = require('node:fs');
 const path = require('node:path');
@@ -510,10 +149,9 @@ const specifiers = new Set();
 console.log(JSON.stringify([...specifiers].sort()));
 """
 
-
-# The helper below is Node's own resolver, which is the only thing that
-# understands pnpm's store layout. `<pkg>/package.json` is not always exported,
-# so a package that hides it is found by walking up from its entry point.
+# Node's own resolver, the only thing that understands pnpm's store layout,
+# walking each package's `dependencies` so the closure is whole. A package that
+# hides its `package.json` is found by walking up from its entry point.
 RESOLVE_HELPER = """
 const fs = require('node:fs');
 const path = require('node:path');
@@ -531,7 +169,6 @@ function packageDirectory(specifier, base) {
 	return directory;
 }
 
-// `node -e` leaves the arguments at argv[1] onwards: there is no script path.
 const [base, ...specifiers] = process.argv.slice(1);
 const found = new Map();
 const queue = specifiers.map((specifier) => [specifier, base]);
@@ -555,35 +192,30 @@ console.log(JSON.stringify(Object.fromEntries(found)));
 """
 
 
-def main_process_dependencies(out_dir: Path) -> dict[str, Path]:
-	"""Every npm package the packaged main process actually imports.
+def package_name(specifier: str) -> str | None:
+	"""The package a bare specifier names, or None for a relative or builtin one."""
+	if specifier.startswith((".", "/", "node:")):
+		return None
+	parts = specifier.split("/")
+	name = "/".join(parts[:2]) if specifier.startswith("@") else parts[0]
+	return None if name in NOT_A_DEPENDENCY else name
 
-	Read off the compiled tree rather than off `package.json`: what the main
-	process needs at runtime and what the manifest calls a dependency are not
-	the same list (`toml-eslint-parser` is a dev dependency there and an import
-	here), and a package built from the manifest would launch and then fail on
-	the first configuration read.
-	"""
+
+def main_process_dependencies(out_dir: Path) -> dict[str, Path]:
+	"""Every npm package the compiled tree imports, with its own dependencies."""
 	scan = subprocess.run(
 		["node", "-e", SCAN_HELPER, str(DESKTOP_DIR), str(out_dir)],
 		cwd=DESKTOP_DIR, capture_output=True, text=True,
 	)
 	if scan.returncode != 0:
 		fail(f"could not read the main process's imports:\n{scan.stderr}")
-
-	specifiers: set[str] = set()
-	for specifier in json.loads(scan.stdout):
-		if specifier.startswith(".") or specifier.startswith("node:"):
-			continue
-		# A deep import (`pkg/sub.js`) still means the package.
-		parts = specifier.split("/")
-		name = "/".join(parts[:2]) if specifier.startswith("@") else parts[0]
-		if name in NOT_A_DEPENDENCY or name in WINDOWS_ONLY:
-			continue
-		specifiers.add(name)
-
+	names = sorted(
+		{name for name in map(package_name, json.loads(scan.stdout)) if name is not None}
+		- set(sys.builtin_module_names)
+		- NODE_BUILTINS
+	)
 	result = subprocess.run(
-		["node", "-e", RESOLVE_HELPER, str(DESKTOP_DIR), *sorted(specifiers)],
+		["node", "-e", RESOLVE_HELPER, str(DESKTOP_DIR), *names],
 		cwd=DESKTOP_DIR, capture_output=True, text=True,
 	)
 	if result.returncode != 0:
@@ -591,99 +223,95 @@ def main_process_dependencies(out_dir: Path) -> dict[str, Path]:
 	return {name: Path(directory) for name, directory in json.loads(result.stdout).items()}
 
 
+# Node's builtin modules imported without `node:` (`fs`, `path`, …).
+NODE_BUILTINS = set(
+	json.loads(
+		subprocess.run(
+			["node", "-p", "JSON.stringify(require('node:module').builtinModules)"],
+			capture_output=True, text=True, check=True,
+		).stdout
+	)
+)
+
+
 # --- copying ---------------------------------------------------------------
-
-
-def copy_tree(source: Path, target: Path, ignore=None) -> None:
-	target.parent.mkdir(parents=True, exist_ok=True)
-	shutil.copytree(source, target, symlinks=True, ignore=ignore, dirs_exist_ok=True)
 
 
 def ignore_tests(directory: str, names: list[str]) -> set[str]:
 	"""Everything a running app never reads: tests, and nested installs."""
-	drop = {n for n in names if n.endswith(".test.js") or n.endswith(".test.d.ts")}
-	drop |= {n for n in names if n in ("test", "tests", "node_modules", ".git")}
+	drop = {n for n in names if n.endswith((".test.js", ".test.d.ts", ".map"))}
+	drop |= {n for n in names if n in ("test", "tests", "test-terminal", "node_modules", ".git")}
 	return drop
 
 
-# node-gyp's own generated build files, as opposed to what it built. They are
-# named the same way in every native module: one `<target>.target.mk` per
-# target, the makefiles that drive them, and a `deps/` of more of the same.
-NODE_GYP_LEFTOVERS = ("Makefile", "binding.Makefile", "config.gypi", "gyp-mac-tool", "deps")
+def ignore_other_platforms(platform: str):
+	"""node-pty ships a prebuild per platform; the app carries its own only."""
+
+	def ignore(directory: str, names: list[str]) -> set[str]:
+		drop = ignore_tests(directory, names)
+		if Path(directory).name == "prebuilds":
+			drop |= {n for n in names if n != platform}
+		# node-pty's sources, its build scripts and its Windows halves.
+		if Path(directory).name == "node-pty":
+			drop |= {n for n in names if n in ("src", "scripts", "third_party", "deps", "binding.gyp", "typings")}
+		return drop
+
+	return ignore
 
 
-def ignore_native_build_intermediates(directory: str, names: list[str]) -> set[str]:
-	"""node-gyp's leftovers, which spell out the machine that compiled them.
-
-	A native module's `build/` holds the linked addon in `Release/` and, beside
-	it, the makefiles node-gyp generated on the way there — and every one of
-	those repeats the compiling machine's home directory in its include flags
-	(`-I/Users/<someone>/Library/Caches/node-gyp/...`). Nothing at runtime opens
-	them, so shipping them only means a zip built on a laptop carries that
-	laptop's user name to whoever it is handed to. Drop them; keep `Release`,
-	which is the part that is actually loaded.
-	"""
-	if Path(directory).name != "build":
-		return set()
-	return {n for n in names if n.endswith((".target.mk", ".o")) or n in NODE_GYP_LEFTOVERS}
-
-
-def strip_inline_source_maps(root: Path) -> tuple[int, int]:
-	saved = 0
-	touched = 0
-	for path in root.rglob("*.js"):
-		data = path.read_bytes()
-		stripped = INLINE_SOURCE_MAP.sub(b"\n", data)
-		if len(stripped) != len(data):
-			path.write_bytes(stripped)
-			saved += len(data) - len(stripped)
-			touched += 1
-	return touched, saved
+def copy_tree(source: Path, target: Path, ignore=None) -> None:
+	target.parent.mkdir(parents=True, exist_ok=True)
+	shutil.copytree(source, target, symlinks=False, ignore=ignore, dirs_exist_ok=True)
 
 
 def directory_size(root: Path) -> int:
 	return sum(p.stat().st_size for p in root.rglob("*") if p.is_file() and not p.is_symlink())
 
 
+def assemble_app_directory(resources: Path, platform: str) -> None:
+	"""`Resources/app`: the build, its metadata, and its dependencies."""
+	shutil.rmtree(resources, ignore_errors=True)
+	resources.mkdir(parents=True)
+
+	step("DevHub's own code")
+	copy_tree(DESKTOP_DIR / "out", resources / "out", ignore=ignore_tests)
+	copy_tree(DESKTOP_DIR / "dist", resources / "dist")
+	manifest = json.loads((DESKTOP_DIR / "package.json").read_text())
+	(resources / "package.json").write_text(
+		json.dumps(
+			{
+				"name": "devhub",
+				"version": devhub_version(),
+				"private": True,
+				"type": manifest.get("type", "module"),
+				"main": manifest["main"],
+			},
+			indent="\t",
+		)
+		+ "\n"
+	)
+	(resources / "product.json").write_text(json.dumps(packaged_product(), indent="\t") + "\n")
+	print(f"    {directory_size(resources) / 1e6:.0f} MB")
+
+	step("the main process's dependencies")
+	ignore = ignore_other_platforms(platform)
+	for name, source in main_process_dependencies(resources / "out").items():
+		print(f"    {name}")
+		copy_tree(source, resources / "node_modules" / name, ignore=ignore)
+	print(f"    {directory_size(resources / 'node_modules') / 1e6:.0f} MB")
+
+
 # --- the bundle ------------------------------------------------------------
 
 
-def rename_bundle(app: Path) -> None:
-	"""Make the Electron bundle DevHub's, and say which DevHub it is.
-
-	The rename itself is `darwin_bundle.rebrand`, shared with the source run's
-	bundle so that the two cannot come to disagree about what DevHub is called,
-	what it looks like or what version it is — the icon and
-	`CFBundleShortVersionString` travel with the rename, in there. What only a
-	release knows is added here: which build this is.
-
-	"About DevHub" is the macOS About panel — `{ role: "about" }` in the App
-	Shell's menu — and it reads these two keys, not anything the workbench
-	knows. So the build's commit goes here as well as into product.json: a
-	nightly that cannot be told from the one before it is a bug report nobody
-	can act on. The panel renders them as `Version <short> (<version>)`.
-	"""
-	rebrand(
-		app,
-		{
-			"CFBundleVersion": f"{devhub_version()}.{date.today():%Y%m%d}+{devhub_commit()[:10]}",
-		},
-	)
-
-
-def write_licenses(app: Path) -> None:
-	"""The licences of everything the bundle redistributes, inside the bundle.
-
-	DevHub ships VS Code and Electron now, so their terms travel with it.
-	"""
+def write_licenses(app: Path, electron_dir: Path) -> None:
 	licenses = app / "Contents" / "Resources" / "licenses"
 	licenses.mkdir(parents=True, exist_ok=True)
 	for source, name in (
 		(REPO_ROOT / "LICENSE", "DevHub-MIT.txt"),
 		(REPO_ROOT / "distribution" / "THIRD-PARTY-NOTICES.txt", "THIRD-PARTY-NOTICES.txt"),
-		(VSCODE_DIR / "LICENSE.txt", "Code-OSS-MIT.txt"),
-		(VSCODE_DIR / "ThirdPartyNotices.txt", "Code-OSS-ThirdPartyNotices.txt"),
-		(VSCODE_DIR / ".build" / "electron" / "LICENSE", "Electron-MIT.txt"),
+		(electron_dir / "LICENSE", "Electron-MIT.txt"),
+		(electron_dir / "LICENSES.chromium.html", "Chromium-LICENSES.html"),
 	):
 		if not source.exists():
 			fail(f"missing licence text {source}")
@@ -692,310 +320,8 @@ def write_licenses(app: Path) -> None:
 		shutil.copyfile(text, licenses / text.name)
 
 
-def bundle_main_process(target: Path) -> None:
-	"""DevHub's main process, bundled the way upstream bundles its own.
-
-	Upstream's `src/main.ts` is a bundle entry point (`bootstrapEntryPoints` in
-	build/gulpfile.vscode.ts): everything the main process imports is folded
-	into one `out/main.js`, which is why a shipped VS Code has 25 files under
-	`out/vs` and not seven thousand. DevHub's `main.ts` is that file's
-	replacement, so it is bundled the same way and lands in the same place.
-
-	The place is load-bearing, not cosmetic. VS Code computes its own roots
-	from wherever the running bundle sits — `appRoot` is the parent of
-	`import.meta.dirname` (bootstrap-node.ts), `_VSCODE_FILE_ROOT` is that
-	directory itself (bootstrap-esm.ts), and `NODE_MODULES_PATH` hangs off it
-	too. Put DevHub's bundle at upstream's own `out/main.js` and every one of
-	those resolves exactly as upstream means it to, because it *is* upstream's
-	path. Put it anywhere else and each of them would need its own correction.
-
-	Externals are the packages, not the modules: the app ships `node_modules`,
-	so bare specifiers stay requires, while `code-oss-dev/...` is aliased to
-	the submodule so the VS Code half is what gets folded in.
-	"""
-	esbuild = VSCODE_DIR / "build" / "node_modules" / ".bin" / "esbuild"
-	if not esbuild.exists():
-		fail(f"missing {esbuild}\n       produce it with: scripts/provision-vscode.sh")
-	target.parent.mkdir(parents=True, exist_ok=True)
-	tree = main_process_vscode_tree(COMPILE_STAMP, VSCODE_DIR, vscode_source_state())
-	if not (tree / "vs").is_dir():
-		fail(f"missing {tree}\n       produce it with: scripts/provision-vscode.sh --for app")
-	print(f"    VS Code modules for the main process from vscode/{tree.name}")
-	run([
-		str(esbuild),
-		str(DESKTOP_DIR / "out" / "main" / "main.js"),
-		"--bundle",
-		"--format=esm",
-		"--platform=node",
-		"--target=node22",
-		"--packages=external",
-		f"--alias:code-oss-dev/out={tree}",
-		f"--outfile={target}",
-	])
-	print(f"    bundled the main process into {target.name} ({target.stat().st_size / 1e6:.1f} MB)")
-
-
-def write_product_json(target: Path, nls_metadata_dir: Path) -> None:
-	"""VS Code's product metadata, saying DevHub where it says Code - OSS.
-
-	`packaged_metadata` carries DevHub's names, the build it was made from, and
-	`commit` — which VS Code reads as "this is a built layout", and which only
-	a packaged app may state. A source run gets everything but that field,
-	through `vscode/product.overrides.json`, from the same module. See the
-	docstring of scripts/product_metadata.py.
-
-	`nlsMetadataHash` is what upstream's packaging stamps beside `commit`, over
-	the message table of the bundled tree in `nls_metadata_dir` (the `out/`
-	the app runs): it names the folder a language pack's translation is cached
-	in, so a build whose patches moved a `localize` call does not read an
-	earlier build's table. See `nls_metadata_hash`. A source run states no
-	`commit` and so never uses a language pack cache at all.
-	"""
-	product = json.loads((VSCODE_DIR / "product.json").read_text())
-	product.update(packaged_metadata())
-	product["nlsMetadataHash"] = nls_metadata_hash(nls_metadata_dir, str(product["commit"]))
-	target.write_text(json.dumps(product, indent="\t") + "\n")
-
-
-"""The generated entry point. Its one job is stated in the module docstring.
-
-`PROFILE_MODULE` is the compiled `src/model/profile.ts` inside the bundle:
-`assemble_app_directory` copies `apps/desktop/out` whole, so the derivation the
-app itself uses is already there. The entry imports it rather than spelling any
-directory, because a second spelling is how a packaged DevHub ends up ignoring
-`DEVHUB_PROFILE` and joining somebody else's instance.
-"""
-PROFILE_MODULE = "./out/model/profile.js"
-
-ENTRY_SOURCE = f'''\
-/**
- * The packaged app's entry point.
- *
- * `apps/desktop/scripts/dev.sh` hands VS Code's Electron an environment and a
- * set of directories before it runs DevHub's main process. A double-clicked
- * app has neither a shell to set them nor arguments to carry them, so the
- * packaged bundle sets exactly the same directories here.
- *
- * Which directories those are is `DEVHUB_PROFILE`'s decision, and it is made
- * in exactly one place — src/model/profile.ts, compiled beside this file, the
- * same module the main process and dev.sh's `profilePaths.js` read. Repeating
- * the derivation here would make the packaged app the one DevHub that ignores
- * the profile and joins the default instance.
- *
- * What it does not set is `VSCODE_DEV`, and that is the whole difference
- * between this app and a `dev.sh` run. See "the two layouts" at the top of
- * scripts/package-nightly.py.
- *
- * Explicit arguments still win, so a scratch run can point the app at a
- * throwaway user-data directory the way a test needs.
- *
- * Generated by scripts/package-nightly.py. Do not edit inside the bundle.
- */
-
-import {{ homedir }} from "node:os";
-import {{ currentProfile }} from "{PROFILE_MODULE}";
-
-const profile = currentProfile(homedir(), process.env);
-
-for (const [flag, value] of [
-\t["--user-data-dir", profile.userDataDirectory],
-\t["--extensions-dir", profile.extensionsDirectory],
-]) {{
-\tconst given = process.argv.some(
-\t\t(arg) => arg === flag || arg.startsWith(`${{flag}}=`),
-\t);
-\tif (!given) {{
-\t\tprocess.argv.push(flag, value);
-\t}}
-}}
-
-// The bundled main process, at upstream's own entry path. `out/main/` beside
-// this file is the module-by-module compile the bundle was built from; it
-// still ships, because the pages' preloads (one per page), the pages
-// themselves and the `devhub` CLI are loaded from it by path, but nothing
-// imports it.
-await import("./node_modules/code-oss-dev/out/main.js");
-'''
-
-
-# Bump when the closure filtering in assemble_app_directory (Copilot skips, copy
-# ignores) changes.
-ASAR_RULES_VERSION = "1"
-
-
-def assemble_app_directory(
-	app: Path, version: str, staged_extensions: Path, asar_cache_root: Path | None = None
-) -> None:
-	resources = app / "Contents" / "Resources" / "app"
-	shutil.rmtree(resources, ignore_errors=True)
-	resources.mkdir(parents=True)
-
-	step("DevHub's own code")
-	copy_tree(DESKTOP_DIR / "out", resources / "out", ignore=ignore_tests)
-	copy_tree(DESKTOP_DIR / "dist", resources / "dist")
-	(resources / "devhub-main.js").write_text(ENTRY_SOURCE)
-	(resources / "package.json").write_text(
-		json.dumps(
-			{
-				"name": "devhub",
-				"version": version,
-				"private": True,
-				"type": "module",
-				"main": "devhub-main.js",
-			},
-			indent="\t",
-		)
-		+ "\n"
-	)
-
-	step("the main process's own dependencies")
-	for name, source in main_process_dependencies(resources / "out").items():
-		print(f"    {name}")
-		copy_tree(source, resources / "node_modules" / name, ignore=ignore_tests)
-
-	code_oss = resources / "node_modules" / "code-oss-dev"
-
-	step("vscode/out-vscode-min")
-	# The bundled tree, not the module-by-module compile: one file per process
-	# instead of the whole source graph. Source maps are external here rather
-	# than inline, so they are simply not copied.
-	copy_tree(
-		VSCODE_DIR / "out-vscode-min",
-		code_oss / "out",
-		ignore=lambda d, names: ignore_tests(d, names)
-		| {n for n in names if n.endswith(".map")},
-	)
-	print(f"    {directory_size(code_oss / 'out') / 1e6:.0f} MB bundled")
-
-	step("DevHub's main process")
-	# Overwrites upstream's own bundled entry: DevHub's main.ts *is* the
-	# replacement for the src/main.ts that produced it. See the function.
-	bundle_main_process(code_oss / "out" / "main.js")
-
-	step("vscode metadata")
-	shutil.copyfile(VSCODE_DIR / "package.json", code_oss / "package.json")
-	write_product_json(code_oss / "product.json", code_oss / "out")
-	for name in ("LICENSE.txt", "ThirdPartyNotices.txt"):
-		source = VSCODE_DIR / name
-		if source.exists():
-			shutil.copyfile(source, code_oss / name)
-
-	step("built-in extensions")
-	copy_tree(staged_extensions, code_oss / "extensions")
-	for source, name in (
-		(BRIDGE_DIR, "devhub-bridge"),
-		(REMOTE_DIR, "devhub-remote"),
-		(COPILOT_DIR, "devhub-copilot"),
-	):
-		copy_tree(
-			source,
-			code_oss / "extensions" / name,
-			ignore=lambda d, names: ignore_tests(d, names)
-			| {"src", "build", "scripts", "test", "tsconfig.json"},
-		)
-	count = len([p for p in (code_oss / "extensions").iterdir() if p.is_dir()])
-	print(f"    {count} built-in extensions")
-
-	step("vscode production dependencies")
-	modules = []
-	skipped = 0
-	for module in production_dependencies():
-		# The Copilot *runtime binary* is a quarter of the whole bundle and
-		# nothing in DevHub starts it: the extension that would is a marketplace
-		# VSIX upstream downloads at release time, not part of the built-in set.
-		#
-		# Its SDK is a different matter, and the bundled build is why. Unbundled,
-		# `copilotAgent.js` was a module the agent host loaded only if it got
-		# that far, so a missing `@github/copilot-sdk` was a path never taken.
-		# Bundling folds the whole import graph into `agentHostMain.js`, which
-		# turns that into a require at load — and the agent host died on startup
-		# with ERR_MODULE_NOT_FOUND. Eight megabytes is the honest price of a
-		# static dependency; the 253 MB platform binary is still not one.
-		if "@github" in module.parts and module.name not in ("copilot", "copilot-sdk"):
-			skipped += 1
-			continue
-		modules.append(module)
-
-	cache_root = (asar_cache_root or REPO_ROOT / "dist") / ".cache" / "asar"
-	key = build_cache.asar_key(
-		modules=modules,
-		root=VSCODE_DIR,
-		packer=REPO_ROOT / "scripts" / "pack_node_modules_asar.mjs",
-		asar_library=next(
-			(c for c in (
-				VSCODE_DIR / "build" / "node_modules" / "@electron" / "asar" / "package.json",
-				VSCODE_DIR / "node_modules" / "@electron" / "asar" / "package.json",
-			) if c.is_file()),
-			None,
-		),
-		node_version=(VSCODE_DIR / ".nvmrc").read_text().strip(),
-		extra_rules=f"skipped:{skipped};rules:{ASAR_RULES_VERSION}",
-	)
-	hit = build_cache.asar_cache_hit(cache_root, key)
-	if hit is not None:
-		step("node_modules.asar")
-		build_cache.asar_cache_restore(hit, code_oss)
-		print(f"    reused node_modules.asar (inputs unchanged; {hit})")
-		return
-
-	for module in modules:
-		relative = module.relative_to(VSCODE_DIR)
-		copy_tree(
-			module,
-			code_oss / relative,
-			ignore=lambda d, names: {"node_modules"} | ignore_native_build_intermediates(d, names),
-		)
-	print(f"    copied the production closure, minus {skipped} Copilot packages")
-
-	step("node_modules.asar")
-	print("    rebuilt node_modules.asar (no cache entry for these inputs)")
-	run(
-		[
-			str(toolchain_node_bin() / "node"),
-			str(REPO_ROOT / "scripts" / "pack_node_modules_asar.mjs"),
-			str(code_oss / "node_modules"),
-			str(VSCODE_DIR),
-		]
-	)
-	build_cache.asar_cache_store(cache_root, key, code_oss)
-
-
-def bundle_remote_servers(app: Path, reh_dir: Path) -> None:
-	"""Put the four remote extension hosts in the app, or refuse to package.
-
-	A DevHub opens remote windows by copying one of these to the far machine;
-	a DevHub without one refuses that machine at runtime with a sentence that
-	tells its user to install a build that has it. So a missing or stale server
-	is refused *here*, where the person packaging can do something about it,
-	and the whole set is checked against the commit and identity this app
-	states (`bundle_problems`), not only the one that happened to be looked at.
-	"""
-	problems = bundle_problems(reh_dir, vscode_commit(), reh_identity())
-	if problems:
-		fail(
-			"the remote extension hosts are not ready to bundle:\n  "
-			+ "\n  ".join(problems)
-			+ "\nBuild them with scripts/build_reh.py (all four by default), or pass "
-			"--without-reh for a bundle that will open no remote window."
-		)
-	target = app / "Contents" / "Resources" / "reh"
-	shutil.rmtree(target, ignore_errors=True)
-	target.mkdir(parents=True)
-	total = 0
-	for name in REH_TARGETS:
-		for file in (f"devhub-reh-{name}.tar.gz", f"devhub-reh-{name}.json"):
-			shutil.copyfile(reh_dir / file, target / file)
-			total += (target / file).stat().st_size
-	print(f"    {', '.join(REH_TARGETS)}: {total / 1e6:.0f} MB")
-
-
 def bundle_whisper(app: Path, whisper_dir: Path) -> None:
-	"""Put the speech recogniser in the app, or refuse to package.
-
-	Checked deeply (both files re-hashed against their statement) because a
-	half-copied model is not an error anyone sees here: it is a microphone
-	button that fails the first time someone presses it.
-	"""
+	"""Put the speech recogniser in the app, or refuse to package."""
 	problems = whisper_install_problems(whisper_dir, model=chosen_whisper_model())
 	if problems:
 		fail(
@@ -1006,44 +332,33 @@ def bundle_whisper(app: Path, whisper_dir: Path) -> None:
 		)
 	target = app / "Contents" / "Resources" / "whisper"
 	shutil.rmtree(target, ignore_errors=True)
-	copy_tree(whisper_dir, target, ignore=lambda d, names: {n for n in names if n.endswith(".part")})
+	shutil.copytree(whisper_dir, target, ignore=lambda d, names: {n for n in names if n.endswith(".part")})
 	# A Mach-O under Resources is sealed as a resource by the bundle's
 	# signature, not signed as code, and Apple Silicon kills an arm64 program
-	# with no signature of its own the moment it is spawned. The linker signs
-	# it ad hoc already; this says so explicitly rather than relying on it.
+	# with no signature of its own the moment it is spawned.
 	for program in ("devhub-whisper", "devhub-whisper-server"):
 		run(["codesign", "--force", "--sign", "-", str(target / program)])
 	print(f"    {directory_size(target) / 1e6:.0f} MB")
+
+
+def node_platform() -> str:
+	machine = os.uname().machine
+	arch = "arm64" if machine in ("arm64", "aarch64") else "x64"
+	return f"{sys.platform if sys.platform != 'darwin' else 'darwin'}-{arch}"
 
 
 # --- entry point -----------------------------------------------------------
 
 
 def main() -> int:
-	parser = argparse.ArgumentParser(description=__doc__)
+	parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("--out-dir", default=str(REPO_ROOT / "dist"), help="where DevHub.app is written")
-	parser.add_argument("--zip", action="store_true", help="also produce a zip with ditto")
+	parser.add_argument("--zip", action="store_true", help="also produce a zip")
 	parser.add_argument("--zip-name", default=None, help="the zip's file name")
 	parser.add_argument(
 		"--zip-level",
 		default=os.environ.get("DEVHUB_ZIP_LEVEL", "1"),
-		help="deflate level 0-9 (0 stores) or 'ditto' for ditto's default; default 1: "
-		"about 2.5x faster than ditto for ~10%% more bytes (env DEVHUB_ZIP_LEVEL)",
-	)
-	parser.add_argument(
-		"--skip-extension-build",
-		action="store_true",
-		help="reuse an existing vscode/.build/extensions instead of rebuilding it",
-	)
-	parser.add_argument(
-		"--reh-dir",
-		default=str(REH_BUILD_DIR),
-		help="where scripts/build_reh.py left the four remote extension hosts",
-	)
-	parser.add_argument(
-		"--without-reh",
-		action="store_true",
-		help="package without them — a bundle that opens no remote window; CI's check build only",
+		help="deflate level 0-9 (0 stores) or 'ditto' for ditto's default (env DEVHUB_ZIP_LEVEL)",
 	)
 	parser.add_argument(
 		"--whisper-dir",
@@ -1055,23 +370,27 @@ def main() -> int:
 		action="store_true",
 		help="package without it — a composer with no voice input; CI's check build only",
 	)
+	parser.add_argument(
+		"--layout-only",
+		metavar="DIR",
+		help="write only Resources/app into DIR, on any platform, and stop",
+	)
 	args = parser.parse_args()
 
+	if args.layout_only:
+		check_inputs()
+		assemble_app_directory(Path(args.layout_only).resolve(), node_platform())
+		print("\nlaid out.")
+		return 0
+
 	if sys.platform != "darwin":
-		fail("this packages a macOS app bundle and only runs on macOS")
+		fail("this packages a macOS app bundle and only runs on macOS (--layout-only runs anywhere)")
 
-	if not args.without_reh:
-		# Before the long steps: a Mac that never built the servers builds them
-		# now, not after node_modules.asar. Does nothing in CI (see ensure_reh).
-		from ensure_reh import ensure as ensure_reh_servers
-
-		if ensure_reh_servers(Path(args.reh_dir).resolve()) != 0:
-			return 1
+	from darwin_bundle import APP_NAME, base_app, rebrand, sign
 
 	if not args.without_whisper:
-		# Also before the long steps, for the same reason: the first build on
-		# a Mac compiles whisper.cpp and downloads its model (~466 MiB for small), both
-		# cached under ~/.cache/devhub/whisper afterwards.
+		# Before the long steps: the first build on a Mac compiles whisper.cpp
+		# and downloads its model, both cached under ~/.cache/devhub/whisper.
 		step("speech recogniser")
 		if ensure_whisper(Path(args.whisper_dir).resolve()) != 0:
 			return 1
@@ -1081,36 +400,26 @@ def main() -> int:
 	version = devhub_version()
 	print(f"    DevHub {version}")
 
-	step("built-in extension set")
-	staged = VSCODE_DIR / ".build" / "extensions"
-	if args.skip_extension_build:
-		if not staged.is_dir():
-			fail(f"--skip-extension-build was given but {staged} does not exist")
-		print(f"    reusing {staged}")
-	else:
-		staged = build_builtin_extensions()
-	check_downloaded_builtins(staged)
-
 	out_dir = Path(args.out_dir).resolve()
 	app = out_dir / f"{APP_NAME}.app"
-	step(f"base bundle -> {app}")
+	base = base_app()
+	step(f"base bundle {base} -> {app}")
 	shutil.rmtree(app, ignore_errors=True)
 	out_dir.mkdir(parents=True, exist_ok=True)
 	# ditto, not copytree: the Electron bundle is full of framework symlinks and
 	# signed binaries, and ditto is the only copier macOS guarantees for those.
-	run(["ditto", str(BASE_APP), str(app)])
+	run(["ditto", str(base), str(app)])
+	# Electron's own sample app, which an app with Resources/app never loads.
+	(app / "Contents" / "Resources" / "default_app.asar").unlink(missing_ok=True)
 
 	step("bundle identity")
-	rename_bundle(app)
-	write_licenses(app)
+	rebrand(
+		app,
+		{"CFBundleVersion": f"{version}.{date.today():%Y%m%d}+{devhub_commit()[:10]}"},
+	)
+	write_licenses(app, base.parent)
 
-	assemble_app_directory(app, version, staged, out_dir)
-
-	step("remote extension hosts")
-	if args.without_reh:
-		print("    none: --without-reh (this bundle opens no remote window)")
-	else:
-		bundle_remote_servers(app, Path(args.reh_dir).resolve())
+	assemble_app_directory(app / "Contents" / "Resources" / "app", node_platform())
 
 	step("speech recogniser")
 	if args.without_whisper:
@@ -1119,18 +428,13 @@ def main() -> int:
 		bundle_whisper(app, Path(args.whisper_dir).resolve())
 
 	step("ad-hoc signature")
-	# An Apple Silicon Mac refuses to run a modified bundle with no signature at
-	# all. Ad-hoc is not notarisation: the first launch still needs
-	# `xattr -dr com.apple.quarantine`.
+	# Ad hoc is not notarisation: the first launch of a downloaded zip still
+	# needs `xattr -dr com.apple.quarantine`.
 	sign(app)
-
 	print(f"\n    {app}  {directory_size(app) / 1e6:.0f} MB")
 
-	# Packaging deliberately does not start the app it just made. A bundle that
-	# assembles can still be inert, and scripts/smoke_packaged_app.py is what
-	# finds that out — but starting DevHub has effects on the machine that
-	# starts it, and a developer running `pnpm build` did not ask for them. CI
-	# runs the smoke test as its own step, against this bundle.
+	# Packaging does not start the app it made: scripts/smoke_packaged_app.py
+	# does, and CI runs it against this bundle.
 
 	if args.zip:
 		name = args.zip_name or f"{APP_NAME}-darwin-arm64-{date.today():%Y%m%d}.zip"

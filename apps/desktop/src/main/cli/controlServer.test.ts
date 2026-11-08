@@ -33,25 +33,10 @@ function everythingSaysOk(): ControlHandlers {
 		open: () => Promise.resolve("ok"),
 		waitEnded: () => Promise.resolve("ok"),
 		addAgent: () => Promise.resolve("ok"),
-		installExtensions: () => Promise.resolve("ok"),
-		uninstallExtensions: () => Promise.resolve("ok"),
-		listExtensions: () => Promise.resolve("ok"),
-		resolveRemote: () =>
-			Promise.resolve({
-				ok: true as const,
-				remote: { port: 1234, connectionToken: "t" },
-			}),
 		metrics: () => Promise.resolve("ok"),
 		tell: () => Promise.resolve({ message: "ok", data: {} }),
 		version: () => Promise.resolve("ok"),
 		terminalProfile: () => Promise.resolve({ file: "tmux", args: [], env: {} }),
-		devContainerConfigs: () =>
-			Promise.resolve({ configs: [], current: undefined }),
-		devContainerBuildLog: () => Promise.resolve("/logs/c.log"),
-		reattachEditor: () => Promise.resolve(),
-		forwardPort: () => Promise.resolve({ localPort: 1, close: () => {} }),
-		devContainerPorts: () =>
-			Promise.resolve({ forwardPorts: [], portsAttributes: {} }),
 		personStarted: () => undefined,
 	};
 }
@@ -84,32 +69,6 @@ describe("the DevHub control socket", () => {
 		calls = [];
 		server = await startControlServer(socketPath, {
 			personStarted: () => undefined,
-			forwardPort: () => Promise.resolve({ localPort: 1, close: () => {} }),
-			devContainerPorts: () =>
-				Promise.resolve({ forwardPorts: [], portsAttributes: {} }),
-			devContainerConfigs: (window) => {
-				calls.push(`configs ${window.scheme}:${window.fsPath}`);
-				return Promise.resolve({
-					configs: [
-						{ path: "/work/a/.devcontainer/devcontainer.json" },
-						{
-							path: "/work/a/.devcontainer/py/devcontainer.json",
-							label: "py",
-						},
-					],
-					current: undefined,
-				});
-			},
-			devContainerBuildLog: (window, configPath) => {
-				calls.push(`build-log ${window.fsPath} ${configPath}`);
-				return Promise.resolve("/logs/c.log");
-			},
-			reattachEditor: (window, to) => {
-				calls.push(
-					`reattach ${window.fsPath} ${"kind" in to ? "host" : to.configPath}`,
-				);
-				return Promise.resolve();
-			},
 			activate: () => {
 				calls.push("activate");
 				return Promise.resolve("DevHub is in front.");
@@ -131,26 +90,7 @@ describe("the DevHub control socket", () => {
 				}
 				return Promise.resolve(`agent ${profileId} started`);
 			},
-			installExtensions: (targets, force, cwd) => {
-				calls.push(`install [${targets.join(" ")}] force=${force} ${cwd}`);
-				if (targets.includes("nope.nothing")) {
-					return Promise.reject(
-						new Error("Extension 'nope.nothing' not found."),
-					);
-				}
-				return Promise.resolve(`installed ${targets.join(", ")}`);
-			},
-			uninstallExtensions: (ids, force) => {
-				calls.push(`uninstall [${ids.join(" ")}] force=${force}`);
-				return Promise.resolve(`uninstalled ${ids.join(", ")}`);
-			},
-			listExtensions: (showVersions) => {
-				calls.push(`list versions=${showVersions}`);
-				return Promise.resolve(
-					showVersions ? "a.b@1.0.0\nc.d@2.0.0" : "a.b\nc.d",
-				);
-			},
-			version: () => Promise.resolve("DevHub 0.1.0\nVS Code 1.0.0\nabc123"),
+			version: () => Promise.resolve("DevHub 0.1.0\nabc123"),
 			tell: (command, origin) => {
 				calls.push(`tell ${command.verb}${origin ? ` from=${origin}` : ""}`);
 				if (command.verb === "agent-answer")
@@ -177,35 +117,6 @@ describe("the DevHub control socket", () => {
 					file: "/usr/bin/tmux",
 					args: ["-L", "devhub", "attach-session", "-t", "ws-abc"],
 					env: { TERMINFO: "/home/dev/.devhub-server/tmux/3.7c/terminfo" },
-				});
-			},
-			resolveRemote: (machine, attempt) => {
-				calls.push(`resolve ${machine} #${String(attempt)}`);
-				if (machine === "ssh:asleep") {
-					return Promise.resolve({
-						ok: false as const,
-						message: "DevHub cannot reach asleep.",
-						retry: true,
-					});
-				}
-				if (machine === "ssh:vax") {
-					return Promise.resolve({
-						ok: false as const,
-						message:
-							"DevHub supports Linux and macOS hosts, and vax reports VMS.",
-						retry: false,
-					});
-				}
-				if (machine === "ssh:boom") {
-					return Promise.reject(new Error("something nobody wrote a case for"));
-				}
-				return Promise.resolve({
-					ok: true as const,
-					remote: {
-						port: 51234,
-						connectionToken: "0123456789abcdef",
-						extensionHostEnv: { SSH_AUTH_SOCK: "/tmp/agent.7" },
-					},
 				});
 			},
 		});
@@ -403,64 +314,10 @@ describe("the DevHub control socket", () => {
 		expect(calls).toEqual([]);
 	});
 
-	it("installs, lists and uninstalls extensions", async () => {
-		expect(
-			await ask(
-				socketPath,
-				`${JSON.stringify({
-					kind: "install-extensions",
-					targets: ["publisher.name", "./a.vsix"],
-					force: true,
-					cwd: "/work/a",
-				})}\n`,
-			),
-		).toEqual({ ok: true, message: "installed publisher.name, ./a.vsix" });
-
-		expect(
-			await ask(
-				socketPath,
-				`${JSON.stringify({ kind: "list-extensions", showVersions: true })}\n`,
-			),
-		).toEqual({ ok: true, message: "a.b@1.0.0\nc.d@2.0.0" });
-
-		expect(
-			await ask(
-				socketPath,
-				`${JSON.stringify({
-					kind: "uninstall-extensions",
-					ids: ["publisher.name"],
-					force: false,
-				})}\n`,
-			),
-		).toEqual({ ok: true, message: "uninstalled publisher.name" });
-
-		expect(calls).toEqual([
-			"install [publisher.name ./a.vsix] force=true /work/a",
-			"list versions=true",
-			"uninstall [publisher.name] force=false",
-		]);
-	});
-
-	it("reports an install that failed, with the reason", async () => {
-		const answer = await ask(
-			socketPath,
-			`${JSON.stringify({
-				kind: "install-extensions",
-				targets: ["nope.nothing"],
-				force: false,
-				cwd: "/work/a",
-			})}\n`,
-		);
-		expect(answer).toEqual({
-			ok: false,
-			message: "Extension 'nope.nothing' not found.",
-		});
-	});
-
-	it("answers a version request with the three lines it was given", async () => {
+	it("answers a version request with the lines it was given", async () => {
 		expect(
 			await ask(socketPath, `${JSON.stringify({ kind: "version" })}\n`),
-		).toEqual({ ok: true, message: "DevHub 0.1.0\nVS Code 1.0.0\nabc123" });
+		).toEqual({ ok: true, message: "DevHub 0.1.0\nabc123" });
 	});
 
 	it("answers a metrics request with the reading the app assembled", async () => {
@@ -546,28 +403,11 @@ describe("the DevHub control socket", () => {
 		const garbage = await ask(socketPath, "not json\n");
 		expect(garbage.ok).toBe(false);
 
-		const nothingToInstall = await ask(
+		const retired = await ask(
 			socketPath,
-			`${JSON.stringify({
-				kind: "install-extensions",
-				targets: [],
-				force: false,
-				cwd: "/work",
-			})}\n`,
+			`${JSON.stringify({ kind: "install-extensions", targets: ["a.b"] })}\n`,
 		);
-		expect(nothingToInstall).toEqual({
-			ok: false,
-			message: "targets must be a non-empty array of non-empty strings",
-		});
-
-		const notABoolean = await ask(
-			socketPath,
-			`${JSON.stringify({ kind: "list-extensions", showVersions: "yes" })}\n`,
-		);
-		expect(notABoolean).toEqual({
-			ok: false,
-			message: "showVersions must be a boolean",
-		});
+		expect(retired.ok).toBe(false);
 	});
 
 	it("waits for a whole line before answering", async () => {
@@ -589,7 +429,7 @@ describe("the DevHub control socket", () => {
 		});
 		expect(answer).toEqual({
 			ok: true,
-			message: "DevHub 0.1.0\nVS Code 1.0.0\nabc123",
+			message: "DevHub 0.1.0\nabc123",
 		});
 	});
 
@@ -654,80 +494,6 @@ describe("the DevHub control socket", () => {
 		expect(calls).toEqual([]);
 	});
 
-	it("answers a window's dev container definitions as data", async () => {
-		const window = {
-			scheme: "file",
-			authority: "",
-			path: "/work/a",
-			fsPath: "/work/a",
-		};
-		const answer = await ask(
-			socketPath,
-			`${JSON.stringify({ kind: "dev-container-configs", window })}\n`,
-		);
-		expect(answer.ok).toBe(true);
-		expect(answer.devContainers?.configs.map((c) => c.label)).toEqual([
-			undefined,
-			"py",
-		]);
-		await ask(
-			socketPath,
-			`${JSON.stringify({
-				kind: "reattach-editor",
-				window,
-				to: { configPath: "/work/a/.devcontainer/py/devcontainer.json" },
-			})}\n`,
-		);
-		await ask(
-			socketPath,
-			`${JSON.stringify({ kind: "reattach-editor", window, to: { kind: "host" } })}\n`,
-		);
-		expect(calls).toEqual([
-			"configs file:/work/a",
-			"reattach /work/a /work/a/.devcontainer/py/devcontainer.json",
-			"reattach /work/a host",
-		]);
-	});
-
-	it("answers where a window's dev container build log is, and refuses without a definition", async () => {
-		const window = {
-			scheme: "file",
-			authority: "",
-			path: "/work/a",
-			fsPath: "/work/a",
-		};
-		const named = await ask(
-			socketPath,
-			`${JSON.stringify({
-				kind: "dev-container-build-log",
-				window,
-				configPath: "/work/a/.devcontainer/devcontainer.json",
-			})}\n`,
-		);
-		expect(named).toMatchObject({ ok: true, buildLog: "/logs/c.log" });
-		const unnamed = await ask(
-			socketPath,
-			`${JSON.stringify({ kind: "dev-container-build-log", window })}\n`,
-		);
-		expect(unnamed.ok).toBe(false);
-		expect(calls).toEqual([
-			"build-log /work/a /work/a/.devcontainer/devcontainer.json",
-		]);
-	});
-
-	it("refuses a reattach that does not say where the editor goes", async () => {
-		const answer = await ask(
-			socketPath,
-			`${JSON.stringify({
-				kind: "reattach-editor",
-				window: { scheme: "file", authority: "", path: "/a", fsPath: "/a" },
-				to: { configPath: "relative/devcontainer.json" },
-			})}\n`,
-		);
-		expect(answer.ok).toBe(false);
-		expect(calls).toEqual([]);
-	});
-
 	it("carries the Workspace a window named through to the answer", async () => {
 		await ask(
 			socketPath,
@@ -769,151 +535,6 @@ describe("the DevHub control socket", () => {
 	});
 });
 
-/**
- * The resolve a remote workbench's resolver makes, and the two shapes its
- * answer can take.
- *
- * No socket: what is under test is the dispatch, and the socket is tested
- * above. See `answerControlRequest`.
- */
-describe("resolving where a remote workbench connects", () => {
-	const seen: string[] = [];
-
-	function handlers(
-		resolveRemote: ControlHandlers["resolveRemote"],
-	): ControlHandlers {
-		return {
-			...everythingSaysOk(),
-			resolveRemote: (machine, attempt) => {
-				seen.push(`${machine} #${String(attempt)}`);
-				return resolveRemote(machine, attempt);
-			},
-		};
-	}
-
-	function ask(machine: unknown, attempt: unknown): string {
-		return JSON.stringify({ kind: "resolve-remote", machine, attempt });
-	}
-
-	beforeEach(() => {
-		seen.length = 0;
-	});
-
-	it("carries the machine and the attempt through to DevHub", async () => {
-		await answerControlRequest(
-			ask("ssh:build-box", 3),
-			handlers(() =>
-				Promise.resolve({
-					ok: true,
-					remote: { port: 1, connectionToken: "t" },
-				}),
-			),
-		);
-		expect(seen).toEqual(["ssh:build-box #3"]);
-	});
-
-	it("answers an endpoint as data, not as a sentence to parse", async () => {
-		const response = await answerControlRequest(
-			ask("ssh:build-box", 1),
-			handlers(() =>
-				Promise.resolve({
-					ok: true,
-					remote: {
-						port: 51234,
-						connectionToken: "0123456789abcdef",
-						extensionHostEnv: { SSH_AUTH_SOCK: "/tmp/agent.7" },
-					},
-				}),
-			),
-		);
-		expect(response.ok).toBe(true);
-		expect(response.remote).toEqual({
-			port: 51234,
-			connectionToken: "0123456789abcdef",
-			extensionHostEnv: { SSH_AUTH_SOCK: "/tmp/agent.7" },
-		});
-	});
-
-	it("says a transient refusal is worth asking about again", async () => {
-		// `retry: true` is what the resolver turns into
-		// `TemporarilyNotAvailable`, which both of VS Code's loops retry. A host
-		// that is asleep is exactly that.
-		const response = await answerControlRequest(
-			ask("ssh:asleep", 1),
-			handlers(() =>
-				Promise.resolve({
-					ok: false,
-					message: "DevHub cannot reach asleep.",
-					retry: true,
-				}),
-			),
-		);
-		expect(response).toMatchObject({
-			ok: false,
-			message: "DevHub cannot reach asleep.",
-			retry: true,
-		});
-		expect(response.remote).toBeUndefined();
-	});
-
-	it("says a permanent refusal is not", async () => {
-		// `retry: false` becomes `NotAvailable`, which makes VS Code stop and
-		// show the sentence rather than try five times and show it anyway.
-		const response = await answerControlRequest(
-			ask("ssh:vax", 1),
-			handlers(() =>
-				Promise.resolve({
-					ok: false,
-					message:
-						"DevHub supports Linux and macOS hosts, and vax reports VMS.",
-					retry: false,
-				}),
-			),
-		);
-		expect(response).toMatchObject({ ok: false, retry: false });
-	});
-
-	it("treats a failure nobody wrote a case for as worth retrying", async () => {
-		// The one place DevHub has no opinion. The two mistakes are not equal: a
-		// resolve that goes on retrying stops on VS Code's own attempt limit and
-		// says so, and one that wrongly gave up needs the window reopening by
-		// hand. So an unanticipated failure is retried.
-		const response = await answerControlRequest(
-			ask("ssh:boom", 1),
-			handlers(() => Promise.reject(new Error("a thing nobody expected"))),
-		);
-		expect(response).toMatchObject({
-			ok: false,
-			message: "a thing nobody expected",
-			retry: true,
-		});
-	});
-
-	it("refuses a request that does not say which machine or which attempt", async () => {
-		for (const line of [
-			ask("", 1),
-			ask("ssh:build-box", -1),
-			ask("ssh:build-box", 1.5),
-			ask("ssh:build-box", "3"),
-			JSON.stringify({ kind: "resolve-remote", machine: "ssh:a" }),
-		]) {
-			const response = await answerControlRequest(
-				line,
-				handlers(() =>
-					Promise.resolve({
-						ok: true,
-						remote: { port: 1, connectionToken: "t" },
-					}),
-				),
-			);
-			expect(response.ok, line).toBe(false);
-		}
-		// None of them reached DevHub: a request that cannot be read is refused
-		// before anything is asked to act on it.
-		expect(seen).toEqual([]);
-	});
-});
-
 describe("a command the person typed", () => {
 	// Their next operation, exactly as a click in the window is: the notice a
 	// person closed stays closed until they do something else, and typing
@@ -927,20 +548,6 @@ describe("a command the person typed", () => {
 			"add-agent",
 			{ kind: "add-agent", profileId: "claude", args: [], cwd: "/src" },
 		],
-		[
-			"install-extensions",
-			{
-				kind: "install-extensions",
-				targets: ["a.b"],
-				force: false,
-				cwd: "/src",
-			},
-		],
-		[
-			"uninstall-extensions",
-			{ kind: "uninstall-extensions", ids: ["a.b"], force: false },
-		],
-		["list-extensions", { kind: "list-extensions", showVersions: false }],
 		["version", { kind: "version" }],
 		["metrics", { kind: "metrics" }],
 	])("starts an operation: %s", async (_kind, request) => {
@@ -1028,119 +635,5 @@ describe("a refusal the devhub command prints", () => {
 
 	it("prints a failure nobody worded as its own message", async () => {
 		expect(await printed(new Error("boom"))).toBe("boom");
-	});
-});
-
-/**
- * A port forward lives as long as the connection that asked for it: the
- * answer comes back on a socket that stays open, and closing that socket is
- * what ends the forward.
- */
-describe("a port forward over the control socket", () => {
-	let scratch: string;
-	let server: ControlServer | undefined;
-
-	afterEach(async () => {
-		await server?.close();
-		server = undefined;
-		removeScratchDir(scratch);
-	});
-
-	it("answers with the local port, holds the connection, and closes the forward with it", async () => {
-		scratch = makeSocketDir("cli-forward");
-		const socketPath = join(scratch, "c.sock");
-		const asked: string[] = [];
-		let closed = 0;
-		server = await startControlServer(socketPath, {
-			...everythingSaysOk(),
-			forwardPort: (machine, host, port, localPort, required) => {
-				asked.push(
-					`${machine} ${host}:${String(port)} ${String(localPort)} ${String(required)}`,
-				);
-				return Promise.resolve({
-					localPort: 4321,
-					close: () => {
-						closed++;
-					},
-				});
-			},
-		});
-		const socket = connect(socketPath);
-		socket.setEncoding("utf8");
-		const line = await new Promise<string>((resolve, reject) => {
-			let buffer = "";
-			socket.on("connect", () =>
-				socket.write(
-					`${JSON.stringify({
-						kind: "forward-port",
-						machine: "container:ab",
-						host: "localhost",
-						port: 3000,
-						localPort: 3000,
-					})}\n`,
-				),
-			);
-			socket.on("data", (chunk: string) => {
-				buffer += chunk;
-				if (buffer.includes("\n")) resolve(buffer.split("\n")[0] ?? "");
-			});
-			socket.on("error", reject);
-		});
-		const answer = JSON.parse(line) as ControlResponse;
-		expect(answer.ok).toBe(true);
-		expect(answer.forward).toEqual({ localPort: 4321 });
-		expect(asked).toEqual(["container:ab localhost:3000 3000 false"]);
-		// Still open: the forward stands.
-		await new Promise((resolve) => setTimeout(resolve, 50));
-		expect(socket.destroyed).toBe(false);
-		expect(closed).toBe(0);
-		socket.destroy();
-		await vi.waitFor(() => expect(closed).toBe(1));
-	});
-
-	it("refuses a forward nobody could close", async () => {
-		const response = await answerControlRequest(
-			JSON.stringify({
-				kind: "forward-port",
-				machine: "container:ab",
-				host: "localhost",
-				port: 3000,
-			}),
-			everythingSaysOk(),
-		);
-		expect(response.ok).toBe(false);
-	});
-
-	it("refuses a port that is not one", async () => {
-		const response = await answerControlRequest(
-			JSON.stringify({
-				kind: "forward-port",
-				machine: "container:ab",
-				host: "localhost",
-				port: 70000,
-			}),
-			everythingSaysOk(),
-			() => {},
-		);
-		expect(response.ok).toBe(false);
-		expect(response.message).toMatch(/port/u);
-	});
-
-	it("answers what a definition says about ports", async () => {
-		const response = await answerControlRequest(
-			JSON.stringify({ kind: "dev-container-ports", machine: "container:ab" }),
-			{
-				...everythingSaysOk(),
-				devContainerPorts: () =>
-					Promise.resolve({
-						forwardPorts: [{ host: "localhost", port: 3000 }],
-						portsAttributes: { "3000": { label: "web" } },
-					}),
-			},
-		);
-		expect(response.ok).toBe(true);
-		expect(response.ports?.forwardPorts).toEqual([
-			{ host: "localhost", port: 3000 },
-		]);
 	});
 });

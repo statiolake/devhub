@@ -41,7 +41,6 @@ export interface TaskManagerHost {
 	snapshot(): Promise<TaskSnapshotWire>;
 	/** The command line a pid runs now; undefined when it has gone. */
 	commandOf(pid: number): Promise<string | undefined>;
-	sleepWorkbench(workspaceId: string): void;
 	stopAgent(agentId: string): void;
 	reveal(target: TaskRevealWire): void;
 	/** `process.kill`, injected so a test kills nothing. */
@@ -178,9 +177,6 @@ function registerIpc(): void {
 	handle(TASK_MANAGER_CHANNELS.snapshot, async () => {
 		last = await requireHost().snapshot();
 		return last;
-	});
-	handle(TASK_MANAGER_CHANNELS.sleepWorkbench, (_event, id: unknown) => {
-		requireHost().sleepWorkbench(String(id));
 	});
 	handle(TASK_MANAGER_CHANNELS.stopAgent, (_event, id: unknown) => {
 		requireHost().stopAgent(String(id));

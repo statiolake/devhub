@@ -4,18 +4,17 @@ name: CI
 #
 # This workflow answers one question — is this change broken? — as fast as it
 # can. It does not produce anything anyone downloads: the product build (the
-# remote extension hosts, the speech recogniser, the full `core-ci` VS Code
-# bundle, the zip, the release) is the nightly's, and so are the longer tests
-# against that packaged app. See docs/ci.md for the whole pipeline.
+# speech recogniser, the zip, the release) is the nightly's, and so are the
+# longer tests against that packaged app. See docs/ci.md for the whole
+# pipeline.
 #
-#   Test: static checks (Linux) ─────────────────────────────┐
-#   Test: desktop (macOS) ───────────────────────────────────┤  all in parallel
+#   Test: static checks and unit tests (Linux) ──────────────┐
+#   Test: desktop tests (macOS) ─────────────────────────────┤  all in parallel
 #   Build: DevHub.app (macOS) ──> Test: app (macOS) ─────────┘
 #
 # Together the jobs run exactly what `pnpm run check` runs, plus a test build
-# of the app and the app-level tests on it. What needs neither macOS nor a
-# provisioned VS Code runs on Linux; the rest is split so that no job waits
-# for another unless it needs its output.
+# of the app and the app-level tests on it. Nothing here touches the `vscode`
+# submodule: DevHub no longer has one to build (docs/without-vscode.md).
 #
 # The repository is public, so the standard runners cost nothing; they still
 # cost *time*, so `concurrency` cancels a branch's older run the moment a newer
@@ -40,12 +39,8 @@ env:
   CI: "true"
 
 jobs:
-  # Everything in `pnpm run check` that needs neither macOS nor a provisioned
-  # VS Code: formatting, lint, both extensions' full checks (build, typecheck,
-  # tests, lint, package, reproducibility) and the Python script tests. The
-  # submodule is checked out and patched — cheap, pure git — because the
-  # remote extension typechecks against VS Code's proposed API files and the
-  # script tests read the patched tree.
+  # Everything in `pnpm run check` that does not need macOS: formatting, lint,
+  # the typecheck and the Python script tests.
   checks:
     name: "Test: static checks and script tests (Linux)"
     runs-on: ubuntu-latest
@@ -54,11 +49,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          submodules: true
           fetch-depth: 1
-
-      - name: Apply DevHub's patches to the VS Code source
-        run: scripts/apply-vscode-patches.sh
 
       - name: Set up Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
@@ -69,99 +60,51 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
-      - name: "Extension: devhub-bridge (lint, package)"
-        run: pnpm run bridge:check
-
-      - name: "Extension: devhub-remote (build, typecheck, test, lint, package)"
-        run: pnpm run remote:check
-
-      - name: "Extension: devhub-copilot (build, typecheck, test, lint)"
-        run: pnpm run copilot:check
+      - name: Typecheck
+        run: pnpm run typecheck
 
       - name: Script tests (python3 -m unittest scripts/*_test.py)
         run: pnpm run test:scripts
 
-  # The desktop app's own typecheck and tests. Both need a provisioned VS Code:
-  # the typecheck resolves DevHub's main process against the submodule's
-  # sources and node_modules, vitest imports the compiled vscode/out, and the
-  # terminal tests load node-pty in VS Code's own Electron. The cache is only
-  # restored here; the build job below provisions everything the key promises
-  # and is the one that saves it.
+  # The desktop app's tests on the platform it ships for: vitest, and the
+  # terminal tests that load node-pty in DevHub's own Electron.
   test-desktop:
-    name: "Test: desktop typecheck and unit tests (macOS)"
+    name: "Test: desktop unit tests (macOS)"
     runs-on: macos-15
-    # Sized for a miss (a VS Code bump or a patch edit): `npm ci` and the
-    # compile from cold. A hit is minutes.
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          submodules: true
           fetch-depth: 1
 
       - name: Set up Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
-
-      - name: Provision VS Code (vscode/out)
-        uses: ./.github/actions/provision-vscode
-        with:
-          for: dev
-          bundle: fast
-          save-cache: "false"
-
-      - name: Typecheck the desktop app
-        run: pnpm --filter @devhub/desktop typecheck
 
       - name: Desktop unit tests (vitest, node-pty under Electron)
         run: pnpm --filter @devhub/desktop test
 
-      # The three script tests the Linux job skips: they read the Electron
-      # bundle provisioning stages, which exists only on a Mac.
-      - name: Script tests that need the provisioned Electron
-        working-directory: scripts
-        run: python3 -m unittest darwin_bundle_test
-
-  # A test build of the app: only what the app-level tests need. No remote
-  # extension hosts, no speech recogniser, no zip, and the fast VS Code bundle
-  # (DEVHUB_FAST_VSCODE_BUNDLE=1, the one a developer's `pnpm build` makes)
-  # instead of the nightly's full `core-ci`. scripts/build_reh_test.py,
-  # build_whisper_test.py and package_nightly_test.py, in the Linux job, keep
-  # the parts it leaves out honest; the nightly builds and tests them for real.
+  # A test build of the app: only what the app-level tests need. No speech
+  # recogniser and no zip; the nightly builds and tests those for real.
   build-app:
     name: "Build: DevHub.app test build (macOS)"
     runs-on: macos-15
-    timeout-minutes: 120
-    env:
-      DEVHUB_FAST_VSCODE_BUNDLE: "1"
+    timeout-minutes: 60
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          submodules: true
           fetch-depth: 1
 
       - name: Set up Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
 
-      # `all`, not just `app`: this job saves the cache the desktop tests
-      # restore, and they need vscode/out.
-      - name: Provision VS Code
-        uses: ./.github/actions/provision-vscode
-        with:
-          for: all
-          bundle: fast
-
       - name: Build DevHub.app
-        env:
-          # The built-in extension set pulls binaries from GitHub releases;
-          # the token is only there for the rate limit.
-          GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/build-app.sh --without-reh --without-whisper --no-zip
+        run: scripts/build-app.sh --without-whisper --no-zip
 
-      # One tar rather than the bundle's 20,000 files: the artifact service
-      # uploads file by file and drops symlinks and modes, which a signed app
-      # bundle needs.
+      # One tar rather than the bundle's thousands of files: the artifact
+      # service uploads file by file and drops symlinks and modes, which a
+      # signed app bundle needs.
       - name: Pack the bundle
         run: tar -cf dist/DevHub.app.tar -C dist DevHub.app
 
@@ -176,9 +119,8 @@ jobs:
 
   # Tests that start the app. A macOS runner has a GUI session, so this is
   # where the end-to-end suite goes when there is one; today it is the smoke
-  # test: start the bundle under a throwaway profile and make it answer on its
-  # control socket — the only way to catch a bundle whose main process comes up
-  # and then stops pumping its event loop.
+  # test: start the bundle under a throwaway profile, make it answer on its
+  # control socket and open a file in its editor.
   test-app:
     name: "Test: app (macOS)"
     needs: build-app
@@ -199,6 +141,10 @@ jobs:
 
       - name: Unpack the bundle
         run: tar -xf dist/DevHub.app.tar -C dist
+
+      # The editor the smoke test opens a file in is Neovim, run by tmux.
+      - name: Install tmux and Neovim
+        run: brew install tmux neovim
 
       - name: Smoke-test the app
         run: scripts/smoke_packaged_app.py dist/DevHub.app

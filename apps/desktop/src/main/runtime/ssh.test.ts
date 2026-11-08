@@ -25,9 +25,8 @@ import {
 	stat,
 	writeFile,
 } from "node:fs/promises";
-import { connect as netConnect } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	afterAll,
 	afterEach,
@@ -44,7 +43,6 @@ import { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch } from "../terminal/pty.js";
 import { describeRuntimeContract } from "./runtime.contract.test.js";
 import { describeHostLink } from "../agent/conversation/hostLink.test.js";
-import { hostContainerMachine } from "./container.js";
 import type { TerminalLauncherSpec } from "./runtime.js";
 import {
 	chooseControlDirectory,
@@ -61,11 +59,6 @@ import {
 	unreachableFailure,
 } from "./ssh.js";
 import { toolTopLevelDirectory, type ToolDelivery } from "./toolDelivery.js";
-import {
-	isPermanent,
-	rehTopLevelDirectory,
-	type RehDelivery,
-} from "./remoteServer.js";
 import { resolveAgentProfile } from "../shell/agentProfileCommand.js";
 
 /**
@@ -222,6 +215,18 @@ const FAKE_TMUX: ToolDelivery = {
 	directory: ".devhub-server/tmux",
 	tarball: () => Promise.reject(new Error("no tmux is installed in this test")),
 };
+
+/** The Node a launcher test finds already on the host (see its `beforeEach`). */
+const FAKE_NODE: ToolDelivery = {
+	tool: "node",
+	version: "22.21.1",
+	directory: ".devhub-server/node",
+	tarball: () => Promise.reject(new Error("no node is installed in this test")),
+};
+
+function NODE_ON_HOST(home: string): string {
+	return `${home}/.devhub-server/node/22.21.1/bin/node`;
+}
 
 function fakeRuntime(): SshRuntime {
 	return new SshRuntime({
@@ -606,6 +611,11 @@ describe("the terminal launcher on the host", () => {
 	beforeEach(async () => {
 		remoteHome = await mkdtemp("/tmp/devhub-remote-home-");
 		log = join(remoteHome, "ssh.log");
+		// A Node already installed there, so the launcher's install finds it
+		// answering and fetches nothing.
+		const node = NODE_ON_HOST(remoteHome);
+		await mkdir(dirname(node), { recursive: true });
+		await writeFile(node, "#!/bin/sh\necho v22.21.1\n", { mode: 0o755 });
 	});
 	afterEach(async () => {
 		await rm(remoteHome, { recursive: true, force: true });
@@ -625,6 +635,7 @@ describe("the terminal launcher on the host", () => {
 				DEVHUB_FAKE_FORWARD: forward,
 			},
 			tmux: FAKE_TMUX,
+			node: FAKE_NODE,
 		});
 	}
 
@@ -636,17 +647,14 @@ describe("the terminal launcher on the host", () => {
 		entryName: "devhub-terminal.bundle.js",
 		cliText: 'import { connect } from "node:net";\nexport const c = connect;\n',
 		cliEntryName: "devhub-cli.bundle.js",
-		serverDataFolderName: ".devhub-server",
-		serverInstallKey: "c0ffee",
 	};
 
 	it("writes the asking program, one file, and a launcher that names it", async () => {
 		const launcher = await runtimeWith().terminalLauncher(spec);
 		expect(launcher.unreachable).toBeUndefined();
 		const script = await readFile(launcher.path, "utf8");
-		// The REH's own Node, at the commit this DevHub states: the one Node a
-		// host with a workbench on it is certain to have.
-		expect(script).toContain(`${remoteHome}/.devhub-server/bin/c0ffee/node`);
+		// DevHub's own Node there, at the version this DevHub pins.
+		expect(script).toContain(NODE_ON_HOST(remoteHome));
 		expect(script).toContain(
 			`${remoteHome}/.devhub/terminal/js/devhub-terminal.bundle.js`,
 		);
@@ -690,7 +698,7 @@ describe("the terminal launcher on the host", () => {
 		const shim = `${launcher.binDirectory ?? ""}/devhub`;
 		const script = await readFile(shim, "utf8");
 		expect(script).toContain("DEVHUB_MACHINE='ssh:build-box.example.com'");
-		expect(script).toContain(`${remoteHome}/.devhub-server/bin/c0ffee/node`);
+		expect(script).toContain(NODE_ON_HOST(remoteHome));
 		expect(script).toMatch(
 			/DEVHUB_CONTROL_SOCKET='[^']*\/control-[0-9a-f]{12}\.sock'/,
 		);
@@ -794,16 +802,6 @@ describe("the terminal launcher on the host", () => {
 		const second = await runtime.terminalLauncher(spec);
 		expect(second).toEqual(first);
 		expect((await readFile(log, "utf8")).split("\n")).toHaveLength(before);
-	});
-
-	// A DevHub with no commit is a DevHub that can open no workbench there
-	// either, so it is one fact and one sentence rather than a guessed path.
-	it("refuses when this DevHub states no commit to find the Node under", async () => {
-		await expect(
-			runtimeWith().terminalLauncher({ ...spec, serverInstallKey: undefined }),
-		).rejects.toThrow(
-			/states no commit or no server identity for the remote extension host/u,
-		);
 	});
 });
 
@@ -1053,7 +1051,7 @@ describe("the tmux DevHub installs on a host", () => {
 		version: string,
 		binary = `#!/bin/sh\necho "tmux ${version}"\n`,
 	): Promise<Uint8Array> {
-		const top = toolTopLevelDirectory("tmux", platform);
+		const top = toolTopLevelDirectory("tmux", platform, "");
 		const root = join(workshop, `${top}-${version}`);
 		await mkdir(join(root, top, "bin"), { recursive: true });
 		await mkdir(join(root, top, "terminfo", "x"), { recursive: true });
@@ -1085,7 +1083,7 @@ describe("the tmux DevHub installs on a host", () => {
 				asked.push(platform);
 				return {
 					bytes: await bytes(platform),
-					topLevelDirectory: toolTopLevelDirectory("tmux", platform),
+					topLevelDirectory: toolTopLevelDirectory("tmux", platform, ""),
 					verifiedSha256: undefined,
 				};
 			},
@@ -1235,7 +1233,7 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 		platform: string,
 		binary = '#!/bin/sh\necho "GNU bash, version 5.3.20(1)-release"\n',
 	): Promise<Uint8Array> {
-		const top = toolTopLevelDirectory("bash", platform);
+		const top = toolTopLevelDirectory("bash", platform, "");
 		const root = join(workshop, top);
 		await mkdir(join(root, top, "bin"), { recursive: true });
 		await writeFile(join(root, top, "bin", "bash"), binary, { mode: 0o755 });
@@ -1257,7 +1255,7 @@ describe("the bash DevHub installs for Claude Code on a host", () => {
 				asked.push(platform);
 				return {
 					bytes: await bytes(platform),
-					topLevelDirectory: toolTopLevelDirectory("bash", platform),
+					topLevelDirectory: toolTopLevelDirectory("bash", platform, ""),
 					verifiedSha256: undefined,
 				};
 			},
@@ -1702,480 +1700,6 @@ describe("waking up", () => {
 		runtime.resumed();
 		expect(runtime.reading().connected).toBe(true);
 		await inFlight;
-	});
-});
-
-/**
- * The remote extension host, installed and started on a "host" that is this
- * machine.
- *
- * The fake ssh runs the composed script with `/bin/sh -c`, which is exactly
- * what a real sshd's login shell does with it — so what is under test is the
- * script DevHub actually sends, on a real filesystem, with a real `nohup` and
- * a real socket. The only thing standing in is the server binary, and it
- * stands in by *being* one: a shell script that binds the socket path it was
- * given, which is the whole of what the start script waits for.
- */
-describe("the remote extension host on a host", () => {
-	let remoteHome: string;
-	let log: string;
-
-	/**
-	 * A `devhub-server` that does the one thing the start script watches for.
-	 *
-	 * It binds the socket and stays alive. It also records its argv, because
-	 * the flags DevHub starts the server with — the socket path and above all
-	 * `--connection-token-file` — are the contract between this side and the
-	 * handshake, and a change to them would otherwise show up as a workbench
-	 * that will not come up.
-	 */
-	const FAKE_SERVER = `#!/bin/sh
-printf '%s\\n' "$*" >> "$(dirname "$0")/../../../argv.log"
-sock=''
-for arg do
-  case "$arg" in --socket-path=*) sock="\${arg#--socket-path=}";; esac
-done
-exec python3 -c 'import socket,sys,time
-s = socket.socket(socket.AF_UNIX)
-s.bind(sys.argv[1])
-s.listen(4)
-time.sleep(600)' "$sock"
-`;
-
-	const KEY = "0123456789abcdef0123456789abcdef01234567-0123456789ab";
-	const TOP = rehTopLevelDirectory("linux-x64");
-
-	/**
-	 * A `node` that runs anything it is given, which is all the install asks
-	 * of it: that the server's own Node starts on the machine.
-	 */
-	const FAKE_NODE = "#!/bin/sh\nexit 0\n";
-
-	/** A tarball of one directory holding a `bin/devhub-server` and a `node`. */
-	async function serverTarball(node = FAKE_NODE): Promise<Uint8Array> {
-		const staging = await mkdtemp("/tmp/devhub-reh-pack-");
-		const top = join(staging, TOP);
-		await mkdir(join(top, "bin"), { recursive: true });
-		await writeFile(join(top, "bin", "devhub-server"), FAKE_SERVER, {
-			mode: 0o755,
-		});
-		await chmod(join(top, "bin", "devhub-server"), 0o755);
-		await writeFile(join(top, "node"), node, { mode: 0o755 });
-		await chmod(join(top, "node"), 0o755);
-		const tar = join(staging, "reh.tar.gz");
-		await new Promise<void>((resolve, reject) => {
-			const child = spawn("tar", ["czf", tar, "-C", staging, TOP], {
-				stdio: "ignore",
-			});
-			child.on("error", reject);
-			child.on("close", (code) =>
-				code === 0
-					? resolve()
-					: reject(new Error(`tar exited ${String(code)}`)),
-			);
-		});
-		const bytes = await readFile(tar);
-		await rm(staging, { recursive: true, force: true });
-		return new Uint8Array(bytes);
-	}
-
-	/**
-	 * The far machine's `uname` and `getconf`, so the machine is Linux on x64
-	 * with glibc on whichever machine runs the suite — a Mac as well, where
-	 * DevHub would rightly refuse to install a Linux server on itself.
-	 */
-	const FAKE_UNAME = `#!/bin/sh
-case "$1" in
-  -s) echo "\${DEVHUB_FAKE_UNAME_S:-Linux}";;
-  -m) echo "\${DEVHUB_FAKE_UNAME_M:-x86_64}";;
-  *) exec /usr/bin/uname "$@";;
-esac
-`;
-	const FAKE_GETCONF = `#!/bin/sh
-[ "$1" = GNU_LIBC_VERSION ] && { echo 'glibc 2.36'; exit 0; }
-exit 1
-`;
-	let machineBin: string;
-
-	let tarball: Uint8Array;
-	let asked: string[];
-
-	function delivery(): RehDelivery {
-		return {
-			installKey: KEY,
-			dataFolderName: ".devhub-server",
-			applicationName: "devhub-server",
-			tarball: (target) => {
-				asked.push(target);
-				return Promise.resolve({
-					bytes: tarball,
-					topLevelDirectory: TOP,
-					sha256: "f00d",
-				});
-			},
-		};
-	}
-
-	function hosted(machine: Record<string, string> = {}): SshRuntime {
-		return new SshRuntime({
-			host: "build-box.example.com",
-			controlDirectory: control,
-			sshPath: join(bin, "ssh"),
-			localEnvironment: {
-				...FAKE_ENVIRONMENT,
-				PATH: `${machineBin}:${process.env["PATH"] ?? ""}`,
-				HOME: remoteHome,
-				DEVHUB_FAKE_SSH_LOG: log,
-				...machine,
-			},
-			tmux: FAKE_TMUX,
-		});
-	}
-
-	beforeAll(async () => {
-		tarball = await serverTarball();
-		machineBin = await mkdtemp(join(tmpdir(), "devhub-fake-machine-bin-"));
-		await writeFile(join(machineBin, "uname"), FAKE_UNAME, { mode: 0o755 });
-		await writeFile(join(machineBin, "getconf"), FAKE_GETCONF, {
-			mode: 0o755,
-		});
-	});
-	afterAll(async () => {
-		await rm(machineBin, { recursive: true, force: true });
-	});
-
-	beforeEach(async () => {
-		remoteHome = await mkdtemp("/tmp/dh-reh-");
-		log = join(remoteHome, "ssh.log");
-		asked = [];
-	});
-	afterEach(async () => {
-		// The fake server and the fake forward both outlive the command that
-		// started them, which is the point of them; nothing else would stop
-		// them.
-		for (const name of ["pid", "L"]) void name;
-		await rm(remoteHome, { recursive: true, force: true });
-	});
-
-	it("installs the server, starts it, and forwards it to a local port", async () => {
-		const runtime = hosted();
-		const endpoint = await runtime.remoteServer(delivery());
-		expect(endpoint.port).toBeGreaterThan(0);
-		expect(endpoint.connectionToken).toMatch(/^[0-9a-f]{64}$/u);
-		// The install is where the tarball said it goes, and the server is the
-		// file `remoteTerminalPaths` names the Node beside.
-		expect(
-			await runtime.stat(
-				`${remoteHome}/.devhub-server/bin/${KEY}/bin/devhub-server`,
-			),
-		).toBe("file");
-		// The server this machine needs, by its platform and its C library.
-		expect(asked).toEqual(["linux-x64"]);
-		// Finished, and saying which tarball it came from.
-		expect(
-			await readFile(
-				`${remoteHome}/.devhub-server/bin/${KEY}/.devhub-installed`,
-				"utf8",
-			),
-		).toBe("f00d\n");
-		// The forward is a port on this Mac that something answers on. That is
-		// the whole product of this call, so it is what is asserted.
-		await expect(canConnect(endpoint.port)).resolves.toBe(true);
-		await runtime.dispose();
-	});
-
-	it("starts the server with the token file, never the token", async () => {
-		const runtime = hosted();
-		await runtime.remoteServer(delivery());
-		const argv = await readFile(
-			`${remoteHome}/.devhub-server/argv.log`,
-			"utf8",
-		);
-		expect(argv).toContain(
-			`--connection-token-file=${remoteHome}/.devhub-server/.${KEY}.token`,
-		);
-		expect(argv).toContain(
-			`--socket-path=${remoteHome}/.devhub-server/.${KEY}.sock`,
-		);
-		// The token is a secret and argv is world-readable in `ps`, so it must
-		// not be anywhere on that line.
-		const token = (
-			await readFile(`${remoteHome}/.devhub-server/.${KEY}.token`, "utf8")
-		).trim();
-		expect(token).toHaveLength(64);
-		expect(argv).not.toContain(token);
-		await runtime.dispose();
-	});
-
-	it("keeps the token a running server was started with, rather than a new one", async () => {
-		const runtime = hosted();
-		const first = await runtime.remoteServer(delivery());
-		// A second DevHub — or this one after a dispose — must adopt the token
-		// in the file. Generating a fresh one for a server that is already
-		// running fails the handshake with a message that does not say "wrong
-		// token", which is the failure this rule exists to prevent.
-		await runtime.dispose();
-		const again = hosted();
-		const second = await again.remoteServer(delivery());
-		expect(second.connectionToken).toBe(first.connectionToken);
-		// And the server was adopted, not restarted: one argv line, not two.
-		const argv = await readFile(
-			`${remoteHome}/.devhub-server/argv.log`,
-			"utf8",
-		);
-		expect(argv.trim().split("\n")).toHaveLength(1);
-		await again.dispose();
-	});
-
-	it("does not fetch or unpack a server that is already installed", async () => {
-		const runtime = hosted();
-		await runtime.remoteServer(delivery());
-		expect(asked).toHaveLength(1);
-		await runtime.dispose();
-		const again = hosted();
-		await again.remoteServer(delivery());
-		expect(asked).toHaveLength(1);
-		await again.dispose();
-	});
-
-	it("replaces an install that never finished rather than starting it", async () => {
-		// A directory under the key with no marker in it: a dropped connection
-		// half way through, or an older DevHub that did not check its Node.
-		const install = `${remoteHome}/.devhub-server/bin/${KEY}`;
-		await mkdir(`${install}/bin`, { recursive: true });
-		await writeFile(`${install}/bin/devhub-server`, "#!/bin/sh\nexit 1\n", {
-			mode: 0o755,
-		});
-		const runtime = hosted();
-		await runtime.remoteServer(delivery());
-		expect(asked).toEqual(["linux-x64"]);
-		expect(await readFile(`${install}/bin/devhub-server`, "utf8")).toBe(
-			FAKE_SERVER,
-		);
-		await runtime.dispose();
-	});
-
-	it("asks for the arm64 server on an arm64 machine", async () => {
-		const runtime = hosted({ DEVHUB_FAKE_UNAME_M: "aarch64" });
-		await runtime.remoteServer(delivery());
-		expect(asked).toEqual(["linux-arm64"]);
-		await runtime.dispose();
-	});
-
-	it("refuses a machine it carries no server for, by name and for good", async () => {
-		const runtime = hosted({
-			DEVHUB_FAKE_UNAME_S: "Darwin",
-			DEVHUB_FAKE_UNAME_M: "arm64",
-		});
-		const failure = await runtime
-			.remoteServer(delivery())
-			.then(() => undefined)
-			.catch((error: unknown) => error);
-		expect(String(failure)).toContain(
-			"no remote extension host for build-box.example.com, which is Darwin arm64",
-		);
-		expect(isPermanent(failure)).toBe(true);
-		// Refused before a byte was read, let alone sent.
-		expect(asked).toEqual([]);
-		await runtime.dispose();
-	});
-
-	it("refuses a server whose node does not run on the machine, and installs nothing", async () => {
-		const bytes = await serverTarball(
-			"#!/bin/sh\necho 'Error loading shared library ld-linux-x86-64.so.2' >&2\nexit 127\n",
-		);
-		const runtime = hosted();
-		const failure = await runtime
-			.remoteServer({
-				...delivery(),
-				tarball: () =>
-					Promise.resolve({ bytes, topLevelDirectory: TOP, sha256: "bad" }),
-			})
-			.then(() => undefined)
-			.catch((error: unknown) => error);
-		expect(String(failure)).toContain(
-			"the server's node does not run on this machine",
-		);
-		expect(String(failure)).toContain("ld-linux-x86-64.so.2");
-		await expect(
-			runtime.stat(`${remoteHome}/.devhub-server/bin/${KEY}`),
-		).resolves.toBe("absent");
-		await runtime.dispose();
-	});
-
-	it("answers a second ask with the same port, so a reconnect costs nothing", async () => {
-		const runtime = hosted();
-		const first = await runtime.remoteServer(delivery());
-		const second = await runtime.remoteServer(delivery());
-		expect(second.port).toBe(first.port);
-		expect(second.connectionToken).toBe(first.connectionToken);
-		await runtime.dispose();
-	});
-
-	it("refuses a forward ssh said it made and did not", async () => {
-		const runtime = hosted({ DEVHUB_FAKE_FORWARD: "silent" });
-		// `-O forward` can report success and bind nothing. A workbench pointed
-		// at a port nothing answers on is exactly the silent failure the check
-		// exists to prevent, so this is a sentence rather than an endpoint.
-		await expect(runtime.remoteServer(delivery())).rejects.toThrow(
-			/nothing answers on 127\.0\.0\.1:/u,
-		);
-		await runtime.dispose();
-	});
-
-	it("refuses a source build by name, permanently", async () => {
-		const runtime = hosted();
-		const sourceRun: RehDelivery = { ...delivery(), installKey: undefined };
-		const failure = await runtime
-			.remoteServer(sourceRun)
-			.then(() => undefined)
-			.catch((error: unknown) => error);
-		expect(String(failure)).toContain("states no commit or no server identity");
-		// Permanent: the resolver turns this into `NotAvailable`, which is what
-		// makes VS Code say the sentence instead of retrying five times.
-		expect(isPermanent(failure)).toBe(true);
-		await runtime.dispose();
-	});
-
-	it("leaves a master alone while it is carrying a forward", async () => {
-		const runtime = hosted();
-		await runtime.remoteServer(delivery());
-		// The forward dies with the master, and `resumed()` exists to kill the
-		// master — so a power event arriving after the workbench has already
-		// reconnected through a brand-new forward would destroy the very thing
-		// the reconnection just built.
-		const before = await readFile(log, "utf8");
-		runtime.resumed();
-		await new Promise((resolve) => setTimeout(resolve, 200));
-		const after = await readFile(log, "utf8");
-		expect(after.slice(before.length)).not.toMatch(/-O exit/u);
-		expect(runtime.reading().connected).toBe(true);
-		await runtime.dispose();
-	});
-
-	it("lets go of the master again once its forward has been given up", async () => {
-		const runtime = hosted();
-		await runtime.remoteServer(delivery());
-		// `dispose` cancels the forwards, which is what puts a runtime back in
-		// the state where a wake may drop its master. Without that the guard
-		// above would be a master nothing ever reclaims.
-		await runtime.dispose();
-		const after = hosted();
-		await run(after, ["true"]);
-		const before = await readFile(log, "utf8");
-		after.resumed();
-		const deadline = Date.now() + 2_000;
-		let said = "";
-		while (!/-O exit/u.test(said)) {
-			if (Date.now() > deadline) {
-				throw new Error(`no master was asked to exit; ssh saw:\n${said}`);
-			}
-			await new Promise((resolve) => setTimeout(resolve, 5));
-			said = (await readFile(log, "utf8").catch(() => "")).slice(before.length);
-		}
-	});
-});
-
-/** Whether anything answers on a port of this machine. */
-function canConnect(port: number): Promise<boolean> {
-	return new Promise<boolean>((resolve) => {
-		const socket = netConnect({ host: "127.0.0.1", port });
-		socket.setTimeout(2000);
-		const done = (answer: boolean): void => {
-			socket.destroy();
-			resolve(answer);
-		};
-		socket.on("connect", () => {
-			done(true);
-		});
-		socket.on("timeout", () => {
-			done(false);
-		});
-		socket.on("error", () => {
-			done(false);
-		});
-	});
-}
-
-/**
- * A dev container on a host: `docker` and `devcontainer` run on the host,
- * through its own runtime, and a DevHub terminal on this Mac reaches the host's
- * session over ssh. The "host" is this machine behind the fake ssh, with a
- * `docker` of its own on the host's PATH.
- */
-describe("a dev container on a host", () => {
-	let hostBin: string;
-	beforeAll(async () => {
-		hostBin = await mkdtemp(join(tmpdir(), "devhub-fake-host-bin-"));
-		// Says what it was asked, and for `exec` echoes its stdin back — which
-		// is what a relay's `docker exec -i` looks like from this side.
-		await writeFile(
-			join(hostBin, "docker"),
-			'#!/bin/sh\nif [ "$1" = exec ]; then printf "exec:"; cat; exit 0; fi\necho "docker $*"\n',
-			{ mode: 0o700 },
-		);
-	});
-	afterAll(async () => {
-		await rm(hostBin, { recursive: true, force: true });
-	});
-
-	function hostRuntime(): SshRuntime {
-		return new SshRuntime({
-			host: "build-box.example.com",
-			controlDirectory: control,
-			sshPath: join(bin, "ssh"),
-			localEnvironment: {
-				...FAKE_ENVIRONMENT,
-				PATH: `${hostBin}:${process.env["PATH"] ?? ""}`,
-			},
-			tmux: FAKE_TMUX,
-		});
-	}
-
-	it("runs docker on the host, found on the host's own PATH", async () => {
-		const machine = hostContainerMachine(hostRuntime());
-		const listed = await machine.docker(["ps", "-a"]);
-		expect(listed.code).toBe(0);
-		expect(listed.stdout.toString("utf8")).toBe("docker ps -a\n");
-		// A sentence about it names the host.
-		expect(machine.where).toBe(" on build-box.example.com");
-		expect(machine.dockerName).toBe("docker on build-box.example.com");
-	});
-
-	it("starts a relay as ssh … docker exec -i, with its stdio as the wire", async () => {
-		const launch = await hostContainerMachine(hostRuntime()).dockerLaunch([
-			"exec",
-			"-i",
-			"c1",
-		]);
-		expect(launch.file).toBe(join(bin, "ssh"));
-		const child = spawn(launch.file, [...launch.args], {
-			env: launch.env as NodeJS.ProcessEnv,
-			stdio: ["pipe", "pipe", "pipe"],
-		});
-		child.on("close", () => launch.release?.());
-		child.stdin.end("bytes");
-		const chunks: Buffer[] = [];
-		for await (const chunk of child.stdout) chunks.push(chunk as Buffer);
-		expect(Buffer.concat(chunks).toString("utf8")).toBe("exec:bytes");
-	});
-
-	it("gives a terminal on this Mac the host's session over ssh -tt", async () => {
-		const here = await hostRuntime().commandFromHere({
-			file: "/bin/sh",
-			args: ["-c", 'printf %s "$DEVHUB_SESSION"'],
-			env: { DEVHUB_SESSION: "the host's tmux" },
-		});
-		expect(here.file).toBe(join(bin, "ssh"));
-		expect(here.args).toContain("-tt");
-		expect(here.args).toContain("build-box.example.com");
-		const child = spawn(here.file, [...here.args], {
-			env: FAKE_ENVIRONMENT as NodeJS.ProcessEnv,
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		const chunks: Buffer[] = [];
-		for await (const chunk of child.stdout) chunks.push(chunk as Buffer);
-		expect(Buffer.concat(chunks).toString("utf8")).toBe("the host's tmux");
 	});
 });
 

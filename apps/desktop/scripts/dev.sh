@@ -1,32 +1,27 @@
 #!/usr/bin/env bash
-# Run DevHub against the pinned VS Code submodule.
+# Run DevHub from this checkout: `pnpm dev`.
 #
-# The main process runs inside VS Code's own Electron: the native modules in
-# vscode/node_modules are built for exactly that binary, and nothing else will
-# load them. The environment below is the same one vscode/scripts/code.sh sets
-# for a source build, plus DevHub's own editor and extensions directories.
+# The main process runs in DevHub's own Electron, npm's `electron` at the
+# version apps/desktop/package.json pins (scripts/electron-path.sh). On a Mac
+# it runs inside a DevHub-branded clone of that bundle, because macOS names an
+# application from the bundle it runs in: booting npm's own would put
+# "Electron" in the menu bar, the Dock and the window switcher no matter what
+# the process calls itself (scripts/darwin_bundle.py).
 #
-# Any argument is passed through to the app, so a second invocation such as
-#   apps/desktop/scripts/dev.sh --new-window <folder>
-# reaches the already-running instance the way `code` does.
+# Any argument is passed through to the app.
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
-VSCODE_DIR="$REPO_ROOT/vscode"
 
-# VS Code's own Electron, because the native modules in vscode/node_modules are
-# built for exactly that binary. On a Mac it is the branded clone provisioning
-# makes rather than the bundle `npm run electron` unpacked: macOS names an
-# application from the bundle it runs in, so booting VS Code's own would put
-# "Code - OSS" in the menu bar, the Dock and the window switcher no matter what
-# the process calls itself. See step 5b of scripts/provision-vscode.sh.
-case "$(uname -s)" in
-	Darwin) ELECTRON="$VSCODE_DIR/.build/devhub-electron/DevHub.app/Contents/MacOS/DevHub" ;;
-	*) ELECTRON="$VSCODE_DIR/.build/electron/code-oss" ;;
-esac
+ELECTRON="$("$APP_DIR/scripts/electron-path.sh")"
+if [ "$(uname -s)" = Darwin ]; then
+	BRANDED="$REPO_ROOT/dist/dev-electron"
+	python3 "$REPO_ROOT/scripts/darwin_bundle.py" "$BRANDED" >/dev/null
+	ELECTRON="$BRANDED/DevHub.app/Contents/MacOS/DevHub"
+fi
 if [ ! -x "$ELECTRON" ]; then
-	echo "no Electron at $ELECTRON — run scripts/provision-vscode.sh" >&2
+	echo "no Electron at $ELECTRON — run 'pnpm install'" >&2
 	exit 1
 fi
 
@@ -35,81 +30,22 @@ if [ ! -f "$APP_DIR/out/main/main.js" ] || [ ! -f "$APP_DIR/dist/shell/index.htm
 	exit 1
 fi
 
-# A source run loads vscode/out, which `pnpm build` no longer compiles (it
-# provisions only the bundled tree; see step 4 of scripts/provision-vscode.sh).
-# So after a patch edit or a bump followed by `pnpm build`, out/ can be
-# yesterday's. Said, not refused: compiling is a minute and a half and the
-# person may be mid-edit on purpose. The state is the one provisioning stamps.
-SOURCE_STATE="$("$REPO_ROOT/scripts/vscode-submodule.sh" source-state)"
-if [ ! -f "$VSCODE_DIR/out/vs/code/electron-main/main.js" ] \
-	|| [ "$(cat "$VSCODE_DIR/.build/devhub-compile.stamp" 2>/dev/null)" != "$SOURCE_STATE" ]; then
-	echo "[devhub] vscode/out is not compiled from this VS Code commit, patches/vscode and patches/vscode-overlay — run 'scripts/provision-vscode.sh --for dev'" >&2
-fi
-
-# The built-in set is staged on every run: it is only symlinks, and a stale one
-# would silently run yesterday's bridge — including yesterday's workbench
-# defaults.
-"$REPO_ROOT/scripts/stage-builtin-extensions.sh" >/dev/null
-
-# DevHub's product identity and its extension gallery, from the one file that
-# holds them (scripts/package-nightly.py writes the packaged product.json from
-# the same file). A source run reads vscode/product.json, so the overrides have
-# to reach it another way: vscode/src/bootstrap-meta.ts merges
-# vscode/product.overrides.json over it whenever VSCODE_DEV is set, in every
-# process that boots VS Code's ESM loader — main, renderer, shared process,
-# extension host — which is exactly the reach the gallery needs. The file is
-# gitignored inside the submodule and rewritten here on every run, so the
-# submodule stays unedited and can never hold a stale copy.
-# The commit rides along with the names, so a source run can say which DevHub
-# it is too — see scripts/product_metadata.py, which the packaged build writes
-# its product.json from as well.
-"$REPO_ROOT/scripts/product_metadata.py" "$VSCODE_DIR/product.overrides.json"
-
-# First build the one server this Mac's CPU can use natively (glibc, its own
-# architecture) if it is missing or stale. Never blocks: no Docker or a failed
-# build only warns. DEVHUB_SKIP_REH_BUILD=1 opts out. See scripts/dev_reh.py.
-python3 "$REPO_ROOT/scripts/dev_reh.py" || true
-
-# The remote extension hosts a source run copies onto SSH hosts and into dev
-# containers are the ones scripts/build_reh.py left in dist/reh — built from
-# this checkout's VS Code and patches, or refused. Said here, once, rather than
-# only at the first remote window: building them takes most of an hour, and a
-# local window needs none of them, so this is a note and not a stop.
-if ! (cd "$REPO_ROOT/scripts" && python3 -c '
-import sys
-from build_reh import DEFAULT_OUT_DIR, bundle_problems
-from product_metadata import reh_identity, vscode_commit
-problems = bundle_problems(DEFAULT_OUT_DIR, vscode_commit(), reh_identity())
-for problem in problems:
-	print(f"[devhub] {problem}", file=sys.stderr)
-sys.exit(1 if problems else 0)
-'); then
-	echo "[devhub] remote windows on the platforms above will be refused until scripts/build_reh.py builds their servers — see docs/remote-ssh.md#a-source-run-uses-servers-built-in-the-checkout" >&2
-fi
-
 # Which DevHub this run is. A source run is a *second* DevHub: the packaged one
-# is the environment the person works in, and the two cannot share the editor's
-# user-data directory (VS Code makes that single-instance, so the second one
-# simply never starts), the settings, the tmux server or the control socket.
-# `DEVHUB_PROFILE` is the whole switch — set it to `default` to run a source
-# build on the packaged app's own locations instead.
+# is the environment the person works in, and the two cannot share the
+# user-data directory (Electron's single-instance lock is in it), the
+# settings, the tmux server or the control socket. `DEVHUB_PROFILE` is the
+# whole switch — set it to `default` to run a source build on the packaged
+# app's own locations instead.
 export DEVHUB_PROFILE="${DEVHUB_PROFILE:-dev}"
 
 # Every location the profile decides, derived where it is decided — in
-# src/model/profile.ts, printed by out/main/profilePaths.js. Spelling them here
-# as well is how the shell and the app end up disagreeing after a rename.
+# src/model/profile.ts, printed by out/main/profilePaths.js.
 eval "$(ELECTRON_RUN_AS_NODE=1 "$ELECTRON" "$APP_DIR/out/main/profilePaths.js")"
-mkdir -p "$DEVHUB_USER_DATA_DIR" "$DEVHUB_EXTENSIONS_DIR"
+mkdir -p "$DEVHUB_USER_DATA_DIR"
 echo "[devhub] profile $DEVHUB_PROFILE_NAME: user data $DEVHUB_USER_DATA_DIR, settings $DEVHUB_CONFIG_DIR, tmux socket $DEVHUB_TMUX_SOCKET_NAME" >&2
 
-export VSCODE_DEV=1
-export VSCODE_CLI=1
 export NODE_ENV=development
 export ELECTRON_ENABLE_LOGGING=1
 export ELECTRON_ENABLE_STACK_DUMPING=1
 
-exec "$ELECTRON" "$APP_DIR" \
-	--user-data-dir "$DEVHUB_USER_DATA_DIR" \
-	--extensions-dir "$DEVHUB_EXTENSIONS_DIR" \
-	--builtin-extensions-dir "$REPO_ROOT/vscode/.build/devhub-builtin-extensions" \
-	"$@"
+exec "$ELECTRON" "$APP_DIR" --user-data-dir "$DEVHUB_USER_DATA_DIR" "$@"

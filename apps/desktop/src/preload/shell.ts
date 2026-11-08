@@ -9,7 +9,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
 	CHANNELS,
-	type EditorPlaceholderEvent,
 	type ShellPageBridge,
 	type WorkbenchAreaWire,
 } from "../ipc/contract.js";
@@ -40,12 +39,6 @@ const api: ShellPageBridge = {
 			CHANNELS.workbenchAreaChanged,
 			listener,
 		),
-	onEditorPlaceholder: (listener) =>
-		on<EditorPlaceholderEvent>(CHANNELS.editorPlaceholder, listener),
-	replayEditorPlaceholders: () =>
-		ipcRenderer.invoke(CHANNELS.replayEditorPlaceholders) as Promise<void>,
-	wakeEditor: (surfaceKey) =>
-		ipcRenderer.invoke(CHANNELS.wakeEditor, surfaceKey) as Promise<void>,
 
 	openModal,
 	closeWorkspace,

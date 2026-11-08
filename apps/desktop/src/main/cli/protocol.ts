@@ -16,7 +16,6 @@
  */
 
 import { join } from "node:path";
-import type { PortsConfiguration } from "../runtime/portForward.js";
 import {
 	callerLabelProblem,
 	tellCommandFrom,
@@ -52,36 +51,6 @@ export interface ControlPosition {
 	readonly line: number;
 	readonly column: number;
 }
-
-/**
- * A workbench window, as it names itself: its folder URI's parts. The same
- * four fields `editorPlaceFromWorkspaceUri` reads, because that is the one
- * translation DevHub has from a window to its Workspace.
- */
-export interface WindowFolderWire {
-	readonly scheme: string;
-	readonly authority: string;
-	readonly path: string;
-	readonly fsPath: string;
-}
-
-/** A Workspace's Dev Container definitions, as a window's commands see them. */
-export interface DevContainerConfigsAnswer {
-	readonly configs: readonly {
-		readonly path: string;
-		readonly label?: string;
-	}[];
-	/** The definition the window's editor is attached to, or nothing. */
-	readonly current: string | undefined;
-}
-
-/** Where a window's editor is to be attached. */
-export type ReattachTargetWire =
-	| { readonly kind: "host" }
-	| { readonly configPath: string };
-
-/** Rebuild the container on the way: with the cache, or without. */
-export type RebuildWire = "cache" | "no-cache";
 
 export type ControlRequest =
 	| {
@@ -185,27 +154,7 @@ export type ControlRequest =
 			readonly waitMarkerPath: string;
 	  }
 	| {
-			/**
-			 * Extension ids, or paths to `.vsix` files. Which of the two a
-			 * target is, is decided where VS Code's own rule lives — the app —
-			 * so `cwd` comes along for the paths among them.
-			 */
-			readonly kind: "install-extensions";
-			readonly targets: readonly string[];
-			readonly force: boolean;
-			readonly cwd: string;
-	  }
-	| {
-			readonly kind: "uninstall-extensions";
-			readonly ids: readonly string[];
-			readonly force: boolean;
-	  }
-	| {
-			readonly kind: "list-extensions";
-			readonly showVersions: boolean;
-	  }
-	| {
-			/** DevHub's version, VS Code's, and the commit it was built from. */
+			/** DevHub's version, and the commit it was built from. */
 			readonly kind: "version";
 	  }
 	| {
@@ -247,99 +196,6 @@ export type ControlRequest =
 			readonly profileId: string;
 			readonly args: readonly string[];
 			readonly cwd: string;
-	  }
-	| {
-			/**
-			 * Where a workbench on another machine should connect to, and with
-			 * what token. Sent by `extensions/devhub-remote`, never by a person.
-			 *
-			 * VS Code asks an extension to resolve `ssh-remote+<host>` and gives
-			 * it nothing but the authority; DevHub already holds the connection to
-			 * that host, already installs the remote extension host on it and
-			 * already owns the forward. So the extension asks, and the answer is
-			 * an endpoint on this Mac. It is on this socket rather than through a
-			 * channel of the extension's own because a `ui`-kind extension is on
-			 * the machine DevHub runs on, so the socket it derives from its own
-			 * global-storage directory is this DevHub's and no other's.
-			 *
-			 * `machine` is a `RuntimeId` — `ssh:<host>` — and not a bare host,
-			 * because it is the key everything else about a machine is filed
-			 * under and because a second kind of remote will be a second prefix
-			 * rather than a second request.
-			 *
-			 * `attempt` is VS Code's own `resolveAttempt`, which counts up across
-			 * a reconnection. DevHub does not branch on it: it is carried so that
-			 * a log line about a host that is being asked for the fourth time
-			 * says so, which is the difference between "slow" and "looping".
-			 */
-			readonly kind: "resolve-remote";
-			readonly machine: string;
-			readonly attempt: number;
-	  }
-	| {
-			/**
-			 * How this workbench's integrated terminal attaches to its DevHub
-			 * session. Sent by the terminal launcher, never by a person.
-			 *
-			 * The root is the directory VS Code started the terminal in. DevHub
-			 * answers with the session of the Workspace that contains it, or the
-			 * Scratch session when none does — which is what the folderless
-			 * window gets, since VS Code starts its terminal in the user's home.
-			 *
-			 * The machine is which computer that directory is on: `local`, or
-			 * `ssh:<host>` — a `RuntimeId`, the same key everything else about a
-			 * machine is filed under. It is required rather than defaulted,
-			 * because a default is a guess, and the guess is wrong in the one
-			 * case that matters: two hosts with the same `/srv/app` are one root
-			 * to a matcher that was not told which of them is asking, and the
-			 * answer it gives is a session on the wrong computer.
-			 */
-			/**
-			 * A workbench's own Reopen in Container / Switch Container asking
-			 * which definitions its Workspace's folder has. See
-			 * `extensions/devhub-remote`.
-			 */
-			readonly kind: "dev-container-configs";
-			readonly window: WindowFolderWire;
-	  }
-	| {
-			/**
-			 * Where the build log is of the dev container a workbench's
-			 * Workspace's folder makes from one of its definitions. See
-			 * `main/runtime/buildLog.ts`.
-			 */
-			readonly kind: "dev-container-build-log";
-			readonly window: WindowFolderWire;
-			readonly configPath: string;
-	  }
-	| {
-			/** Move a workbench's editor, in or out of a dev container. */
-			readonly kind: "reattach-editor";
-			readonly window: WindowFolderWire;
-			readonly to: ReattachTargetWire;
-			/** Remove and rebuild the container first. See `RebuildWire`. */
-			readonly rebuild?: RebuildWire;
-	  }
-	| {
-			/**
-			 * A port on this Mac reaching `host:port` on `machine` — a
-			 * workbench's resolver forwarding a port out of a dev container
-			 * (see `main/runtime/portForward.ts`). The one request whose
-			 * connection stays open after the answer: the forward lives exactly
-			 * as long as it, so a workbench that closes — or an extension host
-			 * that dies — takes its forwards with it.
-			 */
-			readonly kind: "forward-port";
-			readonly machine: string;
-			readonly host: string;
-			readonly port: number;
-			readonly localPort?: number;
-			readonly requireLocalPort?: boolean;
-	  }
-	| {
-			/** What a dev container's definition says about ports. */
-			readonly kind: "dev-container-ports";
-			readonly machine: string;
 	  }
 	| {
 			readonly kind: "terminal-profile";
@@ -389,23 +245,6 @@ export interface TerminalProfileAnswer {
 	readonly env: Readonly<Record<string, string>>;
 }
 
-/**
- * Where a remote workbench connects, as the resolver extension is told it.
- *
- * A port on 127.0.0.1 and a token, which is exactly what `ResolvedAuthority`
- * takes — so the extension's whole job is to put these three values in a
- * constructor. Nothing about how they came to exist is in here: the host, the
- * install directory, the socket on the far side and the ControlMaster carrying
- * it are DevHub's, and an extension that knew any of them would be an extension
- * with a second opinion about them.
- */
-export interface RemoteEndpointAnswer {
-	readonly port: number;
-	readonly connectionToken: string;
-	/** What the far extension host needs in its environment, or nothing. */
-	readonly extensionHostEnv?: Readonly<Record<string, string>>;
-}
-
 export interface ControlResponse {
 	readonly ok: boolean;
 	/**
@@ -423,36 +262,6 @@ export interface ControlResponse {
 	 * failure is a sentence, whoever is reading.
 	 */
 	readonly profile?: TerminalProfileAnswer;
-	/**
-	 * The endpoint a `resolve-remote` asked for, when there is one.
-	 *
-	 * Data rather than a sentence, for the same reason `profile` is: the
-	 * resolver puts it into a `ResolvedAuthority`, and a port squeezed through a
-	 * human sentence would have to be parsed back out of it. Absent on a failed
-	 * answer — a failure is a sentence, whoever is reading.
-	 */
-	readonly remote?: RemoteEndpointAnswer;
-	/**
-	 * Whether asking again could get a different answer.
-	 *
-	 * Only ever on a failed `resolve-remote`, and it is the whole of what the
-	 * resolver decides with: `true` becomes VS Code's `TemporarilyNotAvailable`,
-	 * which both of its retry loops retry, and anything else becomes
-	 * `NotAvailable`, which makes it give up at once. So the question DevHub is
-	 * answering here is exactly "will this get better on its own" — a host that
-	 * is asleep or away will, a host that is not a machine DevHub supports will
-	 * not — and it is answered where the failure happened rather than guessed at
-	 * from its wording.
-	 */
-	readonly retry?: boolean;
-	/** A `dev-container-configs` answer. Data, for the reason `profile` is. */
-	readonly devContainers?: DevContainerConfigsAnswer;
-	/** A `dev-container-build-log` answer: the log file's path on this Mac. */
-	readonly buildLog?: string;
-	/** A `forward-port` answer: the port on this Mac. */
-	readonly forward?: { readonly localPort: number };
-	/** A `dev-container-ports` answer. */
-	readonly ports?: PortsConfiguration;
 	/** A `tell` answer, as data: what `devhub --tell --json` prints. */
 	readonly data?: unknown;
 }
@@ -500,24 +309,6 @@ export function parseControlRequest(line: string): ControlRequest {
 					"waitMarkerPath",
 				),
 			};
-		case "install-extensions":
-			return {
-				kind: "install-extensions",
-				targets: requireNonEmptyStrings(record["targets"], "targets"),
-				force: requireBoolean(record["force"], "force"),
-				cwd: requireAbsolute(record["cwd"], "cwd"),
-			};
-		case "uninstall-extensions":
-			return {
-				kind: "uninstall-extensions",
-				ids: requireNonEmptyStrings(record["ids"], "ids"),
-				force: requireBoolean(record["force"], "force"),
-			};
-		case "list-extensions":
-			return {
-				kind: "list-extensions",
-				showVersions: requireBoolean(record["showVersions"], "showVersions"),
-			};
 		case "version":
 			return { kind: "version" };
 		case "metrics":
@@ -543,55 +334,6 @@ export function parseControlRequest(line: string): ControlRequest {
 				args: requireStrings(record["args"], "args"),
 				cwd: requireAbsolute(record["cwd"], "cwd"),
 			};
-		case "resolve-remote":
-			return {
-				kind: "resolve-remote",
-				machine: requireString(record["machine"], "machine"),
-				attempt: requireCount(record["attempt"], "attempt"),
-			};
-		case "dev-container-configs":
-			return {
-				kind: "dev-container-configs",
-				window: requireWindow(record["window"]),
-			};
-		case "dev-container-build-log":
-			return {
-				kind: "dev-container-build-log",
-				window: requireWindow(record["window"]),
-				configPath: requireAbsolute(record["configPath"], "configPath"),
-			};
-		case "reattach-editor":
-			return {
-				kind: "reattach-editor",
-				window: requireWindow(record["window"]),
-				to: requireReattachTarget(record["to"]),
-				...(record["rebuild"] === undefined
-					? {}
-					: { rebuild: requireRebuild(record["rebuild"]) }),
-			};
-		case "forward-port":
-			return {
-				kind: "forward-port",
-				machine: requireString(record["machine"], "machine"),
-				host: requireString(record["host"], "host"),
-				port: requirePort(record["port"], "port"),
-				...(record["localPort"] === undefined || record["localPort"] === 0
-					? {}
-					: { localPort: requirePort(record["localPort"], "localPort") }),
-				...(record["requireLocalPort"] === undefined
-					? {}
-					: {
-							requireLocalPort: requireBoolean(
-								record["requireLocalPort"],
-								"requireLocalPort",
-							),
-						}),
-			};
-		case "dev-container-ports":
-			return {
-				kind: "dev-container-ports",
-				machine: requireString(record["machine"], "machine"),
-			};
 		case "terminal-profile":
 			return {
 				kind: "terminal-profile",
@@ -607,40 +349,6 @@ export function parseControlRequest(line: string): ControlRequest {
 		default:
 			throw new Error(`unknown control request: ${String(record["kind"])}`);
 	}
-}
-
-function requireWindow(value: unknown): WindowFolderWire {
-	if (typeof value !== "object" || value === null) {
-		throw new Error("window must be the window's folder URI");
-	}
-	const record = value as Record<string, unknown>;
-	const part = (field: string): string => {
-		const found = record[field];
-		if (typeof found !== "string" || found.includes("\0")) {
-			throw new Error(`window.${field} must be a string`);
-		}
-		return found;
-	};
-	return {
-		scheme: part("scheme"),
-		authority: part("authority"),
-		path: part("path"),
-		fsPath: part("fsPath"),
-	};
-}
-
-function requireRebuild(value: unknown): RebuildWire {
-	if (value === "cache" || value === "no-cache") return value;
-	throw new Error('rebuild must be "cache" or "no-cache"');
-}
-
-function requireReattachTarget(value: unknown): ReattachTargetWire {
-	if (typeof value !== "object" || value === null) {
-		throw new Error("to must say where the editor goes");
-	}
-	const record = value as Record<string, unknown>;
-	if (record["kind"] === "host") return { kind: "host" };
-	return { configPath: requireAbsolute(record["configPath"], "to.configPath") };
 }
 
 function requireString(value: unknown, field: string): string {
@@ -672,25 +380,6 @@ function requireStrings(value: unknown, field: string): readonly string[] {
 	return value as readonly string[];
 }
 
-/** An agent's arguments may be empty; a list of things to install may not. */
-function requireNonEmptyStrings(
-	value: unknown,
-	field: string,
-): readonly string[] {
-	const items = requireStrings(value, field);
-	if (items.length === 0 || items.some((item) => item.length === 0)) {
-		throw new Error(`${field} must be a non-empty array of non-empty strings`);
-	}
-	return items;
-}
-
-function requireBoolean(value: unknown, field: string): boolean {
-	if (typeof value !== "boolean") {
-		throw new Error(`${field} must be a boolean`);
-	}
-	return value;
-}
-
 function requirePosition(value: unknown): ControlPosition {
 	if (typeof value !== "object" || value === null) {
 		throw new Error("position must be an object");
@@ -700,26 +389,6 @@ function requirePosition(value: unknown): ControlPosition {
 		line: requireLineOrColumn(record["line"], "line"),
 		column: requireLineOrColumn(record["column"], "column"),
 	};
-}
-
-function requirePort(value: unknown, field: string): number {
-	if (
-		typeof value !== "number" ||
-		!Number.isInteger(value) ||
-		value < 1 ||
-		value > 65535
-	) {
-		throw new Error(`${field} must be a port number`);
-	}
-	return value;
-}
-
-/** A whole number from zero up: how many times something has happened. */
-function requireCount(value: unknown, field: string): number {
-	if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-		throw new Error(`${field} must be a whole number from 0 up`);
-	}
-	return value;
 }
 
 function requireLineOrColumn(value: unknown, field: string): number {

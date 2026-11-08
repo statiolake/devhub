@@ -13,7 +13,6 @@ export type MemoryPressureWire = "normal" | "warning" | "critical" | "unknown";
 
 export const TASK_MANAGER_CHANNELS = {
 	snapshot: "devhub-task-manager:snapshot",
-	sleepWorkbench: "devhub-task-manager:sleep-workbench",
 	stopAgent: "devhub-task-manager:stop-agent",
 	reveal: "devhub-task-manager:reveal",
 	kill: "devhub-task-manager:kill",
@@ -43,7 +42,7 @@ export type TaskRowKind =
 	| "other";
 
 /** What a row offers. Main decides; the page only draws what it is given. */
-export type TaskActionWire = "sleep" | "stop" | "reveal" | "kill";
+export type TaskActionWire = "stop" | "reveal" | "kill";
 
 export interface TaskRowWire {
 	/** Stable across refreshes, so a collapsed row stays collapsed. */
@@ -131,7 +130,6 @@ export type TaskRevealWire =
 /** `window.devhubTaskManager`, as the preload builds it. */
 export interface TaskManagerApi {
 	snapshot(): Promise<TaskSnapshotWire>;
-	sleepWorkbench(workspaceId: string): Promise<void>;
 	stopAgent(agentId: string): Promise<void>;
 	reveal(target: TaskRevealWire): Promise<void>;
 	/** Asks first, natively; `false` when the person said no. */

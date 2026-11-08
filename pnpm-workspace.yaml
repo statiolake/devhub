@@ -1,27 +1,20 @@
 packages:
   - "apps/*"
-  - "extensions/*"
 
 # pnpm 11 blocks dependency lifecycle scripts by default. Vite's native
 # transformer is the only dependency whose install script is required for
 # deterministic local builds.
 #
-# `electron` is here for its type declarations only: the binary DevHub runs is
-# VS Code's own, under vscode/.build/electron, because the native modules in
-# vscode/node_modules are built for exactly that one. Downloading a second copy
-# would be waste, so its install script stays off.
+# Neither of DevHub's two runtime pieces needs one (docs/without-vscode.md):
+#
+# - `electron` (pinned in apps/desktop): its binary is fetched the first time
+#   `require("electron")` is asked for its path from Node, which
+#   `apps/desktop/scripts/electron-path.sh` does for dev.sh, the PTY tests,
+#   the smoke test and packaging. pnpm still counts it as a package with a
+#   build, so it is named here, off.
+# - node-pty is N-API and ships prebuilt binaries for every platform DevHub
+#   runs on, loaded from its own `prebuilds/`; its install script would only
+#   check that they are there.
 allowBuilds:
   electron: false
   esbuild: true
-
-# The Copilot language server's single-file executables, ~100 MB per platform.
-# extensions/devhub-copilot runs the package's JavaScript distribution with the
-# extension host's own Electron instead (src/serverLauncher.ts), so these are
-# never read; without this every install downloads this machine's one.
-ignoredOptionalDependencies:
-  - "@github/copilot-language-server-darwin-arm64"
-  - "@github/copilot-language-server-darwin-x64"
-  - "@github/copilot-language-server-linux-arm64"
-  - "@github/copilot-language-server-linux-x64"
-  - "@github/copilot-language-server-win32-arm64"
-  - "@github/copilot-language-server-win32-x64"

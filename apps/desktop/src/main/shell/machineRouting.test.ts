@@ -36,7 +36,6 @@ import { wireAgents } from "./agentWiring.js";
 import { LOCAL_CADENCE } from "../runtime/local.js";
 import { TerminalRuntimes } from "./terminalRuntimes.js";
 import { remoteCliBinDirectory } from "../terminal/launcher.js";
-import { windowTerminalLauncher } from "./loginEnvironment.js";
 import { TerminalSurfaces } from "../terminal/surfaces.js";
 import { portFailure, workspaceTarget } from "../terminal/ports.js";
 import type { AttachmentManager } from "../terminal/attachments.js";
@@ -424,57 +423,6 @@ describe("the Agent pane's PTY", () => {
 			}),
 		).rejects.toThrow();
 		expect(asked).toEqual([b.id]);
-	});
-});
-
-describe("what a window is told its terminal is", () => {
-	const spec: TerminalLauncherSpec = {
-		localLauncherPath: "/here/devhub-terminal",
-		controlSocketPath: "/here/control.sock",
-		entryText: "export const nothing = 1;\n",
-		entryName: "devhub-terminal.bundle.js",
-		cliText: "",
-		cliEntryName: "devhub-cli.bundle.js",
-		serverDataFolderName: ".devhub-server",
-		serverInstallKey: "abc123",
-	};
-
-	it("names the launcher of the machine that window is on", async () => {
-		const { a, b } = machines();
-		expect(windowTerminalLauncher(await a.terminalLauncher(spec))).toBe(
-			"/home/here/.devhub/devhub-terminal",
-		);
-		// A window on a host names a path on that host. This Mac's launcher is
-		// a file that machine has never heard of, and naming it would give the
-		// workbench there a terminal profile that cannot start.
-		expect(windowTerminalLauncher(await b.terminalLauncher(spec))).toBe(
-			"/home/there/.devhub/devhub-terminal",
-		);
-	});
-
-	it("says 'none' when the launcher cannot reach DevHub", () => {
-		expect(
-			windowTerminalLauncher({
-				path: "/home/there/.devhub/devhub-terminal",
-				unreachable: "the control socket could not be forwarded",
-				binDirectory: undefined,
-			}),
-		).toBeUndefined();
-	});
-
-	it("never lets one machine's launcher be the answer for another", async () => {
-		// The whole point, as one assertion: two machines, two launchers, and
-		// no way for the second window to end up holding the first's path —
-		// including when the second machine has none.
-		const { a, b } = machines();
-		const [here, there] = await Promise.all([
-			a.terminalLauncher(spec),
-			b.terminalLauncher(spec),
-		]);
-		expect(windowTerminalLauncher(here)).toBe(here.path);
-		expect(
-			windowTerminalLauncher({ ...there, unreachable: "no route to host" }),
-		).toBeUndefined();
 	});
 });
 

@@ -1,19 +1,12 @@
 /**
  * A file DevHub is asked to open (`devhub <file>`, a conversation's file
- * link, Send to Agent's reference), as the Neovim editor's open: the one
- * place an open is branched on `general.editor` is `AppController.openInEditor`,
- * and this is the Neovim half of what it hands on.
+ * link, Send to Agent's reference), as the Neovim editor's open: what
+ * `AppController.openInEditor` hands on.
  */
 
 import type { ResolvedPath } from "../cli/canonical.js";
-import type { FileSelection } from "../cli/openFiles.js";
+import type { FileSelection } from "../cli/fileSelection.js";
 import type { NeovimOpen } from "./managedNeovim.js";
-import type { EditorKind } from "../../model/config.js";
-
-/** The editor an open goes to, for the setting DevHub runs on. */
-export function editorForOpen(setting: EditorKind): "workbench" | "neovim" {
-	return setting === "neovim" ? "neovim" : "workbench";
-}
 
 /**
  * A selection with an end puts the cursor at its start (Neovim has no

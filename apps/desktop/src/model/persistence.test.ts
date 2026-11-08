@@ -6,7 +6,6 @@ import {
   AgentProfile,
   agentId,
   agentProfileId,
-  devContainerConfigPath,
   displayPath,
   Workspace,
   workspaceId,
@@ -97,28 +96,6 @@ describe("projection", () => {
       AG_A,
     ]);
     expect(restored.snapshot().selection).toEqual(model.snapshot().selection);
-  });
-
-  it("round-trips where a Workspace's editor is attached", () => {
-    const model = populatedModel();
-    model.attachEditor(WS_B, {
-      kind: "devContainer",
-      configPath: devContainerConfigPath(
-        "/dev/b/.devcontainer/devcontainer.json",
-      ),
-    });
-    const state = stateFromSnapshot(model.snapshot());
-    expect(state.workspaces[1]!.editor).toEqual({
-      kind: "dev_container",
-      config_path: "/dev/b/.devcontainer/devcontainer.json",
-    });
-    // The Workspace's own machine is written as nothing at all.
-    expect("editor" in state.workspaces[0]!).toBe(false);
-    const restored = hydrateModel(state, [codex], today()).snapshot();
-    expect(restored.workspaces[1]!.editor).toEqual(
-      model.snapshot().workspaces[1]!.editor,
-    );
-    expect(restored.workspaces[0]!.editor).toEqual({ kind: "host" });
   });
 
   it("keeps an agent whose profile is gone, marked unavailable", () => {
@@ -876,7 +853,7 @@ describe("store", () => {
     return document;
   }
 
-  it("turns a version-11 container Workspace into its folder, with its editor attached", async () => {
+  it("turns a version-11 container Workspace into its folder, its editor on that machine", async () => {
     await writeFile(
       path,
       JSON.stringify(
@@ -909,15 +886,13 @@ describe("store", () => {
       workspace_id: WS_B,
     });
     expect(load.state.session_machines).toEqual(["local"]);
-    // And the model it hydrates has the editor attached to that definition.
+    // And the model it hydrates has its editor on its own machine: the
+    // container attachment was VS Code's, and went with it.
     const workspace = hydrateModel(load.state, [codex], today())
       .snapshot()
       .workspaces.find((candidate) => candidate.id === WS_B)!;
     expect(workspace.location).toEqual({ kind: "local", path: "/dev/c" });
-    expect(workspace.editor).toEqual({
-      kind: "devContainer",
-      configPath: "/dev/c/.devcontainer/python/devcontainer.json",
-    });
+    expect(workspace.editor).toEqual({ kind: "host" });
   });
 
   it("makes one Workspace of a folder that was open both itself and in its container", async () => {

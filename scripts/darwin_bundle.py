@@ -1,24 +1,22 @@
-#!/usr/bin/env python3
-"""Make VS Code's Electron app bundle say DevHub.
+"""Make npm's Electron app bundle say DevHub.
 
 macOS takes an application's name from the *running bundle's* `Info.plist`, not
 from anything the process says about itself. `app.setName()` renames what
 Electron and JavaScript produce; it cannot reach the menu bar's application
 menu, the Dock tile, Mission Control or the window switcher. Those read
-`CFBundleName`, and the bundle a source run boots is `vscode/.build/electron`,
-which VS Code's own `npm run electron` names after VS Code's product. So an
-unbranded source run calls itself "Code - OSS" everywhere macOS does the
-naming.
+`CFBundleName`, and the bundle npm's `electron` package unpacks is
+`Electron.app`. So an unbranded run calls itself "Electron" everywhere macOS
+does the naming.
 
-The answer is the one the packaged app already uses: run inside a bundle of
-DevHub's own. This module holds that rename so the two paths cannot drift —
-`scripts/provision-vscode.sh` calls it to brand the bundle a source run boots,
-and `scripts/package-nightly.py` imports it to brand the one it ships. Both
-take every name from `apps/desktop/product-overrides.json`, which is the single
-place DevHub says what it is called.
+The answer is to run inside a bundle of DevHub's own. This module holds that
+rename so the two users of it cannot drift — `apps/desktop/scripts/dev.sh`
+runs it to brand the bundle a source run boots, and
+`scripts/package-nightly.py` imports it to brand the one it ships. Both take
+every name from `apps/desktop/product.json`, which is the single place DevHub
+says what it is called.
 
-As a command it clones VS Code's Electron bundle, brands the clone and ad-hoc
-signs it:
+As a command it clones the Electron bundle, brands the clone and ad-hoc signs
+it:
 
     scripts/darwin_bundle.py <destination-directory>
 
@@ -41,113 +39,87 @@ import subprocess
 import sys
 from pathlib import Path
 
-from product_metadata import PRODUCT_OVERRIDES, PRODUCT_OVERRIDES_FILE, devhub_version
+from product_metadata import PRODUCT, PRODUCT_FILE, devhub_version
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-VSCODE_DIR = REPO_ROOT / "vscode"
 DESKTOP_DIR = REPO_ROOT / "apps" / "desktop"
 
-APP_NAME = PRODUCT_OVERRIDES["nameShort"]
-BUNDLE_IDENTIFIER = PRODUCT_OVERRIDES["darwinBundleIdentifier"]
+APP_NAME = PRODUCT["nameShort"]
+BUNDLE_IDENTIFIER = PRODUCT["darwinBundleIdentifier"]
 
 # Rendered from assets/icon-master.svg by scripts/package-icon.sh and committed;
 # that script says why it is committed rather than built here.
 ICON_FILE = REPO_ROOT / "distribution" / f"{APP_NAME}.icns"
 
-# The `Code - OSS` names come from VS Code's own Electron staging step
-# (`npm run electron`), which renames the prebuilt Electron bundle after its
-# product. Ours renames it once more.
-BASE_PRODUCT_NAME = "Code - OSS"
-BASE_APP = VSCODE_DIR / ".build" / "electron" / f"{BASE_PRODUCT_NAME}.app"
+# The names npm's Electron bundle arrives with. Ours renames it.
+BASE_PRODUCT_NAME = "Electron"
+
+
+def base_app() -> Path:
+	"""npm's `Electron.app`, the version apps/desktop/package.json pins.
+
+	Asked of `apps/desktop/scripts/electron-path.sh`, which downloads the
+	binary the first time and prints `.../Electron.app/Contents/MacOS/Electron`.
+	"""
+	executable = subprocess.run(
+		[str(DESKTOP_DIR / "scripts" / "electron-path.sh")],
+		check=True,
+		capture_output=True,
+		text=True,
+	).stdout.strip()
+	return Path(executable).parents[2]
+
 
 # What "About DevHub" says about who made it. The macOS About panel reads this
 # key straight from the running bundle, and Electron's own bundle arrives with
-# Microsoft's — so an unbranded DevHub credits Microsoft alone for a product
-# they did not make, and drops the DevHub half entirely.
-#
-# Both halves stay. Naming Code - OSS is not politeness: the MIT licence
-# requires the notice to travel with the copies (the full texts ride along in
-# `Contents/Resources/licenses`, written by package-nightly.py), and a user
-# reading this panel should be able to tell what DevHub is built out of.
-COPYRIGHT = (
-	"Copyright (C) 2026 DevHub contributors. "
-	"Based on Code - OSS, Copyright (C) Microsoft Corporation. "
-	"MIT licensed."
-)
+# GitHub's. The licences of what DevHub redistributes ride along in
+# `Contents/Resources/licenses`, written by package-nightly.py.
+COPYRIGHT = "Copyright (C) 2026 DevHub contributors. MIT licensed."
 
 
 # What macOS shows in the microphone prompt, the first time the GUI Agent
 # composer's dictation asks (`docs/agent-gui.md`, "Voice input"). Without the
 # key macOS does not ask at all: it ends the process that touched the
-# microphone. Electron's own bundle and VS Code's staging step may or may not
-# carry one, and theirs would speak for another product, so it is DevHub's
-# sentence, set in the same pass as the name — the source run's bundle needs
-# it as much as the nightly does.
+# microphone.
 MICROPHONE_USAGE = (
 	"DevHub listens only while you dictate into an Agent's message box, and "
 	"transcribes what you say on this Mac. Nothing you say is sent anywhere."
 )
 
 
-def document_types(staged: list[dict]) -> list[dict]:
-	"""The file types DevHub offers to open, from the ones VS Code already declared.
+# The file types DevHub offers to open from Finder (`shell/openFromFinder.ts`,
+# which opens them as `devhub <path>` does: in the Workspace that contains
+# them, in its Neovim). Text and source formats, by extension. `Alternate`:
+# DevHub appears in "Open With" and never becomes the default by being
+# installed. Every type wears DevHub's icon.
+DOCUMENT_EXTENSIONS: dict[str, tuple[str, ...]] = {
+	"Plain text": ("txt", "text", "log", "csv", "tsv"),
+	"Markdown": ("md", "markdown", "mdx"),
+	"Configuration": ("json", "jsonc", "toml", "yaml", "yml", "ini", "cfg", "conf", "env", "xml", "plist"),
+	"Shell script": ("sh", "bash", "zsh", "fish"),
+	"Source code": (
+		"c", "h", "cc", "cpp", "hpp", "m", "mm", "swift", "rs", "go", "java", "kt", "scala",
+		"py", "rb", "php", "pl", "lua", "js", "mjs", "cjs", "jsx", "ts", "tsx", "css", "scss",
+		"less", "html", "htm", "vue", "svelte", "sql", "r", "dart", "ex", "exs", "erl", "hs",
+		"ml", "clj", "zig", "nim", "vim", "el", "tex", "proto", "graphql", "dockerfile",
+	),
+}
 
-	Every text and source format VS Code handles is listed in
-	`vscode/build/lib/electron.ts` (`darwinBundleDocumentTypes`), and VS Code's
-	own Electron staging step — the `npm run electron` that produces
-	`.build/electron/Code - OSS.app`, the bundle this whole module is a rename
-	of — has already turned that list into `CFBundleDocumentTypes`. So the list
-	is *read from the input bundle* rather than parsed out of the TypeScript.
 
-	That is the version that stays right across a VS Code bump for the least
-	code: the staged bundle is restaged by every bump, so the extensions here
-	are always the ones the pinned VS Code claims, and there is no second parser
-	to keep in step with a build file DevHub does not own. Parsing
-	`electron.ts` would mean running a TypeScript module at package time to
-	recover a list that is already sitting in a plist beside it.
-
-	Two things are DevHub's rather than VS Code's:
-
-	  * **The rank.** Upstream declares no `LSHandlerRank`, which asks Launch
-	    Services to treat the app as a normal candidate for `.md`. DevHub is a
-	    tool somebody installs beside their editors, not a replacement for the
-	    handler they already chose, so every type is `Alternate`: DevHub appears
-	    in "Open With" and never becomes the default by being installed.
-	  * **The icon.** Upstream points each type at its own language icon
-	    (`markdown.icns`, `python.icns`) — artwork drawn for another product.
-	    Every type gets DevHub's icon instead, for the same reason the Dock tile
-	    does: a document that says it belongs to DevHub should look like DevHub.
-
-	The role is left as upstream set it, `Editor`, which is what DevHub does
-	with a file it is given.
-
-	An empty list is fatal. It means the staging step stopped emitting the types
-	— a bump worth reading, not a packaged app that quietly stopped appearing in
-	"Open With" with nothing to say why.
-	"""
-	if not staged:
-		raise ValueError(
-			f"{BASE_APP.name} declares no CFBundleDocumentTypes;"
-			" VS Code's electron staging step no longer emits them"
-		)
-
+def document_types() -> list[dict]:
+	"""`CFBundleDocumentTypes` for `DOCUMENT_EXTENSIONS`; no extension twice."""
 	seen: dict[str, str] = {}
 	types: list[dict] = []
-	for entry in staged:
-		name = entry["CFBundleTypeName"]
-		for extension in entry.get("CFBundleTypeExtensions", []):
+	for name, extensions in DOCUMENT_EXTENSIONS.items():
+		for extension in extensions:
 			if extension in seen:
-				# Launch Services takes the first declaration of an extension and
-				# ignores the rest, so a duplicate is a type whose entry silently
-				# does nothing. Upstream has none; a bump that introduces one has
-				# to be read.
-				raise ValueError(
-					f"'{extension}' is declared by both '{seen[extension]}' and '{name}'"
-				)
+				raise ValueError(f"'{extension}' is declared by both '{seen[extension]}' and '{name}'")
 			seen[extension] = name
 		types.append(
 			{
-				**entry,
+				"CFBundleTypeName": name,
+				"CFBundleTypeRole": "Editor",
+				"CFBundleTypeExtensions": list(extensions),
 				"LSHandlerRank": "Alternate",
 				"CFBundleTypeIconFile": ICON_FILE.name,
 			}
@@ -223,15 +195,12 @@ def rebrand(app: Path, main_plist_extra: dict[str, str] | None = None) -> None:
 
 	# The file types are DevHub's answer to "Open With", and they are the same
 	# answer for the source run's bundle and the nightly's — so they are here,
-	# with the name and the icon, rather than in either caller. See
-	# `document_types` for where the list comes from.
+	# with the name and the icon, rather than in either caller.
 	main_plist = contents / "Info.plist"
 	patch_plist(
 		main_plist,
 		{
-			"CFBundleDocumentTypes": document_types(
-				read_plist(main_plist).get("CFBundleDocumentTypes", [])
-			),
+			"CFBundleDocumentTypes": document_types(),
 			"CFBundleExecutable": APP_NAME,
 			"CFBundleName": APP_NAME,
 			"CFBundleDisplayName": APP_NAME,
@@ -368,10 +337,10 @@ def install_dev_launcher(app: Path) -> None:
 	patch_plist(app / "Contents" / "Info.plist", {"CFBundleExecutable": DEV_LAUNCHER_NAME})
 
 
-def _stamp_state() -> str:
+def _stamp_state(base: Path) -> str:
 	"""What the branded clone was made from: the Electron, DevHub's version, the names, the icon, the checkout, and this file.
 
-	All of them belong in the stamp. The Electron is restaged by a VS Code bump,
+	All of them belong in the stamp. The Electron moves with its pinned version,
 	DevHub's version is now written into the plist and so a bumped version with
 	a kept clone is a bundle claiming the version before it, the names change
 	whenever `product-overrides.json` does, the icon changes
@@ -393,8 +362,8 @@ def _stamp_state() -> str:
 	APFS copy-on-write and costs almost no disk or time, while a stamp that
 	misses a real change costs an afternoon of not believing your own build.
 	"""
-	electron_version = (BASE_APP.parent / "version").read_text().strip()
-	overrides = PRODUCT_OVERRIDES_FILE.read_bytes()
+	electron_version = (base.parent / "version").read_text().strip()
+	overrides = PRODUCT_FILE.read_bytes()
 	icon = ICON_FILE.read_bytes()
 	checkout = str(REPO_ROOT).encode()
 	recipe = Path(__file__).read_bytes()
@@ -409,7 +378,7 @@ def _stamp_state() -> str:
 
 
 def clone_and_rebrand(destination: Path) -> Path:
-	"""Produce `<destination>/<name>.app` from VS Code's Electron bundle.
+	"""Produce `<destination>/<name>.app` from npm's Electron bundle.
 
 	Idempotent: a clone already made from this Electron and these names is left
 	alone. Anything else is rebuilt from scratch, because a half-renamed bundle
@@ -417,7 +386,8 @@ def clone_and_rebrand(destination: Path) -> Path:
 	"""
 	app = destination / f"{APP_NAME}.app"
 	stamp = destination / ".brand.stamp"
-	state = _stamp_state()
+	base = base_app()
+	state = _stamp_state(base)
 	if app.is_dir() and stamp.is_file() and stamp.read_text() == state:
 		print(f"{app.name} already branded from this Electron and these names")
 		return app
@@ -430,15 +400,15 @@ def clone_and_rebrand(destination: Path) -> Path:
 	# to, so 295 MB of Electron costs the few files the rename rewrites. `-R`
 	# alone is the fallback for a volume without clone support.
 	try:
-		subprocess.run(["cp", "-Rc", str(BASE_APP), str(app)], check=True)
+		subprocess.run(["cp", "-Rc", str(base), str(app)], check=True)
 	except subprocess.CalledProcessError:
-		subprocess.run(["cp", "-R", str(BASE_APP), str(app)], check=True)
+		subprocess.run(["cp", "-R", str(base), str(app)], check=True)
 
 	rebrand(app)
 	install_dev_launcher(app)
 	sign(app)
 	stamp.write_text(state)
-	print(f"branded {app.name} from {BASE_APP.name}")
+	print(f"branded {app.name} from {base.name}")
 	return app
 
 
@@ -449,13 +419,6 @@ def main(argv: list[str]) -> int:
 	if len(argv) != 1:
 		print(f"usage: {Path(__file__).name} <destination-directory>", file=sys.stderr)
 		return 2
-	if not BASE_APP.is_dir():
-		print(
-			f"error: no Electron at {BASE_APP.relative_to(REPO_ROOT)}"
-			" — run scripts/provision-vscode.sh",
-			file=sys.stderr,
-		)
-		return 1
 	clone_and_rebrand(Path(argv[0]))
 	return 0
 

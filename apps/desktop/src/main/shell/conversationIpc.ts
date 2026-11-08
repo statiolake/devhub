@@ -30,7 +30,7 @@ import type {
 	SettingName,
 } from "../agent/conversation/protocolAdapter.js";
 import type { AgentDrafts } from "../agent/conversation/drafts.js";
-import type { FileSelection } from "../cli/openFiles.js";
+import type { FileSelection } from "../cli/fileSelection.js";
 import { fileSelection } from "../agent/conversation/pathLinks.js";
 import type { GuiConversations } from "./agentWiring.js";
 import type { PastSessionWire } from "../../ipc/contract.js";

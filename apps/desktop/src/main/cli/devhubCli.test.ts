@@ -205,17 +205,19 @@ describe("what the devhub command was asked to do", () => {
 		expect(parseArguments(["--help"])).toEqual({ kind: "usage" });
 		expect(parseArguments(["-h"])).toEqual({ kind: "usage" });
 		expect(USAGE).toContain("devhub --agent");
-		expect(USAGE).toContain("--install-extension");
-		expect(USAGE).toContain("--list-extensions");
+		// VS Code's extension options went with VS Code.
+		expect(USAGE).not.toContain("--install-extension");
+		expect(USAGE).not.toContain("--list-extensions");
 		expect(USAGE).toContain("--goto");
 	});
 
 	it("says what is wrong rather than printing the whole usage at nothing", () => {
 		// `devhub` alone is a request, not a mistake — see the activate test.
 		// Arguments that add up to no request still are one.
-		expect(parseArguments(["--force"])).toEqual({
+		expect(parseArguments(["--wait"])).toEqual({
 			kind: "invalid",
-			message: "devhub was not asked to do anything.",
+			message:
+				"--wait waits for a file to be closed, so it needs a file to open.",
 		});
 		expect(parseArguments(["--agent"])).toEqual({
 			kind: "invalid",
@@ -293,50 +295,17 @@ describe("what the devhub command was asked to do", () => {
 		expect(parseArguments(["--goto", "a.ts:"]).kind).toBe("invalid");
 	});
 
-	it("collects extensions to install, in any order, with --force", () => {
-		expect(
-			parseArguments([
-				"--install-extension",
-				"a.b",
-				"--force",
-				"--install-extension",
-				"./c.vsix",
-			]),
-		).toEqual({
-			kind: "install-extensions",
-			targets: ["a.b", "./c.vsix"],
-			force: true,
-		});
-		// `--option=value` means the same thing, as it does for `code`.
-		expect(parseArguments(["--install-extension=a.b"])).toEqual({
-			kind: "install-extensions",
-			targets: ["a.b"],
-			force: false,
-		});
-		expect(parseArguments(["--install-extension"]).kind).toBe("invalid");
-	});
-
-	it("collects extensions to uninstall, and lists them", () => {
-		expect(
-			parseArguments([
-				"--uninstall-extension",
-				"a.b",
-				"--uninstall-extension",
-				"c.d",
-			]),
-		).toEqual({
-			kind: "uninstall-extensions",
-			ids: ["a.b", "c.d"],
-			force: false,
-		});
-		expect(parseArguments(["--list-extensions"])).toEqual({
-			kind: "list-extensions",
-			showVersions: false,
-		});
-		expect(parseArguments(["--list-extensions", "--show-versions"])).toEqual({
-			kind: "list-extensions",
-			showVersions: true,
-		});
+	it("refuses the extension options VS Code answered", () => {
+		for (const option of [
+			"--install-extension",
+			"--uninstall-extension",
+			"--list-extensions",
+		]) {
+			expect(parseArguments([option, "a.b"])).toEqual({
+				kind: "invalid",
+				message: `devhub does not know the option '${option}'.`,
+			});
+		}
 	});
 
 	it("prints its versions", () => {
@@ -359,9 +328,7 @@ describe("what the devhub command was asked to do", () => {
 	});
 
 	it("does one thing at a time", () => {
-		expect(
-			parseArguments(["--list-extensions", "--install-extension", "a.b"]),
-		).toEqual({
+		expect(parseArguments(["--metrics", "/work"])).toEqual({
 			kind: "invalid",
 			message: "devhub does one of these things at a time.",
 		});
@@ -401,31 +368,7 @@ describe("what the devhub command was asked to do", () => {
 		});
 	});
 
-	/**
-	 * A `.vsix` may be a relative path and an id may not, and only VS Code's own
-	 * rule knows which a target is. So the targets go over as they were typed,
-	 * with the directory they were typed in, and the app decides.
-	 */
-	it("sends extension targets untouched, with the directory to resolve them against", () => {
-		expect(
-			requestFor(
-				parseArguments(["--install-extension", "a.b", "--force"]),
-				"/work/a",
-				"/home/d",
-			),
-		).toEqual({
-			kind: "install-extensions",
-			targets: ["a.b"],
-			force: true,
-			cwd: "/work/a",
-		});
-		expect(
-			requestFor(
-				parseArguments(["--uninstall-extension", "a.b"]),
-				"/work/a",
-				"/home/d",
-			),
-		).toEqual({ kind: "uninstall-extensions", ids: ["a.b"], force: false });
+	it("sends a version request with nothing else", () => {
 		expect(
 			requestFor(parseArguments(["--version"]), "/work/a", "/home/d"),
 		).toEqual({ kind: "version" });

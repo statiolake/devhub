@@ -90,12 +90,6 @@ export interface SettingsGeneralWire {
 	readonly noticeSeconds: number;
 	/** `general.terminal_idle_seconds`. */
 	readonly terminalIdleSeconds: number;
-	/** `general.workbench_discard_minutes`. */
-	readonly workbenchDiscardMinutes: number;
-	/** `general.workbench_freeze`. */
-	readonly workbenchFreeze: boolean;
-	/** `general.editor`: `"vscode"` or `"neovim"`. */
-	readonly editor: string;
 }
 
 export interface SettingsRuntimeConfigWire {
@@ -393,7 +387,6 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_appearance"
 	| "invalid_theme"
 	| "invalid_mac_option_is_meta"
-	| "invalid_editor"
 	| "invalid_keybinding"
 	| "unknown_command"
 	| "invalid_font_family"

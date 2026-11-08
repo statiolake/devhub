@@ -2,6 +2,11 @@
 
 DevHub is one window with several web contents in it. This is what owns what.
 
+(What is said below about *workbenches* — VS Code windows laid into DevHub's
+window as views — describes code that no longer has a VS Code to drive it:
+see `docs/without-vscode.md`, "What is left to delete". Nothing creates a
+workbench view any more.)
+
 It is written as the answer to five questions that used to have more than one
 answer each: where anything is drawn, what each page may ask for, where a
 failure goes, where the keyboard is, and what happens when something goes
@@ -397,15 +402,6 @@ draws are all derived from it (`model/themes/theme.ts`); see
 [themes.md](themes.md) for the themes, the settings and the derivation. A
 name no theme has is said once (`color_theme_unavailable`) and DevHub's own
 theme for that half is worn instead.
-
-A VS Code workbench is told nothing: with `editor = "vscode"` it wears the
-theme its own `settings.json` names, as any VS Code does. (DevHub used to read
-VS Code themes from the installed extensions and Open VSX, tell every
-workbench to wear the same one through its memory configuration, and hand a
-starting workbench the theme on its window configuration. All of that is
-gone.) The shell's pages are served with the palette in their `<head>`
-(`shellPageProtocol.ts`), and the window and the Settings window are created
-with its ground as their background, so the first frame is already in it.
 
 ### Theme: Preview…
 

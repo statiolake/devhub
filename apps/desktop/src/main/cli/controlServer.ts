@@ -20,14 +20,8 @@ import {
 	type ControlOpenRequest,
 	type ControlRequest,
 	type ControlResponse,
-	type DevContainerConfigsAnswer,
-	type ReattachTargetWire,
-	type RebuildWire,
-	type RemoteEndpointAnswer,
 	type TerminalProfileAnswer,
-	type WindowFolderWire,
 } from "./protocol.js";
-import type { PortsConfiguration } from "../runtime/portForward.js";
 import type { TellCommand } from "./tell/command.js";
 
 /** Longer than any request DevHub sends; short enough that nothing accumulates. */
@@ -53,13 +47,6 @@ export interface ControlHandlers {
 		args: readonly string[],
 		cwd: string,
 	): Promise<string>;
-	installExtensions(
-		targets: readonly string[],
-		force: boolean,
-		cwd: string,
-	): Promise<string>;
-	uninstallExtensions(ids: readonly string[], force: boolean): Promise<string>;
-	listExtensions(showVersions: boolean): Promise<string>;
 	version(): Promise<string>;
 	/** One reading of the app's own cost, as JSON. */
 	metrics(): Promise<string>;
@@ -77,64 +64,12 @@ export interface ControlHandlers {
 	 * `machine` is the `RuntimeId` of the computer that `root` is a path on, so
 	 * that a path is matched against the Workspaces that are actually on it.
 	 */
-	/**
-	 * A port on this Mac reaching `host:port` on `machine`, open until
-	 * `close` — which the server calls when the asking connection goes away.
-	 */
-	forwardPort(
-		machine: string,
-		host: string,
-		port: number,
-		localPort: number | undefined,
-		requireLocalPort: boolean,
-	): Promise<{ readonly localPort: number; close(): void }>;
-	/** What `machine`'s dev container definition says about ports. */
-	devContainerPorts(machine: string): Promise<PortsConfiguration>;
 	terminalProfile(
 		machine: string,
 		root: string | null,
 		workspace: string | undefined,
 	): Promise<TerminalProfileAnswer>;
-	/**
-	 * Where a workbench on `machine` connects, and with what token.
-	 *
-	 * It answers rather than throws, and that is the one thing about this
-	 * handler that is not like the others. Every other request here fails into
-	 * one shape — a sentence — because there is one thing to do with a failed
-	 * `devhub open`. A failed resolve has *two*, and VS Code picks between them
-	 * from the error class the extension throws: a `TemporarilyNotAvailable` is
-	 * retried by both of its loops, a `NotAvailable` makes it give up at once.
-	 * Whether asking again could help is known where the failure happened and
-	 * nowhere else — a host that is asleep against a host that is not a machine
-	 * DevHub supports — so it travels with the failure instead of being guessed
-	 * at from its wording downstream.
-	 */
-	resolveRemote(machine: string, attempt: number): Promise<RemoteResolution>;
-	/** Which definitions a window's Workspace has; see `DevContainerConfigsAnswer`. */
-	devContainerConfigs(
-		window: WindowFolderWire,
-	): Promise<DevContainerConfigsAnswer>;
-	/**
-	 * Where the build log is of the container the window's Workspace's
-	 * folder makes from the definition `configPath`.
-	 */
-	devContainerBuildLog(
-		window: WindowFolderWire,
-		configPath: string,
-	): Promise<string>;
-	/** Move a window's editor; resolves once the new workbench is open. */
-	reattachEditor(
-		window: WindowFolderWire,
-		to: ReattachTargetWire,
-		rebuild?: RebuildWire,
-	): Promise<void>;
 }
-
-/** What `resolveRemote` answers: an endpoint, or a refusal that says whether
- * it is worth asking again. */
-export type RemoteResolution =
-	| { readonly ok: true; readonly remote: RemoteEndpointAnswer }
-	| { readonly ok: false; readonly message: string; readonly retry: boolean };
 
 export interface ControlServer {
 	readonly socketPath: string;
@@ -226,25 +161,7 @@ function serve(socket: Socket, handlers: ControlHandlers): void {
 		if (newline < 0) return;
 		const line = buffer.slice(0, newline);
 		buffer = "";
-		let release: (() => void) | undefined;
-		void answerControlRequest(line, handlers, (close) => {
-			release = close;
-		}).then((response) => {
-			if (release === undefined || !response.ok) {
-				answer(response);
-				return;
-			}
-			// Held: the answer is written and the connection kept, and the
-			// forward ends when the connection does.
-			const close = release;
-			answered = true;
-			if (socket.destroyed) {
-				close();
-				return;
-			}
-			socket.once("close", close);
-			socket.write(`${JSON.stringify(response)}\n`);
-		});
+		void answerControlRequest(line, handlers).then(answer);
 	});
 	socket.on("error", (error) => {
 		// A client that vanished is not DevHub's failure to report; anything
@@ -268,7 +185,6 @@ function serve(socket: Socket, handlers: ControlHandlers): void {
 export async function answerControlRequest(
 	line: string,
 	handlers: ControlHandlers,
-	hold?: (close: () => void) => void,
 ): Promise<ControlResponse> {
 	let request: ControlRequest;
 	try {
@@ -303,28 +219,6 @@ export async function answerControlRequest(
 						request.cwd,
 					),
 				};
-			case "install-extensions":
-				return {
-					ok: true,
-					message: await handlers.installExtensions(
-						request.targets,
-						request.force,
-						request.cwd,
-					),
-				};
-			case "uninstall-extensions":
-				return {
-					ok: true,
-					message: await handlers.uninstallExtensions(
-						request.ids,
-						request.force,
-					),
-				};
-			case "list-extensions":
-				return {
-					ok: true,
-					message: await handlers.listExtensions(request.showVersions),
-				};
 			case "version":
 				return { ok: true, message: await handlers.version() };
 			case "metrics":
@@ -337,97 +231,6 @@ export async function answerControlRequest(
 					request.as,
 				);
 				return { ok: true, message: answer.message, data: answer.data };
-			}
-			case "resolve-remote": {
-				// Caught here rather than by the `catch` below, because that one
-				// produces a failure with no `retry` on it — which the resolver
-				// reads as "permanent" and VS Code acts on by giving up. A
-				// failure DevHub did not anticipate is the one case where it has
-				// no opinion, and the safer of the two answers is the one that
-				// lets the workbench try again: a resolve that keeps failing
-				// stops on VS Code's own attempt limit, where a resolve that
-				// wrongly gave up needs the window reopening by hand.
-				let resolution: RemoteResolution;
-				try {
-					resolution = await handlers.resolveRemote(
-						request.machine,
-						request.attempt,
-					);
-				} catch (error) {
-					return { ok: false, message: failureText(error), retry: true };
-				}
-				return resolution.ok
-					? {
-							ok: true,
-							// The sentence is for a log and for whoever sends this
-							// by hand; the endpoint is the answer.
-							message: `127.0.0.1:${String(resolution.remote.port)}`,
-							remote: resolution.remote,
-						}
-					: {
-							ok: false,
-							message: resolution.message,
-							retry: resolution.retry,
-						};
-			}
-			case "dev-container-configs": {
-				const devContainers = await handlers.devContainerConfigs(
-					request.window,
-				);
-				return {
-					ok: true,
-					message: devContainers.configs
-						.map((config) => config.path)
-						.join("\n"),
-					devContainers,
-				};
-			}
-			case "dev-container-build-log": {
-				const buildLog = await handlers.devContainerBuildLog(
-					request.window,
-					request.configPath,
-				);
-				return { ok: true, message: buildLog, buildLog };
-			}
-			case "reattach-editor":
-				await handlers.reattachEditor(
-					request.window,
-					request.to,
-					request.rebuild,
-				);
-				return { ok: true, message: "reattached" };
-			case "forward-port": {
-				// Only over a connection that can be held: a forward nobody
-				// could close would outlive the window that asked for it.
-				if (hold === undefined) {
-					return {
-						ok: false,
-						message: "a port forward needs a connection that stays open",
-					};
-				}
-				const forward = await handlers.forwardPort(
-					request.machine,
-					request.host,
-					request.port,
-					request.localPort,
-					request.requireLocalPort === true,
-				);
-				hold(() => forward.close());
-				return {
-					ok: true,
-					message: `127.0.0.1:${String(forward.localPort)}`,
-					forward: { localPort: forward.localPort },
-				};
-			}
-			case "dev-container-ports": {
-				const ports = await handlers.devContainerPorts(request.machine);
-				return {
-					ok: true,
-					message: ports.forwardPorts
-						.map((entry) => `${entry.host}:${String(entry.port)}`)
-						.join("\n"),
-					ports,
-				};
 			}
 			case "terminal-profile": {
 				const profile = await handlers.terminalProfile(
@@ -465,23 +268,13 @@ function typedByPerson(request: ControlRequest): boolean {
 		case "activate":
 		case "open":
 		case "add-agent":
-		case "install-extensions":
-		case "uninstall-extensions":
-		case "list-extensions":
 		case "version":
 		case "metrics":
 			return true;
 		case "ping":
 		case "wait-ended":
 		case "tell":
-		case "resolve-remote":
-		case "forward-port":
-		case "dev-container-ports":
 		case "terminal-profile":
-		case "dev-container-configs":
-		case "dev-container-build-log":
 			return false;
-		case "reattach-editor":
-			return true;
 	}
 }

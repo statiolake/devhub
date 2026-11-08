@@ -1982,10 +1982,6 @@ and changes it for this session.
     fixtures written by hand from the vendored protocol types (multi-agent v2
     subagents from the 0.158.0 sources). Expect a
     protocol-mismatch notice where the real CLI differs.
-- **Dev Containers** do not run Agents. A Workspace whose editor is attached
-  to a dev container runs its Agents, TUI and GUI, on its own machine — this
-  Mac, or the SSH host its folder is on — exactly as it would with the editor
-  on that machine. See [Dev Container development](remote-containers.md).
 - **SSH Agents** have not been checked on a real remote host.
 
 ## Usage limits in the Sidebar

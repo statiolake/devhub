@@ -401,7 +401,7 @@ export function buildTaskTree(input: TaskTreeInput): TaskTree {
 				group(`workbench:${workspace.id}`, "workbench", "VS Code", parts, {
 					state: workbench.state,
 					workspaceId: workspace.id,
-					actions: workbench.sleepable ? ["sleep", "reveal"] : ["reveal"],
+					actions: ["reveal"],
 				}),
 			);
 		}

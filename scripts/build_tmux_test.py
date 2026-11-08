@@ -39,7 +39,7 @@ from build_tmux import (
 	tarball_name,
 	top_level_dir,
 )
-from product_metadata import PRODUCT_OVERRIDES
+from product_metadata import PRODUCT as PRODUCT_OVERRIDES
 
 TEMPLATE = PRODUCT_OVERRIDES["tmuxDownloadUrlTemplate"]
 
@@ -267,7 +267,7 @@ class Overrides(unittest.TestCase):
 			Path(__file__).resolve().parent.parent
 			/ "apps"
 			/ "desktop"
-			/ "product-overrides.json"
+			/ "product.json"
 		)
 		self.assertEqual(json.loads(path.read_text())["tmuxDownloadUrlTemplate"], TEMPLATE)
 

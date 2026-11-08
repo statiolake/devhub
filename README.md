@@ -1,9 +1,10 @@
 # DevHub
 
-DevHub is a workspace- and agent-centred development environment for macOS, in
-which a real VS Code editor is one surface among several rather than the centre
-of the product. It ships that editor: VS Code's own desktop workbench, built
-from a pinned submodule, running inside DevHub's window.
+DevHub is a workspace- and agent-centred development environment for macOS,
+built terminal-first: every Workspace is its tmux session, and the editor is
+Neovim, drawn by DevHub over the terminal it runs in. It is an Electron app of
+its own; it used to be built inside a patched VS Code, and that is gone
+([docs/without-vscode.md](docs/without-vscode.md)).
 
 ```text
 DevHub
@@ -28,32 +29,28 @@ and one main surface on the right.
 │           [▥] │                       │              │
 │ Scratch       │                       │              │
 │               │                       │              │
-│ ▼ foo         │       Workbench       │  Agent pane  │
-│    Claude 1 ● │                       │              │
+│ ▼ foo         │  Workspace terminal   │  Agent pane  │
+│    Claude 1 ● │  (+ its Neovims)      │              │
 │    Codex  2 ○ │                       │              │
 │ ▼ bar         │                       │              │
 │    Claude 1 ● │                       │              │
 └───────────────┴───────────────────────┴──────────────┘
 ```
 
-There is no title bar, no activity switcher, no subtitle strip and no status
-bar. A Workspace **is** its workbench, full width and full height; the sidebar
-is what the window is dragged by, and the one control on it collapses the
-sidebar to an icon rail.
+There is no activity switcher, no subtitle strip and no status bar. A
+Workspace **is** its terminal — its `ws-` tmux session — full width and full
+height, with every Neovim in it drawn by DevHub's GUI over its pane; the
+sidebar's one control collapses it to an icon rail.
 
 The left pane selects what you are working on, and that is the whole selection:
 
-- select a Workspace → its workbench
-- select an Agent → that same workbench, with the Agent's pane beside it on a
+- select a Workspace → its terminal
+- select an Agent → that same terminal, with the Agent's pane beside it on a
   divider you can drag; the ratio is remembered
-- there is no separate Terminal: a terminal is the workbench's own integrated
-  terminal, attached to the tmux session DevHub keeps for that context, so it
-  survives quitting the app exactly as it always did
+- a terminal is a tmux session DevHub keeps for that context, so it survives
+  quitting the app
 
 A Workspace with no Agents shows no disclosure and no child tree at all.
-
-The workbench never appears in the left pane, because every Workspace has
-exactly one and the Workspace node is its entry point.
 
 ## Domain
 
@@ -61,10 +58,10 @@ Workspace is the top concept, and it is deliberately none of the things it
 resembles:
 
 ```text
-DevHub Workspace != VS Code window != Git repository
+DevHub Workspace != Git repository
 ```
 
-A Workspace is a folder root — the same granularity as a VS Code window. A
+A Workspace is a folder root. A
 normal clone and each linked worktree are separate Workspaces. Workspaces are
 transient: they are what you have open now, discovered by fuzzy-finding
 configured source directories rather than kept in a registry.
@@ -75,7 +72,7 @@ URL and start working" flow can resolve which checkout to open.
 ### Scratch
 
 Scratch is **today's daily folder**, and it is an ordinary Workspace: git or
-not, with a workbench and Agents like any other. The one thing that is special
+not, with a terminal and Agents like any other. The one thing that is special
 about it is which Workspace it is. The sidebar draws it as its fixed entry 1,
 called "Scratch", with the real folder in its tooltip and its accessible name; `Cmd+Q Shift+J` and
 `Cmd+Q 1` select it.
@@ -91,7 +88,7 @@ called "Scratch", with the real folder in its tooltip and its accessible name; `
   passed through. `~` is this Mac's home. The folder is made when it is first needed.
 - **Midnight.** At local midnight Scratch becomes the new day's folder,
   immediately. Yesterday's stays open as an ordinary row named by its folder
-  (`20260922`), with its Agents and its workbench untouched, and closes like
+  (`20260922`), with its Agents and its terminal untouched, and closes like
   any row. Nothing running is affected. The timer aims at the next local
   midnight and is re-aimed on wake; a launch works Scratch out from the clock
   and the setting, so a state file from yesterday opens with yesterday's row
@@ -114,27 +111,11 @@ called "Scratch", with the real folder in its tooltip and its accessible name; `
 
 ## Subsystems
 
-**Editor** — VS Code's desktop workbench, from the pinned `vscode/` submodule,
-built and shipped with DevHub. Each Workspace's workbench is one VS Code window
-in every sense the workbench itself can observe, laid into DevHub's single
-window as a `WebContentsView`. Extensions, settings, the integrated terminal
-and the extension host are the real ones, on disk, with no "remote" semantics
-anywhere.
-A Workspace's editor area is its workbench. None starts until it is asked
-for: the editor area says "Editor not running — press Enter to start" (with a
-Start button) until Enter or the button starts it, or until DevHub is asked to
-open a file in it, and `Cmd+Q Shift+E` stops it again (closed as VS Code
-closes a window on quit, unsaved editors kept by hot exit). One that is
-running and not on screen is frozen (its processes stopped, so the Mac
-compresses or swaps them out first) unless it is in use, thawed instantly when shown,
-asked for or connected to, and discarded after a long while frozen. Files
-DevHub is asked to open go to the Workspace's workbench. See
-[`docs/terminal-mode.md`](docs/terminal-mode.md) and
-[`docs/window-and-pages.md`](docs/window-and-pages.md), "What it costs".
-With `[general] editor = "neovim"` the editor area is the Workspace's terminal
-instead, and every Neovim in it is DevHub's own GUI drawn over its tmux pane —
-Neovim's UI protocol drawn natively, with GUI windows that live inside Neovim
-windows; no workbench is started. See
+**Editor** — Neovim. A Workspace's editor area is its terminal, and every
+Neovim in it — `nvim` typed in any DevHub terminal, `git commit`'s, and the
+`devhub-nvim` window files DevHub is asked to open go to — is DevHub's own GUI
+drawn over its tmux pane: Neovim's UI protocol drawn natively, with GUI
+windows that live inside Neovim windows. See
 [`docs/neovim-editor.md`](docs/neovim-editor.md).
 
 **Agents** — an Agent is a tmux session, with no runtime in between. It lives
@@ -152,8 +133,7 @@ the input box of one of the Workspace's Agents, shown beside the editor — see
 [Send the editor's selection to an Agent](docs/agent-gui.md#send-the-editors-selection-to-an-agent).
 
 **Terminal** — tmux. One persistent session per Workspace — Scratch is one.
-The workbench's own integrated terminal is attached to that same session, so
-quitting DevHub does not end it. Each tmux server also has an anchor session
+It is what the Workspace shows, so quitting DevHub does not end it. Each tmux server also has an anchor session
 named `scratch`, which the bootstrap creates with the server so it carries
 DevHub's marker from its first instant; it is not Scratch, nothing accounts
 for it, and the startup sweep reaps it like any other session nothing accounts
@@ -161,45 +141,12 @@ for (which is also what happens to the old folderless Scratch's terminal).
 
 ## Architecture
 
-VS Code is **consumed, never edited**. The whole of the integration is three
-kinds of thing, and each has a rule:
-
-- **Two entry points, copied.** `apps/desktop/src/main/main.ts` and
-  `codeMain.ts` are adapted copies of upstream's `src/main.ts` and
-  `src/vs/code/electron-main/main.ts`. Each carries a header listing every
-  substitution it makes, so a VS Code bump is "re-apply exactly this list"
-  rather than a diff nobody can read.
-- **Composition, everywhere else.** DevHub subclasses and registers VS Code's
-  own main-process services (`src/main/services/`), replaces the `BrowserWindow`
-  constructor VS Code reaches for, and fences the process-wide `electron.app`
-  calls a workbench is not entitled to make
-  ([`shell/appFence.ts`](apps/desktop/src/main/shell/appFence.ts)).
-- **Patches, only for what none of that can reach.**
-  [`patches/vscode/`](patches/vscode) is the exception, and every patch states
-  its own reason in its body. Each one is a hook upstream offers no other way
-  to reach, and the set is kept as small as that allows. A patch changes only
-  files upstream has; whole files DevHub adds to the tree (the Vim engine, the
-  status bar hover) live as plain files under
-  [`patches/vscode-overlay/`](patches/vscode-overlay), at the path they take in
-  `vscode/`. `scripts/apply-vscode-patches.sh` puts both on the submodule
-  (resetting vscode/ first, and doing nothing when the tree is already current); after editing either in `vscode/`,
-  `scripts/vscode-submodule.sh export` writes the change back to the half it
-  belongs to.
-
-DevHub's own integration ships as a built-in extension,
-[`extensions/devhub-bridge`](extensions/devhub-bridge), so that its workbench
-defaults are in effect and cannot be uninstalled. It is those defaults, in its
-manifest, and nothing else: the websocket protocol it once spoke to a web-era
-editor server is gone, and the command that installs `devhub` is DevHub's own
-(below).
-
-GitHub Copilot is built in too, but only completions and Next Edit Suggestions.
-Chat stays off. [`extensions/devhub-copilot`](extensions/devhub-copilot) runs
-the Copilot language server and hands its suggestions to the editor's own
-inline suggestion UI, so NES looks the way it does with the official extension.
-It is off in every window until turned on there (**Copilot: Enable in This
-Window** or its status item), and off means no language server at all; nothing
-remembers it across a reload. Its README explains what that takes.
+One Electron app (`apps/desktop`), on npm's Electron at the version
+`apps/desktop/package.json` pins. Main is `src/main/main.ts`; the pages are
+React, built by Vite; the work that would hold main up runs in utility
+processes (the process host, the pty host with node-pty, the Neovim host, the
+conversation engine) — see [docs/process-model.md](docs/process-model.md) and
+[docs/window-and-pages.md](docs/window-and-pages.md).
 
 ## Lifecycle
 
@@ -208,11 +155,9 @@ Quit stops DevHub but still leaves agents and tmux alive. Closing an Agent
 destroys its session; an Agent that exits on its own disappears from the tree
 immediately.
 
-`Command+Q` is the only key DevHub takes from the workbench, as a prefix:
-press it twice to quit. Everything else is forwarded to VS Code.
+`Command+Q` is DevHub's chord prefix: press it twice to quit.
 
-Main's console — every `[devhub] …` line, including each workbench lifecycle
-transition and why a hidden one stays up or a discard was called off — is also appended to
+Main's console — every `[devhub] …` line — is also appended to
 `<userData>/logs/devhub-main.log` (timestamped; past 5 MB it becomes
 `devhub-main.log.1`, one kept). `DevHub: Open Log` in the command palette
 (`Cmd+Q :`) opens it in the app macOS uses for `.log` files (Console).
@@ -241,18 +186,12 @@ devhub -                             # open what is piped in, the way 'code -' d
 devhub -w|--wait <file>              # ...and wait for its editor to close
 devhub -g|--goto <file:line[:col]>   # ...with the cursor there
 devhub --agent <profile> [-- <args>] # start an Agent in this directory's Workspace
-devhub --install-extension <id|vsix> [--force]
-devhub --uninstall-extension <id> [--force]
-devhub --list-extensions [--show-versions]
-devhub --version                     # DevHub, VS Code, and the commit
+devhub --version                     # DevHub, and the commit
 ```
 
 Which Workspace a path lands in is decided by the path, never by which window
 was focused last: the open Workspace whose root is its nearest ancestor, and
-today's Scratch when no open Workspace contains it (see [Scratch](#scratch)). The extension options
-are VS Code's own `ExtensionManagementCLI`, run against the running app's
-extension management service, so the gallery (Open VSX), the allow-list and the
-built-in protections are the ones the app itself uses. An option `devhub` does
+today's Scratch when no open Workspace contains it (see [Scratch](#scratch)). An option `devhub` does
 not know is refused with a sentence — it is never quietly treated as a path.
 
 ### `devhub --tell`: DevHub's own operations, by name
@@ -370,9 +309,8 @@ row by its own rule, as when a person closes it.
 `--focus`, as on `terminal open`) changes the selected Workspace or Agent,
 what is shown, where the keyboard is, or brings DevHub to the front: what
 `workspace open`, `agent new`, `issue assign` or `agent resume` make appears in
-the Sidebar unselected, its workbench not started
-(`open_folder` / `create_agent` with `focus: "none"`) — no `--tell` command
-starts or stops a workbench. `run` runs
+the Sidebar unselected
+(`open_folder` / `create_agent` with `focus: "none"`). `run` runs
 only the palette commands that move nothing (`refresh_repositories`,
 `mark_agent_unread`). A person is doing something else.
 
@@ -520,18 +458,6 @@ terminal_idle_seconds = 5   # a Workspace row wears the Agents' working mark whi
                             # nothing for this long while you are elsewhere — until
                             # you look at that pane. 0: only exiting counts. No ✓.
                             # Settings > General. See src/main/terminal/paneActivity.ts.
-workbench_discard_minutes = 60  # a Workspace's editor that is not on screen is
-                            # frozen at once (SIGSTOP) unless it is debugging,
-                            # running a task or a terminal command, or talking
-                            # over the network; this long frozen, it is closed
-                            # (renderer, extension host, language servers) and
-                            # reopens where it was, unsaved editors included (hot
-                            # exit), on Enter. Agents and tmux stay. Never SSH or
-                            # dev container editors. 0: never closed.
-editor = "vscode"           # the editor area: "vscode" (each Workspace's own VS
-                            # Code) or "neovim" (DevHub's GUI for a headless Neovim
-                            # on the Workspace's machine). Applies at once.
-                            # Settings > General. See docs/neovim-editor.md.
 
 [appearance]
 theme = "light:DevHub Light,dark:DevHub Dark"
@@ -540,8 +466,8 @@ theme = "light:DevHub Light,dark:DevHub Dark"
                             # both appearances, or light:<name>,dark:<name>
                             # (`mode` picks; auto is the OS's). 267 built-in
                             # themes (iTerm2-Color-Schemes, as Ghostty ships
-                            # them) or your own [themes.<name>] below. A VS Code
-                            # editor keeps its own theme. "Theme: Preview…" wears
+                            # them) or your own [themes.<name>] below.
+                            # "Theme: Preview…" wears
                             # one for the session only. docs/themes.md.
 
 [themes."My Theme"]         # a theme of your own: background, foreground and a
@@ -557,8 +483,7 @@ mac_option_is_meta = false  # macOS Option in DevHub's terminals: false types th
                             # Alt mappings (Neovim <A-e>, readline, tmux M-); "left"
                             # only the left Option, the right one still composes.
                             # JIS: for \ via Option+¥ use "left" (right Option) or
-                            # false. Not VS Code's
-                            # terminal (terminal.integrated.macOptionIsMeta).
+                            # false.
                             # Settings > Terminal. See docs/terminal-mode.md.
 
 [scratch]
@@ -667,32 +592,7 @@ enabled = true                      # false hides a built-in without deleting it
 order = 0                           # its place among the trigger's actions
 ```
 
-The workbench's own settings are VS Code's, on disk under the app's user-data
-directory. Runtime state lives separately under Application Support.
-
-### `init.ts`: your own commands
-
-`init.ts` beside `settings.toml` (`~/.config/devhub/init.ts`; a profile's own
-config directory, `~/.config/devhub-dev/init.ts`, for another profile) is a
-TypeScript file that defines commands, and only commands:
-
-```ts
-import * as vscode from "vscode";
-import { defineCommand } from "devhub";
-
-defineCommand(
-  "user.copyFileName",
-  async () => {
-    const doc = vscode.window.activeTextEditor?.document;
-    if (doc) await vscode.env.clipboard.writeText(doc.fileName);
-  },
-  { title: "Copy File Name" },
-);
-```
-
-Keys stay in `keybindings.json`, `:` commands in `devhub.vim.exCommands`, both
-naming the `user.*` id. It runs in the local extension host at startup and
-again when it is saved, without a reload. See [docs/init.md](docs/init.md).
+Runtime state lives under Application Support (`<userData>/devhub/state.json`).
 
 ## Not now
 
@@ -703,17 +603,18 @@ third development; the seams exist, the features do not.
 ## Development
 
 pnpm at the version `packageManager` in `package.json` pins (`corepack
-enable` picks it up). The Node the VS Code build requires is fetched into a
-gitignored toolchain directory by provisioning; the machine default is not
-used for it.
+enable` picks it up), and Node from `.nvmrc`.
 
 ```sh
 CI=true pnpm install --frozen-lockfile
-pnpm run provision   # submodule, toolchain, patches, compile + bundle, Electron
 pnpm dev             # build apps/desktop and run it
-pnpm run check       # extension checks, format, lint, types, tests
+pnpm run check       # format, lint, types, tests
 pnpm test:local      # all of CI, locally (Linux too): see CONTRIBUTING.md
 ```
+
+That is the whole set-up: there is nothing to provision. npm's Electron is
+downloaded the first time anything asks `apps/desktop/scripts/electron-path.sh`
+for it, and node-pty ships prebuilt binaries.
 
 Type checking and the main-process build use `tsgo` (`@typescript/native-preview`,
 TypeScript's Go port), pinned to an exact preview version: it is several times
@@ -721,71 +622,14 @@ faster and emits the same output as `tsc` 5.9. `typescript` stays installed for
 eslint, vitest and the editor. If `tsgo` misbehaves, `pnpm --filter
 @devhub/desktop run typecheck:tsc` runs the same check with `tsc`.
 
-`pnpm build` skips what has not changed and says so, one line per step
-(`reused …` / `rebuilt … (why)`): `compile-extensions-build` is stamped in
-`vscode/.build/extensions.devhub-stamp` over the VS Code commit, the patches,
-`vscode/extensions` sources, `builtInExtensions` and the Node version;
-`node_modules.asar` is cached in `dist/.cache/asar/<key>/` over the production
-closure's package files, the packer script and the Node version (delete either
-to force a rebuild). The zip uses `zip -1` (`--zip-level 0-9|ditto`, or
-`DEVHUB_ZIP_LEVEL`): about 2.5x faster than `ditto` for roughly 10% more bytes.
-CI starts clean, so these only ever miss there.
-
-Provisioning is idempotent and stamped over the submodule commit _and_ the
-patches, so a bump or a patch edit recompiles and nothing else does. `--force`
-redoes every step. The two VS Code trees are stamped separately and built only
-for whoever needs them: `--for dev` compiles `vscode/out` (`npm run compile`,
-what `pnpm dev` runs on), `--for app` bundles `vscode/out-vscode-min` (what the
-packaged app ships), `--for all` (the default, `pnpm run provision`) does both.
-`pnpm build` asks for `app` only; `pnpm dev` warns when `vscode/out` is behind
-the patches and names `scripts/provision-vscode.sh --for dev`.
-
-`vscode/` is not edited by hand and never needs resetting by hand. Every
-provision (and so every `pnpm build`) resets it to the pinned commit plus the
-current `patches/vscode/` and `patches/vscode-overlay/`, from whatever the
-previous build, a `git pull` of new patches or a submodule bump left there: a
-tree that already is that is left untouched (nothing rewritten, so no
-recompile), anything else (an earlier apply, a file a build copied in) is taken
-off and redone without asking, and ignored build output (`node_modules`,
-`out*`, `.build`) is never touched. Every reset keeps the tree it replaced as a
-commit in `vscode/` (`git -C vscode log -g refs/devhub/vscode-before-reset`),
-so it can be looked at or restored. If you do edit `vscode/` to try a change,
-run `scripts/vscode-submodule.sh export` (writes it into the patches and the
-overlay) before the next build: a build discards whatever was not exported,
-leaving only that backup.
-
-Locally the bundle is the fast one (`DEVHUB_FAST_VSCODE_BUNDLE=1`, the default
-unless `CI` is set): the desktop bundle alone, without `--mangle-privates`, and
-an esbuild transpile into `vscode/out-build` for the main-process bundle instead
-of `npm run compile` — about 2 minutes after a patch edit where it was 5, and
-one bundle's memory (about 5 GB) where `core-ci`'s three parallel bundles passed 16.
-`DEVHUB_FAST_VSCODE_BUNDLE=0` runs upstream's `npm run core-ci` exactly as the
-nightly does; under CI a fast bundle is refused unless the run asks for one
-by name (`DEVHUB_FAST_VSCODE_BUNDLE=1`), as the per-push test build does.
-
-`pnpm dev` also builds the remote extension host for this Mac's CPU
-(`linux-arm64` or `linux-x64`) when it is missing or stale — in Linux
-containers, the way VS Code builds its own: the first time an hour or more on
-Apple Silicon, then minutes; needs Docker. Without Docker, or if the build fails, it warns and starts anyway
-(remote windows won't work until `scripts/build_reh.py <target>` succeeds).
-`DEVHUB_SKIP_REH_BUILD=1 pnpm dev` skips it. The other three servers are listed,
-not built; see [docs/remote-ssh.md](docs/remote-ssh.md).
-
-The server builds are cached: finished tarballs per identity under
-`~/.cache/devhub/reh`, and a Linux build tree per architecture in the Docker
-volume `devhub-reh-work-<arch>`, so a patch-only change skips `npm ci` and
-returning to a built identity builds nothing. `scripts/build_reh.py
---prune-cache [--keep N]` cleans the first, `--reset-work` the second; see the
-build section of [docs/remote-ssh.md](docs/remote-ssh.md).
-
 `pnpm dev` runs under the `dev` profile, so a source build and the packaged
 DevHub can be open at the same time — which is what makes developing DevHub
 inside DevHub possible. `DEVHUB_PROFILE` is the whole switch: unset (every
 packaged run) is the default profile, on exactly the locations DevHub has
 always used, and any other name derives a complete, disjoint set of them —
-`~/Library/Application Support/DevHub Dev/` for the editor's user data and
-extensions, `~/.config/devhub-dev/` for the settings, the `devhub-dev` tmux
-socket, its own control socket, and a `devhub-dev` command in the PATH.
+`~/Library/Application Support/DevHub Dev/` for the user data,
+`~/.config/devhub-dev/` for the settings, the `devhub-dev` tmux socket, its
+own control socket, and a `devhub-dev` command in the PATH.
 `src/model/profile.ts` derives all of it from the one name.
 
 A new profile's first launch copies the default profile's `settings.toml` in,
@@ -802,60 +646,32 @@ override is logged.
 pnpm build
 ```
 
-From a fresh clone that is the whole procedure: it installs the workspace,
-provisions the VS Code submodule (checkout, the Node the submodule's build
-pins, `npm ci`, DevHub's patches, the bundled VS Code, Electron) and assembles
+From a fresh clone that is the whole procedure: it installs the workspace
+(npm's Electron among it), builds DevHub and assembles
 
 ```text
 dist/DevHub.app
 dist/DevHub-darwin-arm64-<date>-<sha>.zip
 ```
 
-signed ad-hoc — enough for macOS to run a modified bundle, not enough to skip
-`xattr -d com.apple.quarantine` on a bundle that has travelled. The build does
-not start what it just made: a running DevHub takes over the machine's tmux
-socket and its Agents, and nobody asks for that by typing `pnpm build`. The
-check that a bundle which assembles can also run is `pnpm run smoke`
+signed ad hoc — enough for macOS to run a modified bundle, not enough to skip
+`xattr -d com.apple.quarantine` on a bundle that has travelled; it is not
+notarized. The build does not start what it just made: a running DevHub takes
+over the machine's tmux socket and its Agents. The check that a bundle which
+assembles can also run is `pnpm run smoke`
 (`scripts/smoke_packaged_app.py dist/DevHub.app`), which starts the bundle
-under a throwaway `smoke` profile and asks it something over its control
-socket. CI runs it on every bundle it packages.
+under a throwaway `smoke` profile, asks it something over its control socket
+and opens a file in its editor. CI runs it on every bundle it packages.
 
 What has to be on the machine first: macOS on Apple Silicon, the Xcode command
-line tools (`xcode-select --install`), `python3`, Node, and pnpm (`corepack
-enable` gives the version `package.json` pins). The machine's
-own Node version does not matter — the one VS Code's build insists on is
-fetched into `vscode-toolchain/`. Anything else missing, `pnpm build` produces
-rather than complains about. That includes the four remote extension hosts in
-`dist/reh`: any that is missing or stale is taken from the local server cache
-(`~/.cache/devhub/reh`), else downloaded — verified — from the prebuilt servers
-the nightly publishes on the `reh` release when one matches this checkout's
-identity, else built with `scripts/build_reh.py <those targets>`, announced up
-front (in Linux containers; the first build of each architecture's tree takes an
-hour or more on Apple Silicon, see [docs/remote-ssh.md](docs/remote-ssh.md); log
-in `dist/reh-build.log`). Each server says which of the three it came from, and a
-failed download only falls back to the build. `DEVHUB_REH_SOURCE=build pnpm
-build` never downloads; `DEVHUB_REH_SOURCE=download` fails rather than build
-(`scripts/ensure_reh.py --no-download` / `--download-only` on their own). A
-build needs **Docker**; without it the build
-stops and names the missing targets. `pnpm build -- --without-reh` skips them
-for a bundle that opens no remote window. Under CI (`CI` set) nothing is built:
-the nightly downloads the servers its own jobs built.
-
-The first build is roughly **40–60 minutes**, nearly all of it VS Code's `npm
-ci` and its two compiles. Those are stamped, so a later build that changes only
-DevHub's own code is **about a minute**, and a submodule bump or a patch edit
-puts the long part back.
-
-The nightly workflow runs this same `pnpm build`; what it adds is a cache of
-the provisioned submodule, the tests against the packaged zip, and publishing
-it. The per-push CI builds a stripped-down test build instead
-(`--without-reh --without-whisper --no-zip`); see [docs/ci.md](docs/ci.md)
-for which checks run where.
+line tools (`xcode-select --install`), `python3`, Node, and pnpm. The speech
+recogniser (`dist/whisper`) is built by `scripts/build_whisper.py` when
+missing — it needs cmake — or left out with `pnpm build -- --without-whisper`.
+The layout of the bundle is in `scripts/package-nightly.py`.
 
 DevHub's product identity is stated once, in
-[`apps/desktop/product-overrides.json`](apps/desktop/product-overrides.json),
-and merged into `product.json` by
-[`scripts/product_metadata.py`](scripts/product_metadata.py) for both the source
-run and the packaged app.
+[`apps/desktop/product.json`](apps/desktop/product.json); the packaged app's
+copy adds the version and the commit
+([`scripts/product_metadata.py`](scripts/product_metadata.py)).
 
 DevHub is distributed under the [MIT License](LICENSE).

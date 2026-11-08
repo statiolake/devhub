@@ -148,7 +148,7 @@ def tarball_name(os_name: str, arch: str, version: str) -> str:
 	"""What the app's download URL resolves to for this target.
 
 	The same statement as `bashDownloadUrlTemplate` in
-	`apps/desktop/product-overrides.json`; `build_bash_test.py` checks that
+	`apps/desktop/product.json`; `build_bash_test.py` checks that
 	the two agree.
 	"""
 	return f"devhub-bash-{os_name}-{arch}-{version}.tar.gz"

@@ -3,7 +3,7 @@
 # Linux included — so a change is iterated on here and CI is only the final
 # check after pushing. `pnpm test:local` runs it.
 #
-#   scripts/test-local.sh                    provision (once, cached), then every stage
+#   scripts/test-local.sh                    provision (seconds once done), then every stage
 #   scripts/test-local.sh vitest pty         just those stages (provisioning is skipped
 #                                            unless named)
 #   scripts/test-local.sh --no-provision     every stage, assuming a provisioned tree
@@ -12,25 +12,20 @@
 #
 # Stages, and the CI job each one stands for:
 #   provision   system packages (Linux: Xvfb, Electron's libraries, tmux), the
-#               unprivileged test user (under root), `pnpm install`,
-#               scripts/provision-vscode.sh --for dev (the submodule at its
-#               pinned commit, patches and overlay, VS Code's npm ci, vscode/out,
-#               Electron, the built-in extensions) and the desktop build. Stamped
-#               and idempotent: a second run is seconds. Not the app bundle:
+#               unprivileged test user (under root), `pnpm install`, npm's
+#               Electron (scripts/electron-path.sh) and the desktop build.
+#               Idempotent: a second run is seconds. Not the app bundle:
 #               packaging (scripts/build-app.sh) is macOS-only.
 #   fmt         pnpm run fmt                                       checks
 #   lint        pnpm run lint                                      checks
-#   extensions  bridge:check, remote:check, copilot:check          checks
-#   typecheck   pnpm run typecheck (the desktop's main included)   test-desktop
+#   typecheck   pnpm run typecheck (the desktop's main included)   checks
 #   vitest      @devhub/desktop vitest                             test-desktop
 #   pty         @devhub/desktop test:pty (node-pty under Electron) test-desktop
-#   scripts     pnpm run test:scripts (+ darwin_bundle_test on macOS) checks, test-desktop
-#   overlay     patches/vscode-overlay's tests: its extensions' node --test
-#               suites, and its src/ tests in VS Code's own Electron test
-#               runner (devhubVim, modal input, …). Not in CI.
+#   scripts     pnpm run test:scripts                              checks
 #   app         the app smoke test (scripts/smoke_packaged_app.py). On macOS
-#               against dist/DevHub.app when one is built, else — and always on
-#               Linux — against a source run (dev.sh) under xvfb-run.  test-app
+#               against dist/DevHub.app when one is built; on Linux against
+#               the packaged layout (package-nightly.py --layout-only) under
+#               xvfb-run, which also loads its node-pty and its wasm.  test-app
 #
 # Under root, the test stages run as the unprivileged user `devhub-test`
 # (created by `provision`): tests that make a directory unwritable and expect a
@@ -38,13 +33,13 @@
 # machine would disagree. Only the scratch directories those tests write are
 # handed to that user. DEVHUB_TEST_USER=root keeps everything as root.
 #
-# Free disk is reported at the end with what provisioning keeps.
+# Free disk is reported at the end with what the install keeps.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 OS="$(uname -s)"
-ALL_STAGES=(provision fmt lint extensions typecheck vitest pty scripts overlay app)
+ALL_STAGES=(provision fmt lint typecheck vitest pty scripts app)
 
 STOP=0
 NO_PROVISION=0
@@ -87,7 +82,6 @@ TEST_WRITABLE=(
 	apps/desktop/node_modules/.vite
 	apps/desktop/node_modules/.vite-temp
 	apps/desktop/out/test-terminal
-	vscode/.build/crashes
 )
 
 prepare_test_user() {
@@ -314,26 +308,13 @@ provision() {
 	provision_system
 	provision_test_user
 	provision_tmux
-	# node-gyp's Electron headers, where electronjs.org is unreachable; see the
-	# script. `ensure` makes node-gyp keep headers it already has instead of
-	# downloading them again (and deleting them when that fails).
-	scripts/electron-headers-fallback.sh
-	export npm_config_ensure=true
 	pnpm install --frozen-lockfile
-	if [ -z "${GITHUB_TOKEN:-}" ] && command -v gh >/dev/null; then
-		GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
-		export GITHUB_TOKEN
-	fi
-	scripts/provision-vscode.sh --for dev
+	echo "electron: $(apps/desktop/scripts/electron-path.sh)"
 	pnpm --filter @devhub/desktop build
 	set +e
 }
 
 # --- the stages -------------------------------------------------------------
-stage_extensions() {
-	pnpm run bridge:check && pnpm run remote:check && pnpm run copilot:check
-}
-
 stage_vitest() {
 	prepare_test_user || return 1
 	(cd apps/desktop && pnpm run build:terminal) || return 1
@@ -347,35 +328,7 @@ stage_pty() {
 
 stage_scripts() {
 	prepare_test_user || return 1
-	as_test_user python3 -m unittest discover -s scripts -p '*_test.py' || return 1
-	if [ "$OS" = Darwin ]; then
-		(cd scripts && python3 -m unittest darwin_bundle_test)
-	else
-		echo "darwin_bundle_test: macOS-only (it reads the Electron app bundle); CI's macOS job runs it"
-	fi
-}
-
-# The overlay's VS Code unit tests: its extensions' node --test suites, and
-# every *.test.ts under patches/vscode-overlay/src, run from vscode/out by VS
-# Code's Electron test runner (vscode/scripts/test.sh), under Xvfb on Linux.
-# One runner per file, the way they are run while developing them: a file
-# that loads a workbench contribution registers its keybindings for the whole
-# process, and another file's census of the default keybindings would see them.
-stage_overlay() {
-	local status=0 f files=() extra=() runner=(vscode/scripts/test.sh)
-	node --test vscode/extensions/devhub-*/test/*.test.js || status=1
-	while IFS= read -r f; do files+=("${f#patches/vscode-overlay/}"); done \
-		< <(find patches/vscode-overlay/src -name '*.test.ts' | LC_ALL=C sort)
-	if [ "$OS" = Linux ]; then
-		runner=(xvfb-run -a -s "-screen 0 1280x1024x24" vscode/scripts/test.sh)
-		# Chromium refuses to run as root with its sandbox on.
-		[ "$(id -u)" = 0 ] && extra+=(--no-sandbox)
-	fi
-	for f in "${files[@]}"; do
-		echo "--- $f"
-		VSCODE_SKIP_PRELAUNCH=1 "${runner[@]}" --run "$f" "${extra[@]}" || { status=1; echo "FAILED: $f"; }
-	done
-	return $status
+	as_test_user python3 -m unittest discover -s scripts -p '*_test.py'
 }
 
 stage_app() {
@@ -383,13 +336,15 @@ stage_app() {
 		scripts/smoke_packaged_app.py dist/DevHub.app
 		return
 	fi
-	local build="$LOG_DIR/app-build.log"
+	local build="$LOG_DIR/app-build.log" layout="$REPO_ROOT/.spike/test-local/app-layout"
 	pnpm --filter @devhub/desktop build >"$build" 2>&1 || { tail -40 "$build"; return 1; }
 	if [ "$OS" = Linux ]; then
+		# The packaged app's own tree, run by npm's Electron.
+		scripts/package-nightly.py --layout-only "$layout" >>"$build" 2>&1 || { tail -40 "$build"; return 1; }
 		local args=()
 		# Chromium refuses to run as root with its sandbox on.
 		[ "$(id -u)" = 0 ] && args+=(--electron-arg=--no-sandbox)
-		xvfb-run -a -s "-screen 0 1280x1024x24" scripts/smoke_packaged_app.py --source "${args[@]}"
+		xvfb-run -a -s "-screen 0 1280x1024x24" scripts/smoke_packaged_app.py --layout "$layout" "${args[@]}"
 	else
 		scripts/smoke_packaged_app.py --source
 	fi
@@ -399,11 +354,8 @@ summarize() {
 	local total=$((SECONDS - STARTED_ALL)) line
 	printf '\n\033[1m==> summary\033[0m  (%dm%02ds; logs in %s)\n' $((total / 60)) $((total % 60)) "${LOG_DIR#"$REPO_ROOT"/}"
 	for line in "${RESULTS[@]}"; do echo "  $line"; done
-	echo "  disk: $(df -h "$REPO_ROOT" | awk 'NR==2 {print $4 " free of " $2}'); provisioned:"
-	du -sh vscode/node_modules vscode/out vscode/.build vscode-toolchain 2>/dev/null | sed 's/^/    /'
-	echo "  nested VS Code installs (build/, extensions/*, remote/, test/*): $(
-		find vscode -mindepth 2 -maxdepth 4 -name node_modules -type d -not -path 'vscode/node_modules/*' -prune -print0 2>/dev/null \
-			| du -csh --files0-from=- 2>/dev/null | tail -1 | cut -f1)"
+	echo "  disk: $(df -h "$REPO_ROOT" | awk 'NR==2 {print $4 " free of " $2}'); installed:"
+	du -sh node_modules apps/desktop/node_modules "$(dirname "$(dirname "$(apps/desktop/scripts/electron-path.sh 2>/dev/null)")")" 2>/dev/null | sed 's/^/    /'
 }
 
 for stage in "${STAGES[@]}"; do
@@ -411,12 +363,10 @@ for stage in "${STAGES[@]}"; do
 		provision) run_stage provision provision ;;
 		fmt) run_stage fmt pnpm run fmt ;;
 		lint) run_stage lint pnpm run lint ;;
-		extensions) run_stage extensions stage_extensions ;;
 		typecheck) run_stage typecheck pnpm run typecheck ;;
 		vitest) run_stage vitest stage_vitest ;;
 		pty) run_stage pty stage_pty ;;
 		scripts) run_stage scripts stage_scripts ;;
-		overlay) run_stage overlay stage_overlay ;;
 		app) run_stage app stage_app ;;
 	esac
 done

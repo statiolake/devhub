@@ -165,8 +165,6 @@ export interface ChordHost {
 	restartAgent(agentId: string): void;
 	/** Close it — and delete the worktree, if that is what it is. */
 	closeWorkspace(workspaceId: string): void;
-	/** Stop its VS Code by hand: discarded, back to its placeholder. */
-	stopEditor(workspaceId: string): void;
 	/** Open the newest of what was closed again (`model/recentlyClosed.ts`). */
 	reopenClosed(): void;
 	/** What was closed lately, as a list to choose from. */
@@ -309,9 +307,6 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "close-workspace":
 			host.closeWorkspace(effect.workspaceId);
-			return;
-		case "stop-editor":
-			host.stopEditor(effect.workspaceId);
 			return;
 		case "reopen-closed":
 			host.reopenClosed();

@@ -3,9 +3,8 @@
 #
 # This is what `pnpm build` at the repository root runs, and it is the only
 # entry point: the nightly workflow calls it too, so CI and a developer's Mac
-# execute the same steps in the same order rather than two lists that drift.
-# Everything it does is delegated — provisioning to scripts/provision-vscode.sh,
-# packaging to scripts/package-nightly.py — so no step is written down twice.
+# execute the same steps in the same order. Packaging itself is
+# scripts/package-nightly.py; this satisfies what it needs first.
 #
 #   dist/DevHub.app
 #   dist/DevHub-darwin-arm64-<date>-<sha>.zip
@@ -16,54 +15,23 @@
 # runs is a separate question, asked by `pnpm run smoke`
 # (scripts/smoke_packaged_app.py) and by CI on every bundle it packages.
 #
-# ## Which prerequisites this satisfies, and which it refuses to
-#
-# The rule is the one the first run has to pass: if a missing input can be
-# produced from what is already in the clone, produce it, because a person who
-# just cloned the repository cannot be expected to know it was needed. If it
-# needs something from outside the clone that we cannot install without taking
-# over the machine, say what is missing in one sentence and stop.
-#
 # Satisfied automatically:
-#   * the pnpm workspace's node_modules       (`pnpm install`)
-#   * the VS Code submodule, its Node
-#     toolchain, its npm dependencies, the
-#     DevHub patches and the VS Code bundle  (scripts/provision-vscode.sh)
-#   * the DevHub packages themselves         (`pnpm run build:packages`)
-#
-# Refused with a message:
-#   * macOS on Apple Silicon — the bundle this produces runs nowhere else
-#   * the Xcode command line tools — packaging signs and copies the bundle with
-#     `codesign` and `ditto`, and installing them opens a system dialog that is
-#     the user's to answer
-#   * python3 — the packaging script is Python, and which Python a machine
-#     should have is not this script's decision
-#   * pnpm — it is the package manager that invoked us in the normal case, but
-#     the script is also runnable directly
-#   * the four remote extension hosts the app carries, in dist/reh, built from
-#     this checkout's VS Code and patches — when any is missing or stale,
-#     package-nightly.py gets exactly those first (scripts/ensure_reh.py):
-#     from the local server cache, else the verified prebuilt server the
-#     nightly published for this identity (the `reh` release; any download
-#     failure falls back to building; DEVHUB_REH_SOURCE=build|download forces
-#     one side), else scripts/build_reh.py: needs Docker, built in Linux containers the
-#     way VS Code builds its own (the first build of an architecture's tree is
-#     an hour or more on Apple Silicon, later ones minutes), announced up
-#     front and logged to dist/reh-build.log. Without Docker it stops, naming
-#     them. It does nothing when CI is set: the nightly downloads the servers
-#     its `reh` jobs built. `--without-reh` packages without them, for a
-#     bundle that opens no remote window (CI's check build does that).
+#   * the pnpm workspace's node_modules, npm's Electron among them
+#                                            (`pnpm install`)
+#   * DevHub's build                         (`pnpm run build:packages`)
 #   * the speech recogniser the GUI Agent composer dictates with, in
 #     dist/whisper — package-nightly.py runs scripts/build_whisper.py when it
 #     is missing or stale: needs cmake, compiles whisper.cpp with Metal (a few
-#     minutes) and downloads its model (547 MiB) once, both cached under
+#     minutes) and downloads its model once, both cached under
 #     ~/.cache/devhub/whisper. Without cmake it stops, naming it.
-#     `--without-whisper` packages without it: the composer then shows its
-#     microphone as unavailable.
+#     `--without-whisper` packages without it.
 #
-# Node's own version is deliberately *not* checked: the only Node this build is
-# picky about is the one VS Code's build requires, and provisioning fetches
-# exactly that one into vscode-toolchain/ rather than using the machine's.
+# Refused with a message:
+#   * anything but macOS on Apple Silicon — the bundle runs nowhere else
+#   * the Xcode command line tools — packaging signs and copies the bundle with
+#     `codesign` and `ditto`, and installing them opens a system dialog that is
+#     the user's to answer
+#   * python3 and pnpm
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -83,22 +51,9 @@ DATE="$(date -u +%Y%m%d)"
 SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 ZIP_NAME="DevHub-darwin-arm64-${DATE}-${SHA}.zip"
 
-# CI restores its own cache and runs these two steps itself before calling us;
-# both are idempotent, so running them again there is a few seconds, not a
-# rebuild. Locally they are the difference between one command and four.
 printf '\n==> workspace dependencies\n'
 pnpm install --frozen-lockfile
-
-# vscode/ is brought to the pinned commit + patches + overlay by provisioning
-# itself, whatever the previous build or a `git pull` left it at. vscode/ is not
-# edited by hand: anything in it that is not the pinned commit + patches +
-# overlay is discarded (a backup ref is kept in vscode/).
-#
-# Only the bundled tree the app ships (`--for app`): the packaged app never
-# loads vscode/out, so `npm run compile` is `pnpm dev`'s cost, not ours. Locally
-# the bundle is the fast one (DEVHUB_FAST_VSCODE_BUNDLE, step 4b of
-# provision-vscode.sh); with CI set it is `core-ci`, as the nightly ships.
-scripts/provision-vscode.sh --for app
+apps/desktop/scripts/electron-path.sh >/dev/null
 
 printf '\n==> DevHub packages\n'
 pnpm run build:packages

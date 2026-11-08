@@ -222,14 +222,12 @@ const SORT_LABEL = {
 } as const;
 
 const ACTION_LABEL = {
-  sleep: "Sleep",
   stop: "Stop",
   reveal: "Show",
   kill: "End…",
 } as const;
 
 const ACTION_TITLE = {
-  sleep: "Put this workbench to sleep (its editors come back when it wakes)",
   stop: "Stop this Agent",
   reveal: "Show it in the DevHub window",
   kill: "End this process",
@@ -382,8 +380,6 @@ export function TaskManagerApp({ client }: { client: TaskManagerApi }) {
       setMessage(undefined);
       const done = (() => {
         switch (action) {
-          case "sleep":
-            return client.sleepWorkbench(row.workspaceId ?? "");
           case "stop":
             return client.stopAgent(row.agentId ?? "");
           case "reveal":

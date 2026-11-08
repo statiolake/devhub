@@ -4,8 +4,7 @@ DevHub's colours are its own. A theme is a terminal palette, the way Ghostty's
 are — sixteen ANSI colours, the background and foreground, the cursor and the
 text under it, the selection — and everything DevHub paints is derived from
 the one the settings select: the window and every page, the terminals, and
-the Neovims DevHub draws. VS Code is not asked; with `editor = "vscode"` a
-workbench wears whatever its own `settings.json` names.
+the Neovims DevHub draws.
 
 ## Choosing one
 

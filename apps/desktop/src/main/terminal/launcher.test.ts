@@ -245,16 +245,15 @@ describe("the DevHub terminal launcher", () => {
 	describe("where all of it goes on another machine", () => {
 		const paths = {
 			home: "/home/dev",
-			serverDataFolderName: ".devhub-server",
-			serverInstallKey: "abc123",
+			node: "/home/dev/.devhub-server/node/22.21.1/bin/node",
 			controlSocketPath: "/data/devhub/devhub/control.sock",
 			entryName: "devhub-terminal.bundle.js",
 			cliEntryName: "devhub-cli.bundle.js",
 		};
 
-		it("runs on the Node the connection already installed there", () => {
+		it("runs on the Node DevHub installed there", () => {
 			expect(remoteTerminalPaths(paths).node).toBe(
-				"/home/dev/.devhub-server/bin/abc123/node",
+				"/home/dev/.devhub-server/node/22.21.1/bin/node",
 			);
 		});
 

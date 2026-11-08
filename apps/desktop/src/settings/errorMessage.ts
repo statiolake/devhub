@@ -115,8 +115,6 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return "`appearance.theme` is a theme's name or light:<name>,dark:<name>. A [themes.<name>] table gives every colour as #rrggbb (or #rgb), and its palette exactly 16 of them; its name cannot contain a comma or start with light: or dark:.";
     case "invalid_mac_option_is_meta":
       return 'Option is Meta in DevHub\'s terminals with `true`, the left Option only with `"left"`, or never with `false`.';
-    case "invalid_editor":
-      return 'The editor is `"vscode"` (each Workspace\'s own VS Code editor) or `"neovim"` (DevHub\'s Neovim GUI).';
     case "invalid_string":
       return "That value cannot contain a null character.";
     case "invalid_keybinding":

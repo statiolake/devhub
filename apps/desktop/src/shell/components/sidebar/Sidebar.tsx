@@ -1421,8 +1421,7 @@ export function Sidebar({ snapshot }: SidebarProps) {
     void devhub().openModal({ kind: "agent-rename", agentId: agent.id });
   }, []);
 
-  const { reopenEditorLocally, reopenEditorInContainer, continueAgent } =
-    useSidebar();
+  const { continueAgent } = useSidebar();
 
   /**
    * The row's context menu: a native menu over the window (`rowMenu.ts`), so
@@ -1447,15 +1446,13 @@ export function Sidebar({ snapshot }: SidebarProps) {
     ) => {
       openRowMenu(
         workspaceMenuItems(workspace, {
-          reopenInContainer: reopenEditorInContainer,
-          reopenLocally: reopenEditorLocally,
           close: closeWorkspaceRow,
           ...menu,
         }),
         at,
       );
     },
-    [closeWorkspaceRow, reopenEditorInContainer, reopenEditorLocally],
+    [closeWorkspaceRow],
   );
 
   const resize = useCallback(

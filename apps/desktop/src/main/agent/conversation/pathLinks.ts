@@ -18,7 +18,7 @@
 import { posix } from "node:path";
 import { OperationDeadline } from "../../terminal/command.js";
 import { CancellationToken } from "../../terminal/ports.js";
-import type { FileSelection } from "../../cli/openFiles.js";
+import type { FileSelection } from "../../cli/fileSelection.js";
 import type { Runtime } from "../../runtime/runtime.js";
 
 /** As much of a machine as the question needs. */

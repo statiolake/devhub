@@ -28,11 +28,6 @@ const devhubTaskManager: TaskManagerApi = {
 		ipcRenderer.invoke(
 			TASK_MANAGER_CHANNELS.snapshot,
 		) as Promise<TaskSnapshotWire>,
-	sleepWorkbench: (workspaceId: string) =>
-		ipcRenderer.invoke(
-			TASK_MANAGER_CHANNELS.sleepWorkbench,
-			workspaceId,
-		) as Promise<void>,
 	stopAgent: (agentId: string) =>
 		ipcRenderer.invoke(
 			TASK_MANAGER_CHANNELS.stopAgent,

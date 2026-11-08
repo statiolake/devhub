@@ -174,7 +174,7 @@ async function withSocketGuard(socket, body) {
   }
 }
 
-test("node-pty resolves from the submodule and drives a real child", async (t) => {
+test("node-pty, DevHub's own dependency, drives a real child", async (t) => {
   assert.equal(typeof nodePty().spawn, "function");
   const cwd = scratchDirectory("pty");
   // Registered before anything can fail, so a scratch directory is never

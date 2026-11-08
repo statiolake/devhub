@@ -215,8 +215,7 @@ export class TerminalRuntimes {
 								REMOTE_DEVHUB_DIRECTORY,
 								`nvim-${remoteProfileTag(this.#options.controlSocketPath)}`,
 							),
-				wanted: () =>
-					this.#options.settings.config.general.editor === "neovim",
+				wanted: () => true,
 			},
 			host,
 			// Asked each time it is stated, so a server started after a theme

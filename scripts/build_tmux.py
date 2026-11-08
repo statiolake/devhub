@@ -209,7 +209,7 @@ def tarball_name(os_name: str, arch: str, version: str) -> str:
 	"""What the app's download URL resolves to for this target.
 
 	The same statement as `tmuxDownloadUrlTemplate` in
-	`apps/desktop/product-overrides.json`, written twice —
+	`apps/desktop/product.json`, written twice —
 	`build_tmux_test.py` checks that the two agree, because nothing at runtime
 	does.
 	"""
@@ -219,9 +219,8 @@ def tarball_name(os_name: str, arch: str, version: str) -> str:
 def release_tag(version: str) -> str:
 	"""The release that holds every architecture's tarball for this tmux.
 
-	Named after the tmux version rather than after a date or DevHub's commit,
-	for the reason `reh-<commit>` is named after the submodule's: the artefact
-	is a function of that version alone, the URL the app resolves has that
+	Named after the tmux version rather than after a date or DevHub's commit:
+	the artefact is a function of that version alone, the URL the app resolves has that
 	version in it, and a release that never moves is a download an app built
 	months ago still finds.
 	"""

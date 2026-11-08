@@ -54,7 +54,6 @@
  * | `Cmd+Q O`                   | `swap_split_focus`        |
  * | `Cmd+Q V`                   | `toggle_terminal`         |
  * | `Cmd+Q E`                   | `focus_editor`            |
- * | `Cmd+Q Shift+E`             | `stop_editor`             |
  * | (palette only)              | `focus_sidebar`           |
  * | `Cmd+Q B`                   | `toggle_sidebar`          |
  * | `Cmd+Q F`                   | `add_workspace`           |
@@ -409,7 +408,6 @@ export type CommandId =
   | "toggle_scratch"
   | "toggle_orchestrator"
   | "focus_editor"
-  | "stop_editor"
   | "focus_sidebar"
   | "toggle_sidebar"
   | "add_workspace"
@@ -661,17 +659,6 @@ export const COMMANDS: readonly CommandDefinition[] = [
     needs: "nothing",
     category: "View",
     defaultKeys: ["e"],
-  },
-  {
-    // The twin of `e`: this Workspace's VS Code closed by hand, as a long
-    // frozen one is discarded (`workbenchPlan.ts`), back to the "Editor not
-    // running" placeholder that Enter starts again. Nothing starts a
-    // workbench but that ask, so this is the way to give its memory back.
-    id: "stop_editor",
-    label: "Stop the editor",
-    needs: "workspace",
-    category: "View",
-    defaultKeys: ["E"],
   },
 
   {

@@ -304,8 +304,7 @@ export interface RuntimeReading {
  * a machine that has none needs to be given in order to grow one — the script
  * DevHub already wrote for itself (which is the whole answer when the machine
  * *is* this one), the socket the answer comes back over, and the two facts a
- * far machine cannot discover: which files make up the asking program, and
- * which commit's REH is installed there to run them.
+ * far machine cannot discover: which files make up the asking program.
  */
 export interface TerminalLauncherSpec {
 	/** The launcher DevHub wrote at startup, for the machine it is running on. */
@@ -337,17 +336,6 @@ export interface TerminalLauncherSpec {
 	 * there has the skill too. Absent: no skill is written.
 	 */
 	readonly skillText?: ((cli: string) => string) | undefined;
-	/** `product.json`'s `serverDataFolderName`: where the REH lives over there. */
-	readonly serverDataFolderName: string;
-	/**
-	 * The directory the REH this DevHub installs is under —
-	 * `<commit>-<identity>`, `rehInstallKey` — so a source run states it too.
-	 *
-	 * `undefined` only for a DevHub that states no key, which is also a
-	 * DevHub that can open no remote workbench at all, so the refusal is the
-	 * same fact said once.
-	 */
-	readonly serverInstallKey: string | undefined;
 }
 
 /**

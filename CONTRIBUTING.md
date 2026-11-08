@@ -26,20 +26,16 @@ Run focused commands while iterating, e.g. `CI=true pnpm --filter
 @devhub/desktop test`.
 
 `pnpm test:local` (`scripts/test-local.sh`) runs everything CI runs, on this
-machine — Linux included: fmt, lint, the extension checks, every typecheck,
-vitest, `test:pty` under Electron, the script tests, the VS Code overlay's
-tests and the app smoke test (under `xvfb-run` on Linux, against a source run
-since the app bundle is macOS-only). Its first stage provisions what the tests
-need once (VS Code's `npm ci`, `vscode/out`, Electron, the desktop build;
-about 6 GB) and is stamped, so later runs start straight at the checks. Name
-stages to run only those (`scripts/test-local.sh --no-provision vitest pty`;
-`--help` lists them). Under root the test stages run as an unprivileged
-`devhub-test` user, so tests that rely on a permission being refused behave
-as on CI. Iterate with it; push and let CI be the final check.
-
-`pnpm run build` reuses the extension build and `node_modules.asar` when their
-inputs are unchanged (see README, Development); if a result looks stale, delete
-`vscode/.build/extensions.devhub-stamp` or `dist/.cache/asar`.
+machine — Linux included: fmt, lint, every typecheck, vitest, `test:pty`
+under DevHub's own Electron, the script tests and the app smoke test (under
+`xvfb-run` on Linux, against the packaged layout `package-nightly.py
+--layout-only` writes, since the bundle itself is macOS-only). Its first
+stage installs what the tests need (system packages, the test user, tmux,
+`pnpm install`, npm's Electron, the desktop build) and is quick once done.
+Name stages to run only those (`scripts/test-local.sh --no-provision vitest
+pty`; `--help` lists them). Under root the test stages run as an
+unprivileged `devhub-test` user, so tests that rely on a permission being
+refused behave as on CI. Iterate with it; push and let CI be the final check.
 
 Types are checked with `tsgo` (pinned `@typescript/native-preview`); if its
 result looks wrong, compare with `pnpm --filter @devhub/desktop run

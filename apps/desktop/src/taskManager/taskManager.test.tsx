@@ -86,7 +86,7 @@ const SNAPSHOT: TaskSnapshotWire = {
           kind: "workbench",
           state: "running",
           workspaceId: "w1",
-          actions: ["sleep", "reveal"],
+          actions: ["reveal"],
           children: [ANALYZER, row("pid:120", "Renderer", 200, 2)],
         }),
         row("agent:a1", "Fix the build", 200, 5, {
@@ -104,7 +104,6 @@ function client(): TaskManagerApi & {
 } {
   return {
     snapshot: vi.fn(() => Promise.resolve(SNAPSHOT)),
-    sleepWorkbench: vi.fn(() => Promise.resolve()),
     stopAgent: vi.fn(() => Promise.resolve()),
     reveal: vi.fn(() => Promise.resolve()),
     kill: vi.fn(() => Promise.resolve(true)),
@@ -233,8 +232,6 @@ describe("what a row does", () => {
   it("hands each action to main", async () => {
     const api = client();
     const grid = await shown(api);
-    fireEvent.click(within(grid).getByRole("button", { name: "Sleep" }));
-    expect(api.sleepWorkbench).toHaveBeenCalledWith("w1");
     fireEvent.click(within(grid).getByRole("button", { name: "Stop" }));
     expect(api.stopAgent).toHaveBeenCalledWith("a1");
     fireEvent.click(within(grid).getAllByRole("button", { name: "Show" })[0]!);
@@ -255,9 +252,9 @@ describe("what a row does", () => {
 
   it("says why an action was refused", async () => {
     const api = client();
-    api.sleepWorkbench.mockRejectedValueOnce(new Error("it is on screen"));
+    api.stopAgent.mockRejectedValueOnce(new Error("it is on screen"));
     const grid = await shown(api);
-    fireEvent.click(within(grid).getByRole("button", { name: "Sleep" }));
+    fireEvent.click(within(grid).getByRole("button", { name: "Stop" }));
     expect(await screen.findByRole("status")).toHaveTextContent(
       "it is on screen",
     );

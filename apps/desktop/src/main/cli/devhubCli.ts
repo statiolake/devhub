@@ -8,12 +8,9 @@
  * socket client and an argument parser, and the whole of DevHub's behaviour
  * lives on the other side of the socket.
  *
- * That includes `--version` and the extension options, which `code` answers in
- * a separate short-lived process of its own. DevHub does not: a second process
- * installing extensions into the directory the running app owns is the same
- * split-brain the single-instance design exists to prevent, and a version
- * printed from somewhere other than the running app is a version of something
- * else. One front door, and it is the socket.
+ * That includes `--version`: a version printed from somewhere other than the
+ * running app is a version of something else. One front door, and it is the
+ * socket.
  *
  * When DevHub is not running the command starts it, waits for its socket, and
  * then sends the request it was given — see `launch.ts`. Every command does
@@ -80,24 +77,10 @@ usage:
                                    and select it; <args> are appended to the
                                    profile's own arguments
 
-extensions:
-  devhub --install-extension <ext-id|path-to-vsix>
-                                   install an extension from the gallery, or
-                                   from a .vsix file; repeat the option to
-                                   install several
-  devhub --uninstall-extension <ext-id>
-                                   uninstall an extension; repeat for several
-  --force                          install over an extension that is already
-                                   there, and uninstall one the user marked as
-                                   built in
-  devhub --list-extensions         list the installed extensions, one per line
-  --show-versions                  list them as <ext-id>@<version>
-
-  devhub -v|--version              print DevHub's version, VS Code's, and the
-                                   commit it was built from
+  devhub -v|--version              print DevHub's version and the commit it
+                                   was built from
   devhub --metrics                 print, as JSON, what the running DevHub is
                                    costing: every process's CPU and memory,
-                                   which workbench each renderer is showing,
                                    and how often DevHub polls. Take two
                                    readings a known time apart to get a rate.
   devhub --tell <subcommand> ...   ask DevHub to do what its window does:
@@ -129,17 +112,6 @@ export type Command =
 			readonly profileId: string;
 			readonly args: readonly string[];
 	  }
-	| {
-			readonly kind: "install-extensions";
-			readonly targets: readonly string[];
-			readonly force: boolean;
-	  }
-	| {
-			readonly kind: "uninstall-extensions";
-			readonly ids: readonly string[];
-			readonly force: boolean;
-	  }
-	| { readonly kind: "list-extensions"; readonly showVersions: boolean }
 	| { readonly kind: "version" }
 	| { readonly kind: "metrics" }
 	| {
@@ -159,8 +131,8 @@ export type Command =
  * everything else is read by the scanner below.
  *
  * An option this command does not know is a refusal with a sentence, never a
- * path: `devhub --isntall-extension x` that quietly tried to open a file
- * called `--isntall-extension` would report a missing file, and the typo would
+ * path: `devhub --wiat x` that quietly tried to open a file called
+ * `--wiat` would report a missing file, and the typo would
  * be the last thing anybody suspected.
  */
 export function parseArguments(argv: readonly string[]): Command {
@@ -181,7 +153,7 @@ export function parseArguments(argv: readonly string[]): Command {
 	// `devhub` on its own is not a mistake, it is the smallest thing the
 	// command can be asked for: put the app you already have in front of you.
 	// The refusal below it is for arguments that add up to nothing — `devhub
-	// --force` — which *is* a mistake, and a different one.
+	// --wait` — which *is* a mistake, and a different one.
 	if (args.length === 0) return { kind: "activate" };
 	if (args[0] === "--help" || args[0] === "-h") return { kind: "usage" };
 	if (args[0] === "--agent") return parseAgent(args.slice(1));
@@ -227,19 +199,14 @@ function parseAgent(rest: readonly string[]): Command {
  *
  * The options are gathered in any order and the mode is decided at the end,
  * from what was gathered. Deciding it from the first argument instead would
- * make `--force --install-extension x` a different command from
- * `--install-extension x --force`, and `code` treats them as one.
+ * make `--wait -g f:1` a different command from `-g f:1 --wait`, and `code`
+ * treats them as one.
  */
 function parseOptions(args: readonly string[]): Command {
-	const install: string[] = [];
-	const uninstall: string[] = [];
 	const paths: string[] = [];
 	let goto: string | undefined;
 	let stdin = false;
 	let wait = false;
-	let force = false;
-	let list = false;
-	let showVersions = false;
 	let version = false;
 	let metrics = false;
 
@@ -248,31 +215,13 @@ function parseOptions(args: readonly string[]): Command {
 		// Every option that takes a value takes exactly one, and it is the next
 		// argument. Reading it here rather than in each branch keeps the index
 		// moving in one place.
-		const takesValue =
-			arg === "--install-extension" ||
-			arg === "--uninstall-extension" ||
-			arg === "-g" ||
-			arg === "--goto";
+		const takesValue = arg === "-g" || arg === "--goto";
 		let value: string | undefined;
 		if (takesValue) {
 			index += 1;
 			value = args[index];
 		}
 		switch (arg) {
-			case "--install-extension": {
-				if (value === undefined || value.length === 0) {
-					return needsValue(arg, "an extension id or a path to a .vsix file");
-				}
-				install.push(value);
-				continue;
-			}
-			case "--uninstall-extension": {
-				if (value === undefined || value.length === 0) {
-					return needsValue(arg, "an extension id");
-				}
-				uninstall.push(value);
-				continue;
-			}
 			case "-g":
 			case "--goto": {
 				if (value === undefined || value.length === 0) {
@@ -281,21 +230,12 @@ function parseOptions(args: readonly string[]): Command {
 				goto = value;
 				continue;
 			}
-			case "--force":
-				force = true;
-				continue;
 			// A modifier rather than a mode: `--wait` says how to open, not
-			// what to open, so it is gathered like `--force` and never counted
+			// what to open, so it is gathered and never counted
 			// among the things devhub does one of at a time.
 			case "-w":
 			case "--wait":
 				wait = true;
-				continue;
-			case "--list-extensions":
-				list = true;
-				continue;
-			case "--show-versions":
-				showVersions = true;
 				continue;
 			case "--metrics":
 				metrics = true;
@@ -325,9 +265,6 @@ function parseOptions(args: readonly string[]): Command {
 	}
 
 	const modes = [
-		install.length > 0,
-		uninstall.length > 0,
-		list,
 		version,
 		metrics,
 		goto !== undefined,
@@ -349,13 +286,6 @@ function parseOptions(args: readonly string[]): Command {
 		};
 	}
 
-	if (install.length > 0) {
-		return { kind: "install-extensions", targets: install, force };
-	}
-	if (uninstall.length > 0) {
-		return { kind: "uninstall-extensions", ids: uninstall, force };
-	}
-	if (list) return { kind: "list-extensions", showVersions };
 	if (metrics) return { kind: "metrics" };
 	if (version) return { kind: "version" };
 	if (stdin) return { kind: "open-stdin", wait };
@@ -448,28 +378,6 @@ export function requestFor(
 				profileId: command.profileId,
 				args: command.args,
 				cwd,
-			};
-		case "install-extensions":
-			// The targets are sent as they were typed. Which of them is a `.vsix`
-			// path rather than an extension id is VS Code's own rule, and it is
-			// applied where that rule lives; `cwd` is what a path among them is
-			// then resolved against.
-			return {
-				kind: "install-extensions",
-				targets: command.targets,
-				force: command.force,
-				cwd,
-			};
-		case "uninstall-extensions":
-			return {
-				kind: "uninstall-extensions",
-				ids: command.ids,
-				force: command.force,
-			};
-		case "list-extensions":
-			return {
-				kind: "list-extensions",
-				showVersions: command.showVersions,
 			};
 		case "version":
 			return { kind: "version" };

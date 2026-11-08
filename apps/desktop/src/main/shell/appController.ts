@@ -15,54 +15,12 @@
  */
 
 import { APP_ROOT } from "./appRoot.js";
-import { processGroupAnchor } from "./processGroupAnchor.js";
-import { hungUpAt } from "./quitTrace.js";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { dirname, join, posix } from "node:path";
-import vscodeProduct from "code-oss-dev/out/vs/platform/product/common/product.js";
-/**
- * The product facts that are DevHub's own and not VS Code's.
- *
- * `product.json` is one file and VS Code's type for it names only VS Code's
- * fields, so the fields `apps/desktop/product-overrides.json` adds are read
- * through this rather than by widening a type that is not DevHub's to widen.
- */
-const devhubProduct = vscodeProduct as unknown as {
-	readonly tmuxVersion?: string;
-	readonly tmuxDownloadUrlTemplate?: string;
-	readonly tmuxDownloadSha256?: Readonly<Record<string, string>>;
-	/** The bash a host with neither bash nor zsh gets, for Claude Code. */
-	readonly bashVersion?: string;
-	readonly bashDownloadUrlTemplate?: string;
-	readonly bashDownloadSha256?: Readonly<Record<string, string>>;
-	/**
-	 * The VS Code commit whose remote extension host this build connects to,
-	 * stated by a source run as well — see `rehCommit`.
-	 */
-	readonly serverCommit?: string;
-	/**
-	 * Which build of that server this DevHub carries: a hash of the commit and
-	 * DevHub's patches — see `rehInstallKey`.
-	 */
-	readonly serverIdentity?: string;
-	/** Where `docker` and `devcontainer` are, when they are not on `PATH`. */
-	readonly dockerPath?: string;
-	readonly devcontainerPath?: string;
-};
-/**
- * The VS Code commit the remote extension host every remote window — an SSH
- * host's, a dev container's — installs is built from: `commit` on a packaged
- * build, `serverCommit` on a source run, which has no `commit`.
- */
-const REH_COMMIT = rehCommit({
-	commit: vscodeProduct.commit,
-	serverCommit: devhubProduct.serverCommit,
-});
-/** And the directory it is installed under over there, `<commit>-<identity>`. */
-const REH_INSTALL_KEY = rehInstallKey(REH_COMMIT, devhubProduct.serverIdentity);
+import { devhubProduct } from "../product.js";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { noteMainActivity } from "../diagnostics/eventLoopLag.js";
 import { SaveCoalescer } from "./saveCoalescer.js";
@@ -79,16 +37,9 @@ import {
 import { NoticeJournal } from "../diagnostics/notices.js";
 import { reconcileRounds } from "../diagnostics/rounds.js";
 import { electron } from "../electron.js";
-import { URI } from "code-oss-dev/out/vs/base/common/uri.js";
-import { CancellationToken as VSCancellationToken } from "code-oss-dev/out/vs/base/common/cancellation.js";
-import type { NativeParsedArgs } from "code-oss-dev/out/vs/platform/environment/common/argv.js";
-import type { ICodeWindow } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
-import { OpenContext } from "code-oss-dev/out/vs/platform/windows/electron-main/windows.js";
-import { UnloadReason } from "code-oss-dev/out/vs/platform/window/electron-main/window.js";
 import {
 	CHANNELS,
 	type AgentActionWire,
-	type EditorPlaceholderEvent,
 	type ChordHelpRowWire,
 	type NoticeSettingsWire,
 	type LayoutPreviewWire,
@@ -128,7 +79,6 @@ import { placeWorkspaceBelow } from "../../model/workspaceOrder.js";
 import { AppCoordinator, type Effect } from "../../model/coordinator.js";
 import {
 	CLOSE_BUDGET_MS,
-	CLOSE_STEP_TIMEOUT_MS,
 	CloseTimeout,
 	sessionsLeftRunning,
 	sessionsLeftRunningDetail,
@@ -140,17 +90,11 @@ import {
 	embedSignature,
 	readEmbedFile,
 } from "../agent/conversation/embedFiles.js";
-import {
-	installExtensions,
-	listExtensions,
-	uninstallExtensions,
-} from "../cli/extensionCommands.js";
-import { openFileInWorkbench, type FileSelection } from "../cli/openFiles.js";
+import type { FileSelection } from "../cli/fileSelection.js";
 import { WaitSelectionReturns } from "../cli/waitReturn.js";
 import type {
 	ControlOpenRequest,
 	ControlPosition,
-	DevContainerConfigsAnswer,
 	TerminalProfileAnswer,
 } from "../cli/protocol.js";
 import { workspaceRootFor } from "../cli/resolve.js";
@@ -172,15 +116,7 @@ import {
 	displayPath,
 	locationKey,
 	agentId as parseAgentId,
-	containerHostId,
 	containerTargetFromHostId,
-	containerTargetOf,
-	devContainerConfigLabel,
-	devContainerConfigPath,
-	EDITOR_ON_HOST,
-	editorAuthorityOf,
-	sameEditorAttachment,
-	surfaceKeyName,
 	workspaceId as parseWorkspaceId,
 	workspaceLocation,
 	sessionId,
@@ -189,15 +125,10 @@ import {
 	type AgentProfileKind,
 	type AgentReconciliation,
 	type CloseStep,
-	type ContainerHostId,
-	type ContainerTarget,
-	type EditorAttachment,
-	type UnsavedEditorsInspection,
 	type CloseInspectionInputs,
 	type Workspace,
 	type WorkspaceId,
 	type WorkspaceLocation,
-	relocatedOnSameMachine,
 } from "../../model/domain.js";
 import { readSshHosts } from "./sshHosts.js";
 import {
@@ -267,7 +198,6 @@ import {
 	failureText,
 } from "../../model/wire.js";
 import {
-	isQuitting,
 	shellWindow,
 	shellWindowIfCreated,
 	type ContentFocus,
@@ -299,46 +229,15 @@ import { crash, isInvariantViolation } from "./invariant.js";
 import { InvariantViolation } from "../../model/invariant.js";
 import { HostLinkFailure } from "../agent/conversation/hostLink.js";
 import { ConversationStopped } from "../agent/conversation/failures.js";
-import { deadEditorKeys, editorGaveUpFailure } from "./editorSupervisor.js";
 import { appearanceMode } from "./appearanceMode.js";
 import { mainLogPath } from "../diagnostics/mainLog.js";
 import {
-	editorElement,
 	orchestratorViewWire,
 	shellTitleFor,
 	type OrchestratorTitleView,
 } from "./shellTitle.js";
-import {
-	WorkbenchLifecycle,
-	type EditorPlaceholder,
-	type LifecycleEffect,
-	type WakeReason,
-} from "./workbenchLifecycle.js";
-import {
-	SocketTrafficSampler,
-	WorkbenchFreezer,
-	WorkbenchSensors,
-	foreignPids,
-	sharedRendererFolders,
-	systemProcessDeps,
-	windowUtilitiesOf,
-	type WorkbenchPids,
-} from "./workbenchProcesses.js";
-import { UtilityProcess } from "code-oss-dev/out/vs/platform/utilityProcess/electron-main/utilityProcess.js";
 import type { ShellPalette } from "../../ipc/palette.js";
-import type { WorkbenchView } from "./workbenchView.js";
 import { agents, inspectWorkspaceResources, terminals } from "./adapters.js";
-import {
-	closeEditor,
-	editorInspection,
-	editorRuntimeState,
-} from "./editorInspection.js";
-import {
-	discardUnsavedEditors,
-	readUnsavedEditors,
-	readWorkbenchActivity,
-	type WorkbenchContents,
-} from "./workbenchUnsaved.js";
 import { wireTerminals, type TerminalWiring } from "./terminalWiring.js";
 import { REPOSITORY_LOOKUP_DEADLINE_MS } from "../runtime/cadence.js";
 import {
@@ -359,11 +258,6 @@ import {
 	TERMINAL_ENTRY_BUNDLE,
 } from "../terminal/launcher.js";
 import { controlSocketPath } from "../cli/protocol.js";
-import {
-	containerCommandUnavailable,
-	windowTerminalLauncher,
-} from "./loginEnvironment.js";
-import { cliWithWindowTerminal } from "../services/windowTerminal.js";
 import { OperationDeadline } from "../terminal/command.js";
 import {
 	cacheKeepSettingsOf,
@@ -430,25 +324,12 @@ import {
 } from "../orchestrator/usageThresholds.js";
 import { agentHostFiles } from "../agent/conversation/hostCommand.js";
 import { AgentReconcilers, type ReconcileHost } from "./agentReconciler.js";
-import {
-	devContainerConfigsIn,
-	type ContainerHost,
-} from "../runtime/container.js";
-import {
-	editorPlaceFromWorkspaceUri,
-	type WorkspaceUriParts,
-} from "./editorPlace.js";
 import { AppConditions } from "./appConditions.js";
 import { MachineConditions } from "./machineConditions.js";
-import { MainServicesGate, type MainServices } from "./mainServices.js";
 import {
-	containerHostFor,
-	disposeContainerHost,
 	disposeRuntime,
-	liveContainerHosts,
 	liveRuntimes,
 	localRuntime,
-	onContainerStarted,
 	runtimeById,
 	runtimeForRequested,
 	runtimeFor,
@@ -457,13 +338,9 @@ import {
 	setRuntimeProfile,
 } from "../runtime/registry.js";
 import {
-	BundledRehDelivery,
-	rehCommit,
-	rehInstallKey,
-} from "../runtime/remoteServer.js";
-import {
 	ReleaseToolDelivery,
 	toolInstallDirectory,
+	type HostTool,
 } from "../runtime/toolDelivery.js";
 import type {
 	Runtime,
@@ -552,13 +429,8 @@ import {
 	worktreeForBranch,
 	type GitCommand,
 } from "./git.js";
-import {
-	disposeWorktreeFolder,
-	folderUnreadableReason,
-	readWorktreeFolder,
-} from "./worktreeFolder.js";
+import { disposeWorktreeFolder, readWorktreeFolder } from "./worktreeFolder.js";
 import { findClones } from "./issues.js";
-import { prepareContainerMigration } from "./containerMigration.js";
 import {
 	postGraphQl,
 	readGitHubLogin,
@@ -668,7 +540,7 @@ import {
 	overlayTerminals,
 	wireTerminalNeovims,
 } from "../editor/terminalNeovimWiring.js";
-import { editorForOpen, neovimOpenOf } from "../editor/neovimOpen.js";
+import { neovimOpenOf } from "../editor/neovimOpen.js";
 import { workspaceTerminalPageId } from "../../ipc/terminal.js";
 import {
 	neovimMissingMessage,
@@ -680,7 +552,6 @@ import {
 	type NeovimCall,
 	type NeovimGuiMessage,
 } from "../../ipc/neovim.js";
-import { listenForCloseRequests } from "./workbenchCloseRequests.js";
 import { describeChordKey } from "../../model/chordKeys.js";
 import {
 	COMMANDS,
@@ -746,64 +617,6 @@ function launcherRequest(userDataPath: string): InstallRequest {
 }
 
 /**
- * Where the remote extension host tarballs are.
- *
- * `commit` is the packaged-build switch (see scripts/product_metadata.py), so
- * it is what decides between the two layouts: `APP_ROOT` is
- * `Contents/Resources/app` in a packaged app, and `apps/desktop` in a
- * checkout.
- */
-function rehBundleDirectory(): string {
-	return vscodeProduct.commit !== undefined
-		? join(APP_ROOT, "..", "reh")
-		: join(APP_ROOT, "..", "..", "dist", "reh");
-}
-
-/**
- * What a thrown thing said, for a detail line.
- *
- * Not `errorWire`: that turns anything unrecognised into
- * `native_unavailable`, an app-wide sentence, and the whole point of routing a
- * workbench failure to its Workspace is that it is not one.
- */
-/**
- * Whether this view is a workbench somebody could type into.
- *
- * Three states are one fact. A view DevHub destroyed, a view whose contents
- * Electron destroyed, and a view whose renderer was killed — by the OS during
- * sleep, or by hand — are all "there is no workbench here", and only the first
- * two answer `isDestroyed`. The third keeps the `WebContents` object, so a
- * check that asked only that question said yes about a dead process.
- */
-/** Every WebContents in DevHub that is not destroyed: pages, workbenches, the rest. */
-function liveContents(): Electron.WebContents[] {
-	return electron.webContents
-		.getAllWebContents()
-		.filter((contents) => !contents.isDestroyed());
-}
-
-function isLiveWorkbench(view: WorkbenchView): boolean {
-	return !view.isDestroyed() && !view.webContents.isCrashed();
-}
-
-function describeFailure(error: unknown): string {
-	return failureText(error);
-}
-
-/**
- * How long an open may take before it counts as having failed.
- *
- * Because an open that never settles is the one failure with no symptom at
- * all: the folder stays `opening`, every later caller joins the open, and
- * the folder has no workbench, no restart and nothing on screen for ever. It
- * is reachable — VS Code's window service, asked to open a folder whose window
- * is a renderer that has just been killed, can route the request into that
- * dead window and never answer. Generous, because a cold workbench really does
- * take seconds; finite, because silence is not an outcome.
- */
-const EDITOR_OPEN_TIMEOUT_MS = 30_000;
-
-/**
  * How long a close waits to be told which session an Agent's CLI is in, so it
  * can be reopened (`model/recentlyClosed.ts`). Short: it is asked only so the
  * close can be undone, and an Agent whose session was not told in time is
@@ -847,30 +660,6 @@ function withDeadline<T>(
 }
 
 /**
- * The folder URI a workbench is opened on.
- *
- * One function for every place, because the difference between them *is* this
- * URI and nothing else: everything on either side of the open — the view, the
- * supervision, the surface key — is the same code. `editorAuthorityOf`
- * composes the authority, so the string this hands VS Code and the string the
- * resolver is asked to resolve come from one place.
- *
- * `path` is where the workbench opens the folder: the folder itself on the
- * Workspace's own machine, and where it is mounted when the editor is in a dev
- * container — which only the container can say (`ContainerHost.workspacePath`).
- */
-function folderUriFor(
-	location: WorkspaceLocation,
-	editor: EditorAttachment,
-	path: string,
-): URI {
-	const authority = editorAuthorityOf(location, editor);
-	return authority === undefined
-		? URI.file(path)
-		: URI.from({ scheme: "vscode-remote", authority, path });
-}
-
-/**
  * How long the page waits for a deferred operation before it is a failure.
  *
  * *Derived* from the cleanup budget, not chosen beside it. It was 60s against
@@ -899,29 +688,6 @@ const NEEDS_PHRASE: Readonly<Record<Exclude<CommandNeeds, "nothing">, string>> =
 
 /** More rounds than any real chain needs, and fewer than a cycle survives. */
 const MAX_DRAIN_ROUNDS = 512;
-
-/** The window a running workbench is; see `workbenchContentsOf`. */
-function workbenchOf(codeWindow: ICodeWindow | undefined): ICodeWindow {
-	if (!codeWindow) {
-		throw new InvariantViolation("a running workbench has no window");
-	}
-	return codeWindow;
-}
-
-/**
- * The contents a running workbench's requests go to. Only a workbench
- * `editorRuntimeState` called running is asked anything, and a running one
- * has contents by that definition — so there being none is a broken rule.
- */
-function workbenchContentsOf(
-	codeWindow: ICodeWindow | undefined,
-): WorkbenchContents {
-	const contents = workbenchOf(codeWindow).win?.webContents;
-	if (!contents) {
-		throw new InvariantViolation("a running workbench has no contents");
-	}
-	return contents;
-}
 
 /**
  * Where a Workspace a folder open makes goes in the Sidebar.
@@ -954,11 +720,6 @@ interface PendingRequest {
 	readonly timer: ReturnType<typeof setTimeout>;
 }
 
-/** How DevHub reads and signals its workbenches' processes. */
-const WORKBENCH_PROCESS_DEPS = systemProcessDeps(() =>
-	electron.app.getAppMetrics().map((metric) => metric.pid),
-);
-
 export class AppController {
 	private readonly coordinator: AppCoordinator;
 	private cursor = 0;
@@ -970,84 +731,6 @@ export class AppController {
 	 */
 	private readonly waitReturns = new WaitSelectionReturns();
 
-	/**
-	 * The workbench view showing each place, by that place's key.
-	 *
-	 * The key is `locationKey` — a local folder's canonical path, unchanged from
-	 * when that was the only kind, and `ssh://host/path` for a folder on another
-	 * machine. A path stopped being enough
-	 * the moment two machines could both have `/src/api`: they are two
-	 * Workspaces, two windows and two rows, and one map entry would have made
-	 * them share a workbench.
-	 */
-	private editorViewId(folder: string): number | undefined {
-		return shellWindowIfCreated()?.editorViewId(folder);
-	}
-
-	/**
-	 * Where every folder's workbench is in its life — opening, awake, asleep,
-	 * restarting, given up on — and what to do about it: the one owner
-	 * (`workbenchLifecycle.ts`). Everything below that touches a workbench's
-	 * existence reports to it and carries out its plan
-	 * (`reconcileWorkbenches`); nothing else keeps any part of that state.
-	 */
-	private readonly workbenches = new WorkbenchLifecycle();
-	/**
-	 * The open each `open` effect started, for whoever needs its view to join.
-	 * Not state: the folder's phase says it is opening; this is the promise.
-	 */
-	private readonly workbenchOpens = new Map<
-		string,
-		Promise<WorkbenchView | undefined>
-	>();
-	/** The one timer for the lifecycle's next deadline (a hold, a backoff). */
-	private workbenchDeadline:
-		| { readonly at: number; readonly timer: ReturnType<typeof setTimeout> }
-		| undefined;
-	/** A plan is being carried out; one asked for meanwhile runs right after. */
-	private reconciling = false;
-	private reconcileAgain = false;
-	/** Every workbench's processes, frozen and thawed. See `workbenchProcesses.ts`. */
-	private readonly freezer = new WorkbenchFreezer(WORKBENCH_PROCESS_DEPS);
-	/** The polls the planner needs from outside VS Code: connections, traffic. */
-	private readonly workbenchSensors = new WorkbenchSensors(
-		this.freezer,
-		new SocketTrafficSampler(WORKBENCH_PROCESS_DEPS),
-		{
-			running: () =>
-				this.workbenches.foldersIn("running").flatMap((folder) => {
-					const workspace = this.workspaceForEditorKey(folder);
-					const view = this.liveWorkbench(folder);
-					return workspace?.location.kind === "local" &&
-						workspace.editor.kind === "host" &&
-						view !== undefined
-						? [{ folder, pids: this.workbenchPids(view) }]
-						: [];
-				}),
-			connectionArrived: (folder) => {
-				this.workbenches.connectionArrived(folder, Date.now());
-				this.reconcileWorkbenches();
-			},
-			traffic: (folders, at) => {
-				for (const folder of folders) this.workbenches.traffic(folder, at);
-				this.reconcileWorkbenches();
-			},
-			log: (line) => {
-				console.warn(line);
-			},
-		},
-	);
-
-	/**
-	 * The one place anything waits for VS Code's main process to be usable.
-	 *
-	 * Everything that needs a workbench goes through `services()`, and
-	 * `services()` goes through here — so a request that arrives during startup
-	 * is answered late rather than dropped or thrown. See `mainServices.ts`.
-	 */
-	private readonly mainServices = new MainServicesGate();
-	/** Handed over by `setServices`; released to the gate by `markReady`. */
-	private handedOverServices: MainServices | undefined;
 	/**
 	 * The settings DevHub is running on, now: always a `Config`, the defaults
 	 * or the last accepted settings while the file cannot be used. Asked of
@@ -1073,14 +756,6 @@ export class AppController {
 	/** Page requests still waiting on a deferred chain, by operation identity. */
 	private readonly pendingRequests = new Map<OperationId, PendingRequest>();
 	private terminalsWiring: TerminalWiring | undefined;
-	/** The Workspace `id` names, if it is a Workspace id and one is open. */
-	private workspaceByRawId(id: string): Workspace | undefined {
-		try {
-			return this.coordinator.model.workspace(parseWorkspaceId(id));
-		} catch {
-			return undefined;
-		}
-	}
 	/**
 	 * The terminal view's file jumps: one Neovim per Workspace, DevHub's own.
 	 * Built with the terminal runtime it runs on; see
@@ -1091,8 +766,6 @@ export class AppController {
 	private neovimEditors: NeovimEditors | undefined;
 	/** Neovims run in Agent terminals, drawn over their panes (`terminalNeovims.ts`). */
 	private terminalNeovims: TerminalNeovims | undefined;
-	/** `general.neovim_terminal_overlay` as the overlays were last told it. */
-	private terminalNeovimsOn = false;
 	/** Where a host's Neovim socket is forwarded to, here. */
 	private neovimForwards = "";
 	/**
@@ -1352,7 +1025,6 @@ export class AppController {
 		 */
 		private readonly settings: RunningSettings,
 		private readonly stateStore: JsonStateStore,
-		private readonly cliArgs: NativeParsedArgs,
 		model: AppModel,
 		state: PersistedAppState,
 		/**
@@ -1377,12 +1049,6 @@ export class AppController {
 		// is in.
 		this.coordinator = new AppCoordinator(model, (snapshot) =>
 			drawnWorkspaceOrder(snapshot, this.repositoryOf),
-		);
-		// The overlay has to know whether the workbench a question belongs to is
-		// the one on screen. Views are the window's; surface keys are the
-		// model's; this is the one place the two are joined.
-		shellWindow().setSurfaceKeyResolver((view) =>
-			this.editorSurfaceKeyForView(view.id),
 		);
 		// The window's name is a function of the model and of what the
 		// workbench on screen calls itself. The model half is pushed from
@@ -1457,31 +1123,6 @@ export class AppController {
 	}
 
 	//#region lifecycle
-
-	/**
-	 * Take the main-process services from VS Code's DI container.
-	 *
-	 * They are only *held* here. The container is built several steps before
-	 * `CodeApplication.startup()` has finished, and a workbench opened in that
-	 * window would be opened into an application still assembling itself. The
-	 * moment they may be used is `markReady`, and that is the moment the gate
-	 * opens — one gate, opened once, at the one point where using them is
-	 * correct.
-	 */
-	setServices(services: MainServices): void {
-		this.handedOverServices = services;
-	}
-
-	/**
-	 * The main-process services, waiting for them if startup has not got there.
-	 *
-	 * This is a promise rather than a value because the alternative is asking
-	 * every caller to know how far into startup it is. It never rejects and it
-	 * never resolves to nothing: "not yet" is a duration, not an outcome.
-	 */
-	private services(): Promise<MainServices> {
-		return this.mainServices.wait();
-	}
 
 	/** Whether the previous run ended cleanly, for the Settings diagnostics. */
 	previousExit(): "clean" | "unclean" | "unknown" {
@@ -1886,11 +1527,6 @@ export class AppController {
 		return key === undefined ? undefined : this.neovimEditors?.bufferName(key);
 	}
 
-	/** Whether Workspaces' editor areas are their Neovim (`general.editor`). */
-	private editorIsNeovim(): boolean {
-		return this.config.general.editor === "neovim";
-	}
-
 	/**
 	 * Where a Workspace's Neovim runs: its own machine. A dev container is
 	 * not one yet (`docs/neovim-editor.md`, "Limitations").
@@ -2087,9 +1723,7 @@ export class AppController {
 	private watchForWake(): void {
 		const wake = (): void => {
 			for (const runtime of liveRuntimes()) runtime.resumed();
-			for (const host of liveContainerHosts()) host.resumed();
 			this.agentReconcilers.wake();
-			this.checkEditorHealth();
 			// A Mac asleep across midnight wakes to a timer aimed at a moment
 			// that has passed, or at one in a timezone it has left. Not caught
 			// here: a failure goes to the main process's root like any other.
@@ -2390,16 +2024,6 @@ export class AppController {
 			closeWorkspace: (workspaceId) => {
 				this.placeKeyboardOnSurface();
 				this.closeWorkspaceOrWorktree(workspaceId);
-			},
-			stopEditor: (workspaceId) => {
-				// The Neovim editor is the Workspace's terminal: nothing to stop.
-				if (this.editorIsNeovim()) {
-					this.reportNotStopped(
-						"the Neovim editor is the Workspace's terminal, which keeps running; quit a Neovim in it with :q",
-					);
-					return;
-				}
-				this.stopWorkbench(workspaceId);
 			},
 			reopenClosed: () => {
 				this.placeKeyboardOnSurface();
@@ -3343,43 +2967,6 @@ export class AppController {
 		await this.saveState();
 	}
 
-	/**
-	 * The window came forward, or went away.
-	 *
-	 * Wired to `ShellWindow` in `bootstrapShell`. It is a fact about the person,
-	 * so it goes into the model as an intent like every other one; what the
-	 * model does with it — reading whatever is on screen when DevHub comes back
-	 * — is the model's rule and is stated there.
-	 */
-	/**
-	 * The folder a workbench was asked for is not on disk.
-	 *
-	 * Told to the model as an intent, the way a focus change is: the model
-	 * decides what an absent folder means for the workspace (`unavailable`,
-	 * with `root_missing` as the reason), and the projection change that
-	 * follows is what takes the workspace out of the workbenches wanted.
-	 * A folder no workspace owns is nobody's to mark.
-	 */
-	private noteFolderUnreadable(
-		folder: string,
-		reason: "root_missing" | "root_inaccessible",
-	): void {
-		const workspace = this.coordinator.model.workspaces.find(
-			(candidate) => candidate.root === folder,
-		);
-		if (!workspace) return;
-		// Through `dispatchOwn`, which is what "DevHub raised this intent
-		// itself" means everywhere else: it drains, and a refusal goes to the
-		// root. This used to have its own copy of both, with the drain skipped
-		// on failure — the second way of saying one thing, and the one that was
-		// slightly different.
-		this.dispatchOwn({
-			type: "workspace_root_unreadable",
-			workspaceId: workspace.id,
-			reason,
-		});
-	}
-
 	windowFocusChanged(focused: boolean): void {
 		// Whether the window is in front decides how loudly an unread Agent is
 		// announced — a badge either way, a Dock bounce only while the person
@@ -3445,23 +3032,6 @@ export class AppController {
 			// a connection and sessions on, which is worth more than a log line.
 			void disposeRuntime(runtime.id);
 		}
-		// And every dev container no Workspace's editor is attached to any
-		// more: its forward and its relay go, the container itself stays.
-		const attached = new Set(this.attachedContainers());
-		for (const host of liveContainerHosts()) {
-			if (attached.has(host.id)) continue;
-			void disposeContainerHost(host.id);
-		}
-	}
-
-	/** The dev containers Workspaces' editors are attached to right now. */
-	private attachedContainers(): readonly ContainerHostId[] {
-		const attached: ContainerHostId[] = [];
-		for (const workspace of this.coordinator.model.workspaces) {
-			const target = containerTargetOf(workspace.location, workspace.editor);
-			if (target !== undefined) attached.push(containerHostId(target));
-		}
-		return attached;
 	}
 
 	/**
@@ -3757,7 +3327,6 @@ export class AppController {
 			resume: sessionId(request.session),
 			...(focus === undefined ? {} : { focus }),
 		});
-		if (focus !== "none") await this.syncEditorView();
 		return outcomeWire(
 			settled,
 			this.coordinator.readiness,
@@ -4165,19 +3734,14 @@ export class AppController {
 		// to be asked for like any asleep one.
 		await this.openFolder(opening, undefined, "automatic", "for-agent");
 		const workspaceId = this.openedWorkspaceId(opening);
-		const notes: string[] = [];
-		if (place.dev_container !== undefined) {
-			try {
-				await this.attachEditor(workspaceId, {
-					kind: "devContainer",
-					configPath: devContainerConfigPath(place.dev_container),
-				});
-			} catch (error: unknown) {
-				notes.push(
-					`Its editor could not be opened in its dev container again (${failureText(error)}); it is open on its own machine.`,
-				);
-			}
-		}
+		// A dev container it was attached to is not reattached: that was VS
+		// Code's (docs/without-vscode.md).
+		const notes =
+			place.dev_container === undefined
+				? []
+				: [
+						"It was open in a dev container; DevHub opens it on its own machine now.",
+					];
 		return { workspaceId, notes };
 	}
 
@@ -4233,7 +3797,6 @@ export class AppController {
 				context: { kind: "workspace", workspaceId: open.id },
 				presentation: "full",
 			});
-			await this.syncEditorView();
 			let stack = this.state.recently_closed;
 			for (const agent of agentEntriesOf(entry).reverse()) {
 				stack = rememberClosed(stack, agent);
@@ -4269,7 +3832,6 @@ export class AppController {
 				context: { kind: "agent", agentId: first },
 				presentation: "full",
 			});
-			await this.syncEditorView();
 		}
 		return notes;
 	}
@@ -4360,7 +3922,6 @@ export class AppController {
 				displayName: agent.display_name,
 			});
 		}
-		await this.syncEditorView();
 		return created.id;
 	}
 
@@ -4369,10 +3930,7 @@ export class AppController {
 	/**
 	 * Tell the Neovims over terminal panes which terminals there are — every
 	 * Agent's, and every Workspace's whose terminal has a page — and which
-	 * are on screen, and whether the editor is Neovim (`general.editor`).
-	 * Turned to VS Code, the overlays there are stay until their Neovims exit,
-	 * and each machine's server is told, so a `nvim` started from then on is
-	 * the TUI.
+	 * are on screen.
 	 */
 	private syncTerminalNeovims(
 		shell: ReturnType<typeof shellWindow>,
@@ -4382,18 +3940,7 @@ export class AppController {
 		const overlays = this.terminalNeovims;
 		if (overlays === undefined) return;
 		shell.setTerminalNeovimHooks(overlays);
-		const on = this.editorIsNeovim();
-		if (this.terminalNeovimsOn && !on) {
-			void this.terminalsWiring?.runtimes
-				.live()
-				.then((adapters) =>
-					Promise.allSettled(
-						adapters.map((adapter) => adapter.clearNeovimOverlay()),
-					),
-				);
-		}
-		this.terminalNeovimsOn = on;
-		overlays.setEnabled(on);
+		overlays.setEnabled(true);
 		const workspaces = workspaceTerminals.flatMap((workspaceId) => {
 			try {
 				const target = this.neovimTarget(workspaceId);
@@ -4594,15 +4141,6 @@ export class AppController {
 	}
 
 	markReady(): void {
-		const services = this.handedOverServices;
-		if (!services) {
-			// Bootstrap order, not a race: nothing waits this out, because the
-			// only way here is a startup that skipped `setServices` entirely.
-			throw new Error(
-				"the App Shell was marked ready before the main services were handed over",
-			);
-		}
-		this.mainServices.register(services);
 		this.coordinator.markReady();
 		this.coordinator.setEditorHostState({ kind: "ready" });
 		this.publishSnapshot();
@@ -4616,11 +4154,6 @@ export class AppController {
 	 * than killing the work. Agents get a bounded chance to shut down.
 	 */
 	async shutdown(): Promise<void> {
-		// Every frozen workbench runs again, so that VS Code's quit can unload
-		// it and its processes can end: a stopped process ends on nothing but
-		// SIGKILL.
-		this.freezer.thawAll();
-		this.workbenchSensors.dispose();
 		// From here a terminal ending is DevHub going, not a person's exit.
 		this.stopWatchingConfig?.();
 		this.stopHearingReconnections?.();
@@ -4672,9 +4205,6 @@ export class AppController {
 					scratch,
 					...rows,
 				].map((workspace) => {
-					const phase = this.workbenches.phase(workspace.key);
-					const state = this.workbenches.state(workspace.key);
-					const view = shell.viewForEditorKey(workspace.key);
 					return {
 						id: workspace.id,
 						label: workspace.label,
@@ -4691,26 +4221,6 @@ export class AppController {
 										),
 									}),
 						})),
-						...(phase.kind === "absent" && view === undefined
-							? {}
-							: {
-									workbench: {
-										state,
-										// What the lifecycle would refuse anyway, not offered:
-										// a far one, the one on screen, or any with freezing off.
-										sleepable:
-											this.config.general.workbench_freeze &&
-											phase.kind === "running" &&
-											workspace.location.kind === "local" &&
-											workspace.editor.kind === "host" &&
-											this.selectedEditorKey() !== workspace.key,
-										renderers:
-											view && isLiveWorkbench(view)
-												? [view.webContents.getOSProcessId()]
-												: [],
-										viewId: view?.id ?? -1,
-									},
-								}),
 					};
 				}),
 			pages: () => [
@@ -4735,21 +4245,6 @@ export class AppController {
 				return (await wiring.local()).processPanes();
 			},
 		});
-	}
-
-	/**
-	 * The Task Manager's Sleep: the next plan is asked to freeze this
-	 * Workspace's workbench now, past what would otherwise keep it up (a
-	 * task, traffic) but never the one on screen, one still starting, or a
-	 * remote one (`AWAKE_RULES`' hard reasons).
-	 */
-	sleepWorkbenchFromTaskManager(workspaceId: string): void {
-		const folder = this.coordinator.model.workspace(
-			workspaceId as WorkspaceId,
-		)?.key;
-		if (folder === undefined) return;
-		this.workbenchFreeze = folder;
-		this.reconcileWorkbenches();
 	}
 
 	/** The Task Manager's Stop: the Agent's own stop, with its question. */
@@ -5020,10 +4515,8 @@ export class AppController {
 		// Which workbenches exist follows the projection and the selection —
 		// a Workspace added or gone, one shown that is asleep, the cap — so
 		// every change is a plan. See `workbenchLifecycle.ts`.
-		this.reconcileWorkbenches();
 		// What is on screen follows the selection, wherever the selection
 		// changed — a menu command, a restored session, or the page.
-		this.syncEditorViewInBackground();
 	}
 
 	/**
@@ -5062,9 +4555,7 @@ export class AppController {
 		const title = shellTitleFor({
 			selection: snapshot.selection,
 			workspaces: snapshot.workspaces,
-			editorElement: this.editorIsNeovim()
-				? this.neovimTitleElement(snapshot.selection)
-				: editorElement(shell.revealedTitle(), vscodeProduct.nameLong),
+			editorElement: this.neovimTitleElement(snapshot.selection),
 			orchestratorWorkspaceId: snapshot.orchestratorWorkspaceId,
 			orchestratorView: this.orchestratorTitleView(),
 			repositories: this.lastRepositoryStatus.workspaces,
@@ -5111,12 +4602,10 @@ export class AppController {
 			layout.kind === "workbench" || layout.kind === "split"
 				? this.editorKeyForSurfaceKey(layout.editorKey)
 				: undefined;
-		// The Neovim editor: the Workspace's terminal is its editor area, its
-		// page made the first time it is shown and kept while the setting
-		// holds, with every Neovim in it drawn over its pane.
-		const neovim = this.editorIsNeovim();
-		if (neovim && editorKey !== undefined) this.neovimShown.add(editorKey);
-		if (!neovim) this.neovimShown.clear();
+		// The Workspace's terminal is its editor area, its page made the first
+		// time it is shown and kept, with every Neovim in it drawn over its
+		// pane.
+		if (editorKey !== undefined) this.neovimShown.add(editorKey);
 		const neovimPages = this.coordinator.model.workspaces.flatMap(
 			(workspace) =>
 				this.neovimShown.has(workspace.key)
@@ -5124,18 +4613,8 @@ export class AppController {
 					: [],
 		);
 		shell.syncEditorTerminals(neovimPages);
-		const view = neovim ? { view: "neovim" as const } : {};
-		// Its phase, as the page draws it: anything standing in for the
-		// workbench means the workbench itself is not what is in the area.
-		const restarting =
-			!neovim &&
-			editorKey !== undefined &&
-			this.workbenches.placeholder(editorKey) !== undefined;
-		// Nothing is drawn in the content area until the model is ready, and a
-		// workbench being rebuilt is a state of the area rather than a reason
-		// to leave it — in both cases the page has the rectangle and no
-		// workbench is over it.
-		const hidden = restarting ? { hidden: true as const } : {};
+		const view = { view: "neovim" as const };
+		const hidden = {};
 		const surface: SurfaceArrangement =
 			snapshot.readiness !== "ready"
 				? { kind: "none" }
@@ -5180,7 +4659,7 @@ export class AppController {
 			model.agentTerminals().map((one) => one.terminalId),
 		);
 		const editorWorkspace =
-			neovim && editorKey !== undefined && surface.kind !== "none"
+			editorKey !== undefined && surface.kind !== "none"
 				? neovimPages.find((page) => page.editorKey === editorKey)?.workspaceId
 				: undefined;
 		this.syncTerminalNeovims(
@@ -6504,49 +5983,10 @@ export class AppController {
 			// rule is `agentsInspection`'s, and it is the same one `Cmd+Q X` on a
 			// single Agent reads.
 			agentsInspection(workspace?.agents ?? []),
-			await this.inspectEditors(workspaceId),
+			// A Neovim's unsaved buffers are its own to ask about (`:qa` in
+			// it); DevHub's close has no editor of its own to inspect.
+			{ kind: "clean" },
 		);
-	}
-
-	/**
-	 * What the close confirmation says about this Workspace's unsaved editors.
-	 * The rule is `editorInspection`'s; this finds the workbench it is about.
-	 */
-	private async inspectEditors(
-		workspaceId: WorkspaceId,
-	): Promise<UnsavedEditorsInspection> {
-		const workspace = this.coordinator.model.workspace(workspaceId);
-		if (workspace === undefined) return { kind: "clean" };
-		// Asked of a workbench that runs: a frozen one is thawed for it, and
-		// one that is not running has nothing unsaved to say.
-		return this.holdWorkbench(workspace.key, "thaw", async () => {
-			const codeWindow = await this.editorWindowFor(workspace.key);
-			return editorInspection(editorRuntimeState(codeWindow), () =>
-				readUnsavedEditors(workbenchContentsOf(codeWindow)),
-			);
-		});
-	}
-
-	/**
-	 * The `CodeWindow` bound to a folder, or nothing when there is no workbench
-	 * for it any more.
-	 *
-	 * The binding outlives the view it names: a workbench
-	 * that VS Code closed, or whose view DevHub destroyed, leaves its id
-	 * behind. So "there is an entry in the map" is not "there is a workbench",
-	 * and asking the window service is the only answer worth having. Reading
-	 * the map alone is what used to make a workspace with no editor at all
-	 * report that its editor was not running.
-	 */
-	private async editorWindowFor(
-		folder: string,
-	): Promise<ICodeWindow | undefined> {
-		const viewId = this.editorViewId(folder);
-		if (viewId === undefined) return undefined;
-		return (await this.services())
-			.windows()
-			.getWindows()
-			.find((candidate) => candidate.id === viewId);
 	}
 
 	private async launchAgent(
@@ -6817,15 +6257,9 @@ export class AppController {
 	 * The rule is `Coordinator.closeWorkspace`'s; this is the environment half
 	 * of it. Two things are load-bearing here.
 	 *
-	 * **The editor comes first, and asks nothing.** Unsaved work was asked
-	 * about once, in the confirmation, beside everything else a close would
-	 * lose (`editorInspection`), and this step carries out that answer: it
-	 * discards, then unloads (`closeEditor`). An unload with work still
-	 * unsaved raises VS Code's own "do you want to save?" — a second question
-	 * in the middle of an answered close, which is how a close once sat at
-	 * "closing" until its deadline with the dialog stranded over it. A veto
-	 * that survives the discard is still an answer and stops the close before
-	 * anything is stopped, killed or deleted.
+	 * **The editor comes first**: the Workspace's managed Neovim, whose
+	 * unsaved buffers the close's question already counted as a running
+	 * program.
 	 *
 	 * **Every step after it treats "already gone" as success.** A `kill-session`
 	 * on a session somebody killed from outside, a whole tmux server that is not
@@ -6853,35 +6287,7 @@ export class AppController {
 		const closing = this.coordinator.model.workspace(workspaceId);
 		let reopenable: ClosedEntryRecord | undefined;
 		try {
-			let vetoed: CloseDiagnosticWire | undefined;
-			try {
-				vetoed = await withCloseDeadline(
-					step,
-					// Both of its editors go with the Workspace, in this step: the
-					// workbench, which may refuse (unsaved work), and then the
-					// managed Neovim, whose unsaved buffers the close's question
-					// already counted as a running program.
-					this.askEditorToClose(workspaceId).then(async (vetoed) => {
-						if (vetoed === undefined) await this.closeManagedNeovim(closing);
-						return vetoed;
-					}),
-				);
-			} finally {
-				// A question the workbench raised while this step waited — an
-				// extension or a task refusing the unload — belongs to this step
-				// and ends with it. Left on the picker after the step had given
-				// up, it covered the app over a close that was no longer running;
-				// withdrawn, it is answered with its own cancel, and the unload
-				// VS Code is still holding settles as a veto.
-				this.withdrawWorkbenchQuestions(workspaceId);
-			}
-			if (vetoed !== undefined) {
-				// The workbench refused — unsaved work, most likely, and the
-				// person has just been asked about it. That is a reason, not an
-				// error, and nothing has been closed.
-				this.failClose(token, workspaceId, step, vetoed);
-				return;
-			}
+			await withCloseDeadline(step, this.closeManagedNeovim(closing));
 			// What reopening it needs, its Agents' sessions included, read
 			// while they are still running. A worktree this close deletes is
 			// remembered as its branch, read now while git still knows it,
@@ -6917,16 +6323,6 @@ export class AppController {
 					workspaceId,
 					() => terminalAdapter.closeWorkspaceTerminals(workspaceId),
 					leftRunning,
-				);
-			}
-
-			step = "view";
-			this.disposeEditorView(workspaceId);
-			if (closing !== undefined) {
-				this.releaseContainer(
-					closing.location,
-					closing.editor,
-					closing.startedContainer,
 				);
 			}
 
@@ -7047,31 +6443,6 @@ export class AppController {
 	}
 
 	/**
-	 * Take down this workspace's workbench view.
-	 *
-	 * After the unload, not instead of it: the unload is what saves work, and
-	 * this is what takes the window away once nothing is left in it to lose. A
-	 * view that is already gone — destroyed, or never built — is the state this
-	 * was trying to reach, so there is nothing to report.
-	 *
-	 * It happens *before* the worktree is removed, because a workbench with an
-	 * open folder under a directory git is about to delete is a workbench
-	 * watching a directory that stops existing.
-	 */
-	private disposeEditorView(workspaceId: WorkspaceId): void {
-		const key = this.coordinator.model.workspace(workspaceId)?.key;
-		if (key === undefined) return;
-		const viewId = this.editorViewId(key);
-		// A stopped renderer cannot end: continued before it is destroyed.
-		this.thawWorkbench(key);
-		shellWindow().unbindEditorKey(key);
-		if (viewId !== undefined) shellWindow().getViewById(viewId)?.destroy();
-		// Taken down on purpose: the lifecycle's `absent`, opened again only
-		// if it is still wanted and not closing (a reattach opens the new one).
-		this.workbenches.disposed(key);
-	}
-
-	/**
 	 * Do what the person said about the folder, if they said anything.
 	 *
 	 * The answer arrived with the close. `remove-anyway` is the only thing that
@@ -7144,28 +6515,6 @@ export class AppController {
 	//#endregion
 
 	//#region workbench views
-
-	/**
-	 * The live workbench for a folder, once the open the lifecycle has in
-	 * flight for it (if any) has settled — or nothing. For revealing the one
-	 * on screen, which the plan starts or thaws for being shown; a request
-	 * that goes on to use a workbench goes through `holdWorkbench`.
-	 */
-	private async workbenchReady(
-		folder: string,
-	): Promise<WorkbenchView | undefined> {
-		this.reconcileWorkbenches();
-		await this.workbenchOpens.get(folder)?.catch(() => undefined);
-		return this.liveWorkbench(folder);
-	}
-
-	/** The folder's view if it is built and its renderer alive. */
-	private liveWorkbench(folder: string): WorkbenchView | undefined {
-		const viewId = this.editorViewId(folder);
-		const view =
-			viewId === undefined ? undefined : shellWindow().getViewById(viewId);
-		return view && isLiveWorkbench(view) ? view : undefined;
-	}
 
 	/**
 	 * The open itself, from the wait for VS Code to the view on the window.
@@ -7256,976 +6605,7 @@ export class AppController {
 			cliText: readCliEntryBundle(APP_ROOT),
 			cliEntryName: CLI_ENTRY_BUNDLE,
 			skillText: devhubSkillText,
-			serverDataFolderName:
-				vscodeProduct.serverDataFolderName ?? ".vscode-server",
-			serverInstallKey: REH_INSTALL_KEY,
 		});
-	}
-
-	/**
-	 * What a window is told its DevHub terminal is.
-	 *
-	 * Per window, because the workbench's integrated terminal runs where its pty
-	 * host runs: a window on a host must name the launcher written *there*, and
-	 * naming this Mac's would be a path that machine has never heard of. It
-	 * travels as a field of the window configuration, which is the channel that
-	 * carries per-window facts — see `loginEnvironment.windowTerminalLauncher`
-	 * for why it is not an environment variable any more.
-	 *
-	 * A machine whose launcher could not be installed is not a reason to refuse
-	 * the window: the person asked for a folder, and a folder they can edit
-	 * without a DevHub terminal is worth more than no folder at all. But it is
-	 * never silent, and never guessed. Three things happen instead, and they
-	 * are three because they are three different readers: the log gets the
-	 * stack, `devhub --metrics` gets the machine and the reason (through
-	 * `terminalLauncherFor`), and the person gets the app's own alert — because
-	 * a window that opened and quietly has no terminal is exactly the failure
-	 * nobody goes looking for.
-	 *
-	 * What is *not* done is falling back to this Mac's launcher. That was the
-	 * bug: a window told nothing inherited whatever was already around, and an
-	 * ssh window opened `/bin/sh` in silence. Undefined is the answer for a
-	 * machine with none, and the patch refuses to invent one.
-	 */
-	private async windowTerminalLauncher(
-		location: WorkspaceLocation | undefined,
-	): Promise<string | undefined> {
-		const runtime =
-			location === undefined ? localRuntime() : runtimeFor(location);
-		try {
-			const launcher = await this.terminalLauncherFor(runtime);
-			if (launcher.unreachable !== undefined) {
-				console.error(
-					`[devhub] terminal launcher on ${runtime.id}: ${launcher.unreachable}`,
-				);
-				this.publishError(
-					withDetail(
-						errorWireAt("terminal_launcher_unavailable"),
-						`${runtime.id}: ${launcher.unreachable}`,
-					),
-				);
-			}
-			return windowTerminalLauncher(launcher);
-		} catch (error: unknown) {
-			console.error(
-				`[devhub] terminal launcher on ${runtime.id} could not be installed`,
-				error instanceof Error ? error.stack : error,
-			);
-			this.publishError(
-				withDetail(
-					errorWireAt("terminal_launcher_unavailable"),
-					`${runtime.id}: ${failureText(error)}`,
-				),
-			);
-			return windowTerminalLauncher(undefined);
-		}
-	}
-
-	private async openEditorView(
-		editorKey: string,
-	): Promise<WorkbenchView | undefined> {
-		const workspace = this.workspaceForEditorKey(editorKey);
-		const location = workspace?.location;
-		const editor = workspace?.editor ?? EDITOR_ON_HOST;
-		// Look before asking, for a folder DevHub can look at. VS Code answers an
-		// open for a folder that is not there with a modal box — "The path '…'
-		// does not exist on this computer." — and it answered it on every launch
-		// and on every selection of a workspace whose folder had gone, because
-		// nothing here had looked first. The folder's absence is a fact about the
-		// workspace, so it goes into the model as one: the workspace becomes
-		// unavailable, which the content area draws with Retry, Locate… and
-		// Close, and the lifecycle stops asking for a workbench in it.
-		//
-		// An ssh folder is not looked at, because there is nothing here that
-		// could look: the machine that knows is the one the workbench is about to
-		// connect to. Its "the folder is not there" arrives from the far end,
-		// inside that pane, as Open Remote - SSH's own failure — which is where a
-		// connection problem belongs, and where the person can retry it. Guessing
-		// from here would put a second, wronger answer on screen.
-		if (location?.kind === "local") {
-			// Two answers, not one. A folder that is gone and a folder DevHub was
-			// not allowed to look at are different facts about the workspace, and
-			// offering Locate… for a folder that never moved is an answer to a
-			// question nobody asked.
-			const reason = await folderUnreadableReason(
-				runtimeFor(location),
-				location.path,
-			);
-			if (reason !== undefined) {
-				console.log(`[devhub] open: '${editorKey}' — ${reason}, no workbench`);
-				this.noteFolderUnreadable(location.path, reason);
-				return undefined;
-			}
-		}
-		// Where the workbench opens the folder. On the Workspace's own machine
-		// that is the folder; in a dev container it is where the CLI mounts it
-		// (`ContainerHost.workspacePath`) — and the container is started first,
-		// and only started: opening a window is the person's standing choice to
-		// have this editor in its container, which is enough to start one that
-		// exists and not enough to spend minutes building an image.
-		const target =
-			location === undefined ? undefined : containerTargetOf(location, editor);
-		const openPath =
-			target === undefined
-				? location?.path
-				: await (async () => {
-						const host = containerHostFor(target);
-						await host.prepare();
-						const inside = await host.workspacePath();
-						await this.installContainerCommand(host);
-						return inside;
-					})();
-		const services = await this.services();
-		// Which `devhub-terminal` this window names, decided here because this
-		// is where the window's machine is already known. This is the *only*
-		// place that decides it: nothing else names one, so a window that is
-		// not told here has none, which is what the patched workbench is
-		// written to say out loud.
-		//
-		// A window attached to a dev container still has a DevHub terminal, and
-		// it is the Workspace's own session on the Workspace's own machine —
-		// run by this Mac's launcher on this Mac's pty host
-		// (`devhubTerminalLocal`), never in the container. Tasks and the
-		// debugger stay in the container: the patch only moves the DevHub
-		// profile.
-		const launcher = await this.windowTerminalLauncher(
-			target === undefined ? location : undefined,
-		);
-		const terminalLocal =
-			target === undefined || workspace === undefined
-				? undefined
-				: {
-						cwd:
-							workspace.location.kind === "local"
-								? workspace.location.path
-								: homedir(),
-						args: ["--workspace", workspace.key],
-					};
-		// Said in the log, every time, because this is the value whose being
-		// wrong is invisible from the outside: a window with another machine's
-		// launcher opens perfectly and only fails when somebody presses Ctrl+`.
-		console.log(
-			`[devhub] open: '${editorKey}' terminal launcher — ${
-				launcher ?? "none on this machine"
-			}`,
-		);
-		// Go through VS Code's own open path, which is what creates a
-		// `CodeWindow` — and therefore, through the shim, a view in the shell.
-		// The same call for both kinds of place: an ssh folder differs only in
-		// the URI, which carries the authority Open Remote - SSH answers for.
-		const windows = await services.windows().open({
-			context: OpenContext.API,
-			// The window's terminal travels in `cli`, which upstream spreads into
-			// the window configuration (`../services/windowTerminal.ts`).
-			cli: cliWithWindowTerminal(this.cliArgs, {
-				devhubTerminalLauncher: launcher,
-				devhubTerminalLocal: terminalLocal,
-			}),
-			urisToOpen:
-				location === undefined || openPath === undefined
-					? []
-					: [{ folderUri: folderUriFor(location, editor, openPath) }],
-			forceEmpty: location === undefined,
-			forceNewWindow: true,
-			noRecentEntry: true,
-		});
-		const opened = windows.at(0);
-		const candidate =
-			opened === undefined ? undefined : shellWindow().getViewById(opened.id);
-		// An open can come back with a window that is not a workbench any more.
-		// VS Code's window service answers an open for a folder it already has a
-		// window for by routing the request *into that window* — and after a
-		// renderer has been killed, that window is a shell with a dead process
-		// in it. Taking it as the answer put a zombie in the table: the folder
-		// had no workbench, the supervisor had nothing to count, and nothing on
-		// screen said so. A dead view is not an answer, so the open failed.
-		const view =
-			candidate && isLiveWorkbench(candidate) ? candidate : undefined;
-		if (opened && view) shellWindow().bindEditorKey(opened.id, editorKey);
-		if (view) {
-			this.superviseEditorView(editorKey, view);
-			// A workbench that has loaded is awake. Waiting for `did-finish-load`
-			// is not enough on its own: a fast workbench can have finished
-			// loading before this promise resolved, and a `once` on an event
-			// that already happened never fires — which would leave it opening,
-			// and its slot saying so, for ever about a workbench that is right
-			// there. The main frame's load, not `isLoading`: that one is also
-			// true while any iframe loads, and a workbench restoring its
-			// editors starts webviews the moment its page has loaded — which is
-			// how a wake was left "Starting…" for good. Whatever still slips
-			// through is settled by the plan (`loading`).
-			if (!view.webContents.isLoadingMainFrame()) {
-				this.workbenchLoaded(editorKey);
-			}
-		}
-		return view;
-	}
-
-	/**
-	 * Tell the page what stands in a folder's editor slot now — its phase as
-	 * `placeholderOf` reads it, nothing when the workbench is itself.
-	 *
-	 * The page needs this for two reasons that are really one: it must show
-	 * *what is true* in the editor area while the workbench is away, and it
-	 * must stop telling main the native surface is on screen — because it is
-	 * not, and main now refuses to be told otherwise.
-	 */
-	private sendEditorPlaceholder(
-		surfaceKey: string,
-		placeholder: EditorPlaceholder | undefined,
-	): void {
-		this.send(CHANNELS.editorPlaceholder, {
-			surfaceKey,
-			...(placeholder === undefined ? {} : { placeholder }),
-		});
-	}
-
-	/**
-	 * Watch a workbench, and report it if it falls over.
-	 *
-	 * DevHub owns the editor's lifecycle. VS Code is one element inside
-	 * DevHub's page, and an element that vanishes because its renderer was
-	 * killed — or because VS Code decided to close itself — is not a decision
-	 * DevHub made and must not be one the person has to notice. So a death
-	 * DevHub did not ask for is a failure the lifecycle answers by building
-	 * the workbench again, in the same slot, after a backoff that grows, and
-	 * after enough tries by stopping and saying so.
-	 */
-	private superviseEditorView(folder: string, view: WorkbenchView): void {
-		const died = (reason: string) => {
-			// Nor is a view that ended because DevHub is quitting. Every
-			// workbench ends then, and by that point there is no page left to
-			// tell and no shell to restart one into — the App Shell window has
-			// already gone, which is how the report of the crash became a crash
-			// of its own ("the App Shell window has not been created yet").
-			if (isQuitting()) return;
-			// A view DevHub destroyed on purpose is not a casualty: its folder is
-			// no longer in the table, because that is what destroying it means.
-			if (this.editorViewId(folder) !== view.id) return;
-			shellWindow().unbindEditorKey(folder);
-			this.workbenchFailed(folder, reason);
-		};
-		view.webContents.once("destroyed", () => {
-			died("The workbench process ended.");
-		});
-		view.webContents.on("render-process-gone", (_event, details) => {
-			died(
-				`The workbench renderer stopped: ${details.reason}${
-					details.exitCode === undefined
-						? ""
-						: ` (exit code ${String(details.exitCode)})`
-				}.`,
-			);
-		});
-		view.webContents.once("did-finish-load", () => {
-			// Loading makes it awake, which is news for the page; for the
-			// failure count it only starts the clock. See `EDITOR_HEALTHY_MS`.
-			this.workbenchLoaded(folder);
-		});
-	}
-
-	/** A folder's view finished loading. */
-	private workbenchLoaded(folder: string): void {
-		this.workbenches.loaded(folder, Date.now());
-		this.reconcileWorkbenches();
-	}
-
-	/**
-	 * There is no workbench for this folder and the last attempt did not make
-	 * one.
-	 *
-	 * Every caller funnels here — the death watcher, a rejected open, an open
-	 * that returned no view — because they are one condition with several
-	 * causes, and a budget per cause is no budget. The lifecycle decides what
-	 * comes of it: a bounded restart at a delay that doubles, or giving up,
-	 * which is reported on the thing the failure is *about*.
-	 *
-	 * Nothing here publishes app-wide for a folder that has a Workspace. The
-	 * failure of one workspace's workbench is that workspace's news: it goes on
-	 * its row and its surface, where the person can retry it, and every other
-	 * row keeps its editor.
-	 */
-	private workbenchFailed(folder: string, reason: string): void {
-		if (isQuitting()) return;
-		console.error(`[devhub] workbench '${folder}' failed: ${reason}`);
-		this.workbenches.failed(folder, reason, Date.now());
-		this.reconcileWorkbenches();
-	}
-
-	/**
-	 * One deliberate look at every workbench, after the Mac has woken up.
-	 *
-	 * Sleep is the one event that can kill a renderer without anything in main
-	 * hearing an event it trusts: the view is still in the table, its contents
-	 * are gone or crashed, and the only thing that would ever have noticed is
-	 * the next caller who tried to use it. Waiting for that is how a wake turns
-	 * into a projection loop discovering a dead workbench a tick at a time.
-	 *
-	 * So it is asked once, on `resume`, and answered once per folder: a dead
-	 * view leaves the table and is rebuilt through the same supervisor as any
-	 * other failure — one restart, counted, bounded — rather than by a fresh
-	 * mechanism with its own budget.
-	 */
-	checkEditorHealth(): void {
-		if (isQuitting()) return;
-		const shell = shellWindowIfCreated();
-		if (!shell) return;
-		const dead = deadEditorKeys(
-			shell.editorBindings().map(([key, viewId]) => {
-				const view = shell.getViewById(viewId);
-				return { key, alive: view !== undefined && isLiveWorkbench(view) };
-			}),
-		);
-		for (const folder of dead) {
-			shell.unbindEditorKey(folder);
-			this.workbenchFailed(
-				folder,
-				"The workbench did not survive the computer going to sleep.",
-			);
-		}
-	}
-
-	/**
-	 * DevHub has stopped building this folder's workbench. Say so where it is
-	 * about, once, and stay said.
-	 *
-	 * A Workspace becomes `unavailable` with `editor_restart_exhausted`, which
-	 * is the state the content area already draws with Retry, Locate… and
-	 * Close — so the terminal state is visible, is on the right row, and has
-	 * the person's way out attached to it. It also takes the workspace out of
-	 * the wanted set, where the lifecycle parks the verdict — the second half
-	 * of "never retried by a projection tick".
-	 *
-	 * A folder no Workspace owns any more has no row, so its giving up is said
-	 * app-wide — once, because the supervisor never reaches this verdict twice.
-	 */
-	private reportEditorGaveUp(
-		folder: string,
-		reason: string,
-		attempt: number,
-	): void {
-		const workspace = this.coordinator.model.workspaces.find(
-			(candidate) => candidate.key === folder,
-		);
-		const failure = editorGaveUpFailure({
-			workspaceId: workspace?.id,
-			attempt,
-			reason,
-		});
-		if (failure.subject === "workspace") {
-			this.reportFailure({
-				subject: "workspace",
-				id: failure.id as WorkspaceId,
-				code: failure.code,
-				detail: failure.detail,
-			});
-			return;
-		}
-		this.publishError(
-			withDetail(
-				withSummary(
-					errorWireAt(failure.code),
-					`The workbench stopped ${String(attempt)} times and will not be restarted again.`,
-				),
-				reason,
-			),
-		);
-	}
-
-	/** Whether this folder is one the lifecycle would keep a workbench for. */
-	private wantsWorkbench(folder: string): boolean {
-		const workspace = this.coordinator.model.workspaces.find(
-			(candidate) => candidate.key === folder,
-		);
-		return workspace !== undefined && workspace.state.kind !== "unavailable";
-	}
-
-	/**
-	 * The workbench the selection wants on screen, as a folder key.
-	 *
-	 * One reading of the layout, used by everything that has to put a workbench
-	 * somewhere. A Workspace and an Agent *beside* it resolve to the same
-	 * workbench, which is what makes that arrangement a split rather than a
-	 * jump.
-	 *
-	 * Nothing, for the layouts with no workbench on screen: a Workspace that
-	 * cannot be shown, and an Agent filling the content area on its own. In
-	 * neither is a
-	 * workbench closed or forgotten — it is only that no workbench is the
-	 * thing on screen, so there is none to reveal.
-	 */
-	private selectedEditorSurfaceKey(): string | undefined {
-		const layout = this.coordinator.snapshot().layout;
-		if (
-			layout.kind === "unavailable" ||
-			layout.kind === "agent" ||
-			layout.kind === "orchestrator"
-		) {
-			return undefined;
-		}
-		return surfaceKeyName(layout.editor);
-	}
-
-	/** The folder of the workbench on screen, if one is. */
-	private selectedEditorKey(): string | undefined {
-		const surfaceKey = this.selectedEditorSurfaceKey();
-		return surfaceKey === undefined
-			? undefined
-			: this.editorKeyForSurfaceKey(surfaceKey);
-	}
-
-	/**
-	 * Somebody asked for this folder's workbench (`WakeReason`): the plan this
-	 * runs starts it if it is discarded or not started yet. The ask is that
-	 * one plan's (`LifecycleInput.ask`) — held here only across a plan already
-	 * running, which runs once more for it.
-	 */
-	private askForWorkbench(folder: string, why: WakeReason): void {
-		this.workbenchAsk = { folder, why };
-		this.reconcileWorkbenches();
-	}
-
-	/** The ask the next plan comes with; see `askForWorkbench`. */
-	private workbenchAsk: { folder: string; why: WakeReason } | undefined;
-
-	/** The folder the next plan is asked to freeze (the Task Manager's Sleep). */
-	private workbenchFreeze: string | undefined;
-
-	/** The folder the next plan is asked to stop (`Cmd+Q Shift+E`). */
-	private workbenchStop: string | undefined;
-
-	/**
-	 * `Cmd+Q Shift+E`: the next plan is asked to stop this Workspace's
-	 * workbench — discarded as a long frozen one is, shown or not
-	 * (`workbenchPlan.ts`, `stopRefusal`), its slot back to the placeholder
-	 * Enter starts it from. A stop that does not happen is said.
-	 */
-	private stopWorkbench(workspaceId: string): void {
-		const folder = this.coordinator.model.workspace(
-			workspaceId as WorkspaceId,
-		)?.key;
-		if (folder === undefined) return;
-		this.workbenchStop = folder;
-		this.reconcileWorkbenches();
-	}
-
-	/** A person's stop that did not happen, and why: said, as a notice. */
-	private reportNotStopped(reason: string): void {
-		this.publishError(withDetail(errorWireAt("editor_not_stopped"), reason));
-	}
-
-	/**
-	 * DevHub's requests waiting on a workbench, by folder: `start` ones need it
-	 * running (`LifecycleInput.requests`), `thaw` ones need it not frozen
-	 * (`LifecycleInput.holds`). See `holdWorkbench`.
-	 */
-	private readonly workbenchHolds = {
-		start: new Map<string, number>(),
-		thaw: new Map<string, number>(),
-	};
-
-	/**
-	 * The one way DevHub talks to a workbench: as a request the lifecycle
-	 * knows of, for as long as `work` runs.
-	 *
-	 * The request is a fact of the plan that follows at once: a frozen
-	 * workbench is thawed there and then (synchronously, before `work`), and
-	 * with `start` a discarded or not yet started one is started and waited
-	 * for. Nothing can freeze it while the
-	 * request stands; when it is done, the plan decides again from what is true
-	 * then. `thaw` is for what only makes sense of a workbench that runs —
-	 * asking a close's questions — and starts nothing.
-	 */
-	private async holdWorkbench<T>(
-		folder: string,
-		how: "start" | "thaw",
-		work: () => Promise<T>,
-	): Promise<T> {
-		const holds = this.workbenchHolds[how];
-		holds.set(folder, (holds.get(folder) ?? 0) + 1);
-		try {
-			this.reconcileWorkbenches();
-			if (how === "start") {
-				await this.workbenchOpens.get(folder)?.catch(() => undefined);
-			}
-			return await work();
-		} finally {
-			const left = (holds.get(folder) ?? 1) - 1;
-			if (left > 0) holds.set(folder, left);
-			else holds.delete(folder);
-			this.reconcileWorkbenches();
-		}
-	}
-
-	/**
-	 * Carry out the workbench lifecycle's plan: the one executor.
-	 *
-	 * Every workspace DevHub knows about wants a workbench — Scratch is one of
-	 * them — unless its folder is gone (`unavailable`: asking is what used to
-	 * put VS Code's "path does not exist" box on screen). What each should be
-	 * doing is the planner's (`workbenchPlan.ts`, through
-	 * `workbenchLifecycle.ts`): this reads the projection, the selection, the
-	 * window and DevHub's own requests, asks for a plan, and does what it says
-	 * — open, probe, freeze, thaw, discard, dispose, report, and tell the page
-	 * what stands in each slot.
-	 *
-	 * Run on every projection change (a Workspace added or gone, a selection
-	 * moved), on every lifecycle event (an open settled, a view loaded or died,
-	 * a probe answered, traffic, a connection, an unload finished), and at the
-	 * lifecycle's own deadlines. Asking twice is harmless: the plan has already
-	 * moved each phase, so it asks for nothing twice.
-	 *
-	 * Nothing here is awaited: a workbench that is slow to start must not hold
-	 * up the window. Freezing and thawing are signals, sent synchronously as
-	 * the plan is carried out, so what was decided from the facts is what
-	 * happens. An open that starts before VS Code's services exist waits inside
-	 * `openEditorView` for exactly as long as it has to (`mainServices.ts`).
-	 */
-	private reconcileWorkbenches(): void {
-		if (isQuitting()) return;
-		const shell = shellWindowIfCreated();
-		if (!shell) return;
-		// The lifecycle's own events can arrive while a plan is being carried
-		// out (a gave-up report moves the projection); they are answered by
-		// one more plan right after, never by one inside this one.
-		if (this.reconciling) {
-			this.reconcileAgain = true;
-			return;
-		}
-		this.reconciling = true;
-		try {
-			do {
-				this.reconcileAgain = false;
-				this.carryOut(this.planWorkbenches(shell));
-			} while (this.reconcileAgain);
-		} finally {
-			this.reconciling = false;
-			// Even after a throw: a backoff with no timer behind it is a
-			// restart that never comes.
-			this.scheduleWorkbenchDeadline();
-			this.workbenchSensors.update();
-		}
-	}
-
-	private planWorkbenches(
-		shell: NonNullable<ReturnType<typeof shellWindowIfCreated>>,
-	): LifecycleEffect[] {
-		const now = Date.now();
-		// A view the table names whose renderer is gone without an event having
-		// said so — the Mac slept — is a failure, counted once.
-		for (const [folder, viewId] of shell.editorBindings()) {
-			const view = shell.getViewById(viewId);
-			if (view && isLiveWorkbench(view)) continue;
-			shell.unbindEditorKey(folder);
-			console.error(`[devhub] workbench '${folder}' failed: its view is gone`);
-			this.workbenches.failed(folder, "The workbench process ended.", now);
-		}
-		const model = this.coordinator.model;
-		const selected = this.selectedEditorKey();
-		const ask = this.workbenchAsk;
-		this.workbenchAsk = undefined;
-		const freeze = this.workbenchFreeze;
-		this.workbenchFreeze = undefined;
-		const stop = this.workbenchStop;
-		this.workbenchStop = undefined;
-		const minutes = this.config.general.workbench_discard_minutes;
-		// A workbench whose renderer process also hosts any other contents —
-		// another workbench, or one of DevHub's own pages (Chromium decides the
-		// grouping): stopping it for the workbench would stop the rest with it.
-		const folderOfContents = new Map<number, string>();
-		for (const [folder, viewId] of shell.editorBindings()) {
-			const view = shell.getViewById(viewId);
-			if (!view || !isLiveWorkbench(view)) continue;
-			folderOfContents.set(view.webContents.id, folder);
-		}
-		const sharedRenderers = sharedRendererFolders(
-			liveContents().map((contents) => {
-				const folder = folderOfContents.get(contents.id);
-				return {
-					pid: contents.getOSProcessId(),
-					...(folder === undefined ? {} : { folder }),
-				};
-			}),
-		);
-		return this.workbenches.plan({
-			now,
-			// Every Workspace whose folder is there (asking for one that is gone
-			// is what put VS Code's "path does not exist" box on screen), in
-			// the model's order.
-			// With the Neovim editor no Workspace wants one: none is started,
-			// and one running when the setting changed is closed.
-			wanted: model.workspaces
-				.filter(
-					(workspace) =>
-						workspace.state.kind !== "unavailable" && !this.editorIsNeovim(),
-				)
-				.map((workspace) => ({
-					folder: workspace.key,
-					surfaceKey: `workspace-editor:${workspace.id}`,
-					// Not SSH or a dev container: out of freezing and discarding
-					// for now (`docs/window-and-pages.md`).
-					freezable:
-						workspace.location.kind === "local" &&
-						workspace.editor.kind === "host",
-					closing: workspace.close.kind === "running",
-				})),
-			selected,
-			views: shell.editorBindings().map(([folder]) => folder),
-			// What a starting folder is still waiting for: its open, or its
-			// page. One waiting for neither is settled by the plan.
-			loading: [
-				...this.workbenchOpens.keys(),
-				...shell.editorBindings().flatMap(([folder, viewId]) => {
-					const view = shell.getViewById(viewId);
-					return view &&
-						isLiveWorkbench(view) &&
-						view.webContents.isLoadingMainFrame()
-						? [folder]
-						: [];
-				}),
-			],
-			discardAfterMs: minutes > 0 ? minutes * 60_000 : 0,
-			freezing: this.config.general.workbench_freeze,
-			requests: [...this.workbenchHolds.start.keys()],
-			holds: [...this.workbenchHolds.thaw.keys()],
-			sharedRenderers,
-			stopped: this.freezer.frozenFolders(),
-			...(ask === undefined ? {} : { ask }),
-			...(freeze === undefined ? {} : { freeze }),
-			...(stop === undefined ? {} : { stop }),
-		});
-	}
-
-	private carryOut(effects: readonly LifecycleEffect[]): void {
-		let placeholders = false;
-		for (const effect of effects) {
-			// The plan has already moved every phase these effects carry out, so
-			// one that throws must not take the rest with it: an `open` skipped
-			// is a folder left starting with nothing coming.
-			try {
-				this.carryOutOne(effect);
-			} catch (error: unknown) {
-				console.error(
-					`[devhub] workbench '${effect.folder}' ${effect.kind} failed:`,
-					error instanceof Error ? error.stack : error,
-				);
-				if (effect.kind === "open") {
-					this.workbenches.failed(
-						effect.folder,
-						describeFailure(error),
-						Date.now(),
-					);
-					this.reconcileAgain = true;
-				}
-			}
-			if (effect.kind === "placeholder") placeholders = true;
-		}
-		// A slot that is standing in for its workbench is not one the
-		// workbench is drawn in, and the one that is back is; both move the
-		// arrangement.
-		if (placeholders) this.publishLayoutState();
-	}
-
-	private carryOutOne(effect: LifecycleEffect): void {
-		switch (effect.kind) {
-			case "placeholder":
-				this.sendEditorPlaceholder(effect.surfaceKey, effect.placeholder);
-				break;
-			case "thaw":
-				this.thawWorkbench(effect.folder);
-				break;
-			case "dispose": {
-				const shell = shellWindow();
-				const viewId = this.editorViewId(effect.folder);
-				shell.unbindEditorKey(effect.folder);
-				if (viewId !== undefined) shell.getViewById(viewId)?.destroy();
-				break;
-			}
-			case "report-gave-up":
-				this.reportEditorGaveUp(effect.folder, effect.reason, effect.attempt);
-				break;
-			case "report-not-stopped":
-				this.reportNotStopped(effect.reason);
-				break;
-			case "open":
-				this.openWorkbench(effect.folder);
-				break;
-			case "probe":
-				void this.probeWorkbench(effect.folder);
-				break;
-			case "freeze":
-				this.freezeWorkbench(effect.folder);
-				break;
-			case "discard":
-				void this.discardWorkbench(effect.folder, effect.stop);
-				break;
-		}
-	}
-
-	/** One timer, at the lifecycle's next deadline, for one more plan. */
-	private scheduleWorkbenchDeadline(): void {
-		const at = this.workbenches.nextDeadline();
-		if (this.workbenchDeadline?.at === at) return;
-		if (this.workbenchDeadline) clearTimeout(this.workbenchDeadline.timer);
-		this.workbenchDeadline = undefined;
-		if (at === undefined) return;
-		const timer = setTimeout(
-			() => {
-				this.workbenchDeadline = undefined;
-				this.reconcileWorkbenches();
-			},
-			Math.max(0, at - Date.now()),
-		);
-		(timer as unknown as { unref?: () => void }).unref?.();
-		this.workbenchDeadline = { at, timer };
-	}
-
-	/**
-	 * The `open` effect: VS Code's own open, with a deadline, its outcome
-	 * reported back.
-	 *
-	 * The promise is kept for whoever needs this folder's view
-	 * (`workbenchReady`); the phase is what says the open is in flight, so a
-	 * second plan never starts a second one.
-	 */
-	private openWorkbench(folder: string): void {
-		const attempt = withDeadline(
-			this.openEditorView(folder),
-			EDITOR_OPEN_TIMEOUT_MS,
-			`the workbench for this folder did not open within ${String(
-				EDITOR_OPEN_TIMEOUT_MS / 1_000,
-			)} seconds`,
-		);
-		this.workbenchOpens.set(folder, attempt);
-		const settle = (failure: string | undefined) => {
-			if (this.workbenchOpens.get(folder) === attempt) {
-				this.workbenchOpens.delete(folder);
-			}
-			if (failure === undefined) {
-				this.reconcileWorkbenches();
-				// A view no longer puts itself on screen when it is created, so
-				// its arrival is a moment to ask the arrangement again.
-				shellWindowIfCreated()?.assertArrangement();
-				return;
-			}
-			// A folder reconciled away while it was opening is not a failure:
-			// startup asks for every folder at once and the projection moves
-			// underneath those opens — a workspace is relocated, a folder turns
-			// out to be unreadable, a close lands — and VS Code answers an open
-			// it no longer has a window for by cancelling it. The folder being
-			// out of the wanted set *is* the answer; it is said in the log.
-			if (!this.wantsWorkbench(folder)) {
-				console.log(
-					`[devhub] open: '${folder}' was reconciled away while it was opening — ${failure}`,
-				);
-				this.workbenches.abandoned(folder);
-				this.reconcileWorkbenches();
-				return;
-			}
-			this.workbenchFailed(folder, failure);
-		};
-		attempt.then(
-			(view) => {
-				settle(view ? undefined : "No workbench view was created.");
-			},
-			(error: unknown) => {
-				settle(describeFailure(error));
-			},
-		);
-	}
-
-	/** The processes main knows to be this workbench's. */
-	private workbenchPids(view: WorkbenchView): WorkbenchPids {
-		return {
-			renderer: view.webContents.getOSProcessId(),
-			// VS Code names each window's utility processes for it:
-			// `extension-host [<window id>]`, `file-watcher [<window id>]`,
-			// and a workbench's window id is its view's id.
-			windowUtilities: windowUtilitiesOf(UtilityProcess.getAll(), view.id),
-			// Whatever else main knows to be running something that is not
-			// this workbench: never stopped (`foreignPids`).
-			foreign: foreignPids({
-				main: process.pid,
-				parent: process.ppid,
-				electron: electron.app.getAppMetrics(),
-				otherContents: liveContents()
-					.filter((contents) => contents.id !== view.webContents.id)
-					.map((contents) => contents.getOSProcessId()),
-			}),
-		};
-	}
-
-	/**
-	 * The `probe` effect: what a freeze would interrupt, whether it has
-	 * finished starting, and how busy its processes are.
-	 */
-	private async probeWorkbench(folder: string): Promise<void> {
-		const view = this.liveWorkbench(folder);
-		try {
-			if (view === undefined) throw new Error("it has no view");
-			const activity = await readWorkbenchActivity(view.webContents);
-			const pids = this.workbenchPids(view);
-			const own = new Set([
-				...(pids.renderer === undefined ? [] : [pids.renderer]),
-				...pids.windowUtilities,
-			]);
-			const cpuPercent = electron.app
-				.getAppMetrics()
-				.filter((metric) => own.has(metric.pid))
-				.reduce((sum, metric) => sum + metric.cpu.percentCPUUsage, 0);
-			this.workbenches.probed(
-				folder,
-				{ busy: activity.busy, ready: activity.ready, cpuPercent },
-				Date.now(),
-			);
-		} catch (error: unknown) {
-			this.workbenches.probeFailed(
-				folder,
-				`no answer (${describeFailure(error)})`,
-				Date.now(),
-			);
-		}
-		this.reconcileWorkbenches();
-	}
-
-	/**
-	 * The `freeze` effect: SIGSTOP on its renderer and window utilities now,
-	 * then on everything under them (`WorkbenchFreezer`). The plan decided it
-	 * from the facts as they are this moment, and it happens in the same
-	 * moment.
-	 */
-	private freezeWorkbench(folder: string): void {
-		const view = this.liveWorkbench(folder);
-		try {
-			if (view === undefined) throw new Error("it has no view");
-			// Stopped processes in an orphaned process group are what the kernel
-			// hangs up, DevHub's main with them: see `processGroupAnchor.ts`.
-			if (!processGroupAnchor().anchored()) {
-				throw new Error("DevHub's process group is not anchored");
-			}
-			// Hung up already: the group was orphaned with something stopped in
-			// it in spite of the anchor, and the kernel's SIGHUP ended every
-			// renderer of the window. Another freeze would only do it again.
-			if (hungUpAt() !== undefined) {
-				throw new Error(
-					"DevHub's process group was hung up in this run (SIGHUP) — freezing is off until DevHub restarts",
-				);
-			}
-			view.setFrozen(true);
-			void this.freezer
-				.freeze(folder, this.workbenchPids(view))
-				.catch((error: unknown) => {
-					console.warn(
-						`[devhub] workbench '${folder}' frozen only in part: ${describeFailure(error)}`,
-					);
-				});
-		} catch (error: unknown) {
-			view?.setFrozen(false);
-			this.workbenches.freezeFailed(
-				folder,
-				`could not freeze: ${describeFailure(error)}`,
-				Date.now(),
-			);
-			this.reconcileAgain = true;
-		}
-	}
-
-	/** The `thaw` effect: SIGCONT, extension hosts and their children first. */
-	private thawWorkbench(folder: string): void {
-		this.freezer.thaw(folder);
-		this.liveWorkbench(folder)?.setFrozen(false);
-	}
-
-	/**
-	 * The `discard` effect: close one frozen workbench — or, for a person's
-	 * stop (`stop`, `Cmd+Q Shift+E`), one running or frozen, shown or not —
-	 * keeping the frame it shows for the page to stand in for it.
-	 *
-	 * It is thawed first, since a window that is to unload has to run. Each
-	 * way it may not go is one log line and an answer to the lifecycle, which
-	 * keeps it running (and so, hidden, frozen again soon) — and, for a stop,
-	 * a notice saying why: DevHub is quitting, the editor is not running,
-	 * somebody showed (not for a stop) or asked for it meanwhile
-	 * (`mayDiscard`, asked at the last moment), it says it would lose unsaved
-	 * editors (hot exit off; no answer is a reason too), or the unload was
-	 * vetoed. Otherwise it is unloaded as VS Code unloads every window on
-	 * Cmd+Q (`UnloadReason.QUIT`: unsaved editors backed up, storage written,
-	 * extensions deactivated), and its view destroyed by the plan.
-	 */
-	private async discardWorkbench(folder: string, stop: boolean): Promise<void> {
-		this.thawWorkbench(folder);
-		const skip = (reason: string) => {
-			this.workbenches.discardSkipped(folder, reason, Date.now());
-			if (stop) this.reportNotStopped(reason);
-			this.reconcileWorkbenches();
-		};
-		const workspace = this.workspaceForEditorKey(folder);
-		if (isQuitting() || workspace === undefined) {
-			skip(isQuitting() ? "DevHub is quitting" : "no Workspace");
-			return;
-		}
-		try {
-			const services = await this.services();
-			const codeWindow = await this.editorWindowFor(folder);
-			const running = editorRuntimeState(codeWindow);
-			if (running !== "running") {
-				skip(`its editor is ${running}`);
-				return;
-			}
-			const { unsaved } = await readWorkbenchActivity(
-				workbenchContentsOf(codeWindow),
-			).catch(() => ({ unsaved: ["no answer"] }));
-			if (unsaved.length > 0) {
-				skip(`it would lose ${unsaved.join(", ")}`);
-				return;
-			}
-			if (!this.workbenches.mayDiscard(folder)) {
-				skip("shown or asked for again");
-				return;
-			}
-			const frame = await this.captureFrame(folder);
-			if (!this.workbenches.mayDiscard(folder)) {
-				skip("shown or asked for again");
-				return;
-			}
-			// QUIT, as on Cmd+Q in VS Code: unsaved editors are backed up (hot
-			// exit) and come back on reopening, rather than asked about.
-			const vetoed = await withDeadline<boolean>(
-				services.lifecycle().unload(workbenchOf(codeWindow), UnloadReason.QUIT),
-				CLOSE_STEP_TIMEOUT_MS,
-				"the workbench did not unload",
-			).finally(() => {
-				// A question raised by the unload is nobody's to answer.
-				this.withdrawWorkbenchQuestions(workspace.id);
-			});
-			if (vetoed) {
-				skip("its unload was vetoed");
-				return;
-			}
-			// Unloaded is gone, even if it was asked for meanwhile: that ask
-			// starts it anew. The plan disposes the view.
-			this.workbenches.discarded(folder, frame);
-			this.reconcileWorkbenches();
-		} catch (error: unknown) {
-			skip(`could not discard: ${describeFailure(error)}`);
-		}
-	}
-
-	/** What a workbench shows, as a data URL; empty when it cannot be had. */
-	private async captureFrame(folder: string): Promise<string> {
-		const viewId = this.editorViewId(folder);
-		const contents =
-			viewId === undefined
-				? undefined
-				: shellWindow().getViewById(viewId)?.webContents;
-		if (!contents) return "";
-		const image = await Promise.race([
-			contents.capturePage(undefined, { stayHidden: true }),
-			new Promise<undefined>((resolve) => setTimeout(resolve, 2_000)),
-		]).catch(() => undefined);
-		return image === undefined || image.isEmpty()
-			? ""
-			: `data:image/jpeg;base64,${image.toJPEG(80).toString("base64")}`;
 	}
 
 	private editorKeyForSurfaceKey(surfaceKey: string): string | undefined {
@@ -8235,130 +6615,16 @@ export class AppController {
 		return this.coordinator.model.workspace(id)?.key;
 	}
 
-	/** Take down every question this Workspace's workbench has on the picker. */
-	private withdrawWorkbenchQuestions(workspaceId: WorkspaceId): void {
-		const surfaceKey = `workspace-editor:${workspaceId}`;
-		shellWindow().picker.closeWhere(
-			(modal) =>
-				modal.request.kind === "workbench-dialog" &&
-				modal.request.surfaceKey === surfaceKey,
-		);
-	}
-
-	/**
-	 * Let a workspace's workbench go, carrying out the answer about its
-	 * unsaved work. The rule is `closeEditor`'s; this finds the workbench.
-	 *
-	 * Closing a window in VS Code is an *unload*, and an unload is what lets
-	 * the workbench refuse. Killing the `WebContents` instead — which is what
-	 * this used to do — skipped all of that, left VS Code's backups behind to
-	 * come back on the next open, and ran no extension's shutdown.
-	 *
-	 * It does not close the view; the close's `view` step does, once this has
-	 * answered. Nothing is remembered between attempts: a workbench that does
-	 * not answer within the step's deadline is a failure of *this* step, and
-	 * the next close asks again.
-	 *
-	 * Answers with the diagnostic that stopped the close, or nothing when the
-	 * workbench agreed — or when there was never anything to ask.
-	 */
-	private async askEditorToClose(
-		workspaceId: WorkspaceId,
-	): Promise<CloseDiagnosticWire | undefined> {
-		const key = this.coordinator.model.workspace(workspaceId)?.key;
-		if (key === undefined) return undefined;
-		const services = await this.services();
-		return this.holdWorkbench(key, "thaw", async () => {
-			const codeWindow = await this.editorWindowFor(key);
-			return closeEditor(editorRuntimeState(codeWindow), {
-				discardUnsaved: () =>
-					discardUnsavedEditors(
-						workbenchContentsOf(codeWindow),
-						CLOSE_STEP_TIMEOUT_MS,
-					),
-				unload: () =>
-					services
-						.lifecycle()
-						.unload(workbenchOf(codeWindow), UnloadReason.CLOSE),
-			});
-		});
-	}
-
 	/** A closing Workspace's managed Neovim, if it has one. */
 	private async closeManagedNeovim(
 		workspace: Workspace | undefined,
 	): Promise<void> {
 		if (workspace === undefined) return;
 		this.neovimShown.delete(workspace.key);
-		// A host is only asked about a Neovim the editor could have started
-		// there: with VS Code, closing a remote Workspace touches no socket.
-		if (workspace.location.kind !== "local" && !this.editorIsNeovim()) return;
 		await this.neovimEditors?.close({
 			machine: runtimeIdFor(workspace.location),
 			workspaceId: workspace.id,
 			root: workspace.root,
-		});
-	}
-
-	/**
-	 * Which editor surface a workbench view is, in the page's own vocabulary.
-	 *
-	 * A dialog raised by a workbench has to be drawn over *that* workbench, and
-	 * the page knows its surfaces by key, not by view id.
-	 */
-	editorSurfaceKeyForView(viewId: number): string | undefined {
-		for (const [key, id] of shellWindow().editorBindings()) {
-			if (id !== viewId) continue;
-			const workspace = this.coordinator.model.workspaces.find(
-				(candidate) => candidate.key === key,
-			);
-			return workspace ? `workspace-editor:${workspace.id}` : undefined;
-		}
-		return undefined;
-	}
-
-	/** The `openInBrowserWindow` override's half of the folder binding. */
-	viewIdForEditorKey(folder: string): number | undefined {
-		return this.editorViewId(folder);
-	}
-
-	bindEditorKeyView(folder: string, viewId: number): void {
-		shellWindow().bindEditorKey(viewId, folder);
-	}
-
-	/**
-	 * A place DevHub was asked to open. Its policy is that this is a Workspace:
-	 * the model learns about it, and opening the same one twice selects the one
-	 * that already exists rather than making a second.
-	 */
-	noteLocation(location: WorkspaceLocation): void {
-		// A workbench DevHub is building itself — the lifecycle starting one
-		// that was asked for, or a discarded one again — is not a request to
-		// open anything: the Workspace is already in
-		// the model, and "opening" it again would select it, moving the person
-		// off whatever they were in. Only a place VS Code asked for on its own
-		// is news.
-		if (this.workbenches.phase(locationKey(location)).kind === "starting") {
-			return;
-		}
-		// A refusal is drawn where it happens; here it only ends the open.
-		void this.openedByVsCode(location).catch((error: unknown) => {
-			console.warn(
-				`[devhub] open: '${locationKey(location)}' did not open: ${failureText(error)}`,
-			);
-		});
-	}
-
-	/**
-	 * `noteLocation`'s open. Like every other open it starts no workbench: the
-	 * Workspace is selected with its placeholder, and Enter starts it.
-	 */
-	private async openedByVsCode(location: WorkspaceLocation): Promise<void> {
-		await this.dispatchAwaiting({
-			type: "open_folder",
-			location: requestedLocation(
-				relocatedOnSameMachine(location, location.path),
-			),
 		});
 	}
 
@@ -8414,7 +6680,6 @@ export class AppController {
 			if (!openBefore.has(workspaceId)) this.placeBelow(workspaceId, anchor);
 		}
 		if (withAgent === undefined) {
-			await this.syncEditorView();
 			return outcomeWire(
 				opened,
 				this.coordinator.readiness,
@@ -8433,7 +6698,6 @@ export class AppController {
 			// saying they wanted an agent at all.
 			presentation: "full",
 		});
-		await this.syncEditorView();
 		return outcomeWire(
 			settled,
 			this.coordinator.readiness,
@@ -8543,419 +6807,6 @@ export class AppController {
 	}
 
 	/**
-	 * The `devhub` command inside a dev container, reaching DevHub through the
-	 * container's relay, installed before the window that needs it opens.
-	 *
-	 * A container whose command could not be installed is still a container
-	 * the person asked to edit in, so the window opens anyway — but never in
-	 * silence, and said as what it is: the `devhub` command in the container.
-	 * It used to be said as `terminal_launcher_unavailable`, which read "This
-	 * window has no DevHub terminal" for a window whose DevHub terminal is
-	 * this Mac's launcher (`devhubTerminalLocal`) and works — see
-	 * `containerCommandUnavailable`.
-	 */
-	private async installContainerCommand(host: ContainerHost): Promise<void> {
-		let unreachable: string | undefined;
-		try {
-			unreachable = (await this.installTerminalLauncher(host)).unreachable;
-		} catch (error: unknown) {
-			unreachable = failureText(error);
-		}
-		if (unreachable === undefined) return;
-		console.error(`[devhub] devhub command in ${host.id}: ${unreachable}`);
-		this.publishError(containerCommandUnavailable(unreachable));
-	}
-
-	/**
-	 * `devhub <file>` from inside a dev container: the file opens in the window
-	 * attached to that container, which is the one Workspace whose editor is
-	 * there. The path is the container's, resolved in the container.
-	 */
-	private async openFromContainer(
-		request: ControlOpenRequest,
-		target: ContainerTarget,
-	): Promise<string> {
-		const { path, position, waitMarkerPath } = request;
-		const id = containerHostId(target);
-		const workspace = this.coordinator.model.workspaces.find((candidate) => {
-			const attached = containerTargetOf(candidate.location, candidate.editor);
-			return attached !== undefined && containerHostId(attached) === id;
-		});
-		const host = containerHostFor(target);
-		if (workspace === undefined) {
-			throw new Error(
-				`No Workspace's editor is attached to ${host.where.trim()}, so there is no window to open ${path} in.`,
-			);
-		}
-		const before = this.coordinator.model.selection;
-		const resolved = await canonicalise(host, path);
-		if (resolved.isDirectory) {
-			throw new Error(
-				`${resolved.path} is a folder. From inside a dev container devhub opens files; the folder's Workspace is ${workspace.root}.`,
-			);
-		}
-		await this.dispatchAwaiting({
-			type: "select_context",
-			context: { kind: "workspace", workspaceId: workspace.id },
-			presentation: "full",
-		});
-		// The container's path is only the workbench's to open: the editor
-		// area shows it, whichever view it was on.
-		openFileInWorkbench(
-			await this.selectedWorkbench(workspace.key),
-			id,
-			resolved,
-			position,
-			waitMarkerPath,
-		);
-		this.rememberWaitReturn(waitMarkerPath, before);
-		this.bringToFront();
-		return `${resolved.path}${at(position)} is open in DevHub.`;
-	}
-
-	/**
-	 * Attach a Workspace's editor somewhere else, and give it a workbench there.
-	 *
-	 * The Workspace does not move: its location, its key, its Agents and its
-	 * terminals are untouched, and so is the slot its editor is shown in. What
-	 * changes is where the workbench's far end is. So the order is: bring the
-	 * container up — building it if need be, because a person asked for this —
-	 * before the editor they are in is touched, so a definition that does not
-	 * build leaves them where they were; then close the old workbench the way a
-	 * Workspace close does, VS Code's own unsaved-work question included; then
-	 * record the new attachment and open the workbench it names.
-	 *
-	 * A person answering Cancel to the unsaved-work question is an answer, not
-	 * a failure: nothing changes and nothing is reported.
-	 */
-	private async attachEditor(
-		workspaceId: WorkspaceId,
-		next: EditorAttachment,
-		rebuild?: { readonly noCache: boolean },
-	): Promise<void> {
-		const workspace = this.coordinator.model.workspace(workspaceId);
-		if (!workspace) {
-			throw new Error(
-				`no workspace ${workspaceId} is open to attach an editor to`,
-			);
-		}
-		const bringUp = (target: ContainerTarget) =>
-			containerHostFor(target).ensureUp(
-				rebuild === undefined ? { build: true } : { build: true, rebuild },
-			);
-		if (rebuild !== undefined && sameEditorAttachment(workspace.editor, next)) {
-			// A rebuild of the container the editor is in: that workbench is
-			// connected to the container about to be removed, so it is asked to
-			// close first (unsaved work included), then the container is
-			// rebuilt, then a workbench is opened on the new one.
-			const target = containerTargetOf(workspace.location, next);
-			if (target === undefined) return;
-			const vetoed = await this.askEditorToClose(workspaceId);
-			if (vetoed === "close_editor_vetoed") return;
-			if (vetoed !== undefined) {
-				throw workspaceFailure(
-					`The editor for ${workspace.root} could not be closed to rebuild its container (${vetoed}).`,
-				);
-			}
-			this.disposeEditorView(workspaceId);
-			const up = await bringUp(target);
-			await this.dispatchAwaiting({
-				type: "attach_editor",
-				workspaceId,
-				editor: next,
-			});
-			this.dispatchOwn({
-				type: "editor_container_started",
-				workspaceId,
-				containerId: up.containerId,
-			});
-			const view = await this.holdWorkbench(workspace.key, "start", () =>
-				Promise.resolve(this.liveWorkbench(workspace.key)),
-			);
-			if (view) shellWindow().assertArrangement();
-			return;
-		}
-		if (sameEditorAttachment(workspace.editor, next)) {
-			// Asked for where it already is: a person reopening an editor that
-			// could not open. Its container is built if it has to be — opening
-			// a window only ever starts one — and DevHub's verdict on the
-			// workbench it gave up on is dropped, so the one opened now stays.
-			const target = containerTargetOf(workspace.location, next);
-			const up = target === undefined ? undefined : await bringUp(target);
-			await this.dispatchAwaiting({
-				type: "attach_editor",
-				workspaceId,
-				editor: next,
-			});
-			if (up?.started === true) {
-				this.dispatchOwn({
-					type: "editor_container_started",
-					workspaceId,
-					containerId: up.containerId,
-				});
-			}
-			const view = await this.holdWorkbench(workspace.key, "start", () =>
-				Promise.resolve(this.liveWorkbench(workspace.key)),
-			);
-			if (view) shellWindow().assertArrangement();
-			return;
-		}
-		if (workspaceId === this.coordinator.model.scratchWorkspaceId) {
-			throw workspaceFailure(
-				"Scratch's editor stays on this Mac: it is today's folder, and there is no dev container to open it in.",
-			);
-		}
-		const leaving = {
-			location: workspace.location,
-			editor: workspace.editor,
-			started: workspace.startedContainer,
-		};
-		const target = containerTargetOf(workspace.location, next);
-		const up = target === undefined ? undefined : await bringUp(target);
-		const vetoed = await this.askEditorToClose(workspaceId);
-		if (vetoed === "close_editor_vetoed") return;
-		if (vetoed !== undefined) {
-			throw workspaceFailure(
-				`The editor for ${workspace.root} could not be closed to reopen it (${vetoed}).`,
-			);
-		}
-		this.disposeEditorView(workspaceId);
-		await this.dispatchAwaiting({
-			type: "attach_editor",
-			workspaceId,
-			editor: next,
-		});
-		// The bring-up above ran before the attachment moved, so the start it
-		// reported had no Workspace attached to hear it; it is recorded now.
-		if (up?.started === true) {
-			this.dispatchOwn({
-				type: "editor_container_started",
-				workspaceId,
-				containerId: up.containerId,
-			});
-		}
-		const view = await this.holdWorkbench(workspace.key, "start", () =>
-			Promise.resolve(this.liveWorkbench(workspace.key)),
-		);
-		if (view) shellWindow().assertArrangement();
-		// The editor has left the container it was in: that container goes the
-		// way its definition says, if DevHub was the one that started it.
-		this.releaseContainer(leaving.location, leaving.editor, leaving.started);
-	}
-
-	/**
-	 * Let go of a dev container an editor has left — reopened on its own
-	 * machine, switched to another definition, or its Workspace closed.
-	 *
-	 * The spec's `shutdownAction` is for "when the related tool window is
-	 * closed", and these are the three moments DevHub has that are. Only a
-	 * container DevHub itself started is stopped (`stopIfStarted`); one DevHub
-	 * found running, or one somebody has rebuilt since, is left as it was.
-	 *
-	 * In the background, after the editor has already moved: the person asked
-	 * to leave the container, and that has happened. A stop that fails is a
-	 * separate fact, and it is said as one.
-	 */
-	private releaseContainer(
-		location: WorkspaceLocation,
-		editor: EditorAttachment,
-		started: string | undefined,
-	): void {
-		const target = containerTargetOf(location, editor);
-		if (target === undefined || started === undefined) return;
-		const host = containerHostFor(target);
-		void host.stopIfStarted(started).then(
-			(done) => {
-				if (done !== undefined) console.log(`[devhub] ${done}`);
-			},
-			(failure: unknown) => {
-				this.publishError(
-					withDetail(
-						errorWireAt("dev_container_not_stopped"),
-						failureText(failure),
-					),
-				);
-			},
-		);
-	}
-
-	/**
-	 * A bring-up started a dev container: whichever Workspaces' editors are
-	 * attached to it remember that DevHub started it. See `releaseContainer`.
-	 */
-	noteContainerStarted(host: ContainerHostId, containerId: string): void {
-		for (const workspace of this.coordinator.model.workspaces) {
-			const target = containerTargetOf(workspace.location, workspace.editor);
-			if (target === undefined || containerHostId(target) !== host) continue;
-			this.dispatchOwn({
-				type: "editor_container_started",
-				workspaceId: workspace.id,
-				containerId,
-			});
-		}
-	}
-
-	/**
-	 * Every definition a Workspace's folder has, for the editor's own
-	 * commands: the path, and the name that tells it from the folder's others.
-	 */
-	private async devContainerConfigsOf(
-		location: WorkspaceLocation,
-	): Promise<DevContainerConfigsAnswer["configs"]> {
-		const paths = await devContainerConfigsIn(
-			runtimeFor(location),
-			location.path,
-		);
-		return paths.map((path) => {
-			const label = devContainerConfigLabel(
-				location.path,
-				devContainerConfigPath(path),
-			);
-			return label === undefined ? { path } : { path, label };
-		});
-	}
-
-	/**
-	 * The Workspace a workbench window is showing, named by its folder URI —
-	 * the one thing a window knows about itself, and the one translation
-	 * DevHub has for it (`editorPlaceFromWorkspaceUri`).
-	 */
-	private workspaceOfWindow(uri: WorkspaceUriParts): Workspace {
-		const place = editorPlaceFromWorkspaceUri(uri);
-		const workspace =
-			place === undefined
-				? undefined
-				: this.workspaceForEditorKey(locationKey(place.location));
-		if (workspace === undefined) {
-			throw workspaceFailure(
-				"This window is not showing a Workspace DevHub has open.",
-			);
-		}
-		return workspace;
-	}
-
-	/** `dev-container-configs`: see `ControlHandlers.devContainerConfigs`. */
-	async devContainerConfigsForWindow(
-		uri: WorkspaceUriParts,
-	): Promise<DevContainerConfigsAnswer> {
-		const workspace = this.workspaceOfWindow(uri);
-		// Scratch is today's folder and its editor stays on this Mac: nothing
-		// to offer, so nothing is.
-		if (workspace.id === this.coordinator.model.scratchWorkspaceId) {
-			return { configs: [], current: undefined };
-		}
-		return {
-			configs: await this.devContainerConfigsOf(workspace.location),
-			current:
-				workspace.editor.kind === "devContainer"
-					? workspace.editor.configPath
-					: undefined,
-		};
-	}
-
-	/**
-	 * `dev-container-build-log`: see `ControlHandlers.devContainerBuildLog`.
-	 * A definition the folder does not have is refused, as a reattach to one
-	 * is.
-	 */
-	async devContainerBuildLogForWindow(
-		uri: WorkspaceUriParts,
-		configPath: string,
-	): Promise<string> {
-		const workspace = this.workspaceOfWindow(uri);
-		const editor = await this.editorFor(workspace, { configPath });
-		const target = containerTargetOf(workspace.location, editor);
-		if (target === undefined) {
-			throw new Error(
-				`${configPath} named no dev container of ${workspace.root}; this is a bug in DevHub.`,
-			);
-		}
-		return containerHostFor(target).buildLogPath;
-	}
-
-	/** `reattach-editor`: see `ControlHandlers.reattachEditor`. */
-	async reattachEditorFromWindow(
-		uri: WorkspaceUriParts,
-		to: { readonly kind: "host" } | { readonly configPath: string },
-		rebuild?: "cache" | "no-cache",
-	): Promise<void> {
-		const workspace = this.workspaceOfWindow(uri);
-		if (rebuild !== undefined && "kind" in to) {
-			throw workspaceFailure("Only a dev container can be rebuilt.");
-		}
-		await this.attachEditor(
-			workspace.id,
-			await this.editorFor(workspace, to),
-			rebuild === undefined ? undefined : { noCache: rebuild === "no-cache" },
-		);
-	}
-
-	/**
-	 * Reopen a Workspace's editor in the dev container it is attached to,
-	 * building it if it was never built: the row's way back in.
-	 */
-	async reopenEditorInContainer(workspaceId: WorkspaceId): Promise<void> {
-		const workspace = this.coordinator.model.workspace(workspaceId);
-		if (workspace === undefined) {
-			throw new Error(`no workspace ${workspaceId} is open to reopen`);
-		}
-		if (workspace.editor.kind !== "devContainer") {
-			throw workspaceFailure(
-				`The editor for ${workspace.root} is not attached to a dev container; use Reopen in Container from the editor to choose one.`,
-			);
-		}
-		await this.attachEditor(workspaceId, workspace.editor);
-	}
-
-	/**
-	 * A request for an empty window in place of the workbench `viewId`: when
-	 * that workbench is attached to a dev container, it is the editor asking
-	 * to leave it, and DevHub's answer is Reopen Folder Locally — not Scratch,
-	 * which is what an empty window otherwise is. True when it was taken as
-	 * that; the reopen runs on, because the workbench that asked is the one it
-	 * closes, and its refusal is said the way the row's is.
-	 */
-	reopenLocallyInsteadOfEmpty(viewId: number): boolean {
-		const key = shellWindow()
-			.editorBindings()
-			.find(([, id]) => id === viewId)?.[0];
-		const workspace =
-			key === undefined ? undefined : this.workspaceForEditorKey(key);
-		if (workspace?.editor.kind !== "devContainer") return false;
-		void this.reopenEditorLocally(workspace.id).catch((failure: unknown) => {
-			this.publishError(errorWire(failure));
-		});
-		return true;
-	}
-
-	/** Reopen a Workspace's editor on its own machine: the row's way out. */
-	async reopenEditorLocally(workspaceId: WorkspaceId): Promise<void> {
-		await this.attachEditor(workspaceId, EDITOR_ON_HOST);
-	}
-
-	/**
-	 * The attachment a request names, checked against the folder: a
-	 * definition the folder does not have is refused, not attached.
-	 */
-	private async editorFor(
-		workspace: Workspace,
-		to: { readonly kind: "host" } | { readonly configPath: string },
-	): Promise<EditorAttachment> {
-		if ("kind" in to) return EDITOR_ON_HOST;
-		const configs = await this.devContainerConfigsOf(workspace.location);
-		const chosen = configs.find((config) => config.path === to.configPath);
-		if (chosen === undefined) {
-			throw workspaceFailure(
-				`${to.configPath} is not one of the dev container definitions in ${workspace.root}.`,
-			);
-		}
-		return {
-			kind: "devContainer",
-			configPath: devContainerConfigPath(chosen.path),
-		};
-	}
-
-	/**
 	 * Which Workspace an `openFolder` just produced.
 	 *
 	 * The selection: opening a folder selects it, whether it was open already
@@ -9021,65 +6872,6 @@ export class AppController {
 		return scratch;
 	}
 
-	/**
-	 * Scratch's workbench, woken or built if it is not there, revealed, and
-	 * selected.
-	 *
-	 * This is where every "new window with no folder" ends up: DevHub has one
-	 * window, and a request for an empty one is a request for somewhere to
-	 * scribble, which is what Scratch is. Selecting it is the same intent the
-	 * menu's New Window raises, so the sidebar and the view agree afterwards
-	 * however it was asked — and selecting is what wakes it, since Scratch
-	 * sleeps like any other Workspace (`selectedWorkbench`).
-	 */
-	async scratchWorkbench(): Promise<ICodeWindow> {
-		await this.dispatchAwaiting({ type: "new_window" });
-		return await this.selectedWorkbench(this.scratchWorkspace().key);
-	}
-
-	/**
-	 * The workbench of the folder just selected, for a request that goes on to
-	 * use it: started, or thawed, by the plan its request is a fact of
-	 * (`holdWorkbench`), and waited for. Never an open of its own — the plan is
-	 * the one executor.
-	 */
-	private async selectedWorkbench(folder: string): Promise<ICodeWindow> {
-		const window = await this.holdWorkbench(folder, "start", () =>
-			this.workbenchWindow(folder),
-		);
-		await this.syncEditorView();
-		return window;
-	}
-
-	/**
-	 * Every workbench VS Code currently has open.
-	 *
-	 * The lifecycle fence (`services/devhubLifecycleMainService.ts`) needs the
-	 * whole set rather than one folder's: a restart that a workbench asks for
-	 * is about the application's settings, so it reaches all of them or none.
-	 * Like everything else here it waits for VS Code rather than reporting an
-	 * empty world during startup.
-	 */
-	async workbenchWindows(): Promise<readonly ICodeWindow[]> {
-		return (await this.services()).windows().getWindows();
-	}
-
-	/** The `ICodeWindow` behind a folder's view; a missing one is a bug. */
-	private async workbenchWindow(folder: string): Promise<ICodeWindow> {
-		const viewId = this.editorViewId(folder);
-		const window =
-			viewId === undefined
-				? undefined
-				: (await this.services())
-						.windows()
-						.getWindows()
-						.find((candidate) => candidate.id === viewId);
-		if (!window) {
-			throw new Error(`the workbench for ${folder} is not running`);
-		}
-		return window;
-	}
-
 	//#endregion
 
 	//#region the devhub command line
@@ -9133,10 +6925,12 @@ export class AppController {
 	async openFromCli(request: ControlOpenRequest): Promise<string> {
 		const { path, position, waitMarkerPath } = request;
 		// The `devhub` command inside a dev container: the file is in that
-		// container, and the window to open it in is the one attached to it.
-		const container = containerTargetFromHostId(request.machine ?? "");
-		if (container !== undefined) {
-			return this.openFromContainer(request, container);
+		// container, and there is no editor there to open it in — the Neovim
+		// editor runs on a Workspace's own machine (docs/neovim-editor.md).
+		if (containerTargetFromHostId(request.machine ?? "") !== undefined) {
+			throw new Error(
+				`${path} is inside a dev container, and DevHub's editor does not run in one; open it from the Workspace's own machine.`,
+			);
 		}
 		// A path is a path on one computer, and which one is a fact the
 		// request carries rather than a default this reaches for: an absent
@@ -9178,7 +6972,6 @@ export class AppController {
 							},
 				),
 			);
-			await this.syncEditorView();
 			this.bringToFront();
 			return `${target.path} is open in DevHub.`;
 		}
@@ -9347,14 +7140,10 @@ export class AppController {
 		reason?: "explicit",
 	): Promise<string> {
 		if (destination.kind === "scratch") {
-			// The workbench's start selects Scratch; the Neovim editor has none.
-			if (this.editorIsNeovim()) {
-				await this.dispatchAwaiting({ type: "new_window" });
-			}
+			// Selecting Scratch is what puts its editor on screen.
+			await this.dispatchAwaiting({ type: "new_window" });
 			await this.openInEditor(
 				this.scratchWorkspace(),
-				async () => this.scratchWorkbench(),
-				machine,
 				target,
 				position,
 				waitMarkerPath,
@@ -9396,19 +7185,7 @@ export class AppController {
 			presentation: besideAgent ? "beside" : "full",
 			...(reason === undefined ? {} : { reason }),
 		});
-		await this.openInEditor(
-			workspace,
-			// The view is filed under the Workspace's key, not its root. For a
-			// local folder those are the same string; for one on a host the key
-			// carries the machine, and asking for the bare path finds nothing —
-			// which reached the person as "the workbench for <path> is not
-			// running" about a window that was on screen.
-			() => this.selectedWorkbench(workspace.key),
-			machine,
-			target,
-			position,
-			waitMarkerPath,
-		);
+		await this.openInEditor(workspace, target, position, waitMarkerPath);
 		this.rememberWaitReturn(waitMarkerPath, before);
 		this.bringToFront();
 		// Named rather than left implicit: a split the person did not ask for by
@@ -9421,40 +7198,25 @@ export class AppController {
 	}
 
 	/**
-	 * Hand a file to the Workspace's editor: its workbench, or — with
-	 * `general.editor = "neovim"` — its Neovim, `:drop`ped there over RPC
-	 * (started first if it is not running). The one place an open is
-	 * branched on the editor kind.
+	 * Hand a file to the Workspace's editor, its Neovim: `:drop`ped there over
+	 * RPC (started first if it is not running).
 	 */
 	private async openInEditor(
 		workspace: Workspace,
-		workbench: () => Promise<ICodeWindow>,
-		machine: RuntimeId,
 		target: ResolvedPath,
 		position: FileSelection | undefined,
 		waitMarkerPath: string | undefined,
 	): Promise<void> {
-		if (editorForOpen(this.config.general.editor) === "neovim") {
-			const editors = this.neovimEditors;
-			if (!editors)
-				throw new Error("DevHub's Neovim editor is not running yet.");
-			await editors.open(
-				this.neovimTarget(workspace.id),
-				neovimOpenOf(target, position, waitMarkerPath),
-			);
-			// Its `devhub-nvim` window is the one the terminal shows now: the
-			// keys go to the Neovim drawn over it, whoever had them.
-			this.terminalNeovims?.reclaim(workspaceTerminalPageId(workspace.id));
-			shellWindow().focusSurface();
-			return;
-		}
-		openFileInWorkbench(
-			await workbench(),
-			machine,
-			target,
-			position,
-			waitMarkerPath,
+		const editors = this.neovimEditors;
+		if (!editors) throw new Error("DevHub's Neovim editor is not running yet.");
+		await editors.open(
+			this.neovimTarget(workspace.id),
+			neovimOpenOf(target, position, waitMarkerPath),
 		);
+		// Its `devhub-nvim` window is the one the terminal shows now: the keys
+		// go to the Neovim drawn over it, whoever had them.
+		this.terminalNeovims?.reclaim(workspaceTerminalPageId(workspace.id));
+		shellWindow().focusSurface();
 	}
 
 	/**
@@ -9506,7 +7268,6 @@ export class AppController {
 			context: back.context,
 			presentation: back.presentation,
 		});
-		await this.syncEditorView();
 		return "The wait is over; DevHub is back where it was.";
 	}
 
@@ -9526,52 +7287,21 @@ export class AppController {
 	}
 
 	/**
-	 * `devhub --install-extension`, `--uninstall-extension`, `--list-extensions`.
-	 *
-	 * Nothing about extensions is decided here. The three go straight to VS
-	 * Code's own extension CLI, driven against the running app's extension
-	 * management service — see `extensionCommands.ts` for why that is the
-	 * running app and not a process of its own.
-	 */
-	async installExtensionsFromCli(
-		targets: readonly string[],
-		force: boolean,
-		cwd: string,
-	): Promise<string> {
-		const extensions = (await this.services()).extensions();
-		return installExtensions(extensions, targets, force, cwd, homedir());
-	}
-
-	async uninstallExtensionsFromCli(
-		ids: readonly string[],
-		force: boolean,
-	): Promise<string> {
-		const extensions = (await this.services()).extensions();
-		return uninstallExtensions(extensions, ids, force);
-	}
-
-	async listExtensionsFromCli(showVersions: boolean): Promise<string> {
-		const extensions = (await this.services()).extensions();
-		return listExtensions(extensions, showVersions);
-	}
-
-	/**
 	 * `devhub --version`.
 	 *
-	 * Three facts, one per line, the way `code --version` prints three. They
-	 * come from the running app rather than from the launcher, because a
-	 * version read anywhere else is the version of something else. A source
-	 * checkout has no commit and says so instead of printing a blank line.
+	 * Two facts, one per line. They come from the running app rather than
+	 * from the launcher, because a version read anywhere else is the version
+	 * of something else. A source checkout has no commit and says so instead
+	 * of printing a blank line.
 	 */
-	async versionFromCli(): Promise<string> {
-		const { vscodeVersion, commit } = (await this.services())
-			.extensions()
-			.version();
-		return [
-			`DevHub ${electron.app.getVersion()}`,
-			`VS Code ${vscodeVersion}`,
-			commit ?? "no commit: this DevHub was built from a source checkout",
-		].join("\n");
+	versionFromCli(): Promise<string> {
+		const { version, commit } = devhubProduct();
+		return Promise.resolve(
+			[
+				`DevHub ${version ?? electron.app.getVersion()}`,
+				commit ?? "no commit: this DevHub was built from a source checkout",
+			].join("\n"),
+		);
 	}
 
 	/**
@@ -9640,33 +7370,17 @@ export class AppController {
 	 * take one.
 	 */
 	async metricsFromCli(): Promise<string> {
-		const shell = shellWindow();
-		const onScreen = shell.onScreenViewId();
-		const workbenches = shell
-			.getViews()
-			.filter((view) => !view.isDestroyed())
-			.map((view) => ({
-				pid: view.webContents.getOSProcessId(),
-				id: view.id,
-				surfaceKey: this.editorSurfaceKeyForView(view.id),
-				onScreen: view.id === onScreen,
-			}));
-		// DevHub's own pages, named the same way, because a reading that can
-		// only name workbenches cannot answer what splitting the pages cost.
-		// `onScreen` for these is "drawn": for the two layers that come and go
+		// DevHub's pages, by name. `onScreen` is "drawn": for the two layers that come and go
 		// it is presence in the window's child list, because a notice layer
 		// standing with nothing on it is a rectangle taking clicks for
 		// nothing; for the Sidebar and the Agents it is visibility, because
 		// both are always in the list and only one of them is always drawn.
-		// Reading it back is how `--metrics` answers "exactly one of the
-		// Agents and a workbench is on the content area" without a screenshot.
-		const chrome = this.chromePages().map((page) => ({
+		const views = this.chromePages().map((page) => ({
 			pid: page.contents.getOSProcessId(),
 			id: page.contents.id,
 			surfaceKey: `chrome:${page.name}`,
 			onScreen: page.present,
 		}));
-		const views = [...workbenches, ...chrome];
 		const cpu = process.cpuUsage();
 		// A terminal DevHub cannot reach has no clients to report, which is a
 		// different sentence from "none are attached" only to a reader who has
@@ -9695,9 +7409,7 @@ export class AppController {
 				views,
 				counters: activityCounters.read(),
 				terminalClients,
-				runtimes: [...liveRuntimes(), ...liveContainerHosts()].map((runtime) =>
-					runtime.reading(),
-				),
+				runtimes: liveRuntimes().map((runtime) => runtime.reading()),
 				terminalLauncher: [...this.launcherStatus.values()],
 				pendingSweeps: this.sessionSweeper?.pending ?? [],
 				repositoryRounds: this.repositoryStatus.rounds(),
@@ -10742,7 +8454,6 @@ export class AppController {
 						reason: "explicit",
 					}),
 				);
-				await this.syncEditorView();
 				this.bringToFront();
 			},
 			focusAgent: async (agentId) => {
@@ -11066,11 +8777,6 @@ export class AppController {
 	 */
 	private readonly unattendedWorkbenches = new Set<string>();
 
-	/** Whether a workbench's question is to be cancelled, not drawn. */
-	workbenchQuestionsUnattended(surfaceKey: string): boolean {
-		return this.unattendedWorkbenches.has(surfaceKey);
-	}
-
 	/** The model's Agent a CLI named by its id. */
 	private cliAgent(id: string): Agent {
 		const agent = this.coordinator.model.agent(parseAgentId(id));
@@ -11324,11 +9030,6 @@ export class AppController {
 		shellWindow().raise();
 	}
 
-	/** Hand a request's files to a workbench, exactly as upstream would. */
-	sendFilesToWorkbench(window: ICodeWindow, files: unknown): void {
-		window.sendWhenReady("vscode:openFiles", VSCancellationToken.None, files);
-	}
-
 	//#endregion
 
 	//#region workbench views
@@ -11415,11 +9116,6 @@ export class AppController {
 		// idle one would not notice the setting turned on until too late.
 		this.conversationEngine?.settingsChanged();
 		this.agentWiring?.conversations.registry.reconsiderCacheKeeping();
-		// `general.workbench_discard_minutes` and `workbench_freeze` are read
-		// by a plan, and its deadline set by one: without a plan now, a frozen
-		// workbench kept the old discard deadline until something else
-		// happened to plan, and one frozen when freezing turned off stayed so.
-		this.reconcileWorkbenches();
 	}
 
 	//#endregion
@@ -11453,7 +9149,6 @@ export class AppController {
 		// Selecting the Editor activity is the moment its view has to exist. It is
 		// done here rather than in the model because a view is an effect on the
 		// window, and the model does not have windows.
-		await this.syncEditorView();
 		return outcomeWire(
 			settled,
 			this.coordinator.readiness,
@@ -11462,46 +9157,16 @@ export class AppController {
 		);
 	}
 
-	/**
-	 * `syncEditorView` where there is nobody to hand a failure back to.
-	 *
-	 * A projection changes for reasons with no caller — a reconciler round, a
-	 * workbench finishing its open — so the promise has no `await` above it. A
-	 * bare `void` on one of those routes its failure to the process's
-	 * `unhandledRejection`, which is now main's root boundary and publishes it
-	 * to the page's one error surface, the same as every failure with a caller.
-	 * See `mainFailureRoot.ts`; this used to carry its own copy of that rule.
-	 */
-	private syncEditorViewInBackground(): void {
-		void this.syncEditorView();
-	}
-
-	/**
-	 * Put what the selection resolves to on screen — which is only ever a
-	 * reveal.
-	 *
-	 * Nothing is opened here. Whether the selected folder has a workbench is
-	 * the lifecycle's plan (`reconcileWorkbenches`, which `workbenchReady`
-	 * runs): an editor somebody asked for is started or woken there, and an
-	 * asleep one nobody asked for stays asleep. What is left is waiting for
-	 * an open already in flight, for the callers that go on to use the
-	 * workbench, and asking the arrangement again — see
-	 * `ShellWindow.assertArrangement`.
-	 */
-	private async syncEditorView(): Promise<void> {
-		const surfaceKey = this.selectedEditorSurfaceKey();
-		// A Workspace that cannot be shown has no workbench to reveal; the page
-		// draws the reason from the Workspace's own state.
-		if (surfaceKey === undefined) return;
-		const folder = this.editorKeyForSurfaceKey(surfaceKey);
-		if (folder === undefined) return;
-		const view = await this.workbenchReady(folder);
-		if (view) shellWindow().assertArrangement();
-	}
-
 	private async pickFolder(): Promise<string | undefined> {
-		const picked = await (await this.services()).dialogs().pickFolder({});
-		return picked?.[0];
+		const window = shellWindowIfCreated()?.window;
+		const options: Electron.OpenDialogOptions = {
+			properties: ["openDirectory", "createDirectory"],
+		};
+		const picked =
+			window === undefined || window.isDestroyed()
+				? await electron.dialog.showOpenDialog(options)
+				: await electron.dialog.showOpenDialog(window, options);
+		return picked.canceled ? undefined : picked.filePaths[0];
 	}
 
 	/**
@@ -11691,7 +9356,6 @@ export class AppController {
 				value: `https://github.com/${item.owner}/${item.repository}/${item.kind === "pull" ? "pull" : "issues"}/${String(item.number)}`,
 			});
 		this.queueIssuePrompt(agentsBefore, item, request.actionId, how);
-		if (!quiet) await this.syncEditorView();
 		return outcomeWire(
 			settled,
 			this.coordinator.readiness,
@@ -11974,26 +9638,6 @@ export class AppController {
 		);
 
 		handle(CHANNELS.chooseWorkspaceFolder, () => this.pickFolder());
-		// A page that has just started listening for placeholders: told every
-		// standing one, in order on the same channel, so nothing said before it
-		// listened is lost (`WorkbenchLifecycle.standing`).
-		handle(CHANNELS.replayEditorPlaceholders, (event) => {
-			for (const { surfaceKey, placeholder } of this.workbenches.standing()) {
-				event.sender.send(CHANNELS.editorPlaceholder, {
-					surfaceKey,
-					placeholder,
-				} satisfies EditorPlaceholderEvent);
-			}
-		});
-		// Enter or a click on an asleep (or never started) editor's
-		// placeholder: the one way the page asks for a workbench.
-		handle(CHANNELS.wakeEditor, (_event, surfaceKey: string) => {
-			const folder = this.editorKeyForSurfaceKey(String(surfaceKey));
-			if (folder === undefined) return;
-			this.askForWorkbench(folder, "asked");
-			this.noteInteraction();
-		});
-
 		handle(CHANNELS.startWorkspacePicker, (_event, query: string) => {
 			this.cancelPicker?.();
 			const config = this.config;
@@ -12088,26 +9732,6 @@ export class AppController {
 						withAgent,
 						"below-selection",
 					);
-				} catch (error: unknown) {
-					throw namedFailure(error);
-				}
-			},
-		);
-		handle(
-			CHANNELS.reopenEditorLocally,
-			async (_event, workspaceId: string) => {
-				try {
-					await this.reopenEditorLocally(parseWorkspaceId(workspaceId));
-				} catch (error: unknown) {
-					throw namedFailure(error);
-				}
-			},
-		);
-		handle(
-			CHANNELS.reopenEditorInContainer,
-			async (_event, workspaceId: string) => {
-				try {
-					await this.reopenEditorInContainer(parseWorkspaceId(workspaceId));
 				} catch (error: unknown) {
 					throw namedFailure(error);
 				}
@@ -12487,32 +10111,6 @@ export class AppController {
 			// the projection is what says how it ended.
 			this.closeWorkspaceOrWorktree(workspaceId);
 		});
-		// The editor's Vim quitting (`:q` in its last window, `:qa`): the same
-		// close button, asked for by the workbench itself. See
-		// `workbenchCloseRequests.ts`.
-		listenForCloseRequests<Electron.WebContents>(electron.ipcMain, {
-			workspaceOf: (contents) => {
-				const shell = shellWindow();
-				const view = shell.getViewByContents(contents);
-				const key = view === undefined ? undefined : shell.editorKeyOf(view);
-				const workspace =
-					key === undefined ? undefined : this.workspaceForEditorKey(key);
-				if (workspace === undefined) return undefined;
-				return {
-					id: workspace.id,
-					// The Orchestrator row's Workspace has no close either: Vim's
-					// `:q` there is refused as it is in Scratch.
-					scratch:
-						workspace.id === this.coordinator.model.scratchWorkspaceId ||
-						workspace.id === this.coordinator.model.orchestratorWorkspaceId,
-					closing: this.coordinator.closeUnderway(workspace.id),
-				};
-			},
-			close: (workspaceId) => {
-				this.personStartedAction();
-				this.closeWorkspaceOrWorktree(workspaceId);
-			},
-		});
 		// The answer to the three-way worktree question main asked. The page
 		// says which of the two answers it was told; `--force` is main's, and
 		// so is what "delete" means. "Cancel" is the sheet dismissing itself
@@ -12821,9 +10419,34 @@ interface IssuePromptHow {
 
 let current: AppController | undefined;
 
+/** One of the tools DevHub installs on a host, from `product.json`'s pins. */
+function hostToolDelivery(
+	tool: HostTool,
+	userDataPath: string,
+): ReleaseToolDelivery {
+	const product = devhubProduct() as unknown as Readonly<
+		Record<string, unknown>
+	>;
+	const text = (key: string) => {
+		const value = product[key];
+		return typeof value === "string" ? value : "";
+	};
+	const pins = product[`${tool}DownloadSha256`];
+	return new ReleaseToolDelivery({
+		tool,
+		version: text(`${tool}Version`),
+		directory: toolInstallDirectory(devhubProduct().serverDataFolderName, tool),
+		urlTemplate: text(`${tool}DownloadUrlTemplate`),
+		sha256:
+			typeof pins === "object" && pins !== null
+				? (pins as Readonly<Record<string, string>>)
+				: {},
+		cacheDirectory: join(userDataPath, tool),
+	});
+}
+
 export async function createAppController(
 	userDataPath: string,
-	cliArgs: NativeParsedArgs,
 	/** The settings DevHub runs on, loaded before the window (`bootstrapShell`). */
 	settings: RunningSettings,
 ): Promise<AppController> {
@@ -12838,65 +10461,21 @@ export async function createAppController(
 	setRuntimeProfile({
 		userDataDirectory: userDataPath,
 		home: homedir(),
-		// Where the tmux DevHub puts on a host comes from. Stated in
-		// `product-overrides.json`, because the release the app installs from is a fact about the build and not a
-		// thing a person configures — and read here for the same reason the
-		// profile is passed in at all.
-		tmux: new ReleaseToolDelivery({
-			tool: "tmux",
-			version: devhubProduct.tmuxVersion ?? "",
-			directory: toolInstallDirectory(
-				vscodeProduct.serverDataFolderName ?? ".vscode-server",
-				"tmux",
-			),
-			urlTemplate: devhubProduct.tmuxDownloadUrlTemplate ?? "",
-			sha256: devhubProduct.tmuxDownloadSha256 ?? {},
-			cacheDirectory: join(userDataPath, "tmux"),
-		}),
-		// And the bash a host with neither bash nor zsh is given for Claude
-		// Code, by the same mechanism, from the same kind of release.
-		bash: new ReleaseToolDelivery({
-			tool: "bash",
-			version: devhubProduct.bashVersion ?? "",
-			directory: toolInstallDirectory(
-				vscodeProduct.serverDataFolderName ?? ".vscode-server",
-				"bash",
-			),
-			urlTemplate: devhubProduct.bashDownloadUrlTemplate ?? "",
-			sha256: devhubProduct.bashDownloadSha256 ?? {},
-			cacheDirectory: join(userDataPath, "bash"),
-		}),
-		// And the remote extension hosts this DevHub carries. Out of the app
-		// itself and never off the network: a packaged app has them in
-		// `Contents/Resources/reh` (scripts/package-nightly.py), a source run
-		// in the checkout's `dist/reh`, where scripts/build_reh.py writes.
-		reh: new BundledRehDelivery({
-			directory: rehBundleDirectory(),
-			commit: REH_COMMIT,
-			identity: devhubProduct.serverIdentity,
-			dataFolderName: vscodeProduct.serverDataFolderName ?? ".vscode-server",
-			applicationName: vscodeProduct.serverApplicationName ?? "code-server",
-			packaged: vscodeProduct.commit !== undefined,
-		}),
-		// And which binaries drive a dev container. Named rather than
-		// discovered, and separately, because they are separately absent: a Mac
-		// can have Docker and no `devcontainer` CLI, and the two refusals name
-		// different things to install. A bare name is resolved against `PATH`
-		// by the OS, which is the person's own answer to where they put it.
-		docker: { path: devhubProduct.dockerPath ?? "docker" },
-		devcontainer: { path: devhubProduct.devcontainerPath ?? "devcontainer" },
+		// Where the tmux, the bash and the Node DevHub puts on a host come
+		// from. Stated in `product.json`, because the release the app installs
+		// from is a fact about the build and not a thing a person configures —
+		// and read here for the same reason the profile is passed in at all.
+		tmux: hostToolDelivery("tmux", userDataPath),
+		// The bash a host with neither bash nor zsh is given for Claude Code.
+		bash: hostToolDelivery("bash", userDataPath),
+		// The Node DevHub's own programs run on there (its `devhub` command).
+		node: hostToolDelivery("node", userDataPath),
 	});
 
 	const config = settings.config;
 
 	const stateStore = new JsonStateStore(
 		join(userDataPath, "devhub", "state.json"),
-		// What an older file never wrote down about a dev container, looked up
-		// before it is migrated. See `containerMigration.ts`.
-		prepareContainerMigration({
-			docker: { path: devhubProduct.dockerPath ?? "docker" },
-			stat: (path) => localRuntime().stat(path),
-		}),
 	);
 	const load = await stateStore.loadState();
 	const state = load.state;
@@ -12944,18 +10523,12 @@ export async function createAppController(
 	const created = new AppController(
 		settings,
 		stateStore,
-		cliArgs,
 		model,
 		state,
 		previousExit,
 		load.metadata.origin === "fresh",
 	);
 	current = created;
-	// Every bring-up, whoever asked for it, tells the Workspaces attached to
-	// that container that DevHub started it. See `releaseContainer`.
-	onContainerStarted((host, containerId) => {
-		created.noteContainerStarted(host, containerId);
-	});
 	// The one notice about a settings file this run could not use. Nothing
 	// else says it: everything runs on the defaults in the meantime.
 	if (settings.launchRefusal !== undefined) {

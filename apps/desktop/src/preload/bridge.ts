@@ -319,20 +319,6 @@ export function openSettings(): Promise<void> {
 	return ipcRenderer.invoke(CHANNELS.openSettings) as Promise<void>;
 }
 
-export function reopenEditorLocally(workspaceId: string): Promise<void> {
-	return ipcRenderer.invoke(
-		CHANNELS.reopenEditorLocally,
-		workspaceId,
-	) as Promise<void>;
-}
-
-export function reopenEditorInContainer(workspaceId: string): Promise<void> {
-	return ipcRenderer.invoke(
-		CHANNELS.reopenEditorInContainer,
-		workspaceId,
-	) as Promise<void>;
-}
-
 export function continueAgent(agentId: string): Promise<void> {
 	return ipcRenderer.invoke(CHANNELS.continueAgent, agentId) as Promise<void>;
 }

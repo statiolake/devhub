@@ -1595,24 +1595,6 @@ export interface ShellPageBridge
 	 * then each time it moves. Main says it only when it moves.
 	 */
 	onWorkbenchArea(listener: (area: WorkbenchAreaWire) => void): () => void;
-	onEditorPlaceholder(
-		listener: (event: EditorPlaceholderEvent) => void,
-	): () => void;
-	/**
-	 * Say every placeholder standing now again, to this page, over
-	 * `onEditorPlaceholder`. A page asks once it listens: main says a
-	 * placeholder only when it changes, and the ones decided before the page
-	 * was listening (every not started Workspace, at launch) would otherwise
-	 * never reach it.
-	 */
-	replayEditorPlaceholders(): Promise<void>;
-	/**
-	 * Wake (or start) the workbench whose placeholder stands in this editor
-	 * slot (`workspace-editor:<id>`): Enter or a click on "Sleeping — press
-	 * Enter to wake". The one way the page asks for one; nothing wakes on its
-	 * own (`docs/window-and-pages.md`).
-	 */
-	wakeEditor(surfaceKey: string): Promise<void>;
 	/**
 	 * Put a modal on screen. Resolves to the id that closes it again.
 	 *
@@ -1661,17 +1643,6 @@ export interface SidebarBridge
 	openModal(request: ModalRequest): Promise<string>;
 	/** Get rid of a workspace, whatever kind. **The one path**; see above. */
 	closeWorkspace(workspaceId: string): Promise<void>;
-	/**
-	 * Reopen a Workspace's editor on its own machine, out of the dev container
-	 * it is attached to: the row's way out when that editor cannot open.
-	 */
-	reopenEditorLocally(workspaceId: string): Promise<void>;
-	/**
-	 * Reopen a Workspace's editor in the dev container it is attached to,
-	 * building the container first when it has not been built: the row's way
-	 * back in when that editor could not open.
-	 */
-	reopenEditorInContainer(workspaceId: string): Promise<void>;
 	/**
 	 * Carry an Agent on in its other presentation, resuming its session: a GUI
 	 * Agent in a terminal, a terminal Claude or Codex Agent in the GUI. The
@@ -2375,9 +2346,7 @@ export const CHANNELS = {
 	dispatch: "devhub:dispatch",
 	replay: "devhub:replay",
 	chooseWorkspaceFolder: "devhub:choose-workspace-folder",
-	wakeEditor: "devhub:wake-editor",
 	/** Every standing editor placeholder, said again to the page that asks. */
-	replayEditorPlaceholders: "devhub:replay-editor-placeholders",
 	startWorkspacePicker: "devhub:start-workspace-picker",
 	cancelWorkspacePicker: "devhub:cancel-workspace-picker",
 	selectWorkspacePicker: "devhub:select-workspace-picker",
@@ -2413,8 +2382,6 @@ export const CHANNELS = {
 	projectDefaultDirectory: "devhub:project-default-directory",
 	listSshHosts: "devhub:list-ssh-hosts",
 	openSshWorkspace: "devhub:open-ssh-workspace",
-	reopenEditorLocally: "devhub:reopen-editor-locally",
-	reopenEditorInContainer: "devhub:reopen-editor-in-container",
 	continueAgent: "devhub:continue-agent",
 	cloneParentDirectories: "devhub:clone-parent-directories",
 	githubLogin: "devhub:github-login",
@@ -2509,7 +2476,6 @@ export const CHANNELS = {
 	/** The set of open modals, pushed to the `picker` page whenever it moves. */
 	modalsChanged: "devhub:modals-changed",
 	/** A workbench died unasked and is being built again in the same slot. */
-	editorPlaceholder: "devhub:editor-placeholder",
 	/** The branch, Issue and pull request each workspace is working on. */
 	repositoryStatusChanged: "devhub:repository-status-changed",
 	/** Claude's and Codex's rate limits, when a GUI Agent reports a change. */

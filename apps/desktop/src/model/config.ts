@@ -401,37 +401,7 @@ export interface GeneralConfig {
    * command as finished. See `main/terminal/paneActivity.ts`.
    */
   readonly terminal_idle_seconds: number;
-  /**
-   * Discard a workbench that has been frozen this many minutes: close it, as
-   * VS Code closes a window on quit, to free what it held. It starts again
-   * when somebody asks for it. `0` never discards. A workbench that is not
-   * on screen is frozen at once (SIGSTOP) unless it is in use; see
-   * `main/shell/workbenchPlan.ts`. Nothing is discarded while
-   * `workbench_freeze` is off, since a discard follows a freeze.
-   */
-  readonly workbench_discard_minutes: number;
-  /**
-   * Freeze (SIGSTOP) a workbench that is not on screen, and let the Task
-   * Manager's Sleep freeze one. `false` never freezes, so never discards
-   * either, and thaws a workbench that is frozen when it turns off. Default
-   * `true`. See `main/shell/workbenchPlan.ts`.
-   */
-  readonly workbench_freeze: boolean;
-  /**
-   * What a Workspace's editor area is: `"vscode"`, its own VS Code
-   * workbench (the default), or `"neovim"`: the Workspace's terminal (its
-   * `ws-` tmux session), where every Neovim — `nvim` typed in any DevHub
-   * terminal, `git commit`'s, and the `devhub-nvim` window files are opened
-   * in — is drawn by DevHub's GUI over its pane. Applies live. See
-   * `docs/neovim-editor.md`.
-   */
-  readonly editor: EditorKind;
 }
-
-/** The kinds of editor area there are, and the only values `general.editor` takes. */
-export const EDITOR_KINDS = ["vscode", "neovim"] as const;
-export type EditorKind = (typeof EDITOR_KINDS)[number];
-export const DEFAULT_EDITOR: EditorKind = "vscode";
 
 export interface RuntimeConfig {
   readonly shell: string;
@@ -816,8 +786,6 @@ export function defaultAgentActions(): ConfiguredAgentAction[] {
 
 /** See `GeneralConfig.terminal_idle_seconds`. */
 export const DEFAULT_TERMINAL_IDLE_SECONDS = 5;
-/** See `GeneralConfig.workbench_discard_minutes`. */
-export const DEFAULT_WORKBENCH_DISCARD_MINUTES = 60;
 
 export function defaultConfig(): Config {
   return {
@@ -828,9 +796,6 @@ export function defaultConfig(): Config {
       notify_sound: true,
       notice_seconds: DEFAULT_NOTICE_SECONDS,
       terminal_idle_seconds: DEFAULT_TERMINAL_IDLE_SECONDS,
-      workbench_discard_minutes: DEFAULT_WORKBENCH_DISCARD_MINUTES,
-      workbench_freeze: true,
-      editor: DEFAULT_EDITOR,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -875,7 +840,6 @@ export type ValidationCode =
   | "invalid_appearance"
   | "invalid_theme"
   | "invalid_mac_option_is_meta"
-  | "invalid_editor"
   | "invalid_keybinding"
   | "unknown_command"
   | "invalid_font_family"
@@ -1005,7 +969,13 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "orchestrator.reminder_interval":
     "there is one cadence: every delivery (`orchestrator.delivery_interval`, 5m by default) carries each `needs_action` subject that needs action then and is not kept (`agent keep`)",
   "general.workbench":
-    "every Workspace's editor area is its own VS Code workbench now",
+    "DevHub has no VS Code any more: every Workspace's editor is its Neovim, drawn over its terminal",
+  "general.editor":
+    "DevHub has no VS Code any more, so there is no editor to choose: every Workspace's editor is its Neovim, drawn over its terminal (docs/without-vscode.md)",
+  "general.workbench_freeze":
+    "it froze VS Code workbenches, and DevHub has no VS Code any more",
+  "general.workbench_discard_minutes":
+    "it discarded VS Code workbenches, and DevHub has no VS Code any more",
   "runtimes.herdr":
     "an Agent is now a tmux session on DevHub's own socket, so there is no separate Agent runtime to point at; the program to run is each profile's own `command`",
 };
@@ -1594,9 +1564,6 @@ export function validateConfig(config: Config): void {
   if (orchestratorKey !== undefined) {
     fail("invalid_orchestrator", `orchestrator.${orchestratorKey}`);
   }
-  if (!(EDITOR_KINDS as readonly string[]).includes(config.general.editor)) {
-    fail("invalid_editor", "general.editor");
-  }
   if (
     !(AGENT_PRESENTATIONS as readonly string[]).includes(
       config.agents.default_presentation,
@@ -2166,9 +2133,6 @@ export function interpretConfig(document: unknown): Config {
       "notify_sound",
       "notice_seconds",
       "terminal_idle_seconds",
-      "workbench_discard_minutes",
-      "workbench_freeze",
-      "editor",
     ],
     "general",
   );
@@ -2291,23 +2255,6 @@ export function interpretConfig(document: unknown): Config {
         "terminal_idle_seconds",
         DEFAULT_TERMINAL_IDLE_SECONDS,
       ),
-      workbench_discard_minutes: generalDuration(
-        generalTable,
-        "workbench_discard_minutes",
-        DEFAULT_WORKBENCH_DISCARD_MINUTES,
-      ),
-      workbench_freeze: optionalBoolean(
-        generalTable,
-        "workbench_freeze",
-        "general",
-        true,
-      ),
-      editor: optionalString(
-        generalTable,
-        "editor",
-        "general",
-        DEFAULT_EDITOR,
-      ) as EditorKind,
     },
     runtimes: {
       shell: optionalString(runtimesTable, "shell", "runtimes", DEFAULT_SHELL),
@@ -2554,9 +2501,6 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       notify_sound: config.general.notify_sound,
       notice_seconds: config.general.notice_seconds,
       terminal_idle_seconds: config.general.terminal_idle_seconds,
-      workbench_discard_minutes: config.general.workbench_discard_minutes,
-      workbench_freeze: config.general.workbench_freeze,
-      editor: config.general.editor,
     },
     runtimes: {
       shell: config.runtimes.shell,

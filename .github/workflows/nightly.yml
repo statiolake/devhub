@@ -1,11 +1,10 @@
 # The product build: package `main` every night, test the packaged app, and
 # publish it as a rolling prerelease. The per-push CI (ci.yml) only asks
 # whether a change is broken; everything that makes a DevHub someone downloads
-# — the remote extension hosts, the speech recogniser, the full `core-ci`
-# VS Code bundle, the zip, the release — is built here. See docs/ci.md.
+# — the speech recogniser, the zip, the release — is built here. See
+# docs/ci.md.
 #
-#   Decide ──> Build: REH <target> (x4, parallel) ──> Publish: prebuilt REH
-#                                  └──> Build: DevHub.app ──> Test: packaged app ──> Publish: nightly release
+#   Decide ──> Build: DevHub.app ──> Test: packaged app ──> Publish: nightly release
 #   Decide: tmux ──> Build: tmux <target> (x2) ──> Publish: tmux release
 #   Decide: bash ──> Build: bash <target> (x2) ──> Publish: bash release
 #
@@ -21,21 +20,11 @@
 # Developer identity in the repository's secrets; until there is one, the
 # release notes tell people how to clear the quarantine flag themselves.
 #
-# The app carries four remote extension hosts (Contents/Resources/reh: glibc
-# and musl Linux, x64 and arm64) — the server DevHub copies onto an SSH host or
-# into a dev container to open a remote window there. They are built here,
-# every time the app is, from the same patched VS Code, one job per server, and
-# handed to the macOS job, which bundles them. `reh-publish` also puts each, by
-# identity, on the rolling `reh` prerelease, so a developer's `pnpm build`
-# (scripts/ensure_reh.py) and the next night's jobs can download the servers
-# instead of spending an hour building them. See docs/remote-ssh.md,
-# scripts/build_reh.py and scripts/reh_release.py.
-#
-# A third set of jobs publishes a statically linked tmux, on the same shape and
+# A second set of jobs publishes a statically linked tmux, on the same shape and
 # for the same reason: DevHub runs every terminal and every Agent inside tmux on
 # the machine the Workspace is on, must not require the host to have one, and
 # must not use the host's if it does. That one answers to the tmux version
-# pinned in scripts/build_tmux.py and to nothing else here. A fourth publishes a
+# pinned in scripts/build_tmux.py and to nothing else here. A third publishes a
 # statically linked bash on the same shape again, for Claude Code on a host
 # with neither bash nor zsh (scripts/build_bash.py).
 name: Nightly
@@ -74,8 +63,7 @@ env:
   CI: "true"
 
 jobs:
-  # A minute of a Linux runner to decide whether to spend hours of the others.
-  # Nothing here needs the submodule or a build.
+  # A minute of a Linux runner to decide whether to spend the macOS ones.
   decide:
     name: "Decide: anything new to package?"
     runs-on: ubuntu-latest
@@ -107,176 +95,24 @@ jobs:
           scripts/nightly-build-needed.sh "$GITHUB_SHA"
 
   # ---------------------------------------------------------------------------
-  # The remote extension hosts the app carries.
-  #
-  # Built the way VS Code builds its own, on Linux x64 for every architecture
-  # (build/azure-pipelines/linux/steps/product-build-linux-setup.yml and
-  # -compile.yml, alpine/product-build-alpine.yml): scripts/build_reh.py runs
-  # upstream's `npm ci` with setup-env.sh's glibc 2.28 sysroot toolchain, the
-  # server's part of `gulp core-ci` and `gulp vscode-reh-<platform>-<arch>-min-ci`
-  # in an amd64 Ubuntu 22.04 container on a copy of the pinned, patched VS
-  # Code, and installs the musl servers' `remote/` in `node:<version>-alpine` of
-  # the target's platform, as upstream's Alpine pipeline does. Nothing is
-  # provisioned on the runner itself: it needs git, python3 and Docker, which
-  # ubuntu-latest has. QEMU runs the arm64 containers (alpine-arm64's
-  # `remote/` install and each arm64 server's start check).
-  #
-  # One job per server, all four in parallel. linux-<arch> and alpine-<arch>
-  # could share one tree (`npm ci` + the server's `core-ci`, the long part), and
-  # one job per architecture would prepare it once and package both servers
-  # from it, one after the other. Per server prepares each tree twice, on
-  # separate runners, which costs runner minutes (free here: the repository is
-  # public) and buys wall-clock: the app job waits for the slowest server,
-  # which is now one tree plus one package step rather than one tree plus two
-  # — alpine-arm64's, whose `remote/` install and start check run under QEMU,
-  # no longer queues behind linux-arm64's. It also lets a server that is
-  # already published skip its job outright (below), which a shared job could
-  # only do when both of its servers were. The tree is >10 GB in a Docker
-  # volume, too big for the Actions cache, so it is not carried between jobs.
-  #
-  # Built on every night the app is: the servers are DevHub's patches as much
-  # as VS Code's, and the app refuses servers of another identity. But the
-  # identity is the whole input, so a server whose identity the `reh` release
-  # already has is downloaded (and verified) instead — most nights after the
-  # first one following a VS Code bump or a patch edit.
-  # ---------------------------------------------------------------------------
-
-  reh:
-    name: "Build: REH ${{ matrix.target }}"
-    needs: decide
-    if: needs.decide.outputs.needed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 150
-    strategy:
-      # One failing server must not cancel the others: knowing that only
-      # alpine-arm64 is broken is the whole of the diagnosis. The app is not
-      # packaged either way — it needs all four.
-      fail-fast: false
-      matrix:
-        target: [linux-x64, alpine-x64, linux-arm64, alpine-arm64]
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          submodules: true
-          fetch-depth: 1
-
-      # The same verified download a developer's `pnpm build` makes
-      # (scripts/ensure_reh.py); it prints what it could not get.
-      - name: Take the server from the reh release if it is published
-        id: published
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          missing="$(scripts/ensure_reh.py --from-release "$TARGET" --out-dir dist/reh)"
-          if [ -n "$missing" ]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            echo "$TARGET is not published for this identity: building it"
-          else
-            echo "build=false" >> "$GITHUB_OUTPUT"
-            echo "$TARGET is published for this identity: downloaded, not building"
-          fi
-
-      # The tree is a full VS Code with every nested node_modules, Chromium's
-      # clang and two sysroots: well over 10 GB in the Docker volume, more than
-      # the runner's root disk has free out of the box.
-      - name: Make room for the build tree
-        if: steps.published.outputs.build == 'true'
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
-
-      - name: Let Docker run arm64 containers
-        if: steps.published.outputs.build == 'true' && endsWith(matrix.target, '-arm64')
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Build the server
-        if: steps.published.outputs.build == 'true'
-        env:
-          # Passed into the containers by name, for the downloads upstream's
-          # steps make from GitHub (sysroots, prebuilt binaries); only for the
-          # rate limit.
-          GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/build_reh.py ${{ matrix.target }} --out-dir dist/reh
-
-      # To the macOS job, which bundles it, and to `reh-publish`.
-      - name: Hand the server to the packaging job
-        uses: actions/upload-artifact@v4
-        with:
-          name: reh-${{ matrix.target }}
-          path: |
-            dist/reh/*.tar.gz
-            dist/reh/*.json
-          retention-days: 1
-          if-no-files-found: error
-
-  # The servers, by identity, as assets of one rolling prerelease `reh`:
-  # `<identity>-devhub-reh-<target>.tar.gz` and its `.json` statement. Only
-  # identities the release lacks are uploaded — the same identity is the same
-  # server — and all but the six most recently uploaded identities are deleted.
-  # `always()` so one failed server does not withhold the others.
-  reh-publish:
-    name: "Publish: prebuilt REH (reh release)"
-    needs: [decide, reh]
-    if: >-
-      always()
-      && needs.decide.result == 'success'
-      && needs.decide.outputs.needed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      # For scripts/reh_release.py only; no submodule — the identity is read
-      # from the statements the `reh` jobs wrote.
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Collect the servers
-        uses: actions/download-artifact@v4
-        with:
-          pattern: reh-*
-          merge-multiple: true
-          path: dist/reh
-
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if ! ls dist/reh/devhub-reh-*.json >/dev/null 2>&1; then
-            echo "no server was built tonight: nothing to publish. Read the red reh jobs." >&2
-            exit 1
-          fi
-          scripts/reh_release.py publish dist/reh --keep 6
-
-  # ---------------------------------------------------------------------------
   # The app: built, then tested as the packaged thing people download, then
   # published. Three jobs, so a red run says which of the three failed.
   # ---------------------------------------------------------------------------
 
   package:
     name: "Build: DevHub.app (darwin-arm64)"
-    # The servers first: the app is not packaged without all four, and
-    # package-nightly.py refuses a bundle that would refuse a far machine.
-    needs: [decide, reh]
+    needs: decide
     if: needs.decide.outputs.needed == 'true'
     runs-on: macos-15
     timeout-minutes: 120
     outputs:
       date: ${{ steps.meta.outputs.date }}
       sha: ${{ steps.meta.outputs.sha }}
-      vscode_sha: ${{ steps.provision.outputs.vscode-sha }}
       artifact: DevHub-darwin-arm64-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.sha }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          submodules: true
           fetch-depth: 1
 
       - name: Describe this build
@@ -289,23 +125,6 @@ jobs:
 
       - name: Set up Node.js and pnpm
         uses: ./.github/actions/setup-node-pnpm
-
-      # The full `core-ci` bundle: this is what ships.
-      - name: Provision VS Code
-        id: provision
-        uses: ./.github/actions/provision-vscode
-        with:
-          for: all
-          bundle: full
-
-      # Where scripts/package-nightly.py looks for them by default, which is
-      # also where scripts/build_reh.py writes on a developer's machine.
-      - name: Collect the remote extension hosts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: reh-*
-          merge-multiple: true
-          path: dist/reh
 
       # The speech recogniser the composer dictates with: whisper.cpp built
       # with Metal and its model, both made by scripts/build_whisper.py and
@@ -321,14 +140,9 @@ jobs:
 
       # The same entry point a developer runs on their own Mac, so there is one
       # build to keep working rather than a local one and a CI one. It repeats
-      # the install and the provision above, which are idempotent and cost
-      # seconds once done, and then builds DevHub's packages and assembles the
-      # bundle and its zip.
+      # the install above, which is idempotent and costs seconds once done,
+      # and then builds DevHub and assembles the bundle and its zip.
       - name: Build DevHub.app
-        env:
-          # The built-in extension set pulls a handful of extensions from
-          # GitHub releases; the token is only there for the rate limit.
-          GITHUB_TOKEN: ${{ github.token }}
         run: pnpm run build
 
       # The zip is what is tested and what is released: the test job unpacks
@@ -386,7 +200,6 @@ jobs:
 
       - name: Write the release notes
         env:
-          VSCODE_SHA: ${{ needs.package.outputs.vscode_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           cat > dist/notes.md <<'NOTES'
@@ -407,16 +220,12 @@ jobs:
           clean up. (`No such xattr` means the download was never quarantined;
           carry on.)
 
-          The first launch asks for access to the keychain item "DevHub Safe
-          Storage" — that is the app creating the store VS Code keeps secrets
-          in. Answer once and it stops asking.
-
           Requires macOS 15 or later on Apple Silicon. There is no update
           mechanism: replace the app with the next nightly.
           NOTES
           {
             echo ""
-            echo "Built from \`$GITHUB_SHA\` with VS Code \`$VSCODE_SHA\`."
+            echo "Built from \`$GITHUB_SHA\`."
             echo ""
             echo "[The run that produced it]($RUN_URL)"
           } >> dist/notes.md
@@ -446,12 +255,11 @@ jobs:
   # tmux: the terminal multiplexer every terminal and every Agent runs inside,
   # on whichever machine the Workspace lives on.
   #
-  # Built on runners of their own architecture rather than cross-built, like the
-  # servers above, and gated on whether its release exists, because the answer
-  # to "is one needed?" is cheap and the build is not. It is otherwise
-  # independent of the servers: this is a function of the tmux version
-  # pinned in scripts/build_tmux.py and of nothing in the VS Code submodule, so
-  # the release is named after that version and is built once, ever, per bump.
+  # Built on runners of their own architecture rather than cross-built, and
+  # gated on whether its release exists, because the answer
+  # to "is one needed?" is cheap and the build is not. It is a function of the
+  # tmux version pinned in scripts/build_tmux.py and of nothing else, so the
+  # release is named after that version and is built once, ever, per bump.
   #
   # Ten minutes of a Linux runner on the night a pin moves, and one minute of
   # the deciding job on every other night. See scripts/build_tmux.py and
@@ -515,7 +323,7 @@ jobs:
           - target: linux-arm64
             runner: ubuntu-24.04-arm
     steps:
-      # No submodule and no Node: this build is three ./configure runs over
+      # No Node: this build is three ./configure runs over
       # pinned upstream tarballs and touches nothing else in the repository.
       - name: Check out source
         uses: actions/checkout@v4
@@ -600,7 +408,7 @@ jobs:
           fi
 
       # The pins the app checks downloads against, in the form
-      # apps/desktop/product-overrides.json takes them (`tmuxDownloadSha256`).
+      # apps/desktop/product.json takes them (`tmuxDownloadSha256`).
       - name: Record the digests
         env:
           TAG: ${{ needs.tmux-decide.outputs.tag }}
@@ -609,7 +417,7 @@ jobs:
           version="${TAG#tmux-}"
           sep=""
           {
-            echo "Digests for \`tmuxDownloadSha256\` in apps/desktop/product-overrides.json:"
+            echo "Digests for \`tmuxDownloadSha256\` in apps/desktop/product.json:"
             echo '```json'
             printf '"tmuxDownloadSha256": {'
             for f in dist/*.tar.gz; do
@@ -751,7 +559,7 @@ jobs:
           fi
 
       # The pins the app checks downloads against, in the form
-      # apps/desktop/product-overrides.json takes them (`bashDownloadSha256`).
+      # apps/desktop/product.json takes them (`bashDownloadSha256`).
       - name: Record the digests
         env:
           TAG: ${{ needs.bash-decide.outputs.tag }}
@@ -760,7 +568,7 @@ jobs:
           version="${TAG#bash-}"
           sep=""
           {
-            echo "Digests for \`bashDownloadSha256\` in apps/desktop/product-overrides.json:"
+            echo "Digests for \`bashDownloadSha256\` in apps/desktop/product.json:"
             echo '```json'
             printf '"bashDownloadSha256": {'
             for f in dist/*.tar.gz; do

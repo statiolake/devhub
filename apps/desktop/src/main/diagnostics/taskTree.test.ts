@@ -156,7 +156,7 @@ describe("attributing processes", () => {
 	it("says what a workbench is doing, and what it offers", () => {
 		const workbench = find(tree.rows, "workbench:w1");
 		expect(workbench.state).toBe("running");
-		expect(workbench.actions).toEqual(["sleep", "reveal"]);
+		expect(workbench.actions).toEqual(["reveal"]);
 		expect(find(tree.rows, "agent:a1").actions).toEqual(["stop", "reveal"]);
 	});
 

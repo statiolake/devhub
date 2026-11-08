@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# The terminal tests that need the native node-pty.
-#
-# node-pty lives in the VS Code submodule and is built for VS Code's own
-# Electron, so the only interpreter that can load it is that binary run as Node
-# (ELECTRON_RUN_AS_NODE=1). The modules under test are compiled first, because
-# that interpreter runs JavaScript, not TypeScript.
+# The terminal tests that need the native node-pty, run in DevHub's own
+# Electron (npm's `electron`, scripts/electron-path.sh) as Node
+# (ELECTRON_RUN_AS_NODE=1): the interpreter the app's utility processes load
+# node-pty in. The modules under test are compiled first, because that
+# interpreter runs JavaScript, not TypeScript.
 #
 # Everything else about the terminal is pure logic and runs under vitest.
 set -euo pipefail
@@ -12,22 +11,10 @@ set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "$TEST_DIR/../.." && pwd)"
 REPO_ROOT="$(cd "$APP_DIR/../.." && pwd)"
-VSCODE_DIR="$REPO_ROOT/vscode"
 
-# VS Code's own Electron, not the DevHub-branded clone dev.sh boots. The clone
-# exists so that macOS has a name to show for a running application; this one
-# is an interpreter with no windows, so it has nothing to be named, and reading
-# the unbranded bundle keeps the tests independent of the branding step.
-case "$(uname -s)" in
-	Darwin) ELECTRON="$VSCODE_DIR/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" ;;
-	*) ELECTRON="$VSCODE_DIR/.build/electron/code-oss" ;;
-esac
+ELECTRON="$("$APP_DIR/scripts/electron-path.sh")"
 if [ ! -x "$ELECTRON" ]; then
-	echo "no Electron at $ELECTRON — run scripts/provision-vscode.sh" >&2
-	exit 1
-fi
-if [ ! -f "$VSCODE_DIR/node_modules/node-pty/build/Release/pty.node" ]; then
-	echo "the submodule has no built node-pty — run scripts/provision-vscode.sh" >&2
+	echo "no Electron at $ELECTRON — run 'pnpm install'" >&2
 	exit 1
 fi
 

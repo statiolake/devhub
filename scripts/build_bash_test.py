@@ -37,7 +37,7 @@ from build_bash import (
 	top_level_dir,
 )
 from build_tmux import PUBLISHED_TARGETS, pack
-from product_metadata import PRODUCT_OVERRIDES
+from product_metadata import PRODUCT as PRODUCT_OVERRIDES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = PRODUCT_OVERRIDES["bashDownloadUrlTemplate"]
@@ -77,7 +77,7 @@ class DownloadTemplate(unittest.TestCase):
 		self.assertEqual(PRODUCT_OVERRIDES["bashVersion"], VERSION)
 
 	def test_the_template_is_stated_in_the_file_the_app_reads(self) -> None:
-		path = REPO_ROOT / "apps" / "desktop" / "product-overrides.json"
+		path = REPO_ROOT / "apps" / "desktop" / "product.json"
 		self.assertEqual(json.loads(path.read_text())["bashDownloadUrlTemplate"], TEMPLATE)
 
 

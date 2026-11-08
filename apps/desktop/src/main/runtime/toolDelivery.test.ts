@@ -55,7 +55,7 @@ describe("where a platform's tmux comes from", () => {
 		expect(toolTarballName("tmux", "linux-x64", "3.7c")).toBe(
 			"devhub-tmux-linux-x64-3.7c.tar.gz",
 		);
-		expect(toolTopLevelDirectory("tmux", "linux-x64")).toBe(
+		expect(toolTopLevelDirectory("tmux", "linux-x64", "")).toBe(
 			"devhub-tmux-linux-x64",
 		);
 	});
@@ -78,7 +78,7 @@ describe("where a platform's bash comes from", () => {
 		expect(toolTarballName("bash", "linux-arm64", "5.3.20")).toBe(
 			"devhub-bash-linux-arm64-5.3.20.tar.gz",
 		);
-		expect(toolTopLevelDirectory("bash", "linux-arm64")).toBe(
+		expect(toolTopLevelDirectory("bash", "linux-arm64", "")).toBe(
 			"devhub-bash-linux-arm64",
 		);
 	});

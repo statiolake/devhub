@@ -248,59 +248,8 @@ export function GeneralSection({
       </Group>
 
       <Group
-        heading="Editors"
-        note="Each Workspace's editor area is its own VS Code editor. None starts until you ask: press Enter (or click Start) in its editor area, and stop it again with Cmd+Q Shift+E. An editor that is not on screen is frozen at once: its processes are paused, so the Mac can compress or swap out their memory, and it resumes instantly, as it was, when you show it again or something connects to it. An editor that is debugging, running a task, running a command in one of its terminals, or talking over the network is not frozen. SSH and dev container editors are never frozen. Agents and terminal sessions keep running throughout."
-      >
-        <Row
-          label="Editor"
-          help="VS Code gives each Workspace its own VS Code editor. Neovim makes each Workspace's editor area its terminal, with no VS Code started: nvim typed in any DevHub terminal (or run by git commit and $EDITOR) is your Neovim drawn in DevHub's GUI over its pane, and files DevHub opens go to the Workspace's devhub-nvim window. Switching applies at once. Default VS Code."
-        >
-          <Popup
-            label="Editor"
-            value={config.general.editor}
-            options={[
-              ["vscode", "VS Code"],
-              ["neovim", "Neovim"],
-            ]}
-            onChange={(editor) => {
-              update({ ...config, general: { ...config.general, editor } });
-            }}
-          />
-        </Row>
-        <SwitchRow
-          label="Freeze hidden editors"
-          help="Off, no editor is ever frozen — not when hidden, not by the Task Manager's Sleep — so none is discarded either, and one frozen now resumes at once. Editors then keep using CPU and memory while hidden. Default on."
-          checked={config.general.workbenchFreeze}
-          onChange={(workbenchFreeze) => {
-            update({
-              ...config,
-              general: { ...config.general, workbenchFreeze },
-            });
-          }}
-        />
-        <Row
-          label="Discard after (minutes)"
-          help="How long an editor may stay frozen before it is closed to free its memory entirely. It reopens where it was, unsaved changes included, when you press Enter on it. 0 never closes one. With freezing off nothing is frozen, so nothing is closed. Default 60."
-        >
-          <NumberField
-            label="Discard after (minutes)"
-            value={config.general.workbenchDiscardMinutes}
-            min={0}
-            max={10_080}
-            unit="min"
-            onCommit={(workbenchDiscardMinutes) => {
-              update({
-                ...config,
-                general: { ...config.general, workbenchDiscardMinutes },
-              });
-            }}
-          />
-        </Row>
-      </Group>
-
-      <Group
         heading="Appearance"
-        note="DevHub wears the colour theme named here — its window, its terminals and the Neovims it draws. Mode decides which half of a light/dark pair applies; Light and Dark tell the system DevHub is in that appearance. A VS Code editor keeps its own theme."
+        note="DevHub wears the colour theme named here — its window, its terminals and the Neovims it draws. Mode decides which half of a light/dark pair applies; Light and Dark tell the system DevHub is in that appearance."
       >
         <Row
           label="Theme"

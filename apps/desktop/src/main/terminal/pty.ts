@@ -1,21 +1,20 @@
 /**
  * The one place DevHub opens a pseudo-terminal.
  *
- * `node-pty` is a native module, and the binary that has to load it is VS
- * Code's own Electron (`vscode/.build/electron`). The submodule already ships a
- * `node-pty` compiled for exactly that ABI — it is what the integrated terminal
- * uses — so DevHub resolves *that* copy through `code-oss-dev/package.json`
- * instead of declaring a dependency of its own. A second copy would have to be
- * rebuilt against Electron's headers on every install and every submodule bump,
- * and a mismatch shows up as a load failure at runtime rather than at build
- * time. Resolving through the submodule makes the ABI question unaskable.
+ * `node-pty` is `@devhub/desktop`'s own dependency, pinned exactly. It is an
+ * N-API addon and ships prebuilt binaries for every platform DevHub runs on
+ * (`node_modules/node-pty/prebuilds/<platform>-<arch>`), so the same file
+ * loads in Electron and in plain Node, and nothing is compiled at install.
+ * (It used to be the VS Code submodule's copy, built for VS Code's Electron;
+ * see docs/without-vscode.md.) It is required rather than imported so that a
+ * module that only names these types does not load the addon.
  *
  * Everything below this module speaks the narrow `Pty` interface, so the
  * attachment logic can be exercised with a fake and only this file needs the
  * native module present.
  */
 
-import { requireFromSubmodule } from "../submoduleRequire.js";
+import { createRequire } from "node:module";
 
 /** The parts of node-pty's surface DevHub uses. */
 interface NodePtyProcess {
@@ -53,14 +52,18 @@ interface NodePtyModule {
 let cached: NodePtyModule | undefined;
 
 /**
- * The submodule's node-pty.
+ * node-pty, resolved from wherever this module is: `apps/desktop/node_modules`
+ * in a checkout, `Resources/app/node_modules` in the packaged app.
  *
  * A failure here is not recoverable and must not be turned into a terminal that
- * silently never starts: it means the submodule is not provisioned, and the
- * caller surfaces it.
+ * silently never starts: it means the install or the package is incomplete,
+ * and the caller surfaces it.
  */
 export function nodePty(): NodePtyModule {
-	cached ??= requireFromSubmodule("node-pty") as NodePtyModule;
+	// Spelled `require("node-pty")` so that packaging's import scan
+	// (scripts/package-nightly.py) sees the dependency.
+	const require = createRequire(import.meta.url);
+	cached ??= require("node-pty") as NodePtyModule;
 	return cached;
 }
 

@@ -164,7 +164,6 @@ const host = {
 	commandOf: vi.fn(
 		(): Promise<string | undefined> => Promise.resolve("/x/rust-analyzer"),
 	),
-	sleepWorkbench: vi.fn(),
 	stopAgent: vi.fn(),
 	reveal: vi.fn(),
 	signal: vi.fn(),
@@ -222,11 +221,9 @@ describe("opening the Task Manager", () => {
 });
 
 describe("what a row can do", () => {
-	it("hands Sleep, Stop and Show to the paths DevHub already has", async () => {
-		await call(TASK_MANAGER_CHANNELS.sleepWorkbench, "w1");
+	it("hands Stop and Show to the paths DevHub already has", async () => {
 		await call(TASK_MANAGER_CHANNELS.stopAgent, "a1");
 		await call(TASK_MANAGER_CHANNELS.reveal, { kind: "agent", agentId: "a1" });
-		expect(host.sleepWorkbench).toHaveBeenCalledWith("w1");
 		expect(host.stopAgent).toHaveBeenCalledWith("a1");
 		expect(host.reveal).toHaveBeenCalledWith({ kind: "agent", agentId: "a1" });
 	});
