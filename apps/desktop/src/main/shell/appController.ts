@@ -1623,6 +1623,9 @@ export class AppController {
 			forwardDirectory: this.neovimForwards,
 			shell: () => shellWindowIfCreated(),
 			theme: () => themePublicationIfInstalled()?.current(),
+			addThemeSink: (sink) => {
+				themePublicationIfInstalled()?.addSink("the terminals' Neovims", sink);
+			},
 			// Which Neovim the Workspace's terminal shows is in the title.
 			changed: () => {
 				this.refreshWindowTitle();

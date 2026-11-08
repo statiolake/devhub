@@ -24,6 +24,10 @@ import { join } from "node:path";
 import type { TerminalPaletteWire } from "../ipc/appShell.js";
 import type { ProfileLocations } from "./profile.js";
 import { themeKindOf, type Theme, type ThemeKind } from "./themes/theme.js";
+import {
+  neovimColorscheme,
+  type NeovimColorscheme,
+} from "./themes/neovimColorscheme.js";
 
 /** `dark` or `light`, by the theme's background. */
 export type PublishedThemeKind = ThemeKind;
@@ -53,6 +57,13 @@ export interface PublishedTheme {
   /** True while a theme is only being worn for this session (Theme: Preview…). */
   readonly temporary: boolean;
   readonly colors: PublishedThemeColors;
+  /**
+   * DevHub's Neovim colorscheme for the theme (`themes/neovimColorscheme.ts`):
+   * `background`, every highlight group as an `nvim_set_hl` spec, and the
+   * sixteen terminal colours. DevHub applies it to the Neovims it draws; a
+   * Neovim it does not draw can apply the same table from `theme.json`.
+   */
+  readonly neovim: NeovimColorscheme;
   /** A ready `fzf --color=` value. */
   readonly fzf: string;
 }
@@ -226,6 +237,7 @@ export function publishedThemeOf(source: PublishedThemeSource): PublishedTheme {
     background: kind,
     temporary: source.temporary,
     colors,
+    neovim: neovimColorscheme(source.theme),
     fzf: fzfColorsOf(colors),
   };
 }

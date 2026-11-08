@@ -270,14 +270,25 @@ rm -rf "$state"
 exit "$status"`;
 
 /**
- * Tell a Neovim the theme DevHub wears. `g:devhub_theme` is its name — what
- * `[appearance] theme` selects — with `g:devhub_theme_kind`
- * (`dark`, `light`), `g:devhub_theme_background` (`dark` / `light`) and
- * the whole published value in `g:devhub_theme_info`; the `DEVHUB_*`
+ * Tell a Neovim the theme DevHub wears, and dress it in DevHub's colorscheme.
+ *
+ * `g:devhub_theme` is the theme's name — what `[appearance] theme` selects —
+ * with `g:devhub_theme_kind` (`dark`, `light`), `g:devhub_theme_background`
+ * and the whole published value in `g:devhub_theme_info`; the `DEVHUB_*`
  * variables a new pane would get are updated in its environment, so a
  * `:terminal` or a job started from it sees them too. Then `User DevhubTheme`
- * fires with the value as its `data`. Nothing else: which colorscheme that
- * means is the person's config's to say (`docs/window-and-pages.md`).
+ * fires with the value as its `data`.
+ *
+ * Then the colorscheme generated from the theme (`theme.neovim`,
+ * `model/themes/neovimColorscheme.ts`) is applied as `devhub` — **unless the
+ * person's config chose another**: with `g:colors_name` set to anything but
+ * `devhub`, nothing more is done, so a `:colorscheme` of their own always
+ * wins. It is applied the way a colorscheme file applies itself (`highlight
+ * clear`, `background`, every group, `g:terminal_color_*`, `g:colors_name`)
+ * and ends with the `ColorScheme` event, so the person's `ColorScheme`
+ * autocommands adjust it as they would any other. After `User DevhubTheme`,
+ * so a plugin that recolours on that event (devhub.nvim) is drawn over
+ * rather than drawing over DevHub's.
  */
 export const PUBLISH_THEME_LUA = `
 local theme, env = ...
@@ -287,6 +298,18 @@ vim.g.devhub_theme_background = theme.background
 vim.g.devhub_theme_info = theme
 for name, value in pairs(env) do vim.env[name] = value end
 vim.api.nvim_exec_autocmds("User", { pattern = "DevhubTheme", modeline = false, data = theme })
+local scheme = theme.neovim
+local chosen = vim.g.colors_name
+if type(scheme) ~= "table" or (chosen ~= nil and chosen ~= "devhub") then return end
+-- Unset first: setting 'background' while a colorscheme is named reloads it.
+vim.g.colors_name = nil
+vim.cmd("highlight clear")
+if vim.fn.exists("syntax_on") == 1 then vim.cmd("syntax reset") end
+vim.o.background = scheme.background
+for name, spec in pairs(scheme.highlights) do vim.api.nvim_set_hl(0, name, spec) end
+for index, color in ipairs(scheme.terminal) do vim.g["terminal_color_" .. (index - 1)] = color end
+vim.g.colors_name = "devhub"
+vim.api.nvim_exec_autocmds("ColorScheme", { pattern = "devhub", modeline = false })
 `;
 
 function isRefused(error: unknown): boolean {

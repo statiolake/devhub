@@ -30,6 +30,13 @@ export interface TerminalNeovimWiringOptions {
 	readonly forwardDirectory: string;
 	readonly shell: () => ShellWindow | undefined;
 	readonly theme: () => PublishedTheme | undefined;
+	/**
+	 * Where every later theme is heard (`ThemePublication.addSink`): each
+	 * terminal's Neovim DevHub has attached to is told it again.
+	 */
+	readonly addThemeSink?: (
+		sink: (theme: PublishedTheme) => Promise<void>,
+	) => void;
 	/** Told after the window is, whenever an overlay or the keys move. */
 	readonly changed?: () => void;
 }
@@ -40,6 +47,30 @@ export function wireTerminalNeovims(
 	const log = (line: string) => {
 		console.error(line);
 	};
+	// The terminals' Neovims DevHub has attached to, by their socket here:
+	// told the theme as they attach and on every change after. One that has
+	// gone is forgotten when telling it fails.
+	const attachedSockets = new Set<string>();
+	const tell = async (localPath: string, theme: PublishedTheme) => {
+		const client = await NeovimClient.connect(localPath);
+		try {
+			await client.request("nvim_exec_lua", [
+				PUBLISH_THEME_LUA,
+				[theme, themeEnvironment(theme, undefined)],
+			]);
+		} finally {
+			client.close();
+		}
+	};
+	options.addThemeSink?.(async (theme) => {
+		await Promise.all(
+			[...attachedSockets].map((localPath) =>
+				tell(localPath, theme).catch(() => {
+					attachedSockets.delete(localPath);
+				}),
+			),
+		);
+	});
 	const neovims: TerminalNeovims = new TerminalNeovims({
 		changed: () => {
 			options.shell()?.syncTerminalNeovims(neovims.views());
@@ -94,19 +125,10 @@ export function wireTerminalNeovims(
 					);
 			},
 			attached: (localPath) => {
+				attachedSockets.add(localPath);
 				const theme = options.theme();
 				if (theme === undefined) return;
-				void (async () => {
-					const client = await NeovimClient.connect(localPath);
-					try {
-						await client.request("nvim_exec_lua", [
-							PUBLISH_THEME_LUA,
-							[theme, themeEnvironment(theme, undefined)],
-						]);
-					} finally {
-						client.close();
-					}
-				})().catch((error: unknown) => {
+				tell(localPath, theme).catch((error: unknown) => {
 					log(
 						`[devhub] a terminal's Neovim was not told the theme: ${String(error)}`,
 					);

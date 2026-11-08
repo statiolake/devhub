@@ -103,3 +103,85 @@ colours) is derived from those in `tokens.css`, as before.
 (`DEVHUB_THEME`, `DEVHUB_FZF_COLORS`, `~/.local/state/devhub/theme.json`,
 `User DevhubTheme`; [window-and-pages.md](window-and-pages.md), "Terminal
 programs").
+
+**The Neovims DevHub draws**: a colorscheme generated from the theme
+(`model/themes/neovimColorscheme.ts`), below.
+
+## Neovim
+
+### How it is worn
+
+DevHub applies the colorscheme, named `devhub`, to every Neovim it draws — the
+managed one and each terminal's `nvim` — when it attaches and again on every
+theme change, **unless the person's config has chosen another colorscheme**
+(`g:colors_name` set to anything but `devhub`). A `colorscheme tokyonight` in
+your config wins and is never painted over; with none, or with devhub.nvim's
+own `devhub`, DevHub's is worn. It is applied the way a colorscheme file
+applies itself (`highlight clear`, `background`, every group,
+`g:terminal_color_0`…`15`, `g:colors_name = 'devhub'`) and ends with the
+`ColorScheme` event, so your `ColorScheme` autocommands (a status line built
+from `StatusLine`, `hi link FloatBorder NormalFloat`) run on it as on any
+other. It runs after `User DevhubTheme`, so a plugin that recolours on that
+event is drawn over.
+
+Why not opt-in (`colorscheme devhub` in your config)? A Neovim DevHub draws
+should match the window around it without configuration, the way the terminal
+does; and a config that already names a colorscheme keeps it. Why not a
+`colors/devhub.lua` file? A Neovim on an SSH host has no DevHub files; the
+table travels over the RPC socket DevHub already holds. The same table is in
+`theme.json` (`neovim`), so a Neovim DevHub does not draw can apply it too.
+
+### Roles
+
+Reference schemes, read from their source: Neovim's default (0.10+,
+`highlight_group.c`) and its `vim` colorscheme, tokyonight, catppuccin,
+kanagawa, gruvbox (ellisonleao), onedark (navarasu), nightfox, base16 (RRethy's
+base16-nvim and mini.base16) and mini.hues. "n/9" counts the nine families.
+
+| Role                   | From                                                                       | Why                                                                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| keyword                | magenta (5)                                                                | 6/9: tokyonight, catppuccin, kanagawa, onedark, nightfox, base16. gruvbox is red; Neovim and mini.hues use the foreground in bold                                  |
+| function               | blue (4)                                                                   | 7/9; gruvbox green, Neovim cyan                                                                                                                                    |
+| type                   | yellow (3)                                                                 | 5/9: catppuccin, onedark, gruvbox, nightfox, base16                                                                                                                |
+| string                 | green (2)                                                                  | 9/9                                                                                                                                                                |
+| constant, number       | orange, made half-way between red and yellow in OKLCH                      | 6/9 use an orange; ANSI has none                                                                                                                                   |
+| special                | cyan (6): escapes, regexps, built-in types and functions                   | Neovim's default links `@type.builtin`, `@function.builtin` and escapes to `Special`, which it, base16 and mini.hues make cyan                                     |
+| variable               | the foreground                                                             | 9/9                                                                                                                                                                |
+| field, property        | blue mixed 45% toward the foreground                                       | the families split; blue-ish is the largest group (catppuccin's lavender, nightfox, gruvbox). Mixed so it is not read as a function                                |
+| parameter              | red mixed 45% toward the foreground                                        | split again; catppuccin's maroon and onedark's red. Mixed so it is not read as an error                                                                            |
+| `self`, `this`         | red (1)                                                                    | tokyonight, catppuccin, onedark, nightfox                                                                                                                          |
+| operator, punctuation  | the foreground 25% toward the background                                   | Neovim, mini.hues, nightfox, onedark: the foreground or a quieter grey                                                                                             |
+| `Identifier`           | as field                                                                   | Vim's own syntax files (TypeScript's, without Tree-sitter) put `const` / `let` there; Neovim's default and gruvbox make it blue                                    |
+| comment                | ANSI 8 (bright black), italic                                              | the terminal's own "dim" colour; italic in tokyonight, catppuccin, kanagawa, gruvbox. The foreground half-way to the background when ANSI 8 is not between the two |
+| line numbers           | the comment 30% toward the background                                      | quieter than comments, as every family has them                                                                                                                    |
+| floats, menu           | the background 0.035 toward its edge (darker when dark)                    | where Neovim's default, tokyonight, catppuccin and mini.hues put floats; toward the foreground (7%) when the background is already black or white                  |
+| cursor line            | background → foreground, 7% (OKLab)                                        | a step without a new hue, mini.hues' `bg_mid` idea                                                                                                                 |
+| status line            | 13%                                                                        |                                                                                                                                                                    |
+| matching bracket       | 20%, bold                                                                  | Neovim's default: a grey ground, bold                                                                                                                              |
+| Visual, menu selection | the theme's selection; else the ground tinted toward a bluish foreground   | a terminal's selection may assume the text is recoloured (Catppuccin's is); used only when the foreground reads on it at 3.5:1                                     |
+| search                 | yellow mixed 30% into the ground, the text kept                            | yellow in Neovim, gruvbox, onedark, base16                                                                                                                         |
+| current match          | orange, filled, the ground as ink, bold                                    | tokyonight, onedark, gruvbox, base16                                                                                                                               |
+| diagnostics            | error red, warn yellow, info cyan, hint blue, ok green                     | Neovim's default levels. Virtual text on its colour mixed 10% into the ground (tokyonight, catppuccin); undercurl with `sp`                                        |
+| diffs                  | green / red / blue mixed 18% / 14% / 12% into the ground; changed text 30% | backgrounds, so the syntax stays; tokyonight's tints                                                                                                               |
+
+Every text role reaches 4.5:1 on the background (WCAG AA), comments 3:1,
+line numbers 2.2:1: a colour that does not is moved in lightness only, hue and
+chroma kept, and a theme's own colour that reads is never touched. For each
+hue the normal ANSI colour is taken when it reads, else the bright one. A slot
+with no hue in a theme whose others have one, or a copy of an earlier slot, is given its canonical hue at the
+theme's typical lightness and chroma. A theme that is grey throughout stays
+grey, and keywords are told by weight instead.
+
+### Groups
+
+Every group a colorscheme usually sets, most as links so overriding one group
+carries to the rest: the editor (`Normal`, floats, `Pmenu*`, `StatusLine*`,
+`WinSeparator`, `CursorLine`, `Visual`, `Search`, `CurSearch`, `MatchParen`,
+`LineNr`, `Folded`, `NonText`, …), legacy syntax, the Tree-sitter captures
+that should not simply be their legacy group (`@variable*`, `@property`,
+`@type.builtin`, `@markup.*`, `@diff.*`, `@tag*`, …), LSP semantic tokens
+where Neovim's default links fall short (`@lsp.type.variable` cleared so
+Tree-sitter's finer captures show, `defaultLibrary` to the built-in captures,
+`unresolvedReference` as an error undercurl), diagnostics, diffs, and
+gitsigns, blink.cmp, snacks, fidget and nvim-tree. The full table is
+`neovimColorscheme()`.

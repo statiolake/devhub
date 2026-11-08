@@ -169,4 +169,69 @@ describe.skipIf(NVIM === undefined)("a real Neovim", () => {
 		).toBe(true);
 		client.close();
 	});
+
+	const told = (name: string) => {
+		const theme = new ThemeCatalog().find(name);
+		if (!theme) throw new Error(`no ${name}`);
+		const published = publishedThemeOf({
+			theme,
+			terminal: terminalPaletteOfTheme(theme),
+			temporary: false,
+		});
+		return [published, themeEnvironment(published, undefined)] as const;
+	};
+	const hl = async (client: NeovimClient, name: string) =>
+		(await client.request("nvim_exec_lua", [
+			`local h = vim.api.nvim_get_hl(0, { name = ..., link = false })
+			return { fg = h.fg and string.format("#%06x", h.fg), bg = h.bg and string.format("#%06x", h.bg) }`,
+			[name],
+		])) as { fg?: string; bg?: string };
+
+	it("wears DevHub's colorscheme, follows a change, and runs ColorScheme for the person's tweaks", async () => {
+		const { client } = await startNvim();
+		await client.request("nvim_exec_lua", [
+			`vim.api.nvim_create_autocmd("ColorScheme", { callback = function(event)
+				vim.g.schemes = (vim.g.schemes or "") .. event.match .. ";"
+			end })`,
+			[],
+		]);
+		const nord = told("Nord");
+		await client.request("nvim_exec_lua", [PUBLISH_THEME_LUA, nord]);
+		expect(await client.request("nvim_get_var", ["colors_name"])).toBe(
+			"devhub",
+		);
+		expect((await hl(client, "Normal")).bg).toBe("#2e3440");
+		// Linked through Keyword to Statement, the theme's magenta.
+		expect((await hl(client, "@keyword")).fg).toBe(
+			nord[0].neovim.highlights["Statement"]?.fg,
+		);
+		expect(
+			await client.request("nvim_get_option_value", ["background", {}]),
+		).toBe("dark");
+		await client.request("nvim_exec_lua", [
+			PUBLISH_THEME_LUA,
+			told("Catppuccin Latte"),
+		]);
+		expect((await hl(client, "Normal")).bg).toBe("#eff1f5");
+		expect(
+			await client.request("nvim_get_option_value", ["background", {}]),
+		).toBe("light");
+		expect(await client.request("nvim_get_var", ["schemes"])).toBe(
+			"devhub;devhub;",
+		);
+		client.close();
+	});
+
+	it("leaves a colorscheme the person chose alone", async () => {
+		const { client } = await startNvim();
+		await client.request("nvim_command", ["colorscheme habamax"]);
+		const before = await hl(client, "Normal");
+		await client.request("nvim_exec_lua", [PUBLISH_THEME_LUA, told("Nord")]);
+		expect(await client.request("nvim_get_var", ["colors_name"])).toBe(
+			"habamax",
+		);
+		expect(await hl(client, "Normal")).toEqual(before);
+		expect(await client.request("nvim_get_var", ["devhub_theme"])).toBe("Nord");
+		client.close();
+	});
 });

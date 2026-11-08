@@ -471,18 +471,27 @@ object, `version: 1`:
     "selectionForeground": "…",
     "ansi": ["#3b4252", "… sixteen …"]
   },
+  "neovim": {
+    "background": "dark",
+    "highlights": { "Normal": { "fg": "#d8dee9", "bg": "#2e3440" }, "…": {} },
+    "terminal": ["#3b4252", "… sixteen …"]
+  },
   "fzf": "fg:#d8dee9,bg:#2e3440,…"
 }
 ```
 
 Every colour is `#rrggbb`.
 
-**The managed Neovim**, told over its msgpack-rpc socket as it is started or
-adopted and whenever the theme changes: `g:devhub_theme` (the name),
-`g:devhub_theme_kind`, `g:devhub_theme_background`, `g:devhub_theme_info` (the
-whole object above), the `DEVHUB_*` variables in its environment, and then
-`User DevhubTheme` fires with the object as its `data`. A handler that throws
-is logged and changes nothing else.
+**The Neovims DevHub draws** — the managed one, and each terminal's `nvim`
+once DevHub's UI is attached to it — are told over their msgpack-rpc socket
+as they are started, adopted or attached and whenever the theme changes:
+`g:devhub_theme` (the name), `g:devhub_theme_kind`,
+`g:devhub_theme_background`, `g:devhub_theme_info` (the whole object above),
+the `DEVHUB_*` variables in its environment, and then `User DevhubTheme` fires
+with the object as its `data`. Then DevHub's colorscheme (`neovim` in the
+object) is applied as `devhub`, unless the person's config chose another
+colorscheme; see [themes.md](themes.md), "Neovim". A handler that throws is
+logged and changes nothing else.
 
 **devhub.nvim** is a Neovim colorscheme built on exactly this
 (`:colorscheme devhub`) for a Neovim DevHub does not draw: it reads the file
