@@ -589,6 +589,10 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   from DevHub's palette: leave it off in DevHub.
 - A GUI window's web page still gives `<C-w>` to Neovim (it has no shell
   to want it); only the terminal follows the `:terminal` model.
+- Pixel scrolling moves through a wrapped line taller than the window in
+  one jump (Neovim's `<C-e>` moves by all its rows unless `smoothscroll`);
+  a window `scrollbind` moves by other rows than the wheeled one (one side
+  at its end) shows what it has, nearest the wheeled one's offset.
 - A float at a buffer position whose line is in the part of the display
   only the ghost covers (Neovim a line ahead) is where Neovim clamps it, at
   its window's edge, until Neovim's view reaches the line; images, cards
@@ -649,7 +653,7 @@ notifications a card, signature help its active parameter and the tab
 strip a current tab joined to the editor), then 8, 12 and 13 (round 3:
 pixel scrolling; round 3 also gave a notification stack one width, a
 spinner shown once, and the cursor a hollow look while another DevHub
-view has the keyboard). The yardstick for chrome
+view has the keyboard), then 14 and 15 (round 4, below). The yardstick for chrome
 (separators, bars, menus, scrollbars) is VS Code and Zed; the text area
 stays cell-aware, as a modal editor's is. Verified on 0.11.5 and 0.12.6
 with a real config (splits, floats and panels, the command line, the
@@ -659,7 +663,38 @@ on both, with the wheel over splits, diff (`scrollbind`), floats and the
 command line, in Insert mode and in `:terminal`; wheel to screen, measured
 in the page under Xvfb: 0.1–2 ms while Neovim's lead covers it (the
 display moves in the wheel's own event), one round trip (10–40 ms) for the
-first line of a gesture, against 20–100 ms per step before. Candidates, by visual impact and then by compatibility risk (the
+first line of a gesture, against 20–100 ms per step before.
+
+Round 4 made pixel scrolling exact beyond the text itself and held it up
+under real conditions. What sits on the text (inline images and cards,
+decorations, `gui.popup`s, floats at a buffer position) now rides it
+frame for frame (`riders.ts`), checked by a probe that compares, every
+frame the page draws, each rider's place with its line's row in the
+painted grid: 0 misplaced of about 3 400 checks over slow, fast and
+reversing gestures (before: a line or two off through each gesture). The
+wheel leaves the cursor where Neovim's own would (it was pushed up to
+Neovim's lead further, several lines on a flick). Wrapped lines (a line
+taller than a row moved by all its rows, and the settle snapped back to
+the top), a busy Neovim (a file just opened: requests timed out, were
+sent again, and Neovim scrolled by all of them — 1 800 px for a 270 px
+gesture), flicks (the display stalled up to 10 rows behind the wheel,
+then jumped: now 2–5) and `scrollbind` (the bound window eased
+behind, up to 280 px apart: now 0 px apart in every frame) were fixed;
+folds, splits of one buffer, `:terminal` and a 260 000-line file held.
+Measured with momentum-like wheel deltas (a flick decaying from 36 px a
+frame, fractional tails, reversals) on 0.11.5 and 0.12.6. Two direction
+changes, recorded: placements were first stamped with the `topline` Lua
+counted from, which cannot tell a scroll through filler or virtual lines
+(the topline stays, `topfill` changes) — the page now counts a placement
+from the rows it had heard of when it came, and Lua draws what is owed
+before placing (`M._drawn`); and scrollbound windows were to fall back to
+line scrolling, which proved unnecessary once they follow the wheeled
+window's offset. Sticky scroll was left out: the config has no
+treesitter-context, and a header of DevHub's would have to guess at
+scopes Neovim does not report; the cursor's glide (70 ms) was already
+there.
+
+Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):
 
 1. _Window separators_ (`│` in a whole cell column) — done: each half of
