@@ -58,6 +58,19 @@
   image-rendering: auto;
 }
 
+/* Lines a `dd` or an `o` moved, sliding into place (`slideLines`): an
+   image of the region, moved inside a clip of it. */
+.nvim-slide {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.nvim-slide > canvas {
+  display: block;
+  will-change: transform;
+}
+
 /* A window scrolling in pixels (smoothScroll.ts): its text area, in which
    its canvas and the ghost of its last view move by transforms only. */
 .nvim-scroll-port {

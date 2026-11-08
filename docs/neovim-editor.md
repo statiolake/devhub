@@ -350,6 +350,18 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   put, a click lands on the line under the pointer. Not for floats or the
   message grid, not on 0.9, and with reduced motion only the wheel's own
   movement.
+- Lines a `dd`, `p` or `o` moves slide into place in 60 ms (the
+  person's pick of three mocks, round 6: 0, 60, 100 ms): what was
+  deleted closes up, what was put in opens a gap, so the eye sees where
+  the lines went. It is told from Neovim's own redraw: a `grid_scroll` in
+  a window whose `win_viewport` says it did not scroll (0.10+), at most a
+  third of the window, one per frame. An image of the region as painted
+  moves inside a clip of it (`slideLines`); the canvas under it is already
+  final, so no key waits for it, rows repainted meanwhile (the cursor
+  line, a blame text) go on sliding as they are, and another move or a
+  whole repaint ends it at once. Not while a window is pixel-scrolled,
+  not in floats, not with reduced motion; 60 ms is over before the next
+  key at any typing speed.
 - What sits on a window's text rides it (`riders.ts`): inline images and
   cards, decorations and popups (the page's DOM) are drawn where their line
   is shown, moved by a transform each frame and cut to the window's text
@@ -1083,7 +1095,8 @@ terminal inside Neovim is no longer offered; Neovim's own `:terminal` is a
 grid like any other). Proposed, not built (mocks first, the person picks):
 a feathered translucent backdrop behind fidget's lines, a fold's fill as
 a fading hairline when its fill character is a line (built in round 8),
-a very short slide of the lines `dd`/`p`/`o` move.
+a very short slide of the lines `dd`/`p`/`o` move (built in round 8,
+60 ms).
 
 Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):

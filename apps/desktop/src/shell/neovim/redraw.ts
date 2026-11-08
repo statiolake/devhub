@@ -218,6 +218,22 @@ export interface RedrawChanges {
   flushed: boolean;
   /** Screen rows each window grid scrolled (`win_viewport`'s scroll_delta). */
   readonly scrolled: Map<number, number>;
+  /**
+   * Each grid's `grid_scroll` region and rows since the last paint, or
+   * `null` when it had more than one (`painter.ts` slides lines a `dd` or
+   * an `o` moved, when the window itself did not scroll).
+   */
+  readonly moved: Map<number, LinesMoved | null>;
+}
+
+/** A `grid_scroll`: the region's rows and columns, and how far it moved. */
+export interface LinesMoved {
+  readonly top: number;
+  readonly bot: number;
+  readonly left: number;
+  readonly right: number;
+  /** Up when positive (lines deleted above the region's end), as Neovim says. */
+  readonly rows: number;
 }
 
 export function emptyChanges(): RedrawChanges {
@@ -232,6 +248,7 @@ export function emptyChanges(): RedrawChanges {
     options: false,
     flushed: false,
     scrolled: new Map(),
+    moved: new Map(),
   };
 }
 
@@ -421,6 +438,10 @@ function gridScroll(
   const right = Math.min(num(args[4]), grid.width);
   const rows = num(args[5]);
   if (rows === 0) return;
+  changes.moved.set(
+    grid.id,
+    changes.moved.has(grid.id) ? null : { top, bot, left, right, rows },
+  );
   const w = grid.width;
   const copyRow = (to: number, from: number) => {
     for (let col = left; col < right; col += 1) {

@@ -16,6 +16,24 @@ const rows = (id: number, state = initialUiState()) => {
 };
 
 describe("the redraw reducer", () => {
+  it("records a grid_scroll's region for the slide, and gives up on a second", () => {
+    const state = initialUiState();
+    applyRedraw(state, [["grid_resize", [2, 10, 10]]]);
+    const one = applyRedraw(state, [["grid_scroll", [2, 3, 10, 0, 10, 1, 0]]]);
+    expect(one.moved.get(2)).toEqual({
+      top: 3,
+      bot: 10,
+      left: 0,
+      right: 10,
+      rows: 1,
+    });
+    const two = applyRedraw(state, [
+      ["grid_scroll", [2, 3, 10, 0, 10, 1, 0]],
+      ["grid_scroll", [2, 0, 10, 0, 10, -2, 0]],
+    ]);
+    expect(two.moved.get(2)).toBeNull();
+  });
+
   it("forgets the old server's screen when a :restart's server attaches, keeping its colours", () => {
     const state = initialUiState();
     applyRedraw(state, [

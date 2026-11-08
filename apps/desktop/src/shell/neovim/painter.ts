@@ -11,7 +11,13 @@
  * a cell grid cannot place a glyph that spans cells it did not ask for.
  */
 
-import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
+import type {
+  GridBox,
+  HlAttr,
+  LinesMoved,
+  NeovimUiState,
+  RedrawChanges,
+} from "./redraw";
 import type { CellMetrics } from "./mouse";
 import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
 import { strokesFor, type Stroke, type StrokeKind } from "./strokes";
@@ -230,6 +236,14 @@ const FILLER_STEP = 6;
 const FOLD_FADE = 260;
 
 /**
+ * How long lines a `dd`, `p` or `o` moved take to slide into place
+ * (`slideLines`): short enough to be over before the next key is read
+ * (typing at 120 wpm is ~100 ms a key), long enough to say where they came
+ * from. The person's pick of three mocks (round 6: 0, 60, 100 ms).
+ */
+const SLIDE_MS = 60;
+
+/**
  * A float's outer corners' radius (DevHub's frame); a border of lines has
  * none. A third of the default line (18 px): the corner reads as lifted at
  * the text's scale and never reaches a row's text. DevHub's own popups
@@ -333,6 +347,16 @@ export class GridPainter {
   private font: FontSpec;
   private metrics: Metrics;
   private theme: PaintTheme = NO_THEME;
+  /** Lines sliding into place after a `dd` or an `o`, by grid. */
+  private readonly slides = new Map<
+    number,
+    {
+      readonly clip: HTMLElement;
+      readonly image: HTMLCanvasElement;
+      readonly x: number;
+      readonly y: number;
+    }
+  >();
   /** Where each window's decorations are, as Lua last said (`decor.ts`). */
   private decor: Decor = new Map();
   /** The row's decorations' words, drawn after its text (`paintRow`). */
@@ -552,8 +576,25 @@ export class GridPainter {
         fresh || all
           ? Array.from({ length: grid.height }, (_, row) => row)
           : [...grid.dirty];
+      const moved = changes.moved.get(box.grid);
+      // Lines moved again, or the grid repainted whole: a slide under way
+      // ends at once, so what is drawn is never behind Neovim.
+      if (moved !== undefined || fresh || all) this.endSlide(box.grid);
       for (const row of rows) this.paintRow(entry, state, box, row);
       grid.dirty.clear();
+      // Rows repainted under a slide (the cursor line's highlight, a
+      // blame text) go on sliding as they are now.
+      if (rows.length > 0) this.refreshSlide(box.grid, entry);
+      if (
+        moved &&
+        state.scrollDeltas &&
+        !changes.scrolled.has(box.grid) &&
+        !box.float &&
+        box.win !== undefined &&
+        box.grid !== 1
+      ) {
+        this.slideLines(entry, state, box, moved);
+      }
       if (smooth) this.placeScroll(state, box);
     }
   }
@@ -1536,6 +1577,91 @@ export class GridPainter {
       x += piece.width * scale;
     }
     ctx.restore();
+  }
+
+  /**
+   * Lines Neovim moved inside a window that did not scroll — a `dd`, a
+   * `p` or an `o` (`grid_scroll` with no `scroll_delta`; 0.10+, which says
+   * a window scrolled) — slide from where they were into place in
+   * `SLIDE_MS`: what was deleted closes up, what was put in opens a gap.
+   * An image of the region as now painted, moved inside a clip of the
+   * region by a transform (the compositor's work); the canvas under it is
+   * already final, so a key typed meanwhile is never held, and the next
+   * paint of the grid ends the slide. A move of more than a third of the
+   * window, a window being pixel-scrolled, and reduced motion slide
+   * nothing.
+   */
+  private slideLines(
+    entry: GridCanvas,
+    state: NeovimUiState,
+    box: GridBox,
+    moved: LinesMoved,
+  ): void {
+    const { canvas } = entry;
+    if (canvas.parentElement !== this.root) return;
+    if (Math.abs(moved.rows) > Math.max(1, Math.floor(box.height / 3))) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const { width: cw, height: ch } = this.metrics;
+    const x = moved.left * cw;
+    const y = moved.top * ch;
+    const w = (moved.right - moved.left) * cw;
+    const h = (moved.bot - moved.top) * ch;
+    if (w <= 0 || h <= 0) return;
+    const clip = document.createElement("div");
+    clip.className = "nvim-slide";
+    clip.style.left = `${String(parseFloat(canvas.style.left) + x)}px`;
+    clip.style.top = `${String(parseFloat(canvas.style.top) + y)}px`;
+    clip.style.width = `${String(w)}px`;
+    clip.style.height = `${String(h)}px`;
+    clip.style.zIndex = canvas.style.zIndex;
+    clip.style.background = cssColor(state.defaults.background);
+    const image = document.createElement("canvas");
+    image.width = Math.max(1, Math.round(w * this.dpr));
+    image.height = Math.max(1, Math.round(h * this.dpr));
+    image.style.width = `${String(w)}px`;
+    image.style.height = `${String(h)}px`;
+    clip.append(image);
+    canvas.after(clip);
+    this.slides.set(box.grid, { clip, image, x, y });
+    this.refreshSlide(box.grid, entry);
+    const slide = image.animate(
+      [
+        { transform: `translateY(${String(moved.rows * ch)}px)` },
+        { transform: "translateY(0)" },
+      ],
+      { duration: SLIDE_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+    );
+    slide.onfinish = () => {
+      this.endSlide(box.grid, clip);
+    };
+  }
+
+  /** A slide's image of its region, as the canvas holds it now. */
+  private refreshSlide(grid: number, entry: GridCanvas): void {
+    const slide = this.slides.get(grid);
+    if (!slide) return;
+    const { image } = slide;
+    const ctx = image.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, image.width, image.height);
+    ctx.drawImage(
+      entry.canvas,
+      Math.round(slide.x * this.dpr),
+      Math.round(slide.y * this.dpr),
+      image.width,
+      image.height,
+      0,
+      0,
+      image.width,
+      image.height,
+    );
+  }
+
+  private endSlide(grid: number, only?: HTMLElement): void {
+    const slide = this.slides.get(grid);
+    if (!slide || (only !== undefined && slide.clip !== only)) return;
+    slide.clip.remove();
+    this.slides.delete(grid);
   }
 
   /**
