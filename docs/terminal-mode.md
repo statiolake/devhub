@@ -469,22 +469,48 @@ measured before anything is changed.
 
 ### Handoff: where phases 3 and 4 start
 
-**State (phase 3 under way).** The Neovim overlay, an SSH host, the reload
-port and the side-by-side measurement are done (above). Of phase 3,
-`display-popup` is done (below, "What waits on a control client"); next, in
-this order: `command-prompt` / `confirm-before`, `display-menu`, the
-choosers, copy mode. The look of each follows the mock sent for review
-(`tmux-chrome/phase3/mock.html` in the work's scratch area: a float in one
-frame for popup, menu and chooser; a one-line prompt at the terminal's
-foot; copy mode in place with tmux's `[n/m]` badge); keep each look in one
-CSS module of tokens, as `popup.css` is, so a change after the review stays
-small, and remove each guard as its piece lands. A prompt's answer, a
-menu's item and a chooser's choice are run as commands of the control
-client; tmux expands every format (`display-message -p -t <pane>`) and
-keeps the prompt history (`show-prompt-history`). Before phase 4 deletes
-the xterm.js path: the `cat` throughput (1.8 s against 1.1 s) and the GPU
-process's compositing (36–40% against 9%) are to be profiled and measured
-on the Mac.
+**State (phase 3 done but for what is listed below; next is phase 4).**
+Everything tmux does not draw for a control client is now DevHub's (below,
+"What waits on a control client"): `display-popup` (with `-e`, `-b none`
+and the mouse), `command-prompt`/`confirm-before`, `display-menu` and the
+right-click menus, `choose-tree`/`find-window`/`display-panes`, and copy
+mode with the person's copy-mode-vi table, search, prefix+y / Y and the
+clipboard. Each look is one CSS module of tokens after the mock
+(`popup.css`, `prompt.css`, `menu.css`, `chooser.css`, `copyMode.css`). The
+pattern every piece follows: DevHub draws and edits, tmux decides — formats
+are expanded by `display-message -p`, a prompt's answer is typed into tmux's
+own prompt (the binding rerun with `-b`), any other command text is run
+through `confirm-before -b … ; send-keys y` so it answers once, a binding
+DevHub draws arrives whole as `KeyRoute.own` and `#dispatch` decides what it
+is. Still refused: `choose-buffer`, `choose-client`, `customize-mode`, and a
+binding that holds a waiting command beside others (not one command, not an
+`if-shell -F`).
+
+Open, in order:
+
+- **Phase 4** (the tabs mock, then deleting the xterm.js path and the
+  setting) is next; not started.
+- **SSH hosts' `tmux` on PATH.** A host's pane (and a popup there) finds the
+  host's own `tmux`, which may not talk to DevHub's 3.7c server. The clean
+  fix is two places, both to be checked against an sshd: `panePath`
+  (`main/terminal/tmux.ts`) puts `dirname(tmuxPath())` after
+  `paneBinDirectory` when that is set (a host); and a popup's PATH
+  (`#openPopup`, which reads `show-environment`, the session's `-e` PATH,
+  not the pane's) gets the same directory in front. Not done: the popup half
+  needs the host to verify, and half of it would leave panes and popups
+  disagreeing.
+- **The GPU process's compositing** (36–40 % under Xvfb) and the in-app
+  `cat` time are to be measured on the Mac (see "Throughput, profiled").
+- Smaller: a drag or double-click selection in copy mode (tmux takes the
+  position from a mouse event a control client cannot send), the mock's
+  0.4 s flash on a prompt-mark copy, completion menus for `-t` targets in
+  the prompt, choose-tree's tags, sort and `-F`, the `#{mouse_word}` items of
+  the pane menu.
+- `pnpm install` writing `node-pty: set this to true or false` into
+  `pnpm-workspace.yaml`: checked on main with pnpm 11.20.0 and an empty
+  store — a fresh install writes nothing since 0bbbc5c2 (`allowBuilds:
+  node-pty: false` is pnpm 11's format); without that line it writes the
+  placeholder. A checkout from before 0bbbc5c2 still does.
 
 - **Popups.** A popup's command runs as the popup's pane's: `$TMUX_PANE`
   and "the current pane" are the pane that opened it, which is what the
@@ -682,7 +708,7 @@ command from a control client has not got), line numbers
 (`copy-mode-line-numbers`), the 0.4 s flash the mock shows on a prompt-mark
 copy.
 
-The rest, until phase 3 draws them, is not let do that
+What DevHub does not draw yet is not let do that
 (`main/ptyHost/control/keyGuard.ts`):
 
 - DevHub keeps its own copy of where tmux is in its key tables, from the
@@ -694,7 +720,8 @@ The rest, until phase 3 draws them, is not let do that
   and the page says so quietly ("C-q m: display-popup is not available in
   control mode yet"). A table tmux was already in is reset. Keys typed
   before the bindings were first read wait for them.
-- A pane left in a mode (copy mode, a chooser) once the binding that entered
+- A pane left in a mode other than copy or view mode (a buffer or client
+  chooser, customize mode) once the binding that entered
   it has finished — 250 ms after its last mode change, since tmux says so
   while the binding still runs — is taken out of it (`copy-mode -q`), and
   that is said. prefix+y / Y, which enter copy mode, select by the prompt
