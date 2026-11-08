@@ -100,6 +100,11 @@ export interface NeovimGuiWindowWire {
 	readonly content:
 		| { readonly kind: "html"; readonly html: string }
 		| { readonly kind: "url"; readonly url: string };
+	/**
+	 * Whose the keys are while it is current: `"neovim"`'s as in normal
+	 * mode (a field takes them in insert mode), or the `"content"`'s.
+	 */
+	readonly keyboard: "neovim" | "content";
 	/** `false`: the window was closed and this GUI window with it. */
 	readonly open: boolean;
 }

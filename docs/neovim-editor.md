@@ -485,6 +485,7 @@ to a Neovim object and follows it.
 local gui = require('devhub_gui')
 local w = gui.open{ title = 'Outline', html = '<button>…</button>', win = 'vsplit' }
 --                 or url = 'https://…'; win = 'vsplit' | 'split' | 'float' | 'tab' | 'current'
+--                 keyboard = 'neovim' (html's default) | 'content' (url's)
 gui.on_message(w, function(msg) … end)   -- the page's devhub.send(msg)
 gui.send(w, { kind = 'outline', … })     -- the page's devhub.onMessage(fn)
 gui.close(w)
@@ -495,14 +496,64 @@ the border, whose cells Neovim draws. A GUI window is a scratch buffer (`buftype
 its id in `b:devhub_gui_id`) shown in an ordinary window or float; the page
 paints its web content (a sandboxed iframe) exactly over that window's grid.
 So `:vsplit`, `<C-w>hjkl`, `<C-w>=`, `:close`, `:q`, `:only` and tab pages
-are Neovim's own, and the content follows. When the cursor enters the window
-the keyboard goes into the content; `<C-w>` gives it back to Neovim, which
-reads the rest of the window command. A click into it makes it Neovim's
+are Neovim's own, and the content follows. A click into it makes it Neovim's
 current window. Its content is kept in the Lua module, so it outlives a
 DevHub restart.
 
+**Its keys are Neovim's.** Neovim is the modal engine, and a page must not
+be an island the keys fall into: while a GUI window is current and no field
+in it has the keys, they are Neovim's, as in normal mode — `:`, `<C-w>…`,
+`<Leader>…`, `/`, counts and the person's maps all work there
+(`shell/neovim/guiFrame.ts`, `SETUP_LUA`'s keyboard part). Each choice and
+its reason:
+
+- _The buffer's lines are the page's focusable elements_ (links, buttons,
+  fields, `[tabindex]`; enabled and visible, in document order), one per
+  line, its label the element's `aria-label`, `<label>`, placeholder or
+  text; _the cursor line is the focused one_. This is `gui.view`'s model,
+  and for the same reason: `j`/`k`, `5j`, `gg`/`G`, `/Filter`, marks and
+  macros are Neovim's own, so they behave as everywhere else and nothing is
+  reimplemented. Mapping `j`/`k`/`<Tab>` to "next element" instead would
+  break counts and search and shadow the person's maps. The page reports its
+  list again whenever its DOM changes (a `MutationObserver`, only when the
+  list differs) and rings the element Lua names (`data-devhub-focus`, an
+  outline in `Cursor`'s colour while the window is current, as a view rings
+  its item), scrolled into sight. The page never moves its DOM focus for
+  this, so the keys stay Neovim's.
+- _`<CR>` activates_ the element (a click), or enters it if it is a field.
+  `<Space>` is not mapped: it is a common `<Leader>`, the person's config
+  included.
+- _A field is insert mode._ `i`/`a` enter the focused field with its caret
+  where it was, `I` at its start, `A` at its end; a click on a field enters
+  it too. Neovim really goes to insert mode — so a status line says INSERT
+  and `mode()` is `i` — and the keys go to the field. The buffer is
+  modifiable only meanwhile (Neovim enters no insert mode in a buffer that
+  is not; `i` on a button does nothing, and `o`, `cc` and the like answer
+  E21), with no undo, and a key that still reaches Neovim is undone. `<Esc>`,
+  `<C-[>` and `<C-c>` in a field are sent as Neovim's `<Esc>`: leaving insert
+  mode, by any means (`ModeChanged`, since `<C-c>` runs no `InsertLeave`;
+  a `stopinsert`; another window becoming current), blurs the field and
+  gives the keys back. `<Tab>` in a field moves the page's focus as the web
+  does; the cursor follows, and on an element that is not a field Neovim is
+  in normal mode again.
+- _A key the frame gets while no field has it_ (it took the focus a moment
+  with a click) is sent on to Neovim as the editor would send it, and the
+  editor takes the keyboard back: none is lost.
+- _A page can declare its own keys_: `devhub.keys({ X: (el) => … })` maps
+  them on the window's buffer (Neovim owns them; `:map` lists them), and the
+  page's function gets the focused element. A plugin's Lua maps keys on
+  `w.buf` as on any buffer.
+- _`keyboard = 'content'`_ gives the keys to the page whenever its window is
+  current, as a web app that reads raw keys needs; `<C-w>` gives them back to
+  Neovim, which reads the rest of the window command. It is a `url` page's
+  default and its only choice: a page DevHub did not write has no bridge to
+  say what it holds, so `keyboard = 'neovim'` with `url` is an error. Such a
+  page taking the focus with a click makes its window current.
+
 `:DevhubGuiDemo` opens an Outline beside the current window: its buttons jump
-that window to a function, or run `gg`, `G`, `:write` in it.
+that window to a function, or run `gg`, `G`, `:write` in it, and its Filter
+field narrows them (`i` to type, `<Esc>` to leave, `X` — the page's own key —
+to clear it).
 
 ### Notifications and inline images
 

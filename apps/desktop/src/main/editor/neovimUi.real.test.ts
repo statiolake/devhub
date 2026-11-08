@@ -343,6 +343,124 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
+	it("gives a GUI window's keys to Neovim: lines are its elements, a field is insert mode", async () => {
+		const h = await attached();
+		const lua = (code: string) => h.ui.request("nvim_exec_lua", [code, []]);
+		await lua(
+			"_G.w = require('devhub_gui').open{ title = 'keys', html = '<button>a</button>' }",
+		);
+		await h.until(() => h.gui.opened.length > 0, "the GUI window");
+		expect(h.gui.opened[0]).toMatchObject({ keyboard: "neovim" });
+		const controls = () =>
+			h.gui.events
+				.filter((e) => e.kind === "gui_keys")
+				.map(
+					(e) => e.payload as { action: string; index: number; caret?: string },
+				);
+		const mode = async () =>
+			((await h.ui.request("nvim_get_mode", [])) as { mode: string }).mode;
+		const settle = async (
+			check: () => boolean | Promise<boolean>,
+			what: string,
+		) => {
+			for (let i = 0; i < 100; i += 1) {
+				if (await check()) return;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			throw new Error(`timed out waiting for ${what}`);
+		};
+		// The page tells its elements: they are the buffer's lines.
+		h.ui.call("nvim_exec_lua", [
+			"require('devhub_gui')._gui_items(1, ...)",
+			[
+				[
+					{ label: "gg", editable: false },
+					{ label: "Filter", editable: true },
+					{ label: "Go", editable: false },
+				],
+			],
+		]);
+		await settle(
+			async () =>
+				(await lua("return vim.api.nvim_buf_line_count(_G.w.buf)")) === 3,
+			"the lines",
+		);
+		expect(
+			await lua("return vim.api.nvim_buf_get_lines(_G.w.buf, 0, -1, false)"),
+		).toEqual(["gg", "Filter", "Go"]);
+		expect(await lua("return vim.bo[_G.w.buf].modifiable")).toBe(false);
+		// Motions are Neovim's; the cursor line is the focus.
+		h.ui.call("nvim_input", ["G"]);
+		await settle(() => controls().at(-1)?.index === 2, "the focus on Go");
+		h.ui.call("nvim_input", ["<CR>"]);
+		await settle(
+			() => controls().some((c) => c.action === "activate" && c.index === 2),
+			"Go pressed",
+		);
+		// i on a button does nothing; on the field, insert mode.
+		h.ui.call("nvim_input", ["i"]);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(await mode()).toBe("n");
+		h.ui.call("nvim_input", ["kA"]);
+		await settle(async () => (await mode()) === "i", "insert mode");
+		expect(controls().at(-1)).toMatchObject({
+			action: "edit",
+			index: 1,
+			caret: "end",
+		});
+		// <Esc> from the field: normal mode, and the page is told.
+		h.ui.call("nvim_input", ["<Esc>"]);
+		await settle(async () => (await mode()) === "n", "normal mode");
+		await settle(
+			() => controls().some((c) => c.action === "leave"),
+			"the field left",
+		);
+		expect(await lua("return vim.bo[_G.w.buf].modifiable")).toBe(false);
+		// A click on the field (the page's focus moving) enters it too.
+		h.ui.call("nvim_exec_lua", [
+			"require('devhub_gui')._gui_focused(1, 1)",
+			[],
+		]);
+		await settle(async () => (await mode()) === "i", "insert mode by a click");
+		// Leaving the window leaves the field.
+		h.ui.call("nvim_command", ["wincmd p"]);
+		await settle(
+			async () => (await mode()) === "n",
+			"normal mode in the other window",
+		);
+		// The page's own keys are maps on the buffer.
+		h.ui.call("nvim_exec_lua", [
+			"require('devhub_gui')._gui_declare(1, { 'X' })",
+			[],
+		]);
+		h.ui.call("nvim_command", ["wincmd p"]);
+		// (nvim_input is a fast call: it would be typed before the command ran.)
+		expect(await lua("return vim.bo.filetype")).toBe("devhub_gui");
+		h.ui.call("nvim_input", ["X"]);
+		await settle(
+			() => controls().some((c) => c.action === "key"),
+			"the page's key",
+		);
+		h.ui.client.close();
+	});
+
+	it("keeps a url page's keys its own, and refuses to drive one from Neovim", async () => {
+		const h = await attached();
+		await h.ui.request("nvim_exec_lua", [
+			"require('devhub_gui').open{ title = 'web', url = 'https://example.com' }",
+			[],
+		]);
+		await h.until(() => h.gui.opened.length > 0, "the GUI window");
+		expect(h.gui.opened[0]).toMatchObject({ keyboard: "content" });
+		await expect(
+			h.ui.request("nvim_exec_lua", [
+				"require('devhub_gui').open{ url = 'https://example.com', keyboard = 'neovim' }",
+				[],
+			]),
+		).rejects.toThrow(/keyboard = 'content'/);
+		h.ui.client.close();
+	});
+
 	it("leaves out a float's blank border and keeps a border of lines", async () => {
 		const h = await attached(60, 20);
 		const has010 = (await h.ui.request("nvim_exec_lua", [

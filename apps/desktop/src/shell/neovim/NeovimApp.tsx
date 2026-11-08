@@ -16,8 +16,9 @@
  * opens an ordinary Neovim window on a scratch buffer, and this page paints
  * web content exactly over that window's grid: `:vsplit`, `<C-w>` moves,
  * `:close`, `:only` and tab pages move it, because they move the window.
- * When the cursor enters it, the keyboard goes into it; `<C-w>` gives the
- * keyboard back to Neovim, which reads the rest of the window command.
+ * Its keys are Neovim's, as in normal mode, until a field in it takes them
+ * in insert mode (`guiFrame.ts`); a `keyboard = "content"` page has them
+ * whenever its window is current, and `<C-w>` gives them back.
  *
  * # Its contract with main
  *
@@ -62,6 +63,14 @@ import {
   type Layers,
 } from "./layers";
 import {
+  guiControlOf,
+  guiDocument,
+  guiItemsOf,
+  keysIntoFrame,
+  strayKeys,
+  type GuiKeyboard,
+} from "./guiFrame";
+import {
   NO_DECORATIONS,
   applyGuiEvent,
   dismissToast,
@@ -92,6 +101,7 @@ interface GuiContent {
   readonly title: string;
   readonly html?: string;
   readonly url?: string;
+  readonly keyboard: GuiKeyboard;
 }
 
 /** `workspaceId` is the overlay's key, the id every Neovim call names. */
@@ -133,6 +143,8 @@ function NeovimSurface({
   const [decorations, setDecorations] = useState<Decorations>(NO_DECORATIONS);
   const [layers, setLayers] = useState<Layers>(NO_LAYERS);
   const frames = useRef(new Map<number, HTMLIFrameElement>());
+  /** The GUI window whose field has the keys (Lua's `edit`, until `leave`). */
+  const [editing, setEditing] = useState<number | undefined>(undefined);
   const reconnectAttempt = useRef(0);
 
   const settings = useMemo(
@@ -191,6 +203,7 @@ function NeovimSurface({
             next.set(wire.id, {
               id: wire.id,
               title: wire.title,
+              keyboard: wire.keyboard,
               ...(wire.content.kind === "html"
                 ? { html: wire.content.html }
                 : {}),
@@ -220,6 +233,23 @@ function NeovimSurface({
       if (event.kind === "decor") {
         // Where virtual text and folds' text are: set in the UI face.
         editor.setDecor(decorOf(event.payload));
+        return;
+      }
+      if (event.kind === "gui_keys") {
+        // Lua's word on a GUI window's focus: the page rings, presses or
+        // enters the element; a field entered takes the keys, and gives
+        // them back when Neovim leaves insert mode.
+        const control = guiControlOf(event.payload);
+        if (!control) return;
+        const frame = frames.current.get(control.id);
+        if (control.action === "edit") {
+          setEditing(control.id);
+          frame?.focus();
+        } else if (control.action === "leave") {
+          setEditing((before) => (before === control.id ? undefined : before));
+          editor.focus();
+        }
+        frame?.contentWindow?.postMessage({ devhubControl: control }, "*");
         return;
       }
       if (event.kind === "theme") {
@@ -304,11 +334,64 @@ function NeovimSurface({
     const onMessage = (event: MessageEvent) => {
       for (const [id, frame] of frames.current) {
         if (frame.contentWindow !== event.source) continue;
+        if (event.data === null || typeof event.data !== "object") return;
         const data = event.data as {
           devhubSend?: unknown;
           devhubKey?: string;
           devhubFocus?: boolean;
+          index?: unknown;
+          editable?: unknown;
+          devhubFocused?: unknown;
+          devhubItems?: unknown;
+          devhubDeclare?: unknown;
+          devhubStray?: unknown;
         };
+        const lua = (fn: string, ...args: unknown[]) => {
+          bridge.neovim.call({
+            workspaceId,
+            method: "nvim_exec_lua",
+            params: [
+              "local M = package.loaded['devhub_gui']; local fn = ...; if M and M[fn] then M[fn](select(2, ...)) end",
+              [fn, id, ...args],
+            ],
+          });
+        };
+        const items = guiItemsOf(data.devhubItems);
+        if (items) {
+          lua("_gui_items", items);
+          const current = guiWindowsRef.current;
+          frame.contentWindow?.postMessage(
+            {
+              devhubCurrent: current.windows.some(
+                (w) => w.id === id && w.win === current.current,
+              ),
+            },
+            "*",
+          );
+        }
+        if (Array.isArray(data.devhubDeclare)) {
+          lua(
+            "_gui_declare",
+            data.devhubDeclare.filter((k) => typeof k === "string"),
+          );
+        }
+        if (typeof data.devhubFocused === "number") {
+          lua("_gui_focused", data.devhubFocused);
+        }
+        if ("devhubStray" in data) {
+          const keys = strayKeys(
+            data.devhubStray,
+            settingsRef.current.macOptionIsMeta === true,
+          );
+          if (keys !== undefined) {
+            bridge.neovim.call({
+              workspaceId,
+              method: "nvim_input",
+              params: [keys],
+            });
+          }
+          editorRef.current?.focus();
+        }
         if ("devhubSend" in data) {
           bridge.neovim.guiMessage({
             workspaceId,
@@ -335,6 +418,14 @@ function NeovimSurface({
               params: [win],
             });
           }
+          // A click is the focus moving too: on a field, into it (insert
+          // mode); elsewhere the keys stay, or come back, Neovim's.
+          if (guiContentRef.current.get(id)?.keyboard === "neovim") {
+            if (typeof data.index === "number" && data.index >= 0) {
+              lua("_gui_focused", data.index);
+            }
+            if (data.editable !== true) editorRef.current?.focus();
+          }
         }
       }
     };
@@ -345,22 +436,67 @@ function NeovimSurface({
   }, [bridge, workspaceId]);
   const guiWindowsRef = useRef(guiWindows);
   guiWindowsRef.current = guiWindows;
+  const guiContentRef = useRef(guiContent);
+  guiContentRef.current = guiContent;
+
+  // A page with no bridge (a url) says nothing of a click: its frame taking
+  // the focus says it, and its window becomes Neovim's current one.
+  useEffect(() => {
+    const onBlur = () => {
+      window.setTimeout(() => {
+        for (const [id, frame] of frames.current) {
+          if (document.activeElement !== frame) continue;
+          const { windows, current } = guiWindowsRef.current;
+          const win = windows.find((w) => w.id === id)?.win;
+          if (win !== undefined && win !== current) {
+            bridge.neovim.call({
+              workspaceId,
+              method: "nvim_set_current_win",
+              params: [win],
+            });
+          }
+        }
+      }, 0);
+    };
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [bridge, workspaceId]);
 
   const editor = editorRef.current;
   const nvim = editor?.state;
 
-  // Keyboard into the GUI window Neovim's cursor is in; back out otherwise.
+  // Keyboard into the current GUI window's frame only while it is the
+  // frame's (a "content" page, or a field Lua entered); Neovim's otherwise.
   const currentGui = guiWindows.windows.find(
     (w) => w.win === guiWindows.current,
   );
+  const currentKeyboard = currentGui && guiContent.get(currentGui.id)?.keyboard;
+  const intoFrame =
+    currentGui !== undefined &&
+    keysIntoFrame(currentKeyboard, editing === currentGui.id);
   useEffect(() => {
     if (!editor) return;
-    if (currentGui === undefined) {
+    if (!intoFrame || currentGui === undefined) {
       if (document.activeElement !== editor.input) editor.focus();
       return;
     }
     frames.current.get(currentGui.id)?.focus();
-  }, [editor, currentGui, guiContent]);
+  }, [editor, currentGui, intoFrame]);
+  // A field whose window is no longer current has lost the keys (Lua
+  // stopped insert mode); the ring shows only in the current window.
+  useEffect(() => {
+    if (editing !== undefined && currentGui?.id !== editing) {
+      setEditing(undefined);
+    }
+    for (const [id, frame] of frames.current) {
+      frame.contentWindow?.postMessage(
+        { devhubCurrent: currentGui?.id === id },
+        "*",
+      );
+    }
+  }, [currentGui, editing]);
 
   const send = useCallback(
     (method: string, params: readonly unknown[]) => {
@@ -539,7 +675,14 @@ function NeovimSurface({
                       {...(content.url !== undefined
                         ? { src: content.url }
                         : {
-                            srcDoc: guiDocument(content.html ?? "", nvim),
+                            srcDoc: guiDocument(
+                              content.html ?? "",
+                              {
+                                fg: cssColor(nvim.defaults.foreground),
+                                bg: cssColor(nvim.defaults.background),
+                              },
+                              content.keyboard,
+                            ),
                           })}
                     />
                   </div>
@@ -619,45 +762,6 @@ function guiWindowsInPaintOrder(
   });
   const rest = windows.filter((w) => primary.get(w.id) !== w.win);
   return [...first, ...rest];
-}
-
-/** The GUI window's page: the person's HTML, with `devhub` to talk to Lua. */
-function guiDocument(html: string, state: NeovimUiState): string {
-  const fg = cssColor(state.defaults.foreground);
-  const bg = cssColor(state.defaults.background);
-  const prelude = `<style>:root{--fg:${fg};--bg:${bg};color-scheme:dark light}html,body{color:var(--fg);background:var(--bg)}</style><script>
-(() => {
-  const listeners = [];
-  window.devhub = {
-    send: (message) => parent.postMessage({ devhubSend: message }, "*"),
-    onMessage: (fn) => listeners.push(fn),
-  };
-  addEventListener("message", (event) => {
-    if (event.source !== parent || !event.data || !("devhubGui" in event.data)) return;
-    for (const fn of listeners) fn(event.data.devhubGui);
-  });
-  addEventListener("keydown", (event) => {
-    if (event.ctrlKey && (event.key === "w" || event.key === "W")) {
-      event.preventDefault();
-      parent.postMessage({ devhubKey: "<C-w>" }, "*");
-      return;
-    }
-    // The Mac's editing keys reach this page as keys (DevHub's menu leaves
-    // them to the Neovim editor): answered here, on this page's selection.
-    if (event.metaKey && !event.ctrlKey && !event.altKey) {
-      const k = event.key.toLowerCase();
-      const command = k === "c" ? "copy" : k === "x" ? "cut" : k === "a" ? "selectAll"
-        : k === "z" ? (event.shiftKey ? "redo" : "undo") : undefined;
-      if (command) {
-        event.preventDefault();
-        document.execCommand(command);
-      }
-    }
-  }, true);
-  addEventListener("pointerdown", () => parent.postMessage({ devhubFocus: true }, "*"), true);
-})();
-</script>`;
-  return prelude + html;
 }
 
 /** The command line bar's padding around its cells, as `neovim.css` rounds it. */

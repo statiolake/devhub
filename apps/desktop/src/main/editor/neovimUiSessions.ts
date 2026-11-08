@@ -234,6 +234,7 @@ export class NeovimUiSessions<P> {
 						open.url !== undefined
 							? { kind: "url", url: open.url }
 							: { kind: "html", html: open.html ?? "" },
+					keyboard: open.keyboard,
 					open: true,
 				};
 				known.guiWindows.set(open.id, window);

@@ -73,7 +73,15 @@ export interface GuiOpenReport {
 	readonly title: string;
 	readonly html?: string;
 	readonly url?: string;
+	/** Whose the keys are while it is current (`gui.open`'s `keyboard`). */
+	readonly keyboard: GuiKeyboard;
 }
+
+/**
+ * `"neovim"`: Neovim's, as in normal mode, a field taking them in insert
+ * mode. `"content"`: the page's, `<C-w>` giving them back.
+ */
+export type GuiKeyboard = "neovim" | "content";
 
 /**
  * What the attach asks for. `ext_messages` stays off: in 0.9 it is
@@ -110,7 +118,9 @@ export function uiAttachOptions(): Record<string, boolean> {
  *   ordinary window or float; DevHub paints its web content over that
  *   window's grid, so `:vsplit`, `<C-w>` moves, `:close`, `:only` and tab
  *   pages are Neovim's own. Which windows show one, and which window is
- *   current, is reported on every window event.
+ *   current, is reported on every window event. Its keys are Neovim's (its
+ *   lines are the page's focusable elements, the cursor line the focused
+ *   one, a field insert mode) unless it asks for `keyboard = "content"`.
  */
 export const SETUP_LUA = String.raw`
 local chan = ...
@@ -171,6 +181,8 @@ M._next = M._next or 0
 
 --- Every GUI window still open, told again (a new DevHub, a reloaded page).
 function M._replay()
+  -- The field that had the keys went with the old page.
+  if M._editing then vim.cmd("stopinsert") end
   for _, open in pairs(M._open) do vim.rpcnotify(M._chan, "devhub_gui_open", open) end
   M._report()
   vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
@@ -222,10 +234,22 @@ vim.api.nvim_create_autocmd({ "WinEnter", "WinNew", "WinClosed", "BufWinEnter", 
 })
 
 --- Open a GUI window: { html = "...", url = "...", title = "...",
---- win = "vsplit" | "split" | "float" | "tab" | "current" }.
---- Answers its handle, for send() and on_message().
+--- win = "vsplit" | "split" | "float" | "tab" | "current",
+--- keyboard = "neovim" | "content" }.
+--- keyboard: whose the keys are while the window is current. "neovim" (an
+--- html page's default): Neovim's, as in normal mode, the buffer's lines
+--- being the page's focusable elements and a field taking them in insert
+--- mode. "content" (a url page's, which has no bridge to Neovim): the page's,
+--- <C-w> giving them back. Answers its handle, for send() and on_message().
 function M.open(opts)
   opts = opts or {}
+  local keyboard = opts.keyboard or (opts.url and "content" or "neovim")
+  if keyboard ~= "neovim" and keyboard ~= "content" then
+    error("devhub gui.open: keyboard is 'neovim' or 'content'")
+  end
+  if keyboard == "neovim" and opts.url then
+    error("devhub gui.open: a url page cannot tell Neovim what it holds; it takes keyboard = 'content'")
+  end
   M._next = M._next + 1
   local id = M._next
   local buf = vim.api.nvim_create_buf(false, true)
@@ -256,13 +280,16 @@ function M.open(opts)
     pcall(function() vim.wo[win][option] = value end)
   end
   local handle = { id = id, buf = buf }
-  M._open[id] = { id = id, title = opts.title or "", html = opts.html, url = opts.url }
+  M._open[id] = { id = id, title = opts.title or "", html = opts.html, url = opts.url, keyboard = keyboard }
+  if keyboard == "neovim" then M._keyboard(id, buf) end
   vim.rpcnotify(M._chan, "devhub_gui_open", M._open[id])
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = group, buffer = buf, once = true,
     callback = function()
       M._handlers[id] = nil
       M._open[id] = nil
+      M._pages[id] = nil
+      if M._editing == id then M._editing = nil end
       vim.rpcnotify(M._chan, "devhub_gui_close", id)
       vim.schedule(report)
     end,
@@ -296,6 +323,181 @@ local function gui_event(kind, payload)
   vim.rpcnotify(M._chan, "devhub_gui_event", kind, payload)
 end
 M._event = gui_event
+
+-- A GUI window's keyboard (keyboard = "neovim"). Neovim is the modal engine:
+-- while the window is current and no field in it has the keys, they are
+-- Neovim's, as in normal mode. The buffer's lines are the page's focusable
+-- elements, one per line in document order (the page tells them,
+-- _gui_items), and the cursor line is the focused one — gui.view's model —
+-- so j/k, counts, /, gg/G, marks, :, <C-w> and the person's maps are
+-- Neovim's own and the page only rings the element. <CR> activates it (a
+-- click) or enters it if it is a field; i/a (the caret where it was), I
+-- (start), A (end) enter a field: Neovim goes to insert mode and the keys go
+-- to the field; <Esc> there is Neovim's <Esc>, and leaving insert mode, by
+-- whatever means, gives the keys back.
+M._pages = M._pages or {}
+
+--- The window that shows a GUI buffer: the current one, else the first.
+local function gui_win(buf)
+  local current = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(current) == buf then return current end
+  return vim.fn.win_findbuf(buf)[1]
+end
+
+--- The focused element's index (0-based), -1 for none.
+local function focus_index(page)
+  local win = gui_win(page.buf)
+  if not win then return -1 end
+  local lnum = vim.api.nvim_win_get_cursor(win)[1]
+  return lnum <= #page.items and lnum - 1 or -1
+end
+
+--- What the page is told: { id, action = "focus" | "activate" | "edit" |
+--- "leave" | "key", index, ring = the cursor's colour, caret, lhs }.
+local function control(id, action, extra)
+  local page = M._pages[id]
+  if not page then return end
+  local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = "Cursor", link = false })
+  local rgb = ok and type(hl) == "table" and (hl.bg or hl.fg) or nil
+  local payload = { id = id, action = action, index = focus_index(page),
+    ring = rgb and string.format("#%06x", rgb) or nil }
+  for key, value in pairs(extra or {}) do payload[key] = value end
+  gui_event("gui_keys", payload)
+end
+
+--- Into the focused field: insert mode, the keys the field's. The buffer is
+--- modifiable only meanwhile (Neovim enters no insert mode in one that is
+--- not), with no undo, and a key that still reaches Neovim is undone.
+local function edit(id, caret)
+  local page = M._pages[id]
+  if not page then return end
+  local item = page.items[focus_index(page) + 1]
+  if not item or not item.editable then return end
+  M._editing = id
+  vim.bo[page.buf].modifiable = true
+  vim.cmd("startinsert")
+  control(id, "edit", { caret = caret })
+end
+
+local function render(page)
+  local lines = {}
+  for _, item in ipairs(page.items) do table.insert(lines, item.label) end
+  if #lines == 0 then lines = { "" } end
+  local modifiable = vim.bo[page.buf].modifiable
+  vim.bo[page.buf].modifiable = true
+  vim.api.nvim_buf_set_lines(page.buf, 0, -1, false, lines)
+  vim.bo[page.buf].modifiable = modifiable
+  vim.bo[page.buf].modified = false
+end
+
+--- The maps the window always has, then the page's own (devhub.keys).
+local function keymaps(id, page)
+  local function map(lhs, fn, desc)
+    vim.keymap.set("n", lhs, fn, { buffer = page.buf, desc = "DevHub GUI: " .. desc })
+  end
+  map("<CR>", function()
+    local item = page.items[focus_index(page) + 1]
+    if item and item.editable then edit(id, "keep") elseif item then control(id, "activate") end
+  end, "activate the focused element")
+  map("i", function() edit(id, "keep") end, "type into the focused field")
+  map("a", function() edit(id, "keep") end, "type into the focused field")
+  map("I", function() edit(id, "start") end, "type at the focused field's start")
+  map("A", function() edit(id, "end") end, "type at the focused field's end")
+  for _, lhs in ipairs(page.declared) do
+    map(lhs, function() control(id, "key", { lhs = lhs }) end, "the page's " .. lhs)
+  end
+end
+
+--- The window's maps and autocmds; again at every attach, since the
+--- autocmds' group starts empty then.
+local function watch(id, page)
+  local buf = page.buf
+  keymaps(id, page)
+  vim.api.nvim_create_autocmd("CursorMoved", {
+    group = group, buffer = buf, callback = function() control(id, "focus") end,
+  })
+  -- A click in another window while in the field: that window gets the
+  -- cursor in normal mode, as leaving a field leaves its typing.
+  vim.api.nvim_create_autocmd("WinLeave", {
+    group = group, buffer = buf,
+    callback = function() if M._editing == id then vim.cmd("stopinsert") end end,
+  })
+  vim.api.nvim_create_autocmd("TextChangedI", {
+    group = group, buffer = buf, callback = function() render(page) end,
+  })
+end
+
+function M._keyboard(id, buf)
+  local page = { buf = buf, items = {}, declared = {} }
+  M._pages[id] = page
+  vim.bo[buf].modifiable = false
+  vim.bo[buf].undolevels = -1
+  watch(id, page)
+end
+
+for id, page in pairs(M._pages) do
+  if vim.api.nvim_buf_is_valid(page.buf) then watch(id, page) else M._pages[id] = nil end
+end
+
+-- Leaving insert mode while in a field — <Esc> in it, <C-c>, a stopinsert —
+-- gives the keyboard back. ModeChanged, since <C-c> runs no InsertLeave.
+vim.api.nvim_create_autocmd("ModeChanged", {
+  group = group,
+  callback = function()
+    local id = M._editing
+    if not id or vim.v.event.new_mode:sub(1, 1) == "i" then return end
+    M._editing = nil
+    local page = M._pages[id]
+    if page and vim.api.nvim_buf_is_valid(page.buf) then vim.bo[page.buf].modifiable = false end
+    control(id, "leave")
+  end,
+})
+
+--- The page's focusable elements: { { label, editable }, … }.
+function M._gui_items(id, items)
+  local page = M._pages[id]
+  if not page or not vim.api.nvim_buf_is_valid(page.buf) then return end
+  page.items = {}
+  for _, item in ipairs(type(items) == "table" and items or {}) do
+    local label = type(item) == "table" and type(item.label) == "string" and item.label or ""
+    table.insert(page.items, { label = (label:gsub("%c", " ")), editable = item.editable == true })
+  end
+  render(page)
+  control(id, "focus")
+end
+
+--- The page moved its focus (a click, <Tab> in a field): the cursor follows,
+--- and the mode with it — insert in a field, normal elsewhere.
+function M._gui_focused(id, index)
+  local page = M._pages[id]
+  if not page or type(index) ~= "number" then return end
+  local item = page.items[index + 1]
+  local win = gui_win(page.buf)
+  if item and win then vim.api.nvim_win_set_cursor(win, { index + 1, 0 }) end
+  if item and item.editable then
+    if M._editing ~= id and win == vim.api.nvim_get_current_win() then
+      M._editing = id
+      vim.bo[page.buf].modifiable = true
+      vim.cmd("startinsert")
+      control(id, "edit", { caret = "keep" })
+    end
+  elseif M._editing == id then
+    vim.cmd("stopinsert")
+  end
+end
+
+--- The page's own keys (devhub.keys{ lhs = fn }): buffer-local maps that
+--- tell it which was pressed.
+function M._gui_declare(id, list)
+  local page = M._pages[id]
+  if not page or not vim.api.nvim_buf_is_valid(page.buf) then return end
+  for _, lhs in ipairs(page.declared) do pcall(vim.keymap.del, "n", lhs, { buffer = page.buf }) end
+  page.declared = {}
+  for _, lhs in ipairs(type(list) == "table" and list or {}) do
+    if type(lhs) == "string" and lhs ~= "" then table.insert(page.declared, lhs) end
+  end
+  keymaps(id, page)
+end
 
 local LEVELS = { [0] = "debug", [1] = "debug", [2] = "info", [3] = "warn", [4] = "error" }
 
@@ -602,7 +804,9 @@ function M._demo_image()
   return path
 end
 
---- :DevhubGuiDemo: a GUI window whose buttons drive the window beside it.
+--- :DevhubGuiDemo: a GUI window whose buttons drive the window beside it,
+--- and a field that filters them: its keys are Neovim's (j/k, <CR>, :,
+--- <C-w>), i types into the field and <Esc> leaves it.
 vim.api.nvim_create_user_command("DevhubGuiDemo", function()
   local source = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_win_get_buf(source)
@@ -636,27 +840,43 @@ body{font:13px -apple-system,system-ui,sans-serif;margin:0;padding:12px;color:va
 h1{font-size:13px;margin:0 0 8px;opacity:.7;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
 button{display:block;width:100%;text-align:left;border:0;border-radius:6px;padding:5px 8px;margin:1px 0;
   background:transparent;color:inherit;font:inherit;cursor:pointer}
-button:hover,button:focus{background:rgba(127,127,127,.18);outline:none}
+button:hover,[data-devhub-focus]{background:rgba(127,127,127,.18)}
+input{box-sizing:border-box;width:100%;margin:0 0 8px;padding:5px 8px;border-radius:6px;font:inherit;color:inherit;
+  border:1px solid rgba(127,127,127,.35);background:transparent}
+input:focus{outline:none;border-color:var(--devhub-ring,currentColor)}
 .ln{opacity:.5;float:right;font-variant-numeric:tabular-nums}
 .bar{display:flex;gap:6px;margin:0 0 10px}.bar button{background:rgba(127,127,127,.16);text-align:center}
+.hint{opacity:.5;font-size:11px;margin:10px 0 0}
 </style><h1 id="title">Outline</h1>
 <div class="bar"><button id="top">gg</button><button id="bottom">G</button><button id="write">:write</button></div>
-<div id="items"></div><script>
+<input id="filter" placeholder="Filter" aria-label="Filter">
+<div id="items"></div>
+<p class="hint">j/k move · &lt;CR&gt; runs · i types in Filter, &lt;Esc&gt; leaves · X clears it</p><script>
 const $ = (id) => document.getElementById(id);
 $("top").onclick = () => devhub.send({kind:"command", command:"wincmd p | normal! gg"});
 $("bottom").onclick = () => devhub.send({kind:"command", command:"wincmd p | normal! G"});
 $("write").onclick = () => devhub.send({kind:"command", command:"wincmd p | write"});
-devhub.onMessage((msg) => {
-  if (msg.kind !== "outline") return;
-  $("title").textContent = msg.file + " — " + msg.lines + " lines";
+let outline = [];
+const draw = () => {
+  const words = $("filter").value.toLowerCase();
   const box = $("items"); box.textContent = "";
-  for (const item of msg.items) {
+  for (const item of outline) {
+    if (words && !item.name.toLowerCase().includes(words)) continue;
     const b = document.createElement("button");
     b.innerHTML = "<span class=ln></span>"; b.firstChild.textContent = item.line;
     b.append(item.name);
     b.onclick = () => devhub.send({kind:"jump", line:item.line});
     box.append(b);
   }
+};
+$("filter").oninput = draw;
+// A key of the page's own: Neovim maps it on this window's buffer.
+devhub.keys({ X: () => { $("filter").value = ""; draw(); } });
+devhub.onMessage((msg) => {
+  if (msg.kind !== "outline") return;
+  $("title").textContent = msg.file + " — " + msg.lines + " lines";
+  outline = msg.items;
+  draw();
 });
 devhub.send({kind:"ready"});
 </script>
@@ -926,6 +1146,7 @@ export class NeovimUi {
 					title: typeof open["title"] === "string" ? open["title"] : "",
 					...(typeof open["html"] === "string" ? { html: open["html"] } : {}),
 					...(typeof open["url"] === "string" ? { url: open["url"] } : {}),
+					keyboard: open["keyboard"] === "content" ? "content" : "neovim",
 				});
 				return;
 			}
