@@ -52,6 +52,7 @@
  * so once the ledger says an attach is current, nothing can interleave with it.
  */
 
+import { POPUP_SCRIPT } from "../ptyHost/control/popup.js";
 import {
 	MAX_INPUT_SEQUENCE,
 	MAX_OUTPUT_BUFFER_BYTES,
@@ -660,6 +661,11 @@ export interface HostedOpen extends PtyAttachmentSpec {
 	readonly launch: PtyLaunch;
 	/** A tmux control client: `launch` is run on pipes and drawn by the page. */
 	readonly control?: boolean;
+	/**
+	 * A control client's popups: `POPUP_SCRIPT` in a pty on the same machine
+	 * (`ptyHost/control/popup.ts`), opened once per `display-popup`.
+	 */
+	readonly popupLaunch?: PtyLaunch;
 }
 
 /**
@@ -913,6 +919,28 @@ export class AttachmentManager {
 		};
 	}
 
+	/**
+	 * What a control client's popups are opened as: `sh -c POPUP_SCRIPT` on
+	 * the client's machine, said by the machine as it says the client. A
+	 * popup's SSH session is short and one at a time; its slot is not held.
+	 */
+	private popupLaunchOf(context: AttachContext): PtyLaunch | undefined {
+		try {
+			const plan = context.plan?.({
+				...this.launchOf(context),
+				file: "/bin/sh",
+				args: ["-c", POPUP_SCRIPT],
+				pipes: undefined,
+			});
+			plan?.ended();
+			if (plan === undefined) return undefined;
+			const { pipes: _pipes, ...launch } = plan.launch;
+			return launch;
+		} catch {
+			return undefined;
+		}
+	}
+
 	private finished(entry: LedgerEntry, reason: ExitReason): void {
 		if (this.attachments.get(entry.id) === entry) {
 			this.attachments.delete(entry.id);
@@ -1015,6 +1043,8 @@ export class AttachmentManager {
 				throw new TerminalFailure("pty_unavailable");
 			return this.attach(permit, context);
 		}
+		const popupLaunch =
+			context.control === true ? this.popupLaunchOf(context) : undefined;
 		this.replaceSurface(context.surfaceKey);
 		const id = this.nextId();
 		const targetGeneration = this.nextGeneration();
@@ -1040,6 +1070,7 @@ export class AttachmentManager {
 				route,
 				launch: plan.launch,
 				...(context.control === true ? { control: true } : {}),
+				...(popupLaunch === undefined ? {} : { popupLaunch }),
 			});
 		} catch (failure: unknown) {
 			entry.ended("childExited");

@@ -1,0 +1,54 @@
+/* A `display-popup` DevHub runs (`ptyHost/control/popup.ts`): the frame
+   under its grid, which the painter draws at z 50 over the panes. Its look
+   is here alone, as tokens, so the mock's review changes nothing else
+   (`docs/terminal-mode.md`, phase 3). */
+
+.control-terminal {
+  /* The popup's border, as tmux draws one around it: a hairline. */
+  --popup-border: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 24%,
+    transparent
+  );
+  --popup-radius: 6px;
+  --popup-shadow: 0 8px 28px rgb(0 0 0 / 14%), 0 1px 3px rgb(0 0 0 / 10%);
+  /* The panes under it, faded towards their ground: the keys are the popup's. */
+  --popup-under: color-mix(
+    in srgb,
+    var(--terminal-background, Canvas) 45%,
+    transparent
+  );
+  --popup-title: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 60%,
+    transparent
+  );
+}
+
+.control-popup {
+  position: absolute;
+  /* Over the panes (z 1) and their hairlines, under the popup's grid (50). */
+  z-index: 40;
+  box-sizing: border-box;
+  pointer-events: none;
+  background: var(--terminal-background, Canvas);
+  border-radius: var(--popup-radius);
+  box-shadow:
+    var(--popup-shadow),
+    0 0 0 100vmax var(--popup-under);
+}
+
+.control-popup[data-border="true"] {
+  border: 1px solid var(--popup-border);
+}
+
+.control-popup-title {
+  position: absolute;
+  top: -0.6em;
+  left: 12px;
+  padding: 0 4px;
+  background: var(--terminal-background, Canvas);
+  color: var(--popup-title);
+  font-size: 11px;
+  line-height: 1.2;
+}

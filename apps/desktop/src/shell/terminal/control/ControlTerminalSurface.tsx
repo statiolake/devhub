@@ -3,6 +3,7 @@ import "../../neovim/neovim.css";
 import "../../surfaces/xtermSession.css";
 import "../terminal.css";
 import "./control.css";
+import "./popup.css";
 import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
 import { GridPainter, rgbOfCss } from "../../neovim/painter";
@@ -137,12 +138,15 @@ export function ControlTerminalSurface({
     lines.className = "control-borders";
     const cursor = document.createElement("div");
     cursor.className = "control-cursor";
+    const popupFrame = document.createElement("div");
+    popupFrame.className = "control-popup";
+    popupFrame.hidden = true;
     const input = document.createElement("textarea");
     input.className = "control-input";
     input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
     input.autocapitalize = "off";
     input.spellcheck = false;
-    host.append(grids, lines, cursor, input);
+    host.append(grids, lines, popupFrame, cursor, input);
 
     const appearanceNow = live.current.appearance;
     const fontSize = appearanceNow?.terminalFontSize ?? 13;
@@ -188,7 +192,9 @@ export function ControlTerminalSurface({
         rows: view.rows,
         client: connected ? view.client : "",
         prefixes: view.prefixes,
-        shown: connected ? view.panes : [],
+        // Under an open popup a Neovim drawn over a pane would cover it:
+        // no pane is said to be shown until it closes.
+        shown: connected && view.popup === undefined ? view.panes : [],
         panes: view.sessionPanes,
       };
       const key = JSON.stringify(panes);
@@ -262,8 +268,48 @@ export function ControlTerminalSurface({
           return el;
         }),
       );
-      const pane = activePane();
-      const at = pane === undefined ? undefined : view.cursors.get(pane.pane);
+      const popup = view.popup;
+      popupFrame.hidden = popup === undefined;
+      if (popup !== undefined) {
+        popupFrame.dataset.border = String(popup.border);
+        popupFrame.style.left = `${String(popup.x * width)}px`;
+        popupFrame.style.top = `${String(popup.y * height)}px`;
+        popupFrame.style.width = `${String(popup.width * width)}px`;
+        popupFrame.style.height = `${String(popup.height * height)}px`;
+        if (popupFrame.dataset.title !== popup.title) {
+          popupFrame.dataset.title = popup.title;
+          popupFrame.replaceChildren(
+            ...(popup.title === ""
+              ? []
+              : [
+                  Object.assign(document.createElement("span"), {
+                    className: "control-popup-title",
+                    textContent: popup.title,
+                  }),
+                ]),
+          );
+        }
+      }
+      // While a popup is open its cursor is the one shown, over it.
+      const inset = popup?.border === true ? 1 : 0;
+      const pane =
+        popup !== undefined
+          ? {
+              pane: -1,
+              x: popup.x + inset,
+              y: popup.y + inset,
+              width: 0,
+              height: 0,
+              active: true,
+            }
+          : activePane();
+      const at =
+        popup !== undefined
+          ? popup.cursor
+          : pane === undefined
+            ? undefined
+            : view.cursors.get(pane.pane);
+      cursor.style.zIndex = popup === undefined ? "" : "60";
       if (pane === undefined || at === undefined || !at.visible) {
         cursor.style.display = "none";
       } else {

@@ -127,6 +127,23 @@ export type ControlToPage =
 			readonly modes: PaneModes;
 	  }
 	/**
+	 * A `display-popup` DevHub runs (`ptyHost/control/popup.ts`): where it
+	 * is in cells of the window, its border included, and its rows since the
+	 * last. While one is open the keys are its.
+	 */
+	| {
+			readonly kind: "popup";
+			readonly id: number;
+			readonly x: number;
+			readonly y: number;
+			readonly width: number;
+			readonly height: number;
+			readonly border: boolean;
+			readonly title: string;
+			readonly frame: VtFrame;
+	  }
+	| { readonly kind: "popup-closed"; readonly id: number }
+	/**
 	 * Something DevHub did not do and says so quietly: a binding whose
 	 * command tmux does not draw for a control client (`keyGuard.ts`).
 	 */

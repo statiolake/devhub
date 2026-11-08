@@ -289,6 +289,9 @@ export class PtyHostClient implements HostedPtys {
 					page: pageId,
 					channelId: spec.route.channelId,
 					launch: spec.launch,
+					...(spec.popupLaunch === undefined
+						? {}
+						: { popupLaunch: spec.popupLaunch }),
 					...(spec.control === true ? { control: true } : {}),
 				},
 			});

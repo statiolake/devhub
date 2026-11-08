@@ -79,7 +79,7 @@ function page() {
     if (message.kind === "layout") layout = message;
     else if (message.kind === "ended") ended = message.reason;
     else if (message.kind === "notice") notices.push(message.text);
-    else {
+    else if (message.kind === "pane") {
       const rows = screens.get(message.pane) ?? [];
       for (const row of message.frame.dirty)
         rows[row.y] = row.cells.join("").trimEnd();
@@ -198,7 +198,8 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       ended: () => undefined,
     });
     const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
-    // A popup and a confirm are said, not run: the client answers on.
+    // A confirm is said, not run, and so is a popup with no pty to run it
+    // in (`ControlClientOptions.popup`): the client answers on.
     client.receive({ kind: "keys", keys: ["C-q", "m", "C-q", "W"] });
     await until("two notices", () => view.notices.length === 2);
     expect(view.notices[0]).toContain("display-popup");

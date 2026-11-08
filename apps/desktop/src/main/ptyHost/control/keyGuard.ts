@@ -14,9 +14,13 @@
  * So DevHub keeps its own copy of where tmux is in its key tables, from the
  * bindings tmux lists (`list-keys`), and looks a key up before it sends it:
  * the prefix is held until the key after it says which binding it is, and a
- * binding that would wait is not sent but said (`KeyRoute.refused`). Pure:
+ * binding that would wait is not sent but said (`KeyRoute.refused`); one
+ * that is a `display-popup` is handed to DevHub to run (`KeyRoute.popup`,
+ * `popup.ts`). Pure:
  * `controlClient.ts` reads the bindings and sends.
  */
+
+import { popupOf, type PopupArgs } from "./tmuxCommand.js";
 
 export interface Binding {
 	readonly command: string;
@@ -80,6 +84,11 @@ export interface KeyRoute {
 	readonly send: readonly string[];
 	/** A binding that would wait on the client, not sent. */
 	readonly refused?: { readonly keys: string; readonly command: string };
+	/**
+	 * A binding that is one `display-popup`: DevHub runs it itself
+	 * (`popup.ts`), not sent.
+	 */
+	readonly popup?: PopupArgs;
 	/**
 	 * tmux may be in a table other than the root one (a repeat, a
 	 * `switch-client -T`) after a refusal: it is to be put back in it.
@@ -160,6 +169,14 @@ export class KeyRouter {
 		const binding = this.#bindings.get(table)?.get(key);
 		if (binding === undefined) return { send: keys };
 		const waiting = waitingCommand(binding.command);
+		const popup = waiting === undefined ? undefined : popupOf(binding.command);
+		if (popup !== undefined) {
+			return {
+				send: [],
+				popup,
+				resetTable: table !== "root" && keys.length === 1,
+			};
+		}
 		if (waiting !== undefined) {
 			return {
 				send: [],

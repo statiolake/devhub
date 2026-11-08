@@ -54,14 +54,19 @@ describe("the key guard", () => {
 
 	it("refuses a binding that would wait, and never sends its prefix", () => {
 		const r = router();
-		for (const key of ["m", "W", ","]) {
+		for (const key of ["W", ","]) {
 			r.route("C-q", 0);
 			const route = r.route(key, 0);
 			expect(route.send).toEqual([]);
 			expect(route.refused?.keys).toBe(`C-q ${key}`);
 			expect(route.resetTable).toBe(false);
 		}
-		expect(r.route("M-m", 0).refused?.command).toBe("popup");
+		// A popup is DevHub's to run (`popup.ts`): handed over, not sent.
+		r.route("C-q", 0);
+		const popup = r.route("m", 0);
+		expect(popup.send).toEqual([]);
+		expect(popup.popup).toMatchObject({ closeOnExit: 1, width: "80%" });
+		expect(r.route("M-m", 0).popup).toBeDefined();
 		// The prefix's own send-prefix still goes.
 		r.route("C-q", 0);
 		expect(r.route("C-q", 0)).toEqual({ send: ["C-q", "C-q"] });

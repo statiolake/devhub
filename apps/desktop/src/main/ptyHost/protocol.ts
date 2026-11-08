@@ -30,6 +30,8 @@ export interface OpenSpec {
 	readonly launch: PtyLaunch;
 	/** A tmux control client (`control/controlClient.ts`), run on pipes. */
 	readonly control?: boolean;
+	/** What its popups are opened as (`control/popup.ts`), in a pty. */
+	readonly popupLaunch?: PtyLaunch;
 }
 
 export type ToPtyHost =

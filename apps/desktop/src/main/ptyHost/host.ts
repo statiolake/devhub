@@ -263,9 +263,22 @@ export class PtyHost {
 		} catch (failure: unknown) {
 			return fail(failure instanceof Error ? failure.message : String(failure));
 		}
+		const popupLaunch = spec.popupLaunch;
 		const client = new ControlClient({
 			process: child,
 			vt,
+			...(popupLaunch === undefined
+				? {}
+				: {
+						popup: (cols: number, rows: number) =>
+							this.#options.spawn({
+								...popupLaunch,
+								cols,
+								rows,
+								pixelWidth: 0,
+								pixelHeight: 0,
+							}),
+					}),
 			cols: spec.size.cols,
 			rows: spec.size.rows,
 			post: (message) => {

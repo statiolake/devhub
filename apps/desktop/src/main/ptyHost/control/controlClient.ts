@@ -40,6 +40,8 @@ import {
 } from "../../../ipc/terminalControl.js";
 import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
 import { KeyRouter, parseBindings } from "./keyGuard.js";
+import { PopupJob, popupInput, type PopupPty } from "./popup.js";
+import { popupPosition, popupSize, type PopupArgs } from "./tmuxCommand.js";
 import {
 	ControlParser,
 	commandLine,
@@ -78,6 +80,8 @@ export interface ControlClientOptions {
 		set(fn: () => void, ms: number): unknown;
 		clear(handle: unknown): void;
 	};
+	/** A pty for a popup's command (`popup.ts`); none: popups are refused. */
+	readonly popup?: (cols: number, rows: number) => PopupPty;
 }
 
 const MAX_UNACKED = 4;
@@ -154,6 +158,11 @@ export class ControlClient {
 	 * routed with no bindings known is a popup sent unseen.
 	 */
 	#keysBeforeBindings: string[] | undefined = [];
+	/** The popup open now: the keys are its. */
+	#popup: PopupJob | undefined;
+	#popupSerial = 0;
+	/** Keys typed while a popup was being opened: its, once it is. */
+	#popupOpening: string[] | undefined;
 
 	constructor(options: ControlClientOptions) {
 		this.#o = options;
@@ -178,6 +187,10 @@ export class ControlClient {
 				this.#keys(message.keys);
 				return;
 			case "bytes": {
+				if (this.#popup !== undefined && message.pane === undefined) {
+					this.#popup.bytes(message.bytes);
+					return;
+				}
 				const pane = message.pane ?? this.#activePane();
 				if (pane === undefined || message.bytes.length === 0) return;
 				this.#sendBytes(pane, message.bytes);
@@ -199,6 +212,7 @@ export class ControlClient {
 			case "visible":
 				this.#visible = message.visible;
 				if (message.visible) {
+					this.#popup?.redraw();
 					for (const pane of this.#panes.values()) pane.all = true;
 					this.#postLayout();
 					this.#schedule();
@@ -368,6 +382,15 @@ export class ControlClient {
 			this.#keysBeforeBindings.push(...keys);
 			return;
 		}
+		if (this.#popupOpening !== undefined) {
+			this.#popupOpening.push(...keys);
+			return;
+		}
+		if (this.#popup !== undefined) {
+			// A popup has the keys, the prefix too, as in tmux.
+			for (const key of keys) this.#popup?.key(key);
+			return;
+		}
 		let send: string[] = [];
 		const flush = () => {
 			if (send.length > 0)
@@ -381,9 +404,24 @@ export class ControlClient {
 				]);
 			send = [];
 		};
-		for (const key of keys) {
+		for (const [index, key] of keys.entries()) {
 			const route = this.#router.route(key, Date.now());
 			send.push(...route.send);
+			if (route.popup !== undefined) {
+				flush();
+				if (route.resetTable === true) {
+					void this.#command([
+						"switch-client",
+						"-c",
+						this.#clientName,
+						"-T",
+						"root",
+					]);
+				}
+				const rest = keys.slice(index + 1);
+				void this.#openPopup(route.popup, rest);
+				return;
+			}
 			if (route.refused !== undefined) {
 				flush();
 				if (route.resetTable === true) {
@@ -456,6 +494,116 @@ export class ControlClient {
 			kind: "notice",
 			text: `${mode !== undefined && mode !== "" ? mode : "This mode"} is not available in control mode yet.`,
 		});
+	}
+
+	/**
+	 * Run a `display-popup` binding as tmux would (`popup.ts`): its
+	 * target pane's `TMUX`, `TMUX_PANE`, directory and the server's
+	 * `default-shell` are read from tmux, `-d` and `-T` expanded by it, and
+	 * its size and place worked out against the client's size as tmux does.
+	 * `rest`: keys typed after the binding's, which are the popup's.
+	 */
+	async #openPopup(args: PopupArgs, rest: readonly string[]): Promise<void> {
+		const spawn = this.#o.popup;
+		if (spawn === undefined) {
+			this.#o.post({
+				kind: "notice",
+				text: "display-popup is not available here.",
+			});
+			this.#keys(rest);
+			return;
+		}
+		this.#popupOpening = [...rest];
+		const active = this.#activePane();
+		const target =
+			args.target ?? (active === undefined ? undefined : `%${String(active)}`);
+		const facts = await this.#command([
+			"display-message",
+			"-p",
+			...(target === undefined ? [] : ["-t", target]),
+			[
+				"#{pane_id}",
+				"#{socket_path},#{pid},#{session_id}",
+				args.directory ?? "#{pane_current_path}",
+				"#{default-shell}",
+				args.title ?? "",
+			].join(FIELD),
+		]);
+		// The PATH tmux gives a popup's job: its session's, else the server's.
+		const paths = await Promise.all(
+			[[...(target === undefined ? [] : ["-t", target])], ["-g"]].map((scope) =>
+				this.#command(["show-environment", ...scope, "PATH"]),
+			),
+		);
+		const path =
+			paths
+				.flatMap((answer) => (answer.ok ? answer.lines : []))
+				.find((line) => line.startsWith("PATH="))
+				?.slice("PATH=".length) ?? "";
+		const waiting = this.#popupOpening;
+		this.#popupOpening = undefined;
+		const [pane, tmux, directory, shell, title] = facts.lines
+			.join("\n")
+			.split(FIELD);
+		if (!facts.ok || pane === undefined || this.#ended) {
+			this.#keys(waiting);
+			return;
+		}
+		const cols = this.#cols;
+		const rows = this.#rows;
+		const width = popupSize(args.width, cols, Math.floor(cols / 2));
+		const height = popupSize(args.height, rows, Math.floor(rows / 2));
+		const box = {
+			x: popupPosition(args.x, cols, width),
+			y: popupPosition(args.y, rows, height, true),
+			width,
+			height,
+		};
+		const border = !args.noBorder && width > 2 && height > 2;
+		const inner = {
+			cols: border ? width - 2 : width,
+			rows: border ? height - 2 : height,
+		};
+		this.#popup?.close();
+		let pty: PopupPty;
+		try {
+			pty = spawn(inner.cols, inner.rows);
+		} catch (failure: unknown) {
+			this.#o.post({
+				kind: "notice",
+				text: `display-popup could not start: ${failure instanceof Error ? failure.message : String(failure)}`,
+			});
+			return;
+		}
+		const vt = this.#o.vt.open(inner.cols, inner.rows, 0);
+		if (this.#colors !== undefined) vt.setColors(this.#colors);
+		const id = ++this.#popupSerial;
+		const job = new PopupJob({
+			id,
+			pty,
+			vt,
+			box,
+			border,
+			title: title ?? "",
+			closeOnExit: args.closeOnExit,
+			// tmux's `TMUX` names the session by its number, without the `$`.
+			input: popupInput({
+				directory: directory ?? "",
+				tmux: (tmux ?? "").replace(/,$(\d+)$/, ",$1"),
+				pane,
+				shell: shell ?? "",
+				command: args.command ?? "",
+				path,
+			}),
+			changed: () => this.#schedule(),
+			closed: () => {
+				if (this.#popup === job) this.#popup = undefined;
+				if (!this.#ended) this.#o.post({ kind: "popup-closed", id });
+			},
+		});
+		this.#popup = job;
+		for (const key of waiting) job.key(key);
+		this.#schedule();
 	}
 
 	/** Write a command; its answer is the next reply of this client's. */
@@ -799,6 +947,18 @@ export class ControlClient {
 
 	#flush(): void {
 		if (!this.#visible || this.#ended) return;
+		const popup = this.#popup;
+		const popupFrame = popup?.frame();
+		if (popup !== undefined && popupFrame !== undefined) {
+			this.#o.post({
+				kind: "popup",
+				id: popup.id,
+				...popup.box,
+				border: popup.border,
+				title: popup.title,
+				frame: popupFrame,
+			});
+		}
 		for (const box of this.#shownPanes()) {
 			if (this.#seq - this.#acked >= MAX_UNACKED) return;
 			const pane = this.#panes.get(box.pane);
@@ -836,6 +996,7 @@ export class ControlClient {
 			timers.clear(this.#flushTimer);
 			this.#flushTimer = undefined;
 		}
+		this.#popup?.close();
 		for (const check of this.#modeChecks.values()) {
 			(this.#o.timers ?? NODE_TIMERS).clear(check);
 		}

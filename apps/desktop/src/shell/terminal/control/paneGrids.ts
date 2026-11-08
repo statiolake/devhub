@@ -14,6 +14,7 @@ import type {
   PaneModes,
   SessionPane,
   VtCursor,
+  VtFrame,
   VtStyle,
   WindowInfo,
 } from "../../../ipc/terminalControl";
@@ -79,6 +80,19 @@ export interface ControlView {
   client: string;
   prefixes: readonly string[];
   readonly cursors: Map<number, VtCursor | undefined>;
+  /** The `display-popup` open now, in cells of the window (border included). */
+  popup:
+    | {
+        readonly id: number;
+        readonly x: number;
+        readonly y: number;
+        readonly width: number;
+        readonly height: number;
+        readonly border: boolean;
+        readonly title: string;
+        cursor: VtCursor | undefined;
+      }
+    | undefined;
   readonly modes: Map<number, PaneModes>;
   /** Each pane's own style ids, as highlights of the one table. */
   readonly hlIds: Map<string, number>;
@@ -100,9 +114,66 @@ export function newControlView(fallback: {
     client: "",
     prefixes: [],
     cursors: new Map(),
+    popup: undefined,
     modes: new Map(),
     hlIds: new Map(),
   };
+}
+
+/** The popup's grid: grid 1, which no pane has (`gridOf`). */
+export const POPUP_GRID = 1;
+/** The popup's styles, apart from every pane's. */
+const POPUP_STYLES = "popup";
+
+/** One engine's frame into its grid: a pane's, the popup's. */
+function applyFrame(
+  view: ControlView,
+  owner: string,
+  id: number,
+  frame: VtFrame,
+  changes: RedrawChanges,
+): void {
+  for (const [styleId, style] of frame.styles) {
+    const key = `${owner}:${String(styleId)}`;
+    let hl = view.hlIds.get(key);
+    if (hl === undefined) {
+      hl = view.hlIds.size + 1;
+      view.hlIds.set(key, hl);
+    }
+    view.state.hl.set(hl, hlOf(style, view.state.defaults));
+  }
+  let grid = view.state.grids.get(id);
+  if (
+    grid === undefined ||
+    grid.width !== frame.cols ||
+    grid.height !== frame.rows
+  ) {
+    const size = frame.cols * frame.rows;
+    grid = {
+      id,
+      width: frame.cols,
+      height: frame.rows,
+      chars: new Array<string>(size).fill(" "),
+      hls: new Int32Array(size),
+      dirty: new Set(),
+    };
+    view.state.grids.set(id, grid);
+    for (let row = 0; row < frame.rows; row++) grid.dirty.add(row);
+    changes.grids.add(id);
+  }
+  for (const row of frame.dirty) {
+    if (row.y >= grid.height) continue;
+    const at = row.y * grid.width;
+    for (let x = 0; x < grid.width && x < row.cells.length; x++) {
+      grid.chars[at + x] = row.cells[x];
+      const styleId = row.styles[x];
+      grid.hls[at + x] =
+        styleId === 0
+          ? 0
+          : (view.hlIds.get(`${owner}:${String(styleId)}`) ?? 0);
+    }
+    grid.dirty.add(row.y);
+  }
 }
 
 /** Fold one message into the view; what the painter has to redraw. */
@@ -127,53 +198,38 @@ export function applyControl(
     }
     case "pane": {
       const { pane, frame } = message;
-      for (const [id, style] of frame.styles) {
-        const key = `${String(pane)}:${String(id)}`;
-        let hl = view.hlIds.get(key);
-        if (hl === undefined) {
-          hl = view.hlIds.size + 1;
-          view.hlIds.set(key, hl);
-        }
-        view.state.hl.set(hl, hlOf(style, view.state.defaults));
-      }
-      const id = gridOf(pane);
-      let grid = view.state.grids.get(id);
-      if (
-        grid === undefined ||
-        grid.width !== frame.cols ||
-        grid.height !== frame.rows
-      ) {
-        const size = frame.cols * frame.rows;
-        grid = {
-          id,
-          width: frame.cols,
-          height: frame.rows,
-          chars: new Array<string>(size).fill(" "),
-          hls: new Int32Array(size),
-          dirty: new Set(),
-        };
-        view.state.grids.set(id, grid);
-        for (let row = 0; row < frame.rows; row++) grid.dirty.add(row);
-        changes.grids.add(id);
-      }
-      for (const row of frame.dirty) {
-        if (row.y >= grid.height) continue;
-        const at = row.y * grid.width;
-        for (let x = 0; x < grid.width && x < row.cells.length; x++) {
-          grid.chars[at + x] = row.cells[x];
-          const styleId = row.styles[x];
-          grid.hls[at + x] =
-            styleId === 0
-              ? 0
-              : (view.hlIds.get(`${String(pane)}:${String(styleId)}`) ?? 0);
-        }
-        grid.dirty.add(row.y);
-      }
+      applyFrame(view, String(pane), gridOf(pane), frame, changes);
       view.cursors.set(pane, frame.cursor);
       view.modes.set(pane, message.modes);
       changes.cursor = true;
       return changes;
     }
+    case "popup": {
+      const { frame } = message;
+      const fresh = view.popup?.id !== message.id;
+      view.popup = {
+        id: message.id,
+        x: message.x,
+        y: message.y,
+        width: message.width,
+        height: message.height,
+        border: message.border,
+        title: message.title,
+        cursor: frame.cursor,
+      };
+      applyFrame(view, POPUP_STYLES, POPUP_GRID, frame, changes);
+      changes.layout ||= fresh;
+      changes.cursor = true;
+      return changes;
+    }
+    case "popup-closed":
+      if (view.popup?.id === message.id) {
+        view.popup = undefined;
+        view.state.grids.delete(POPUP_GRID);
+        changes.layout = true;
+        changes.cursor = true;
+      }
+      return changes;
     case "notice":
     case "ended":
       return changes;
@@ -182,6 +238,27 @@ export function applyControl(
 
 /** Where each shown pane's grid goes, in cells of the window. */
 export function paneBoxes(view: ControlView): GridBox[] {
+  const popup = view.popup;
+  const inset = popup?.border === true ? 1 : 0;
+  const popupBox: GridBox[] =
+    popup === undefined || !view.state.grids.has(POPUP_GRID)
+      ? []
+      : [
+          {
+            grid: POPUP_GRID,
+            row: popup.y + inset,
+            col: popup.x + inset,
+            width: popup.width - 2 * inset,
+            height: popup.height - 2 * inset,
+            z: 50,
+            float: true,
+            win: undefined,
+          },
+        ];
+  return [...panesBoxes(view), ...popupBox];
+}
+
+function panesBoxes(view: ControlView): GridBox[] {
   return view.panes
     .filter((box) => view.state.grids.has(gridOf(box.pane)))
     .map((box) => ({

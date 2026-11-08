@@ -499,7 +499,31 @@ that is never shown; every command DevHub sends after it waits too. Copy
 mode and the choosers do not wait, but take every key into a mode nobody
 sees.
 
-Until phase 3 draws them, nothing is let do that
+Phase 3 replaces this piece by piece. **`display-popup` is DevHub's now**
+(`main/ptyHost/control/popup.ts`): a binding that is one `display-popup`
+(as `list-keys` writes it, parsed by `tmuxCommand.ts`) is not sent; the
+pty host opens a pty of its own on the terminal's machine (`OpenSpec.popupLaunch`:
+`sh -c POPUP_SCRIPT`, planned by the machine as the control client is, so
+`ssh -tt` on a host) and runs the command there as tmux runs a popup's job:
+the opener's directory (`-d`, else `pane_current_path`), `TMUX` and
+`TMUX_PANE`, the session's `PATH` (else the server's), `default-shell -c`.
+`-w`/`-h`/`-x`/`-y` are placed against the client's size as tmux does
+(`C`, cells, percentages; `-y` is the last line), `-T` and `-d` are expanded
+by tmux, `-E`/`-EE` close it on exit, without them a key closes it once its
+command has exited, and `-B` drops the border. Its screen is an engine of
+its own (no scrollback); the page draws it as a float over the panes
+(`paneGrids.ts`, grid 1, z 50) in a frame whose look is `popup.css` alone,
+and while it is open every key is its, the prefix too. Checked in the app:
+the person's `bind m` (fzf over `tmux list-windows`, then `tmux move-pane
+-t :N`) listed the opener's windows and moved the opener; on an SSH host the
+popup ran on the host with the opener as `TMUX_PANE`. A Neovim drawn over a
+pane is hidden while a popup is open (the overlay is a view above the page).
+Not yet: `-e`, `-b`/`-s`/`-S` styles, the mouse in a popup. Seen on the way:
+a host's pane finds the host's own `tmux` on its PATH, not DevHub's (on the
+test host a 3.4, which cannot talk to the 3.7c server), in a popup and in a
+pane alike.
+
+The rest, until phase 3 draws them, is not let do that
 (`main/ptyHost/control/keyGuard.ts`):
 
 - DevHub keeps its own copy of where tmux is in its key tables, from the
