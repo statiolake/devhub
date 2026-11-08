@@ -59,15 +59,19 @@ state is `devhub/state.json` under it. What VS Code kept there (`User/`,
 
 ## Measured
 
-Build time and disk, before (VS Code provisioned) and after:
+Before: VS Code provisioned (the checkout this was cut from, and CI's runs
+of the commit before the removal). After: measured on the Linux container
+the cut was made in, from a fresh worktree with an empty pnpm store and an
+empty Electron cache.
 
 | | before | after |
 | --- | --- | --- |
-| disk a working checkout needs | `vscode/` 7.9 GB + `vscode-toolchain/` 0.2 GB + `node_modules` 0.9 GB ≈ 9.0 GB | `node_modules` 0.74 GB (Electron 0.32 GB of it) |
-| cold set-up (fresh clone) | provisioning: 16 min on CI's macOS runner (nightly, cache miss); the README said 40–60 min on a Mac | see the removal's follow-up commit message and the table in the final report |
-| warm, per CI macOS job | 3–4.3 min restoring the provisioned cache, before any check | none |
-| the desktop build | ~30 s | ~24–30 s |
-| packaged `Resources/app` | `code-oss-dev/` workbench bundle, built-ins and asar | 21 MB |
+| disk a working checkout needs | `vscode/` 7.9 GB + `vscode-toolchain/` 0.2 GB + `node_modules` 0.9 GB ≈ 9.0 GB | `node_modules` 0.74 GB, Electron's 0.32 GB of it |
+| cold set-up and build (fresh clone) | provisioning alone: 16 min on CI's macOS runner (nightly, cache miss); 40–60 min on a Mac (the README) | `pnpm install` 4 s (616 packages downloaded) + Electron 7 s + build 25 s ≈ 36 s |
+| warm, per CI macOS job, before any check | 3–4.3 min restoring the provisioned cache | `pnpm install` from the pnpm store cache |
+| warm rebuild | ~30 s, plus a recompile of `vscode/` after any patch edit | ~25 s |
+| packaged `Resources/app` | the `code-oss-dev/` workbench bundle, built-ins and asar, plus four REH tarballs | 21 MB |
+| nightly | four REH builds (12–27 min each) before the app job | the app job only |
 
 ## What is left to delete
 

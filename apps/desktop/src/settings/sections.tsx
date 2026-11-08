@@ -172,7 +172,7 @@ export function GeneralSection({
       <Group heading="Environment" note={runtime.loginEnvironment}>
         <SwitchRow
           label="Login shell"
-          help="Use your login shell's environment for everything DevHub runs — the editor and its extensions as well as terminals and agents. Takes effect the next time DevHub starts."
+          help="Use your login shell's environment for everything DevHub runs — terminals, Neovim and agents. Takes effect the next time DevHub starts."
           checked={config.general.importLoginEnvironment}
           onChange={(importLoginEnvironment) => {
             update({
@@ -771,7 +771,7 @@ export function GeneralSection({
 
       <Group
         heading="Agent panes"
-        note="The workbench's own terminal is styled by the workbench's settings, not by these: DevHub's terminals are the integrated terminal now, and an Agent's pane is the one text surface DevHub still draws itself. The font family is also DevHub's one monospace face: a GUI Agent's code, diffs and command output, and every other fixed-width line in DevHub's own windows, are set in it."
+        note="DevHub's terminals and the Neovims it draws over them are set in this. The font family is also DevHub's one monospace face: a GUI Agent's code, diffs and command output, and every other fixed-width line in DevHub's own windows, are set in it."
       >
         <Row label="Font">
           <TextField
@@ -1674,7 +1674,7 @@ export function TerminalSection({
 
       <Group
         heading="Keys"
-        note="DevHub's own terminals: the Workspace terminal, pane terminals and Agent panes. VS Code's integrated terminal has its own setting, terminal.integrated.macOptionIsMeta."
+        note="DevHub's terminals: the Workspace terminal, pane terminals and Agent panes."
       >
         <Row
           label="Option key"

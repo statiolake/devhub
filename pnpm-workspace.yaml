@@ -14,7 +14,9 @@ packages:
 #   build, so it is named here, off.
 # - node-pty is N-API and ships prebuilt binaries for every platform DevHub
 #   runs on, loaded from its own `prebuilds/`; its install script would only
-#   check that they are there.
+#   check that they are there. pnpm counts it as a package with a build too,
+#   so it is named here, off.
 allowBuilds:
   electron: false
   esbuild: true
+  node-pty: false
