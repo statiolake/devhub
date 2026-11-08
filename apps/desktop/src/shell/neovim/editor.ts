@@ -33,6 +33,8 @@ import {
 } from "./painter";
 import { escapeInputText, keyToNeovim } from "./keys";
 import { floatLabelsOf } from "./frame";
+import { cmdlineLayout, textCells } from "./cmdline";
+import { cmdlinePlace } from "./place";
 import {
   IDLE,
   imeStep,
@@ -531,28 +533,63 @@ export class NeovimEditor {
     this.cursor.style.zIndex = String(
       (this.boxes.find((b) => b.grid === grid)?.z ?? 0) + 1,
     );
-    // The IME's candidate window opens at the textarea: keep it on the cursor.
-    this.input.style.left = `${String(at.x)}px`;
-    this.input.style.top = `${String(at.y)}px`;
+    // The IME's candidate window opens at the textarea: keep it on the
+    // cursor — the command line's, while the bar is up.
+    const ime = this.cmdlineCaret() ?? at;
+    this.input.style.left = `${String(ime.x)}px`;
+    this.input.style.top = `${String(ime.y)}px`;
     this.input.style.height = `${String(cell.height)}px`;
     this.placePreedit();
   }
 
+  /**
+   * Where the command line's cursor is, in the page's pixels, while the bar
+   * is up: the cell `cmdlineLayout` puts it on, as the bar draws it.
+   */
+  private cmdlineCaret(): { x: number; y: number } | undefined {
+    const line = this.state.cmdline.at(-1);
+    if (!line) return undefined;
+    const cell = this.painter.cell();
+    const place = cmdlinePlace(this.gridSize().cols, cell.width);
+    const lead = Math.min(
+      place.cols - 1,
+      Math.max(1, textCells(line.firstc || line.prompt || "")),
+    );
+    const { caret } = cmdlineLayout(line, place.cols - lead);
+    const above = this.state.cmdlineBlock?.length ?? 0;
+    return {
+      x: (place.col + lead + caret.col) * cell.width,
+      y: (place.row + above + caret.row) * cell.height,
+    };
+  }
+
   private placePreedit(): void {
-    const at = this.cursorBox();
+    const bar = this.cmdlineCaret();
+    const at = bar ?? this.cursorBox();
     const text = this.ime.preedit;
+    this.host.classList.toggle("nvim-composing", text.length > 0);
     this.preedit.style.display =
       text.length === 0 || at === undefined ? "none" : "";
     if (text.length === 0 || at === undefined) return;
     const cell = this.painter.cell();
     // Cell by cell, as the grid will hold it once committed.
     const layout = preeditLayout(text);
+    // In the bar, in the bar's colours and over it.
+    const style = bar ? getComputedStyle(document.documentElement) : undefined;
+    const fg = style
+      ? rgbOfCss(style.getPropertyValue("--primary"))
+      : undefined;
+    const bg = style
+      ? (rgbOfCss(style.getPropertyValue("--raised")) ??
+        rgbOfCss(style.getPropertyValue("--surface")))
+      : undefined;
     this.painter.paintPreedit(
       this.preedit,
       layout,
-      this.state.defaults.foreground,
-      this.state.defaults.background,
+      fg ?? this.state.defaults.foreground,
+      bg ?? this.state.defaults.background,
     );
+    this.preedit.style.zIndex = bar ? "401" : "";
     this.preedit.style.left = `${String(at.x)}px`;
     this.preedit.style.top = `${String(at.y)}px`;
     // The textarea's caret — where the IME opens its candidates — after the

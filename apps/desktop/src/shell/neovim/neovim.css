@@ -250,21 +250,50 @@
   display: flex;
 }
 
-/* One cell, as Neovim's own command line has it: the text starts where a
-   plugin told `g:ui_cmdline_pos` expects it. */
+/* `firstc` or an `input()` prompt, on whole cells as Neovim's own command
+   line has it: the text starts where a plugin told `g:ui_cmdline_pos`
+   expects it. */
 .nvim-cmdline-firstc {
   flex: none;
   min-width: var(--nvim-cell);
+  overflow: hidden;
   color: var(--accent);
   font-weight: 600;
 }
 
-.nvim-cmdline-cursor {
-  display: inline-block;
-  min-width: 2px;
-  margin-right: -2px;
-  border-left: 2px solid var(--accent);
-  color: var(--ink-secondary);
+/* The text on cells (`cmdline.ts`): each character on the cells Neovim
+   gives it, the caret on the cursor's. */
+.nvim-cmdline-text {
+  position: relative;
+  flex: 1;
+}
+
+.nvim-cmdline-cell {
+  position: absolute;
+  text-align: center;
+  white-space: pre;
+}
+
+.nvim-cmdline-special {
+  color: var(--accent);
+}
+
+.nvim-cmdline-caret {
+  position: absolute;
+  pointer-events: none;
+  overflow: hidden;
+  white-space: pre;
+  text-align: center;
+  background: var(--accent);
+}
+
+.nvim-cmdline-caret-block {
+  color: var(--raised, var(--surface));
+}
+
+/* An IME composing in the bar: its preedit carries the caret. */
+.nvim-composing .nvim-cmdline-caret {
+  visibility: hidden;
 }
 
 .nvim-pum {

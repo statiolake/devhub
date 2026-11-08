@@ -219,6 +219,14 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   select), the command line as a palette-like bar (firstc, cursor, special
   char, `cmdline_block` for multiline), and tab pages as a native tab strip
   (click switches via `nvim_set_current_tabpage`).
+- The command line's text is laid out on cells as Neovim's own command line
+  holds it (`cmdline.ts`): `cmdline_pos` is a byte offset, a wide character
+  takes two cells, a combining mark joins the one before, the text wraps at
+  the bar's width, and `cmdline_special_char` shows at the cursor (put in
+  with `shift`, else over the character there). The caret sits on that cell
+  in the current mode's `guicursor` shape, colours and blink (`c`, `ci`,
+  `cr`), in `cmdline_block` and after an `input()` prompt too; an IME's
+  preedit and candidate window go there while the bar is up.
 - The command line bar sits on whole cells in the grid's font, and Neovim is
   told where: `g:ui_cmdline_pos` (`[row, col]`, the convention noice.nvim
   started), which blink.cmp's `:` completion menu reads, so its float opens

@@ -38,11 +38,12 @@ import {
 import { NeovimEditor } from "./editor";
 import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
 import {
-  charOffsetOfByte,
+  currentModeInfo,
   type Chunks,
   type GridBox,
   type NeovimUiState,
 } from "./redraw";
+import { cmdlineLayout, textCells } from "./cmdline";
 import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
 import { glyphKind } from "./glyphs";
 import { TerminalSurface } from "../terminal/TerminalSurface";
@@ -816,10 +817,6 @@ function guiDocument(html: string, state: NeovimUiState): string {
 const CMDLINE_PAD_X = 12;
 const CMDLINE_PAD_Y = 8;
 
-function chunkText(chunks: Chunks): string {
-  return chunks.map(([, text]) => text).join("");
-}
-
 function ChunkSpans({
   chunks,
   state,
@@ -851,9 +848,11 @@ function ChunkSpans({
 
 /**
  * `ext_cmdline`: a palette-like bar near the top, the cursor in it. It sits
- * on whole cells in the grid's own font (`cmdlinePlace`), so what plugins
- * draw beside the command line — told where it is by `g:ui_cmdline_pos` —
- * lines up with its text.
+ * on whole cells in the grid's own font (`cmdlinePlace`), its text laid out
+ * cell by cell as Neovim's own command line would hold it (`cmdlineLayout`),
+ * so what plugins draw beside the command line — told where it is by
+ * `g:ui_cmdline_pos` — lines up with its text, and the caret and an IME's
+ * preedit sit on the cell `cmdline_pos` names.
  */
 function Cmdline({
   state,
@@ -865,10 +864,6 @@ function Cmdline({
   const line = state.cmdline.at(-1);
   if (!line && !state.cmdlineBlock) return null;
   const block = state.cmdlineBlock ?? [];
-  const text = line ? chunkText(line.content) : "";
-  const cursorAt = line ? charOffsetOfByte(text, line.pos) : 0;
-  const before = text.slice(0, cursorAt);
-  const after = text.slice(cursorAt);
   const cell = editor.cellMetrics();
   const font = editor.font();
   const place = cmdlinePlace(editor.gridSize().cols, cell.width);
@@ -906,20 +901,124 @@ function Cmdline({
         </div>
       ))}
       {line ? (
-        <div className="nvim-cmdline-row">
-          <span className="nvim-cmdline-firstc">
-            {line.firstc || line.prompt || ""}
-          </span>
-          <span className="nvim-cmdline-text">
-            {" ".repeat(line.indent)}
-            {before}
-            <span className="nvim-cmdline-cursor">
-              {line.special?.char ?? ""}
-            </span>
-            {after}
-          </span>
-        </div>
+        <CmdlineRow line={line} state={state} cell={cell} cols={place.cols} />
       ) : null}
+    </div>
+  );
+}
+
+function CmdlineRow({
+  line,
+  state,
+  cell,
+  cols,
+}: {
+  readonly line: NeovimUiState["cmdline"][number];
+  readonly state: NeovimUiState;
+  readonly cell: { readonly width: number; readonly height: number };
+  readonly cols: number;
+}) {
+  const lead = line.firstc || line.prompt || "";
+  const leadCells = Math.min(cols - 1, Math.max(1, textCells(lead)));
+  const layout = cmdlineLayout(line, cols - leadCells);
+  const mode = currentModeInfo(state);
+  const caretRef = useRef<HTMLSpanElement>(null);
+  const on = mode?.blinkon ?? 0;
+  const off = mode?.blinkoff ?? 0;
+  const wait = mode?.blinkwait ?? 0;
+  const moved = `${String(layout.caret.row)},${String(layout.caret.col)},${state.mode.name}`;
+  // `guicursor`'s blink, restarted on every move, as the grid's cursor.
+  useEffect(() => {
+    const caret = caretRef.current;
+    if (!caret || on <= 0 || off <= 0 || typeof caret.animate !== "function")
+      return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const split = on / (on + off);
+    const blink = caret.animate(
+      [
+        { opacity: 1, offset: 0 },
+        { opacity: 1, offset: split },
+        { opacity: 0, offset: split },
+        { opacity: 0, offset: 1 },
+      ],
+      { duration: on + off, delay: wait, iterations: Infinity },
+    );
+    return () => {
+      blink.cancel();
+    };
+  }, [moved, on, off, wait]);
+  const attr = mode && mode.attrId > 0 ? state.hl.get(mode.attrId) : undefined;
+  const colors =
+    attr && (attr.background !== undefined || attr.foreground !== undefined)
+      ? resolveColors(attr, state.defaults)
+      : undefined;
+  const shape = mode?.cursorShape ?? "vertical";
+  const pct = (mode?.cellPercentage ?? 25) / 100;
+  const under = layout.cells.find(
+    (c) => c.row === layout.caret.row && c.col === layout.caret.col,
+  );
+  const caretStyle: React.CSSProperties = {
+    left: layout.caret.col * cell.width,
+    top: layout.caret.row * cell.height,
+    height: cell.height,
+    ...(colors ? { background: cssColor(colors.bg) } : {}),
+  };
+  if (shape === "vertical") {
+    caretStyle.width = Math.max(2, Math.round(cell.width * pct));
+  } else if (shape === "horizontal") {
+    const h = Math.max(2, Math.round(cell.height * pct));
+    caretStyle.top = layout.caret.row * cell.height + cell.height - h;
+    caretStyle.height = h;
+    caretStyle.width = (under?.cells ?? 1) * cell.width;
+  } else {
+    caretStyle.width = (under?.cells ?? 1) * cell.width;
+    if (colors) caretStyle.color = cssColor(colors.fg);
+  }
+  const textColor = (hl: number) => {
+    const a = hl === 0 ? undefined : state.hl.get(hl);
+    return a?.foreground !== undefined
+      ? cssColor(resolveColors(a, state.defaults).fg)
+      : undefined;
+  };
+  return (
+    <div className="nvim-cmdline-row">
+      <span
+        className="nvim-cmdline-firstc"
+        style={{ width: leadCells * cell.width }}
+      >
+        {lead}
+      </span>
+      <span
+        className="nvim-cmdline-text"
+        style={{ height: layout.rows * cell.height }}
+      >
+        {layout.cells.map((c, index) => (
+          <span
+            key={index}
+            className={
+              c.special
+                ? "nvim-cmdline-cell nvim-cmdline-special"
+                : "nvim-cmdline-cell"
+            }
+            style={{
+              left: c.col * cell.width,
+              top: c.row * cell.height,
+              width: c.cells * cell.width,
+              color: textColor(c.hl),
+            }}
+          >
+            {c.ch}
+          </span>
+        ))}
+        <span
+          ref={caretRef}
+          className={`nvim-cmdline-caret nvim-cmdline-caret-${shape}`}
+          style={caretStyle}
+          aria-hidden="true"
+        >
+          {shape === "block" ? (under?.ch ?? "") : ""}
+        </span>
+      </span>
     </div>
   );
 }
