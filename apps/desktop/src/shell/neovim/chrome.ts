@@ -39,6 +39,12 @@ export interface Corners {
 export interface PaintTheme {
   /** Backgrounds drawn as rounded shapes: `Visual`, `Search`, … */
   readonly shaped: ReadonlySet<number>;
+  /**
+   * `EndOfBuffer`'s foreground while `fillchars` leaves `eob:` at its
+   * default `~`: those markers are not drawn, as a GUI editor shows empty
+   * space past the end. `undefined` when the person chose `eob:`.
+   */
+  readonly eob?: number;
   /** `cmdheight`: grid 1's last rows are the command line's, no bar. */
   readonly cmdheight: number;
 }
@@ -57,16 +63,19 @@ const SHAPED_GROUPS = [
 
 /**
  * Asked with `nvim_exec_lua` (0.9+: `nvim_get_hl`): each group's colours,
- * links followed, and `cmdheight`.
+ * links followed, `cmdheight` and the global `fillchars`.
  */
-export const THEME_LUA = `local out = { groups = {}, cmdheight = vim.o.cmdheight }
+export const THEME_LUA = `local out = { groups = {}, cmdheight = vim.o.cmdheight, fillchars = vim.go.fillchars }
 for _, name in ipairs(...) do
   local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
   if ok then out.groups[name] = hl end
 end
 return out`;
 
-export const THEME_GROUPS: readonly string[] = SHAPED_GROUPS;
+export const THEME_GROUPS: readonly string[] = [
+  ...SHAPED_GROUPS,
+  "EndOfBuffer",
+];
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -87,12 +96,23 @@ export function themeOf(answer: unknown): PaintTheme {
     if (typeof hl["bg"] === "number") shaped.add(hl["bg"]);
   }
   const cmdheight = typeof out["cmdheight"] === "number" ? out["cmdheight"] : 1;
-  return { shaped, cmdheight };
+  const fillchars =
+    typeof out["fillchars"] === "string" ? out["fillchars"] : "";
+  const eobChosen = fillchars
+    .split(",")
+    .some((part) => part.startsWith("eob:"));
+  const eob = record(groups["EndOfBuffer"])?.["fg"];
+  return {
+    shaped,
+    cmdheight,
+    ...(!eobChosen && typeof eob === "number" ? { eob } : {}),
+  };
 }
 
 export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
   return (
     a.cmdheight === b.cmdheight &&
+    a.eob === b.eob &&
     a.shaped.size === b.shaped.size &&
     [...a.shaped].every((bg) => b.shaped.has(bg))
   );
@@ -393,4 +413,22 @@ export function separatorsOf(
 /** A separator's character: a vertical line, light or heavy, or `|`. */
 export function isSeparatorLine(c: string): boolean {
   return c === "│" || c === "┃" || c === "|" || c === "║";
+}
+
+/**
+ * A window row that is only an end-of-buffer `~` (the default `eob`, in
+ * `EndOfBuffer`'s colour): the row past the end of the buffer.
+ */
+export function isEndOfBuffer(
+  chars: readonly string[],
+  base: number,
+  width: number,
+  fg: number,
+  eob: number | undefined,
+): boolean {
+  if (eob === undefined || fg !== eob || chars[base] !== "~") return false;
+  for (let col = 1; col < width; col += 1) {
+    if ((chars[base + col] ?? " ") !== " ") return false;
+  }
+  return true;
 }

@@ -25,6 +25,7 @@ import {
   NO_THEME,
   barLayout,
   barsOf,
+  isEndOfBuffer,
   isSeparatorLine,
   sameTheme,
   separatorsOf,
@@ -823,6 +824,19 @@ export class GridPainter {
     this.paintShaped(ctx, state, box, row, y);
     this.skip.clear();
     this.paintBars(ctx, state, box, row, y);
+    if (
+      !box.float &&
+      box.grid !== 1 &&
+      isEndOfBuffer(
+        grid.chars,
+        base,
+        grid.width,
+        resolveColors(state.hl.get(grid.hls[base] ?? 0), state.defaults).fg,
+        this.theme.eob,
+      )
+    ) {
+      this.skip.add(0);
+    }
     for (const run of runs) {
       this.paintRun(
         ctx,

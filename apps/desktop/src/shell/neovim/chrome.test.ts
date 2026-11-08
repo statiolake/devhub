@@ -4,6 +4,7 @@ import {
   NO_THEME,
   barLayout,
   barsOf,
+  isEndOfBuffer,
   separatorsOf,
   sameTheme,
   shapedSpans,
@@ -209,5 +210,30 @@ describe("a window separator", () => {
       { row: 2, col: 5, left: LEFT, right: STATUS },
       { row: 3, col: 5, left: LEFT, right: RIGHT },
     ]);
+  });
+});
+
+describe("the end of the buffer", () => {
+  const EOB = 0x3b3b3b;
+
+  it("is not drawn while fillchars leaves eob: alone", () => {
+    const theme = themeOf({
+      groups: { EndOfBuffer: { fg: EOB } },
+      fillchars: "vert:│,stl:┴",
+    });
+    expect(theme.eob).toBe(EOB);
+    const chars = [..."~    "];
+    expect(isEndOfBuffer(chars, 0, 5, EOB, theme.eob)).toBe(true);
+    // A line of text that starts with a tilde, in another colour.
+    expect(isEndOfBuffer(chars, 0, 5, 0xffffff, theme.eob)).toBe(false);
+    expect(isEndOfBuffer([..."~ x  "], 0, 5, EOB, theme.eob)).toBe(false);
+  });
+
+  it("is drawn when the person chose eob:", () => {
+    const theme = themeOf({
+      groups: { EndOfBuffer: { fg: EOB } },
+      fillchars: "eob:~",
+    });
+    expect(theme.eob).toBeUndefined();
   });
 });

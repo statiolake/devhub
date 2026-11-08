@@ -207,6 +207,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     A row is repainted with its neighbours while such colours are about.
   - A window separator's cell is drawn as the two sides meeting
     (`separatorsOf`): each half in the ground beside it, its line between.
+  - The `~` past the end of a buffer is not drawn while `fillchars` has
+    no `eob:` of the person's (`isEndOfBuffer`).
   - Status lines and winbars are bars (`chrome.ts`'s `barsOf`,
     `barLayout`): the runs not in the bar's commonest colour are pills,
     and Powerline's filled separators (U+E0B0, E0B2, … even code points)
@@ -562,11 +564,12 @@ least risky first within a band):
    inner ones where the next row runs on (VS Code's selection), the line's
    `linespace` included; colours unchanged. `CursorLine` stays a flat band,
    edge to edge, as editors draw it.
-4. _`~` end-of-buffer markers and the blank rows past the end_: drawn as
-   text. `fillchars` `eob:` is the person's choice; when it is the default
-   `~`, draw nothing (or a faint end rule), as GUI editors show empty space.
-   Low risk (purely visual), but a person who set `eob:~` on purpose loses
-   it — key it on the option being the default.
+4. _`~` end-of-buffer markers and the blank rows past the end_ — done:
+   while the global `fillchars` has no `eob:` (asked with the theme), a
+   window row that is only a `~` in `EndOfBuffer`'s colour is drawn
+   without it: empty space past the end, as GUI editors show. A person who
+   set `eob:` (even `eob:~`) keeps their markers. `:set fillchars=eob:x`
+   in one window only is not seen until highlights or the layout change.
 5. _Float scrollbars drawn by plugins as cells_ (snacks, blink.cmp,
    nvim-cmp: a column of `█`/`▐` thumbs in `PmenuThumb`/`PmenuSbar`):
    recognise a one-column float or column of thumb glyphs at a float's
