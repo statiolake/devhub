@@ -451,13 +451,22 @@ every byte; xterm.js' path drops what tmux coalesced away).
 
 - **Popups.** A popup's command runs as the popup's pane's: `$TMUX_PANE`
   and "the current pane" are the pane that opened it, which is what the
-  person's `bind m` (`tmux move-pane` with no `-s`) relies on. Running the
-  command in a split or a window DevHub shows as a float changes that, so
-  the float has to be given the opener as its target: the command run with
-  `TMUX_PANE` and a `-t` of the opener where tmux allows it, or the pane
-  marked (`select-pane -m`) for commands that take the marked pane. The
-  guard (`keyGuard.ts`) already knows which binding was pressed and its
-  command; that is where a popup would be started instead of refused.
+  person's `bind m` (`tmux move-pane` with no `-s`) relies on. Settled by
+  experiment (tmux 3.7c, a server of its own): run in a temporary window or
+  a session of its own, the command's tty is that pane's, and tmux takes
+  the pane whose tty a client is on as "the current pane" before
+  `$TMUX_PANE` — `list-windows` listed the popup's session and
+  `move-pane -t :2` failed, `TMUX_PANE` overridden or not. Run in a pty of
+  DevHub's own, which is no pane's, with the opener's `TMUX` and
+  `TMUX_PANE` in its environment — what tmux's own popup job is — tmux
+  falls back to `$TMUX_PANE`: `list-windows` listed the opener's windows
+  and `move-pane -t :2` moved the opener. So the pty host runs the popup's
+  command itself (on a host, in a pty there: `ssh -tt`), in the opener's
+  directory (`-d`, else `pane_current_path`), and the page draws it as a
+  float with an engine of its own. The guard (`keyGuard.ts`) already knows
+  which binding was pressed and its command; that is where a popup would
+  be started instead of refused. The look is mocked (`phase3/mock.html` in
+  the work's scratch area, sent for review) and waits for the person.
 - **Menus, prompts, confirm-before.** The binding's command is known at
   the guard; DevHub draws the menu or prompt (mock first, Japanese
   annotations) and runs the chosen item, or the prompt's template with
@@ -509,10 +518,9 @@ Until phase 3 draws them, nothing is let do that
   marks and `copy-pipe-and-cancel` in one binding, are done by then and are
   untouched.
 
-Running a popup's command somewhere else (a temporary split or window) was
-considered and not done: such a command runs as the popup's pane's, and the
-person's `bind m` moves "the current pane" (`tmux move-pane` with no `-s`),
-which in a split is the split itself.
+A popup's command run in a temporary split or window would run as that
+pane's, not the opener's (see the handoff above): it is to run in a pty of
+DevHub's own.
 
 ### Phases
 
