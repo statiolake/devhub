@@ -129,9 +129,28 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   border is blank cells (`'solid'`, a table of spaces — Neovim 0.10+ says
   where a border is with `win_viewport_margins`) is drawn as with none:
   only its text area, where Neovim put it, in that frame, and a click on
-  the left-out border falls through (`GridBox.crop`). One whose border
-  draws something (`'rounded'`, `'single'`, …) is drawn as Neovim says,
-  with only a shadow: never two frames (`floatBorder`). Ligatures off. The font is `guifont` if set, else DevHub's
+  the left-out border falls through (`GridBox.crop`); a blank border
+  with a title or footer keeps that row, a header inside the frame. One
+  whose border is lines (`'rounded'`, `'single'`, `'double'`, heavy,
+  dashed, a table of box-drawing characters) is cut at its line
+  (`frame.ts`, `GridBox.frame`): the line is the float's edge, nothing of
+  the border cells outside it is drawn — the windows behind show there,
+  and a click there goes to them; inside it, the border's ground. The
+  canvas is the text area; the lines are DevHub's (CSS borders on whole
+  device pixels, where `glyphShapes` would have drawn `─ │ ╭`, a rounded
+  corner's arc as the radius), with the shadow following that outline.
+  Framed floats edge to edge meet half way between their lines and the
+  edge they share is drawn once (`framePieces`); only the panel's outer
+  corners stay round. A borderless float wholly behind framed ones (a
+  picker's root box) is not drawn (`underFrames`). The `title` and
+  `footer` are labels on the line, in their highlights, where Neovim put
+  them (`title_pos`/`footer_pos`), the line broken around them: the page
+  asks `nvim_win_get_config` when a border holds text, and until the
+  config explains that text (or when it does not) the float is drawn cell
+  for cell, as Neovim drew it. Any other border (ASCII, block elements, a
+  side with text) is drawn as Neovim says, with only a shadow: never two
+  frames (`floatBorder`). With `winblend`, the ring between the lines and
+  the text is blended and the panel has no shadow. Ligatures off. The font is `guifont` if set, else DevHub's
   terminal font (Settings > Terminal); `linespace` is honoured.
   - The cell is measured on whole device pixels (crisp at
     `devicePixelRatio` 2; the text of a run is spread to the cell with
@@ -190,8 +209,9 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   cell, so the candidate window opens under the end of the preedit.
   Paste (Cmd+V, the menu) goes to `nvim_paste`.
 - `mouse.ts` — `nvim_input_mouse` with the grid under the pointer (floats
-  first), drags kept on the press's grid, wheel/trackpad pixels accumulated
-  into line steps.
+  first; a framed float only inside its lines, which toward a float edge to
+  edge with it go on to its cells' edge), drags kept on the press's grid,
+  wheel/trackpad pixels accumulated into line steps.
 - Resize: the view's size over the cell size, `nvim_ui_try_resize`.
 - Focus: `nvim_ui_set_focus` (FocusGained/FocusLost).
 - Widgets in DevHub's chrome: the completion menu at its anchor cell (flipped
@@ -466,6 +486,84 @@ VS Code: several terminals (`:DevhubTerminal new`, numbered buffers), each a
 DevHub pane terminal session of the Workspace (on the Workspace's machine
 even when Neovim runs in a container), `<C-w>` navigation, a `terminal`
 layout preset, and the Sidebar's terminal activity marks.
+
+**Toward a GUI editor: what still looks like a terminal.** Neovim is the
+modal editing engine — buffers, modes, motions, keymaps, layout, plugins'
+logic; DevHub is the editor's presentation. Whatever looks like a terminal
+only because the protocol speaks in cells is an implementation detail to
+draw as a modern GUI editor would, as long as what is where, what a click
+or a key does, and what a plugin sees stay the same. Done: geometric box
+drawing, blocks and Powerline separators; floats framed, cut at their line,
+titled with labels; panels of floats under one shadow; native popupmenu,
+command line, tab line, hover popups, notifications; smooth scroll and
+cursor. Candidates, by visual impact and then by compatibility risk (the
+least risky first within a band):
+
+1. _Window separators_ (`│` in a whole cell column): the line runs through
+   the middle of a cell of `WinSeparator`'s ground, a half-cell band each
+   side. Draw a 1px line on the column's centre over the neighbouring
+   windows' grounds (each half of the column in its window's `Normal`
+   background), so splits meet edge to edge like editor groups; clicks and
+   drags on the column stay Neovim's (`:help vertical-separator`). Low risk.
+2. _Statusline and winbar as cell rows_: a full row of `StatusLine` cells,
+   lualine's segments as blocks with Powerline triangles. Draw the row as a
+   bar of its own (a hairline above, the text vertically centred, segment
+   backgrounds as rounded pills where a separator glyph joins two runs);
+   the text and click regions stay cell for cell (`%@…@` handlers, lualine
+   components). Medium risk: themes rely on exact colours.
+3. _Selection, search and cursorline as per-cell rectangles_: Visual mode,
+   `Search`/`IncSearch`, `CursorLine`, `Visual` are runs of background
+   colour, square and edged at cell rows (with `linespace` a selection is a
+   stack of tall slabs). Recognise those highlight groups' runs and draw
+   them as one shape per row with rounded outer corners (VS Code's
+   selection), the line's inner `linespace` included or not as one choice.
+   Colours unchanged. Low risk; needs `ext_hlstate` or the group names to
+   know which runs they are.
+4. _`~` end-of-buffer markers and the blank rows past the end_: drawn as
+   text. `fillchars` `eob:` is the person's choice; when it is the default
+   `~`, draw nothing (or a faint end rule), as GUI editors show empty space.
+   Low risk (purely visual), but a person who set `eob:~` on purpose loses
+   it — key it on the option being the default.
+5. _Float scrollbars drawn by plugins as cells_ (snacks, blink.cmp,
+   nvim-cmp: a column of `█`/`▐` thumbs in `PmenuThumb`/`PmenuSbar`):
+   recognise a one-column float or column of thumb glyphs at a float's
+   right edge and draw it as DevHub's overlay scrollbar (thin, rounded,
+   fading), clicks passed through as before. Medium risk (heuristic).
+6. _The message area and `cmdheight` row_ (`-- INSERT --`, the ruler, `Press
+ENTER`): a terminal row at the bottom of the editor. With `ext_messages`
+   (0.10+, see The attach) the row goes away and messages become toasts and
+   a mode chip; until then, draw the row as a status bar of DevHub's
+   (smaller type, no cell grid). High risk: hit-enter prompts must stay
+   answerable.
+7. _Sign, number and fold columns_: cells with spaces between; diagnostics
+   signs as letters or icons in a two-cell column. Draw sign icons centred
+   in the column, line numbers right-aligned in a lighter weight, fold
+   markers as chevrons, and the `foldcolumn`'s `│` as nothing. Low risk
+   (`statuscolumn` output is kept as text; only glyphs DevHub recognises
+   change).
+8. _Indent guides and `listchars`_ (`│`, `▏`, `·`, `→`): drawn geometrically
+   already, but a guide is a cell-centred line broken by `linespace`
+   nowhere and coloured by its highlight; draw them hairline and dimmer,
+   aligned to the indent's first column as editors do. Low risk.
+9. _Diagnostic virtual text and inlay hints_: text with a background block
+   at cell height after the line. Draw as pills (rounded, inset, smaller
+   type), keeping their cells reserved so the cursor and `$` still land
+   where Neovim says. Medium risk (wide characters, truncation at the
+   window edge).
+10. _Diff filler lines and `diff` fillchars_ (`-----` in `DiffDelete`): draw
+    as a hatched band; folds' `+--  12 lines` as a fold bar. Low risk.
+11. _The block cursor and its cell_: a solid block over the character,
+    redrawn in reverse. Draw a rounded caret/block with the character in
+    the cursor's foreground and a soft blink (already follows `guicursor`).
+    Low risk.
+12. _Blended backdrops_ (snacks' `backdrop`, a full-screen float with
+    `winblend`): drawn cell for cell with each character's ground mixed.
+    Recognise a blank full-screen float with `winblend` and draw a dim
+    overlay (a CSS layer with its colour and opacity), cheaper and smooth.
+    Low risk.
+13. _`scrolloff` and the last row's padding_: behaviour, not drawing —
+    kept. Pixel-smooth scrolling between rows (the 90 ms slide already
+    hides the jumps) is as far as it goes without changing `topline`.
 
 **Also:** dev containers (Neovim in the container through `docker exec`, its
 socket reached by a relay like the `devhub` command's), delivering `nvim` to

@@ -57,6 +57,11 @@ const DASHES: Readonly<Record<number, number>> = {
   0x254f: 2,
 };
 
+/** A dashed line (`┄ ┆ ┈ ╌`, …): a frame draws it dashed. */
+export function isDashed(c: string): boolean {
+  return DASHES[c.codePointAt(0) ?? 0] !== undefined;
+}
+
 export interface Arms {
   readonly n: number;
   readonly e: number;

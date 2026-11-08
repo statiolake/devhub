@@ -15,6 +15,8 @@
  * rows are dirty and which widgets moved, read and cleared at each `flush`.
  */
 
+import { analyzeFrame, type FloatFrame, type FloatLabels } from "./frame.js";
+
 /** A highlight, as `hl_attr_define`'s rgb map says it. Colours are 24-bit. */
 export interface HlAttr {
   readonly foreground?: number;
@@ -155,6 +157,12 @@ export interface NeovimUiState {
    * position.)
    */
   readonly margins: Map<number, Margins>;
+  /**
+   * Each float's `title` and `footer`, by window handle, as
+   * `nvim_win_get_config` answered (the page asks when a border holds text):
+   * what lets a border's text be drawn as a label on its line.
+   */
+  readonly floatLabels: Map<number, FloatLabels>;
   readonly windows: Map<number, WindowState>;
   readonly hl: Map<number, HlAttr>;
   defaults: { foreground: number; background: number; special: number };
@@ -219,6 +227,7 @@ export function initialUiState(
     grids: new Map(),
     gridWins: new Map(),
     margins: new Map(),
+    floatLabels: new Map(),
     windows: new Map(),
     hl: new Map(),
     defaults: { ...fallback },
@@ -521,6 +530,9 @@ function applyEvent(
       return;
     }
     case "win_close": {
+      const closing = state.windows.get(num(args[0]));
+      if (closing?.placement.kind === "float")
+        state.floatLabels.delete(closing.placement.win);
       state.windows.delete(num(args[0]));
       changes.layout = true;
       return;
@@ -776,19 +788,34 @@ export interface GridBox {
    * DevHub's own frame, as with no border — and a click there falls through.
    */
   readonly crop?: Margins;
-  /** A float with a border of lines, drawn as Neovim says: no frame of DevHub's. */
+  /** A float with a border of lines: no frame of DevHub's. */
   readonly lined?: boolean;
+  /**
+   * That border as a frame (`frame.ts`): the canvas is the text area, the
+   * lines and labels are DevHub's, cut at the line. Without it, a border of
+   * lines is drawn cell for cell.
+   */
+  readonly frame?: FloatFrame;
+  /** Its border holds text its known `title` / `footer` do not explain. */
+  readonly wantsLabels?: boolean;
 }
 
 /**
- * How a float's border shows: `crop` when all its cells are blank, `lined`
- * when it draws something, neither without one (or before 0.10, which does
- * not say).
+ * How a float's border shows: `crop` when its cells are blank (but for rows
+ * of text above or below, which are kept), `frame` when it is lines,
+ * `lined` when it draws something else, neither without one (or before
+ * 0.10, which does not say).
  */
 export function floatBorder(
   grid: Grid,
   margins: Margins | undefined,
-): { crop?: Margins; lined?: boolean } {
+  labels?: FloatLabels,
+): {
+  crop?: Margins;
+  lined?: boolean;
+  frame?: FloatFrame;
+  wantsLabels?: boolean;
+} {
   if (!margins) return {};
   const { top, right, bottom, left } = margins;
   if (top + right + bottom + left === 0) return {};
@@ -802,14 +829,28 @@ export function floatBorder(
     return true;
   };
   // The edges only: this runs on every paint.
-  for (let row = 0; row < grid.height; row += 1) {
-    const ok =
-      row < top || row >= grid.height - bottom
-        ? blank(row, 0, grid.width)
-        : blank(row, 0, left) && blank(row, grid.width - right, grid.width);
-    if (!ok) return { lined: true };
+  let sides = true;
+  for (let row = 0; row < grid.height && sides; row += 1) {
+    sides = blank(row, 0, left) && blank(row, grid.width - right, grid.width);
   }
-  return { crop: margins };
+  let keepTop = top;
+  while (keepTop > 0 && blank(top - keepTop, 0, grid.width)) keepTop -= 1;
+  let keepBottom = bottom;
+  while (
+    keepBottom > 0 &&
+    blank(grid.height - bottom + keepBottom - 1, 0, grid.width)
+  )
+    keepBottom -= 1;
+  if (sides && keepTop === 0 && keepBottom === 0) return { crop: margins };
+  const seen = analyzeFrame(grid, margins, labels);
+  if (seen.frame) return { lined: true, frame: seen.frame };
+  // A blank border with a title or footer (`'solid'` and a `title`): the
+  // blank is left out, the rows with text kept, a header in DevHub's frame.
+  if (sides && left + right > 0)
+    return {
+      crop: { top: top - keepTop, right, bottom: bottom - keepBottom, left },
+    };
+  return seen.labels ? { lined: true, wantsLabels: true } : { lined: true };
 }
 
 /**
@@ -891,7 +932,11 @@ export function layoutGrids(state: NeovimUiState): GridBox[] {
         z: 100 + p.zindex,
         float: true,
         win: p.win,
-        ...floatBorder(grid, state.margins.get(window.grid)),
+        ...floatBorder(
+          grid,
+          state.margins.get(window.grid),
+          state.floatLabels.get(p.win),
+        ),
       };
     }
     boxes.set(window.grid, box);

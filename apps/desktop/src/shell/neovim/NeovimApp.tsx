@@ -163,7 +163,20 @@ function NeovimSurface({
     const call = (method: string, params: readonly unknown[]) => {
       bridge.neovim.call({ workspaceId, method, params });
     };
-    const editor = new NeovimEditor(host, { call }, settingsRef.current);
+    const request = async (method: string, params: readonly unknown[]) => {
+      const answer = await bridge.neovim.request({
+        workspaceId,
+        method,
+        params,
+      });
+      if (!answer.ok) throw new Error(answer.message);
+      return answer.value;
+    };
+    const editor = new NeovimEditor(
+      host,
+      { call, request },
+      settingsRef.current,
+    );
     editorRef.current = editor;
     // For DevTools: the state the page is drawing.
     (window as unknown as { neovimEditor?: NeovimEditor }).neovimEditor =

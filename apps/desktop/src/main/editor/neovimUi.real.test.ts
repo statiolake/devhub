@@ -27,6 +27,7 @@ import {
 	placeUnplacedWindows,
 	type NeovimUiState,
 } from "../../shell/neovim/redraw.js";
+import { floatLabelsOf } from "../../shell/neovim/frame.js";
 
 function findNvim(): string | undefined {
 	const named = process.env.DEVHUB_TEST_NVIM;
@@ -376,6 +377,48 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		await h.until(() => float()?.width === 10, "no border");
 		expect(float()?.crop).toBeUndefined();
 		expect(float()?.lined).toBeUndefined();
+		h.ui.client.close();
+	});
+
+	it("frames a float's border of lines, its title a label once its config is known", async () => {
+		const h = await attached(60, 20);
+		const has010 = (await h.ui.request("nvim_exec_lua", [
+			"return vim.fn.has('nvim-0.10') == 1",
+			[],
+		])) as boolean;
+		if (!has010) return; // 0.9 sends no win_viewport_margins, nor footers
+		const win = (await h.ui.request("nvim_exec_lua", [
+			"local buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'hello' }); return vim.api.nvim_open_win(buf, false, { relative = 'editor', row = 2, col = 3, width = 20, height = 3, border = 'rounded', title = ' Files ', title_pos = 'center', footer = { { '1', 'Title' }, { '/2', 'Comment' } }, footer_pos = 'right' })",
+			[],
+		])) as number;
+		const float = () => layoutGrids(h.state).find((b) => b.float);
+		// The border holds text its (unknown) config has to explain first.
+		await h.until(() => float()?.wantsLabels === true, "the border's text");
+		expect(float()?.frame).toBeUndefined();
+		const config = await h.ui.request("nvim_win_get_config", [win]);
+		h.state.floatLabels.set(win, floatLabelsOf(config));
+		const box = float();
+		expect(box?.wantsLabels).toBeUndefined();
+		expect(box?.frame?.corners).toEqual({ tl: "╭", tr: "╮", br: "╯", bl: "╰" });
+		expect(box?.frame?.sides.left?.glyph).toBe("│");
+		expect(
+			box?.frame?.labels.map((l) => [
+				l.side,
+				l.col,
+				l.cells,
+				l.runs.map((r) => r.text).join(""),
+			]),
+		).toEqual([
+			// Centred: (22 - 7) / 2 = 7, after its blank.
+			["top", 8, 5, "Files"],
+			// Right: against the corner.
+			["bottom", 18, 3, "1/2"],
+		]);
+		// Two highlights in the footer: two runs.
+		expect(box?.frame?.labels[1]?.runs.length).toBe(2);
+		// A new title the config does not have yet: cell for cell again.
+		await h.ui.request("nvim_win_set_config", [win, { title: " Grep " }]);
+		await h.until(() => float()?.wantsLabels === true, "the new title");
 		h.ui.client.close();
 	});
 

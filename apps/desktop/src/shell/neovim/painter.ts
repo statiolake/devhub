@@ -14,7 +14,20 @@
 import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
 import type { CellMetrics } from "./mouse";
 import { fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
-import { floatClusters, type CellRect, type FloatCorners } from "./floats";
+import {
+  floatClusters,
+  framePieces,
+  underFrames,
+  type FloatCorners,
+  type FramedMember,
+} from "./floats";
+import {
+  SIDES,
+  frameGeometry,
+  labelBox,
+  type FrameLabel,
+  type Side,
+} from "./frame";
 
 export interface FontSpec {
   readonly family: string;
@@ -171,15 +184,55 @@ const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 /** A float's outer corners' radius (DevHub's frame); a border of lines has none. */
 const FLOAT_RADIUS = 6;
 
+/**
+ * What of a grid its canvas shows: a float's left-out blank border, or a
+ * framed float's border (DevHub draws the frame).
+ */
+function cropOf(box: GridBox) {
+  return box.frame?.margins ?? box.crop ?? NO_CROP;
+}
+
 function radii(corners: FloatCorners, r: number): string {
   const px = (on: boolean) => `${String(on ? r : 0)}px`;
   return `${px(corners.tl)} ${px(corners.tr)} ${px(corners.br)} ${px(corners.bl)}`;
 }
 
+/** One ground under a panel of floats (`placeClusters`). */
+interface Piece {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  readonly radius: string;
+  readonly background: string;
+  /** A framed member's lines: top, right, bottom, left, as CSS borders. */
+  readonly borders?: readonly string[];
+  /** A blended framed member's text area, left out. */
+  readonly hole?: string;
+  /** A framed member's zindex: its lines are drawn at it. */
+  readonly z?: number;
+}
+
+/** A title or footer on a frame's line. */
+interface Label {
+  readonly x: number;
+  readonly w: number;
+  readonly cy: number;
+  readonly background: string;
+  readonly runs: readonly { text: string; color: string; font: string }[];
+}
+
 export class GridPainter {
   private readonly canvases = new Map<number, GridCanvas>();
   /** One shadow per panel of floats (`floats.ts`), by what it looks like. */
-  private readonly clusters = new Map<string, HTMLDivElement>();
+  private readonly clusters = new Map<
+    string,
+    {
+      readonly ground: HTMLDivElement;
+      readonly frames: readonly HTMLDivElement[];
+      readonly labels?: HTMLDivElement;
+    }
+  >();
   private font: FontSpec;
   private metrics: Metrics;
   private dpr: number;
@@ -257,8 +310,14 @@ export class GridPainter {
       }
     }
     const all = forceAll || changes.colors;
-    const corners = this.placeClusters(state, boxes);
-    for (const box of boxes) {
+    const hidden = underFrames(boxes);
+    const shown = boxes.filter((box) => !hidden.has(box.grid));
+    for (const grid of hidden) {
+      const entry = this.canvases.get(grid);
+      if (entry) entry.canvas.style.display = "none";
+    }
+    const corners = this.placeClusters(state, shown);
+    for (const box of shown) {
       const grid = state.grids.get(box.grid);
       if (!grid) continue;
       let entry = this.canvases.get(box.grid);
@@ -276,7 +335,7 @@ export class GridPainter {
       const { canvas } = entry;
       // A float's blank border is left out: the canvas is its text area,
       // where Neovim put it (`paintRow` draws the grid shifted by it).
-      const crop = box.crop ?? NO_CROP;
+      const crop = cropOf(box);
       const cropKey = `${String(crop.top)},${String(crop.right)},${String(crop.bottom)},${String(crop.left)}`;
       canvas.style.display = "";
       canvas.style.left = `${String((box.col + crop.left) * this.metrics.width)}px`;
@@ -286,6 +345,7 @@ export class GridPainter {
       const round = corners.get(box.grid);
       canvas.style.borderRadius =
         round && box.lined !== true ? radii(round, FLOAT_RADIUS) : "";
+      canvas.classList.toggle("nvim-framed", box.frame !== undefined);
       if (
         entry.width !== grid.width ||
         entry.height !== grid.height ||
@@ -361,9 +421,12 @@ export class GridPainter {
   /**
    * The shadow under each panel of floats (`floatClusters`): one element per
    * cluster under its members, holding a ground for each member and seam,
-   * whose drop shadow follows their union's outline. Kept while the cluster
-   * looks the same, so a member's redraw does not touch it. Answers each
-   * member's outer corners, for its canvas's radius.
+   * whose drop shadow follows their union's outline. A member whose border
+   * is a frame (`frame.ts`) gets its ground out to its lines and no
+   * further, the lines and its title and footer drawn here: the float is cut
+   * at its line. Kept while the cluster looks the same, so a member's redraw
+   * does not touch it. Answers each member's outer corners, for its canvas's
+   * radius.
    */
   private placeClusters(
     state: NeovimUiState,
@@ -372,57 +435,249 @@ export class GridPainter {
     const { width: cw, height: ch } = this.metrics;
     const corners = new Map<number, FloatCorners>();
     const live = new Set<string>();
-    // A float that lets what is under it show (winblend) gets no ground.
-    const opaque = boxes.filter((box) => {
-      if (!box.float) return false;
-      const hl = state.grids.get(box.grid)?.hls[0] ?? 0;
-      return (state.hl.get(hl)?.blend ?? 0) === 0;
-    });
-    for (const cluster of floatClusters(opaque)) {
+    const blendOf = (grid: number) => {
+      const hl = state.grids.get(grid)?.hls[0] ?? 0;
+      return state.hl.get(hl)?.blend ?? 0;
+    };
+    // A float that lets what is under it show (winblend) gets no ground,
+    // unless it is framed: then the ring between its lines and its text.
+    const shown = boxes.filter(
+      (box) =>
+        box.float && (box.frame !== undefined || blendOf(box.grid) === 0),
+    );
+    const byGrid = new Map(shown.map((box) => [box.grid, box]));
+    const colors = (hl: number) =>
+      resolveColors(hl ? state.hl.get(hl) : undefined, state.defaults);
+    const px = (v: number) => `${String(v)}px`;
+    for (const cluster of floatClusters(shown)) {
       const first = cluster.members[0];
       const grid = first ? state.grids.get(first.grid) : undefined;
-      const hl = grid?.hls[0] ?? 0;
-      const ground = resolveColors(
-        hl ? state.hl.get(hl) : undefined,
-        state.defaults,
-      ).bg;
-      const rect = (r: CellRect, round: string) =>
-        `${String(r.col * cw)},${String(r.row * ch)},${String(r.width * cw)},${String(r.height * ch)},${round}`;
-      const parts = [
-        ...cluster.members.map((m) =>
-          rect(m.rect, m.lined ? "0" : radii(m.corners, FLOAT_RADIUS)),
-        ),
-        ...cluster.seams.map((r) => rect(r, "0")),
-      ];
-      for (const m of cluster.members) corners.set(m.grid, m.corners);
-      const key = `${String(cluster.z)}|${cluster.lined ? "l" : ""}|${String(ground)}|${parts.join(";")}`;
+      const ground = colors(grid?.hls[0] ?? 0).bg;
+      const blended = cluster.members.some((m) => blendOf(m.grid) > 0);
+      const pieces: Piece[] = [];
+      const labels: Label[] = [];
+      const framed: (FramedMember & { box: GridBox })[] = [];
+      for (const m of cluster.members) {
+        corners.set(m.grid, m.corners);
+        const box = byGrid.get(m.grid);
+        if (box?.frame) {
+          framed.push({
+            grid: m.grid,
+            rect: m.rect,
+            box,
+            geometry: frameGeometry(
+              box.frame,
+              box,
+              this.metrics,
+              this.dpr,
+              this.font.size,
+            ),
+          });
+          continue;
+        }
+        if (blendOf(m.grid) > 0) continue;
+        pieces.push({
+          x: m.rect.col * cw,
+          y: m.rect.row * ch,
+          w: m.rect.width * cw,
+          h: m.rect.height * ch,
+          radius: m.lined ? "0" : radii(m.corners, FLOAT_RADIUS),
+          background: cssColor(ground),
+        });
+      }
+      const framedGrids = new Set(framed.map((f) => f.grid));
+      for (const seam of cluster.seams) {
+        if (seam.between.every((g) => framedGrids.has(g))) continue;
+        pieces.push({
+          x: seam.col * cw,
+          y: seam.row * ch,
+          w: seam.width * cw,
+          h: seam.height * ch,
+          radius: "0",
+          background: cssColor(ground),
+        });
+      }
+      const geometries = new Map(framed.map((f) => [f.grid, f]));
+      for (const piece of framePieces(framed, this.dpr)) {
+        const member = geometries.get(piece.grid);
+        const frame = member?.box.frame;
+        if (!member || !frame) continue;
+        const sideHl = SIDES.map((side) => frame.sides[side]?.hl).find(
+          (hl) => hl !== undefined,
+        );
+        const ring = colors(sideHl ?? 0);
+        const blend = blendOf(piece.grid);
+        const border = (side: Side) => {
+          const s = frame.sides[side];
+          const width = member.geometry.widths[side];
+          if (!piece.draw[side] || !s || width <= 0) return "none";
+          return `${px(width)} ${member.geometry.styles[side]} ${cssColor(colors(s.hl).fg)}`;
+        };
+        pieces.push({
+          x: piece.x,
+          y: piece.y,
+          w: piece.w,
+          h: piece.h,
+          radius: `${px(piece.radii.tl)} ${px(piece.radii.tr)} ${px(piece.radii.br)} ${px(piece.radii.bl)}`,
+          background: cssColor(ring.bg, 1 - blend / 100),
+          borders: SIDES.map(border),
+          z: member.box.z,
+          ...(blend > 0 ? { hole: this.textArea(member.box, piece) } : {}),
+        });
+        for (const label of frame.labels) {
+          labels.push(
+            this.label(
+              state,
+              label,
+              labelBox(label, member.box, member.geometry, this.metrics),
+            ),
+          );
+        }
+      }
+      const lined = cluster.lined;
+      const key = JSON.stringify([cluster.z, lined, blended, pieces, labels]);
       live.add(key);
-      if (this.clusters.has(key)) continue;
+      const known = this.clusters.get(key);
+      if (known) {
+        // Over the canvases, which may have come since.
+        if (known.labels && known.labels !== this.root.lastElementChild)
+          this.root.append(known.labels);
+        continue;
+      }
       const el = document.createElement("div");
-      el.className = `nvim-float-shadow${cluster.lined ? " nvim-float-shadow-lined" : ""}`;
+      el.className = `nvim-float-shadow${lined ? " nvim-float-shadow-lined" : ""}${blended ? " nvim-float-shadow-none" : ""}`;
       el.style.zIndex = String(cluster.z);
-      for (const part of parts) {
-        const [x, y, w, h, round] = part.split(",");
+      const pieceOf = (part: Piece, lines: boolean) => {
         const piece = document.createElement("div");
-        piece.style.left = `${x ?? "0"}px`;
-        piece.style.top = `${y ?? "0"}px`;
-        piece.style.width = `${w ?? "0"}px`;
-        piece.style.height = `${h ?? "0"}px`;
-        piece.style.borderRadius = round ?? "0";
-        piece.style.background = cssColor(ground);
-        el.append(piece);
+        piece.style.left = px(part.x);
+        piece.style.top = px(part.y);
+        piece.style.width = px(part.w);
+        piece.style.height = px(part.h);
+        piece.style.borderRadius = part.radius;
+        piece.style.background = part.background;
+        if (part.borders) {
+          piece.style.boxSizing = "border-box";
+          piece.style.borderTop = part.borders[0] ?? "none";
+          piece.style.borderRight = part.borders[1] ?? "none";
+          piece.style.borderBottom = part.borders[2] ?? "none";
+          piece.style.borderLeft = part.borders[3] ?? "none";
+        }
+        if (part.hole) piece.style.clipPath = part.hole;
+        if (!lines) {
+          // The ground only, for the shadow's outline.
+          piece.style.border = "none";
+          piece.style.background = part.hole ? "transparent" : part.background;
+        }
+        return piece;
+      };
+      // A framed member's ground and lines at its own zindex, under its
+      // canvas but over a lower member's (a picker's borderless box under
+      // its framed list): one element per zindex, before the canvases.
+      const frames = new Map<number, HTMLDivElement>();
+      for (const part of pieces) {
+        el.append(pieceOf(part, part.z === undefined));
+        if (part.z === undefined) continue;
+        let layer = frames.get(part.z);
+        if (!layer) {
+          layer = document.createElement("div");
+          layer.className = "nvim-float-frames";
+          layer.style.zIndex = String(part.z);
+          frames.set(part.z, layer);
+        }
+        layer.append(pieceOf(part, true));
+      }
+      // The labels over the members (a sibling's canvas may reach a line):
+      // an element of their own, at the members' top zindex, after them.
+      const textHeight = Math.round(this.metrics.textHeight) + 2;
+      const over =
+        labels.length > 0 ? document.createElement("div") : undefined;
+      if (over) {
+        over.className = "nvim-frame-labels";
+        over.style.zIndex = String(
+          Math.max(...cluster.members.map((m) => byGrid.get(m.grid)?.z ?? 0)),
+        );
+      }
+      for (const label of labels) {
+        const tag = document.createElement("div");
+        tag.className = "nvim-frame-label";
+        const pad = Math.max(4, Math.round(cw * 0.5));
+        tag.style.left = px(label.x - pad);
+        tag.style.minWidth = px(label.w + 2 * pad);
+        tag.style.top = px(label.cy - textHeight / 2);
+        tag.style.height = px(textHeight);
+        tag.style.lineHeight = px(textHeight);
+        tag.style.padding = `0 ${px(pad)}`;
+        tag.style.borderRadius = px(textHeight / 2);
+        tag.style.background = label.background;
+        for (const run of label.runs) {
+          const span = document.createElement("span");
+          span.textContent = run.text;
+          span.style.color = run.color;
+          span.style.font = run.font;
+          span.style.lineHeight = px(textHeight);
+          tag.append(span);
+        }
+        over?.append(tag);
       }
       // Under the canvases of the same zindex: they come later.
+      for (const layer of frames.values()) this.root.prepend(layer);
       this.root.prepend(el);
-      this.clusters.set(key, el);
+      if (over) this.root.append(over);
+      this.clusters.set(key, {
+        ground: el,
+        frames: [...frames.values()],
+        ...(over ? { labels: over } : {}),
+      });
     }
-    for (const [key, el] of this.clusters) {
+    for (const [key, entry] of this.clusters) {
       if (!live.has(key)) {
-        el.remove();
+        entry.ground.remove();
+        for (const layer of entry.frames) layer.remove();
+        entry.labels?.remove();
         this.clusters.delete(key);
       }
     }
     return corners;
+  }
+
+  /** A title or footer, in its highlights, at `at`. */
+  private label(
+    state: NeovimUiState,
+    label: FrameLabel,
+    at: { x: number; w: number; cy: number },
+  ): Label {
+    const colors = (hl: number) =>
+      resolveColors(hl ? state.hl.get(hl) : undefined, state.defaults);
+    return {
+      x: at.x,
+      w: at.w,
+      cy: at.cy,
+      background: cssColor(colors(label.runs[0]?.hl ?? 0).bg),
+      runs: label.runs.map((run) => ({
+        text: run.text,
+        color: cssColor(colors(run.hl).fg),
+        font: fontOf(this.font, state.hl.get(run.hl)),
+      })),
+    };
+  }
+
+  /**
+   * A blended framed float's text area, cut out of its ring's ground (its
+   * canvas draws its own, blended once), as a `clip-path` in the piece's
+   * own coordinates.
+   */
+  private textArea(
+    box: GridBox,
+    piece: { x: number; y: number; w: number; h: number },
+  ): string {
+    const { width: cw, height: ch } = this.metrics;
+    const m = box.frame?.margins ?? NO_CROP;
+    const x0 = (box.col + m.left) * cw - piece.x;
+    const y0 = (box.row + m.top) * ch - piece.y;
+    const x1 = (box.col + box.width - m.right) * cw - piece.x;
+    const y1 = (box.row + box.height - m.bottom) * ch - piece.y;
+    const n = (v: number) => String(Math.round(v * 100) / 100);
+    return `path(evenodd, "M0 0H${n(piece.w)}V${n(piece.h)}H0Z M${n(x0)} ${n(y0)}H${n(x1)}V${n(y1)}H${n(x0)}Z")`;
   }
 
   private paintRow(
@@ -435,7 +690,7 @@ export class GridPainter {
     if (!grid || row >= grid.height) return;
     const { ctx } = entry;
     const { width: cw, height: ch, baseline } = this.metrics;
-    const crop = box.crop ?? NO_CROP;
+    const crop = cropOf(box);
     if (row < crop.top || row >= grid.height - crop.bottom) return;
     ctx.setTransform(
       this.dpr,

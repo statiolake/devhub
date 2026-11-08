@@ -79,8 +79,42 @@
   filter: drop-shadow(0 6px 10px rgb(0 0 0 / 20%));
 }
 
+.nvim-float-shadow.nvim-float-shadow-none {
+  filter: none;
+}
+
 .nvim-float-shadow > div {
   position: absolute;
+}
+
+/*
+ * A framed float's title or footer (`frame.ts`): a label on its line, the
+ * line broken around it.
+ */
+.nvim-float-frames {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.nvim-float-frames > div {
+  position: absolute;
+}
+
+.nvim-frame-labels {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.nvim-frame-labels > .nvim-frame-label {
+  position: absolute;
+  box-sizing: border-box;
+  white-space: pre;
+  text-align: center;
+  overflow: hidden;
 }
 
 .nvim-cursor {

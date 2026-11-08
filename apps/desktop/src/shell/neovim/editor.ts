@@ -13,6 +13,7 @@ import {
   applyRedraw,
   currentModeInfo,
   emptyChanges,
+  gridRowText,
   initialUiState,
   layoutGrids,
   placeUnplacedWindows,
@@ -31,6 +32,7 @@ import {
   type FontSpec,
 } from "./painter";
 import { escapeInputText, keyToNeovim } from "./keys";
+import { floatLabelsOf } from "./frame";
 import {
   IDLE,
   imeStep,
@@ -65,6 +67,8 @@ function themeColors(): {
 /** What the editor needs from the page: Neovim API calls. */
 export interface NeovimPort {
   call(method: string, params: readonly unknown[]): void;
+  /** A call whose answer is wanted; rejects when Neovim answers an error. */
+  request?(method: string, params: readonly unknown[]): Promise<unknown>;
 }
 
 export interface EditorSettings {
@@ -89,6 +93,8 @@ export class NeovimEditor {
   private settings: EditorSettings;
   private size = { cols: 0, rows: 0 };
   private boxes: GridBox[] = [];
+  /** The border text each float's labels were last asked for, by window. */
+  private readonly labelsAsked = new Map<number, string>();
   private readonly listeners = new Set<() => void>();
   private dragging: { button: string; target: MouseTarget } | undefined;
   private dropComposition = false;
@@ -298,9 +304,53 @@ export class NeovimEditor {
     this.boxes = layoutGrids(this.state);
     this.host.style.background = cssColor(this.state.defaults.background);
     this.painter.paint(this.state, changes, this.boxes, forceAll);
+    this.askFloatLabels();
     this.placeScrollbars();
     this.placeCursor();
     for (const listener of this.listeners) listener();
+  }
+
+  /**
+   * A float with a border of lines whose border holds text: its `title` and
+   * `footer`, from `nvim_win_get_config`, are what let that text be drawn
+   * as a label on the line (`frame.ts`); until they are known, or when the
+   * text is not theirs, the border is drawn cell for cell. Asked again only
+   * when the border's text changes.
+   */
+  private askFloatLabels(): void {
+    const request = this.port.request?.bind(this.port);
+    if (!request) return;
+    const open = new Set<number>();
+    for (const box of this.boxes) {
+      if (!box.float || box.win === undefined || box.lined !== true) continue;
+      open.add(box.win);
+      if (box.wantsLabels !== true) continue;
+      const grid = this.state.grids.get(box.grid);
+      if (!grid) continue;
+      const text = `${gridRowText(grid, 0)}\n${gridRowText(grid, grid.height - 1)}`;
+      if (this.labelsAsked.get(box.win) === text) continue;
+      this.labelsAsked.set(box.win, text);
+      const win = box.win;
+      request("nvim_win_get_config", [win]).then(
+        (config) => {
+          if (this.disposed) return;
+          this.state.floatLabels.set(win, floatLabelsOf(config));
+          this.pending.layout = true;
+          if (this.frame === 0) {
+            this.frame = requestAnimationFrame(() => {
+              this.frame = 0;
+              this.paint();
+            });
+          }
+        },
+        () => {
+          // Closed meanwhile, or no such window: drawn cell for cell.
+        },
+      );
+    }
+    for (const win of this.labelsAsked.keys()) {
+      if (!open.has(win)) this.labelsAsked.delete(win);
+    }
   }
 
   /**

@@ -126,6 +126,8 @@ describe("the redraw reducer", () => {
       ["win_viewport_margins", [4, 1001, 1, 1, 1, 1]],
       // 'rounded'.
       ["grid_line", [5, 0, 0, [["╭"], ["─", 0, 4], ["╮"]], false]],
+      ["grid_line", [5, 1, 0, [["│"], [" ", 0, 4], ["│"]], false]],
+      ["grid_line", [5, 2, 0, [["╰"], ["─", 0, 4], ["╯"]], false]],
       ["win_viewport_margins", [5, 1002, 1, 1, 1, 1]],
     ]);
     const boxes = layoutGrids(state);
@@ -137,6 +139,8 @@ describe("the redraw reducer", () => {
     const rounded = boxes.find((b) => b.grid === 5);
     expect(rounded?.crop).toBeUndefined();
     expect(rounded?.lined).toBe(true);
+    // Drawn as DevHub's frame, cut at its lines (`frame.ts`).
+    expect(rounded?.frame?.corners.tl).toBe("╭");
     // No border (or 0.9, which does not say): neither.
     expect(floatBorder(state.grids.get(4)!, undefined)).toEqual({});
     expect(
@@ -147,9 +151,23 @@ describe("the redraw reducer", () => {
         left: 0,
       }),
     ).toEqual({});
-    // A winbar is text in the top margin: kept.
-    applyRedraw(state, [["grid_line", [4, 0, 1, [["W"]], false]]]);
-    expect(layoutGrids(state).find((b) => b.grid === 4)?.lined).toBe(true);
+    // A title in a blank border: its row is kept, the rest left out.
+    applyRedraw(state, [["grid_line", [4, 0, 1, [["T"]], false]]]);
+    expect(layoutGrids(state).find((b) => b.grid === 4)?.crop).toEqual({
+      top: 0,
+      right: 1,
+      bottom: 1,
+      left: 1,
+    });
+    // A winbar is text in the top margin of a float without a border: kept.
+    expect(
+      floatBorder(state.grids.get(4)!, {
+        top: 1,
+        right: 0,
+        bottom: 0,
+        left: 0,
+      }),
+    ).toEqual({ lined: true });
   });
 
   it("places windows on grid 1 and floats against their anchor, stacked by zindex", () => {

@@ -9,6 +9,8 @@
  * trackpad scroll moves by lines and a fast one does not lose any.
  */
 
+import { frameGeometry, insideRounded } from "./frame";
+import { underFrames } from "./floats";
 import type { GridBox } from "./redraw";
 
 export interface CellMetrics {
@@ -31,9 +33,22 @@ export function hitTest(
 ): MouseTarget {
   const row = Math.max(0, Math.floor(y / cell.height));
   const col = Math.max(0, Math.floor(x / cell.width));
+  const hidden = underFrames(boxes);
   for (let i = boxes.length - 1; i >= 0; i -= 1) {
     const box = boxes[i];
     if (box === undefined || box.grid === 1) continue;
+    // Not drawn: behind framed floats, which are the panel's edge.
+    if (hidden.has(box.grid)) continue;
+    if (box.frame) {
+      if (insideFrame(box, boxes, cell, x, y)) {
+        return {
+          grid: box.grid,
+          row: Math.min(box.height - 1, Math.max(0, row - box.row)),
+          col: Math.min(box.width - 1, Math.max(0, col - box.col)),
+        };
+      }
+      continue;
+    }
     // A float's left-out blank border is not there: a click falls through.
     const crop = box.crop;
     if (
@@ -46,6 +61,60 @@ export function hitTest(
     }
   }
   return { grid: 1, row, col };
+}
+
+/**
+ * Whether `(x, y)` is on a framed float: inside its lines (`frame.ts`), the
+ * float's edge — outside them the click is for what is behind. Toward
+ * another float edge to edge with it (a picker's list beside its preview)
+ * the panel goes on, so the box's own cells count there.
+ */
+function insideFrame(
+  box: GridBox,
+  boxes: readonly GridBox[],
+  cell: CellMetrics,
+  x: number,
+  y: number,
+): boolean {
+  const frame = box.frame;
+  if (!frame) return false;
+  const g = frameGeometry(frame, box, cell, 1, 12.5);
+  const near = (d: number) => d >= -1 && d <= 1;
+  const overlap = (a0: number, a1: number, b0: number, b1: number) =>
+    Math.max(a0, b0) < Math.min(a1, b1);
+  const others = boxes.filter((o) => o.float && o !== box);
+  const rows = (o: GridBox) =>
+    overlap(box.row, box.row + box.height, o.row, o.row + o.height);
+  const cols = (o: GridBox) =>
+    overlap(box.col, box.col + box.width, o.col, o.col + o.width);
+  const left = others.some((o) => rows(o) && near(box.col - (o.col + o.width)));
+  const right = others.some(
+    (o) => rows(o) && near(o.col - (box.col + box.width)),
+  );
+  const top = others.some((o) => cols(o) && near(box.row - (o.row + o.height)));
+  const bottom = others.some(
+    (o) => cols(o) && near(o.row - (box.row + box.height)),
+  );
+  const x0 = left ? box.col * cell.width : g.x;
+  const x1 = right ? (box.col + box.width) * cell.width : g.x + g.w;
+  const y0 = top ? box.row * cell.height : g.y;
+  const y1 = bottom ? (box.row + box.height) * cell.height : g.y + g.h;
+  return insideRounded(
+    {
+      x: x0,
+      y: y0,
+      w: x1 - x0,
+      h: y1 - y0,
+      radii: {
+        tl: left || top ? 0 : g.radii.tl,
+        tr: right || top ? 0 : g.radii.tr,
+        br: right || bottom ? 0 : g.radii.br,
+        bl: left || bottom ? 0 : g.radii.bl,
+      },
+    },
+    x,
+    y,
+  );
 }
 
 /** `nvim_input_mouse`'s modifier string: `"C"`, `"S"`, `"A"`, `"D"`, joined. */

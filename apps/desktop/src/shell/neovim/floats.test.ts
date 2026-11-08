@@ -48,8 +48,8 @@ describe("floats that make one panel", () => {
     const panel = clusters.find((c) => c.key === "4,5,6");
     // One seam: between the column and the preview, over the span they share.
     expect(panel?.seams).toEqual([
-      { row: 2, col: 35, width: 1, height: 3 },
-      { row: 5, col: 35, width: 1, height: 15 },
+      { row: 2, col: 35, width: 1, height: 3, between: [4, 6] },
+      { row: 5, col: 35, width: 1, height: 15, between: [5, 6] },
     ]);
     const corners = (grid: number) =>
       panel?.members.find((m) => m.grid === grid)?.corners;
