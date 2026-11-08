@@ -41,6 +41,7 @@ import {
   type Surface,
 } from "./chrome";
 import { cmdlineLayout, cmdlineLead } from "./cmdline";
+import type { Decor } from "./decor";
 import { cmdlinePlace, type CmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
 import { rideAnchor, rideArea, rideStyle, type BufposAnchor } from "./riders";
@@ -585,6 +586,28 @@ export class NeovimEditor {
    */
   refreshTheme(): void {
     this.askTheme();
+  }
+
+  /**
+   * Where each window's decorations are (Lua's `decor` event): the rows of
+   * the windows whose changed are painted again on the next frame.
+   */
+  setDecor(decor: Decor): void {
+    const changed = new Set(this.painter.setDecor(decor));
+    if (changed.size === 0) return;
+    for (const box of this.boxes) {
+      if (box.win === undefined || !changed.has(box.win)) continue;
+      const grid = this.state.grids.get(box.grid);
+      if (!grid) continue;
+      for (let row = 0; row < grid.height; row += 1) grid.dirty.add(row);
+      this.pending.grids.add(box.grid);
+    }
+    if (this.frame === 0) {
+      this.frame = requestAnimationFrame(() => {
+        this.frame = 0;
+        this.paint();
+      });
+    }
   }
 
   private askTheme(): void {

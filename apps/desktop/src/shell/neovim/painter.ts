@@ -17,6 +17,7 @@ import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
 import { strokesFor, type Stroke, type StrokeKind } from "./strokes";
 import { boxArms, fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
 import { familyOf, markPath, type KindFamily } from "./kinds";
+import { placeDecor, wordsOf, type Decor } from "./decor";
 import {
   bandGround,
   floatClusters,
@@ -86,6 +87,12 @@ const FALLBACK_FAMILY = `Menlo, "SF Mono", Monaco, "DejaVu Sans Mono", monospace
 export const ICON_FAMILY = `"DevHub Nerd Symbols"`;
 
 /** `guifont` (`Fira Code,Menlo:h13`) as a CSS family list and a size. */
+/**
+ * The UI face, as the completion menu's labels wear it (`neovim.css`):
+ * decorations' words are set in it (`decor.ts`).
+ */
+const UI_FAMILY = `-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif`;
+
 export function parseGuifont(
   value: unknown,
 ): { family?: string; size?: number } | undefined {
@@ -317,6 +324,14 @@ export class GridPainter {
   private font: FontSpec;
   private metrics: Metrics;
   private theme: PaintTheme = NO_THEME;
+  /** Where each window's decorations are, as Lua last said (`decor.ts`). */
+  private decor: Decor = new Map();
+  /** The row's decorations' words, drawn after its text (`paintRow`). */
+  private readonly words: {
+    start: number;
+    end: number;
+    align: "left" | "right";
+  }[] = [];
   /** Grid 1's columns between two windows (`separatorsOf`). */
   private separators: readonly Separator[] = [];
   private separatorsKey = "";
@@ -389,6 +404,22 @@ export class GridPainter {
 
   fontSpec(): FontSpec {
     return this.font;
+  }
+
+  /**
+   * Where each window's decorations are now: the windows whose changed,
+   * whose rows are to be painted again.
+   */
+  setDecor(decor: Decor): number[] {
+    const changed: number[] = [];
+    for (const win of new Set([...decor.keys(), ...this.decor.keys()])) {
+      if (
+        JSON.stringify(decor.get(win)) !== JSON.stringify(this.decor.get(win))
+      )
+        changed.push(win);
+    }
+    this.decor = decor;
+    return changed;
   }
 
   /** What the colorscheme says beyond the grid, as last asked. */
@@ -1370,6 +1401,24 @@ export class GridPainter {
     ) {
       this.skip.add(0);
     }
+    // Decorations (virtual text, a fold's text) found where Lua says they
+    // are: their words are set in the UI face after the row's text, inside
+    // their cells (`decor.ts`), so the cells' own glyphs are not drawn.
+    this.words.length = 0;
+    const spans =
+      box.win === undefined
+        ? undefined
+        : this.decor.get(box.win)?.filter((span) => span.row === row);
+    if (spans && spans.length > 0) {
+      const cells = { chars: grid.chars, base, width: grid.width };
+      for (const place of placeDecor(cells, spans)) {
+        const words = wordsOf(cells, place);
+        if (!words) continue;
+        this.words.push({ ...words, align: place.align });
+        for (let col = words.start; col < words.end; col += 1)
+          this.skip.add(col);
+      }
+    }
     for (const run of runs) {
       this.paintRun(
         ctx,
@@ -1400,7 +1449,78 @@ export class GridPainter {
       this.paintIcon(ctx, icon.c, icon.x, y, icon.cells, icon.attr, icon.spill);
     }
     this.icons.length = 0;
+    for (const words of this.words) {
+      this.paintWords(ctx, state, grid, base, words, y, baseline);
+    }
+    this.words.length = 0;
     ctx.restore();
+  }
+
+  /**
+   * A decoration's words in the UI face, a step under the editor's size —
+   * words about the code, as the completion menu's labels are — each
+   * highlight's run after the one before, on the grid's baseline, inside
+   * the decoration's cells: narrower than the cells (the usual case) with
+   * the slack on the side `align` leaves it; wider (rare) set narrower to
+   * fit, so nothing after it moves.
+   */
+  private paintWords(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    grid: {
+      readonly chars: readonly string[];
+      readonly hls: ArrayLike<number>;
+    },
+    base: number,
+    words: { start: number; end: number; align: "left" | "right" },
+    y: number,
+    baseline: number,
+  ): void {
+    const { width: cw } = this.metrics;
+    const size = Math.max(1, this.font.size - 1);
+    const pieces: { text: string; attr: HlAttr | undefined; width: number }[] =
+      [];
+    ctx.save();
+    ctx.letterSpacing = "0px";
+    ctx.textBaseline = "alphabetic";
+    let total = 0;
+    for (let col = words.start; col < words.end; ) {
+      const hl = grid.hls[base + col] ?? 0;
+      let text = "";
+      let end = col;
+      while (end < words.end && (grid.hls[base + end] ?? 0) === hl) {
+        text += grid.chars[base + end] ?? "";
+        end += 1;
+      }
+      const attr = state.hl.get(hl);
+      ctx.font = this.wordsFont(attr, size);
+      const width = ctx.measureText(text).width;
+      pieces.push({ text, attr, width });
+      total += width;
+      col = end;
+    }
+    const room = (words.end - words.start) * cw;
+    const scale = total > room ? room / total : 1;
+    let x =
+      words.align === "right"
+        ? words.end * cw - total * scale
+        : words.start * cw;
+    for (const piece of pieces) {
+      ctx.font = this.wordsFont(piece.attr, size);
+      ctx.fillStyle = cssColor(resolveColors(piece.attr, state.defaults).fg);
+      ctx.save();
+      ctx.translate(x, 0);
+      ctx.scale(scale, 1);
+      if (piece.text.trim().length > 0)
+        ctx.fillText(piece.text, 0, y + baseline);
+      ctx.restore();
+      x += piece.width * scale;
+    }
+    ctx.restore();
+  }
+
+  private wordsFont(attr: HlAttr | undefined, size: number): string {
+    return `${attr?.italic === true ? "italic " : ""}${attr?.bold === true ? "bold " : ""}${String(size)}px ${ICON_FAMILY}, ${UI_FAMILY}`;
   }
 
   /**

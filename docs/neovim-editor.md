@@ -243,11 +243,50 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) on
     a menu's right edge is an overlay scrollbar: the gutter not drawn, the
     thumb a thin bar.
-  - Status lines, winbars, virtual text, inlay hints, the fold column,
-    indent guides and `MatchParen` are what Neovim and the person's config
-    say, cell for cell; only the glyphs a terminal approximates are drawn
-    as what they mean (box drawing, blocks and Powerline separators as
-    geometry, continuous across `linespace`).
+  - Status lines, winbars, the fold column, indent guides and
+    `MatchParen` are what Neovim and the person's config say, cell for
+    cell; only the glyphs a terminal approximates are drawn as what they
+    mean (box drawing, blocks and Powerline separators as geometry,
+    continuous across `linespace`).
+  - Decorations in a proportional face (`decor.ts`,
+    `main/editor/neovimDecor.ts`): virtual text at the end of a line
+    (diagnostics, git blame), right-aligned and inline (inlay hints),
+    virtual lines, and a closed fold's text are not the buffer's content,
+    so their words are set in the UI face a step under the editor's size,
+    as the completion menu's labels are: words about the code, not code.
+    Does Neovim drawing them on cells make them drift? No, as long as they
+    stay inside their cells. Neovim lays them out in cells, and everything
+    after them — the buffer text after an inlay hint, the cursor, a
+    click's cell, a selection — is placed by those cells, not by what the
+    GUI draws in them. A proportional word is usually narrower than its
+    cells, so it is drawn inside them and the slack is left blank; one
+    wider (rare) is set narrower to fit, never past them. What cells cannot
+    say is _which_ cells are virtual: `grid_line` does not tell. So Lua
+    says: after every redraw that drew a window, the extmarks in its
+    visible lines (`nvim_buf_get_extmarks` with details) and its closed
+    folds (`foldclosed`, `foldtextresult`) are placed with `screenpos` and
+    sent as rows and columns of the window's grid with their text (only
+    when they changed). The page sets one only where the grid holds exactly
+    that text there now — a few cells off is looked for, nearest first,
+    since a character typed before a hint moves it before Lua speaks
+    again — and anything else is cells as before: a guess is never drawn.
+    - The words only: padding blanks at either end and drawing characters
+      (a virtual line's `└────` under the column it points at) stay on
+      cells; the ground is the cells' (the highlight's box, as Neovim says).
+    - The slack: inline hints keep to the code they name — one ending in
+      `:` (a parameter's name) to the code after it, the slack before;
+      any other (`: i32`, `-> T`) to the code before, the slack after,
+      where reading goes on. Right-aligned text keeps to the window's
+      edge. The rest starts where Neovim starts it.
+    - A fold's `+--` marker stays on cells: the cursor sits on its first
+      cell on a closed fold, and its dashes count the level. The words
+      after it are set; the fill after them is the fold's.
+    - Left as cells: `overlay` and `virt_text_win_col` text (put on the
+      buffer's own columns — indent guides, tables, concealed markup —
+      it only works on cells), `virt_lines_above`, and a fold whose
+      `foldtext` is empty (the line itself, content).
+    - Wide characters take their two cells in the match; a CJK word in a
+      proportional face is about as wide as its cells.
   - The underline family and strikethrough (`strokes.ts`) are drawn as type
     is: as thick as the face asks, on whole device pixels under the
     baseline; undercurl a true wave whose phase is the row's (runs side by
@@ -1114,8 +1153,10 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
     `-` in `DiffDelete`'s ground (the default `diff:`) is a hatched band
     of thin diagonals in its foreground, continuous from row to row, as
     GUI diff views mark lines the other side has. A person's `diff:` is
-    kept. Folds' `+--  12 lines` stay Neovim's text: `foldtext` is the
-    person's, and a fold bar of DevHub's would have to guess at it.
+    kept. Folds' `+--  12 lines` stay Neovim's text — `foldtext` is the
+    person's, and a fold bar of DevHub's would have to guess at it — set in
+    the UI face after the marker (round 8, "Decorations in a proportional
+    face").
 11. _The block cursor and its cell_ — done: the block is square (round 5; its
     rounded corners were taken back), it still shows the character in the
     cursor's foreground, and the blink (`guicursor`'s) fades in and out

@@ -34,6 +34,7 @@ import {
   useProjection,
   useRaiseFailure,
 } from "../model/pageModel";
+import { decorOf } from "./decor";
 import { NeovimEditor } from "./editor";
 import { cmdlineUiPos, popupmenuPlace } from "./place";
 import {
@@ -216,6 +217,11 @@ function NeovimSurface({
       // scrolled when the placement came, not when it is drawn.
       const scrolled = editor.scrolledRows();
       const rowsOf = (win: number) => scrolled.get(win) ?? 0;
+      if (event.kind === "decor") {
+        // Where virtual text and folds' text are: set in the UI face.
+        editor.setDecor(decorOf(event.payload));
+        return;
+      }
       if (event.kind === "theme") {
         // A window's fillchars changed: what the painter keeps is asked again.
         editor.refreshTheme();

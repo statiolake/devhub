@@ -16,6 +16,7 @@
  */
 
 import { MsgpackExt, decode } from "./msgpack.js";
+import { DECOR_LUA } from "./neovimDecor.js";
 import { LAYERS_LUA } from "./neovimGuiLayers.js";
 import { RESTART_STATE_LUA } from "./neovimRestart.js";
 import type { NeovimRpc } from "./neovimRpc.js";
@@ -781,6 +782,8 @@ export class NeovimUi {
 		// Views, inline cards and decorations (`gui.view`, `gui.inline`,
 		// `gui.decorate`): the same module, grown by its own file.
 		await this.client.request("nvim_exec_lua", [LAYERS_LUA, []]);
+		// Where virtual text and folds' text are, for a proportional face.
+		await this.client.request("nvim_exec_lua", [DECOR_LUA, []]);
 		// A Neovim that had a multigrid UI before (DevHub restarted, the page
 		// reloaded) keeps its window grids and believes the new UI has them
 		// too, so it would send only what changes from here. A moment attached
