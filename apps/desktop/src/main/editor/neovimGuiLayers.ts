@@ -117,6 +117,16 @@ local function serialize(node, actions, hls, depth)
         if s ~= nil then table.insert(list, s) end
       end
       out[k] = list
+    elseif k == "marks" and type(v) == "table" then
+      -- a markdown's marks over its code: their groups are resolved too
+      local list = {}
+      for _, mark in ipairs(v) do
+        if type(mark) == "table" and type(mark.hl) == "string" then
+          hls[mark.hl] = true
+          table.insert(list, mark)
+        end
+      end
+      out[k] = list
     elseif HL_KEYS[k] and type(v) == "string" then
       local name = M.tones[v] or v
       hls[name] = true

@@ -91,6 +91,22 @@ function runStyle(attrs: HlAttrs | undefined): CSSProperties {
   };
 }
 
+/**
+ * A mark over code (a signature's active parameter) in its group's
+ * colours, its ground a rounded chip; a group with neither a ground nor a
+ * weight of its own is drawn bold and underlined, so the mark still shows.
+ */
+function markStyle(hl: HlTable, name: string): CSSProperties {
+  const attrs = hl.get(name);
+  const style = runStyle(attrs);
+  const bg = bgOf(hl, name);
+  if (bg !== undefined) {
+    return { ...style, background: bg, borderRadius: 3 };
+  }
+  if (attrs?.bold === true || attrs?.underline === true) return style;
+  return { ...style, fontWeight: 700, textDecoration: "underline" };
+}
+
 /** The colour of a checked box, a bar, a line, unless a node names one. */
 const ACCENT = "DiagnosticInfo";
 
@@ -192,7 +208,17 @@ function Node({ node }: { readonly node: ComponentNode }): ReactNode {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             skipHtml
-            components={markdownComponents(theme.dark, theme.openLink)}
+            components={markdownComponents(
+              theme.dark,
+              theme.openLink,
+              node.marks
+                ? {
+                    source: node.text,
+                    marks: node.marks,
+                    style: (name) => markStyle(theme.hl, name),
+                  }
+                : undefined,
+            )}
           >
             {node.text}
           </ReactMarkdown>

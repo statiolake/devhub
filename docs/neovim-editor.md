@@ -448,7 +448,12 @@ local pop = gui.popup{ anchor = 'cursor', component = ui.md(markdown), max_width
   `vim.lsp.util.open_floating_preview`: in DevHub's GUI, hover, signature
   help and `vim.diagnostic.open_float` are popups — markdown as `ui.md`,
   another syntax as a fenced block, plain text (a diagnostic float) as lines
-  in the highlights its caller puts on the float's buffer. The hook answers
+  in the highlights its caller puts on the float's buffer. A highlight its
+  caller puts on a markdown float's code (signature help's
+  `LspSignatureActiveParameter`) is a `marks` entry of the `ui.md` node —
+  its source line and UTF-16 columns — drawn over the coloured code in
+  that group's colours (a ground as a chip; a group with no ground or
+  weight bold and underlined). The hook answers
   what Neovim's does, a buffer with the lines and a window — a hidden one
   (`hide`, 0.10+), which its caller may close (the popup closes with it)
   and which closes with the popup. `K K` focuses the popup instead of
@@ -507,9 +512,10 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   under it.
 - Notifications sit above the lowest window's status line, over whatever
   is there (a panel's hint line included), on a card of their own.
-- A popup does not carry the highlights its caller adds to a markdown
-  float's buffer (signature help's active parameter is not marked); a plain
-  text float's (a diagnostic's) are carried.
+- A popup carries the highlights its caller adds to a markdown float's
+  buffer only where they fall on fenced code (signature help's active
+  parameter); one on prose is not drawn. A plain text float's (a
+  diagnostic's) are carried.
 - `ext_hlstate` off; no semantic styling of diagnostics yet.
 - A GUI buffer shown in two windows has its content (one page, one terminal
   client) in one of them — the current window when it is one, else the

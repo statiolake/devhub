@@ -88,6 +88,19 @@ export interface MarkdownNode extends Common {
   readonly type: "markdown";
   readonly text: string;
   readonly size?: Size | undefined;
+  /**
+   * Ranges of the source's fenced code drawn in a group's colours (an LSP
+   * signature's active parameter): `line` is the source's (1-based),
+   * `from`/`to` UTF-16 columns of it.
+   */
+  readonly marks?: readonly MdMark[] | undefined;
+}
+
+export interface MdMark {
+  readonly line: number;
+  readonly from: number;
+  readonly to: number;
+  readonly hl: string;
 }
 
 export interface BadgeNode extends Common {
@@ -280,6 +293,47 @@ function run(value: unknown): Run | undefined {
   };
 }
 
+function mdMark(value: unknown): MdMark[] {
+  const r = rec(value);
+  if (!r) return [];
+  const line = num(r, "line", 1, Number.MAX_SAFE_INTEGER);
+  const from = num(r, "from", 0, MAX_TEXT);
+  const to = num(r, "to", 0, MAX_TEXT);
+  const hl = str(r, "hl");
+  if (line === undefined || from === undefined || to === undefined) return [];
+  if (hl === undefined || to <= from) return [];
+  return [{ line: Math.floor(line), from, to, hl }];
+}
+
+/**
+ * A line of tokens cut where marks begin and end: each piece with the
+ * index of the mark over it (or -1). Columns are UTF-16, as JS counts.
+ */
+export function markPieces<T extends { readonly text: string }>(
+  tokens: readonly T[],
+  marks: readonly { readonly from: number; readonly to: number }[],
+): { readonly token: T; readonly text: string; readonly mark: number }[] {
+  const out: { token: T; text: string; mark: number }[] = [];
+  let at = 0;
+  for (const token of tokens) {
+    const end = at + token.text.length;
+    const cuts = new Set([at, end]);
+    for (const m of marks) {
+      if (m.from > at && m.from < end) cuts.add(m.from);
+      if (m.to > at && m.to < end) cuts.add(m.to);
+    }
+    const points = [...cuts].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < points.length; i += 1) {
+      const a = points[i] ?? at;
+      const b = points[i + 1] ?? end;
+      const mark = marks.findIndex((m) => m.from <= a && b <= m.to);
+      out.push({ token, text: token.text.slice(a - at, b - at), mark });
+    }
+    at = end;
+  }
+  return out;
+}
+
 function values(value: unknown): number[] {
   return luaList(value)
     .slice(0, MAX_VALUES)
@@ -363,11 +417,13 @@ export function parseNode(
     case "markdown": {
       const text = str(r, "text");
       if (text === undefined) return undefined;
+      const marks = luaList(r["marks"]).flatMap(mdMark).slice(0, 64);
       return {
         ...base,
         type: "markdown",
         text,
         size: oneOf(r, "size", SIZES),
+        ...(marks.length > 0 ? { marks } : {}),
       };
     }
     case "badge":

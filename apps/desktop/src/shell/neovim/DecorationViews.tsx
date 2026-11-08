@@ -4,7 +4,13 @@
  * editor (components' `markdown`, popups).
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import type { Components } from "react-markdown";
 import {
   grammarFor,
@@ -12,6 +18,7 @@ import {
   type Colouring,
 } from "../conversation/highlight";
 import type { Surface } from "./chrome";
+import { markPieces, type MdMark } from "./components";
 import type { GridBox } from "./redraw";
 import { toastGroups, type Decorations, type Toast } from "./decorations";
 
@@ -228,13 +235,51 @@ export function InlineImages({
   );
 }
 
+/** Marks over a markdown's fenced code, and how a group is drawn. */
+export interface CodeMarks {
+  /** The markdown source, whose lines the marks name. */
+  readonly source: string;
+  readonly marks: readonly MdMark[];
+  readonly style: (hl: string) => CSSProperties;
+}
+
+/** A mark over one line of a code block: its columns and its look. */
+interface LineMark {
+  readonly line: number;
+  readonly from: number;
+  readonly to: number;
+  readonly style: CSSProperties;
+}
+
+/**
+ * The marks over the code block whose node starts on source line `start`
+ * (1-based; a fence's line, or the first line of an indented block), as
+ * lines of the code.
+ */
+function blockMarks(marked: CodeMarks, start: number): LineMark[] {
+  const fence = /^\s{0,3}(```|~~~)/.test(
+    marked.source.split("\n")[start - 1] ?? "",
+  );
+  const first = fence ? start + 1 : start;
+  return marked.marks
+    .filter((m) => m.line >= first)
+    .map((m) => ({
+      line: m.line - first,
+      from: m.from,
+      to: m.to,
+      style: marked.style(m.hl),
+    }));
+}
+
 /**
  * How a markdown body is drawn in the editor (a component's `markdown`, a
- * popup's): links open in the browser, fenced code is coloured.
+ * popup's): links open in the browser, fenced code is coloured, and marks
+ * (an LSP signature's active parameter) are drawn over it.
  */
 export function markdownComponents(
   dark: boolean,
   openLink: (url: string) => void,
+  marked?: CodeMarks,
 ): Components {
   return {
     a: ({ href, children }) => (
@@ -253,16 +298,24 @@ export function markdownComponents(
       </a>
     ),
     pre: ({ children }) => <>{children}</>,
-    code: ({ className, children }) => {
+    code: ({ className, children, node }) => {
       const text = String(children ?? "");
       const language = /language-([\w+-]+)/.exec(className ?? "")?.[1];
       const block = language !== undefined || text.includes("\n");
       if (!block) return <code>{children}</code>;
+      const start = node?.position?.start.line;
+      const code = text.replace(/\n$/, "");
+      const lines = code.split("\n").length;
+      const marks =
+        marked && start !== undefined
+          ? blockMarks(marked, start).filter((m) => m.line < lines)
+          : [];
       return (
         <HighlightedCode
-          code={text.replace(/\n$/, "")}
+          code={code}
           language={language}
           dark={dark}
+          marks={marks}
         />
       );
     },
@@ -273,10 +326,12 @@ export function HighlightedCode({
   code,
   language,
   dark,
+  marks = [],
 }: {
   readonly code: string;
   readonly language: string | undefined;
   readonly dark: boolean;
+  readonly marks?: readonly LineMark[];
 }) {
   const grammar = grammarFor(language);
   const [colouring, setColouring] = useState<Colouring | undefined>();
@@ -293,22 +348,40 @@ export function HighlightedCode({
       live = false;
     };
   }, [code, grammar]);
-  let body: ReactNode = code;
-  if (colouring) {
-    body = colouring.map((line, index) => (
+  const lines: readonly (readonly { text: string; colour?: string }[])[] =
+    colouring
+      ? colouring.map((line) =>
+          line.map((token) => {
+            const colour = dark ? token.dark : token.light;
+            return colour ? { text: token.text, colour } : { text: token.text };
+          }),
+        )
+      : code.split("\n").map((text) => [{ text }]);
+  const body: ReactNode = lines.map((line, index) => {
+    const here = marks.filter((m) => m.line === index);
+    return (
       <span key={index}>
-        {line.map((token, t) => {
-          const colour = dark ? token.dark : token.light;
+        {markPieces(line, here).map((piece, t) => {
+          const colour = piece.token.colour;
+          const mark = here[piece.mark];
+          const style: CSSProperties = {
+            ...(colour ? { color: colour } : {}),
+            ...(mark ? mark.style : {}),
+          };
           return (
-            <span key={t} style={colour ? { color: colour } : undefined}>
-              {token.text}
+            <span
+              key={t}
+              className={mark ? "nvim-code-mark" : undefined}
+              style={Object.keys(style).length > 0 ? style : undefined}
+            >
+              {piece.text}
             </span>
           );
         })}
-        {index < colouring.length - 1 ? "\n" : null}
+        {index < lines.length - 1 ? "\n" : null}
       </span>
-    ));
-  }
+    );
+  });
   return (
     <pre className="nvim-rich-code">
       <code>{body}</code>

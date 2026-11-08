@@ -4,6 +4,7 @@ import {
   barRects,
   clampScroll,
   linePoints,
+  markPieces,
   parseHlTable,
   parseNode,
   revealScroll,
@@ -143,5 +144,34 @@ describe("layout decisions", () => {
     const bars = barRects([1, 0, 2], 30, 10);
     expect(bars.map((b) => b.h)).toEqual([5, 0, 10]);
     expect(bars[2]).toMatchObject({ x: 20, y: 0, w: 9 });
+  });
+});
+
+describe("marks in a markdown's code", () => {
+  it("cut a line's tokens where they begin and end", () => {
+    const pieces = markPieces(
+      [{ text: "fn(a: number, " }, { text: "b: string)" }],
+      [{ from: 14, to: 23 }],
+    );
+    expect(pieces.map((p) => [p.text, p.mark])).toEqual([
+      ["fn(a: number, ", -1],
+      ["b: string", 0],
+      [")", -1],
+    ]);
+  });
+
+  it("are parsed from the node, the odd ones left out", () => {
+    const node = parseNode({
+      type: "markdown",
+      text: "x",
+      marks: [
+        { line: 2, from: 3, to: 7, hl: "LspSignatureActiveParameter" },
+        { line: 2, from: 7, to: 3, hl: "X" },
+        { line: "2", from: 1, to: 2, hl: "X" },
+      ],
+    });
+    expect(node && node.type === "markdown" ? node.marks : undefined).toEqual([
+      { line: 2, from: 3, to: 7, hl: "LspSignatureActiveParameter" },
+    ]);
   });
 });
