@@ -3,6 +3,7 @@ import "./terminal.css";
 import { useColorScheme } from "../appearance";
 import { Failure, Waiting } from "../components/shell/SurfaceState";
 import { openXtermSession, type XtermSession } from "../surfaces/xtermSession";
+import { perfProbe } from "../perfProbe";
 import {
   activePalette,
   terminalSurfaceStyle,
@@ -359,6 +360,7 @@ export function TerminalSurface({
         }
         if (frame.type === "output") {
           terminal.write(frame.bytes, () => {
+            perfProbe("terminal-output", { surfaceKey, bytes: frame.bytes });
             if (
               disposed ||
               serial !== attachSerial ||

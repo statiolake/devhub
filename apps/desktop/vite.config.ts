@@ -31,6 +31,12 @@ const electronStub = fileURLToPath(
 export default defineConfig({
   base: "./",
   plugins: [react()],
+  // A measurement build only (`src/shell/perfProbe.ts`); `false` everywhere else.
+  define: {
+    __DEVHUB_PERF_PROBE__: JSON.stringify(
+      process.env.DEVHUB_PERF_PROBE === "1",
+    ),
+  },
   build: {
     outDir: "dist/shell",
     emptyOutDir: true,
