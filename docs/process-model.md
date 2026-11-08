@@ -41,7 +41,8 @@ and which come next.
   `invoke`). Attaching and detaching are still a request to main, which
   resolves the session and keeps who owns which client. A surface that is
   hidden acks its frames as they come and does not hand them to xterm
-  (phase 6).
+  (phase 6), and once it has missed more than it keeps it lets its client
+  go until it is shown (phase 6d).
 - **Neovim.** page → its port → the Neovim host → socket → nvim; a redraw:
   nvim → socket → the Neovim host decodes msgpack → its port (structured
   clone) → page. Main is on none of it (until phase 5c it decoded every
@@ -215,6 +216,9 @@ whose four cores were saturated by tmux and the streams.
 | 5d    | Byte streams in the process host; a remote Agent's journal read by the engine, over a port  | `f8793ba3` |
 | 6a    | A hidden terminal surface acks its frames and does not draw them                            | `a02af7d9` |
 | 6b    | The GUI Agents' conversations in a renderer of their own (the Conversations page)           | `61914f30` |
+| 6c    | Inserting into a long list does not restyle all of it (`.picker > * + *`)                   | `e4b05e6d` |
+| 6c    | A conversation's frame costs what changed, not the transcript's length                      | `ad5f834f` |
+| 6d    | A hidden terminal surface lets its client go once it has missed more than it keeps          | `111d60da` |
 
 **Phase 1.** `useConversation` keeps folding every event of a hidden pane
 (so a bad event is still refused where it arrives) and publishes nothing;
@@ -455,11 +459,31 @@ old client's last frame, so the new attach went silent and timed out
 flight). Frames from the pty host now say whose they are; the preload
 drops a detached attachment's and the decoder passes over them.
 
-Not done: telling the pty host to stop reading a hidden client (tmux would
-discard and redraw on its own when it is read again). It would save what
-is left — the frames' receipt and the acks, 11% of the Agents renderer's
-thread with four streams, `postMessage` and `onmessage` — for a protocol
-change through the pty host, main's fallback and the backpressure timer.
+Not done here: telling the pty host to stop reading a hidden client. Done
+another way in phase 6d, below.
+
+**Phase 6d.** Past the 128 KiB a hidden surface keeps, the client it has is
+no use to it: coming back attaches a new one either way. Until then it went
+on streaming — the pty host read and framed it, the Agents page received
+and acknowledged every frame — for nothing: 13–14% of the Agents renderer
+and 16–17% of the pty host with four hidden Agents streaming. The surface
+now detaches that client the moment it has missed more than it keeps, and
+passes over what it still had on the way, its end included (on main's own
+path the end can arrive before the detach is answered, and would have said
+the session disconnected).
+
+The plan was a hidden mode in the pty host: stop forwarding, keep or count
+the backlog there, reveal by asking it. Measured, the client was worth
+nothing past the bound and something under it, which is the rule 6a
+already had in the page; letting it go needs no new message, nothing in
+main's fallback path and no change to the backpressure timer, and it
+saves the pty host's reading too, not only the page's. It does not touch
+tmux, whose work (70–87% here) is parsing the panes' output with or without
+a client. The program in the pane is never held back — there is no client
+to hold it — and nothing is lost: tmux keeps the screen and the history,
+and the client attached on reveal is drawn from them. A Workspace terminal
+let go reads as not in view (`session_attached`) for the activity marks,
+which is only so while its Workspace is not on screen either.
 
 **Phase 6b.** Every Agent's pane was mounted in the one Agents page, so a
 GUI Agent's conversation being drawn held the terminal Agents' keys:
@@ -496,6 +520,115 @@ the terminals' thread again. Two renderers make "a conversation cannot
 hold a terminal's keys" true by construction. Virtualizing is still worth
 doing, for the conversation's own sake: its renderer is at 116–121% with
 a long transcript streaming, and its composer's keys wait for that.
+
+**Phase 6c.** The plan was to virtualize the transcript — draw what is on
+view and some around it, as VS Code's and Zed's chats do. It was not done:
+measured first, the cost was not the number of entries in the document but
+four things each frame did with all of them, and each could be made to cost
+what changed instead. With a GUI Agent streaming on screen (the stand-in
+CLI: a 40 000-line burst, then 300 lines/s, 3 400–4 100 top-level entries
+and 65 000–80 000 elements at the times measured) a frame took, largest
+first:
+
+1. **Style and layout for every entry, each time one was added.** Inserting
+   one child into the transcript restyled all of its children (Chrome's
+   trace: 3 400–4 100 elements recalculated, 25–45 ms, and 2 200 of 3 500
+   layout objects dirtied), because of the transcript's own sibling rules
+   (`.conversation-entry + .conversation-entry`, the spacing) — and every
+   page's `.picker > * + *`, which on its own made inserting into any long
+   list restyle all of it (22 ms → 1 ms for 2 000 plain paragraphs; fixed,
+   and a test keeps such rules out). The top-level entries are now in
+   chunks of 50 (`entryChunks.tsx`) inside a container of their own, so an
+   entry is added at the end of the last chunk and a chunk at the end of
+   the container, never before a sibling: under 1 ms. A chunk keeps its
+   entries (named by its first, the starts remembered across draws, only
+   the last one cut by size), so an entry is never moved and drawn anew
+   with its folds closed. The spacing across a chunk's edge is the same
+   rule with the kind before taken from the chunk (`data-after`).
+2. **Every tool call drawn again, every frame.** Every `ToolView` read the
+   subagent layout from a context whose value was a new object each frame
+   (a subagent entry changes as it runs), and the page's two app-level
+   contexts (`useAgents`, the `devhub:` links) were new on every app
+   snapshot — with the transcript below them, React looked through all of
+   its fibers for readers each time (`propagateContextChanges`, 5–7%) and
+   redrew thousands of tool calls (their DOM's props compared: another
+   10%). They are now stores handed down in a context that does not change
+   (`publishedValue.tsx`): what draws in the same pass reads the new value,
+   and once committed only readers whose part of it changed draw again — a
+   tool call its place (`useSubagentPlace`), its children and requests
+   (`EntryTreeContext`). The layout is also memoized.
+3. **Blink's own observer of every `content-visibility: auto` element.**
+   With per-entry `content-visibility`, the page worked out where 3 400
+   elements were every frame (`IntersectionObserverController`, 21% of the
+   thread once the rest was gone). The chunks are what is skipped now; the
+   entries of a chunk on view are drawn as they are.
+4. **Following the end and marking what arrived** read the whole
+   transcript's layout (`scrollTop = scrollHeight`, 18% before, 7% after
+   the others) and walked every entry (`useFreshEntries`); the latter now
+   reads the transcript's own mutations.
+
+Why not virtualize after all: with the transcript whole in the document,
+find (`transcriptSearch.ts` reads the drawn words), a drag selection across
+messages, Cmd+A and copy, the browser's scroll anchoring and
+`content-visibility`'s remembered sizes all hold by construction, and each
+of those would have needed its own replacement over a window of entries
+(find over a model of text the page does not draw, a selection pinned
+across unmounts, anchoring by estimated heights). Drawing a window would
+still bound what a pathological transcript costs in memory; with the costs
+above gone it is not what the keys wait for.
+
+### After phase 6d
+
+**b hidden**: four terminal Agents streaming (b terms), none of them on
+screen, the typing Agent shown; process CPU over two 10 s windows, then 40
+keys typed into the shown Agent. Two runs each; "before" is phase 6c.
+
+| run | Agents renderer   | pty host          | tmux server     | terminal key→paint p50 / p99 (ms) |
+| --- | ----------------- | ----------------- | --------------- | --------------------------------- |
+| 1   | 13, 13 → **0, 0** | 17, 17 → **0, 0** | 84, 83 → 76, 82 | 21.7 / 55.1 → 22.1 / 68.7         |
+| 2   | 13, 14 → **0, 1** | 16, 17 → **0, 0** | 83, 70 → 87, 85 | 28.9 / 51.8 → 18.4 / 40.3         |
+
+- What hidden terminals cost DevHub went to nothing: the Agents renderer
+  **13–14% → 0–1%**, the pty host **16–17% → 0%**.
+- tmux is the same, and so is what bounds the shown terminal's keys
+  (finding 5): the four streams' panes are parsed by tmux whoever reads
+  them.
+- Checked live: the four hidden streamers have no clients
+  (`list-clients`); one shown mid-stream is drawn at once without
+  "Connecting…", and Ctrl+C and a command typed into it reach it.
+
+### After phase 6c
+
+**v long**: a GUI Agent on screen, on the stand-in CLI (a 40 000-line
+burst, then 300 lines/s with 16 subagents running at a time), measured 20 s
+and 60 s after it started: the Conversations renderer's process CPU over
+8 s, then 20 keys typed into its composer 120 ms apart, each timed from the
+dispatch to the animation frame after its `input` event, and the share of
+that time in long tasks. Same machine, two runs of each; "before" is
+origin/main (`8d9cd20e`).
+
+| since start | entries drawn | Conversations renderer | composer key→paint p50 / p90 / p99 (ms)                             | long tasks             |
+| ----------- | ------------- | ---------------------- | ------------------------------------------------------------------- | ---------------------- |
+| 20 s        | 3 200–3 370   | 121, 122 → 79, 95      | 156 / 221 / 238, 153 / 194 / 284 → **12 / 60 / 61, 12 / 52 / 54**   | 78, 77 → **1.6, 3.4**  |
+| 60 s        | 3 920–4 130   | 125, 117 → 93, 98      | 188 / 220 / 476, 192 / 259 / 261 → **10 / 28 / 56, 16 / 105 / 123** | 81, 83 → **6.7, 10.4** |
+
+- The composer's keys: **150–190 ms → 10–16 ms** at p50, p99 from
+  240–480 ms to 55–125 ms.
+- The renderer is still busy (80–98%): it draws every frame the
+  conversation changes, 6.5 frames a second before and 15.5 with the
+  chunks and the stores (from a trace), and what a frame costs no longer
+  grows with the transcript. The keys go between frames.
+- In between, the chunks alone (no stores, entries still each
+  `content-visibility`) left the keys where they were, 137–206 ms: the
+  frames' style and layout went (the forced layout of following the end
+  from 18% of the thread to 7%), but React's redrawing of every tool call
+  and Blink's observer took the time they left.
+- Checked live on 2 700–4 000 entries: the spacing at all 64 chunk edges is
+  the spacing inside a chunk; find counts every match (266 of 266, as the
+  text holds) and brings the current one on screen; a selection from the
+  last entry of one chunk into the next copies both; scrolled up while it
+  streamed, the entry under the top edge stayed where it was while
+  12 000 px arrived below, and Latest follows again.
 
 ### After phase 6
 
@@ -696,17 +829,40 @@ complete.
    relay, and the other `child_process` callers in main (the GitHub CLI,
    usage readers, the login shell probe), which could go through
    `cleanSpawn` and the process host too.
-6. **Done** (phases 6a and 6b above). Left of it: virtualizing the
-   transcript, for the conversation's own responsiveness (its renderer at
-   116–121% with a long transcript streaming, its composer's keys behind
-   it); and a hidden terminal's frames, still received and acked (11% of
-   the Agents renderer with four streams), which the pty host could stop
-   reading instead.
+6. **Done** (phases 6a–6d above). Left of it: a window of entries for a
+   transcript too long to keep in memory (not what the keys wait for any
+   more, and what it would cost find, selection and anchoring is in 6c);
+   the Conversations renderer still draws every frame a visible
+   conversation changes (80–98% of a core while one streams).
 7. **Background services**: the agent and activity rounds' scheduling,
    repository status, usage readers, Task Manager sampling, the
    Orchestrator's invariant and GitHub polling, and `state.json`'s
-   serialisation, moved together because they share the model's facts. At
-   the measured loads they are small (d, e), so they come after 4–6.
+   serialisation, moved together because they share the model's facts.
+   **Measured after phase 6d and not moved**: with a, b, c and f run again
+   (profiles of main, 250 µs), main's thread is at its idle 8–11% in every
+   scenario and its JavaScript 0.8% busy idle, 2.3% in c steady and 2.6% in
+   f all. Of that, the agent round's `reconcile` and what it sets off —
+   projecting the snapshot and sending it to the pages
+   (`projectionChanged`, `send`), the layout (`publishLayoutState`), the
+   save (`persist`, `saveStateLocked`) — is 1.3–1.4%; the tmux rounds
+   0.2%; git, GitHub, usage and the Orchestrator do not reach 0.1% each. A
+   host of their own would move about 1.5% of a thread that is not what
+   anything waits for, with the Orchestrator's delivery, `needs_action`,
+   its invariants and the `devhub --tell` answers to keep identical across
+   a process boundary. Not worth that until a measured load says
+   otherwise.
+
+   Found on the way: with one GUI Agent streaming, main sends 3.2 app
+   snapshots a second to each of the six pages (the Agent's prompt-cache
+   numbers and its activity line, which change with every request the CLI
+   makes; the stand-in makes them far faster than a real one), and with
+   each one `workbench-area-changed` and `sidebar-area-changed`, unchanged
+   in 19 of 19, to all six, though only the window's page and the Sidebar
+   listen. Not changed: the window's page draws nothing until it has an
+   area and has no way to ask for one, so a page reloaded after main
+   stopped repeating it would stay blank; and since phase 6c a snapshot no
+   longer makes the Conversations page walk its transcript.
+
 8. **Chords in the pages' preloads** (capture-phase `keydown`) instead of
    `before-input-event`, with main's handler kept for VS Code's workbench
    views only. Measured impact is the smallest of all: a key reaches the
