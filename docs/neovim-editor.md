@@ -541,7 +541,12 @@ or a key does, and what a plugin sees stay the same. Done: geometric box
 drawing, blocks and Powerline separators; floats framed, cut at their line,
 titled with labels; panels of floats under one shadow; native popupmenu,
 command line, tab line, hover popups, notifications; smooth scroll and
-cursor. Candidates, by visual impact and then by compatibility risk (the
+cursor; and, from the list below, 1–5 and 9–11. The yardstick for chrome
+(separators, bars, menus, scrollbars) is VS Code and Zed; the text area
+stays cell-aware, as a modal editor's is. Verified on 0.11.5 and 0.12.6
+with a real config (splits, floats and panels, the command line, the
+completion menu, IME preedit, `:terminal`, diff mode, folds, CJK,
+`linespace`): a full-window scroll costs what it did before. Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):
 
 1. _Window separators_ (`│` in a whole cell column) — done: each half of
