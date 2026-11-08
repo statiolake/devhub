@@ -2205,6 +2205,26 @@ describe("the colour theme, as [appearance] theme and [themes.*] say", () => {
     expect(parseConfig(over).themes).toEqual(config.themes);
   });
 
+  it("reads a custom theme's Neovim colorscheme and its plugin, and writes them back", () => {
+    const source = [
+      version,
+      '[themes."Min Dark"]',
+      'background = "#1f1f1f"',
+      'foreground = "#bbbbbb"',
+      `palette = [${palette}]`,
+      'neovim_colorscheme = "min-dark"',
+      'neovim_plugin = "statiolake/min-theme.nvim"',
+      "",
+    ].join("\n");
+    const config = parseConfig(source);
+    expect(config.themes[0]?.neovimColorscheme).toBe("min-dark");
+    expect(config.themes[0]?.neovimPlugin).toBe("statiolake/min-theme.nvim");
+    const [mine] = customThemesOf(config);
+    expect(mine?.neovimColorscheme).toBe("min-dark");
+    expect(mine?.neovimPlugin).toBe("statiolake/min-theme.nvim");
+    expect(parseConfig(configToToml(config)).themes).toEqual(config.themes);
+  });
+
   it("refuses a custom theme's bad field by its path", () => {
     const theme = (lines: string[]) =>
       [version, '[themes."Mine"]', ...lines, ""].join("\n");
@@ -2246,6 +2266,26 @@ describe("the colour theme, as [appearance] theme and [themes.*] say", () => {
         ],
         "unknown_key",
         "themes.Mine.bold",
+      ],
+      [
+        [
+          `background = "#000"`,
+          `foreground = "#fff"`,
+          `palette = [${palette}]`,
+          `neovim_colorscheme = "min dark"`,
+        ],
+        "invalid_theme",
+        "themes.Mine.neovim_colorscheme",
+      ],
+      [
+        [
+          `background = "#000"`,
+          `foreground = "#fff"`,
+          `palette = [${palette}]`,
+          `neovim_plugin = "min-theme.nvim"`,
+        ],
+        "invalid_theme",
+        "themes.Mine.neovim_plugin",
       ],
     ];
     for (const [lines, code, path] of cases) {

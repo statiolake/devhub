@@ -57,6 +57,14 @@ export interface NeovimColorscheme {
   readonly highlights: Readonly<Record<string, NeovimHighlight>>;
   /** `g:terminal_color_0` … `15`. */
   readonly terminal: readonly string[];
+  /**
+   * The theme's own Neovim colorscheme (`Theme.neovimColorscheme`), worn
+   * instead of `highlights` where it is installed; those are then only the
+   * fallback. Absent for a theme that has none.
+   */
+  readonly colorscheme?: string;
+  /** The plugin that provides `colorscheme`, `owner/repo`. */
+  readonly plugin?: string;
 }
 
 /** The roles every group is made from. */

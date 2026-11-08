@@ -8,12 +8,13 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { OPEN_FILE_LUA, PUBLISH_THEME_LUA } from "./managedNeovim.js";
 import {
 	ThemeCatalog,
+	completeTheme,
 	terminalPaletteOfTheme,
 } from "../../model/themes/theme.js";
 import {
@@ -218,6 +219,99 @@ describe.skipIf(NVIM === undefined)("a real Neovim", () => {
 		).toBe("light");
 		expect(await client.request("nvim_get_var", ["schemes"])).toBe(
 			"devhub;devhub;",
+		);
+		client.close();
+	});
+
+	it("wears a theme's own colorscheme where it is installed, else the generated one, said once", async () => {
+		const { client } = await startNvim();
+		// A plugin on the runtimepath with a colorscheme, as lazy.nvim puts one
+		// there when :colorscheme asks for it.
+		const plugin = makeScratchDir("nvim-colors");
+		directories.push(plugin);
+		mkdirSync(join(plugin, "colors"));
+		writeFileSync(
+			join(plugin, "colors", "devhub-test-own.lua"),
+			`vim.cmd("highlight clear")
+			vim.api.nvim_set_hl(0, "Normal", { fg = "#010203", bg = "#fefdfc" })
+			vim.g.colors_name = "devhub-test-own"`,
+		);
+		await client.request("nvim_exec_lua", [
+			`vim.opt.runtimepath:append(...)
+			vim.api.nvim_create_autocmd("ColorScheme", { callback = function(event)
+				vim.g.schemes = (vim.g.schemes or "") .. event.match .. ";"
+			end })
+			vim.notify = function(message) vim.g.said = (vim.g.said or "") .. message .. "\\n" end`,
+			[plugin],
+		]);
+		const own = (name: string, colorscheme: string) => {
+			const theme = completeTheme({
+				name,
+				background: "#ffffff",
+				foreground: "#202020",
+				palette: Array.from({ length: 16 }, () => "#808080"),
+				neovimColorscheme: colorscheme,
+				neovimPlugin: "someone/colors.nvim",
+			});
+			const published = publishedThemeOf({
+				theme,
+				terminal: terminalPaletteOfTheme(theme),
+				temporary: false,
+			});
+			return [published, themeEnvironment(published, undefined)] as const;
+		};
+		const flush = () => client.request("nvim_exec_lua", ["return 1", []]);
+		await client.request("nvim_exec_lua", [
+			PUBLISH_THEME_LUA,
+			own("Mine", "devhub-test-own"),
+		]);
+		expect(await client.request("nvim_get_var", ["colors_name"])).toBe(
+			"devhub-test-own",
+		);
+		expect((await hl(client, "Normal")).bg).toBe("#fefdfc");
+		expect(
+			await client.request("nvim_get_option_value", ["background", {}]),
+		).toBe("light");
+		// Told again: already worn, nothing redone.
+		await client.request("nvim_exec_lua", [
+			PUBLISH_THEME_LUA,
+			own("Mine", "devhub-test-own"),
+		]);
+		// A theme without one: the generated colorscheme, over DevHub's own pick.
+		await client.request("nvim_exec_lua", [PUBLISH_THEME_LUA, told("Nord")]);
+		expect(await client.request("nvim_get_var", ["colors_name"])).toBe(
+			"devhub",
+		);
+		expect((await hl(client, "Normal")).bg).toBe("#2e3440");
+		// One that is not installed: the generated one, and a hint, once.
+		await client.request("nvim_exec_lua", [
+			PUBLISH_THEME_LUA,
+			own("Absent", "devhub-test-absent"),
+		]);
+		await client.request("nvim_exec_lua", [PUBLISH_THEME_LUA, told("Nord")]);
+		await client.request("nvim_exec_lua", [
+			PUBLISH_THEME_LUA,
+			own("Absent", "devhub-test-absent"),
+		]);
+		await flush();
+		expect(await client.request("nvim_get_var", ["colors_name"])).toBe(
+			"devhub",
+		);
+		expect((await hl(client, "Normal")).bg).toBe("#ffffff");
+		const said = (await client.request("nvim_get_var", ["said"])) as string;
+		expect(said.split("\n").filter((line) => line.length > 0)).toEqual([
+			"DevHub: Absent is meant to be worn as the colorscheme devhub-test-absent (someone/colors.nvim). Install it to wear it; until then DevHub's generated colours are worn.",
+		]);
+		// And back to the installed one, live.
+		await client.request("nvim_exec_lua", [
+			PUBLISH_THEME_LUA,
+			own("Mine", "devhub-test-own"),
+		]);
+		expect(await client.request("nvim_get_var", ["colors_name"])).toBe(
+			"devhub-test-own",
+		);
+		expect(await client.request("nvim_get_var", ["schemes"])).toBe(
+			"devhub-test-own;devhub;devhub;devhub;devhub;devhub-test-own;",
 		);
 		client.close();
 	});

@@ -71,6 +71,8 @@ palette = [                        # ANSI 0–15: black, red, green, yellow, blu
   "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af",
   "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
 ]
+neovim_colorscheme = "catppuccin-mocha"   # optional: the theme's own Neovim colorscheme
+neovim_plugin = "catppuccin/nvim"         # optional: the plugin that has it (named in a hint)
 ```
 
 and name it in `[appearance] theme`. One named like a built-in theme replaces
@@ -79,7 +81,8 @@ it. A table DevHub cannot use is refused with its path, as any setting is
 `#rrggbb` / `#rgb`, a palette that is not exactly sixteen colours, a key it
 does not know, a missing `background`, `foreground` or `palette`, or a name
 `appearance.theme` could not spell (one with a comma, or starting `light:` /
-`dark:`).
+`dark:`), or a `neovim_colorscheme` with a space in it or a `neovim_plugin` that is
+not `owner/repo`.
 
 ## What is derived from it
 
@@ -109,14 +112,49 @@ programs").
 
 ## Neovim
 
+### A theme's own colorscheme
+
+A theme made with a Neovim colorscheme of its own is worn as that one, so the
+editor looks as its authors meant: their syntax roles, their UI, their plugin
+groups. The built-in ones that have one (`model/themes/neovimPlugins.ts`),
+listed only where the plugin's palette is the one the theme is:
+
+| Theme                                         | `:colorscheme`                                        | Plugin                              |
+| --------------------------------------------- | ----------------------------------------------------- | ----------------------------------- |
+| DevHub Dark, DevHub Light                     | `vscode-2026-dark`, `vscode-2026-light`               | `statiolake/vscode-2026-theme.nvim` |
+| TokyoNight (= Night), Night, Storm, Moon, Day | `tokyonight-night`, `-storm`, `-moon`, `-day`         | `folke/tokyonight.nvim`             |
+| Catppuccin Mocha, Macchiato, Frappe, Latte    | `catppuccin-mocha`, `-macchiato`, `-frappe`, `-latte` | `catppuccin/nvim`                   |
+| Kanagawa Wave, Dragon                         | `kanagawa-wave`, `kanagawa-dragon`                    | `rebelot/kanagawa.nvim`             |
+| Rose Pine, Rose Pine Moon, Rose Pine Dawn     | `rose-pine-main`, `rose-pine-moon`, `rose-pine-dawn`  | `rose-pine/neovim`                  |
+| Gruvbox Dark, Gruvbox Light                   | `gruvbox` (it follows `background`, set first)        | `ellisonleao/gruvbox.nvim`          |
+| Nightfox                                      | `nightfox`                                            | `EdenEast/nightfox.nvim`            |
+
+A custom theme names its own with `neovim_colorscheme` (and `neovim_plugin`
+for the hint). DevHub sets `background` and the terminal colours from the
+theme and runs `:colorscheme <name>`. With lazy.nvim the plugin can be
+`lazy = true`: lazy loads a colorscheme plugin when `:colorscheme` asks for one
+of its colorschemes (its `ColorSchemePre` handler), so listing several costs
+nothing at startup:
+
+```lua
+{ 'statiolake/min-theme.nvim', lazy = true },
+```
+
+Where it is not installed, the generated colorscheme below is worn instead and
+DevHub says once per Neovim which plugin would be worn. Why not install it for
+you? A Neovim's plugins are its config's to choose; DevHub only names one.
+
 ### How it is worn
 
-DevHub applies the colorscheme, named `devhub`, to every Neovim it draws — the
-managed one and each terminal's `nvim` — when it attaches and again on every
-theme change, **unless the person's config has chosen another colorscheme**
-(`g:colors_name` set to anything but `devhub`). A `colorscheme tokyonight` in
-your config wins and is never painted over; with none, or with devhub.nvim's
-own `devhub`, DevHub's is worn. It is applied the way a colorscheme file
+DevHub applies the theme's own colorscheme, or the generated one named
+`devhub`, to every Neovim it draws — the managed one and each terminal's
+`nvim` — when it attaches and again on every theme change, **unless the
+person's config has chosen another colorscheme** (`g:colors_name` set to
+anything but `devhub` or the colorscheme DevHub itself put on,
+`g:devhub_colorscheme`). A `colorscheme tokyonight` in your config wins and is
+never painted over; with none, or with devhub.nvim's own `devhub`, DevHub's is
+worn. A theme's own colorscheme already worn is not redone when the same theme
+is told again. It is applied the way a colorscheme file
 applies itself (`highlight clear`, `background`, every group,
 `g:terminal_color_0`…`15`, `g:colors_name = 'devhub'`) and ends with the
 `ColorScheme` event, so your `ColorScheme` autocommands (a status line built

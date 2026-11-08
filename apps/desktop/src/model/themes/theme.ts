@@ -32,6 +32,7 @@ import {
   withContrast,
 } from "./color.js";
 import { DEVHUB_THEMES } from "./devhubThemes.js";
+import { NEOVIM_PLUGINS } from "./neovimPlugins.js";
 
 export {
   DEFAULT_DARK_THEME,
@@ -54,6 +55,15 @@ export interface Theme {
   readonly selectionForeground?: string;
   /** ANSI 0–15: black, red, green, yellow, blue, magenta, cyan, white, then bright. */
   readonly palette: readonly string[];
+  /**
+   * The Neovim colorscheme the theme is meant to be worn as (what
+   * `:colorscheme` takes), when it has one of its own: the Neovims DevHub
+   * draws wear it where it is installed, else the colorscheme DevHub
+   * generates. Built-in themes take it from `NEOVIM_PLUGINS`.
+   */
+  readonly neovimColorscheme?: string;
+  /** The plugin that provides it, `owner/repo`: named in the hint to install it. */
+  readonly neovimPlugin?: string;
 }
 
 /** Where a theme in the catalog comes from. */
@@ -89,12 +99,24 @@ function rowTheme(name: string, colors: string): CatalogTheme {
   };
 }
 
+/** A built-in theme with the Neovim colorscheme `NEOVIM_PLUGINS` names for it. */
+function withNeovimPlugin(theme: CatalogTheme): CatalogTheme {
+  const plugin = NEOVIM_PLUGINS[theme.name];
+  return plugin === undefined
+    ? theme
+    : {
+        ...theme,
+        neovimColorscheme: plugin.colorscheme,
+        neovimPlugin: plugin.plugin,
+      };
+}
+
 /** Every built-in theme: DevHub's two first, then the collection by name. */
 export function builtinThemes(): readonly CatalogTheme[] {
   builtins ??= [
     ...DEVHUB_THEMES.map((theme) => ({ ...theme, origin: "devhub" as const })),
     ...BUILTIN_THEME_ROWS.map(([name, colors]) => rowTheme(name, colors)),
-  ];
+  ].map(withNeovimPlugin);
   return builtins;
 }
 
@@ -137,6 +159,8 @@ export const CUSTOM_THEME_KEYS: readonly string[] = [
   "selection_background",
   "selection_foreground",
   "palette",
+  "neovim_colorscheme",
+  "neovim_plugin",
 ];
 
 /**
@@ -154,6 +178,8 @@ export function completeTheme(fields: {
   readonly selectionBackground?: string | undefined;
   readonly selectionForeground?: string | undefined;
   readonly palette: readonly string[];
+  readonly neovimColorscheme?: string | undefined;
+  readonly neovimPlugin?: string | undefined;
 }): Theme {
   const background = normalizeHex(fields.background);
   const foreground = normalizeHex(fields.foreground);
@@ -177,6 +203,12 @@ export function completeTheme(fields: {
         : normalizeHex(fields.selectionBackground),
     ...(selectionForeground === undefined ? {} : { selectionForeground }),
     palette: fields.palette.map(normalizeHex),
+    ...(fields.neovimColorscheme === undefined
+      ? {}
+      : { neovimColorscheme: fields.neovimColorscheme }),
+    ...(fields.neovimPlugin === undefined
+      ? {}
+      : { neovimPlugin: fields.neovimPlugin }),
   };
 }
 

@@ -568,6 +568,10 @@ export interface CustomThemeConfig {
   readonly selectionBackground?: string;
   readonly selectionForeground?: string;
   readonly palette: readonly string[];
+  /** `neovim_colorscheme`: what `:colorscheme` takes, e.g. `min-dark`. */
+  readonly neovimColorscheme?: string;
+  /** `neovim_plugin`: the plugin providing it, `owner/repo`. */
+  readonly neovimPlugin?: string;
 }
 
 export interface ScratchConfig {
@@ -1220,6 +1224,19 @@ function customThemeFromTable(value: unknown, name: string): CustomThemeConfig {
     const found = color(key, false);
     return found === undefined ? {} : { [field]: found };
   };
+  // A name `:colorscheme` can take (no spaces: it would split the command),
+  // and a plugin as `owner/repo`, the way lazy.nvim and vim.pack spell one.
+  const word = (
+    key: string,
+    field: keyof CustomThemeConfig,
+    pattern: RegExp,
+  ) => {
+    const found = table[key];
+    if (found === undefined) return {};
+    if (typeof found !== "string") fail("invalid_type", `${path}.${key}`);
+    if (!pattern.test(found.trim())) fail("invalid_theme", `${path}.${key}`);
+    return { [field]: found.trim() };
+  };
   return {
     name,
     background: color("background", true) as string,
@@ -1229,6 +1246,8 @@ function customThemeFromTable(value: unknown, name: string): CustomThemeConfig {
     ...optional("selection_background", "selectionBackground"),
     ...optional("selection_foreground", "selectionForeground"),
     palette: (palette as string[]).map((entry) => entry.trim()),
+    ...word("neovim_colorscheme", "neovimColorscheme", /^[\w.+-]+$/u),
+    ...word("neovim_plugin", "neovimPlugin", /^[\w.-]+\/[\w.-]+$/u),
   };
 }
 
@@ -1257,6 +1276,12 @@ function customThemeToTable(
       ? {}
       : { selection_foreground: theme.selectionForeground }),
     palette: [...theme.palette],
+    ...(theme.neovimColorscheme === undefined
+      ? {}
+      : { neovim_colorscheme: theme.neovimColorscheme }),
+    ...(theme.neovimPlugin === undefined
+      ? {}
+      : { neovim_plugin: theme.neovimPlugin }),
   };
 }
 

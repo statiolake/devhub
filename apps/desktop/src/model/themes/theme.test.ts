@@ -7,6 +7,7 @@ import {
   oklchOf,
   withContrast,
 } from "./color.js";
+import { NEOVIM_PLUGINS } from "./neovimPlugins.js";
 import {
   builtinThemes,
   completeTheme,
@@ -39,6 +40,17 @@ describe("the built-in themes", () => {
         expect(color).toMatch(HEX);
       }
     }
+  });
+
+  it("name their own Neovim colorscheme where one is made for the same palette, and only themes that exist", () => {
+    const catalog = new ThemeCatalog();
+    for (const [name, plugin] of Object.entries(NEOVIM_PLUGINS)) {
+      const theme = catalog.find(name);
+      expect(theme?.name).toBe(name);
+      expect(theme?.neovimColorscheme).toBe(plugin.colorscheme);
+      expect(theme?.neovimPlugin).toMatch(/^[\w.-]+\/[\w.-]+$/);
+    }
+    expect(catalog.find("Nord")?.neovimColorscheme).toBeUndefined();
   });
 
   it("include the well-known ones", () => {

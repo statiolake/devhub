@@ -60,8 +60,10 @@ export interface PublishedTheme {
   /**
    * DevHub's Neovim colorscheme for the theme (`themes/neovimColorscheme.ts`):
    * `background`, every highlight group as an `nvim_set_hl` spec, and the
-   * sixteen terminal colours. DevHub applies it to the Neovims it draws; a
-   * Neovim it does not draw can apply the same table from `theme.json`.
+   * sixteen terminal colours; with `colorscheme` and `plugin` when the theme
+   * has a Neovim colorscheme of its own, which is worn instead where it is
+   * installed. DevHub applies it to the Neovims it draws; a Neovim it does
+   * not draw can apply the same from `theme.json`.
    */
   readonly neovim: NeovimColorscheme;
   /** A ready `fzf --color=` value. */
@@ -237,7 +239,15 @@ export function publishedThemeOf(source: PublishedThemeSource): PublishedTheme {
     background: kind,
     temporary: source.temporary,
     colors,
-    neovim: neovimColorscheme(source.theme),
+    neovim: {
+      ...neovimColorscheme(source.theme),
+      ...(source.theme.neovimColorscheme === undefined
+        ? {}
+        : { colorscheme: source.theme.neovimColorscheme }),
+      ...(source.theme.neovimPlugin === undefined
+        ? {}
+        : { plugin: source.theme.neovimPlugin }),
+    },
     fzf: fzfColorsOf(colors),
   };
 }

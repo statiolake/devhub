@@ -279,16 +279,27 @@ exit "$status"`;
  * `:terminal` or a job started from it sees them too. Then `User DevhubTheme`
  * fires with the value as its `data`.
  *
- * Then the colorscheme generated from the theme (`theme.neovim`,
- * `model/themes/neovimColorscheme.ts`) is applied as `devhub` — **unless the
- * person's config chose another**: with `g:colors_name` set to anything but
- * `devhub`, nothing more is done, so a `:colorscheme` of their own always
- * wins. It is applied the way a colorscheme file applies itself (`highlight
- * clear`, `background`, every group, `g:terminal_color_*`, `g:colors_name`)
- * and ends with the `ColorScheme` event, so the person's `ColorScheme`
- * autocommands adjust it as they would any other. After `User DevhubTheme`,
- * so a plugin that recolours on that event (devhub.nvim) is drawn over
- * rather than drawing over DevHub's.
+ * Then the theme is worn — **unless the person's config chose another
+ * colorscheme**: with `g:colors_name` set to anything but `devhub` or the
+ * colorscheme DevHub itself put on (`g:devhub_colorscheme`), nothing more is
+ * done, so a `:colorscheme` of their own always wins.
+ *
+ * - A theme with a Neovim colorscheme of its own (`theme.neovim.colorscheme`,
+ *   `model/themes/neovimPlugins.ts` or a custom theme's `neovim_colorscheme`)
+ *   is worn as that: `background` from the theme, then `:colorscheme <name>`
+ *   — which lazy.nvim answers by loading a `lazy = true` plugin that has it.
+ *   Nothing is redone when it is already worn.
+ * - Otherwise, or when `:colorscheme` cannot find it, the colorscheme
+ *   generated from the theme (`theme.neovim.highlights`,
+ *   `model/themes/neovimColorscheme.ts`) is applied as `devhub`, the way a
+ *   colorscheme file applies itself (`highlight clear`, `background`, every
+ *   group, `g:terminal_color_*`, `g:colors_name`). A colorscheme that was not
+ *   found is said once per Neovim, quietly, with the plugin to install.
+ *
+ * Either way it ends with the `ColorScheme` event, so the person's
+ * `ColorScheme` autocommands adjust it as they would any other. After `User
+ * DevhubTheme`, so a plugin that recolours on that event (devhub.nvim) is
+ * drawn over rather than drawing over DevHub's.
  */
 export const PUBLISH_THEME_LUA = `
 local theme, env = ...
@@ -300,7 +311,30 @@ for name, value in pairs(env) do vim.env[name] = value end
 vim.api.nvim_exec_autocmds("User", { pattern = "DevhubTheme", modeline = false, data = theme })
 local scheme = theme.neovim
 local chosen = vim.g.colors_name
-if type(scheme) ~= "table" or (chosen ~= nil and chosen ~= "devhub") then return end
+if type(scheme) ~= "table" then return end
+if chosen ~= nil and chosen ~= "devhub" and chosen ~= vim.g.devhub_colorscheme then return end
+local own = scheme.colorscheme
+if type(own) == "string" and own ~= "" then
+  if chosen == own and vim.o.background == scheme.background then return end
+  -- Before it, so a colorscheme that sets its own terminal colours wins.
+  for index, color in ipairs(scheme.terminal) do vim.g["terminal_color_" .. (index - 1)] = color end
+  -- Unset first: setting 'background' while a colorscheme is named reloads it.
+  vim.g.colors_name = nil
+  vim.o.background = scheme.background
+  if pcall(vim.cmd.colorscheme, own) then
+    vim.g.devhub_colorscheme = own
+    return
+  end
+  local said = vim.g.devhub_colorscheme_missing or ""
+  if not said:find("|" .. own .. "|", 1, true) then
+    vim.g.devhub_colorscheme_missing = said .. "|" .. own .. "|"
+    local plugin = type(scheme.plugin) == "string" and scheme.plugin or "a plugin that has it"
+    vim.schedule(function()
+      vim.notify(string.format("DevHub: %s is meant to be worn as the colorscheme %s (%s). Install it to wear it; until then DevHub's generated colours are worn.", theme.name, own, plugin), vim.log.levels.INFO)
+    end)
+  end
+end
+vim.g.devhub_colorscheme = nil
 -- Unset first: setting 'background' while a colorscheme is named reloads it.
 vim.g.colors_name = nil
 vim.cmd("highlight clear")
