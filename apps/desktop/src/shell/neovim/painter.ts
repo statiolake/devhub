@@ -22,6 +22,14 @@ import {
   type FramedMember,
 } from "./floats";
 import {
+  NO_THEME,
+  sameTheme,
+  shapedSpans,
+  spanCorners,
+  spanNotches,
+  type PaintTheme,
+} from "./chrome";
+import {
   SIDES,
   frameGeometry,
   labelBox,
@@ -181,6 +189,9 @@ interface GridCanvas {
 
 const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 
+/** A selection's or search match's corners (`chrome.ts`). */
+const SHAPE_RADIUS = 3;
+
 /** A float's outer corners' radius (DevHub's frame); a border of lines has none. */
 const FLOAT_RADIUS = 6;
 
@@ -235,6 +246,7 @@ export class GridPainter {
   >();
   private font: FontSpec;
   private metrics: Metrics;
+  private theme: PaintTheme = NO_THEME;
   private dpr: number;
   /** The row's icons, drawn after its backgrounds (`paintRow`). */
   private readonly icons: {
@@ -286,6 +298,13 @@ export class GridPainter {
     }
     this.font = font;
     this.metrics = measureFont(font, this.dpr);
+    return true;
+  }
+
+  /** What the colorscheme says beyond the grid (`chrome.ts`); answers whether it changed. */
+  setTheme(theme: PaintTheme): boolean {
+    if (sameTheme(theme, this.theme)) return false;
+    this.theme = theme;
     return true;
   }
 
@@ -367,7 +386,7 @@ export class GridPainter {
       const rows =
         fresh || all
           ? Array.from({ length: grid.height }, (_, row) => row)
-          : [...grid.dirty];
+          : this.withNeighbours(grid.dirty, grid.height);
       for (const row of rows) this.paintRow(entry, state, box, row);
       grid.dirty.clear();
       const scrolled = changes.scrolled.get(box.grid) ?? 0;
@@ -375,6 +394,21 @@ export class GridPainter {
         this.glide(canvas, scrolled, grid.height);
       }
     }
+  }
+
+  /**
+   * The rows to repaint for `dirty`: with shaped colours about, the rows
+   * next to each too — a selection's corners there depend on it.
+   */
+  private withNeighbours(dirty: ReadonlySet<number>, height: number) {
+    if (this.theme.shaped.size === 0) return [...dirty];
+    const rows = new Set<number>();
+    for (const row of dirty) {
+      if (row > 0) rows.add(row - 1);
+      rows.add(row);
+      if (row + 1 < height) rows.add(row + 1);
+    }
+    return [...rows];
   }
 
   /**
@@ -708,26 +742,36 @@ export class GridPainter {
     ctx.clearRect(0, y, grid.width * cw, ch);
     const base = row * grid.width;
     this.icons.length = 0;
+    const runs: { start: number; end: number; hl: number }[] = [];
     let col = 0;
     while (col < grid.width) {
       const hl = grid.hls[base + col] ?? 0;
       let end = col + 1;
       while (end < grid.width && grid.hls[base + end] === hl) end += 1;
+      runs.push({ start: col, end, hl });
+      col = end;
+    }
+    // Every ground first, then the shapes over them, then the text: a
+    // selection's rounded corner shows the ground beside it, and no run's
+    // ground covers the text of the run before it.
+    for (const run of runs) {
+      this.paintGround(ctx, state, box, grid.chars, base, run, y);
+    }
+    this.paintShaped(ctx, state, box, row, y);
+    for (const run of runs) {
       this.paintRun(
         ctx,
         state,
-        box,
         grid.chars,
         grid.hls,
         grid.width,
         base,
-        col,
-        end,
-        hl,
+        run.start,
+        run.end,
+        run.hl,
         y,
         baseline,
       );
-      col = end;
     }
     // After every background of the row: an icon may reach into the blank
     // cell after it, which a later run would otherwise paint over.
@@ -737,6 +781,93 @@ export class GridPainter {
     }
     this.icons.length = 0;
     ctx.restore();
+  }
+
+  /** The backgrounds of one row's cells, `reverse` applied. */
+  private rowGrounds(state: NeovimUiState, box: GridBox, row: number) {
+    const grid = state.grids.get(box.grid);
+    const out = new Int32Array(grid?.width ?? 0);
+    if (!grid || row < 0 || row >= grid.height) return out.fill(-1);
+    const base = row * grid.width;
+    for (let col = 0; col < grid.width; col += 1) {
+      const attr = state.hl.get(grid.hls[base + col] ?? 0);
+      // A blended cell is no selection to shape.
+      out[col] =
+        box.float && (attr?.blend ?? 0) > 0
+          ? -1
+          : resolveColors(attr, state.defaults).bg;
+    }
+    return out;
+  }
+
+  /**
+   * Selections and search matches (`PaintTheme.shaped`) as one rounded
+   * shape over the rows they span: each run's cells take the ground beside
+   * it, and the run is filled over that with its corners rounded where the
+   * row above or below does not continue it.
+   */
+  private paintShaped(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    box: GridBox,
+    row: number,
+    y: number,
+  ): void {
+    const { shaped } = this.theme;
+    if (shaped.size === 0) return;
+    const grounds = this.rowGrounds(state, box, row);
+    const spans = shapedSpans(grounds, shaped);
+    if (spans.length === 0) return;
+    const above = shapedSpans(this.rowGrounds(state, box, row - 1), shaped);
+    const below = shapedSpans(this.rowGrounds(state, box, row + 1), shaped);
+    const { width: cw, height: ch } = this.metrics;
+    const r = Math.max(0, Math.min(SHAPE_RADIUS, cw / 2, ch / 2));
+    for (const span of spans) {
+      const x0 = span.start * cw;
+      const x1 = span.end * cw;
+      const left = span.start > 0 ? grounds[span.start - 1] : -1;
+      const right = span.end < grounds.length ? grounds[span.end] : -1;
+      const beside =
+        left !== undefined && left >= 0 && !shaped.has(left)
+          ? left
+          : right !== undefined && right >= 0 && !shaped.has(right)
+            ? right
+            : state.defaults.background;
+      ctx.fillStyle = cssColor(beside);
+      ctx.fillRect(x0, y, x1 - x0, ch);
+      const c = spanCorners(span, above, below);
+      ctx.fillStyle = cssColor(span.bg);
+      ctx.beginPath();
+      ctx.roundRect(x0, y, x1 - x0, ch, [
+        c.tl ? r : 0,
+        c.tr ? r : 0,
+        c.br ? r : 0,
+        c.bl ? r : 0,
+      ]);
+      ctx.fill();
+      // The inside corners where the row above or below runs on past this
+      // one: the selection's colour, cut round by the ground beside.
+      const n = spanNotches(span, above, below);
+      const notch = (
+        on: boolean,
+        x: number,
+        top: number,
+        cx: number,
+        cy: number,
+      ) => {
+        if (!on || r <= 0) return;
+        ctx.fillStyle = cssColor(span.bg);
+        ctx.fillRect(x, top, r, r);
+        ctx.fillStyle = cssColor(beside);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      notch(n.tl, x0 - r, y, x0 - r, y + r);
+      notch(n.tr, x1, y, x1 + r, y + r);
+      notch(n.bl, x0 - r, y + ch - r, x0 - r, y + ch - r);
+      notch(n.br, x1, y + ch - r, x1 + r, y + ch - r);
+    }
   }
 
   /**
@@ -851,28 +982,23 @@ export class GridPainter {
     this.inks.clear();
   }
 
-  private paintRun(
+  /** A run's background, `winblend` applied. */
+  private paintGround(
     ctx: CanvasRenderingContext2D,
     state: NeovimUiState,
     box: GridBox,
     chars: readonly string[],
-    hls: ArrayLike<number>,
-    rowWidth: number,
     base: number,
-    start: number,
-    end: number,
-    hl: number,
+    run: { readonly start: number; readonly end: number; readonly hl: number },
     y: number,
-    baseline: number,
   ): void {
     const { width: cw, height: ch } = this.metrics;
-    const attr = state.hl.get(hl);
-    const { fg, bg, sp } = resolveColors(attr, state.defaults);
+    const { start, end } = run;
+    const attr = state.hl.get(run.hl);
+    const { bg } = resolveColors(attr, state.defaults);
     const blend = box.float && attr?.blend !== undefined ? attr.blend : 0;
-    const x0 = start * cw;
-    const x1 = end * cw;
     ctx.fillStyle = cssColor(bg, 1 - blend / 100);
-    ctx.fillRect(x0, y, x1 - x0, ch);
+    ctx.fillRect(start * cw, y, (end - start) * cw, ch);
     if (blend > 0) {
       // Neovim's compositor shows what is under a blended float only
       // through its blank cells; under its text it is the float's. A cell
@@ -887,6 +1013,27 @@ export class GridPainter {
         ctx.fillRect(col * cw, y, (wide ? 2 : 1) * cw, ch);
       }
     }
+  }
+
+  /** A run's text, glyphs and lines, over the grounds. */
+  private paintRun(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    chars: readonly string[],
+    hls: ArrayLike<number>,
+    rowWidth: number,
+    base: number,
+    start: number,
+    end: number,
+    hl: number,
+    y: number,
+    baseline: number,
+  ): void {
+    const { width: cw, height: ch } = this.metrics;
+    const attr = state.hl.get(hl);
+    const { fg, bg, sp } = resolveColors(attr, state.defaults);
+    const x0 = start * cw;
+    const x1 = end * cw;
     ctx.fillStyle = cssColor(fg);
     ctx.font = fontOf(this.font, attr);
     ctx.textBaseline = "alphabetic";

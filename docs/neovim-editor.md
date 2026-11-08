@@ -198,6 +198,13 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     kitty and WezTerm draw them, since devicons, lualine and completion
     menus all put a space after their icons. A completion kind that starts
     with an icon (lspkind) shows that icon in the popup menu.
+  - Selections and search matches (`Visual`, `Search`, `CurSearch`,
+    `IncSearch`, `Substitute`: their backgrounds, asked by name when
+    highlights change) are rounded shapes (`chrome.ts`): a run takes the
+    ground beside it and is filled over that with its corners rounded where
+    the row above or below does not go on, and its inside corners filled
+    round where it does, so a selection of several lines is one outline.
+    A row is repainted with its neighbours while such colours are about.
   - A full repaint of a 164×43 screen with two windows and a float takes
     about 6 ms (15 000 cells at `devicePixelRatio` 2: about 4 ms); there is
     no glyph atlas, and none has been needed.
@@ -536,14 +543,13 @@ least risky first within a band):
    backgrounds as rounded pills where a separator glyph joins two runs);
    the text and click regions stay cell for cell (`%@…@` handlers, lualine
    components). Medium risk: themes rely on exact colours.
-3. _Selection, search and cursorline as per-cell rectangles_: Visual mode,
-   `Search`/`IncSearch`, `CursorLine`, `Visual` are runs of background
-   colour, square and edged at cell rows (with `linespace` a selection is a
-   stack of tall slabs). Recognise those highlight groups' runs and draw
-   them as one shape per row with rounded outer corners (VS Code's
-   selection), the line's inner `linespace` included or not as one choice.
-   Colours unchanged. Low risk; needs `ext_hlstate` or the group names to
-   know which runs they are.
+3. _Selection, search and cursorline as per-cell rectangles_ — done:
+   runs in `Visual`'s, `VisualNOS`'s and the searches' backgrounds (asked
+   of Neovim by group name, `chrome.ts`'s `THEME_LUA`, whenever highlights
+   change) are one shape per row with rounded outer corners and filled
+   inner ones where the next row runs on (VS Code's selection), the line's
+   `linespace` included; colours unchanged. `CursorLine` stays a flat band,
+   edge to edge, as editors draw it.
 4. _`~` end-of-buffer markers and the blank rows past the end_: drawn as
    text. `fillchars` `eob:` is the person's choice; when it is the default
    `~`, draw nothing (or a faint end rule), as GUI editors show empty space.

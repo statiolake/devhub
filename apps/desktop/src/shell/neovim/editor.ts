@@ -33,6 +33,7 @@ import {
 } from "./painter";
 import { escapeInputText, keyToNeovim } from "./keys";
 import { floatLabelsOf } from "./frame";
+import { THEME_GROUPS, THEME_LUA, themeOf } from "./chrome";
 import { cmdlineLayout, textCells } from "./cmdline";
 import { cmdlinePlace } from "./place";
 import {
@@ -112,6 +113,8 @@ export class NeovimEditor {
       timer: number;
     }
   >();
+  /** A pending ask for the colorscheme's groups (`askTheme`). */
+  private themeTimer = 0;
   private blink: Animation | undefined;
   private blinkKey = "";
   private stopWatchingDpr: () => void = () => {};
@@ -275,6 +278,7 @@ export class NeovimEditor {
     this.stopWatchingDpr();
     this.stopWatchingFonts();
     for (const bar of this.scrollbars.values()) window.clearTimeout(bar.timer);
+    window.clearTimeout(this.themeTimer);
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
     this.gridLayer.remove();
   }
@@ -303,6 +307,7 @@ export class NeovimEditor {
     const changes = this.pending;
     this.pending = emptyChanges();
     if (changes.options) this.applyFont();
+    if (changes.colors) this.askTheme();
     this.boxes = layoutGrids(this.state);
     this.host.style.background = cssColor(this.state.defaults.background);
     this.painter.paint(this.state, changes, this.boxes, forceAll);
@@ -310,6 +315,28 @@ export class NeovimEditor {
     this.placeScrollbars();
     this.placeCursor();
     for (const listener of this.listeners) listener();
+  }
+
+  /**
+   * The colorscheme's selection and match colours, by group name
+   * (`chrome.ts`): asked a moment after highlights change (a colorscheme
+   * defines hundreds at once), and everything repainted when they differ.
+   */
+  private askTheme(): void {
+    const request = this.port.request?.bind(this.port);
+    if (!request) return;
+    window.clearTimeout(this.themeTimer);
+    this.themeTimer = window.setTimeout(() => {
+      request("nvim_exec_lua", [THEME_LUA, [THEME_GROUPS]]).then(
+        (answer) => {
+          if (this.disposed || !this.painter.setTheme(themeOf(answer))) return;
+          this.paint(true);
+        },
+        () => {
+          // Not answered: drawn as cells, as before.
+        },
+      );
+    }, 120);
   }
 
   /**
