@@ -660,7 +660,10 @@ import {
 import type { Landing } from "./chords.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
 import { NeovimEditors } from "../editor/neovimEditors.js";
-import type { TerminalNeovims } from "../editor/terminalNeovims.js";
+import {
+	parseControlPanes,
+	type TerminalNeovims,
+} from "../editor/terminalNeovims.js";
 import {
 	overlayTerminals,
 	wireTerminalNeovims,
@@ -11894,6 +11897,19 @@ export class AppController {
 					height: height ?? 0,
 					zoom: event.sender.getZoomFactor(),
 				});
+			},
+		);
+		// The same page in tmux control mode: its panes, exactly.
+		receive(
+			CHANNELS.reportTerminalPanes,
+			(event, terminalId: unknown, panes: unknown) => {
+				if (typeof terminalId !== "string") return;
+				const parsed =
+					panes === null
+						? undefined
+						: parseControlPanes(panes, event.sender.getZoomFactor());
+				if (panes !== null && parsed === undefined) return;
+				this.terminalNeovims?.controlPanes(terminalId, parsed);
 			},
 		);
 		handle(

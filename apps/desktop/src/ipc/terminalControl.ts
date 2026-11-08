@@ -71,6 +71,27 @@ export interface PaneBox {
 	readonly active: boolean;
 }
 
+/**
+ * A pane of the session, shown or not: what a Neovim DevHub draws over a
+ * pane (`main/editor/terminalNeovims.ts`) is shown and hidden by.
+ */
+export interface SessionPane {
+	readonly pane: number;
+	readonly window: number;
+	/** In a mode (copy mode, a chooser): tmux shows the mode, not the program. */
+	readonly inMode: boolean;
+	/** `@devhub-nvim`: the socket its `nvim` named, or `""`. */
+	readonly socket: string;
+}
+
+/**
+ * What DevHub's `nvim` (`main/editor/terminalNeovimShim.ts`) writes to its
+ * pane once it has named its socket: tmux drops an OSC it does not know, and
+ * a control client sees the pane's bytes as they are, so the pane is read at
+ * once rather than at tmux's next once-a-second subscription check.
+ */
+export const NVIM_NAMED_OSC = "\u001b]6973;devhub-nvim\u0007";
+
 /** The modes of a pane the page encodes input by. */
 export interface PaneModes {
 	/** 0 off, else the tracking mode: 9, 1000, 1002 or 1003. */
@@ -91,6 +112,12 @@ export type ControlToPage =
 			/** The shown window, and its panes as shown. */
 			readonly window: number | undefined;
 			readonly panes: readonly PaneBox[];
+			/** Every pane of the session, every window's. */
+			readonly sessionPanes: readonly SessionPane[];
+			/** The control client's name, as tmux has it. */
+			readonly client: string;
+			/** `prefix` and `prefix2` as tmux names keys, `None` left out. */
+			readonly prefixes: readonly string[];
 	  }
 	| {
 			readonly kind: "pane";

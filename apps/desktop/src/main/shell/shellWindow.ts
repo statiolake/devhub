@@ -71,7 +71,7 @@ import {
  */
 export interface TerminalNeovimHooks {
 	keyboardOverlay(terminalId: string): string | undefined;
-	overlayKey(key: string, input: KeyInput): "prefix" | "pass";
+	overlayKey(key: string, input: KeyInput): "prefix" | "hand" | "pass";
 	terminalKey(terminalId: string, input: KeyInput): "pass" | "redirect";
 	overlayFocused(key: string): void;
 	terminalFocused(terminalId: string): void;
@@ -858,11 +858,19 @@ export class ShellWindow {
 				this.terminalNeovims.overlayFocused(key);
 			});
 			contents?.on("before-input-event", (event, input) => {
-				if (this.terminalNeovims.overlayKey(key, input) !== "prefix") return;
+				const answer = this.terminalNeovims.overlayKey(key, input);
+				if (answer === "pass") return;
 				// tmux's prefix: tmux's, as in any pane. The client is in its
-				// prefix table now, and the terminal takes the next key.
+				// prefix table now, and the terminal takes the next key. In
+				// control mode the terminal's page is handed the prefix itself:
+				// its client keeps its own place in tmux's key tables.
 				event.preventDefault();
 				this.focusSurface();
+				if (answer !== "hand") return;
+				const target = this.terminalPageContents(terminalId);
+				for (const forwarded of forwardedKey(input)) {
+					target?.sendInputEvent(forwarded);
+				}
 			});
 			this.overlayViews.set(key, { view: page, terminalId, rect: view.rect });
 			if (this.pageOpened) page.openPage();
@@ -879,6 +887,18 @@ export class ShellWindow {
 	}
 
 	private overlayKeyboardAnswer = "";
+
+	/** A terminal's page, an Agent's or a Workspace's (`ws:<id>`). */
+	private terminalPageContents(
+		terminalId: string,
+	): Electron.WebContents | undefined {
+		const agent = this.terminalViews.get(terminalId);
+		if (agent !== undefined) return agent.contents();
+		for (const [key, id] of this.editorTerminalIds) {
+			if (id === terminalId) return this.editorTerminals.get(key)?.contents();
+		}
+		return undefined;
+	}
 
 	private keyboardOverlayNow(): string | undefined {
 		const child = keyboardChild(this.layoutInput());

@@ -100,6 +100,8 @@ export type ControlEvent =
 	| {
 			readonly type: "subscription-changed";
 			readonly name: string;
+			/** The pane it is about, for a subscription to panes (`%*`). */
+			readonly pane: TmuxId | undefined;
 			readonly value: string;
 	  }
 	| { readonly type: "other"; readonly line: string };
@@ -413,9 +415,11 @@ export class ControlParser {
 				// %subscription-changed <name> $s @w <index> %p ... : <value>
 				const colon = text.indexOf(" : ");
 				if (colon < 0) break;
+				const pane = words[5];
 				emit({
 					type: "subscription-changed",
 					name: words[1] ?? "",
+					pane: pane?.startsWith("%") === true ? parseId(pane) : undefined,
 					value: text.slice(colon + 3),
 				});
 				return;

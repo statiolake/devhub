@@ -400,6 +400,15 @@ picks it by the setting and mounts the other one when it changes.
 - **The window strip** under the panes is provisional — the session's
   windows, the index in a small keycap, the active one standing out — until
   phase 4's tabs are designed from a mock.
+- **Neovim over a pane** (`docs/neovim-editor.md`, "Neovim in a terminal"):
+  the page says where each pane is drawn and what it is
+  (`reportTerminalPanes`), and the overlay is placed from that, with no
+  polling. Checked in the app with the person's Neovim config and
+  tmux.conf: `nvim` in a pane, a split and a zoom from the overlay, another
+  window hiding it, `C-q C-q` reaching Neovim, a click beside it and a key
+  that takes the keys back, `git commit`, `devhub -g` into the
+  `devhub-nvim` window and `:restart` there. From the socket named to the
+  UI attached: 370 ms, most of it the overlay's page starting.
 
 Measured in the app (Xvfb, the person's tmux.conf, zsh, a busy 4-core
 machine at load 6): key to paint p50 6.3 ms, p90 9.0 ms, max 17.3 ms over 40
@@ -407,9 +416,6 @@ keys (keydown to the painter's first glyph after it).
 
 ### Next (phase 2 still open)
 
-- The Neovim overlay on exact pane rectangles: `terminalNeovims` places it
-  from the xterm.js page's screen report and the client's size; the control
-  surface knows each pane's rectangle itself and should report those.
 - An SSH host's terminal in control mode, run end to end (the plan is
   `ssh -T`; not yet tried against a host).
 - The old path's key-to-paint, throughput and CPU on the same machine, for

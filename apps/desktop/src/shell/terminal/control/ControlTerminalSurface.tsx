@@ -19,6 +19,7 @@ import {
   type TerminalReceipt,
 } from "../client";
 import { TERMINAL_PROTOCOL_VERSION } from "../../../ipc/terminal";
+import type { TerminalPanesWire } from "../../../ipc/contract";
 import type {
   ControlToPage,
   PageToControl,
@@ -97,6 +98,7 @@ export function ControlTerminalSurface({
   hideTitle = false,
   hidden = false,
   reattachOnExit = false,
+  onControlPanes,
 }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const boundClient = useMemo(() => client ?? createTerminalClient(), [client]);
@@ -116,8 +118,14 @@ export function ControlTerminalSurface({
     selectWindow(id: number): void;
     focus(): void;
   } | null>(null);
-  const live = useRef({ hidden, reattachOnExit, appearance, colors });
-  live.current = { hidden, reattachOnExit, appearance, colors };
+  const live = useRef({
+    hidden,
+    reattachOnExit,
+    appearance,
+    colors,
+    onControlPanes,
+  });
+  live.current = { hidden, reattachOnExit, appearance, colors, onControlPanes };
 
   useEffect(() => {
     const host = hostRef.current;
@@ -161,6 +169,33 @@ export function ControlTerminalSurface({
     let ackedSeq = 0;
     let noticeTimer: ReturnType<typeof setTimeout> | undefined;
     let size = { cols: 0, rows: 0 };
+    let reported = "";
+
+    // Where the panes are drawn and what each is, for a Neovim DevHub draws
+    // over one (`main/editor/terminalNeovims.ts`): said when it changes.
+    const report = () => {
+      const tell = live.current.onControlPanes;
+      if (tell === undefined) return;
+      const at = grids.getBoundingClientRect();
+      const { width, height } = cell();
+      const connected = receipt !== undefined;
+      const panes: TerminalPanesWire = {
+        x: at.x,
+        y: at.y,
+        cellWidth: width,
+        cellHeight: height,
+        cols: view.cols,
+        rows: view.rows,
+        client: connected ? view.client : "",
+        prefixes: view.prefixes,
+        shown: connected ? view.panes : [],
+        panes: view.sessionPanes,
+      };
+      const key = JSON.stringify(panes);
+      if (key === reported) return;
+      reported = key;
+      tell(panes);
+    };
 
     const cell = () => painter.cell();
     const measure = () => {
@@ -245,6 +280,7 @@ export function ControlTerminalSurface({
         ackedSeq = lastSeq;
         send({ kind: "ack", seq: lastSeq });
       }
+      if (merged.layout) report();
     };
 
     const schedule = (changes: ReturnType<typeof applyControl>) => {
@@ -284,6 +320,7 @@ export function ControlTerminalSurface({
         receipt = undefined;
         const lived = typed || Date.now() - connectedAt >= REATTACH_ON_EXIT_MS;
         if (ended !== undefined) void detach(ended);
+        report();
         if (live.current.reattachOnExit && (!reattachedOnExit || lived)) {
           setConnection("connecting");
           queueMicrotask(() => {
@@ -479,6 +516,7 @@ export function ControlTerminalSurface({
 
     const observer = new ResizeObserver(() => {
       if (live.current.hidden) return;
+      report();
       const next = measure();
       if (next.cols === size.cols && next.rows === size.rows) return;
       size = next;
@@ -526,6 +564,7 @@ export function ControlTerminalSurface({
       host.removeEventListener("paste", markTyped, true);
       if (receipt !== undefined) void detach(receipt);
       receipt = undefined;
+      live.current.onControlPanes?.(null);
       controllerRef.current = null;
       host.replaceChildren();
     };

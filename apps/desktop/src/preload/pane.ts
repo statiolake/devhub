@@ -29,6 +29,9 @@ const api: PaneBridge = {
 	reportTerminalScreen(terminalId, screen) {
 		ipcRenderer.send(CHANNELS.reportTerminalScreen, terminalId, screen);
 	},
+	reportTerminalPanes(terminalId, panes) {
+		ipcRenderer.send(CHANNELS.reportTerminalPanes, terminalId, panes);
+	},
 };
 
 contextBridge.exposeInMainWorld("devhub", api);

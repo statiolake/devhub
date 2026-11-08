@@ -842,6 +842,21 @@ rectangle in the terminal view, a `neovim.html#tnv:<n>` view placed right
 above it (`ShellWindow.syncTerminalNeovims`). It is hidden while tmux does
 not show the pane: another window, a zoomed sibling, copy mode or a chooser.
 A terminal not on screen is not read; its overlays keep their pages, hidden.
+
+In tmux control mode (`[terminal] tmux_control_mode`, `docs/terminal-mode.md`)
+nothing is polled: the terminal's page draws each pane at the rectangle tmux's
+layout gives it, so it says those rectangles itself whenever they change
+(`PaneBridge.reportTerminalPanes`) — where the panes' first cell is, a cell's
+size, the shown window's panes, and every pane's window, mode and
+`@devhub-nvim` — and the overlay moves in the same frame as the panes it sits
+on (a split, a zoom, a window switch). The pty host's control client hears a
+mode change from tmux at once (`%pane-mode-changed`) and `@devhub-nvim`
+through a subscription (`refresh-client -B`, which tmux checks once a
+second); DevHub's `nvim` also writes an OSC tmux does not know
+(`NVIM_NAMED_OSC`) into its pane after naming its socket, which tmux drops
+and a control client sees in the pane's bytes, so the pane is read at once.
+The page's sockets are a hint: each change of them is one reading of tmux
+by main, and only a socket that reading confirms is attached to.
 Each Neovim is its own: a `nvim` run in a pane is never the `devhub-nvim`
 one and never reused — `devhub <file>`, a conversation's file link and Send
 to Agent go to the Workspace's `devhub-nvim` window, and a `git commit`
@@ -852,7 +867,10 @@ its pane is tmux's active pane, shown. DevHub's chords are caught first, as on
 every page. The tmux prefix typed in it is tmux's: DevHub puts its client in
 the prefix table (`switch-client -T prefix`) and the terminal takes the next
 key; once that binding ran (a zoom, a pane switch, a window switch), the keys
-come back if the overlaid pane is still the active one. A binding that opens
+come back if the overlaid pane is still the active one. In control mode the
+prefix is handed to the terminal's page as the keystroke it was, since that
+page's control client keeps its own place in tmux's key tables
+(`keyGuard.ts`). A binding that opens
 a prompt or a chooser (`:`, `[`, `w`, `s`, `,`…) keeps them in the terminal
 until Enter or Escape. A click beside the overlay gives the keys to the
 terminal; a key typed there that tmux would only hand to the pane under the

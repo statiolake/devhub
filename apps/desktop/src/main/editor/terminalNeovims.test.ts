@@ -10,6 +10,8 @@ import {
 	overlayRect,
 	parseTerminalNeovimReading,
 	TerminalNeovims,
+	parseControlPanes,
+	type ControlPanes,
 	type KeyInput,
 	type TerminalNeovimReading,
 } from "./terminalNeovims.js";
@@ -247,6 +249,132 @@ describe("TerminalNeovims", () => {
 		});
 		expect(neovims.views()).toEqual([]);
 		neovims.dispose();
+	});
+	describe("in tmux control mode", () => {
+		const panes = (over: Partial<ControlPanes> = {}): ControlPanes => ({
+			x: 4,
+			y: 2,
+			cellWidth: 8,
+			cellHeight: 20,
+			cols: 80,
+			rows: 24,
+			zoom: 1,
+			client: "client-7",
+			prefixes: ["C-b"],
+			shown: [
+				{ pane: 0, x: 0, y: 0, width: 40, height: 24, active: false },
+				{ pane: 1, x: 41, y: 0, width: 39, height: 24, active: true },
+			],
+			panes: [
+				{ pane: 0, inMode: false, socket: "" },
+				{ pane: 1, inMode: false, socket: "/tmp/d/s" },
+				{ pane: 2, inMode: false, socket: "" },
+			],
+			...over,
+		});
+
+		it("places the overlay on the page's pane rectangle, without polling", async () => {
+			const { neovims, ports } = setup(parseTerminalNeovimReading(OUTPUT));
+			neovims.controlPanes("t", panes());
+			await vi.waitFor(() => {
+				expect(neovims.views()).toHaveLength(1);
+			});
+			const reads = ports.read.mock.calls.length;
+			expect(neovims.views()[0]?.rect).toEqual({
+				x: 4 + 41 * 8,
+				y: 2,
+				width: 39 * 8,
+				height: 24 * 20,
+			});
+			// A zoom: the pane alone, at once.
+			neovims.controlPanes(
+				"t",
+				panes({
+					shown: [{ pane: 1, x: 0, y: 0, width: 80, height: 24, active: true }],
+				}),
+			);
+			expect(neovims.views()[0]?.rect).toEqual({
+				x: 4,
+				y: 2,
+				width: 640,
+				height: 480,
+			});
+			// Another window shown: hidden, and kept.
+			neovims.controlPanes(
+				"t",
+				panes({
+					shown: [{ pane: 2, x: 0, y: 0, width: 80, height: 24, active: true }],
+				}),
+			);
+			expect(neovims.views()).toHaveLength(1);
+			expect(neovims.views()[0]?.rect).toBeUndefined();
+			// In copy mode: hidden.
+			neovims.controlPanes(
+				"t",
+				panes({
+					panes: [
+						{ pane: 0, inMode: false, socket: "" },
+						{ pane: 1, inMode: true, socket: "/tmp/d/s" },
+						{ pane: 2, inMode: false, socket: "" },
+					],
+				}),
+			);
+			expect(neovims.views()[0]?.rect).toBeUndefined();
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			// Only the sockets changing is a reading of tmux: none here.
+			expect(ports.read.mock.calls.length).toBe(reads);
+			neovims.dispose();
+		});
+
+		it("attaches only to a socket tmux confirms", async () => {
+			const { neovims } = setup({ panes: [], client: undefined });
+			neovims.controlPanes("t", panes());
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(neovims.views()).toEqual([]);
+			neovims.dispose();
+		});
+
+		it("hands the prefix to the terminal's page, and the keys come back", async () => {
+			const { neovims, ports } = setup(parseTerminalNeovimReading(OUTPUT));
+			neovims.controlPanes("t", panes());
+			await vi.waitFor(() => {
+				expect(neovims.views()).toHaveLength(1);
+			});
+			neovims.attached("tnv:1");
+			expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+			expect(
+				neovims.overlayKey("tnv:1", key({ key: "b", control: true })),
+			).toBe("hand");
+			expect(ports.enterPrefix).not.toHaveBeenCalled();
+			// The handed prefix arriving, then the prefix again: send-prefix.
+			expect(neovims.terminalKey("t", key({ key: "b", control: true }))).toBe(
+				"pass",
+			);
+			expect(neovims.keyboardOverlay("t")).toBeUndefined();
+			expect(neovims.terminalKey("t", key({ key: "b", control: true }))).toBe(
+				"pass",
+			);
+			await vi.waitFor(() => {
+				expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+			});
+			// A prompt key is no wait here: the guard or DevHub has it.
+			neovims.overlayKey("tnv:1", key({ key: "b", control: true }));
+			neovims.terminalKey("t", key({ key: "b", control: true }));
+			neovims.terminalKey("t", key({ key: ":" }));
+			await vi.waitFor(() => {
+				expect(neovims.keyboardOverlay("t")).toBe("tnv:1");
+			});
+			neovims.dispose();
+		});
+
+		it("checks a page's report", () => {
+			const wire = { ...panes(), zoom: undefined };
+			expect(parseControlPanes(wire, 2)?.zoom).toBe(2);
+			expect(parseControlPanes({ ...wire, cols: -1 }, 1)).toBeUndefined();
+			expect(
+				parseControlPanes({ ...wire, shown: [{ pane: "1" }] }, 1),
+			).toBeUndefined();
+		});
 	});
 });
 

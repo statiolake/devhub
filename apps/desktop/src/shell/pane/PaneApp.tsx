@@ -45,7 +45,7 @@ import {
   workspaceOfTerminalPage,
   workspaceTerminalSurfaceKey,
 } from "../../ipc/terminal";
-import type { TerminalScreenWire } from "../../ipc/contract";
+import type { TerminalPanesWire, TerminalScreenWire } from "../../ipc/contract";
 import { useTerminalScreenReport } from "./screenReport";
 
 export function PaneApp({ terminalId }: { readonly terminalId: string }) {
@@ -62,6 +62,12 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
       },
       [bridge, terminalId],
     ),
+  );
+  const reportPanes = useCallback(
+    (panes: TerminalPanesWire | null) => {
+      bridge.reportTerminalPanes(terminalId, panes);
+    },
+    [bridge, terminalId],
   );
   if (state.status !== "ready") return null;
   const workspaceId = workspaceOfTerminalPage(terminalId);
@@ -92,6 +98,7 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
           appearance={appearance}
           hideTitle
           reattachOnExit={workspaceId !== undefined}
+          onControlPanes={reportPanes}
         />
       </div>
     </div>

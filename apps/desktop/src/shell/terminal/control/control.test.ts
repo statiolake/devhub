@@ -74,6 +74,14 @@ describe("panes as the painter's grids", () => {
       { pane: 2, x: 11, y: 0, width: 10, height: 2, active: false },
       { pane: 3, x: 11, y: 3, width: 10, height: 2, active: false },
     ],
+    sessionPanes: [1, 2, 3].map((pane) => ({
+      pane,
+      window: 0,
+      inMode: false,
+      socket: "",
+    })),
+    client: "client-1",
+    prefixes: ["C-q"],
   };
 
   it("places each pane's grid at its rectangle, and finds the pane under a cell", () => {

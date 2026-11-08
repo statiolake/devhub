@@ -44,6 +44,22 @@
  * terminal; a key typed there that tmux would only hand to the pane under the
  * overlay (whose Neovim does not read its tty) goes to the overlay instead.
  * DevHub's own chords are caught before any of this, on every page.
+ *
+ * # In tmux control mode
+ *
+ * A terminal in control mode (`docs/terminal-mode.md`) draws its panes
+ * itself, from the layout tmux pushes, so its page knows each pane's
+ * rectangle exactly and says it (`controlPanes`): where the panes' cells
+ * start, a cell's size, the shown window's panes, every pane's window, mode
+ * and `@devhub-nvim`, the client and the prefixes. Nothing is polled; the
+ * overlay moves with the panes as they are painted. The sockets the page
+ * names are only a hint: each change of them is a reading of tmux here, and
+ * only a socket that reading confirms is attached to. The prefix typed in
+ * the overlay is handed to the terminal's page as the keystroke it was, since
+ * that page's control client keeps its own place in tmux's key tables
+ * (`ptyHost/control/keyGuard.ts`); a prompt or a chooser is DevHub's to draw
+ * there (or refused), so every key after the prefix gives the keys back once
+ * its binding has run.
  */
 
 import type { RuntimeId } from "../runtime/runtime.js";
@@ -223,6 +239,163 @@ export function overlayRect(
 	const bottom = Math.round(originY + (row + pane.height) * cellHeight);
 	if (right <= left || bottom <= top) return undefined;
 	return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+/**
+ * A control-mode terminal's panes, as its page draws them (`controlPanes`),
+ * in the page's CSS pixels and in cells.
+ */
+export interface ControlPanes {
+	/** Where the panes' cell (0, 0) is drawn, and a cell's size. */
+	readonly x: number;
+	readonly y: number;
+	readonly cellWidth: number;
+	readonly cellHeight: number;
+	readonly cols: number;
+	readonly rows: number;
+	readonly zoom: number;
+	readonly client: string;
+	readonly prefixes: readonly string[];
+	/** The shown window's panes, at their rectangles (a zoomed pane alone). */
+	readonly shown: readonly {
+		readonly pane: number;
+		readonly x: number;
+		readonly y: number;
+		readonly width: number;
+		readonly height: number;
+		readonly active: boolean;
+	}[];
+	/** Every pane of the session. */
+	readonly panes: readonly {
+		readonly pane: number;
+		readonly inMode: boolean;
+		readonly socket: string;
+	}[];
+}
+
+const MAX_PANES = 1024;
+
+/**
+ * A page's report of its panes, checked: numbers that are numbers, at most
+ * `MAX_PANES` of each list; anything else is no report.
+ */
+export function parseControlPanes(
+	value: unknown,
+	zoom: number,
+): ControlPanes | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const v = value as Record<string, unknown>;
+	const finite = (n: unknown): n is number =>
+		typeof n === "number" && Number.isFinite(n);
+	const cell = (n: unknown): n is number =>
+		typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 100_000;
+	if (
+		![v.x, v.y, v.cellWidth, v.cellHeight].every(finite) ||
+		!cell(v.cols) ||
+		!cell(v.rows) ||
+		typeof v.client !== "string" ||
+		!Array.isArray(v.prefixes) ||
+		!v.prefixes.every((p) => typeof p === "string" && p.length < 64) ||
+		!Array.isArray(v.shown) ||
+		!Array.isArray(v.panes) ||
+		v.shown.length > MAX_PANES ||
+		v.panes.length > MAX_PANES
+	)
+		return undefined;
+	const shown: ControlPanes["shown"][number][] = [];
+	for (const item of v.shown as unknown[]) {
+		const b = item as Record<string, unknown> | null;
+		if (
+			b === null ||
+			typeof b !== "object" ||
+			![b.pane, b.x, b.y, b.width, b.height].every(cell) ||
+			typeof b.active !== "boolean"
+		)
+			return undefined;
+		shown.push({
+			pane: b.pane as number,
+			x: b.x as number,
+			y: b.y as number,
+			width: b.width as number,
+			height: b.height as number,
+			active: b.active,
+		});
+	}
+	const panes: ControlPanes["panes"][number][] = [];
+	for (const item of v.panes as unknown[]) {
+		const p = item as Record<string, unknown> | null;
+		if (
+			p === null ||
+			typeof p !== "object" ||
+			!cell(p.pane) ||
+			typeof p.inMode !== "boolean" ||
+			typeof p.socket !== "string"
+		)
+			return undefined;
+		panes.push({ pane: p.pane, inMode: p.inMode, socket: p.socket });
+	}
+	return {
+		x: v.x as number,
+		y: v.y as number,
+		cellWidth: v.cellWidth as number,
+		cellHeight: v.cellHeight as number,
+		cols: v.cols,
+		rows: v.rows,
+		zoom,
+		client: v.client,
+		prefixes: v.prefixes as string[],
+		shown,
+		panes,
+	};
+}
+
+/**
+ * A control-mode page's panes as a reading, with the sockets a reading of
+ * tmux confirmed (`confirmed`, by pane id) in place of the page's hints.
+ */
+export function controlReading(
+	panes: ControlPanes,
+	confirmed: ReadonlyMap<string, string>,
+): { reading: TerminalNeovimReading; screen: TerminalScreen } {
+	const shown = new Map(panes.shown.map((box) => [box.pane, box]));
+	return {
+		reading: {
+			panes: panes.panes.map((pane) => {
+				const paneId = `%${String(pane.pane)}`;
+				const box = shown.get(pane.pane);
+				return {
+					paneId,
+					windowActive: box !== undefined,
+					paneActive: box?.active ?? false,
+					zoomed: false,
+					left: box?.x ?? 0,
+					top: box?.y ?? 0,
+					width: box?.width ?? 0,
+					height: box?.height ?? 0,
+					inMode: pane.inMode,
+					socket: confirmed.get(paneId) ?? "",
+				};
+			}),
+			client:
+				panes.client === ""
+					? undefined
+					: {
+							name: panes.client,
+							width: panes.cols,
+							height: panes.rows,
+							keyTable: "root",
+							statusTop: 0,
+							prefixes: panes.prefixes,
+						},
+		},
+		screen: {
+			x: panes.x,
+			y: panes.y,
+			width: panes.cols * panes.cellWidth,
+			height: panes.rows * panes.cellHeight,
+			zoom: panes.zoom,
+		},
+	};
 }
 
 /** A key as Electron's `before-input-event` has it. */
@@ -408,7 +581,12 @@ interface Overlay {
 }
 
 type Lend =
-	| { readonly kind: "prefix"; readonly armed: boolean }
+	| {
+			readonly kind: "prefix";
+			readonly armed: boolean;
+			/** Handed to a control-mode page, whose own input event is not news. */
+			readonly handed?: boolean;
+	  }
 	| { readonly kind: "interactive" }
 	| { readonly kind: "user" };
 
@@ -422,6 +600,17 @@ interface Watch {
 	lend: Lend | undefined;
 	/** The overlay's pane was active and shown at the last reading. */
 	activeShown: boolean;
+	/**
+	 * In control mode: the page's panes, and the sockets the last reading of
+	 * tmux confirmed. Absent: the page is xterm.js, and tmux is polled.
+	 */
+	control:
+		| {
+				panes: ControlPanes;
+				hints: string;
+				confirmed: Map<string, string>;
+		  }
+		| undefined;
 	readonly overlays: Map<string, Overlay>;
 }
 
@@ -440,6 +629,8 @@ export class TerminalNeovims {
 	 * started again in a new pane listens on the same socket path.
 	 */
 	private readonly dead = new Set<string>();
+	/** Control-mode pages that spoke before their terminal was known. */
+	private readonly earlyControl = new Map<string, ControlPanes>();
 	private serial = 1;
 	private disposed = false;
 	/** `[general] editor = "neovim"`: off, no new overlay is made. */
@@ -489,9 +680,13 @@ export class TerminalNeovims {
 					reading$: false,
 					lend: undefined,
 					activeShown: false,
+					control: undefined,
 					overlays: new Map(),
 				};
 				this.watches.set(terminal.terminalId, watch);
+				const early = this.earlyControl.get(terminal.terminalId);
+				this.earlyControl.delete(terminal.terminalId);
+				if (early !== undefined) this.controlPanes(terminal.terminalId, early);
 			}
 			watch.terminal = terminal;
 			const shown = onScreen.has(terminal.terminalId);
@@ -512,6 +707,43 @@ export class TerminalNeovims {
 		watch.screen = screen;
 		if (watch.overlays.size > 0) this.options.changed();
 		if (watch.onScreen) this.schedule(watch, 0);
+	}
+
+	/**
+	 * A control-mode terminal's page, saying where its panes are drawn and
+	 * what each is (see the file's comment); `undefined`: it is not a
+	 * control-mode page any more, and tmux is polled again.
+	 */
+	controlPanes(terminalId: string, panes: ControlPanes | undefined): void {
+		const watch = this.watches.get(terminalId);
+		if (watch === undefined) {
+			// The page can say it before main has heard of the terminal.
+			if (panes === undefined) this.earlyControl.delete(terminalId);
+			else this.earlyControl.set(terminalId, panes);
+			return;
+		}
+		if (panes === undefined) {
+			if (watch.control === undefined) return;
+			watch.control = undefined;
+			if (watch.onScreen) this.schedule(watch, 0);
+			return;
+		}
+		this.stop(watch);
+		const hints = JSON.stringify(
+			panes.panes.map((pane) => [pane.pane, pane.socket]),
+		);
+		const first = watch.control === undefined;
+		const control = (watch.control ??= {
+			panes,
+			hints: "",
+			confirmed: new Map(),
+		});
+		control.panes = panes;
+		this.applyControl(watch);
+		if (first || hints !== control.hints) {
+			control.hints = hints;
+			void this.confirm(watch);
+		}
 	}
 
 	/** Every overlay, for the window. */
@@ -561,7 +793,8 @@ export class TerminalNeovims {
 		}
 		watch.lend = undefined;
 		this.options.changed();
-		if (watch.onScreen) this.schedule(watch, 0);
+		if (watch.control !== undefined) void this.confirm(watch);
+		else if (watch.onScreen) this.schedule(watch, 0);
 	}
 
 	/** Where an overlay's page attaches: the socket, reached from here. */
@@ -611,7 +844,8 @@ export class TerminalNeovims {
 			watch.lend = undefined;
 		}
 		this.options.changed();
-		if (watch?.onScreen === true) this.schedule(watch, 0);
+		if (watch?.control !== undefined) this.applyControl(watch);
+		else if (watch?.onScreen === true) this.schedule(watch, 0);
 	}
 
 	/** The overlay's page took the keyboard (a click into it). */
@@ -630,7 +864,7 @@ export class TerminalNeovims {
 				.selectPane(watch.terminal, overlay.paneId)
 				.catch(() => undefined)
 				.then(() => {
-					this.schedule(watch, 0);
+					if (watch.control === undefined) this.schedule(watch, 0);
 				});
 		} else if (lent) {
 			this.options.changed();
@@ -648,9 +882,11 @@ export class TerminalNeovims {
 
 	/**
 	 * A key typed in the overlay: `prefix` when it is tmux's prefix, which
-	 * the terminal is to take (the client is put in the prefix table here).
+	 * the terminal is to take (the client is put in the prefix table here);
+	 * `hand`, in control mode, when the terminal's page is to be given the
+	 * keystroke itself (its control client keeps its own key tables).
 	 */
-	overlayKey(key: string, input: KeyInput): "prefix" | "pass" {
+	overlayKey(key: string, input: KeyInput): "prefix" | "hand" | "pass" {
 		if (input.type !== "keyDown") return "pass";
 		const overlay = this.byKey.get(key);
 		const watch =
@@ -661,6 +897,11 @@ export class TerminalNeovims {
 		if (watch === undefined || client === undefined) return "pass";
 		if (!client.prefixes.some((prefix) => isTmuxKey(prefix, input))) {
 			return "pass";
+		}
+		if (watch.control !== undefined) {
+			watch.lend = { kind: "prefix", armed: true, handed: true };
+			this.options.changed();
+			return "hand";
 		}
 		watch.lend = { kind: "prefix", armed: true };
 		void this.options.ports
@@ -684,9 +925,21 @@ export class TerminalNeovims {
 		const client = watch.reading?.client;
 		if (overlay?.attached !== true || client === undefined) return "pass";
 		const lend = watch.lend;
+		// The prefix the overlay handed this page, arriving.
+		if (
+			lend?.kind === "prefix" &&
+			lend.handed === true &&
+			client.prefixes.some((prefix) => isTmuxKey(prefix, input))
+		) {
+			watch.lend = { kind: "prefix", armed: true };
+			return "pass";
+		}
 		// The key after the prefix, the prefix again (`send-prefix`) included.
 		if (lend?.kind === "prefix" && lend.armed) {
-			if (INTERACTIVE_AFTER_PREFIX.has(input.key)) {
+			if (
+				watch.control === undefined &&
+				INTERACTIVE_AFTER_PREFIX.has(input.key)
+			) {
 				watch.lend = { kind: "interactive" };
 			} else {
 				watch.lend = { kind: "prefix", armed: false };
@@ -746,7 +999,9 @@ export class TerminalNeovims {
 		setTimeout(() => {
 			if (watch.lend === undefined || watch.lend.kind === "user") return;
 			watch.lend = { kind: "user" };
-			void this.poll(watch).then(() => {
+			const read =
+				watch.control === undefined ? this.poll(watch) : Promise.resolve();
+			void read.then(() => {
 				if (watch.lend?.kind !== "user") return;
 				if (watch.reading?.client?.keyTable !== "root") return;
 				if (this.activeOverlay(watch) === undefined) return;
@@ -762,7 +1017,7 @@ export class TerminalNeovims {
 	}
 
 	private schedule(watch: Watch, delayMs: number): void {
-		if (this.disposed || !watch.onScreen) return;
+		if (this.disposed || !watch.onScreen || watch.control !== undefined) return;
 		this.stop(watch);
 		watch.timer = setTimeout(() => {
 			watch.timer = undefined;
@@ -790,6 +1045,45 @@ export class TerminalNeovims {
 			watch.reading$ = false;
 		}
 		if (reading === undefined || this.disposed) return;
+		this.apply(watch, reading);
+	}
+
+	/**
+	 * Read tmux for a control-mode terminal's sockets (and state the
+	 * overlay's server option on the way): what its page names is a hint.
+	 */
+	private async confirm(watch: Watch): Promise<void> {
+		let reading: TerminalNeovimReading | undefined;
+		try {
+			reading = await this.options.ports.read(watch.terminal, this.enabled);
+		} catch {
+			reading = undefined;
+		}
+		const control = watch.control;
+		if (reading === undefined || control === undefined || this.disposed) return;
+		control.confirmed = new Map(
+			reading.panes
+				.filter((pane) => pane.socket !== "")
+				.map((pane) => [pane.paneId, pane.socket]),
+		);
+		this.applyControl(watch);
+	}
+
+	private applyControl(watch: Watch): void {
+		const control = watch.control;
+		if (control === undefined || this.disposed) return;
+		const { reading, screen } = controlReading(
+			control.panes,
+			control.confirmed,
+		);
+		this.apply(watch, reading, screen);
+	}
+
+	private apply(
+		watch: Watch,
+		reading: TerminalNeovimReading,
+		screen?: TerminalScreen,
+	): void {
 		const before = JSON.stringify(
 			this.views().filter(
 				(view) => view.terminalId === watch.terminal.terminalId,
@@ -797,6 +1091,10 @@ export class TerminalNeovims {
 		);
 		const keysBefore = this.keyboardOverlay(watch.terminal.terminalId);
 		watch.reading = reading;
+		if (screen !== undefined) {
+			watch.screen = screen;
+			this.screens.set(watch.terminal.terminalId, screen);
+		}
 		let changed = false;
 		const live = new Map(reading.panes.map((pane) => [pane.paneId, pane]));
 		for (const [paneId, overlay] of [...watch.overlays]) {

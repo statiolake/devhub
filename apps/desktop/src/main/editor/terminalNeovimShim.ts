@@ -64,6 +64,12 @@
 import { shellQuote } from "../runtime/quote.js";
 import { NVIM_STATE_VARIABLE, followRestartSh } from "./neovimRestart.js";
 import { ttyKeysShim } from "./terminalNeovimTtyKeys.js";
+import { NVIM_NAMED_OSC } from "../../ipc/terminalControl.js";
+
+/** `NVIM_NAMED_OSC` as `printf` writes it. */
+function shNamedOsc(): string {
+	return NVIM_NAMED_OSC.replace("\u001b", "\\033").replace("\u0007", "\\007");
+}
 
 /** The pane option the script names its socket in. */
 export const NVIM_SOCKET_OPTION = "@devhub-nvim";
@@ -158,6 +164,9 @@ ${ttyKeysShim()}# Ctrl-C, Ctrl-\\ and Ctrl-Z typed at the pane under the GUI are
 # its keys are the GUI's. A hangup (the pane killed) still ends both.
 trap '' INT QUIT TSTP
 "$shim_tmux" set-option -p -t "$TMUX_PANE" ${NVIM_SOCKET_OPTION} "$socket" 2>/dev/null
+# Said in the pane too, for a DevHub in tmux control mode, which sees the
+# pane's bytes (tmux drops an OSC it does not know).
+printf '${shNamedOsc()}'
 # Neovim 0.9 waits for an --embed UI on stdin alone, and answers nothing on
 # its socket meanwhile; it starts headless instead, without that wait.
 case $("$real" --version 2>/dev/null | sed -n 1p) in

@@ -12,6 +12,7 @@ import type {
   ControlToPage,
   PaneBox,
   PaneModes,
+  SessionPane,
   VtCursor,
   VtStyle,
   WindowInfo,
@@ -73,6 +74,10 @@ export interface ControlView {
   windows: readonly WindowInfo[];
   window: number | undefined;
   panes: readonly PaneBox[];
+  /** Every pane of the session, every window's. */
+  sessionPanes: readonly SessionPane[];
+  client: string;
+  prefixes: readonly string[];
   readonly cursors: Map<number, VtCursor | undefined>;
   readonly modes: Map<number, PaneModes>;
   /** Each pane's own style ids, as highlights of the one table. */
@@ -91,6 +96,9 @@ export function newControlView(fallback: {
     windows: [],
     window: undefined,
     panes: [],
+    sessionPanes: [],
+    client: "",
+    prefixes: [],
     cursors: new Map(),
     modes: new Map(),
     hlIds: new Map(),
@@ -111,6 +119,9 @@ export function applyControl(
       view.windows = message.windows;
       view.window = message.window;
       view.panes = message.panes;
+      view.sessionPanes = message.sessionPanes;
+      view.client = message.client;
+      view.prefixes = message.prefixes;
       changes.layout = true;
       return changes;
     }

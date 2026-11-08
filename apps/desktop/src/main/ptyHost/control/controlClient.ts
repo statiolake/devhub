@@ -29,12 +29,14 @@
  * is not on screen.
  */
 
-import type {
-	ControlToPage,
-	PageToControl,
-	PaneBox,
-	PaneModes,
-	WindowInfo,
+import {
+	NVIM_NAMED_OSC,
+	type ControlToPage,
+	type PageToControl,
+	type PaneBox,
+	type PaneModes,
+	type SessionPane,
+	type WindowInfo,
 } from "../../../ipc/terminalControl.js";
 import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
 import { KeyRouter, parseBindings } from "./keyGuard.js";
@@ -86,6 +88,10 @@ const NODE_TIMERS = {
 	clear: (handle: unknown) => clearTimeout(handle as NodeJS.Timeout),
 };
 const FIELD = "\u001f";
+/** The subscription that says a pane's mode or `@devhub-nvim` changed. */
+const PANE_FACTS = "devhub-pane";
+const PANE_FACTS_FORMAT = `#{pane_in_mode}${FIELD}#{@devhub-nvim}`;
+const NAMED = new TextEncoder().encode(NVIM_NAMED_OSC);
 
 interface Pane {
 	readonly id: TmuxId;
@@ -98,6 +104,10 @@ interface Pane {
 	/** Send every row next time: it was hidden, resynchronised or resized. */
 	all: boolean;
 	lastCursor: string;
+	/** In a mode (copy mode, a chooser). */
+	inMode: boolean;
+	/** `@devhub-nvim`: the socket a DevHub `nvim` in it named. */
+	socket: string;
 }
 
 interface Window {
@@ -122,6 +132,7 @@ export class ControlClient {
 	#session = "";
 	#activeWindow: TmuxId | undefined;
 	#clientName = "";
+	#prefixes: readonly string[] = [];
 	#cols: number;
 	#rows: number;
 	#visible = true;
@@ -231,6 +242,14 @@ export class ControlClient {
 			"-f",
 			`pause-after=${String(this.#o.pauseAfter ?? 2)}`,
 		]);
+		// Where a Neovim DevHub draws over a pane is shown: tmux says a mode
+		// change at once, and checks a subscription once a second; DevHub's
+		// `nvim` also says it named its socket in the pane's output.
+		await this.#command([
+			"refresh-client",
+			"-B",
+			`${PANE_FACTS}:%*:${PANE_FACTS_FORMAT}`,
+		]);
 		const name = await this.#command([
 			"display-message",
 			"-p",
@@ -252,7 +271,9 @@ export class ControlClient {
 				return;
 			case "output": {
 				const pane = this.#panes.get(event.pane);
-				if (pane === undefined || pane.syncing) return;
+				if (pane === undefined) return;
+				if (includes(event.data, NAMED)) void this.#readFacts(pane.id);
+				if (pane.syncing) return;
 				pane.vt.write(event.data);
 				pane.dirty = true;
 				this.#schedule();
@@ -307,7 +328,13 @@ export class ControlClient {
 			case "pause":
 				void this.#continue(event.pane);
 				return;
+			case "subscription-changed": {
+				if (event.name !== PANE_FACTS || event.pane === undefined) return;
+				this.#facts(event.pane, event.value);
+				return;
+			}
 			case "pane-mode-changed": {
+				void this.#readFacts(event.pane);
 				// tmux says so while the binding that entered the mode is still
 				// running (prefix+y: copy-mode, select, copy-pipe-and-cancel), so
 				// the pane is asked once that has had time to finish.
@@ -399,6 +426,10 @@ export class ControlClient {
 			prefixes,
 			Number(repeat) || 500,
 		);
+		if (prefixes.join(" ") !== this.#prefixes.join(" ")) {
+			this.#prefixes = prefixes;
+			this.#postLayout();
+		}
 	}
 
 	/**
@@ -483,7 +514,9 @@ export class ControlClient {
 			"list-panes",
 			"-s",
 			"-F",
-			["#{pane_id}", "#{window_id}", "#{pane_active}"].join(FIELD),
+			["#{pane_id}", "#{window_id}", "#{pane_active}", PANE_FACTS_FORMAT].join(
+				FIELD,
+			),
 		]);
 		if (!windows.ok || !panes.ok || this.#ended) return;
 		const seenWindows = new Set<TmuxId>();
@@ -521,7 +554,8 @@ export class ControlClient {
 		const seenPanes = new Set<TmuxId>();
 		const fresh: Pane[] = [];
 		for (const line of panes.lines) {
-			const [paneText, windowText, active] = line.split(FIELD);
+			const [paneText, windowText, active, inMode, ...socket] =
+				line.split(FIELD);
 			const id = parseId(paneText);
 			const windowId = parseId(windowText);
 			if (id === undefined || windowId === undefined) continue;
@@ -531,6 +565,8 @@ export class ControlClient {
 			const known = this.#panes.get(id);
 			if (known !== undefined) {
 				known.window = windowId;
+				known.inMode = inMode === "1";
+				known.socket = socket.join(FIELD);
 				continue;
 			}
 			const box =
@@ -551,6 +587,8 @@ export class ControlClient {
 				dirty: false,
 				all: true,
 				lastCursor: "",
+				inMode: inMode === "1",
+				socket: socket.join(FIELD),
 			};
 			this.#panes.set(id, pane);
 			fresh.push(pane);
@@ -615,6 +653,29 @@ export class ControlClient {
 		pane.syncing = false;
 		pane.dirty = true;
 		pane.all = true;
+	}
+
+	/** A pane's mode and socket, as `PANE_FACTS_FORMAT` gives them. */
+	#facts(paneId: TmuxId, value: string): void {
+		const pane = this.#panes.get(paneId);
+		if (pane === undefined) return;
+		const [inMode, ...socket] = value.split(FIELD);
+		const next = { inMode: inMode === "1", socket: socket.join(FIELD) };
+		if (next.inMode === pane.inMode && next.socket === pane.socket) return;
+		pane.inMode = next.inMode;
+		pane.socket = next.socket;
+		this.#postLayout();
+	}
+
+	async #readFacts(paneId: TmuxId): Promise<void> {
+		const state = await this.#command([
+			"display-message",
+			"-p",
+			"-t",
+			`%${String(paneId)}`,
+			PANE_FACTS_FORMAT,
+		]);
+		if (state.ok) this.#facts(paneId, state.lines.join("\n"));
 	}
 
 	async #continue(paneId: TmuxId): Promise<void> {
@@ -711,6 +772,16 @@ export class ControlClient {
 			windows,
 			window: this.#activeWindow,
 			panes: this.#shownPanes(),
+			sessionPanes: [...this.#panes.values()].map(
+				(pane): SessionPane => ({
+					pane: pane.id,
+					window: pane.window,
+					inMode: pane.inMode,
+					socket: pane.socket,
+				}),
+			),
+			client: this.#clientName,
+			prefixes: this.#prefixes,
 		});
 	}
 
@@ -841,4 +912,16 @@ export function restoreSequence(
 	if (cursorFlag === "0") out += "\x1b[?25l";
 	out += `\x1b[${String(Number(cursorY) + 1)};${String(Number(cursorX) + 1)}H`;
 	return out;
+}
+
+/** Whether `needle` is somewhere in `bytes`. */
+function includes(bytes: Uint8Array, needle: Uint8Array): boolean {
+	const first = needle[0];
+	for (let i = bytes.indexOf(first); i >= 0; i = bytes.indexOf(first, i + 1)) {
+		if (i + needle.length > bytes.length) return false;
+		let j = 1;
+		while (j < needle.length && bytes[i + j] === needle[j]) j++;
+		if (j === needle.length) return true;
+	}
+	return false;
 }

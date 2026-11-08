@@ -5,6 +5,7 @@ import { Failure, Waiting } from "../components/shell/SurfaceState";
 import { openXtermSession, type XtermSession } from "../surfaces/xtermSession";
 import { ControlTerminalSurface } from "./control/ControlTerminalSurface";
 import { perfProbe } from "../perfProbe";
+import type { TerminalPanesWire } from "../../ipc/contract";
 import {
   activePalette,
   terminalSurfaceStyle,
@@ -71,6 +72,12 @@ export interface TerminalSurfaceProps {
    * keeps its screen and history for the client attached on reveal.
    */
   readonly hidden?: boolean;
+  /**
+   * In tmux control mode, where the panes are drawn and what each is, as
+   * it changes; `null` when this surface goes. What a Neovim DevHub draws
+   * over a pane is placed by (`PaneBridge.reportTerminalPanes`).
+   */
+  readonly onControlPanes?: (panes: TerminalPanesWire | null) => void;
   /**
    * A session that ended (its last window closed, a detach) is attached
    * again at once — made again — instead of the pane saying it

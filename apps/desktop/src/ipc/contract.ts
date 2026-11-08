@@ -1914,6 +1914,40 @@ export interface PaneBridge
 	 * (`main/editor/terminalNeovims.ts`).
 	 */
 	reportTerminalScreen(terminalId: string, screen: TerminalScreenWire): void;
+	/**
+	 * In tmux control mode, where the terminal's panes are drawn and what
+	 * each is; `null` once the page is not a control-mode one
+	 * (`main/editor/terminalNeovims.ts`, "In tmux control mode").
+	 */
+	reportTerminalPanes(
+		terminalId: string,
+		panes: TerminalPanesWire | null,
+	): void;
+}
+
+/** `PaneBridge.reportTerminalPanes`: CSS pixels and cells. */
+export interface TerminalPanesWire {
+	readonly x: number;
+	readonly y: number;
+	readonly cellWidth: number;
+	readonly cellHeight: number;
+	readonly cols: number;
+	readonly rows: number;
+	readonly client: string;
+	readonly prefixes: readonly string[];
+	readonly shown: readonly {
+		readonly pane: number;
+		readonly x: number;
+		readonly y: number;
+		readonly width: number;
+		readonly height: number;
+		readonly active: boolean;
+	}[];
+	readonly panes: readonly {
+		readonly pane: number;
+		readonly inMode: boolean;
+		readonly socket: string;
+	}[];
 }
 
 /** `PaneBridge.reportTerminalScreen`'s rectangle. */
@@ -2396,6 +2430,7 @@ export const CHANNELS = {
 	openMicrophoneSettings: "devhub:open-microphone-settings",
 	openExternalUrl: "devhub:open-external-url",
 	reportTerminalScreen: "devhub:report-terminal-screen",
+	reportTerminalPanes: "devhub:report-terminal-panes",
 	writeClipboard: "devhub:write-clipboard",
 	writeClipboardImage: "devhub:write-clipboard-image",
 	writeClipboardRich: "devhub:write-clipboard-rich",
