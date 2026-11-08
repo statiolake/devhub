@@ -1697,7 +1697,10 @@ export class TmuxTerminalRuntime {
 					reason:
 						"DevHub will not run tmux with the configured tmux_args: one of them is not an argument DevHub passes on.",
 				};
-		this.tmuxArgs = argumentsSafe ? [...options.tmuxArgs] : [];
+		// `-u`: tmux's answers are DevHub's protocol (its separators are
+		// control characters), and a tmux that finds no UTF-8 locale — a host
+		// whose ssh carries none — writes each of them as `_`.
+		this.tmuxArgs = argumentsSafe ? ["-u", ...options.tmuxArgs] : [];
 		this.tmuxOwnEnvironment = options.tmuxEnvironment ?? {};
 		this.shellName = options.shell?.basename;
 		this.effectiveSocket = isValidSocketName(options.effectiveSocketName)

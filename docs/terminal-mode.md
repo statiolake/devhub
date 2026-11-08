@@ -387,14 +387,27 @@ picks it by the setting and mounts the other one when it changes.
   `devhub-nvim` window and `:restart` there. From the socket named to the
   UI attached: 370 ms, most of it the overlay's page starting.
 
+- **An SSH host** (checked against a local sshd, DevHub's tmux 3.7c
+  installed on the host as it is for any host): the control client runs as
+  `ssh -T <host> -- … tmux -C attach-session`, typing and splits as here, a
+  `nvim` on the host drawn over its pane through the forwarded socket. With
+  the connection killed on the host's side, the surface attaches a new
+  control client by itself, and the Neovim's overlay comes back with it: a
+  new client name in the page's report is the connection back, so a pane
+  whose UI ended with the old one is tried again. Seen on the way: a host
+  whose non-interactive shell has no UTF-8 locale (no `AcceptEnv LANG`)
+  gets tmux's answers with DevHub's field and record separators turned into
+  `_`, and every listing fails as "an unterminated record"; macOS's
+  `SendEnv LANG LC_*` and Debian's `AcceptEnv` make that rare, but it is
+  not DevHub's to rely on, so every tmux DevHub runs is told UTF-8 with
+  `-u` (both paths, here and on hosts).
+
 Measured in the app (Xvfb, the person's tmux.conf, zsh, a busy 4-core
 machine at load 6): key to paint p50 6.3 ms, p90 9.0 ms, max 17.3 ms over 40
 keys (keydown to the painter's first glyph after it).
 
 ### Next (phase 2 still open)
 
-- An SSH host's terminal in control mode, run end to end (the plan is
-  `ssh -T`; not yet tried against a host).
 - The old path's key-to-paint, throughput and CPU on the same machine, for
   the comparison.
 - A page that reloads (only in development) is not handed a new port to the
