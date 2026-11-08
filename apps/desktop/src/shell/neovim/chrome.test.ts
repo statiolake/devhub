@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { initialUiState, type GridBox } from "./redraw";
 import {
   NO_THEME,
+  barLayout,
+  barsOf,
   sameTheme,
   shapedSpans,
   spanCorners,
@@ -93,5 +96,69 @@ describe("shaped spans", () => {
       br: false,
       bl: false,
     });
+  });
+});
+
+describe("a status line as a bar", () => {
+  const BAR = 0x303030;
+  const MODE = 0x569cd6;
+  const BRANCH = 0x444444;
+
+  it("is its commonest colour, with the other runs as pills", () => {
+    // " NORMAL  main  file.ts " — lualine's sections, Powerline joints.
+    const chars = [..." NORMAL \ue0b0 main \ue0b0 file.ts        "];
+    const bgs = chars.map((_, col) =>
+      col < 8 ? MODE : col === 8 ? BRANCH : col < 15 ? BRANCH : BAR,
+    );
+    const bar = barLayout(chars, bgs, { start: 0, end: chars.length });
+    expect(bar.ground).toBe(BAR);
+    expect(bar.joints).toEqual([8, 15]);
+    expect(bar.pills).toEqual([
+      { start: 0, end: 8, bg: MODE, roundLeft: true, roundRight: true },
+      { start: 9, end: 15, bg: BRANCH, roundLeft: true, roundRight: true },
+    ]);
+  });
+
+  it("rounds touching runs of other colours as one pill", () => {
+    const chars = [..." A  B     "];
+    const bgs = [MODE, MODE, MODE, BRANCH, BRANCH, BAR, BAR, BAR, BAR, BAR];
+    expect(barLayout(chars, bgs, { start: 0, end: 10 }).pills).toEqual([
+      { start: 0, end: 3, bg: MODE, roundLeft: true, roundRight: false },
+      { start: 3, end: 5, bg: BRANCH, roundLeft: false, roundRight: true },
+    ]);
+  });
+
+  it("is under each window, but not on the command line's rows", () => {
+    const state = initialUiState({
+      foreground: 0,
+      background: 0,
+      special: 0,
+    });
+    state.grids.set(1, {
+      id: 1,
+      width: 20,
+      height: 10,
+      chars: [],
+      hls: new Int32Array(200),
+      dirty: new Set(),
+    });
+    state.margins.set(3, { top: 1, right: 0, bottom: 0, left: 0 });
+    const win = (grid: number, row: number, height: number): GridBox => ({
+      grid,
+      row,
+      col: 0,
+      width: 20,
+      height,
+      z: 1,
+      float: false,
+      win: 1000 + grid,
+    });
+    // Two windows stacked, the lower one's status line on row 8; with
+    // `laststatus=0` the row under it would be the command line's.
+    const bars = barsOf(state, [win(2, 0, 4), win(3, 5, 3)], 1);
+    expect([...(bars.get(1)?.keys() ?? [])]).toEqual([4, 8]);
+    expect([...(bars.get(3)?.keys() ?? [])]).toEqual([0]);
+    const none = barsOf(state, [win(2, 0, 4), win(3, 5, 4)], 1);
+    expect([...(none.get(1)?.keys() ?? [])]).toEqual([4]);
   });
 });

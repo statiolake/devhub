@@ -23,10 +23,13 @@ import {
 } from "./floats";
 import {
   NO_THEME,
+  barLayout,
+  barsOf,
   sameTheme,
   shapedSpans,
   spanCorners,
   spanNotches,
+  type Bars,
   type PaintTheme,
 } from "./chrome";
 import {
@@ -247,6 +250,11 @@ export class GridPainter {
   private font: FontSpec;
   private metrics: Metrics;
   private theme: PaintTheme = NO_THEME;
+  /** The status lines and winbars (`barsOf`), and what they were last. */
+  private bars: Bars = new Map();
+  private barsKey = "";
+  /** The row's cells whose glyph is not drawn (a bar's joints). */
+  private readonly skip = new Set<number>();
   private dpr: number;
   /** The row's icons, drawn after its backgrounds (`paintRow`). */
   private readonly icons: {
@@ -336,6 +344,7 @@ export class GridPainter {
       if (entry) entry.canvas.style.display = "none";
     }
     const corners = this.placeClusters(state, shown);
+    this.placeBars(state, shown);
     for (const box of shown) {
       const grid = state.grids.get(box.grid);
       if (!grid) continue;
@@ -394,6 +403,24 @@ export class GridPainter {
         this.glide(canvas, scrolled, grid.height);
       }
     }
+  }
+
+  /**
+   * Where the status lines and winbars are; when that changed, the rows
+   * they were and are on are repainted.
+   */
+  private placeBars(state: NeovimUiState, boxes: readonly GridBox[]): void {
+    const bars = barsOf(state, boxes, this.theme.cmdheight);
+    const key = JSON.stringify([...bars].map(([g, rows]) => [g, [...rows]]));
+    if (key === this.barsKey) return;
+    for (const map of [this.bars, bars]) {
+      for (const [grid, rows] of map) {
+        const dirty = state.grids.get(grid)?.dirty;
+        for (const row of rows.keys()) dirty?.add(row);
+      }
+    }
+    this.bars = bars;
+    this.barsKey = key;
   }
 
   /**
@@ -758,6 +785,8 @@ export class GridPainter {
       this.paintGround(ctx, state, box, grid.chars, base, run, y);
     }
     this.paintShaped(ctx, state, box, row, y);
+    this.skip.clear();
+    this.paintBars(ctx, state, box, row, y);
     for (const run of runs) {
       this.paintRun(
         ctx,
@@ -781,6 +810,53 @@ export class GridPainter {
     }
     this.icons.length = 0;
     ctx.restore();
+  }
+
+  /**
+   * A status line or winbar as a bar (`barLayout`): its segments of other
+   * colours as pills, a little inside the row and rounded at their ends,
+   * and Powerline's filled separators between them as the bar's ground.
+   */
+  private paintBars(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    box: GridBox,
+    row: number,
+    y: number,
+  ): void {
+    const spans = this.bars.get(box.grid)?.get(row);
+    const grid = state.grids.get(box.grid);
+    if (!spans || !grid) return;
+    const { width: cw, height: ch, textHeight } = this.metrics;
+    const chars = grid.chars.slice(row * grid.width, (row + 1) * grid.width);
+    const grounds = this.rowGrounds(state, box, row);
+    // As tall as the text and a pixel more each side, never the whole row.
+    const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
+    const h = snap(Math.min(ch - 2, textHeight + 2));
+    const top = snap(y + (ch - h) / 2);
+    const r = Math.min(h / 2, cw);
+    for (const span of spans) {
+      const bar = barLayout(chars, grounds, span);
+      if (bar.pills.length === 0 && bar.joints.length === 0) continue;
+      ctx.fillStyle = cssColor(bar.ground);
+      for (const pill of bar.pills) {
+        ctx.fillRect(pill.start * cw, y, (pill.end - pill.start) * cw, ch);
+      }
+      for (const col of bar.joints) {
+        ctx.fillRect(col * cw, y, cw, ch);
+        this.skip.add(col);
+      }
+      for (const pill of bar.pills) {
+        const x0 = pill.start * cw;
+        const x1 = pill.end * cw;
+        const left = pill.roundLeft ? r : 0;
+        const right = pill.roundRight ? r : 0;
+        ctx.fillStyle = cssColor(pill.bg);
+        ctx.beginPath();
+        ctx.roundRect(x0, top, x1 - x0, h, [left, right, right, left]);
+        ctx.fill();
+      }
+    }
   }
 
   /** The backgrounds of one row's cells, `reverse` applied. */
@@ -1051,6 +1127,11 @@ export class GridPainter {
     for (let col = start; col < end; col += 1) {
       const c = chars[base + col] ?? " ";
       if (c === "") continue;
+      if (this.skip.has(col)) {
+        flush();
+        textStart = col + 1;
+        continue;
+      }
       const wide = chars[base + col + 1] === "";
       const kind = glyphKind(c);
       const simple =

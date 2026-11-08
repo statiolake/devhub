@@ -307,7 +307,8 @@ export class NeovimEditor {
     const changes = this.pending;
     this.pending = emptyChanges();
     if (changes.options) this.applyFont();
-    if (changes.colors) this.askTheme();
+    // `cmdheight` is asked with them: it moves when the layout does.
+    if (changes.colors || changes.layout) this.askTheme();
     this.boxes = layoutGrids(this.state);
     this.host.style.background = cssColor(this.state.defaults.background);
     this.painter.paint(this.state, changes, this.boxes, forceAll);
@@ -318,9 +319,10 @@ export class NeovimEditor {
   }
 
   /**
-   * The colorscheme's selection and match colours, by group name
-   * (`chrome.ts`): asked a moment after highlights change (a colorscheme
-   * defines hundreds at once), and everything repainted when they differ.
+   * The colorscheme's selection and match colours, by group name, and
+   * `cmdheight` (`chrome.ts`): asked a moment after highlights or the
+   * layout change (a colorscheme defines hundreds at once), and everything
+   * repainted when they differ.
    */
   private askTheme(): void {
     const request = this.port.request?.bind(this.port);

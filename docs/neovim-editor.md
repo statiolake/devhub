@@ -205,6 +205,10 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     the row above or below does not go on, and its inside corners filled
     round where it does, so a selection of several lines is one outline.
     A row is repainted with its neighbours while such colours are about.
+  - Status lines and winbars are bars (`chrome.ts`'s `barsOf`,
+    `barLayout`): the runs not in the bar's commonest colour are pills,
+    and Powerline's filled separators (U+E0B0, E0B2, … even code points)
+    between them are not drawn, a gap of the bar's ground instead.
   - A full repaint of a 164×43 screen with two windows and a float takes
     about 6 ms (15 000 cells at `devicePixelRatio` 2: about 4 ms); there is
     no glyph atlas, and none has been needed.
@@ -537,12 +541,16 @@ least risky first within a band):
    windows' grounds (each half of the column in its window's `Normal`
    background), so splits meet edge to edge like editor groups; clicks and
    drags on the column stay Neovim's (`:help vertical-separator`). Low risk.
-2. _Statusline and winbar as cell rows_: a full row of `StatusLine` cells,
-   lualine's segments as blocks with Powerline triangles. Draw the row as a
-   bar of its own (a hairline above, the text vertically centred, segment
-   backgrounds as rounded pills where a separator glyph joins two runs);
-   the text and click regions stay cell for cell (`%@…@` handlers, lualine
-   components). Medium risk: themes rely on exact colours.
+2. _Statusline and winbar as cell rows_ — done: a status line (grid 1's
+   row under a window, not the command line's `cmdheight` rows) and a
+   winbar (a window's top margin) is a bar of its commonest colour; runs of
+   other colours are pills on it (a pixel more than the text each side,
+   rounded at their outer ends, touching runs one pill), and Powerline's
+   filled separators between them are left out as a gap of the bar's
+   ground — lualine's sections read as chips. Text, colours and click
+   regions stay cell for cell. A hairline above the bar was left out: a
+   status line in `Normal`'s ground (lualine's `c`, a line of `─`) has a
+   line or nothing by design, and one in its own colour needs none.
 3. _Selection, search and cursorline as per-cell rectangles_ — done:
    runs in `Visual`'s, `VisualNOS`'s and the searches' backgrounds (asked
    of Neovim by group name, `chrome.ts`'s `THEME_LUA`, whenever highlights
