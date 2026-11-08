@@ -866,6 +866,7 @@ describe("the commands that need nothing at all", () => {
 		expect(run("open_task_manager", nothing)).toEqual({
 			kind: "open-task-manager",
 		});
+		expect(run("install_cli", nothing)).toEqual({ kind: "install-cli" });
 		expect(run("focus_sidebar", nothing)).toEqual({ kind: "focus-sidebar" });
 		// Both directions, unconditionally: the model holds which way round it
 		// is, so there is nothing here to decide and nothing to gate on.

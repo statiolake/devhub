@@ -62,8 +62,8 @@ support them anyway.
 The workbench opens on `vscode-remote://ssh-remote+<host>/<path>` and waits.
 `extensions/devhub-remote` is activated by that authority, parses the host out
 of it, and sends one JSON line over DevHub's control socket — the same socket
-the `devhub` command and "Install 'devhub' command in PATH" use, found the same
-way, from the extension's own global-storage directory:
+the `devhub` command uses — found from the extension's own global-storage
+directory:
 
 ```json
 { "kind": "resolve-remote", "machine": "ssh:<host>", "attempt": 1 }

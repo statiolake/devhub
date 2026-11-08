@@ -15,8 +15,7 @@ extension host is, and this extension answers by asking the running DevHub:
 ```
 
 one line out over DevHub's control socket, one line back, and the connection
-closes — the same framing `devhub-bridge` uses for `devhub.installCli`. A
-successful answer carries a port and a connection token, and becomes a
+closes. A successful answer carries a port and a connection token, and becomes a
 `ResolvedAuthority` on `127.0.0.1`; VS Code's connection to the remote goes
 through whatever DevHub has already put on that port. When the answer carries
 an `extensionHostEnv` — that is where `SSH_AUTH_SOCK` arrives, for a host with

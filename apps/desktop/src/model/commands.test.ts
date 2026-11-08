@@ -144,6 +144,7 @@ describe("the registry itself", () => {
       "open_recently_closed",
       "preview_color_theme",
       "open_task_manager",
+      "install_cli",
     ]);
     expect(keysForCommand(bindings, "focus_sidebar")).toEqual([]);
   });

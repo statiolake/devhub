@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
 	commandLauncher,
 	forwardedSocketLauncher,
+	INSTALL_COMMAND_HINT,
 	launchAndWait,
 	launchCommandFor,
 	LAUNCH_TIMEOUT_MS,
@@ -44,7 +45,7 @@ function fakeLauncher(options: {
 		// The real one's wording, so the assertions below are about the text a
 		// person actually reads.
 		cannotStart: (reason: string) =>
-			`DevHub is not running, and it could not be started: ${reason}\nThe 'devhub' launcher starts DevHub with ${DESCRIPTION}. If DevHub has moved, run "DevHub: Install 'devhub' command in PATH" from DevHub's command palette again.`,
+			`DevHub is not running, and it could not be started: ${reason}\nThe 'devhub' launcher starts DevHub with ${DESCRIPTION}. If DevHub has moved, run ${INSTALL_COMMAND_HINT} again.`,
 		opened,
 		probes: () => probes,
 		open: () => {

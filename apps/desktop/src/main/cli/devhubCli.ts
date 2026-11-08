@@ -32,6 +32,7 @@ import { parseFileAndPosition, type FilePosition } from "./goto.js";
 import {
 	commandLauncher,
 	forwardedSocketLauncher,
+	INSTALL_COMMAND_HINT,
 	LAUNCH_COMMAND_ENVIRONMENT_VARIABLE,
 	NotRunning,
 	parseLaunchCommand,
@@ -705,7 +706,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 	const socketPath = process.env["DEVHUB_CONTROL_SOCKET"];
 	if (!socketPath) {
 		console.error(
-			"DEVHUB_CONTROL_SOCKET is not set. Run \"DevHub: Install 'devhub' command in PATH\" from DevHub's command palette to write a launcher that sets it.",
+			`DEVHUB_CONTROL_SOCKET is not set. Run ${INSTALL_COMMAND_HINT} to write a launcher that sets it.`,
 		);
 		return 1;
 	}

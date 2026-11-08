@@ -609,7 +609,11 @@ import {
 	writeOrchestratorSkill,
 	type OrchestratorSkill,
 } from "../orchestrator/orchestratorSkill.js";
-import { launcherScript } from "../cli/install.js";
+import {
+	installLauncher,
+	launcherScript,
+	type InstallRequest,
+} from "../cli/install.js";
 import { launchCommandFor } from "../cli/launch.js";
 import type { TellCommand } from "../cli/tell/command.js";
 import {
@@ -715,6 +719,28 @@ const PAGE_NAMES: Readonly<Record<string, string>> = {
 	toasts: "Notices page",
 	picker: "Questions page",
 };
+
+/**
+ * The `devhub` launcher this DevHub writes (`cli/install.ts`): the one the
+ * install command puts on the PATH and the one the `/devhub` skill names.
+ *
+ * The binary running this process is the app's own Electron, in a checkout and
+ * in a bundle alike, and it is what the launcher runs the CLI with as Node. How
+ * this DevHub is started is written down by the DevHub that is running: a
+ * bundle the Finder can open, or the checkout's own dev.sh (`cli/launch.ts`).
+ */
+function launcherRequest(userDataPath: string): InstallRequest {
+	return {
+		execPath: process.execPath,
+		cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCliEntry.js"),
+		socketPath: controlSocketPath(userDataPath),
+		commandName: activeProfile().cliCommandName,
+		profile: activeProfile().profile,
+		launchCommand: launchCommandFor(APP_ROOT),
+		home: homedir(),
+		pathValue: process.env["PATH"] ?? "",
+	};
+}
 
 /**
  * Where the remote extension host tarballs are.
@@ -1972,19 +1998,7 @@ export class AppController {
 	private writeAgentSkill(userDataPath: string): DevhubSkill | undefined {
 		const skill = devhubSkillPaths(userDataPath);
 		try {
-			writeDevhubSkill(
-				skill,
-				launcherScript({
-					execPath: process.execPath,
-					cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCliEntry.js"),
-					socketPath: controlSocketPath(userDataPath),
-					commandName: activeProfile().cliCommandName,
-					profile: activeProfile().profile,
-					launchCommand: launchCommandFor(APP_ROOT),
-					home: homedir(),
-					pathValue: process.env["PATH"] ?? "",
-				}),
-			);
+			writeDevhubSkill(skill, launcherScript(launcherRequest(userDataPath)));
 			return skill;
 		} catch (error) {
 			console.error(
@@ -2145,6 +2159,48 @@ export class AppController {
 				`${file}: ${failure}`,
 			),
 		);
+	}
+
+	/**
+	 * `DevHub: Install 'devhub' command in PATH`: write the launcher
+	 * (`cli/install.ts`) and say where it went, or why it went nowhere.
+	 *
+	 * DevHub's own command rather than a workbench's, because the launcher is
+	 * DevHub's and a Workspace whose editor is Neovim has no workbench to run a
+	 * command in. The answer is a message box, the way VS Code answers its own
+	 * "Shell Command: Install 'code' command in PATH": it is the one sentence
+	 * the person asked for, and it may tell them to change their PATH.
+	 */
+	private async installCli(): Promise<void> {
+		const userDataPath = this.userDataPath;
+		if (userDataPath === undefined) return;
+		let message: string;
+		try {
+			message = installLauncher(launcherRequest(userDataPath)).message;
+		} catch (error) {
+			this.publishError(
+				withDetail(
+					withSummary(
+						errorWireAt("native_unavailable"),
+						`The '${activeProfile().cliCommandName}' command could not be installed.`,
+					),
+					failureText(error),
+				),
+			);
+			return;
+		}
+		console.log(`[devhub] cli: ${message}`);
+		const options: Electron.MessageBoxOptions = {
+			type: "info",
+			message: `Install '${activeProfile().cliCommandName}' command in PATH`,
+			detail: message,
+			buttons: ["OK"],
+			noLink: true,
+		};
+		const shell = shellWindowIfCreated();
+		await (shell
+			? electron.dialog.showMessageBox(shell.window, options)
+			: electron.dialog.showMessageBox(options));
 	}
 
 	/**
@@ -2377,6 +2433,9 @@ export class AppController {
 			},
 			openTaskManager: () => {
 				openTaskManagerWindow();
+			},
+			installCli: () => {
+				void this.installCli().catch(report);
 			},
 			navigateHistory: (direction) => this.navigateHistory(direction),
 			openCommandPalette: () => {

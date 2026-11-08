@@ -34,7 +34,7 @@ Build: DevHub.app test build (macOS) ──> Test: app (macOS) ┘
 
 | Job | Runner | What it runs | Needs a provisioned VS Code |
 | --- | --- | --- | --- |
-| `checks` | ubuntu-latest | `pnpm run fmt`, `pnpm run lint`, `bridge:check`, `remote:check` (each extension's build, typecheck, tests, lint, package, reproducibility), `pnpm run test:scripts` | no — the submodule is checked out and patched, which is pure git |
+| `checks` | ubuntu-latest | `pnpm run fmt`, `pnpm run lint`, `bridge:check` (the manifest's static checks, package, reproducibility), `remote:check` (build, typecheck, tests, lint, package, reproducibility), `pnpm run test:scripts` | no — the submodule is checked out and patched, which is pure git |
 | `test-desktop` | macos-15 | `@devhub/desktop` typecheck and tests (vitest, node-pty under VS Code's Electron), `darwin_bundle_test` | yes: `--for dev` (restores the cache, never saves it) |
 | `build-app` | macos-15 | `scripts/build-app.sh --without-reh --without-whisper --no-zip` with the fast VS Code bundle; hands `DevHub.app` on as a tar | yes: `--for all` (saves the cache) |
 | `test-app` | macos-15 | the app-level tests against that bundle: today `scripts/smoke_packaged_app.py` | no — it gets the app from `build-app` |

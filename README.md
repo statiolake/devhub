@@ -188,9 +188,10 @@ kinds of thing, and each has a rule:
 
 DevHub's own integration ships as a built-in extension,
 [`extensions/devhub-bridge`](extensions/devhub-bridge), so that its workbench
-defaults are in effect and cannot be uninstalled. It carries the workbench
-defaults and the `devhub.installCli` palette command, and nothing else: the
-websocket protocol it once spoke to a web-era editor server is gone.
+defaults are in effect and cannot be uninstalled. It is those defaults, in its
+manifest, and nothing else: the websocket protocol it once spoke to a web-era
+editor server is gone, and the command that installs `devhub` is DevHub's own
+(below).
 
 GitHub Copilot is built in too, but only completions and Next Edit Suggestions.
 Chat stays off. [`extensions/devhub-copilot`](extensions/devhub-copilot) runs
@@ -218,7 +219,9 @@ transition and why a hidden one stays up or a discard was called off — is also
 
 ## The `devhub` command
 
-`DevHub: Install 'devhub' command in PATH` writes a launcher that talks to the
+**DevHub: Install 'devhub' command in PATH**, in DevHub's command palette
+(`Cmd+Q :`, `install_cli`) whichever editor the Workspace has, writes a
+launcher that talks to the
 running app over a unix socket in its user-data directory: `/usr/local/bin/devhub`,
 or `~/.local/bin/devhub` when `/usr/local/bin` is not writable (a profile's own
 DevHub installs `devhub-<profile>`). Run the command again after moving or

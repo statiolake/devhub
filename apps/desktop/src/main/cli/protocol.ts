@@ -249,10 +249,6 @@ export type ControlRequest =
 			readonly cwd: string;
 	  }
 	| {
-			/** Put the `devhub` launcher on the PATH. Sent by the workbench command. */
-			readonly kind: "install-cli";
-	  }
-	| {
 			/**
 			 * Where a workbench on another machine should connect to, and with
 			 * what token. Sent by `extensions/devhub-remote`, never by a person.
@@ -264,8 +260,7 @@ export type ControlRequest =
 			 * an endpoint on this Mac. It is on this socket rather than through a
 			 * channel of the extension's own because a `ui`-kind extension is on
 			 * the machine DevHub runs on, so the socket it derives from its own
-			 * global-storage directory is this DevHub's and no other's — the same
-			 * derivation `install-cli` uses, for the same reason.
+			 * global-storage directory is this DevHub's and no other's.
 			 *
 			 * `machine` is a `RuntimeId` — `ssh:<host>` — and not a bare host,
 			 * because it is the key everything else about a machine is filed
@@ -548,8 +543,6 @@ export function parseControlRequest(line: string): ControlRequest {
 				args: requireStrings(record["args"], "args"),
 				cwd: requireAbsolute(record["cwd"], "cwd"),
 			};
-		case "install-cli":
-			return { kind: "install-cli" };
 		case "resolve-remote":
 			return {
 				kind: "resolve-remote",

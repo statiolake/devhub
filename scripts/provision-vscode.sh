@@ -392,9 +392,8 @@ fi
 # project and on an extension repo alike.
 step "built-in extensions"
 (cd "$VSCODE_DIR" && npm run download-builtin-extensions)
-# DevHub's own two extensions are built here for the same reason the bridge
-# always was: the staging script below refuses a set with either missing.
-(cd "$REPO_ROOT/extensions/devhub-bridge" && node scripts/build.mjs)
+# DevHub's remote resolver is built here because the staging script below
+# refuses a set without it. The bridge is a manifest and has nothing to build.
 (cd "$REPO_ROOT/extensions/devhub-remote" && node scripts/build.mjs)
 # The staging script takes a set without Copilot, but a provisioned checkout
 # should not be one: this also stages the language server it starts.

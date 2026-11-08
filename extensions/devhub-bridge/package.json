@@ -1,7 +1,7 @@
 {
   "name": "@devhub/bridge",
   "displayName": "DevHub Bridge",
-  "description": "DevHub's built-in VS Code integration: the workbench defaults DevHub owes an answer for, and the command that installs the 'devhub' launcher.",
+  "description": "DevHub's built-in VS Code integration: the workbench defaults DevHub owes an answer for.",
   "version": "0.1.0",
   "publisher": "devhub",
   "license": "MIT",
@@ -9,7 +9,6 @@
   "engines": {
     "vscode": "^1.109.0"
   },
-  "main": "./dist/extension.js",
   "extensionKind": [
     "workspace"
   ],
@@ -18,9 +17,6 @@
       "supported": true
     }
   },
-  "activationEvents": [
-    "onCommand:devhub.installCli"
-  ],
   "contributes": {
     "configurationDefaults": {
       "window.title": "${dirty}${activeEditorShort}",
@@ -28,31 +24,17 @@
       "workbench.layoutControl.enabled": false,
       "workbench.startupEditor": "none",
       "chat.disableAIFeatures": true
-    },
-    "commands": [
-      {
-        "command": "devhub.installCli",
-        "title": "DevHub: Install 'devhub' command in PATH"
-      }
-    ]
+    }
   },
   "scripts": {
-    "build": "node scripts/build.mjs",
     "package": "node scripts/package.mjs",
     "reproducible": "node scripts/reproducible.mjs",
-    "fmt:check": "prettier --check src scripts test package.json tsconfig.json README.md",
-    "fmt": "prettier --write src scripts test package.json tsconfig.json README.md",
+    "fmt:check": "prettier --check scripts package.json README.md",
+    "fmt": "prettier --write scripts package.json README.md",
     "lint": "node scripts/check.mjs",
-    "typecheck": "tsgo --noEmit -p tsconfig.json",
-    "test": "node scripts/test.mjs",
-    "check": "pnpm run build && pnpm run typecheck && pnpm run test && pnpm run lint && pnpm run package && pnpm run reproducible"
+    "check": "pnpm run lint && pnpm run package && pnpm run reproducible"
   },
   "devDependencies": {
-    "@types/node": "22.20.1",
-    "@types/vscode": "1.109.0",
-    "@typescript/native-preview": "7.0.0-dev.20260707.2",
-    "esbuild": "0.25.12",
-    "prettier": "3.6.2",
-    "typescript": "5.9.2"
+    "prettier": "3.6.2"
   }
 }

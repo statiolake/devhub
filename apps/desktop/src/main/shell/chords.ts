@@ -243,6 +243,8 @@ export type ChordEffect =
 	| { readonly kind: "open-log" }
 	| { readonly kind: "preview-color-theme" }
 	| { readonly kind: "open-task-manager" }
+	/** Put the `devhub` launcher on the PATH (`cli/install.ts`). */
+	| { readonly kind: "install-cli" }
 	/** Every command, by name: the registry as a picker. */
 	| { readonly kind: "open-command-palette" }
 	/** Back or Forward through the places the window has shown. */
@@ -523,6 +525,9 @@ export function resolveChord(
 
 		case "open_task_manager":
 			return { kind: "open-task-manager" };
+
+		case "install_cli":
+			return { kind: "install-cli" };
 
 		case "show_chord_help":
 			return { kind: "open-chord-help" };

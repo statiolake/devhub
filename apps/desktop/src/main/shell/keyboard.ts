@@ -190,6 +190,8 @@ export interface ChordHost {
 	previewColorTheme(): void;
 	/** The Task Manager window, or away with it when it is in front. */
 	openTaskManager(): void;
+	/** Put the `devhub` launcher on the PATH, and say where it went. */
+	installCli(): void;
 	/** Every command, by name — `Cmd+Q :`. */
 	openCommandPalette(): void;
 }
@@ -337,6 +339,9 @@ function perform(host: ChordHost, effect: ChordEffect): void {
 			return;
 		case "open-task-manager":
 			host.openTaskManager();
+			return;
+		case "install-cli":
+			host.installCli();
 			return;
 		case "open-command-palette":
 			host.openCommandPalette();

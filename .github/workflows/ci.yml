@@ -69,7 +69,7 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
-      - name: "Extension: devhub-bridge (build, typecheck, test, lint, package)"
+      - name: "Extension: devhub-bridge (lint, package)"
         run: pnpm run bridge:check
 
       - name: "Extension: devhub-remote (build, typecheck, test, lint, package)"

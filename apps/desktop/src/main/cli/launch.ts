@@ -51,6 +51,14 @@ import type { ControlResponse } from "./protocol.js";
 /** The launcher script's record of how to start the DevHub it belongs to. */
 export const LAUNCH_COMMAND_ENVIRONMENT_VARIABLE = "DEVHUB_LAUNCH_COMMAND";
 
+/**
+ * What writes the launcher, as every sentence that sends a person to it says
+ * it: DevHub's own palette command (`install_cli` in `model/commands.ts`), on
+ * `Cmd+Q :` whichever editor a Workspace has.
+ */
+export const INSTALL_COMMAND_HINT =
+	"\"DevHub: Install 'devhub' command in PATH\" from DevHub's command palette (Cmd+Q :)";
+
 /** How long a cold start is given before the wait is called a failure. */
 export const LAUNCH_TIMEOUT_MS = 30_000;
 
@@ -104,7 +112,7 @@ export function launchCommandFor(
 export function parseLaunchCommand(raw: string | undefined): readonly string[] {
 	if (raw === undefined || raw === "") {
 		throw new Error(
-			`${LAUNCH_COMMAND_ENVIRONMENT_VARIABLE} is not set, so this launcher does not know how to start DevHub. Run "DevHub: Install 'devhub' command in PATH" from DevHub's command palette to write it again.`,
+			`${LAUNCH_COMMAND_ENVIRONMENT_VARIABLE} is not set, so this launcher does not know how to start DevHub. Run ${INSTALL_COMMAND_HINT} to write it again.`,
 		);
 	}
 	const parsed: unknown = JSON.parse(raw);
@@ -231,7 +239,7 @@ export function commandLauncher(
 		socketPath,
 		description: command.join(" "),
 		cannotStart: (reason) =>
-			`DevHub is not running, and it could not be started: ${reason}\nThe 'devhub' launcher starts DevHub with ${command.join(" ")}. If DevHub has moved, run "DevHub: Install 'devhub' command in PATH" from DevHub's command palette again.`,
+			`DevHub is not running, and it could not be started: ${reason}\nThe 'devhub' launcher starts DevHub with ${command.join(" ")}. If DevHub has moved, run ${INSTALL_COMMAND_HINT} again.`,
 		open: () => runDetached(command),
 		answers: () => socketAnswers(socketPath),
 		pause: (ms) =>

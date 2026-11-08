@@ -62,7 +62,6 @@ import { refreshMenu } from "./menu.js";
 import { startControlServer } from "../cli/controlServer.js";
 import { processGroupAnchor } from "./processGroupAnchor.js";
 import { controlSocketPath } from "../cli/protocol.js";
-import { installLauncher } from "../cli/install.js";
 import {
 	installTerminalLauncher,
 	terminalLauncherPath,
@@ -77,7 +76,6 @@ import { RunningSettings } from "./runningSettings.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
 import { answerFinderOpens, finderOpen } from "./openFromFinder.js";
-import { launchCommandFor } from "../cli/launch.js";
 import {
 	forwardRemotePort,
 	remotePortsConfiguration,
@@ -381,25 +379,6 @@ export async function bootstrapShell(
 				window,
 				"kind" in to ? { kind: "host" } : { configPath: to.configPath },
 				rebuild,
-			),
-		installCli: () =>
-			Promise.resolve(
-				installLauncher({
-					// The binary running this process is the app's own Electron,
-					// in a checkout and in a bundle alike, and it is what the
-					// launcher runs the CLI with as Node.
-					execPath: process.execPath,
-					cliScript: join(APP_ROOT, "out", "main", "cli", "devhubCliEntry.js"),
-					socketPath,
-					commandName: activeProfile().cliCommandName,
-					profile: activeProfile().profile,
-					// How this DevHub is started, written down by the DevHub
-					// that is running: a bundle the Finder can open, or the
-					// checkout's own dev.sh. See `launch.ts`.
-					launchCommand: launchCommandFor(APP_ROOT),
-					home: homedir(),
-					pathValue: process.env["PATH"] ?? "",
-				}).message,
 			),
 	});
 

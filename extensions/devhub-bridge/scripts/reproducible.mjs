@@ -34,7 +34,6 @@ async function digest() {
 
 const digests = [];
 for (let index = 0; index < 2; index += 1) {
-  await run("build.mjs");
   await run("package.mjs");
   digests.push(await digest());
 }

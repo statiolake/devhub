@@ -609,6 +609,9 @@ following its event stream. See devhub.nvim's README.
   the keys go to the Neovim drawn over it, wherever they were.
   `AppController.openInEditor` is the one place that branches on the editor
   kind (`editor/neovimOpen.ts`).
+- `devhub` itself goes on the PATH from DevHub's command palette, **DevHub:
+  Install 'devhub' command in PATH** (`Cmd+Q :`, `install_cli`): DevHub's own
+  command, since with Neovim there is no workbench palette to run it from.
 - Leaving it is tmux's and Neovim's: `:q` ends that Neovim, its window
   closes and tmux shows the window it shows next, with the keys in it; the
   prefix and a window key (`l`, `0`, `n`) go back and forth with the

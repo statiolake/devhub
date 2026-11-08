@@ -69,10 +69,6 @@ if [ ! -d "$VSCODE_EXTENSIONS" ]; then
 	echo "no $VSCODE_EXTENSIONS — run scripts/provision-vscode.sh" >&2
 	exit 1
 fi
-if [ ! -f "$BRIDGE/dist/extension.js" ]; then
-	echo "the bridge extension is not built — run 'pnpm --filter @devhub/bridge build'" >&2
-	exit 1
-fi
 if [ ! -f "$REMOTE/dist/extension.js" ]; then
 	echo "the remote resolver extension is not built — run 'pnpm --filter devhub-remote build'" >&2
 	exit 1

@@ -12,8 +12,7 @@
  * the derivation holds: the socket it finds belongs to the DevHub whose window
  * is asking for the remote.
  *
- * The derivation and the framing are shared by copy with
- * `extensions/devhub-bridge/src/installCli.ts`; both mirror
+ * The derivation and the framing mirror
  * `apps/desktop/src/main/cli/protocol.ts`, which is the source of truth.
  */
 

@@ -242,7 +242,6 @@ def check_compiled_output_is_current() -> None:
 	for source, built, command in (
 		(DESKTOP_DIR / "src", DESKTOP_DIR / "out", "pnpm --filter @devhub/desktop build"),
 		(DESKTOP_DIR / "src", DESKTOP_DIR / "dist", "pnpm --filter @devhub/desktop build"),
-		(BRIDGE_DIR / "src", BRIDGE_DIR / "dist", "pnpm --filter @devhub/bridge build"),
 		(REMOTE_DIR / "src", REMOTE_DIR / "dist", "pnpm --filter devhub-remote build"),
 		(COPILOT_DIR / "src", COPILOT_DIR / "dist", "pnpm --filter devhub-copilot build"),
 	):
@@ -275,7 +274,6 @@ def check_inputs() -> None:
 		# Holds DevHub's process group un-orphaned while workbenches are frozen.
 		# A bundle without it never freezes a workbench.
 		(DESKTOP_DIR / "out" / "native" / "devhub-pgrp-anchor", "pnpm --filter @devhub/desktop build"),
-		(BRIDGE_DIR / "dist" / "extension.js", "pnpm --filter @devhub/bridge build"),
 		# Without this the packaged app has no `ssh-remote` resolver, and every
 		# SSH Workspace opens a workbench that waits for an authority nothing
 		# answers. It is a built-in for the same reason the bridge is: a person

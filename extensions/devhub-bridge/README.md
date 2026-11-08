@@ -5,8 +5,8 @@ because a person must not be able to uninstall DevHub's integration and be left
 with a broken window; `scripts/stage-builtin-extensions.sh` stages it alongside
 VS Code's own built-ins.
 
-It does two things, and they are the two things a _product_ cannot say to
-VS Code any other way.
+It is a manifest and no code: the one thing a _product_ cannot say to VS Code
+any other way.
 
 **The workbench defaults.** `contributes.configurationDefaults` is the only
 supported way to move a workbench default on the desktop — `product.json` has
@@ -22,19 +22,17 @@ it. The defaults a person may still overrule live here; the ones that have to
 be written into the settings file instead are in
 `apps/desktop/src/main/workbenchDefaults.ts`, which says why for each.
 
-**`devhub.installCli`.** The palette command "DevHub: Install 'devhub' command
-in PATH", the way VS Code's own "Shell Command: Install 'code' command in PATH"
-works. It writes nothing itself: it asks the running DevHub over the control
-socket in the app's user-data directory and shows the sentence that comes back.
-The socket is derived from the extension's global-storage path, so a scratch
-DevHub and a real one can never be confused, and no environment variable has to
-survive into the extension host.
-
-`activationEvents` is `onCommand:devhub.installCli` and nothing wider. The
-contributed defaults are read from the manifest and need no activation at all,
-so there is nothing left that has to run before somebody asks for it.
+The contributed defaults are read from the manifest and need no activation, so
+there is no entry point and no activation event.
 
 ## What used to be here
+
+**`devhub.installCli`**, the palette command "DevHub: Install 'devhub' command
+in PATH", which asked the running DevHub over its control socket to write the
+launcher. It is DevHub's own palette command now (`Cmd+Q :`, `install_cli`),
+which writes the launcher itself: the launcher is DevHub's, and a Workspace
+whose editor is Neovim has no workbench to run a command in. Two ways to the
+same launcher would have been one too many, so this one is deleted.
 
 A websocket transport to a DevHub-hosted Bridge endpoint — an RFC6455 frame
 codec, a session ledger over a generated v1 contract, a reconnecting
@@ -51,5 +49,5 @@ kept as a branch that is always taken the same way.
 pnpm --filter @devhub/bridge check
 ```
 
-builds the extension, typechecks it, runs the tests, runs the static checks
-above, packages the VSIX and verifies the VSIX is byte-for-byte reproducible.
+runs the static checks, packages the VSIX and verifies the VSIX is
+byte-for-byte reproducible.

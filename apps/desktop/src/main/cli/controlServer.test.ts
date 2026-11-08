@@ -44,7 +44,6 @@ function everythingSaysOk(): ControlHandlers {
 		metrics: () => Promise.resolve("ok"),
 		tell: () => Promise.resolve({ message: "ok", data: {} }),
 		version: () => Promise.resolve("ok"),
-		installCli: () => Promise.resolve("ok"),
 		terminalProfile: () => Promise.resolve({ file: "tmux", args: [], env: {} }),
 		devContainerConfigs: () =>
 			Promise.resolve({ configs: [], current: undefined }),
@@ -165,7 +164,6 @@ describe("the DevHub control socket", () => {
 				calls.push("metrics");
 				return Promise.resolve('{"processes":[]}');
 			},
-			installCli: () => Promise.resolve("installed"),
 			terminalProfile: (machine, root, workspace) => {
 				calls.push(
 					`profile ${machine} ${root ?? "scratch"}${workspace === undefined ? "" : ` for ${workspace}`}`,
@@ -578,8 +576,8 @@ describe("the DevHub control socket", () => {
 			let buffer = "";
 			socket.setEncoding("utf8");
 			socket.on("connect", () => {
-				socket.write('{"kind":"ins');
-				setTimeout(() => socket.write('tall-cli"}\n'), 20);
+				socket.write('{"kind":"ver');
+				setTimeout(() => socket.write('sion"}\n'), 20);
 			});
 			socket.on("data", (chunk: string) => {
 				buffer += chunk;
@@ -589,7 +587,10 @@ describe("the DevHub control socket", () => {
 				resolve(JSON.parse(buffer.split("\n")[0] ?? "") as ControlResponse);
 			});
 		});
-		expect(answer).toEqual({ ok: true, message: "installed" });
+		expect(answer).toEqual({
+			ok: true,
+			message: "DevHub 0.1.0\nVS Code 1.0.0\nabc123",
+		});
 	});
 
 	it("takes over a socket file a crashed run left behind", async () => {
@@ -599,7 +600,7 @@ describe("the DevHub control socket", () => {
 		server = await startControlServer(socketPath, everythingSaysOk());
 		const answer = await ask(
 			socketPath,
-			`${JSON.stringify({ kind: "install-cli" })}\n`,
+			`${JSON.stringify({ kind: "version" })}\n`,
 		);
 		expect(answer.ok).toBe(true);
 	});
@@ -942,7 +943,6 @@ describe("a command the person typed", () => {
 		["list-extensions", { kind: "list-extensions", showVersions: false }],
 		["version", { kind: "version" }],
 		["metrics", { kind: "metrics" }],
-		["install-cli", { kind: "install-cli" }],
 	])("starts an operation: %s", async (_kind, request) => {
 		const personStarted = vi.fn();
 		await answerControlRequest(JSON.stringify(request), {

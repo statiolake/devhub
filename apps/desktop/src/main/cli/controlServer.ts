@@ -70,7 +70,6 @@ export interface ControlHandlers {
 		machine?: string | undefined,
 		as?: string | undefined,
 	): Promise<{ readonly message: string; readonly data: unknown }>;
-	installCli(): Promise<string>;
 	/**
 	 * The command line the workbench rooted at `root` — or the folderless one,
 	 * for `null` — starts its integrated terminal with.
@@ -339,8 +338,6 @@ export async function answerControlRequest(
 				);
 				return { ok: true, message: answer.message, data: answer.data };
 			}
-			case "install-cli":
-				return { ok: true, message: await handlers.installCli() };
 			case "resolve-remote": {
 				// Caught here rather than by the `catch` below, because that one
 				// produces a failure with no `retry` on it — which the resolver
@@ -473,7 +470,6 @@ function typedByPerson(request: ControlRequest): boolean {
 		case "list-extensions":
 		case "version":
 		case "metrics":
-		case "install-cli":
 			return true;
 		case "ping":
 		case "wait-ended":

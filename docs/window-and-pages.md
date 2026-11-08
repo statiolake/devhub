@@ -955,9 +955,10 @@ picker. Every command there has an id, a label, a category (`Navigate`, `View`,
 `Category: Label` with the chords actually in effect at its right end, so a
 rebound key reads as the person's own. A command may be palette only — no
 default key — when it already has a gesture elsewhere or is rare:
-`focus_sidebar`, `open_log`, `open_recently_closed`, `preview_color_theme`
-and `open_task_manager` are today
-(`PALETTE_ONLY_COMMANDS`).
+`focus_sidebar`, `open_log`, `open_recently_closed`, `preview_color_theme`,
+`open_task_manager` and `install_cli` (**DevHub: Install 'devhub' command in
+PATH**, the launcher from `main/cli/install.ts`, whichever editor the Workspace
+has) are today (`PALETTE_ONLY_COMMANDS`).
 `navigate_back` and `navigate_forward` are `Cmd+Q H` / `Cmd+Q L` (Vim's left and
 right): `Cmd+[` / `Cmd+]` still work unprefixed on DevHub's own pages, but over a
 workbench the brackets belong to VS Code, and as chords they already belong to

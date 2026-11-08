@@ -16,10 +16,6 @@ const extensionDir = resolve(staging, "extension");
 const timestamp = new Date("2000-01-01T00:00:00.000Z");
 await mkdir(extensionDir, { recursive: true });
 await writeFile(
-  resolve(extensionDir, "extension.js"),
-  await readFile(resolve(root, "dist/extension.js")),
-);
-await writeFile(
   resolve(extensionDir, "README.md"),
   await readFile(resolve(root, "README.md")),
 );
@@ -31,10 +27,8 @@ const manifest = {
   publisher: packageJson.publisher,
   license: packageJson.license,
   engines: packageJson.engines,
-  main: "./extension.js",
   extensionKind: packageJson.extensionKind,
   capabilities: packageJson.capabilities,
-  activationEvents: packageJson.activationEvents,
   contributes: packageJson.contributes,
 };
 await writeFile(
@@ -43,7 +37,7 @@ await writeFile(
 );
 await writeFile(
   resolve(staging, "[Content_Types].xml"),
-  `<?xml version="1.0" encoding="utf-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="json" ContentType="application/json"/><Default Extension="js" ContentType="application/javascript"/><Default Extension="md" ContentType="text/markdown"/><Default Extension="xml" ContentType="application/xml"/></Types>\n`,
+  `<?xml version="1.0" encoding="utf-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="json" ContentType="application/json"/><Default Extension="md" ContentType="text/markdown"/><Default Extension="xml" ContentType="application/xml"/></Types>\n`,
 );
 await writeFile(
   resolve(staging, "extension.vsixmanifest"),
@@ -56,7 +50,6 @@ async function normalize(path) {
 for (const path of [
   resolve(staging, "[Content_Types].xml"),
   resolve(staging, "extension.vsixmanifest"),
-  resolve(extensionDir, "extension.js"),
   resolve(extensionDir, "README.md"),
   resolve(extensionDir, "package.json"),
 ])
@@ -70,7 +63,6 @@ const files = [
   "[Content_Types].xml",
   "extension.vsixmanifest",
   "extension/README.md",
-  "extension/extension.js",
   "extension/package.json",
 ];
 await new Promise((resolveZip, rejectZip) => {
