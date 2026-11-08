@@ -59,6 +59,8 @@ import { createRequire } from 'node:module';
 import { migrateUserDataDirectory } from './userDataMigration.js';
 import { installMainLog, mainLogPath } from './diagnostics/mainLog.js';
 import { startEventLoopLagMonitor } from './diagnostics/eventLoopLag.js';
+import { processHostRunner } from './processHost/client.js';
+import { setChildRunner } from './terminal/command.js';
 import { watchForFinderOpens } from './shell/openFromFinder.js';
 import { activeProfile } from '../model/profile.js';
 
@@ -285,6 +287,16 @@ app.once('ready', function () {
 
 async function onReady() {
 	perf.mark('code/mainAppReady');
+
+	// DevHub: tmux, git and the Agents' host scripts are started by a utility
+	// process from here on, not on main's thread (processHost/client.ts). Let
+	// go of it last: what shutting down still runs starts in main again.
+	const processHost = processHostRunner();
+	setChildRunner(processHost);
+	app.once('quit', () => {
+		setChildRunner(undefined);
+		processHost.dispose();
+	});
 
 	try {
 		const [, nlsConfig] = await Promise.all([

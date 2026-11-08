@@ -13,7 +13,6 @@
  * only the exit — and which failure wins when several apply.
  */
 
-import { spawn } from "node:child_process";
 import { accessSync, constants, realpathSync, statSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { ExecLimits } from "../runtime/runtime.js";
@@ -23,6 +22,7 @@ import {
 	type PortFailure,
 	type RuntimeLaunchContext,
 } from "./ports.js";
+import { RUN_HERE, type ChildError, type ChildRunner } from "./childRun.js";
 
 export const MAX_OUTPUT_BYTES = 128 * 1024;
 export const MAX_STDERR_BYTES = 16 * 1024;
@@ -170,10 +170,27 @@ export function resolveExecutable(
 }
 
 /**
+ * Where `runBounded` starts its children: here, unless the process host has
+ * been installed (`setChildRunner`), which main does once Electron is ready.
+ */
+let childRunner: ChildRunner = RUN_HERE;
+
+/**
+ * Start every bounded command through `runner` from now on — the process
+ * host, in main (`main/processHost/client.ts`). `undefined` goes back to
+ * starting them in this process.
+ */
+export function setChildRunner(runner: ChildRunner | undefined): void {
+	childRunner = runner ?? RUN_HERE;
+}
+
+/**
  * Run one command to completion inside the operation's budget.
  *
  * The child is its own process group, so a provider that forks (tmux does)
  * can be terminated as a whole rather than leaving a descendant holding a pipe.
+ * Which process it is a child of is `childRunner`'s; everything about time —
+ * the deadline, cancellation, which failure wins — is decided here.
  */
 export function runBounded(
 	spec: CommandSpec,
@@ -187,122 +204,85 @@ export function runBounded(
 	// happens to be spawned. Refuse a late spawn outright.
 	deadline.check(cancel);
 	return new Promise<CommandOutput>((resolve, reject) => {
-		const child = spawn(spec.file, [...spec.args], {
-			cwd: spec.cwd,
-			env: spec.env as NodeJS.ProcessEnv,
-			stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-			detached: true,
-		});
-		// Both are pipes by construction, three lines above. If they are not,
-		// the child is not the child this function was asked to run and there is
-		// nothing to read: say so rather than reading nothing for the whole
-		// budget and calling it a timeout.
-		const outPipe = child.stdout;
-		const errPipe = child.stderr;
-		if (outPipe === null || errPipe === null) {
-			throw new Error("a bounded command was spawned without pipes to read");
-		}
-		const stdout: Buffer[] = [];
-		const stderr: Buffer[] = [];
-		let stdoutBytes = 0;
-		let stderrBytes = 0;
 		let settled = false;
-
-		const terminate = () => {
-			try {
-				if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-			} catch {
-				// Not a swallow: the group is already gone, which is the state
-				// this call exists to reach.
-			}
-			child.kill("SIGKILL");
-		};
+		const run = childRunner.run(
+			{
+				file: spec.file,
+				args: spec.args,
+				cwd: spec.cwd,
+				env: spec.env,
+				stdin,
+				stdoutBytes: limits.stdoutBytes,
+				stderrBytes: limits.stderrBytes,
+				overflow: limits.overflow.kind,
+				streamOutput: onOutput !== undefined,
+			},
+			onOutput === undefined
+				? undefined
+				: (chunk) => {
+						onOutput(
+							Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength),
+						);
+					},
+		);
 		const finish = (failure?: unknown, output?: CommandOutput) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(timer);
 			clearInterval(poll);
 			if (failure) {
-				terminate();
+				run.kill();
 				reject(failure);
 			} else {
 				resolve(output as CommandOutput);
 			}
 		};
-
-		if (stdin !== undefined) {
-			// A program that stops reading before its input is all written has
-			// not been given what the caller handed it — and without a listener
-			// the EPIPE that says so is an uncaught exception in main. After the
-			// command has settled (it was killed at its deadline, say), `finish`
-			// ignores it: the settled answer already says why.
-			child.stdin?.on("error", (error: NodeJS.ErrnoException) => {
-				finish(
-					portFailure("failed", {
-						detail: `${spec.file} stopped reading its input before all of it was written (${error.code ?? error.message})`,
-						cause: error,
-					}),
-				);
-			});
-			child.stdin?.end(Buffer.from(stdin));
-		}
-		child.on("error", (error: NodeJS.ErrnoException) => {
-			finish(
-				portFailure(
-					error.code === "ENOENT" || error.code === "EACCES"
-						? "unavailable"
-						: "failed",
-					{ cause: error },
-				),
-			);
-		});
-		// One rule for both streams, so a cap that is right for one of them
-		// cannot be quietly wrong for the other.
-		const capped = (
-			chunks: Buffer[],
-			seen: number,
-			chunk: Buffer,
-			cap: number,
-		): number => {
-			const total = seen + chunk.byteLength;
-			if (seen >= cap) return total;
-			if (total <= cap) {
-				chunks.push(chunk);
-				return total;
-			}
-			if (limits.overflow.kind === "fail") {
-				finish(limits.overflow.failure());
-				return total;
-			}
-			chunks.push(chunk.subarray(0, cap - seen));
-			return total;
-		};
-		// Both streams, as they arrive, to a caller showing a long command's
-		// progress — whole, before any cap: the cap bounds what is held here,
-		// and what the caller keeps is the caller's business.
-		outPipe.on("data", (chunk: Buffer) => {
-			onOutput?.(chunk);
-			stdoutBytes = capped(stdout, stdoutBytes, chunk, limits.stdoutBytes);
-		});
-		errPipe.on("data", (chunk: Buffer) => {
-			onOutput?.(chunk);
-			stderrBytes = capped(stderr, stderrBytes, chunk, limits.stderrBytes);
-		});
-		// `close` rather than `exit`: the drain is part of the same budget, so
-		// a descendant holding a pipe open cannot be mistaken for completion.
-		child.on("close", (code, signal) => {
-			// The provider answered, so the operation's watchdog starts again:
-			// the next command is waiting on a runtime that has just proven it
-			// is alive, not extending a budget it already spent.
-			deadline.answered();
-			finish(undefined, {
-				success: code === 0 && signal === null,
-				code,
-				signal,
-				stdout: Buffer.concat(stdout),
-				stderr: Buffer.concat(stderr),
-			});
-		});
+		run.outcome.then(
+			(outcome) => {
+				switch (outcome.kind) {
+					case "closed":
+						// The provider answered, so the operation's watchdog starts
+						// again: the next command is waiting on a runtime that has just
+						// proven it is alive, not extending a budget it already spent.
+						deadline.answered();
+						finish(undefined, {
+							success: outcome.code === 0 && outcome.signal === null,
+							code: outcome.code,
+							signal: outcome.signal,
+							stdout: asBuffer(outcome.stdout),
+							stderr: asBuffer(outcome.stderr),
+						});
+						return;
+					case "spawn-error":
+						finish(
+							portFailure(
+								outcome.error.code === "ENOENT" ||
+									outcome.error.code === "EACCES"
+									? "unavailable"
+									: "failed",
+								{ cause: errnoError(outcome.error) },
+							),
+						);
+						return;
+					case "stdin-error":
+						finish(
+							portFailure("failed", {
+								detail: `${spec.file} stopped reading its input before all of it was written (${outcome.error.code ?? outcome.error.message})`,
+								cause: errnoError(outcome.error),
+							}),
+						);
+						return;
+					case "overflow":
+						finish(
+							limits.overflow.kind === "fail"
+								? limits.overflow.failure()
+								: new Error("a truncating command reported an overflow"),
+						);
+						return;
+				}
+			},
+			(failure: unknown) => finish(failure),
+		);
 
 		const timer = setTimeout(
 			() => finish(portFailure("timed_out")),
@@ -314,6 +294,19 @@ export function runBounded(
 			if (cancel.isCancelled) finish(portFailure("cancelled"));
 		}, 5);
 	});
+}
+
+function asBuffer(bytes: Uint8Array): Buffer {
+	return Buffer.isBuffer(bytes)
+		? bytes
+		: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+}
+
+/** The `ErrnoException` a child's failure was, as near as data can say it. */
+function errnoError(error: ChildError): NodeJS.ErrnoException {
+	const rebuilt: NodeJS.ErrnoException = new Error(error.message);
+	if (error.code !== undefined) rebuilt.code = error.code;
+	return rebuilt;
 }
 
 /**
