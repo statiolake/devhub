@@ -122,6 +122,9 @@ export class NeovimEditor {
   private blinkKey = "";
   private stopWatchingDpr: () => void = () => {};
   private stopWatchingFonts: () => void = () => {};
+  private stopWatchingViewFocus: () => void = () => {};
+  /** What Neovim was last told of the focus (`nvim_ui_set_focus`). */
+  private toldFocus: boolean | undefined;
 
   constructor(
     private readonly host: HTMLElement,
@@ -157,6 +160,48 @@ export class NeovimEditor {
     this.observer.observe(host);
     this.watchDevicePixelRatio();
     this.watchFonts();
+    this.watchViewFocus();
+  }
+
+  /**
+   * Whether the keyboard is Neovim's: the page's textarea focused *and* the
+   * page's view the one DevHub gave the keyboard to. Each DevHub view is
+   * its own page, and a page keeps its focused element while another view
+   * (the Sidebar, an Agent, a terminal) has the keys — only
+   * `document.hasFocus()` says it has gone (`docs/window-and-pages.md`, The
+   * keyboard).
+   */
+  hasKeyboard(): boolean {
+    return document.activeElement === this.input && document.hasFocus();
+  }
+
+  /**
+   * The view gaining or losing the keyboard: the cursor turns hollow or
+   * solid again and Neovim hears of it (FocusLost/FocusGained), as when
+   * the textarea itself is blurred.
+   */
+  private watchViewFocus(): void {
+    const changed = () => {
+      if (this.disposed) return;
+      this.syncFocus();
+    };
+    window.addEventListener("focus", changed);
+    window.addEventListener("blur", changed);
+    this.stopWatchingViewFocus = () => {
+      window.removeEventListener("focus", changed);
+      window.removeEventListener("blur", changed);
+    };
+  }
+
+  /** The cursor and Neovim's focus, in line with `hasKeyboard`. */
+  private syncFocus(): void {
+    const focused = this.hasKeyboard();
+    if (focused !== this.toldFocus) {
+      this.toldFocus = focused;
+      this.port.call("nvim_ui_set_focus", [focused]);
+    }
+    this.placeCursor();
+    for (const listener of this.listeners) listener();
   }
 
   /**
@@ -314,6 +359,7 @@ export class NeovimEditor {
     this.observer.disconnect();
     this.stopWatchingDpr();
     this.stopWatchingFonts();
+    this.stopWatchingViewFocus();
     for (const bar of this.scrollbars.values()) window.clearTimeout(bar.timer);
     window.clearTimeout(this.themeTimer);
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
@@ -578,10 +624,15 @@ export class NeovimEditor {
     s.background = cssColor(colors.bg);
     s.color = cssColor(colors.fg);
     s.lineHeight = `${String(cell.height)}px`;
-    const focused = document.activeElement === this.input;
+    const focused = this.hasKeyboard();
+    // Without the keyboard: a block is hollow, a bar or an underline faint.
     this.cursor.classList.toggle(
       "nvim-cursor-unfocused",
       !focused && shape === "block",
+    );
+    this.cursor.classList.toggle(
+      "nvim-cursor-unfocused-thin",
+      !focused && shape !== "block",
     );
     if (shape === "vertical") {
       s.top = `${String(at.y)}px`;
@@ -771,13 +822,11 @@ export class NeovimEditor {
       else if (event.inputType === "historyRedo") menuKey(event, "<D-Z>");
     });
     input.addEventListener("focus", () => {
-      this.port.call("nvim_ui_set_focus", [true]);
-      this.placeCursor();
+      this.syncFocus();
     });
     input.addEventListener("blur", () => {
       this.imeEvent({ type: "reset" });
-      this.port.call("nvim_ui_set_focus", [false]);
-      this.placeCursor();
+      this.syncFocus();
     });
 
     const layer = this.gridLayer;

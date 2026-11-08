@@ -169,6 +169,11 @@
   outline-offset: -1px;
 }
 
+.nvim-cursor-unfocused-thin,
+.nvim-cmdline-caret-unfocused {
+  opacity: 0.4;
+}
+
 /* The IME's preedit: a canvas the painter draws as it draws the grid. */
 .nvim-preedit {
   position: absolute;

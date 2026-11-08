@@ -918,7 +918,13 @@ function Cmdline({
         </div>
       ))}
       {line ? (
-        <CmdlineRow line={line} state={state} cell={cell} cols={place.cols} />
+        <CmdlineRow
+          line={line}
+          state={state}
+          cell={cell}
+          cols={place.cols}
+          focused={editor.hasKeyboard()}
+        />
       ) : null}
     </div>
   );
@@ -927,11 +933,14 @@ function Cmdline({
 function CmdlineRow({
   line,
   state,
+  focused,
   cell,
   cols,
 }: {
   readonly line: NeovimUiState["cmdline"][number];
   readonly state: NeovimUiState;
+  /** Whether this view has the keyboard (`NeovimEditor.hasKeyboard`). */
+  readonly focused: boolean;
   readonly cell: { readonly width: number; readonly height: number };
   readonly cols: number;
 }) {
@@ -940,7 +949,8 @@ function CmdlineRow({
   const layout = cmdlineLayout(line, cols - leadCells);
   const mode = currentModeInfo(state);
   const caretRef = useRef<HTMLSpanElement>(null);
-  const on = mode?.blinkon ?? 0;
+  // Another view has the keyboard: a steady, faint caret, as the grid's.
+  const on = focused ? (mode?.blinkon ?? 0) : 0;
   const off = mode?.blinkoff ?? 0;
   const wait = mode?.blinkwait ?? 0;
   const moved = `${String(layout.caret.row)},${String(layout.caret.col)},${state.mode.name}`;
@@ -1029,7 +1039,7 @@ function CmdlineRow({
         ))}
         <span
           ref={caretRef}
-          className={`nvim-cmdline-caret nvim-cmdline-caret-${shape}`}
+          className={`nvim-cmdline-caret nvim-cmdline-caret-${shape}${focused ? "" : " nvim-cmdline-caret-unfocused"}`}
           style={caretStyle}
           aria-hidden="true"
         >
