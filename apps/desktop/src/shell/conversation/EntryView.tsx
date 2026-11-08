@@ -18,6 +18,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -45,7 +46,6 @@ import {
   type TurnEndEntry,
   type UserEntry,
 } from "../../model/conversation";
-import type { ValueStore } from "../model/publishedValue";
 import { CopyButton } from "./CopyButton";
 import { REWIND_NOTE } from "./Composer";
 import {
@@ -56,7 +56,12 @@ import { Clip } from "./Clip";
 import { REVEAL_EVENT } from "./findInTranscript";
 import { DiffView, ImageView, JsonView, OutputView } from "./EntryParts";
 import { SkillText } from "./skillTokens";
-import { NO_ENTRIES, NO_REQUESTS, type EntryTree } from "./entryTree";
+import {
+  EntryTreeStore,
+  NO_ENTRIES,
+  NO_REQUESTS,
+  type EntryTree,
+} from "./entryTree";
 import { RewindIcon } from "./icons";
 import { clockTime } from "../resetTime";
 import { Markdown } from "./Markdown";
@@ -72,14 +77,23 @@ import {
 
 /**
  * The entry tree the surface draws, which every tool call reads its own
- * children and requests from: a store (`publishedValue.tsx`), not the tree
+ * children and requests from: a store (`EntryTreeStore`), not the tree
  * itself in a context, so a new tree each frame does not make React look
  * through the whole transcript for its readers, nor draw every tool call
- * again to look its children up — only those whose part of it changed.
+ * again to look its children up — only those whose part of it changed are
+ * told, and draw again.
  */
-export const EntryTreeContext = createContext<
-  ValueStore<EntryTree> | undefined
->(undefined);
+export const EntryTreeContext = createContext<EntryTreeStore | undefined>(
+  undefined,
+);
+
+/** The store for `tree`, kept for the caller's life and published on each commit. */
+export function useEntryTreeStore(tree: EntryTree): EntryTreeStore {
+  const [store] = useState(() => new EntryTreeStore(tree));
+  store.set(tree);
+  useLayoutEffect(() => store.publish(), [store, tree]);
+  return store;
+}
 
 /** A tool call's part of the tree: its children, its requests, whether it shows the plan. */
 interface ToolPart {
@@ -94,6 +108,10 @@ function useToolPart(id: EntryId): ToolPart {
     throw new Error("a tool call was drawn outside a ConversationSurface");
   }
   const last = useRef<ToolPart | undefined>(undefined);
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribe(id, listener),
+    [store, id],
+  );
   const read = useCallback((): ToolPart => {
     const tree = store.get();
     const childEntries = tree.children.get(id) ?? NO_ENTRIES;
@@ -111,7 +129,7 @@ function useToolPart(id: EntryId): ToolPart {
     last.current = part;
     return part;
   }, [store, id]);
-  return useSyncExternalStore(store.subscribe, read);
+  return useSyncExternalStore(subscribe, read);
 }
 
 /** The deepest level that still indents. */

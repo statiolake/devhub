@@ -12,6 +12,7 @@ import {
   EMPTY_SESSION,
   type ConversationEvent,
 } from "../../model/conversation";
+import { PathLinks } from "./pathLinks";
 import {
   draw,
   entry,
@@ -247,6 +248,36 @@ describe("a path in the Agent's prose", () => {
     expect(actions.reportFailure).toHaveBeenCalledTimes(1);
     expect(actions.reportFailure).toHaveBeenCalledWith(failure);
     expect(links()).toHaveLength(0);
+  });
+});
+
+describe("the conversation's file links", () => {
+  it("wake only the readers of a word whose answer changed", async () => {
+    const files = ["/a.ts"];
+    const links = new PathLinks(machineWith(files), vi.fn());
+    const a = vi.fn();
+    const b = vi.fn();
+    links.subscribe(CWD, "/a.ts", a);
+    links.subscribe(CWD, "/b.ts", b);
+    links.want(CWD, "/a.ts");
+    links.want(CWD, "/b.ts");
+    await answered();
+    expect(links.file(CWD, "/a.ts")).toBe("/a.ts");
+    expect(links.file(CWD, "/b.ts")).toBeNull();
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+    // A turn ended: the word that named nothing is asked about again, and
+    // stays what it was until main says otherwise.
+    links.askAgainAbsent();
+    expect(links.file(CWD, "/b.ts")).toBeNull();
+    await answered();
+    expect(b).toHaveBeenCalledTimes(1);
+    files.push("/b.ts");
+    links.askAgainAbsent();
+    await answered();
+    expect(links.file(CWD, "/b.ts")).toBe("/b.ts");
+    expect(b).toHaveBeenCalledTimes(2);
+    expect(a).toHaveBeenCalledTimes(1);
   });
 });
 

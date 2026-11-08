@@ -14,7 +14,7 @@
  * found, stays a link for as long as the conversation is on the page (a click
  * on one that has gone since is refused by main, and said). A word that named
  * nothing is asked about again once the Agent's turn has ended, because the
- * turn may be what made it (`forgetAbsent`).
+ * turn may be what made it (`askAgainAbsent`).
  *
  * Where the gate applies is where `LinkedText` is drawn, and a diff's file
  * header.
@@ -22,6 +22,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useSyncExternalStore,
@@ -41,10 +42,18 @@ type Resolve = (
 export class PathLinks {
   /** A candidate's key → the file's absolute path, or `null` for none. */
   readonly #known = new Map<string, string | null>();
+  /** Every key ever asked about → the directory it is relative to, and the path. */
+  readonly #asked = new Map<string, readonly [string | undefined, string]>();
   /** Keys asked about or about to be, by the directory they are relative to. */
   readonly #queued = new Map<string | undefined, Map<string, string>>();
   readonly #asking = new Set<string>();
-  readonly #listeners = new Set<() => void>();
+  /**
+   * The readers of each key. A word is read by its own links only, so an
+   * answer wakes those and no other: a long transcript has thousands of
+   * candidates, and waking all of them for every answer (or every turn's
+   * end) drew each of them again to find the few that changed.
+   */
+  readonly #listeners = new Map<string, Set<() => void>>();
   #scheduled = false;
 
   constructor(
@@ -61,14 +70,58 @@ export class PathLinks {
   want(cwd: string | undefined, path: string): void {
     const key = keyOf(cwd, path);
     if (this.#known.has(key) || this.#asking.has(key)) return;
-    const base = isRelative(path) ? cwd : undefined;
     if (isRelative(path) && cwd === undefined) {
       // Relative to a directory the session has not named yet: nothing to
       // ask about. The key changes when it names one.
       this.#known.set(key, null);
       return;
     }
+    this.#ask(key, isRelative(path) ? cwd : undefined, path);
+  }
+
+  /** Forget what `path` named, so it is asked about again when next drawn. */
+  forget(cwd: string | undefined, path: string): void {
+    const key = keyOf(cwd, path);
+    if (this.#known.delete(key)) this.#emit(key);
+  }
+
+  /**
+   * Ask again about every word that named nothing: the turn that ended may
+   * have made it. Each stays plain text while it is asked about, so only a
+   * word that now names a file is drawn again.
+   */
+  askAgainAbsent(): void {
+    for (const [key, file] of this.#known) {
+      if (file !== null || this.#asking.has(key)) continue;
+      const asked = this.#asked.get(key);
+      // Known without asking: relative to no directory, which is still so.
+      if (asked === undefined) continue;
+      this.#ask(key, ...asked);
+    }
+  }
+
+  /** `listener` is called when what `path` names may have changed. */
+  subscribe(
+    cwd: string | undefined,
+    path: string,
+    listener: () => void,
+  ): () => void {
+    const key = keyOf(cwd, path);
+    let readers = this.#listeners.get(key);
+    if (readers === undefined) {
+      readers = new Set();
+      this.#listeners.set(key, readers);
+    }
+    readers.add(listener);
+    return () => {
+      readers.delete(listener);
+      if (readers.size === 0) this.#listeners.delete(key);
+    };
+  }
+
+  #ask(key: string, base: string | undefined, path: string): void {
     this.#asking.add(key);
+    this.#asked.set(key, [base, path]);
     const queue = this.#queued.get(base) ?? new Map<string, string>();
     queue.set(key, path);
     this.#queued.set(base, queue);
@@ -77,27 +130,6 @@ export class PathLinks {
     queueMicrotask(() => this.#flush());
   }
 
-  /** Forget what `path` named, so it is asked about again when next drawn. */
-  forget(cwd: string | undefined, path: string): void {
-    if (this.#known.delete(keyOf(cwd, path))) this.#emit();
-  }
-
-  /** Forget every word that named nothing: the turn that ended may have made it. */
-  forgetAbsent(): void {
-    let forgot = false;
-    for (const [key, file] of this.#known) {
-      if (file !== null) continue;
-      this.#known.delete(key);
-      forgot = true;
-    }
-    if (forgot) this.#emit();
-  }
-
-  subscribe = (listener: () => void): (() => void) => {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
-  };
-
   #flush(): void {
     this.#scheduled = false;
     const queued = [...this.#queued];
@@ -105,12 +137,12 @@ export class PathLinks {
     for (const [cwd, paths] of queued) {
       const entries = [...paths];
       for (let at = 0; at < entries.length; at += BATCH) {
-        void this.#ask(cwd, entries.slice(at, at + BATCH));
+        void this.#answer(cwd, entries.slice(at, at + BATCH));
       }
     }
   }
 
-  async #ask(
+  async #answer(
     cwd: string | undefined,
     entries: readonly (readonly [string, string])[],
   ): Promise<void> {
@@ -133,13 +165,17 @@ export class PathLinks {
     }
     entries.forEach(([key], index) => {
       this.#asking.delete(key);
-      this.#known.set(key, files[index] ?? null);
+      const file = files[index] ?? null;
+      const before = this.#known.get(key);
+      this.#known.set(key, file);
+      if (before !== file) this.#emit(key);
     });
-    this.#emit();
   }
 
-  #emit(): void {
-    for (const listener of this.#listeners) listener();
+  #emit(key: string): void {
+    const readers = this.#listeners.get(key);
+    if (readers === undefined) return;
+    for (const listener of [...readers]) listener();
   }
 }
 
@@ -167,9 +203,11 @@ function usePathLinks(): PathLinks {
 function useFileOf(path: string): string | null | undefined {
   const links = usePathLinks();
   const cwd = useAgentCwd();
-  const file = useSyncExternalStore(links.subscribe, () =>
-    links.file(cwd, path),
+  const subscribe = useCallback(
+    (listener: () => void) => links.subscribe(cwd, path, listener),
+    [links, cwd, path],
   );
+  const file = useSyncExternalStore(subscribe, () => links.file(cwd, path));
   useEffect(() => {
     if (file === undefined) links.want(cwd, path);
   }, [links, cwd, path, file]);

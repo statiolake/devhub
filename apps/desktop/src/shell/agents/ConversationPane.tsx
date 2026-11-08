@@ -39,6 +39,7 @@ import {
 } from "../components/shell/SessionPicker";
 import { useAgents } from "./AgentsContext";
 import { devhub } from "./client";
+import { perfProbe } from "../perfProbe";
 
 export function ConversationPane({
   agentId,
@@ -359,6 +360,7 @@ function useConversation(
         }
         current.fold.apply(event);
         current.revision = revision;
+        perfProbe("conversation-event", agentId);
       } catch (error: unknown) {
         // What is drawn stops where it was still true.
         broken = true;

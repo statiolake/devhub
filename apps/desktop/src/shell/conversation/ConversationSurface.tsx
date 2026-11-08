@@ -49,7 +49,6 @@ import {
   type UserEntry,
 } from "../../model/conversation";
 import { isImeComposing } from "../accessibility/ime";
-import { usePublishedStore } from "../model/publishedValue";
 import { Composer, inputRefusal, type ComposerInsertion } from "./Composer";
 import { SkillWordsProvider } from "./skillTokens";
 import {
@@ -63,6 +62,7 @@ import {
 import {
   CompactingView,
   EntryTreeContext,
+  useEntryTreeStore,
   LimitResumeView,
   SendingView,
 } from "./EntryView";
@@ -77,6 +77,7 @@ import { PathLinks, PathLinksProvider } from "./pathLinks";
 import { QueuedMessages, usePendingEdits } from "./QueuedMessages";
 import { ArrowDownIcon, ArrowUpIcon } from "./icons";
 import { SEND_KEY } from "./messageKeys";
+import { perfProbe } from "../perfProbe";
 import { RequestCard } from "./RequestCard";
 import type { SettingPickerHandle } from "./SettingPickers";
 import {
@@ -120,6 +121,8 @@ interface Reveal {
 
 /** The terminal's text size when the page has no appearance yet. */
 const DEFAULT_FONT_SIZE = 13;
+
+const NO_TARGETS: ReadonlySet<EntryId> = new Set();
 
 /**
  * The conversation's text size, a step larger than the terminal's.
@@ -170,7 +173,7 @@ export function ConversationSurface({
     return next;
   }, [transcript]);
   // What the tool calls read their children from (`EntryTreeContext`).
-  const treeStore = usePublishedStore(tree);
+  const treeStore = useEntryTreeStore(tree);
 
   // The conversation's file links (`pathLinks.tsx`): asked about in batches,
   // remembered for as long as the surface is mounted, and a word that named
@@ -184,7 +187,7 @@ export function ConversationSurface({
     [transcript.entries],
   );
   useEffect(() => {
-    pathLinks.forgetAbsent();
+    pathLinks.askAgainAbsent();
   }, [pathLinks, turnsEnded]);
 
   const surface = useRef<HTMLElement>(null);
@@ -202,6 +205,9 @@ export function ConversationSurface({
     revision: transcript,
   });
   useFreshEntries(content, transcript);
+  useLayoutEffect(() => {
+    if (!hidden) perfProbe("conversation-committed", transcript);
+  }, [hidden, transcript]);
   useNoReplayOnShow(surface, hidden, maximized?.id);
 
   const composer = useRef<HTMLTextAreaElement>(null);
@@ -221,7 +227,18 @@ export function ConversationSurface({
 
   // A rewound message's words go back to the composer, each rewind once.
   const [restored, setRestored] = useState<UserEntry | undefined>(undefined);
-  const targets = useMemo(() => rewindTargets(transcript), [transcript]);
+  // The same set while it holds the same messages: it is in a context every
+  // message of the transcript is under, and a new one each frame had React
+  // look through all of them for its readers.
+  const previousTargets = useRef<ReadonlySet<EntryId>>(NO_TARGETS);
+  const targets = useMemo(() => {
+    const next = rewindTargets(transcript);
+    const before = previousTargets.current;
+    if (next.size === before.size && [...next].every((id) => before.has(id)))
+      return before;
+    previousTargets.current = next;
+    return next;
+  }, [transcript]);
   const rewindMessage = useMemo(
     () => ({
       targets,

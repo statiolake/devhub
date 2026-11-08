@@ -90,3 +90,78 @@ export function entryTree(
     latestPlan: latestPlan(transcript)?.entry,
   };
 }
+
+/** The parents whose part of the tree is not the same between two trees. */
+export function changedParts(
+  before: EntryTree,
+  after: EntryTree,
+): ReadonlySet<EntryId> {
+  const changed = new Set<EntryId>();
+  const compare = <K extends EntryId | null, T>(
+    a: ReadonlyMap<K, readonly T[]>,
+    b: ReadonlyMap<K, readonly T[]>,
+  ) => {
+    for (const [id, items] of b) {
+      if (id !== null && a.get(id) !== items) changed.add(id);
+    }
+    for (const id of a.keys()) {
+      if (id !== null && !b.has(id)) changed.add(id);
+    }
+  };
+  compare(before.children, after.children);
+  compare(before.requests, after.requests);
+  if (before.latestPlan !== after.latestPlan) {
+    if (before.latestPlan !== undefined) changed.add(before.latestPlan);
+    if (after.latestPlan !== undefined) changed.add(after.latestPlan);
+  }
+  return changed;
+}
+
+/**
+ * The tree as the tool calls read it, each its own part: the value being
+ * drawn (read by what draws after it in the same pass) and, once committed,
+ * a word to the readers of each part that changed — and to no other. Every
+ * tool call of a long transcript reads the tree, and telling all of them on
+ * every frame had each one look its part up to find the few that moved.
+ */
+export class EntryTreeStore {
+  #value: EntryTree;
+  #published: EntryTree;
+  readonly #listeners = new Map<EntryId, Set<() => void>>();
+
+  constructor(value: EntryTree) {
+    this.#value = value;
+    this.#published = value;
+  }
+
+  readonly get = (): EntryTree => this.#value;
+
+  set(value: EntryTree): void {
+    this.#value = value;
+  }
+
+  /** The value is committed: the readers of each part that changed compare what they read. */
+  publish(): void {
+    const before = this.#published;
+    const after = this.#value;
+    this.#published = after;
+    if (before === after) return;
+    for (const id of changedParts(before, after)) {
+      const readers = this.#listeners.get(id);
+      if (readers) for (const listener of [...readers]) listener();
+    }
+  }
+
+  subscribe(id: EntryId, listener: () => void): () => void {
+    let readers = this.#listeners.get(id);
+    if (readers === undefined) {
+      readers = new Set();
+      this.#listeners.set(id, readers);
+    }
+    readers.add(listener);
+    return () => {
+      readers.delete(listener);
+      if (readers.size === 0) this.#listeners.delete(id);
+    };
+  }
+}
