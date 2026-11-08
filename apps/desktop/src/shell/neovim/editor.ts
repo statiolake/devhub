@@ -37,6 +37,12 @@ import { THEME_GROUPS, THEME_LUA, themeOf, type Surface } from "./chrome";
 import { cmdlineLayout, textCells } from "./cmdline";
 import { cmdlinePlace } from "./place";
 import {
+  SCROLL_LUA,
+  answered,
+  inexact,
+  type ScrollRequest,
+} from "./smoothScroll";
+import {
   IDLE,
   imeStep,
   preeditLayout,
@@ -119,6 +125,10 @@ export class NeovimEditor {
   /** A pending ask for the colorscheme's groups (`askTheme`). */
   private themeTimer = 0;
   private blink: Animation | undefined;
+  /** The frame that moves windows scrolling in pixels (`smoothScroll.ts`). */
+  private scrollTick = 0;
+  /** Where the last wheel event was, for a request Neovim's wheel answers. */
+  private wheelAt: MouseTarget | undefined;
   private blinkKey = "";
   private stopWatchingDpr: () => void = () => {};
   private stopWatchingFonts: () => void = () => {};
@@ -363,6 +373,7 @@ export class NeovimEditor {
     for (const bar of this.scrollbars.values()) window.clearTimeout(bar.timer);
     window.clearTimeout(this.themeTimer);
     if (this.frame !== 0) cancelAnimationFrame(this.frame);
+    if (this.scrollTick !== 0) cancelAnimationFrame(this.scrollTick);
     this.gridLayer.remove();
   }
 
@@ -398,7 +409,80 @@ export class NeovimEditor {
     this.askFloatLabels();
     this.placeScrollbars();
     this.placeCursor();
+    this.scrollFrame();
     for (const listener of this.listeners) listener();
+  }
+
+  /**
+   * One frame of pixel scrolling: each window's display moved, Neovim asked
+   * for the lines it needs ahead (or back, to rest), the cursor moved with
+   * its text; again next frame while anything still moves.
+   */
+  private scrollFrame(): void {
+    if (this.disposed) return;
+    const moving = this.painter.scrollFrame(
+      this.state,
+      this.boxes,
+      (grid, request) => {
+        this.askScroll(grid, request);
+      },
+    );
+    this.placeCursorScroll();
+    if (moving && this.scrollTick === 0) {
+      this.scrollTick = requestAnimationFrame(() => {
+        this.scrollTick = 0;
+        this.scrollFrame();
+      });
+    }
+  }
+
+  /** Ask Neovim to scroll a window (`SCROLL_LUA`) and hear how it went. */
+  private askScroll(grid: number, request: ScrollRequest): void {
+    const view = this.painter.scrollView(grid);
+    const win = this.state.gridWins.get(grid);
+    const ask = this.port.request?.bind(this.port);
+    if (!view || win === undefined || !ask) {
+      if (view) answered(view, false);
+      return;
+    }
+    const at =
+      this.wheelAt?.grid === grid ? this.wheelAt : { grid, row: 0, col: 0 };
+    ask("nvim_exec_lua", [
+      SCROLL_LUA,
+      [win, request.lines, grid, at.row, at.col, request.exact],
+    ]).then(
+      (answer) => {
+        if (answer === 0) answered(view, false);
+        else if (answer === -1) inexact(view);
+        this.scrollFrame();
+      },
+      () => {
+        answered(view, false);
+        this.scrollFrame();
+      },
+    );
+  }
+
+  /**
+   * The cursor rides with its window's text while that scrolls in pixels
+   * (a transform, so it does not glide behind it), hidden while its row is
+   * outside the window's text area.
+   */
+  private placeCursorScroll(): void {
+    const { grid, row } = this.state.cursor;
+    const off = this.painter.scrollOffset(grid);
+    this.cursor.style.transform =
+      off === 0 ? "" : `translateY(${String(-off)}px)`;
+    const box = this.boxes.find((b) => b.grid === grid);
+    const m = this.state.margins.get(grid);
+    const ch = this.painter.cell().height;
+    const y = row * ch - off;
+    const shown =
+      off === 0 ||
+      !box ||
+      (y >= (m?.top ?? 0) * ch - 0.5 &&
+        y + ch <= (box.height - (m?.bottom ?? 0)) * ch + 0.5);
+    this.cursor.style.visibility = shown ? "" : "hidden";
   }
 
   /**
@@ -832,12 +916,25 @@ export class NeovimEditor {
     const layer = this.gridLayer;
     const target = (event: MouseEvent): MouseTarget => {
       const rect = layer.getBoundingClientRect();
-      return hitTest(
+      const y = event.clientY - rect.top;
+      const at = hitTest(
         this.boxes,
         this.painter.cell(),
         event.clientX - rect.left,
-        event.clientY - rect.top,
+        y,
       );
+      // A window moved by pixel scrolling: the row whose text is under the
+      // pointer (the nearest of Neovim's, over a line only the ghost has).
+      const off = this.painter.scrollOffset(at.grid);
+      const box = this.boxes.find((b) => b.grid === at.grid);
+      if (off === 0 || !box) return at;
+      const ch = this.painter.cell().height;
+      const m = this.state.margins.get(at.grid);
+      const top = m?.top ?? 0;
+      const bottom = box.height - (m?.bottom ?? 0);
+      if (at.row < top || at.row >= bottom) return at;
+      const row = Math.floor((y - box.row * ch + off) / ch);
+      return { ...at, row: Math.min(bottom - 1, Math.max(top, row)) };
     };
     const mouse = (
       button: string,
@@ -896,11 +993,33 @@ export class NeovimEditor {
         if (ownedByGui(event)) return;
         event.preventDefault();
         const at = target(event);
+        // A window's vertical scrolling follows the trackpad in pixels
+        // (`smoothScroll.ts`); with a modifier, sideways or anywhere else
+        // the wheel is Neovim's, in line steps.
+        const box = this.boxes.find((b) => b.grid === at.grid);
+        const plain =
+          !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
+        const cell = this.painter.cell();
+        const dy =
+          event.deltaMode === 1
+            ? event.deltaY * cell.height
+            : event.deltaMode === 2
+              ? event.deltaY * (box?.height ?? 1) * cell.height
+              : event.deltaY;
+        const pixels =
+          plain &&
+          dy !== 0 &&
+          box !== undefined &&
+          this.painter.wheel(this.state, box, dy);
+        if (pixels) {
+          this.wheelAt = at;
+          this.scrollFrame();
+        }
         for (const step of this.wheel.steps(
           event.deltaX,
-          event.deltaY,
+          pixels ? 0 : event.deltaY,
           event.deltaMode,
-          this.painter.cell(),
+          cell,
         )) {
           mouse("wheel", step, event, at);
         }

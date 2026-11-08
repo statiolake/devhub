@@ -43,6 +43,16 @@ import {
   type Separator,
 } from "./chrome";
 import {
+  WHEEL_IDLE_MS,
+  isActive,
+  newScrollView,
+  shifted,
+  step,
+  wheeled,
+  type ScrollRequest,
+  type ScrollView,
+} from "./smoothScroll";
+import {
   SIDES,
   frameGeometry,
   labelBox,
@@ -249,8 +259,28 @@ interface Label {
   readonly runs: readonly { text: string; color: string; font: string }[];
 }
 
+/**
+ * A window's pixel scrolling (`smoothScroll.ts`): its display, the ghost of
+ * what was on screen when Neovim last scrolled it, and its winbar held in
+ * place while the text moves.
+ */
+interface ScrollSlot {
+  readonly view: ScrollView;
+  /**
+   * The window's text area, clipping what moves in it: the canvas and the
+   * ghost are moved inside it by transforms only, which the compositor
+   * does without painting anything again.
+   */
+  port?: HTMLDivElement;
+  ghost?: HTMLCanvasElement;
+  spare?: HTMLCanvasElement;
+  pin?: HTMLCanvasElement;
+}
+
 export class GridPainter {
   private readonly canvases = new Map<number, GridCanvas>();
+  /** Each window grid's pixel scrolling, by grid. */
+  private readonly scrolls = new Map<number, ScrollSlot>();
   /** One shadow per panel of floats (`floats.ts`), by what it looks like. */
   private readonly clusters = new Map<
     string,
@@ -372,6 +402,9 @@ export class GridPainter {
         canvas.canvas.style.display = "none";
       }
     }
+    for (const id of this.scrolls.keys()) {
+      if (!onScreen.has(id)) this.dropScroll(id);
+    }
     const all = forceAll || changes.colors;
     if (changes.colors) this.roles.clear();
     const hidden = underFrames(boxes);
@@ -452,17 +485,313 @@ export class GridPainter {
         entry.crop = cropKey;
         fresh = true;
       }
+      const scrolled = changes.scrolled.get(box.grid) ?? 0;
+      const smooth = this.smoothable(state, box);
+      if (!smooth || fresh) this.dropScroll(box.grid);
+      else if (scrolled !== 0) this.scrolledBy(state, box, entry, scrolled);
       const rows =
         fresh || all
           ? Array.from({ length: grid.height }, (_, row) => row)
           : this.withNeighbours(grid.dirty, grid.height);
       for (const row of rows) this.paintRow(entry, state, box, row);
       grid.dirty.clear();
-      const scrolled = changes.scrolled.get(box.grid) ?? 0;
-      if (scrolled !== 0 && !box.float && !fresh) {
-        this.glide(canvas, scrolled, grid.height);
-      }
+      if (smooth) this.placeScroll(state, box);
     }
+  }
+
+  /**
+   * Whether a grid scrolls in pixels: a window's (not a float's, not the
+   * message grid's), with Neovim saying how far it scrolls (0.10+).
+   */
+  private smoothable(state: NeovimUiState, box: GridBox): boolean {
+    return (
+      state.scrollDeltas &&
+      !box.float &&
+      box.grid !== 1 &&
+      state.windows.get(box.grid)?.placement.kind === "window"
+    );
+  }
+
+  /** The rows of a window's text area (its winbar and the like left out). */
+  private textRows(state: NeovimUiState, box: GridBox) {
+    const m = state.margins.get(box.grid);
+    const top = Math.min(box.height, m?.top ?? 0);
+    const bottom = Math.max(top, box.height - (m?.bottom ?? 0));
+    return { top, bottom };
+  }
+
+  /**
+   * Neovim scrolled a window by `rows`: before its canvas takes the new
+   * rows, what is on screen now becomes the ghost (the canvas and the old
+   * ghost, as displayed), and the display is measured from the new
+   * `topline`. With reduced motion only the wheel's own scrolling is
+   * followed; Neovim's jumps.
+   */
+  private scrolledBy(
+    state: NeovimUiState,
+    box: GridBox,
+    entry: GridCanvas,
+    rows: number,
+  ): void {
+    const now = performance.now();
+    let slot = this.scrolls.get(box.grid);
+    const led =
+      slot !== undefined &&
+      (slot.view.pending !== 0 || now - slot.view.wheelAt < WHEEL_IDLE_MS);
+    if (!led && matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      this.dropScroll(box.grid);
+      return;
+    }
+    if (!slot) {
+      slot = { view: newScrollView() };
+      this.scrolls.set(box.grid, slot);
+    }
+    const { height: ch } = this.metrics;
+    const text = this.textRows(state, box);
+    this.takeGhost(slot, entry, text);
+    shifted(slot.view, rows, ch, (text.bottom - text.top) * ch, now);
+  }
+
+  /** What the window shows now, drawn into its ghost (`scrolledBy`). */
+  private takeGhost(
+    slot: ScrollSlot,
+    entry: GridCanvas,
+    text: { top: number; bottom: number },
+  ): void {
+    const { canvas } = entry;
+    const make = () => {
+      const c = document.createElement("canvas");
+      c.className = "nvim-grid nvim-scroll-ghost";
+      return c;
+    };
+    const old = slot.view.ghost !== undefined ? slot.ghost : undefined;
+    const into = old ? (slot.spare ?? make()) : (slot.ghost ?? make());
+    if (into.width !== canvas.width || into.height !== canvas.height) {
+      into.width = canvas.width;
+      into.height = canvas.height;
+    }
+    const ctx = into.getContext("2d");
+    if (!ctx) return;
+    const dpr = this.dpr;
+    const ch = this.metrics.height;
+    const top = Math.round(text.top * ch * dpr);
+    const bottom = Math.round(text.bottom * ch * dpr);
+    const off = Math.round(slot.view.off * dpr);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, into.width, into.height);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, top, into.width, bottom - top);
+    ctx.clip();
+    if (old && slot.view.ghost !== undefined) {
+      ctx.drawImage(old, 0, Math.round(slot.view.ghost * dpr) - off);
+    }
+    ctx.drawImage(canvas, 0, -off);
+    ctx.restore();
+    if (into !== slot.ghost) {
+      if (slot.ghost) {
+        slot.ghost.remove();
+        slot.spare = slot.ghost;
+      }
+      slot.ghost = into;
+    }
+    if (into.parentElement !== canvas.parentElement) canvas.before(into);
+  }
+
+  /** Forget a grid's pixel scrolling: its canvas shows Neovim's grid as it is. */
+  private dropScroll(grid: number): void {
+    const slot = this.scrolls.get(grid);
+    if (!slot) return;
+    slot.ghost?.remove();
+    slot.pin?.remove();
+    this.scrolls.delete(grid);
+    const entry = this.canvases.get(grid);
+    if (entry && slot.port) {
+      const { canvas } = entry;
+      slot.port.before(canvas);
+      canvas.style.transform = "";
+      canvas.style.clipPath = "";
+      canvas.style.left = slot.port.dataset.left ?? "0px";
+      canvas.style.top = slot.port.dataset.top ?? "0px";
+    }
+    slot.port?.remove();
+  }
+
+  /**
+   * The canvas, the ghost and the winbar's pin where the display is: the
+   * text moved by `off`, clipped to the text area; the margins where they
+   * are.
+   */
+  private placeScroll(state: NeovimUiState, box: GridBox): void {
+    const slot = this.scrolls.get(box.grid);
+    const entry = this.canvases.get(box.grid);
+    if (!slot || !entry) return;
+    const { canvas } = entry;
+    const view = slot.view;
+    if (!isActive(view)) {
+      this.dropScroll(box.grid);
+      return;
+    }
+    const { width: cw, height: ch } = this.metrics;
+    const text = this.textRows(state, box);
+    const H = box.height * ch;
+    const t = text.top * ch;
+    const b = text.bottom * ch;
+    const off = view.off;
+    let port = slot.port;
+    if (!port) {
+      port = document.createElement("div");
+      port.className = "nvim-scroll-port";
+      slot.port = port;
+    }
+    if (canvas.parentElement !== port) {
+      canvas.before(port);
+      port.append(canvas);
+    }
+    const left = `${String(box.col * cw)}px`;
+    const top = `${String(box.row * ch)}px`;
+    port.dataset.left = left;
+    port.dataset.top = top;
+    port.style.left = left;
+    port.style.top = `${String(box.row * ch + t)}px`;
+    port.style.width = canvas.style.width;
+    port.style.height = `${String(b - t)}px`;
+    port.style.zIndex = canvas.style.zIndex;
+    port.style.display = canvas.style.display;
+    canvas.style.left = "0px";
+    canvas.style.top = `${String(-t)}px`;
+    canvas.style.transform = off === 0 ? "" : `translateY(${String(-off)}px)`;
+    // Its winbar must not slide into the text area with it (the pin shows
+    // it in place).
+    canvas.style.clipPath =
+      t > 0 || b < H ? `inset(${String(t)}px 0 ${String(H - b)}px 0)` : "";
+    const ghost = slot.ghost;
+    if (ghost && view.ghost !== undefined) {
+      ghost.style.display = "";
+      ghost.style.left = "0px";
+      ghost.style.top = `${String(-t)}px`;
+      ghost.style.width = canvas.style.width;
+      ghost.style.height = canvas.style.height;
+      ghost.style.transform = `translateY(${String(view.ghost - off)}px)`;
+    } else if (ghost) {
+      ghost.style.display = "none";
+    }
+    this.pinMargins(slot, entry, text, box, off !== 0);
+  }
+
+  /** A winbar (the text area's margins) stays put while the text moves. */
+  private pinMargins(
+    slot: ScrollSlot,
+    entry: GridCanvas,
+    text: { top: number; bottom: number },
+    box: GridBox,
+    moving: boolean,
+  ): void {
+    if (!moving || (text.top === 0 && text.bottom === box.height)) {
+      if (slot.pin) slot.pin.style.display = "none";
+      return;
+    }
+    const { canvas } = entry;
+    let pin = slot.pin;
+    if (!pin) {
+      pin = document.createElement("canvas");
+      pin.className = "nvim-grid";
+      slot.pin = pin;
+    }
+    if (!pin.isConnected) slot.port?.after(pin);
+    if (pin.width !== canvas.width || pin.height !== canvas.height) {
+      pin.width = canvas.width;
+      pin.height = canvas.height;
+    }
+    pin.style.display = "";
+    pin.style.left = `${String(box.col * this.metrics.width)}px`;
+    pin.style.top = `${String(box.row * this.metrics.height)}px`;
+    pin.style.width = canvas.style.width;
+    pin.style.height = canvas.style.height;
+    pin.style.zIndex = canvas.style.zIndex;
+    const ctx = pin.getContext("2d");
+    if (!ctx) return;
+    const dpr = this.dpr;
+    const ch = this.metrics.height;
+    const top = Math.round(text.top * ch * dpr);
+    const bottom = Math.round(text.bottom * ch * dpr);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, pin.width, pin.height);
+    if (top > 0) {
+      ctx.drawImage(canvas, 0, 0, canvas.width, top, 0, 0, canvas.width, top);
+    }
+    if (bottom < canvas.height) {
+      const h = canvas.height - bottom;
+      ctx.drawImage(
+        canvas,
+        0,
+        bottom,
+        canvas.width,
+        h,
+        0,
+        bottom,
+        canvas.width,
+        h,
+      );
+    }
+  }
+
+  /**
+   * The wheel moved `dy` pixels over `box`; answers whether that window
+   * scrolls in pixels (else the wheel is Neovim's, in line steps).
+   */
+  wheel(state: NeovimUiState, box: GridBox, dy: number): boolean {
+    const grid = box.grid;
+    if (!this.smoothable(state, box) || !this.canvases.has(grid)) return false;
+    let slot = this.scrolls.get(grid);
+    if (!slot) {
+      slot = { view: newScrollView() };
+      this.scrolls.set(grid, slot);
+    }
+    wheeled(slot.view, dy, performance.now());
+    return true;
+  }
+
+  /** The display of a window grid that scrolls in pixels, if it does. */
+  scrollView(grid: number): ScrollView | undefined {
+    return this.scrolls.get(grid)?.view;
+  }
+
+  /** How far a window's display is from Neovim's `topline`, in pixels. */
+  scrollOffset(grid: number): number {
+    return this.scrolls.get(grid)?.view.off ?? 0;
+  }
+
+  /**
+   * One frame of every window's pixel scrolling: the displays moved, and
+   * what to ask Neovim. Answers whether any is still moving.
+   */
+  scrollFrame(
+    state: NeovimUiState,
+    boxes: readonly GridBox[],
+    ask: (grid: number, request: ScrollRequest) => void,
+  ): boolean {
+    const now = performance.now();
+    let moving = false;
+    for (const [grid, slot] of [...this.scrolls]) {
+      const box = boxes.find((b) => b.grid === grid);
+      if (!box) {
+        this.dropScroll(grid);
+        continue;
+      }
+      const text = this.textRows(state, box);
+      const request = step(
+        slot.view,
+        now,
+        this.metrics.height,
+        text.bottom - text.top,
+        this.dpr,
+      );
+      if (request) ask(grid, request);
+      this.placeScroll(state, box);
+      if (this.scrolls.has(grid)) moving = true;
+    }
+    return moving;
   }
 
   /**
@@ -1331,33 +1660,6 @@ export class GridPainter {
       notch(n.bl, x0 - r, y + ch - r, x0 - r, y + ch - r);
       notch(n.br, x1, y + ch - r, x1 + r, y + ch - r);
     }
-  }
-
-  /**
-   * A window that scrolled a few rows slides into place (the wheel, `<C-e>`,
-   * a search nearby) instead of jumping. The canvas already holds the new
-   * rows; it starts where the old ones were and is clipped to its own box
-   * as it moves, so nothing slides over the statusline. Not for a jump of
-   * more than a third of the window (`<C-d>`, `G`), where a slide would
-   * show a band of nothing, nor with reduced motion.
-   */
-  private glide(canvas: HTMLCanvasElement, rows: number, height: number) {
-    if (Math.abs(rows) > Math.max(3, Math.floor(height / 3))) return;
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    if (typeof canvas.animate !== "function") return;
-    const offset = rows * this.metrics.height;
-    const top = Math.max(0, -offset);
-    const bottom = Math.max(0, offset);
-    canvas.animate(
-      [
-        {
-          transform: `translateY(${String(offset)}px)`,
-          clipPath: `inset(${String(top)}px 0 ${String(bottom)}px 0)`,
-        },
-        { transform: "translateY(0)", clipPath: "inset(0 0 0 0)" },
-      ],
-      { duration: 90, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
-    );
   }
 
   /** Rectangles and paths from `glyphShapes`, in the foreground. */

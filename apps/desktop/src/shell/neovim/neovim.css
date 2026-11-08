@@ -58,6 +58,17 @@
   image-rendering: auto;
 }
 
+/* A window scrolling in pixels (smoothScroll.ts): its text area, in which
+   its canvas and the ghost of its last view move by transforms only. */
+.nvim-scroll-port {
+  position: absolute;
+  overflow: hidden;
+}
+
+.nvim-scroll-port > .nvim-grid {
+  will-change: transform;
+}
+
 /* Messages scrolled up over the windows: a panel risen from the bottom. */
 .nvim-grid.nvim-msg-panel {
   box-shadow:

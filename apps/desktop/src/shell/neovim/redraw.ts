@@ -163,6 +163,8 @@ export interface NeovimUiState {
    * position.)
    */
   readonly margins: Map<number, Margins>;
+  /** Neovim says how far each window scrolled (0.10+ `scroll_delta`). */
+  scrollDeltas: boolean;
   /**
    * Each float's `title` and `footer`, by window handle, as
    * `nvim_win_get_config` answered (the page asks when a border holds text):
@@ -233,6 +235,7 @@ export function initialUiState(
     grids: new Map(),
     gridWins: new Map(),
     margins: new Map(),
+    scrollDeltas: false,
     floatLabels: new Map(),
     windows: new Map(),
     hl: new Map(),
@@ -584,6 +587,7 @@ function applyEvent(
       };
       // 0.10+: how many screen rows the view scrolled, for a GUI that
       // animates it (0.9 sends none).
+      if (args.length > 7) state.scrollDeltas = true;
       const delta = num(args[7]);
       if (delta !== 0) {
         const grid = num(args[0]);
