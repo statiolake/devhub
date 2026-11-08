@@ -115,3 +115,18 @@ export function cmdlineLayout(
   }
   return { cells, caret, rows: row + 1 };
 }
+
+/**
+ * The cells `firstc` or an `input()` prompt takes before the text, as
+ * Neovim's own command line has them: at least one, and never the whole
+ * width.
+ */
+export function cmdlineLead(
+  line: { readonly firstc: string; readonly prompt: string },
+  cols: number,
+): number {
+  return Math.min(
+    cols - 1,
+    Math.max(1, textCells(line.firstc || line.prompt || "")),
+  );
+}

@@ -40,8 +40,8 @@ import {
   type PaintTheme,
   type Surface,
 } from "./chrome";
-import { cmdlineLayout, textCells } from "./cmdline";
-import { cmdlinePlace } from "./place";
+import { cmdlineLayout, cmdlineLead } from "./cmdline";
+import { cmdlinePlace, type CmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
 import { rideAnchor, rideArea, rideStyle, type BufposAnchor } from "./riders";
 
@@ -289,6 +289,28 @@ export class NeovimEditor {
   /** The grid size Neovim was last asked for. */
   gridSize(): { cols: number; rows: number } {
     return this.size.cols > 0 ? this.size : this.fit();
+  }
+
+  /**
+   * Where the command line is now (`cmdlinePlace`): in the rows `cmdheight`
+   * keeps, risen by what it holds beyond them, or the palette.
+   */
+  cmdlinePlace(): CmdlinePlace {
+    const size = this.gridSize();
+    const screen = this.state.grids.get(1);
+    const room = {
+      gridCols: screen?.width ?? size.cols,
+      gridRows: screen?.height ?? size.rows,
+      cellWidth: this.painter.cell().width,
+      cmdheight: this.paintTheme().cmdheight,
+    };
+    const first = cmdlinePlace(room);
+    const line = this.state.cmdline.at(-1);
+    const block = this.state.cmdlineBlock?.length ?? 0;
+    const text = line
+      ? cmdlineLayout(line, first.cols - cmdlineLead(line, first.cols)).rows
+      : 0;
+    return cmdlinePlace({ ...room, rows: block + text });
   }
 
   /** The font the grids are painted in. */
@@ -837,11 +859,8 @@ export class NeovimEditor {
     const line = this.state.cmdline.at(-1);
     if (!line) return undefined;
     const cell = this.painter.cell();
-    const place = cmdlinePlace(this.gridSize().cols, cell.width);
-    const lead = Math.min(
-      place.cols - 1,
-      Math.max(1, textCells(line.firstc || line.prompt || "")),
-    );
+    const place = this.cmdlinePlace();
+    const lead = cmdlineLead(line, place.cols);
     const { caret } = cmdlineLayout(line, place.cols - lead);
     const above = this.state.cmdlineBlock?.length ?? 0;
     return {
@@ -861,8 +880,12 @@ export class NeovimEditor {
     const cell = this.painter.cell();
     // Cell by cell, as the grid will hold it once committed.
     const layout = preeditLayout(text);
-    // In the bar, in the bar's colours and over it.
-    const style = bar ? getComputedStyle(document.documentElement) : undefined;
+    // In the palette, in its colours and over it; at the bottom, the
+    // command line is the editor's own line, in the editor's colours.
+    const style =
+      bar && !this.cmdlinePlace().bottom
+        ? getComputedStyle(document.documentElement)
+        : undefined;
     const fg = style
       ? rgbOfCss(style.getPropertyValue("--primary"))
       : undefined;

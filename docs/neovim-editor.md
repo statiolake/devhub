@@ -358,8 +358,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   steady.
 - Widgets in DevHub's chrome: the completion menu at its anchor cell (flipped
   above near the bottom, scrolls to the selected item, click to select;
-  drawn as below, "The completion menu"), the command line as a palette-like bar (firstc, cursor, special
-  char, `cmdline_block` for multiline), and tab pages as a native tab strip
+  drawn as below, "The completion menu"), the command line (firstc, cursor, special
+  char, `cmdline_block` for multiline; where it is, below), and tab pages as a native tab strip
   (click switches via `nvim_set_current_tabpage`; `gt`/`gT` are Neovim's):
   the current tab wears the editor's ground and joins it, over the strip's
   bottom line, as an editor's tab does. Tabs keep their names at their
@@ -376,11 +376,27 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   in the current mode's `guicursor` shape, colours and blink (`c`, `ci`,
   `cr`), in `cmdline_block` and after an `input()` prompt too; an IME's
   preedit and candidate window go there while the bar is up.
-- The command line bar sits on whole cells in the grid's font, and Neovim is
-  told where: `g:ui_cmdline_pos` (`[row, col]`, the convention noice.nvim
-  started), which blink.cmp's `:` completion menu reads, so its float opens
-  under the bar's text instead of at the bottom where Neovim's own command
-  line would be.
+- Where the command line is (`cmdlinePlace`). With `cmdheight` > 0 —
+  the person's config has rows kept for it — it is in those rows at the
+  bottom, from the first column, its text on the first of them, as Neovim
+  draws its own: the editor's own line, in the editor's ground and text,
+  with no frame, shadow or arrival. The rows the person gave the command
+  line are where they read what they type; a palette elsewhere would leave
+  them empty and move the eye. What makes it a GUI's stays: the caret in
+  `guicursor`'s shape and blink, crisp text on cells, the completion menu
+  over the word it completes (opening upward from the line), an IME's
+  preedit and candidates at the caret. A wrapped line or a
+  `cmdline_block` that needs more rows rises over the windows above, as
+  Neovim's message area does. With `cmdheight=0` no row is kept: drawn at
+  the bottom it would cover the last window's last lines and its status
+  line, so there it is the palette-like bar near the top, centred, where
+  it covers least of what is being edited.
+- Either sits on whole cells in the grid's font, and Neovim is told where:
+  `g:ui_cmdline_pos` (`[row, col]`, the convention noice.nvim started),
+  which blink.cmp's `:` completion menu reads. At the bottom it names the
+  text's own row, so blink's menu opens above it, as at Neovim's own
+  command line; for the palette, the row under the bar's text, so the
+  menu opens under it instead of at the bottom.
 - Floats are kept on the screen as Neovim's own compositor keeps them: one
   that would run past the right or bottom edge is moved in.
 

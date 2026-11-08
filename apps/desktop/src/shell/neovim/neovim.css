@@ -889,3 +889,12 @@
   padding: 0;
   background: none;
 }
+
+/* The command line in the rows `cmdheight` keeps (`cmdlinePlace`): the
+   editor's own line, its ground and text from the element, no frame and
+   no arrival — it is where Neovim's command line always is. */
+.nvim-cmdline.nvim-cmdline-bottom {
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+}

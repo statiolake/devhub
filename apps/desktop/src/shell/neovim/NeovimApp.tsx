@@ -35,14 +35,14 @@ import {
   useRaiseFailure,
 } from "../model/pageModel";
 import { NeovimEditor } from "./editor";
-import { cmdlinePlace, cmdlineUiPos, popupmenuPlace } from "./place";
+import { cmdlineUiPos, popupmenuPlace } from "./place";
 import {
   currentModeInfo,
   type Chunks,
   type GridBox,
   type NeovimUiState,
 } from "./redraw";
-import { cmdlineLayout, textCells } from "./cmdline";
+import { cmdlineLayout, cmdlineLead } from "./cmdline";
 import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
 import { familyOf, kindOf, markPath, type Kind } from "./kinds";
 import { TabStrip } from "./TabStrip";
@@ -364,16 +364,17 @@ function NeovimSurface({
   );
 
   const cell = editor?.cellMetrics();
-  // Where the command line bar is, for plugins that draw beside it.
-  const [posRow, posCol] =
-    editor && cell
-      ? cmdlineUiPos(cmdlinePlace(editor.gridSize().cols, cell.width))
-      : [0, 0];
+  // Where the command line is, for plugins that draw beside it.
+  const [posRow, posCol] = editor
+    ? cmdlineUiPos(editor.cmdlinePlace())
+    : [0, 0];
   const attached = connection.kind === "attached";
+  const screen = editor?.state.grids.has(1) === true;
   useEffect(() => {
-    if (!attached || posRow === 0) return;
+    // Not before grid 1 is there: the rows are counted from it.
+    if (!attached || posRow === 0 || !screen) return;
     send("nvim_set_var", ["ui_cmdline_pos", [posRow, posCol]]);
-  }, [attached, send, posRow, posCol]);
+  }, [attached, send, posRow, posCol, screen]);
 
   // Where each GUI buffer's content is drawn when it is in several windows:
   // the current window if it is one of them, else the first.
@@ -687,12 +688,15 @@ function ChunkSpans({
 }
 
 /**
- * `ext_cmdline`: a palette-like bar near the top, the cursor in it. It sits
- * on whole cells in the grid's own font (`cmdlinePlace`), its text laid out
- * cell by cell as Neovim's own command line would hold it (`cmdlineLayout`),
- * so what plugins draw beside the command line — told where it is by
- * `g:ui_cmdline_pos` — lines up with its text, and the caret and an IME's
- * preedit sit on the cell `cmdline_pos` names.
+ * `ext_cmdline`. With `cmdheight` > 0, in the rows Neovim keeps for it at
+ * the bottom, as the editor's own line: the editor's ground and text, no
+ * frame, its text from the first column (`cmdlinePlace`). With
+ * `cmdheight=0`, a palette-like bar near the top. Either sits on whole
+ * cells in the grid's own font, its text laid out cell by cell as Neovim's
+ * own command line would hold it (`cmdlineLayout`), so what plugins draw
+ * beside the command line — told where it is by `g:ui_cmdline_pos` —
+ * lines up with its text, and the caret and an IME's preedit sit on the
+ * cell `cmdline_pos` names.
  */
 function Cmdline({
   state,
@@ -706,16 +710,29 @@ function Cmdline({
   const block = state.cmdlineBlock ?? [];
   const cell = editor.cellMetrics();
   const font = editor.font();
-  const place = cmdlinePlace(editor.gridSize().cols, cell.width);
-  const style: React.CSSProperties = {
-    left: place.col * cell.width - CMDLINE_PAD_X,
-    top: place.row * cell.height - CMDLINE_PAD_Y,
-    width: place.cols * cell.width + 2 * CMDLINE_PAD_X,
-    padding: `${String(CMDLINE_PAD_Y)}px ${String(CMDLINE_PAD_X)}px`,
-    font: fontOf(font),
-    lineHeight: `${String(cell.height)}px`,
-    ["--nvim-cell" as string]: `${String(cell.width)}px`,
-  };
+  const place = editor.cmdlinePlace();
+  const style: React.CSSProperties = place.bottom
+    ? {
+        left: place.col * cell.width,
+        top: place.row * cell.height,
+        width: place.cols * cell.width,
+        minHeight: (editor.gridSize().rows - place.row) * cell.height,
+        font: fontOf(font),
+        lineHeight: `${String(cell.height)}px`,
+        // The message area's ground and text: the editor's own line.
+        background: cssColor(state.defaults.background),
+        color: cssColor(state.defaults.foreground),
+        ["--nvim-cell" as string]: `${String(cell.width)}px`,
+      }
+    : {
+        left: place.col * cell.width - CMDLINE_PAD_X,
+        top: place.row * cell.height - CMDLINE_PAD_Y,
+        width: place.cols * cell.width + 2 * CMDLINE_PAD_X,
+        padding: `${String(CMDLINE_PAD_Y)}px ${String(CMDLINE_PAD_X)}px`,
+        font: fontOf(font),
+        lineHeight: `${String(cell.height)}px`,
+        ["--nvim-cell" as string]: `${String(cell.width)}px`,
+      };
   const label =
     line?.firstc === ":"
       ? "Command"
@@ -730,7 +747,9 @@ function Cmdline({
               : "Command";
   return (
     <div
-      className="nvim-cmdline"
+      className={
+        place.bottom ? "nvim-cmdline nvim-cmdline-bottom" : "nvim-cmdline"
+      }
       role="dialog"
       aria-label={label}
       style={style}
@@ -768,7 +787,7 @@ function CmdlineRow({
   readonly cols: number;
 }) {
   const lead = line.firstc || line.prompt || "";
-  const leadCells = Math.min(cols - 1, Math.max(1, textCells(lead)));
+  const leadCells = cmdlineLead(line, cols);
   const layout = cmdlineLayout(line, cols - leadCells);
   const mode = currentModeInfo(state);
   const caretRef = useRef<HTMLSpanElement>(null);
@@ -931,24 +950,34 @@ function Popupmenu({
     v === undefined ? undefined : cssColor(v);
   const command = menu.grid === -1;
   const box = editor.gridBoxes().find((b) => b.grid === menu.grid);
-  const bar = cmdlinePlace(editor.gridSize().cols, cell.width);
+  const bar = editor.cmdlinePlace();
   // The words start three cells in (padding, mark, gap): the menu goes
   // that far left of its anchor, so a candidate sits over the word it
   // completes.
   const lead = 3 * cell.width;
   const style: React.CSSProperties = {
-    ...(command
+    ...(command && !bar.bottom
       ? {
           left: (bar.col + menu.col) * cell.width - lead,
           top: (bar.row + 1) * cell.height + CMDLINE_PAD_Y + 4,
         }
-      : popupmenuPlace(
-          editor.areaSize(),
-          ((box?.row ?? 0) + menu.row) * cell.height,
-          ((box?.col ?? 0) + menu.col) * cell.width - lead,
-          cell.height,
-          menu.items.length,
-        )),
+      : command
+        ? // Over the command line at the bottom, its candidates over the
+          // word they complete.
+          popupmenuPlace(
+            editor.areaSize(),
+            (bar.row + (state.cmdlineBlock?.length ?? 0)) * cell.height,
+            (bar.col + menu.col) * cell.width - lead,
+            cell.height,
+            menu.items.length,
+          )
+        : popupmenuPlace(
+            editor.areaSize(),
+            ((box?.row ?? 0) + menu.row) * cell.height,
+            ((box?.col ?? 0) + menu.col) * cell.width - lead,
+            cell.height,
+            menu.items.length,
+          )),
     font: fontOf(font),
     lineHeight: `${String(cell.height)}px`,
     ["--nvim-cell" as string]: `${String(cell.width)}px`,
