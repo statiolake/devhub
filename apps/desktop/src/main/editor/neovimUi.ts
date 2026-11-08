@@ -82,13 +82,15 @@ export interface GuiOpenReport {
  * What the attach asks for. `ext_messages` stays off: in 0.9 it is
  * experimental and takes the grid's own message area away, so Neovim keeps
  * drawing messages in the grid (its message grid, `msg_set_pos`).
+ * `ext_hlstate` names the groups each highlight is made of, so the page
+ * knows a selection, a pill or a diff's filler by name, not by colour.
  */
 export function uiAttachOptions(): Record<string, boolean> {
 	return {
 		rgb: true,
 		ext_linegrid: true,
 		ext_multigrid: true,
-		ext_hlstate: false,
+		ext_hlstate: true,
 		ext_popupmenu: true,
 		ext_cmdline: true,
 		ext_tabline: true,
@@ -420,6 +422,20 @@ function M._place()
   end
   gui_event("place", { images = images })
 end
+
+-- A window's fillchars changed (:setlocal, a filetype's): the page asks
+-- its theme again, so a person's eob: or diff: shows at once.
+vim.api.nvim_create_autocmd("OptionSet", {
+  group = group,
+  pattern = "fillchars",
+  callback = function() gui_event("theme", { win = vim.api.nvim_get_current_win() }) end,
+})
+vim.api.nvim_create_autocmd({ "FileType", "BufWinEnter" }, {
+  group = group,
+  callback = function()
+    if vim.wo.fillchars ~= vim.go.fillchars then gui_event("theme", { win = vim.api.nvim_get_current_win() }) end
+  end,
+})
 
 vim.api.nvim_create_autocmd({ "WinScrolled", "WinResized", "WinClosed", "WinNew", "BufWinEnter",
   "TabEnter", "VimResized", "TextChanged", "TextChangedI", "CursorMoved", "CursorMovedI" }, {

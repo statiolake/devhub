@@ -4,8 +4,10 @@ import {
   NO_THEME,
   barLayout,
   barsOf,
+  fillChosen,
   fillerStart,
   floatScrollbars,
+  hlRole,
   isEndOfBuffer,
   separatorsOf,
   sameTheme,
@@ -28,8 +30,15 @@ describe("the colorscheme's shaped colours", () => {
         IncSearch: { reverse: true, fg: SEARCH },
         CurSearch: [],
       },
+      finals: { Visual: "Visual", Search: "MySearch" },
     });
-    expect([...theme.shaped].sort()).toEqual([VISUAL, SEARCH].sort());
+    expect([...theme.shaped].sort()).toEqual(
+      ["MySearch", "Search", "Visual"].sort(),
+    );
+    // By name: a real line in Visual's colour is no selection.
+    expect(hlRole(["String"], theme)).toBeUndefined();
+    expect(hlRole(["Comment", "Visual"], theme)).toBe("shaped");
+    expect(hlRole(["MySearch"], theme)).toBe("shaped");
   });
 
   it("are none from an answer of another shape", () => {
@@ -62,7 +71,8 @@ describe("the surface notifications wear", () => {
 describe("shaped spans", () => {
   it("are runs of one shaped colour", () => {
     const row = [NORMAL, VISUAL, VISUAL, SEARCH, NORMAL, VISUAL];
-    expect(shapedSpans(row, new Set([VISUAL, SEARCH]))).toEqual([
+    const shaped = new Set([VISUAL, SEARCH]);
+    expect(shapedSpans(row, (col) => shaped.has(row[col] ?? 0))).toEqual([
       { start: 1, end: 3, bg: VISUAL },
       { start: 3, end: 4, bg: SEARCH },
       { start: 5, end: 6, bg: VISUAL },
@@ -236,27 +246,26 @@ describe("a window separator", () => {
 });
 
 describe("the end of the buffer", () => {
-  const EOB = 0x3b3b3b;
-
-  it("is not drawn while fillchars leaves eob: alone", () => {
-    const theme = themeOf({
-      groups: { EndOfBuffer: { fg: EOB } },
-      fillchars: "vert:│,stl:┴",
-    });
-    expect(theme.eob).toBe(EOB);
+  it("is a ~ alone in EndOfBuffer's highlight", () => {
     const chars = [..."~    "];
-    expect(isEndOfBuffer(chars, 0, 5, EOB, theme.eob)).toBe(true);
-    // A line of text that starts with a tilde, in another colour.
-    expect(isEndOfBuffer(chars, 0, 5, 0xffffff, theme.eob)).toBe(false);
-    expect(isEndOfBuffer([..."~ x  "], 0, 5, EOB, theme.eob)).toBe(false);
+    expect(isEndOfBuffer(chars, 0, 5, true)).toBe(true);
+    // A line of text that starts with a tilde, in another highlight.
+    expect(isEndOfBuffer(chars, 0, 5, false)).toBe(false);
+    expect(isEndOfBuffer([..."~ x  "], 0, 5, true)).toBe(false);
   });
 
-  it("is drawn when the person chose eob:", () => {
+  it("is drawn when the person chose eob:, in the window or globally", () => {
     const theme = themeOf({
-      groups: { EndOfBuffer: { fg: EOB } },
-      fillchars: "eob:~",
+      groups: {},
+      fillchars: "vert:│,stl:┴",
+      wins: { "1001": "eob:~", "1002": "vert:│" },
     });
-    expect(theme.eob).toBeUndefined();
+    expect(fillChosen(theme, 1000, "eob")).toBe(false);
+    expect(fillChosen(theme, 1001, "eob")).toBe(true);
+    expect(fillChosen(theme, 1002, "eob")).toBe(false);
+    expect(
+      fillChosen(themeOf({ groups: {}, fillchars: "eob: " }), 1000, "eob"),
+    ).toBe(true);
   });
 });
 
@@ -269,41 +278,30 @@ describe("text Neovim adds to a line", () => {
         DiagnosticVirtualTextWarn: { fg: 0xe0af68 },
         LspInlayHint: { bg: VISUAL },
       },
+      finals: { LspInlayHint: "Visual" },
     });
-    // A pill colour that is also a selection's stays a selection.
-    expect([...theme.pills]).toEqual([0x362c3d]);
+    // A group whose links end at a selection's is a selection.
+    expect([...theme.pills].sort()).toEqual([
+      "DiagnosticVirtualTextError",
+      "LspInlayHint",
+    ]);
+    expect(hlRole(["LspInlayHint", "Visual"], theme)).toBe("shaped");
+    expect(hlRole(["DiagnosticVirtualTextError"], theme)).toBe("pill");
   });
 });
 
 describe("a diff's filler row", () => {
-  const DELETE = 0x562f2d;
-  const theme = themeOf({ groups: { DiffDelete: { bg: DELETE } } });
-  const colors = (bgs: readonly number[]) => (col: number) => ({
-    fg: 0xffffff,
-    bg: bgs[col] ?? 0,
-  });
-
-  it("is the dashes in DiffDelete's ground from the text column on", () => {
+  it("is the dashes in DiffDelete's highlight from the text column on", () => {
     const chars = [..."    ----------"];
-    const bgs = chars.map((_, col) => (col < 4 ? NORMAL : DELETE));
-    expect(fillerStart(chars, 0, 14, colors(bgs), theme.diffDelete)).toBe(4);
-    // Not a filler: dashes in the text's own colours.
-    expect(
-      fillerStart(
-        chars,
-        0,
-        14,
-        colors(chars.map(() => NORMAL)),
-        theme.diffDelete,
-      ),
-    ).toBeUndefined();
+    expect(fillerStart(chars, 0, 14, (col) => col >= 4)).toBe(4);
+    // Not a filler: dashes in the text's own highlight.
+    expect(fillerStart(chars, 0, 14, () => false)).toBeUndefined();
   });
 
   it("is left alone when the person chose diff:", () => {
     expect(
-      themeOf({ groups: { DiffDelete: { bg: DELETE } }, fillchars: "diff:╱" })
-        .diffDelete,
-    ).toBeUndefined();
+      fillChosen(themeOf({ groups: {}, fillchars: "diff:╱" }), 1000, "diff"),
+    ).toBe(true);
   });
 });
 
@@ -347,7 +345,18 @@ describe("a menu's scrollbar drawn as floats", () => {
       float: true,
       win: 1000 + grid,
     });
+    const menu: GridBox = {
+      grid: 5,
+      row: 4,
+      col: 0,
+      width: 18,
+      height: 10,
+      z: 1101,
+      float: true,
+      win: 1005,
+    };
     const parts = floatScrollbars(state, [
+      menu,
       box(2, 10, 1102),
       box(3, 2, 1103),
       box(4, 3, 1104),
@@ -356,5 +365,13 @@ describe("a menu's scrollbar drawn as floats", () => {
       [2, "gutter"],
       [3, "thumb"],
     ]);
+    // Not on a menu's edge: a one-column float of a plugin's own.
+    expect([
+      ...floatScrollbars(state, [
+        { ...menu, col: 30 },
+        box(2, 10, 1102),
+        box(3, 2, 1103),
+      ]),
+    ]).toEqual([]);
   });
 });

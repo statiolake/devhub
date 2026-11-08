@@ -332,6 +332,10 @@ export class NeovimEditor {
    * layout change (a colorscheme defines hundreds at once), and everything
    * repainted when they differ.
    */
+  refreshTheme(): void {
+    this.askTheme();
+  }
+
   private askTheme(): void {
     const request = this.port.request?.bind(this.port);
     if (!request) return;

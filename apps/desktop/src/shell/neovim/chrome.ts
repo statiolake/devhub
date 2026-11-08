@@ -37,24 +37,23 @@ export interface Corners {
  * asked of Neovim by name (`THEME_LUA`) whenever highlights change.
  */
 export interface PaintTheme {
-  /** Backgrounds drawn as rounded shapes: `Visual`, `Search`, … */
-  readonly shaped: ReadonlySet<number>;
   /**
-   * Backgrounds drawn as pills a little inside the row: diagnostics'
-   * virtual text and inlay hints, when their colorscheme gives them one.
+   * The groups whose cells are drawn as rounded shapes (`Visual`,
+   * `Search`, … and what they link to, when they have a ground): a cell is
+   * one when its highlight is made of one of them (`ext_hlstate`), not
+   * when its colour happens to match.
    */
-  readonly pills: ReadonlySet<number>;
+  readonly shaped: ReadonlySet<string>;
   /**
-   * `DiffDelete`'s colours while `fillchars` leaves `diff:` at its default
-   * `-`: a filler line is drawn hatched instead of dashed.
+   * The groups whose cells are pills a little inside the row: diagnostics'
+   * virtual text and inlay hints, when their colorscheme gives them a
+   * ground.
    */
-  readonly diffDelete?: { readonly fg?: number; readonly bg: number };
-  /**
-   * `EndOfBuffer`'s foreground while `fillchars` leaves `eob:` at its
-   * default `~`: those markers are not drawn, as a GUI editor shows empty
-   * space past the end. `undefined` when the person chose `eob:`.
-   */
-  readonly eob?: number;
+  readonly pills: ReadonlySet<string>;
+  /** The global `fillchars`. */
+  readonly fillchars: string;
+  /** Each window's own `fillchars` (`:setlocal`), by window id. */
+  readonly winFillchars: ReadonlyMap<number, string>;
   /** `cmdheight`: grid 1's last rows are the command line's, no bar. */
   readonly cmdheight: number;
   /**
@@ -79,6 +78,8 @@ export interface Surface {
 export const NO_THEME: PaintTheme = {
   shaped: new Set(),
   pills: new Set(),
+  fillchars: "",
+  winFillchars: new Map(),
   cmdheight: 1,
 };
 
@@ -104,20 +105,31 @@ const PILL_GROUPS = [
 
 /**
  * Asked with `nvim_exec_lua` (0.9+: `nvim_get_hl`): each group's colours,
- * links followed, `cmdheight` and the global `fillchars`.
+ * links followed, and the group its links end at (`ext_hlstate` names a
+ * highlight from a plugin's group by that one); `cmdheight`; the global
+ * `fillchars` and each window's of the tab page.
  */
-export const THEME_LUA = `local out = { groups = {}, cmdheight = vim.o.cmdheight, fillchars = vim.go.fillchars }
-for _, name in ipairs(...) do
+export const THEME_LUA = `local names = ...
+local out = { groups = {}, finals = {}, wins = {}, cmdheight = vim.o.cmdheight, fillchars = vim.go.fillchars }
+for _, name in ipairs(names) do
   local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
   if ok then out.groups[name] = hl end
+  local final = name
+  for _ = 1, 16 do
+    local ok2, h = pcall(vim.api.nvim_get_hl, 0, { name = final, link = true })
+    if not ok2 or type(h.link) ~= "string" then break end
+    final = h.link
+  end
+  out.finals[name] = final
+end
+for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+  out.wins[tostring(win)] = vim.wo[win].fillchars
 end
 return out`;
 
 export const THEME_GROUPS: readonly string[] = [
   ...SHAPED_GROUPS,
   ...PILL_GROUPS,
-  "EndOfBuffer",
-  "DiffDelete",
   "Normal",
   "NormalFloat",
   "Comment",
@@ -138,28 +150,33 @@ export function themeOf(answer: unknown): PaintTheme {
   const out = record(answer);
   const groups = record(out?.["groups"]);
   if (!out || !groups) return NO_THEME;
-  const backgrounds = (names: readonly string[]) => {
-    const out = new Set<number>();
+  const finals = record(out["finals"]) ?? {};
+  // A group with a ground of its own (not `reverse`), by its name and the
+  // name its links end at.
+  const named = (names: readonly string[]) => {
+    const set = new Set<string>();
     for (const name of names) {
       const hl = record(groups[name]);
-      // A group drawn by `reverse` has no background of its own to match.
-      if (!hl || hl["reverse"] === true) continue;
-      if (typeof hl["bg"] === "number") out.add(hl["bg"]);
+      if (!hl || hl["reverse"] === true || typeof hl["bg"] !== "number")
+        continue;
+      set.add(name);
+      const final = finals[name];
+      if (typeof final === "string") set.add(final);
     }
-    return out;
+    return set;
   };
-  const shaped = backgrounds(SHAPED_GROUPS);
-  const pills = backgrounds(PILL_GROUPS);
-  for (const bg of shaped) pills.delete(bg);
+  const shaped = named(SHAPED_GROUPS);
+  const pills = named(PILL_GROUPS);
+  for (const name of shaped) pills.delete(name);
   const cmdheight = typeof out["cmdheight"] === "number" ? out["cmdheight"] : 1;
   const fillchars =
     typeof out["fillchars"] === "string" ? out["fillchars"] : "";
-  const chosen = (item: string) =>
-    fillchars.split(",").some((part) => part.startsWith(`${item}:`));
-  const eob = record(groups["EndOfBuffer"])?.["fg"];
-  const diff = record(groups["DiffDelete"]);
-  const diffFg = diff?.["fg"];
-  const diffBg = diff?.["bg"];
+  const winFillchars = new Map<number, string>();
+  for (const [win, value] of Object.entries(record(out["wins"]) ?? {})) {
+    const id = Number(win);
+    if (Number.isInteger(id) && typeof value === "string")
+      winFillchars.set(id, value);
+  }
   const colour = (name: string, key: "fg" | "bg") => {
     const v = record(groups[name])?.[key];
     return typeof v === "number" ? v : undefined;
@@ -176,34 +193,53 @@ export function themeOf(answer: unknown): PaintTheme {
   return {
     shaped,
     pills,
+    fillchars,
+    winFillchars,
     cmdheight,
     ...(surfaceEntries.length > 0
       ? { surface: Object.fromEntries(surfaceEntries) as Surface }
       : {}),
-    ...(!chosen("eob") && typeof eob === "number" ? { eob } : {}),
-    ...(!chosen("diff") &&
-    diff?.["reverse"] !== true &&
-    typeof diffBg === "number"
-      ? {
-          diffDelete: {
-            bg: diffBg,
-            ...(typeof diffFg === "number" ? { fg: diffFg } : {}),
-          },
-        }
-      : {}),
   };
 }
 
-function sameSet(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+/**
+ * Whether a window's `fillchars` (its own, else the global one) has the
+ * person's `item:` — then what Neovim draws for it is theirs, and kept.
+ */
+export function fillChosen(
+  theme: PaintTheme,
+  win: number | undefined,
+  item: "eob" | "diff",
+): boolean {
+  const value =
+    (win !== undefined ? theme.winFillchars.get(win) : undefined) ??
+    theme.fillchars;
+  return value.split(",").some((part) => part.startsWith(`${item}:`));
+}
+
+/** What a highlight's cells are to the painter, by the groups it is made of. */
+export type HlRole = "shaped" | "pill" | undefined;
+
+export function hlRole(
+  groups: readonly string[] | undefined,
+  theme: PaintTheme,
+): HlRole {
+  if (!groups) return undefined;
+  if (groups.some((g) => theme.shaped.has(g))) return "shaped";
+  if (groups.some((g) => theme.pills.has(g))) return "pill";
+  return undefined;
+}
+
+function sameSet<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
   return a.size === b.size && [...a].every((v) => b.has(v));
 }
 
 export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
   return (
     a.cmdheight === b.cmdheight &&
-    a.eob === b.eob &&
-    a.diffDelete?.fg === b.diffDelete?.fg &&
-    a.diffDelete?.bg === b.diffDelete?.bg &&
+    a.fillchars === b.fillchars &&
+    JSON.stringify([...a.winFillchars]) ===
+      JSON.stringify([...b.winFillchars]) &&
     sameSet(a.shaped, b.shaped) &&
     sameSet(a.pills, b.pills) &&
     JSON.stringify(a.surface) === JSON.stringify(b.surface)
@@ -233,10 +269,13 @@ export function spanNotches(
   };
 }
 
-/** A row's runs of shaped colours: one span per run of one colour. */
+/**
+ * A row's runs of shaped cells (`isShaped`): one span per run of one
+ * colour.
+ */
 export function shapedSpans(
   bgs: ArrayLike<number>,
-  shaped: ReadonlySet<number>,
+  isShaped: (col: number) => boolean,
   from = 0,
   to = bgs.length,
 ): ShapedSpan[] {
@@ -244,12 +283,12 @@ export function shapedSpans(
   let col = from;
   while (col < to) {
     const bg = bgs[col] ?? -1;
-    if (!shaped.has(bg)) {
+    if (bg < 0 || !isShaped(col)) {
       col += 1;
       continue;
     }
     let end = col + 1;
-    while (end < to && bgs[end] === bg) end += 1;
+    while (end < to && bgs[end] === bg && isShaped(end)) end += 1;
     out.push({ start: col, end, bg });
     col = end;
   }
@@ -508,17 +547,17 @@ export function isSeparatorLine(c: string): boolean {
 }
 
 /**
- * A window row that is only an end-of-buffer `~` (the default `eob`, in
- * `EndOfBuffer`'s colour): the row past the end of the buffer.
+ * A window row that is only an end-of-buffer `~` (the default `eob`; its
+ * highlight `EndOfBuffer`'s, by name, `isEob`): the row past the end of
+ * the buffer.
  */
 export function isEndOfBuffer(
   chars: readonly string[],
   base: number,
   width: number,
-  fg: number,
-  eob: number | undefined,
+  isEob: boolean,
 ): boolean {
-  if (eob === undefined || fg !== eob || chars[base] !== "~") return false;
+  if (!isEob || chars[base] !== "~") return false;
   for (let col = 1; col < width; col += 1) {
     if ((chars[base + col] ?? " ") !== " ") return false;
   }
@@ -527,28 +566,19 @@ export function isEndOfBuffer(
 
 /**
  * A diff's filler row (a line the other side has): from some column on,
- * nothing but `-` in `DiffDelete`'s colours. Answers that column, or
- * `undefined`.
+ * nothing but `-` in a highlight made of `DiffDelete` (`isFill`). Answers
+ * that column, or `undefined`.
  */
 export function fillerStart(
   chars: readonly string[],
   base: number,
   width: number,
-  colors: (col: number) => { fg: number; bg: number },
-  diffDelete: { readonly fg?: number; readonly bg: number } | undefined,
+  isFill: (col: number) => boolean,
 ): number | undefined {
-  if (!diffDelete) return undefined;
-  const isFill = (col: number) => {
-    const c = colors(col);
-    return (
-      chars[base + col] === "-" &&
-      (diffDelete.fg === undefined || c.fg === diffDelete.fg) &&
-      c.bg === diffDelete.bg
-    );
-  };
-  if (width === 0 || !isFill(width - 1)) return undefined;
+  const fill = (col: number) => chars[base + col] === "-" && isFill(col);
+  if (width === 0 || !fill(width - 1)) return undefined;
   let start = width - 1;
-  while (start > 0 && isFill(start - 1)) start -= 1;
+  while (start > 0 && fill(start - 1)) start -= 1;
   // A real line of dashes is not a whole row of them in DiffDelete's
   // colours from the text column on; still, a short run is left alone.
   return width - start >= Math.min(8, width) ? start : undefined;
@@ -560,20 +590,33 @@ export type ScrollbarPart = "thumb" | "gutter";
 /**
  * Completion menus' and docs' scrollbars drawn as floats (blink.cmp,
  * nvim-cmp: a one-cell-wide, unfocusable float of blank cells in a colour,
- * the thumb over the gutter). Answers each such float's part: the one with
- * another over it is the gutter, the rest thumbs.
+ * the thumb over the gutter) on a menu's right edge: on its last column
+ * (its border) or the one after, within its rows. Answers each such
+ * float's part: the one with another over it is the gutter, the rest
+ * thumbs. A one-column float that is not on a menu's edge is left alone.
  */
 export function floatScrollbars(
   state: NeovimUiState,
   boxes: readonly GridBox[],
 ): Map<number, ScrollbarPart> {
-  const bars = boxes.filter((box) => {
+  const thin = boxes.filter((box) => {
     if (!box.float || box.width !== 1 || box.crop || box.frame) return false;
     const placement = state.windows.get(box.grid)?.placement;
     if (placement?.kind !== "float" || placement.focusable) return false;
     const grid = state.grids.get(box.grid);
     return grid !== undefined && grid.chars.every((c) => c === " " || c === "");
   });
+  const menus = boxes.filter((box) => box.float && box.width > 1);
+  const bars = thin.filter((bar) =>
+    menus.some(
+      (menu) =>
+        bar.z >= menu.z &&
+        bar.col >= menu.col + menu.width - 1 &&
+        bar.col <= menu.col + menu.width &&
+        bar.row >= menu.row &&
+        bar.row + bar.height <= menu.row + menu.height,
+    ),
+  );
   const out = new Map<number, ScrollbarPart>();
   for (const bar of bars) {
     const over = bars.some(

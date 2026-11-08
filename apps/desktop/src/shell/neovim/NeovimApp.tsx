@@ -237,6 +237,11 @@ function NeovimSurface({
         setTerminalNormal(undefined);
         return;
       }
+      if (event.kind === "theme") {
+        // A window's fillchars changed: what the painter keeps is asked again.
+        editor.refreshTheme();
+        return;
+      }
       if (LAYER_EVENTS.has(event.kind)) {
         setLayers((before) =>
           applyLayerEvent(before, event.kind, event.payload),

@@ -24,7 +24,7 @@ describe("DevHub as a Neovim UI", () => {
 			ext_popupmenu: true,
 			ext_cmdline: true,
 			ext_tabline: true,
-			ext_hlstate: false,
+			ext_hlstate: true,
 			ext_messages: false,
 		});
 	});

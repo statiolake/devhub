@@ -25,8 +25,10 @@ import {
   NO_THEME,
   barLayout,
   barsOf,
+  fillChosen,
   fillerStart,
   floatScrollbars,
+  hlRole,
   isEndOfBuffer,
   isSeparatorLine,
   sameTheme,
@@ -35,6 +37,7 @@ import {
   spanCorners,
   spanNotches,
   type Bars,
+  type HlRole,
   type PaintTheme,
   type Separator,
 } from "./chrome";
@@ -259,6 +262,8 @@ export class GridPainter {
   private font: FontSpec;
   private metrics: Metrics;
   private theme: PaintTheme = NO_THEME;
+  /** Each highlight's role (`hlRole`), worked out once per definition. */
+  private readonly roles = new Map<number, HlRole>();
   /** The status lines and winbars (`barsOf`), and what they were last. */
   private bars: Bars = new Map();
   private barsKey = "";
@@ -327,6 +332,7 @@ export class GridPainter {
   setTheme(theme: PaintTheme): boolean {
     if (sameTheme(theme, this.theme)) return false;
     this.theme = theme;
+    this.roles.clear();
     return true;
   }
 
@@ -357,6 +363,7 @@ export class GridPainter {
       }
     }
     const all = forceAll || changes.colors;
+    if (changes.colors) this.roles.clear();
     const hidden = underFrames(boxes);
     const shown = boxes.filter((box) => !hidden.has(box.grid));
     for (const grid of hidden) {
@@ -865,8 +872,8 @@ export class GridPainter {
         grid.chars,
         base,
         grid.width,
-        resolveColors(state.hl.get(grid.hls[base] ?? 0), state.defaults).fg,
-        this.theme.eob,
+        this.hasGroup(state, grid.hls[base] ?? 0, "EndOfBuffer") &&
+          !fillChosen(this.theme, box.win, "eob"),
       )
     ) {
       this.skip.add(0);
@@ -1011,10 +1018,10 @@ export class GridPainter {
     row: number,
     y: number,
   ): void {
-    const { pills } = this.theme;
-    if (pills.size === 0) return;
+    if (this.theme.pills.size === 0) return;
     const grounds = this.rowGrounds(state, box, row);
-    const spans = shapedSpans(grounds, pills);
+    const isPill = this.cellsOf(state, box, row, "pill");
+    const spans = shapedSpans(grounds, isPill);
     if (spans.length === 0) return;
     const { width: cw, height: ch, textHeight } = this.metrics;
     const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
@@ -1027,9 +1034,9 @@ export class GridPainter {
       const left = span.start > 0 ? grounds[span.start - 1] : undefined;
       const right = grounds[span.end];
       const beside =
-        left !== undefined && left >= 0 && !pills.has(left)
+        left !== undefined && left >= 0 && !isPill(span.start - 1)
           ? left
-          : right !== undefined && right >= 0 && !pills.has(right)
+          : right !== undefined && right >= 0 && !isPill(span.end)
             ? right
             : state.defaults.background;
       ctx.fillStyle = cssColor(beside);
@@ -1054,12 +1061,13 @@ export class GridPainter {
     y: number,
   ): void {
     const grid = state.grids.get(box.grid);
-    const diff = this.theme.diffDelete;
-    if (!grid || !diff) return;
+    if (!grid || fillChosen(this.theme, box.win, "diff")) return;
     const base = row * grid.width;
     const colors = (col: number) =>
       resolveColors(state.hl.get(grid.hls[base + col] ?? 0), state.defaults);
-    const start = fillerStart(grid.chars, base, grid.width, colors, diff);
+    const start = fillerStart(grid.chars, base, grid.width, (col) =>
+      this.hasGroup(state, grid.hls[base + col] ?? 0, "DiffDelete"),
+    );
     if (start === undefined) return;
     const { width: cw, height: ch } = this.metrics;
     const x0 = start * cw;
@@ -1082,6 +1090,35 @@ export class GridPainter {
     ctx.stroke();
     ctx.restore();
     for (let col = start; col < grid.width; col += 1) this.skip.add(col);
+  }
+
+  /** A highlight's role (`hlRole`: a selection's, a pill's), kept. */
+  private roleOf(state: NeovimUiState, hl: number): HlRole {
+    if (this.roles.has(hl)) return this.roles.get(hl);
+    const role = hlRole(state.hl.get(hl)?.groups, this.theme);
+    this.roles.set(hl, role);
+    return role;
+  }
+
+  /** Whether a highlight is made of `group` (`ext_hlstate`). */
+  private hasGroup(state: NeovimUiState, hl: number, group: string) {
+    return state.hl.get(hl)?.groups?.includes(group) === true;
+  }
+
+  /** Which of a row's cells have `role` (none past the grid's rows). */
+  private cellsOf(
+    state: NeovimUiState,
+    box: GridBox,
+    row: number,
+    role: Exclude<HlRole, undefined>,
+  ): (col: number) => boolean {
+    const grid = state.grids.get(box.grid);
+    if (!grid || row < 0 || row >= grid.height) return () => false;
+    const base = row * grid.width;
+    return (col) =>
+      col >= 0 &&
+      col < grid.width &&
+      this.roleOf(state, grid.hls[base + col] ?? 0) === role;
   }
 
   /**
@@ -1121,13 +1158,19 @@ export class GridPainter {
     row: number,
     y: number,
   ): void {
-    const { shaped } = this.theme;
-    if (shaped.size === 0) return;
+    if (this.theme.shaped.size === 0) return;
     const grounds = this.rowGrounds(state, box, row);
-    const spans = shapedSpans(grounds, shaped);
+    const isShaped = this.cellsOf(state, box, row, "shaped");
+    const spans = shapedSpans(grounds, isShaped);
     if (spans.length === 0) return;
-    const above = shapedSpans(this.rowGrounds(state, box, row - 1), shaped);
-    const below = shapedSpans(this.rowGrounds(state, box, row + 1), shaped);
+    const above = shapedSpans(
+      this.rowGrounds(state, box, row - 1),
+      this.cellsOf(state, box, row - 1, "shaped"),
+    );
+    const below = shapedSpans(
+      this.rowGrounds(state, box, row + 1),
+      this.cellsOf(state, box, row + 1, "shaped"),
+    );
     const { width: cw, height: ch } = this.metrics;
     const r = Math.max(0, Math.min(SHAPE_RADIUS, cw / 2, ch / 2));
     for (const span of spans) {
@@ -1136,9 +1179,9 @@ export class GridPainter {
       const left = span.start > 0 ? grounds[span.start - 1] : -1;
       const right = span.end < grounds.length ? grounds[span.end] : -1;
       const beside =
-        left !== undefined && left >= 0 && !shaped.has(left)
+        left !== undefined && left >= 0 && !isShaped(span.start - 1)
           ? left
-          : right !== undefined && right >= 0 && !shaped.has(right)
+          : right !== undefined && right >= 0 && !isShaped(span.end)
             ? right
             : state.defaults.background;
       ctx.fillStyle = cssColor(beside);

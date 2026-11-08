@@ -81,7 +81,11 @@ TUI Neovim in a tmux pane is gone.)
 ### The attach
 
 `main/editor/neovimUi.ts` attaches with `rgb`, `ext_linegrid`,
-`ext_multigrid`, `ext_popupmenu`, `ext_cmdline` and `ext_tabline`.
+`ext_multigrid`, `ext_hlstate`, `ext_popupmenu`, `ext_cmdline` and
+`ext_tabline`. `ext_hlstate` only adds the groups each highlight is made of
+(`hl_attr_define`'s info: `ui_name`, `hi_name`); the page keeps them on the
+highlight and knows a selection, a pill, a diff's filler and the
+end-of-buffer `~` by name, not by colour.
 `ext_messages` stays off, on 0.11 too: it is still marked experimental there,
 and it hands the GUI every prompt Neovim would otherwise draw and wait on —
 the hit-enter prompt, `confirm()`, the swap-file question, `:s///c` — which
@@ -198,21 +202,25 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     kitty and WezTerm draw them, since devicons, lualine and completion
     menus all put a space after their icons. A completion kind that starts
     with an icon (lspkind) shows that icon in the popup menu.
-  - Selections and search matches (`Visual`, `Search`, `CurSearch`,
-    `IncSearch`, `Substitute`: their backgrounds, asked by name when
-    highlights change) are rounded shapes (`chrome.ts`): a run takes the
+  - Selections and search matches (cells whose highlight is made of
+    `Visual`, `Search`, `CurSearch`, `IncSearch`, `Substitute` or the group
+    their links end at, when it has a ground; `ext_hlstate`) are rounded
+    shapes (`chrome.ts`): a run takes the
     ground beside it and is filled over that with its corners rounded where
     the row above or below does not go on, and its inside corners filled
     round where it does, so a selection of several lines is one outline.
     A row is repainted with its neighbours while such colours are about.
   - A window separator's cell is drawn as the two sides meeting
     (`separatorsOf`): each half in the ground beside it, its line between.
-  - The `~` past the end of a buffer is not drawn while `fillchars` has
-    no `eob:` of the person's (`isEndOfBuffer`).
+  - The `~` past the end of a buffer (in `EndOfBuffer`) is not drawn while
+    the window's `fillchars` has no `eob:` of the person's
+    (`isEndOfBuffer`); a `:setlocal fillchars` is seen at once
+    (`OptionSet`, and on `FileType`/`BufWinEnter` when a window's differs).
   - Diagnostics' virtual text and inlay hints with a ground of their own
     are pills; a diff's filler rows (the default `diff:` `-`) are hatched.
-  - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) is
-    an overlay scrollbar: the gutter not drawn, the thumb a thin bar.
+  - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) on
+    a menu's right edge is an overlay scrollbar: the gutter not drawn, the
+    thumb a thin bar.
   - Status lines and winbars are bars (`chrome.ts`'s `barsOf`,
     `barLayout`): the runs not in the bar's commonest colour are pills,
     and Powerline's filled separators (U+E0B0, E0B2, … even code points)
@@ -516,7 +524,8 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   buffer only where they fall on fenced code (signature help's active
   parameter); one on prose is not drawn. A plain text float's (a
   diagnostic's) are carried.
-- `ext_hlstate` off; no semantic styling of diagnostics yet.
+- No semantic styling of diagnostics yet (`ext_hlstate` names the groups,
+  only selections, pills, fillers and `~` use them).
 - A GUI buffer shown in two windows has its content (one page, one terminal
   client) in one of them — the current window when it is one, else the
   first — and the other says where it is; a click there moves the cursor in.
@@ -585,16 +594,21 @@ least risky first within a band):
    change) are one shape per row with rounded outer corners and filled
    inner ones where the next row runs on (VS Code's selection), the line's
    `linespace` included; colours unchanged. `CursorLine` stays a flat band,
-   edge to edge, as editors draw it.
+   edge to edge, as editors draw it. Round 2: matched by group name
+   (`ext_hlstate`), not by colour, so a buffer's own text that happens to be
+   in a selection's colour is no longer shaped.
 4. _`~` end-of-buffer markers and the blank rows past the end_ — done:
    while the global `fillchars` has no `eob:` (asked with the theme), a
    window row that is only a `~` in `EndOfBuffer`'s colour is drawn
    without it: empty space past the end, as GUI editors show. A person who
-   set `eob:` (even `eob:~`) keeps their markers. `:set fillchars=eob:x`
-   in one window only is not seen until highlights or the layout change.
+   set `eob:` (even `eob:~`) keeps their markers, per window: the page asks
+   each window's `fillchars`, again on `OptionSet fillchars`. The `~` is
+   known by its highlight's name (`EndOfBuffer`), not its colour.
 5. _Float scrollbars drawn by plugins as cells_ — done for scrollbars
    that are floats (blink.cmp's and nvim-cmp's: one cell wide,
-   unfocusable, blank cells in a colour): the one with another over it is
+   unfocusable, blank cells in a colour, on a menu's last column or the
+   one after it, within its rows — round 2: a plugin's lone one-column
+   float elsewhere is left alone): the one with another over it is
    the gutter and is not drawn (the menu's ground shows), the other the
    thumb, drawn as a thin rounded bar in the middle of its cell
    (`floatScrollbars`, a `clip-path` on its canvas). Clicks are as

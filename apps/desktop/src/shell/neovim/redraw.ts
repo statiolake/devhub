@@ -33,6 +33,12 @@ export interface HlAttr {
   readonly underdashed?: boolean;
   /** 0–100: how transparent a float's background is. */
   readonly blend?: number;
+  /**
+   * The groups it is made of (`ext_hlstate`'s info: each item's `ui_name`
+   * and `hi_name`), so a selection or a diff's filler is known by name
+   * rather than by colour.
+   */
+  readonly groups?: readonly string[];
 }
 
 /** One grid: `width × height` cells, row-major. */
@@ -290,8 +296,24 @@ function color(value: unknown): number | undefined {
   return typeof value === "number" && value >= 0 ? value : undefined;
 }
 
-function attrOf(map: unknown): HlAttr {
-  if (map === null || typeof map !== "object") return {};
+/** `ext_hlstate`'s info items' group names, each once. */
+function groupsOf(info: unknown): string[] | undefined {
+  if (!Array.isArray(info)) return undefined;
+  const out = new Set<string>();
+  for (const item of info) {
+    if (item === null || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    for (const key of ["ui_name", "hi_name"]) {
+      const v = r[key];
+      if (typeof v === "string" && v !== "") out.add(v);
+    }
+  }
+  return out.size > 0 ? [...out] : undefined;
+}
+
+function attrOf(map: unknown, info?: unknown): HlAttr {
+  const groups = groupsOf(info);
+  if (map === null || typeof map !== "object") return groups ? { groups } : {};
   const m = map as Record<string, unknown>;
   const flag = (key: string) => (m[key] === true ? true : undefined);
   const out: Record<string, unknown> = {
@@ -308,6 +330,7 @@ function attrOf(map: unknown): HlAttr {
     underdotted: flag("underdotted") ?? flag("underdot"),
     underdashed: flag("underdashed") ?? flag("underdash"),
     blend: typeof m["blend"] === "number" ? m["blend"] : undefined,
+    groups,
   };
   for (const key of Object.keys(out)) {
     if (out[key] === undefined) delete out[key];
@@ -485,7 +508,7 @@ function applyEvent(
       changes.colors = true;
       return;
     case "hl_attr_define":
-      state.hl.set(num(args[0]), attrOf(args[1]));
+      state.hl.set(num(args[0]), attrOf(args[1], args[3]));
       changes.colors = true;
       return;
     case "win_pos": {
