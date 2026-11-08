@@ -18,8 +18,11 @@
  * `on_win`, sent once the redraw is over), and sent only when it changed.
  * Left out on purpose: `overlay` and `virt_text_win_col` text (it is put on
  * the buffer's own columns — indent guides, tables, concealed markup — and
- * only works on cells), `virt_lines_above`, and a fold whose `foldtext` is
- * empty (the line itself, which is content).
+ * only works on cells), `virt_lines_above`, a fold whose `foldtext` is
+ * empty (the line itself, which is content), and anything in a namespace a
+ * plugin declared content with `content_namespace(ns)`: virtual text that
+ * is code, not words about it (the deleted lines of an inline diff, a hunk
+ * preview), stays in the grid's face.
  */
 export const DECOR_LUA = String.raw`
 local M = package.loaded["devhub_gui"]
@@ -27,6 +30,22 @@ if not M then return end
 local ns = vim.api.nvim_create_namespace("devhub_gui_decor")
 M._decor_dirty = M._decor_dirty or {}
 M._decor_sent = M._decor_sent or {}
+M._content_ns = M._content_ns or {}
+
+--- Declare the virtual text and lines of namespace ns (an id or a name) as
+--- content — code, drawn on cells in the grid's face like the buffer's own
+--- lines — rather than words about the code (pass false to undo).
+function M.content_namespace(ns, on)
+  if type(ns) == "string" then ns = vim.api.nvim_create_namespace(ns) end
+  if type(ns) ~= "number" then return end
+  M._content_ns[ns] = on ~= false or nil
+  M._decor_last = nil
+  for _, win in ipairs(vim.api.nvim_list_wins()) do M._decor_dirty[win] = true end
+  if not M._decor_pending then
+    M._decor_pending = true
+    vim.schedule(M._decor_send)
+  end
+end
 
 local function chunks_text(chunks)
   local parts = {}
@@ -84,7 +103,11 @@ local function spans_of(win)
     local row0, col0, d = m[2], m[3], m[4] or {}
     local l = row0 + 1
     local closed = folding and vim.api.nvim_win_call(win, function() return vim.fn.foldclosed(l) end) or -1
-    if closed == -1 then
+    local content = d.ns_id ~= nil and M._content_ns[d.ns_id]
+    if closed == -1 and content and d.virt_lines and not d.virt_lines_above then
+      -- Content lines still take their rows: later lines under this one go after them.
+      lines_below[row0] = (lines_below[row0] or 0) + #d.virt_lines
+    elseif closed == -1 and not content then
       local line = vim.api.nvim_buf_get_lines(buf, row0, row0 + 1, false)[1] or ""
       -- Where the line's text ends: its last screen row, and the cell after
       -- its last character (the text area's start for an empty line).

@@ -291,6 +291,15 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
       buffer's own columns — indent guides, tables, concealed markup —
       it only works on cells), `virt_lines_above`, and a fold whose
       `foldtext` is empty (the line itself, content).
+    - Left as cells too: what a plugin says is content.
+      `require('devhub_gui').content_namespace(ns)` (devhub.nvim:
+      `gui.content_namespace`) declares that the virtual text and lines of an
+      extmark namespace are code, not words about it. The deleted lines of
+      an inline diff and a hunk preview are examples. They stay in the
+      grid's face like the buffer's own lines; `false` undoes it. Only the
+      plugin knows which of its virtual lines are code, so it says so. The
+      cells cannot tell, and guessing from highlight groups would be wrong
+      as often as right.
     - Wide characters take their two cells in the match; a CJK word in a
       proportional face is about as wide as its cells.
   - A closed fold's fill, when the person's `fold:` character draws a line
