@@ -845,34 +845,8 @@
   border-top: 1px solid color-mix(in srgb, currentcolor 18%, transparent);
 }
 
-.nvim-popup .nvc-markdown h1 {
-  font-size: 14px;
-}
-
-.nvim-popup .nvc-markdown h3,
-.nvim-popup .nvc-markdown h4 {
-  font-size: 12.5px;
-}
-
-/* Links as VS Code's hovers: the accent, underlined under the pointer. */
 .nvim-popup .nvc-markdown a {
   color: var(--accent);
-  text-decoration: none;
-  text-underline-offset: 2px;
-}
-
-.nvim-popup .nvc-markdown a:hover {
-  text-decoration: underline;
-}
-
-.nvim-popup .nvc-markdown blockquote {
-  padding: 0 0 0 9px;
-  border-left: 3px solid color-mix(in srgb, currentcolor 22%, transparent);
-  color: color-mix(in srgb, currentcolor 78%, transparent);
-}
-
-.nvim-popup .nvc-markdown blockquote > :last-child {
-  margin-bottom: 0;
 }
 
 /* Code in the grid's face (the guifont), as in the buffer. */
