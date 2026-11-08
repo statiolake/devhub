@@ -265,7 +265,11 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   window at a time: in Normal mode by that many screen rows (`<C-e>`/`<C-y>`
   with `normal!`, one at a time until the view moved that far, counted with
   `nvim_win_text_height`: a wrapped line moves by all its rows at once
-  unless `smoothscroll`, filler and virtual lines by a row each; in the
+  unless `smoothscroll`, filler and virtual lines by a row each; a line
+  taller than the window by a row at a time, `smoothscroll` set on the
+  window while its view is inside that line (skipcol) and the person's
+  value back as soon as it is not, before its buffer leaves the window,
+  and in a window split from it — Neovim keeps no skipcol without it; in the
   window under the pointer, current window unchanged, unless the person
   mapped the wheel); in any other mode Neovim's own wheel. One request is
   in flight at a time and is not given up before Neovim answers (a busy
@@ -281,7 +285,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   when the gesture turns back — and puts it back when Neovim is brought to
   rest. At rest
   Neovim is brought back to the nearest line boundary (a wrapped line's
-  start, not a row inside it) and the display eases onto
+  start, not a row inside it; inside a line taller than the window, the
+  nearest row) and the display eases onto
   it, so what is shown is Neovim's grid again, exactly. A scroll Neovim
   makes itself (`<C-d>`, `<C-f>`, `zz`, `j` past the edge, a search) eases
   from the old view to the new in 90 ms, already under way on the first
@@ -593,9 +598,9 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   from DevHub's palette: leave it off in DevHub.
 - A GUI window's web page still gives `<C-w>` to Neovim (it has no shell
   to want it); only the terminal follows the `:terminal` model.
-- Pixel scrolling moves through a wrapped line taller than the window in
-  one jump (Neovim's `<C-e>` moves by all its rows unless `smoothscroll`);
-  a window `scrollbind` moves by other rows than the wheeled one (one side
+- Pixel scrolling inside a line taller than the window turns
+  `smoothscroll` on for that window until the view leaves the line
+  (`:set smoothscroll?` says so meanwhile); a window `scrollbind` moves by other rows than the wheeled one (one side
   at its end) shows what it has, nearest the wheeled one's offset.
 - A view is laid out by the browser and scrolled in pixels; Neovim's own
   `topline` in that window is not what is shown (only the cursor line

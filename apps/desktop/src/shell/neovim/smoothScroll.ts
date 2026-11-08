@@ -388,10 +388,56 @@ if m.mode == 'n' and not m.blocking and vim.o.mouse ~= ''
     -- each way (a line half in view does not push: where it rests decides).
     kept.line = within(line_at(a, math.floor(hi or 0)),
       line_at(a, vim.api.nvim_win_get_height(0) - 1 + math.ceil(lo or 0)))
+    -- A line taller than the window would go by all its rows at once:
+    -- 'smoothscroll' (a row at a time, skipcol) while the view is in one.
+    -- The person's own value (off) comes back once the view is out of it
+    -- (here, or on WinScrolled), before the buffer leaves the window (or
+    -- the window is left for another buffer: Neovim keeps a window's
+    -- options with the buffer), and in a window split from this one.
+    G._sms = G._sms or {}
+    local function own_rows(l)
+      local h = vim.api.nvim_win_text_height(0, { start_row = l - 1, end_row = l - 1 })
+      return h.all - h.fill
+    end
+    local function restore()
+      G._sms[win] = nil
+      pcall(vim.api.nvim_del_augroup_by_name, 'devhub_smoothscroll_' .. win)
+      if vim.api.nvim_win_is_valid(win) then
+        vim.api.nvim_win_call(win, function() vim.cmd('noautocmd setlocal nosmoothscroll') end)
+      end
+    end
+    local function smooth_if_tall(v)
+      local edge = (n > 0 or (v.skipcol or 0) > 0) and v.topline or v.topline - 1
+      if G._sms[win] or not vim.wo.wrap or vim.wo.smoothscroll
+        or edge < 1 or own_rows(edge) < vim.api.nvim_win_get_height(0) - 1 then
+        return
+      end
+      G._sms[win] = true
+      vim.cmd('noautocmd setlocal smoothscroll')
+      local group = vim.api.nvim_create_augroup('devhub_smoothscroll_' .. win, { clear = true })
+      vim.api.nvim_create_autocmd('WinScrolled', { group = group, pattern = tostring(win),
+        callback = function()
+          if not vim.api.nvim_win_is_valid(win)
+            or vim.api.nvim_win_call(win, function() return vim.fn.winsaveview().skipcol end) == 0 then
+            restore()
+          end
+        end })
+      vim.api.nvim_create_autocmd('BufLeave', { group = group, callback = function()
+        if vim.api.nvim_get_current_win() == win then restore() end
+      end })
+      vim.api.nvim_create_autocmd('WinNew', { group = group, callback = function()
+        if vim.fn.win_getid(vim.fn.winnr('#')) == win then
+          vim.cmd('noautocmd setlocal nosmoothscroll')
+        end
+      end })
+      vim.api.nvim_create_autocmd('WinClosed', { group = group, pattern = tostring(win),
+        callback = function() G._sms[win] = nil; pcall(vim.api.nvim_del_augroup_by_name, 'devhub_smoothscroll_' .. win) end })
+    end
     local step = n > 0 and '\\5' or '\\25'
     local rows, done, view = math.abs(n), 0, a
     for _ = 1, 400 do
       if done >= rows then break end
+      smooth_if_tall(view)
       vim.cmd('normal! ' .. step)
       local v = vim.fn.winsaveview()
       local d = math.abs(moved(view, v))
@@ -404,6 +450,7 @@ if m.mode == 'n' and not m.blocking and vim.o.mouse ~= ''
       done, view = done + d, v
     end
     local b = vim.fn.winsaveview()
+    if G._sms[win] and (b.skipcol or 0) == 0 then restore() end
     changed = a.topline ~= b.topline or a.topfill ~= b.topfill
       or (a.skipcol or 0) ~= (b.skipcol or 0)
     if exact_only then
