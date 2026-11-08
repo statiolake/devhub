@@ -421,6 +421,38 @@ keys (keydown to the painter's first glyph after it).
   over the text (difference blend), not the text drawn in the cursor's
   colour as Neovim's is.
 
+### Handoff: where phases 3 and 4 start
+
+- **Popups.** A popup's command runs as the popup's pane's: `$TMUX_PANE`
+  and "the current pane" are the pane that opened it, which is what the
+  person's `bind m` (`tmux move-pane` with no `-s`) relies on. Running the
+  command in a split or a window DevHub shows as a float changes that, so
+  the float has to be given the opener as its target: the command run with
+  `TMUX_PANE` and a `-t` of the opener where tmux allows it, or the pane
+  marked (`select-pane -m`) for commands that take the marked pane. The
+  guard (`keyGuard.ts`) already knows which binding was pressed and its
+  command; that is where a popup would be started instead of refused.
+- **Menus, prompts, confirm-before.** The binding's command is known at
+  the guard; DevHub draws the menu or prompt (mock first, Japanese
+  annotations) and runs the chosen item, or the prompt's template with
+  `%%` filled, as a command of the control client.
+- **Choose-tree / w / s.** `list-sessions`, `list-windows -a` and
+  `list-panes -a` give the tree; DevHub draws it and runs `switch-client`
+  / `select-window` / `select-pane`.
+- **Copy mode.** DevHub-side, on the engine's scrollback (each pane keeps
+  2000 lines; `capture-pane -S -` gives the rest). The person's
+  copy-mode-vi table (`list-keys -T copy-mode-vi`) says what each key does;
+  the libghostty-vt selection API (word, line, `select_output` by OSC 133
+  marks) carries the y / Y copies. `%paste-buffer-changed` is where a
+  copy that tmux made (`copy-pipe`, `load-buffer -w`) reaches the system
+  clipboard.
+- **Tabs (phase 4).** The window strip's data is `layout.windows` (index,
+  name, active, zoomed); the person's `window-status-format` and
+  `window-status-current-format` can be read with `show -gv` and expanded
+  per window with `display-message -p -t @<id>`, as data, never by
+  reading painted cells. Mock first; then delete the xterm.js path, the
+  pty clients of the pty host and the `tmux_control_mode` key together.
+
 ### What waits on a control client, until DevHub draws it
 
 A control client cannot answer what tmux would draw for a normal one, and
