@@ -193,3 +193,52 @@ export function gridSizeFor(
     rows: Math.max(3, Math.floor(height / cell.height)),
   };
 }
+
+/** A window border a drag resizes: its line, in grid 1's cells. */
+export interface Sash {
+  /** `col`: a vertical separator (drags sideways); `row`: a status line or
+   * horizontal separator with a window under it (drags up and down). */
+  readonly dir: "col" | "row";
+  readonly row: number;
+  readonly col: number;
+  /** Its length in cells, down a column or along a row. */
+  readonly length: number;
+}
+
+/**
+ * The window border at grid 1's cell `(row, col)`, when it is one Neovim
+ * resizes by a drag (with `mouse` on, a press there and a drag are its):
+ * the column between two windows side by side, or the row between one
+ * window and the one under it (the upper one's status line, or `─`).
+ */
+export function sashAt(
+  boxes: readonly GridBox[],
+  row: number,
+  col: number,
+): Sash | undefined {
+  const windows = boxes.filter(
+    (b) => b.grid !== 1 && !b.float && b.win !== undefined,
+  );
+  const within = (b: GridBox, r: number, c: number) =>
+    r >= b.row && r < b.row + b.height && c >= b.col && c < b.col + b.width;
+  if (windows.some((b) => within(b, row, col))) return undefined;
+  const left = windows.find(
+    (b) => b.col + b.width === col && row >= b.row && row <= b.row + b.height,
+  );
+  const right = windows.find(
+    (b) => b.col === col + 1 && row >= b.row && row <= b.row + b.height,
+  );
+  if (left && right) {
+    return { dir: "col", row: left.row, col, length: left.height + 1 };
+  }
+  const above = windows.find(
+    (b) => b.row + b.height === row && col >= b.col && col < b.col + b.width,
+  );
+  const below = windows.find(
+    (b) => b.row === row + 1 && col >= b.col && col < b.col + b.width,
+  );
+  if (above && below) {
+    return { dir: "row", row, col: above.col, length: above.width };
+  }
+  return undefined;
+}

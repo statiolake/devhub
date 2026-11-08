@@ -69,7 +69,9 @@ import {
   hitTest,
   mouseButton,
   mouseModifiers,
+  sashAt,
   type MouseTarget,
+  type Sash,
 } from "./mouse";
 import { OptionKeys } from "../surfaces/optionKey";
 import type { MacOptionIsMeta } from "../../model/macOption";
@@ -161,6 +163,13 @@ export class NeovimEditor {
         sent: number | undefined;
       }
     | undefined;
+  /**
+   * The window border under the pointer that a drag resizes (Neovim does,
+   * `sashAt`), lit as VS Code's sash after a moment; kept while dragged.
+   */
+  private readonly sash: HTMLDivElement;
+  private sashOn: Sash | undefined;
+  private sashDragged = false;
   /** What the scrollbars mark (`marks.ts`), and a count of its changes. */
   private marks: ScrollMarks = NO_MARKS;
   private marksVersion = 0;
@@ -200,7 +209,9 @@ export class NeovimEditor {
     // follows then sits at the end of the preedit, as the overlay draws it.
     this.input.setAttribute("wrap", "off");
     this.input.setAttribute("aria-label", "Neovim");
-    this.gridLayer.append(this.cursor, this.preedit, this.input);
+    this.sash = document.createElement("div");
+    this.sash.className = "nvim-sash";
+    this.gridLayer.append(this.cursor, this.preedit, this.input, this.sash);
     host.append(this.gridLayer);
     this.painter = new GridPainter(this.gridLayer, this.fontSpec());
     this.gridLayer.style.font = fontOf(this.painter.fontSpec());
@@ -786,6 +797,39 @@ export class NeovimEditor {
     this.placeScrollbars();
   }
 
+  /** Light the border a drag at grid 1's `at` would resize, or none. */
+  private placeSash(at: MouseTarget | undefined): void {
+    const sash =
+      at && at.grid === 1 && this.state.mouse
+        ? sashAt(this.boxes, at.row, at.col)
+        : undefined;
+    if (!sash && this.sashDragged) return;
+    const key = (s: Sash | undefined) =>
+      s ? `${s.dir}:${String(s.row)}:${String(s.col)}:${String(s.length)}` : "";
+    if (key(sash) === key(this.sashOn)) return;
+    this.sashOn = sash;
+    this.gridLayer.style.cursor = sash
+      ? sash.dir === "col"
+        ? "col-resize"
+        : "row-resize"
+      : "";
+    this.sash.classList.toggle("nvim-sash-on", sash !== undefined);
+    if (!sash) return;
+    const cell = this.painter.cell();
+    const st = this.sash.style;
+    if (sash.dir === "col") {
+      st.left = `${String((sash.col + 0.5) * cell.width - 2)}px`;
+      st.top = `${String(sash.row * cell.height)}px`;
+      st.width = "4px";
+      st.height = `${String(sash.length * cell.height)}px`;
+    } else {
+      st.left = `${String(sash.col * cell.width)}px`;
+      st.top = `${String((sash.row + 0.5) * cell.height - 2)}px`;
+      st.width = `${String(sash.length * cell.width)}px`;
+      st.height = "4px";
+    }
+  }
+
   /**
    * A press on a scrollbar (`scrollbar.ts`): on a mark, Neovim goes to its
    * line; on the track, it pages towards the press; on the thumb, a drag
@@ -1292,6 +1336,15 @@ export class NeovimEditor {
       const row = Math.floor((y - box.row * ch + off) / ch);
       return { ...at, row: Math.min(bottom - 1, Math.max(top, row)) };
     };
+    const screenCell = (event: MouseEvent): MouseTarget => {
+      const rect = layer.getBoundingClientRect();
+      const cell = this.painter.cell();
+      return {
+        grid: 1,
+        row: Math.max(0, Math.floor((event.clientY - rect.top) / cell.height)),
+        col: Math.max(0, Math.floor((event.clientX - rect.left) / cell.width)),
+      };
+    };
     const mouse = (
       button: string,
       action: string,
@@ -1319,13 +1372,18 @@ export class NeovimEditor {
       if (!button || !this.state.mouse) return;
       const at = target(event);
       this.dragging = { button, target: at };
+      this.sashDragged = this.sashOn !== undefined;
+      this.sash.classList.toggle("nvim-sash-dragged", this.sashDragged);
       mouse(button, "press", event, at);
     });
     layer.addEventListener("mousemove", (event) => {
-      this.hoverGrid(ownedByGui(event) ? undefined : target(event).grid);
+      const at = ownedByGui(event) ? undefined : target(event);
+      this.hoverGrid(at?.grid);
+      if (!this.dragging && !this.thumbDrag) this.placeSash(at);
     });
     layer.addEventListener("mouseleave", () => {
       this.hoverGrid(undefined);
+      if (!this.sashDragged) this.placeSash(undefined);
     });
     window.addEventListener("mousemove", (event) => {
       if (this.thumbDrag) {
@@ -1334,7 +1392,11 @@ export class NeovimEditor {
       }
       const drag = this.dragging;
       if (!drag) return;
-      const at = target(event);
+      // A press on grid 1 (a window border, a status line: Neovim resizes)
+      // drags in grid 1's cells, over the windows too.
+      const at = drag.target.grid === 1 ? screenCell(event) : target(event);
+      // The border follows the pointer as Neovim moves it.
+      if (this.sashDragged) this.placeSash(at);
       // Neovim wants drags on the grid the press was on.
       const same = at.grid === drag.target.grid ? at : drag.target;
       if (same.row === drag.target.row && same.col === drag.target.col) return;
@@ -1346,7 +1408,17 @@ export class NeovimEditor {
       const drag = this.dragging;
       if (!drag) return;
       this.dragging = undefined;
-      mouse(drag.button, "release", event, target(event));
+      if (this.sashDragged) {
+        this.sashDragged = false;
+        this.sash.classList.remove("nvim-sash-dragged");
+        this.placeSash(target(event));
+      }
+      mouse(
+        drag.button,
+        "release",
+        event,
+        drag.target.grid === 1 ? screenCell(event) : target(event),
+      );
     });
     layer.addEventListener(
       "wheel",

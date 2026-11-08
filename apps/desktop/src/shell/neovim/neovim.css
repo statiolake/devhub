@@ -881,3 +881,31 @@
   background: var(--raised, var(--surface));
   pointer-events: none;
 }
+
+/* The window border a drag resizes (Neovim does), lit after a moment as
+   VS Code's sash; at once and kept while dragged. */
+.nvim-sash {
+  position: absolute;
+  pointer-events: none;
+  z-index: 40;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.nvim-sash-on {
+  opacity: 0.9;
+  transition-delay: 300ms;
+}
+
+.nvim-sash-dragged {
+  opacity: 0.9;
+  transition-delay: 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nvim-sash {
+    transition: none;
+  }
+}

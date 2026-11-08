@@ -5,6 +5,7 @@ import {
   hitTest,
   mouseButton,
   mouseModifiers,
+  sashAt,
 } from "./mouse";
 import type { GridBox } from "./redraw";
 
@@ -110,5 +111,39 @@ describe("the pointer", () => {
 
   it("fits a grid to the view", () => {
     expect(gridSizeFor(800, 400, cell)).toEqual({ cols: 100, rows: 25 });
+  });
+});
+
+describe("window borders", () => {
+  // Two windows side by side over a third, each with a status line.
+  const boxes = [
+    box(1, 0, 0, 80, 24, 0),
+    box(2, 0, 0, 40, 10, 1),
+    box(3, 0, 41, 39, 10, 1),
+    box(4, 11, 0, 80, 11, 1),
+  ];
+
+  it("finds the column between windows side by side", () => {
+    expect(sashAt(boxes, 4, 40)).toEqual({
+      dir: "col",
+      row: 0,
+      col: 40,
+      length: 11,
+    });
+  });
+
+  it("finds a status line with a window under it", () => {
+    expect(sashAt(boxes, 10, 5)).toEqual({
+      dir: "row",
+      row: 10,
+      col: 0,
+      length: 40,
+    });
+    // The last window's status line has none under it.
+    expect(sashAt(boxes, 22, 5)).toBeUndefined();
+  });
+
+  it("is nothing inside a window", () => {
+    expect(sashAt(boxes, 4, 10)).toBeUndefined();
   });
 });

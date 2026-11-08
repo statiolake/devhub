@@ -340,9 +340,17 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   Paste (Cmd+V, the menu) goes to `nvim_paste`.
 - `mouse.ts` — `nvim_input_mouse` with the grid under the pointer (floats
   first; a framed float only inside its lines, which toward a float edge to
-  edge with it go on to its cells' edge), drags kept on the press's grid,
-  a window's vertical wheel in pixels (above); sideways, with a modifier
-  or over anything else, pixels accumulated into line steps.
+  edge with it go on to its cells' edge), drags kept on the press's grid
+  (a press on grid 1 — a window border, a status line — drags in grid 1's
+  cells over the windows too, so Neovim resizes: before, such a drag
+  stopped at the first window it crossed), a window's vertical wheel in
+  pixels (above); sideways, with a modifier or over anything else, pixels
+  accumulated into line steps. A border a drag resizes (`sashAt`: the
+  column between windows side by side, the row between a window and the
+  one under it) gives the pointer `col-resize`/`row-resize` and, after
+  300 ms, a 4-pixel line in the accent colour, as VS Code's sash; lit at
+  once and following the pointer while dragged. Keys: `<C-w><`, `<C-w>>`,
+  `<C-w>+`, `<C-w>-`, `<C-w>=`.
 - Resize: the view's size over the cell size, `nvim_ui_try_resize`.
 - Focus: `nvim_ui_set_focus` (FocusGained/FocusLost), told once per
   change. The editor has the keyboard when its textarea is focused _and_
