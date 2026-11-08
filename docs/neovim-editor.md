@@ -217,7 +217,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     about 6 ms (15 000 cells at `devicePixelRatio` 2: about 4 ms); there is
     no glyph atlas, and none has been needed.
 - The cursor follows `guicursor`: its shape, its highlight, and its blink
-  (`blinkwait`/`blinkon`/`blinkoff`, restarted on every move). It glides to a
+  (`blinkwait`/`blinkon`/`blinkoff`, restarted on every move; each edge
+  fades over 120 ms of its phase). A block's corners are a little rounded. It glides to a
   new cell in 70 ms outside Insert mode (none with reduced motion).
 - Each window gets an overlay scrollbar from `win_viewport`, shown while the
   view moves and faded out after.
@@ -598,10 +599,11 @@ ENTER`): a terminal row at the bottom of the editor. With `ext_messages`
    window edge).
 10. _Diff filler lines and `diff` fillchars_ (`-----` in `DiffDelete`): draw
     as a hatched band; folds' `+--  12 lines` as a fold bar. Low risk.
-11. _The block cursor and its cell_: a solid block over the character,
-    redrawn in reverse. Draw a rounded caret/block with the character in
-    the cursor's foreground and a soft blink (already follows `guicursor`).
-    Low risk.
+11. _The block cursor and its cell_ — done: the block's corners are a
+    little rounded (a bar's ends too), it still shows the character in the
+    cursor's foreground, and the blink (`guicursor`'s) fades in and out
+    over 120 ms of its phases, as VS Code's "smooth" blink; a hard blink
+    with reduced motion.
 12. _Blended backdrops_ (snacks' `backdrop`, a full-screen float with
     `winblend`): drawn cell for cell with each character's ground mixed.
     Recognise a blank full-screen float with `winblend` and draw a dim

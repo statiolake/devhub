@@ -81,6 +81,9 @@ export interface EditorSettings {
   readonly macOptionIsMeta: MacOptionIsMeta;
 }
 
+/** How long the cursor's blink takes to fade out or in. */
+const BLINK_FADE_MS = 120;
+
 export class NeovimEditor {
   readonly state: NeovimUiState = initialUiState(themeColors());
   private pending: RedrawChanges = emptyChanges();
@@ -461,12 +464,18 @@ export class NeovimEditor {
       return;
     }
     const period = on + off;
+    // A soft blink, as VS Code's "smooth" one: each edge fades over a
+    // moment of its phase (none with reduced motion), still on for `on`.
+    const fade = matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? 0
+      : Math.min(BLINK_FADE_MS, on / 2, off / 2);
     this.blink = this.cursor.animate(
       [
         { opacity: 1, offset: 0 },
         { opacity: 1, offset: on / period },
-        { opacity: 0, offset: on / period },
-        { opacity: 0, offset: 1 },
+        { opacity: 0, offset: (on + fade) / period },
+        { opacity: 0, offset: (period - fade) / period },
+        { opacity: 1, offset: 1 },
       ],
       { duration: period, delay: wait, iterations: Infinity },
     );
@@ -522,6 +531,12 @@ export class NeovimEditor {
     const width = cell.width * (wide ? 2 : 1);
     const s = this.cursor.style;
     s.left = `${String(at.x)}px`;
+    // Softened corners, as a GUI editor's caret: a block's a little
+    // rounded, a bar's ends round.
+    s.borderRadius =
+      shape === "block"
+        ? `${String(Math.min(3, cell.width / 4))}px`
+        : `${String(Math.min(1, cell.width / 8))}px`;
     s.background = cssColor(colors.bg);
     s.color = cssColor(colors.fg);
     s.lineHeight = `${String(cell.height)}px`;
