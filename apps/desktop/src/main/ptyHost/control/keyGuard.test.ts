@@ -7,6 +7,7 @@ const LINES = [
 	'bind-key    -T prefix         W                         confirm-before -p "kill this session? (y/n)" kill-session',
 	'bind-key    -T prefix         m                         display-popup -E -w 80% -h 60% "target=$(fzf)"',
 	"bind-key    -T prefix         [                         copy-mode",
+	"bind-key    -T prefix         =                         choose-buffer -Z",
 	"bind-key    -T prefix         w                         choose-tree -Zw",
 	"bind-key    -T prefix         z                         resize-pane -Z",
 	"bind-key    -T prefix         C-q                       send-prefix",
@@ -59,19 +60,20 @@ describe("the key guard", () => {
 			r.route("C-q", 0);
 			const route = r.route(key, 0);
 			expect(route.send).toEqual([]);
-			expect(route.prompt?.replay).toMatch(
-				/^(confirm-before|command-prompt) -b /,
-			);
+			expect(route.own).toMatch(/^(confirm-before|command-prompt) /);
 			expect(route.resetTable).toBe(false);
 		}
 		r.route("C-q", 0);
-		expect(r.route("w", 0).refused?.keys).toBe("C-q w");
+		expect(r.route("w", 0).own).toBe("choose-tree -Zw");
+		// What DevHub does not draw yet is refused.
+		r.route("C-q", 0);
+		expect(r.route("=", 0).refused?.command).toBe("choose-buffer");
 		// A popup is DevHub's to run (`popup.ts`): handed over, not sent.
 		r.route("C-q", 0);
 		const popup = r.route("m", 0);
 		expect(popup.send).toEqual([]);
-		expect(popup.popup).toMatchObject({ closeOnExit: 1, width: "80%" });
-		expect(r.route("M-m", 0).popup).toBeDefined();
+		expect(popup.own).toContain("display-popup");
+		expect(r.route("M-m", 0).own).toBe("popup -E htop");
 		// The prefix's own send-prefix still goes.
 		r.route("C-q", 0);
 		expect(r.route("C-q", 0)).toEqual({ send: ["C-q", "C-q"] });
@@ -87,7 +89,7 @@ describe("the key guard", () => {
 		r.route("C-q", 2000);
 		expect(r.route("g", 2000)).toEqual({ send: ["C-q", "g"] });
 		const route = r.route("p", 2000);
-		expect(route.refused?.command).toBe("display-panes");
+		expect(route.own).toBe("display-panes");
 		expect(route.resetTable).toBe(true);
 		r.route("C-q", 3000);
 		r.route("g", 3000);

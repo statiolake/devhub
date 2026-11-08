@@ -42,6 +42,17 @@ import type { LibGhosttyVt, VtPane } from "../vt/libghosttyVt.js";
 import { KeyRouter, parseBindings, waitingCommand } from "./keyGuard.js";
 import { PopupJob, popupInput, type PopupPty } from "./popup.js";
 import {
+	ChooserSession,
+	chooserOf,
+	displayPanesOf,
+	killConfirm,
+	templateReplace,
+	type ChooserArgs,
+	type ChooserStep,
+	type DisplayPanesArgs,
+	type TreeNode,
+} from "./chooser.js";
+import {
 	MenuSession,
 	ifShellOf,
 	keptItems,
@@ -119,6 +130,14 @@ const FIELD = "\u001f";
 const PANE_FACTS = "devhub-pane";
 const PANE_FACTS_FORMAT = `#{pane_in_mode}${FIELD}#{@devhub-nvim}`;
 const NAMED = new TextEncoder().encode(NVIM_NAMED_OSC);
+
+/** A rectangle in cells of the window. */
+interface Box {
+	readonly x: number;
+	readonly y: number;
+	readonly width: number;
+	readonly height: number;
+}
 
 /** Where a click that opened something was: its target, and its cell. */
 interface MouseAt {
@@ -228,6 +247,28 @@ export class ControlClient {
 		  }
 		| undefined;
 	#menuSerial = 0;
+	/** The picker open now (`chooser.ts`): the keys are its. */
+	#chooser:
+		| {
+				readonly id: number;
+				readonly session: ChooserSession;
+				readonly box: Box;
+				readonly preview: Box;
+				readonly vt: VtPane;
+				timer: unknown;
+				shown: string;
+		  }
+		| undefined;
+	#chooserSerial = 0;
+	/** `display-panes` showing now: the next key is its. */
+	#numbers:
+		| {
+				readonly id: number;
+				readonly args: DisplayPanesArgs;
+				readonly panes: readonly { pane: number; index: number }[];
+				timer: unknown;
+		  }
+		| undefined;
 	/** What Tab completes to, read once: commands and aliases, options. */
 	#completions: Promise<{ commands: string[]; options: string[] }> | undefined;
 
@@ -275,6 +316,11 @@ export class ControlClient {
 				return;
 			case "mouse-menu":
 				this.#mouseMenu(message);
+				return;
+			case "chooser":
+				if (message.action === "close") this.#chooserStep({ kind: "close" });
+				else if (this.#chooser !== undefined)
+					this.#chooserStep(this.#chooser.session.choose(message.index ?? -1));
 				return;
 			case "select-pane":
 				void this.#command(["select-pane", "-t", `%${String(message.pane)}`]);
@@ -497,6 +543,23 @@ export class ControlClient {
 			this.#opening.push(...keys);
 			return;
 		}
+		if (this.#numbers !== undefined) {
+			const [key, ...after] = keys;
+			if (key === undefined) return;
+			this.#numbersKey(key);
+			this.#keys(after);
+			return;
+		}
+		if (this.#chooser !== undefined) {
+			for (const [index, key] of keys.entries()) {
+				this.#chooserStep(this.#chooser.session.key(key));
+				if (this.#chooser === undefined) {
+					this.#keys(keys.slice(index + 1));
+					return;
+				}
+			}
+			return;
+		}
 		if (this.#menu !== undefined) {
 			for (const [index, key] of keys.entries()) {
 				this.#menuStep(this.#menu.session.key(key));
@@ -539,12 +602,7 @@ export class ControlClient {
 		for (const [index, key] of keys.entries()) {
 			const route = this.#router.route(key, Date.now());
 			send.push(...route.send);
-			if (
-				route.popup !== undefined ||
-				route.prompt !== undefined ||
-				route.menu !== undefined ||
-				route.conditional !== undefined
-			) {
+			if (route.own !== undefined) {
 				flush();
 				if (route.resetTable === true) {
 					void this.#command([
@@ -555,14 +613,7 @@ export class ControlClient {
 						"root",
 					]);
 				}
-				const rest = keys.slice(index + 1);
-				if (route.popup !== undefined) void this.#openPopup(route.popup, rest);
-				else if (route.prompt !== undefined)
-					void this.#openPrompt(route.prompt, rest);
-				else if (route.menu !== undefined)
-					void this.#openMenu(route.menu, rest);
-				else if (route.conditional !== undefined)
-					void this.#hold(rest, this.#conditional(route.conditional));
+				void this.#hold(keys.slice(index + 1), this.#dispatch(route.own));
 				return;
 			}
 			if (route.refused !== undefined) {
@@ -849,6 +900,10 @@ export class ControlClient {
 		if (prompt !== undefined) return this.#openPrompt(prompt, []);
 		const menu = menuOf(command);
 		if (menu !== undefined) return this.#openMenu(menu, [], mouse);
+		const chooser = chooserOf(command);
+		if (chooser !== undefined) return this.#openChooser(chooser);
+		const numbers = displayPanesOf(command);
+		if (numbers !== undefined) return this.#openNumbers(numbers);
 		const conditional = ifShellOf(command);
 		if (conditional !== undefined && waitingCommand(command) !== undefined)
 			return this.#conditional(conditional, mouse);
@@ -1042,6 +1097,265 @@ export class ControlClient {
 	}
 
 	/**
+	 * A picker over tmux's tree (`chooser.ts`): sessions, windows and panes
+	 * as tmux lists them, each line in tmux's choose-tree format, `-f` by
+	 * tmux; the chosen item's pane shown beside it, read again while it is.
+	 */
+	async #openChooser(args: ChooserArgs): Promise<void> {
+		const F = FIELD;
+		const filter = args.filter === undefined ? [] : ["-f", args.filter];
+		const [here, sessions, windows, panes] = await Promise.all([
+			this.#command([
+				"display-message",
+				"-p",
+				`#{session_id}${F}#{window_id}${F}#{pane_id}`,
+			]),
+			this.#command([
+				"list-sessions",
+				"-F",
+				`#{session_id}${F}#{session_name}${F}#{session_name}: #{session_windows} windows#{?session_grouped, (group #{session_group}: #{session_group_list}),}#{?session_attached, (attached),}`,
+			]),
+			this.#command([
+				"list-windows",
+				"-a",
+				"-F",
+				`#{session_id}${F}#{window_id}${F}#{window_index}${F}#{window_index}: #{window_name}#{window_flags}#{?#{&&:#{==:#{window_panes},1},#{&&:#{pane_title},#{!=:#{pane_title},#{host_short}}}},: "#{pane_title}",}`,
+			]),
+			this.#command([
+				"list-panes",
+				"-a",
+				...filter,
+				"-F",
+				`#{session_id}${F}#{window_id}${F}#{pane_id}${F}#{pane_index}: #{pane_current_command}#{?pane_active,*,}#{?pane_marked,M,}#{?#{&&:#{pane_title},#{!=:#{pane_title},#{host_short}}},: "#{pane_title}",}`,
+			]),
+		]);
+		if (this.#ended || !sessions.ok || !windows.ok || !panes.ok) return;
+		const [curSession, curWindow, curPane] = (here.lines[0] ?? "").split(F);
+		const roots: TreeNode[] = [];
+		const byId = new Map<
+			string,
+			{ node: TreeNode; name: string; index?: string }
+		>();
+		for (const line of sessions.lines) {
+			const [id, name, ...text] = line.split(F);
+			const node: TreeNode = {
+				kind: "session",
+				id,
+				target: `=${name}:`,
+				text: text.join(F),
+				children: [],
+				current: id === curSession,
+			};
+			byId.set(id, { node, name });
+			roots.push(node);
+		}
+		for (const line of windows.lines) {
+			const [sessionId, id, index, ...text] = line.split(F);
+			const parent = byId.get(sessionId);
+			if (parent === undefined) continue;
+			const node: TreeNode = {
+				kind: "window",
+				id: `${sessionId}${id}`,
+				target: `=${parent.name}:${index}.`,
+				text: text.join(F),
+				children: [],
+				current: id === curWindow && sessionId === curSession,
+			};
+			parent.node.children.push(node);
+			byId.set(`${sessionId}${id}`, { node, name: parent.name, index });
+		}
+		for (const line of panes.lines) {
+			const [sessionId, windowId, id, ...text] = line.split(F);
+			const parent = byId.get(`${sessionId}${windowId}`);
+			if (parent === undefined) continue;
+			parent.node.children.push({
+				kind: "pane",
+				id: `${sessionId}${id}`,
+				target: `=${parent.name}:${parent.index ?? ""}.${id}`,
+				text: text.join(F),
+				children: [],
+				current: id === curPane && sessionId === curSession,
+			});
+		}
+		// `-f` filters the panes: a window or session left with none goes too.
+		const kept =
+			args.filter === undefined
+				? roots
+				: roots
+						.map((session) => ({
+							...session,
+							children: session.children.filter((w) => w.children.length > 0),
+						}))
+						.filter((session) => session.children.length > 0);
+		const session = new ChooserSession(args, kept);
+		// The picker's frame: most of the terminal; the tree on its left, the
+		// chosen item's pane on the right, a line for the filter at its top.
+		const cols = this.#cols;
+		const rows = this.#rows;
+		const width = Math.max(20, Math.min(cols, Math.floor(cols * 0.9)));
+		const height = Math.max(6, Math.min(rows, Math.floor(rows * 0.85)));
+		const box = {
+			x: Math.floor((cols - width) / 2),
+			y: Math.floor((rows - height) / 2),
+			width,
+			height,
+		};
+		const treeWidth = Math.max(16, Math.floor(width * 0.4));
+		const preview = {
+			x: box.x + treeWidth + 1,
+			y: box.y + 2,
+			width: Math.max(1, width - treeWidth - 2),
+			height: Math.max(1, height - 3),
+		};
+		this.#chooser?.vt.dispose();
+		const vt = this.#o.vt.open(preview.width, preview.height, 0);
+		if (this.#colors !== undefined) vt.setColors(this.#colors);
+		this.#chooser = {
+			id: ++this.#chooserSerial,
+			session,
+			box,
+			preview,
+			vt,
+			timer: undefined,
+			shown: "",
+		};
+		this.#postChooser();
+		void this.#readPreview();
+	}
+
+	/** The chosen item's pane, read with `capture-pane`, again every 500 ms. */
+	async #readPreview(): Promise<void> {
+		const chooser = this.#chooser;
+		if (chooser === undefined || this.#ended) return;
+		const timers = this.#o.timers ?? NODE_TIMERS;
+		if (chooser.timer !== undefined) timers.clear(chooser.timer);
+		chooser.timer = timers.set(() => {
+			chooser.timer = undefined;
+			void this.#readPreview();
+		}, 500);
+		const node = chooser.session.chosen;
+		if (node === undefined) return;
+		const target = node.id.slice(
+			node.id.search(/[@%]/) >= 0 ? node.id.search(/[@%]/) : 0,
+		);
+		const capture = await this.#command([
+			"capture-pane",
+			"-p",
+			"-e",
+			"-N",
+			"-t",
+			target,
+		]);
+		if (this.#chooser !== chooser || !capture.ok) return;
+		chooser.vt.reset();
+		chooser.vt.write(
+			new TextEncoder().encode(
+				`\u001b[?7l\u001b[H${capture.lines.slice(0, chooser.preview.height).join("\r\n")}`,
+			),
+		);
+		chooser.shown = node.id;
+		this.#schedule();
+	}
+
+	#postChooser(): void {
+		const chooser = this.#chooser;
+		if (chooser === undefined || this.#ended) return;
+		this.#o.post({
+			kind: "chooser",
+			id: chooser.id,
+			...chooser.box,
+			preview: chooser.preview,
+			filter: chooser.session.filter,
+			rows: chooser.session.rows(),
+			choice: chooser.session.choice,
+		});
+	}
+
+	#chooserStep(step: ChooserStep): void {
+		const chooser = this.#chooser;
+		if (chooser === undefined) return;
+		switch (step.kind) {
+			case "unchanged":
+				return;
+			case "changed":
+				this.#postChooser();
+				if (chooser.session.chosen?.id !== chooser.shown)
+					void this.#readPreview();
+				return;
+			case "close":
+				this.#closeChooser();
+				return;
+			case "choose":
+				this.#closeChooser();
+				void this.#hold([], this.#dispatch(step.command));
+				return;
+			case "kill":
+				// tmux asks first, on its prompt line: so does DevHub.
+				this.#closeChooser();
+				void this.#hold([], this.#dispatch(killConfirm(step.node)));
+				return;
+		}
+	}
+
+	#closeChooser(): void {
+		const chooser = this.#chooser;
+		if (chooser === undefined) return;
+		this.#chooser = undefined;
+		if (chooser.timer !== undefined)
+			(this.#o.timers ?? NODE_TIMERS).clear(chooser.timer);
+		chooser.vt.dispose();
+		if (!this.#ended) this.#o.post({ kind: "chooser-closed", id: chooser.id });
+	}
+
+	/**
+	 * `display-panes`: each shown pane's index over it, until a key or
+	 * `display-panes-time`; a digit runs the template with that index.
+	 */
+	async #openNumbers(args: DisplayPanesArgs): Promise<void> {
+		const [listing, time] = await Promise.all([
+			this.#command(["list-panes", "-F", `#{pane_id}${FIELD}#{pane_index}`]),
+			this.#command(["display-message", "-p", "#{display-panes-time}"]),
+		]);
+		if (!listing.ok || this.#ended) return;
+		const panes = listing.lines.map((line) => {
+			const [id, index] = line.split(FIELD);
+			return { pane: Number(id.slice(1)), index: Number(index) };
+		});
+		const ms = args.duration ?? (Number(time.lines[0]) || 1000);
+		const timers = this.#o.timers ?? NODE_TIMERS;
+		const id = ++this.#chooserSerial;
+		this.#numbers = {
+			id,
+			args,
+			panes,
+			timer: ms > 0 ? timers.set(() => this.#closeNumbers(), ms) : undefined,
+		};
+		this.#o.post({ kind: "display-panes", id, panes });
+	}
+
+	#numbersKey(key: string): void {
+		const numbers = this.#numbers;
+		if (numbers === undefined) return;
+		this.#closeNumbers();
+		if (numbers.args.noKeys || !/^[0-9]$/.test(key)) return;
+		if (!numbers.panes.some((p) => p.index === Number(key))) return;
+		void this.#hold(
+			[],
+			this.#dispatch(templateReplace(numbers.args.template, key)),
+		);
+	}
+
+	#closeNumbers(): void {
+		const numbers = this.#numbers;
+		if (numbers === undefined) return;
+		this.#numbers = undefined;
+		if (numbers.timer !== undefined)
+			(this.#o.timers ?? NODE_TIMERS).clear(numbers.timer);
+		if (!this.#ended)
+			this.#o.post({ kind: "display-panes-closed", id: numbers.id });
+	}
+
+	/**
 	 * A right-click the page did not give the pane's program: tmux's
 	 * `MouseDown3Pane` (or, on a window's tab, `MouseDown3Status`) binding,
 	 * with the click as its mouse.
@@ -1109,6 +1423,10 @@ export class ControlClient {
 		const text = new TextDecoder().decode(bytes);
 		if (this.#opening !== undefined) {
 			this.#opening.push({ text });
+			return true;
+		}
+		if (this.#chooser !== undefined) {
+			this.#chooserStep(this.#chooser.session.text(untilControl(text)));
 			return true;
 		}
 		const prompt = this.#prompt;
@@ -1600,6 +1918,12 @@ export class ControlClient {
 				frame: popupFrame,
 			});
 		}
+		const chooser = this.#chooser;
+		if (chooser !== undefined) {
+			const frame = chooser.vt.read(false);
+			if (frame.dirty.length > 0 || frame.styles.length > 0)
+				this.#o.post({ kind: "chooser-preview", id: chooser.id, frame });
+		}
 		for (const box of this.#shownPanes()) {
 			if (this.#seq - this.#acked >= MAX_UNACKED) return;
 			const pane = this.#panes.get(box.pane);
@@ -1640,6 +1964,8 @@ export class ControlClient {
 		this.#popup?.close();
 		this.#prompt = undefined;
 		this.#menu = undefined;
+		this.#closeChooser();
+		this.#closeNumbers();
 		for (const check of this.#modeChecks.values()) {
 			(this.#o.timers ?? NODE_TIMERS).clear(check);
 		}

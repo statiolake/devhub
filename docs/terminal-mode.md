@@ -598,6 +598,28 @@ read the mouse's word or line (`#{mouse_word}`) expand to nothing, since a
 format DevHub asks tmux for has no mouse event, and are left out as tmux
 leaves out any empty item.
 
+**`choose-tree`, `find-window` and `display-panes` are DevHub's**
+(`main/ptyHost/control/chooser.ts`). The picker is a float in the popup's
+frame (`chooser.css`): a filter line on top, the tree on the left
+(sessions, windows and panes as `list-sessions`/`list-windows -a`/`list-panes
+-a` give them, each line in tmux's choose-tree format, `-f` applied by tmux
+to the panes, `-s`/`-w` collapsing as tmux does, the client's own session
+and window open), and on the right the chosen item's pane, read with
+`capture-pane -e` into an engine of its own every 500 ms while it is chosen
+and drawn by the painter (grid 0). What is typed filters it at once
+(`find-window`'s match is where the filter starts): a letter cannot be both
+a filter character and a command, so tmux's choose-mode letters move to
+their named or Ctrl keys — Up/Down and `C-p`/`C-n`, Left/Right to close and
+open (Left on a closed item goes to its parent, as tmux), PPage/NPage,
+Home/End, Enter, Escape/`C-c`/`C-g`, `C-x` for `x` (kill, asked first on the
+prompt line with tmux's wording), Backspace and `C-u` for the filter.
+Enter runs the binding's template (`switch-client -Zt '%%'` by default) with
+`%%` filled by a port of tmux's `cmd_template_replace` and the target named
+as `window_tree_get_target` names it. Tags, sort orders and `-F`/`-K`
+formats are not drawn. `display-panes` draws each shown pane's index large
+in its middle for `-d` or `display-panes-time`; a digit runs its template
+(`select-pane -t '%%'`), any other key closes it.
+
 The rest, until phase 3 draws them, is not let do that
 (`main/ptyHost/control/keyGuard.ts`):
 

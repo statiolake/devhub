@@ -95,6 +95,14 @@ export interface ControlView {
     | undefined;
   /** The `command-prompt` or `confirm-before` open now: one line at the foot. */
   prompt: Omit<Extract<ControlToPage, { kind: "prompt" }>, "kind"> | undefined;
+  /** The picker open now (`choose-tree`), its preview in `CHOOSER_GRID`. */
+  chooser:
+    | Omit<Extract<ControlToPage, { kind: "chooser" }>, "kind">
+    | undefined;
+  /** `display-panes`: the indexes drawn over the panes. */
+  numbers:
+    | Omit<Extract<ControlToPage, { kind: "display-panes" }>, "kind">
+    | undefined;
   /** The `display-menu` open now. */
   menu: Omit<Extract<ControlToPage, { kind: "menu" }>, "kind"> | undefined;
   readonly modes: Map<number, PaneModes>;
@@ -121,6 +129,8 @@ export function newControlView(fallback: {
     popup: undefined,
     prompt: undefined,
     menu: undefined,
+    chooser: undefined,
+    numbers: undefined,
     modes: new Map(),
     hlIds: new Map(),
   };
@@ -128,6 +138,8 @@ export function newControlView(fallback: {
 
 /** The popup's grid: grid 1, which no pane has (`gridOf`). */
 export const POPUP_GRID = 1;
+/** The picker's preview: grid 0, which neither a pane nor a popup has. */
+export const CHOOSER_GRID = 0;
 /** The popup's styles, apart from every pane's. */
 const POPUP_STYLES = "popup";
 
@@ -256,6 +268,38 @@ export function applyControl(
       if (view.menu?.id === message.id) view.menu = undefined;
       changes.cursor = true;
       return changes;
+    case "chooser": {
+      const { kind: _, ...chooser } = message;
+      const fresh = view.chooser?.id !== message.id;
+      view.chooser = chooser;
+      changes.layout ||= fresh;
+      changes.cursor = true;
+      return changes;
+    }
+    case "chooser-preview":
+      if (view.chooser?.id === message.id) {
+        applyFrame(view, "chooser", CHOOSER_GRID, message.frame, changes);
+        changes.layout = true;
+      }
+      return changes;
+    case "chooser-closed":
+      if (view.chooser?.id === message.id) {
+        view.chooser = undefined;
+        view.state.grids.delete(CHOOSER_GRID);
+        changes.layout = true;
+        changes.cursor = true;
+      }
+      return changes;
+    case "display-panes": {
+      const { kind: _, ...numbers } = message;
+      view.numbers = numbers;
+      changes.cursor = true;
+      return changes;
+    }
+    case "display-panes-closed":
+      if (view.numbers?.id === message.id) view.numbers = undefined;
+      changes.cursor = true;
+      return changes;
     case "notice":
     case "ended":
       return changes;
@@ -281,7 +325,23 @@ export function paneBoxes(view: ControlView): GridBox[] {
             win: undefined,
           },
         ];
-  return [...panesBoxes(view), ...popupBox];
+  const chooser = view.chooser;
+  const chooserBox: GridBox[] =
+    chooser === undefined || !view.state.grids.has(CHOOSER_GRID)
+      ? []
+      : [
+          {
+            grid: CHOOSER_GRID,
+            row: chooser.preview.y,
+            col: chooser.preview.x,
+            width: chooser.preview.width,
+            height: chooser.preview.height,
+            z: 60,
+            float: true,
+            win: undefined,
+          },
+        ];
+  return [...panesBoxes(view), ...popupBox, ...chooserBox];
 }
 
 function panesBoxes(view: ControlView): GridBox[] {

@@ -92,6 +92,17 @@ export interface SessionPane {
  */
 export const NVIM_NAMED_OSC = "\u001b]6973;devhub-nvim\u0007";
 
+/** A row of the picker's tree. */
+export interface ChooserRow {
+	readonly depth: number;
+	readonly text: string;
+	readonly kind: "session" | "window" | "pane";
+	/** Absent: nothing under it. */
+	readonly expanded?: boolean;
+	/** The client's own session, window or pane. */
+	readonly current: boolean;
+}
+
 /** A menu's item as the page draws it; no name is a separator. */
 export interface MenuItem {
 	readonly name?: string;
@@ -192,6 +203,45 @@ export type ControlToPage =
 	  }
 	| { readonly kind: "menu-closed"; readonly id: number }
 	/**
+	 * A `choose-tree` or `find-window` DevHub draws
+	 * (`ptyHost/control/chooser.ts`): its frame in cells of the window, the
+	 * tree's rows as shown, and where the chosen item's pane is drawn
+	 * (`chooser-preview` frames). While one is open the keys are its.
+	 */
+	| {
+			readonly kind: "chooser";
+			readonly id: number;
+			readonly x: number;
+			readonly y: number;
+			readonly width: number;
+			readonly height: number;
+			readonly preview: {
+				readonly x: number;
+				readonly y: number;
+				readonly width: number;
+				readonly height: number;
+			};
+			readonly filter: string;
+			readonly rows: readonly ChooserRow[];
+			readonly choice: number;
+	  }
+	| {
+			readonly kind: "chooser-preview";
+			readonly id: number;
+			readonly frame: VtFrame;
+	  }
+	| { readonly kind: "chooser-closed"; readonly id: number }
+	/** `display-panes`: each shown pane's index, drawn over it. */
+	| {
+			readonly kind: "display-panes";
+			readonly id: number;
+			readonly panes: readonly {
+				readonly pane: number;
+				readonly index: number;
+			}[];
+	  }
+	| { readonly kind: "display-panes-closed"; readonly id: number }
+	/**
 	 * Something DevHub did not do and says so quietly: a binding whose
 	 * command tmux does not draw for a control client (`keyGuard.ts`).
 	 */
@@ -212,6 +262,12 @@ export type PageToControl =
 	/** The open menu: an item clicked, or a click outside it. */
 	| {
 			readonly kind: "menu";
+			readonly action: "choose" | "close";
+			readonly index?: number;
+	  }
+	/** The open picker: a row clicked, or a click outside it. */
+	| {
+			readonly kind: "chooser";
 			readonly action: "choose" | "close";
 			readonly index?: number;
 	  }
@@ -329,6 +385,15 @@ export function validateControlRequest(value: unknown): ControlRequest {
 				kind: "menu",
 				action: m.action,
 				...(m.index === undefined ? {} : { index: count(m.index, 10_000) }),
+			};
+			break;
+		case "chooser":
+			if (m.action !== "choose" && m.action !== "close")
+				throw new TerminalFailure("invalid_request");
+			message = {
+				kind: "chooser",
+				action: m.action,
+				...(m.index === undefined ? {} : { index: count(m.index) }),
 			};
 			break;
 		case "mouse-menu":

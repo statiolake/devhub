@@ -77,12 +77,18 @@ function page() {
   const notices: string[] = [];
   let prompt: Extract<ControlToPage, { kind: "prompt" }> | undefined;
   let menu: Extract<ControlToPage, { kind: "menu" }> | undefined;
+  let chooser: Extract<ControlToPage, { kind: "chooser" }> | undefined;
+  let numbers: Extract<ControlToPage, { kind: "display-panes" }> | undefined;
   const post = (message: ControlToPage) => {
     if (message.kind === "layout") layout = message;
     else if (message.kind === "prompt") prompt = message;
     else if (message.kind === "prompt-closed") prompt = undefined;
     else if (message.kind === "menu") menu = message;
     else if (message.kind === "menu-closed") menu = undefined;
+    else if (message.kind === "chooser") chooser = message;
+    else if (message.kind === "chooser-closed") chooser = undefined;
+    else if (message.kind === "display-panes") numbers = message;
+    else if (message.kind === "display-panes-closed") numbers = undefined;
     else if (message.kind === "ended") ended = message.reason;
     else if (message.kind === "notice") notices.push(message.text);
     else if (message.kind === "pane") {
@@ -108,6 +114,12 @@ function page() {
     },
     get menu() {
       return menu;
+    },
+    get chooser() {
+      return chooser;
+    },
+    get numbers() {
+      return numbers;
     },
   };
 }
@@ -309,6 +321,47 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
     await until("the end", () => view.ended);
   }, 20000);
 
+  it("draws choose-tree and display-panes, and tmux runs the choice", async () => {
+    const socket = `devhub-choose-${String(process.pid)}`;
+    sockets.push(socket);
+    tmux(socket, "new-session", "-d", "-s", "c", "-x", "80", "-y", "24", "sh");
+    tmux(socket, "split-window", "-t", "c", "sh");
+    const view = page();
+    const client = new ControlClient({
+      process: controlProcess(socket, "c"),
+      vt: lib,
+      cols: 80,
+      rows: 24,
+      post: view.post,
+      ended: () => undefined,
+    });
+    await until("two panes", () => view.layout?.panes.length === 2);
+    const [top] = view.layout?.panes ?? [];
+    client.receive({ kind: "keys", keys: ["C-q", "w"] });
+    const picker = await until("the picker", () => view.chooser);
+    // The client's own pane, the second, is where the keys start.
+    expect(picker.rows[picker.choice]?.text).toMatch(/^1: sh\*/);
+    client.receive({ kind: "keys", keys: ["Up", "Enter"] });
+    await until("the first pane chosen", () =>
+      view.layout?.panes.find((p) => p.active)?.pane === top.pane
+        ? true
+        : undefined,
+    );
+    expect(view.chooser).toBeUndefined();
+    client.receive({ kind: "keys", keys: ["C-q", "q"] });
+    expect((await until("the numbers", () => view.numbers)).panes).toHaveLength(
+      2,
+    );
+    client.receive({ kind: "keys", keys: ["1"] });
+    await until("the second pane chosen", () =>
+      view.layout?.panes.find((p) => p.active)?.pane !== top.pane
+        ? true
+        : undefined,
+    );
+    client.stop();
+    await until("the end", () => view.ended);
+  }, 20000);
+
   it("refuses the bindings that would wait on it, and is never held by them", async () => {
     const socket = `devhub-guard-${String(process.pid)}`;
     sockets.push(socket);
@@ -324,12 +377,12 @@ describe.skipIf(TMUX === undefined)("a tmux control client", () => {
       ended: () => undefined,
     });
     const pane = await until("the pane", () => view.layout?.panes[0]?.pane);
-    // A chooser is said, not run, and so is a popup with no pty to run it
-    // in (`ControlClientOptions.popup`): the client answers on.
-    client.receive({ kind: "keys", keys: ["C-q", "m", "C-q", "q"] });
+    // A buffer chooser is said, not run, and so is a popup with no pty to
+    // run it in (`ControlClientOptions.popup`): the client answers on.
+    client.receive({ kind: "keys", keys: ["C-q", "m", "C-q", "="] });
     await until("two notices", () => view.notices.length === 2);
     expect(view.notices[0]).toContain("display-popup");
-    expect(view.notices[1]).toContain("display-panes");
+    expect(view.notices[1]).toContain("choose-buffer");
     client.receive({
       kind: "bytes",
       bytes: new TextEncoder().encode("echo still-here\r"),

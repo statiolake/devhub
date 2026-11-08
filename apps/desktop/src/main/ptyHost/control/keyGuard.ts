@@ -15,15 +15,14 @@
  * bindings tmux lists (`list-keys`), and looks a key up before it sends it:
  * the prefix is held until the key after it says which binding it is, and a
  * binding that would wait is not sent but said (`KeyRoute.refused`); one
- * that is a `display-popup` is handed to DevHub to run (`KeyRoute.popup`,
- * `popup.ts`), one that is a `command-prompt` or `confirm-before` to DevHub
- * to ask (`KeyRoute.prompt`, `prompt.ts`). Pure:
+ * that DevHub draws itself is handed to it (`KeyRoute.own`). Pure:
  * `controlClient.ts` reads the bindings and sends.
  */
 
-import { ifShellOf, menuOf, type IfShellArgs, type MenuArgs } from "./menu.js";
-import { promptOf, type PromptArgs } from "./prompt.js";
-import { popupOf, type PopupArgs } from "./tmuxCommand.js";
+import { chooserOf, displayPanesOf } from "./chooser.js";
+import { ifShellOf, menuOf } from "./menu.js";
+import { promptOf } from "./prompt.js";
+import { popupOf } from "./tmuxCommand.js";
 
 export interface Binding {
 	readonly command: string;
@@ -88,27 +87,30 @@ export interface KeyRoute {
 	/** A binding that would wait on the client, not sent. */
 	readonly refused?: { readonly keys: string; readonly command: string };
 	/**
-	 * A binding that is one `display-popup`: DevHub runs it itself
-	 * (`popup.ts`), not sent.
+	 * A binding DevHub does itself, not sent: one `display-popup`
+	 * (`popup.ts`), `command-prompt` or `confirm-before` (`prompt.ts`),
+	 * `display-menu` (`menu.ts`), `choose-tree`, `find-window` or
+	 * `display-panes` (`chooser.ts`), or an `if-shell -F` holding one
+	 * (`controlClient.ts` decides it).
 	 */
-	readonly popup?: PopupArgs;
-	/**
-	 * A binding that is one `command-prompt` or `confirm-before`: DevHub asks
-	 * it (`prompt.ts`), not sent.
-	 */
-	readonly prompt?: PromptArgs;
-	/** A binding that is one `display-menu`: DevHub asks it (`menu.ts`). */
-	readonly menu?: MenuArgs;
-	/**
-	 * A binding that is one `if-shell -F` with a command that would wait in
-	 * it: tmux decides the format, DevHub runs the arm (`controlClient.ts`).
-	 */
-	readonly conditional?: IfShellArgs;
+	readonly own?: string;
 	/**
 	 * tmux may be in a table other than the root one (a repeat, a
 	 * `switch-client -T`) after a refusal: it is to be put back in it.
 	 */
 	readonly resetTable?: boolean;
+}
+
+/** A command DevHub does itself when tmux would wait on the client for it. */
+export function ownCommand(command: string): boolean {
+	return (
+		popupOf(command) !== undefined ||
+		promptOf(command) !== undefined ||
+		menuOf(command) !== undefined ||
+		chooserOf(command) !== undefined ||
+		displayPanesOf(command) !== undefined ||
+		ifShellOf(command) !== undefined
+	);
 }
 
 /** What `switch-client -T <table>` in a binding moves to, if it does. */
@@ -189,24 +191,10 @@ export class KeyRouter {
 		const binding = this.#bindings.get(table)?.get(key);
 		if (binding === undefined) return { send: keys };
 		const waiting = waitingCommand(binding.command);
-		const popup = waiting === undefined ? undefined : popupOf(binding.command);
-		const prompt =
-			waiting === undefined ? undefined : promptOf(binding.command);
-		const menu = waiting === undefined ? undefined : menuOf(binding.command);
-		const conditional =
-			waiting === undefined ? undefined : ifShellOf(binding.command);
-		if (
-			popup !== undefined ||
-			prompt !== undefined ||
-			menu !== undefined ||
-			conditional !== undefined
-		) {
+		if (waiting !== undefined && ownCommand(binding.command)) {
 			return {
 				send: [],
-				...(popup === undefined ? {} : { popup }),
-				...(prompt === undefined ? {} : { prompt }),
-				...(menu === undefined ? {} : { menu }),
-				...(conditional === undefined ? {} : { conditional }),
+				own: binding.command,
 				resetTable: table !== "root" && keys.length === 1,
 			};
 		}

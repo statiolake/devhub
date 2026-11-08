@@ -6,6 +6,7 @@ import "./control.css";
 import "./popup.css";
 import "./prompt.css";
 import "./menu.css";
+import "./chooser.css";
 import { useColorScheme } from "../../appearance";
 import { Failure, Waiting } from "../../components/shell/SurfaceState";
 import { GridPainter, rgbOfCss } from "../../neovim/painter";
@@ -151,12 +152,27 @@ export function ControlTerminalSurface({
     menuEl.className = "control-menu";
     menuEl.setAttribute("role", "menu");
     menuEl.hidden = true;
+    const chooserEl = document.createElement("div");
+    chooserEl.className = "control-chooser";
+    chooserEl.setAttribute("role", "dialog");
+    chooserEl.hidden = true;
+    const numbersEl = document.createElement("div");
     const input = document.createElement("textarea");
     input.className = "control-input";
     input.setAttribute("aria-label", `${surfaceLabel} terminal input`);
     input.autocapitalize = "off";
     input.spellcheck = false;
-    host.append(grids, lines, popupFrame, promptLine, menuEl, cursor, input);
+    host.append(
+      grids,
+      lines,
+      popupFrame,
+      promptLine,
+      menuEl,
+      chooserEl,
+      numbersEl,
+      cursor,
+      input,
+    );
 
     const appearanceNow = live.current.appearance;
     const fontSize = appearanceNow?.terminalFontSize ?? 13;
@@ -202,9 +218,10 @@ export function ControlTerminalSurface({
         rows: view.rows,
         client: connected ? view.client : "",
         prefixes: view.prefixes,
-        // Under an open popup a Neovim drawn over a pane would cover it:
-        // no pane is said to be shown until it closes.
-        shown: connected && view.popup === undefined ? view.panes : [],
+        // Under what DevHub draws over the panes (a popup, a prompt, a
+        // menu, the picker) a Neovim drawn over a pane would cover it: no
+        // pane is said to be shown until it closes.
+        shown: connected && !covered() ? view.panes : [],
         panes: view.sessionPanes,
       };
       const key = JSON.stringify(panes);
@@ -213,6 +230,12 @@ export function ControlTerminalSurface({
       tell(panes);
     };
 
+    let wasCovered = false;
+    const covered = () =>
+      view.popup !== undefined ||
+      view.prompt !== undefined ||
+      view.menu !== undefined ||
+      view.chooser !== undefined;
     const cell = () => painter.cell();
     const measure = () => {
       const rect = host.getBoundingClientRect();
@@ -302,6 +325,8 @@ export function ControlTerminalSurface({
       }
       drawPrompt(width, height);
       drawMenu(width, height);
+      drawChooser(width, height);
+      drawNumbers(width, height);
       // While a popup is open its cursor is the one shown, over it.
       const inset = popup?.border === true ? 1 : 0;
       const pane =
@@ -326,7 +351,9 @@ export function ControlTerminalSurface({
         pane === undefined ||
         at === undefined ||
         !at.visible ||
-        view.prompt !== undefined
+        view.prompt !== undefined ||
+        view.menu !== undefined ||
+        view.chooser !== undefined
       ) {
         cursor.style.display = "none";
       } else {
@@ -343,7 +370,9 @@ export function ControlTerminalSurface({
         ackedSeq = lastSeq;
         send({ kind: "ack", seq: lastSeq });
       }
-      if (merged.layout) report();
+      // What covers the panes hides a Neovim over them: said when it changes.
+      if (merged.layout || covered() !== wasCovered) report();
+      wasCovered = covered();
     };
 
     // The prompt's line (`prompt.css`): the panes' last row, in their font.
@@ -478,6 +507,109 @@ export function ControlTerminalSurface({
         .querySelector<HTMLElement>('[aria-selected="true"]')
         ?.scrollIntoView({ block: "nearest" });
     };
+    // The picker (`chooser.css`): its frame and tree; the painter draws the
+    // preview's grid over it.
+    let chooserShown = "";
+    const drawChooser = (width: number, height: number) => {
+      const chooser = view.chooser;
+      chooserEl.hidden = chooser === undefined;
+      if (chooser === undefined) {
+        chooserShown = "";
+        return;
+      }
+      const key = JSON.stringify(chooser);
+      if (key === chooserShown) return;
+      chooserShown = key;
+      Object.assign(chooserEl.style, {
+        left: `${String(chooser.x * width)}px`,
+        top: `${String(chooser.y * height)}px`,
+        width: `${String(chooser.width * width)}px`,
+        height: `${String(chooser.height * height)}px`,
+      });
+      const filter = document.createElement("div");
+      filter.className = "control-chooser-filter";
+      filter.style.height = `${String(1.5 * height)}px`;
+      filter.style.lineHeight = `${String(1.5 * height)}px`;
+      const typed = document.createElement("b");
+      typed.textContent = chooser.filter;
+      const caret = Object.assign(document.createElement("span"), {
+        className: "control-prompt-cursor",
+        textContent: " ",
+      });
+      filter.append(
+        chooser.filter === "" ? "Type to filter · " : "Filter: ",
+        typed,
+        caret,
+      );
+      const tree = document.createElement("div");
+      tree.className = "control-chooser-tree";
+      const treeTop = 2 * height;
+      tree.style.top = `${String(treeTop)}px`;
+      tree.style.width = `${String((chooser.preview.x - chooser.x) * width)}px`;
+      tree.style.font = `${String(fontSize)}px/${String(height)}px ${terminalFontStack(appearanceNow?.terminalFontFamily)}`;
+      const visible = Math.max(1, chooser.height - 2);
+      const first = Math.max(
+        0,
+        Math.min(
+          chooser.choice - Math.floor(visible / 2),
+          chooser.rows.length - visible,
+        ),
+      );
+      chooser.rows.slice(first, first + visible).forEach((row, i) => {
+        const index = first + i;
+        const el = document.createElement("div");
+        el.className = "control-chooser-row";
+        el.dataset.index = String(index);
+        el.dataset.current = String(row.current);
+        el.setAttribute("aria-selected", String(index === chooser.choice));
+        const mark =
+          row.expanded === undefined ? "  " : row.expanded ? "▾ " : "▸ ";
+        el.textContent = `${"  ".repeat(row.depth)}${mark}${row.text}`;
+        el.style.paddingLeft = `${String(width)}px`;
+        tree.append(el);
+      });
+      chooserEl.replaceChildren(filter, tree);
+    };
+    // `display-panes`: each pane's index in its middle.
+    const drawNumbers = (width: number, height: number) => {
+      const numbers = view.numbers;
+      if (numbers === undefined) {
+        numbersEl.replaceChildren();
+        return;
+      }
+      numbersEl.replaceChildren(
+        ...view.panes.flatMap((box) => {
+          const index = numbers.panes.find((p) => p.pane === box.pane)?.index;
+          if (index === undefined) return [];
+          return [
+            Object.assign(document.createElement("div"), {
+              className: "control-number",
+              textContent: String(index),
+              style: `left:${String(box.x * width)}px;top:${String(box.y * height)}px;width:${String(box.width * width)}px;height:${String(box.height * height)}px`,
+            }),
+          ];
+        }),
+      );
+    };
+    // The mouse on the picker: a row chooses, outside it closes it.
+    const onChooserMouseDown = (event: MouseEvent) => {
+      if (view.chooser === undefined) return;
+      event.preventDefault();
+      event.stopPropagation();
+      input.focus();
+      const row = (event.target as HTMLElement).closest<HTMLElement>(
+        ".control-chooser-row",
+      );
+      if (row !== null && event.button === 0)
+        send({
+          kind: "chooser",
+          action: "choose",
+          index: Number(row.dataset.index),
+        });
+      else if (!chooserEl.contains(event.target as Node))
+        send({ kind: "chooser", action: "close" });
+    };
+    host.addEventListener("mousedown", onChooserMouseDown, true);
     // The mouse on a menu: an item chooses, anywhere else closes it.
     const onMenuMouseDown = (event: MouseEvent) => {
       if (view.menu === undefined) return;
@@ -802,6 +934,7 @@ export function ControlTerminalSurface({
       host.removeEventListener("click", focusInput);
       host.removeEventListener("contextmenu", noContextMenu);
       host.removeEventListener("mousedown", onMenuMouseDown, true);
+      host.removeEventListener("mousedown", onChooserMouseDown, true);
       host.removeEventListener("paste", markTyped, true);
       if (receipt !== undefined) void detach(receipt);
       receipt = undefined;

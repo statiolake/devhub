@@ -1,0 +1,89 @@
+/* The picker DevHub draws for `choose-tree` (`ptyHost/control/chooser.ts`):
+   a float in the popup's frame (`popup.css`), the filter on its top line,
+   the tree on its left in the terminal's font, the chosen item's pane on its
+   right (the painter's grid 0, over this frame). And `display-panes`' big
+   numbers. Their look is here alone, as tokens, as the mock has it
+   (`docs/terminal-mode.md`, phase 3). */
+
+.control-terminal {
+  --chooser-rule: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 10%,
+    transparent
+  );
+  --chooser-quiet: color-mix(
+    in srgb,
+    var(--terminal-foreground, currentColor) 50%,
+    transparent
+  );
+  --chooser-chosen: var(--menu-chosen);
+  --numbers-ink: var(--control-cursor);
+}
+
+.control-chooser {
+  position: absolute;
+  /* Over the panes and the popup's frame, under the preview's grid (60). */
+  z-index: 55;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--popup-border);
+  border-radius: var(--popup-radius);
+  background: var(--terminal-background, Canvas);
+  box-shadow:
+    var(--popup-shadow),
+    0 0 0 100vmax var(--popup-under);
+  color: var(--terminal-foreground, currentColor);
+}
+
+.control-chooser[hidden] {
+  display: none;
+}
+
+.control-chooser-filter {
+  position: absolute;
+  inset: 0 0 auto;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--chooser-rule);
+  color: var(--chooser-quiet);
+  font: 12px var(--font-ui, system-ui, sans-serif);
+  white-space: pre;
+}
+
+.control-chooser-filter b {
+  color: var(--terminal-foreground, currentColor);
+  font-weight: normal;
+}
+
+.control-chooser-tree {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--chooser-rule);
+  white-space: pre;
+}
+
+.control-chooser-row {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.control-chooser-row[aria-selected="true"] {
+  background: var(--chooser-chosen);
+}
+
+/* The client's own session, window and pane: tmux's flags say so in the
+   text (`*`); the row is not marked twice. */
+
+/* `display-panes`: each pane's index, large, in its middle. */
+.control-number {
+  position: absolute;
+  z-index: 65;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  color: var(--numbers-ink);
+  font: 600 48px var(--font-ui, system-ui, sans-serif);
+}
