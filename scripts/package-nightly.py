@@ -98,7 +98,11 @@ def check_inputs() -> None:
 
 	`out/` and `dist/` are copied verbatim; nothing here rebuilds them. So an
 	edit that was never compiled would ship as the *previous* compile, and
-	nothing about the result would say so.
+	nothing about the result would say so. Nor is anything filtered out of
+	them: apps/desktop's `build` deletes both before it compiles (its `clean`
+	script), so they hold what the current sources emit and nothing a source
+	since deleted left behind — which the dependency scan below would
+	otherwise read, and fail on, as if it were live code.
 	"""
 	for required in (
 		DESKTOP_DIR / "out" / "main" / "main.js",

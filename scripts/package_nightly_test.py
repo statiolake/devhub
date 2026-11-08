@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 
@@ -46,6 +47,18 @@ class PrebuildFilter(unittest.TestCase):
 		ignore = package_nightly.ignore_other_platforms("linux-x64")
 		dropped = ignore("/x/node_modules/node-pty", ["lib", "prebuilds", "src", "binding.gyp", "package.json"])
 		self.assertEqual(dropped, {"src", "binding.gyp"})
+
+
+class FreshBuild(unittest.TestCase):
+	"""Packaging copies `out/` and `dist/` whole and scans every `.js` in `out/`,
+	so a file the current sources no longer emit must not survive a build."""
+
+	def test_the_build_starts_by_deleting_what_packaging_copies(self) -> None:
+		manifest = json.loads((package_nightly.DESKTOP_DIR / "package.json").read_text())
+		scripts = manifest["scripts"]
+		self.assertTrue(scripts["build"].startswith("pnpm run clean && "), scripts["build"])
+		self.assertEqual(scripts["clean"].split()[:2], ["rm", "-rf"])
+		self.assertLessEqual({"out", "dist"}, set(scripts["clean"].split()[2:]))
 
 
 if __name__ == "__main__":
