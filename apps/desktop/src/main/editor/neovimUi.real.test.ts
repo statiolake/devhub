@@ -587,6 +587,28 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			rows: 2,
 			col: 0,
 		});
+		// Below a closed fold of 250 lines (a diff's, say): still found.
+		await h.ui.request("nvim_exec_lua", [
+			`_G.deco.clear(); _G.card.clear()
+			vim.cmd('enew')
+			local lines = {}
+			for i = 1, 300 do lines[i] = 'line ' .. i end
+			vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+			vim.wo.foldmethod = 'manual'
+			vim.cmd('1,250fold')
+			_G.deco = require('devhub_gui').decorate{ buf = 0, range = { 252, 253 }, style = 'highlight' }`,
+			[],
+		]);
+		await waitFor(
+			() =>
+				(list(last("layers")?.["decos"])[0] as { row?: number } | undefined)
+					?.row === 2,
+			"the decoration under the fold",
+		);
+		expect(list(last("layers")?.["decos"])[0]).toMatchObject({
+			row: 2,
+			rows: 2,
+		});
 		await h.ui.request("nvim_exec_lua", [
 			"_G.deco.clear(); _G.card.clear(); _G.view.close()",
 			[],

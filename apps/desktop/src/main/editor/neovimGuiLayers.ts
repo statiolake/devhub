@@ -519,7 +519,9 @@ function M._place_layers()
         local info = vim.fn.getwininfo(win)[1]
         if info then
           local top, bottom
-          for lnum = math.max(first, info.topline), math.min(last, info.topline + info.height + 200) do
+          -- Not topline + height: closed folds (a diff's) hide any number of lines.
+          local from = math.max(first, info.topline)
+          for lnum = from, math.min(last, from + 2000) do
             local a, b = line_rows(win, info, lnum)
             if a then
               top = top or a
