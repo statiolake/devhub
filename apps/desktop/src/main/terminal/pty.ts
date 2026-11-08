@@ -15,8 +15,7 @@
  * native module present.
  */
 
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { requireFromSubmodule } from "../submoduleRequire.js";
 
 /** The parts of node-pty's surface DevHub uses. */
 interface NodePtyProcess {
@@ -61,37 +60,8 @@ let cached: NodePtyModule | undefined;
  * caller surfaces it.
  */
 export function nodePty(): NodePtyModule {
-	if (cached) return cached;
-	const requireHere = createRequire(import.meta.url);
-	// Resolve *from* the submodule's package.json, so node-pty's own
-	// dependencies come from `vscode/node_modules` as well.
-	const submodule = requireHere.resolve("code-oss-dev/package.json");
-	const requireFromSubmodule = createRequire(submodule);
-	try {
-		cached = requireFromSubmodule("node-pty") as NodePtyModule;
-	} catch (failure: unknown) {
-		// A packaged app has the submodule's `node_modules` as
-		// `node_modules.asar` (scripts/package-nightly.py), which Node's
-		// resolver finds only through VS Code's bootstrap (`enableASARSupport`,
-		// bootstrap-node.ts) — installed in main, not in a utility process such
-		// as the pty host. So the archive is named here outright; Electron reads
-		// it in any of its processes, and node-pty itself takes `pty.node` and
-		// `spawn-helper` from `node_modules.asar.unpacked`.
-		const archived = join(dirname(submodule), "node_modules.asar", "node-pty");
-		try {
-			cached = requireFromSubmodule(archived) as NodePtyModule;
-		} catch (second: unknown) {
-			throw new Error(
-				`node-pty could not be loaded: ${messageOf(failure)}; nor from ${archived}: ${messageOf(second)}`,
-				{ cause: failure },
-			);
-		}
-	}
+	cached ??= requireFromSubmodule("node-pty") as NodePtyModule;
 	return cached;
-}
-
-function messageOf(failure: unknown): string {
-	return failure instanceof Error ? failure.message : String(failure);
 }
 
 export interface PtyLaunch {
