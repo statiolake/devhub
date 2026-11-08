@@ -6,7 +6,11 @@
  * Each proxy is a `ConversationHandle`. Its `facts()` are what the engine last
  * pushed; its calls are messages, answered by the engine; its `snapshot()` is
  * a request. Pages attach to the engine over a `MessagePort` this hands out
- * (`pagePort`), so a conversation's events never pass main.
+ * (`pagePort`), so a conversation's events never pass main. For an Agent on
+ * another machine the engine follows the journal itself, and main brokers
+ * what needs the machine: a stream its runtime starts (in the process host)
+ * with its bytes sent to the engine on a port of their own, how that stream
+ * ended, and a command.
  *
  * **When the engine is gone.** An engine that exits fails the calls it held
  * (`ConversationStopped`), and every conversation reads as one nobody follows
@@ -34,14 +38,20 @@ import type {
 } from "../agent/conversation/handle.js";
 import type { LimitResumeRecord } from "../agent/conversation/limitResume.js";
 import { observeConversation } from "../agent/conversation/reading.js";
+import type { HostRuntime } from "../agent/conversation/hostLink.js";
+import { OperationDeadline } from "../terminal/command.js";
 import { CancellationToken } from "../terminal/ports.js";
+import type { StreamSink } from "../terminal/streamRun.js";
 import {
 	errorFromWire,
 	errorToWire,
 	type CallMethod,
+	type EngineQuestion,
 	type EngineSettings,
+	type ExecAnswer,
 	type FromEngine,
 	type HostMethod,
+	type JournalPlace,
 	type OpenSpec,
 	type PreparedHost,
 	type ToEngine,
@@ -103,6 +113,11 @@ export interface ConversationServices {
 	prepareHost(): Promise<PreparedHost>;
 	/** The host of an Agent on another machine, which main reaches. */
 	host(): ConversationHost;
+	/** That host's machine and state directory: what its journal is followed on. */
+	journal(): Promise<{
+		readonly runtime: HostRuntime;
+		readonly directory: string;
+	}>;
 	/** The Agent's usage-limit record now, for a conversation opened (again). */
 	record(): LimitResumeRecord | undefined;
 	setRecord(record: LimitResumeRecord): void;
@@ -115,9 +130,18 @@ export interface EngineClientOptions {
 	readonly settings: () => EngineSettings;
 	readonly log?: (line: string) => void;
 	readonly now?: () => number;
-	/** When queued journal lines are sent on: after this turn of the loop; tests pass their own. */
-	readonly defer?: (send: () => void) => void;
+	/** A new port pair for a stream: Electron's `MessageChannelMain`; tests pass their own. */
+	readonly channel?: () => StreamChannel;
 }
+
+/** A stream's port pair: the sink end goes to the stream's process, the other to the engine. */
+export interface StreamChannel {
+	readonly port1: StreamSink & TransferablePort;
+	readonly port2: TransferablePort;
+}
+
+/** A command overflowed a cap under `overflow: "fail"`, which the engine words. */
+class Overflowed extends Error {}
 
 interface Proxy {
 	readonly agentId: AgentId;
@@ -409,17 +433,11 @@ export class EngineClient {
 			case "ask":
 				void this.#answer(engine, message);
 				return;
-			case "lines-open":
-				void this.#follow(
-					engine,
-					message.stream,
-					message.agentId,
-					message.fromOffset,
-				);
+			case "stream-open":
+				void this.#stream(engine, message);
 				return;
-			case "lines-cancel":
+			case "stream-cancel":
 				this.#streams.get(message.stream)?.cancel();
-				this.#streams.delete(message.stream);
 				return;
 		}
 	}
@@ -455,6 +473,14 @@ export class EngineClient {
 				const prepared = await proxy.services.prepareHost();
 				proxy.instructions = prepared.instructions;
 				value = prepared;
+			} else if (question.kind === "journal") {
+				const { runtime, directory } = await proxy.services.journal();
+				value = { directory, where: runtime.where } satisfies JournalPlace;
+			} else if (question.kind === "exec") {
+				value = await execFor(
+					(await proxy.services.journal()).runtime,
+					question,
+				);
 			} else {
 				value = await hostCall(
 					this.#hostOf(proxy),
@@ -473,42 +499,99 @@ export class EngineClient {
 		}
 	}
 
-	/** Follow a host's journal for the engine: an Agent on another machine. */
-	async #follow(
+	/**
+	 * Start a stream on an Agent's machine for the engine: main's runtime
+	 * composes and starts it, its bytes go to the engine on a port of their
+	 * own, and main tells the engine how it ended.
+	 */
+	async #stream(
 		engine: EngineProcess,
-		stream: number,
-		agentId: AgentId,
-		fromOffset: number,
+		message: Extract<FromEngine, { type: "stream-open" }>,
 	): Promise<void> {
+		const { stream } = message;
 		const token = new CancellationToken();
 		this.#streams.set(stream, token);
-		const send = (message: ToEngine) => {
-			if (engine === this.#engine) engine.postMessage(message);
-		};
-		let queued: { line: string; offset: number }[] = [];
-		const flush = () => {
-			if (queued.length === 0) return;
-			const lines = queued;
-			queued = [];
-			send({ type: "lines", stream, lines });
+		const send = (answer: ToEngine) => {
+			if (engine === this.#engine) engine.postMessage(answer);
 		};
 		try {
-			const proxy = this.#proxies.get(agentId);
+			const proxy = this.#proxies.get(message.agentId);
 			if (proxy === undefined)
-				throw new Error(`the conversation of Agent ${agentId} is not open`);
-			for await (const line of this.#hostOf(proxy).lines(fromOffset, token)) {
-				if (token.isCancelled) break;
-				if (queued.length === 0) (this.#options.defer ?? setImmediate)(flush);
-				queued.push(line);
-			}
-			flush();
-			send({ type: "lines-end", stream, error: undefined });
+				throw new Error(
+					`the conversation of Agent ${message.agentId} is not open`,
+				);
+			const { runtime } = await proxy.services.journal();
+			const { port1, port2 } = (
+				this.#options.channel ?? electronStreamChannel
+			)();
+			engine.postMessage({ type: "stream-port", stream }, [port2]);
+			const running = runtime.spawnStream({
+				argv: message.argv,
+				...(message.cwd === undefined ? {} : { cwd: message.cwd }),
+				...(message.env === undefined ? {} : { env: message.env }),
+				cancel: token,
+				to: port1,
+			});
+			const end = await running.ended;
+			send({
+				type: "stream-end",
+				stream,
+				end: {
+					code: end.code,
+					signal: end.signal,
+					stderr: new Uint8Array(end.stderr),
+				},
+				error: undefined,
+			});
 		} catch (error: unknown) {
-			flush();
-			send({ type: "lines-end", stream, error: errorToWire(error) });
+			send({
+				type: "stream-end",
+				stream,
+				end: undefined,
+				error: errorToWire(error),
+			});
 		} finally {
 			this.#streams.delete(stream);
 		}
+	}
+}
+
+function electronStreamChannel(): StreamChannel {
+	return new electron.MessageChannelMain();
+}
+
+/** A command on an Agent's machine, for the engine, answered as data. */
+async function execFor(
+	runtime: HostRuntime,
+	question: Extract<EngineQuestion, { kind: "exec" }>,
+): Promise<ExecAnswer> {
+	try {
+		const result = await runtime.exec({
+			argv: question.argv,
+			...(question.cwd === undefined ? {} : { cwd: question.cwd }),
+			...(question.env === undefined ? {} : { env: question.env }),
+			...(question.stdin === undefined ? {} : { stdin: question.stdin }),
+			deadline: OperationDeadline.in(question.timeoutMs),
+			cancel: new CancellationToken(),
+			limits: {
+				stdoutBytes: question.stdoutBytes,
+				stderrBytes: question.stderrBytes,
+				overflow:
+					question.overflow === "fail"
+						? { kind: "fail", failure: () => new Overflowed() }
+						: { kind: "truncate" },
+			},
+		});
+		return {
+			kind: "result",
+			code: result.code,
+			signal: result.signal,
+			stdout: new Uint8Array(result.stdout),
+			stderr: new Uint8Array(result.stderr),
+		};
+	} catch (failure: unknown) {
+		if (failure instanceof Overflowed) return { kind: "overflow" };
+		throw failure;
 	}
 }
 

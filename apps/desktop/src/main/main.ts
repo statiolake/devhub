@@ -61,6 +61,7 @@ import { installMainLog, mainLogPath } from './diagnostics/mainLog.js';
 import { startEventLoopLagMonitor } from './diagnostics/eventLoopLag.js';
 import { processHostRunner } from './processHost/client.js';
 import { setChildRunner } from './terminal/command.js';
+import { setStreamRunner } from './runtime/byteStream.js';
 import { watchForFinderOpens } from './shell/openFromFinder.js';
 import { activeProfile } from '../model/profile.js';
 
@@ -289,12 +290,18 @@ async function onReady() {
 	perf.mark('code/mainAppReady');
 
 	// DevHub: tmux, git and the Agents' host scripts are started by a utility
-	// process from here on, not on main's thread (processHost/client.ts). Let
-	// go of it last: what shutting down still runs starts in main again.
+	// process from here on, not on main's thread (processHost/client.ts), and
+	// so are the long-lived streams, a remote Agent's journal among them,
+	// unless `DEVHUB_BYTESTREAMS_IN_MAIN=1`. Let go of it last: what shutting
+	// down still runs starts in main again.
 	const processHost = processHostRunner();
 	setChildRunner(processHost);
+	if (process.env['DEVHUB_BYTESTREAMS_IN_MAIN'] !== '1') {
+		setStreamRunner(processHost);
+	}
 	app.once('quit', () => {
 		setChildRunner(undefined);
+		setStreamRunner(undefined);
 		processHost.dispose();
 	});
 

@@ -13,9 +13,11 @@
  * - **The host.** For an Agent on this machine the engine follows the
  *   journal and writes to the host itself (`HostLink` on a `LocalRuntime` of
  *   its own); it asks main only where the host is and what its CLI is
- *   (`prepare-host`). For an Agent on another machine every host call is
- *   main's, whose runtime reaches that machine, and the journal's lines come
- *   from main.
+ *   (`prepare-host`). For an Agent on another machine it follows the journal
+ *   too, with a `HostLink` on main's runtime of that machine at one remove
+ *   (`brokeredRuntime.ts`): main starts the stream, in the process host, and
+ *   its bytes come here on a port without passing main. Every other host
+ *   call of that Agent's is main's.
  * - **The pages.** The Agents page attaches over a `MessagePort` main handed
  *   it (`page`): it is sent the snapshot and then the events of what it
  *   attached, batched per turn of this loop, without main.
@@ -23,6 +25,8 @@
  *   on disk, and a new engine replays each conversation from them. The
  *   usage-limit records are main's (`record`), handed over at `open`.
  */
+
+import { Buffer } from "node:buffer";
 
 import type { ConversationEvent } from "../../model/conversation.js";
 import type { AgentId } from "../../model/domain.js";
@@ -35,7 +39,7 @@ import {
 	type ConversationHost,
 } from "../agent/conversation/conversation.js";
 import { guiAgentCli } from "../agent/conversation/hostCommand.js";
-import { HostLink, type JournalLine } from "../agent/conversation/hostLink.js";
+import { HostLink } from "../agent/conversation/hostLink.js";
 import {
 	REAL_CLOCK,
 	type LimitResumeClock,
@@ -44,7 +48,11 @@ import {
 import { CACHE_KEEP_OFF } from "../agent/conversation/cacheKeeper.js";
 import type { ProtocolAdapter } from "../agent/conversation/protocolAdapter.js";
 import type { Runtime } from "../runtime/runtime.js";
-import type { CancellationToken } from "../terminal/ports.js";
+import {
+	brokeredRuntime,
+	StreamBroker,
+	type StreamPort,
+} from "./brokeredRuntime.js";
 import {
 	errorFromWire,
 	errorToWire,
@@ -54,6 +62,7 @@ import {
 	type EngineToPage,
 	type FromEngine,
 	type HostMethod,
+	type JournalPlace,
 	type OpenSpec,
 	type PageToEngine,
 	type PreparedHost,
@@ -95,12 +104,6 @@ interface Page {
 	queued: [AgentId, number, ConversationEvent][];
 }
 
-interface Stream {
-	readonly lines: JournalLine[];
-	ended: { readonly error: Error | undefined } | undefined;
-	wake: (() => void) | undefined;
-}
-
 const NO_SETTINGS: EngineSettings = {
 	limitResume: { enabled: false, message: "" },
 	cacheKeep: CACHE_KEEP_OFF,
@@ -116,15 +119,15 @@ export class ConversationEngine {
 		number,
 		{ resolve: (value: unknown) => void; reject: (error: Error) => void }
 	>();
-	readonly #streams = new Map<number, Stream>();
+	readonly #streams: StreamBroker;
 	readonly #dirty = new Set<AgentId>();
 	#settings: EngineSettings = NO_SETTINGS;
 	#nextAsk = 1;
-	#nextStream = 1;
 	#factsDue = false;
 
 	constructor(options: EngineOptions) {
 		this.#options = options;
+		this.#streams = new StreamBroker(options.post);
 	}
 
 	receive(message: ToEngine, ports: readonly EnginePort[] = []): void {
@@ -155,23 +158,35 @@ export class ConversationEngine {
 				else asked.reject(errorFromWire(message.error));
 				return;
 			}
-			case "lines": {
-				const stream = this.#streams.get(message.stream);
-				if (stream === undefined) return;
-				stream.lines.push(...message.lines);
-				stream.wake?.();
+			case "stream-port": {
+				const port = ports[0];
+				if (port === undefined)
+					throw new Error(`stream ${message.stream} came without its port`);
+				this.#streams.port(message.stream, port as unknown as StreamPort);
 				return;
 			}
-			case "lines-end": {
-				const stream = this.#streams.get(message.stream);
-				if (stream === undefined) return;
-				stream.ended = {
-					error:
-						message.error === undefined
-							? undefined
-							: errorFromWire(message.error),
-				};
-				stream.wake?.();
+			case "stream-end": {
+				const { end, error } = message;
+				this.#streams.ended(
+					message.stream,
+					end === undefined
+						? errorFromWire(
+								error ?? {
+									kind: "error",
+									name: "Error",
+									message: "the stream ended without an answer",
+								},
+							)
+						: {
+								code: end.code,
+								signal: end.signal,
+								stderr: Buffer.from(
+									end.stderr.buffer,
+									end.stderr.byteOffset,
+									end.stderr.byteLength,
+								),
+							},
+				);
 				return;
 			}
 			case "page": {
@@ -305,12 +320,34 @@ export class ConversationEngine {
 		});
 	}
 
-	/** A host whose every call is main's: an Agent on another machine. */
+	/**
+	 * The host of an Agent on another machine: its journal followed here, over
+	 * main's runtime of that machine, and every other call main's.
+	 */
 	#mainsHost(agentId: AgentId): ConversationHost {
 		const host = (method: HostMethod, ...args: unknown[]) =>
 			this.#ask(agentId, { kind: "host", method, args });
+		let link: Promise<HostLink> | undefined;
+		const linked = () =>
+			(link ??= (async () => {
+				const place = (await this.#ask(agentId, {
+					kind: "journal",
+				})) as JournalPlace;
+				return new HostLink(
+					brokeredRuntime(agentId, place.where, this.#streams, (question) =>
+						this.#ask(agentId, question),
+					),
+					place.directory,
+				);
+			})().catch((failure: unknown) => {
+				// Asked again by the next attach rather than kept as the answer.
+				link = undefined;
+				throw failure;
+			}));
 		return {
-			lines: (fromOffset, cancel) => this.#lines(agentId, fromOffset, cancel),
+			async *lines(fromOffset, cancel) {
+				yield* (await linked()).lines(fromOffset, cancel);
+			},
 			write: async (line, afterOffset) => {
 				await host("write", line, afterOffset);
 			},
@@ -326,45 +363,6 @@ export class ConversationEngine {
 				>,
 			journalSize: async () => (await host("journalSize")) as number,
 		};
-	}
-
-	/** The journal of a host main follows, line by line as main sends them. */
-	async *#lines(
-		agentId: AgentId,
-		fromOffset: number,
-		cancel: CancellationToken,
-	): AsyncIterable<JournalLine> {
-		const id = this.#nextStream++;
-		const stream: Stream = { lines: [], ended: undefined, wake: undefined };
-		this.#streams.set(id, stream);
-		this.#options.post({ type: "lines-open", stream: id, agentId, fromOffset });
-		cancel.onCancelled(() => {
-			if (!this.#streams.has(id)) return;
-			this.#options.post({ type: "lines-cancel", stream: id });
-			stream.ended ??= { error: undefined };
-			stream.wake?.();
-		});
-		try {
-			for (;;) {
-				const line = stream.lines.shift();
-				if (line !== undefined) {
-					yield line;
-					continue;
-				}
-				if (stream.ended !== undefined) {
-					if (stream.ended.error !== undefined) throw stream.ended.error;
-					return;
-				}
-				await new Promise<void>((resolve) => {
-					stream.wake = resolve;
-				});
-				stream.wake = undefined;
-			}
-		} finally {
-			this.#streams.delete(id);
-			if (stream.ended === undefined)
-				this.#options.post({ type: "lines-cancel", stream: id });
-		}
 	}
 
 	#published(

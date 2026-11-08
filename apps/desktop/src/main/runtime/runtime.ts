@@ -28,6 +28,7 @@ import { createHash } from "node:crypto";
 import type { OperationDeadline } from "../terminal/command.js";
 import type { CancellationToken } from "../terminal/ports.js";
 import type { Pty, PtyLaunch, PtyPlan } from "../terminal/pty.js";
+import type { StreamSink } from "../terminal/streamRun.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import type { ContainerHostId, RuntimeId } from "../../model/domain.js";
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
@@ -134,6 +135,14 @@ export interface StreamRequest {
 	readonly env?: Readonly<Record<string, string | undefined>>;
 	/** Cancelling it is `kill()`. */
 	readonly cancel: CancellationToken;
+	/**
+	 * Where the bytes go instead of `stdout`, which then yields none: one end
+	 * of a port whose other end is the process that reads them, so that the
+	 * process that asked for the stream never touches them (a remote Agent's
+	 * journal, read by the conversation engine). `ended` still says how the
+	 * program ended, here.
+	 */
+	readonly to?: StreamSink;
 }
 
 /** How a stream's program ended, and the end of what it said on stderr. */

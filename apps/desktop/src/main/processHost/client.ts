@@ -12,16 +12,30 @@
  * Nothing about a run's meaning moves: `runBounded` keeps the deadline, the
  * cancellation and which failure wins, and ends a run with `kill`.
  *
+ * It is also a `StreamRunner` (`terminal/streamRun.ts`): the long-lived
+ * streams `openByteStream` starts — a remote Agent's journal over `ssh -T`
+ * — are its children too. A stream handed a sink (a port to the process that
+ * reads it) never sends main a byte; one without sends its chunks here.
+ *
  * **When the host is gone.** A host that exits fails the runs it held, the
  * way a child that died would (a `spawn-error`, so `runBounded` reports a
- * failed command), and the next run starts a new one. A host that keeps
- * dying is given up on: after `MAX_RESTARTS` exits within a minute, runs go
- * back to starting here, in main, and that is said once.
+ * failed command, and a stream's `ended` a failed stream, which its reader
+ * attaches again), and the next run starts a new one. A host that keeps
+ * dying is given up on: after `MAX_RESTARTS` exits within a minute, runs and
+ * streams go back to starting here, in main, and that is said once.
  */
 
 import { join } from "node:path";
 import { electron } from "../electron.js";
 import { APP_ROOT } from "../shell/appRoot.js";
+import {
+	RUN_STREAM_HERE,
+	type StreamExit,
+	type StreamRun,
+	type StreamRunner,
+	type StreamSink,
+	type StreamSpawn,
+} from "../terminal/streamRun.js";
 import {
 	RUN_HERE,
 	type ChildOutcome,
@@ -36,7 +50,8 @@ const RESTART_WINDOW_MS = 60_000;
 
 /** What the client needs of a utility process; Electron's, in DevHub. */
 export interface HostProcess {
-	postMessage(message: ToHost): void;
+	/** `transfer`: a stream's sink, which goes to the host with it. */
+	postMessage(message: ToHost, transfer?: readonly StreamSink[]): void;
 	onMessage(listener: (message: FromHost) => void): void;
 	onExit(listener: (code: number) => void): void;
 	kill(): void;
@@ -63,7 +78,11 @@ export function electronHostLauncher(): HostProcess {
 		serviceName: "DevHub Process Host",
 	});
 	return {
-		postMessage: (message) => child.postMessage(message),
+		postMessage: (message, transfer) =>
+			child.postMessage(
+				message,
+				transfer as Electron.MessagePortMain[] | undefined,
+			),
 		onMessage: (listener) =>
 			child.on("message", (message: unknown) => listener(message as FromHost)),
 		onExit: (listener) => child.on("exit", listener),
@@ -94,7 +113,12 @@ interface Pending {
 	readonly onOutput: ((chunk: Uint8Array) => void) | undefined;
 }
 
-export interface ProcessHostRunner extends ChildRunner {
+interface Streaming {
+	readonly settle: (exit: StreamExit) => void;
+	readonly chunk: ((chunk: Uint8Array) => void) | undefined;
+}
+
+export interface ProcessHostRunner extends ChildRunner, StreamRunner {
 	dispose(): void;
 }
 
@@ -108,17 +132,17 @@ export function processHostRunner(
 	let gaveUp = false;
 	const exits: number[] = [];
 	const pending = new Map<number, Pending>();
+	const streams = new Map<number, Streaming>();
 	let nextId = 1;
 
 	const failAll = (why: string) => {
+		const error = { message: why, code: undefined };
 		const held = [...pending.values()];
 		pending.clear();
-		for (const run of held) {
-			run.settle({
-				kind: "spawn-error",
-				error: { message: why, code: undefined },
-			});
-		}
+		for (const run of held) run.settle({ kind: "spawn-error", error });
+		const flowing = [...streams.values()];
+		streams.clear();
+		for (const stream of flowing) stream.settle({ kind: "spawn-error", error });
 	};
 
 	const hostNow = (): HostProcess => {
@@ -126,6 +150,16 @@ export function processHostRunner(
 		const started = launch();
 		started.onMessage((message) => {
 			if (started !== host) return;
+			if (message.type === "stream-data") {
+				streams.get(message.id)?.chunk?.(message.chunk);
+				return;
+			}
+			if (message.type === "stream-ended") {
+				const stream = streams.get(message.id);
+				streams.delete(message.id);
+				stream?.settle(message.exit);
+				return;
+			}
 			const run = pending.get(message.id);
 			if (run === undefined) return;
 			switch (message.type) {
@@ -161,7 +195,7 @@ export function processHostRunner(
 			if (exits.length >= MAX_RESTARTS) {
 				gaveUp = true;
 				log(
-					`[devhub] process host ended ${String(exits.length)} times in a minute; commands start in main from now on`,
+					`[devhub] process host ended ${String(exits.length)} times in a minute; commands and streams start in main from now on`,
 				);
 			}
 		});
@@ -189,6 +223,65 @@ export function processHostRunner(
 				kill: () => {
 					if (!pending.delete(id)) return;
 					if (host === target) target.postMessage({ type: "kill", id });
+				},
+			};
+		},
+		open(spawn: StreamSpawn, sink?: StreamSink): StreamRun {
+			if (disposed || gaveUp) return RUN_STREAM_HERE.open(spawn, sink);
+			const id = nextId++;
+			let settle: (exit: StreamExit) => void = () => undefined;
+			const exit = new Promise<StreamExit>((resolve) => {
+				settle = resolve;
+			});
+			// Chunks for a reader here, kept until it asks: the host sends them
+			// as they come, with no say from the reader in how fast.
+			const queued: Uint8Array[] = [];
+			let over = false;
+			let wake: (() => void) | undefined;
+			const ping = () => {
+				const woken = wake;
+				wake = undefined;
+				woken?.();
+			};
+			streams.set(id, {
+				settle: (ending) => {
+					over = true;
+					ping();
+					settle(ending);
+				},
+				chunk:
+					sink === undefined
+						? (chunk) => {
+								queued.push(chunk);
+								ping();
+							}
+						: undefined,
+			});
+			const target = hostNow();
+			target.postMessage(
+				{ type: "stream", id, spawn: { ...spawn, env: plainEnv(spawn.env) } },
+				sink === undefined ? undefined : [sink],
+			);
+			async function* read(): AsyncGenerator<Uint8Array> {
+				if (sink !== undefined) return;
+				for (;;) {
+					const chunk = queued.shift();
+					if (chunk !== undefined) {
+						yield chunk;
+						continue;
+					}
+					if (over) return;
+					await new Promise<void>((resolve) => {
+						wake = resolve;
+					});
+				}
+			}
+			return {
+				stdout: read(),
+				exit,
+				kill: () => {
+					if (streams.has(id) && host === target)
+						target.postMessage({ type: "stream-kill", id });
 				},
 			};
 		},

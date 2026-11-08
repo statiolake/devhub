@@ -359,6 +359,10 @@ export function wireAgents(options: AgentWiringOptions): AgentWiring {
 							};
 						},
 						host: mainsHost,
+						journal: async () => ({
+							runtime: options.machineRuntime(machine),
+							directory: await stateDirectory(machine, agentId),
+						}),
 						record: () => options.limitResumes.get(agentId),
 						setRecord: (record) => options.limitResumes.set(agentId, record),
 						instructions: () =>

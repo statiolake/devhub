@@ -149,15 +149,23 @@ function describe(failure: unknown): string {
 	return failureText(failure);
 }
 
+/**
+ * What a link needs of its machine: to run a command, to follow a stream, and
+ * the words that say where it is. A `Runtime`; in the conversation engine,
+ * for an Agent on another machine, main's runtime of it at one remove
+ * (`agentEngine/brokeredRuntime.ts`).
+ */
+export type HostRuntime = Pick<Runtime, "where" | "exec" | "spawnStream">;
+
 export class HostLink {
-	readonly #runtime: Runtime;
+	readonly #runtime: HostRuntime;
 	readonly #directory: string;
 	readonly #writeTimeoutMs: number;
 	/** The last write, so that the next one starts after it. */
 	#writes: Promise<unknown> = Promise.resolve();
 
 	constructor(
-		runtime: Runtime,
+		runtime: HostRuntime,
 		stateDirectory: string,
 		options: { readonly writeTimeoutMs?: number } = {},
 	) {

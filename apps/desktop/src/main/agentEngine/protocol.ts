@@ -4,12 +4,14 @@
  *
  * - **main → engine**: the settings the conversations run on; open a
  *   conversation, call one of its methods, close it; answers to what the
- *   engine asked; the lines of a journal main follows for it (an Agent on
- *   another machine); a page's port.
+ *   engine asked; for an Agent on another machine, the port a stream main
+ *   started for it sends its bytes on, and how the stream ended; a page's
+ *   port.
  * - **engine → main**: each conversation's facts when they change (the
  *   round's reading of it, its session, its MCP servers), its usage, the
  *   results of calls, and what it asks main for: where the host is and what
- *   it runs, a usage-limit record to keep, a host on another machine to use.
+ *   it runs, a usage-limit record to keep, a host on another machine to use,
+ *   a stream or a command on that machine.
  * - **page ↔ engine**, over a `MessagePort` main handed out: attach, detach,
  *   and the events of what the page attached, batched per turn of the
  *   engine's loop. A transcript never passes main.
@@ -28,7 +30,6 @@ import type { ConversationFacts } from "../agent/conversation/conversation.js";
 import type { ConversationHandle } from "../agent/conversation/handle.js";
 import type {
 	HostLinkFailureCode,
-	JournalLine,
 	SentRecord,
 } from "../agent/conversation/hostLink.js";
 import type {
@@ -64,7 +65,9 @@ export interface OpenSpec {
 	/**
 	 * The engine opens the host itself (an Agent on this machine): it asks
 	 * main where (`prepare-host`), then follows the journal and writes on its
-	 * own. Otherwise every host call is main's (`host`).
+	 * own. Otherwise it follows the journal over main's runtime of that
+	 * machine (`brokeredRuntime.ts`), and every other host call is main's
+	 * (`host`).
 	 */
 	readonly hostHere: boolean;
 	/** The Agent's usage-limit record, as main keeps it. */
@@ -100,6 +103,25 @@ export type HostMethod =
 	| "sleep"
 	| "sentLog"
 	| "journalSize";
+
+/** Where the journal of an Agent on another machine is: main's answer to `journal`. */
+export interface JournalPlace {
+	readonly directory: string;
+	/** The runtime's `where`, for the link's sentences. */
+	readonly where: string;
+}
+
+/** How a command main ran for the engine ended: main's answer to `exec`. */
+export type ExecAnswer =
+	| {
+			readonly kind: "result";
+			readonly code: number | null;
+			readonly signal: string | null;
+			readonly stdout: Uint8Array;
+			readonly stderr: Uint8Array;
+	  }
+	/** It went past a cap under `overflow: "fail"`: the engine says it in its own words. */
+	| { readonly kind: "overflow" };
 
 /** A failure crossing a process: its class is part of what it means. */
 export type ErrorWire =
@@ -147,14 +169,19 @@ export type ToEngine =
 			readonly ok: false;
 			readonly error: ErrorWire;
 	  }
+	/** Carries the port the stream's bytes come on as its one transferred port. */
+	| { readonly type: "stream-port"; readonly stream: number }
+	/** `end` when the program ended, `error` when there was no answer. */
 	| {
-			readonly type: "lines";
+			readonly type: "stream-end";
 			readonly stream: number;
-			readonly lines: readonly JournalLine[];
-	  }
-	| {
-			readonly type: "lines-end";
-			readonly stream: number;
+			readonly end:
+				| {
+						readonly code: number | null;
+						readonly signal: string | null;
+						readonly stderr: Uint8Array;
+				  }
+				| undefined;
 			readonly error: ErrorWire | undefined;
 	  }
 	/** Carries the page's port as its one transferred port. */
@@ -163,6 +190,18 @@ export type ToEngine =
 
 export type EngineQuestion =
 	| { readonly kind: "prepare-host" }
+	| { readonly kind: "journal" }
+	| {
+			readonly kind: "exec";
+			readonly argv: readonly string[];
+			readonly cwd?: string;
+			readonly env?: Readonly<Record<string, string | undefined>>;
+			readonly stdin?: Uint8Array;
+			readonly timeoutMs: number;
+			readonly stdoutBytes: number;
+			readonly stderrBytes: number;
+			readonly overflow: "truncate" | "fail";
+	  }
 	| {
 			readonly kind: "host";
 			readonly method: HostMethod;
@@ -199,13 +238,16 @@ export type FromEngine =
 			readonly agentId: AgentId;
 			readonly record: LimitResumeRecord;
 	  }
+	/** A stream on `agentId`'s machine, for its `HostLink` here (`StreamRequest` as data). */
 	| {
-			readonly type: "lines-open";
+			readonly type: "stream-open";
 			readonly stream: number;
 			readonly agentId: AgentId;
-			readonly fromOffset: number;
+			readonly argv: readonly string[];
+			readonly cwd?: string;
+			readonly env?: Readonly<Record<string, string | undefined>>;
 	  }
-	| { readonly type: "lines-cancel"; readonly stream: number };
+	| { readonly type: "stream-cancel"; readonly stream: number };
 
 export type PageToEngine =
 	| { readonly type: "attach"; readonly agentId: string; readonly rid: number }

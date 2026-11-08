@@ -286,6 +286,7 @@ export class LocalRuntime implements Runtime {
 					env: request.env ?? {},
 				}),
 			request.cancel,
+			request.to,
 		);
 	}
 

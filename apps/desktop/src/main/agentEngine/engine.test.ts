@@ -2,10 +2,12 @@
  * The conversation engine and main's client of it, wired back to back as
  * the utility process wires them, with every message structured-cloned as
  * it would be crossing processes. The CLI is the permission fixture's,
- * scripted; its host is main's (an Agent on another machine), so the
- * journal's lines and the writes cross too.
+ * scripted; its host is main's (an Agent on another machine), so the writes
+ * cross too, and its journal is a stream main starts whose bytes come to the
+ * engine on a port of their own.
  */
 
+import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,11 +19,18 @@ import { CACHE_KEEP_OFF } from "../agent/conversation/cacheKeeper.js";
 import { ConversationRefused } from "../agent/conversation/failures.js";
 import {
 	HostLinkFailure,
+	type HostRuntime,
 	type JournalLine,
 	type SentRecord,
 } from "../agent/conversation/hostLink.js";
-import type { CancellationToken } from "../terminal/ports.js";
-import { EngineClient, type EngineProcess } from "./client.js";
+import type { StreamEnd, StreamRequest } from "../runtime/runtime.js";
+import { portFailure } from "../terminal/ports.js";
+import type { StreamSink } from "../terminal/streamRun.js";
+import {
+	EngineClient,
+	type EngineProcess,
+	type StreamChannel,
+} from "./client.js";
 import { ConversationEngine, type EnginePort } from "./engine.js";
 import {
 	errorFromWire,
@@ -52,13 +61,67 @@ const FIXTURE = readFileSync(
 		line: line.slice(2),
 	}));
 
-/** The fixture's CLI behind main's host: prints its lines up to the next one DevHub is to write. */
+interface Following {
+	readonly fromOffset: number;
+	readonly sink: StreamSink;
+	readonly end: (outcome: StreamEnd | Error) => void;
+	sent: number;
+}
+
+/**
+ * The fixture's CLI behind main's host: prints its lines up to the next one
+ * DevHub is to write. Its journal is read as a stream on its machine
+ * (`runtime`), whose bytes go where the stream is told to send them.
+ */
 class ScriptedHost implements ConversationHost {
 	readonly journal: JournalLine[] = [];
 	readonly written: SentRecord[] = [];
+	/** Every stream main started on this machine, from the offset it asked. */
+	readonly streams: Following[] = [];
+	#bytes = Buffer.alloc(0);
 	#next = 0;
 	#size = 0;
-	#wake: (() => void) | undefined;
+
+	readonly runtime: HostRuntime = {
+		where: " on the fake",
+		exec: () => Promise.reject(new Error("no command in this test")),
+		spawnStream: (request: StreamRequest) => {
+			const sink = request.to;
+			if (sink === undefined)
+				throw new Error("main reads no journal itself in this test");
+			let settle: (end: StreamEnd) => void = () => undefined;
+			let fail: (error: Error) => void = () => undefined;
+			const ended = new Promise<StreamEnd>((resolve, reject) => {
+				settle = resolve;
+				fail = reject;
+			});
+			const following: Following = {
+				fromOffset: Number(request.argv[5]),
+				sink,
+				sent: Number(request.argv[5]),
+				end: (outcome) => {
+					sink.postMessage(null);
+					sink.close();
+					if (outcome instanceof Error) fail(outcome);
+					else settle(outcome);
+				},
+			};
+			this.streams.push(following);
+			request.cancel.onCancelled(() =>
+				following.end({
+					code: null,
+					signal: "SIGTERM",
+					stderr: Buffer.alloc(0),
+				}),
+			);
+			this.#send(following);
+			return {
+				stdout: (async function* () {})(),
+				ended,
+				kill: () => undefined,
+			};
+		},
+	};
 
 	constructor() {
 		this.#printUntilDevHub();
@@ -70,29 +133,35 @@ class ScriptedHost implements ConversationHost {
 			FIXTURE[this.#next]!.side === "received"
 		) {
 			const { line } = FIXTURE[this.#next]!;
-			this.#size += Buffer.byteLength(`${line}\n`);
+			const bytes = Buffer.from(`${line}\n`);
+			this.#bytes = Buffer.concat([this.#bytes, bytes]);
+			this.#size += bytes.byteLength;
 			this.journal.push({ line, offset: this.#size });
 			this.#next += 1;
 		}
-		this.#wake?.();
+		for (const following of this.streams) this.#send(following);
 	}
 
-	async *lines(
-		fromOffset: number,
-		cancel: CancellationToken,
-	): AsyncGenerator<JournalLine> {
-		let index = this.journal.findIndex((each) => each.offset > fromOffset);
-		if (index < 0) index = this.journal.length;
-		while (!cancel.isCancelled) {
-			if (index < this.journal.length) {
-				yield this.journal[index++]!;
-				continue;
-			}
-			await new Promise<void>((resolve) => {
-				this.#wake = resolve;
-				cancel.onCancelled(() => resolve());
-			});
-		}
+	/** What the journal has that this stream has not sent yet, in two chunks, so a line can straddle them. */
+	#send(following: Following): void {
+		const rest = this.#bytes.subarray(following.sent);
+		if (rest.byteLength === 0) return;
+		const half = Math.floor(rest.byteLength / 2);
+		following.sink.postMessage(rest.subarray(0, half));
+		following.sink.postMessage(rest.subarray(half));
+		following.sent = this.#bytes.byteLength;
+	}
+
+	/** The stream's process ended under it (a process host that died). */
+	lose(): void {
+		this.streams
+			.at(-1)
+			?.end(portFailure("failed", { detail: "the process host ended" }));
+	}
+
+	// eslint-disable-next-line require-yield -- never followed: the engine follows the journal itself.
+	async *lines(): AsyncGenerator<JournalLine> {
+		throw new Error("main does not follow the journal in this test");
 	}
 
 	async write(line: string, afterOffset: number): Promise<void> {
@@ -142,6 +211,32 @@ function fakePort() {
 		say: (message) => listener?.({ data: structuredClone(message) }),
 	};
 	return port;
+}
+
+/** A port pair whose messages and close arrive a turn later, in order, cloned. */
+function fakeChannel(): StreamChannel {
+	let listener: ((event: { data: unknown }) => void) | undefined;
+	let closed: (() => void) | undefined;
+	const port2 = {
+		on: (event: string, given: unknown) => {
+			if (event === "message")
+				listener = given as (event: { data: unknown }) => void;
+			if (event === "close") closed = given as () => void;
+			return port2;
+		},
+		start: () => undefined,
+		close: () => undefined,
+	};
+	const port1 = {
+		postMessage: (message: Uint8Array | null) => {
+			const copy = structuredClone(message);
+			setImmediate(() => listener?.({ data: copy }));
+		},
+		close: () => {
+			setImmediate(() => closed?.());
+		},
+	};
+	return { port1, port2 };
 }
 
 /** Engines started by the client, each its own `ConversationEngine` behind a cloning wire. */
@@ -208,8 +303,17 @@ function wired(now: () => number = Date.now) {
 		}),
 		log: (line) => logged.push(line),
 		now,
+		channel: fakeChannel,
 	});
 	const hosts: ScriptedHost[] = [];
+	// One CLI per open, as one host per Agent is: what main reaches of it.
+	const hostNow = () => {
+		const opened = hosts.at(-1);
+		if (opened !== undefined) return opened;
+		const host = new ScriptedHost();
+		hosts.push(host);
+		return host;
+	};
 	const records: unknown[] = [];
 	const open = () => {
 		const conversation = client.open(
@@ -224,11 +328,11 @@ function wired(now: () => number = Date.now) {
 			},
 			{
 				prepareHost: () => Promise.reject(new Error("not on this machine")),
-				host: () => {
-					const host = new ScriptedHost();
-					hosts.push(host);
-					return host;
-				},
+				host: () => hostNow(),
+				journal: async () => ({
+					runtime: hostNow().runtime,
+					directory: "/home/testuser/.devhub/agents/a",
+				}),
 				record: () => undefined,
 				setRecord: (record) => records.push(record),
 				instructions: () => undefined,
@@ -259,6 +363,42 @@ describe("a conversation in the engine", () => {
 		);
 		// What reached main from the engine: no events, no entries.
 		expect(engines).toHaveLength(1);
+	});
+
+	it("reads the journal's bytes from their own port, none of them passing main", async () => {
+		const { open, engines, hosts } = wired();
+		const conversation = open();
+		await settle();
+		expect(conversation.facts().observation.status).toBe("idle");
+		expect(hosts[0]!.streams.map((each) => each.fromOffset)).toEqual([0]);
+		const told = engines[0]!.seen.map((message) => message.type);
+		expect(told).toContain("stream-port");
+		expect(told).not.toContain("stream-end");
+		// The bytes went on the port: nothing main sent the engine carried them.
+		const sentBytes = JSON.stringify(engines[0]!.seen).length;
+		expect(sentBytes).toBeLessThan(hosts[0]!.journal.at(-1)!.offset);
+	});
+
+	it("is lost when its stream's process ends under it, and the round's reattach follows on from where it was", async () => {
+		const { open, engines, hosts } = wired();
+		const conversation = open();
+		await settle();
+		const reached = hosts[0]!.journal.at(-1)!.offset;
+		hosts[0]!.lose();
+		await settle();
+		expect(
+			engines[0]!.seen.filter((message) => message.type === "stream-end"),
+		).toHaveLength(1);
+		conversation.reattach();
+		await settle();
+		expect(hosts[0]!.streams.map((each) => each.fromOffset)).toEqual([
+			0,
+			reached,
+		]);
+		expect(conversation.facts().observation).toMatchObject({
+			status: "idle",
+			failure: undefined,
+		});
 	});
 
 	it("carries a call out and gives its failure back as the same kind of failure", async () => {

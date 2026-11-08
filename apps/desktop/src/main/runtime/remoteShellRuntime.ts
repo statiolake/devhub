@@ -630,20 +630,24 @@ export abstract class RemoteShellRuntime {
 	}
 
 	spawnStream(request: StreamRequest): ByteStream {
-		return openByteStream(async () => {
-			const { login } = await this.describeRemote();
-			const launch = await this.streamLaunch(
-				remoteScript({
-					argv: request.argv,
-					cwd: request.cwd,
-					env: { ...login, ...request.env },
-				}),
-			);
-			return {
-				...launch,
-				refusal: (end) => launch.refusal?.(end) ?? scriptRefusal(end),
-			};
-		}, request.cancel);
+		return openByteStream(
+			async () => {
+				const { login } = await this.describeRemote();
+				const launch = await this.streamLaunch(
+					remoteScript({
+						argv: request.argv,
+						cwd: request.cwd,
+						env: { ...login, ...request.env },
+					}),
+				);
+				return {
+					...launch,
+					refusal: (end) => launch.refusal?.(end) ?? scriptRefusal(end),
+				};
+			},
+			request.cancel,
+			request.to,
+		);
 	}
 
 	/**
