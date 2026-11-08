@@ -695,7 +695,8 @@ function M._place_layers()
             shown = true
             local cursor = vim.api.nvim_win_get_cursor(win)[1]
             local range = card.range or { lnum, lnum }
-            table.insert(inlines, { id = id, win = win, row = last + 1, col = info.textoff,
+            local before = M._rows_before(card.buf, ns, card.mark, lnum)
+            table.insert(inlines, { id = id, win = win, row = last + 1 + before, col = info.textoff,
               width = width, rows = card.rows,
               active = card.focus == true or (win == current and cursor >= range[1] and cursor <= (range[2] or range[1])) })
           elseif not shown and #measure < 64 then

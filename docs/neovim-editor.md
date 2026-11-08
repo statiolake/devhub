@@ -421,8 +421,10 @@ img.clear()
   `:vsplit` shows them twice) and DevHub paints the image there. A path is
   read on Neovim's machine and sent as a `data:` URL (an SSH host's file
   works; 0.10+ for `vim.base64`); an `https:` URL is passed as it is. Where
-  it is — the row under the line's last screen row, the text column, from
-  the window's top — is worked out again (`screenpos`, `getwininfo`) on
+  it is — the row under the line's last screen row, after the rows of any
+  `virt_lines` Neovim stacks there first (another image, a card, a
+  plugin's), the text column, from the window's top — is worked out again
+  (`screenpos`, `getwininfo`) on
   every `WinScrolled`, `WinResized`, `CursorMoved`, `TextChanged`, window
   open/close and tab change, for every window of the tab page showing the
   buffer; a closed fold hides it, a window's bottom clips it.

@@ -483,6 +483,26 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 				"",
 				"c",
 			]);
+			// A second image under the same line: each in its own rows, one
+			// after the other as Neovim stacks their virt_lines.
+			await h.ui.request("nvim_exec_lua", [
+				"local M = require('devhub_gui'); M.image(0, 2, M._demo_image(), { height_rows = 2 })",
+				[],
+			]);
+			await waitFor(() => {
+				const images = lastPlace()?.images;
+				return Array.isArray(images) && images.length === 2;
+			}, "both images placed");
+			const both = [
+				...(lastPlace()?.images as { row: number; rows: number }[]),
+			].sort((a, b) => a.row - b.row);
+			expect(both[0]?.row).toBe(2);
+			expect(both[1]?.row).toBe(2 + (both[0]?.rows ?? 0));
+			expect(both.map((i) => i.rows).sort()).toEqual([2, 3]);
+			await h.until(
+				(state) => cursorGridText(state)[7] === "c",
+				"both images' rows",
+			);
 		}
 
 		h.ui.client.close();

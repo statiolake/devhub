@@ -426,6 +426,23 @@ function M._line_rows(win, info, lnum)
   return first, last, folded ~= -1
 end
 
+--- The virt_lines rows Neovim draws under line lnum (1-based) of buf
+--- before those of ns's mark: two images, cards or a plugin's virtual
+--- lines under one line stack in the order the marks are kept, which is
+--- the order nvim_buf_get_extmarks lists them in.
+function M._rows_before(buf, ns, mark, lnum)
+  local ok, marks = pcall(vim.api.nvim_buf_get_extmarks, buf, -1, { lnum - 1, 0 }, { lnum - 1, -1 },
+    { details = true })
+  if not ok then return 0 end
+  local rows = 0
+  for _, m in ipairs(marks) do
+    local d = m[4] or {}
+    if d.ns_id == ns and m[1] == mark then return rows end
+    if d.virt_lines and not d.virt_lines_above then rows = rows + #d.virt_lines end
+  end
+  return 0
+end
+
 --- Before a placement is taken: what Neovim has not drawn yet is drawn,
 --- so the placement reaches the page after the redraw of the state it is
 --- taken in (a scroll can come between a scheduled placement and its
@@ -456,7 +473,8 @@ function M._place()
         if last and not folded then
           -- From the window's top: the page places it on the window's box
           -- and cuts it to the window.
-          table.insert(images, { id = id, win = win, row = last + 1, col = info.textoff,
+          local before = M._rows_before(image.buf, image_ns, image.mark, lnum)
+          table.insert(images, { id = id, win = win, row = last + 1 + before, col = info.textoff,
             width = info.width - info.textoff, rows = image.rows })
         end
       end
