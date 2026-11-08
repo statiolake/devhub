@@ -33,7 +33,7 @@ import {
 } from "./painter";
 import { escapeInputText, keyToNeovim } from "./keys";
 import { floatLabelsOf } from "./frame";
-import { THEME_GROUPS, THEME_LUA, themeOf } from "./chrome";
+import { THEME_GROUPS, THEME_LUA, themeOf, type Surface } from "./chrome";
 import { cmdlineLayout, textCells } from "./cmdline";
 import { cmdlinePlace } from "./place";
 import {
@@ -237,6 +237,11 @@ export class NeovimEditor {
 
   gridBoxes(): readonly GridBox[] {
     return this.boxes;
+  }
+
+  /** The colours a GUI surface over the editor wears (`chrome.ts`). */
+  surface(): Surface | undefined {
+    return this.painter.paintTheme().surface;
   }
 
   updateSettings(settings: EditorSettings): void {

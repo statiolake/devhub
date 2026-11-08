@@ -464,8 +464,14 @@
 }
 
 /* devhub_gui.notify: fidget-like notifications, bottom right of the editor,
-   above Neovim's status line, grouped by source, fading when done. */
+   above Neovim's status line, grouped by source. Each source is a card in
+   the colorscheme's floats' colours (the editor sets --nvim-toast-*), with
+   gui.popup's hairline and a soft shadow, so it reads over any text. */
 .nvim-toasts {
+  --nvim-toast-bg-default: var(--raised, var(--surface));
+  --nvim-toast-ground: var(--nvim-toast-bg, var(--nvim-toast-bg-default));
+  --nvim-toast-ink: var(--nvim-toast-fg, var(--primary));
+
   position: absolute;
   right: 14px;
   z-index: 600;
@@ -476,7 +482,7 @@
   max-width: min(520px, calc(100% - 28px));
   pointer-events: none;
   font:
-    12px / 1.35 "DevHub Nerd Symbols",
+    12px / 1.4 "DevHub Nerd Symbols",
     system-ui,
     sans-serif;
 }
@@ -485,38 +491,69 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 1px;
-  padding: 3px 2px;
+  max-width: 100%;
+  padding: 4px 0;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+  color: var(--nvim-toast-ink);
+  background: var(--nvim-toast-ground);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--nvim-toast-ink) 14%, transparent),
+    0 6px 20px rgb(0 0 0 / 28%);
+  animation: nvim-toast-in 160ms ease-out;
+  transition:
+    opacity 400ms ease-in,
+    transform 400ms ease-in;
+}
+
+/* Every line of it is leaving: the card goes as one. */
+.nvim-toast-group-leaving {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 .nvim-toast-source {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 8px 1px;
+  padding: 0 10px 2px;
   font-weight: 600;
-  color: var(--primary);
 }
 
+/* A line folds away when its time is up (unless its card goes with it). */
 .nvim-toast {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  grid-template-rows: 1fr;
   max-width: 100%;
-  padding: 1px 8px;
-  border-radius: 6px;
-  color: var(--ink-secondary, var(--primary));
   pointer-events: auto;
-  animation:
-    nvim-toast-in 160ms ease-out,
-    nvim-toast-out 500ms ease-in forwards;
+  animation: nvim-toast-in 160ms ease-out;
+  transition:
+    grid-template-rows 300ms ease-in 100ms,
+    opacity 300ms ease-in;
 }
 
 .nvim-toast-updated {
-  animation-name: none, nvim-toast-out;
+  animation: none;
+}
+
+.nvim-toast-leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.nvim-toast-group-leaving .nvim-toast-leaving {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.nvim-toast-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1px 10px;
+  color: color-mix(in srgb, var(--nvim-toast-ink) 82%, transparent);
 }
 
 @keyframes nvim-toast-in {
@@ -526,15 +563,11 @@
   }
 }
 
-@keyframes nvim-toast-out {
-  to {
-    opacity: 0;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .nvim-toast {
+  .nvim-toast,
+  .nvim-toast-group {
     animation: none;
+    transition: none;
   }
 
   .nvim-toast-spinner {
@@ -549,15 +582,17 @@
   white-space: nowrap;
 }
 
-.nvim-toast-title {
+.nvim-toast-title,
+.nvim-toast-percent {
   flex: none;
-  color: var(--ink-tertiary, var(--ink-secondary));
+  color: var(
+    --nvim-toast-muted,
+    color-mix(in srgb, var(--nvim-toast-ink) 55%, transparent)
+  );
 }
 
 .nvim-toast-percent {
-  flex: none;
   font-variant-numeric: tabular-nums;
-  color: var(--ink-tertiary, var(--ink-secondary));
 }
 
 .nvim-toast-mark {
@@ -576,32 +611,35 @@
   place-items: center;
   font-size: 9.5px;
   font-weight: 700;
-  color: var(--surface);
-  background: var(--accent);
+  color: var(--nvim-toast-ground);
+  background: var(--nvim-toast-info, var(--accent));
 }
 
 .nvim-toast-warn .nvim-toast-msg {
-  color: #d9a23a;
+  color: var(--nvim-toast-warn, #d9a23a);
 }
 
 .nvim-toast-warn .nvim-toast-icon {
-  background: #d9a23a;
+  background: var(--nvim-toast-warn, #d9a23a);
 }
 
 .nvim-toast-error .nvim-toast-msg {
-  color: #e0565b;
+  color: var(--nvim-toast-error, #e0565b);
 }
 
 .nvim-toast-error .nvim-toast-icon {
-  background: #e0565b;
+  background: var(--nvim-toast-error, #e0565b);
 }
 
 .nvim-toast-debug .nvim-toast-icon {
-  background: var(--ink-tertiary, gray);
+  background: var(
+    --nvim-toast-muted,
+    color-mix(in srgb, var(--nvim-toast-ink) 45%, transparent)
+  );
 }
 
 .nvim-toast-done {
-  color: #6cc485;
+  color: var(--nvim-toast-ok, #6cc485);
   font-weight: 700;
 }
 
@@ -610,8 +648,9 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  border: 1.5px solid color-mix(in srgb, var(--accent) 25%, transparent);
-  border-top-color: var(--accent);
+  border: 1.5px solid
+    color-mix(in srgb, var(--nvim-toast-info, var(--accent)) 25%, transparent);
+  border-top-color: var(--nvim-toast-info, var(--accent));
   animation: nvim-toast-spin 0.8s linear infinite;
 }
 

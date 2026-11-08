@@ -657,6 +657,7 @@ function NeovimSurface({
         toasts={decorations.toasts}
         dismiss={dismiss}
         bottom={toastBottom(editor, boxes)}
+        surface={editor?.surface()}
       />
       {connection.kind === "connecting" ? (
         <div className="nvim-status">Starting Neovim…</div>
@@ -1150,6 +1151,7 @@ function toastBottom(
   const cell = editor.cellMetrics();
   const windows = boxes.filter((b) => !b.float && b.win !== undefined);
   if (windows.length === 0) return 12;
+  // The status line is the row under the lowest window: clear of its top.
   const lowest = Math.max(...windows.map((b) => b.row + b.height));
-  return Math.max(6, editor.areaSize().height - (lowest + 1) * cell.height + 6);
+  return Math.max(6, editor.areaSize().height - lowest * cell.height + 6);
 }

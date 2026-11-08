@@ -57,6 +57,23 @@ export interface PaintTheme {
   readonly eob?: number;
   /** `cmdheight`: grid 1's last rows are the command line's, no bar. */
   readonly cmdheight: number;
+  /**
+   * The colours of what DevHub draws over the editor (notifications):
+   * the floats' ground and ink (`NormalFloat`, else `Normal`), and the
+   * diagnostics' colours for levels. Absent until asked.
+   */
+  readonly surface?: Surface;
+}
+
+/** `PaintTheme.surface`: colours a GUI surface over the editor wears. */
+export interface Surface {
+  readonly bg?: number;
+  readonly fg?: number;
+  readonly muted?: number;
+  readonly info?: number;
+  readonly warn?: number;
+  readonly error?: number;
+  readonly ok?: number;
 }
 
 export const NO_THEME: PaintTheme = {
@@ -101,6 +118,13 @@ export const THEME_GROUPS: readonly string[] = [
   ...PILL_GROUPS,
   "EndOfBuffer",
   "DiffDelete",
+  "Normal",
+  "NormalFloat",
+  "Comment",
+  "DiagnosticInfo",
+  "DiagnosticWarn",
+  "DiagnosticError",
+  "DiagnosticOk",
 ];
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -136,10 +160,26 @@ export function themeOf(answer: unknown): PaintTheme {
   const diff = record(groups["DiffDelete"]);
   const diffFg = diff?.["fg"];
   const diffBg = diff?.["bg"];
+  const colour = (name: string, key: "fg" | "bg") => {
+    const v = record(groups[name])?.[key];
+    return typeof v === "number" ? v : undefined;
+  };
+  const surfaceEntries = Object.entries({
+    bg: colour("NormalFloat", "bg") ?? colour("Normal", "bg"),
+    fg: colour("NormalFloat", "fg") ?? colour("Normal", "fg"),
+    muted: colour("Comment", "fg"),
+    info: colour("DiagnosticInfo", "fg"),
+    warn: colour("DiagnosticWarn", "fg"),
+    error: colour("DiagnosticError", "fg"),
+    ok: colour("DiagnosticOk", "fg"),
+  }).filter(([, v]) => v !== undefined);
   return {
     shaped,
     pills,
     cmdheight,
+    ...(surfaceEntries.length > 0
+      ? { surface: Object.fromEntries(surfaceEntries) as Surface }
+      : {}),
     ...(!chosen("eob") && typeof eob === "number" ? { eob } : {}),
     ...(!chosen("diff") &&
     diff?.["reverse"] !== true &&
@@ -165,7 +205,8 @@ export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
     a.diffDelete?.fg === b.diffDelete?.fg &&
     a.diffDelete?.bg === b.diffDelete?.bg &&
     sameSet(a.shaped, b.shaped) &&
-    sameSet(a.pills, b.pills)
+    sameSet(a.pills, b.pills) &&
+    JSON.stringify(a.surface) === JSON.stringify(b.surface)
   );
 }
 

@@ -39,6 +39,26 @@ describe("the colorscheme's shaped colours", () => {
   });
 });
 
+describe("the surface notifications wear", () => {
+  it("is the floats' colours, else Normal's, with the diagnostics'", () => {
+    const theme = themeOf({
+      groups: {
+        Normal: { bg: NORMAL, fg: 0xd4d4d4 },
+        NormalFloat: { bg: 0x252526 },
+        DiagnosticWarn: { fg: 0xcca700 },
+      },
+    });
+    expect(theme.surface).toEqual({
+      bg: 0x252526,
+      fg: 0xd4d4d4,
+      warn: 0xcca700,
+    });
+    expect(
+      sameTheme(theme, themeOf({ groups: { Normal: { bg: NORMAL } } })),
+    ).toBe(false);
+  });
+});
+
 describe("shaped spans", () => {
   it("are runs of one shaped colour", () => {
     const row = [NORMAL, VISUAL, VISUAL, SEARCH, NORMAL, VISUAL];

@@ -319,7 +319,12 @@ img.clear()
 - **notify** — fidget-like: compact lines at the bottom right, just above
   the lowest window's status line, under the name of their source
   (`group`), by level (`info`, `warn`, `error`, `debug` or
-  `vim.log.levels.*`), fading after 4–8 s (or a click). A `key` updates the
+  `vim.log.levels.*`), fading after 4–8 s (or a click). Each source is a
+  small card in the colorscheme's floats' colours (`NormalFloat`, else
+  `Normal`; the levels in the diagnostics' colours), with `gui.popup`'s
+  hairline and a soft shadow, so it reads over any text; a line whose
+  time is up fades and folds away, and a card whose every line is
+  leaving fades as one. A `key` updates the
   notification it named in place, so work in progress (`progress = true`,
   `percent`, `done`) spins, shows its percentage and ticks when done (gone
   2 s later). devhub.nvim's `setup{ notify = true }` makes `vim.notify` this
@@ -501,7 +506,7 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
 - An inline card's height is whole rows: up to a row of its slot is blank
   under it.
 - Notifications sit above the lowest window's status line, over whatever
-  is there (a panel's hint line included).
+  is there (a panel's hint line included), on a card of their own.
 - A popup does not carry the highlights its caller adds to a markdown
   float's buffer (signature help's active parameter is not marked); a plain
   text float's (a diagnostic's) are carried.

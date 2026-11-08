@@ -4,13 +4,14 @@
  * editor (components' `markdown`, popups).
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { Components } from "react-markdown";
 import {
   grammarFor,
   highlight,
   type Colouring,
 } from "../conversation/highlight";
+import type { Surface } from "./chrome";
 import type { GridBox } from "./redraw";
 import { toastGroups, type Decorations, type Toast } from "./decorations";
 
@@ -21,23 +22,45 @@ interface Cell {
 
 /**
  * Notifications, fidget-like: compact lines at the bottom right, above the
- * status line, under the name of their source; each fades when its time is
- * up. Work in progress spins, shows its percentage, and ticks when done.
+ * status line, under the name of their source; each source a small card in
+ * the floats' colours (`surface`, as `gui.popup` wears them), so it reads
+ * over any text. A line whose time is up fades and folds away; a card whose
+ * every line is leaving fades as one. Work in progress spins, shows its
+ * percentage, and ticks when done.
  */
 export function Toasts({
   toasts,
   dismiss,
   bottom = 12,
+  surface,
 }: {
   readonly toasts: readonly Toast[];
   readonly dismiss: (key: number) => void;
   /** Pixels from the editor's bottom: above Neovim's status line. */
   readonly bottom?: number;
+  /** The colorscheme's floats' colours; DevHub's own until known. */
+  readonly surface?: Surface | undefined;
 }) {
+  const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set());
+  const leave = useCallback((id: string) => {
+    setLeaving((before) => new Set(before).add(id));
+  }, []);
+  const live = new Set(toasts.map(toastId));
+  if ([...leaving].some((id) => !live.has(id))) {
+    // Forget lines that are gone (a render-time prune, no effect needed).
+    setLeaving(new Set([...leaving].filter((id) => live.has(id))));
+  }
   return (
-    <div className="nvim-toasts" aria-live="polite" style={{ bottom }}>
+    <div
+      className="nvim-toasts"
+      aria-live="polite"
+      style={{ bottom, ...surfaceStyle(surface) }}
+    >
       {toastGroups(toasts).map(({ group, toasts: list }) => (
-        <div key={group} className="nvim-toast-group">
+        <div
+          key={group}
+          className={`nvim-toast-group${list.every((t) => leaving.has(toastId(t))) ? " nvim-toast-group-leaving" : ""}`}
+        >
           {group !== "" ? (
             <div className="nvim-toast-source">
               {list.some((t) => t.progress && !t.progress.done) ? (
@@ -48,8 +71,10 @@ export function Toasts({
           ) : null}
           {list.map((toast) => (
             <ToastView
-              key={`${String(toast.key)}:${String(toast.rev)}`}
+              key={toastId(toast)}
               toast={toast}
+              leaving={leaving.has(toastId(toast))}
+              leave={leave}
               dismiss={dismiss}
             />
           ))}
@@ -57,6 +82,33 @@ export function Toasts({
       ))}
     </div>
   );
+}
+
+/** A notification as it is now: an update is a new line, its time anew. */
+function toastId(toast: Toast): string {
+  return `${String(toast.key)}:${String(toast.rev)}`;
+}
+
+/** The surface's colours as the stack's custom properties. */
+function surfaceStyle(surface: Surface | undefined): Record<string, string> {
+  if (!surface) return {};
+  const css = (v: number | undefined) =>
+    v === undefined
+      ? undefined
+      : `#${v.toString(16).padStart(6, "0").slice(-6)}`;
+  const out: Record<string, string> = {};
+  const set = (name: string, v: number | undefined) => {
+    const c = css(v);
+    if (c !== undefined) out[name] = c;
+  };
+  set("--nvim-toast-bg", surface.bg);
+  set("--nvim-toast-fg", surface.fg);
+  set("--nvim-toast-muted", surface.muted);
+  set("--nvim-toast-info", surface.info);
+  set("--nvim-toast-warn", surface.warn);
+  set("--nvim-toast-error", surface.error);
+  set("--nvim-toast-ok", surface.ok);
+  return out;
 }
 
 const LEVEL_ICON: Record<Toast["level"], string> = {
@@ -67,24 +119,35 @@ const LEVEL_ICON: Record<Toast["level"], string> = {
 };
 
 /** How long a notification takes to fade, at the end of its time. */
-const FADE_MS = 500;
+const FADE_MS = 400;
 
 function ToastView({
   toast,
+  leaving,
+  leave,
   dismiss,
 }: {
   readonly toast: Toast;
+  readonly leaving: boolean;
+  readonly leave: (id: string) => void;
   readonly dismiss: (key: number) => void;
 }) {
   useEffect(() => {
     if (toast.timeout <= 0) return undefined;
-    const timer = window.setTimeout(() => {
+    const fade = window.setTimeout(
+      () => {
+        leave(toastId(toast));
+      },
+      Math.max(0, toast.timeout - FADE_MS),
+    );
+    const gone = window.setTimeout(() => {
       dismiss(toast.key);
     }, toast.timeout);
     return () => {
-      window.clearTimeout(timer);
+      window.clearTimeout(fade);
+      window.clearTimeout(gone);
     };
-  }, [toast, dismiss]);
+  }, [toast, leave, dismiss]);
   const progress = toast.progress;
   const icon = progress ? (
     progress.done ? (
@@ -97,35 +160,29 @@ function ToastView({
   );
   return (
     <div
-      className={`nvim-toast nvim-toast-${toast.level}${toast.rev > 1 ? " nvim-toast-updated" : ""}`}
+      className={`nvim-toast nvim-toast-${toast.level}${toast.rev > 1 ? " nvim-toast-updated" : ""}${leaving ? " nvim-toast-leaving" : ""}`}
       role={toast.level === "error" ? "alert" : "status"}
-      style={
-        toast.timeout > 0
-          ? {
-              animationDelay: `0ms, ${String(Math.max(0, toast.timeout - FADE_MS))}ms`,
-            }
-          : {
-              animation:
-                toast.rev > 1 ? "none" : "nvim-toast-in 160ms ease-out",
-            }
-      }
       onMouseDown={(event) => {
         event.preventDefault();
         dismiss(toast.key);
       }}
     >
-      <span className="nvim-toast-msg">{toast.msg || toast.title}</span>
-      {toast.msg !== "" && toast.title !== "" && toast.title !== toast.group ? (
-        <span className="nvim-toast-title">{toast.title}</span>
-      ) : null}
-      {progress?.percent !== undefined && !progress.done ? (
-        <span className="nvim-toast-percent">
-          {Math.round(progress.percent)}%
+      <div className="nvim-toast-line">
+        <span className="nvim-toast-msg">{toast.msg || toast.title}</span>
+        {toast.msg !== "" &&
+        toast.title !== "" &&
+        toast.title !== toast.group ? (
+          <span className="nvim-toast-title">{toast.title}</span>
+        ) : null}
+        {progress?.percent !== undefined && !progress.done ? (
+          <span className="nvim-toast-percent">
+            {Math.round(progress.percent)}%
+          </span>
+        ) : null}
+        <span className="nvim-toast-mark" aria-hidden>
+          {icon}
         </span>
-      ) : null}
-      <span className="nvim-toast-mark" aria-hidden>
-        {icon}
-      </span>
+      </div>
     </div>
   );
 }

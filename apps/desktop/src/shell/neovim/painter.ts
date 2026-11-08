@@ -334,6 +334,11 @@ export class GridPainter {
     return this.font;
   }
 
+  /** What the colorscheme says beyond the grid, as last asked. */
+  paintTheme(): PaintTheme {
+    return this.theme;
+  }
+
   /** Bring every canvas in line with the state; repaint what changed. */
   paint(
     state: NeovimUiState,
