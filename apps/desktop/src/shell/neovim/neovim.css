@@ -228,17 +228,44 @@
 .nvim-tabline {
   display: flex;
   flex: none;
-  gap: 2px;
   height: 31px;
   padding: 0 8px;
-  align-items: stretch;
   /* The strip's bottom line is its ground's last pixel row, so the current
      tab, the editor's ground, covers it and joins the editor. */
   background: linear-gradient(to top, var(--line-soft) 1px, var(--chrome) 1px);
+}
+
+.nvim-tabline-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  align-items: stretch;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* More tabs beyond an edge: that edge fades out (TabStrip.tsx). */
+.nvim-tabline-more-left {
+  mask-image: linear-gradient(to right, transparent, black 28px);
+}
+
+.nvim-tabline-more-right {
+  mask-image: linear-gradient(to left, transparent, black 28px);
+}
+
+.nvim-tabline-more-left.nvim-tabline-more-right {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 28px,
+    black calc(100% - 28px),
+    transparent
+  );
 }
 
 .nvim-tab {
+  flex: none;
   max-width: 220px;
   padding: 0 12px;
   border: 0;

@@ -365,7 +365,12 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   char, `cmdline_block` for multiline), and tab pages as a native tab strip
   (click switches via `nvim_set_current_tabpage`; `gt`/`gT` are Neovim's):
   the current tab wears the editor's ground and joins it, over the strip's
-  bottom line, as an editor's tab does.
+  bottom line, as an editor's tab does. Tabs keep their names at their
+  width (`TabStrip.tsx`, VS Code's `tabSizing: fit`; before, many tabs
+  squeezed to `p…`) and the strip scrolls sideways: the current tab is
+  brought into view whenever it changes, so `gt` reaches one out of view;
+  the wheel scrolls the strip; an edge with more beyond fades out; the
+  full name is the tooltip.
 - The command line's text is laid out on cells as Neovim's own command line
   holds it (`cmdline.ts`): `cmdline_pos` is a byte offset, a wide character
   takes two cells, a combining mark joins the one before, the text wraps at

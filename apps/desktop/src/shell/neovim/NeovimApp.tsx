@@ -47,6 +47,7 @@ import { cmdlineLayout, textCells } from "./cmdline";
 import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
 import { glyphKind } from "./glyphs";
 import { TerminalSurface } from "../terminal/TerminalSurface";
+import { TabStrip } from "./TabStrip";
 import { InlineImages, Toasts } from "./DecorationViews";
 import {
   GuiViews,
@@ -498,28 +499,14 @@ function NeovimSurface({
       }
     >
       {showTabs ? (
-        <div className="nvim-tabline" role="tablist">
-          {tabs.tabs.map((tab) => (
-            <button
-              key={tab.tab}
-              type="button"
-              role="tab"
-              aria-selected={tab.tab === tabs.current}
-              className={
-                tab.tab === tabs.current
-                  ? "nvim-tab nvim-tab-current"
-                  : "nvim-tab"
-              }
-              onMouseDown={(event) => {
-                event.preventDefault();
-                send("nvim_set_current_tabpage", [tab.tab]);
-                editor?.focus();
-              }}
-            >
-              {tabTitle(tab.name)}
-            </button>
-          ))}
-        </div>
+        <TabStrip
+          tabs={tabs.tabs}
+          current={tabs.current}
+          select={(tab) => {
+            send("nvim_set_current_tabpage", [tab]);
+            editor?.focus();
+          }}
+        />
       ) : null}
       <div className="nvim-host" ref={hostRef} aria-label={`${label} — Neovim`}>
         {nvim && cell
@@ -803,11 +790,6 @@ function hexColor(rgb: number): string {
 }
 
 /** A tab's name as Neovim gives it (a path): its last part. */
-function tabTitle(name: string): string {
-  const parts = name.split("/");
-  return parts.at(-1) || name || "[No Name]";
-}
-
 /** The GUI window's page: the person's HTML, with `devhub` to talk to Lua. */
 function guiDocument(html: string, state: NeovimUiState): string {
   const fg = cssColor(state.defaults.foreground);
