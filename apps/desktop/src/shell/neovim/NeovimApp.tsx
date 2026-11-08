@@ -46,11 +46,12 @@ import {
 import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
 import { glyphKind } from "./glyphs";
 import { TerminalSurface } from "../terminal/TerminalSurface";
-import { InlineImages, RichFloats, Toasts } from "./DecorationViews";
+import { InlineImages, Toasts } from "./DecorationViews";
 import {
   GuiViews,
   InlineCards,
   LineDecorations,
+  Popups,
   type LayerHost,
 } from "./LayerViews";
 import {
@@ -626,18 +627,13 @@ function NeovimSurface({
                 <LineDecorations layers={layers} host={layerHost} />
                 <InlineCards layers={layers} host={layerHost} />
                 <GuiViews layers={layers} host={layerHost} />
+                <Popups
+                  layers={layers}
+                  host={layerHost}
+                  area={editor.areaSize()}
+                />
               </>
             ) : null}
-            <RichFloats
-              decorations={decorations}
-              boxes={boxes}
-              cell={cell}
-              state={nvim}
-              openLink={openLink}
-              refocus={() => {
-                editor.focus();
-              }}
-            />
             <Cmdline state={nvim} editor={editor} />
             <Popupmenu state={nvim} editor={editor} send={send} />
           </>

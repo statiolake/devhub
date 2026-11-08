@@ -3,7 +3,6 @@ import {
   NO_DECORATIONS,
   applyGuiEvent,
   dismissToast,
-  richScrollFraction,
   toastGroups,
 } from "./decorations";
 
@@ -89,28 +88,11 @@ describe("devhub_gui's events on the page", () => {
         { id: 3, win: 1000, row: 2, col: 4, width: 40, rows: 3, full: 8 },
         { id: 3, win: 1001, row: 2 },
       ],
-      rich: {},
     });
     expect(state.placedImages).toEqual([
       { id: 3, win: 1000, row: 2, col: 4, width: 40, rows: 3, full: 8 },
     ]);
-    expect(state.placedRich).toEqual([]);
     state = applyGuiEvent(state, "image_clear", { id: 3 });
     expect(state.images.size).toBe(0);
-  });
-
-  it("scrolls a rich float as Neovim scrolls its window", () => {
-    const place = {
-      id: 1,
-      win: 1002,
-      topline: 1,
-      lines: 30,
-      height: 10,
-      border: true,
-    };
-    expect(richScrollFraction(place)).toBe(0);
-    expect(richScrollFraction({ ...place, topline: 21 })).toBe(1);
-    expect(richScrollFraction({ ...place, topline: 11 })).toBe(0.5);
-    expect(richScrollFraction({ ...place, lines: 5 })).toBe(0);
   });
 });

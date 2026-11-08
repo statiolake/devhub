@@ -2,7 +2,8 @@
  * What `devhub_gui`'s buffer-backed GUI layers leave on the page: views
  * (`gui.view`: one component per buffer line, painted over the windows that
  * show the buffer), inline cards (`gui.inline`: a component in the
- * `virt_lines` rows of an extmark) and line decorations (`gui.decorate`).
+ * `virt_lines` rows of an extmark), line decorations (`gui.decorate`) and
+ * popups (`gui.popup`: a component at a buffer position, a hover).
  *
  * Neovim owns all of it. Lua sends the content when it changes (`view`,
  * `inline`, `deco`, their `*_clear`) and where everything is after every
@@ -94,6 +95,35 @@ export interface DecoPlace {
   readonly width: number;
 }
 
+export type PopupPlacement = "below" | "above" | "auto";
+
+export interface PopupContent {
+  readonly id: number;
+  readonly node: ComponentNode;
+  readonly hl: HlTable;
+  readonly placement: PopupPlacement;
+  /** In cells, when the popup's owner bounds it. */
+  readonly maxWidth: number | undefined;
+  readonly maxHeight: number | undefined;
+}
+
+/** A popup's anchor: its cell, from its window's top-left. */
+export interface PopupPlace {
+  readonly id: number;
+  readonly win: number;
+  readonly row: number;
+  readonly col: number;
+  /** It has the keys (j/k scroll it, q closes it). */
+  readonly focused: boolean;
+}
+
+/** A scroll Neovim asked of a popup (its keys); `seq` tells a new one. */
+export interface PopupScroll {
+  readonly seq: number;
+  readonly by: "line" | "half" | "page" | "top" | "bottom";
+  readonly n: number;
+}
+
 export interface Layers {
   readonly views: ReadonlyMap<number, ViewContent>;
   readonly inlines: ReadonlyMap<number, InlineContent>;
@@ -102,6 +132,9 @@ export interface Layers {
   readonly placedInlines: readonly InlinePlace[];
   readonly measureInlines: readonly InlineMeasure[];
   readonly placedDecos: readonly DecoPlace[];
+  readonly popups: ReadonlyMap<number, PopupContent>;
+  readonly placedPopups: readonly PopupPlace[];
+  readonly popupScrolls: ReadonlyMap<number, PopupScroll>;
 }
 
 export const NO_LAYERS: Layers = {
@@ -112,6 +145,9 @@ export const NO_LAYERS: Layers = {
   placedInlines: [],
   measureInlines: [],
   placedDecos: [],
+  popups: new Map(),
+  placedPopups: [],
+  popupScrolls: new Map(),
 };
 
 /** The events this reducer takes. */
@@ -122,6 +158,9 @@ export const LAYER_EVENTS: ReadonlySet<string> = new Set([
   "inline_clear",
   "deco",
   "deco_clear",
+  "popup",
+  "popup_clear",
+  "popup_scroll",
   "layers",
 ]);
 
@@ -233,6 +272,57 @@ export function applyLayerEvent(
         }),
       };
     }
+    case "popup": {
+      const node = parseNode(p["node"]);
+      if (id === undefined || !node) return state;
+      const placement = p["placement"];
+      const cells = (key: string) => {
+        const v = int(p, key);
+        return v !== undefined && v > 0 ? v : undefined;
+      };
+      return {
+        ...state,
+        popups: new Map(state.popups).set(id, {
+          id,
+          node,
+          hl: parseHlTable(p["hl"]),
+          placement:
+            placement === "above" || placement === "auto" ? placement : "below",
+          maxWidth: cells("max_width"),
+          maxHeight: cells("max_height"),
+        }),
+      };
+    }
+    case "popup_clear":
+      return id === undefined
+        ? state
+        : {
+            ...state,
+            popups: without(state.popups, id),
+            popupScrolls: without(state.popupScrolls, id),
+          };
+    case "popup_scroll": {
+      const by = p["by"];
+      const seq = int(p, "seq");
+      if (
+        id === undefined ||
+        seq === undefined ||
+        (by !== "line" &&
+          by !== "half" &&
+          by !== "page" &&
+          by !== "top" &&
+          by !== "bottom")
+      )
+        return state;
+      return {
+        ...state,
+        popupScrolls: new Map(state.popupScrolls).set(id, {
+          seq,
+          by,
+          n: int(p, "n") ?? 1,
+        }),
+      };
+    }
     case "deco_clear":
       return id === undefined
         ? state
@@ -274,6 +364,13 @@ export function applyLayerEvent(
             ? ints(r, ["id", "win", "row", "rows", "col", "width"] as const)
             : undefined;
           return n && n.rows > 0 ? [n] : [];
+        }),
+        placedPopups: luaList(p["popups"]).flatMap((v) => {
+          const r = rec(v);
+          const n = r
+            ? ints(r, ["id", "win", "row", "col"] as const)
+            : undefined;
+          return r && n ? [{ ...n, focused: r["focused"] === true }] : [];
         }),
       };
     default:

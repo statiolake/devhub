@@ -1,6 +1,6 @@
 /**
  * The page's side of `layers.ts`: views painted over their windows, cards in
- * the rows their extmarks reserve, and line decorations.
+ * the rows their extmarks reserve, line decorations, and popups.
  *
  * Neovim keeps the state and the keys. A view's focused item is the line
  * Neovim's cursor is on; the view scrolls (in pixels, its own way: items are
@@ -14,6 +14,7 @@
 import {
   useLayoutEffect,
   useRef,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -31,9 +32,13 @@ import type {
   DecoContent,
   InlineContent,
   Layers,
+  PopupContent,
+  PopupPlace,
+  PopupScroll,
   ViewContent,
   ViewPlace,
 } from "./layers";
+import { placePopup, popupMaxWidth, popupScrollTop } from "./popup";
 import type { GridBox } from "./redraw";
 
 interface Cell {
@@ -551,6 +556,178 @@ function Decoration({
       }}
     >
       {tag}
+    </div>
+  );
+}
+
+/**
+ * Popups (`gui.popup`, a hover): a component at a buffer position, with no
+ * Neovim window. Laid out the page's way — prose reflowed, code wrapped —
+ * at most as wide and tall as its owner says and the editor allows, under
+ * its anchor or above it (`placePopup`), following the anchor as the window
+ * scrolls; taller content scrolls inside, with a fade at the clipped edge.
+ * Neovim keeps the keys: a focused popup scrolls as Lua asks (j/k, <C-d>,
+ * gg/G: `popupScrolls`); the wheel scrolls it here.
+ */
+export function Popups({
+  layers,
+  host,
+  area,
+}: {
+  readonly layers: Layers;
+  readonly host: LayerHost;
+  /** The editor's size, in pixels. */
+  readonly area: { readonly width: number; readonly height: number };
+}) {
+  return (
+    <>
+      {layers.placedPopups.map((place) => {
+        const content = layers.popups.get(place.id);
+        const box = host.boxes.find((b) => b.win === place.win);
+        if (!content || !box) return null;
+        return (
+          <Popup
+            key={place.id}
+            content={content}
+            place={place}
+            box={box}
+            host={host}
+            area={area}
+            scroll={layers.popupScrolls.get(place.id)}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+/** A popup's line, for j/k: its prose's line height. */
+const POPUP_LINE = 19;
+
+function Popup({
+  content,
+  place,
+  box,
+  host,
+  area,
+  scroll,
+}: {
+  readonly content: PopupContent;
+  readonly place: PopupPlace;
+  readonly box: GridBox;
+  readonly host: LayerHost;
+  readonly area: { readonly width: number; readonly height: number };
+  readonly scroll: PopupScroll | undefined;
+}) {
+  const { cell } = host;
+  const scroller = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState<
+    { readonly width: number; readonly height: number } | undefined
+  >();
+  const [more, setMore] = useState({ above: false, below: false });
+  const edges = () => {
+    const el = scroller.current;
+    if (!el) return;
+    const above = el.scrollTop > 1;
+    const below = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+    setMore((m) =>
+      m.above === above && m.below === below ? m : { above, below },
+    );
+  };
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (!el) return undefined;
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      setSize((s) =>
+        s?.width === rect.width && s.height === rect.height
+          ? s
+          : { width: rect.width, height: rect.height },
+      );
+      edges();
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+    };
+  }, [content]);
+  const seq = useRef(0);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el || !scroll || scroll.seq === seq.current) return;
+    seq.current = scroll.seq;
+    el.scrollTop = popupScrollTop(el.scrollTop, scroll, {
+      height: el.clientHeight,
+      content: el.scrollHeight,
+      line: POPUP_LINE,
+    });
+    edges();
+  }, [scroll]);
+  const maxWidth = popupMaxWidth(content.maxWidth, cell.width, area.width);
+  const layout = size
+    ? placePopup({
+        anchor: {
+          x: (box.col + place.col) * cell.width,
+          y: (box.row + place.row) * cell.height,
+        },
+        cellHeight: cell.height,
+        size,
+        area,
+        placement: content.placement,
+        maxHeight:
+          content.maxHeight !== undefined
+            ? content.maxHeight * cell.height
+            : undefined,
+      })
+    : undefined;
+  const theme = themeFor(host, content.hl, (action) => {
+    host.lua("_layers_click", ["popup", place.id, null, null, action]);
+    host.refocus();
+  });
+  // A popup wears the floats' colours.
+  const float = content.hl.get("NormalFloat");
+  const bg = float?.bg ?? theme.bg;
+  const fg = float?.fg ?? theme.fg;
+  return (
+    <div
+      className={`nvim-popup${place.focused ? " nvim-popup-focused" : ""}`}
+      style={{
+        left: layout?.left ?? 0,
+        top: layout?.top ?? 0,
+        height: layout?.height,
+        maxWidth,
+        visibility: layout ? undefined : "hidden",
+        color: rgbCss(fg),
+        background: rgbCss(bg),
+        ["--nvim-ring" as string]: ringColor(content.hl, fg),
+        ["--nvim-ground" as string]: rgbCss(bg),
+        ["--nvim-grid-font" as string]: host.mono,
+        ["--nvim-muted" as string]:
+          fgOf(content.hl, "Comment") ?? rgbCss(fg, 0.55),
+      }}
+      onMouseUp={() => {
+        // A plain click gives the keyboard back to Neovim; a selection stays
+        // (to be copied).
+        if (window.getSelection()?.isCollapsed !== false) host.refocus();
+      }}
+    >
+      <div ref={scroller} className="nvim-popup-scroll" onScroll={edges}>
+        <div ref={body} className="nvim-popup-body" style={{ maxWidth }}>
+          <ComponentTree
+            node={content.node}
+            theme={{ ...theme, fg, bg, dark: isDark(bg) }}
+          />
+        </div>
+      </div>
+      {more.above ? (
+        <div className="nvim-popup-fade nvim-popup-fade-top" aria-hidden />
+      ) : null}
+      {more.below ? (
+        <div className="nvim-popup-fade nvim-popup-fade-bottom" aria-hidden />
+      ) : null}
     </div>
   );
 }

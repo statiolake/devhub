@@ -379,7 +379,7 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 		h.ui.client.close();
 	});
 
-	it("sends toasts, and places an image and a rich float where their windows show them", async () => {
+	it("sends toasts, and places an image where its windows show it", async () => {
 		const h = await attached(60, 20);
 		const hasBase64 = (await h.ui.request("nvim_exec_lua", [
 			"return vim.base64 ~= nil",
@@ -410,7 +410,6 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 			h.gui.events.filter((e) => e.kind === "place").at(-1)?.payload as
 				| {
 						images: { row: number; rows: number }[] | object;
-						rich: { topline: number; border: boolean }[] | object;
 				  }
 				| undefined;
 		if (hasBase64) {
@@ -444,28 +443,87 @@ describe.skipIf(NVIM === undefined)("DevHub as a real Neovim's UI", () => {
 				"c",
 			]);
 		}
-		await h.ui.request("nvim_exec_lua", [
-			"local buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# Hi', '```lua', 'x = 1', '```' }); local win = vim.api.nvim_open_win(buf, false, { relative = 'editor', row = 1, col = 1, width = 20, height = 4, border = 'rounded' }); _G.rich_win = win; require('devhub_gui').rich_float(win, { '# Hi', '```lua', 'x = 1', '```' })",
-			[],
-		]);
-		await waitFor(
-			() =>
-				h.gui.events.some((e) => e.kind === "rich") &&
-				Array.isArray(lastPlace()?.rich) &&
-				(lastPlace()?.rich as unknown[]).length > 0,
-			"the rich float placed",
-		);
-		expect(lastPlace()?.rich).toMatchObject([{ topline: 1, border: true }]);
-		await h.ui.request("nvim_exec_lua", [
-			"vim.api.nvim_win_close(_G.rich_win, true)",
-			[],
-		]);
-		await waitFor(
-			() => h.gui.events.some((e) => e.kind === "rich_clear"),
-			"the rich float cleared",
-		);
+
 		h.ui.client.close();
 	});
+	it("shows a popup at its anchor, follows it, gives it the keys when focused, and closes it", async () => {
+		const h = await attached(60, 20);
+		const waitFor = async (check: () => boolean, what: string) => {
+			const deadline = Date.now() + 3_000;
+			while (!check()) {
+				if (Date.now() > deadline)
+					throw new Error(`timed out waiting for ${what}`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		};
+		const last = (kind: string) =>
+			h.gui.events.filter((e) => e.kind === kind).at(-1)?.payload as
+				| Record<string, unknown>
+				| undefined;
+		const popups = (): Record<string, unknown>[] => {
+			const v = last("layers")?.["popups"];
+			return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
+		};
+		const lua = (code: string) => h.ui.request("nvim_exec_lua", [code, []]);
+		await lua(`vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'alpha', 'beta gamma', 'delta' })
+			vim.api.nvim_win_set_cursor(0, { 2, 5 })
+			_G.closed = 0
+			_G.pop = require('devhub_gui').popup{ component = { type = 'markdown', text = '**hi** there' },
+				max_width = 40, text = 'hi there', on_close = function() _G.closed = _G.closed + 1 end }`);
+		await waitFor(() => popups().length === 1, "the popup placed");
+		expect(last("popup")).toMatchObject({
+			node: { type: "markdown", text: "**hi** there" },
+			placement: "below",
+			max_width: 40,
+		});
+		// The anchor's cell, from the window's top-left: line 2, column 6.
+		expect(popups()[0]).toMatchObject({ row: 1, col: 5, focused: false });
+		// Focused: the keys are the popup's; j scrolls it and moves nothing.
+		await lua("_G.pop.focus()");
+		await waitFor(() => popups()[0]?.["focused"] === true, "focused");
+		await lua("vim.api.nvim_feedkeys('j', 'x', false)");
+		await waitFor(
+			() => last("popup_scroll")?.["by"] === "line",
+			"a scroll asked for",
+		);
+		expect(last("popup_scroll")).toMatchObject({ by: "line", n: 1 });
+		await lua(
+			"vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<C-d>', true, false, true), 'x', false)",
+		);
+		await waitFor(() => last("popup_scroll")?.["by"] === "half", "half a page");
+		expect(
+			await h.ui.request("nvim_exec_lua", [
+				"return vim.api.nvim_win_get_cursor(0)",
+				[],
+			]),
+		).toEqual([2, 5]);
+		// y yanks its text.
+		await lua("vim.api.nvim_feedkeys('y', 'x', false)");
+		expect(
+			await h.ui.request("nvim_exec_lua", ["return vim.fn.getreg('\"')", []]),
+		).toBe("hi there");
+		// q closes it, and its keys go with it.
+		await lua("vim.api.nvim_feedkeys('q', 'x', false)");
+		await waitFor(() => last("popup_clear") !== undefined, "closed");
+		expect(
+			await h.ui.request("nvim_exec_lua", [
+				"return { _G.closed, vim.fn.maparg('j', 'n') }",
+				[],
+			]),
+		).toEqual([1, ""]);
+		// Not focused, the cursor moving closes it.
+		await lua(
+			"_G.pop2 = require('devhub_gui').popup{ component = { type = 'markdown', text = 'two' } }",
+		);
+		await waitFor(() => popups().length === 1, "the second popup");
+		await lua("vim.api.nvim_feedkeys('j', 'x', false)");
+		await waitFor(() => popups().length === 0, "closed by the cursor");
+		expect(
+			await h.ui.request("nvim_exec_lua", ["return _G.pop2.is_open()", []]),
+		).toBe(false);
+		h.ui.client.close();
+	});
+
 	it("reports a view's items and cursor, a card's reserved rows round trip, and a decorated range", async () => {
 		const h = await attached(60, 20);
 		const waitFor = async (check: () => boolean, what: string) => {

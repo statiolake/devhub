@@ -34,8 +34,9 @@ export interface NeovimUiSink {
 	/** The current buffer's file name (`""` for none), for the window title. */
 	bufferChanged?(name: string): void;
 	/**
-	 * A one-way GUI event from `devhub_gui`: a toast (`notify`), an image or
-	 * a rich float and where they are (`image`, `rich`, `place`, `*_clear`).
+	 * A one-way GUI event from `devhub_gui`: a toast (`notify`), an image and
+	 * where it is (`image`, `place`, `image_clear`), the GUI layers' events
+	 * (views, cards, decorations, popups).
 	 */
 	guiEvent?(kind: string, payload: unknown): void;
 }
@@ -173,7 +174,6 @@ function M._replay()
   M._report()
   vim.rpcnotify(M._chan, "devhub_buffer", vim.api.nvim_buf_get_name(0), vim.bo.buftype)
   for id, image in pairs(M._images or {}) do M._event("image", { id = id, src = image.src }) end
-  for id, rich in pairs(M._rich or {}) do M._event("rich", { id = id, markdown = rich.markdown }) end
   if M._place then vim.schedule(M._place) end
   -- Attached: what the config asked for before (devhub.nvim's gui queue).
   vim.api.nvim_exec_autocmds("User", { pattern = "DevhubGui", modeline = false })
@@ -295,7 +295,7 @@ function M._receive(id, message)
   if fn then fn(message) end
 end
 
---- One-way GUI events (a toast, an image, a rich float), on one method.
+--- One-way GUI events (a toast, an image, a layer), on one method.
 local function gui_event(kind, payload)
   vim.rpcnotify(M._chan, "devhub_gui_event", kind, payload)
 end
@@ -327,11 +327,10 @@ function M.notify(opts)
 end
 
 -- Decorations DevHub paints over a window's text area, anchored to Neovim
--- objects: an image in the virt_lines rows of an extmark, a rich rendering
--- of a float's markdown. Where each is on the screen is told again whenever
--- a window scrolls, moves, folds or closes; the page only follows.
+-- objects: an image in the virt_lines rows of an extmark. Where each is on
+-- the screen is told again whenever a window scrolls, moves, folds or
+-- closes; the page only follows.
 M._images = M._images or {}
-M._rich = M._rich or {}
 local image_ns = vim.api.nvim_create_namespace("devhub_gui_image")
 M._image_ns = image_ns
 
@@ -377,30 +376,15 @@ function M.image_clear(id)
   vim.schedule(M._place)
 end
 
---- Draw a float's markdown natively (LSP hover, signature help). The float
---- stays Neovim's: its keys scroll and close it, and DevHub follows its
---- topline. devhub.nvim's open_floating_preview hook calls this.
-function M.rich_float(win, markdown)
-  if not vim.api.nvim_win_is_valid(win) then return end
-  if type(markdown) == "table" then markdown = table.concat(markdown, "\n") end
-  M._next = M._next + 1
-  local id = M._next
-  vim.w[win].devhub_rich = id
-  M._rich[id] = { id = id, win = win, markdown = markdown }
-  gui_event("rich", { id = id, markdown = markdown })
-  vim.schedule(M._place)
-  return id
-end
-
 local function text_area(win)
   local info = vim.fn.getwininfo(win)[1]
   if not info then return nil end
   return info
 end
 
---- Where every image and rich float is now, on the current tab page.
+--- Where every image is now, on the current tab page.
 function M._place()
-  local images, rich = {}, {}
+  local images = {}
   local tab_wins = {}
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do tab_wins[win] = true end
   for id, image in pairs(M._images) do
@@ -430,28 +414,14 @@ function M._place()
       end
     end
   end
-  for id, r in pairs(M._rich) do
-    if not vim.api.nvim_win_is_valid(r.win) or vim.w[r.win].devhub_rich ~= id then
-      M._rich[id] = nil
-      gui_event("rich_clear", { id = id })
-    else
-      local info = text_area(r.win)
-      if info then
-        local b = vim.api.nvim_win_get_config(r.win).border
-        table.insert(rich, { id = id, win = r.win, topline = info.topline,
-          lines = vim.api.nvim_buf_line_count(info.bufnr), height = info.height,
-          border = type(b) == "table" and #b > 0 and not (#b == 1 and (b[1] == "" or b[1] == " ")) })
-      end
-    end
-  end
-  gui_event("place", { images = images, rich = rich })
+  gui_event("place", { images = images })
 end
 
 vim.api.nvim_create_autocmd({ "WinScrolled", "WinResized", "WinClosed", "WinNew", "BufWinEnter",
   "TabEnter", "VimResized", "TextChanged", "TextChangedI", "CursorMoved", "CursorMovedI" }, {
   group = group,
   callback = function()
-    if next(M._images) == nil and next(M._rich) == nil then return end
+    if next(M._images) == nil then return end
     vim.schedule(M._place)
   end,
 })

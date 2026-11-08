@@ -118,8 +118,14 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
 - `painter.ts` — a 2D canvas per grid, repainted a dirty row at a time on
   the animation frame after a `flush`; runs of one highlight, wide characters
   cell by cell, underline/undercurl/underdouble/dotted/dashed/strikethrough in
-  the special colour, `reverse`, float `blend`. Floats get a shadow and
-  rounded corners. Ligatures off. The font is `guifont` if set, else DevHub's
+  the special colour, `reverse`, float `blend`. A float without a border
+  gets DevHub's frame (a hairline, a shadow, rounded corners); one whose
+  border is blank cells (`'solid'`, a table of spaces — Neovim 0.10+ says
+  where a border is with `win_viewport_margins`) is drawn as with none:
+  only its text area, where Neovim put it, in that frame, and a click on
+  the left-out border falls through (`GridBox.crop`). One whose border
+  draws something (`'rounded'`, `'single'`, …) is drawn as Neovim says,
+  with only a shadow: never two frames (`floatBorder`). Ligatures off. The font is `guifont` if set, else DevHub's
   terminal font (Settings > Terminal); `linespace` is honoured.
   - The cell is measured on whole device pixels (crisp at
     `devicePixelRatio` 2; the text of a run is spread to the cell with
@@ -143,7 +149,7 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     as "DevHub Nerd Symbols", with a `unicode-range` of the Nerd Font code
     points only (the private-use areas and the IEC power symbols), first in
     the font stack of the grids, the command line, the completion menu, the
-    tab strip, toasts and rich floats — it answers for icons and nothing
+    tab strip, toasts and popups — it answers for icons and nothing
     else. An icon is fitted to its cell (two when Neovim says it is wide)
     and centred on the text; one followed by a blank cell of the same
     background may spill into it at up to the Nerd Font's own size, as
@@ -219,21 +225,20 @@ DevHub restart.
 `:DevhubGuiDemo` opens an Outline beside the current window: its buttons jump
 that window to a function, or run `gg`, `G`, `:write` in it.
 
-### Notifications, inline images and rich floats
+### Notifications and inline images
 
 The same rule, for things smaller than a window. `devhub_gui` sends them as
 one-way events on one RPC method (`devhub_gui_event`; main forwards them on
 `devhub:neovim:gui-event`; `shell/neovim/decorations.ts` is the page's
 reducer, `DecorationViews.tsx` draws them). A payload of the wrong shape is
 ignored, so anything odd leaves Neovim's own grid showing; a page that
-attaches again is told every image and rich float again.
+attaches again is told every image again.
 
 ```lua
 local gui = require('devhub_gui')          -- or require('devhub').gui (devhub.nvim)
 gui.notify{ title = 'Build', msg = 'done', level = 'warn' }   -- a notification
 local img = gui.image(0, 5, '~/shot.png', { height_rows = 10 }) -- under line 5
 img.clear()
-gui.rich_float(win, markdown_lines)        -- what devhub.nvim's LSP hook calls
 ```
 
 - **notify** — fidget-like: compact lines at the bottom right, just above
@@ -257,15 +262,6 @@ gui.rich_float(win, markdown_lines)        -- what devhub.nvim's LSP hook calls
   buffer; a closed fold hides it, a window's bottom clips it.
   `:DevhubImageDemo [path]` opens a markdown buffer with one (with no path,
   a small generated PNG).
-- **rich_float** — the window's markdown drawn natively over its text area
-  (inside its border): `react-markdown` with GFM, fenced code coloured by
-  the conversation view's highlighter, links opened in the browser. The
-  window stays Neovim's: `K K` goes into it, its keys scroll it (the content
-  follows its `topline` as a fraction) and close it (`w:devhub_rich` is how
-  the content knows it still belongs there). Its colours are the float's own
-  (`NormalFloat`, read from its grid). devhub.nvim installs the hook on
-  `vim.lsp.util.open_floating_preview` (hover, signature help); a config can
-  call it for any float.
 
 **`:DevhubTerminal`** (`:DevhubTerminal float`) is the same idea: a Neovim
 window (a split at the bottom by default) that DevHub fills with the
@@ -294,8 +290,9 @@ paints is **data**. A config describes content as declarative components
 (`shell/neovim/components.ts`: types, the checks a payload passes, and the
 layout decisions, pure and unit-tested; `ComponentView.tsx` draws them):
 `stack`/`hstack` (gap, padding, alignment, a raised `card`, a left `accent`
-bar, a ground, an indent), `text` runs, `markdown` (the rich float's
-renderer), `badge`, `kbd`, `button`, a tri-state `checkbox`, `progress`, a
+bar, a ground, an indent), `text` runs, `markdown` (GFM, fenced code
+coloured by the conversation view's highlighter, links opened in the
+browser), `badge`, `kbd`, `button`, a tri-state `checkbox`, `progress`, a
 Nerd Font `icon`, an `avatar`, `spacer`/`divider`, `sparkline`, a small line
 `chart` and an `image`. Every colour is a highlight group's name (or a tone
 that names one), resolved by Neovim (`nvim_get_hl`) and sent with the tree,
@@ -320,6 +317,8 @@ local view = gui.view{ buf = buf, win = 'vsplit',
 local card = gui.inline{ buf = 0, lnum = 87, id = 'thread:1', range = { 84, 87 },
   component = ui.card{ accent = 'warn', ui.md('**Waiting** for the agent') } }
 local deco = gui.decorate{ buf = 0, range = { 23, 31 }, style = 'dim' }   -- 'highlight' | 'tag'
+local pop = gui.popup{ anchor = 'cursor', component = ui.md(markdown), max_width = 80,
+  keys = { ['<CR>'] = function(p) end } }                    -- :focus(), :scroll('half'), :close()
 ```
 
 - **`gui.view`** — a panel that is a buffer: one buffer line per item (the
@@ -348,6 +347,35 @@ local deco = gui.decorate{ buf = 0, range = { 23, 31 }, style = 'dim' }   -- 'hi
   dimmed, highlighted (a tint and a bar in a group's colour) or tagged (a
   pill at its right), painted over every window showing it, diff windows
   included.
+- **`gui.popup`** — a hover: a component at a buffer position (the cursor,
+  or `{ buf, lnum, col }`; an extmark) with no Neovim window. DevHub lays it
+  out its own way — prose reflowed in DevHub's type, code in the grid's face
+  wrapped and coloured — as wide and tall as its content up to `max_width`
+  (80 cells by default) / `max_height` and the room it has; under the
+  anchor's cell, or above it when there is no room below and more above
+  (`placement` says which side first; `popup.ts`'s `placePopup`), kept on
+  the editor, following the anchor on every scroll and window change.
+  Taller content scrolls inside, with a fade at the clipped edge; the wheel
+  scrolls it, links open in the browser, a click gives the keyboard back to
+  Neovim. Neovim keeps the keys: `close_on` events (default the cursor
+  moving, `InsertCharPre`, `BufLeave`) close it; `:focus()` maps, on the
+  anchor's buffer for as long as it is focused, `j`/`k`, `<C-e>`/`<C-y>`,
+  `<C-d>`/`<C-u>`, `<C-f>`/`<C-b>`, `gg`/`G` (scrolls Lua asks of the page:
+  `popup_scroll`), `q`/`<Esc>` (close), `y` (yank its `text`) and the
+  popup's own `keys`, and puts back what they replaced when it closes.
+
+  **LSP floats are popups.** devhub.nvim hooks
+  `vim.lsp.util.open_floating_preview`: in DevHub's GUI, hover, signature
+  help and `vim.diagnostic.open_float` are popups — markdown as `ui.md`,
+  another syntax as a fenced block, plain text (a diagnostic float) as lines
+  in the highlights its caller puts on the float's buffer. The hook answers
+  what Neovim's does, a buffer with the lines and a window — a hidden one
+  (`hide`, 0.10+), which its caller may close (the popup closes with it)
+  and which closes with the popup. `K K` focuses the popup instead of
+  opening a second. A float's `border` and `title` give way to DevHub's
+  frame; `max_width`/`max_height` are kept. On 0.9, outside DevHub or on
+  any error, Neovim's own float; `vim.g.devhub_rich_floats = false` keeps
+  Neovim's always.
 
 In plain Neovim (or a terminal), devhub.nvim's calls do nothing: a view is
 its buffer's text, a card reserves nothing.
@@ -399,9 +427,9 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   under it.
 - Notifications sit above the lowest window's status line, over whatever
   is there (a panel's hint line included).
-- A rich float's rendering is usually shorter than Neovim's text of it, so
-  the float can be taller than its content; when it is longer, the float
-  scrolls itself (the wheel) as well as following Neovim's topline.
+- A popup does not carry the highlights its caller adds to a markdown
+  float's buffer (signature help's active parameter is not marked); a plain
+  text float's (a diagnostic's) are carried.
 - `ext_hlstate` off; no semantic styling of diagnostics yet.
 - A GUI buffer shown in two windows has its content (one page, one terminal
   client) in one of them — the current window when it is one, else the
@@ -415,7 +443,7 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
 
 **GUI plugin bridge for devhub.nvim.** Done: `require('devhub').gui`
 (devhub.nvim) forwards `open`, `send`, `on_message`, `close`, `notify`,
-`image`, `rich_float`, `view`, `inline` and `decorate` to the `devhub_gui`
+`image`, `view`, `inline`, `decorate` and `popup` to the `devhub_gui`
 DevHub injects — one implementation, owned by the end that speaks the RPC —
 queues calls made before the attach until `User DevhubGui`, and does nothing
 outside DevHub (`notify` falls back to `vim.notify`). Still to come:

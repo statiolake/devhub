@@ -1,24 +1,18 @@
 /**
- * The page's side of `decorations.ts`: toasts, inline images and rich
- * floats, each drawn over the Neovim window it belongs to.
+ * The page's side of `decorations.ts`: toasts and inline images, each drawn
+ * over the Neovim window it belongs to; and how markdown is drawn in the
+ * editor (components' `markdown`, popups).
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useEffect, useState, type ReactNode } from "react";
+import type { Components } from "react-markdown";
 import {
   grammarFor,
   highlight,
   type Colouring,
 } from "../conversation/highlight";
-import { cssColor, resolveColors } from "./painter";
-import type { GridBox, NeovimUiState } from "./redraw";
-import {
-  richScrollFraction,
-  toastGroups,
-  type Decorations,
-  type Toast,
-} from "./decorations";
+import type { GridBox } from "./redraw";
+import { toastGroups, type Decorations, type Toast } from "./decorations";
 
 interface Cell {
   readonly width: number;
@@ -178,122 +172,8 @@ export function InlineImages({
 }
 
 /**
- * A float's markdown drawn natively over its text area. Neovim keeps the
- * window: its keys scroll it (the content follows its topline) and close it
- * (the content goes with it). A failure to draw leaves Neovim's grid.
- */
-export function RichFloats({
-  decorations,
-  boxes,
-  cell,
-  state,
-  openLink,
-  refocus,
-}: {
-  readonly decorations: Decorations;
-  readonly boxes: readonly GridBox[];
-  readonly cell: Cell;
-  readonly state: NeovimUiState;
-  readonly openLink: (url: string) => void;
-  readonly refocus: () => void;
-}) {
-  return (
-    <>
-      {decorations.placedRich.map((place) => {
-        const markdown = decorations.rich.get(place.id);
-        const box = boxes.find((b) => b.win === place.win);
-        if (markdown === undefined || !box) return null;
-        const inset = place.border ? 1 : 0;
-        const width = box.width - 2 * inset;
-        const height = box.height - 2 * inset;
-        if (width <= 0 || height <= 0) return null;
-        const grid = state.grids.get(box.grid);
-        const hl = grid
-          ? grid.hls[inset * grid.width + Math.max(0, grid.width - 1 - inset)]
-          : 0;
-        const colors = resolveColors(
-          hl ? state.hl.get(hl) : undefined,
-          state.defaults,
-        );
-        return (
-          <RichFloat
-            key={place.id}
-            markdown={markdown}
-            fraction={richScrollFraction(place)}
-            dark={luminance(colors.bg) < 0.5}
-            style={{
-              left: (box.col + inset) * cell.width,
-              top: (box.row + inset) * cell.height,
-              width: width * cell.width,
-              height: height * cell.height,
-              zIndex: box.z + 1,
-              background: cssColor(colors.bg),
-              color: cssColor(colors.fg),
-              ["--nvim-line" as string]: `${String(cell.height)}px`,
-            }}
-            openLink={openLink}
-            refocus={refocus}
-          />
-        );
-      })}
-    </>
-  );
-}
-
-function luminance(rgb: number): number {
-  const r = (rgb >> 16) & 255;
-  const g = (rgb >> 8) & 255;
-  const b = rgb & 255;
-  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-}
-
-function RichFloat({
-  markdown,
-  fraction,
-  dark,
-  style,
-  openLink,
-  refocus,
-}: {
-  readonly markdown: string;
-  readonly fraction: number;
-  readonly dark: boolean;
-  readonly style: React.CSSProperties;
-  readonly openLink: (url: string) => void;
-  readonly refocus: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.scrollTop = fraction * Math.max(0, el.scrollHeight - el.clientHeight);
-  }, [fraction, markdown]);
-  const components = markdownComponents(dark, openLink);
-  return (
-    <div
-      ref={ref}
-      className={`nvim-rich-float ${dark ? "nvim-rich-dark" : "nvim-rich-light"}`}
-      style={style}
-      onMouseUp={() => {
-        // A plain click gives the keyboard back to Neovim; a selection stays
-        // (to be copied).
-        if (window.getSelection()?.isCollapsed !== false) refocus();
-      }}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        components={components}
-      >
-        {markdown}
-      </ReactMarkdown>
-    </div>
-  );
-}
-
-/**
- * How a markdown body is drawn in the editor (a rich float, a component's
- * `markdown`): links open in the browser, fenced code is coloured.
+ * How a markdown body is drawn in the editor (a component's `markdown`, a
+ * popup's): links open in the browser, fenced code is coloured.
  */
 export function markdownComponents(
   dark: boolean,

@@ -88,4 +88,41 @@ describe("buffer-backed GUI layers on the page", () => {
     expect(state.measureInlines).toEqual([{ id: 9, width: 70, full: 2 }]);
     expect(state.placedDecos).toEqual([]);
   });
+  it("keeps a popup, where its anchor is, and the scrolls its keys ask for", () => {
+    let state = applyLayerEvent(NO_LAYERS, "popup", {
+      id: 4,
+      node: { type: "markdown", text: "**hi**" },
+      hl: {},
+      placement: "sideways",
+      max_width: 60,
+    });
+    expect(state.popups.get(4)).toMatchObject({
+      placement: "below",
+      maxWidth: 60,
+      maxHeight: undefined,
+    });
+    state = applyLayerEvent(state, "layers", {
+      views: {},
+      inlines: {},
+      measure: {},
+      decos: {},
+      popups: [{ id: 4, win: 1000, row: 3, col: 7, focused: true }, { id: 5 }],
+    });
+    expect(state.placedPopups).toEqual([
+      { id: 4, win: 1000, row: 3, col: 7, focused: true },
+    ]);
+    state = applyLayerEvent(state, "popup_scroll", {
+      id: 4,
+      by: "half",
+      n: -1,
+      seq: 2,
+    });
+    expect(state.popupScrolls.get(4)).toEqual({ seq: 2, by: "half", n: -1 });
+    expect(
+      applyLayerEvent(state, "popup_scroll", { id: 4, by: "sideways", seq: 3 }),
+    ).toBe(state);
+    state = applyLayerEvent(state, "popup_clear", { id: 4 });
+    expect(state.popups.size).toBe(0);
+    expect(state.popupScrolls.size).toBe(0);
+  });
 });

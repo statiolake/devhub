@@ -568,59 +568,122 @@
   border-radius: 6px;
 }
 
-/* A float's markdown, drawn natively over its text area. */
-.nvim-rich-float {
+/*
+ * A popup (gui.popup, a hover): DevHub's own, at a buffer position. As wide
+ * and tall as its content, up to its maximum (then it scrolls, with a fade
+ * at the clipped edge); tight, even spacing; the floats' frame.
+ */
+.nvim-popup {
   position: absolute;
+  z-index: 300;
   box-sizing: border-box;
-  overflow: hidden auto;
-  padding: 0 1ch;
+  width: max-content;
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--primary) 12%, transparent),
+    0 8px 24px rgb(0 0 0 / 24%);
   font:
-    13px / var(--nvim-line, 1.45) "DevHub Nerd Symbols",
+    13px/1.45 "DevHub Nerd Symbols",
     system-ui,
     sans-serif;
 }
 
-.nvim-rich-float > :first-child {
-  margin-top: 2px;
+/* It has the keys: j/k scroll it, q closes it. */
+.nvim-popup-focused {
+  box-shadow:
+    0 0 0 1px var(--nvim-ring),
+    0 8px 24px rgb(0 0 0 / 24%);
 }
 
-.nvim-rich-float p,
-.nvim-rich-float ul,
-.nvim-rich-float ol {
+.nvim-popup-scroll {
+  height: 100%;
+  overflow: hidden auto;
+}
+
+.nvim-popup-body {
+  box-sizing: border-box;
+  width: max-content;
+  padding: 6px 10px;
+  overflow-wrap: anywhere;
+}
+
+.nvim-popup-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 16px;
+  pointer-events: none;
+}
+
+.nvim-popup-fade-top {
+  top: 0;
+  background: linear-gradient(var(--nvim-ground), transparent);
+}
+
+.nvim-popup-fade-bottom {
+  bottom: 0;
+  background: linear-gradient(transparent, var(--nvim-ground));
+}
+
+.nvim-popup .nvc-markdown p,
+.nvim-popup .nvc-markdown ul,
+.nvim-popup .nvc-markdown ol,
+.nvim-popup .nvc-markdown pre,
+.nvim-popup .nvc-markdown blockquote {
   margin: 0 0 6px;
 }
 
-.nvim-rich-float ul,
-.nvim-rich-float ol {
-  padding-left: 18px;
-}
-
-.nvim-rich-float h1,
-.nvim-rich-float h2,
-.nvim-rich-float h3 {
-  margin: 4px 0;
+.nvim-popup .nvc-markdown h1,
+.nvim-popup .nvc-markdown h2,
+.nvim-popup .nvc-markdown h3,
+.nvim-popup .nvc-markdown h4 {
+  margin: 8px 0 3px;
   font-size: 13px;
   font-weight: 600;
 }
 
-.nvim-rich-float hr {
+.nvim-popup .nvc-markdown > :first-child {
+  margin-top: 0;
+}
+
+.nvim-popup .nvc-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.nvim-popup .nvc-markdown hr {
   margin: 6px 0;
   border: 0;
-  border-top: 1px solid color-mix(in srgb, currentcolor 20%, transparent);
+  border-top: 1px solid color-mix(in srgb, currentcolor 18%, transparent);
 }
 
-.nvim-rich-float code {
-  font-family: "DevHub Nerd Symbols", var(--font-mono);
-  font-size: 12px;
-  text-autospace: no-autospace;
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: color-mix(in srgb, currentcolor 10%, transparent);
-}
-
-.nvim-rich-float a {
+.nvim-popup .nvc-markdown a {
   color: var(--accent);
-  text-decoration: underline;
+}
+
+/* Code in the grid's face (the guifont), as in the buffer. */
+.nvim-popup .nvc-markdown code {
+  font-family: var(--nvim-grid-font);
+}
+
+.nvim-popup .nvim-rich-code {
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+.nvim-popup .nvim-rich-code code {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* A popup that is only a code block (a signature): the popup is the block. */
+.nvim-popup .nvc-markdown > .nvim-rich-code:only-child {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
 .nvim-rich-code {
