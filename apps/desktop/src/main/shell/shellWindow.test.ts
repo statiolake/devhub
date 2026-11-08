@@ -1139,6 +1139,7 @@ describe("the pages in the shell window", () => {
 		expect([...loaded].sort()).toEqual(
 			[
 				"devhub-app://shell/agents.html",
+				"devhub-app://shell/conversations.html",
 				"devhub-app://shell/index.html",
 				"devhub-app://shell/picker.html",
 				"devhub-app://shell/sidebar.html",

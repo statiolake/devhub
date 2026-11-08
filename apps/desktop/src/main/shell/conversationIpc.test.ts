@@ -42,6 +42,7 @@ function harness(defer?: (send: () => void) => void) {
 		},
 	} as unknown as IpcMain;
 	const page = fakePage();
+	const agentsPage = fakePage();
 	const conversation = {
 		snapshot: () => ({ transcript: { entries: [] }, revision: 3 }),
 	} as unknown as ConversationHandle;
@@ -54,8 +55,12 @@ function harness(defer?: (send: () => void) => void) {
 		ipcMain,
 		...(defer === undefined ? {} : { defer }),
 		conversations,
-		drafts: { get: () => "half a thought" } as unknown as AgentDrafts,
-		agentsPage: () => page as unknown as WebContents,
+		drafts: {
+			get: () => "half a thought",
+			set: () => undefined,
+		} as unknown as AgentDrafts,
+		conversationsPage: () => page as unknown as WebContents,
+		agentsPage: () => agentsPage as unknown as WebContents,
 		continueIn: unused,
 		restart: unused,
 		resumeElsewhere: unused,
@@ -71,7 +76,9 @@ function harness(defer?: (send: () => void) => void) {
 	const ipc = registerConversationIpc(options);
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: page }, ...args);
-	return { ipc, page, invoke, conversations };
+	const invokeFrom = (sender: unknown, channel: string, ...args: unknown[]) =>
+		handlers.get(channel)!({ sender }, ...args);
+	return { ipc, page, agentsPage, invoke, invokeFrom, conversations };
 }
 
 describe("words for a GUI Agent's composer", () => {
@@ -144,5 +151,21 @@ describe("a conversation's events", () => {
 		publish(4, event("a"));
 		expect(due).toEqual([]);
 		expect(page.sent).toEqual([]);
+	});
+});
+
+describe("which pages reach the conversations", () => {
+	it("draws them on the Conversations page, and answers the Agents page's requests about them", async () => {
+		const { page, agentsPage, invokeFrom } = harness();
+		// The Agents page asks — a terminal Agent's failure carries it on in
+		// the GUI — without drawing a conversation.
+		await expect(
+			invokeFrom(agentsPage, CONVERSATION_CHANNELS.saveDraft, AGENT, "words"),
+		).resolves.toBeUndefined();
+		await expect(
+			invokeFrom({}, CONVERSATION_CHANNELS.saveDraft, AGENT, "words"),
+		).rejects.toThrow(/only the Conversations and Agents pages/);
+		await invokeFrom(page, CONVERSATION_CHANNELS.attach, AGENT);
+		expect(agentsPage.sent).toEqual([]);
 	});
 });

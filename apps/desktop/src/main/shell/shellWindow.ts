@@ -234,6 +234,13 @@ export class ShellWindow {
 	 */
 	readonly sidebar: ChromeView;
 	readonly agents: ChromeView;
+	/**
+	 * The GUI Agents' conversations: a page of its own beside `agents`,
+	 * laid where it is, so a transcript being drawn has a renderer of its own
+	 * and the terminal Agents' keys never wait for it. It has the Agents
+	 * page's preload — the same bridge, the conversation half of it used.
+	 */
+	readonly conversations: ChromeView;
 	readonly toasts: ToastsView;
 	readonly picker: PickerView;
 	readonly tooltip: TooltipView;
@@ -269,6 +276,13 @@ export class ShellWindow {
 	 * with its scrollback. Made and ended by `syncTerminalViews`.
 	 */
 	private readonly terminalViews = new Map<string, ChromeView>();
+	/**
+	 * The Orchestrator's board, not its GUI Agent's conversation beside it,
+	 * is what took the keyboard last: the two are one half of the content
+	 * area drawn by two views (`LayoutState.conversation`), and the keys go
+	 * back where the person put them.
+	 */
+	private onBoard = false;
 	/**
 	 * The Neovim editor: one page per Workspace whose Neovim has been shown,
 	 * by its editor key — `neovim.html#<workspace id>`, DevHub's GUI for that
@@ -355,6 +369,17 @@ export class ShellWindow {
 		);
 		this.agents.adopt(this.window);
 		this.agents.contents()?.on("focus", () => {
+			if (this.state.conversation === "beside-board") this.onBoard = true;
+			this.contentFocused({ kind: "agents" });
+		});
+		this.conversations = new ChromeView(
+			preloadFor("agents"),
+			`${pageBase}/conversations.html`,
+		);
+		this.conversations.adopt(this.window);
+		// The same half of the content area as the Agents view: the Agent.
+		this.conversations.contents()?.on("focus", () => {
+			this.onBoard = false;
 			this.contentFocused({ kind: "agents" });
 		});
 		this.toasts = new ToastsView(
@@ -418,6 +443,7 @@ export class ShellWindow {
 			["shell", this.window.webContents],
 			["sidebar", this.sidebar.contents()],
 			["agents", this.agents.contents()],
+			["conversations", this.conversations.contents()],
 			["toasts", this.toasts.contents()],
 			["tooltip", this.tooltip.contents()],
 			["questions", this.picker.contents()],
@@ -495,6 +521,7 @@ export class ShellWindow {
 		void this.window.loadURL(this.pageUrl);
 		this.sidebar.openPage();
 		this.agents.openPage();
+		this.conversations.openPage();
 		this.toasts.openPage();
 		this.tooltip.openPage();
 		this.picker.openPage();
@@ -508,6 +535,7 @@ export class ShellWindow {
 			this.window.webContents,
 			this.sidebar.contents(),
 			this.agents.contents(),
+			this.conversations.contents(),
 			this.toasts.contents(),
 			this.tooltip.contents(),
 		]) {
@@ -1207,6 +1235,16 @@ export class ShellWindow {
 				return this.sidebar.contents() ?? this.window.webContents;
 			case "agents":
 				return this.agents.contents() ?? this.window.webContents;
+			case "conversations": {
+				// The Orchestrator's board and its GUI Agent are one half of the
+				// content area in two views: the keys stay on the board while it
+				// is what the person clicked into.
+				const view =
+					this.onBoard && this.state.conversation === "beside-board"
+						? this.agents
+						: this.conversations;
+				return view.contents() ?? this.window.webContents;
+			}
 			case "terminal":
 				return (
 					this.terminalViews.get(identity.terminalId)?.contents() ??
@@ -1313,6 +1351,7 @@ export class ShellWindow {
 	 */
 	setLayoutState(state: LayoutState): void {
 		const before = JSON.stringify(this.state);
+		if (state.conversation !== "beside-board") this.onBoard = false;
 		this.state = state;
 		if (JSON.stringify(state) === before) return;
 		this.layout();
@@ -1424,14 +1463,17 @@ export class ShellWindow {
 
 	/**
 	 * Where the page that asked for a context menu is, in the window: the
-	 * Agents view for a right-click in a GUI Agent's answer, the Sidebar for
-	 * every other request (the only other page that asks).
+	 * Conversations view for a right-click in a GUI Agent's answer, the
+	 * Agents view for one on the Orchestrator's board, the Sidebar for every
+	 * other request (the only other page that asks).
 	 */
 	contextMenuOrigin(sender: Electron.WebContents): SidebarAreaWire {
-		const agents = this.agents.contents();
-		if (agents !== undefined && sender === agents) {
-			const { x, y, width, height } = this.agents.bounds();
-			return { x, y, width, height };
+		for (const view of [this.conversations, this.agents]) {
+			const contents = view.contents();
+			if (contents !== undefined && sender === contents) {
+				const { x, y, width, height } = view.bounds();
+				return { x, y, width, height };
+			}
 		}
 		return this.sidebarArea();
 	}
@@ -1561,6 +1603,10 @@ export class ShellWindow {
 				this.agents.place(this.window, child.rect, false);
 				continue;
 			}
+			if (child.identity.kind === "conversations" && !child.visible) {
+				this.conversations.place(this.window, child.rect, false);
+				continue;
+			}
 			if (child.identity.kind === "attached") {
 				const entry = this.attachedEntry(child.identity.id);
 				if (!entry) continue;
@@ -1627,6 +1673,9 @@ export class ShellWindow {
 					break;
 				case "agents":
 					this.agents.place(this.window, child.rect, child.visible);
+					break;
+				case "conversations":
+					this.conversations.place(this.window, child.rect, child.visible);
 					break;
 				case "terminal":
 					if (!child.visible) break;

@@ -1,5 +1,18 @@
 /**
- * Every Agent, in one view.
+ * Every terminal Agent, in one view; every GUI Agent in another.
+ *
+ * # Why two views
+ *
+ * A GUI Agent's conversation is React drawing a transcript, and a long one
+ * streaming is a renderer's whole thread — seconds a frame. In one page with
+ * the terminal Agents, that was the thread their keys and their output waited
+ * on: switching from a streaming conversation to a terminal Agent and typing
+ * took over ten seconds to echo (docs/process-model.md, phase 6). So the GUI
+ * Agents' panes are a page of their own (`ConversationsApp`, in the
+ * Conversations view main lays exactly where this one is) and this page draws
+ * the terminal Agents and the Orchestrator's board. Main shows the view with
+ * the Agent on screen and gives it the keys; an Agent's pane is in one page
+ * or the other by its presentation, its failure and its buttons with it.
  *
  * # Why one view and not one per Agent
  *
@@ -51,6 +64,7 @@
  *   Agent's pane because that is where its subject is.
  */
 
+import type { AgentPresentationWire } from "../../ipc/appShell";
 import { AgentsProvider } from "./AgentsContext";
 import { useAgents } from "./AgentsContext";
 import { AgentPane } from "./AgentPane";
@@ -62,7 +76,18 @@ export function AgentsApp() {
   return (
     <AgentsProvider>
       <AgentsDevhubLinks>
-        <Panes />
+        <Panes presentation="tui" />
+      </AgentsDevhubLinks>
+    </AgentsProvider>
+  );
+}
+
+/** The GUI Agents' page: their conversations, and nothing of the Orchestrator's board. */
+export function ConversationsApp() {
+  return (
+    <AgentsProvider>
+      <AgentsDevhubLinks>
+        <Panes presentation="gui" />
       </AgentsDevhubLinks>
     </AgentsProvider>
   );
@@ -76,7 +101,11 @@ export function AgentsApp() {
  * projection that names it has arrived, so "loading" here is a state nobody
  * can see.
  */
-function Panes() {
+function Panes({
+  presentation,
+}: {
+  readonly presentation: AgentPresentationWire;
+}) {
   const { state, appearance, board } = useAgents();
   if (state.status !== "ready") return null;
   const layout = state.snapshot.layout;
@@ -92,8 +121,10 @@ function Panes() {
       : undefined;
   // The Orchestrator row: the board on the left, the orchestrator agent's own
   // pane (from the same pool) on the right. The pane stays the second child
-  // either way, so selecting the row moves no pane out of the pool.
-  const orchestrator = layout.kind === "orchestrator";
+  // either way, so selecting the row moves no pane out of the pool. The board
+  // is this page's; a GUI orchestrator agent's pane is the Conversations
+  // page's, which main lays right of the board.
+  const orchestrator = layout.kind === "orchestrator" && presentation === "tui";
   return (
     <div
       className="app-shell agents-page"
@@ -105,6 +136,7 @@ function Panes() {
           snapshot={state.snapshot}
           appearance={appearance}
           activeKey={activeKey}
+          presentation={presentation}
         />
         {orchestrator && activeKey === undefined ? (
           <OrchestratorStart board={board} />

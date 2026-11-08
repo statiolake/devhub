@@ -1,12 +1,12 @@
 /**
  * The bundled recogniser, as main runs it (`whisper.ts`) and answers the
- * Agents page about it (`voiceIpc.ts`).
+ * pages about it (`voiceIpc.ts`).
  *
  * whisper.cpp itself is not run here — it is a macOS binary built by
  * `scripts/build_whisper.py` — so what is pinned is everything around it:
  * where it is looked for, the WAV it is handed, the command line, how its
  * transcript is turned into one paragraph, which recordings are refused, and
- * that only the Agents page is answered.
+ * that only the Conversations and Agents pages are answered.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -259,7 +259,7 @@ describe("the Agents page's requests", () => {
 				on: (channel: string, handler: Handler) =>
 					void listeners.set(channel, handler),
 			} as never,
-			agentsPage: () => page as never,
+			pages: () => [page as never],
 			install:
 				options.installed === false
 					? undefined
@@ -281,7 +281,7 @@ describe("the Agents page's requests", () => {
 		const { handlers, listeners } = register();
 		await expect(
 			handlers.get(VOICE_CHANNELS.status)!({ sender: {} }),
-		).rejects.toThrow(/only the Agents page/);
+		).rejects.toThrow(/only the Conversations and Agents pages/);
 		// One-way messages from another page are dropped, not thrown.
 		expect(
 			listeners.get(VOICE_CHANNELS.audio)!(

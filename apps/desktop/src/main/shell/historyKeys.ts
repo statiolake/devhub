@@ -55,6 +55,7 @@ const APP_HISTORY_PAGES = [
 	"index.html",
 	"sidebar.html",
 	"agents.html",
+	"conversations.html",
 	"pane.html",
 ].map((page) => `${SHELL_ORIGIN}/${page}`);
 
@@ -79,9 +80,11 @@ export function isDestinationSurface(surfaceUrl: string): boolean {
 	);
 }
 
-const DESTINATION_PAGES = ["agents.html", "pane.html"].map(
-	(page) => `${SHELL_ORIGIN}/${page}`,
-);
+const DESTINATION_PAGES = [
+	"agents.html",
+	"conversations.html",
+	"pane.html",
+].map((page) => `${SHELL_ORIGIN}/${page}`);
 
 /** Whether this web contents is one of DevHub's own pages that walk app history. */
 export function isAppHistorySurface(surfaceUrl: string): boolean {

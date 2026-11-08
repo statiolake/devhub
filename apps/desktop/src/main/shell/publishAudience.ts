@@ -44,6 +44,11 @@ export interface Pages<Contents> {
 	};
 	readonly sidebar: { contents(): Contents | undefined };
 	readonly agents: { contents(): Contents | undefined };
+	/**
+	 * The GUI Agents' conversations, beside the Agents. Optional, so a test
+	 * fake of a window from before it is a window without one.
+	 */
+	readonly conversations?: { contents(): Contents | undefined };
 	readonly picker: { contents(): Contents | undefined };
 	readonly toasts: { contents(): Contents | undefined };
 	readonly tooltip: { contents(): Contents | undefined };
@@ -88,6 +93,7 @@ export function chromeAudience<Contents>(
 		pages.window.webContents,
 		pages.sidebar.contents(),
 		pages.agents.contents(),
+		pages.conversations?.contents(),
 		pages.picker.contents(),
 		pages.toasts.contents(),
 		pages.tooltip.contents(),
@@ -108,6 +114,7 @@ export function projectionAudience<Contents>(
 		pages.window.webContents,
 		pages.sidebar.contents(),
 		pages.agents.contents(),
+		pages.conversations?.contents(),
 		pages.picker.contents(),
 		// A terminal pane draws its name and its session from the model.
 		...panesOf(pages),
@@ -143,6 +150,7 @@ function ownedBy<Contents>(
 		contents === pages.window.webContents ||
 		contents === pages.sidebar.contents() ||
 		contents === pages.agents.contents() ||
+		contents === pages.conversations?.contents() ||
 		contents === pages.picker.contents() ||
 		contents === pages.toasts.contents() ||
 		contents === pages.tooltip.contents() ||

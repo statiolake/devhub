@@ -18,6 +18,9 @@
   --nav-duration: 220ms;
   display: flex;
   overflow: hidden;
+  /* Main lays a GUI Orchestrator's conversation right of this, in a view of
+     its own: `orchestratorBoardWidth` in `main/shell/windowLayout.ts` says
+     the same width. */
   width: clamp(380px, 46%, 720px);
   min-width: 0;
   height: 100%;

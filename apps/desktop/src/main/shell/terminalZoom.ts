@@ -52,12 +52,14 @@ import { SHELL_ORIGIN } from "./shellPageProtocol.js";
 import type { TerminalZoomDirection } from "../../model/terminalZoom.js";
 
 /**
- * The pages these keys mean anything on: the Agents, and every terminal pane
- * (`pane.html#<id>`) — the two pages whose text is a terminal's, drawn at the
- * one terminal size the zoom moves.
+ * The pages these keys mean anything on: the Agents, the GUI Agents'
+ * conversations, and every terminal pane (`pane.html#<id>`) — the pages whose
+ * text is drawn at the one terminal size the zoom moves (a conversation's is
+ * that size, scaled).
  */
 const TERMINAL_PAGES = [
 	`${SHELL_ORIGIN}/agents.html`,
+	`${SHELL_ORIGIN}/conversations.html`,
 	`${SHELL_ORIGIN}/pane.html`,
 ];
 

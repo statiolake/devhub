@@ -86,6 +86,7 @@ function renderPane(
       snapshot={snapshotWith(failure, presentation)}
       appearance={undefined}
       activeKey="agent:agent-1"
+      presentation={presentation}
     />,
   );
 }
@@ -138,6 +139,7 @@ describe("a failure about one Agent", () => {
         snapshot={snapshotWith(undefined, "tui")}
         appearance={undefined}
         activeKey="agent:agent-1"
+        presentation="tui"
       />,
     );
     expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -214,6 +216,7 @@ describe("a conversation its CLI stopped", () => {
         snapshot={snapshotWith({ code: "conversation_refused", detail: "x" })}
         appearance={undefined}
         activeKey="agent:agent-1"
+        presentation="gui"
       />,
     );
     expect(screen.getByRole("alertdialog")).toHaveAccessibleName(

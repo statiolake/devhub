@@ -78,7 +78,12 @@ export function chunkRefusal(pcm: unknown): string | undefined {
 
 export function registerVoiceIpc(options: {
 	readonly ipcMain: Pick<IpcMain, "handle" | "on">;
-	readonly agentsPage: () => WebContents | undefined;
+	/**
+	 * The pages that dictate: the Conversations page (a GUI Agent's composer)
+	 * and the Agents page (the Orchestrator's). A dictation's words go back
+	 * to the page that began it.
+	 */
+	readonly pages: () => readonly (WebContents | undefined)[];
 	readonly install: WhisperInstall | undefined;
 	readonly microphone: MicrophoneAccess;
 	/** For tests: the recogniser to use instead of the install's. */
@@ -92,21 +97,22 @@ export function registerVoiceIpc(options: {
 	const sessions = new Map<number, DictationStream>();
 	let nextSession = 1;
 
+	const dictates = (sender: WebContents) => options.pages().includes(sender);
 	const handle = <T>(
 		channel: string,
-		work: (...args: unknown[]) => Promise<T> | T,
+		work: (sender: WebContents, ...args: unknown[]) => Promise<T> | T,
 	) =>
 		options.ipcMain.handle(
 			channel,
 			async (event: IpcMainInvokeEvent, ...args: unknown[]) => {
-				if (event.sender !== options.agentsPage())
-					throw new Error("only the Agents page dictates");
-				return work(...args);
+				if (!dictates(event.sender))
+					throw new Error("only the Conversations and Agents pages dictate");
+				return work(event.sender, ...args);
 			},
 		);
 	const listen = (channel: string, work: (...args: unknown[]) => void) =>
 		options.ipcMain.on(channel, (event: IpcMainEvent, ...args: unknown[]) => {
-			if (event.sender !== options.agentsPage()) return;
+			if (!dictates(event.sender)) return;
 			work(...args);
 		});
 
@@ -146,28 +152,30 @@ export function registerVoiceIpc(options: {
 		}
 	});
 
-	handle(VOICE_CHANNELS.begin, (language: unknown): VoiceResult<number> => {
-		if (transcriber === undefined) return { ok: false, reason: NO_RECOGNISER };
-		const page = options.agentsPage();
-		if (page === undefined) return { ok: false, reason: "No Agents page." };
-		const spoken: VoiceLanguage = VOICE_LANGUAGES.includes(
-			language as VoiceLanguage,
-		)
-			? (language as VoiceLanguage)
-			: DEFAULT_VOICE_LANGUAGE;
-		const id = nextSession++;
-		void transcriber.warm?.().catch(() => undefined);
-		const stream = new DictationStream(transcriber, spoken, (update) => {
-			if (sessions.has(id) && !page.isDestroyed())
-				page.send(VOICE_CHANNELS.update, id, update);
-		});
-		sessions.set(id, stream);
-		page.once("destroyed", () => {
-			sessions.get(id)?.cancel();
-			sessions.delete(id);
-		});
-		return { ok: true, value: id };
-	});
+	handle(
+		VOICE_CHANNELS.begin,
+		(page: WebContents, language: unknown): VoiceResult<number> => {
+			if (transcriber === undefined)
+				return { ok: false, reason: NO_RECOGNISER };
+			const spoken: VoiceLanguage = VOICE_LANGUAGES.includes(
+				language as VoiceLanguage,
+			)
+				? (language as VoiceLanguage)
+				: DEFAULT_VOICE_LANGUAGE;
+			const id = nextSession++;
+			void transcriber.warm?.().catch(() => undefined);
+			const stream = new DictationStream(transcriber, spoken, (update) => {
+				if (sessions.has(id) && !page.isDestroyed())
+					page.send(VOICE_CHANNELS.update, id, update);
+			});
+			sessions.set(id, stream);
+			page.once("destroyed", () => {
+				sessions.get(id)?.cancel();
+				sessions.delete(id);
+			});
+			return { ok: true, value: id };
+		},
+	);
 
 	listen(VOICE_CHANNELS.audio, (id: unknown, pcm: unknown) => {
 		const stream = sessions.get(id as number);
@@ -185,7 +193,7 @@ export function registerVoiceIpc(options: {
 
 	handle(
 		VOICE_CHANNELS.end,
-		async (id: unknown): Promise<VoiceResult<string>> => {
+		async (_page, id: unknown): Promise<VoiceResult<string>> => {
 			const stream = sessions.get(id as number);
 			if (stream === undefined)
 				return { ok: false, reason: "That dictation is not running." };

@@ -42,7 +42,16 @@ export interface ConversationIpcOptions {
 	readonly conversations: GuiConversations;
 	/** Each GUI Agent's unsent draft, handed out with the attachment and kept as the page reports it. */
 	readonly drafts: AgentDrafts;
-	/** The Agents page, the one page that draws conversations, once it exists. */
+	/**
+	 * The Conversations page, the one page that draws conversations, once it
+	 * exists: what attaches, and is sent their events and words.
+	 */
+	readonly conversationsPage: () => WebContents | undefined;
+	/**
+	 * The Agents page, which asks about GUI Agents too without drawing them —
+	 * a terminal Agent carried on in the GUI, a file an Orchestrator's
+	 * escalation links to.
+	 */
 	readonly agentsPage: () => WebContents | undefined;
 	/** Ask the model to carry an Agent on in the other presentation, resuming this session. */
 	readonly continueIn: (
@@ -174,7 +183,7 @@ export function registerConversationIpc(
 	const flush = () => {
 		const batch = queued;
 		queued = [];
-		const page = options.agentsPage();
+		const page = options.conversationsPage();
 		// A page that went away took its attachments with it; the one that
 		// replaces it attaches afresh.
 		if (page === undefined || page.isDestroyed()) {
@@ -191,12 +200,12 @@ export function registerConversationIpc(
 
 	// A new engine replayed every conversation: the page attaches afresh.
 	options.pagePorts?.onReplaced(() => {
-		const page = options.agentsPage();
+		const page = options.conversationsPage();
 		if (page === undefined || page.isDestroyed()) return;
 		page.send(CONVERSATION_CHANNELS.restarted);
 	});
 
-	/** Every request: from the Agents page, about an Agent, or refused in the app's own shape. */
+	/** Every request: from the Conversations or the Agents page, about an Agent, or refused in the app's own shape. */
 	const handle = <T>(
 		channel: string,
 		work: (agentId: AgentId, ...rest: unknown[]) => Promise<T> | T,
@@ -209,12 +218,13 @@ export function registerConversationIpc(
 				...rest: unknown[]
 			) => {
 				try {
+					const from = event.sender;
 					if (
-						options.agentsPage() === undefined ||
-						event.sender !== options.agentsPage()
+						from !== options.conversationsPage() &&
+						from !== options.agentsPage()
 					) {
 						throw new Error(
-							"only the Agents page reaches the GUI Agents' conversations",
+							"only the Conversations and Agents pages reach the GUI Agents' conversations",
 						);
 					}
 					if (typeof agentId !== "string")
@@ -229,9 +239,9 @@ export function registerConversationIpc(
 	handle(
 		CONVERSATION_CHANNELS.attach,
 		async (agentId): Promise<ConversationAttachReply> => {
-			const page = options.agentsPage();
+			const page = options.conversationsPage();
 			if (page === undefined)
-				throw new Error("the Agents page went away while it attached");
+				throw new Error("the Conversations page went away while it attached");
 			watch(page);
 			const conversation = await options.conversations.of(agentId);
 			// Subscribed before the snapshot is taken, so no event can fall between
@@ -403,7 +413,7 @@ export function registerConversationIpc(
 
 	return {
 		insert(agentId, text) {
-			const page = options.agentsPage();
+			const page = options.conversationsPage();
 			if (attached.has(agentId) && page !== undefined && !page.isDestroyed()) {
 				page.send(CONVERSATION_CHANNELS.insert, agentId, text);
 				return;

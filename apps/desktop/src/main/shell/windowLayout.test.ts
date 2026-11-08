@@ -6,6 +6,7 @@ import {
 	terminalSeam,
 	terminalStacked,
 	agentsRect,
+	orchestratorBoardWidth,
 	chromeVariables,
 	sidebarColumnWidth,
 	sidebarOverlayHolds,
@@ -141,6 +142,7 @@ describe("the child list", () => {
 			"editor",
 			"editor",
 			"agents",
+			"conversations",
 			"toasts",
 			"picker",
 			"tooltip",
@@ -219,6 +221,7 @@ describe("the child list", () => {
 				"editor",
 				"editor",
 				"agents",
+				"conversations",
 				"toasts",
 				"picker",
 				"tooltip",
@@ -270,6 +273,7 @@ describe("the child list", () => {
 				attached: 3,
 				neovim: 3,
 				agents: 4,
+				conversations: 4,
 				terminal: 5,
 				toasts: 6,
 				picker: 7,
@@ -359,6 +363,81 @@ describe("where the keyboard goes", () => {
 				input({ asking: "/b", state: state({ surface: { kind: "agent" } }) }),
 			),
 		).toEqual({ kind: "editor", editorKey: "/b" });
+	});
+});
+
+describe("a GUI Agent's conversation, in a view of its own", () => {
+	const child = (
+		children: ReturnType<typeof windowLayout>,
+		kind: "agents" | "conversations",
+	) => children.find((one) => one.identity.kind === kind)!;
+
+	it("is drawn over the Agents' rectangle in place of the Agents view, and has the keys", () => {
+		for (const surface of [
+			{ kind: "agent" } as const,
+			{ kind: "split", editorKey: "/a", ratio: 0.5 } as const,
+		]) {
+			const gui = input({
+				state: state({ surface, keyboard: "agents", conversation: "whole" }),
+			});
+			const children = windowLayout(gui);
+			expect(child(children, "conversations")).toEqual({
+				identity: { kind: "conversations" },
+				rect: agentsRect(WINDOW, gui.state),
+				visible: true,
+			});
+			// Sized all the same, so a terminal Agent shown next is not a reflow.
+			expect(child(children, "agents")).toEqual({
+				identity: { kind: "agents" },
+				rect: agentsRect(WINDOW, gui.state),
+				visible: false,
+			});
+			expect(keyboardChild(gui)).toEqual({ kind: "conversations" });
+		}
+	});
+
+	it("is not drawn for a terminal Agent, nor with no Agent on screen", () => {
+		const terminal = input({
+			state: state({ surface: { kind: "agent" }, keyboard: "agents" }),
+		});
+		expect(child(windowLayout(terminal), "conversations").visible).toBe(false);
+		expect(child(windowLayout(terminal), "agents").visible).toBe(true);
+		expect(keyboardChild(terminal)).toEqual({ kind: "agents" });
+		const editor = input({ state: state({ conversation: "whole" }) });
+		expect(child(windowLayout(editor), "conversations").visible).toBe(false);
+		expect(keyboardChild(editor)).toEqual({ kind: "editor", editorKey: "/a" });
+	});
+
+	it("stands right of the Orchestrator's board, which the Agents view still draws", () => {
+		const board = input({
+			state: state({
+				surface: { kind: "agent" },
+				keyboard: "agents",
+				conversation: "beside-board",
+			}),
+		});
+		const children = windowLayout(board);
+		const agents = child(children, "agents");
+		const conversations = child(children, "conversations");
+		expect(agents.visible).toBe(true);
+		expect(conversations.visible).toBe(true);
+		const width = orchestratorBoardWidth(agents.rect.width);
+		expect(conversations.rect).toEqual({
+			...agents.rect,
+			x: agents.rect.x + width,
+			width: agents.rect.width - width,
+		});
+		// Above the Agents view, which it covers the right of.
+		expect(children.indexOf(conversations)).toBeGreaterThan(
+			children.indexOf(agents),
+		);
+		expect(keyboardChild(board)).toEqual({ kind: "conversations" });
+	});
+
+	it("says the board's width as its stylesheet does: 46%, never under 380 or over 720", () => {
+		expect(orchestratorBoardWidth(1000)).toBe(460);
+		expect(orchestratorBoardWidth(600)).toBe(380);
+		expect(orchestratorBoardWidth(2000)).toBe(720);
 	});
 });
 
@@ -628,6 +707,7 @@ describe("where a tooltip goes", () => {
 			"editor",
 			"editor",
 			"agents",
+			"conversations",
 			"toasts",
 			"picker",
 			"tooltip",
@@ -767,6 +847,7 @@ describe("a view a workbench attached to itself", () => {
 			"editor",
 			"attached",
 			"agents",
+			"conversations",
 			"toasts",
 			"picker",
 			"tooltip",
@@ -1136,7 +1217,13 @@ describe("the floating Sidebar", () => {
 		);
 		const order = kinds(children);
 		const sidebar = order.indexOf("sidebar");
-		for (const content of ["editor", "attached", "agents", "terminal"]) {
+		for (const content of [
+			"editor",
+			"attached",
+			"agents",
+			"conversations",
+			"terminal",
+		]) {
 			expect(order.lastIndexOf(content as never)).toBeLessThan(sidebar);
 		}
 		for (const layer of ["toasts", "picker", "tooltip"]) {

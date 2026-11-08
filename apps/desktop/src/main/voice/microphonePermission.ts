@@ -1,6 +1,6 @@
 /**
- * Chromium's half of the microphone: the Agents page may open it, for audio
- * only, and nothing else changes.
+ * Chromium's half of the microphone: the Agents and Conversations pages may
+ * open it, for audio only, and nothing else changes.
  *
  * macOS granting DevHub the microphone (`voiceIpc.ts`) is not enough. VS Code's
  * `CodeApplication` installs a permission request handler and a permission
@@ -23,13 +23,14 @@ import type { Session, WebContents } from "electron";
 
 import { SHELL_ORIGIN } from "../shell/shellPageProtocol.js";
 
-/** The one page that dictates. */
+/** The pages that dictate: the Orchestrator's composer, and a GUI Agent's. */
 export const AGENTS_PAGE_URL = `${SHELL_ORIGIN}/agents.html`;
+export const CONVERSATIONS_PAGE_URL = `${SHELL_ORIGIN}/conversations.html`;
 
 function isAgentsPage(url: string | undefined): boolean {
 	if (url === undefined) return false;
 	const bare = url.split(/[?#]/, 1)[0];
-	return bare === AGENTS_PAGE_URL;
+	return bare === AGENTS_PAGE_URL || bare === CONVERSATIONS_PAGE_URL;
 }
 
 /**

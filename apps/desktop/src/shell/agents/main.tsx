@@ -1,5 +1,6 @@
 /**
- * The `agents` page's entry point.
+ * The `agents` page's entry point: the terminal Agents and the Orchestrator's
+ * board (`conversationsMain.tsx` is the GUI Agents').
  *
  * Its own entry, because it is its own page in its own view. What DevHub's
  * pages share is stated by what each of them installs here rather than by all

@@ -47,6 +47,9 @@ export default defineConfig({
         picker: fileURLToPath(new URL("./picker.html", import.meta.url)),
         sidebar: fileURLToPath(new URL("./sidebar.html", import.meta.url)),
         agents: fileURLToPath(new URL("./agents.html", import.meta.url)),
+        conversations: fileURLToPath(
+          new URL("./conversations.html", import.meta.url),
+        ),
         pane: fileURLToPath(new URL("./pane.html", import.meta.url)),
         neovim: fileURLToPath(new URL("./neovim.html", import.meta.url)),
         tooltip: fileURLToPath(new URL("./tooltip.html", import.meta.url)),

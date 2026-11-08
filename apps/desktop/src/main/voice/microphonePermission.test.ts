@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
 	AGENTS_PAGE_URL,
+	CONVERSATIONS_PAGE_URL,
 	allowsAgentsMicrophoneCheck,
 	allowsAgentsMicrophoneRequest,
 	letAgentsPageDictate,
@@ -20,6 +21,13 @@ describe("allowsAgentsMicrophoneRequest", () => {
 		expect(
 			allowsAgentsMicrophoneRequest("media", {
 				requestingUrl: `${AGENTS_PAGE_URL}?x=1#y`,
+				mediaTypes: ["audio"],
+			}),
+		).toBe(true);
+		// A GUI Agent's composer, on a page of its own.
+		expect(
+			allowsAgentsMicrophoneRequest("media", {
+				requestingUrl: CONVERSATIONS_PAGE_URL,
 				mediaTypes: ["audio"],
 			}),
 		).toBe(true);

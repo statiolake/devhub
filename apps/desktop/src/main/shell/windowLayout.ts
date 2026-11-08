@@ -213,6 +213,18 @@ export interface LayoutState {
 	 * `model/agentTerminal.ts`.
 	 */
 	readonly terminal?: { readonly terminalId: string; readonly share: number };
+	/**
+	 * The Agent on screen is a GUI Agent, whose conversation the
+	 * Conversations view draws rather than the Agents view: over the Agents'
+	 * whole rectangle (`whole`), or right of the Orchestrator's board, which
+	 * the Agents view goes on drawing (`beside-board`). Absent, the Agents
+	 * view is the Agent's: a terminal Agent, the board alone, or none.
+	 *
+	 * Two renderers, so that a conversation being drawn — a long transcript
+	 * is seconds of a renderer's thread — never holds the terminal Agents'
+	 * keys (docs/process-model.md, phase 6).
+	 */
+	readonly conversation?: "whole" | "beside-board";
 }
 
 /** Whether the questions layer covers the window or one workbench. */
@@ -302,6 +314,8 @@ export type ChildIdentity =
 	| { readonly kind: "shell" }
 	| { readonly kind: "sidebar" }
 	| { readonly kind: "agents" }
+	/** The GUI Agents' conversations, laid where the Agents view is. */
+	| { readonly kind: "conversations" }
 	| { readonly kind: "editor"; readonly editorKey: string }
 	/** A view VS Code attached to a workbench — see `AttachedPlacement`. */
 	| {
@@ -622,6 +636,29 @@ export function agentsRect(
 	);
 }
 
+/**
+ * How wide the Orchestrator's board is in an Agents view `width` wide: its
+ * `width: clamp(380px, 46%, 720px)` in `shell/agents/orchestrator.css`,
+ * which this has to say the same as.
+ */
+export function orchestratorBoardWidth(width: number): number {
+	return Math.round(Math.min(720, Math.max(380, width * 0.46)));
+}
+
+/**
+ * The rectangle the Conversations view is laid into: the Agents' own, or
+ * the part of it right of the Orchestrator's board.
+ */
+export function conversationsRect(
+	windowSize: LayoutSize,
+	state: LayoutState,
+): LayoutRect {
+	const agents = agentsRect(windowSize, state);
+	if (state.conversation !== "beside-board") return agents;
+	const board = Math.min(agents.width, orchestratorBoardWidth(agents.width));
+	return { ...agents, x: agents.x + board, width: agents.width - board };
+}
+
 /** A split's whole right half: the Agent, and its terminal under it if any. */
 function splitAgentHalf(
 	windowSize: LayoutSize,
@@ -906,7 +943,9 @@ export function keyboardChild(input: LayoutInput): ChildIdentity {
 		if (editor !== undefined && input.state.surface.kind !== "agent") {
 			return editor;
 		}
-		return agentsVisible(input.state) ? { kind: "agents" } : { kind: "shell" };
+		return agentsVisible(input.state)
+			? agentChild(input.state)
+			: { kind: "shell" };
 	}
 	if (input.state.keyboard === "agents") {
 		// Only where there is one to type into. An Agent's view is drawn for an
@@ -914,9 +953,18 @@ export function keyboardChild(input: LayoutInput): ChildIdentity {
 		// the keys to a view that is not in the window is the invisible-focus
 		// bug this whole redesign exists to end — so anything else falls to
 		// the window's own page, which is always there.
-		return agentsVisible(input.state) ? { kind: "agents" } : { kind: "shell" };
+		return agentsVisible(input.state)
+			? agentChild(input.state)
+			: { kind: "shell" };
 	}
 	return editorChild(input) ?? { kind: "shell" };
+}
+
+/** Which of the two views the Agent on screen is drawn in. */
+function agentChild(state: LayoutState): ChildIdentity {
+	return state.conversation === undefined
+		? { kind: "agents" }
+		: { kind: "conversations" };
 }
 
 /** Whether an Agent is drawn at all: over the content area, or beside it. */
@@ -1095,10 +1143,21 @@ export function windowLayout(input: LayoutInput): readonly LayoutChild[] {
 	// exactly when a workbench is not — or beside one, which is what a split
 	// is — so "one of {the Agents, a workbench} is on the content area" is a
 	// property of this list rather than a rule somebody has to keep.
+	//
+	// Two views: the Agents view draws the terminal Agents and the
+	// Orchestrator's board, the Conversations view the GUI Agents. Both are
+	// always sized; the one with the Agent on screen is drawn — and both for
+	// the Orchestrator with a GUI Agent, the conversation right of the board
+	// and so above the Agents view.
 	children.push({
 		identity: { kind: "agents" },
 		rect: agentsRect(windowSize, state),
-		visible: agentsVisible(state),
+		visible: agentsVisible(state) && state.conversation !== "whole",
+	});
+	children.push({
+		identity: { kind: "conversations" },
+		rect: conversationsRect(windowSize, state),
+		visible: agentsVisible(state) && state.conversation !== undefined,
 	});
 	// Every Agent terminal that has a view: the one on screen at the right,
 	// and every other one hidden at the content area's size, so that coming

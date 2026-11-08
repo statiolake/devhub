@@ -6,7 +6,7 @@ import { TerminalSurface } from "../terminal/TerminalSurface";
 import { InjectionStatus } from "../components/shell/InjectionStatus";
 import { SmartButtons } from "./SmartButtons";
 import { ConversationPane } from "./ConversationPane";
-import type { AgentWire } from "../../ipc/appShell";
+import type { AgentPresentationWire, AgentWire } from "../../ipc/appShell";
 
 /**
  * Every running Agent, mounted; the selected one shown.
@@ -25,6 +25,7 @@ export function AgentPane({
   snapshot,
   appearance,
   activeKey,
+  presentation,
 }: {
   readonly snapshot: AppSnapshot;
   readonly appearance: AppAppearance | undefined;
@@ -33,17 +34,35 @@ export function AgentPane({
    * them", which is every moment this view is not drawn at all.
    */
   readonly activeKey: string | undefined;
+  /**
+   * Which Agents this page draws: the terminal Agents (the Agents page) or
+   * the GUI Agents' conversations (the Conversations page). Two pages, in two
+   * renderers, so a transcript being drawn never holds a terminal's keys —
+   * main shows whichever has the Agent on screen
+   * (`main/shell/windowLayout.ts`, `LayoutState.conversation`).
+   */
+  readonly presentation: AgentPresentationWire;
 }) {
-  const pool = useMemo(() => runningAgentSurfaces(snapshot), [snapshot]);
+  const pool = useMemo(
+    () =>
+      [...runningAgentSurfaces(snapshot).values()].filter(
+        (surface) => surface.presentation === presentation,
+      ),
+    [snapshot, presentation],
+  );
   // What floats over the pane belongs to the Agent on screen and to no other.
   // The pool keeps every running Agent mounted so that coming back to one is
   // unhiding a pane, not drawing its corner again for each hidden one.
   const active = snapshot.workspaces
     .flatMap((workspace) => workspace.agents)
-    .find((agent) => `agent:${agent.id}` === activeKey);
+    .find(
+      (agent) =>
+        `agent:${agent.id}` === activeKey &&
+        agent.presentation === presentation,
+    );
   return (
-    <div className="agent-pane" hidden={activeKey === undefined}>
-      {[...pool.values()].map((surface) => (
+    <div className="agent-pane" hidden={active === undefined}>
+      {pool.map((surface) => (
         <div
           className="surface-pool-entry"
           key={surface.key}

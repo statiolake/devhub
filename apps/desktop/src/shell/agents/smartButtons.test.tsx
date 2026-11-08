@@ -393,6 +393,7 @@ describe("a GUI Agent on screen with no composer under it", () => {
             snapshot={snapshot}
             appearance={undefined}
             activeKey="agent:a-1"
+            presentation="gui"
           />
         </AgentsContext.Provider>,
       ),
@@ -1000,6 +1001,7 @@ describe("the box in an Agent's pane", () => {
           snapshot={snapshotWith(stored)}
           appearance={undefined}
           activeKey="agent:a-1"
+          presentation="tui"
         />
       </AgentsContext.Provider>
     );

@@ -87,12 +87,23 @@ function snapshot(): AppSnapshot {
 
 describe("switching Agents", () => {
   it("mounts each running Agent's surface once, and only unhides it", () => {
+    // The two pages side by side, as main lays them: the terminal Agents'
+    // and the GUI Agents', each with its own pool.
     const pane = (activeKey: string | undefined) => (
-      <AgentPane
-        snapshot={snapshot()}
-        appearance={undefined}
-        activeKey={activeKey}
-      />
+      <>
+        <AgentPane
+          snapshot={snapshot()}
+          appearance={undefined}
+          activeKey={activeKey}
+          presentation="tui"
+        />
+        <AgentPane
+          snapshot={snapshot()}
+          appearance={undefined}
+          activeKey={activeKey}
+          presentation="gui"
+        />
+      </>
     );
     const { rerender, getByTestId } = render(pane("agent:gui-1"));
     const first = getByTestId("gui-1");
@@ -110,5 +121,29 @@ describe("switching Agents", () => {
     expect(getByTestId("gui-1")).toBe(first);
     expect(first).toHaveAttribute("data-hidden");
     expect(getByTestId("gui-2")).not.toHaveAttribute("data-hidden");
+  });
+});
+
+describe("the two pages", () => {
+  it("each mount only their own Agents: the terminals one page, the conversations the other", () => {
+    for (const presentation of ["tui", "gui"] as const) {
+      mounts.length = 0;
+      const { unmount, container } = render(
+        <AgentPane
+          snapshot={snapshot()}
+          appearance={undefined}
+          activeKey="agent:gui-1"
+          presentation={presentation}
+        />,
+      );
+      expect([...mounts].sort()).toEqual(
+        presentation === "gui" ? ["gui-1", "gui-2"] : ["agent:tui-1"],
+      );
+      // The Agent on screen is the other page's: this one draws nothing.
+      expect(
+        container.querySelector(".agent-pane")?.hasAttribute("hidden"),
+      ).toBe(presentation === "tui");
+      unmount();
+    }
   });
 });

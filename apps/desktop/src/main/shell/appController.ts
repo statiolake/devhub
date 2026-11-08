@@ -1637,7 +1637,10 @@ export class AppController {
 		// this build has one, and macOS's microphone permission.
 		registerVoiceIpc({
 			ipcMain: electron.ipcMain,
-			agentsPage: () => shellWindow().agents.contents(),
+			pages: () => [
+				shellWindow().conversations.contents(),
+				shellWindow().agents.contents(),
+			],
 			install: locateWhisper(whisperCandidates(APP_ROOT, process.env)),
 			microphone: {
 				status: () =>
@@ -1658,6 +1661,7 @@ export class AppController {
 			},
 			drafts: this.drafts,
 			...(engine === undefined ? {} : { pagePorts: enginePagePorts(engine) }),
+			conversationsPage: () => shellWindow().conversations.contents(),
 			agentsPage: () => shellWindow().agents.contents(),
 			// A continue of an Agent that is not idle is a question first
 			// (`Coordinator.askAbout`), and the button that asked cannot draw
@@ -2364,7 +2368,12 @@ export class AppController {
 	private installHistoryGestures(): void {
 		const shell = shellWindowIfCreated();
 		if (!shell) return;
-		const ownButtons = ["/agents.html", "/sidebar.html", "/pane.html"];
+		const ownButtons = [
+			"/agents.html",
+			"/conversations.html",
+			"/sidebar.html",
+			"/pane.html",
+		];
 		shell.window.on("app-command", (_event, command) => {
 			const direction = appCommandDirection(command);
 			if (direction === undefined) return;
@@ -4971,6 +4980,28 @@ export class AppController {
 		shell.syncTerminalViews(
 			model.agentTerminals().map((one) => one.terminalId),
 		);
+		// A GUI Agent on screen is drawn by the Conversations view, the rest
+		// by the Agents view (`LayoutState.conversation`); the Orchestrator's
+		// board stays the Agents view's, left of its GUI Agent's conversation.
+		const shownKey =
+			layout.kind === "agent" ||
+			layout.kind === "split" ||
+			layout.kind === "orchestrator"
+				? layout.agentKey
+				: undefined;
+		const shownGui =
+			shownKey !== undefined &&
+			snapshot.workspaces.some((workspace) =>
+				workspace.agents.some(
+					(agent) =>
+						`agent:${agent.id}` === shownKey && agent.presentation === "gui",
+				),
+			);
+		const conversation = !shownGui
+			? undefined
+			: layout.kind === "orchestrator"
+				? ("beside-board" as const)
+				: ("whole" as const);
 		const paneFocus = model.paneFocus;
 		const keyboard: KeyboardHalf = this.keyboardInSidebar
 			? "sidebar"
@@ -5000,6 +5031,7 @@ export class AppController {
 					: surface,
 			keyboard,
 			...(terminal === undefined ? {} : { terminal }),
+			...(conversation === undefined ? {} : { conversation }),
 		});
 		// The page draws its own states in the same rectangle the workbench is
 		// laid into, and the split's seam is where that rectangle ends. It is
@@ -9325,6 +9357,11 @@ export class AppController {
 				contents: shell.agents.contents(),
 				name: "agents",
 				present: shell.agents.isVisible(),
+			},
+			{
+				contents: shell.conversations.contents(),
+				name: "conversations",
+				present: shell.conversations.isVisible(),
 			},
 			{
 				contents: shell.toasts.contents(),
