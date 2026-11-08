@@ -219,6 +219,8 @@ whose four cores were saturated by tmux and the streams.
 | 6c    | Inserting into a long list does not restyle all of it (`.picker > * + *`)                   | `e4b05e6d` |
 | 6c    | A conversation's frame costs what changed, not the transcript's length                      | `ad5f834f` |
 | 6d    | A hidden terminal surface lets its client go once it has missed more than it keeps          | `111d60da` |
+| 6e    | A streaming conversation's frame wakes only the file links and tool calls that changed      | `ad05b7e1` |
+| 7a    | Main says a rectangle and the window's name only when they move, to the page that draws it  | `505a2384` |
 
 **Phase 1.** `useConversation` keeps folding every event of a hidden pane
 (so a bad event is still refused where it arrives) and publishes nothing;
@@ -577,6 +579,135 @@ across unmounts, anchoring by estimated heights). Drawing a window would
 still bound what a pathological transcript costs in memory; with the costs
 above gone it is not what the keys wait for.
 
+**Phase 6e.** After 6c the Conversations renderer was still at 80–110%
+with a conversation streaming on screen (the stand-in, as in 6c), its
+main thread at 66–81%. The plan named four suspects; profiled (CPU
+profiles of an unminified build, Chrome traces), none of them was it:
+the Markdown parse is already a settled prefix and a re-parsed tail
+(`markdownBlocks.ts`, about 1% of the thread), a code block is coloured
+only once its fence has closed and the colouring is kept (nothing in the
+profile), the following of the end is the frame's own style and layout
+read early (not a second one), and the store updates are already drawn
+at most once an animation frame. What was:
+
+1. **Every file link woke for every answer, and for every turn's end.**
+   One `PathLinks` per conversation had one set of listeners: each answer
+   from main called every word that could be a path, and a turn's end
+   forgot every word that named nothing — each of those drew again as
+   "not asked", asked again, and drew again when the answer came. In a
+   long transcript that is thousands of `PathLink`s drawn twice per turn:
+   with the stand-in (a turn every 1.5 s) 18% of the thread in passive
+   effects and 15% in the synchronous draws that followed. A word's
+   readers now subscribe to that word, a turn's end asks again about the
+   words that named nothing while they stay plain text
+   (`askAgainAbsent`), and only a word whose answer changed is woken.
+2. **Every tool call was told of every commit.** The entry tree's store
+   (6c) called all its readers on each commit, and each looked its part
+   up to find that nothing had moved (3–4%). `EntryTreeStore` compares the
+   tree it publishes with the last (`changedParts`: the parents whose
+   children or requests are new arrays, and the two the plan moved
+   between) and tells only those parts' readers.
+3. **The rewind targets were a new set every frame**, in a context over
+   every message, so React looked through the whole transcript for its
+   readers each time (`propagateContextChanges`, 4%). The set is kept
+   while it holds the same messages.
+
+Tried and not kept, each measured against the build without it on the
+same running conversation, interleaved:
+
+- **Drawing in the animation frame** (`flushSync` in the
+  `requestAnimationFrame` that publishes, instead of React's scheduler
+  task after it, which leaves the picture for the next frame): the text
+  appeared no sooner (event→paint p50 25–27 ms either way), and the
+  composer's keys were later (p50 17–34 ms against 7–18): a draw inside
+  the frame holds the input that arrives while it runs.
+- **Pacing the draws by their cost** (resting twice what the last draw
+  took): half the commits, but the thread was at 53–61% against 57–63%
+  and the text's p99 went from 61–81 to 128–172 ms. What the thread
+  spends is not per commit.
+
+Left: Chrome's style update costs 2–4 ms a frame with ten or so elements
+to recalculate (`Document::updateStyle` well beyond its `recalcStyle`),
+not explained by any group of the page's rules switched off live
+(`:has()`, sibling combinators, `content-visibility`, containers,
+counters, animations); and the process's other threads (raster,
+compositor) at 15–25% while it draws 30 frames a second.
+
+**Phase 7a.** Main ran `publishLayoutState` and `refreshWindowTitle` on
+every projection and sent their results to all six pages each time: with
+one GUI Agent streaming, 2.5–3.2 snapshots a second and, with each, a
+workbench rectangle, a Sidebar rectangle and the window's name, unchanged
+in all but the name and wanted by one page each. The workbench's
+rectangle now goes to the window's own page and the Sidebar's to the
+Sidebar, each only when it moved (compared as JSON), and the name to the
+window's page only when it moved. A page that starts asks: `onWorkbenchArea`
+and `onSidebarArea` hear the rectangle as it stands, asked of main
+(`getWorkbenchArea`, `getSidebarArea`) as they start listening, then each
+push (`onCurrent` in the preload; main answers in order with what it
+pushes, so an answer is never older than a push before it). `getSnapshot`
+no longer republishes the layout to every page as a way of reaching the
+one that started. A snapshot that says what the last one said, its
+revision aside, is not sent again.
+
+Found on the way: a window resize was no projection, so the rectangles
+were said only once the model next moved — the window's page drew its
+states and the split's seam against the old size until then (with an
+Agent streaming that was a third of a second; idle, indefinitely). They
+are said on `resize` now.
+
+Not done: sending the snapshot as a diff. It changes for real 2.5–3 times
+a second here (the Agent's prompt-cache numbers and activity line), it is
+6 KB, and a page holds it whole and lets React keep what did not change;
+a patch protocol would be a second way for a page's model to be wrong
+(the revision and replay rules over patches) to save main well under 0.5%
+of its thread.
+
+### After phase 6e
+
+**v long** as in 6c (a GUI Agent on screen, the stand-in at a 40 000-line
+burst then 300 lines/s, 16 subagents at a time), at 20 s and 60 s: the
+Conversations renderer's process CPU and its main thread's over 8 s, then
+over 6 s each conversation event's arrival in the page to the animation
+frame after the commit that drew it (the oldest event of each commit), then
+20 composer keys. Two runs of each; "before" is `65138812` with the same
+probes (`perfProbe`). The machine was shared with another session's
+DevHub throughout, which is the spread between runs.
+
+| since start | process CPU      | main thread         | text event→paint p50 / p90 / p99 (ms)                     | commits/s       | composer key→paint p50 / p90 / p99 (ms)                 |
+| ----------- | ---------------- | ------------------- | --------------------------------------------------------- | --------------- | ------------------------------------------------------- |
+| 20 s        | 91, 91 → 79, 65  | 80, 66 → **52, 54** | 27 / 92 / 123, 27 / 50 / 77 → 26 / 39 / 73, 26 / 48 / 75  | 25, 30 → 32, 33 | 14 / 52 / 96, 9 / 36 / 53 → 12 / 23 / 50, 18 / 30 / 57  |
+| 60 s        | 110, 95 → 86, 77 | 81, 73 → **54, 62** | 26 / 86 / 123, 27 / 70 / 112 → 26 / 44 / 78, 26 / 54 / 97 | 24, 26 → 33, 31 | 12 / 51 / 54, 17 / 70 / 79 → 14 / 41 / 45, 13 / 55 / 55 |
+
+- The renderer's main thread: **66–81% → 52–62%**, while it draws more
+  often (24–30 → 31–33 commits a second) — the frames are cheaper and
+  there are more of them, which is where some of the process's CPU went
+  back (raster and compositor).
+- Text appears no later at p50 (26 ms) and sooner at the tail: p90
+  50–92 → 39–54 ms, p99 77–123 → 73–97 ms.
+- The composer's keys are where they were, a little better at the tail.
+
+**Main's pushes** with one GUI Agent streaming on screen, each page's
+messages from main over 10 s, twice:
+
+| page              | before (per second)                                                    | after (per second)              |
+| ----------------- | ---------------------------------------------------------------------- | ------------------------------- |
+| each of six       | 10.0–12.8: snapshot, workbench area, Sidebar area, title, 2.5–3.2 each | 2.4–3.0: the snapshot           |
+| the window's page | the same                                                               | 3.3–4.8: and the title, 0.9–1.8 |
+
+- Messages to the pages: **60–77 → 15–19 a second**; the bytes are the
+  snapshot's and stayed (15–20 KiB/s a page).
+- The title moves for real here (it names the Agent's activity).
+- Main's JavaScript: 2.4–2.7% → 3.6% busy over those windows, which is
+  noise between them (`drain` 1.1–1.2% → 1.3–1.5%); what the change took
+  off it is about 0.2% (the area and title sends).
+- Checked live: every page reloaded (the window's, the Sidebar, Agents,
+  Conversations, the picker, a Neovim page, toasts, the tooltip) draws
+  what it drew before — the window's page its workbench rectangle, the
+  Sidebar a row's tooltip — the same as before the change (the Agents
+  page's terminals and a Neovim page's grids come back when shown, on
+  both builds); a resize with nothing else happening moves the window's
+  page's rectangle, and a reload after it gets the new one.
+
 ### After phase 6d
 
 **b hidden**: four terminal Agents streaming (b terms), none of them on
@@ -829,11 +960,12 @@ complete.
    relay, and the other `child_process` callers in main (the GitHub CLI,
    usage readers, the login shell probe), which could go through
    `cleanSpawn` and the process host too.
-6. **Done** (phases 6a–6d above). Left of it: a window of entries for a
+6. **Done** (phases 6a–6e above). Left of it: a window of entries for a
    transcript too long to keep in memory (not what the keys wait for any
    more, and what it would cost find, selection and anchoring is in 6c);
-   the Conversations renderer still draws every frame a visible
-   conversation changes (80–98% of a core while one streams).
+   the Conversations renderer's main thread at 52–62% while a fast
+   stand-in streams on screen, a good part of it Chrome's style update
+   with almost nothing to recalculate (6e).
 7. **Background services**: the agent and activity rounds' scheduling,
    repository status, usage readers, Task Manager sampling, the
    Orchestrator's invariant and GitHub polling, and `state.json`'s
@@ -852,16 +984,9 @@ complete.
    a process boundary. Not worth that until a measured load says
    otherwise.
 
-   Found on the way: with one GUI Agent streaming, main sends 3.2 app
-   snapshots a second to each of the six pages (the Agent's prompt-cache
-   numbers and its activity line, which change with every request the CLI
-   makes; the stand-in makes them far faster than a real one), and with
-   each one `workbench-area-changed` and `sidebar-area-changed`, unchanged
-   in 19 of 19, to all six, though only the window's page and the Sidebar
-   listen. Not changed: the window's page draws nothing until it has an
-   area and has no way to ask for one, so a page reloaded after main
-   stopped repeating it would stay blank; and since phase 6c a snapshot no
-   longer makes the Conversations page walk its transcript.
+   Found on the way, and done as phase 7a: main sent every page a
+   workbench rectangle, a Sidebar rectangle and the window's name with
+   every snapshot, unchanged and unread by all but one page each.
 
 8. **Chords in the pages' preloads** (capture-phase `keydown`) instead of
    `before-input-event`, with main's handler kept for VS Code's workbench
