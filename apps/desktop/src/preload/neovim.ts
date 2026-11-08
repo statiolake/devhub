@@ -4,7 +4,7 @@
  * One view per Neovim drawn over a terminal pane. See `NeovimBridge` in
  * `ipc/contract.ts`, and `shell/neovim/NeovimApp.tsx`.
  *
- * A Workspace's UI runs in one of two places, and this is the only code that
+ * A Neovim's UI runs in one of two places, and this is the only code that
  * knows which. Mostly in the Neovim host (`main/neovimHost/`): main hands the
  * page a port to it (`NEOVIM_CHANNELS.port`) and says so in the attach's
  * answer (`hosted`), and from then on the redraws and the GUI windows'
@@ -15,7 +15,7 @@
  *
  * **When the host ends.** Main says so (`NEOVIM_CHANNELS.restarted`): its
  * port is closed here and a request waiting on it is answered with a
- * failure; main then tells each of its Workspaces' pages that it ended, with
+ * failure; main then tells each page whose UI it ran that it ended, with
  * `reconnect`, and the page attaches again.
  */
 
@@ -102,7 +102,7 @@ ipcRenderer.on(NEOVIM_CHANNELS.guiEvent, (_event, event: NeovimGuiEvent) => {
 let host:
 	| { readonly port: MessagePort; readonly generation: number }
 	| undefined;
-/** Each Workspace whose UI is in a host: that host's generation. */
+/** Each overlay whose UI is in a host: that host's generation. */
 const hosted = new Map<string, number>();
 const replies = new Map<number, (result: NeovimRequestResult) => void>();
 let nextRequest = 1;
@@ -144,7 +144,7 @@ ipcRenderer.on(
 	},
 );
 
-/** The port a Workspace's UI is on, or nothing: main's. */
+/** The port an overlay's UI is on, or nothing: main's. */
 function portFor(workspaceId: string): MessagePort | undefined {
 	const generation = hosted.get(workspaceId);
 	if (generation === undefined) return undefined;

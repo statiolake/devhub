@@ -1,5 +1,7 @@
 /**
- * The Neovim editor: one Workspace's headless Neovim, drawn by DevHub.
+ * A Neovim drawn by DevHub over its terminal pane: one page per overlay
+ * (`neovim.html#tnv:<n>`, `main/editor/terminalNeovims.ts`), whether the
+ * Neovim was typed in a pane or is a Workspace's `devhub-nvim` one.
  *
  * # What is Neovim's and what is DevHub's
  *
@@ -19,8 +21,7 @@
  *
  * # Its contract with main
  *
- * - **reads**: the snapshot (that its Workspace exists, its name), the
- *   appearance (the monospace font and the Option key).
+ * - **reads**: the appearance (the monospace font and the Option key).
  * - **asks**: `neovim.attach` once mounted, then `neovim.call` for every
  *   key, click, scroll and resize.
  * - **is pushed**: `redraw`, `ended`, GUI windows and their messages.
@@ -92,37 +93,25 @@ interface GuiContent {
   readonly url?: string;
 }
 
+/** `workspaceId` is the overlay's key, the id every Neovim call names. */
 export function NeovimApp({ workspaceId }: { readonly workspaceId: string }) {
   const bridge = useMemo(() => devhub(), []);
   const reportFailure = useRaiseFailure(bridge);
   const { state, attempt } = useProjection(bridge, reportFailure, () => {});
   const appearance = useAppearance(bridge, reportFailure, attempt);
-  const workspace =
-    state.status === "ready"
-      ? state.snapshot.workspaces.find((one) => one.id === workspaceId)
-      : undefined;
-  // A Neovim run in a terminal pane is no Workspace's: its id is its
-  // overlay's (`main/editor/terminalNeovims.ts`).
-  const inTerminal = workspaceId.startsWith("tnv:");
-  if (state.status !== "ready" || (!workspace && !inTerminal)) return null;
+  if (state.status !== "ready") return null;
   return (
     <div className="app-shell neovim-page">
-      <NeovimSurface
-        workspaceId={workspaceId}
-        label={workspace?.label ?? "Neovim"}
-        appearance={appearance}
-      />
+      <NeovimSurface workspaceId={workspaceId} appearance={appearance} />
     </div>
   );
 }
 
 function NeovimSurface({
   workspaceId,
-  label,
   appearance,
 }: {
   readonly workspaceId: string;
-  readonly label: string;
   readonly appearance: AppAppearance | undefined;
 }) {
   const bridge = useMemo(() => devhub(), []);
@@ -456,7 +445,7 @@ function NeovimSurface({
           }}
         />
       ) : null}
-      <div className="nvim-host" ref={hostRef} aria-label={`${label} — Neovim`}>
+      <div className="nvim-host" ref={hostRef} aria-label="Neovim">
         {nvim && cell
           ? guiWindowsInPaintOrder(guiWindows.windows, primaryWindow).map(
               ({ id, win }) => {
@@ -625,7 +614,6 @@ function guiWindowsInPaintOrder(
   return [...first, ...rest];
 }
 
-/** A tab's name as Neovim gives it (a path): its last part. */
 /** The GUI window's page: the person's HTML, with `devhub` to talk to Lua. */
 function guiDocument(html: string, state: NeovimUiState): string {
   const fg = cssColor(state.defaults.foreground);

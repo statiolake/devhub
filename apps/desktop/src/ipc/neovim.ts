@@ -181,8 +181,8 @@ export interface DevhubNeovimApi {
 		listener: (workspaceId: string, batches: readonly unknown[]) => void,
 	): () => void;
 	/**
-	 * The connection ended. `reconnect`: only the way to Neovim went (an SSH
-	 * host's connection dropped) and it went on running, so attaching again
+	 * The connection ended. `reconnect`: only the way to Neovim went (the
+	 * Neovim host restarted) and it went on running, so attaching again
 	 * picks it up — the page does so by itself.
 	 */
 	onEnded(

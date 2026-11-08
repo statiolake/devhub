@@ -1,12 +1,12 @@
 /**
- * The Neovim editor page's entry point — one view per Workspace whose
- * editor area is its Neovim (`general.editor = "neovim"`).
+ * The Neovim page's entry point — one view per Neovim DevHub draws over a
+ * terminal pane (`general.editor = "neovim"`).
  *
  * Its own entry, because it is its own page in its own view, installing what
  * every DevHub page installs: the palette it was served wearing, the
  * monospace family, the selection guard, the side buttons' history, and the
- * root failure handler. Which Workspace it draws is the page's fragment
- * (`neovim.html#<id>`), which main writes when it makes the view; see
+ * root failure handler. Which Neovim it draws is the page's fragment
+ * (`neovim.html#tnv:<n>`), which main writes when it makes the view; see
  * `NeovimApp`.
  */
 
