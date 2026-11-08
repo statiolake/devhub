@@ -160,13 +160,21 @@ export function registerTerminalService(
 	const watch = (sender: WebContents) => {
 		if (watched.has(sender)) return;
 		watched.add(sender);
-		sender.once("destroyed", () => {
-			watched.delete(sender);
-			// One call: the page is the label, and every surface it held is
-			// released by it. Nothing here keeps a list of mounted surfaces to
-			// fall out of step with the ledger.
+		// One call: the page is the label, and every surface it held is
+		// released by it. Nothing here keeps a list of mounted surfaces to
+		// fall out of step with the ledger.
+		const gone = () => {
 			surfaces.detachView(String(sender.id));
 			ptyHost?.pageGone(sender);
+		};
+		// A page that loads again (a reload, in development) is a new page in
+		// the same web contents: its old document's clients go with it, and
+		// its next attach is handed a new port to the pty host.
+		sender.on("did-navigate", gone);
+		sender.once("destroyed", () => {
+			watched.delete(sender);
+			sender.off("did-navigate", gone);
+			gone();
 		});
 	};
 
