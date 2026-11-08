@@ -38,9 +38,8 @@
  */
 
 import {
-	EMPTY_TRANSCRIPT,
 	answerTo,
-	applyEvent,
+	TranscriptFold,
 	rewindTargets,
 	entryId,
 	requestId,
@@ -470,7 +469,8 @@ const AUTO_COMPACTED =
 	"Auto-compacted to keep the prompt cache warm: the conversation was idle and its cache was about to expire.";
 
 export class ClaudeAdapter implements ProtocolAdapter {
-	private current: Transcript = EMPTY_TRANSCRIPT;
+	/** The adapter's own fold of what it emits: what it reads its next steps from. */
+	private readonly fold = new TranscriptFold();
 	private spent = false;
 	private events: ConversationEvent[] = [];
 	private replies: string[] = [];
@@ -580,7 +580,12 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	) {}
 
 	get transcript(): Transcript {
-		return this.current;
+		return this.fold.snapshot();
+	}
+
+	/** The transcript now, to read at once (`TranscriptFold.current`). */
+	private get current(): Transcript {
+		return this.fold.current;
 	}
 
 	opening(): readonly string[] {
@@ -860,7 +865,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	private emit(event: ConversationEvent): void {
-		this.current = applyEvent(this.current, event);
+		this.fold.apply(event);
 		this.events.push(event);
 	}
 
@@ -894,11 +899,7 @@ export class ClaudeAdapter implements ProtocolAdapter {
 	}
 
 	private find(id: EntryId): TranscriptEntry | undefined {
-		const { entries } = this.current;
-		for (let index = entries.length - 1; index >= 0; index -= 1) {
-			if (entries[index]!.id === id) return entries[index];
-		}
-		return undefined;
+		return this.fold.entry(id);
 	}
 
 	private tool(id: EntryId): ToolEntry | undefined {

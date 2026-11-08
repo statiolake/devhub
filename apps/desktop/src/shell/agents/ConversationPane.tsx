@@ -2,11 +2,11 @@
  * A GUI Agent's pane: its conversation, attached and drawn.
  *
  * The counterpart of `TerminalSurface`'s attachment. It asks main for the
- * conversation once, folds every event after it with the same `applyEvent`
- * main folded them with, and hands the result to `ConversationSurface`, which
- * draws and does nothing else. The calls the surface makes go to the bridge,
- * already bound to this one Agent, and a call that fails goes to the page's
- * root like every other failure on the page.
+ * conversation once, folds every event after it with the same fold main
+ * folded them with (`TranscriptFold`), and hands the result to
+ * `ConversationSurface`, which draws and does nothing else. The calls the
+ * surface makes go to the bridge, already bound to this one Agent, and a call
+ * that fails goes to the page's root like every other failure on the page.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,7 +20,7 @@ import type {
 import type { FileRange } from "../../ipc/conversation";
 import {
   EMPTY_TRANSCRIPT,
-  applyEvent,
+  TranscriptFold,
   type ConversationEvent,
   type RequestAnswer,
   type EntryId,
@@ -299,14 +299,18 @@ function useConversation(
         ...texts.map((text) => ({ id: ++insertions, text })),
       ]);
     };
-    let current: { transcript: Transcript; revision: number } | undefined;
+    /**
+     * The fold of the attachment and every event since: changed in place
+     * between frames, its snapshot what React is handed (`TranscriptFold`).
+     */
+    let current: { fold: TranscriptFold; revision: number } | undefined;
     let broken = false;
     let frame: number | undefined;
     /** The transcript last handed to React, so coming on screen redraws only what changed. */
     let drawn: Transcript | undefined;
     const draw = () => {
-      if (current === undefined || current.transcript === drawn) return;
-      drawn = current.transcript;
+      if (current === undefined || current.fold.current === drawn) return;
+      drawn = current.fold.snapshot();
       setTranscript(drawn);
     };
     const publish = () => {
@@ -332,10 +336,8 @@ function useConversation(
             `the conversation of Agent ${agentId} skipped from event ${current.revision} to ${revision}`,
           );
         }
-        current = {
-          transcript: applyEvent(current.transcript, event),
-          revision,
-        };
+        current.fold.apply(event);
+        current.revision = revision;
       } catch (error: unknown) {
         // What is drawn stops where it was still true.
         broken = true;
@@ -353,7 +355,10 @@ function useConversation(
       })
       .then((attachment) => {
         if (!attached) return;
-        current = attachment;
+        current = {
+          fold: new TranscriptFold(attachment.transcript),
+          revision: attachment.revision,
+        };
         drawn = attachment.transcript;
         setTranscript(attachment.transcript);
         setDraft(attachment.draft);

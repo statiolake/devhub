@@ -1136,112 +1136,18 @@ export const EMPTY_TRANSCRIPT: Transcript = {
   compacting: false,
 };
 
-/** The one fold. Returns a new Transcript; the one passed in is not touched. */
+/**
+ * The one fold, as a pure function: returns a new Transcript; the one passed
+ * in is not touched. It copies the entries for each event it changes them
+ * by, so a loop over a stream folds with `TranscriptFold` instead.
+ */
 export function applyEvent(
   transcript: Transcript,
   event: ConversationEvent,
 ): Transcript {
-  switch (event.type) {
-    case "entry":
-      return {
-        ...transcript,
-        entries: putEntry(transcript.entries, event.entry),
-      };
-    case "text-delta":
-      return {
-        ...transcript,
-        entries: appendDelta(
-          transcript.entries,
-          event.entry,
-          event.block,
-          event.text,
-        ),
-      };
-    case "request-opened":
-      return {
-        ...transcript,
-        requests: openRequest(transcript, event.request),
-      };
-    case "request-closed":
-      return {
-        ...transcript,
-        requests: closeRequest(transcript.requests, event.request),
-      };
-    case "session":
-      return { ...transcript, session: event.session };
-    case "state":
-      // A compaction is part of a turn: no turn running, none going on.
-      return {
-        ...transcript,
-        state: event.state,
-        compacting:
-          event.state.phase === "ready" && event.state.turn === "running"
-            ? transcript.compacting
-            : false,
-      };
-    case "usage":
-      return { ...transcript, usage: event.usage };
-    case "pending":
-      return { ...transcript, pending: event.pending };
-    case "sending":
-      return { ...transcript, sending: event.sending };
-    case "background-tasks":
-      return {
-        ...transcript,
-        backgroundTasks: backgroundTasks(transcript, event.tasks),
-      };
-    case "mcp":
-      return { ...transcript, mcp: event.mcp };
-    case "mcp-sign-in":
-      return { ...transcript, mcpSignIn: event.signIn };
-    case "limit-resume":
-      return { ...transcript, limitResume: event.resume };
-    case "compacting": {
-      const { state } = transcript;
-      if (
-        event.compacting &&
-        (state.phase !== "ready" || state.turn !== "running")
-      ) {
-        throw new TranscriptInvariantError(
-          "a compaction started while no turn is running",
-        );
-      }
-      return { ...transcript, compacting: event.compacting };
-    }
-    case "rewound":
-      return { ...transcript, entries: rewind(transcript, event.from) };
-    case "session-switched": {
-      const open = transcript.requests[0];
-      if (open !== undefined) {
-        throw new TranscriptInvariantError(
-          `a switch to session ${event.session} while request ${open.id} is open`,
-        );
-      }
-      const running = transcript.backgroundTasks[0];
-      if (running !== undefined) {
-        throw new TranscriptInvariantError(
-          `a switch to session ${event.session} while background task ${running.id} is running`,
-        );
-      }
-      return {
-        ...transcript,
-        entries: [],
-        usage: undefined,
-        session: { ...transcript.session, sessionId: event.session },
-      };
-    }
-    case "restarted":
-      return {
-        ...transcript,
-        entries: transcript.entries.map(withProcessEnded),
-        requests: [],
-        sending: [],
-        backgroundTasks: [],
-        compacting: false,
-      };
-    default:
-      return unknownEvent(event);
-  }
+  const fold = new TranscriptFold(transcript, { index: false });
+  fold.apply(event);
+  return fold.snapshot();
 }
 
 /** `applyEvent` over a sequence, in order: a replayed journal, a batch off the wire. */
@@ -1249,9 +1155,370 @@ export function applyEvents(
   transcript: Transcript,
   events: Iterable<ConversationEvent>,
 ): Transcript {
-  let folded = transcript;
-  for (const event of events) folded = applyEvent(folded, event);
-  return folded;
+  const fold = new TranscriptFold(transcript);
+  for (const event of events) fold.apply(event);
+  return fold.snapshot();
+}
+
+/**
+ * The fold of a stream of events, at a cost per event that does not grow
+ * with the transcript.
+ *
+ * `applyEvent` has to copy the entries array for every event that touches
+ * it and look the entry up by scanning: with a long conversation, each
+ * streamed delta cost a copy and a scan of every entry. A `TranscriptFold`
+ * owns its entries array between snapshots and changes it in place, and
+ * keeps an id → index map beside it, so an event costs a map lookup and a
+ * write; a snapshot makes the array the snapshot's for good, and the next
+ * event that changes the entries starts a copy of its own (one copy per
+ * snapshot, not per event).
+ *
+ * - `snapshot()` is a Transcript that never changes again: what may be kept,
+ *   handed to React, compared by identity with an earlier one (it is the
+ *   same object until an event is applied).
+ * - `current` is the Transcript now, without that promise: its entries
+ *   array may be changed in place by the next `apply`. It is for reading at
+ *   once — what a caller works out from it between two events — never for
+ *   keeping.
+ *
+ * `apply` checks everything an event must be true of before it changes
+ * anything, so an event that throws `TranscriptInvariantError` leaves the
+ * fold as it was.
+ */
+export class TranscriptFold {
+  #transcript: Transcript;
+  #entries: TranscriptEntry[];
+  /** Whether `#entries` is this fold's alone: not a snapshot's, not the caller's. */
+  #owned = false;
+  /** Each entry's index in `#entries`; built at the first lookup, when indexing. */
+  #index: Map<EntryId, number> | undefined;
+  readonly #indexed: boolean;
+
+  constructor(
+    start: Transcript = EMPTY_TRANSCRIPT,
+    /** `index: false` looks entries up by scanning from the end instead (one event, no map to build). */
+    options: { readonly index?: boolean } = {},
+  ) {
+    this.#transcript = start;
+    this.#entries = start.entries as TranscriptEntry[];
+    this.#indexed = options.index ?? true;
+  }
+
+  /** The transcript now; read it at once, do not keep it (see the class's doc). */
+  get current(): Transcript {
+    return this.#transcript;
+  }
+
+  /** The entry with `id` now, if there is one. */
+  entry(id: EntryId): TranscriptEntry | undefined {
+    const index = this.#indexOf(id);
+    return index < 0 ? undefined : this.#entries[index];
+  }
+
+  /** The transcript now, never to change again. */
+  snapshot(): Transcript {
+    this.#owned = false;
+    return this.#transcript;
+  }
+
+  apply(event: ConversationEvent): void {
+    const transcript = this.#transcript;
+    switch (event.type) {
+      case "entry":
+        this.#putEntry(event.entry);
+        this.#transcript = { ...transcript, entries: this.#entries };
+        return;
+      case "text-delta":
+        this.#appendDelta(event.entry, event.block, event.text);
+        this.#transcript = { ...transcript, entries: this.#entries };
+        return;
+      case "request-opened":
+        this.#transcript = {
+          ...transcript,
+          requests: this.#openRequest(event.request),
+        };
+        return;
+      case "request-closed":
+        this.#transcript = {
+          ...transcript,
+          requests: closeRequest(transcript.requests, event.request),
+        };
+        return;
+      case "session":
+        this.#transcript = { ...transcript, session: event.session };
+        return;
+      case "state":
+        // A compaction is part of a turn: no turn running, none going on.
+        this.#transcript = {
+          ...transcript,
+          state: event.state,
+          compacting:
+            event.state.phase === "ready" && event.state.turn === "running"
+              ? transcript.compacting
+              : false,
+        };
+        return;
+      case "usage":
+        this.#transcript = { ...transcript, usage: event.usage };
+        return;
+      case "pending":
+        this.#transcript = { ...transcript, pending: event.pending };
+        return;
+      case "sending":
+        this.#transcript = { ...transcript, sending: event.sending };
+        return;
+      case "background-tasks":
+        this.#transcript = {
+          ...transcript,
+          backgroundTasks: this.#backgroundTasks(event.tasks),
+        };
+        return;
+      case "mcp":
+        this.#transcript = { ...transcript, mcp: event.mcp };
+        return;
+      case "mcp-sign-in":
+        this.#transcript = { ...transcript, mcpSignIn: event.signIn };
+        return;
+      case "limit-resume":
+        this.#transcript = { ...transcript, limitResume: event.resume };
+        return;
+      case "compacting": {
+        const { state } = transcript;
+        if (
+          event.compacting &&
+          (state.phase !== "ready" || state.turn !== "running")
+        ) {
+          throw new TranscriptInvariantError(
+            "a compaction started while no turn is running",
+          );
+        }
+        this.#transcript = { ...transcript, compacting: event.compacting };
+        return;
+      }
+      case "rewound":
+        this.#rewind(event.from);
+        this.#transcript = { ...transcript, entries: this.#entries };
+        return;
+      case "session-switched": {
+        const open = transcript.requests[0];
+        if (open !== undefined) {
+          throw new TranscriptInvariantError(
+            `a switch to session ${event.session} while request ${open.id} is open`,
+          );
+        }
+        const running = transcript.backgroundTasks[0];
+        if (running !== undefined) {
+          throw new TranscriptInvariantError(
+            `a switch to session ${event.session} while background task ${running.id} is running`,
+          );
+        }
+        this.#entries = [];
+        this.#owned = true;
+        this.#index = undefined;
+        this.#transcript = {
+          ...transcript,
+          entries: this.#entries,
+          usage: undefined,
+          session: { ...transcript.session, sessionId: event.session },
+        };
+        return;
+      }
+      case "restarted":
+        this.#own();
+        for (let index = 0; index < this.#entries.length; index += 1) {
+          this.#entries[index] = withProcessEnded(this.#entries[index]!);
+        }
+        this.#transcript = {
+          ...transcript,
+          entries: this.#entries,
+          requests: [],
+          sending: [],
+          backgroundTasks: [],
+          compacting: false,
+        };
+        return;
+      default:
+        unknownEvent(event);
+    }
+  }
+
+  /** Make `#entries` this fold's own to change: a copy, once per snapshot. */
+  #own(): void {
+    if (this.#owned) return;
+    this.#entries = [...this.#entries];
+    this.#owned = true;
+  }
+
+  #indexOf(id: EntryId): number {
+    if (!this.#indexed) {
+      // Searched from the end: the entries events touch — the one streaming,
+      // the tool running — are almost always the last few.
+      const entries = this.#entries;
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        if (entries[index]!.id === id) return index;
+      }
+      return -1;
+    }
+    let map = this.#index;
+    if (map === undefined) {
+      map = new Map();
+      this.#entries.forEach((entry, index) => map!.set(entry.id, index));
+      this.#index = map;
+    }
+    return map.get(id) ?? -1;
+  }
+
+  #requireToolEntry(id: EntryId, role: string): void {
+    const index = this.#indexOf(id);
+    if (index < 0) {
+      throw new TranscriptInvariantError(`${role} ${id} is not an entry`);
+    }
+    const kind = this.#entries[index]!.kind;
+    if (kind !== "tool") {
+      throw new TranscriptInvariantError(
+        `${role} ${id} is a ${kind} entry, not a tool call`,
+      );
+    }
+  }
+
+  #putEntry(entry: TranscriptEntry): void {
+    const index = this.#indexOf(entry.id);
+    if (index < 0) {
+      const parent = parentOf(entry);
+      // A child arrives after the call that started it: the parent must
+      // already be here, which is also what keeps the tree free of cycles.
+      if (parent !== null)
+        this.#requireToolEntry(parent, `parent of ${entry.id}`);
+      this.#own();
+      this.#entries.push(entry);
+      this.#index?.set(entry.id, this.#entries.length - 1);
+      return;
+    }
+    const previous = this.#entries[index]!;
+    if (previous.kind !== entry.kind) {
+      throw new TranscriptInvariantError(
+        `entry ${entry.id} was a ${previous.kind} and cannot become a ${entry.kind}`,
+      );
+    }
+    if (parentOf(previous) !== parentOf(entry)) {
+      throw new TranscriptInvariantError(
+        `entry ${entry.id} cannot move from parent ${parentOf(previous)} to ${parentOf(entry)}`,
+      );
+    }
+    this.#own();
+    this.#entries[index] = entry;
+  }
+
+  #appendDelta(id: EntryId, block: number, text: string): void {
+    const index = this.#indexOf(id);
+    if (index < 0) {
+      throw new TranscriptInvariantError(
+        `text delta for ${id}, which is not an entry`,
+      );
+    }
+    const entry = this.#entries[index]!;
+    if (entry.kind !== "assistant") {
+      throw new TranscriptInvariantError(
+        `text delta for ${id}, which is a ${entry.kind} entry`,
+      );
+    }
+    if (!entry.streaming) {
+      throw new TranscriptInvariantError(
+        `text delta for ${id}, which is no longer streaming`,
+      );
+    }
+    const target = entry.blocks[block];
+    if (target === undefined) {
+      throw new TranscriptInvariantError(
+        `text delta for block ${block} of ${id}, which has ${entry.blocks.length}`,
+      );
+    }
+    let grown: AssistantBlock;
+    switch (target.kind) {
+      case "text":
+        grown = { ...target, markdown: target.markdown + text };
+        break;
+      case "thinking":
+        grown = { ...target, text: target.text + text };
+        break;
+      case "plan":
+        throw new TranscriptInvariantError(
+          `text delta for block ${block} of ${id}, which is a plan`,
+        );
+    }
+    const blocks = [...entry.blocks];
+    blocks[block] = grown;
+    this.#own();
+    this.#entries[index] = { ...entry, blocks };
+  }
+
+  #openRequest(request: PendingRequest): readonly PendingRequest[] {
+    const { requests } = this.#transcript;
+    if (requests.some((pending) => pending.id === request.id)) {
+      throw new TranscriptInvariantError(
+        `request ${request.id} is already open`,
+      );
+    }
+    if (request.entry !== undefined) {
+      this.#requireToolEntry(request.entry, `subject of request ${request.id}`);
+    }
+    return [...requests, request];
+  }
+
+  #backgroundTasks(tasks: readonly RunningTask[]): readonly RunningTask[] {
+    const seen = new Set<string>();
+    for (const task of tasks) {
+      if (seen.has(task.id)) {
+        throw new TranscriptInvariantError(
+          `background task ${task.id} is listed twice`,
+        );
+      }
+      seen.add(task.id);
+      if (task.call !== undefined)
+        this.#requireToolEntry(task.call, `call of background task ${task.id}`);
+    }
+    return tasks;
+  }
+
+  #rewind(from: EntryId): void {
+    const transcript = this.#transcript;
+    const open = transcript.requests[0];
+    if (open !== undefined) {
+      throw new TranscriptInvariantError(
+        `a rewind to ${from} while request ${open.id} is open`,
+      );
+    }
+    const index = this.#indexOf(from);
+    if (index < 0) {
+      throw new TranscriptInvariantError(
+        `a rewind to ${from}, which is not an entry`,
+      );
+    }
+    const entry = this.#entries[index]!;
+    if (entry.kind !== "user" || entry.parent !== null) {
+      throw new TranscriptInvariantError(
+        `a rewind to ${from}: ${from} is a ${entry.kind} entry, not a message the person sent`,
+      );
+    }
+    const orphan = transcript.backgroundTasks.find((task) => {
+      if (task.call === undefined) return false;
+      const call = this.#indexOf(task.call);
+      return call < 0 || call >= index;
+    });
+    if (orphan !== undefined) {
+      throw new TranscriptInvariantError(
+        `a rewind to ${from} takes back ${orphan.call}, which started background task ${orphan.id}, still running`,
+      );
+    }
+    for (let at = index; at < this.#entries.length; at += 1) {
+      this.#index?.delete(this.#entries[at]!.id);
+    }
+    if (this.#owned) this.#entries.length = index;
+    else {
+      this.#entries = this.#entries.slice(0, index);
+      this.#owned = true;
+    }
+  }
 }
 
 function unknownEvent(event: never): never {
@@ -1260,141 +1527,8 @@ function unknownEvent(event: never): never {
   );
 }
 
-function replaceAt<T>(
-  items: readonly T[],
-  index: number,
-  item: T,
-): readonly T[] {
-  const copy = [...items];
-  copy[index] = item;
-  return copy;
-}
-
 function parentOf(entry: TranscriptEntry): EntryId | null {
   return entry.kind === "turn-end" ? null : entry.parent;
-}
-
-/**
- * Searched from the end: the entries events touch — the one streaming, the
- * tool running — are almost always the last few.
- */
-function indexOfEntry(
-  entries: readonly TranscriptEntry[],
-  id: EntryId,
-): number {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (entries[index]!.id === id) return index;
-  }
-  return -1;
-}
-
-function requireToolEntry(
-  entries: readonly TranscriptEntry[],
-  id: EntryId,
-  role: string,
-): void {
-  const index = indexOfEntry(entries, id);
-  if (index < 0) {
-    throw new TranscriptInvariantError(`${role} ${id} is not an entry`);
-  }
-  const kind = entries[index]!.kind;
-  if (kind !== "tool") {
-    throw new TranscriptInvariantError(
-      `${role} ${id} is a ${kind} entry, not a tool call`,
-    );
-  }
-}
-
-function putEntry(
-  entries: readonly TranscriptEntry[],
-  entry: TranscriptEntry,
-): readonly TranscriptEntry[] {
-  const index = indexOfEntry(entries, entry.id);
-  if (index < 0) {
-    const parent = parentOf(entry);
-    // A child arrives after the call that started it: the parent must already
-    // be here, which is also what keeps the tree free of cycles.
-    if (parent !== null)
-      requireToolEntry(entries, parent, `parent of ${entry.id}`);
-    return [...entries, entry];
-  }
-  const previous = entries[index]!;
-  if (previous.kind !== entry.kind) {
-    throw new TranscriptInvariantError(
-      `entry ${entry.id} was a ${previous.kind} and cannot become a ${entry.kind}`,
-    );
-  }
-  if (parentOf(previous) !== parentOf(entry)) {
-    throw new TranscriptInvariantError(
-      `entry ${entry.id} cannot move from parent ${parentOf(previous)} to ${parentOf(entry)}`,
-    );
-  }
-  return replaceAt(entries, index, entry);
-}
-
-function appendDelta(
-  entries: readonly TranscriptEntry[],
-  id: EntryId,
-  block: number,
-  text: string,
-): readonly TranscriptEntry[] {
-  const index = indexOfEntry(entries, id);
-  if (index < 0) {
-    throw new TranscriptInvariantError(
-      `text delta for ${id}, which is not an entry`,
-    );
-  }
-  const entry = entries[index]!;
-  if (entry.kind !== "assistant") {
-    throw new TranscriptInvariantError(
-      `text delta for ${id}, which is a ${entry.kind} entry`,
-    );
-  }
-  if (!entry.streaming) {
-    throw new TranscriptInvariantError(
-      `text delta for ${id}, which is no longer streaming`,
-    );
-  }
-  const target = entry.blocks[block];
-  if (target === undefined) {
-    throw new TranscriptInvariantError(
-      `text delta for block ${block} of ${id}, which has ${entry.blocks.length}`,
-    );
-  }
-  let grown: AssistantBlock;
-  switch (target.kind) {
-    case "text":
-      grown = { ...target, markdown: target.markdown + text };
-      break;
-    case "thinking":
-      grown = { ...target, text: target.text + text };
-      break;
-    case "plan":
-      throw new TranscriptInvariantError(
-        `text delta for block ${block} of ${id}, which is a plan`,
-      );
-  }
-  return replaceAt(entries, index, {
-    ...entry,
-    blocks: replaceAt(entry.blocks, block, grown),
-  });
-}
-
-function openRequest(
-  transcript: Transcript,
-  request: PendingRequest,
-): readonly PendingRequest[] {
-  if (transcript.requests.some((pending) => pending.id === request.id)) {
-    throw new TranscriptInvariantError(`request ${request.id} is already open`);
-  }
-  if (request.entry !== undefined) {
-    requireToolEntry(
-      transcript.entries,
-      request.entry,
-      `subject of request ${request.id}`,
-    );
-  }
-  return [...transcript.requests, request];
 }
 
 /**
@@ -1438,62 +1572,6 @@ function closeRequest(
     throw new TranscriptInvariantError(`request ${id} is not open`);
   }
   return remaining;
-}
-
-function backgroundTasks(
-  transcript: Transcript,
-  tasks: readonly RunningTask[],
-): readonly RunningTask[] {
-  const seen = new Set<string>();
-  for (const task of tasks) {
-    if (seen.has(task.id)) {
-      throw new TranscriptInvariantError(
-        `background task ${task.id} is listed twice`,
-      );
-    }
-    seen.add(task.id);
-    if (task.call !== undefined)
-      requireToolEntry(
-        transcript.entries,
-        task.call,
-        `call of background task ${task.id}`,
-      );
-  }
-  return tasks;
-}
-
-function rewind(
-  transcript: Transcript,
-  from: EntryId,
-): readonly TranscriptEntry[] {
-  const open = transcript.requests[0];
-  if (open !== undefined) {
-    throw new TranscriptInvariantError(
-      `a rewind to ${from} while request ${open.id} is open`,
-    );
-  }
-  const index = indexOfEntry(transcript.entries, from);
-  if (index < 0) {
-    throw new TranscriptInvariantError(
-      `a rewind to ${from}, which is not an entry`,
-    );
-  }
-  const entry = transcript.entries[index]!;
-  if (entry.kind !== "user" || entry.parent !== null) {
-    throw new TranscriptInvariantError(
-      `a rewind to ${from}: ${from} is a ${entry.kind} entry, not a message the person sent`,
-    );
-  }
-  const kept = transcript.entries.slice(0, index);
-  const orphan = transcript.backgroundTasks.find(
-    (task) => task.call !== undefined && indexOfEntry(kept, task.call) < 0,
-  );
-  if (orphan !== undefined) {
-    throw new TranscriptInvariantError(
-      `a rewind to ${from} takes back ${orphan.call}, which started background task ${orphan.id}, still running`,
-    );
-  }
-  return kept;
 }
 
 // ---------------------------------------------------------------------------

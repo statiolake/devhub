@@ -97,9 +97,8 @@
  */
 
 import {
-	EMPTY_TRANSCRIPT,
 	TranscriptInvariantError,
-	applyEvent,
+	TranscriptFold,
 	pendingId,
 	rewindTargets,
 	withProcessEnded,
@@ -259,7 +258,16 @@ export class AgentConversation {
 	readonly #adapter: ProtocolAdapter;
 	readonly #publish: ConversationPublish;
 
-	#transcript: Transcript = EMPTY_TRANSCRIPT;
+	/**
+	 * DevHub's fold: the adapter's events, one at a time, and DevHub's own
+	 * (`pending`, `mcp-sign-in`, `limit-resume`). It is not the adapter's
+	 * fold read back: what watches the conversation here — an edit's rewind,
+	 * the held message, the usage-limit and cache keepers — looks at it after
+	 * each event of a step, not only after the step, and DevHub's own events
+	 * fold only here. Each fold costs the same small amount per event
+	 * (`TranscriptFold`), however long the conversation.
+	 */
+	readonly #fold = new TranscriptFold();
 	#revision = 0;
 	/** The journal, consumed up to here. */
 	#offset = 0;
@@ -327,6 +335,11 @@ export class AgentConversation {
 		);
 	}
 
+	/** The transcript now, to read at once, never to keep (`TranscriptFold.current`). */
+	get #transcript(): Transcript {
+		return this.#fold.current;
+	}
+
 	/** Start following the host. Once; `reattach` is how it starts again. */
 	start(): void {
 		if (this.#following !== undefined)
@@ -347,7 +360,7 @@ export class AgentConversation {
 
 	reading(): ConversationReading {
 		return {
-			transcript: this.#transcript,
+			transcript: this.#fold.snapshot(),
 			lost: this.#lost,
 			crashed: this.#crashed,
 			autoCompactAt: this.#cacheKeeper.dueAt(),
@@ -357,7 +370,7 @@ export class AgentConversation {
 
 	/** The page's starting point: everything up to `revision`; events after it follow. */
 	snapshot(): { readonly transcript: Transcript; readonly revision: number } {
-		return { transcript: this.#transcript, revision: this.#revision };
+		return { transcript: this.#fold.snapshot(), revision: this.#revision };
 	}
 
 	/**
@@ -390,9 +403,7 @@ export class AgentConversation {
 			);
 		});
 		await rewound.over;
-		return this.#transcript.entries.some((entry) => entry.id === message)
-			? "refused"
-			: "rewound";
+		return this.#fold.entry(message) !== undefined ? "refused" : "rewound";
 	}
 
 	/**
@@ -1057,7 +1068,7 @@ export class AgentConversation {
 	}
 
 	#apply(event: ConversationEvent): void {
-		this.#transcript = applyEvent(this.#transcript, event);
+		this.#fold.apply(event);
 		this.#revision += 1;
 		this.#publish(this.#revision, event);
 		this.#watchRewind();

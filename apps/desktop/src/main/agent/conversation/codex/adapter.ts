@@ -64,9 +64,8 @@
 
 import {
 	EMPTY_SESSION,
-	EMPTY_TRANSCRIPT,
 	answerTo,
-	applyEvent,
+	TranscriptFold,
 	isSentOrigin,
 	rewindTargets,
 	entryId,
@@ -488,7 +487,8 @@ export function openElsewhere(message: string): string {
 }
 
 export class CodexAdapter implements ProtocolAdapter {
-	private current: Transcript = EMPTY_TRANSCRIPT;
+	/** The adapter's own fold of what it emits: what it reads its next steps from. */
+	private readonly fold = new TranscriptFold();
 	/** An earlier call threw; the bookkeeping may be half-updated. */
 	private spent = false;
 	/** The conversation is broken (signed out, refused, or a failure it reported). */
@@ -626,7 +626,12 @@ export class CodexAdapter implements ProtocolAdapter {
 	constructor(private readonly options: CodexAdapterOptions) {}
 
 	get transcript(): Transcript {
-		return this.current;
+		return this.fold.snapshot();
+	}
+
+	/** The transcript now, to read at once (`TranscriptFold.current`). */
+	private get current(): Transcript {
+		return this.fold.current;
 	}
 
 	// -------------------------------------------------------------------------
@@ -896,16 +901,12 @@ export class CodexAdapter implements ProtocolAdapter {
 
 	/** Every event goes through here, so the adapter's own copy is the fold's. */
 	private emit(event: ConversationEvent): void {
-		this.current = applyEvent(this.current, event);
+		this.fold.apply(event);
 		this.events.push(event);
 	}
 
 	private entry(id: EntryId): TranscriptEntry | undefined {
-		const { entries } = this.current;
-		for (let index = entries.length - 1; index >= 0; index -= 1) {
-			if (entries[index]!.id === id) return entries[index];
-		}
-		return undefined;
+		return this.fold.entry(id);
 	}
 
 	private setState(state: ConversationState): void {
