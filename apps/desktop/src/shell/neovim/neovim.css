@@ -492,9 +492,12 @@
   z-index: 600;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  /* One width for every card: the widest's, within bounds. */
+  align-items: stretch;
   gap: 6px;
-  max-width: min(520px, calc(100% - 28px));
+  width: max-content;
+  min-width: min(280px, calc(100% - 28px));
+  max-width: min(480px, calc(100% - 28px));
   pointer-events: none;
   font:
     12px / 1.4 "DevHub Nerd Symbols",
@@ -505,9 +508,9 @@
 .nvim-toast-group {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  max-width: 100%;
-  padding: 4px 0;
+  align-items: stretch;
+  min-width: 0;
+  padding: 5px 0;
   border-radius: 8px;
   color: var(--nvim-toast-ink);
   background: var(--nvim-toast-ground);
@@ -527,10 +530,10 @@
 }
 
 .nvim-toast-source {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px 2px;
+  padding: 0 12px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
 }
 
@@ -538,7 +541,7 @@
 .nvim-toast {
   display: grid;
   grid-template-rows: 1fr;
-  max-width: 100%;
+  min-width: 0;
   pointer-events: auto;
   animation: nvim-toast-in 160ms ease-out;
   transition:
@@ -563,11 +566,10 @@
 .nvim-toast-line {
   display: flex;
   align-items: baseline;
-  justify-content: flex-end;
   gap: 8px;
   min-height: 0;
   overflow: hidden;
-  padding: 1px 10px;
+  padding: 1px 12px;
   color: color-mix(in srgb, var(--nvim-toast-ink) 82%, transparent);
 }
 
@@ -591,6 +593,7 @@
 }
 
 .nvim-toast-msg {
+  flex: auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

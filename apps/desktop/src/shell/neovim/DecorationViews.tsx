@@ -28,12 +28,15 @@ interface Cell {
 }
 
 /**
- * Notifications, fidget-like: compact lines at the bottom right, above the
- * status line, under the name of their source; each source a small card in
- * the floats' colours (`surface`, as `gui.popup` wears them), so it reads
- * over any text. A line whose time is up fades and folds away; a card whose
- * every line is leaving fades as one. Work in progress spins, shows its
- * percentage, and ticks when done.
+ * Notifications: compact lines at the bottom right, above the status line,
+ * under the name of their source; each source a small card in the floats'
+ * colours (`surface`, as `gui.popup` wears them), so it reads over any
+ * text. The cards of a stack share one width (the widest's, within
+ * bounds) and one right edge, as VS Code's and Zed's notifications do; a
+ * line leads with its mark (the level, a spinner, a tick) and its text
+ * starts after it. A line whose time is up fades and folds away; a card
+ * whose every line is leaving fades as one. Work in progress spins (on its
+ * line only), shows its percentage, and ticks when done.
  */
 export function Toasts({
   toasts,
@@ -69,12 +72,7 @@ export function Toasts({
           className={`nvim-toast-group${list.every((t) => leaving.has(toastId(t))) ? " nvim-toast-group-leaving" : ""}`}
         >
           {group !== "" ? (
-            <div className="nvim-toast-source">
-              {list.some((t) => t.progress && !t.progress.done) ? (
-                <span className="nvim-toast-spinner" aria-hidden />
-              ) : null}
-              {group}
-            </div>
+            <div className="nvim-toast-source">{group}</div>
           ) : null}
           {list.map((toast) => (
             <ToastView
@@ -175,6 +173,9 @@ function ToastView({
       }}
     >
       <div className="nvim-toast-line">
+        <span className="nvim-toast-mark" aria-hidden>
+          {icon}
+        </span>
         <span className="nvim-toast-msg">{toast.msg || toast.title}</span>
         {toast.msg !== "" &&
         toast.title !== "" &&
@@ -186,9 +187,6 @@ function ToastView({
             {Math.round(progress.percent)}%
           </span>
         ) : null}
-        <span className="nvim-toast-mark" aria-hidden>
-          {icon}
-        </span>
       </div>
     </div>
   );
