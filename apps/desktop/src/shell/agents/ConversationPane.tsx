@@ -66,6 +66,7 @@ export function ConversationPane({
   const { transcript, draft, inserted } = useConversation(
     agentId,
     reportFailure,
+    hidden,
   );
   // Not declared as `ConversationActions`: that interface grows with the
   // surface (the composer, the header), and what this pane binds is every
@@ -261,10 +262,19 @@ export function useLiveFailure(
  * at most once per animation frame: a streaming answer sends a delta per
  * token, and drawing each of them would redraw the transcript many times
  * inside one frame for a picture only the last of them is on.
+ *
+ * **A hidden pane draws nothing.** Every Agent's pane is mounted in this one
+ * page, and the terminals of the other Agents are drawn by the same renderer:
+ * two GUI Agents streaming behind a terminal Agent kept it redrawing their
+ * transcripts every frame, and the keys typed in the terminal waited a second
+ * and more for it (docs/process-model.md). So while the pane is hidden the
+ * fold goes on and nothing is published; coming on screen publishes what the
+ * fold holds then, in the same render.
  */
 function useConversation(
   agentId: string,
   reportFailure: (error: unknown) => void,
+  hidden: boolean,
 ): {
   readonly transcript: Transcript;
   readonly draft: string | undefined;
@@ -273,6 +283,12 @@ function useConversation(
   const [transcript, setTranscript] = useState<Transcript>(EMPTY_TRANSCRIPT);
   const [draft, setDraft] = useState<string | undefined>(undefined);
   const [inserted, setInserted] = useState<readonly ComposerInsertion[]>([]);
+  const hiddenRef = useRef(hidden);
+  const publishRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    hiddenRef.current = hidden;
+    if (!hidden) publishRef.current();
+  }, [hidden]);
   useEffect(() => {
     const bridge = devhub();
     let insertions = 0;
@@ -286,13 +302,21 @@ function useConversation(
     let current: { transcript: Transcript; revision: number } | undefined;
     let broken = false;
     let frame: number | undefined;
+    /** The transcript last handed to React, so coming on screen redraws only what changed. */
+    let drawn: Transcript | undefined;
+    const draw = () => {
+      if (current === undefined || current.transcript === drawn) return;
+      drawn = current.transcript;
+      setTranscript(drawn);
+    };
     const publish = () => {
-      if (frame !== undefined) return;
+      if (frame !== undefined || hiddenRef.current) return;
       frame = requestAnimationFrame(() => {
         frame = undefined;
-        if (current !== undefined) setTranscript(current.transcript);
+        draw();
       });
     };
+    publishRef.current = draw;
     const early: [number, ConversationEvent][] = [];
     const earlyInserts: string[] = [];
     const fold = (revision: number, event: ConversationEvent) => {
@@ -330,6 +354,7 @@ function useConversation(
       .then((attachment) => {
         if (!attached) return;
         current = attachment;
+        drawn = attachment.transcript;
         setTranscript(attachment.transcript);
         setDraft(attachment.draft);
         insert([...attachment.inserted, ...earlyInserts.splice(0)]);
@@ -342,6 +367,7 @@ function useConversation(
       attached = false;
       broken = true;
       if (frame !== undefined) cancelAnimationFrame(frame);
+      publishRef.current = () => undefined;
       // A detach that fails has nothing left to tell: the Agent may already
       // be gone, and main lets go of the page's attachments by itself.
       bridge.conversation.detach(agentId).catch(() => undefined);

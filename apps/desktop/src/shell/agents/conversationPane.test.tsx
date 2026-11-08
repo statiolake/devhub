@@ -119,21 +119,26 @@ afterEach(() => {
 
 const STREAMING = transcriptOf([put(assistant("a1", "", { streaming: true }))]);
 
-async function attached(
-  revision = 5,
-  draft = "",
-  inserted: readonly string[] = [],
-) {
-  const view = render(
+function pane(hidden: boolean) {
+  return (
     <ConversationPane
       agentId="agent-1"
       workspaceId="workspace-1"
       label="Agent 1"
       cli="Claude"
       appearance={undefined}
-      hidden={false}
-    />,
+      hidden={hidden}
+    />
   );
+}
+
+async function attached(
+  revision = 5,
+  draft = "",
+  inserted: readonly string[] = [],
+  hidden = false,
+) {
+  const view = render(pane(hidden));
   await act(async () => {
     answerAttach({ transcript: STREAMING, revision, draft, inserted });
   });
@@ -213,6 +218,43 @@ describe("drawing once per frame", () => {
     expect(frames.size).toBe(1);
     view.unmount();
     expect(frames.size).toBe(0);
+  });
+});
+
+describe("a hidden pane", () => {
+  // Every Agent's pane is in one page, beside the other Agents' terminals:
+  // a hidden conversation redrawing on every frame made their keys wait.
+  it("folds what arrives and draws none of it until it is shown", async () => {
+    const view = await attached(5, "", [], true);
+    const before = drawn.length;
+    act(() => {
+      listener!(6, delta("a"));
+      listener!(7, delta("b"));
+    });
+    runFrame();
+    expect(frames.size).toBe(0);
+    expect(drawn.length).toBe(before);
+    view.rerender(pane(false));
+    expect(markdownOf(drawn.at(-1)!)).toBe("ab");
+  });
+
+  it("goes back to drawing once per frame when it is shown", async () => {
+    const view = await attached(5, "", [], true);
+    view.rerender(pane(false));
+    const after = drawn.length;
+    act(() => listener!(6, delta("c")));
+    runFrame();
+    expect(drawn.length).toBe(after + 1);
+    expect(markdownOf(drawn.at(-1)!)).toBe("c");
+  });
+
+  it("stops drawing once it is hidden again", async () => {
+    const view = await attached();
+    view.rerender(pane(true));
+    const after = drawn.length;
+    act(() => listener!(6, delta("d")));
+    runFrame();
+    expect(drawn.length).toBe(after);
   });
 });
 
