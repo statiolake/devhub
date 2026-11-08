@@ -118,8 +118,14 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
 - `painter.ts` — a 2D canvas per grid, repainted a dirty row at a time on
   the animation frame after a `flush`; runs of one highlight, wide characters
   cell by cell, underline/undercurl/underdouble/dotted/dashed/strikethrough in
-  the special colour, `reverse`, float `blend`. A float without a border
-  gets DevHub's frame (a hairline, a shadow, rounded corners); one whose
+  the special colour, `reverse`, float `blend`. Floats edge to edge (or a
+  cell apart) at about the same `zindex` are one panel — a picker's input,
+  list and preview (`floats.ts`'s `floatClusters`): one shadow under the
+  union of their outlines (an element of grounds per cluster, under the
+  canvases, with a `drop-shadow`), a one-cell seam between them filled with
+  their ground, only the panel's outer corners rounded; a float alone is a
+  panel of one, and one with `winblend` gets none. A float without a border
+  gets DevHub's frame (that shadow, a hairline, rounded corners); one whose
   border is blank cells (`'solid'`, a table of spaces — Neovim 0.10+ says
   where a border is with `win_viewport_margins`) is drawn as with none:
   only its text area, where Neovim put it, in that frame, and a click on

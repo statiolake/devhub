@@ -14,6 +14,7 @@
 import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
 import type { CellMetrics } from "./mouse";
 import { fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
+import { floatClusters, type CellRect, type FloatCorners } from "./floats";
 
 export interface FontSpec {
   readonly family: string;
@@ -167,8 +168,18 @@ interface GridCanvas {
 
 const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
 
+/** A float's outer corners' radius (DevHub's frame); a border of lines has none. */
+const FLOAT_RADIUS = 6;
+
+function radii(corners: FloatCorners, r: number): string {
+  const px = (on: boolean) => `${String(on ? r : 0)}px`;
+  return `${px(corners.tl)} ${px(corners.tr)} ${px(corners.br)} ${px(corners.bl)}`;
+}
+
 export class GridPainter {
   private readonly canvases = new Map<number, GridCanvas>();
+  /** One shadow per panel of floats (`floats.ts`), by what it looks like. */
+  private readonly clusters = new Map<string, HTMLDivElement>();
   private font: FontSpec;
   private metrics: Metrics;
   private dpr: number;
@@ -246,6 +257,7 @@ export class GridPainter {
       }
     }
     const all = forceAll || changes.colors;
+    const corners = this.placeClusters(state, boxes);
     for (const box of boxes) {
       const grid = state.grids.get(box.grid);
       if (!grid) continue;
@@ -271,7 +283,9 @@ export class GridPainter {
       canvas.style.top = `${String((box.row + crop.top) * this.metrics.height)}px`;
       canvas.style.zIndex = String(box.z);
       canvas.classList.toggle("nvim-float", box.float);
-      canvas.classList.toggle("nvim-float-lined", box.lined === true);
+      const round = corners.get(box.grid);
+      canvas.style.borderRadius =
+        round && box.lined !== true ? radii(round, FLOAT_RADIUS) : "";
       if (
         entry.width !== grid.width ||
         entry.height !== grid.height ||
@@ -301,6 +315,73 @@ export class GridPainter {
         this.glide(canvas, scrolled, grid.height);
       }
     }
+  }
+
+  /**
+   * The shadow under each panel of floats (`floatClusters`): one element per
+   * cluster under its members, holding a ground for each member and seam,
+   * whose drop shadow follows their union's outline. Kept while the cluster
+   * looks the same, so a member's redraw does not touch it. Answers each
+   * member's outer corners, for its canvas's radius.
+   */
+  private placeClusters(
+    state: NeovimUiState,
+    boxes: readonly GridBox[],
+  ): Map<number, FloatCorners> {
+    const { width: cw, height: ch } = this.metrics;
+    const corners = new Map<number, FloatCorners>();
+    const live = new Set<string>();
+    // A float that lets what is under it show (winblend) gets no ground.
+    const opaque = boxes.filter((box) => {
+      if (!box.float) return false;
+      const hl = state.grids.get(box.grid)?.hls[0] ?? 0;
+      return (state.hl.get(hl)?.blend ?? 0) === 0;
+    });
+    for (const cluster of floatClusters(opaque)) {
+      const first = cluster.members[0];
+      const grid = first ? state.grids.get(first.grid) : undefined;
+      const hl = grid?.hls[0] ?? 0;
+      const ground = resolveColors(
+        hl ? state.hl.get(hl) : undefined,
+        state.defaults,
+      ).bg;
+      const rect = (r: CellRect, round: string) =>
+        `${String(r.col * cw)},${String(r.row * ch)},${String(r.width * cw)},${String(r.height * ch)},${round}`;
+      const parts = [
+        ...cluster.members.map((m) =>
+          rect(m.rect, m.lined ? "0" : radii(m.corners, FLOAT_RADIUS)),
+        ),
+        ...cluster.seams.map((r) => rect(r, "0")),
+      ];
+      for (const m of cluster.members) corners.set(m.grid, m.corners);
+      const key = `${String(cluster.z)}|${cluster.lined ? "l" : ""}|${String(ground)}|${parts.join(";")}`;
+      live.add(key);
+      if (this.clusters.has(key)) continue;
+      const el = document.createElement("div");
+      el.className = `nvim-float-shadow${cluster.lined ? " nvim-float-shadow-lined" : ""}`;
+      el.style.zIndex = String(cluster.z);
+      for (const part of parts) {
+        const [x, y, w, h, round] = part.split(",");
+        const piece = document.createElement("div");
+        piece.style.left = `${x ?? "0"}px`;
+        piece.style.top = `${y ?? "0"}px`;
+        piece.style.width = `${w ?? "0"}px`;
+        piece.style.height = `${h ?? "0"}px`;
+        piece.style.borderRadius = round ?? "0";
+        piece.style.background = cssColor(ground);
+        el.append(piece);
+      }
+      // Under the canvases of the same zindex: they come later.
+      this.root.prepend(el);
+      this.clusters.set(key, el);
+    }
+    for (const [key, el] of this.clusters) {
+      if (!live.has(key)) {
+        el.remove();
+        this.clusters.delete(key);
+      }
+    }
+    return corners;
   }
 
   private paintRow(

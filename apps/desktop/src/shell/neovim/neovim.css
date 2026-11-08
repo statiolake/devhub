@@ -59,20 +59,28 @@
 }
 
 /*
- * A float without a border (or with a blank one, left out: `GridBox.crop`)
- * wears DevHub's frame. One with a border of lines is framed by it, as
- * Neovim draws it: only a shadow under it, never a second frame.
+ * Floats: one shadow per panel of them (`floats.ts`: floats edge to edge
+ * are one panel, a float alone is one too), under the union of their
+ * outlines, with DevHub's hairline unless every member draws a border of
+ * lines itself; the canvases round only the panel's outer corners.
  */
-.nvim-float {
-  border-radius: 6px;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--primary) 10%, transparent),
-    0 8px 24px rgb(0 0 0 / 28%);
+.nvim-float-shadow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  filter: drop-shadow(
+      0 0 0.6px color-mix(in srgb, var(--primary) 30%, transparent)
+    )
+    drop-shadow(0 6px 10px rgb(0 0 0 / 22%));
 }
 
-.nvim-float.nvim-float-lined {
-  border-radius: 0;
-  box-shadow: 0 6px 18px rgb(0 0 0 / 22%);
+.nvim-float-shadow.nvim-float-shadow-lined {
+  filter: drop-shadow(0 6px 10px rgb(0 0 0 / 20%));
+}
+
+.nvim-float-shadow > div {
+  position: absolute;
 }
 
 .nvim-cursor {
