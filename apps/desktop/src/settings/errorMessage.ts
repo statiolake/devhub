@@ -111,6 +111,8 @@ export function ruleMessage(code: SettingsDiagnosticCodeWire): string {
       return "An agent profile runs Codex, Claude, Cursor, or something else DevHub reads no status from.";
     case "invalid_appearance":
       return "A font size is 9 to 24, a line height 1 to 2, an inset 0 to 64, and a sidebar density Compact or Comfortable.";
+    case "invalid_theme":
+      return "`appearance.theme` is a theme's name or light:<name>,dark:<name>. A [themes.<name>] table gives every colour as #rrggbb (or #rgb), and its palette exactly 16 of them; its name cannot contain a comma or start with light: or dark:.";
     case "invalid_mac_option_is_meta":
       return 'Option is Meta in DevHub\'s terminals with `true`, the left Option only with `"left"`, or never with `false`.';
     case "invalid_editor":

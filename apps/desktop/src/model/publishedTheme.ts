@@ -2,10 +2,10 @@
  * What DevHub tells the programs in its terminals about the colour theme it
  * wears.
  *
- * DevHub does not colour anybody's Neovim or fzf. It *publishes* the theme —
- * its name, its kind, and the sixteen ANSI colours with the background,
- * foreground, cursor and selection its own terminals were given — and a
- * person's config decides what to do with that. Three channels carry the same
+ * It *publishes* the theme — its name, its kind, and the sixteen ANSI colours
+ * with the background, foreground, cursor and selection its own terminals
+ * were given — for a person's config to use (fzf, a shell prompt, a Neovim
+ * DevHub does not draw). Three channels carry the same
  * value (`main/shell/themePublication.ts` sends it):
  *
  * - **the environment** of every new pane (`themeEnvironment`), stated in each
@@ -22,16 +22,11 @@
 
 import { join } from "node:path";
 import type { TerminalPaletteWire } from "../ipc/appShell.js";
-import {
-  COLOR_IDS,
-  type ColorThemeType,
-  type ResolvedColorTheme,
-  type TokenColorRule,
-} from "./colorTheme.js";
 import type { ProfileLocations } from "./profile.js";
+import { themeKindOf, type Theme, type ThemeKind } from "./themes/theme.js";
 
-/** `dark`, `light`, or `hc` for either high-contrast theme. */
-export type PublishedThemeKind = "dark" | "light" | "hc";
+/** `dark` or `light`, by the theme's background. */
+export type PublishedThemeKind = ThemeKind;
 
 /** Every colour as `#rrggbb`, made opaque over the background. */
 export interface PublishedThemeColors {
@@ -50,147 +45,16 @@ export interface PublishedThemeColors {
 export interface PublishedTheme {
   /** The format of this object; a reader may refuse one it does not know. */
   readonly version: 1;
-  /** What `[appearance] theme_dark` / `theme_light` name it by (its id). */
+  /** What `[appearance] theme` names it by. */
   readonly name: string;
-  /** What the theme picker shows. */
-  readonly label: string;
   readonly kind: PublishedThemeKind;
-  /** VS Code's own type: `dark`, `light`, `hcDark` or `hcLight`. */
-  readonly type: ColorThemeType;
   /** What `background` a program that only knows two should take. */
   readonly background: "dark" | "light";
   /** True while a theme is only being worn for this session (Theme: Preview…). */
   readonly temporary: boolean;
   readonly colors: PublishedThemeColors;
-  /**
-   * The editor's colours (`COLOR_IDS.editor`), as VS Code resolves them under
-   * this theme, `#rrggbb` over the editor's background. An id VS Code gives
-   * no colour is absent.
-   */
-  readonly editor: Readonly<Record<string, string>>;
-  /**
-   * The syntax colours: for each TextMate scope in `PUBLISHED_SCOPES`, what
-   * the theme's `tokenColors` give it — its most specific rule for each of
-   * the colour and the style, as VS Code picks them. A scope the theme says
-   * nothing about is absent.
-   */
-  readonly tokens: Readonly<Record<string, PublishedTokenStyle>>;
   /** A ready `fzf --color=` value. */
   readonly fzf: string;
-}
-
-export interface PublishedTokenStyle {
-  readonly fg?: string;
-  readonly bold?: boolean;
-  readonly italic?: boolean;
-  readonly underline?: boolean;
-  readonly strikethrough?: boolean;
-}
-
-/**
- * The scopes published, chosen as what a colorscheme needs to colour
- * Neovim's syntax, Tree-sitter and LSP groups the way the theme colours the
- * same tokens in VS Code.
- */
-export const PUBLISHED_SCOPES: readonly string[] = [
-  "comment",
-  "comment.block.documentation",
-  "string",
-  "string.regexp",
-  "constant.character.escape",
-  "constant.numeric",
-  "constant.language",
-  "constant.language.boolean",
-  "constant.character",
-  "constant.other",
-  "variable",
-  "variable.parameter",
-  "variable.other.property",
-  "variable.other.constant",
-  "variable.language",
-  "keyword",
-  "keyword.control",
-  "keyword.control.import",
-  "keyword.operator",
-  "storage",
-  "storage.type",
-  "storage.modifier",
-  "entity.name.function",
-  "support.function",
-  "entity.name.function.preprocessor",
-  "meta.preprocessor",
-  "entity.name.type",
-  "entity.name.class",
-  "entity.name.namespace",
-  "entity.name.tag",
-  "entity.name.label",
-  "entity.other.attribute-name",
-  "entity.other.inherited-class",
-  "support.type",
-  "support.class",
-  "support.constant",
-  "punctuation",
-  "punctuation.definition.tag",
-  "meta.brace",
-  "markup.heading",
-  "markup.bold",
-  "markup.italic",
-  "markup.underline.link",
-  "markup.inline.raw",
-  "markup.quote",
-  "markup.list",
-  "markup.inserted",
-  "markup.deleted",
-  "markup.changed",
-  "invalid",
-];
-
-/** How specific `selector` is for `scope`: its segments, or -1 for no match. */
-function specificity(selector: string, scope: string): number {
-  if (selector === scope || scope.startsWith(`${selector}.`)) {
-    return selector.split(".").length;
-  }
-  return -1;
-}
-
-/**
- * The style `rules` give `scope`, each property from the most specific rule
- * that sets it (the later of two equally specific ones). A selector with a
- * descendant (`source.js string`) or an exclusion is about a context a lone
- * scope does not have, and is not taken.
- */
-export function tokenStyleOf(
-  rules: readonly TokenColorRule[],
-  scope: string,
-): PublishedTokenStyle | undefined {
-  let foreground:
-    | { readonly value: string; readonly score: number }
-    | undefined;
-  let fontStyle: { readonly value: string; readonly score: number } | undefined;
-  for (const rule of rules) {
-    let score = -1;
-    for (const selector of rule.scopes) {
-      if (/\s/.test(selector)) continue;
-      score = Math.max(score, specificity(selector, scope));
-    }
-    if (score < 0) continue;
-    if (rule.foreground !== undefined && score >= (foreground?.score ?? -1)) {
-      foreground = { value: rule.foreground, score };
-    }
-    if (rule.fontStyle !== undefined && score >= (fontStyle?.score ?? -1)) {
-      fontStyle = { value: rule.fontStyle, score };
-    }
-  }
-  const fg = foreground && opaqueHex(foreground.value);
-  const words = new Set((fontStyle?.value ?? "").split(/\s+/));
-  const style: PublishedTokenStyle = {
-    ...(fg === undefined ? {} : { fg }),
-    ...(words.has("bold") ? { bold: true } : {}),
-    ...(words.has("italic") ? { italic: true } : {}),
-    ...(words.has("underline") ? { underline: true } : {}),
-    ...(words.has("strikethrough") ? { strikethrough: true } : {}),
-  };
-  return Object.keys(style).length > 0 ? style : undefined;
 }
 
 /** The variable names, in one place: they are the interface. */
@@ -202,18 +66,6 @@ export const THEME_ENV = {
   fzf: "DEVHUB_FZF_COLORS",
   file: "DEVHUB_THEME_FILE",
 } as const;
-
-export function kindOfThemeType(type: ColorThemeType): PublishedThemeKind {
-  switch (type) {
-    case "light":
-      return "light";
-    case "dark":
-      return "dark";
-    case "hcDark":
-    case "hcLight":
-      return "hc";
-  }
-}
 
 interface Rgb {
   readonly r: number;
@@ -358,40 +210,22 @@ export function themeColorsString(colors: PublishedThemeColors): string {
 }
 
 export interface PublishedThemeSource {
-  readonly theme: ResolvedColorTheme;
+  readonly theme: Theme;
   /** The palette DevHub's own terminals are given under it. */
   readonly terminal: TerminalPaletteWire;
   readonly temporary: boolean;
 }
 
 export function publishedThemeOf(source: PublishedThemeSource): PublishedTheme {
-  const { theme } = source;
-  const { definition, type } = theme;
   const colors = publishedColorsOf(source.terminal);
-  const ground =
-    opaqueHex(theme.css("editor.background") ?? "") ?? colors.background;
-  const editor: Record<string, string> = {};
-  for (const id of COLOR_IDS.editor) {
-    const value = theme.css(id);
-    const hex = value === undefined ? undefined : opaqueHex(value, ground);
-    if (hex !== undefined) editor[id] = hex;
-  }
-  const tokens: Record<string, PublishedTokenStyle> = {};
-  for (const scope of PUBLISHED_SCOPES) {
-    const style = tokenStyleOf(definition.tokenColors ?? [], scope);
-    if (style) tokens[scope] = style;
-  }
+  const kind = themeKindOf(source.theme);
   return {
     version: 1,
-    name: definition.settingsId,
-    label: definition.label,
-    kind: kindOfThemeType(type),
-    type,
-    background: type === "light" || type === "hcLight" ? "light" : "dark",
+    name: source.theme.name,
+    kind,
+    background: kind,
     temporary: source.temporary,
     colors,
-    editor,
-    tokens,
     fzf: fzfColorsOf(colors),
   };
 }

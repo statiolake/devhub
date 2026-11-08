@@ -88,14 +88,15 @@ import {
   migrateLocalSettings,
   type MigrationOutcome,
 } from "./settingsMigration.js";
+import { isHexColor } from "./themes/color.js";
 import {
-  defaultTerminalDark,
-  defaultTerminalLight,
-  defaultTerminalPalettes,
-  TERMINAL_THEME_VSCODE,
-  type TerminalPalette,
-  type TerminalThemeConfig,
-} from "./terminalPalettes.js";
+  CUSTOM_THEME_KEYS,
+  DEFAULT_THEME_SELECTION,
+  completeTheme,
+  parseThemeSelection,
+  type Theme,
+  type ThemeSelection,
+} from "./themes/theme.js";
 import {
   parseTomlValue,
   renderTomlDocument,
@@ -117,11 +118,9 @@ import {
  * on every profile because it was the only default there was, and that copy is
  * dropped once — see `withoutTheOldPresentationDefault`.
  *
- * 4 says an Agent pane's colours follow the VS Code theme unless
- * `[appearance] terminal_theme` names palettes. A file older than that wrote
- * the built-in palettes out in full because a save states the whole config,
- * and that copy is read as the default it was — see
- * `withoutTheOldTerminalThemeDefault`.
+ * 4 was a migration of `[appearance] terminal_theme`, a key since retired
+ * with the VS Code themes (`[appearance] theme` and `[themes.*]` replace it,
+ * `model/themes/theme.ts`); a file of any readable version loads the same.
  */
 export const CONFIG_SCHEMA_VERSION = 4;
 
@@ -502,22 +501,17 @@ export interface AppearanceConfig {
    * Not a palette. This is the answer DevHub gives the OS — it decides what
    * Electron reports the system appearance to be, for every native surface in
    * the process and for `window.autoDetectColorScheme` in each workbench — and
-   * so which of `theme_dark` and `theme_light` DevHub and every workbench
-   * wear. See `shell/appearanceMode.ts`.
+   * so which half of `theme` DevHub wears. See `shell/appearanceMode.ts`.
    */
   readonly mode: string;
   /**
-   * The VS Code colour theme DevHub wears in the dark and the light
-   * appearance: `theme_dark` / `theme_light`, named as VS Code names it in
-   * `workbench.colorTheme` (or by the label its picker shows). DevHub reads the
-   * theme itself (`main/shell/shellTheme.ts`), so its chrome and its Agent
-   * panes are in it whether any workbench is awake or not, and every workbench
-   * is told to wear the same one. Which of the two applies is the appearance
-   * `mode` gives the process. The defaults are VS Code's own
-   * (`DEFAULT_THEME_DARK`, `DEFAULT_THEME_LIGHT`).
+   * `[appearance] theme`: the colour theme DevHub wears — one name, or
+   * `light:<name>,dark:<name>` as Ghostty spells it. A built-in theme or a
+   * `[themes.<name>]` of the file's own (`model/themes/theme.ts`). DevHub's
+   * window, its terminals and the Neovims it draws are all derived from it.
+   * Kept as written; `themeSelectionOf` reads it.
    */
-  readonly themeDark: string;
-  readonly themeLight: string;
+  readonly theme: string;
   readonly terminalFontFamily: string;
   readonly terminalFontSize: number;
   /**
@@ -558,7 +552,22 @@ export interface AppearanceConfig {
   readonly terminalScrollSensitivity: number;
   readonly sidebarDensity: string;
   readonly terminalMargin: number;
-  readonly terminalTheme: TerminalThemeConfig;
+}
+
+/**
+ * One `[themes.<name>]` table, as written: the colours it sets. The ones it
+ * leaves out are filled in where it is used (`completeTheme`), and only what
+ * it says is written back.
+ */
+export interface CustomThemeConfig {
+  readonly name: string;
+  readonly background: string;
+  readonly foreground: string;
+  readonly cursor?: string;
+  readonly cursorText?: string;
+  readonly selectionBackground?: string;
+  readonly selectionForeground?: string;
+  readonly palette: readonly string[];
 }
 
 export interface ScratchConfig {
@@ -585,6 +594,8 @@ export interface Config {
   readonly general: GeneralConfig;
   readonly runtimes: RuntimeConfig;
   readonly appearance: AppearanceConfig;
+  /** `[themes.<name>]`: the file's own colour themes, in file order. */
+  readonly themes: readonly CustomThemeConfig[];
   /** `[terminal]`: how DevHub's own terminals read the keyboard. */
   readonly terminal: TerminalConfig;
   /**
@@ -649,29 +660,24 @@ export function withProfileRuntimes(
   };
 }
 
-/**
- * VS Code's default colour themes (`ThemeSettingDefaults.COLOR_THEME_DARK` /
- * `COLOR_THEME_LIGHT` in the pinned VS Code), and so DevHub's.
- */
-export const DEFAULT_THEME_DARK = "Dark 2026";
-export const DEFAULT_THEME_LIGHT = "Light 2026";
+/** Which theme each appearance wears, as `[appearance] theme` says. */
+export function themeSelectionOf(config: Config): ThemeSelection {
+  const selection = parseThemeSelection(config.appearance.theme);
+  // `validateConfig` refused anything else before this config existed.
+  return "problem" in selection
+    ? (parseThemeSelection(DEFAULT_THEME_SELECTION) as ThemeSelection)
+    : selection;
+}
 
-/** The two colour theme names the settings give, for the shell's theme. */
-export function colorThemeNamesOf(config: Config): {
-  readonly dark: string;
-  readonly light: string;
-} {
-  return {
-    dark: config.appearance.themeDark,
-    light: config.appearance.themeLight,
-  };
+/** The file's own themes, with what each leaves out filled in. */
+export function customThemesOf(config: Config): Theme[] {
+  return config.themes.map(completeTheme);
 }
 
 export function defaultAppearance(): AppearanceConfig {
   return {
     mode: "auto",
-    themeDark: DEFAULT_THEME_DARK,
-    themeLight: DEFAULT_THEME_LIGHT,
+    theme: DEFAULT_THEME_SELECTION,
     titleBar: DEFAULT_TITLE_BAR,
     terminalFontFamily: DEFAULT_FONT_FAMILY,
     terminalFontSize: 13,
@@ -679,7 +685,6 @@ export function defaultAppearance(): AppearanceConfig {
     terminalScrollSensitivity: 3,
     sidebarDensity: "compact",
     terminalMargin: 4,
-    terminalTheme: TERMINAL_THEME_VSCODE,
   };
 }
 
@@ -818,6 +823,7 @@ export function defaultConfig(): Config {
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
+    themes: [],
     terminal: { macOptionIsMeta: DEFAULT_MAC_OPTION_IS_META },
     keybindings: defaultKeybindings(),
     workspaceSources: defaultWorkspaceSources(),
@@ -853,6 +859,7 @@ export type ValidationCode =
   | "invalid_socket_name"
   | "forbidden_tmux_argument"
   | "invalid_appearance"
+  | "invalid_theme"
   | "invalid_mac_option_is_meta"
   | "invalid_editor"
   | "invalid_keybinding"
@@ -972,7 +979,13 @@ const RETIRED_KEYS: Readonly<Record<string, string>> = {
   "agent_actions.issue.*.start":
     "an Issue action always sends its wording as the new Agent's first message; `confirm_before_send` decides whether the window shows it for review first",
   "appearance.color_scheme":
-    "DevHub's colours are the VS Code theme named by `appearance.theme_dark` / `appearance.theme_light`; to choose light or dark for DevHub itself, use `appearance.mode`",
+    "DevHub's colours are the theme `appearance.theme` names; to choose light or dark for DevHub itself, use `appearance.mode`",
+  "appearance.theme_dark":
+    "DevHub's themes are its own now, not VS Code's: `appearance.theme = \"light:<name>,dark:<name>\"` names a built-in theme or a `[themes.<name>]` table for each appearance",
+  "appearance.theme_light":
+    "DevHub's themes are its own now, not VS Code's: `appearance.theme = \"light:<name>,dark:<name>\"` names a built-in theme or a `[themes.<name>]` table for each appearance",
+  "appearance.terminal_theme":
+    "the terminal wears the theme `appearance.theme` names; for colours of your own, write them as a `[themes.<name>]` table and name it there",
   "orchestrator.wait_reminder_interval":
     "there is no 待機中 reminder any more: a waiting escalation comes back as `waiting.changed`, when its `--at` time comes or when what it waits on changes; a `needs_action` subject that stays so is on every delivery (`orchestrator.delivery_interval`)",
   "orchestrator.reminder_interval":
@@ -1168,61 +1181,83 @@ function optionalNumberArray(
   return value as number[];
 }
 
-const PALETTE_KEYS = [
-  "background",
-  "foreground",
-  "cursor",
-  "cursor_text",
-  "selection_background",
-  "selection_foreground",
-  "ansi",
-] as const;
-
-function paletteFromTable(
-  value: unknown,
-  path: string,
-  fallback: TerminalPalette,
-): TerminalPalette {
+/**
+ * `[themes.<name>]`: every colour `#rrggbb` (or `#rgb`), `palette` exactly
+ * sixteen of them. Each problem names the field it is in.
+ */
+function customThemeFromTable(value: unknown, name: string): CustomThemeConfig {
+  const path = `themes.${name}`;
   const table = requireTable(value, path);
-  checkKeys(table, PALETTE_KEYS, path);
+  checkKeys(table, CUSTOM_THEME_KEYS, path);
+  if (
+    name.trim() === "" ||
+    /[,]/.test(name) ||
+    /^\s*(light|dark)\s*:/i.test(name)
+  ) {
+    // A name `appearance.theme` could not spell.
+    fail("invalid_theme", path);
+  }
+  const color = (key: string, required: boolean): string | undefined => {
+    const field = table[key];
+    if (field === undefined) {
+      if (required) fail("missing_required_field", `${path}.${key}`);
+      return undefined;
+    }
+    if (typeof field !== "string") fail("invalid_type", `${path}.${key}`);
+    if (!isHexColor(field.trim())) fail("invalid_theme", `${path}.${key}`);
+    return field.trim();
+  };
+  const palette = table["palette"];
+  if (palette === undefined) fail("missing_required_field", `${path}.palette`);
+  if (!Array.isArray(palette)) fail("invalid_type", `${path}.palette`);
+  if (palette.length !== 16) fail("invalid_theme", `${path}.palette`);
+  palette.forEach((entry: unknown, index) => {
+    if (typeof entry !== "string" || !isHexColor(entry.trim())) {
+      fail("invalid_theme", `${path}.palette[${String(index)}]`);
+    }
+  });
+  const optional = (key: string, field: keyof CustomThemeConfig) => {
+    const found = color(key, false);
+    return found === undefined ? {} : { [field]: found };
+  };
   return {
-    background: optionalString(table, "background", path, fallback.background),
-    foreground: optionalString(table, "foreground", path, fallback.foreground),
-    cursor: optionalString(table, "cursor", path, fallback.cursor),
-    cursorText: optionalString(table, "cursor_text", path, fallback.cursorText),
-    selectionBackground: optionalString(
-      table,
-      "selection_background",
-      path,
-      fallback.selectionBackground,
-    ),
-    selectionForeground: optionalString(
-      table,
-      "selection_foreground",
-      path,
-      fallback.selectionForeground,
-    ),
-    ansi: optionalStringArray(table, "ansi", path, fallback.ansi),
+    name,
+    background: color("background", true) as string,
+    foreground: color("foreground", true) as string,
+    ...optional("cursor", "cursor"),
+    ...optional("cursor_text", "cursorText"),
+    ...optional("selection_background", "selectionBackground"),
+    ...optional("selection_foreground", "selectionForeground"),
+    palette: (palette as string[]).map((entry) => entry.trim()),
   };
 }
 
-function isHexColor(value: string): boolean {
-  return /^#[0-9a-fA-F]{6}$/.test(value);
+function customThemesFromValue(value: unknown): CustomThemeConfig[] {
+  if (value === undefined) return [];
+  const table = requireTable(value, "themes");
+  return Object.entries(table).map(([name, entry]) =>
+    customThemeFromTable(entry, name),
+  );
 }
 
-function paletteIsValid(palette: TerminalPalette): boolean {
-  return (
-    palette.ansi.length === 16 &&
-    [
-      palette.background,
-      palette.foreground,
-      palette.cursor,
-      palette.cursorText,
-      palette.selectionBackground,
-      palette.selectionForeground,
-      ...palette.ansi,
-    ].every(isHexColor)
-  );
+function customThemeToTable(
+  theme: CustomThemeConfig,
+): Record<string, TomlValue> {
+  return {
+    background: theme.background,
+    foreground: theme.foreground,
+    ...(theme.cursor === undefined ? {} : { cursor: theme.cursor }),
+    ...(theme.cursorText === undefined
+      ? {}
+      : { cursor_text: theme.cursorText }),
+    ...(theme.selectionBackground === undefined
+      ? {}
+      : { selection_background: theme.selectionBackground }),
+    ...(theme.selectionForeground === undefined
+      ? {}
+      : { selection_foreground: theme.selectionForeground }),
+    palette: [...theme.palette],
+  };
 }
 
 export function isValidSocketName(value: string): boolean {
@@ -1308,16 +1343,25 @@ function validateAppearance(appearance: AppearanceConfig): void {
     appearance.terminalScrollSensitivity > 20 ||
     !APPEARANCE_MODES.includes(appearance.mode) ||
     !TITLE_BAR_MODES.includes(appearance.titleBar) ||
-    appearance.themeDark.trim() === "" ||
-    appearance.themeLight.trim() === "" ||
     (appearance.sidebarDensity !== "compact" &&
       appearance.sidebarDensity !== "comfortable") ||
-    appearance.terminalMargin > MAX_TERMINAL_MARGIN ||
-    (appearance.terminalTheme !== TERMINAL_THEME_VSCODE &&
-      (!paletteIsValid(appearance.terminalTheme.light) ||
-        !paletteIsValid(appearance.terminalTheme.dark)))
+    appearance.terminalMargin > MAX_TERMINAL_MARGIN
   ) {
     fail("invalid_appearance", "appearance");
+  }
+  if ("problem" in parseThemeSelection(appearance.theme)) {
+    fail("invalid_theme", "appearance.theme");
+  }
+}
+
+/** The file's own themes, as a save would write them: each a valid table. */
+function validateThemes(themes: readonly CustomThemeConfig[]): void {
+  const seen = new Set<string>();
+  for (const theme of themes) {
+    const path = `themes.${theme.name}`;
+    if (seen.has(theme.name)) fail("duplicate_identity", path);
+    seen.add(theme.name);
+    customThemeFromTable(customThemeToTable(theme), theme.name);
   }
 }
 
@@ -1492,6 +1536,7 @@ export function validateConfig(config: Config): void {
   }
   validateRuntimes(config.runtimes);
   validateAppearance(config.appearance);
+  validateThemes(config.themes);
   if (!isMacOptionIsMeta(config.terminal.macOptionIsMeta)) {
     fail("invalid_mac_option_is_meta", "terminal.mac_option_is_meta");
   }
@@ -1535,6 +1580,7 @@ const TOP_LEVEL_KEYS = [
   "general",
   "runtimes",
   "appearance",
+  "themes",
   "terminal",
   "keybindings",
   "workspace_sources",
@@ -1737,67 +1783,6 @@ function withoutTheOldPresentationDefault(
     profile.presentation === "tui"
       ? { ...profile, presentation: undefined }
       : profile,
-  );
-}
-
-/**
- * `[appearance] terminal_theme`, as written: absent or `"vscode"` follows the
- * VS Code theme, and a table is palettes.
- *
- * A table may name one scheme and leave the other out; the one left out is the
- * built-in palette for it, as a key left out of a palette is the built-in
- * value for that key.
- */
-function terminalThemeFromValue(value: unknown): TerminalThemeConfig {
-  const path = "appearance.terminal_theme";
-  if (value === undefined) return TERMINAL_THEME_VSCODE;
-  if (typeof value === "string") {
-    if (value !== TERMINAL_THEME_VSCODE) fail("invalid_appearance", path);
-    return TERMINAL_THEME_VSCODE;
-  }
-  const table = requireTable(value, path);
-  checkKeys(table, ["light", "dark"], path);
-  return {
-    light: paletteFromTable(
-      table["light"] ?? {},
-      `${path}.light`,
-      defaultTerminalLight(),
-    ),
-    dark: paletteFromTable(
-      table["dark"] ?? {},
-      `${path}.dark`,
-      defaultTerminalDark(),
-    ),
-  };
-}
-
-/**
- * The one-time migration of `terminal_theme`.
- *
- * Before version 4 there was nothing to follow, and every file DevHub wrote
- * spelled the built-in palettes out in full, because a save states the whole
- * config. Read as the person's palettes, that copy would keep every existing
- * install off the VS Code theme and make the new default mean nothing to
- * anybody who had ever saved Settings. So in an older file, palettes that are
- * exactly the built-in ones are taken for what they were — the default — and
- * palettes that differ anywhere, which somebody wrote, stay theirs.
- */
-function withoutTheOldTerminalThemeDefault(
-  theme: TerminalThemeConfig,
-  fileVersion: number,
-): TerminalThemeConfig {
-  if (fileVersion >= 4 || theme === TERMINAL_THEME_VSCODE) return theme;
-  const shipped = defaultTerminalPalettes();
-  return samePalette(theme.light, shipped.light) &&
-    samePalette(theme.dark, shipped.dark)
-    ? TERMINAL_THEME_VSCODE
-    : theme;
-}
-
-function samePalette(left: TerminalPalette, right: TerminalPalette): boolean {
-  return (
-    JSON.stringify(paletteToTable(left)) ===
-    JSON.stringify(paletteToTable(right))
   );
 }
 
@@ -2175,8 +2160,7 @@ export function interpretConfig(document: unknown): Config {
     appearanceTable,
     [
       "mode",
-      "theme_dark",
-      "theme_light",
+      "theme",
       "title_bar",
       "terminal_font_family",
       "terminal_font_size",
@@ -2184,7 +2168,6 @@ export function interpretConfig(document: unknown): Config {
       "terminal_scroll_sensitivity",
       "sidebar_density",
       "terminal_margin",
-      "terminal_theme",
     ],
     "appearance",
   );
@@ -2323,17 +2306,11 @@ export function interpretConfig(document: unknown): Config {
         3,
       ),
       mode: optionalString(appearanceTable, "mode", "appearance", "auto"),
-      themeDark: optionalString(
+      theme: optionalString(
         appearanceTable,
-        "theme_dark",
+        "theme",
         "appearance",
-        DEFAULT_THEME_DARK,
-      ).trim(),
-      themeLight: optionalString(
-        appearanceTable,
-        "theme_light",
-        "appearance",
-        DEFAULT_THEME_LIGHT,
+        DEFAULT_THEME_SELECTION,
       ).trim(),
       titleBar: optionalString(
         appearanceTable,
@@ -2353,11 +2330,8 @@ export function interpretConfig(document: unknown): Config {
         "appearance",
         4,
       ),
-      terminalTheme: withoutTheOldTerminalThemeDefault(
-        terminalThemeFromValue(appearanceTable["terminal_theme"]),
-        fileVersion,
-      ),
     },
+    themes: customThemesFromValue(table["themes"]),
     terminal: { macOptionIsMeta },
     keybindings: {
       prefix: optionalString(
@@ -2547,8 +2521,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
     },
     appearance: {
       mode: config.appearance.mode,
-      theme_dark: config.appearance.themeDark,
-      theme_light: config.appearance.themeLight,
+      theme: config.appearance.theme,
       title_bar: config.appearance.titleBar,
       terminal_font_family: config.appearance.terminalFontFamily,
       terminal_font_size: config.appearance.terminalFontSize,
@@ -2556,14 +2529,18 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       terminal_scroll_sensitivity: config.appearance.terminalScrollSensitivity,
       sidebar_density: config.appearance.sidebarDensity,
       terminal_margin: config.appearance.terminalMargin,
-      terminal_theme:
-        config.appearance.terminalTheme === TERMINAL_THEME_VSCODE
-          ? TERMINAL_THEME_VSCODE
-          : {
-              light: paletteToTable(config.appearance.terminalTheme.light),
-              dark: paletteToTable(config.appearance.terminalTheme.dark),
-            },
     },
+    // Absent rather than an empty table when the file has none of its own.
+    ...(config.themes.length === 0
+      ? {}
+      : {
+          themes: Object.fromEntries(
+            config.themes.map((theme) => [
+              theme.name,
+              customThemeToTable(theme),
+            ]),
+          ),
+        }),
     terminal: { mac_option_is_meta: config.terminal.macOptionIsMeta },
     keybindings: {
       prefix: config.keybindings.prefix,
@@ -2620,18 +2597,6 @@ export function configToToml(config: Config): string {
 export function configOntoDocument(source: string, config: Config): string {
   validateConfig(config);
   return updateTomlDocument(source, configDocument(config));
-}
-
-function paletteToTable(palette: TerminalPalette) {
-  return {
-    background: palette.background,
-    foreground: palette.foreground,
-    cursor: palette.cursor,
-    cursor_text: palette.cursorText,
-    selection_background: palette.selectionBackground,
-    selection_foreground: palette.selectionForeground,
-    ansi: [...palette.ansi],
-  };
 }
 
 // -------------------------------------------------------------------- store

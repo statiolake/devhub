@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeScratchDir, removeScratchDir } from "../../model/testScratch.js";
 import {
-	ResolvedColorTheme,
+	ThemeCatalog,
 	terminalPaletteOfTheme,
-} from "../../model/colorTheme.js";
+} from "../../model/themes/theme.js";
 import {
 	publishedThemeOf,
 	type PublishedTheme,
@@ -22,12 +22,11 @@ afterEach(() => {
 });
 
 function theme(name: string, type: "dark" | "light" = "dark"): PublishedTheme {
-	const resolved = new ResolvedColorTheme({
-		settingsId: name,
-		label: name,
-		type,
-		colors: {},
-	});
+	const base = new ThemeCatalog().find(
+		type === "dark" ? "DevHub Dark" : "DevHub Light",
+	);
+	if (!base) throw new Error("no DevHub theme");
+	const resolved = { ...base, name };
 	return publishedThemeOf({
 		theme: resolved,
 		terminal: terminalPaletteOfTheme(resolved),

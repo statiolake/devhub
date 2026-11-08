@@ -213,14 +213,12 @@ other.
 
 ## Theme
 
-The chrome and the terminal palette come from the VS Code colour theme
-DevHub's own settings name (`appearance.theme_dark` / `appearance.theme_light`,
-read by `colorThemeCatalog.ts` and `shellTheme.ts` from the extensions on
-disk), not from a workbench's report. That source never needed a workbench —
-it paints the window from a cold start and with every workbench frozen or
-discarded — and DevHub's own terminals (Agent panes and their terminals) wear
-the same `terminal_theme` (the theme's terminal colours by default, or the
-configured palettes).
+The chrome and the terminal palette come from the colour theme DevHub's own
+settings select (`[appearance] theme`, a built-in theme or a `[themes.<name>]`
+of the file's; see [themes.md](themes.md)), not from a workbench. That source
+never needed a workbench — it paints the window from a cold start and with
+every workbench frozen or discarded — and DevHub's own terminals (Agent panes
+and their terminals) wear the theme's own colours.
 
 The programs inside the terminal are told the theme too — `DEVHUB_THEME`,
 `DEVHUB_FZF_COLORS` and the rest in every new pane's environment, a

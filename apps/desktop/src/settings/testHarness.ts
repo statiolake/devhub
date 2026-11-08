@@ -11,11 +11,7 @@
  * that moves forward.
  */
 
-import type {
-  SettingsConfig,
-  SettingsSnapshot,
-  SettingsTerminalPaletteWire,
-} from "../ipc/settings";
+import type { SettingsConfig, SettingsSnapshot } from "../ipc/settings";
 import { SETTINGS_SCHEMA_VERSION } from "../ipc/settings";
 import {
   DEFAULT_ACTION_ID,
@@ -24,16 +20,6 @@ import {
 } from "../model/agentActions";
 import type { SettingsClient } from "./client";
 import { DEFAULT_ORCHESTRATOR_EVENTS } from "../model/orchestratorSettings";
-
-const PALETTE: SettingsTerminalPaletteWire = {
-  background: "#FFFFFF",
-  foreground: "#202020",
-  cursor: "#202020",
-  cursorText: "#FFFFFF",
-  selectionBackground: "#BFD9F2",
-  selectionForeground: "#202020",
-  ansi: Array.from({ length: 16 }, () => "#202020"),
-};
 
 export function testConfig(
   patch: Partial<SettingsConfig> = {},
@@ -84,8 +70,7 @@ export function testConfig(
     },
     appearance: {
       mode: "auto",
-      themeDark: "Dark 2026",
-      themeLight: "Light 2026",
+      theme: "light:DevHub Light,dark:DevHub Dark",
       titleBar: "shown",
       sidebarDensity: "compact",
       terminalFontFamily: "SF Mono",
@@ -93,8 +78,8 @@ export function testConfig(
       terminalLineHeight: 1.2,
       terminalScrollSensitivity: 3,
       terminalMargin: 4,
-      terminalTheme: { light: PALETTE, dark: PALETTE },
     },
+    themes: [],
     keybindings: { prefix: "Cmd+q", chords: {} },
     workspaceSources: [],
     agentProfiles: [],

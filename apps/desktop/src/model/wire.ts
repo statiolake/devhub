@@ -107,11 +107,8 @@ import {
   isMacOptionIsMeta,
   type MacOptionIsMeta,
 } from "./macOption.js";
-import {
-  defaultTerminalPalettes,
-  TERMINAL_THEME_VSCODE,
-  type TerminalThemeConfig,
-} from "./terminalPalettes.js";
+import { builtinThemes, terminalPaletteOfTheme } from "./themes/theme.js";
+import { DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME } from "./themes/selection.js";
 import type { CoordinatorReplay } from "./coordinator.js";
 
 /** A projection that cannot be represented on the wire is a bug, not a state. */
@@ -135,27 +132,22 @@ function paletteWire(palette: TerminalPaletteWire): TerminalPaletteWire {
 }
 
 /**
- * The palettes an Agent pane wears, from the setting and the colour theme.
- *
- * Following the theme, the theme's terminal colours are the pane's colours
- * whichever scheme the page is in — they are the colours of the one theme
- * DevHub is wearing, and that theme is what decides the scheme. Without a
- * theme to read (a controller built in a test) the built-in palettes stand
- * in. Palettes the person named win outright.
+ * The palettes a terminal wears: the colour theme DevHub wears, whichever
+ * scheme the page is in — that theme is what decides the scheme. Without a
+ * theme (a controller built in a test) DevHub's own two stand in.
  */
 export function terminalThemeWire(
-  theme: TerminalThemeConfig,
-  fromVsCode: TerminalPaletteWire | undefined,
+  worn: TerminalPaletteWire | undefined,
 ): TerminalThemeWire {
-  const palettes: { light: TerminalPaletteWire; dark: TerminalPaletteWire } =
-    theme !== TERMINAL_THEME_VSCODE
-      ? theme
-      : fromVsCode
-        ? { light: fromVsCode, dark: fromVsCode }
-        : defaultTerminalPalettes();
+  if (worn) return { light: paletteWire(worn), dark: paletteWire(worn) };
+  const named = (name: string): TerminalPaletteWire => {
+    const theme = builtinThemes().find((one) => one.name === name);
+    if (!theme) throw new SnapshotWireError(`no built-in theme ${name}`);
+    return terminalPaletteOfTheme(theme);
+  };
   return {
-    light: paletteWire(palettes.light),
-    dark: paletteWire(palettes.dark),
+    light: named(DEFAULT_LIGHT_THEME),
+    dark: named(DEFAULT_DARK_THEME),
   };
 }
 
@@ -184,7 +176,7 @@ export function terminalPaletteIsValid(palette: TerminalPaletteWire): boolean {
 export function appearanceWire(
   config: AppearanceConfig,
   sequence: number,
-  vsCodeTerminal: TerminalPaletteWire | undefined,
+  terminal: TerminalPaletteWire | undefined,
   macOptionIsMeta: MacOptionIsMeta = DEFAULT_MAC_OPTION_IS_META,
 ): AppAppearanceWire {
   const wire: AppAppearanceWire = {
@@ -197,7 +189,7 @@ export function appearanceWire(
     terminalLineHeight: config.terminalLineHeight,
     terminalScrollSensitivity: config.terminalScrollSensitivity,
     terminalMargin: config.terminalMargin,
-    terminalTheme: terminalThemeWire(config.terminalTheme, vsCodeTerminal),
+    terminalTheme: terminalThemeWire(terminal),
     terminalMacOptionIsMeta: macOptionIsMeta,
   };
   validateAppearanceWire(wire);

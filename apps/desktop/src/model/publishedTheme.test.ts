@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ResolvedColorTheme, terminalPaletteOfTheme } from "./colorTheme.js";
+import { ThemeCatalog, terminalPaletteOfTheme } from "./themes/theme.js";
 import {
   fzfColorsOf,
   opaqueHex,
@@ -8,50 +8,19 @@ import {
   themeEnvironment,
   themeFilePath,
   themeFileText,
-  tokenStyleOf,
 } from "./publishedTheme.js";
 
-const NORD = new ResolvedColorTheme({
-  settingsId: "Nord",
-  label: "Nord",
-  type: "dark",
-  colors: {
-    "editor.background": "#2e3440",
-    "editor.foreground": "#d8dee9",
-    "terminal.background": "#2e3440",
-    "terminal.foreground": "#d8dee9",
-    "terminal.selectionBackground": "#434c5ecc",
-    "terminal.ansiBlack": "#3b4252",
-    "terminal.ansiRed": "#bf616a",
-    "terminal.ansiGreen": "#a3be8c",
-    "terminal.ansiYellow": "#ebcb8b",
-    "terminal.ansiBlue": "#81a1c1",
-    "terminal.ansiMagenta": "#b48ead",
-    "terminal.ansiCyan": "#88c0d0",
-    "terminal.ansiWhite": "#e5e9f0",
-    "terminal.ansiBrightBlack": "#4c566a",
-    "terminal.ansiBrightRed": "#bf616a",
-    "terminal.ansiBrightGreen": "#a3be8c",
-    "terminal.ansiBrightYellow": "#ebcb8b",
-    "terminal.ansiBrightBlue": "#81a1c1",
-    "terminal.ansiBrightMagenta": "#b48ead",
-    "terminal.ansiBrightCyan": "#8fbcbb",
-    "terminal.ansiBrightWhite": "#eceff4",
-  },
-  tokenColors: [
-    { scopes: [], foreground: "#d8dee9" },
-    { scopes: ["comment"], foreground: "#616e88", fontStyle: "italic" },
-    { scopes: ["keyword"], foreground: "#81a1c1" },
-    { scopes: ["keyword.control"], fontStyle: "bold" },
-    { scopes: ["source.js keyword"], foreground: "#ff0000" },
-    { scopes: ["string", "string.quoted"], foreground: "#a3be8c" },
-  ],
-});
+function builtin(name: string) {
+  const theme = new ThemeCatalog().find(name);
+  if (!theme) throw new Error(`no ${name}`);
+  return theme;
+}
 
 function nord(temporary = false) {
+  const theme = builtin("Nord");
   return publishedThemeOf({
-    theme: NORD,
-    terminal: terminalPaletteOfTheme(NORD),
+    theme,
+    terminal: terminalPaletteOfTheme(theme),
     temporary,
   });
 }
@@ -69,54 +38,21 @@ describe("the published theme", () => {
     expect(theme.colors.background).toBe("#2e3440");
     expect(theme.colors.ansi).toHaveLength(16);
     expect(theme.colors.ansi[4]).toBe("#81a1c1");
-    // #434c5e at 0.8 over #2e3440.
-    expect(theme.colors.selectionBackground).toBe("#3f4758");
-    for (const color of [
-      ...theme.colors.ansi,
-      ...Object.values(theme.editor),
-    ]) {
+    for (const color of theme.colors.ansi) {
       expect(color).toMatch(/^#[0-9a-f]{6}$/);
     }
-    expect(theme.editor["editor.background"]).toBe("#2e3440");
-    // From the registry's defaults where the theme says nothing.
-    expect(theme.editor["editorError.foreground"]).toMatch(/^#/);
   });
 
-  it("says high contrast as hc, with the background it is on", () => {
+  it("says a light theme is light, and whether it is only worn for now", () => {
+    const latte = builtin("Catppuccin Latte");
     const theme = publishedThemeOf({
-      theme: new ResolvedColorTheme({
-        settingsId: "HC Light",
-        label: "HC Light",
-        type: "hcLight",
-        colors: {},
-      }),
-      terminal: terminalPaletteOfTheme(
-        new ResolvedColorTheme({
-          settingsId: "HC Light",
-          label: "HC Light",
-          type: "hcLight",
-          colors: {},
-        }),
-      ),
+      theme: latte,
+      terminal: terminalPaletteOfTheme(latte),
       temporary: true,
     });
-    expect(theme.kind).toBe("hc");
+    expect(theme.kind).toBe("light");
     expect(theme.background).toBe("light");
     expect(theme.temporary).toBe(true);
-  });
-
-  it("takes each syntax style from the most specific rule, and no descendant selectors", () => {
-    const rules = NORD.definition.tokenColors ?? [];
-    expect(tokenStyleOf(rules, "keyword.control")).toEqual({
-      fg: "#81a1c1",
-      bold: true,
-    });
-    expect(tokenStyleOf(rules, "comment.line.double-slash")).toEqual({
-      fg: "#616e88",
-      italic: true,
-    });
-    expect(tokenStyleOf(rules, "constant.numeric")).toBeUndefined();
-    expect(nord().tokens["string"]).toEqual({ fg: "#a3be8c" });
   });
 
   it("spells the colours for a shell and for fzf", () => {

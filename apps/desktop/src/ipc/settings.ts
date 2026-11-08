@@ -38,49 +38,23 @@ export interface SettingsAgentProfileWire {
 	readonly presentation: "default" | "tui" | "gui";
 }
 
-export interface SettingsTerminalPaletteWire {
-	readonly background: string;
-	readonly foreground: string;
-	readonly cursor: string;
-	readonly cursorText: string;
-	readonly selectionBackground: string;
-	readonly selectionForeground: string;
-	readonly ansi: readonly string[];
-}
-
 /**
- * `"vscode"` follows the VS Code theme's terminal colours; palettes are the
- * person's own. See `TerminalThemeConfig` in `model/config.ts`.
- */
-export type SettingsTerminalThemeWire =
-	| "vscode"
-	| {
-			readonly light: SettingsTerminalPaletteWire;
-			readonly dark: SettingsTerminalPaletteWire;
-	  };
-
-/**
- * The appearance: which VS Code colour theme DevHub wears, and in which mode.
+ * The appearance: which colour theme DevHub wears, and in which mode.
  *
- * `themeDark` / `themeLight` name the theme, as VS Code names it in
- * `workbench.colorTheme`. DevHub reads that theme itself and paints its chrome
- * and its Agent panes in it, and it tells every workbench to wear the same one,
- * so there is one answer to "what colour is this window" and it is here.
- * (`appearance.color_scheme`, a DevHub palette beside the theme, stays
- * retired.)
+ * `theme` is `[appearance] theme` as written — one name, or
+ * `light:<name>,dark:<name>` — naming a built-in theme or one of the file's
+ * `[themes.<name>]` (`SettingsCustomThemeWire`, carried whole so a save keeps
+ * them). DevHub's window, its terminals and the Neovims it draws are all
+ * derived from it; a VS Code workbench keeps its own theme.
  *
- * `mode` decides which of the two applies — *which appearance is this process
- * in*, which is the OS's question and used to be answered by whichever
- * workbench wrote `nativeTheme.themeSource` last (see `main/shell/appFence.ts`).
- * Choosing light or dark here changes what the OS appearance is reported to
- * be, and the theme for that half follows everywhere at once.
+ * `mode` decides which half applies — *which appearance is this process in*,
+ * which is the OS's question (see `main/shell/appFence.ts`).
  */
 export interface SettingsAppearanceWire {
 	/** `auto`, `light` or `dark` — see `model/config.ts`. */
 	readonly mode: string;
-	/** `appearance.theme_dark` / `theme_light`: VS Code colour theme names. */
-	readonly themeDark: string;
-	readonly themeLight: string;
+	/** `appearance.theme`: a theme name, or `light:<name>,dark:<name>`. */
+	readonly theme: string;
 	readonly sidebarDensity: string;
 	/** `system` or `hidden` — see `model/config.ts`. Takes a relaunch. */
 	readonly titleBar: string;
@@ -94,7 +68,18 @@ export interface SettingsAppearanceWire {
 	 * save silently resets.
 	 */
 	readonly terminalMargin: number;
-	readonly terminalTheme: SettingsTerminalThemeWire;
+}
+
+/** One `[themes.<name>]` table, as the file says it. */
+export interface SettingsCustomThemeWire {
+	readonly name: string;
+	readonly background: string;
+	readonly foreground: string;
+	readonly cursor?: string;
+	readonly cursorText?: string;
+	readonly selectionBackground?: string;
+	readonly selectionForeground?: string;
+	readonly palette: readonly string[];
 }
 
 export interface SettingsGeneralWire {
@@ -188,6 +173,8 @@ export interface SettingsConfigWire {
 	readonly general: SettingsGeneralWire;
 	readonly runtimes: SettingsRuntimeConfigWire;
 	readonly appearance: SettingsAppearanceWire;
+	/** `[themes.<name>]`, carried verbatim: the page does not edit them. */
+	readonly themes: readonly SettingsCustomThemeWire[];
 	/**
 	 * `[terminal]`: `macOptionIsMeta` is `false`, `true` or `"left"` — what
 	 * Option is in DevHub's own terminals. See `MacOptionIsMeta` in
@@ -400,6 +387,7 @@ export type SettingsDiagnosticCodeWire =
 	| "invalid_socket_name"
 	| "forbidden_tmux_argument"
 	| "invalid_appearance"
+	| "invalid_theme"
 	| "invalid_mac_option_is_meta"
 	| "invalid_editor"
 	| "invalid_keybinding"
@@ -514,60 +502,21 @@ export interface SettingsResetRequestWire {
 }
 
 /**
- * The colour themes, for Appearance: every theme DevHub can wear and DevHub's
- * own library (`main/shell/themeLibrary.ts`). Searching and installing reach
- * Open VSX, and only when the person asks.
+ * The colour themes, for Appearance: every theme `[appearance] theme` can
+ * name (`model/themes/theme.ts`).
  */
 export interface SettingsColorThemeWire {
 	readonly name: string;
-	readonly label: string;
-	/** `light`, `dark`, `hcDark`, `hcLight`. */
-	readonly type: string;
-	readonly extension: string;
-	readonly source: "builtin" | "devhub" | "extension";
-}
-
-export interface SettingsLibraryThemeWire {
-	readonly id: string;
-	readonly version: string;
-	readonly displayName: string;
-	/** The names its themes are chosen by. */
-	readonly themes: readonly string[];
-	readonly inWorkbench: boolean;
+	readonly kind: "dark" | "light";
+	/** DevHub's own, the built-in collection, or the file's `[themes.*]`. */
+	readonly origin: "devhub" | "builtin" | "custom";
 }
 
 export interface SettingsThemesWire {
 	readonly available: readonly SettingsColorThemeWire[];
-	readonly library: readonly SettingsLibraryThemeWire[];
 	/** Worn for this session only (Theme: Preview…), if anything. */
 	readonly temporary?: string;
 }
-
-export interface SettingsOpenVsxThemeWire {
-	readonly namespace: string;
-	readonly name: string;
-	readonly version: string;
-	readonly displayName: string;
-	readonly description: string;
-	readonly downloadCount: number;
-	readonly download: string;
-}
-
-/** An answer about themes: what is true now, and a sentence when something failed. */
-export interface SettingsThemeOutcomeWire {
-	readonly themes: SettingsThemesWire;
-	/** Said as a notice in Appearance. */
-	readonly problem?: string;
-	/** Said beside it, when nothing failed. */
-	readonly done?: string;
-}
-
-export type SettingsThemeSearchWire =
-	| {
-			readonly kind: "found";
-			readonly themes: readonly SettingsOpenVsxThemeWire[];
-	  }
-	| { readonly kind: "failed"; readonly problem: string };
 
 /** The surface the preload puts on `window.devhubSettings`. */
 /**
@@ -611,11 +560,6 @@ export interface SettingsApi {
 	close(): Promise<void>;
 	onChanged(listener: (snapshot: SettingsSnapshot) => void): () => void;
 	themes(): Promise<SettingsThemesWire>;
-	searchThemes(query: string): Promise<SettingsThemeSearchWire>;
-	installTheme(
-		theme: SettingsOpenVsxThemeWire,
-	): Promise<SettingsThemeOutcomeWire>;
-	uninstallTheme(id: string): Promise<SettingsThemeOutcomeWire>;
 	/** Theme: Preview… in the main window. */
 	previewThemes(): Promise<void>;
 }
@@ -633,8 +577,5 @@ export const SETTINGS_CHANNELS = {
 	close: "devhub-settings:close",
 	changed: "devhub-settings:changed",
 	themes: "devhub-settings:themes",
-	searchThemes: "devhub-settings:search-themes",
-	installTheme: "devhub-settings:install-theme",
-	uninstallTheme: "devhub-settings:uninstall-theme",
 	previewThemes: "devhub-settings:preview-themes",
 } as const;

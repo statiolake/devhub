@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 /**
- * Naming the colour theme DevHub wears: two fields, one per appearance,
- * saved as `[appearance] theme_dark` / `theme_light`.
+ * Naming the colour theme DevHub wears: one field, saved as
+ * `[appearance] theme` — a name, or `light:<name>,dark:<name>`.
  */
 
 import "@testing-library/jest-dom/vitest";
@@ -22,34 +22,36 @@ async function open() {
   return { saves };
 }
 
-describe("the colour theme fields", () => {
-  it("show the themes the settings name", async () => {
+describe("the colour theme field", () => {
+  it("shows the theme the settings name", async () => {
     await open();
-    expect(screen.getByLabelText("Dark colour theme")).toHaveValue("Dark 2026");
-    expect(screen.getByLabelText("Light colour theme")).toHaveValue(
-      "Light 2026",
+    expect(screen.getByLabelText("Colour theme")).toHaveValue(
+      "light:DevHub Light,dark:DevHub Dark",
     );
   });
 
-  it("save a theme named in one", async () => {
+  it("saves a theme named in it", async () => {
     const { saves } = await open();
-    const field = screen.getByLabelText("Dark colour theme");
-    fireEvent.change(field, { target: { value: "Monokai" } });
+    const field = screen.getByLabelText("Colour theme");
+    fireEvent.change(field, {
+      target: { value: "light:Catppuccin Latte,dark:Catppuccin Mocha" },
+    });
     fireEvent.blur(field);
     await vi.waitFor(() => {
-      expect(saves.map((save) => save.appearance.themeDark)).toEqual([
-        "Monokai",
+      expect(saves.map((save) => save.appearance.theme)).toEqual([
+        "light:Catppuccin Latte,dark:Catppuccin Mocha",
       ]);
     });
-    expect(saves[0]?.appearance.themeLight).toBe("Light 2026");
   });
 
-  it("refuse an empty name", async () => {
+  it("refuses what is neither a name nor a light/dark pair", async () => {
     const { saves } = await open();
-    const field = screen.getByLabelText("Light colour theme");
-    fireEvent.change(field, { target: { value: "  " } });
+    const field = screen.getByLabelText("Colour theme");
+    fireEvent.change(field, { target: { value: "light:Nord" } });
     fireEvent.blur(field);
-    expect(await screen.findByText("Name a colour theme.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Name a theme, or light:<name>,dark:<name>/),
+    ).toBeInTheDocument();
     expect(saves).toEqual([]);
   });
 });

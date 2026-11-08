@@ -534,23 +534,22 @@ editor = "vscode"           # the editor area: "vscode" (each Workspace's own VS
                             # Settings > General. See docs/neovim-editor.md.
 
 [appearance]
-theme_dark = "Dark 2026"    # the VS Code colour theme DevHub wears in the dark
-theme_light = "Light 2026"  # and the light appearance (`mode` picks; auto is the
-                            # OS's): its window, its Agent panes (with
-                            # terminal_theme = "vscode") and every editor, which is
-                            # told to wear the same one — an editor's own theme
-                            # picker or `workbench.colorTheme` does not override it.
-                            # A built-in theme or one from an installed extension,
-                            # by the name the picker shows or its id. Unset: VS
-                            # Code's defaults. Settings > General > Appearance.
-                            # Settings > General > Colour themes installs more
-                            # from Open VSX into DevHub's own library (and its
-                            # editors); "Theme: Preview…" wears one for the
-                            # session only. The theme is published to the
-                            # programs in DevHub's terminals (DEVHUB_THEME,
-                            # DEVHUB_FZF_COLORS, ~/.local/state/devhub/theme.json,
-                            # User DevhubTheme in the managed Neovim):
-                            # docs/window-and-pages.md, Terminal programs.
+theme = "light:DevHub Light,dark:DevHub Dark"
+                            # the colour theme DevHub wears: its window, its
+                            # terminals and the Neovims it draws. One name for
+                            # both appearances, or light:<name>,dark:<name>
+                            # (`mode` picks; auto is the OS's). 267 built-in
+                            # themes (iTerm2-Color-Schemes, as Ghostty ships
+                            # them) or your own [themes.<name>] below. A VS Code
+                            # editor keeps its own theme. "Theme: Preview…" wears
+                            # one for the session only. docs/themes.md.
+
+[themes."My Theme"]         # a theme of your own: background, foreground and a
+background = "#1e1e2e"      # 16-colour palette (ANSI 0-15); cursor, cursor_text,
+foreground = "#cdd6f4"      # selection_background, selection_foreground optional.
+palette = ["#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7",
+           "#94e2d5", "#bac2de", "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af",
+           "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8"]
 
 [terminal]
 mac_option_is_meta = false  # macOS Option in DevHub's terminals: false types the

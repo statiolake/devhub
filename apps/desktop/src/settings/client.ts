@@ -8,7 +8,7 @@ import type {
 } from "../ipc/settings";
 import type { SettingsPageBridge } from "../ipc/contract";
 import { pageBridge } from "../shell/bridge";
-import type { ThemesClient } from "./ThemeLibrary";
+import type { ThemesClient } from "./ThemePreviewRow";
 
 export interface SettingsClient {
   getSnapshot(): Promise<SettingsSnapshot>;
@@ -69,9 +69,6 @@ export function createSettingsClient(
     subscribe: (listener) => api.onChanged(listener),
     themes: {
       themes: () => api.themes(),
-      search: (query) => api.searchThemes(query),
-      install: (theme) => api.installTheme(theme),
-      uninstall: (id) => api.uninstallTheme(id),
       preview: () => api.previewThemes(),
     },
   };

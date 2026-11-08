@@ -26,9 +26,9 @@ import {
 	type PublishedTheme,
 } from "../../model/publishedTheme.js";
 import {
-	ResolvedColorTheme,
+	ThemeCatalog,
 	terminalPaletteOfTheme,
-} from "../../model/colorTheme.js";
+} from "../../model/themes/theme.js";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 
 const WORKSPACE: WorkspaceTerminalTarget = {
@@ -440,12 +440,9 @@ describe("where the sockets go", () => {
 
 describe("the theme", () => {
 	const theme = (name: string): PublishedTheme => {
-		const resolved = new ResolvedColorTheme({
-			settingsId: name,
-			label: name,
-			type: "dark",
-			colors: {},
-		});
+		const base = new ThemeCatalog().find("DevHub Dark");
+		if (!base) throw new Error("no DevHub Dark");
+		const resolved = { ...base, name };
 		return publishedThemeOf({
 			theme: resolved,
 			terminal: terminalPaletteOfTheme(resolved),

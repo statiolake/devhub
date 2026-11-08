@@ -13,9 +13,9 @@ import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { OPEN_FILE_LUA, PUBLISH_THEME_LUA } from "./managedNeovim.js";
 import {
-	ResolvedColorTheme,
+	ThemeCatalog,
 	terminalPaletteOfTheme,
-} from "../../model/colorTheme.js";
+} from "../../model/themes/theme.js";
 import {
 	publishedThemeOf,
 	themeEnvironment,
@@ -131,12 +131,8 @@ describe.skipIf(NVIM === undefined)("a real Neovim", () => {
 
 	it("is told the theme: g:devhub_theme, the environment, and User DevhubTheme with it", async () => {
 		const { client } = await startNvim();
-		const resolved = new ResolvedColorTheme({
-			settingsId: "Nord",
-			label: "Nord",
-			type: "dark",
-			colors: { "terminal.background": "#2e3440" },
-		});
+		const resolved = new ThemeCatalog().find("Nord");
+		if (!resolved) throw new Error("no Nord");
 		const theme = publishedThemeOf({
 			theme: resolved,
 			terminal: terminalPaletteOfTheme(resolved),

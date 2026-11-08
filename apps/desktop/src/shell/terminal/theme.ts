@@ -25,9 +25,8 @@ export interface TerminalPalette {
  * colour theme decides it, and the system decides it until one has — so
  * sending only the resolved one would mean a round trip every time it moved.
  *
- * Following the colour theme (`[appearance] terminal_theme = "vscode"`), main
- * sends the theme's terminal colours as both: they are the colours of the one
- * theme DevHub is wearing, whichever scheme it put the page in.
+ * Main sends the worn theme's colours as both: they are the colours of the
+ * one theme DevHub is wearing, whichever scheme it put the page in.
  */
 export interface TerminalTheme {
   readonly light: TerminalPalette;

@@ -28,7 +28,7 @@
  * answer, and every value is applied where it is typed.
  */
 
-import { ThemeLibrary, type ThemesClient } from "./ThemeLibrary";
+import { ThemePreviewRow, type ThemesClient } from "./ThemePreviewRow";
 import { useState } from "react";
 import { runtimeUnavailableMessage } from "../ipc/settings";
 import type {
@@ -84,10 +84,7 @@ import {
   usageThresholdsProblem,
 } from "../model/orchestratorSettings";
 import { resumeMessageProblem } from "../model/conversation";
-import {
-  defaultTerminalPalettes,
-  TERMINAL_THEME_VSCODE,
-} from "../model/terminalPalettes";
+import { parseThemeSelection } from "../model/themes/selection";
 import { presentationsFor } from "../model/domain";
 import {
   ACTION_VARIABLES,
@@ -303,46 +300,31 @@ export function GeneralSection({
 
       <Group
         heading="Appearance"
-        note="DevHub wears the VS Code colour theme named here — its window, its Agent panes and every editor alike: each editor is told to wear the same theme, so a theme chosen in an editor's own picker does not stick. Mode decides which of the two applies; Light and Dark tell the system DevHub is in that appearance."
+        note="DevHub wears the colour theme named here — its window, its terminals and the Neovims it draws. Mode decides which half of a light/dark pair applies; Light and Dark tell the system DevHub is in that appearance. A VS Code editor keeps its own theme."
       >
         <Row
-          label="Dark theme"
-          help="A VS Code colour theme, by the name VS Code's theme picker shows or its id (what `workbench.colorTheme` says) — a built-in one or one from an installed extension. A name DevHub cannot find falls back to VS Code's default, and DevHub says so."
+          label="Theme"
+          help="A built-in theme's name (Preview lists them all), or one of your own as a [themes.<name>] table in settings.toml. light:<name>,dark:<name> wears one for each appearance. A name DevHub cannot find falls back to DevHub's own, and DevHub says so."
         >
           <TextField
-            label="Dark colour theme"
-            value={config.appearance.themeDark}
-            placeholder="Dark 2026"
-            validate={(next) =>
-              next.trim() === "" ? "Name a colour theme." : undefined
-            }
-            onCommit={(themeDark) => {
+            label="Colour theme"
+            value={config.appearance.theme}
+            placeholder="light:DevHub Light,dark:DevHub Dark"
+            validate={(next) => {
+              const parsed = parseThemeSelection(next);
+              return "problem" in parsed
+                ? `Name a theme, or light:<name>,dark:<name>: ${parsed.problem}.`
+                : undefined;
+            }}
+            onCommit={(theme) => {
               update({
                 ...config,
-                appearance: { ...config.appearance, themeDark },
+                appearance: { ...config.appearance, theme: theme.trim() },
               });
             }}
           />
         </Row>
-        <Row
-          label="Light theme"
-          help="The theme for the light appearance, named the same way."
-        >
-          <TextField
-            label="Light colour theme"
-            value={config.appearance.themeLight}
-            placeholder="Light 2026"
-            validate={(next) =>
-              next.trim() === "" ? "Name a colour theme." : undefined
-            }
-            onCommit={(themeLight) => {
-              update({
-                ...config,
-                appearance: { ...config.appearance, themeLight },
-              });
-            }}
-          />
-        </Row>
+        {themes ? <ThemePreviewRow client={themes} /> : null}
         <Row label="Mode" help="Auto follows the system appearance.">
           <Popup
             label="Appearance mode"
@@ -380,22 +362,6 @@ export function GeneralSection({
           />
         </Row>
       </Group>
-      {themes ? (
-        <ThemeLibrary
-          client={themes}
-          nameTheme={(half, name) => {
-            update({
-              ...config,
-              appearance: {
-                ...config.appearance,
-                ...(half === "dark"
-                  ? { themeDark: name }
-                  : { themeLight: name }),
-              },
-            });
-          }}
-        />
-      ) : null}
 
       <Group heading="Agents">
         <Row
@@ -922,38 +888,6 @@ export function GeneralSection({
               update({
                 ...config,
                 appearance: { ...config.appearance, terminalScrollSensitivity },
-              });
-            }}
-          />
-        </Row>
-        <Row
-          label="Colours"
-          help="Following the colour theme, a pane takes the theme's terminal colours — those VS Code's own terminal would have under it — and changes with it. Palettes are the light and dark tables under [appearance.terminal_theme] in settings.toml, starting from DevHub's own."
-        >
-          <Popup
-            label="Agent pane colours"
-            value={
-              config.appearance.terminalTheme === TERMINAL_THEME_VSCODE
-                ? "vscode"
-                : "palettes"
-            }
-            options={[
-              ["vscode", "Follow the colour theme"],
-              ["palettes", "Palettes in settings.toml"],
-            ]}
-            onChange={(choice) => {
-              // Palettes already there stay: only a switch from the theme starts
-              // from the built-in ones.
-              const current = config.appearance.terminalTheme;
-              const terminalTheme =
-                choice === "vscode"
-                  ? TERMINAL_THEME_VSCODE
-                  : current === TERMINAL_THEME_VSCODE
-                    ? defaultTerminalPalettes()
-                    : current;
-              update({
-                ...config,
-                appearance: { ...config.appearance, terminalTheme },
               });
             }}
           />

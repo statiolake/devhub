@@ -1,14 +1,11 @@
 /**
- * The shell's palette: the active VS Code colour theme, expressed as tokens.
+ * The shell's palette: the colour theme DevHub wears, expressed as tokens.
  *
- * DevHub's chrome is not a second application beside the Workbench, it is the
- * frame around it, so it is in the same colour theme: the one DevHub's
- * settings name, which every workbench is told to wear too. Main reads the
- * theme's files itself (`main/shell/shellTheme.ts`) and computes the four
- * material and ink anchors the way the workbench's window splash does, and
- * the accent from the theme's link and button colours
- * (`model/colorTheme.ts#shellPaletteOfTheme`) — never by reading CSS out of a
- * view.
+ * DevHub's chrome is in the same theme as its terminals and the Neovims it
+ * draws: the one `[appearance] theme` selects. Main derives the four material
+ * and ink anchors and the accent from that theme's sixteen colours
+ * (`model/themes/theme.ts#shellPaletteOfTheme`) — never by reading CSS out of
+ * a view.
  *
  * Only six colours cross the wire. Everything else DevHub draws is derived
  * from them in `tokens.css`, and they are mapped to it here, in one place, so that main (which writes the palette into the

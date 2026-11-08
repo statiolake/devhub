@@ -22,9 +22,6 @@ import {
 	type SettingsSaveRequestWire,
 	type SettingsSnapshot,
 	type SettingsSocketPreflightWire,
-	type SettingsOpenVsxThemeWire,
-	type SettingsThemeOutcomeWire,
-	type SettingsThemeSearchWire,
 	type SettingsThemesWire,
 } from "../ipc/settings.js";
 import { on, pageBridge } from "./bridge.js";
@@ -72,21 +69,6 @@ const devhubSettings: SettingsApi = {
 		on<SettingsSnapshot>(SETTINGS_CHANNELS.changed, listener),
 	themes: () =>
 		ipcRenderer.invoke(SETTINGS_CHANNELS.themes) as Promise<SettingsThemesWire>,
-	searchThemes: (query: string) =>
-		ipcRenderer.invoke(
-			SETTINGS_CHANNELS.searchThemes,
-			query,
-		) as Promise<SettingsThemeSearchWire>,
-	installTheme: (theme: SettingsOpenVsxThemeWire) =>
-		ipcRenderer.invoke(
-			SETTINGS_CHANNELS.installTheme,
-			theme,
-		) as Promise<SettingsThemeOutcomeWire>,
-	uninstallTheme: (id: string) =>
-		ipcRenderer.invoke(
-			SETTINGS_CHANNELS.uninstallTheme,
-			id,
-		) as Promise<SettingsThemeOutcomeWire>,
 	previewThemes: () =>
 		ipcRenderer.invoke(SETTINGS_CHANNELS.previewThemes) as Promise<void>,
 };

@@ -271,8 +271,8 @@ exit "$status"`;
 
 /**
  * Tell a Neovim the theme DevHub wears. `g:devhub_theme` is its name — what
- * `[appearance] theme_dark` / `theme_light` say — with `g:devhub_theme_kind`
- * (`dark`, `light`, `hc`), `g:devhub_theme_background` (`dark` / `light`) and
+ * `[appearance] theme` selects — with `g:devhub_theme_kind`
+ * (`dark`, `light`), `g:devhub_theme_background` (`dark` / `light`) and
  * the whole published value in `g:devhub_theme_info`; the `DEVHUB_*`
  * variables a new pane would get are updated in its environment, so a
  * `:terminal` or a job started from it sees them too. Then `User DevhubTheme`

@@ -31,9 +31,6 @@ import {
 	type SettingsSaveRequestWire,
 	type SettingsSnapshotWire,
 	type SettingsSocketPreflightWire,
-	type SettingsOpenVsxThemeWire,
-	type SettingsThemeOutcomeWire,
-	type SettingsThemeSearchWire,
 	type SettingsThemesWire,
 } from "../../ipc/settings.js";
 import {
@@ -78,15 +75,12 @@ interface SettingsHost {
 	preflightSocket(socketName: string): Promise<SettingsSocketPreflightWire>;
 	/** Move DevHub's terminal sessions onto that socket, or fail loudly. */
 	changeSocket(socketName: string): Promise<void>;
-	/** The colour themes and DevHub's library; see `themeSettings.ts`. */
+	/** The colour themes; see `themeSettings.ts`. */
 	readonly themes?: SettingsThemesHost;
 }
 
 export interface SettingsThemesHost {
 	themes(): Promise<SettingsThemesWire>;
-	search(query: string): Promise<SettingsThemeSearchWire>;
-	install(theme: SettingsOpenVsxThemeWire): Promise<SettingsThemeOutcomeWire>;
-	uninstall(id: string): Promise<SettingsThemeOutcomeWire>;
 	preview(): void;
 	/** Reload: a theme worn for the session only goes, as with a save. */
 	revertTemporary(): void;
@@ -229,8 +223,7 @@ function toWireConfig(config: Config): SettingsConfigWire {
 		},
 		appearance: {
 			mode: config.appearance.mode,
-			themeDark: config.appearance.themeDark,
-			themeLight: config.appearance.themeLight,
+			theme: config.appearance.theme,
 			sidebarDensity: config.appearance.sidebarDensity,
 			titleBar: config.appearance.titleBar,
 			terminalFontFamily: config.appearance.terminalFontFamily,
@@ -238,8 +231,11 @@ function toWireConfig(config: Config): SettingsConfigWire {
 			terminalLineHeight: config.appearance.terminalLineHeight,
 			terminalScrollSensitivity: config.appearance.terminalScrollSensitivity,
 			terminalMargin: config.appearance.terminalMargin,
-			terminalTheme: config.appearance.terminalTheme,
 		},
+		themes: config.themes.map((theme) => ({
+			...theme,
+			palette: [...theme.palette],
+		})),
 		terminal: { macOptionIsMeta: config.terminal.macOptionIsMeta },
 		keybindings: {
 			prefix: config.keybindings.prefix,
@@ -388,8 +384,7 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 		},
 		appearance: {
 			mode: wire.appearance.mode,
-			themeDark: wire.appearance.themeDark,
-			themeLight: wire.appearance.themeLight,
+			theme: wire.appearance.theme,
 			sidebarDensity: wire.appearance.sidebarDensity,
 			titleBar: wire.appearance.titleBar,
 			terminalFontFamily: wire.appearance.terminalFontFamily,
@@ -397,8 +392,11 @@ function fromWireConfig(wire: SettingsConfigWire): Config {
 			terminalLineHeight: wire.appearance.terminalLineHeight,
 			terminalScrollSensitivity: wire.appearance.terminalScrollSensitivity,
 			terminalMargin: wire.appearance.terminalMargin,
-			terminalTheme: wire.appearance.terminalTheme,
 		},
+		themes: wire.themes.map((theme) => ({
+			...theme,
+			palette: [...theme.palette],
+		})),
 		terminal: { macOptionIsMeta: wire.terminal.macOptionIsMeta },
 		keybindings: {
 			prefix: wire.keybindings.prefix,
@@ -668,16 +666,6 @@ function registerIpc(): void {
 	});
 
 	handle(SETTINGS_CHANNELS.themes, () => requireThemes().themes());
-	handle(SETTINGS_CHANNELS.searchThemes, (_event, query: unknown) =>
-		requireThemes().search(typeof query === "string" ? query : ""),
-	);
-	handle(
-		SETTINGS_CHANNELS.installTheme,
-		(_event, theme: SettingsOpenVsxThemeWire) => requireThemes().install(theme),
-	);
-	handle(SETTINGS_CHANNELS.uninstallTheme, (_event, id: unknown) =>
-		requireThemes().uninstall(String(id)),
-	);
 	handle(SETTINGS_CHANNELS.previewThemes, () => {
 		requireThemes().preview();
 	});

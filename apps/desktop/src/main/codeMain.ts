@@ -12,17 +12,9 @@
  *    2. `CodeApplication` is `DevHubApplication` (../devhubApplication.ts),
  *       which registers DevHub's windows and dialog services.
  *    3. `bootstrapShell(...)` runs before `startup()`, so the App Shell window
- *       exists before the first workbench asks Electron for a window, and it
- *       is handed where the built-in and installed extensions are, so the
- *       window can be created in the colour theme DevHub's settings name
- *       (`shell/shellTheme.ts`). Nothing else in `startup()` changed.
- *    4. `IThemeMainService` is `DevHubThemeMainService`
- *       (./services/devhubThemeMainService.ts), which stamps each window splash
- *       with the colour theme it was saved in and hands a window one in the
- *       theme DevHub names when the stored one is in another. (It was once a
- *       subclass that announced each splash, when the shell followed the
- *       workbenches' theme; that is gone.)
- *    5. `ILifecycleMainService` is `DevHubLifecycleMainService`
+ *       exists before the first workbench asks Electron for a window. Nothing
+ *       else in `startup()` changed.
+ *    4. `ILifecycleMainService` is `DevHubLifecycleMainService`
  *       (./services/devhubLifecycleMainService.ts), which translates a
  *       workbench's "restart" into DevHub's terms instead of taking the whole
  *       application down with it. The substitution is here, at the
@@ -31,7 +23,7 @@
  *       later substitution would leave two lifecycle services side by side.
  *       For the same reason the startup-failure path below calls `app.exit`
  *       itself rather than `lifecycleMainService.kill`.
- *    6. `installAppFence()` runs before `startup()`, so the process settings
+ *    5. `installAppFence()` runs before `startup()`, so the process settings
  *       VS Code writes straight onto `electron.app` — the proxy, the OS recent
  *       items, the Dock badge and menu, the protocol registration, the update
  *       path — stop at DevHub instead. See `shell/appFence.ts`. The order
@@ -41,17 +33,12 @@
  *       sets Chrome's code cache path while no page exists yet, and fences
  *       upstream's later call. On Electron 43 that call, once the App Shell
  *       pages exist, kills the main process (see `fenceCodeCachePath`).
- *    7. `--force-disable-user-env` is on, because DevHub resolves the login
+ *    6. `--force-disable-user-env` is on, because DevHub resolves the login
  *       shell's environment itself and upstream's copy would be a second
  *       answer to the same question. See `resolveArgs`.
- *    8. `--shared-data-dir` is the profile's, because `sharedDataFolderName` is
+ *    7. `--shared-data-dir` is the profile's, because `sharedDataFolderName` is
  *       one string for the whole build and every other directory a profile owns
  *       is the profile's. See `resolveArgs`.
- *    9. `IProtocolMainService` is `DevHubProtocolMainService`
- *       (./services/devhubProtocolMainService.ts), which puts the colour theme
- *       a workbench is to start in into every window configuration it hands a
- *       renderer, so the first frame of a load is in it. See
- *       `shell/workbenchStartTheme.ts`.
  *
  *  Everything else is upstream, including the copyright below.
  *--------------------------------------------------------------------------------------------*/
@@ -86,8 +73,6 @@ import { connect as nodeIPCConnect, serve as nodeIPCServe, Server as NodeIPCServ
 import { DevHubApplication } from './devhubApplication.js';
 import { bootstrapShell } from './shell/bootstrapShell.js';
 import { installAppFence } from './shell/appFence.js';
-import { DevHubThemeMainService } from './services/devhubThemeMainService.js';
-import { DevHubProtocolMainService } from './services/devhubProtocolMainService.js';
 import { appController } from './shell/appController.js';
 import { activeProfile } from '../model/profile.js';
 import { localize } from 'code-oss-dev/out/vs/nls.js';
@@ -114,6 +99,7 @@ import { ConsoleMainLogger, getLogLevel, ILoggerService, ILogService, isDevConso
 import product from 'code-oss-dev/out/vs/platform/product/common/product.js';
 import { IProductService } from 'code-oss-dev/out/vs/platform/product/common/productService.js';
 import { IProtocolMainService } from 'code-oss-dev/out/vs/platform/protocol/electron-main/protocol.js';
+import { ProtocolMainService } from 'code-oss-dev/out/vs/platform/protocol/electron-main/protocolMainService.js';
 import { ITunnelService } from 'code-oss-dev/out/vs/platform/tunnel/common/tunnel.js';
 import { TunnelService } from 'code-oss-dev/out/vs/platform/tunnel/node/tunnelService.js';
 import { IRequestService } from 'code-oss-dev/out/vs/platform/request/common/request.js';
@@ -123,6 +109,7 @@ import { SignService } from 'code-oss-dev/out/vs/platform/sign/node/signService.
 import { IStateReadService, IStateService } from 'code-oss-dev/out/vs/platform/state/node/state.js';
 import { NullTelemetryService } from 'code-oss-dev/out/vs/platform/telemetry/common/telemetryUtils.js';
 import { IThemeMainService } from 'code-oss-dev/out/vs/platform/theme/electron-main/themeMainService.js';
+import { ThemeMainService } from 'code-oss-dev/out/vs/platform/theme/electron-main/themeMainServiceImpl.js';
 import { IUserDataProfilesMainService, UserDataProfilesMainService } from 'code-oss-dev/out/vs/platform/userDataProfile/electron-main/userDataProfile.js';
 import { isInnoSetupInstall } from 'code-oss-dev/out/vs/platform/update/electron-main/win32UpdateType.js';
 import { IPolicyService, NullPolicyService } from 'code-oss-dev/out/vs/platform/policy/common/policy.js';
@@ -227,7 +214,7 @@ class CodeMain {
 				// inside it.
 				// A fresh accessor: `accessor` above is only valid for the synchronous
 				// part of its own invocation, and this point is several awaits later.
-				await bootstrapShell(environmentMainService.userDataPath, environmentMainService.args, { builtin: environmentMainService.builtinExtensionsPath, user: environmentMainService.extensionsPath });
+				await bootstrapShell(environmentMainService.userDataPath, environmentMainService.args);
 
 				const application = instantiationService.createInstance(DevHubApplication, mainProcessNodeIpcServer, instanceEnvironment);
 				await application.startup();
@@ -364,7 +351,7 @@ class CodeMain {
 		services.set(IRequestService, new SyncDescriptor(RequestService, undefined, true));
 
 		// Themes
-		services.set(IThemeMainService, new SyncDescriptor(DevHubThemeMainService));
+		services.set(IThemeMainService, new SyncDescriptor(ThemeMainService));
 
 		// Signing
 		services.set(ISignService, new SyncDescriptor(SignService, undefined, false /* proxied to other processes */));
@@ -373,7 +360,7 @@ class CodeMain {
 		services.set(ITunnelService, new SyncDescriptor(TunnelService));
 
 		// Protocol (instantiated early and not using sync descriptor for security reasons)
-		services.set(IProtocolMainService, new DevHubProtocolMainService(environmentMainService, userDataProfilesMainService, logService));
+		services.set(IProtocolMainService, new ProtocolMainService(environmentMainService, userDataProfilesMainService, logService));
 
 		return [new InstantiationService(services, true), instanceEnvironment, environmentMainService, configurationService, stateService, bufferLogger, productService, userDataProfilesMainService];
 	}

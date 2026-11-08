@@ -233,7 +233,8 @@ import {
 } from "../../model/appModel.js";
 import { activeProfile } from "../../model/profile.js";
 import {
-	colorThemeNamesOf,
+	customThemesOf,
+	themeSelectionOf,
 	profilePresentation,
 	type Config,
 } from "../../model/config.js";
@@ -249,7 +250,6 @@ import {
 import {
 	agentProfilesWire,
 	appearanceWire,
-	terminalThemeWire,
 	errorWire,
 	errorWireAt,
 	intentFromWire,
@@ -4874,9 +4874,8 @@ export class AppController {
 				),
 			},
 			this.appearanceSequence,
-			// The colour theme's terminal colours, with
-			// `terminal_theme = "vscode"`. A controller built without a
-			// theme (in a test) has the built-in palettes.
+			// The colour theme's terminal colours. A controller built
+			// without a theme (in a test) has DevHub's own.
 			shellThemeIfInstalled()?.terminalPalette(),
 			config.terminal.macOptionIsMeta,
 		);
@@ -5342,25 +5341,19 @@ export class AppController {
 
 	/**
 	 * Tell the programs in DevHub's terminals the theme (`themePublication.ts`):
-	 * its name, and the palette DevHub's own terminals are given under it —
-	 * the theme's terminal colours, or the person's own palettes under
-	 * `[appearance.terminal_theme]` — for the appearance worn now. Published
+	 * its name, and the palette DevHub's own terminals are given under it,
+	 * for the appearance worn now. Published
 	 * whenever the appearance is, which is every change of theme, of
 	 * appearance and of settings; an unchanged value goes nowhere.
 	 */
 	publishTerminalTheme(): void {
 		const publication = themePublicationIfInstalled();
 		const theme = shellThemeIfInstalled();
-		const config = this.config;
 		if (!publication || !theme) return;
-		const palettes = terminalThemeWire(
-			config.appearance.terminalTheme,
-			theme.terminalPalette(),
-		);
 		publication.publish(
 			publishedThemeOf({
-				theme: theme.workbenchColorTheme(),
-				terminal: palettes[theme.palette().base],
+				theme: theme.wornTheme(),
+				terminal: theme.terminalPalette(),
 				temporary: theme.temporaryTheme() !== undefined,
 			}),
 		);
@@ -11399,7 +11392,7 @@ export class AppController {
 		// The theme the settings name now. A change recolours the window, the
 		// pages, the panes and every workbench (`bootstrapShell` listens).
 		const theme = shellThemeIfInstalled();
-		theme?.configure(colorThemeNamesOf(config));
+		theme?.configure(themeSelectionOf(config), customThemesOf(config));
 		for (const problem of theme?.takeProblems() ?? []) {
 			this.noteFailure(
 				new NamedFailure(

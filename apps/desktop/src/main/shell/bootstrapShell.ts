@@ -20,21 +20,7 @@ import {
 	ThemePublication,
 } from "./themePublication.js";
 import { themeFilePath } from "../../model/publishedTheme.js";
-import { themeTypeOfUiTheme } from "../../model/colorTheme.js";
-import { ThemeLibrary, themeLibraryDirectory } from "./themeLibrary.js";
-import { OpenVsxClient } from "./openVsx.js";
 import { themeSettings } from "./themeSettings.js";
-import { tmpdir } from "node:os";
-import {
-	findColorTheme,
-	listColorThemes,
-	loadColorTheme,
-	type ExtensionRoots,
-} from "./colorThemeCatalog.js";
-import {
-	managedSettingsOf,
-	WorkbenchManagedSettings,
-} from "./workbenchManagedSettings.js";
 import {
 	registerShellPageProtocol,
 	SHELL_ORIGIN,
@@ -71,7 +57,11 @@ import {
 	type SettingsProblem,
 } from "../workbenchDefaults.js";
 import { activeProfile } from "../../model/profile.js";
-import { colorThemeNamesOf, titleBarModeOf } from "../../model/config.js";
+import {
+	customThemesOf,
+	themeSelectionOf,
+	titleBarModeOf,
+} from "../../model/config.js";
 import { RunningSettings } from "./runningSettings.js";
 import type { AppErrorWire } from "../../ipc/appShell.js";
 import { errorWireAt, withDetail } from "../../model/wire.js";
@@ -140,7 +130,6 @@ function unreadableSettingsError(
 export async function bootstrapShell(
 	userDataPath: string,
 	cliArgs: NativeParsedArgs,
-	extensionRoots: ExtensionRoots,
 ): Promise<void> {
 	// First, so that it holds before the first background workbench is frozen:
 	// a freeze waits for it (`processGroupAnchor.ts`).
@@ -186,20 +175,13 @@ export async function bootstrapShell(
 	const titleBar = titleBarModeOf(settings.config);
 
 	// The colour theme comes first, before the page is servable and before the
-	// window exists, because both are created wearing it. It is the theme
-	// DevHub's own settings name, read here from the extensions VS Code would
-	// find it in — so the window, the pages and the Agent panes start in it
-	// whether or not any workbench ever comes up.
+	// window exists, because both are created wearing it: the theme DevHub's
+	// own settings select (`model/themes/theme.ts`).
 	//
 	// Which of the two is the appearance's answer, so the appearance the
 	// settings ask for is applied first; the controller applies it again on
 	// every change.
 	appearanceMode().apply(settings.config.appearance.mode);
-	// DevHub's own theme library is a third place themes are found in.
-	const roots: ExtensionRoots = {
-		...extensionRoots,
-		devhub: themeLibraryDirectory(userDataPath),
-	};
 	// What the programs in DevHub's terminals are told about the theme
 	// (`themePublication.ts`); the controller publishes into it.
 	installThemePublication(
@@ -214,29 +196,9 @@ export async function bootstrapShell(
 	);
 	installShellTheme(
 		new ShellTheme(
-			() => {
-				const themes = listColorThemes(roots);
-				return (name) => {
-					const entry = findColorTheme(themes, name);
-					return entry && loadColorTheme(entry);
-				};
-			},
 			() => electron.nativeTheme.shouldUseDarkColors,
-			colorThemeNamesOf(settings.config),
-			() =>
-				listColorThemes(roots).map((entry) => ({
-					name: entry.settingsId,
-					label: entry.label,
-					type: themeTypeOfUiTheme(entry.uiTheme),
-					extension: entry.extension,
-					source:
-						roots.devhub !== undefined && entry.path.startsWith(roots.devhub)
-							? "devhub"
-							: roots.builtin !== undefined &&
-								  entry.path.startsWith(roots.builtin)
-								? "builtin"
-								: "extension",
-				})),
+			themeSelectionOf(settings.config),
+			customThemesOf(settings.config),
 		),
 	);
 	const palette = shellTheme().palette();
@@ -245,13 +207,6 @@ export async function bootstrapShell(
 	electron.nativeTheme.on("updated", () => {
 		shellTheme().appearanceChanged();
 	});
-	// Every workbench wears the same theme: it asks as it starts and is told
-	// again when the theme changes. See `workbenchManagedSettings.ts`.
-	const managedSettings = new WorkbenchManagedSettings(() =>
-		managedSettingsOf(shellTheme().workbenchThemes()),
-	);
-	managedSettings.listen(electron.ipcMain);
-
 	// One preload per page, in one directory, named after the page. Which
 	// preload a page is loaded with is what decides what that page can spell:
 	// see `ipc/contract.ts` for the bridges and `scripts/build-preloads.mjs`
@@ -299,7 +254,6 @@ export async function bootstrapShell(
 		// The Agent panes' colours are part of the appearance, so every pane
 		// learns them the way it learns an edited setting.
 		controller.publishAppearance();
-		managedSettings.changed();
 	});
 	for (const problem of shellTheme().takeProblems()) {
 		controller.noteStartupFailure(
@@ -463,18 +417,6 @@ export async function bootstrapShell(
 		changeSocket: (name) => controller.changeTerminalSocket(name),
 		themes: themeSettings({
 			theme: shellTheme,
-			library: new ThemeLibrary(themeLibraryDirectory(userDataPath), tmpdir()),
-			// Electron's network stack: the system's proxy and certificates.
-			openVsx: new OpenVsxClient((url, init) => electron.net.fetch(url, init)),
-			workbench: () =>
-				Promise.resolve({
-					installVsix: async (path: string) => {
-						await controller.installExtensionsFromCli([path], true, homedir());
-					},
-					uninstall: async (id: string) => {
-						await controller.uninstallExtensionsFromCli([id], true);
-					},
-				}),
 			preview: () => {
 				controller.openThemePreview();
 			},

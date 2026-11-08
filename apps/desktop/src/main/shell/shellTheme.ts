@@ -1,85 +1,53 @@
 /**
- * Where DevHub's colours come from: the colour theme DevHub's own settings
- * name.
+ * The colour theme DevHub wears, and everything painted from it.
  *
- * `[appearance] theme_dark` and `theme_light` name a VS Code colour theme each
- * (VS Code's defaults unless the person says otherwise), and the appearance
- * the process is in (`appearance.mode`, `appearanceMode.ts`) picks one.
- * DevHub reads that theme itself — `colorThemeCatalog.ts` finds it among the
- * built-in and installed extensions and reads its file, and
- * `model/colorTheme.ts` fills in what it leaves unset from VS Code's own
- * registered defaults — and paints from it:
+ * `[appearance] theme` selects a theme for each appearance — one name for
+ * both, or `light:<name>,dark:<name>` — among the built-in ones and the
+ * file's own `[themes.<name>]` (`model/themes/theme.ts`); the appearance the
+ * process is in (`appearance.mode`, `appearanceMode.ts`) picks the half.
+ * From that one theme:
  *
  * - the shell's palette (`palette()`): the window, every DevHub page, the
  *   questions' dim;
- * - the Agent panes' terminal colours (`terminalPalette()`), with
- *   `[appearance] terminal_theme = "vscode"`;
- * - and every workbench (`workbenchThemes()`), which is told to wear the same
- *   theme (`workbenchColorTheme.ts`), so the editor and the frame around it
- *   cannot disagree.
+ * - DevHub's terminals (`terminalPalette()`): the theme's own colours;
+ * - the published theme (`themePublication.ts`) and with it the Neovims
+ *   DevHub draws (`model/themes/neovimColorscheme.ts`).
  *
- * It used to be the other way round: the shell followed the window splash
- * each workbench reported, and the panes read `--vscode-terminal-*` out of a
- * workbench's page and cached the answer on disk for when none was awake. The
- * theme is now known before any workbench exists and while every one is
- * asleep, so neither the splash nor the cache is needed.
+ * A VS Code workbench is not told anything: with `editor = "vscode"` it
+ * keeps the theme its own settings name.
  */
 
 import type { TerminalPaletteWire } from "../../ipc/appShell.js";
 import type { ShellPalette } from "../../ipc/palette.js";
 import {
-	ResolvedColorTheme,
+	DEFAULT_DARK_THEME,
+	DEFAULT_LIGHT_THEME,
 	shellPaletteOfTheme,
 	terminalPaletteOfTheme,
-	type ColorThemeDefinition,
-	type ColorThemeType,
-} from "../../model/colorTheme.js";
-import { DEFAULT_THEME_DARK, DEFAULT_THEME_LIGHT } from "../../model/config.js";
+	ThemeCatalog,
+	themeKindOf,
+	type CatalogTheme,
+	type Theme,
+	type ThemeKind,
+	type ThemeOrigin,
+	type ThemeSelection,
+} from "../../model/themes/theme.js";
 import { InvariantViolation } from "../../model/invariant.js";
 
-/** The two names, as the settings say them. */
-export interface ColorThemeNames {
-	readonly dark: string;
-	readonly light: string;
-}
-
-/** What a workbench is told to wear, as `workbench.colorTheme` spells it. */
-export interface WorkbenchColorThemes {
-	readonly dark: string;
-	readonly light: string;
-	/** The one for the appearance the process is in now. */
-	readonly current: string;
-}
-
-/**
- * Reading a theme by name: its definition, or `undefined` when no installed
- * extension contributes one by that name. A theme that is there and cannot be
- * read throws, with a sentence for the person.
- */
-export type ColorThemeLoader = (
-	name: string,
-) => ColorThemeDefinition | undefined;
-
 /** One theme that can be worn, for a list to choose from. */
-export interface AvailableColorTheme {
-	/** What the settings name it by. */
+export interface AvailableTheme {
 	readonly name: string;
-	readonly label: string;
-	readonly type: ColorThemeType;
-	/** `publisher.name` of the extension that contributes it. */
-	readonly extension: string;
-	/** Where it was found: VS Code's own, DevHub's library, or installed. */
-	readonly source: "builtin" | "devhub" | "extension";
+	readonly kind: ThemeKind;
+	readonly origin: ThemeOrigin;
 }
 
 interface Worn {
-	readonly theme: ResolvedColorTheme;
+	readonly theme: CatalogTheme;
 	readonly palette: ShellPalette;
 	readonly terminal: TerminalPaletteWire;
 }
 
-function worn(definition: ColorThemeDefinition): Worn {
-	const theme = new ResolvedColorTheme(definition);
+function worn(theme: CatalogTheme): Worn {
 	return {
 		theme,
 		palette: shellPaletteOfTheme(theme),
@@ -100,7 +68,13 @@ interface Temporary {
 	readonly kind: TemporaryThemeKind;
 }
 
+const DEFAULT_SELECTION: ThemeSelection = {
+	light: DEFAULT_LIGHT_THEME,
+	dark: DEFAULT_DARK_THEME,
+};
+
 export class ShellTheme {
+	private catalog: ThemeCatalog;
 	private dark: Worn;
 	private light: Worn;
 	private temporary: Temporary | undefined;
@@ -110,35 +84,23 @@ export class ShellTheme {
 	private readonly pending: string[] = [];
 	private readonly said = new Set<string>();
 
-	/**
-	 * @param loader A reader of the themes installed now — asked for afresh
-	 *   each time the names are read, so one listing serves both names.
-	 * @param prefersDark Whether the process is in the dark appearance.
-	 */
+	/** @param prefersDark Whether the process is in the dark appearance. */
 	constructor(
-		private readonly loader: () => ColorThemeLoader,
 		private readonly prefersDark: () => boolean,
-		names: ColorThemeNames = {
-			dark: DEFAULT_THEME_DARK,
-			light: DEFAULT_THEME_LIGHT,
-		},
-		private readonly catalog: () => readonly AvailableColorTheme[] = () => [],
+		selection: ThemeSelection = DEFAULT_SELECTION,
+		custom: readonly Theme[] = [],
 	) {
-		const load = loader();
-		this.dark = this.read(load, names.dark, DEFAULT_THEME_DARK, "dark");
-		this.light = this.read(load, names.light, DEFAULT_THEME_LIGHT, "light");
+		this.catalog = new ThemeCatalog(custom);
+		this.dark = this.read(selection.dark, DEFAULT_DARK_THEME, "dark");
+		this.light = this.read(selection.light, DEFAULT_LIGHT_THEME, "light");
 		this.announced = this.key();
 	}
 
-	/**
-	 * The names the settings give, read again — at startup, and every time the
-	 * settings are saved. The files are read again too, so a theme installed
-	 * since is found by saving the setting that names it.
-	 */
-	configure(names: ColorThemeNames): void {
-		const load = this.loader();
-		this.dark = this.read(load, names.dark, DEFAULT_THEME_DARK, "dark");
-		this.light = this.read(load, names.light, DEFAULT_THEME_LIGHT, "light");
+	/** The settings, read again — at startup, and every time they are saved. */
+	configure(selection: ThemeSelection, custom: readonly Theme[]): void {
+		this.catalog = new ThemeCatalog(custom);
+		this.dark = this.read(selection.dark, DEFAULT_DARK_THEME, "dark");
+		this.light = this.read(selection.light, DEFAULT_LIGHT_THEME, "light");
 		// The settings are the answer again: a theme worn for the session
 		// only lasts until they are next applied.
 		this.temporary = undefined;
@@ -148,32 +110,32 @@ export class ShellTheme {
 	/**
 	 * Wear `name` for this session only, whatever the appearance, without
 	 * touching the settings — or, with `undefined`, go back to what they
-	 * name. Throws, with a sentence for the person, when no installed theme
-	 * is called that or its file will not read; what is worn then is
-	 * unchanged.
+	 * name. Throws, with a sentence for the person, when no theme is called
+	 * that; what is worn then is unchanged.
 	 */
 	wearTemporarily(name: string | undefined, kind: TemporaryThemeKind): void {
 		if (name === undefined) {
 			this.temporary = undefined;
 		} else {
-			const definition = this.loader()(name);
-			if (!definition) {
-				throw new Error(`No installed colour theme is called '${name}'.`);
-			}
-			this.temporary = { worn: worn(definition), kind };
+			const theme = this.catalog.find(name);
+			if (!theme) throw new Error(`No colour theme is called '${name}'.`);
+			this.temporary = { worn: worn(theme), kind };
 		}
 		this.announce();
 	}
 
-	/** Every theme that can be worn now, read afresh. */
-	available(): readonly AvailableColorTheme[] {
-		return this.catalog();
+	/** Every theme that can be worn now. */
+	available(): readonly AvailableTheme[] {
+		return this.catalog.list().map((theme) => ({
+			name: theme.name,
+			kind: themeKindOf(theme),
+			origin: theme.origin,
+		}));
 	}
 
 	/** What the settings name for the appearance the process is in now. */
 	configuredName(): string {
-		return (this.prefersDark() ? this.dark : this.light).theme.definition
-			.settingsId;
+		return (this.prefersDark() ? this.dark : this.light).theme.name;
 	}
 
 	/** What is worn for the session only, if anything, and how. */
@@ -182,16 +144,18 @@ export class ShellTheme {
 		| undefined {
 		const temporary = this.temporary;
 		return (
-			temporary && {
-				name: temporary.worn.theme.definition.settingsId,
-				kind: temporary.kind,
-			}
+			temporary && { name: temporary.worn.theme.name, kind: temporary.kind }
 		);
 	}
 
 	/** The name of the theme worn now: the temporary one, else the settings'. */
 	wornName(): string {
-		return this.current().theme.definition.settingsId;
+		return this.current().theme.name;
+	}
+
+	/** The theme worn now, itself. */
+	wornTheme(): CatalogTheme {
+		return this.current().theme;
 	}
 
 	/** The OS appearance (or `appearance.mode`) changed. */
@@ -204,31 +168,9 @@ export class ShellTheme {
 		return this.current().palette;
 	}
 
-	/** The Agent panes' colours under the theme worn now. */
+	/** DevHub's terminals' colours under the theme worn now. */
 	terminalPalette(): TerminalPaletteWire {
 		return this.current().terminal;
-	}
-
-	/** What every workbench is told to wear. */
-	workbenchThemes(): WorkbenchColorThemes {
-		if (this.temporary) {
-			// One theme, both halves: the workbench's own appearance switch
-			// must not take it out of the theme being looked at.
-			const only = this.temporary.worn.theme.definition.settingsId;
-			return { dark: only, light: only, current: only };
-		}
-		const dark = this.dark.theme.definition.settingsId;
-		const light = this.light.theme.definition.settingsId;
-		return { dark, light, current: this.prefersDark() ? dark : light };
-	}
-
-	/**
-	 * The theme a workbench wears now, resolved: what one that is starting is
-	 * handed, so that its first frame is already in it
-	 * (`workbenchStartTheme.ts`).
-	 */
-	workbenchColorTheme(): ResolvedColorTheme {
-		return this.current().theme;
 	}
 
 	/** Who to tell when any of the above changed. */
@@ -239,10 +181,7 @@ export class ShellTheme {
 		this.changed = listener;
 	}
 
-	/**
-	 * What could not be worn since the last call, each said once: a name no
-	 * installed theme has, or a theme file that would not read.
-	 */
+	/** What could not be worn since the last call, each said once. */
 	takeProblems(): readonly string[] {
 		return this.pending.splice(0);
 	}
@@ -252,38 +191,17 @@ export class ShellTheme {
 		return this.prefersDark() ? this.dark : this.light;
 	}
 
-	private read(
-		load: ColorThemeLoader,
-		name: string,
-		fallback: string,
-		half: "dark" | "light",
-	): Worn {
-		const attempt = (candidate: string): ColorThemeDefinition | undefined => {
-			try {
-				const definition = load(candidate);
-				if (!definition) {
-					this.problem(
-						`No installed colour theme is called '${candidate}' (appearance.theme_${half}).`,
-					);
-				}
-				return definition;
-			} catch (error) {
-				if (!(error instanceof Error)) throw error;
-				this.problem(error.message);
-				return undefined;
-			}
-		};
-		const named = attempt(name);
+	private read(name: string, fallback: string, half: "dark" | "light"): Worn {
+		const named = this.catalog.find(name);
 		if (named) return worn(named);
-		if (name !== fallback) {
-			const instead = attempt(fallback);
-			if (instead) return worn(instead);
+		this.problem(
+			`No colour theme is called '${name}' (the ${half} half of appearance.theme); DevHub wears '${fallback}' instead.`,
+		);
+		const instead = this.catalog.find(fallback);
+		if (!instead) {
+			throw new InvariantViolation(`the built-in theme ${fallback} is missing`);
 		}
-		// Not even VS Code's own default is there — a checkout without its
-		// built-in extensions, say. The registry's defaults for that half are
-		// still VS Code's colours, so they are what is worn.
-		const type: ColorThemeType = half;
-		return worn({ settingsId: fallback, label: fallback, type, colors: {} });
+		return worn(instead);
 	}
 
 	private problem(detail: string): void {
@@ -293,11 +211,7 @@ export class ShellTheme {
 	}
 
 	private key(): string {
-		return JSON.stringify([
-			this.palette(),
-			this.terminalPalette(),
-			this.workbenchThemes(),
-		]);
+		return JSON.stringify([this.current().theme, this.palette()]);
 	}
 
 	private announce(): void {

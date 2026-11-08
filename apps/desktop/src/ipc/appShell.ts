@@ -232,8 +232,8 @@ export interface AgentTerminalWire {
 	readonly open: boolean;
 }
 /**
- * No colour scheme here: the shell chrome takes its colours from the active
- * VS Code theme, so "light or dark" is already answered by the theme the
+ * No colour scheme here: the shell chrome takes its colours from the colour
+ * theme DevHub wears, so "light or dark" is already answered by the theme the
  * person chose. This carried a `colorScheme` that was the constant `"light"`
  * however the app was actually painted — a field the page could read, believe
  * and be wrong about.
@@ -314,13 +314,13 @@ export type AppErrorCodeWire =
 	 */
 	| "editor_not_stopped"
 	/**
-	 * The colour theme `[appearance] theme_dark` / `theme_light` names could
-	 * not be found among the installed themes, or its file could not be read
-	 * (`main/shell/shellTheme.ts`).
+	 * A theme `[appearance] theme` names is neither built in nor one of the
+	 * file's `[themes.*]` (`main/shell/shellTheme.ts`), or Theme: Preview…
+	 * could not wear the one under its cursor.
 	 *
 	 * Its own code because the consequence is a fallback and not a failed
-	 * action: DevHub and its workbenches wear VS Code's default theme for that
-	 * half instead. Said once per name.
+	 * action: DevHub wears its own theme for that half instead. Said once per
+	 * name.
 	 */
 	| "color_theme_unavailable"
 	/** The Agent Surface has no live channel to its Agent. */
@@ -552,7 +552,7 @@ export const APP_ERROR_SUMMARY: Readonly<Record<AppErrorCodeWire, string>> = {
 		"The workbench kept stopping and will not be restarted again.",
 	editor_not_stopped: "The editor was not stopped.",
 	color_theme_unavailable:
-		"The colour theme named in DevHub's settings is not available, so VS Code's default theme is worn instead.",
+		"The colour theme named in DevHub's settings is not available, so DevHub's own theme is worn instead.",
 	agent_not_connected: "The agent surface is not connected.",
 	agent_exited: "The agent has exited.",
 	agent_runtime_unavailable: "The agent runtime is unavailable.",
@@ -1127,8 +1127,8 @@ export interface TerminalPaletteWire {
 	readonly foreground: string;
 	readonly selectionBackground: string;
 	/**
-	 * Absent when the VS Code theme leaves `terminal.selectionForeground`
-	 * unset: a selected cell keeps its own colour, as it does in VS Code.
+	 * Absent when the theme leaves the selection's foreground unset: a
+	 * selected cell keeps its own colour.
 	 */
 	readonly selectionForeground: string | undefined;
 }

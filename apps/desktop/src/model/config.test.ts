@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CONFIG_SCHEMA_VERSION,
   ConfigError,
-  type Config,
   type ConfigPaths,
   type ConfiguredAgentProfile,
   ConfigStore,
@@ -16,18 +15,12 @@ import {
   parseConfig,
   parseConfigText,
   retiredKeysIn,
-  DEFAULT_THEME_DARK,
-  DEFAULT_THEME_LIGHT,
+  customThemesOf,
+  themeSelectionOf,
   type ValidationCode,
   profilePresentation,
 } from "./config.js";
 import { chordKeyId } from "./chordKeys.js";
-import {
-  defaultTerminalDark,
-  defaultTerminalLight,
-  defaultTerminalPalettes,
-  TERMINAL_THEME_VSCODE,
-} from "./terminalPalettes.js";
 import { resolveBindings } from "./commands.js";
 import { isValidFontFamily, MAX_FONT_FAMILY_LENGTH } from "./fontFamily.js";
 import { makeScratchDir, removeScratchDir } from "./testScratch.js";
@@ -648,11 +641,7 @@ describe("parsing", () => {
       codeOf(() => parseConfig("version = 1\n[general]\nnope = true\n")),
     ).toBe("unknown_key");
     expect(
-      codeOf(() =>
-        parseConfig(
-          "version = 1\n[appearance.terminal_theme.light]\nnope = 1\n",
-        ),
-      ),
+      codeOf(() => parseConfig("version = 1\n[themes.Mine]\nnope = 1\n")),
     ).toBe("unknown_key");
   });
 
@@ -1684,7 +1673,7 @@ describe("saving over a hand-written file", () => {
     // A section the file left implicit is written out, because a save states
     // the whole config — the same as the Rust's document merge. What it never
     // does is rewrite what was already there.
-    expect(saved).toContain('terminal_theme = "vscode"');
+    expect(saved).toContain('theme = "light:DevHub Light,dark:DevHub Dark"');
     expect(parseConfig(saved).appearance.terminalFontSize).toBe(15);
   });
 
@@ -2134,155 +2123,149 @@ describe("where new projects go, as [projects] directory says", () => {
   });
 });
 
-describe("the colour theme, as [appearance] theme_dark / theme_light say", () => {
+describe("the colour theme, as [appearance] theme and [themes.*] say", () => {
   const version = `version = ${String(CONFIG_SCHEMA_VERSION)}`;
+  const palette = Array.from(
+    { length: 16 },
+    (_, i) => `"#${(i * 16).toString(16).padStart(2, "0").repeat(3)}"`,
+  ).join(", ");
 
-  it("is VS Code's own defaults when the file says nothing", () => {
-    expect(DEFAULT_THEME_DARK).toBe("Dark 2026");
-    expect(DEFAULT_THEME_LIGHT).toBe("Light 2026");
+  it("is DevHub's own pair when the file says nothing", () => {
     const config = parseConfig(`${version}\n`);
-    expect(config.appearance.themeDark).toBe("Dark 2026");
-    expect(config.appearance.themeLight).toBe("Light 2026");
-    expect(defaultConfig().appearance.themeDark).toBe("Dark 2026");
+    expect(config.appearance.theme).toBe("light:DevHub Light,dark:DevHub Dark");
+    expect(themeSelectionOf(config)).toEqual({
+      light: "DevHub Light",
+      dark: "DevHub Dark",
+    });
+    expect(config.themes).toEqual([]);
   });
 
-  it("reads and writes back the names the file gives", () => {
-    const source = `${version}\n[appearance]\ntheme_dark = "Monokai"\ntheme_light = " Solarized Light "\n`;
-    const config = parseConfig(source);
-    expect(config.appearance.themeDark).toBe("Monokai");
-    expect(config.appearance.themeLight).toBe("Solarized Light");
-    const saved = configToToml(config);
-    expect(saved).toContain('theme_dark = "Monokai"');
-    expect(saved).toContain('theme_light = "Solarized Light"');
-  });
-
-  it("refuses a name that is not a string, or is empty", () => {
-    expect(
-      pathOf(() => parseConfig(`${version}\n[appearance]\ntheme_dark = 1\n`)),
-    ).toBe("appearance.theme_dark");
-    expect(
-      codeOf(() => parseConfig(`${version}\n[appearance]\ntheme_light = ""\n`)),
-    ).toBe("invalid_appearance");
-  });
-});
-
-describe("the Agent panes' colours, as [appearance] terminal_theme says", () => {
-  const version = `version = ${String(CONFIG_SCHEMA_VERSION)}`;
-  const ownLight = { ...defaultTerminalLight(), background: "#FAFAFA" };
-
-  it("follows the VS Code theme when the file says nothing", () => {
-    expect(parseConfig(`${version}\n`).appearance.terminalTheme).toBe(
-      TERMINAL_THEME_VSCODE,
+  it("reads one name, or a light/dark pair, and writes it back as written", () => {
+    const one = parseConfig(`${version}\n[appearance]\ntheme = "Nord"\n`);
+    expect(themeSelectionOf(one)).toEqual({ light: "Nord", dark: "Nord" });
+    const pair = parseConfig(
+      `${version}\n[appearance]\ntheme = "dark: Catppuccin Mocha , light:Catppuccin Latte"\n`,
     );
-    expect(defaultConfig().appearance.terminalTheme).toBe(
-      TERMINAL_THEME_VSCODE,
+    expect(themeSelectionOf(pair)).toEqual({
+      light: "Catppuccin Latte",
+      dark: "Catppuccin Mocha",
+    });
+    expect(configToToml(pair)).toContain(
+      'theme = "dark: Catppuccin Mocha , light:Catppuccin Latte"',
     );
   });
 
-  it("follows it when the file says vscode, and writes the word back", () => {
-    const source = `${version}\n[appearance]\nterminal_theme = "vscode"\n`;
-    const config = parseConfig(source);
-    expect(config.appearance.terminalTheme).toBe(TERMINAL_THEME_VSCODE);
-    expect(configToToml(config)).toContain('terminal_theme = "vscode"');
-    expect(configToToml(config)).not.toContain("[appearance.terminal_theme");
-  });
-
-  it("refuses any other word", () => {
-    const source = `${version}\n[appearance]\nterminal_theme = "solarized"\n`;
-    expect(codeOf(() => parseConfig(source))).toBe("invalid_appearance");
-    expect(pathOf(() => parseConfig(source))).toBe("appearance.terminal_theme");
-  });
-
-  it("wears palettes the file names, filling a scheme it leaves out", () => {
-    const source = [
-      version,
-      "[appearance.terminal_theme.light]",
-      'background = "#FAFAFA"',
+  it("refuses a theme value it cannot read, at its key", () => {
+    for (const value of [
       "",
-    ].join("\n");
-    expect(parseConfig(source).appearance.terminalTheme).toEqual({
-      light: ownLight,
-      dark: defaultTerminalDark(),
-    });
+      "light:Nord",
+      "light:A,light:B",
+      "light:A,dusk:B",
+    ]) {
+      const source = `${version}\n[appearance]\ntheme = "${value}"\n`;
+      expect(codeOf(() => parseConfig(source))).toBe("invalid_theme");
+      expect(pathOf(() => parseConfig(source))).toBe("appearance.theme");
+    }
   });
 
-  it("round-trips palettes as tables", () => {
-    const config: Config = {
-      ...defaultConfig(),
-      appearance: {
-        ...defaultConfig().appearance,
-        terminalTheme: { light: ownLight, dark: defaultTerminalDark() },
-      },
-    };
-    const text = configToToml(config);
-    expect(text).toContain("[appearance.terminal_theme.light]");
-    expect(parseConfig(text).appearance.terminalTheme).toEqual(
-      config.appearance.terminalTheme,
-    );
-  });
-
-  it("reads the built-in palettes an older file spelled out as the default they were, once", () => {
-    const shipped = configToToml({
-      ...defaultConfig(),
-      appearance: {
-        ...defaultConfig().appearance,
-        terminalTheme: defaultTerminalPalettes(),
-      },
-    });
-    const older = shipped.replace(version, "version = 3");
-    expect(parseConfig(older).appearance.terminalTheme).toBe(
-      TERMINAL_THEME_VSCODE,
-    );
-    // Written forward, the file says so and nothing else.
-    const saved = configOntoDocument(older, parseConfig(older));
-    expect(saved).toContain('terminal_theme = "vscode"');
-    expect(saved).not.toContain("[appearance.terminal_theme");
-    expect(parseConfig(saved).appearance.terminalTheme).toBe(
-      TERMINAL_THEME_VSCODE,
-    );
-    // The current version is taken at its word: palettes there are palettes.
-    expect(parseConfig(shipped).appearance.terminalTheme).toEqual(
-      defaultTerminalPalettes(),
-    );
-  });
-
-  it("keeps palettes an older file changed anywhere", () => {
+  it("reads a custom theme, fills what it leaves out where it is used, and writes back only what it said", () => {
     const source = [
-      "version = 1",
-      "[appearance.terminal_theme.light]",
-      'background = "#FAFAFA"',
-      "",
-    ].join("\n");
-    expect(parseConfig(source).appearance.terminalTheme).toEqual({
-      light: ownLight,
-      dark: defaultTerminalDark(),
-    });
-  });
-
-  it("drops the tables when a save switches to following the theme", () => {
-    const source = [
-      "# mine",
       version,
       "[appearance]",
-      "terminal_font_size = 13",
+      'theme = "Mine"',
       "",
-      "[appearance.terminal_theme.light]",
-      'background = "#FAFAFA"',
+      '[themes."Mine"]',
+      'background = "#101010"',
+      'foreground = "#EEE"',
+      `palette = [${palette}]`,
       "",
     ].join("\n");
     const config = parseConfig(source);
-    const saved = configOntoDocument(source, {
-      ...config,
-      appearance: {
-        ...config.appearance,
-        terminalTheme: TERMINAL_THEME_VSCODE,
+    expect(config.themes).toEqual([
+      {
+        name: "Mine",
+        background: "#101010",
+        foreground: "#EEE",
+        palette: expect.any(Array) as unknown,
       },
-    });
-    expect(saved).toContain("# mine");
-    expect(saved).not.toContain("[appearance.terminal_theme");
-    expect(parseConfig(saved).appearance.terminalTheme).toBe(
-      TERMINAL_THEME_VSCODE,
+    ]);
+    const [mine] = customThemesOf(config);
+    expect(mine?.foreground).toBe("#eeeeee");
+    expect(mine?.cursor).toBe("#eeeeee");
+    expect(mine?.cursorText).toBe("#101010");
+    expect(mine?.selectionBackground).toMatch(/^#[0-9a-f]{6}$/);
+    const saved = configToToml(config);
+    expect(saved).toContain("[themes.Mine]");
+    expect(saved).not.toContain("cursor_text");
+    expect(parseConfig(saved).themes).toEqual(config.themes);
+    const over = configOntoDocument(source, config);
+    expect(over).toContain(
+      '[themes."Mine"]\nbackground = "#101010"\nforeground = "#EEE"',
     );
+    expect(parseConfig(over).themes).toEqual(config.themes);
+  });
+
+  it("refuses a custom theme's bad field by its path", () => {
+    const theme = (lines: string[]) =>
+      [version, '[themes."Mine"]', ...lines, ""].join("\n");
+    const cases: [string[], string, string][] = [
+      [
+        [`foreground = "#fff"`, `palette = [${palette}]`],
+        "missing_required_field",
+        "themes.Mine.background",
+      ],
+      [
+        [
+          `background = "black"`,
+          `foreground = "#fff"`,
+          `palette = [${palette}]`,
+        ],
+        "invalid_theme",
+        "themes.Mine.background",
+      ],
+      [
+        [`background = "#000"`, `foreground = "#fff"`, `palette = ["#000"]`],
+        "invalid_theme",
+        "themes.Mine.palette",
+      ],
+      [
+        [
+          `background = "#000"`,
+          `foreground = "#fff"`,
+          `palette = [${palette.replace('"#000000"', '"red"')}]`,
+        ],
+        "invalid_theme",
+        "themes.Mine.palette[0]",
+      ],
+      [
+        [
+          `background = "#000"`,
+          `foreground = "#fff"`,
+          `palette = [${palette}]`,
+          `bold = "#fff"`,
+        ],
+        "unknown_key",
+        "themes.Mine.bold",
+      ],
+    ];
+    for (const [lines, code, path] of cases) {
+      expect(codeOf(() => parseConfig(theme(lines)))).toBe(code);
+      expect(pathOf(() => parseConfig(theme(lines)))).toBe(path);
+    }
+  });
+
+  it("loads a file that still names the VS Code theme keys, and says they are retired", () => {
+    const source = `${version}\n[appearance]\ntheme_dark = "Dark 2026"\ntheme_light = "Light 2026"\nterminal_theme = "vscode"\n`;
+    expect(parseConfig(source).appearance.theme).toBe(
+      "light:DevHub Light,dark:DevHub Dark",
+    );
+    expect(
+      retiredKeysIn(parseConfigText(source)).map((notice) => notice.key),
+    ).toEqual([
+      "appearance.theme_dark",
+      "appearance.theme_light",
+      "appearance.terminal_theme",
+    ]);
   });
 });
 
