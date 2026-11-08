@@ -110,7 +110,12 @@ function world() {
 	const editorPanes: EditorPanes = {
 		open: (target, argv) => {
 			const paneId = `%${String(next++)}`;
-			log.push(`open ${target.workspaceId} ${argv.join(" ")} -> ${paneId}`);
+			// The keeper: `sh -c <script> devhub-nvim <nvim and its arguments>`.
+			expect(argv.slice(0, 2)).toEqual(["sh", "-c"]);
+			expect(argv[3]).toBe("devhub-nvim");
+			log.push(
+				`open ${target.workspaceId} ${argv.slice(4).join(" ")} -> ${paneId}`,
+			);
 			if (failStart) {
 				panes.set(paneId, "dead");
 				return Promise.resolve(paneId);
@@ -197,7 +202,7 @@ describe("the first jump into a Workspace", () => {
 		});
 		expect(result).toEqual({ started: true });
 		expect(w.log).toEqual([
-			`open ${WORKSPACE.workspaceId} env DEVHUB_NEOVIM_GUI=1 /opt/homebrew/bin/nvim --headless --listen ${SOCKET} -> %1`,
+			`open ${WORKSPACE.workspaceId} /opt/homebrew/bin/nvim --headless --listen ${SOCKET} -> %1`,
 		]);
 		expect(w.server()?.opens()).toEqual([["/src/widget/a b.ts", 12, 4, null]]);
 		expect(neovims.paneOf(WORKSPACE.workspaceId)).toBe("%1");
@@ -296,7 +301,7 @@ describe("a jump after that Neovim has gone", () => {
 		const result = await neovims.open(WORKSPACE, { path: "/src/widget/b.ts" });
 		expect(result).toEqual({ started: true });
 		expect(w.log.filter((line) => line.startsWith("open"))).toEqual([
-			`open ${WORKSPACE.workspaceId} env DEVHUB_NEOVIM_GUI=1 /opt/homebrew/bin/nvim --headless --listen ${SOCKET} -> %2`,
+			`open ${WORKSPACE.workspaceId} /opt/homebrew/bin/nvim --headless --listen ${SOCKET} -> %2`,
 		]);
 	});
 

@@ -15,6 +15,14 @@
  * into the main process, the preload and the page alike.
  */
 
+/**
+ * DevHub's own redraw event, not Neovim's: put in the redraw stream where a
+ * UI starts over on the server a `:restart` started (0.12), so the page
+ * forgets the old server's screen in order with the new one's first events
+ * (`main/editor/neovimUiSessions.ts`, `shell/neovim/redraw.ts`).
+ */
+export const NEOVIM_RESTARTED_EVENT = "devhub_restarted";
+
 export const NEOVIM_CHANNELS = {
 	/** page → main: attach as this Workspace's UI at this size. */
 	attach: "devhub:neovim:attach",

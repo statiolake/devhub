@@ -15,6 +15,7 @@
  * rows are dirty and which widgets moved, read and cleared at each `flush`.
  */
 
+import { NEOVIM_RESTARTED_EVENT } from "../../ipc/neovim.js";
 import { analyzeFrame, type FloatFrame, type FloatLabels } from "./frame.js";
 
 /** A highlight, as `hl_attr_define`'s rgb map says it. Colours are 24-bit. */
@@ -457,6 +458,16 @@ export function applyRedraw(
   return changes;
 }
 
+/**
+ * DevHub's own marker in the redraw stream, not Neovim's: the UI attached
+ * again to the server a `:restart` started (`neovimUiSessions.ts`), and
+ * what follows is that server's screen from scratch. Everything the old
+ * server said is forgotten here, in order with the new server's first
+ * events, so the frame drawn at its first `flush` is wholly the new
+ * server's and the one before stays on screen until then.
+ */
+export const RESTARTED_EVENT = NEOVIM_RESTARTED_EVENT;
+
 function applyEvent(
   state: NeovimUiState,
   changes: RedrawChanges,
@@ -464,6 +475,21 @@ function applyEvent(
   args: readonly unknown[],
 ): void {
   switch (name) {
+    case RESTARTED_EVENT: {
+      for (const id of state.grids.keys()) changes.grids.add(id);
+      // The old colours stay until the new server says its own, so the
+      // ground does not flash to the fallback in between.
+      const defaults = state.defaults;
+      Object.assign(state, initialUiState(state.fallback), { defaults });
+      changes.colors = true;
+      changes.cursor = true;
+      changes.layout = true;
+      changes.popupmenu = true;
+      changes.cmdline = true;
+      changes.tabline = true;
+      changes.options = true;
+      return;
+    }
     case "grid_resize": {
       const id = num(args[0]);
       const width = Math.max(0, num(args[1]));

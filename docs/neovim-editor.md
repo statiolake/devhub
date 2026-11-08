@@ -718,6 +718,46 @@ and it adds one `precmd` hook that puts the shim's directory back in front of
 the PATH before each prompt if anything moved it. A zsh started from the pane
 is an ordinary one.
 
+**`:restart` (Neovim 0.12).** `:restart` starts a new server with the old
+one's arguments — the same `--listen` socket — tells its UIs `restart`
+(`["restart", listen_addr]`), restores the session and exits. DevHub
+follows it wherever a Neovim lives, and nothing on screen leaves:
+
+- _The UI_ (`neovimUiSessions.ts`): after a `restart` event, the old
+  connection closing is not an end. The UI connects again to the same
+  local socket (on an SSH host, the same `ssh -O forward` socket, which
+  reaches the host's path anew), tried every 100 ms for up to 10 s, and
+  attaches at the page's current size with the same page. Where the new
+  stream starts it puts DevHub's own redraw event `devhub_restarted`
+  (`NEOVIM_RESTARTED_EVENT`), on which the page's reducer forgets the old
+  server's grids, windows and highlights (keeping its colours) in order
+  with the new server's first events: the old frame stays until the new
+  server's first `flush`, so there is no blank frame, no shell and no TUI
+  between. The overlay, its pane, its placement and the keys are not
+  touched; main hears nothing (no `ended`). The old server's GUI windows
+  are closed on the page.
+- _The pane_ (`neovimRestart.ts`): the new server is the old one's child,
+  not the pane's, so whatever waited on the old one would see it exit 0 —
+  the shim would give the pane back to the shell and `git commit` would go
+  on with the message unedited; the `devhub-nvim` window would close. So
+  the shim and the `devhub-nvim` window's keeper (now a `sh` around the
+  headless Neovim) put a directory of their own in the server's
+  environment (`DEVHUB_NVIM_STATE`, which the restarted server inherits);
+  DevHub's setup writes the server's pid there at every attach and, at
+  `VimLeave`, `restart` (`v:exitreason`) or the status (`v:exiting`). After
+  the first server exits, the program waits on each restarted server by
+  its pid and ends with the last one's status: `:restart` then `:wq` in a
+  `git commit` makes the commit, `:cq 3` after a restart is status 3.
+- A `devhub-nvim` Neovim that restarted is adopted again by its socket at
+  the next open, as after a DevHub restart (its `$TMUX_PANE` is the
+  keeper's, inherited).
+- Neovim 0.11 and older have no `:restart` and never write `restart`:
+  nothing changes there. Checked on 0.12.6 with the dotfiles' config: in a
+  pane (session and splits back, the pane still the shim's), in the
+  `devhub-nvim` window (the next `devhub -g` opens in the restarted one),
+  and in `git commit`'s editor (`:restart`, then `:wq` commits). Not
+  checked over SSH.
+
 ## What works
 
 Verified against Neovim 0.9.5, 0.11.5 and 0.12.6 (`neovimUi.real.test.ts`, and a

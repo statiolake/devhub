@@ -17,6 +17,7 @@
 
 import { MsgpackExt, decode } from "./msgpack.js";
 import { LAYERS_LUA } from "./neovimGuiLayers.js";
+import { RESTART_STATE_LUA } from "./neovimRestart.js";
 import type { NeovimRpc } from "./neovimRpc.js";
 
 /** What the GUI hears from its Neovim (`neovimUiSessions.ts` sends it on). */
@@ -775,6 +776,8 @@ export class NeovimUi {
 			this.attached = false;
 		}
 		await this.client.request("nvim_exec_lua", [SETUP_LUA, [channel]]);
+		// What a pane's program needs to follow a `:restart` (0.12).
+		await this.client.request("nvim_exec_lua", [RESTART_STATE_LUA, []]);
 		// Views, inline cards and decorations (`gui.view`, `gui.inline`,
 		// `gui.decorate`): the same module, grown by its own file.
 		await this.client.request("nvim_exec_lua", [LAYERS_LUA, []]);

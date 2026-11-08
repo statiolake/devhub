@@ -48,9 +48,16 @@
  * when no UI attaches within ten seconds (the terminal is not on screen, say):
  * then the Neovim waiting for it is ended and the TUI runs instead, with the
  * same arguments.
+ *
+ * # `:restart`
+ *
+ * Neovim 0.12's `:restart` replaces the server with one it starts itself, on
+ * the same socket: the script keeps the pane, and its exit status is the
+ * last server's (`neovimRestart.ts`).
  */
 
 import { shellQuote } from "../runtime/quote.js";
+import { NVIM_STATE_VARIABLE, followRestartSh } from "./neovimRestart.js";
 
 /** The pane option the script names its socket in. */
 export const NVIM_SOCKET_OPTION = "@devhub-nvim";
@@ -149,10 +156,10 @@ trap '' INT QUIT TSTP
 # its socket meanwhile; it starts headless instead, without that wait.
 case $("$real" --version 2>/dev/null | sed -n 1p) in
 "NVIM v0."[0-9]"."*)
-	DEVHUB_NEOVIM_GUI=1 "$real" --headless --listen "$socket" "$@" </dev/null >/dev/null 3>&- &
+	DEVHUB_NEOVIM_GUI=1 ${NVIM_STATE_VARIABLE}=$dir "$real" --headless --listen "$socket" "$@" </dev/null >/dev/null 3>&- &
 	;;
 *)
-	DEVHUB_NEOVIM_GUI=1 "$real" --embed --listen "$socket" "$@" <&3 >/dev/null 3>&- &
+	DEVHUB_NEOVIM_GUI=1 ${NVIM_STATE_VARIABLE}=$dir "$real" --embed --listen "$socket" "$@" <&3 >/dev/null 3>&- &
 	;;
 esac
 pid=$!
@@ -174,6 +181,11 @@ while kill -0 "$pid" 2>/dev/null; do
 done
 wait "$pid"
 status=$?
+# :restart (0.12): the server it started takes over on the same socket, the
+# old one's child and not this script's; the pane stays the Neovim's until
+# the last of them ends, with its status (neovimRestart.ts).
+state=$dir
+${followRestartSh()}
 cleanup
 exit "$status"
 `;

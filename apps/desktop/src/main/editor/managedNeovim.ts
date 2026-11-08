@@ -45,6 +45,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceTerminalTarget } from "../terminal/ports.js";
 import { NeovimClient, type NeovimRpc } from "./neovimRpc.js";
+import { NVIM_STATE_VARIABLE, followRestartSh } from "./neovimRestart.js";
 import {
 	themeEnvironment,
 	type PublishedTheme,
@@ -241,18 +242,32 @@ const PANE_LUA = "return vim.env.TMUX_PANE";
  * What the keeper pane runs: a headless Neovim on the socket, with the
  * person's own config. `DEVHUB_NEOVIM_GUI=1` is there from the first line of
  * their config, so it can tell DevHub's GUI from a terminal before any UI has
- * attached (`g:devhub_gui` is set on attach, `neovimUi.ts`).
+ * attached (`g:devhub_gui` is set on attach, `neovimUi.ts`). A `sh` keeps the
+ * pane while it runs and, after a `:restart` (0.12), while the server that
+ * took over runs (`neovimRestart.ts`): the pane is the Neovim's until the
+ * last of them ends.
  */
 export function neovimArgv(nvim: string, socketPath: string): string[] {
 	return [
-		"env",
-		"DEVHUB_NEOVIM_GUI=1",
+		"sh",
+		"-c",
+		KEEPER_SH,
+		"devhub-nvim",
 		nvim,
 		"--headless",
 		"--listen",
 		socketPath,
 	];
 }
+
+const KEEPER_SH = `state=$(mktemp -d "\${TMPDIR:-/tmp}/devhub-nvim.XXXXXX") || state=/nonexistent
+DEVHUB_NEOVIM_GUI=1 ${NVIM_STATE_VARIABLE}=$state "$@" &
+pid=$!
+wait "$pid"
+status=$?
+${followRestartSh()}
+rm -rf "$state"
+exit "$status"`;
 
 /**
  * Tell a Neovim the theme DevHub wears. `g:devhub_theme` is its name — what

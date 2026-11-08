@@ -7,6 +7,7 @@ import {
   initialUiState,
   layoutGrids,
   placeUnplacedWindows,
+  RESTARTED_EVENT,
 } from "./redraw";
 
 const rows = (id: number, state = initialUiState()) => {
@@ -15,6 +16,30 @@ const rows = (id: number, state = initialUiState()) => {
 };
 
 describe("the redraw reducer", () => {
+  it("forgets the old server's screen when a :restart's server attaches, keeping its colours", () => {
+    const state = initialUiState();
+    applyRedraw(state, [
+      ["default_colors_set", [0x111111, 0x222222, 0x333333]],
+      ["hl_attr_define", [5, { bold: true }, {}, []]],
+      ["grid_resize", [2, 4, 1]],
+      ["win_pos", [2, 1000, 0, 0, 4, 1]],
+      ["grid_line", [2, 0, 0, [["old", 5]]]],
+    ]);
+    const changes = applyRedraw(state, [
+      [RESTARTED_EVENT, []],
+      ["grid_resize", [3, 4, 1]],
+      ["grid_line", [3, 0, 0, [["new"]]]],
+      ["flush", []],
+    ]);
+    expect([...state.grids.keys()]).toEqual([3]);
+    expect(state.windows.size).toBe(0);
+    expect(state.hl.size).toBe(0);
+    expect(state.defaults.background).toBe(0x222222);
+    expect(changes.grids.has(2)).toBe(true);
+    expect(changes.layout && changes.colors && changes.flushed).toBe(true);
+    expect(rows(3, state)[0]?.trimEnd()).toBe("new");
+  });
+
   it("makes a grid, writes a line with repeats and carried highlights", () => {
     const state = initialUiState();
     const changes = applyRedraw(state, [
