@@ -84,7 +84,7 @@ TUI Neovim in a tmux pane is gone.)
 `ext_multigrid`, `ext_hlstate`, `ext_popupmenu`, `ext_cmdline` and
 `ext_tabline`. `ext_hlstate` only adds the groups each highlight is made of
 (`hl_attr_define`'s info: `ui_name`, `hi_name`); the page keeps them on the
-highlight and knows a selection, a pill, a diff's filler and the
+highlight and knows a diff's filler and the
 end-of-buffer `~` by name, not by colour.
 `ext_messages` stays off, on 0.11 too: it is still marked experimental there,
 and it hands the GUI every prompt Neovim would otherwise draw and wait on —
@@ -202,65 +202,37 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     kitty and WezTerm draw them, since devicons, lualine and completion
     menus all put a space after their icons. A completion kind that starts
     with an icon (lspkind) shows that icon in the popup menu.
-  - Selections and search matches (cells whose highlight is made of
-    `Visual`, `Search`, `CurSearch`, `IncSearch`, `Substitute` or the group
-    their links end at, when it has a ground; `ext_hlstate`) are rounded
-    shapes (`chrome.ts`): a run takes the
-    ground beside it and is filled over that with its corners rounded where
-    the row above or below does not go on, and its inside corners filled
-    round where it does, so a selection of several lines is one outline.
-    A row is repainted with its neighbours while such colours are about.
+  - Selections and search matches are their highlight's own fill, square
+    and continuous: the whole cell, `linespace` included, with no seam
+    between cells or rows (a terminal's grid shows one).
   - A window separator's cell is drawn as the two sides meeting
     (`separatorsOf`): each half in the ground beside it, its line between.
   - The `~` past the end of a buffer (in `EndOfBuffer`) is not drawn while
     the window's `fillchars` has no `eob:` of the person's
     (`isEndOfBuffer`); a `:setlocal fillchars` is seen at once
     (`OptionSet`, and on `FileType`/`BufWinEnter` when a window's differs).
-  - Diagnostics' virtual text and inlay hints with a ground of their own
-    are pills; a diff's filler rows (the default `diff:` `-`) are hatched.
+  - A diff's filler rows (the default `diff:` `-`) are hatched: thin
+    diagonals in the foreground, continuous from row to row.
   - A menu's scrollbar made of one-column floats (blink.cmp, nvim-cmp) on
     a menu's right edge is an overlay scrollbar: the gutter not drawn, the
     thumb a thin bar.
-  - A fold column (`foldcolumn`, cells in `FoldColumn`/`CursorLineFold`)
-    is VS Code's gutter: a closed fold's `+` a chevron pointing right,
-    always; an open fold's `-` a chevron pointing down, on the cursor's row
-    and while the pointer is over the window; a fold's extent (`│`) not
-    drawn. Clicks and `za`/`zc`/`zo` are Neovim's as before; a person's own
-    `foldopen:`/`foldclose:`/`foldsep:` is drawn as they set it.
-  - Status lines and winbars are bars (`chrome.ts`'s `barsOf`,
-    `barLayout`): the runs not in the bar's commonest colour are pills,
-    and Powerline's filled separators (U+E0B0, E0B2, … even code points)
-    between them are not drawn, a gap of the bar's ground instead.
+  - Status lines, winbars, virtual text, inlay hints, the fold column,
+    indent guides and `MatchParen` are what Neovim and the person's config
+    say, cell for cell; only the glyphs a terminal approximates are drawn
+    as what they mean (box drawing, blocks and Powerline separators as
+    geometry, continuous across `linespace`).
+  - The underline family and strikethrough (`strokes.ts`) are drawn as type
+    is: as thick as the face asks, on whole device pixels under the
+    baseline; undercurl a true wave whose phase is the row's (runs side by
+    side make one wave), dots round, dashes even, strikethrough through
+    the lowercase letters.
   - A full repaint of a 164×43 screen with two windows and a float takes
     about 6 ms (15 000 cells at `devicePixelRatio` 2: about 4 ms); there is
     no glyph atlas, and none has been needed.
 - The cursor follows `guicursor`: its shape, its highlight, and its blink
   (`blinkwait`/`blinkon`/`blinkoff`, restarted on every move; each edge
-  fades over 120 ms of its phase). A block's corners are a little rounded. It glides to a
+  fades over 120 ms of its phase). Square, as the cell. It glides to a
   new cell in 70 ms outside Insert mode (none with reduced motion).
-- Each window gets an overlay scrollbar from `win_viewport`, shown while the
-  view moves and faded out after; its thumb follows the display in pixels.
-  Along it, always shown, marks as VS Code's overview ruler (`marks.ts`):
-  git's changed lines on the left (gitsigns' hunks, in `GitSignsAdd`/
-  `Change`/`Delete` or `Added`/`Changed`/`Removed`), the search's matches
-  in the middle while `hlsearch` shows them (`Search`'s ground; buffers up
-  to 100 000 lines, `matchbufline`, cached per pattern and change), the
-  diagnostics on the right (the worst on top), the cursor across. Lua sends
-  the lines (`M._marks`, after `DiagnosticChanged`, `GitSignsUpdate`, edits,
-  window changes, and — no event says a search or `:nohlsearch` happened —
-  when Neovim is idle and the pattern or `v:hlsearch` differ from what was
-  sent); the cursor's line is `win_viewport`'s. The scrollbar (its last 8
-  pixels of the window, shown under the pointer) is a control, as VS
-  Code's (`scrollbar.ts`), each part done by Neovim with its own commands
-  (`SCROLLBAR_LUA`) and each with its keys, named in the track's tooltip:
-  the thumb drags (`<C-e>`/`<C-y>` with a count, a request at a time; the
-  cursor pushed as scrolling pushes it — keys: `gg`, `G`, `{count}%`,
-  `<C-d>`); a mark, within 3 pixels, goes to its line in that window
-  (`m'` first, so `<C-o>` comes back; the diagnostic's or the match's
-  column, else the first non-blank; folds opened as a jump opens them —
-  keys: `]d`/`[d`, `n`/`N`, the person's hunk motions such as gitsigns'
-  `]c`/`[c`); the rest of the track pages (`<C-f>`/`<C-b>`). The thumb
-  wins over the marks it covers; no new keymaps.
 - A window scrolls in pixels (`smoothScroll.ts`; 0.10+, which says how far
   a window scrolled in `win_viewport`'s `scroll_delta`): the trackpad and
   the wheel move its text pixel for pixel while Neovim's `topline` stays a
@@ -347,10 +319,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   pixels (above); sideways, with a modifier or over anything else, pixels
   accumulated into line steps. A border a drag resizes (`sashAt`: the
   column between windows side by side, the row between a window and the
-  one under it) gives the pointer `col-resize`/`row-resize` and, after
-  300 ms, a 4-pixel line in the accent colour, as VS Code's sash; lit at
-  once and following the pointer while dragged. Keys: `<C-w><`, `<C-w>>`,
-  `<C-w>+`, `<C-w>-`, `<C-w>=`.
+  one under it) gives the pointer `col-resize`/`row-resize`, nothing more.
+  Keys: `<C-w><`, `<C-w>>`, `<C-w>+`, `<C-w>-`, `<C-w>=`.
 - Resize: the view's size over the cell size, `nvim_ui_try_resize`.
 - Focus: `nvim_ui_set_focus` (FocusGained/FocusLost), told once per
   change. The editor has the keyboard when its textarea is focused _and_
@@ -431,22 +401,21 @@ local img = gui.image(0, 5, '~/shot.png', { height_rows = 10 }) -- under line 5
 img.clear()
 ```
 
-- **notify** — fidget-like: compact lines at the bottom right, just above
-  the lowest window's status line, under the name of their source
-  (`group`), by level (`info`, `warn`, `error`, `debug` or
-  `vim.log.levels.*`), fading after 4–8 s (or a click). Each source is a
-  card, every card of the stack one width (the widest's, 280–480 px) on
-  one right edge as VS Code's and Zed's, a line leading with its mark
-  (level, spinner, tick), in the colorscheme's floats' colours (`NormalFloat`, else
-  `Normal`; the levels in the diagnostics' colours), with `gui.popup`'s
-  hairline and a soft shadow, so it reads over any text; a line whose
-  time is up fades and folds away, and a card whose every line is
-  leaving fades as one. A `key` updates the
-  notification it named in place, so work in progress (`progress = true`,
-  `percent`, `done`) spins, shows its percentage and ticks when done (gone
-  2 s later). devhub.nvim's `setup{ notify = true }` makes `vim.notify` this
-  (its `title` is the source) and shows `LspProgress` (0.10+) the way fidget
-  does. Not `ext_messages`: Neovim's messages stay Neovim's.
+- **notify** — in fidget's spirit: quiet lines at the bottom right, just
+  above the lowest window's status line, right-aligned, in the editor's
+  own face, under the name of their source (`group`), by level (`info`,
+  `warn`, `error`, `debug` or `vim.log.levels.*`), fading after 4–8 s (or
+  a click). Each message is followed by its title, its percentage and
+  fidget's mark (a dots spinner, a check, or the level's word in its
+  colour, `DiagnosticInfo`/`Warn`/`Error`); the text sits on the editor's
+  ground (`Normal`, as fidget's window), so it reads over code with no box
+  around it: no card, no edge. A line whose time is up fades and folds
+  away. A `key` updates the notification it named in place, so work in
+  progress (`progress = true`, `percent`, `done`) spins, shows its
+  percentage and ticks when done (gone 2 s later). devhub.nvim's
+  `setup{ notify = true }` makes `vim.notify` this (its `title` is the
+  source) and shows `LspProgress` (0.10+) the way fidget does. Not
+  `ext_messages`: Neovim's messages stay Neovim's.
 - **image** — an extmark's `virt_lines` reserve `height_rows` blank rows
   under the line, so Neovim lays them out (the cursor steps over them,
   `:vsplit` shows them twice) and DevHub paints the image there. A path is
@@ -631,14 +600,17 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   lines).
 - An inline card's height is whole rows: up to a row of its slot is blank
   under it.
+- Two images under one line are placed at its first virtual row, one over
+  the other.
 - Notifications sit above the lowest window's status line, over whatever
-  is there (a panel's hint line included), on a card of their own.
+  is there (a panel's hint line included), each line on the editor's
+  ground.
 - A popup carries the highlights its caller adds to a markdown float's
   buffer only where they fall on fenced code (signature help's active
   parameter); one on prose is not drawn. A plain text float's (a
   diagnostic's) are carried.
 - No semantic styling of diagnostics yet (`ext_hlstate` names the groups,
-  only selections, pills, fillers and `~` use them).
+  only fillers and `~` use them).
 - A GUI buffer shown in two windows has its content (one page, one terminal
   client) in one of them — the current window when it is one, else the
   first — and the other says where it is; a click there moves the cursor in.
@@ -665,33 +637,55 @@ DevHub pane terminal session of the Workspace (on the Workspace's machine
 even when Neovim runs in a container), `<C-w>` navigation, a `terminal`
 layout preset, and the Sidebar's terminal activity marks.
 
-**Toward a GUI editor: what still looks like a terminal.** Neovim is the
-modal editing engine — buffers, modes, motions, keymaps, layout, plugins'
-logic; DevHub is the editor's presentation. Whatever looks like a terminal
-only because the protocol speaks in cells is an implementation detail to
-draw as a modern GUI editor would, as long as what is where, what a click
-or a key does, and what a plugin sees stay the same. Done: geometric box
-drawing, blocks and Powerline separators; floats framed, cut at their line,
-titled with labels; panels of floats under one shadow; native popupmenu,
-command line, tab line, hover popups, notifications; smooth scroll and
-cursor; and, from the list below, 1–5 and 9–11 (round 1), then 7's fold
-column and 6's message panel, with 3–5 matched by highlight name
-(`ext_hlstate`) instead of colour (round 2; round 2 also gave
-notifications a card, signature help its active parameter and the tab
-strip a current tab joined to the editor), then 8, 12 and 13 (round 3:
-pixel scrolling; round 3 also gave a notification stack one width, a
-spinner shown once, and the cursor a hollow look while another DevHub
-view has the keyboard), then 14 and 15 (round 4, below). The yardstick for chrome
-(separators, bars, menus, scrollbars) is VS Code and Zed; the text area
-stays cell-aware, as a modal editor's is. Verified on 0.11.5 and 0.12.6
-with a real config (splits, floats and panels, the command line, the
-completion menu, IME preedit, `:terminal`, diff mode, folds, CJK,
-`linespace`): a full-window scroll costs what it did before. Round 3 again
-on both, with the wheel over splits, diff (`scrollbind`), floats and the
-command line, in Insert mode and in `:terminal`; wheel to screen, measured
-in the page under Xvfb: 0.1–2 ms while Neovim's lead covers it (the
-display moves in the wheel's own event), one round trip (10–40 ms) for the
-first line of a gesture, against 20–100 ms per step before.
+**Toward a GUI editor: what still looks like a terminal.**
+
+_The principle (binding since round 5)._ Neovim is the modal editing
+engine — buffers, modes, motions, keymaps, layout, plugins' logic; DevHub
+is its presentation. The goal is not VS Code's or Zed's feature set or
+look: it is to remove the compromises a terminal forces on expressing
+things simply, and to render what Neovim and the person's config express,
+faithfully and more precisely. DevHub adds no features and no adornments
+of its own. Simple, quiet and beautiful: nothing competes for attention or
+interrupts thought.
+
+- Do: draw what cells only approximate as what it means — a separator as
+  a true line between two grounds, a selection as a continuous fill with
+  no seam between cells, `~` past the end left out, a diff's filler
+  hatched, box drawing and Powerline glyphs as crisp geometry, a float's
+  border as a line with the editor showing through its gaps, underlines
+  and undercurl as a typesetter strokes them. Proper vertical centring and
+  bar height in status lines.
+- Do: keep the main window square — selections, matches, the cursor,
+  status line and winbar runs, virtual text, `MatchParen`, tabs, the
+  message panel. Rounded corners only on floats and popups: they are
+  literally lifted off the main window.
+- Do: soften only what is high in volume and transient and would draw too
+  much attention if crisp (fidget's progress). Anything persistently just
+  there stays crisp — truncated lines, hovers, floats, menus, the status
+  line's filename, the message panel: blurring what is always there makes
+  the whole editor feel blurred and costs focus.
+- Don't: reinterpret the person's design (pills in their status line,
+  Powerline separators turned into gaps), add what their config does not
+  ask for (fold chevrons, indent guides, scrollbars and overview marks of
+  DevHub's own, a box around the matching bracket, a lit sash), or wrap
+  quiet information in cards, hairlines and shadows (a notification
+  centre).
+
+History: geometric box drawing, blocks and Powerline separators; floats
+framed, cut at their line, titled with labels; panels of floats under one
+shadow; native popupmenu, command line, tab line, hover popups,
+notifications; smooth scroll and cursor; then rounds 1–4 by the list
+below, measured against VS Code and Zed. Round 5 re-judged all of it by
+the principle and took back what it rules out (struck through below).
+Verified on 0.11.5 and 0.12.6 with a real config (splits, floats and
+panels, the command line, the completion menu, IME preedit, `:terminal`,
+diff mode, folds, CJK, `linespace`): a full-window scroll costs what it
+did before. Round 3 again on both, with the wheel over splits, diff
+(`scrollbind`), floats and the command line, in Insert mode and in
+`:terminal`; wheel to screen, measured in the page under Xvfb: 0.1–2 ms
+while Neovim's lead covers it (the display moves in the wheel's own
+event), one round trip (10–40 ms) for the first line of a gesture, against
+20–100 ms per step before.
 
 Round 4 made pixel scrolling exact beyond the text itself and held it up
 under real conditions. What sits on the text (inline images and cards,
@@ -722,6 +716,39 @@ treesitter-context, and a header of DevHub's would have to guess at
 scopes Neovim does not report; the cursor's glide (70 ms) was already
 there.
 
+Round 5 finished pixel scrolling's edges, then — on the person's word —
+re-judged everything by the principle above. Kept and added: a float at a
+buffer position whose line Neovim, led ahead, has scrolled out of its view
+(Neovim pins it to the window's top edge) stays on its line while the
+display shows it (`pinnedRows`; a probe comparing the float with its
+line's row every frame: 0 off of 100–180 frames per gesture on 0.11.5 and
+0.12.6, against every frame past the line before); a line taller than the
+window scrolls a row at a time (`smoothscroll` set on that window while
+its view is inside the line, the person's value back once it leaves, its
+buffer leaves the window, or a window is split from it; before, the
+display jumped 1 700 px at once); a drag from a window border or status
+line resizes (it stopped at the first window it crossed), with a resize
+pointer and nothing lit; tabs keep their names and the strip scrolls,
+bringing the current tab into view on `gt`; underlines and undercurl drawn
+as type is (`strokes.ts`); notifications back to fidget's quiet lines.
+Taken back: DevHub's window scrollbar with its overview marks (and the
+clickable marks, paging and thumb drag built for it this round), rounded
+selections and matches, status line pills and Powerline gaps, virtual
+text pills, the `MatchParen` box, fold chevrons, the guide restyling, the
+message panel's hairline and shadow, rounded cursor and tabs, a lit sash,
+notification cards, and hover markdown's heading sizes and quote bar.
+The person's status line now matches a plain terminal's rendering of
+their config (xterm, checked side by side) except where the terminal
+compromises: glyph geometry and centring. Re-checked together on a fresh
+build, 0.11.5 and 0.12.6: riders with notifications and the message panel
+(0 misplaced of 635 checks), pixel scrolling with an IME preedit, a Visual
+selection and through a diff (`scrollbind`, filler hatched, both sides in
+line), floats, the picker, the command line, blink, `:terminal`, folds,
+CJK and `linespace`. Proposed, not built (mocks first, the person picks):
+a feathered translucent backdrop behind fidget's lines, a fold's fill as
+a fading hairline when its fill character is a line, a very short slide
+of the lines `dd`/`p`/`o` move.
+
 Candidates, by visual impact and then by compatibility risk (the
 least risky first within a band):
 
@@ -734,25 +761,16 @@ least risky first within a band):
    editor groups. A status line drawn as a line beside it (`─`, a
    person's `stl:`) meets that line instead of stopping half a cell short.
    A blank separator (`vert: `) is a band by choice and stays one. Clicks and drags on the column stay Neovim's.
-2. _Statusline and winbar as cell rows_ — done: a status line (grid 1's
-   row under a window, not the command line's `cmdheight` rows) and a
-   winbar (a window's top margin) is a bar of its commonest colour; runs of
-   other colours are pills on it (a pixel more than the text each side,
-   rounded at their outer ends, touching runs one pill), and Powerline's
-   filled separators between them are left out as a gap of the bar's
-   ground — lualine's sections read as chips. Text, colours and click
-   regions stay cell for cell. A hairline above the bar was left out: a
-   status line in `Normal`'s ground (lualine's `c`, a line of `─`) has a
-   line or nothing by design, and one in its own colour needs none.
-3. _Selection, search and cursorline as per-cell rectangles_ — done:
-   runs in `Visual`'s, `VisualNOS`'s and the searches' backgrounds (asked
-   of Neovim by group name, `chrome.ts`'s `THEME_LUA`, whenever highlights
-   change) are one shape per row with rounded outer corners and filled
-   inner ones where the next row runs on (VS Code's selection), the line's
-   `linespace` included; colours unchanged. `CursorLine` stays a flat band,
-   edge to edge, as editors draw it. Round 2: matched by group name
-   (`ext_hlstate`), not by colour, so a buffer's own text that happens to be
-   in a selection's colour is no longer shaped.
+2. ~~_Statusline and winbar as cell rows_~~ — round 1 drew a status line
+   as a bar of its commonest colour with the other runs as rounded pills
+   and Powerline's separators turned into gaps. Taken back in round 5: it
+   reinterpreted the person's design (theirs floats the file name at the
+   right on a line). Now exactly what the status line says; only the
+   separator glyphs are crisp geometry and the text centred in the row.
+3. _Selection, search and cursorline_ — a selection or match is its
+   highlight's own fill, square and continuous across cells and
+   `linespace` (round 5; rounds 1–2 drew rounded outlines with filled inner
+   corners, as VS Code's — taken back). `CursorLine` a flat band.
 4. _`~` end-of-buffer markers and the blank rows past the end_ — done:
    while the global `fillchars` has no `eob:` (asked with the theme), a
    window row that is only a `~` in `EndOfBuffer`'s colour is drawn
@@ -787,51 +805,29 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
    second message UI here. What landed instead is safe: messages that
    scroll up over the windows (`msg_set_pos` with `scrolled`: `:ls`, an
    error's trace, a hit-enter or `confirm()` prompt) are a panel risen
-   from the bottom — a hairline and a shadow along its top edge — and the
-   notifications move above it, so a prompt is never under a toast.
+   from the bottom and the notifications move above it, so a prompt is never under a toast.
    Prompts are answered by keyboard as before (checked: hit-enter,
-   `confirm()` answered with `n`).
-7. _Sign, number and fold columns_ — fold column done (round 2): its
-   default `-`/`+` are chevrons (an open fold's only on the cursor's row
-   and under the pointer, as VS Code's `showFoldingControls: mouseover`),
-   its `│` nothing; found by highlight name (`ext_hlstate`), so a
-   `statuscolumn` that draws its own fold marks keeps them. Nothing is
-   added when `foldcolumn` is 0: a chevron needs a column Neovim reserves,
-   and inventing one in the number column would put a GUI-only target in
-   a cell Neovim thinks is a digit's. Round 3 looked again at VS Code's
-   hover chevron beside the line numbers: drawing it over the number
-   column would need every visible line's fold level from Lua on each
-   hover and redraw, cover a digit or the sign before it, and give the
-   mouse a target the keyboard does not have; not default-safe. The clean
-   way is the person's: `foldcolumn=auto:1` (a column only where a fold
-   is, drawn as chevrons here) or a `statuscolumn` with its own marks. Signs were left: gitsigns' bars are
-   already drawn geometrically, continuous across `linespace`, and
-   diagnostics' signs are the config's icons, centred by the icon fitting.
-   Line numbers keep their weight (a lighter weight read as disabled
-   against the code).
-8. _Indent guides_ — done (round 3): a guide plugin's line
-   (indent-blankline, snacks.indent, mini.indentscope, hlchunk; known by
-   its groups, `ext_hlstate`) is one light line at the left edge of the
-   indent column, solid and continuous across `linespace`, in the
-   plugin's colour, whatever character it chose (`▎` was a quarter cell,
-   `╎` dashed, `│` centred), as VS Code and Zed draw guides. Not dimmed:
-   the colour is the colorscheme's. `listchars` stay text.
-9. _Diagnostic virtual text and inlay hints_ — done where the
-   colorscheme gives them a ground (`DiagnosticVirtualText*`,
-   `LspInlayHint` with a `bg`, asked with the theme): their runs are pills
-   a pixel more than the text each side, rounded at their ends, the
-   ground beside them around; their cells stay reserved where Neovim put
-   them, so the cursor and `$` land as before. Smaller type was left out:
-   text narrower than its cells would leave a gap that reads as a bug.
-   Without a `bg` they are text, as before.
+   `confirm()` answered with `n`). Round 5 took its hairline and shadow back:
+   it is Neovim's message grid, square and crisp.
+7. _Sign, number and fold columns_ — ~~fold chevrons~~ (rounds 2–3 drew
+   the fold column's `-`/`+` as chevrons, an open fold's only on hover;
+   taken back in round 5: an invention). The fold column is what
+   `foldcolumn` and `fillchars` say, only when the config asks for it.
+   Signs and numbers as Neovim draws them.
+8. ~~_Indent guides_~~ — round 3 redrew any guide plugin's character as
+   one light line at the cell's left edge; taken back in round 5. A guide
+   is the plugin's own character where its config draws it; box-drawing
+   characters are continuous across `linespace` as all box drawing is.
+9. ~~_Diagnostic virtual text and inlay hints as pills_~~ — taken back in
+   round 5: square, as the highlight says.
 10. _Diff filler lines_ — done: a row that is, from some column on, only
     `-` in `DiffDelete`'s ground (the default `diff:`) is a hatched band
     of thin diagonals in its foreground, continuous from row to row, as
     GUI diff views mark lines the other side has. A person's `diff:` is
     kept. Folds' `+--  12 lines` stay Neovim's text: `foldtext` is the
     person's, and a fold bar of DevHub's would have to guess at it.
-11. _The block cursor and its cell_ — done: the block's corners are a
-    little rounded (a bar's ends too), it still shows the character in the
+11. _The block cursor and its cell_ — done: the block is square (round 5; its
+    rounded corners were taken back), it still shows the character in the
     cursor's foreground, and the blink (`guicursor`'s) fades in and out
     over 120 ms of its phases, as VS Code's "smooth" blink; a hard blink
     with reduced motion.
@@ -846,17 +842,12 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
     stays the size Neovim gave it, and what the display needs beyond it is
     the ghost of what Neovim drew before. `scrolloff` and the last row's
     padding stay behaviour, kept.
-14. _Scrollbar marks_ — done (round 4): diagnostics, the search's
-    matches, git's hunks and the cursor along each window's scrollbar, as
-    VS Code's overview ruler (The page, above); round 5 made them and the
-    track clickable and the thumb draggable. No minimap: a minimap of
-    a modal editor's buffer is a second view to keep in step for little.
-15. _The matching bracket_ — done (round 4): `MatchParen`'s cells (by
-    group name, when it has a ground) are a box a little inside the cell,
-    rounded, with a hairline in the bracket's colour, as VS Code's
-    `editorBracketMatch`; each cell its own box. Without a ground (a
-    colorscheme's bold or coloured text alone) the text stays as it is.
-
+14. ~~_Scrollbar marks_~~ — round 4 drew an overlay scrollbar on each
+    window with VS Code's overview ruler along it; round 5 made it
+    clickable, then took all of it back: DevHub's own invention, not the
+    person's. Scrollbars a plugin draws (a menu's) are kept, drawn thin.
+15. ~~_The matching bracket_~~ — round 4 boxed `MatchParen`'s cells with a
+    hairline, as VS Code's; taken back in round 5: the highlight as it is.
 **Also:** dev containers (Neovim in the container through `docker exec`, its
 socket reached by a relay like the `devhub` command's), delivering `nvim` to
 hosts like tmux and bash are, `ext_messages` on 0.10+, ligatures, a
