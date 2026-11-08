@@ -33,7 +33,7 @@ import { basename, join } from "node:path";
 import { activityCounters, COUNTER } from "../diagnostics/counters.js";
 import { RollingTally } from "../diagnostics/rollingTally.js";
 import { runBounded } from "../terminal/command.js";
-import { openPty, type Pty } from "../terminal/pty.js";
+import { openPty, type Pty, type PtyPlan } from "../terminal/pty.js";
 import { gitDirectoryOf } from "./gitDirectory.js";
 import { openByteStream } from "./byteStream.js";
 import { resolveExecutable } from "../shell/runtimes.js";
@@ -264,6 +264,11 @@ export class LocalRuntime implements Runtime {
 
 	spawnPty(request: PtyRequest): Pty {
 		return openPty(request);
+	}
+
+	/** Here a PTY is the program itself, and nothing is held for it. */
+	ptyPlan(request: PtyRequest): PtyPlan {
+		return { launch: request, ended: () => undefined };
 	}
 
 	spawnStream(request: StreamRequest): ByteStream {

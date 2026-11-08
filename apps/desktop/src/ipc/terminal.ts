@@ -75,6 +75,7 @@ export type TerminalErrorCode =
 	| "workspace_closing"
 	| "workspace_root_missing"
 	| "workspace_root_inaccessible"
+	| "host_restarted"
 	| "internal";
 
 export interface TerminalError {
@@ -103,6 +104,7 @@ const ERROR_SUMMARIES: Readonly<Record<TerminalErrorCode, string>> = {
 	workspace_closing: "This workspace is closing.",
 	workspace_root_missing: "The workspace folder no longer exists.",
 	workspace_root_inaccessible: "The workspace folder cannot be read.",
+	host_restarted: "The terminal host restarted. Reconnecting.",
 	internal: "The terminal runtime could not complete the request.",
 };
 
@@ -287,7 +289,25 @@ export const TERMINAL_CHANNELS = {
 	acknowledge: "devhub:terminal:acknowledge",
 	detach: "devhub:terminal:detach",
 	frame: "devhub:terminal:frame",
+	/**
+	 * Main → page: the page's `MessagePort` to the pty host of a generation
+	 * (`main/ptyHost/`). A client the host runs sends its frames and takes its
+	 * input, resizes and acks there; attach and detach stay main's.
+	 */
+	port: "devhub:terminal:port",
+	/** Main → page: the pty host of a generation ended; its clients are gone. */
+	restarted: "devhub:terminal:restarted",
 } as const;
+
+/**
+ * What main answers an attach with: the result, and for a client the pty host
+ * runs, the generation of the host whose port carries it. The preload makes a
+ * `TerminalResult` of it for the page.
+ */
+export interface TerminalAttachReply {
+	readonly result: TerminalResult<TerminalAttachReceipt>;
+	readonly hosted?: number;
+}
 
 /**
  * What a terminal request replies.

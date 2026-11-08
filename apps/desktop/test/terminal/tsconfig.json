@@ -20,6 +20,9 @@
     "../../src/main/terminal/launcher.ts",
     "../../src/main/terminal/devhubTerminalEntry.ts",
     "../../src/main/terminal/attachments.ts",
-    "../../src/main/terminal/service.ts"
+    "../../src/main/terminal/service.ts",
+    "../../src/main/terminal/childRun.ts",
+    "../../src/main/terminal/cleanSpawn.ts",
+    "../../src/main/ptyHost/host.ts"
   ]
 }

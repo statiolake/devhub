@@ -65,7 +65,12 @@ import {
 	type TerminalFrame,
 	type TerminalSize,
 } from "../../ipc/terminal.js";
-import { type Pty, type PtyFactory } from "./pty.js";
+import {
+	type Pty,
+	type PtyFactory,
+	type PtyLaunch,
+	type PtyPlan,
+} from "./pty.js";
 import { CancellationToken, sameTarget, type TerminalTarget } from "./ports.js";
 
 const MAX_IN_FLIGHT_FRAMES = 8;
@@ -145,6 +150,14 @@ export interface AttachContext {
 	readonly environment: Readonly<Record<string, string>>;
 	readonly size: TerminalSize;
 	readonly sink: FrameSink;
+	/**
+	 * What this client's machine would run on this machine to start it
+	 * (`Runtime.ptyPlan`), for a client started in the pty host. `undefined`
+	 * (or a plan of `undefined`): the client is started here, with `spawn`.
+	 */
+	readonly plan?: (launch: PtyLaunch) => PtyPlan | undefined;
+	/** Where the page is reached from the pty host; absent: frames go to `sink`. */
+	readonly route?: HostedRoute;
 }
 
 /**
@@ -279,7 +292,12 @@ class ResizeCoalescer {
 	}
 }
 
-class Attachment {
+/**
+ * One client's data path: its PTY, the output coalescer, the ack window and the
+ * input ledger. The same code wherever the PTY is — in main, or in the pty host
+ * (`main/ptyHost/`), which runs exactly this for every page attached to it.
+ */
+export class PtyAttachment {
 	readonly flow = new FlowControl();
 	private sequence = 0;
 	private lastInputSequence = 0;
@@ -297,12 +315,11 @@ class Attachment {
 		readonly id: string,
 		readonly surfaceKey: string,
 		readonly viewLabel: string,
-		readonly target: TerminalTarget,
 		readonly targetGeneration: number,
 		private readonly pty: Pty,
 		private readonly sink: FrameSink,
 		private readonly onFinished: (
-			attachment: Attachment,
+			attachment: PtyAttachment,
 			reason: ExitReason,
 		) => void,
 	) {
@@ -558,6 +575,103 @@ class Attachment {
 	}
 }
 
+/** What one client is started as: the identity its frames carry. */
+export interface PtyAttachmentSpec {
+	readonly id: string;
+	readonly surfaceKey: string;
+	readonly viewLabel: string;
+	readonly targetGeneration: number;
+	readonly size: TerminalSize;
+}
+
+/**
+ * Bind a freshly spawned PTY to its view and say `started`.
+ *
+ * Nothing may reach the view before the `started` frame. The PTY is held
+ * paused until it is on the wire; this is the Rust reader gate, expressed where
+ * the data actually comes from. Synchronous from the spawn to the resume, so no
+ * other attach can interleave with it.
+ */
+export function startPtyAttachment(
+	spec: PtyAttachmentSpec,
+	pty: Pty,
+	sink: FrameSink,
+	onFinished: (attachment: PtyAttachment, reason: ExitReason) => void,
+): PtyAttachment {
+	pty.pause();
+	const attachment = new PtyAttachment(
+		spec.id,
+		spec.surfaceKey,
+		spec.viewLabel,
+		spec.targetGeneration,
+		pty,
+		sink,
+		onFinished,
+	);
+	pty.onData((bytes) => attachment.acceptOutput(bytes));
+	pty.onExit(() => attachment.handleExit());
+	attachment.sendStarted(spec.size);
+	pty.resume();
+	return attachment;
+}
+
+/**
+ * The view asked for a terminal and there is none: tell it in the same shape
+ * a later failure would take.
+ */
+export function reportSpawnFailure(
+	sink: FrameSink,
+	attachmentId: string,
+): void {
+	sink({
+		type: "error",
+		schemaVersion: TERMINAL_PROTOCOL_VERSION,
+		attachmentId,
+		sequence: 0,
+		error: new TerminalFailure("pty_unavailable").toWire(),
+	});
+	sink({
+		type: "exited",
+		schemaVersion: TERMINAL_PROTOCOL_VERSION,
+		attachmentId,
+		sequence: 1,
+		reason: "childExited",
+	});
+}
+
+/**
+ * Where a page's client is reached when its PTY runs in the pty host: the page
+ * (an Electron `WebContents` in DevHub; opaque here) and its channel id there.
+ */
+export interface HostedRoute {
+	readonly page: object;
+	readonly channelId: string;
+}
+
+/** One client for the pty host to start. */
+export interface HostedOpen extends PtyAttachmentSpec {
+	readonly route: HostedRoute;
+	readonly launch: PtyLaunch;
+}
+
+/**
+ * The pty host as the ledger sees it (`main/ptyHost/client.ts`).
+ *
+ * The host runs the client's data path — the PTY, the frames, the acks, the
+ * input — directly with the page, over a port of the page's own; the ledger
+ * here keeps who owns what. `open` settles once the host has started the
+ * client and put its `started` frame on the page's port, with the host's
+ * generation; it rejects as `TerminalFailure` (`pty_unavailable`, or
+ * `host_restarted` when the host ended first). What the host ends on its own
+ * comes back through `AttachmentManager.hostedEnded`.
+ */
+export interface HostedPtys {
+	/** False once the host was given up on: clients run in this process again. */
+	readonly available: boolean;
+	open(spec: HostedOpen): Promise<number>;
+	stop(id: string, reason: ExitReason): void;
+}
+
 export interface AttachmentManagerOptions {
 	/** Overridden only by tests; production opens the target machine's PTY. */
 	readonly spawn?: PtyFactory;
@@ -574,6 +688,8 @@ export interface AttachmentManagerOptions {
 		readonly surfaceKey: string;
 		readonly target: TerminalTarget;
 	}) => void;
+	/** Where clients run when a context offers a route to it; absent: here. */
+	readonly hosted?: HostedPtys;
 }
 
 interface InFlightAttach {
@@ -583,13 +699,115 @@ interface InFlightAttach {
 	readonly cancel: CancellationToken;
 }
 
+/** One attachment in the ledger, wherever its PTY is. */
+interface LedgerEntry {
+	readonly id: string;
+	readonly surfaceKey: string;
+	readonly viewLabel: string;
+	readonly target: TerminalTarget;
+	readonly targetGeneration: number;
+	stop(reason?: ExitReason): void;
+	acceptInput(sequence: number, bytes: Uint8Array): void;
+	requestResize(size: TerminalSize): void;
+	acknowledge(sequence: number): void;
+}
+
+/** A client whose PTY is in this process. */
+class LocalEntry implements LedgerEntry {
+	constructor(
+		readonly live: PtyAttachment,
+		readonly target: TerminalTarget,
+	) {}
+	get id(): string {
+		return this.live.id;
+	}
+	get surfaceKey(): string {
+		return this.live.surfaceKey;
+	}
+	get viewLabel(): string {
+		return this.live.viewLabel;
+	}
+	get targetGeneration(): number {
+		return this.live.targetGeneration;
+	}
+	stop(reason?: ExitReason): void {
+		this.live.stop(reason);
+	}
+	acceptInput(sequence: number, bytes: Uint8Array): void {
+		this.live.acceptInput(sequence, bytes);
+	}
+	requestResize(size: TerminalSize): void {
+		this.live.requestResize(size);
+	}
+	acknowledge(sequence: number): void {
+		this.live.acknowledge(sequence);
+	}
+}
+
+/**
+ * A client whose PTY is in the pty host. Its input, resizes and acks go from
+ * the page to the host directly, so asking this process for them is asking the
+ * wrong owner.
+ */
+class HostedEntry implements LedgerEntry {
+	#stopped = false;
+	#ended = false;
+	generation = 0;
+
+	constructor(
+		readonly id: string,
+		readonly surfaceKey: string,
+		readonly viewLabel: string,
+		readonly target: TerminalTarget,
+		readonly targetGeneration: number,
+		private readonly host: HostedPtys,
+		private readonly plan: PtyPlan,
+		private readonly gone: (entry: HostedEntry, reason: ExitReason) => void,
+	) {}
+
+	get isEnded(): boolean {
+		return this.#ended;
+	}
+
+	/** DevHub ends it: the host is told, and the ledger lets go at once. */
+	stop(reason: ExitReason = "detached"): void {
+		if (this.#stopped) return;
+		this.#stopped = true;
+		if (!this.#ended) this.host.stop(this.id, reason);
+		this.gone(this, reason);
+	}
+
+	/** The host says it has ended (or the host itself has). */
+	ended(reason: ExitReason): void {
+		if (this.#ended) return;
+		this.#ended = true;
+		this.plan.ended();
+		if (this.#stopped) return;
+		this.#stopped = true;
+		this.gone(this, reason);
+	}
+
+	acceptInput(): void {
+		throw new TerminalFailure("wrong_attachment");
+	}
+	requestResize(): void {
+		throw new TerminalFailure("wrong_attachment");
+	}
+	acknowledge(): void {
+		throw new TerminalFailure("wrong_attachment");
+	}
+}
+
 export class AttachmentManager {
-	private readonly attachments = new Map<string, Attachment>();
+	private readonly attachments = new Map<string, LedgerEntry>();
+	/** Every hosted client until the host says it has ended, ledger or not. */
+	private readonly hostedClients = new Map<string, HostedEntry>();
 	private readonly inFlight = new Map<number, InFlightAttach>();
 	private nextAttachKey = 1;
 	private readonly spawn: PtyFactory | undefined;
 	private readonly randomBytes: (count: number) => Uint8Array;
 	private readonly onEndedByItself: AttachmentManagerOptions["onEndedByItself"];
+	private readonly hosted: HostedPtys | undefined;
 	private generation: number;
 
 	constructor(options: AttachmentManagerOptions) {
@@ -599,6 +817,7 @@ export class AttachmentManager {
 		this.spawn = options.spawn;
 		this.randomBytes = options.randomBytes;
 		this.onEndedByItself = options.onEndedByItself;
+		this.hosted = options.hosted;
 		// The ledger starts somewhere unguessable, so a generation from one run
 		// of the app is not a usable capability in the next.
 		// Six bytes: unguessable, and still an exact integer.
@@ -662,7 +881,42 @@ export class AttachmentManager {
 	}
 
 	/**
-	 * Publish one resolved client as this surface's attachment.
+	 * One surface's previous client goes before its next one exists: a surface
+	 * that remounts, or that is opened in another page, replaces its own client
+	 * and nobody else's. The sibling surfaces of this page keep theirs.
+	 */
+	private replaceSurface(surfaceKey: string): void {
+		for (const existing of [...this.attachments.values()]) {
+			if (existing.surfaceKey === surfaceKey) existing.stop("detached");
+		}
+	}
+
+	private launchOf(context: AttachContext): PtyLaunch {
+		return {
+			file: context.file,
+			args: context.args,
+			cwd: context.cwd,
+			cols: context.size.cols,
+			rows: context.size.rows,
+			pixelWidth: context.size.pixelWidth,
+			pixelHeight: context.size.pixelHeight,
+			env: { ...context.environment },
+		};
+	}
+
+	private finished(entry: LedgerEntry, reason: ExitReason): void {
+		if (this.attachments.get(entry.id) === entry) {
+			this.attachments.delete(entry.id);
+		}
+		if (reason === "eof")
+			this.onEndedByItself?.({
+				surfaceKey: entry.surfaceKey,
+				target: entry.target,
+			});
+	}
+
+	/**
+	 * Publish one resolved client as this surface's attachment, in this process.
 	 *
 	 * Everything from here to the receipt is synchronous: the child is spawned,
 	 * registered and given its Started frame without yielding, so no other
@@ -670,85 +924,143 @@ export class AttachmentManager {
 	 */
 	attach(permit: AttachPermit, context: AttachContext): TerminalAttachReceipt {
 		if (!this.isCurrent(permit)) throw new TerminalFailure("stale_target");
-		// One attachment per surface: a surface that remounts, or that is opened
-		// in another page, replaces its own client and nobody else's. The
-		// sibling surfaces of this page keep theirs. A replacement is reaped
-		// before the new PTY exists, so the old child never outlives the receipt
-		// that named it.
-		for (const existing of [...this.attachments.values()]) {
-			if (existing.surfaceKey === context.surfaceKey) {
-				existing.stop("detached");
-			}
-		}
+		// A replacement is reaped before the new PTY exists, so the old child
+		// never outlives the receipt that named it.
+		this.replaceSurface(context.surfaceKey);
 		const id = this.nextId();
 		const targetGeneration = this.nextGeneration();
 		let pty: Pty;
 		try {
-			pty = (this.spawn ?? context.spawn)({
-				file: context.file,
-				args: context.args,
-				cwd: context.cwd,
-				cols: context.size.cols,
-				rows: context.size.rows,
-				pixelWidth: context.size.pixelWidth,
-				pixelHeight: context.size.pixelHeight,
-				env: { ...context.environment },
-			});
+			pty = (this.spawn ?? context.spawn)(this.launchOf(context));
 		} catch (failure: unknown) {
 			// The view asked for a terminal and there is none. Tell it in the
 			// same shape a later failure would take, then reject the request.
-			context.sink({
-				type: "error",
-				schemaVersion: TERMINAL_PROTOCOL_VERSION,
-				attachmentId: id,
-				sequence: 0,
-				error: new TerminalFailure("pty_unavailable").toWire(),
-			});
-			context.sink({
-				type: "exited",
-				schemaVersion: TERMINAL_PROTOCOL_VERSION,
-				attachmentId: id,
-				sequence: 1,
-				reason: "childExited",
-			});
+			reportSpawnFailure(context.sink, id);
 			throw failure instanceof TerminalFailure
 				? failure
 				: new TerminalFailure("pty_unavailable", { cause: failure });
 		}
-		// Nothing may reach the view before its receipt's Started frame. The
-		// PTY is held paused until Started is on the wire; this is the Rust
-		// reader gate, expressed where the data actually comes from.
-		pty.pause();
-		const attachment = new Attachment(
-			id,
-			context.surfaceKey,
-			context.viewLabel,
-			context.target,
-			targetGeneration,
+		const live = startPtyAttachment(
+			{
+				id,
+				surfaceKey: context.surfaceKey,
+				viewLabel: context.viewLabel,
+				targetGeneration,
+				size: context.size,
+			},
 			pty,
 			context.sink,
-			(finished, reason) => {
-				if (this.attachments.get(finished.id) === finished) {
-					this.attachments.delete(finished.id);
-				}
-				if (reason === "eof")
-					this.onEndedByItself?.({
-						surfaceKey: finished.surfaceKey,
-						target: finished.target,
-					});
+			(_finished, reason) => {
+				const entry = this.attachments.get(id);
+				if (entry !== undefined) this.finished(entry, reason);
 			},
 		);
-		pty.onData((bytes) => attachment.acceptOutput(bytes));
-		pty.onExit(() => attachment.handleExit());
-		this.attachments.set(id, attachment);
-		attachment.sendStarted(context.size);
-		pty.resume();
+		const entry = new LocalEntry(live, context.target);
+		// A client that ended while it was being started (its frames already
+		// said so) is not published.
+		if (!live.isStopped) this.attachments.set(id, entry);
 		return {
 			schemaVersion: TERMINAL_PROTOCOL_VERSION,
 			attachmentId: id,
 			surfaceKey: context.surfaceKey,
 			targetGeneration,
 		};
+	}
+
+	/**
+	 * Publish one resolved client, in the pty host when the context has a route
+	 * there and its machine can say what to run (`Runtime.ptyPlan`); here
+	 * otherwise, as `attach`.
+	 *
+	 * The hosted client is in the ledger from before the host is asked, so an
+	 * end the host reports at any point finds it; an attach superseded while
+	 * the host was starting it is stopped there and refused as stale.
+	 */
+	async attachVia(
+		permit: AttachPermit,
+		context: AttachContext,
+	): Promise<TerminalAttachReceipt> {
+		const hosted = this.hosted;
+		const route = context.route;
+		if (
+			hosted === undefined ||
+			!hosted.available ||
+			route === undefined ||
+			context.plan === undefined
+		) {
+			return this.attach(permit, context);
+		}
+		if (!this.isCurrent(permit)) throw new TerminalFailure("stale_target");
+		let plan: PtyPlan | undefined;
+		try {
+			plan = context.plan(this.launchOf(context));
+		} catch {
+			// The machine cannot say what it would open: opening it here says
+			// so, in the shape every failure to open one takes.
+			plan = undefined;
+		}
+		if (plan === undefined) return this.attach(permit, context);
+		this.replaceSurface(context.surfaceKey);
+		const id = this.nextId();
+		const targetGeneration = this.nextGeneration();
+		const entry = new HostedEntry(
+			id,
+			context.surfaceKey,
+			context.viewLabel,
+			context.target,
+			targetGeneration,
+			hosted,
+			plan,
+			(gone, reason) => this.finished(gone, reason),
+		);
+		this.attachments.set(id, entry);
+		this.hostedClients.set(id, entry);
+		try {
+			entry.generation = await hosted.open({
+				id,
+				surfaceKey: context.surfaceKey,
+				viewLabel: context.viewLabel,
+				targetGeneration,
+				size: context.size,
+				route,
+				launch: plan.launch,
+			});
+		} catch (failure: unknown) {
+			entry.ended("childExited");
+			this.hostedClients.delete(id);
+			throw failure instanceof TerminalFailure
+				? failure
+				: new TerminalFailure("pty_unavailable", { cause: failure });
+		}
+		if (!this.isCurrent(permit)) {
+			entry.stop("detached");
+			throw new TerminalFailure("stale_target");
+		}
+		if (entry.isEnded || this.attachments.get(id) !== entry) {
+			// It ended, or was replaced, while it was being started; its frames
+			// have said so to the page.
+			throw new TerminalFailure("channel_closed");
+		}
+		return {
+			schemaVersion: TERMINAL_PROTOCOL_VERSION,
+			attachmentId: id,
+			surfaceKey: context.surfaceKey,
+			targetGeneration,
+		};
+	}
+
+	/** A hosted client ended, as the pty host says (or because it did). */
+	hostedEnded(id: string, reason: ExitReason): void {
+		const entry = this.hostedClients.get(id);
+		if (entry === undefined) return;
+		this.hostedClients.delete(id);
+		entry.ended(reason);
+	}
+
+	/** The pty host generation a hosted client was started in; `undefined` for one here. */
+	hostedGeneration(id: string): number | undefined {
+		const entry = this.attachments.get(id);
+		return entry instanceof HostedEntry ? entry.generation : undefined;
 	}
 
 	input(identity: RequestIdentity, sequence: number, bytes: Uint8Array): void {
@@ -811,7 +1123,7 @@ export class AttachmentManager {
 		}
 	}
 
-	private owned(identity: RequestIdentity): Attachment {
+	private owned(identity: RequestIdentity): LedgerEntry {
 		const attachment = this.attachments.get(identity.attachmentId);
 		if (
 			!attachment ||

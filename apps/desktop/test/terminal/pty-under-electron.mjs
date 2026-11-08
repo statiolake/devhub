@@ -1,6 +1,6 @@
 /* The lint config gives Node's globals to `.ts`/`.tsx` only, and this file is
    plain JavaScript because its interpreter has no TypeScript. */
-/* global Buffer, URL, TextEncoder, process, setTimeout, clearTimeout */
+/* global Buffer, URL, TextDecoder, TextEncoder, process, setTimeout, clearTimeout */
 
 /**
  * The whole terminal, end to end, on the real native module and a real tmux.
@@ -18,13 +18,14 @@
  */
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -53,6 +54,7 @@ import {
   decodeTerminalFrame,
   encodeTerminalFrame,
 } from "../../out/test-terminal/ipc/terminal.js";
+import { PtyHost } from "../../out/test-terminal/main/ptyHost/host.js";
 
 /** Scratch lives inside the repository, never in the OS temp directory. */
 const SCRATCH_ROOT = fileURLToPath(
@@ -572,5 +574,216 @@ test(
       () => clients().length === 0,
       "the client to go with its terminal",
     );
+  },
+);
+
+/** A port pair whose ends deliver a task later, as `MessagePortMain` does. */
+function portPair() {
+  const make = () => {
+    const listeners = { message: [], close: [] };
+    const port = {
+      peer: undefined,
+      closed: false,
+      postMessage(data) {
+        const peer = port.peer;
+        if (port.closed || peer.closed) return;
+        setTimeout(() => {
+          if (!peer.closed)
+            for (const listener of peer.listeners.message) listener({ data });
+        }, 0);
+      },
+      on(event, listener) {
+        listeners[event].push(listener);
+      },
+      start() {},
+      close() {
+        port.closed = true;
+        for (const listener of listeners.close) listener();
+      },
+      listeners,
+    };
+    return port;
+  };
+  const a = make();
+  const b = make();
+  a.peer = b;
+  b.peer = a;
+  return [a, b];
+}
+
+test("the pty host runs a real PTY's client with its page over a port", async () => {
+  const toMain = [];
+  const host = new PtyHost({
+    post: (message) => toMain.push(message),
+    spawn: openPty,
+  });
+  const [hostEnd, pageEnd] = portPair();
+  const frames = [];
+  const replies = new Map();
+  pageEnd.on("message", ({ data }) => {
+    if (data.type === "frame") frames.push(decodeTerminalFrame(data.frame));
+    else replies.get(data.rid)?.(data.result);
+  });
+  host.receive({ type: "page", page: 1, viewLabel: "9" }, [hostEnd]);
+  host.receive({
+    type: "open",
+    rid: 1,
+    spec: {
+      id: "a".repeat(32),
+      surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+      viewLabel: "9",
+      targetGeneration: 5,
+      size: { cols: 80, rows: 24, pixelWidth: 0, pixelHeight: 0 },
+      page: 1,
+      channelId: "c",
+      launch: {
+        file: "/bin/sh",
+        args: [],
+        cwd: "/",
+        cols: 80,
+        rows: 24,
+        pixelWidth: 0,
+        pixelHeight: 0,
+        env: terminalEnvironment({ PATH: process.env.PATH, PS1: "$ " }),
+      },
+    },
+  });
+  assert.deepEqual(toMain, [{ type: "opened", rid: 1 }]);
+  const text = () =>
+    frames
+      .filter((frame) => frame.type === "output")
+      .map((frame) => new TextDecoder().decode(frame.bytes))
+      .join("");
+  const reply = await new Promise((resolve) => {
+    replies.set(1, resolve);
+    pageEnd.postMessage({
+      type: "input",
+      rid: 1,
+      request: {
+        schemaVersion: 1,
+        surfaceKey: "workspace-terminal:00000000-0000-4000-8000-00000000005c",
+        attachmentId: "a".repeat(32),
+        targetGeneration: 5,
+        inputSequence: 1,
+        bytes: [...new TextEncoder().encode("echo pty-host-$((40+2))\r")],
+      },
+    });
+  });
+  assert.deepEqual(reply, { ok: true, value: undefined });
+  const end = Date.now() + 5_000;
+  while (!text().includes("pty-host-42") && Date.now() < end) await sleep(20);
+  assert.match(text(), /pty-host-42/);
+  assert.equal(frames[0].type, "started");
+  // The page going takes its client with it.
+  hostEnd.close();
+  await sleep(50);
+  assert.equal(host.clientCount, 0);
+  assert.deepEqual(toMain.at(-1), {
+    type: "ended",
+    id: "a".repeat(32),
+    reason: "detached",
+  });
+});
+
+/**
+ * The child of the test below, Electron run as Node like the utility
+ * processes: Node marks what it inherited close-on-exec when it starts, but
+ * Electron opens descriptors of its own after that which are not (as
+ * /proc/self/fdinfo says). It starts a plain child, a PTY and a bounded
+ * command, and says which of those descriptors each of them has.
+ */
+const FD_PROBE = (modules, helper) => `
+import { spawn } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
+import { openPty } from ${JSON.stringify(`${modules}/main/terminal/pty.js`)};
+import { runChildHere } from ${JSON.stringify(`${modules}/main/terminal/childRun.js`)};
+import { setExecCleanHelper } from ${JSON.stringify(`${modules}/main/terminal/cleanSpawn.js`)};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const leaky = readdirSync("/proc/self/fd").filter((fd) => {
+  if (Number(fd) <= 2) return false;
+  try {
+    const flags = /flags:\\s*([0-7]+)/.exec(readFileSync("/proc/self/fdinfo/" + fd, "utf8"))[1];
+    return (parseInt(flags, 8) & 0o2000000) === 0;
+  } catch { return false; }
+});
+const hasLeaky = (pid) => readdirSync("/proc/" + pid + "/fd").some((fd) => leaky.includes(fd));
+const result = { leaky };
+const plain = spawn("sleep", ["5"], { stdio: "ignore" });
+await sleep(150);
+result.plain = hasLeaky(plain.pid);
+plain.kill("SIGKILL");
+const pty = openPty({ file: "/bin/sleep", args: ["5"], cwd: "/", cols: 80, rows: 24,
+  pixelWidth: 0, pixelHeight: 0, env: { PATH: process.env.PATH } });
+await sleep(150);
+result.pty = hasLeaky(pty.pid);
+result.ptyFds = readdirSync("/proc/" + pty.pid + "/fd").sort();
+pty.kill();
+setExecCleanHelper(${JSON.stringify(helper)});
+const run = runChildHere({ file: "sleep", args: ["5"], cwd: undefined, env: process.env,
+  stdin: undefined, stdoutBytes: 1024, stderrBytes: 1024, overflow: "truncate", streamOutput: false });
+await sleep(150);
+const mine = readdirSync("/proc").filter((e) => {
+  if (!/^\\d+$/.test(e)) return false;
+  try { const st = readFileSync("/proc/" + e + "/stat", "utf8");
+    return st.includes("(sleep)") && st.slice(st.lastIndexOf(")") + 2).split(" ")[1] === String(process.pid);
+  } catch { return false; } });
+result.bounded = mine.map(hasLeaky);
+run.kill();
+process.stdout.write(JSON.stringify(result));
+process.exit(0);
+`;
+
+/**
+ * A descriptor a process holds without close-on-exec is not held by what it
+ * starts: node-pty's PTYs close them in the child, and children through
+ * `childRun` (the process host's) go through `devhub-exec-clean`. Read from
+ * /proc/<child>/fd, so Linux only.
+ */
+test(
+  "what the pty host and the process host start holds nothing of theirs",
+  { skip: process.platform !== "linux" },
+  async () => {
+    const directory = scratchDirectory("exec-clean");
+    const helper = join(directory, "devhub-exec-clean");
+    execFileSync("cc", [
+      "-O2",
+      "-o",
+      helper,
+      fileURLToPath(
+        new URL("../../src/main/native/execClean.c", import.meta.url),
+      ),
+    ]);
+    const probe = join(directory, "probe.mjs");
+    writeFileSync(
+      probe,
+      FD_PROBE(
+        new URL("../../out/test-terminal", import.meta.url).href,
+        helper,
+      ),
+    );
+    try {
+      const output = await new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, [probe], {
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+          stdio: ["ignore", "pipe", "inherit"],
+        });
+        let out = "";
+        child.stdout.on("data", (chunk) => (out += chunk));
+        child.on("error", reject);
+        child.on("close", (code) =>
+          code === 0 ? resolve(out) : reject(new Error(`probe exited ${code}`)),
+        );
+      });
+      const result = JSON.parse(output);
+      // The premise: there are such descriptors, and a child started with
+      // nothing in the way has them.
+      assert.ok(result.leaky.length > 0, "Electron has no descriptor to leak");
+      assert.equal(result.plain, true);
+      assert.equal(result.pty, false);
+      assert.deepEqual(result.ptyFds, ["0", "1", "2"]);
+      assert.deepEqual(result.bounded, [false]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   },
 );

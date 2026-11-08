@@ -88,6 +88,12 @@ const DETACHABLE_ERROR = "The terminal connection is unavailable.";
  */
 const HANDSHAKE_SILENCE_MS = 5_000;
 const MAX_HANDSHAKE_BUFFER_FRAMES = 8;
+/**
+ * How long after its pty host ended a surface attaches again. The tmux
+ * session is intact (tmux owns the shell), so the next attach finds it; the
+ * pause lets the detach of the lost client be answered first.
+ */
+const HOST_RESTART_REATTACH_MS = 250;
 const MAX_HANDSHAKE_BUFFER_BYTES = 256 * 1024;
 
 function requestFor(
@@ -160,6 +166,9 @@ export function TerminalSurface({
   const controllerRef = useRef<{ retry: () => void } | null>(null);
   const hiddenRef = useRef(hidden);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
+  // Connecting again because the pty host the client was in ended, not for
+  // the first time: the spinner says so.
+  const [reconnecting, setReconnecting] = useState(false);
   // One row's height, measured, for `hiddenRows`.
   const [rowHeight, setRowHeight] = useState(0);
   const measureRow = () => {
@@ -264,12 +273,33 @@ export function TerminalSurface({
       void clientRef.current.detach(detachRequest(surfaceKey, targetReceipt));
     };
 
+    let reattachingFor: number | undefined;
     const fail = (serial: number, failure: unknown) => {
       if (disposed || serial !== attachSerial) return;
       if (inputQueue?.serial === serial) inputQueue.failed = true;
+      if (receipt && !receiptDetached) detachExact(receipt);
+      // The pty host that ran this client ended. The session is tmux's and
+      // still there, so this is not a failure to show: the surface says it
+      // is reconnecting and attaches again, once per client lost. A host
+      // that keeps ending is given up on by main, and the next attach is
+      // then a client in main.
+      if (
+        failure instanceof TerminalFailure &&
+        failure.code === "host_restarted"
+      ) {
+        if (reattachingFor === serial) return;
+        reattachingFor = serial;
+        setConnection("connecting");
+        setReconnecting(true);
+        setError(undefined);
+        setTimeout(() => {
+          if (!disposed && serial === attachSerial) void attach();
+        }, HOST_RESTART_REATTACH_MS);
+        return;
+      }
+      setReconnecting(false);
       setConnection("disconnected");
       setError(terminalErrorSummary(failure));
-      if (receipt && !receiptDetached) detachExact(receipt);
     };
 
     const sendResize = async (
@@ -484,6 +514,7 @@ export function TerminalSurface({
           failed: false,
         };
         setConnection("connected");
+        setReconnecting(false);
         await sendResize(returnedReceipt, session.geometry, serial);
       } catch (attachError: unknown) {
         clearHandshakeWatchdog();
@@ -623,7 +654,9 @@ export function TerminalSurface({
         aria-label={`${surfaceLabel} terminal`}
         tabIndex={0}
       />
-      {connection === "connecting" && <Waiting label="Connecting…" />}
+      {connection === "connecting" && (
+        <Waiting label={reconnecting ? "Reconnecting…" : "Connecting…"} />
+      )}
       {connection === "disconnected" && (
         <Failure
           summary="The terminal session is not connected."

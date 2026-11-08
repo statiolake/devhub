@@ -808,6 +808,77 @@ describe("TerminalSurface lifecycle", () => {
   });
 });
 
+describe("TerminalSurface when its pty host ends", () => {
+  const KEY = "workspace-terminal:00000000-0000-4000-8000-00000000005c";
+  const lost = (id: string, sequence: number) =>
+    raw(4, {
+      ...fixture.errorMetadata,
+      attachmentId: id,
+      sequence,
+      error: new TerminalFailure("host_restarted").toWire(),
+    });
+
+  it("says it is reconnecting and attaches again on its own", async () => {
+    const harness = clientHarness();
+    render(
+      <TerminalSurface
+        surfaceKey={KEY}
+        surfaceLabel="Scratch"
+        client={harness.client}
+      />,
+    );
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    act(() => harness.handlers[0](lost(harness.receipts[0].attachmentId, 1)));
+    expect(screen.getByText("Reconnecting…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Reconnecting…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("attaches again when the attach itself was refused as host_restarted", async () => {
+    const harness = clientHarness();
+    const first = harness.client.attach;
+    let refused = false;
+    harness.client.attach = vi.fn(async (request, onFrame) => {
+      if (!refused) {
+        refused = true;
+        throw new TerminalFailure("host_restarted");
+      }
+      return first(request, onFrame);
+    });
+    render(
+      <TerminalSurface
+        surfaceKey={KEY}
+        surfaceLabel="Scratch"
+        client={harness.client}
+      />,
+    );
+    await waitFor(() => expect(harness.client.attach).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(harness.client.resize).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("still shows any other failure, with Retry", async () => {
+    const harness = clientHarness();
+    harness.client.attach = vi.fn(async () => {
+      throw new TerminalFailure("pty_unavailable");
+    });
+    render(
+      <TerminalSurface
+        surfaceKey={KEY}
+        surfaceLabel="Scratch"
+        client={harness.client}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument(),
+    );
+    expect(harness.client.attach).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("TerminalSurface coming on screen disconnected", () => {
   const KEY = "workspace-terminal:00000000-0000-4000-8000-00000000005c";
 

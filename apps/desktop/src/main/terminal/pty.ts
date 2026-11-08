@@ -103,6 +103,21 @@ export interface Pty {
 export type PtyFactory = (launch: PtyLaunch) => Pty;
 
 /**
+ * What a machine would open on *this* machine for a PTY of its own, said
+ * without opening it: the program and its environment as `openPty` takes them,
+ * and what to give back once the PTY has ended (an SSH session slot).
+ *
+ * This is how a terminal client is started somewhere other than the process
+ * that asked for it — the pty host (`main/ptyHost/`) — while the machine's own
+ * rules for starting one stay the machine's (`Runtime.ptyPlan`).
+ */
+export interface PtyPlan {
+	readonly launch: PtyLaunch;
+	/** Called once, when the PTY has ended or was never opened. Idempotent. */
+	ended(): void;
+}
+
+/**
  * The environment the tmux client starts with.
  *
  * The surface is xterm.js, so its capability set is deliberately stable across

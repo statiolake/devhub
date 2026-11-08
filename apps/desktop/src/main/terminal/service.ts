@@ -29,7 +29,7 @@ import {
 	validateDetachRequest,
 	validateInputRequest,
 	validateResizeRequest,
-	type TerminalAttachReceipt,
+	type TerminalAttachReply,
 	type TerminalResult,
 } from "../../ipc/terminal.js";
 import {
@@ -37,6 +37,7 @@ import {
 	type AttachmentManagerOptions,
 	type RequestIdentity,
 } from "./attachments.js";
+import type { PtyHostClient } from "../ptyHost/client.js";
 import { type PtyFactory } from "./pty.js";
 import type { TerminalTarget } from "./ports.js";
 import { TerminalSurfaces, terminalFailureFromPort } from "./surfaces.js";
@@ -62,6 +63,12 @@ export interface TerminalServiceOptions {
 	readonly spawn?: PtyFactory;
 	/** A client ended on its own (`AttachmentManagerOptions.onEndedByItself`). */
 	readonly onEndedByItself?: AttachmentManagerOptions["onEndedByItself"];
+	/**
+	 * Where clients run while it is available (`main/ptyHost/`): their
+	 * frames, input, resizes and acks then pass between the page and the host
+	 * and not through here. Absent, or given up on: in this process.
+	 */
+	readonly ptyHost?: PtyHostClient;
 }
 
 export interface TerminalService {
@@ -89,11 +96,16 @@ function refuse<T>(failure: unknown): TerminalResult<T> {
 export function registerTerminalService(
 	options: TerminalServiceOptions,
 ): TerminalService {
+	const ptyHost = options.ptyHost;
 	const attachments = new AttachmentManager({
 		spawn: options.spawn,
 		onEndedByItself: options.onEndedByItself,
 		randomBytes: (count) => new Uint8Array(randomBytes(count)),
+		...(ptyHost === undefined ? {} : { hosted: ptyHost }),
 	});
+	const stopHearing = ptyHost?.onEnded((id, reason) =>
+		attachments.hostedEnded(id, reason),
+	);
 	const surfaces = new TerminalSurfaces({
 		runtimeFor: options.runtimeFor,
 		attachments,
@@ -145,6 +157,7 @@ export function registerTerminalService(
 			// released by it. Nothing here keeps a list of mounted surfaces to
 			// fall out of step with the ledger.
 			surfaces.detachView(String(sender.id));
+			ptyHost?.pageGone(sender);
 		});
 	};
 
@@ -161,7 +174,7 @@ export function registerTerminalService(
 			event,
 			channelId: unknown,
 			payload: unknown,
-		): Promise<TerminalResult<TerminalAttachReceipt>> => {
+		): Promise<TerminalAttachReply> => {
 			try {
 				const id = channel(channelId);
 				const request = validateAttachRequest(payload);
@@ -170,30 +183,38 @@ export function registerTerminalService(
 				const label = viewLabel(event);
 				watch(event.sender);
 				const sender = event.sender;
-				return ok(
-					await surfaces.attach({
-						target,
-						surfaceKey: request.surfaceKey,
-						viewLabel: label,
-						size: {
-							cols: request.cols,
-							rows: request.rows,
-							pixelWidth: request.pixelWidth,
-							pixelHeight: request.pixelHeight,
-						},
-						sink: (frame) => {
-							if (sender.isDestroyed()) return false;
-							sender.send(
-								TERMINAL_CHANNELS.frame,
-								id,
-								encodeTerminalFrame(frame),
-							);
-							return true;
-						},
-					}),
-				);
+				const receipt = await surfaces.attach({
+					target,
+					surfaceKey: request.surfaceKey,
+					viewLabel: label,
+					size: {
+						cols: request.cols,
+						rows: request.rows,
+						pixelWidth: request.pixelWidth,
+						pixelHeight: request.pixelHeight,
+					},
+					// Frames of a client in this process; one in the pty host
+					// sends them to the page's port to it instead.
+					sink: (frame) => {
+						if (sender.isDestroyed()) return false;
+						sender.send(
+							TERMINAL_CHANNELS.frame,
+							id,
+							encodeTerminalFrame(frame),
+						);
+						return true;
+					},
+					...(ptyHost?.available === true
+						? { route: { page: sender, channelId: id } }
+						: {}),
+				});
+				const hosted = attachments.hostedGeneration(receipt.attachmentId);
+				return {
+					result: ok(receipt),
+					...(hosted === undefined ? {} : { hosted }),
+				};
 			} catch (failure: unknown) {
-				return refuse(terminalFailureFromPort(failure));
+				return { result: refuse(terminalFailureFromPort(failure)) };
 			}
 		},
 	);
@@ -274,6 +295,7 @@ export function registerTerminalService(
 		},
 		dispose() {
 			surfaces.detachAll();
+			stopHearing?.();
 			app.removeListener("will-quit", onQuit);
 			for (const name of [
 				TERMINAL_CHANNELS.attach,

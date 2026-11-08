@@ -27,7 +27,7 @@ import type { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import type { OperationDeadline } from "../terminal/command.js";
 import type { CancellationToken } from "../terminal/ports.js";
-import type { Pty, PtyLaunch } from "../terminal/pty.js";
+import type { Pty, PtyLaunch, PtyPlan } from "../terminal/pty.js";
 import type { SettingsResolvedRuntimeWire } from "../../ipc/settings.js";
 import type { ContainerHostId, RuntimeId } from "../../model/domain.js";
 import { errorWireAt, NamedFailure, withDetail } from "../../model/wire.js";
@@ -491,6 +491,12 @@ export interface Runtime {
 
 	exec(request: ExecRequest): Promise<ExecResult>;
 	spawnPty(request: PtyRequest): Pty;
+	/**
+	 * What `spawnPty` would open, on this Mac, without opening it — for a PTY
+	 * opened in another process (the pty host). Absent, or `undefined`: this
+	 * machine's PTYs are opened only by `spawnPty`, in the process that asks.
+	 */
+	ptyPlan?(request: PtyRequest): PtyPlan | undefined;
 	/**
 	 * A long-lived program on this machine, over pipes. See `ByteStream`.
 	 *

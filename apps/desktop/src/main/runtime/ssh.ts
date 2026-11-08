@@ -48,7 +48,12 @@ import {
 	type CommandOutput,
 } from "../terminal/command.js";
 import { CancellationToken, portFailure } from "../terminal/ports.js";
-import { openPty, type Pty, type PtyFactory } from "../terminal/pty.js";
+import {
+	openPty,
+	type Pty,
+	type PtyFactory,
+	type PtyPlan,
+} from "../terminal/pty.js";
 import {
 	REMOTE_REPOSITORY_FOCUS_REFRESH_MIN_INTERVAL_MS,
 	remoteReconcileIntervalMs,
@@ -696,6 +701,18 @@ export class SshRuntime
 	 * tmux refuses to attach.
 	 */
 	spawnPty(request: PtyRequest): Pty {
+		const plan = this.ptyPlan(request);
+		const pty = this.#ptyFactory(plan.launch);
+		pty.onExit(() => plan.ended());
+		return pty;
+	}
+
+	/**
+	 * The ssh client `spawnPty` opens, said rather than opened, for a PTY
+	 * opened in the pty host. Its session slot is taken now and given back by
+	 * `ended`, as `spawnPty` gives it back when its PTY exits.
+	 */
+	ptyPlan(request: PtyRequest): PtyPlan {
 		const login = this.login;
 		if (login === undefined) {
 			throw new Error(
@@ -712,26 +729,28 @@ export class SshRuntime
 		// A pty holds a session for as long as it is open, so it holds a slot
 		// for as long as it is open. It takes one without waiting — see
 		// `MuxSessions` — because a person pressed a key and an exec did not.
+		// Idempotent already (`MuxSessions`), as `PtyPlan.ended` must be.
 		const release = this.#sessions.take();
-		const pty = this.#ptyFactory({
-			file: this.#sshPath,
-			args: [
-				...sshOptionArgv(this.#controlDirectory),
-				"-tt",
-				this.#host,
-				"--",
-				script,
-			],
-			// The ssh client runs here; the remote `cd` is in the script.
-			cwd: homedir(),
-			cols: request.cols,
-			rows: request.rows,
-			pixelWidth: request.pixelWidth,
-			pixelHeight: request.pixelHeight,
-			env: this.#localEnvironment,
-		});
-		pty.onExit(release);
-		return pty;
+		return {
+			launch: {
+				file: this.#sshPath,
+				args: [
+					...sshOptionArgv(this.#controlDirectory),
+					"-tt",
+					this.#host,
+					"--",
+					script,
+				],
+				// The ssh client runs here; the remote `cd` is in the script.
+				cwd: homedir(),
+				cols: request.cols,
+				rows: request.rows,
+				pixelWidth: request.pixelWidth,
+				pixelHeight: request.pixelHeight,
+				env: this.#localEnvironment,
+			},
+			ended: release,
+		};
 	}
 
 	/**

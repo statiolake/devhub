@@ -22,6 +22,7 @@ import { OperationDeadline } from "./command.js";
 import {
 	AttachmentManager,
 	type FrameSink,
+	type HostedRoute,
 	type RequestIdentity,
 } from "./attachments.js";
 import {
@@ -88,6 +89,11 @@ export interface AttachSurfaceRequest {
 	readonly viewLabel: string;
 	readonly size: TerminalSize;
 	readonly sink: FrameSink;
+	/**
+	 * The page as the pty host reaches it, when the client may run there; the
+	 * frames then go to the page's port to the host, not to `sink`.
+	 */
+	readonly route?: HostedRoute;
 }
 
 export interface TerminalSurfacesOptions {
@@ -158,11 +164,13 @@ export class TerminalSurfaces {
 				// whose full marker triple was just read back.
 				if (!exact) throw new TerminalFailure("session_unavailable");
 				operation.check();
-				return this.attachments.attach(permit, {
+				return await this.attachments.attachVia(permit, {
 					surfaceKey: request.surfaceKey,
 					viewLabel: request.viewLabel,
 					target: request.target,
 					spawn: (launch) => runtime.spawnPty(launch),
+					plan: (launch) => runtime.ptyPlan(launch),
+					...(request.route === undefined ? {} : { route: request.route }),
 					file: runtime.tmuxPath(),
 					args: runtime.attachArgv(exact.name),
 					// The client runs from the launch home: a workspace folder

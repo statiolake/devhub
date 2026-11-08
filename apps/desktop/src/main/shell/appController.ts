@@ -372,6 +372,7 @@ import {
 } from "./agentWiring.js";
 import { EngineClient, electronEngineLauncher } from "../agentEngine/client.js";
 import { enginePagePorts } from "../agentEngine/pagePorts.js";
+import { PtyHostClient, electronPtyHostLauncher } from "../ptyHost/client.js";
 import { EscalationStore } from "../orchestrator/escalationStore.js";
 import {
 	OrchestratorService,
@@ -1081,6 +1082,12 @@ export class AppController {
 	 * process. `DEVHUB_CONVERSATIONS_IN_MAIN=1` runs them in main instead.
 	 */
 	private conversationEngine: EngineClient | undefined;
+	/**
+	 * Where the terminal surfaces' tmux clients run (`ptyHost/`): a utility
+	 * process the pages reach over ports of their own.
+	 * `DEVHUB_TERMINALS_IN_MAIN=1` runs them in main instead.
+	 */
+	private ptyHost: PtyHostClient | undefined;
 	/** The Agents page's conversations, once registered: where words for a composer go. */
 	private conversationIpc: ConversationIpc | undefined;
 	/** "Send to Agent…" from the editors. See `sendToAgent.ts`. */
@@ -1514,7 +1521,12 @@ export class AppController {
 		// machine, so it is asked on that machine, once, when its adapter is
 		// built (`terminalRuntimes.ts`) — and the Settings window asks its own
 		// for this Mac, which is what that window is about.
+		this.ptyHost =
+			process.env["DEVHUB_TERMINALS_IN_MAIN"] === "1"
+				? undefined
+				: new PtyHostClient({ launch: electronPtyHostLauncher });
 		this.terminalsWiring = wireTerminals({
+			...(this.ptyHost === undefined ? {} : { ptyHost: this.ptyHost }),
 			settings: this.settings,
 			effectiveSocketName: this.state.tmux.effective_socket_name,
 			// One tmux config, in DevHub's own config directory, beside
@@ -4427,6 +4439,7 @@ export class AppController {
 		// much as a terminal's. That is the point of putting them on the same
 		// runtime: coming back finds the same work still running.
 		this.terminalsWiring?.service.dispose();
+		this.ptyHost?.dispose();
 		// The managed Neovims too: they run on in tmux, and the next DevHub
 		// adopts them by their sockets.
 		this.managedNeovims?.dispose();

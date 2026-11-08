@@ -37,7 +37,12 @@ import type {
 	RuntimeId,
 	UserTmuxConfig,
 } from "../runtime/runtime.js";
-import { terminalEnvironment, type Pty, type PtyLaunch } from "./pty.js";
+import {
+	terminalEnvironment,
+	type Pty,
+	type PtyLaunch,
+	type PtyPlan,
+} from "./pty.js";
 import { createHash, randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -1687,6 +1692,11 @@ export class TmuxTerminalRuntime {
 	 */
 	spawnPty(launch: PtyLaunch): Pty {
 		return this.host.spawnPty(launch);
+	}
+
+	/** What `spawnPty` would open here, for the pty host to open (`Runtime.ptyPlan`). */
+	ptyPlan(launch: PtyLaunch): PtyPlan | undefined {
+		return this.host.ptyPlan?.(launch);
 	}
 
 	/**
