@@ -21,7 +21,7 @@ and which come next.
 | **pty host** (utility process, new)                         | every terminal surface's tmux client (node-pty), its output coalesced and framed, its acks, input and resizes, directly with the page over the page's `MessagePort` (`main/ptyHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **Neovim host** (utility process, new)                      | every Neovim editor's UI: its own connection to the Neovim's socket, the msgpack decoding, the attach, the GUI windows, each redraw sent to the page over the page's `MessagePort` and the page's calls back on it (`main/neovimHost/`, `editor/neovimUiSessions.ts`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **conversation engine** (utility process, new)              | every GUI Agent's `AgentConversation`: the journal followed (an Agent on this machine), the protocol adapter, the fold, the held messages, the usage-limit and cache keepers; the Agents page's snapshot and events over a `MessagePort` (`main/agentEngine/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| DevHub's pages (one renderer each)                          | the window's own page, the Sidebar, **the Agents page (every Agent's pane: terminal Agents' xterms and GUI Agents' conversations, all in one renderer)**, an Agent's terminal pane, one Neovim page per Workspace, notices, questions, tooltip; Settings and Task Manager windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| DevHub's pages (one renderer each)                          | the window's own page, the Sidebar, **the Agents page (the terminal Agents' xterms and the Orchestrator's board) and the Conversations page (the GUI Agents' conversations), laid in the same place, two renderers**, an Agent's terminal pane, one Neovim page per Workspace, notices, questions, tooltip; Settings and Task Manager windows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | VS Code                                                     | a renderer per workbench, its extension host, file watcher, shared process, pty host, language servers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | outside Electron                                            | DevHub's tmux server (every terminal and every Agent's session), the GUI Agents' hosts and CLIs, Neovim (`nvim --headless --listen`, kept by tmux)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
@@ -39,7 +39,9 @@ and which come next.
   acks each frame on the same port. Main is on none of it (until phase 5 it
   was on it three times: the input `invoke`, the read and `send`, the ack
   `invoke`). Attaching and detaching are still a request to main, which
-  resolves the session and keeps who owns which client.
+  resolves the session and keeps who owns which client. A surface that is
+  hidden acks its frames as they come and does not hand them to xterm
+  (phase 6).
 - **Neovim.** page → its port → the Neovim host → socket → nvim; a redraw:
   nvim → socket → the Neovim host decodes msgpack → its port (structured
   clone) → page. Main is on none of it (until phase 5c it decoded every
@@ -48,8 +50,9 @@ and which come next.
 - **A GUI Agent.** CLI → `out` (the journal) → `tail` → the conversation
   engine reads lines → adapter (JSON decode, protocol) → fold
   (`TranscriptFold`, twice: the adapter's and the conversation's, each a
-  map lookup and a write per event) → events, batched → the Agents page
-  over its port → folded a third time there → React. Main is told the
+  map lookup and a write per event) → events, batched → the
+  Conversations page over its port → folded a third time there → React
+  (until phase 6 that was the Agents page, the terminal Agents' renderer). Main is told the
   conversation's facts (status, activity, session, MCP servers) when they
   change. DevHub's replies and the person's words: page → main (`invoke`) →
   engine → `sh` host script → the FIFO.
@@ -210,6 +213,8 @@ whose four cores were saturated by tmux and the streams.
 | 5c    | The Neovim host: every Neovim editor's UI connection in a utility process, pages over ports | `b4015c4f` |
 | 5d    | SSH hosts' commands reach the process host at all (an environment it can clone)             | `273547ea` |
 | 5d    | Byte streams in the process host; a remote Agent's journal read by the engine, over a port  | `f8793ba3` |
+| 6a    | A hidden terminal surface acks its frames and does not draw them                            | `a02af7d9` |
+| 6b    | The GUI Agents' conversations in a renderer of their own (the Conversations page)           | `61914f30` |
 
 **Phase 1.** `useConversation` keeps folding every event of a hidden pane
 (so a bad event is still refused where it arrives) and publishes nothing;
@@ -419,6 +424,116 @@ Not moved: the dev-container relay (`container.ts`'s `spawnRelay`, a
 which is the editor's remote traffic for a container on a host, not a
 stream DevHub reads, and the whisper server, which is started once.
 
+**Phase 6a.** A terminal surface that has been on screen and is hidden
+again (`TerminalSurface`, the Agents page's pool) keeps its client and
+acks each frame the moment it arrives, so tmux is never held back, and
+does not hand it to xterm. It keeps what arrived while that is under
+128 KiB and writes it, in order, when it is shown: the exact stream, one
+small parse. Past that it keeps nothing, and being shown attaches a new
+client — quietly: the pane goes on showing what it last drew rather than
+"Connecting…", and keys typed meanwhile go to the new client — which tmux
+draws from nothing, the modes and the cursor with the screen, so nothing
+skipped can be missing from it.
+
+The plan was to re-attach on every reveal. Two things measured changed it.
+xterm has no scrollback to lose here: tmux enters the alternate screen on
+its client terminal (`smcup`, `?1049h` is the first thing an attach
+sends), so the history is tmux's and a re-attach costs xterm nothing
+(with a user's `smcup@` override the hidden stretch would be missing from
+xterm's scrollback, and is in tmux's). But a TUI that animates in the
+background — an Agent's spinner — would have cost a new client and a
+redraw on every switch to it; under the bound it costs a few kilobytes
+parsed. Keeping the parse and throttling it was not tried: the parse of a
+stream nobody sees was the cost.
+
+Replacing a client that is still streaming exposed a race older than this:
+its frames in flight, and its end, arrived on the same channel as the next
+attachment's. The page's decoder failed on them ("terminal frame sequence
+is not contiguous"), and the preload marked the new channel ended on the
+old client's last frame, so the new attach went silent and timed out
+(`Retry` after a failure never met it: a failed client has nothing in
+flight). Frames from the pty host now say whose they are; the preload
+drops a detached attachment's and the decoder passes over them.
+
+Not done: telling the pty host to stop reading a hidden client (tmux would
+discard and redraw on its own when it is read again). It would save what
+is left — the frames' receipt and the acks, 11% of the Agents renderer's
+thread with four streams, `postMessage` and `onmessage` — for a protocol
+change through the pty host, main's fallback and the backpressure timer.
+
+**Phase 6b.** Every Agent's pane was mounted in the one Agents page, so a
+GUI Agent's conversation being drawn held the terminal Agents' keys:
+phase 1 kept hidden conversations from drawing, but nothing kept a
+visible one from taking the renderer, and a long transcript is seconds of
+React per frame. Measured below (v): with a GUI Agent streaming on screen
+the renderer was at 101–121%, and switching to a terminal Agent and typing
+did not echo within 10 s.
+
+The GUI Agents' panes are now a page of their own, `conversations.html`
+(`ConversationsApp`), in a Conversations view main lays exactly where the
+Agents view is (`shellWindow.ts`); the Agents page draws the terminal
+Agents and the Orchestrator's board. An Agent's pane, its failure and its
+Smart Buttons are in one page or the other by its presentation
+(`AgentPane`'s `presentation`). `LayoutState.conversation` says which view
+has the Agent on screen — `whole`, or `beside-board` for a GUI
+Orchestrator, its conversation right of the board the Agents view goes on
+drawing (`orchestratorBoardWidth` says the board's CSS width) — and the
+keyboard goes to that view (`keyboardChild`); keys the person put on the
+board stay there. The conversation IPC sends attachments, events, words
+and the engine's port to the Conversations page and answers either page's
+requests (a terminal Agent carried on in the GUI asks from the Agents
+page); dictation and the microphone are both pages'; the lists of pages
+by URL (history, zoom, the Task Manager, recovery) name it. The page has
+the Agents page's preload. It costs a renderer: 38 MB PSS idle.
+
+Why the split and not the alternatives the plan named: the fold is not
+what costs (one hidden GUI Agent at 6 000 lines/s kept the Agents page's
+thread 9% busy, the terminal at 9 / 20 ms); drawing is, and only a visible
+conversation draws. Moving the fold to a worker would not touch that.
+Virtualizing the transcript would cut it, but not isolate it: the next
+expensive thing a conversation draws (a diagram, a long diff) would be on
+the terminals' thread again. Two renderers make "a conversation cannot
+hold a terminal's keys" true by construction. Virtualizing is still worth
+doing, for the conversation's own sake: its renderer is at 116–121% with
+a long transcript streaming, and its composer's keys wait for that.
+
+### After phase 6
+
+Same machine and workload, two runs of each on the same day. "before" is
+origin/main before phase 6 (`0b30a5a7`), "6a" with the hidden terminals,
+"6b" with the split as well. c's two GUI Agents (a 40 000-line burst,
+then 300 lines/s) are hidden throughout; f is b + c + the git churn.
+"Agents" and "Conversations" are those renderers' process CPU.
+
+| scenario | Agents renderer          | Conversations renderer | terminal key→paint p50 / p99 (ms)                        | tmux server |
+| -------- | ------------------------ | ---------------------- | -------------------------------------------------------- | ----------- |
+| b terms  | 56, 40 → 15, 15 → 15, 17 | —                      | 28 / 145, 30 / 128 → 27 / 75, 22 / 64 → 23 / 41, 33 / 74 | 66–90       |
+| c steady | 44, 24 → 29, 26 → <5, <5 | 30, 27                 | 15 / 104, 10 / 44 → 9 / 29, 9 / 36 → 8 / 27, 10 / 24     | <5          |
+| f all    | 46, 49 → 33, 29 → 15, 15 | (not in the top 8)     | 56 / 168, 28 / 103 → 28 / 82, 24 / 90 → 22 / 46, 25 / 48 | 62–84       |
+
+**v**: a GUI Agent on screen streaming, then ten times: show it for 2 s,
+switch to a terminal Agent (`devhub --tell focus`) and type a key at once,
+timed from the switch and from the key to the echo's paint. Before is
+origin/main and 6a alike (6a does not touch it), after is 6b.
+
+| GUI Agent streaming       | renderer(s) while it is on screen           | switch → echo p50 (max)                                | key → echo p50 (max) |
+| ------------------------- | ------------------------------------------- | ------------------------------------------------------ | -------------------- |
+| 40 000 burst, 300 lines/s | Agents 121% → Agents 0%, Conversations 116% | none within 10 s (10 of 10) → **157 ms (240)**         | → **28 ms (48)**     |
+| 6 000 lines/s             | Agents 101% → Agents 0%, Conversations 119% | 9 of 10 not within 10 s, one 13.3 s → **195 ms (323)** | → **40 ms (81)**     |
+
+(Switching between two terminal Agents is 89 ms switch → echo, 23 ms key
+→ echo: most of a switch is the `devhub` command's round trip.)
+
+- Typing into a terminal Agent with four hidden Agents streaming: p99
+  **128–145 → 41–74 ms**; the Agents renderer **40–56% → 15%**. The p50
+  stays at 22–33 ms: what bounds it is the tmux server at 66–90% and four
+  cores saturated by the streams, as in phase 5 (finding 5).
+- Hidden GUI Agents' folds moved with them: 24–44% of the Agents renderer
+  → the Conversations renderer's 27–30%, the terminal Agents' at <5%.
+- A conversation on screen no longer delays the terminal Agents at all:
+  switching from one streaming and typing went from more than 10 s to
+  under 200 ms.
+
 ### After phase 5d
 
 **r stream**: two GUI Claude Agents on an SSH host (`ssh:bsh`: OpenSSH
@@ -581,11 +696,12 @@ complete.
    relay, and the other `child_process` callers in main (the GitHub CLI,
    usage readers, the login shell probe), which could go through
    `cleanSpawn` and the process host too.
-6. **The Agents page split**: terminal Agents and GUI conversations in
-   different renderers, so a visible conversation's rendering cannot hold a
-   terminal's keys either (phase 1 covers only hidden ones). Before it, the
-   same rule as phase 1 for hidden terminals: a hidden Agent's xterm
-   parsing and drawing a stream nobody sees is what is left in f.
+6. **Done** (phases 6a and 6b above). Left of it: virtualizing the
+   transcript, for the conversation's own responsiveness (its renderer at
+   116–121% with a long transcript streaming, its composer's keys behind
+   it); and a hidden terminal's frames, still received and acked (11% of
+   the Agents renderer with four streams), which the pty host could stop
+   reading instead.
 7. **Background services**: the agent and activity rounds' scheduling,
    repository status, usage readers, Task Manager sampling, the
    Orchestrator's invariant and GitHub polling, and `state.json`'s
