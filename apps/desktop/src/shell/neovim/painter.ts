@@ -13,6 +13,7 @@
 
 import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
 import type { CellMetrics } from "./mouse";
+import { pinnedRows, type BufposAnchor, type FloatRef } from "./riders";
 import {
   boxArms,
   fitIcon,
@@ -305,7 +306,9 @@ export class GridPainter {
    * Floats at a buffer position (`bufpos`), by window: they ride their
    * anchor window's text while it scrolls in pixels (`rideFloats`).
    */
-  private bufposFloats: ReadonlySet<number> = new Set();
+  private bufposFloats: ReadonlyMap<number, BufposAnchor> = new Map();
+  /** Each riding float as last seen with its line in view, by grid. */
+  private readonly floatRefs = new Map<number, FloatRef>();
   /** Window grids following another's display (`scrollbind`), by leader. */
   private readonly followers = new Map<number, readonly number[]>();
   /** The rows each window grid has scrolled, as painted (`riders.ts`). */
@@ -844,7 +847,7 @@ export class GridPainter {
   }
 
   /** The floats (by window) that are at a buffer position (`bufpos`). */
-  setBufposFloats(wins: ReadonlySet<number>): void {
+  setBufposFloats(wins: ReadonlyMap<number, BufposAnchor>): void {
     this.bufposFloats = wins;
   }
 
@@ -858,18 +861,46 @@ export class GridPainter {
    * a plugin's `relative='win'` with `bufpos`) is where Neovim puts it in
    * its anchor window's grid; while that window's display is moved from
    * the grid (`smoothScroll.ts`), the float is moved with it, its frame
-   * and shadow too, so it stays on its text. Other floats stay put, as
-   * Neovim keeps them.
+   * and shadow too, so it stays on its text — also when Neovim, led past
+   * the display, has its line out of view and pins it to the window's top
+   * edge (`pinnedRows`). Other floats stay put, as Neovim keeps them.
    */
   private rideFloats(state: NeovimUiState, boxes: readonly GridBox[]): void {
     const shifts = new Map<number, number>();
+    const seen = new Set<number>();
     for (const box of boxes) {
       if (!box.float || box.win === undefined) continue;
-      if (!this.bufposFloats.has(box.win)) continue;
+      const anchor = this.bufposFloats.get(box.win);
+      if (!anchor) continue;
       const p = state.windows.get(box.grid)?.placement;
       if (p?.kind !== "float") continue;
+      seen.add(box.grid);
       const off = this.scrolls.get(p.anchorGrid)?.view.off ?? 0;
-      if (off !== 0) shifts.set(box.grid, -off);
+      const viewport = state.windows.get(p.anchorGrid)?.viewport;
+      const anchorBox = boxes.find((b) => b.grid === p.anchorGrid);
+      let pin = 0;
+      if (viewport && anchorBox) {
+        const h = this.metrics.height;
+        const text = this.textRows(state, anchorBox);
+        const { rows, ref } = pinnedRows({
+          anchor,
+          anchorRow: p.anchorRow,
+          painted: this.paintedRows(p.anchorGrid),
+          topline: viewport.topline,
+          botline: viewport.botline,
+          ref: this.floatRefs.get(box.grid),
+          off: off / h,
+          textRows: text.bottom,
+        });
+        if (ref) this.floatRefs.set(box.grid, ref);
+        // At rest the display is Neovim's grid: a line out of its view is
+        // out of the display, and the float is where Neovim pins it.
+        if (off !== 0) pin = rows * h;
+      }
+      if (off !== 0 || pin !== 0) shifts.set(box.grid, pin - off);
+    }
+    for (const grid of this.floatRefs.keys()) {
+      if (!seen.has(grid)) this.floatRefs.delete(grid);
     }
     const move = (el: HTMLElement, dy: number | undefined) => {
       const t = dy === undefined ? "" : `translateY(${String(dy)}px)`;

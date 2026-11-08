@@ -37,7 +37,7 @@ import { THEME_GROUPS, THEME_LUA, themeOf, type Surface } from "./chrome";
 import { cmdlineLayout, textCells } from "./cmdline";
 import { cmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
-import { rideAnchor, rideArea, rideStyle } from "./riders";
+import { rideAnchor, rideArea, rideStyle, type BufposAnchor } from "./riders";
 import { markRects, NO_MARKS, parseMarks, type ScrollMarks } from "./marks";
 
 /** The width of a scrollbar's marks, as the scrollbar's track (CSS). */
@@ -105,9 +105,12 @@ export class NeovimEditor {
   private settings: EditorSettings;
   private size = { cols: 0, rows: 0 };
   private boxes: GridBox[] = [];
+  /**
+   * Floats anchored in a window, by window: where in the buffer, when at a
+   * buffer position (`false`: not, or not known yet).
+   */
+  private readonly anchorsAsked = new Map<number, BufposAnchor | false>();
   /** The border text each float's labels were last asked for, by window. */
-  /** Floats anchored in a window, by window: at a buffer position? */
-  private readonly anchorsAsked = new Map<number, boolean>();
   private readonly labelsAsked = new Map<number, string>();
   private readonly listeners = new Set<() => void>();
   private dragging: { button: string; target: MouseTarget } | undefined;
@@ -662,8 +665,16 @@ export class NeovimEditor {
       request("nvim_win_get_config", [win]).then(
         (config) => {
           if (this.disposed || !this.anchorsAsked.has(win)) return;
-          const bufpos = (config as { bufpos?: unknown } | null)?.bufpos;
-          this.anchorsAsked.set(win, Array.isArray(bufpos));
+          const { bufpos, row } = (config ?? {}) as {
+            bufpos?: unknown;
+            row?: unknown;
+          };
+          this.anchorsAsked.set(
+            win,
+            Array.isArray(bufpos) && typeof bufpos[0] === "number"
+              ? { line: bufpos[0], row: typeof row === "number" ? row : 0 }
+              : false,
+          );
           this.syncBufposFloats();
           this.scrollFrame();
         },
@@ -679,11 +690,9 @@ export class NeovimEditor {
   }
 
   private syncBufposFloats(): void {
-    this.painter.setBufposFloats(
-      new Set(
-        [...this.anchorsAsked].filter(([, at]) => at).map(([win]) => win),
-      ),
-    );
+    const anchors = new Map<number, BufposAnchor>();
+    for (const [win, at] of this.anchorsAsked) if (at) anchors.set(win, at);
+    this.painter.setBufposFloats(anchors);
   }
 
   /** A scrollbar's marks, drawn again when they or its size changed. */

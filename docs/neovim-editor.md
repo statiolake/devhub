@@ -303,7 +303,11 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   (`relative='win'` with `bufpos`, asked once per float with
   `nvim_win_get_config`) moves with its anchor window's display, frame and
   shadow too; a float at a fixed cell (`relative='cursor'` is one) stays,
-  as Neovim keeps it.
+  as Neovim keeps it. Neovim pins a float whose line has left its view to
+  the window's top edge; while the display still shows that line (Neovim
+  led past it), the float is where it was when its line was last in
+  Neovim's view, moved by the rows scrolled since (`pinnedRows`); once the
+  line is off the display too, it is where Neovim pins it.
 - `keys.ts` — a `keydown` as key notation: `<C-…>`, `<M-…>` for Option when
   `[terminal] mac_option_is_meta` says it is Meta (left/right tracked as in
   DevHub's terminals), `<D-…>` for Cmd, named keys, `<lt>` and friends.
@@ -593,10 +597,6 @@ reconnecting by itself to the same Neovim, its unsaved edit still there. Not exe
   one jump (Neovim's `<C-e>` moves by all its rows unless `smoothscroll`);
   a window `scrollbind` moves by other rows than the wheeled one (one side
   at its end) shows what it has, nearest the wheeled one's offset.
-- A float at a buffer position whose line is in the part of the display
-  only the ghost covers (Neovim a line ahead) is where Neovim clamps it, at
-  its window's edge, until Neovim's view reaches the line; images, cards
-  and decorations are placed there exactly.
 - A view is laid out by the browser and scrolled in pixels; Neovim's own
   `topline` in that window is not what is shown (only the cursor line
   is). Items are all drawn (no virtualisation; a view keeps its first 5000

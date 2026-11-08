@@ -96,3 +96,53 @@ export function rideStyle(ride: Ride): {
         : "",
   };
 }
+
+/** Where a float at a buffer position is as asked (`nvim_win_get_config`). */
+export interface BufposAnchor {
+  /** Its line, 0-based (`bufpos[0]`). */
+  readonly line: number;
+  /** Its rows from that line (`row`). */
+  readonly row: number;
+}
+
+/** Where such a float was when its line was last in Neovim's view. */
+export interface FloatRef {
+  /** Its `anchor_row` (`win_float_pos`) then. */
+  readonly row: number;
+  /** The rows its anchor window had scrolled then, as painted. */
+  readonly painted: number;
+}
+
+/**
+ * The rows to move a float at a buffer position from where Neovim put it.
+ * Neovim pins one whose line has left its view to the window's top edge;
+ * led past the display (`smoothScroll.ts`), Neovim has often left a line
+ * the display still shows. Then the float is where it was when its line
+ * was last in view, moved by the rows scrolled since, as long as that line
+ * is on the display (`lineAt`: its row there, in rows from the grid's top,
+ * `off` taken in); off it, where Neovim pins it, as at rest.
+ *
+ * Answers the rows, and the reference to keep (`undefined`: none yet).
+ */
+export function pinnedRows(input: {
+  readonly anchor: BufposAnchor;
+  readonly anchorRow: number;
+  readonly painted: number;
+  /** Neovim's view: `topline` and `botline` (`win_viewport`, 0-based). */
+  readonly topline: number;
+  readonly botline: number;
+  readonly ref: FloatRef | undefined;
+  /** The display's offset from Neovim's grid, in rows (down positive). */
+  readonly off: number;
+  /** The rows of the window's text area. */
+  readonly textRows: number;
+}): { rows: number; ref: FloatRef | undefined } {
+  const { anchor, anchorRow, painted, ref } = input;
+  const inView = anchor.line >= input.topline && anchor.line < input.botline;
+  if (inView) return { rows: 0, ref: { row: anchorRow, painted } };
+  if (!ref) return { rows: 0, ref };
+  const row = ref.row - (painted - ref.painted);
+  const lineAt = row - anchor.row - input.off;
+  if (lineAt <= -1 || lineAt >= input.textRows) return { rows: 0, ref };
+  return { rows: row - anchorRow, ref };
+}
