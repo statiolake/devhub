@@ -674,6 +674,7 @@ function NeovimSurface({
         dismiss={dismiss}
         bottom={toastBottom(editor, boxes)}
         surface={editor?.surface()}
+        font={layerHost?.mono}
       />
       {connection.kind === "connecting" ? (
         <div className="nvim-status">Starting Neovim…</div>

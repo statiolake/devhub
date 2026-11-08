@@ -44,6 +44,7 @@ export function Toasts({
   dismiss,
   bottom = 12,
   surface,
+  font,
 }: {
   readonly toasts: readonly Toast[];
   readonly dismiss: (key: number) => void;
@@ -51,6 +52,8 @@ export function Toasts({
   readonly bottom?: number;
   /** The colorscheme's floats' colours; DevHub's own until known. */
   readonly surface?: Surface | undefined;
+  /** The grid's own face (fidget is text in the editor's font). */
+  readonly font?: string | undefined;
 }) {
   const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set());
   const leave = useCallback((id: string) => {
@@ -65,7 +68,11 @@ export function Toasts({
     <div
       className="nvim-toasts"
       aria-live="polite"
-      style={{ bottom, ...surfaceStyle(surface) }}
+      style={{
+        bottom,
+        ...surfaceStyle(surface),
+        ...(font ? { ["--nvim-toast-font" as string]: font } : {}),
+      }}
     >
       {toastGroups(toasts).map(({ group, toasts: list }) => (
         <div
@@ -107,7 +114,6 @@ function surfaceStyle(surface: Surface | undefined): Record<string, string> {
     const c = css(v);
     if (c !== undefined) out[name] = c;
   };
-  set("--nvim-toast-bg", surface.bg);
   set("--nvim-toast-fg", surface.fg);
   set("--nvim-toast-muted", surface.muted);
   set("--nvim-toast-info", surface.info);
@@ -117,11 +123,12 @@ function surfaceStyle(surface: Surface | undefined): Record<string, string> {
   return out;
 }
 
-const LEVEL_ICON: Record<Toast["level"], string> = {
-  debug: "·",
-  info: "i",
-  warn: "!",
-  error: "×",
+/** fidget's annotation for a notification's level, after its message. */
+const LEVEL_NOTE: Record<Toast["level"], string> = {
+  debug: "DEBUG",
+  info: "INFO",
+  warn: "WARN",
+  error: "ERROR",
 };
 
 /** How long a notification takes to fade, at the end of its time. */
@@ -155,14 +162,14 @@ function ToastView({
     };
   }, [toast, leave, dismiss]);
   const progress = toast.progress;
-  const icon = progress ? (
+  const mark = progress ? (
     progress.done ? (
-      <span className="nvim-toast-done">✓</span>
+      <span className="nvim-toast-done">✔</span>
     ) : (
       <span className="nvim-toast-spinner" />
     )
   ) : (
-    <span className="nvim-toast-icon">{LEVEL_ICON[toast.level]}</span>
+    <span className="nvim-toast-note">{LEVEL_NOTE[toast.level]}</span>
   );
   return (
     <div
@@ -174,9 +181,6 @@ function ToastView({
       }}
     >
       <div className="nvim-toast-line">
-        <span className="nvim-toast-mark" aria-hidden>
-          {icon}
-        </span>
         <span className="nvim-toast-msg">{toast.msg || toast.title}</span>
         {toast.msg !== "" &&
         toast.title !== "" &&
@@ -185,9 +189,12 @@ function ToastView({
         ) : null}
         {progress?.percent !== undefined && !progress.done ? (
           <span className="nvim-toast-percent">
-            {Math.round(progress.percent)}%
+            ({Math.round(progress.percent)}%)
           </span>
         ) : null}
+        <span className="nvim-toast-mark" aria-hidden>
+          {mark}
+        </span>
       </div>
     </div>
   );
