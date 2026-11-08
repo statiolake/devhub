@@ -827,7 +827,7 @@ describe("what a tmux command says when it goes wrong", () => {
       const runner = runtime({
         timeoutMs: 5_000,
         tmux: fakeTmux(
-          `[ "$3" = "-V" ] && { echo "tmux 3.4"; exit 0; }\necho ${JSON.stringify(said)} >&2\nexit 1`,
+          `case " $* " in *" -V "*) echo "tmux 3.4"; exit 0 ;; esac\necho ${JSON.stringify(said)} >&2\nexit 1`,
         ),
       });
       await expect(runner.agentRound([])).rejects.toMatchObject({ code });
@@ -841,7 +841,7 @@ describe("what a tmux command says when it goes wrong", () => {
     const runner = runtime({
       timeoutMs: 5_000,
       tmux: fakeTmux(
-        '[ "$3" = "-V" ] && { echo "tmux 3.4"; exit 0; }\necho "unknown command: display-message" >&2\nexit 1',
+        'case " $* " in *" -V "*) echo "tmux 3.4"; exit 0 ;; esac\necho "unknown command: display-message" >&2\nexit 1',
       ),
     });
     expect((await runner.agentRound([])).marker).toBe("wrong");
