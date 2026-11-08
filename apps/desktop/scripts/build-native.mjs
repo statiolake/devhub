@@ -25,12 +25,22 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
 mkdirSync(`${root}/out/native`, { recursive: true });
+
+// libghostty-vt, the control-mode terminal's engine (`vendor/libghostty-vt/`,
+// `src/main/ptyHost/vt/libghosttyVt.ts`): not native code, but a build input
+// that lives outside `src` and has to be in `out`, which is what the packaged
+// app carries. Copied on every platform.
+mkdirSync(`${root}/out/vt`, { recursive: true });
+copyFileSync(
+  `${root}/vendor/libghostty-vt/ghostty-vt.wasm`,
+  `${root}/out/vt/ghostty-vt.wasm`,
+);
 
 // `devhub-pgrp-anchor`, which keeps DevHub's process group from being
 // orphaned while a workbench is frozen (`src/main/native/processGroupAnchor.c`,
