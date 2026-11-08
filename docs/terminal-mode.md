@@ -437,6 +437,26 @@ the GPU process's 36–40% of a core; a `cat` of a large file takes 0.7 s
 longer, the time the pty host's engine spends parsing it (the engine reads
 every byte; xterm.js' path drops what tmux coalesced away).
 
+**Throughput, profiled (phase 3).** A `cat` of 21.9 MB (300 000 lines) into a
+192×60 pane, timed headless (Node, the pty host's code, a real tmux 3.7c
+control client) from the command to the line after it in the engine: 1.15–
+1.25 s. The floor is tmux's own: a control client that only reads its
+`%output` and parses nothing takes 0.84–0.89 s. A CPU profile of the rest
+put two things in the engine's binding on top: `resetEnds`, a byte-by-byte
+JavaScript scan of every chunk for `ESC c` and `DECRST 2027` (0.2 s), and the
+`memory.buffer` getter that `views()` called on every row and style read to
+see whether wasm memory had grown (0.12 s, plus its garbage). Now the scan
+jumps between ESCs with `indexOf`, and growth is seen as the old view's
+buffer being detached (length 0): 0.85–0.94 s, tmux's floor. The libghostty
+parse itself was 0.08 s of it; dropping a flood and reading the pane back
+with `capture-pane` instead was tried and gained nothing, so it is not done.
+In the app, the remaining difference to xterm.js' path is the pty host
+process sharing the machine with the renderer and the GPU process; it is to
+be measured again on the Mac. The GPU process's 36–40 % is compositing the
+painter's canvas every frame under Xvfb's software compositing; it is not
+cheap to change here, and with the Mac's GPU compositing it is to be
+measured before anything is changed.
+
 ### Next (phase 2 still open)
 
 - The painter's frames cost the compositor more than xterm.js' DOM rows

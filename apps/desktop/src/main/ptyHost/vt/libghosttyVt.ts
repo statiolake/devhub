@@ -203,9 +203,14 @@ export class LibGhosttyVt {
 		return this.#scratch;
 	}
 
-	/** @internal The memory's views, taken again if it grew. */
+	/**
+	 * @internal The memory's views, taken again if it grew. A memory that
+	 * grows detaches its old buffer, whose length is then 0: that is
+	 * checked, not `memory.buffer`, a getter that costs a call each time
+	 * (a tenth of a large `cat`'s time, profiled).
+	 */
 	views(): { u8: Uint8Array; dv: DataView } {
-		if (this.#u8.buffer !== this.#ex.memory.buffer) {
+		if (this.#u8.byteLength === 0) {
 			this.#u8 = new Uint8Array(this.#ex.memory.buffer);
 			this.#dv = new DataView(this.#ex.memory.buffer);
 		}
@@ -686,18 +691,21 @@ export class VtPane {
  * turns grapheme clustering off. A sequence split across two chunks is missed
  * (a pane's output arrives in lines, and both are rare).
  */
-function* resetEnds(bytes: Uint8Array): Generator<number> {
+function resetEnds(bytes: Uint8Array): number[] {
 	const decrst = [0x5b, 0x3f, 0x32, 0x30, 0x32, 0x37, 0x6c];
-	for (let i = 0; i < bytes.length - 1; i++) {
-		if (bytes[i] !== 0x1b) continue;
-		if (bytes[i + 1] === 0x63) {
-			yield i + 2;
-			continue;
-		}
-		if (decrst.every((byte, k) => bytes[i + 1 + k] === byte)) {
-			yield i + 1 + decrst.length;
-		}
+	const ends: number[] = [];
+	// `indexOf` finds each ESC natively: a byte-by-byte loop here was a
+	// fifth of a large `cat`'s time in the pty host, profiled.
+	for (
+		let i = bytes.indexOf(0x1b);
+		i >= 0 && i < bytes.length - 1;
+		i = bytes.indexOf(0x1b, i + 1)
+	) {
+		if (bytes[i + 1] === 0x63) ends.push(i + 2);
+		else if (decrst.every((byte, k) => bytes[i + 1 + k] === byte))
+			ends.push(i + 1 + decrst.length);
 	}
+	return ends;
 }
 
 function rgbAt(u8: Uint8Array, at: number): number {
