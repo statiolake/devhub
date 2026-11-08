@@ -3,14 +3,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// What `import 'electron'` means to a test. There is no Electron under vitest,
-// and up to 1.131.0 nobody had to say so: VS Code listed Electron among its
-// devDependencies, so a VS Code module imported from a test resolved it against
-// `vscode/node_modules`. 1.136.1 dropped it, and the import began reaching
-// whichever nested `node_modules` a walk up the tree found first — a bare
-// extension copy with no binary, which throws at load. The stub says what the
-// answer has always been in these tests; see the file for why it is not
-// DevHub's own `electron` package.
+// What `import 'electron'` means to a test: there is no Electron under vitest.
+// See the stub for why it is not DevHub's own `electron` package.
 const electronStub = fileURLToPath(
   new URL("./test/stubs/electron.cjs", import.meta.url),
 );
