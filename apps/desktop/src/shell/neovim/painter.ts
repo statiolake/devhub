@@ -475,6 +475,22 @@ export class GridPainter {
           : part === "gutter"
             ? "inset(50%)"
             : "";
+      // A blank blended float (a picker's or a dialog's backdrop) is one
+      // tint over everything: a layer of its colour, no bitmap to paint.
+      const backdrop = box.float ? this.backdropOf(state, box) : undefined;
+      if (backdrop !== undefined) {
+        if (entry.width !== -2) {
+          canvas.width = 1;
+          canvas.height = 1;
+          entry.width = -2;
+        }
+        canvas.style.width = `${String(grid.width * this.metrics.width)}px`;
+        canvas.style.height = `${String(grid.height * this.metrics.height)}px`;
+        canvas.style.background = backdrop;
+        grid.dirty.clear();
+        continue;
+      }
+      if (entry.width === -2) canvas.style.background = "";
       if (
         entry.width !== grid.width ||
         entry.height !== grid.height ||
@@ -505,6 +521,35 @@ export class GridPainter {
       grid.dirty.clear();
       if (smooth) this.placeScroll(state, box);
     }
+  }
+
+  /**
+   * A float that is a backdrop — no border, every cell blank, all in one
+   * ground with `winblend` (its `Normal` and its `EndOfBuffer` rows are
+   * two highlights of one colour) — as the CSS colour it tints with: its
+   * ground at `100 - blend` percent, which is what Neovim's compositor
+   * mixes.
+   */
+  private backdropOf(state: NeovimUiState, box: GridBox): string | undefined {
+    if (box.frame || box.crop) return undefined;
+    const grid = state.grids.get(box.grid);
+    if (!grid || grid.width * grid.height === 0) return undefined;
+    let tint: string | undefined;
+    let last = -1;
+    const n = grid.width * grid.height;
+    for (let i = 0; i < n; i += 1) {
+      if (grid.chars[i] !== " ") return undefined;
+      const hl = grid.hls[i] ?? 0;
+      if (hl === last) continue;
+      last = hl;
+      const attr = state.hl.get(hl);
+      if (attr?.blend === undefined || attr.blend <= 0) return undefined;
+      const { bg } = resolveColors(attr, state.defaults);
+      const css = cssColor(bg, 1 - attr.blend / 100);
+      if (tint !== undefined && css !== tint) return undefined;
+      tint = css;
+    }
+    return tint;
   }
 
   /**
