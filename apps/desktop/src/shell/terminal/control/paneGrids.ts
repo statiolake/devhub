@@ -91,6 +91,7 @@ export interface ControlView {
         readonly border: boolean;
         readonly title: string;
         cursor: VtCursor | undefined;
+        modes: PaneModes;
       }
     | undefined;
   /** The `command-prompt` or `confirm-before` open now: one line at the foot. */
@@ -251,6 +252,7 @@ export function applyControl(
         border: message.border,
         title: message.title,
         cursor: frame.cursor,
+        modes: message.modes,
       };
       applyFrame(view, POPUP_STYLES, POPUP_GRID, frame, changes);
       changes.layout ||= fresh;

@@ -863,6 +863,34 @@ export function ControlTerminalSurface({
     };
     const mouseFor = (event: MouseEvent) => {
       const { col, row } = cellAt(event);
+      // While a popup is open the mouse is its, as the keys are: reported
+      // to its program when it asked, as a pane's (pane -1: the popup).
+      const popup = view.popup;
+      if (popup !== undefined) {
+        const inset = popup.border ? 1 : 0;
+        const x = col - popup.x - inset;
+        const y = row - popup.y - inset;
+        const inside =
+          x >= 0 &&
+          y >= 0 &&
+          x < popup.width - 2 * inset &&
+          y < popup.height - 2 * inset;
+        if (!inside) return undefined;
+        const reports = popup.modes.mouse >= 1000 && popup.modes.sgrMouse;
+        return {
+          pane: {
+            pane: -1,
+            x: popup.x + inset,
+            y: popup.y + inset,
+            width: 0,
+            height: 0,
+            active: true,
+          },
+          x,
+          y,
+          reports,
+        };
+      }
       const pane = paneAt(view, col, row);
       if (pane === undefined) return undefined;
       const modes = view.modes.get(pane.pane);
@@ -877,6 +905,7 @@ export function ControlTerminalSurface({
       if (hit === undefined) return;
       // A right-click the program does not take is tmux's MouseDown3Pane.
       if (event.button === 2 && !hit.reports) {
+        if (hit.pane.pane < 0) return;
         send({
           kind: "mouse",
           key: `${event.altKey ? "M-" : ""}MouseDown3Pane`,
@@ -886,20 +915,23 @@ export function ControlTerminalSurface({
         });
         return;
       }
-      if (!hit.pane.active) send({ kind: "select-pane", pane: hit.pane.pane });
+      if (!hit.pane.active && hit.pane.pane >= 0)
+        send({ kind: "select-pane", pane: hit.pane.pane });
       if (hit.reports)
         send({
           kind: "bytes",
-          pane: hit.pane.pane,
+          ...target(hit.pane.pane),
           bytes: sgrMouse(event.button, hit.x, hit.y, false),
         });
     };
+    // Bytes for a pane; the popup's (pane -1) go with none, which is its.
+    const target = (pane: number) => (pane < 0 ? {} : { pane });
     const onMouseUp = (event: MouseEvent) => {
       const hit = mouseFor(event);
       if (hit?.reports)
         send({
           kind: "bytes",
-          pane: hit.pane.pane,
+          ...target(hit.pane.pane),
           bytes: sgrMouse(event.button, hit.x, hit.y, true),
         });
     };
@@ -910,7 +942,7 @@ export function ControlTerminalSurface({
       // The wheel over a program that does not take it is tmux's
       // (WheelUpPane: into copy mode, and scrolling in it).
       if (!hit.reports) {
-        if (event.deltaY === 0) return;
+        if (event.deltaY === 0 || hit.pane.pane < 0) return;
         send({
           kind: "mouse",
           key: event.deltaY < 0 ? "WheelUpPane" : "WheelDownPane",
@@ -922,7 +954,7 @@ export function ControlTerminalSurface({
       }
       send({
         kind: "bytes",
-        pane: hit.pane.pane,
+        ...target(hit.pane.pane),
         bytes: sgrMouse(event.deltaY < 0 ? 64 : 65, hit.x, hit.y, false),
       });
     };

@@ -828,6 +828,7 @@ export class ControlClient {
 				shell: shell ?? "",
 				command: args.command ?? "",
 				path,
+				environment: args.environment,
 			}),
 			changed: () => this.#schedule(),
 			closed: () => {
@@ -2099,6 +2100,7 @@ export class ControlClient {
 				border: popup.border,
 				title: popup.title,
 				frame: popupFrame,
+				modes: modesOf(popup.vt),
 			});
 		}
 		const chooser = this.#chooser;

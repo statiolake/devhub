@@ -14,7 +14,7 @@
  * make it "the current pane" and the binding would act on the wrong one.
  *
  * The pty is opened running `POPUP_SCRIPT`, the same program everywhere
- * (`OpenSpec.popupLaunch`): it reads what to run from its first five lines
+ * (`OpenSpec.popupLaunch`): it reads what to run from its first seven lines
  * of input, with echo off, so nothing about one popup is in the launch.
  */
 
@@ -31,13 +31,14 @@ import { printfEscaped } from "./tmuxCommand.js";
  */
 export const POPUP_SCRIPT = [
 	"stty -echo 2>/dev/null",
-	"IFS= read -r d; IFS= read -r t; IFS= read -r p; IFS= read -r s; IFS= read -r c; IFS= read -r e",
+	"IFS= read -r d; IFS= read -r t; IFS= read -r p; IFS= read -r s; IFS= read -r c; IFS= read -r e; IFS= read -r v",
 	"stty echo 2>/dev/null",
 	"printf '\\033[H\\033[2J'",
 	'c=$(printf "$c")',
 	'cd "$d" 2>/dev/null || cd',
 	"TMUX=$t TMUX_PANE=$p; export TMUX TMUX_PANE",
 	'if [ -n "$e" ]; then PATH=$e; export PATH; fi',
+	'if [ -n "$v" ]; then eval "$(printf "$v")"; fi',
 	'[ -x "$s" ] || s=/bin/sh',
 	'if [ -z "$c" ]; then exec "$s"; fi',
 	'exec "$s" -c "$c"',
@@ -50,7 +51,7 @@ export interface PopupPty {
 	kill(): void;
 }
 
-/** What `POPUP_SCRIPT` is told, as its five lines. */
+/** What `POPUP_SCRIPT` is told, as its seven lines. */
 export function popupInput(job: {
 	readonly directory: string;
 	readonly tmux: string;
@@ -58,6 +59,8 @@ export function popupInput(job: {
 	readonly shell: string;
 	readonly command: string;
 	readonly path: string;
+	/** `-e NAME=value`, each put in the command's environment as tmux does. */
+	readonly environment?: readonly string[];
 }): Uint8Array {
 	const line = (text: string) => text.replace(/[\r\n]/g, " ");
 	return new TextEncoder().encode(
@@ -68,6 +71,14 @@ export function popupInput(job: {
 			line(job.shell),
 			printfEscaped(job.command),
 			line(job.path),
+			// One `export 'NAME=value'` line each, quoted for sh, sent as
+			// printf escapes so a value holds anything.
+			printfEscaped(
+				(job.environment ?? [])
+					.filter((pair) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(pair))
+					.map((pair) => `export '${pair.replace(/'/g, "'\\''")}'`)
+					.join("\n"),
+			),
 		].join("\n") + "\n",
 	);
 }
@@ -170,6 +181,11 @@ export class PopupJob {
 	#closed = false;
 	#all = true;
 	#dirty = true;
+
+	/** Its engine: the page reports the mouse to it by its modes. */
+	get vt(): VtPane {
+		return this.#o.vt;
+	}
 
 	constructor(options: PopupJobOptions) {
 		this.#o = options;

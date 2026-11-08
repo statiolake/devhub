@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { keyBytes, popupInput } from "./popup.js";
+import { execFileSync } from "node:child_process";
+import { POPUP_SCRIPT, keyBytes, popupInput } from "./popup.js";
 import {
 	parseCommands,
 	popupOf,
@@ -61,7 +62,31 @@ describe("tmux's command syntax", () => {
 				path: "/p",
 			}),
 		);
-		expect(lines).toBe("/d\n/s,1,2\n%0\n/bin/sh\n\\154\\163\n/p\n");
+		expect(lines).toBe("/d\n/s,1,2\n%0\n/bin/sh\n\\154\\163\n/p\n\n");
+	});
+
+	it("takes -b none as no border", () => {
+		expect(popupOf("display-popup -b none -E htop")?.noBorder).toBe(true);
+		expect(popupOf("display-popup -b rounded -E htop")?.noBorder).toBe(false);
+	});
+
+	it("puts -e in the command's environment, whatever its value holds", () => {
+		const input = new TextDecoder().decode(
+			popupInput({
+				directory: "/",
+				tmux: "",
+				pane: "%0",
+				shell: "/bin/sh",
+				command: 'printf "%s|%s" "$A" "$B"',
+				path: "",
+				environment: ["A=it's $HOME", "B=x\ny", "not a pair"],
+			}),
+		);
+		const out = execFileSync("sh", ["-c", POPUP_SCRIPT], {
+			input,
+			encoding: "utf8",
+		});
+		expect(out.endsWith("it's $HOME|x\ny")).toBe(true);
 	});
 
 	it("types tmux's key names as a terminal sends them", () => {

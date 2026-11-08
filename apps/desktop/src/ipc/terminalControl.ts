@@ -168,6 +168,8 @@ export type ControlToPage =
 			readonly border: boolean;
 			readonly title: string;
 			readonly frame: VtFrame;
+			/** Its program's modes: the mouse is reported to it as a pane's. */
+			readonly modes: PaneModes;
 	  }
 	| { readonly kind: "popup-closed"; readonly id: number }
 	/**

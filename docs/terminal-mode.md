@@ -535,7 +535,15 @@ the person's `bind m` (fzf over `tmux list-windows`, then `tmux move-pane
 -t :N`) listed the opener's windows and moved the opener; on an SSH host the
 popup ran on the host with the opener as `TMUX_PANE`. A Neovim drawn over a
 pane is hidden while a popup is open (the overlay is a view above the page).
-Not yet: `-e`, `-b`/`-s`/`-S` styles, the mouse in a popup. Seen on the way:
+`-e NAME=value` is put in the command's environment as tmux does (unexpanded;
+sent as `printf` escapes of `export` lines, so a value holds anything);
+`-b none` is no border, as `-B`; tmux's other border line styles and the
+`-s`/`-S` colours describe tmux's border characters, and DevHub's frame is
+`popup.css`'s, so they change nothing. While a popup is open the mouse is its
+as the keys are: a press, release or wheel inside it is reported to its
+program when the program asked (SGR), and nothing reaches the panes. A Neovim
+drawn over a pane stays hidden under a popup: the overlay is a view above the
+page, so shown it would cover the popup. Seen on the way:
 a host's pane finds the host's own `tmux` on its PATH, not DevHub's (on the
 test host a 3.4, which cannot talk to the 3.7c server), in a popup and in a
 pane alike.

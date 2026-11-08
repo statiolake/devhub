@@ -173,7 +173,10 @@ export function popupOf(binding: string): PopupArgs | undefined {
 	const value = (flag: string) => values.get(flag);
 	return {
 		closeOnExit: Math.min(closeOnExit, 2) as 0 | 1 | 2,
-		noBorder,
+		// `-b none` (`popup-border-lines`) is no border, as `-B`. tmux's other
+		// line styles and `-s`/`-S` colours draw tmux's border characters;
+		// DevHub's frame is `popup.css`'s, so they change nothing here.
+		noBorder: noBorder || values.get("b") === "none",
 		environment,
 		...(value("w") === undefined ? {} : { width: value("w") }),
 		...(value("h") === undefined ? {} : { height: value("h") }),
