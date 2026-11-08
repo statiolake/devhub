@@ -311,7 +311,9 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   — as page text it sat half a pixel or a pixel off the row's baseline,
   depending on font and size (the line box rounds ascent and descent its
   own way), and lost bold, italic and wide cells. It glides to a
-  new cell in 70 ms outside Insert mode (none with reduced motion).
+  new cell in 70 ms outside Insert mode (none with reduced motion), but
+  never across a scroll of its window: then it moves with the text at
+  once.
 - A window scrolls in pixels (`smoothScroll.ts`; 0.10+, which says how far
   a window scrolled in `win_viewport`'s `scroll_delta`): the trackpad and
   the wheel move its text pixel for pixel while Neovim's `topline` stays a
@@ -352,7 +354,11 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   makes itself (`<C-d>`, `<C-f>`, `zz`, `j` past the edge, a search) eases
   from the old view to the new in 90 ms, already under way on the first
   frame drawn (keys are never held); a jump of a window or more (`G`) is
-  not eased. The cursor rides with its text (a transform), a winbar stays
+  not eased. The cursor rides with its text (a transform) and does not
+  glide while its window scrolls — Neovim's scroll moves its row at once
+  and the display's offset takes the rows back, so a glide to the new row
+  put it rows off its cell for 70 ms, the trackpad's warping cursor; a
+  winbar stays
   put, a click lands on the line under the pointer. Not for floats or the
   message grid, not on 0.9, and with reduced motion only the wheel's own
   movement.

@@ -429,7 +429,7 @@ export class NeovimEditor {
     this.painter.paint(this.state, changes, this.boxes, forceAll);
     this.askFloatLabels();
     this.askFloatAnchors();
-    this.placeCursor();
+    this.placeCursor(changes.scrolled.has(this.state.cursor.grid));
     this.scrollFrame();
     for (const listener of this.listeners) listener();
   }
@@ -790,7 +790,8 @@ export class NeovimEditor {
     return this.cursorBox();
   }
 
-  private placeCursor(): void {
+  /** `scrolled`: Neovim scrolled the cursor's window in this redraw. */
+  private placeCursor(scrolled = false): void {
     const at = this.cursorBox();
     const cell = this.painter.cell();
     const mode = currentModeInfo(this.state);
@@ -803,6 +804,17 @@ export class NeovimEditor {
     this.cursor.style.display = hidden ? "none" : "";
     if (at === undefined) return;
     const { grid, row, col } = this.state.cursor;
+    // Moves glide, briefly — not in Insert mode, where it would trail the
+    // typing — and the stylesheet drops it for reduced motion. Never across
+    // a scroll: the text moves at once (or rides the display's offset, a
+    // transform), and a cursor gliding to its new row meanwhile would be
+    // rows off its cell, so it goes with the text instead; a glide under
+    // way stops where it is going.
+    const scrolling = scrolled || this.painter.scrollView(grid) !== undefined;
+    this.cursor.classList.toggle(
+      "nvim-cursor-glide",
+      !this.state.mode.name.startsWith("insert") && !scrolling,
+    );
     const g = this.state.grids.get(grid);
     const wide = g !== undefined && g.chars[row * g.width + col + 1] === "";
     const attr =
@@ -864,12 +876,6 @@ export class NeovimEditor {
       mode?.blinkoff ?? 0,
       mode?.blinkwait ?? 0,
       `${String(at.x)},${String(at.y)},${this.state.mode.name},${String(focused)}`,
-    );
-    // Moves glide, briefly — not in Insert mode, where it would trail the
-    // typing — and the stylesheet drops it for reduced motion.
-    this.cursor.classList.toggle(
-      "nvim-cursor-glide",
-      !this.state.mode.name.startsWith("insert"),
     );
     this.cursor.style.zIndex = String(
       (this.boxes.find((b) => b.grid === grid)?.z ?? 0) + 1,
