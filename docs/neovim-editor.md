@@ -249,8 +249,18 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   the lines (`M._marks`, after `DiagnosticChanged`, `GitSignsUpdate`, edits,
   window changes, and — no event says a search or `:nohlsearch` happened —
   when Neovim is idle and the pattern or `v:hlsearch` differ from what was
-  sent); the cursor's line is `win_viewport`'s. Only drawn: clicks go to
-  the text under them.
+  sent); the cursor's line is `win_viewport`'s. The scrollbar (its last 8
+  pixels of the window, shown under the pointer) is a control, as VS
+  Code's (`scrollbar.ts`), each part done by Neovim with its own commands
+  (`SCROLLBAR_LUA`) and each with its keys, named in the track's tooltip:
+  the thumb drags (`<C-e>`/`<C-y>` with a count, a request at a time; the
+  cursor pushed as scrolling pushes it — keys: `gg`, `G`, `{count}%`,
+  `<C-d>`); a mark, within 3 pixels, goes to its line in that window
+  (`m'` first, so `<C-o>` comes back; the diagnostic's or the match's
+  column, else the first non-blank; folds opened as a jump opens them —
+  keys: `]d`/`[d`, `n`/`N`, the person's hunk motions such as gitsigns'
+  `]c`/`[c`); the rest of the track pages (`<C-f>`/`<C-b>`). The thumb
+  wins over the marks it covers; no new keymaps.
 - A window scrolls in pixels (`smoothScroll.ts`; 0.10+, which says how far
   a window scrolled in `win_viewport`'s `scroll_delta`): the trackpad and
   the wheel move its text pixel for pixel while Neovim's `topline` stays a
@@ -825,7 +835,8 @@ ENTER`) — evaluated in round 2, `ext_messages` not adopted. On 0.11 it
     padding stay behaviour, kept.
 14. _Scrollbar marks_ — done (round 4): diagnostics, the search's
     matches, git's hunks and the cursor along each window's scrollbar, as
-    VS Code's overview ruler (The page, above). No minimap: a minimap of
+    VS Code's overview ruler (The page, above); round 5 made them and the
+    track clickable and the thumb draggable. No minimap: a minimap of
     a modal editor's buffer is a second view to keep in step for little.
 15. _The matching bracket_ — done (round 4): `MatchParen`'s cells (by
     group name, when it has a ground) are a box a little inside the cell,

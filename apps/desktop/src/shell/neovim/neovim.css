@@ -150,18 +150,27 @@
     top 70ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-/* Each window's scrollbar (`win_viewport`), seen while the view moves. */
+/* Each window's scrollbar (`win_viewport`), seen while the view moves and
+   under the pointer; a press on it is its own (scrollbar.ts). */
 .nvim-scrollbar {
   position: absolute;
-  width: 6px;
-  pointer-events: none;
+  width: 8px;
+  cursor: default;
   opacity: 0;
   transition: opacity 400ms ease;
 }
 
-.nvim-scrollbar-active {
+.nvim-scrollbar-active,
+.nvim-scrollbar:hover,
+.nvim-scrollbar-dragging {
   opacity: 1;
   transition: opacity 80ms ease;
+}
+
+.nvim-scrollbar:hover .nvim-scrollbar-thumb,
+.nvim-scrollbar-dragging .nvim-scrollbar-thumb {
+  width: 6px;
+  background: color-mix(in srgb, var(--primary) 50%, transparent);
 }
 
 /* Marks along a window's scrollbar (marks.ts): faint, over the text's

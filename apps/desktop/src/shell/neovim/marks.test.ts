@@ -50,6 +50,8 @@ describe("scrollbar marks", () => {
       w: 2,
       h: 20,
       color: "rgb(0,255,0)",
+      kind: "git",
+      line: 1,
     });
     expect(rects[1]).toMatchObject({ y: 158, h: 2, color: "rgb(136,0,0)" });
     // The search in the middle, in Search's ground.
@@ -63,6 +65,14 @@ describe("scrollbar marks", () => {
     const diag = rects.filter((r) => r.x === 5);
     expect(diag.map((r) => r.y)).toEqual([98, 18]);
     // The cursor across.
-    expect(rects.at(-1)).toEqual({ x: 0, y: 78, w: 8, h: 1, color: "grey" });
+    expect(rects.at(-1)).toEqual({
+      x: 0,
+      y: 78,
+      w: 8,
+      h: 1,
+      color: "grey",
+      kind: "cursor",
+      line: 40,
+    });
   });
 });

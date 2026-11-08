@@ -38,7 +38,21 @@ import { cmdlineLayout, textCells } from "./cmdline";
 import { cmdlinePlace } from "./place";
 import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
 import { rideAnchor, rideArea, rideStyle, type BufposAnchor } from "./riders";
-import { markRects, NO_MARKS, parseMarks, type ScrollMarks } from "./marks";
+import {
+  markRects,
+  NO_MARKS,
+  parseMarks,
+  type MarkRect,
+  type ScrollMarks,
+} from "./marks";
+import {
+  draggedTopline,
+  hitScrollbar,
+  markTitle,
+  SCROLLBAR_LUA,
+  thumbOf,
+  type Thumb,
+} from "./scrollbar";
 
 /** The width of a scrollbar's marks, as the scrollbar's track (CSS). */
 const MARKS_WIDTH = 8;
@@ -128,8 +142,25 @@ export class NeovimEditor {
       key: string;
       marksKey: string;
       timer: number;
+      /** As last placed: for a press on it (`scrollbar.ts`). */
+      thumbAt: Thumb;
+      rects: readonly MarkRect[];
+      height: number;
+      lineCount: number;
     }
   >();
+  /** A scrollbar's thumb being dragged, and the scroll asked for last. */
+  private thumbDrag:
+    | {
+        readonly grid: number;
+        readonly win: number;
+        readonly y: number;
+        readonly top: number;
+        busy: boolean;
+        want: number | undefined;
+        sent: number | undefined;
+      }
+    | undefined;
   /** What the scrollbars mark (`marks.ts`), and a count of its changes. */
   private marks: ScrollMarks = NO_MARKS;
   private marksVersion = 0;
@@ -698,7 +729,11 @@ export class NeovimEditor {
   /** A scrollbar's marks, drawn again when they or its size changed. */
   private placeMarks(
     canvas: HTMLCanvasElement,
-    bar: { marksKey: string; track: HTMLDivElement },
+    bar: {
+      marksKey: string;
+      track: HTMLDivElement;
+      rects: readonly MarkRect[];
+    },
     box: GridBox,
     viewport: { readonly curline: number; readonly lineCount: number },
     height: number,
@@ -737,6 +772,7 @@ export class NeovimEditor {
       height,
       cssColor(this.state.defaults.foreground, 0.55),
     );
+    bar.rects = rects;
     for (const r of rects) {
       ctx.fillStyle = r.color;
       ctx.fillRect(r.x, Math.min(r.y, height - r.h), r.w, r.h);
@@ -748,6 +784,108 @@ export class NeovimEditor {
     this.marks = parseMarks(payload);
     this.marksVersion += 1;
     this.placeScrollbars();
+  }
+
+  /**
+   * A press on a scrollbar (`scrollbar.ts`): on a mark, Neovim goes to its
+   * line; on the track, it pages towards the press; on the thumb, a drag
+   * scrolls it. The pointer over a mark names it and its keys.
+   */
+  private listenScrollbar(grid: number, track: HTMLDivElement): void {
+    const hit = (event: MouseEvent) => {
+      const bar = this.scrollbars.get(grid);
+      if (!bar) return undefined;
+      const y = event.clientY - track.getBoundingClientRect().top;
+      return {
+        bar,
+        y,
+        hit: hitScrollbar(y, bar.height, bar.thumbAt, bar.rects),
+      };
+    };
+    track.addEventListener("mousemove", (event) => {
+      const at = hit(event);
+      const title = at ? markTitle(at.hit) : "";
+      if (track.title !== title) track.title = title;
+    });
+    track.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.focus();
+      const at = hit(event);
+      const win = this.state.gridWins.get(grid);
+      if (event.button !== 0 || !at || win === undefined) return;
+      const { bar, hit: what } = at;
+      if (what.kind === "mark") {
+        this.askScrollbar("mark", win, what.line, what.mark);
+      } else if (what.kind === "page") {
+        this.askScrollbar("page", win, what.dir);
+      } else {
+        bar.track.classList.add("nvim-scrollbar-dragging");
+        this.thumbDrag = {
+          grid,
+          win,
+          y: event.clientY,
+          top: bar.thumbAt.top,
+          busy: false,
+          want: undefined,
+          sent: undefined,
+        };
+      }
+    });
+  }
+
+  /** The thumb dragged to `clientY`: Neovim scrolls, a request at a time. */
+  private dragThumb(clientY: number | undefined): void {
+    const drag = this.thumbDrag;
+    if (!drag) return;
+    const bar = this.scrollbars.get(drag.grid);
+    if (!bar) {
+      this.thumbDrag = undefined;
+      return;
+    }
+    if (clientY !== undefined) {
+      drag.want = draggedTopline(
+        drag.top,
+        clientY - drag.y,
+        bar.height,
+        bar.lineCount,
+      );
+    }
+    if (drag.busy || drag.want === undefined || drag.want === drag.sent) return;
+    drag.busy = true;
+    drag.sent = drag.want;
+    void this.askScrollbar("top", drag.win, drag.want).finally(() => {
+      drag.busy = false;
+      if (this.thumbDrag === drag) this.dragThumb(undefined);
+    });
+  }
+
+  private endThumbDrag(): void {
+    const drag = this.thumbDrag;
+    if (!drag) return;
+    this.thumbDrag = undefined;
+    this.scrollbars
+      .get(drag.grid)
+      ?.track.classList.remove("nvim-scrollbar-dragging");
+  }
+
+  /** Ask Neovim to do what the scrollbar was pressed for (`SCROLLBAR_LUA`). */
+  private async askScrollbar(
+    action: "mark" | "page" | "top",
+    win: number,
+    arg: number,
+    kind?: string,
+  ): Promise<void> {
+    const request = this.port.request?.bind(this.port);
+    if (!request) return;
+    try {
+      await request("nvim_exec_lua", [
+        SCROLLBAR_LUA,
+        [action, win, arg, kind ?? ""],
+      ]);
+    } catch {
+      // The window closed meanwhile: nothing to scroll.
+    }
   }
 
   /**
@@ -776,28 +914,42 @@ export class NeovimEditor {
         const marks = document.createElement("canvas");
         marks.className = "nvim-scrollbar-marks";
         this.gridLayer.append(marks, track);
-        bar = { track, thumb, marks, key: "", marksKey: "", timer: 0 };
+        bar = {
+          track,
+          thumb,
+          marks,
+          key: "",
+          marksKey: "",
+          timer: 0,
+          thumbAt: { top: 0, size: 1 },
+          rects: [],
+          height: 0,
+          lineCount: 0,
+        };
         this.scrollbars.set(box.grid, bar);
+        this.listenScrollbar(box.grid, track);
       }
       // The window's text rows: its grid without the statusline, which
       // Neovim draws on the grid only when the window has one of its own.
       const height = box.height * cell.height;
       const rows = this.painter.scrollOffset(box.grid) / cell.height;
-      const top = Math.max(
-        0,
-        Math.min(1, (viewport.topline + rows) / viewport.lineCount),
+      const thumb = thumbOf(
+        viewport.topline,
+        shown,
+        viewport.lineCount,
+        rows,
+        height,
       );
-      const size = Math.max(
-        Math.min(1, shown / viewport.lineCount),
-        24 / Math.max(1, height),
-      );
+      bar.thumbAt = thumb;
+      bar.height = height;
+      bar.lineCount = viewport.lineCount;
       const t = bar.track.style;
       t.left = `${String((box.col + box.width) * cell.width - 8)}px`;
       t.top = `${String(box.row * cell.height)}px`;
       t.height = `${String(height)}px`;
       t.zIndex = String(box.z + 1);
-      bar.thumb.style.top = `${String(Math.min(1 - size, top) * 100)}%`;
-      bar.thumb.style.height = `${String(size * 100)}%`;
+      bar.thumb.style.top = `${String(thumb.top * 100)}%`;
+      bar.thumb.style.height = `${String(thumb.size * 100)}%`;
       this.placeMarks(bar.marks, bar, box, viewport, height);
       const key = `${String(viewport.topline)}:${String(viewport.lineCount)}`;
       if (key !== bar.key) {
@@ -1176,6 +1328,10 @@ export class NeovimEditor {
       this.hoverGrid(undefined);
     });
     window.addEventListener("mousemove", (event) => {
+      if (this.thumbDrag) {
+        this.dragThumb(event.clientY);
+        return;
+      }
       const drag = this.dragging;
       if (!drag) return;
       const at = target(event);
@@ -1186,6 +1342,7 @@ export class NeovimEditor {
       mouse(drag.button, "drag", event, same);
     });
     window.addEventListener("mouseup", (event) => {
+      this.endThumbDrag();
       const drag = this.dragging;
       if (!drag) return;
       this.dragging = undefined;

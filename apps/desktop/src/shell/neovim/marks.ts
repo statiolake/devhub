@@ -6,8 +6,8 @@
  * window's scrollbar, in the colorscheme's colour for it. Lua sends the
  * lines (`devhub_gui`'s `M._marks`, a `marks` event); the cursor's line is
  * `win_viewport`'s. Lanes as VS Code's: git on the left, the search in the
- * middle, diagnostics on the right; the cursor across. Only drawn; clicks
- * go through to the text, as the scrollbar's do.
+ * middle, diagnostics on the right; the cursor across. A click on one
+ * goes to its line (`scrollbar.ts`).
  */
 
 import { cssColor } from "./painter";
@@ -83,6 +83,9 @@ export interface MarkRect {
   readonly w: number;
   readonly h: number;
   readonly color: string;
+  /** What it marks, and the line (1-based) a click on it goes to. */
+  readonly kind?: "diag" | "search" | "git" | "cursor";
+  readonly line?: number;
 }
 
 const SEVERITY = [
@@ -127,7 +130,15 @@ export function markRects(
   for (const [line, count, kind] of marks?.git ?? []) {
     const color = fg(GIT[kind - 1] ?? []);
     if (color === undefined) continue;
-    out.push({ x: 0, y: y(line), w: lane, h: span(count), color });
+    out.push({
+      x: 0,
+      y: y(line),
+      w: lane,
+      h: span(count),
+      color,
+      kind: "git",
+      line,
+    });
   }
   const search = colors.get("Search");
   const searchColor =
@@ -144,6 +155,8 @@ export function markRects(
         w: 2 * lane,
         h: span(1),
         color: searchColor,
+        kind: "search",
+        line,
       });
     }
   }
@@ -151,7 +164,15 @@ export function markRects(
   for (const [line, severity] of diag) {
     const color = fg([SEVERITY[severity - 1] ?? "DiagnosticHint"]);
     if (color === undefined) continue;
-    out.push({ x: 2.5 * lane, y: y(line), w: 1.5 * lane, h: span(1), color });
+    out.push({
+      x: 2.5 * lane,
+      y: y(line),
+      w: 1.5 * lane,
+      h: span(1),
+      color,
+      kind: "diag",
+      line,
+    });
   }
   if (cursor > 0) {
     out.push({
@@ -160,6 +181,8 @@ export function markRects(
       w: width,
       h: Math.max(1, min / 2),
       color: cursorColor,
+      kind: "cursor",
+      line: cursor,
     });
   }
   return out;
