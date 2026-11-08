@@ -181,9 +181,13 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   here: main's key router takes them first, as for every surface.
 - `ime.ts` — the hidden textarea's events as a state machine: the preedit is
   drawn inline at the cursor, underlined, with the caret at its end (Neovim's
-  cursor is hidden meanwhile), and only the committed text is sent (once);
-  the textarea sits on the cursor, one unwrapped line in the grid's font, so
-  the candidate window opens under the end of the preedit.
+  cursor is hidden meanwhile), and only the committed text is sent (once).
+  The painter draws the preedit as it draws the grid (a canvas: the grid's
+  font, baseline and cell), each character on the cells it will take once
+  committed — a wide one on two (`preeditLayout`, East Asian Wide and
+  Fullwidth) — so committing moves nothing. The textarea (a pixel wide, one
+  unwrapped line, its caret at its left edge) sits after the preedit's last
+  cell, so the candidate window opens under the end of the preedit.
   Paste (Cmd+V, the menu) goes to `nvim_paste`.
 - `mouse.ts` — `nvim_input_mouse` with the grid under the pointer (floats
   first), drags kept on the press's grid, wheel/trackpad pixels accumulated

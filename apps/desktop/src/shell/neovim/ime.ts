@@ -79,3 +79,82 @@ export function imeStep(state: ImeState, event: ImeEvent): ImeStep {
       return { state: IDLE, clear: true };
   }
 }
+
+/**
+ * East Asian Wide and Fullwidth (Unicode's EastAsianWidth W and F, as
+ * Neovim's default `ambiwidth=single` takes them): the ranges that take two
+ * cells. Combining marks take none.
+ */
+const WIDE: readonly (readonly [number, number])[] = [
+  [0x1100, 0x115f],
+  [0x231a, 0x231b],
+  [0x2329, 0x232a],
+  [0x23e9, 0x23ec],
+  [0x2e80, 0x303e],
+  [0x3041, 0x33ff],
+  [0x3400, 0x4dbf],
+  [0x4e00, 0x9fff],
+  [0xa000, 0xa4cf],
+  [0xa960, 0xa97f],
+  [0xac00, 0xd7a3],
+  [0xf900, 0xfaff],
+  [0xfe10, 0xfe19],
+  [0xfe30, 0xfe6f],
+  [0xff00, 0xff60],
+  [0xffe0, 0xffe6],
+  [0x1f300, 0x1f64f],
+  [0x1f900, 0x1f9ff],
+  [0x20000, 0x2fffd],
+  [0x30000, 0x3fffd],
+];
+
+const COMBINING: readonly (readonly [number, number])[] = [
+  [0x0300, 0x036f],
+  [0x200b, 0x200f],
+  [0x3099, 0x309a],
+  [0xfe00, 0xfe0f],
+];
+
+const within = (
+  ranges: readonly (readonly [number, number])[],
+  code: number,
+): boolean => ranges.some(([a, b]) => code >= a && code <= b);
+
+/** The cells a character takes in the grid: 2 wide, 0 combining, else 1. */
+export function cellsOf(ch: string): 0 | 1 | 2 {
+  const code = ch.codePointAt(0) ?? 0;
+  if (within(COMBINING, code)) return 0;
+  return within(WIDE, code) ? 2 : 1;
+}
+
+export interface PreeditCell {
+  readonly ch: string;
+  /** Its first cell, from the cursor's. */
+  readonly col: number;
+  readonly cells: number;
+}
+
+/**
+ * The preedit as the grid will hold it once committed: each character on
+ * its cells — a wide one (かな, 漢字) on two — so what is composed sits
+ * exactly where the committed text will. A combining mark joins the
+ * character before it.
+ */
+export function preeditLayout(text: string): {
+  readonly chars: readonly PreeditCell[];
+  readonly cells: number;
+} {
+  const chars: { ch: string; col: number; cells: number }[] = [];
+  let col = 0;
+  for (const ch of text) {
+    const cells = cellsOf(ch);
+    const last = chars.at(-1);
+    if (cells === 0 && last) {
+      last.ch += ch;
+      continue;
+    }
+    chars.push({ ch, col, cells: Math.max(1, cells) });
+    col += Math.max(1, cells);
+  }
+  return { chars, cells: col };
+}

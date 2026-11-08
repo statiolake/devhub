@@ -128,14 +128,11 @@
   outline-offset: -1px;
 }
 
+/* The IME's preedit: a canvas the painter draws as it draws the grid. */
 .nvim-preedit {
   position: absolute;
   z-index: 300;
   pointer-events: none;
-  white-space: pre;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  box-shadow: inset -2px 0 0 currentColor;
 }
 
 /* Where the IME's candidate window opens; nothing of it is seen. */

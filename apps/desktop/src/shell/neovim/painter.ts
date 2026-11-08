@@ -318,6 +318,47 @@ export class GridPainter {
   }
 
   /**
+   * An IME's preedit, drawn as the grid draws text: the grid's font, its
+   * baseline and cell, each character on its cells (`preeditLayout`), so the
+   * composition sits where the committed text will; underlined across its
+   * cells as the grid underlines, a bar after it for the caret.
+   */
+  paintPreedit(
+    canvas: HTMLCanvasElement,
+    layout: {
+      readonly chars: readonly { ch: string; col: number; cells: number }[];
+      readonly cells: number;
+    },
+    fg: number,
+    bg: number,
+  ): void {
+    const { width: cw, height: ch, baseline } = this.metrics;
+    const w = Math.max(1, layout.cells) * cw + 2;
+    canvas.width = Math.max(1, Math.ceil(w * this.dpr));
+    canvas.height = Math.max(1, Math.ceil(ch * this.dpr));
+    canvas.style.width = `${String(w)}px`;
+    canvas.style.height = `${String(ch)}px`;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.fillStyle = cssColor(bg);
+    ctx.fillRect(0, 0, w, ch);
+    ctx.fillStyle = cssColor(fg);
+    ctx.font = fontOf(this.font);
+    ctx.textBaseline = "alphabetic";
+    ctx.letterSpacing = "0px";
+    for (const c of layout.chars) ctx.fillText(c.ch, c.col * cw, baseline);
+    ctx.strokeStyle = cssColor(fg);
+    ctx.lineWidth = 1;
+    const uy = baseline + 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, uy);
+    ctx.lineTo(layout.cells * cw, uy);
+    ctx.stroke();
+    ctx.fillRect(layout.cells * cw, 0, 2, ch);
+  }
+
+  /**
    * The shadow under each panel of floats (`floatClusters`): one element per
    * cluster under its members, holding a ground for each member and seam,
    * whose drop shadow follows their union's outline. Kept while the cluster

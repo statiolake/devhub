@@ -31,7 +31,13 @@ import {
   type FontSpec,
 } from "./painter";
 import { escapeInputText, keyToNeovim } from "./keys";
-import { IDLE, imeStep, type ImeEvent, type ImeState } from "./ime";
+import {
+  IDLE,
+  imeStep,
+  preeditLayout,
+  type ImeEvent,
+  type ImeState,
+} from "./ime";
 import {
   WheelAccumulator,
   gridSizeFor,
@@ -75,7 +81,7 @@ export class NeovimEditor {
   private readonly painter: GridPainter;
   private readonly gridLayer: HTMLDivElement;
   private readonly cursor: HTMLDivElement;
-  private readonly preedit: HTMLDivElement;
+  private readonly preedit: HTMLCanvasElement;
   readonly input: HTMLTextAreaElement;
   private ime: ImeState = IDLE;
   private readonly optionKeys = new OptionKeys();
@@ -113,7 +119,7 @@ export class NeovimEditor {
     this.gridLayer.className = "nvim-grids";
     this.cursor = document.createElement("div");
     this.cursor.className = "nvim-cursor";
-    this.preedit = document.createElement("div");
+    this.preedit = document.createElement("canvas");
     this.preedit.className = "nvim-preedit";
     this.input = document.createElement("textarea");
     this.input.className = "nvim-input";
@@ -489,14 +495,20 @@ export class NeovimEditor {
       text.length === 0 || at === undefined ? "none" : "";
     if (text.length === 0 || at === undefined) return;
     const cell = this.painter.cell();
-    this.preedit.textContent = text;
+    // Cell by cell, as the grid will hold it once committed.
+    const layout = preeditLayout(text);
+    this.painter.paintPreedit(
+      this.preedit,
+      layout,
+      this.state.defaults.foreground,
+      this.state.defaults.background,
+    );
     this.preedit.style.left = `${String(at.x)}px`;
     this.preedit.style.top = `${String(at.y)}px`;
-    this.preedit.style.height = `${String(cell.height)}px`;
-    this.preedit.style.lineHeight = `${String(cell.height)}px`;
-    this.preedit.style.background = cssColor(this.state.defaults.background);
-    this.preedit.style.color = cssColor(this.state.defaults.foreground);
-    this.preedit.style.font = fontOf(this.painter.fontSpec());
+    // The textarea's caret — where the IME opens its candidates — after the
+    // preedit's last cell. The textarea is a pixel wide and scrolls its text
+    // to keep the caret in view, so its caret is at its own left edge.
+    this.input.style.left = `${String(at.x + layout.cells * cell.width)}px`;
   }
 
   private resize(): void {

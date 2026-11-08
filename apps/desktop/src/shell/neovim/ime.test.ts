@@ -97,3 +97,28 @@ describe("text input and the IME", () => {
     ).toEqual([]);
   });
 });
+
+describe("the preedit, cell by cell", () => {
+  it("takes the cells the grid gives each character", async () => {
+    const { cellsOf, preeditLayout } = await import("./ime");
+    expect(cellsOf("a")).toBe(1);
+    expect(cellsOf("に")).toBe(2);
+    expect(cellsOf("漢")).toBe(2);
+    expect(cellsOf("ｱ")).toBe(1); // halfwidth katakana
+    expect(cellsOf("Ａ")).toBe(2); // fullwidth
+    expect(cellsOf("゙")).toBe(0); // a combining voiced mark
+    expect(preeditLayout("aにほ")).toEqual({
+      chars: [
+        { ch: "a", col: 0, cells: 1 },
+        { ch: "に", col: 1, cells: 2 },
+        { ch: "ほ", col: 3, cells: 2 },
+      ],
+      cells: 5,
+    });
+    // A combining mark joins the character before it.
+    expect(preeditLayout("がき").chars).toEqual([
+      { ch: "が", col: 0, cells: 2 },
+      { ch: "き", col: 2, cells: 2 },
+    ]);
+  });
+});
