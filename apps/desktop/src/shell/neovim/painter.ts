@@ -13,7 +13,14 @@
 
 import type { GridBox, HlAttr, NeovimUiState, RedrawChanges } from "./redraw";
 import type { CellMetrics } from "./mouse";
-import { boxArms, fitIcon, glyphKind, glyphShapes, type Shape } from "./glyphs";
+import {
+  boxArms,
+  fitIcon,
+  glyphKind,
+  glyphShapes,
+  lightThickness,
+  type Shape,
+} from "./glyphs";
 import {
   floatClusters,
   framePieces,
@@ -31,6 +38,7 @@ import {
   foldMark,
   hlRole,
   isEndOfBuffer,
+  isIndentGuide,
   isSeparatorLine,
   sameTheme,
   separatorsOf,
@@ -1822,6 +1830,13 @@ export class GridPainter {
         continue;
       }
       const wide = chars[base + col + 1] === "";
+      if (isIndentGuide(c, attr?.groups)) {
+        flush();
+        const t = lightThickness(this.font.size, this.dpr) / this.dpr;
+        ctx.fillRect(col * cw, y, t, ch);
+        textStart = col + 1;
+        continue;
+      }
       const kind = glyphKind(c);
       const simple =
         kind === undefined &&

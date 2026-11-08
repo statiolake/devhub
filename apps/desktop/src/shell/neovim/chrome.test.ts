@@ -16,6 +16,7 @@ import {
   spanCorners,
   spanNotches,
   themeOf,
+  isIndentGuide,
 } from "./chrome";
 
 const VISUAL = 0x264f78;
@@ -389,5 +390,20 @@ describe("a fold column", () => {
       fillChosen(theme, 1001, item);
     expect(foldMark("-", chosen)).toBeUndefined();
     expect(foldMark("+", chosen)).toBe("closed");
+  });
+});
+
+describe("isIndentGuide", () => {
+  it("knows a guide plugin's line by its group, whatever the character", () => {
+    expect(isIndentGuide("│", ["IblIndent"])).toBe(true);
+    expect(isIndentGuide("▎", ["Normal", "IblScope"])).toBe(true);
+    expect(isIndentGuide("╎", ["MiniIndentscopeSymbol"])).toBe(true);
+    expect(isIndentGuide("│", ["SnacksIndent3"])).toBe(true);
+  });
+
+  it("leaves the same characters alone elsewhere", () => {
+    expect(isIndentGuide("│", ["WinSeparator"])).toBe(false);
+    expect(isIndentGuide("│", undefined)).toBe(false);
+    expect(isIndentGuide("x", ["IblIndent"])).toBe(false);
   });
 });

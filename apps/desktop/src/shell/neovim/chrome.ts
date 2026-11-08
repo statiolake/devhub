@@ -236,6 +236,32 @@ export function foldMark(
   return undefined;
 }
 
+/**
+ * The groups indent-guide plugins draw their guides in: indent-blankline
+ * (v3 and v2), snacks.indent, mini.indentscope, hlchunk, indentmini.
+ */
+const GUIDE_GROUP =
+  /^(Ibl|IndentBlankline|SnacksIndent|MiniIndentscope|HLIndent|HLChunk|IndentLine)/;
+
+/** The characters guides are drawn with: a vertical line, solid or dashed. */
+const GUIDE_CHARS = new Set([..."│▏▎▍┃|┆┊╎╏┇┋"]);
+
+/**
+ * Whether `c` in a highlight made of `groups` is an indent guide: drawn as
+ * VS Code and Zed draw them, a hairline at the indent column's left edge,
+ * continuous across `linespace`, whatever character the plugin chose.
+ */
+export function isIndentGuide(
+  c: string,
+  groups: readonly string[] | undefined,
+): boolean {
+  return (
+    GUIDE_CHARS.has(c) &&
+    groups !== undefined &&
+    groups.some((g) => GUIDE_GROUP.test(g))
+  );
+}
+
 /** What a highlight's cells are to the painter, by the groups it is made of. */
 export type HlRole = "shaped" | "pill" | undefined;
 
