@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { controlArgv } from "../main/terminal/attachments";
+import { controlArgv } from "../main/terminal/attachments.js";
 import {
 	WORKSPACE_TERMINAL_SURFACE_PREFIX,
 	validateAttachRequest,
-} from "./terminal";
-import { validateControlRequest } from "./terminalControl";
+} from "./terminal.js";
+import { validateControlRequest } from "./terminalControl.js";
 
 const SURFACE = `${WORKSPACE_TERMINAL_SURFACE_PREFIX}0b7c8e2a-4f1d-4c3e-9a6b-2d5e8f1a3c4b`;
 const identity = {
