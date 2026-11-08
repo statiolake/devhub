@@ -29,6 +29,8 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { availableParallelism } from "node:os";
 
+import { cleanSpawnArgs } from "../terminal/cleanSpawn.js";
+
 import { VOICE_SAMPLE_RATE } from "../../ipc/voice.js";
 import type { TranscribeOptions, Transcriber } from "./dictationStream.js";
 import {
@@ -67,8 +69,14 @@ export function freePort(): Promise<number> {
 }
 
 export const NODE_DEPS: WhisperServerDeps = {
-	spawn: (binary, args) =>
-		nodeSpawn(binary, args, { stdio: ["ignore", "ignore", "pipe"] }),
+	// A server that lives as long as DevHub: started with nothing of main's
+	// open but its stdio (`cleanSpawn.ts`).
+	spawn: (binary, args) => {
+		const program = cleanSpawnArgs(binary, args, undefined, process.env);
+		return nodeSpawn(program.file, [...program.args], {
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+	},
 	fetch: (...args) => fetch(...args),
 	freePort,
 	secret: () => randomBytes(16).toString("hex"),

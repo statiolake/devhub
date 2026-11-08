@@ -13,7 +13,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -125,6 +125,43 @@ describe.skipIf(cc === undefined)("devhub-pgrp-anchor", () => {
 	it("with it holding, the same exit hangs up nobody", async () => {
 		expect(await runLeader("anchored")).toBe("no-hup");
 	});
+
+	// What it was started with stays open in it for as long as DevHub runs, so
+	// it keeps none of it: a descriptor of main's that is not close-on-exec
+	// (here 7, opened by the shell that execs the helper) is not among its
+	// own, nor its keeper's.
+	it.runIf(process.platform === "linux")(
+		"holds nothing open but its stdio, nor does its keeper",
+		async () => {
+			const child = spawn(
+				"/bin/sh",
+				["-c", 'exec 7</dev/null; exec "$0"', helper],
+				{ stdio: ["pipe", "pipe", "inherit"] },
+			);
+			try {
+				const line = await new Promise<string>((resolve, reject) => {
+					let out = "";
+					child.stdout.on("data", (d: Buffer) => {
+						out += d.toString();
+						if (out.includes("\n")) resolve(out);
+					});
+					child.on("error", reject);
+				});
+				const [, anchorPid, keeperPid] =
+					/^anchored (\d+) (\d+)/u.exec(line) ?? [];
+				expect(anchorPid).toBe(String(child.pid));
+				// Its stdio and the pipe to its keeper; the keeper, that pipe.
+				const anchor = readdirSync(`/proc/${anchorPid!}/fd`).map(Number);
+				expect(anchor.filter((fd) => fd > 2).length).toBeLessThanOrEqual(1);
+				expect(anchor).not.toContain(7);
+				const keeper = readdirSync(`/proc/${keeperPid!}/fd`).map(Number);
+				expect(keeper.filter((fd) => fd > 2).length).toBeLessThanOrEqual(1);
+				expect(keeper).not.toContain(7);
+			} finally {
+				child.stdin.end();
+			}
+		},
+	);
 
 	it("ProcessGroupAnchor says it holds once the helper has anchored, and lets go on stop", async () => {
 		const lines: string[] = [];

@@ -19,6 +19,8 @@
 
 import { spawn } from "node:child_process";
 
+import { cleanSpawnArgs } from "./cleanSpawn.js";
+
 /** What to run, as plain data: it crosses to the process host as it is. */
 export interface ChildRequest {
 	readonly file: string;
@@ -81,7 +83,16 @@ export function runChildHere(
 	request: ChildRequest,
 	onOutput?: (chunk: Uint8Array) => void,
 ): ChildRun {
-	const child = spawn(request.file, [...request.args], {
+	// Started with nothing of this process's open but its stdio
+	// (`cleanSpawn.ts`): what it starts in turn — the tmux server — lives far
+	// longer than this process's descriptors should.
+	const program = cleanSpawnArgs(
+		request.file,
+		request.args,
+		request.cwd,
+		request.env,
+	);
+	const child = spawn(program.file, [...program.args], {
 		cwd: request.cwd,
 		env: request.env as NodeJS.ProcessEnv,
 		stdio: [request.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],

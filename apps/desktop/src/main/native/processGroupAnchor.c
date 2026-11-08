@@ -33,10 +33,49 @@
  * Plain POSIX, so the same file builds on Linux, where DevHub's tests run.
  */
 
+#include <dirent.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
+
+/*
+ * Close everything but stdin, stdout and stderr.
+ *
+ * This process lives as long as DevHub and is started straight from main,
+ * whose descriptors that are not close-on-exec it would otherwise hold for
+ * all that time — main's `--remote-debugging-port` listening socket among
+ * them, which kept the next DevHub from binding the port while an anchor of
+ * the last one lived (docs/process-model.md, finding 9).
+ */
+static void close_inherited(void) {
+#if defined(__linux__) && defined(SYS_close_range)
+	if (syscall(SYS_close_range, 3U, ~0U, 0U) == 0) return;
+#endif
+#if defined(__linux__)
+	const char *listing = "/proc/self/fd";
+#else
+	const char *listing = "/dev/fd";
+#endif
+	DIR *dir = opendir(listing);
+	if (dir == NULL) return;
+	int own = dirfd(dir);
+	int open_fds[1024];
+	int count = 0;
+	struct dirent *entry;
+	while ((entry = readdir(dir)) != NULL && count < 1024) {
+		char *end = NULL;
+		long fd = strtol(entry->d_name, &end, 10);
+		if (end == entry->d_name || *end != '\0' || fd < 3 || fd == own) continue;
+		open_fds[count++] = (int)fd;
+	}
+	closedir(dir);
+	for (int i = 0; i < count; i++) close(open_fds[i]);
+}
 
 /* Until end-of-file (or an error other than an interrupted read). */
 static void wait_for_eof(int fd) {
@@ -50,6 +89,7 @@ static void wait_for_eof(int fd) {
 }
 
 int main(void) {
+	close_inherited();
 	/* The kernel's SIGHUP is the thing this exists to prevent; if it comes
 	 * anyway (the group was orphaned before this started), it is not a
 	 * reason for the anchor to let go. */

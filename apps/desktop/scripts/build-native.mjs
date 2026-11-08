@@ -12,6 +12,9 @@
  * - `devhub-pgrp-anchor`, which holds DevHub's process group un-orphaned
  *   while workbenches are frozen (`src/main/native/processGroupAnchor.c`, see
  *   `src/main/shell/processGroupAnchor.ts`). Plain POSIX: built everywhere.
+ * - `devhub-exec-clean`, which starts a child with only its stdio open
+ *   (`src/main/native/execClean.c`, see `src/main/terminal/cleanSpawn.ts`).
+ *   Linux only: macOS's `posix_spawn` already inherits nothing else.
  *
  * The first two are macOS APIs (Carbon, libproc), so there is nothing to build anywhere
  * but macOS. Elsewhere — the Linux containers DevHub is developed and tested
@@ -54,6 +57,33 @@ try {
   console.log(
     `build:native: devhub-pgrp-anchor not built (${error.message}); workbenches will not be frozen`,
   );
+}
+
+// `devhub-exec-clean`, which starts a program with nothing of its parent's
+// open but stdio (`src/main/native/execClean.c`, see
+// `src/main/terminal/cleanSpawn.ts`). Only Linux needs it — libuv starts
+// children with `posix_spawn` and close-on-exec by default on macOS — and
+// without it children are started directly, as before.
+if (process.platform === "linux") {
+  try {
+    execFileSync(
+      "cc",
+      [
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-o",
+        "out/native/devhub-exec-clean",
+        "src/main/native/execClean.c",
+      ],
+      { cwd: root, stdio: "inherit" },
+    );
+  } catch (error) {
+    console.log(
+      `build:native: devhub-exec-clean not built (${error.message}); children inherit what their parent has open`,
+    );
+  }
 }
 
 if (process.platform !== "darwin") {

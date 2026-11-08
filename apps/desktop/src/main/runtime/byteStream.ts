@@ -11,6 +11,8 @@
 
 import { Buffer } from "node:buffer";
 import { spawn, type ChildProcess } from "node:child_process";
+
+import { cleanSpawnArgs } from "../terminal/cleanSpawn.js";
 import { portFailure, type CancellationToken } from "../terminal/ports.js";
 import type { ByteStream, StreamEnd } from "./runtime.js";
 
@@ -71,7 +73,14 @@ export function openByteStream(
 					detail: `${launch.file} was stopped before it started`,
 				});
 			}
-			const spawned = spawn(launch.file, [...launch.args], {
+			// Nothing of this process's open but its stdio (`cleanSpawn.ts`).
+			const program = cleanSpawnArgs(
+				launch.file,
+				launch.args,
+				launch.cwd,
+				launch.env,
+			);
+			const spawned = spawn(program.file, [...program.args], {
 				cwd: launch.cwd,
 				env: launch.env as NodeJS.ProcessEnv,
 				stdio: ["pipe", "pipe", "pipe"],
