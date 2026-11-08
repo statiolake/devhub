@@ -224,3 +224,143 @@ The programs inside the terminal are told the theme too — `DEVHUB_THEME`,
 `DEVHUB_FZF_COLORS` and the rest in every new pane's environment, a
 `theme.json` that is rewritten on every change, and `User DevhubTheme` in the
 managed Neovim — see `docs/window-and-pages.md`, "Terminal programs".
+
+## The terminal in tmux control mode (in progress)
+
+DevHub's terminals are moving from one xterm.js per tmux _client_ (tmux
+draws the whole window, status line and pane borders included, into one
+grid) to **tmux control mode** (`tmux -C`, the protocol iTerm2's integration
+uses): one control client per session, DevHub keeps a terminal engine per
+_pane_, fed by that pane's `%output`, and draws every pane itself with the
+Neovim editor's cell painter (`shell/neovim/painter.ts`). Panes, borders,
+the status line and the window tabs become DevHub's; tmux keeps the
+sessions, the processes, the layout and the key bindings.
+
+What tmux does not draw for a control client — `display-popup`,
+`display-menu`, `command-prompt` / `confirm-before`, choose-tree and copy
+mode — DevHub draws itself (phase 3). The spike that settled the
+architecture measured, with four panes streaming, 0.14 MB/s to the page
+against 3.3 MB/s (tmux repaints side-by-side panes whole for a normal
+client), the tmux server at 7.4% CPU against 19.1%, and key-to-echo p99 of
+8.5 ms against 20.6 ms beside a streaming pane.
+
+### The engine: libghostty-vt
+
+The per-pane engine is **libghostty-vt** (Ghostty's terminal core, MIT,
+compiled to wasm32), not headless xterm.js. Both were measured on the same
+inputs, under Electron 43's V8 (`ELECTRON_RUN_AS_NODE`), 200×50 panes, on a
+shared 4-core Linux machine (absolute numbers are noisy; the ratios held
+across runs). The painter's input is the same for both: per cell a
+codepoint, a width, a resolved foreground and background and the style
+flags — what `paintRow` needs.
+
+| | xterm.js 6.0.0 headless | libghostty-vt (wasm, ReleaseSmall) |
+| --- | --- | --- |
+| parse, colored `ls -lR` log | 53 MB/s | 43 MB/s |
+| parse, full-screen truecolor TUI redraws | 83 MB/s | 26 MB/s |
+| parse, CJK / emoji / combining text | 42 MB/s | 24 MB/s |
+| read a whole 200×50 viewport for the painter | 0.14 ms | 1.2 ms |
+| one echoed key: write + read its dirty row | 2.5 µs p50 / 23 µs p99 | 15 µs p50 / 74 µs p99 |
+| memory per pane, 10 000 lines of scrollback | 31.5 MiB RSS | 17 MiB RSS (31 MiB of wasm memory reserved) |
+| start-up | 11 ms to load the module | 4.5 ms to compile and instantiate |
+| **cell widths that agree with tmux 3.7c** (20 graphemes: CJK, emoji with skin tones, ZWJ families, flags, VS16, combining marks, ZWSP) | **14–16 of 20** in every mode (default, `unicode11`, `unicode-graphemes`) | **20 of 20** (mode 2027 on), 14 legacy |
+
+Why libghostty-vt, in the order that decided it:
+
+1. **The grid has to be tmux's.** In control mode the engine does not
+   decide where text goes — tmux does, and the program (zsh, Neovim, an
+   Agent's TUI) moves its cursor by tmux's arithmetic. An engine that counts
+   a skin-toned emoji, a ZWJ family or a flag differently from tmux puts
+   every character after it in the wrong column, and the line stays wrong
+   until it is redrawn. tmux 3.7 clusters graphemes the way Ghostty's mode
+   2027 does; xterm.js disagrees on 4–6 of 20 common sequences in every
+   unicode mode it has. DevHub turns mode 2027 on in every pane's engine (it
+   is how tmux behaves whatever the program asks). DevHub's tmux is built
+   without utf8proc (`scripts/build_tmux.py`), so on macOS tmux takes the
+   base widths from libc's `wcwidth`; where macOS and Ghostty's tables
+   differ, tmux's `codepoint-widths` is the lever, set by DevHub, so the
+   two still agree.
+2. **What DevHub needs is in its API, not behind internals.** Dirty rows
+   come from its render state (xterm.js has them only through
+   `_core._inputHandler`); OSC 8 hyperlinks are readable per cell; semantic
+   prompts (OSC 133) are tracked and `select_output` selects one command's
+   output — the prefix+y / Y copy in the person's tmux.conf; selection
+   gestures (word, line, between) are the library's; the mouse encoder
+   follows the pane's modes; snapshots serialise a pane's whole state.
+   With xterm.js headless every one of those is DevHub code or a private
+   field.
+3. **Half the memory per pane.** It matters with many panes and long
+   scrollback.
+4. **Speed is enough, and it is the build's.** This wasm is size-optimised
+   with SIMD off; even so a full viewport costs 1.2 ms (a 60 Hz frame has
+   16.7), an echo 15 µs against milliseconds of tmux round trip, and parsing
+   runs off the page (phase 2 runs the engines beside the control client,
+   not in the renderer). A ReleaseFast build is measured again when it is
+   built from the release (below).
+
+What it costs: DevHub owns a small binding over a C ABI (pointers, a wasm
+memory that grows and never shrinks — a closed pane's memory is reused by
+the next one, not returned), and the wasm is a build artefact, not a
+JavaScript package that updates itself. The binding reads the library's
+own `ghostty_type_json()` (every struct's layout) and `ghostty_build_info`
+(version, features) at load, so an ABI that moved is a refusal at start,
+not wrong colours.
+
+Not deciding factors: key encoding (in control mode keys reach the program
+through `send-keys`, which tmux encodes for the pane — Kitty keyboard
+included); Kitty graphics (not in a freestanding wasm build, and only
+reachable through tmux's `allow-passthrough` in any case); reflow (tmux reflows; DevHub resyncs a
+resized pane with `capture-pane`); search (not in the 1.0 ABI; DevHub's
+copy mode searches the pane's text itself).
+
+### Where the wasm comes from
+
+The plan is the release's own build, `vt-1.0.0` built with the Zig its
+`build.zig.zon` names (`pip install ziglang==<that version>`), ReleaseFast.
+That build needs the Ghostty sources (github.com/ghostty-org/ghostty) and
+its pinned dependencies, which Ghostty serves only from
+`deps.files.ghostty.org` (`uucode` is not optional). Neither was reachable
+from the machine this was done on (`release.files.ghostty.org` and
+`ziglang.org` were blocked too). Until it is, DevHub uses the wasm that
+`@gkoreli/ghostty-vt-js@0.6.0` publishes on npm: an unpatched build of the
+libghostty-vt C ABI (200 exports, `env.log` its only import, MIT), which
+reports itself as `0.1.0-dev`, ReleaseSmall, no SIMD — a snapshot from
+before the 1.0 tag, so its option numbers are not 1.0's. Its sha256 is
+`7cf0d42c8737137cb49293326e1d69b90de44b3800b9c52f6ba33e252fe171d7`. Moving
+to the release build changes the binding's constants and nothing above it.
+
+### The font, once
+
+Every pane is drawn by the painter Neovim's grids use — the same font
+measurement, the same baseline (`alphabetic` at the ascent), the same box
+drawing, block and Powerline glyphs and Nerd Font icons. That is also the
+fix for the terminal's Source Code Pro baseline: xterm.js' WebGL atlas
+draws with `textBaseline = "ideographic"` at the cell's bottom, which sits
+2.45 px low at 15 px for Source Code Pro (JetBrains Mono and DejaVu happen
+to agree). With the xterm.js path deleted (phase 4) there is no second
+path to patch.
+
+### The setting, while both paths exist
+
+`[terminal] tmux_control_mode = true` selects the control-mode terminal;
+the xterm.js path stays the default until the new one does everything the
+old one does. The key exists only for that transition: when control mode
+becomes the only terminal (phase 4), the key and the xterm.js path are
+deleted together — no setting is kept for compatibility, and a
+`tmux_control_mode` left in a settings file is then refused like any
+unknown key.
+
+### Phases
+
+1. **Engine** — done (above).
+2. **Control-mode core** behind the setting: one control client per
+   session in a utility process, the panes' layout, an engine per pane fed
+   by `%output`, flow control (`pause-after`, resync by `capture-pane`), the
+   painter drawing each pane with native borders, keys through `send-keys`
+   (prefix, the IME, the mouse), hidden panes not drawn, the Neovim overlay
+   on exact pane rectangles, SSH hosts.
+3. **What tmux does not draw for control clients**: popups (the command in
+   a pane DevHub shows as a float), menus, prompts, choose-tree, copy mode
+   with the person's copy-mode-vi bindings and the prompt-mark copy.
+4. **The status line as DevHub's tabs**, then control mode as the only
+   terminal: the xterm.js path and the setting deleted.
