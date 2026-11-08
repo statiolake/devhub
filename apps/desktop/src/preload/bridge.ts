@@ -75,6 +75,28 @@ export function on<T>(
 	};
 }
 
+/**
+ * A push channel that main says only when its value moves: the listener
+ * hears the value as it stands, asked of main as it starts listening, and
+ * then each push. Main answers the ask in order with what it pushes, so an
+ * answer is never older than a push that arrived before it.
+ */
+export function onCurrent<T>(
+	ask: string,
+	channel: string,
+	listener: (payload: T) => void,
+): () => void {
+	let listening = true;
+	const stop = on<T>(channel, listener);
+	void (ipcRenderer.invoke(ask) as Promise<T>).then((value) => {
+		if (listening) listener(value);
+	});
+	return () => {
+		listening = false;
+		stop();
+	};
+}
+
 export function pageBridge(): PageBridge {
 	return {
 		// One way, and it has to be: see `raiseFailure` in `ipc/contract.ts`.

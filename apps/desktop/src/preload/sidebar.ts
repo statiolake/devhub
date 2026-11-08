@@ -23,6 +23,7 @@ import {
 	continueAgent,
 	focusSurface,
 	on,
+	onCurrent,
 	openExternalUrl,
 	openModal,
 	pageBridge,
@@ -55,7 +56,11 @@ const api: SidebarBridge = {
 	focusSurface,
 
 	onSidebarArea: (listener) =>
-		on<SidebarAreaWire>(CHANNELS.sidebarAreaChanged, listener),
+		onCurrent<SidebarAreaWire>(
+			CHANNELS.getSidebarArea,
+			CHANNELS.sidebarAreaChanged,
+			listener,
+		),
 	// One way, both of them: what is being sent is a fact about where the
 	// pointer is resting, not a request waiting on an answer, and a tooltip
 	// that had to await a round trip would arrive after the pointer moved on.

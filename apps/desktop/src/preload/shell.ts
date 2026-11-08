@@ -17,6 +17,7 @@ import {
 	appearanceBridge,
 	closeWorkspace,
 	on,
+	onCurrent,
 	openModal,
 	openSettings,
 	pageBridge,
@@ -34,7 +35,11 @@ const api: ShellPageBridge = {
 	onWindowTitle: (listener) =>
 		on<string>(CHANNELS.windowTitleChanged, listener),
 	onWorkbenchArea: (listener) =>
-		on<WorkbenchAreaWire>(CHANNELS.workbenchAreaChanged, listener),
+		onCurrent<WorkbenchAreaWire>(
+			CHANNELS.getWorkbenchArea,
+			CHANNELS.workbenchAreaChanged,
+			listener,
+		),
 	onEditorPlaceholder: (listener) =>
 		on<EditorPlaceholderEvent>(CHANNELS.editorPlaceholder, listener),
 	replayEditorPlaceholders: () =>

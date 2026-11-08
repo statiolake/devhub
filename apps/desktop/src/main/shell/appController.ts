@@ -271,6 +271,7 @@ import {
 	shellWindow,
 	shellWindowIfCreated,
 	type ContentFocus,
+	type ShellWindow,
 } from "./shellWindow.js";
 import type { KeyboardHalf, SurfaceArrangement } from "./windowLayout.js";
 import {
@@ -1358,6 +1359,14 @@ export class AppController {
 		// `projectionChanged`; this is the other half arriving on its own.
 		shellWindow().onTitleChanged(() => {
 			this.refreshWindowTitle();
+		});
+		// The window's size is the one input to the rectangles that is not
+		// the model's, and a resize is no projection: said only from one,
+		// they stayed where they were until the model next moved, and the
+		// window's page drew its states and the split's seam against the
+		// window's old size.
+		shellWindow().window.on("resize", () => {
+			this.publishAreas(shellWindow());
 		});
 		// A click into one of the content area's views is the person choosing
 		// that pane; the model is told, so the chords start from it.
@@ -4834,8 +4843,26 @@ export class AppController {
 		} satisfies NoticeSettingsWire);
 	}
 
+	/**
+	 * The projection, to every page that draws from it — unless it says what
+	 * the last one said, its revision aside. A revision moves with changes
+	 * the projection does not show, and six pages each decoding and drawing
+	 * the same picture again is the whole of what sending it would do. A
+	 * page that missed it asks (`getSnapshot`), as every page does when it
+	 * starts.
+	 */
+	private sendSnapshot(snapshot: AppSnapshotWire): void {
+		const content = JSON.stringify({ ...snapshot, revision: 0 });
+		if (content === this.snapshotSent) return;
+		this.snapshotSent = content;
+		this.send(CHANNELS.snapshotChanged, snapshot);
+	}
+
+	/** What the last snapshot sent said, as JSON with its revision cleared. */
+	private snapshotSent: string | undefined;
+
 	private publishSnapshot(): void {
-		this.send(CHANNELS.snapshotChanged, this.snapshot());
+		this.sendSnapshot(this.snapshot());
 		this.projectionChanged();
 	}
 
@@ -4935,12 +4962,16 @@ export class AppController {
 			orchestratorView: this.orchestratorTitleView(),
 			repositories: this.lastRepositoryStatus.workspaces,
 		});
+		// Asked for on every projection; said only when it moved.
+		if (shell.window.getTitle() === title) return;
 		shell.window.setTitle(title);
 		// The same string, once, to both places that show it. DevHub's own
 		// title bar is drawn by the page, and a page that composed the name a
 		// second time would be a window whose bar and whose Mission Control
-		// entry could disagree — about the very thing a title is for.
-		this.send(CHANNELS.windowTitleChanged, title);
+		// entry could disagree — about the very thing a title is for. The
+		// window's own page is the one that letters it; one that has just
+		// started reads it (`getWindowTitle`).
+		shell.window.webContents.send(CHANNELS.windowTitleChanged, title);
 	}
 
 	/**
@@ -5094,11 +5125,30 @@ export class AppController {
 			...(terminal === undefined ? {} : { terminal }),
 			...(conversation === undefined ? {} : { conversation }),
 		});
+		this.publishAreas(shell);
+	}
+
+	/**
+	 * Where the workbench and the Sidebar are laid, to the pages that draw
+	 * against them.
+	 */
+	private publishAreas(shell: ShellWindow): void {
 		// The page draws its own states in the same rectangle the workbench is
 		// laid into, and the split's seam is where that rectangle ends. It is
 		// given the number rather than asked for it, so there is no
 		// arrangement in which the two can disagree about where the seam is.
-		this.send(CHANNELS.workbenchAreaChanged, shell.workbenchArea());
+		//
+		// To the window's own page and to no other, and only when it moved:
+		// this runs on every projection, which is several times a second while
+		// an Agent works, and the rectangle is the same nearly every time. A
+		// page that has just started asks for it (`getWorkbenchArea`), so
+		// nothing depends on it being said again.
+		const workbench = shell.workbenchArea();
+		const workbenchKey = JSON.stringify(workbench);
+		if (workbenchKey !== this.workbenchAreaSent) {
+			this.workbenchAreaSent = workbenchKey;
+			shell.window.webContents.send(CHANNELS.workbenchAreaChanged, workbench);
+		}
 		// And the Sidebar is told its own, for one reason: a row has to be
 		// able to say where it is *in the window*, so that its tooltip is
 		// placed against the window rather than against the column it is in.
@@ -5106,9 +5156,18 @@ export class AppController {
 		// column's width is the model's — which is why it is the rectangle and
 		// not just the origin: a row scrolled half out of the column has half
 		// an anchor, and a tooltip pointing at the invisible half points at
-		// nothing.
-		this.send(CHANNELS.sidebarAreaChanged, shell.sidebarArea());
+		// nothing. To the Sidebar alone, when it moved, as above.
+		const sidebar = shell.sidebarArea();
+		const sidebarKey = JSON.stringify(sidebar);
+		if (sidebarKey !== this.sidebarAreaSent) {
+			this.sidebarAreaSent = sidebarKey;
+			shell.sidebar.contents()?.send(CHANNELS.sidebarAreaChanged, sidebar);
+		}
 	}
+
+	/** The last workbench and Sidebar rectangles said, as JSON: see `publishAreas`. */
+	private workbenchAreaSent: string | undefined;
+	private sidebarAreaSent: string | undefined;
 
 	/**
 	 * A drag in progress, in the page's own hand.
@@ -5315,7 +5374,7 @@ export class AppController {
 			this.orchestrator?.observe();
 			const after = this.orderedWorkspaceIds();
 			if (before.join("\0") !== after.join("\0")) {
-				this.send(CHANNELS.snapshotChanged, this.snapshot());
+				this.sendSnapshot(this.snapshot());
 			}
 		},
 	});
@@ -5682,7 +5741,7 @@ export class AppController {
 				}
 				if (latest) {
 					noteMainActivity("snapshot publish");
-					this.send(CHANNELS.snapshotChanged, latest);
+					this.sendSnapshot(latest);
 					this.projectionChanged();
 					this.tellMemory.observe(
 						latest.workspaces.flatMap((workspace) => workspace.agents),
@@ -11743,17 +11802,15 @@ export class AppController {
 			});
 		});
 
-		handle(CHANNELS.getSnapshot, () => {
-			// A page asking for the world is also a page that has just started
-			// and has none of the pushes yet. The rectangle the owner leaves
-			// for a workbench is one of those, and the window's own page draws
-			// nothing at all until it has one — deliberately, because a guessed
-			// rectangle is the page having an opinion about the layout. So it
-			// is said again here, where "a page has just started" is a fact
-			// main can see.
-			this.publishLayoutState();
-			return this.snapshot();
-		});
+		handle(CHANNELS.getSnapshot, () => this.snapshot());
+		// A page that has just started has none of the pushes yet, and main
+		// says a rectangle only when it moves (`publishLayoutState`). The
+		// window's own page draws nothing at all until it has one —
+		// deliberately, because a guessed rectangle is the page having an
+		// opinion about the layout — so each page asks for its own as it
+		// starts listening (`onWorkbenchArea`, `onSidebarArea`).
+		handle(CHANNELS.getWorkbenchArea, () => shellWindow().workbenchArea());
+		handle(CHANNELS.getSidebarArea, () => shellWindow().sidebarArea());
 		handle(CHANNELS.getAppearance, () => this.appearance());
 		// Read back off the window rather than composed again: this is the
 		// name the OS is showing, which is the only thing the bar may letter.

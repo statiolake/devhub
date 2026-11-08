@@ -1589,7 +1589,11 @@ export interface ShellPageBridge
 	 */
 	getWindowTitle(): Promise<string>;
 	onWindowTitle(listener: (title: string) => void): () => void;
-	/** Where main has laid the workbench, so the page leaves that hole. */
+	/**
+	 * Where main has laid the workbench, so the page leaves that hole: the
+	 * rectangle as it is now, asked of main as the page starts listening, and
+	 * then each time it moves. Main says it only when it moves.
+	 */
 	onWorkbenchArea(listener: (area: WorkbenchAreaWire) => void): () => void;
 	onEditorPlaceholder(
 		listener: (event: EditorPlaceholderEvent) => void,
@@ -1688,7 +1692,8 @@ export interface SidebarBridge
 	focusSurface(): Promise<void>;
 	/**
 	 * Where main has laid this view, so a row can say where it is in the
-	 * window. See `SidebarAreaWire` — the origin is the owner's number.
+	 * window. See `SidebarAreaWire` — the origin is the owner's number. As
+	 * `onWorkbenchArea`: the rectangle as it is now, then each move.
 	 */
 	onSidebarArea(listener: (area: SidebarAreaWire) => void): () => void;
 	/**
@@ -2327,6 +2332,10 @@ export const CHANNELS = {
 	getSnapshot: "devhub:get-snapshot",
 	getAppearance: "devhub:get-appearance",
 	getWindowTitle: "devhub:get-window-title",
+	/** The workbench's rectangle as it is now: what `workbenchAreaChanged` last said. */
+	getWorkbenchArea: "devhub:get-workbench-area",
+	/** The Sidebar's rectangle as it is now: what `sidebarAreaChanged` last said. */
+	getSidebarArea: "devhub:get-sidebar-area",
 	getAgentProfiles: "devhub:get-agent-profiles",
 	dispatch: "devhub:dispatch",
 	replay: "devhub:replay",
