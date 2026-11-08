@@ -40,6 +40,16 @@ export interface PaintTheme {
   /** Backgrounds drawn as rounded shapes: `Visual`, `Search`, … */
   readonly shaped: ReadonlySet<number>;
   /**
+   * Backgrounds drawn as pills a little inside the row: diagnostics'
+   * virtual text and inlay hints, when their colorscheme gives them one.
+   */
+  readonly pills: ReadonlySet<number>;
+  /**
+   * `DiffDelete`'s colours while `fillchars` leaves `diff:` at its default
+   * `-`: a filler line is drawn hatched instead of dashed.
+   */
+  readonly diffDelete?: { readonly fg?: number; readonly bg: number };
+  /**
    * `EndOfBuffer`'s foreground while `fillchars` leaves `eob:` at its
    * default `~`: those markers are not drawn, as a GUI editor shows empty
    * space past the end. `undefined` when the person chose `eob:`.
@@ -49,7 +59,11 @@ export interface PaintTheme {
   readonly cmdheight: number;
 }
 
-export const NO_THEME: PaintTheme = { shaped: new Set(), cmdheight: 1 };
+export const NO_THEME: PaintTheme = {
+  shaped: new Set(),
+  pills: new Set(),
+  cmdheight: 1,
+};
 
 /** The groups whose backgrounds are selections and matches. */
 const SHAPED_GROUPS = [
@@ -59,6 +73,16 @@ const SHAPED_GROUPS = [
   "CurSearch",
   "IncSearch",
   "Substitute",
+] as const;
+
+/** The groups whose backgrounds are pills: text Neovim adds to a line. */
+const PILL_GROUPS = [
+  "DiagnosticVirtualTextError",
+  "DiagnosticVirtualTextWarn",
+  "DiagnosticVirtualTextInfo",
+  "DiagnosticVirtualTextHint",
+  "DiagnosticVirtualTextOk",
+  "LspInlayHint",
 ] as const;
 
 /**
@@ -74,7 +98,9 @@ return out`;
 
 export const THEME_GROUPS: readonly string[] = [
   ...SHAPED_GROUPS,
+  ...PILL_GROUPS,
   "EndOfBuffer",
+  "DiffDelete",
 ];
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -88,33 +114,58 @@ export function themeOf(answer: unknown): PaintTheme {
   const out = record(answer);
   const groups = record(out?.["groups"]);
   if (!out || !groups) return NO_THEME;
-  const shaped = new Set<number>();
-  for (const name of SHAPED_GROUPS) {
-    const hl = record(groups[name]);
-    // A group drawn by `reverse` has no background of its own to match.
-    if (!hl || hl["reverse"] === true) continue;
-    if (typeof hl["bg"] === "number") shaped.add(hl["bg"]);
-  }
+  const backgrounds = (names: readonly string[]) => {
+    const out = new Set<number>();
+    for (const name of names) {
+      const hl = record(groups[name]);
+      // A group drawn by `reverse` has no background of its own to match.
+      if (!hl || hl["reverse"] === true) continue;
+      if (typeof hl["bg"] === "number") out.add(hl["bg"]);
+    }
+    return out;
+  };
+  const shaped = backgrounds(SHAPED_GROUPS);
+  const pills = backgrounds(PILL_GROUPS);
+  for (const bg of shaped) pills.delete(bg);
   const cmdheight = typeof out["cmdheight"] === "number" ? out["cmdheight"] : 1;
   const fillchars =
     typeof out["fillchars"] === "string" ? out["fillchars"] : "";
-  const eobChosen = fillchars
-    .split(",")
-    .some((part) => part.startsWith("eob:"));
+  const chosen = (item: string) =>
+    fillchars.split(",").some((part) => part.startsWith(`${item}:`));
   const eob = record(groups["EndOfBuffer"])?.["fg"];
+  const diff = record(groups["DiffDelete"]);
+  const diffFg = diff?.["fg"];
+  const diffBg = diff?.["bg"];
   return {
     shaped,
+    pills,
     cmdheight,
-    ...(!eobChosen && typeof eob === "number" ? { eob } : {}),
+    ...(!chosen("eob") && typeof eob === "number" ? { eob } : {}),
+    ...(!chosen("diff") &&
+    diff?.["reverse"] !== true &&
+    typeof diffBg === "number"
+      ? {
+          diffDelete: {
+            bg: diffBg,
+            ...(typeof diffFg === "number" ? { fg: diffFg } : {}),
+          },
+        }
+      : {}),
   };
+}
+
+function sameSet(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
+  return a.size === b.size && [...a].every((v) => b.has(v));
 }
 
 export function sameTheme(a: PaintTheme, b: PaintTheme): boolean {
   return (
     a.cmdheight === b.cmdheight &&
     a.eob === b.eob &&
-    a.shaped.size === b.shaped.size &&
-    [...a.shaped].every((bg) => b.shaped.has(bg))
+    a.diffDelete?.fg === b.diffDelete?.fg &&
+    a.diffDelete?.bg === b.diffDelete?.bg &&
+    sameSet(a.shaped, b.shaped) &&
+    sameSet(a.pills, b.pills)
   );
 }
 
@@ -431,4 +482,33 @@ export function isEndOfBuffer(
     if ((chars[base + col] ?? " ") !== " ") return false;
   }
   return true;
+}
+
+/**
+ * A diff's filler row (a line the other side has): from some column on,
+ * nothing but `-` in `DiffDelete`'s colours. Answers that column, or
+ * `undefined`.
+ */
+export function fillerStart(
+  chars: readonly string[],
+  base: number,
+  width: number,
+  colors: (col: number) => { fg: number; bg: number },
+  diffDelete: { readonly fg?: number; readonly bg: number } | undefined,
+): number | undefined {
+  if (!diffDelete) return undefined;
+  const isFill = (col: number) => {
+    const c = colors(col);
+    return (
+      chars[base + col] === "-" &&
+      (diffDelete.fg === undefined || c.fg === diffDelete.fg) &&
+      c.bg === diffDelete.bg
+    );
+  };
+  if (width === 0 || !isFill(width - 1)) return undefined;
+  let start = width - 1;
+  while (start > 0 && isFill(start - 1)) start -= 1;
+  // A real line of dashes is not a whole row of them in DiffDelete's
+  // colours from the text column on; still, a short run is left alone.
+  return width - start >= Math.min(8, width) ? start : undefined;
 }

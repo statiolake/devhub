@@ -25,6 +25,7 @@ import {
   NO_THEME,
   barLayout,
   barsOf,
+  fillerStart,
   isEndOfBuffer,
   isSeparatorLine,
   sameTheme,
@@ -195,6 +196,9 @@ interface GridCanvas {
 }
 
 const NO_CROP = { top: 0, right: 0, bottom: 0, left: 0 } as const;
+
+/** A diff filler's hatching: pixels between its diagonals. */
+const FILLER_STEP = 6;
 
 /** A selection's or search match's corners (`chrome.ts`). */
 const SHAPE_RADIUS = 3;
@@ -824,6 +828,8 @@ export class GridPainter {
     this.paintShaped(ctx, state, box, row, y);
     this.skip.clear();
     this.paintBars(ctx, state, box, row, y);
+    this.paintPills(ctx, state, box, row, y);
+    if (!box.float && box.grid !== 1) this.paintFiller(ctx, state, box, row, y);
     if (
       !box.float &&
       box.grid !== 1 &&
@@ -933,6 +939,92 @@ export class GridPainter {
         ctx.fill();
       }
     }
+  }
+
+  /**
+   * Text Neovim adds to a line in a colour of its own (`PaintTheme.pills`:
+   * diagnostics' virtual text, inlay hints) as a pill: a little inside the
+   * row, rounded at its ends, the ground beside it around it. Its cells are
+   * where Neovim put them, so the cursor and `$` land as before.
+   */
+  private paintPills(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    box: GridBox,
+    row: number,
+    y: number,
+  ): void {
+    const { pills } = this.theme;
+    if (pills.size === 0) return;
+    const grounds = this.rowGrounds(state, box, row);
+    const spans = shapedSpans(grounds, pills);
+    if (spans.length === 0) return;
+    const { width: cw, height: ch, textHeight } = this.metrics;
+    const snap = (v: number) => Math.round(v * this.dpr) / this.dpr;
+    const h = snap(Math.min(ch - 2, textHeight + 2));
+    const top = snap(y + (ch - h) / 2);
+    const r = Math.min(h / 2, cw * 0.75);
+    for (const span of spans) {
+      const x0 = span.start * cw;
+      const x1 = span.end * cw;
+      const left = span.start > 0 ? grounds[span.start - 1] : undefined;
+      const right = grounds[span.end];
+      const beside =
+        left !== undefined && left >= 0 && !pills.has(left)
+          ? left
+          : right !== undefined && right >= 0 && !pills.has(right)
+            ? right
+            : state.defaults.background;
+      ctx.fillStyle = cssColor(beside);
+      ctx.fillRect(x0, y, x1 - x0, ch);
+      ctx.fillStyle = cssColor(span.bg);
+      ctx.beginPath();
+      ctx.roundRect(x0, top, x1 - x0, h, r);
+      ctx.fill();
+    }
+  }
+
+  /**
+   * A diff's filler row (`-` in `DiffDelete`, the default `diff:`) as a
+   * hatched band, as GUI diff views mark lines that are not there: thin
+   * diagonals in its foreground, continuous from row to row.
+   */
+  private paintFiller(
+    ctx: CanvasRenderingContext2D,
+    state: NeovimUiState,
+    box: GridBox,
+    row: number,
+    y: number,
+  ): void {
+    const grid = state.grids.get(box.grid);
+    const diff = this.theme.diffDelete;
+    if (!grid || !diff) return;
+    const base = row * grid.width;
+    const colors = (col: number) =>
+      resolveColors(state.hl.get(grid.hls[base + col] ?? 0), state.defaults);
+    const start = fillerStart(grid.chars, base, grid.width, colors, diff);
+    if (start === undefined) return;
+    const { width: cw, height: ch } = this.metrics;
+    const x0 = start * cw;
+    const x1 = grid.width * cw;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, y, x1 - x0, ch);
+    ctx.clip();
+    ctx.strokeStyle = cssColor(colors(grid.width - 1).fg);
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const step = FILLER_STEP;
+    // Lines x + y = k·step, so they run on across rows of the grid.
+    const first = Math.floor((x0 + y) / step) * step;
+    for (let k = first; k <= x1 + y + ch + step; k += step) {
+      ctx.moveTo(k - y, y);
+      ctx.lineTo(k - y - ch, y + ch);
+    }
+    ctx.stroke();
+    ctx.restore();
+    for (let col = start; col < grid.width; col += 1) this.skip.add(col);
   }
 
   /** The backgrounds of one row's cells, `reverse` applied. */

@@ -4,6 +4,7 @@ import {
   NO_THEME,
   barLayout,
   barsOf,
+  fillerStart,
   isEndOfBuffer,
   separatorsOf,
   sameTheme,
@@ -235,5 +236,52 @@ describe("the end of the buffer", () => {
       fillchars: "eob:~",
     });
     expect(theme.eob).toBeUndefined();
+  });
+});
+
+describe("text Neovim adds to a line", () => {
+  it("is a pill when its colorscheme gives it a ground", () => {
+    const theme = themeOf({
+      groups: {
+        Visual: { bg: VISUAL },
+        DiagnosticVirtualTextError: { fg: 0xdb4b4b, bg: 0x362c3d },
+        DiagnosticVirtualTextWarn: { fg: 0xe0af68 },
+        LspInlayHint: { bg: VISUAL },
+      },
+    });
+    // A pill colour that is also a selection's stays a selection.
+    expect([...theme.pills]).toEqual([0x362c3d]);
+  });
+});
+
+describe("a diff's filler row", () => {
+  const DELETE = 0x562f2d;
+  const theme = themeOf({ groups: { DiffDelete: { bg: DELETE } } });
+  const colors = (bgs: readonly number[]) => (col: number) => ({
+    fg: 0xffffff,
+    bg: bgs[col] ?? 0,
+  });
+
+  it("is the dashes in DiffDelete's ground from the text column on", () => {
+    const chars = [..."    ----------"];
+    const bgs = chars.map((_, col) => (col < 4 ? NORMAL : DELETE));
+    expect(fillerStart(chars, 0, 14, colors(bgs), theme.diffDelete)).toBe(4);
+    // Not a filler: dashes in the text's own colours.
+    expect(
+      fillerStart(
+        chars,
+        0,
+        14,
+        colors(chars.map(() => NORMAL)),
+        theme.diffDelete,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("is left alone when the person chose diff:", () => {
+    expect(
+      themeOf({ groups: { DiffDelete: { bg: DELETE } }, fillchars: "diff:╱" })
+        .diffDelete,
+    ).toBeUndefined();
   });
 });

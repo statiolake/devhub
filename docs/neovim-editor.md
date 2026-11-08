@@ -209,6 +209,8 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
     (`separatorsOf`): each half in the ground beside it, its line between.
   - The `~` past the end of a buffer is not drawn while `fillchars` has
     no `eob:` of the person's (`isEndOfBuffer`).
+  - Diagnostics' virtual text and inlay hints with a ground of their own
+    are pills; a diff's filler rows (the default `diff:` `-`) are hatched.
   - Status lines and winbars are bars (`chrome.ts`'s `barsOf`,
     `barLayout`): the runs not in the bar's commonest colour are pills,
     and Powerline's filled separators (U+E0B0, E0B2, … even code points)
@@ -592,13 +594,20 @@ ENTER`): a terminal row at the bottom of the editor. With `ext_messages`
    already, but a guide is a cell-centred line broken by `linespace`
    nowhere and coloured by its highlight; draw them hairline and dimmer,
    aligned to the indent's first column as editors do. Low risk.
-9. _Diagnostic virtual text and inlay hints_: text with a background block
-   at cell height after the line. Draw as pills (rounded, inset, smaller
-   type), keeping their cells reserved so the cursor and `$` still land
-   where Neovim says. Medium risk (wide characters, truncation at the
-   window edge).
-10. _Diff filler lines and `diff` fillchars_ (`-----` in `DiffDelete`): draw
-    as a hatched band; folds' `+--  12 lines` as a fold bar. Low risk.
+9. _Diagnostic virtual text and inlay hints_ — done where the
+   colorscheme gives them a ground (`DiagnosticVirtualText*`,
+   `LspInlayHint` with a `bg`, asked with the theme): their runs are pills
+   a pixel more than the text each side, rounded at their ends, the
+   ground beside them around; their cells stay reserved where Neovim put
+   them, so the cursor and `$` land as before. Smaller type was left out:
+   text narrower than its cells would leave a gap that reads as a bug.
+   Without a `bg` they are text, as before.
+10. _Diff filler lines_ — done: a row that is, from some column on, only
+    `-` in `DiffDelete`'s ground (the default `diff:`) is a hatched band
+    of thin diagonals in its foreground, continuous from row to row, as
+    GUI diff views mark lines the other side has. A person's `diff:` is
+    kept. Folds' `+--  12 lines` stay Neovim's text: `foldtext` is the
+    person's, and a fold bar of DevHub's would have to guess at it.
 11. _The block cursor and its cell_ — done: the block's corners are a
     little rounded (a bar's ends too), it still shows the character in the
     cursor's foreground, and the blink (`guicursor`'s) fades in and out
