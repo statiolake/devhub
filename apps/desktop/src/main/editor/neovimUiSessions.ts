@@ -125,19 +125,9 @@ export class NeovimUiSessions<P> {
 						win: 0,
 						title: open.title,
 						content:
-							open.terminal === true
-								? {
-										kind: "terminal",
-										surfaceKey: "",
-										hiddenRows: {
-											top: open.statusTop === true ? (open.statusRows ?? 0) : 0,
-											bottom:
-												open.statusTop === true ? 0 : (open.statusRows ?? 0),
-										},
-									}
-								: open.url !== undefined
-									? { kind: "url", url: open.url }
-									: { kind: "html", html: open.html ?? "" },
+							open.url !== undefined
+								? { kind: "url", url: open.url }
+								: { kind: "html", html: open.html ?? "" },
 						open: true,
 					};
 					known.guiWindows.set(open.id, window);

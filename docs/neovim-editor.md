@@ -42,7 +42,7 @@ at once. `Cmd+Q Shift+E` stops nothing here and says so; `:q` ends a Neovim.
  │ redraw.ts  (pure reducer)     │◀─────│ NeovimUiSessions         │◀─────│ nvim --headless --listen │
  │ painter.ts (a canvas per grid)│redraw│  NeovimUi (attach,       │ rpc  │   in its devhub-nvim     │
  │ widgets: pum, cmdline, tabs,  │─────▶│  GUI windows), msgpack   │─────▶│   tmux window (or a      │
- │  GUI windows (iframe, xterm)  │calls └──────────────────────────┘      │   pane's nvim); socket:  │
+ │  GUI windows (iframe)         │calls └──────────────────────────┘      │   pane's nvim); socket:  │
  │ keys.ts ime.ts mouse.ts       │        ▲ attach, ended, clipboard      │   local, or ssh forward  │
  └───────────────────────────────┘        │                    ┌──────────┴───────────────┐
           │ attach (invoke)        ┌──────┴──────────────┐      │ (a second connection:    │
@@ -135,16 +135,15 @@ snippet (`SETUP_LUA`) that:
   `+`. DevHub's key router answers Cmd+A/C/X/Z with editing commands on its
   own pages, but not on this one (`editingCommands.ts`): there they reach
   the page as `<D-…>` keys. Cmd+V stays the Edit menu's Paste, which the
-  page hands to `nvim_paste` (one undoable change, in any mode). In a
-  terminal window Cmd+C copies the terminal's selection, and a GUI window's
-  page answers Cmd+C/X/A/Z on its own selection. With nothing selected,
+  page hands to `nvim_paste` (one undoable change, in any mode). A GUI
+  window's page answers Cmd+C/X/A/Z on its own selection. With nothing selected,
   Cmd+C and Cmd+X take the line (in Normal and Insert mode): an unmapped
   `<D-x>` would reach Neovim as a plain `x`. The Edit menu clicked with the
   mouse does the same: its Copy, Cut, Undo and Redo arrive at the page's
   hidden textarea as `copy`/`cut` events and `historyUndo`/`historyRedo`
   input, which the page sends as `<D-c>`, `<D-x>`, `<D-z>`, `<D-Z>` (Select
   All from the menu does nothing yet). The chords still come first;
-- defines the `devhub_gui` Lua module and `:DevhubTerminal`, `:DevhubGuiDemo`,
+- defines the `devhub_gui` Lua module, `:DevhubGuiDemo` and
   `:DevhubImageDemo`; once attached it fires `User DevhubGui`.
 
 **Attaching again** (a reloaded page, a restarted DevHub) needs care: Neovim
@@ -399,7 +398,7 @@ gui.send(w, { kind = 'outline', … })     -- the page's devhub.onMessage(fn)
 gui.close(w)
 ```
 
-In a float with a border (`:DevhubTerminal float`), the content goes inside
+In a float with a border (`win = 'float'`), the content goes inside
 the border, whose cells Neovim draws. A GUI window is a scratch buffer (`buftype=nofile`, `filetype=devhub_gui`,
 its id in `b:devhub_gui_id`) shown in an ordinary window or float; the page
 paints its web content (a sandboxed iframe) exactly over that window's grid.
@@ -490,25 +489,6 @@ img.clear()
   buffer; a closed fold hides it, a window's bottom clips it.
   `:DevhubImageDemo [path]` opens a markdown buffer with one (with no path,
   a small generated PNG).
-
-**`:DevhubTerminal`** (`:DevhubTerminal float`) is the same idea: a Neovim
-window (a split at the bottom by default) that DevHub fills with the
-Workspace's DevHub terminal — its tmux session, on the Workspace's machine. It
-is a Neovim window for layout and navigation, and a terminal for input; the
-same command toggles it. Keys follow Neovim's own `:terminal`: in the
-terminal they all go to the shell, `<C-w>` included (delete-word works);
-`<C-\><C-n>` leaves for terminal-normal mode, where the cursor stays in the
-window but the keyboard is Neovim's (`<C-w>k`, `:q`, a "TERMINAL NORMAL"
-pill says so), and `i`, `a`, `I`, `A`, `<CR>` or a click go back in. Moving
-into the window with `<C-w>j` puts the keyboard in the terminal at once. A
-`<C-\>` followed by anything else reaches the shell after all.
-It wears Neovim's default colours rather than the
-terminal theme's, so it reads as part of the editor, and it leaves out the
-session's tmux status line — Neovim's statusline is right under it. The
-keeper window is started with `$DEVHUB_TMUX` (the tmux that runs the server),
-through which `devhub_gui` reads `status` and `status-position`; the terminal
-is fitted that many rows taller and those rows are clipped
-(`TerminalSurface`'s `hiddenRows`), so the shell keeps every row it shows.
 
 ### Components, views, inline cards and decorations
 
@@ -741,7 +721,7 @@ Verified against Neovim 0.9.5, 0.11.5 and 0.12.6 (`neovimUi.real.test.ts`, and a
 DevHub run under Xvfb; on 0.11.5 with a real lazy.nvim config: devhub.nvim's
 theme, blink.cmp in insert and `:` mode, the snacks picker, fidget): typing,
 the cursor and its shapes, scrolling, splits and floats, resize, the completion menu, the command line, tab pages, the clipboard
-provider, GUI windows and `:DevhubTerminal`, file opens, reattaching after a
+provider, GUI windows, file opens, reattaching after a
 DevHub restart. SSH, against an sshd on localhost (a Workspace on
 `ssh:<host>`, Neovim 0.11.5 and the same config on the host): the socket
 forward, the attach, and — after the ControlMaster is killed — the page
@@ -770,8 +750,7 @@ editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
   are Neovim's own, in its message grid, which DevHub draws as a panel
   when they scroll over the windows. 0.12's `ui2` takes the command line
   from DevHub's palette: leave it off in DevHub.
-- A GUI window's web page still gives `<C-w>` to Neovim (it has no shell
-  to want it); only the terminal follows the `:terminal` model.
+- A GUI window's web page gives `<C-w>` to Neovim.
 - Pixel scrolling inside a line taller than the window turns
   `smoothscroll` on for that window until the view leaves the line
   (`:set smoothscroll?` says so meanwhile); a window `scrollbind` moves by other rows than the wheeled one (one side
@@ -793,8 +772,8 @@ editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
   diagnostic's) are carried.
 - No semantic styling of diagnostics yet (`ext_hlstate` names the groups,
   only fillers and `~` use them).
-- A GUI buffer shown in two windows has its content (one page, one terminal
-  client) in one of them — the current window when it is one, else the
+- A GUI buffer shown in two windows has its content (one page) in one of
+  them — the current window when it is one, else the
   first — and the other says where it is; a click there moves the cursor in.
 - A `devhub-nvim` window started by a DevHub from before the terminal
   became the editor area has its status-line entry made empty; it is
@@ -802,10 +781,6 @@ editor half); `Cmd+Q O` between the halves; resize; switching Workspaces;
 - An SSH host's dropped connection takes the overlay with it while the
   Neovim runs on; it is drawn again at the next file opened into the
   Workspace (a pane's own `nvim` there stays undrawn until it exits).
-- `:DevhubTerminal` has no Workspace terminal to show in a Neovim drawn
-  over a pane (its page is named by the overlay, not a Workspace): its
-  window says the terminal surface is invalid. The Workspace's terminal is
-  the editor area itself.
 
 ## Phase 2
 
@@ -818,12 +793,6 @@ outside DevHub (`notify` falls back to `vim.notify`). Still to come:
 diagnostics and virtual text drawn from extmarks (`ext_hlstate` +
 `win_extmark`), a component for a diff hunk, and more adapters
 (incremental diff review, pahcer) on the same layers.
-
-**Terminal overlay.** `:DevhubTerminal` grows into the integrated terminal of
-VS Code: several terminals (`:DevhubTerminal new`, numbered buffers), each a
-DevHub pane terminal session of the Workspace (on the Workspace's machine
-even when Neovim runs in a container), `<C-w>` navigation, a `terminal`
-layout preset, and the Sidebar's terminal activity marks.
 
 **The completion menu** (round 7, the person's pick). Both menus — DevHub's
 own (`ext_popupmenu`: a native completion, `<C-x><C-o>`) and a plugin's
@@ -985,8 +954,10 @@ CJK and `linespace`. Round 6 mocked the rest; round 7 built the person's
 picks (notifications, the completion menu, review threads above) and
 checked them on 0.11.5 and 0.12.6 with the person's config. The audit's
 flat `gui.view` panels were declined (the current panels stay); its
-`ui.*` card proposals and removing the "TERMINAL NORMAL" pill are
-undecided. Proposed, not built (mocks first, the person picks):
+`ui.*` card proposals are undecided (the "TERMINAL NORMAL" pill went with
+`:DevhubTerminal`: the Workspace's terminal is the editor area itself, so a
+terminal inside Neovim is no longer offered; Neovim's own `:terminal` is a
+grid like any other). Proposed, not built (mocks first, the person picks):
 a feathered translucent backdrop behind fidget's lines, a fold's fill as
 a fading hairline when its fill character is a line, a very short slide
 of the lines `dd`/`p`/`o` move.

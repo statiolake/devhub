@@ -1932,14 +1932,13 @@ export interface TerminalScreenWire {
  * It draws Neovim's UI protocol itself (`shell/neovim/`) and sends back what
  * the person did as Neovim API calls (`neovim`, `ipc/neovim.ts`). It reads
  * the projection and the appearance for the font and the Option key, and
- * draws a terminal in a GUI window (`:DevhubTerminal`), so it has the
- * terminal transport too.
+ * opens a link a GUI layer was clicked on.
  */
 export interface NeovimBridge
 	extends PageBridge,
 		ProjectionBridge,
-		AppearanceBridge,
-		TerminalSurfaceBridge {
+		AppearanceBridge {
+	openExternalUrl(url: string): Promise<void>;
 	readonly neovim: DevhubNeovimApi;
 }
 

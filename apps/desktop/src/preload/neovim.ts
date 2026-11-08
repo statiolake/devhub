@@ -40,9 +40,7 @@ import {
 	openExternalUrl,
 	pageBridge,
 	projectionBridge,
-	writeClipboard,
 } from "./bridge.js";
-import { terminalApi } from "./terminal.js";
 
 type Listeners = {
 	readonly [K in NeovimPageEvent["type"]]: Set<
@@ -238,8 +236,6 @@ const api: NeovimBridge = {
 	...appearanceBridge(),
 
 	openExternalUrl,
-	writeClipboard,
-	terminal: terminalApi,
 	neovim,
 };
 

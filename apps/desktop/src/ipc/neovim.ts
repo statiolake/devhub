@@ -91,16 +91,7 @@ export interface NeovimGuiWindowWire {
 	readonly title: string;
 	readonly content:
 		| { readonly kind: "html"; readonly html: string }
-		| { readonly kind: "url"; readonly url: string }
-		| {
-				readonly kind: "terminal";
-				readonly surfaceKey: string;
-				/**
-				 * Rows of the terminal the window leaves out: the tmux status
-				 * line, which Neovim's own statusline makes redundant there.
-				 */
-				readonly hiddenRows?: { readonly top: number; readonly bottom: number };
-		  };
+		| { readonly kind: "url"; readonly url: string };
 	/** `false`: the window was closed and this GUI window with it. */
 	readonly open: boolean;
 }

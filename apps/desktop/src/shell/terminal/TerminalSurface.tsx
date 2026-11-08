@@ -71,14 +71,6 @@ export interface TerminalSurfaceProps {
    */
   readonly hidden?: boolean;
   /**
-   * Rows at the top and bottom of the terminal this view does not show — a
-   * tmux status line where the view has its own (a terminal in a Neovim
-   * window, under Neovim's statusline). The terminal is fitted that many
-   * rows taller than the view and those rows are clipped, so the program in
-   * it still gets every row the view shows.
-   */
-  readonly hiddenRows?: { readonly top: number; readonly bottom: number };
-  /**
    * A session that ended (its last window closed, a detach) is attached
    * again at once — made again — instead of the pane saying it
    * disconnected: a Workspace's terminal is a place, not a process. Once
@@ -192,7 +184,6 @@ export function TerminalSurface({
   client,
   hideTitle = false,
   hidden = false,
-  hiddenRows,
   reattachOnExit = false,
 }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -213,28 +204,6 @@ export function TerminalSurface({
   // Connecting again because the pty host the client was in ended, not for
   // the first time: the spinner says so.
   const [reconnecting, setReconnecting] = useState(false);
-  // One row's height, measured, for `hiddenRows`.
-  const [rowHeight, setRowHeight] = useState(0);
-  const measureRow = () => {
-    const screen = hostRef.current?.querySelector(".xterm-screen");
-    const rows = sessionRef.current?.terminal.rows ?? 0;
-    if (!screen || rows <= 0) return;
-    const measured = screen.getBoundingClientRect().height / rows;
-    if (measured > 0) setRowHeight(measured);
-  };
-  const measureRowRef = useRef(measureRow);
-  measureRowRef.current = measureRow;
-  const wantsHiddenRows =
-    hiddenRows !== undefined && hiddenRows.top + hiddenRows.bottom > 0;
-  useEffect(() => {
-    if (!wantsHiddenRows || connection !== "connected") return undefined;
-    const frame = requestAnimationFrame(() => {
-      measureRowRef.current();
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-    };
-  }, [wantsHiddenRows, connection]);
   const [error, setError] = useState<string>();
   const connectionRef = useRef(connection);
   // Once true, stays true: see `hidden`.
@@ -308,7 +277,6 @@ export function TerminalSurface({
         describedBy: hideTitle ? undefined : `${surfaceKey}-terminal-title`,
         isHidden: () => hiddenRef.current,
         onGeometry: (next) => {
-          measureRowRef.current();
           const nextReceipt = receipt;
           if (!nextReceipt || receiptDetached) return;
           const serial = attachSerial;
@@ -805,8 +773,6 @@ export function TerminalSurface({
       <div
         ref={hostRef}
         className="terminal-surface"
-        style={hiddenRowsStyle(hiddenRows, rowHeight)}
-        data-hidden-rows={wantsHiddenRows ? "" : undefined}
         role="application"
         aria-label={`${surfaceLabel} terminal`}
         tabIndex={0}
@@ -829,23 +795,4 @@ export function TerminalSurface({
       )}
     </div>
   );
-}
-
-/** The host, `hiddenRows` taller than its place and clipped back to it. */
-function hiddenRowsStyle(
-  hiddenRows: { readonly top: number; readonly bottom: number } | undefined,
-  rowHeight: number,
-): React.CSSProperties | undefined {
-  if (!hiddenRows || rowHeight <= 0) return undefined;
-  const top = Math.max(0, hiddenRows.top) * rowHeight;
-  const bottom = Math.max(0, hiddenRows.bottom) * rowHeight;
-  if (top === 0 && bottom === 0) return undefined;
-  // The emulator's screen is clipped (`terminal.css`), not the host: the
-  // host's last fraction of a row is below the screen, not part of it.
-  return {
-    marginTop: -top,
-    marginBottom: -bottom,
-    ["--terminal-hidden-top" as string]: `${String(top)}px`,
-    ["--terminal-hidden-bottom" as string]: `${String(bottom)}px`,
-  };
 }

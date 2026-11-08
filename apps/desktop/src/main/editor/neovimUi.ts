@@ -5,10 +5,9 @@
  * (`neovimUiSessions.ts`; the server is `managedNeovim.ts`'s). It runs
  * `SETUP_LUA` on the server — which tells the person's config it is in
  * DevHub's GUI (`g:devhub_gui`), points the clipboard at this Mac's, and
- * provides the `devhub_gui` Lua module and `:DevhubTerminal` — then attaches
- * with the `ext_*` options the page draws natively, and forwards every
- * `redraw` to the page. Neovim's requests on
- * the same channel (the clipboard's paste) are answered here; its
+ * provides the `devhub_gui` Lua module — then attaches with the `ext_*`
+ * options the page draws natively, and forwards every `redraw` to the page.
+ * Neovim's requests on the same channel (the clipboard's paste) are answered here; its
  * notifications about GUI windows are forwarded.
  *
  * The page sends what the person did as API calls by name (`call`), which
@@ -72,10 +71,6 @@ export interface GuiOpenReport {
 	readonly title: string;
 	readonly html?: string;
 	readonly url?: string;
-	readonly terminal?: boolean;
-	/** A terminal's tmux status line, which the window does not show. */
-	readonly statusRows?: number;
-	readonly statusTop?: boolean;
 }
 
 /**
@@ -114,8 +109,6 @@ export function uiAttachOptions(): Record<string, boolean> {
  *   window's grid, so `:vsplit`, `<C-w>` moves, `:close`, `:only` and tab
  *   pages are Neovim's own. Which windows show one, and which window is
  *   current, is reported on every window event.
- * - `:DevhubTerminal [float]` opens a GUI window DevHub fills with the
- *   Workspace's terminal, toggled by the same command.
  */
 export const SETUP_LUA = String.raw`
 local chan = ...
@@ -227,7 +220,7 @@ vim.api.nvim_create_autocmd({ "WinEnter", "WinNew", "WinClosed", "BufWinEnter", 
 })
 
 --- Open a GUI window: { html = "...", url = "...", title = "...",
---- win = "vsplit" | "split" | "float" | "tab" | "current", terminal = bool }.
+--- win = "vsplit" | "split" | "float" | "tab" | "current" }.
 --- Answers its handle, for send() and on_message().
 function M.open(opts)
   opts = opts or {}
@@ -261,12 +254,7 @@ function M.open(opts)
     pcall(function() vim.wo[win][option] = value end)
   end
   local handle = { id = id, buf = buf }
-  M._open[id] = { id = id, title = opts.title or "", html = opts.html, url = opts.url, terminal = opts.terminal == true }
-  if opts.terminal then
-    local rows, top = M._tmux_status()
-    M._open[id].status_rows = rows
-    M._open[id].status_top = top
-  end
+  M._open[id] = { id = id, title = opts.title or "", html = opts.html, url = opts.url }
   vim.rpcnotify(M._chan, "devhub_gui_open", M._open[id])
   vim.api.nvim_create_autocmd("BufWipeout", {
     group = group, buffer = buf, once = true,
@@ -572,61 +560,6 @@ function M._demo_image()
   file:close()
   return path
 end
-
---- How many rows the tmux status line of this Neovim's session takes, and
---- whether it is at the top: a terminal GUI window leaves them out, since
---- Neovim's own statusline already says where it is.
-function M._tmux_status()
-  if not vim.env.TMUX then return 0, false end
-  local cmd = { vim.env.DEVHUB_TMUX or "tmux", "display-message", "-p" }
-  if vim.env.TMUX_PANE then vim.list_extend(cmd, { "-t", vim.env.TMUX_PANE }) end
-  table.insert(cmd, "#{status}\t#{status-position}")
-  local ok, out = pcall(vim.fn.system, cmd)
-  if not ok or vim.v.shell_error ~= 0 then return 0, false end
-  local status, position = out:match("^(%w+)\t(%w+)")
-  local rows = status == "on" and 1 or tonumber(status or "") or 0
-  return rows, position == "top"
-end
-
---- :DevhubTerminal [float]: the Workspace's terminal in a window, toggled.
-function M.terminal(how)
-  if M._terminal and vim.api.nvim_buf_is_valid(M._terminal.buf) then
-    local shown = vim.fn.win_findbuf(M._terminal.buf)
-    if #shown > 0 then
-      for _, w in ipairs(shown) do pcall(vim.api.nvim_win_close, w, true) end
-      return
-    end
-    if how == "float" then
-      vim.api.nvim_open_win(M._terminal.buf, true, {
-        relative = "editor", width = math.floor(vim.o.columns * 0.8), height = math.floor(vim.o.lines * 0.7),
-        row = 2, col = math.floor(vim.o.columns * 0.1), style = "minimal", border = "rounded", zindex = 60,
-      })
-    else
-      vim.cmd("botright split")
-      vim.api.nvim_win_set_buf(0, M._terminal.buf)
-      vim.cmd("resize " .. math.floor(vim.o.lines * 0.35))
-    end
-    vim.schedule(report)
-    return
-  end
-  local buf_how = how == "float" and "float" or "botright split"
-  M._terminal = M.open({ title = "terminal", terminal = true, win = buf_how })
-  local term = M._terminal
-  vim.bo[term.buf].bufhidden = "hide"
-  vim.bo[term.buf].modifiable = false
-  -- Terminal-normal mode (<C-\><C-n> in the terminal): i, a, I, A and <CR>
-  -- go back into it, as in a :terminal buffer.
-  for _, lhs in ipairs({ "i", "a", "I", "A", "<CR>" }) do
-    vim.keymap.set("n", lhs, function() gui_event("terminal_insert", { id = term.id }) end,
-      { buffer = term.buf, desc = "DevHub: back into the terminal" })
-  end
-  if buf_how ~= "float" then vim.cmd("resize " .. math.floor(vim.o.lines * 0.35)) end
-end
-
-vim.api.nvim_create_user_command("DevhubTerminal", function(o) M.terminal(o.args) end, {
-  nargs = "?", complete = function() return { "float" } end,
-  desc = "Toggle the Workspace's DevHub terminal in a window",
-})
 
 --- :DevhubGuiDemo: a GUI window whose buttons drive the window beside it.
 vim.api.nvim_create_user_command("DevhubGuiDemo", function()
@@ -948,13 +881,6 @@ export class NeovimUi {
 					title: typeof open["title"] === "string" ? open["title"] : "",
 					...(typeof open["html"] === "string" ? { html: open["html"] } : {}),
 					...(typeof open["url"] === "string" ? { url: open["url"] } : {}),
-					...(open["terminal"] === true ? { terminal: true } : {}),
-					...(typeof open["status_rows"] === "number"
-						? {
-								statusRows: open["status_rows"],
-								statusTop: open["status_top"] === true,
-							}
-						: {}),
 				});
 				return;
 			}

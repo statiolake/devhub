@@ -131,10 +131,10 @@ asked for or connected to, and discarded after a long while frozen. Files
 DevHub is asked to open go to the Workspace's workbench. See
 [`docs/terminal-mode.md`](docs/terminal-mode.md) and
 [`docs/window-and-pages.md`](docs/window-and-pages.md), "What it costs".
-With `[general] editor = "neovim"` the editor area is DevHub's own GUI for a
-headless Neovim on the Workspace's machine instead — Neovim's UI protocol
-drawn natively, GUI windows that live inside Neovim windows, and
-`:DevhubTerminal`; no workbench is started. See
+With `[general] editor = "neovim"` the editor area is the Workspace's terminal
+instead, and every Neovim in it is DevHub's own GUI drawn over its tmux pane —
+Neovim's UI protocol drawn natively, with GUI windows that live inside Neovim
+windows; no workbench is started. See
 [`docs/neovim-editor.md`](docs/neovim-editor.md).
 
 **Agents** — an Agent is a tmux session, with no runtime in between. It lives

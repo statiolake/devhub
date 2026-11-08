@@ -439,12 +439,6 @@
   flex: none;
 }
 
-/* A terminal is the editor's own: Neovim's statusline frames it. */
-.nvim-gui-terminal,
-.nvim-gui-terminal.nvim-gui-current {
-  box-shadow: none;
-}
-
 .nvim-gui-window iframe {
   flex: 1;
   border: 0;
@@ -894,24 +888,4 @@
 .nvim-rich-code code {
   padding: 0;
   background: none;
-}
-
-/* Terminal-normal mode: the keyboard is Neovim's, the terminal waits. */
-.nvim-gui-terminal-normal {
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-
-.nvim-gui-terminal-normal::after {
-  content: "-- TERMINAL NORMAL --  i to type";
-  position: absolute;
-  right: 8px;
-  bottom: 4px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font:
-    11px / 18px system-ui,
-    sans-serif;
-  color: var(--secondary);
-  background: var(--raised, var(--surface));
-  pointer-events: none;
 }

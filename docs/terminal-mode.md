@@ -33,7 +33,9 @@ to — is DevHub's GUI drawn over its pane; see
 page, no placeholder and nothing to start or stop: `Cmd+Q E` puts the keys
 in the terminal (or the Neovim over its active pane), and `Cmd+Q Shift+E`
 says there is nothing to stop. A session whose last window closed is made and
-attached again at once.
+attached again at once. Since the terminal is the editor area, Neovim offers
+no terminal of DevHub's inside it (`:DevhubTerminal` is gone); Neovim's own
+`:terminal` is drawn as any other window's grid.
 
 ## The Option key
 

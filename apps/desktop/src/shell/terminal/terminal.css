@@ -25,12 +25,3 @@
   background: var(--surface);
   inset: 0;
 }
-
-/* Rows the view leaves out (`hiddenRows`): a tmux status line under a
-   Neovim statusline. The host is fitted taller by as much; the screen is cut
-   back to the rows the view shows. */
-.terminal-surface[data-hidden-rows] .xterm-screen {
-  clip-path: inset(
-    var(--terminal-hidden-top, 0) 0 var(--terminal-hidden-bottom, 0) 0
-  );
-}

@@ -16,15 +16,13 @@
  * `:close`, `:only` and tab pages move it, because they move the window.
  * When the cursor enters it, the keyboard goes into it; `<C-w>` gives the
  * keyboard back to Neovim, which reads the rest of the window command.
- * `:DevhubTerminal` is one of them, filled with the Workspace's terminal.
  *
  * # Its contract with main
  *
  * - **reads**: the snapshot (that its Workspace exists, its name), the
  *   appearance (the monospace font and the Option key).
  * - **asks**: `neovim.attach` once mounted, then `neovim.call` for every
- *   key, click, scroll and resize; the terminal transport for a terminal
- *   GUI window.
+ *   key, click, scroll and resize.
  * - **is pushed**: `redraw`, `ended`, GUI windows and their messages.
  */
 
@@ -46,7 +44,6 @@ import {
 import { cmdlineLayout, textCells } from "./cmdline";
 import { ICON_FAMILY, cssColor, fontOf, resolveColors } from "./painter";
 import { familyOf, kindOf, markPath, type Kind } from "./kinds";
-import { TerminalSurface } from "../terminal/TerminalSurface";
 import { TabStrip } from "./TabStrip";
 import { InlineImages, Toasts } from "./DecorationViews";
 import {
@@ -68,7 +65,6 @@ import {
   dismissToast,
   type Decorations,
 } from "./decorations";
-import { workspaceTerminalSurfaceKey } from "../../ipc/terminal";
 import type {
   NeovimGuiWindowWire,
   NeovimGuiWindowsWire,
@@ -94,8 +90,6 @@ interface GuiContent {
   readonly title: string;
   readonly html?: string;
   readonly url?: string;
-  readonly terminal?: boolean;
-  readonly hiddenRows?: { readonly top: number; readonly bottom: number };
 }
 
 export function NeovimApp({ workspaceId }: { readonly workspaceId: string }) {
@@ -211,14 +205,6 @@ function NeovimSurface({
                 ? { html: wire.content.html }
                 : {}),
               ...(wire.content.kind === "url" ? { url: wire.content.url } : {}),
-              ...(wire.content.kind === "terminal"
-                ? {
-                    terminal: true,
-                    ...(wire.content.hiddenRows
-                      ? { hiddenRows: wire.content.hiddenRows }
-                      : {}),
-                  }
-                : {}),
             });
           return next;
         });
@@ -241,10 +227,6 @@ function NeovimSurface({
       // scrolled when the placement came, not when it is drawn.
       const scrolled = editor.scrolledRows();
       const rowsOf = (win: number) => scrolled.get(win) ?? 0;
-      if (event.kind === "terminal_insert") {
-        setTerminalNormal(undefined);
-        return;
-      }
       if (event.kind === "theme") {
         // A window's fillchars changed: what the painter keeps is asked again.
         editor.refreshTheme();
@@ -376,53 +358,20 @@ function NeovimSurface({
   const currentGui = guiWindows.windows.find(
     (w) => w.win === guiWindows.current,
   );
-  // A terminal window in terminal-normal mode: the cursor is in it, the
-  // keyboard is Neovim's (<C-w>k, :q, …) until i/a give it back.
-  const [terminalNormal, setTerminalNormal] = useState<number | undefined>();
-  const escapeRef = useRef<{ id: number; replaying: boolean } | undefined>(
-    undefined,
-  );
-  const normalHere =
-    currentGui !== undefined && terminalNormal === currentGui.id;
-  useEffect(() => {
-    if (terminalNormal !== undefined && currentGui?.id !== terminalNormal) {
-      setTerminalNormal(undefined);
-    }
-  }, [currentGui, terminalNormal]);
   useEffect(() => {
     if (!editor) return;
-    if (currentGui === undefined || normalHere) {
+    if (currentGui === undefined) {
       if (document.activeElement !== editor.input) editor.focus();
       return;
     }
-    const content = guiContent.get(currentGui.id);
-    if (content?.terminal === true) {
-      const textarea = document.querySelector<HTMLTextAreaElement>(
-        `[data-gui-id="${String(currentGui.id)}"] .xterm-helper-textarea`,
-      );
-      textarea?.focus();
-    } else {
-      frames.current.get(currentGui.id)?.focus();
-    }
-  }, [editor, currentGui, guiContent, normalHere]);
+    frames.current.get(currentGui.id)?.focus();
+  }, [editor, currentGui, guiContent]);
 
   const send = useCallback(
     (method: string, params: readonly unknown[]) => {
       bridge.neovim.call({ workspaceId, method, params });
     },
     [bridge, workspaceId],
-  );
-
-  // A terminal in a Neovim window wears Neovim's ground, not the terminal
-  // theme's: it is part of the editor, under Neovim's statusline.
-  const nvimBackground = nvim?.defaults.background;
-  const nvimForeground = nvim?.defaults.foreground;
-  const terminalAppearance = useMemo(
-    () =>
-      appearance && nvimBackground !== undefined && nvimForeground !== undefined
-        ? withGround(appearance, nvimBackground, nvimForeground)
-        : appearance,
-    [appearance, nvimBackground, nvimForeground],
   );
 
   const cell = editor?.cellMetrics();
@@ -516,7 +465,7 @@ function NeovimSurface({
                 if (!box || !content) return null;
                 if (primaryWindow.get(id) !== win) {
                   // The same GUI buffer in a second window: its content lives
-                  // in one place (one page, one terminal client), so this one
+                  // in one place (one page), so this one
                   // says where, and a click takes the cursor there.
                   return (
                     <div
@@ -564,47 +513,14 @@ function NeovimSurface({
                     className={[
                       "nvim-gui-window",
                       current ? "nvim-gui-current" : "",
-                      content.terminal === true ? "nvim-gui-terminal" : "",
-                      current && terminalNormal === id
-                        ? "nvim-gui-terminal-normal"
-                        : "",
                     ]
                       .filter(Boolean)
                       .join(" ")}
                     style={style}
                     onMouseDownCapture={() => {
                       if (!current) send("nvim_set_current_win", [win]);
-                      // A click into a terminal is typing into it again.
-                      if (terminalNormal === id) setTerminalNormal(undefined);
-                    }}
-                    onFocusCapture={() => {
-                      // A terminal focuses itself as it connects: the keyboard
-                      // stays where Neovim's cursor is until Neovim moves it.
-                      if (!current) editor?.focus();
                     }}
                     onKeyDownCapture={(event) => {
-                      if (content.terminal === true) {
-                        // Neovim's :terminal model: keys go to the shell
-                        // (<C-w> deletes a word there); <C-\><C-n> leaves
-                        // for terminal-normal mode, i/a come back.
-                        if (terminalEscape(event, escapeRef, id)) {
-                          setTerminalNormal(id);
-                          editor?.focus();
-                          return;
-                        }
-                        // Cmd+C copies the terminal's selection: DevHub's
-                        // menu leaves the editing keys to this page, and the
-                        // emulator answers the copy command, not the key.
-                        if (
-                          event.metaKey &&
-                          !event.shiftKey &&
-                          (event.key === "c" || event.key === "C")
-                        ) {
-                          event.preventDefault();
-                          document.execCommand("copy");
-                        }
-                        return;
-                      }
                       if (
                         event.ctrlKey &&
                         (event.key === "w" || event.key === "W")
@@ -617,31 +533,19 @@ function NeovimSurface({
                       }
                     }}
                   >
-                    {content.terminal === true ? (
-                      <TerminalSurface
-                        surfaceKey={workspaceTerminalSurfaceKey(workspaceId)}
-                        surfaceLabel={`${label} terminal`}
-                        appearance={terminalAppearance}
-                        hideTitle
-                        {...(content.hiddenRows
-                          ? { hiddenRows: content.hiddenRows }
-                          : {})}
-                      />
-                    ) : (
-                      <iframe
-                        title={content.title}
-                        ref={(frame) => {
-                          if (frame) frames.current.set(id, frame);
-                          else frames.current.delete(id);
-                        }}
-                        sandbox="allow-scripts allow-forms allow-popups"
-                        {...(content.url !== undefined
-                          ? { src: content.url }
-                          : {
-                              srcDoc: guiDocument(content.html ?? "", nvim),
-                            })}
-                      />
-                    )}
+                    <iframe
+                      title={content.title}
+                      ref={(frame) => {
+                        if (frame) frames.current.set(id, frame);
+                        else frames.current.delete(id);
+                      }}
+                      sandbox="allow-scripts allow-forms allow-popups"
+                      {...(content.url !== undefined
+                        ? { src: content.url }
+                        : {
+                            srcDoc: guiDocument(content.html ?? "", nvim),
+                          })}
+                    />
                   </div>
                 );
               },
@@ -719,76 +623,6 @@ function guiWindowsInPaintOrder(
   });
   const rest = windows.filter((w) => primary.get(w.id) !== w.win);
   return [...first, ...rest];
-}
-
-/**
- * <C-\\><C-n> in a terminal window, Neovim's own way out of a terminal: true
- * when this key completes it. A <C-\\> followed by anything else reaches the
- * shell after all, ahead of that key (replayed into the emulator).
- */
-function terminalEscape(
-  event: React.KeyboardEvent,
-  pending: { current: { id: number; replaying: boolean } | undefined },
-  id: number,
-): boolean {
-  const state = pending.current;
-  if (state?.replaying === true) return false;
-  const ctrlOnly = event.ctrlKey && !event.metaKey && !event.altKey;
-  if (state !== undefined && state.id === id) {
-    if (["Control", "Shift"].includes(event.key)) return false;
-    pending.current = undefined;
-    if (ctrlOnly && (event.key === "n" || event.key === "N")) {
-      event.preventDefault();
-      event.stopPropagation();
-      return true;
-    }
-    const target = event.target as HTMLElement;
-    pending.current = { id, replaying: true };
-    target.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "\\",
-        code: "Backslash",
-        keyCode: 220,
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    pending.current = undefined;
-    return false;
-  }
-  if (ctrlOnly && (event.code === "Backslash" || event.key === "\\")) {
-    event.preventDefault();
-    event.stopPropagation();
-    pending.current = { id, replaying: false };
-  }
-  return false;
-}
-
-/** `appearance` with both terminal palettes on Neovim's default colours. */
-function withGround(
-  appearance: AppAppearance,
-  background: number,
-  foreground: number,
-): AppAppearance {
-  const bg = hexColor(background);
-  const fg = hexColor(foreground);
-  const theme = appearance.terminalTheme;
-  const ground = (palette: typeof theme.dark) => ({
-    ...palette,
-    background: bg,
-    foreground: fg,
-    cursor: fg,
-    cursorText: bg,
-  });
-  return {
-    ...appearance,
-    terminalTheme: { light: ground(theme.light), dark: ground(theme.dark) },
-  };
-}
-
-function hexColor(rgb: number): string {
-  return `#${rgb.toString(16).padStart(6, "0")}`;
 }
 
 /** A tab's name as Neovim gives it (a path): its last part. */

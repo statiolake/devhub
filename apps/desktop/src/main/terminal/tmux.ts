@@ -1585,7 +1585,6 @@ export function editorWindowArgs(
 	session: string,
 	root: string,
 	argv: readonly string[],
-	tmuxPath?: string,
 ): readonly string[] {
 	return [
 		"new-window",
@@ -1594,9 +1593,6 @@ export function editorWindowArgs(
 		"-d",
 		"-n",
 		"devhub-nvim",
-		// The tmux that runs this server, for the Neovim to ask it things
-		// (`devhub_gui`'s terminal reads the status line's size).
-		...(tmuxPath !== undefined ? ["-e", `DEVHUB_TMUX=${tmuxPath}`] : []),
 		"-P",
 		"-F",
 		"#{pane_id}",
@@ -2414,7 +2410,7 @@ export class TmuxTerminalRuntime {
 			const session = this.targetIdentity(workspace, sessions).sessionName;
 			const output = await this.runTmux(
 				socket,
-				editorWindowArgs(session, target.root, argv, this.tmuxPath()),
+				editorWindowArgs(session, target.root, argv),
 				this.contextHome,
 				cancel,
 				deadline,

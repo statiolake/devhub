@@ -325,8 +325,8 @@ client started or ended (an end of its own still reaches
 (`Runtime.ptyPlan`): the tmux client on this machine, the `ssh -tt` client
 for a host, its mux session slot given back when the host says the client
 ended. `preload/terminal.ts` is the only code that knows where a client is;
-`DevhubTerminalApi` is unchanged, so the shell, the Agents page, the panes
-and the Neovim surface's terminal windows are untouched. A host that dies
+`DevhubTerminalApi` is unchanged, so the shell, the Agents page and the panes
+are untouched. A host that dies
 takes its clients with it (tmux keeps the sessions), the pages are told
 (`TERMINAL_CHANNELS.restarted`), and each surface gets a `host_restarted`
 error in its own frame sequence, shows "Reconnecting…" and attaches again,
