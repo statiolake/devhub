@@ -264,6 +264,8 @@ export class GridPainter {
   /** Grid 1's columns between two windows (`separatorsOf`). */
   private separators: readonly Separator[] = [];
   private separatorsKey = "";
+  /** `rowGrounds`, by grid and row, for the paint under way. */
+  private readonly grounds = new Map<number, Int32Array>();
   /** The row's cells whose glyph is not drawn (a bar's joints). */
   private readonly skip = new Set<number>();
   private dpr: number;
@@ -338,6 +340,7 @@ export class GridPainter {
     boxes: readonly GridBox[],
     forceAll: boolean,
   ): void {
+    this.grounds.clear();
     const onScreen = new Set(boxes.map((box) => box.grid));
     for (const [id, canvas] of this.canvases) {
       if (!state.grids.has(id)) {
@@ -1027,10 +1030,17 @@ export class GridPainter {
     for (let col = start; col < grid.width; col += 1) this.skip.add(col);
   }
 
-  /** The backgrounds of one row's cells, `reverse` applied. */
+  /**
+   * The backgrounds of one row's cells, `reverse` applied; kept for the
+   * paint (a row is asked for by its neighbours' shapes too).
+   */
   private rowGrounds(state: NeovimUiState, box: GridBox, row: number) {
+    const key = box.grid * 65536 + row;
+    const known = this.grounds.get(key);
+    if (known) return known;
     const grid = state.grids.get(box.grid);
     const out = new Int32Array(grid?.width ?? 0);
+    this.grounds.set(key, out);
     if (!grid || row < 0 || row >= grid.height) return out.fill(-1);
     const base = row * grid.width;
     for (let col = 0; col < grid.width; col += 1) {
