@@ -609,7 +609,7 @@
 }
 
 .nvim-toast-msg {
-  flex: auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -625,7 +625,10 @@
   );
 }
 
+/* The title follows the message (fidget's "message  title"); the
+   percentage keeps to the card's right edge. */
 .nvim-toast-percent {
+  margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
 
