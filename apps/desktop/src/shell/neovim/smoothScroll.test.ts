@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EASE_MS,
   WHEEL_IDLE_MS,
-  answered,
+  replied,
   coverage,
   isActive,
   newScrollView,
@@ -20,7 +20,7 @@ describe("pixel scrolling", () => {
     const view = newScrollView();
     wheeled(view, 5, 0);
     const request = step(view, 1, CH, ROWS, 2);
-    expect(request?.lines).toBe(2);
+    expect(request?.rows).toBe(2);
     // Nothing below the grid yet: the display waits for Neovim.
     expect(view.off).toBe(0);
     shifted(view, 2, CH, TEXT, 20);
@@ -72,7 +72,7 @@ describe("pixel scrolling", () => {
     expect(view.off).toBe(-32);
     const rest = 16 + WHEEL_IDLE_MS + 1;
     const back = step(view, rest, CH, ROWS, 2);
-    expect(back).toEqual({ lines: -2, exact: true });
+    expect(back).toEqual({ rows: -2, exact: true });
     shifted(view, -2, CH, TEXT, rest + 10);
     expect(view.off).toBe(8);
     step(view, rest + 11, CH, ROWS, 2);
@@ -105,19 +105,36 @@ describe("pixel scrolling", () => {
     const view = newScrollView();
     wheeled(view, 30, 0);
     step(view, 0, CH, ROWS, 2);
-    answered(view, false);
+    replied(view, 0, 0);
     expect(view.stuck).toBe(1);
     expect(view.want).toBe(0);
     wheeled(view, 10, 16);
     expect(step(view, 16, CH, ROWS, 2)).toBeUndefined();
     expect(view.off).toBe(0);
     wheeled(view, -10, 32);
-    expect(step(view, 32, CH, ROWS, 2)?.lines).toBe(-2);
+    // As far ahead as the wheel goes in two round trips and a frame
+    // (10px a frame, 30ms each way): 58px, and the 10px it asks for.
+    expect(step(view, 32, CH, ROWS, 2)?.rows).toBe(-4);
+  });
+
+  it("waits for Neovim's answer however long it takes, then for its scroll", () => {
+    const view = newScrollView();
+    wheeled(view, 5, 0);
+    expect(step(view, 0, CH, ROWS, 2)).toBeDefined();
+    // A busy Neovim: no second request while the first is unanswered.
+    wheeled(view, 5, 90);
+    expect(step(view, 400, CH, ROWS, 2)).toBeUndefined();
+    // Its own wheel was sent (not Normal mode) and nothing scrolled.
+    replied(view, 2, 400);
+    wheeled(view, 5, 410);
+    expect(step(view, 410, CH, ROWS, 2)).toBeUndefined();
+    wheeled(view, 5, 470);
+    expect(step(view, 470, CH, ROWS, 2)).toBeDefined();
   });
 
   it("asks for as much as a flick needs, less than a window at a time", () => {
     const view = newScrollView();
     wheeled(view, 2000, 0);
-    expect(step(view, 0, CH, ROWS, 2)?.lines).toBe(ROWS - 2);
+    expect(step(view, 0, CH, ROWS, 2)?.rows).toBe(ROWS - 2);
   });
 });

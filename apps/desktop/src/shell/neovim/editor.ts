@@ -36,12 +36,7 @@ import { floatLabelsOf } from "./frame";
 import { THEME_GROUPS, THEME_LUA, themeOf, type Surface } from "./chrome";
 import { cmdlineLayout, textCells } from "./cmdline";
 import { cmdlinePlace } from "./place";
-import {
-  SCROLL_LUA,
-  answered,
-  inexact,
-  type ScrollRequest,
-} from "./smoothScroll";
+import { SCROLL_LUA, replied, type ScrollRequest } from "./smoothScroll";
 import { rideAnchor, rideArea, rideStyle } from "./riders";
 import {
   IDLE,
@@ -447,7 +442,7 @@ export class NeovimEditor {
     const win = this.state.gridWins.get(grid);
     const ask = this.port.request?.bind(this.port);
     if (!view || win === undefined || !ask) {
-      if (view) answered(view, false);
+      if (view) replied(view, 0, performance.now());
       return;
     }
     const at =
@@ -456,7 +451,7 @@ export class NeovimEditor {
       SCROLL_LUA,
       [
         win,
-        request.lines,
+        request.rows,
         grid,
         at.row,
         at.col,
@@ -466,12 +461,20 @@ export class NeovimEditor {
       ],
     ]).then(
       (answer) => {
-        if (answer === 0) answered(view, false);
-        else if (answer === -1) inexact(view);
+        const [code, bound] = Array.isArray(answer) ? answer : [];
+        replied(view, typeof code === "number" ? code : 0, performance.now());
+        // The windows `scrollbind` moves with it follow its display.
+        const wins = new Set(Array.isArray(bound) ? bound : []);
+        this.painter.setFollowers(
+          grid,
+          [...this.state.gridWins]
+            .filter(([, w]) => wins.has(w))
+            .map(([g]) => g),
+        );
         this.scrollFrame();
       },
       () => {
-        answered(view, false);
+        replied(view, 0, performance.now());
         this.scrollFrame();
       },
     );

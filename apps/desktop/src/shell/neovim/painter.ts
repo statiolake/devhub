@@ -53,6 +53,7 @@ import {
 import {
   WHEEL_IDLE_MS,
   isActive,
+  coverage,
   newScrollView,
   shifted,
   step,
@@ -305,6 +306,8 @@ export class GridPainter {
    * anchor window's text while it scrolls in pixels (`rideFloats`).
    */
   private bufposFloats: ReadonlySet<number> = new Set();
+  /** Window grids following another's display (`scrollbind`), by leader. */
+  private readonly followers = new Map<number, readonly number[]>();
   /** The rows each window grid has scrolled, as painted (`riders.ts`). */
   private readonly painted = new Map<number, number>();
   /** Each riding float's shift, by grid (pixels, down positive). */
@@ -829,6 +832,12 @@ export class GridPainter {
     return this.scrolls.get(grid)?.view.off ?? 0;
   }
 
+  /** The windows `scrollbind` moves with window grid `leader`. */
+  setFollowers(leader: number, grids: readonly number[]): void {
+    if (grids.length > 0) this.followers.set(leader, grids);
+    else this.followers.delete(leader);
+  }
+
   /** The rows a window grid has scrolled, as painted so far. */
   paintedRows(grid: number): number {
     return this.painted.get(grid) ?? 0;
@@ -895,13 +904,40 @@ export class GridPainter {
   ): boolean {
     const now = performance.now();
     let moving = false;
-    for (const [grid, slot] of [...this.scrolls]) {
+    // A window `scrollbind` moves with a scrolling one shows what that one
+    // shows: the same offset from Neovim's view (both scroll by the same
+    // rows, a diff's filler keeping them in line), within what it has.
+    const leaders = new Map<number, ScrollView>();
+    for (const [leader, grids] of this.followers) {
+      const view = this.scrolls.get(leader)?.view;
+      if (!view) {
+        this.followers.delete(leader);
+        continue;
+      }
+      for (const grid of grids) if (grid !== leader) leaders.set(grid, view);
+    }
+    const order = [...this.scrolls].sort(
+      ([a], [b]) => Number(leaders.has(a)) - Number(leaders.has(b)),
+    );
+    for (const [grid, slot] of order) {
       const box = boxes.find((b) => b.grid === grid);
       if (!box) {
         this.dropScroll(grid);
         continue;
       }
       const text = this.textRows(state, box);
+      const leader = leaders.get(grid);
+      if (leader) {
+        const view = slot.view;
+        const { lo, hi } = coverage(view);
+        view.off = Math.min(hi, Math.max(lo, leader.off));
+        view.want = view.off;
+        view.ease = undefined;
+        view.settled = true;
+        this.placeScroll(state, box);
+        if (this.scrolls.has(grid)) moving = true;
+        continue;
+      }
       const request = step(
         slot.view,
         now,

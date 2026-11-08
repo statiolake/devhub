@@ -248,18 +248,29 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   ghost are moved by transforms inside a clipping element of the text area
   (`.nvim-scroll-port`, the compositor's work, nothing repainted), and
   between them cover every position the display can be at. The wheel keeps
-  Neovim ahead of the display by a line, or by as far as the wheel goes
-  while Neovim answers (the round trip is measured), less than a window at
-  a time: in Normal mode exactly that many lines (`<C-e>`/`<C-y>` with `normal!`
-  in the window under the pointer, current window unchanged, unless the
-  person mapped the wheel); in any other mode Neovim's own wheel. The
+  Neovim ahead of the display by a line, or by twice as far as the wheel
+  goes while Neovim answers and a frame draws it (the round trip is
+  measured; a flick's first event counts as a frame's worth), less than a
+  window at a time: in Normal mode by that many screen rows (`<C-e>`/`<C-y>`
+  with `normal!`, one at a time until the view moved that far, counted with
+  `nvim_win_text_height`: a wrapped line moves by all its rows at once
+  unless `smoothscroll`, filler and virtual lines by a row each; in the
+  window under the pointer, current window unchanged, unless the person
+  mapped the wheel); in any other mode Neovim's own wheel. One request is
+  in flight at a time and is not given up before Neovim answers (a busy
+  Neovim, a file just opened, would otherwise get one after another and
+  scroll by all of them); once answered, until its redraw comes. Windows
+  `scrollbind` moves with the wheeled one (a diff) show the same offset
+  from Neovim's view, frame for frame (they scroll by the same rows, the
+  filler keeping them in line): no drift, no easing behind. The
   cursor ends where Neovim's own wheel would leave it: Neovim's lead pushes
   it further than the display went, so `SCROLL_LUA` keeps the cursor the
   wheel alone would leave — pushed only by the furthest the display went
   each way in the gesture (`reach`), `scrolloff` kept, and staying pushed
   when the gesture turns back — and puts it back when Neovim is brought to
   rest. At rest
-  Neovim is brought back to the nearest line and the display eases onto
+  Neovim is brought back to the nearest line boundary (a wrapped line's
+  start, not a row inside it) and the display eases onto
   it, so what is shown is Neovim's grid again, exactly. A scroll Neovim
   makes itself (`<C-d>`, `<C-f>`, `zz`, `j` past the edge, a search) eases
   from the old view to the new in 90 ms, already under way on the first
