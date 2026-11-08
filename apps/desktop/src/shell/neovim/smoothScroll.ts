@@ -64,6 +64,11 @@ export interface ScrollView {
   rtt: number;
   /** How fast the wheel goes (px/ms, smoothed). */
   speed: number;
+  /**
+   * The furthest the display went each way in this gesture, as `off` is
+   * measured: where the wheel would have pushed the cursor to (`SCROLL_LUA`).
+   */
+  reach: { lo: number; hi: number };
 }
 
 export function newScrollView(): ScrollView {
@@ -80,6 +85,7 @@ export function newScrollView(): ScrollView {
     settled: false,
     rtt: 30,
     speed: 0,
+    reach: { lo: 0, hi: 0 },
   };
 }
 
@@ -120,6 +126,7 @@ export function shifted(
   view.ghost = view.off - d;
   view.off -= d;
   view.want -= d;
+  view.reach = { lo: view.reach.lo - d, hi: view.reach.hi - d };
   if (!led) {
     // Started a frame ago: the first frame drawn already shows the move,
     // so a key's scroll is seen as soon as it would be without easing.
@@ -145,6 +152,7 @@ export function shifted(
 export function wheeled(view: ScrollView, dy: number, now: number): void {
   if (dy === 0) return;
   const dt = now - view.wheelAt;
+  if (dt > WHEEL_IDLE_MS) view.reach = { lo: view.off, hi: view.off };
   const speed = Math.abs(dy) / Math.max(8, dt);
   view.speed =
     dt > WHEEL_IDLE_MS || Math.sign(dy) !== view.dir
@@ -206,6 +214,10 @@ export function step(
   const behind = view.stuck !== view.dir && (view.want < lo || view.want > hi);
   if (now - view.wheelAt < WHEEL_IDLE_MS || behind) {
     view.off = snap(Math.min(hi, Math.max(lo, view.want)));
+    view.reach = {
+      lo: Math.min(view.reach.lo, view.off),
+      hi: Math.max(view.reach.hi, view.off),
+    };
     if (view.pending !== 0 || view.stuck === view.dir) return undefined;
     // Keep Neovim ahead of where the wheel wants the display: a line, or
     // as far as the wheel goes while Neovim answers, whichever is more; by
@@ -265,20 +277,57 @@ export function inexact(view: ScrollView): void {
  * pointer, unless only an exact scroll will do. Answers 1 (scrolled), 0
  * (could not: an end of the buffer), 2 (the wheel was sent; its scroll
  * shows in the redraw) or -1 (not exact, nothing sent).
+ *
+ * The cursor ends where Neovim's own wheel leaves it: on its line, unless
+ * the view left it behind (then the nearest line in view, `scrolloff`
+ * kept), and once pushed it stays pushed. Neovim is led past the display,
+ * so its view pushes the cursor further than the display went: the cursor
+ * the wheel alone would leave is kept here, pushed by the furthest the
+ * display went each way (`lo`, `hi`: from Neovim's view, in rows) as each
+ * request comes, and put back at every exact request (the settling one).
  */
 export const SCROLL_LUA = `
-local win, n, grid, row, col, exact_only = ...
+local win, n, grid, row, col, exact_only, lo, hi = ...
 local m = vim.api.nvim_get_mode()
 local key = n > 0 and '<ScrollWheelDown>' or '<ScrollWheelUp>'
 if m.mode == 'n' and not m.blocking and vim.o.mouse ~= ''
   and vim.api.nvim_win_is_valid(win) and vim.fn.maparg(key, 'n') == '' then
+  local G = package.loaded['devhub_gui'] or {}
+  G._wheel = G._wheel or {}
   local changed = false
   vim.api.nvim_win_call(win, function()
     local a = vim.fn.winsaveview()
+    local kept = G._wheel[win]
+    if not kept or kept.lnum ~= a.lnum or kept.col ~= a.col then
+      kept = { line = a.lnum, curswant = a.curswant }
+    end
+    local last = vim.fn.line('$')
+    local so = vim.wo.scrolloff >= 0 and vim.wo.scrolloff or vim.o.scrolloff
+    -- The cursor kept within a view from top to bottom, as the wheel does.
+    local function within(top, bottom)
+      top, bottom = math.max(1, top), math.min(last, bottom)
+      local lo = top == 1 and 1 or math.min(bottom, top + so)
+      local hi = bottom == last and bottom or math.max(lo, bottom - so)
+      return math.max(lo, math.min(hi, kept.line))
+    end
+    -- The lines the display showed at least partly (a line half in view
+    -- does not push: where it rests decides).
+    kept.line = within(vim.fn.line('w0') + math.floor(hi or 0), vim.fn.line('w$') + math.ceil(lo or 0))
     vim.cmd('normal! ' .. math.abs(n) .. (n > 0 and '\\5' or '\\25'))
     local b = vim.fn.winsaveview()
     changed = a.topline ~= b.topline or a.topfill ~= b.topfill
       or (a.skipcol or 0) ~= (b.skipcol or 0)
+    if exact_only then
+      local want = within(vim.fn.line('w0'), vim.fn.line('w$'))
+      kept.line = want
+      if want ~= b.lnum and vim.fn.foldclosed(want) == -1 then
+        vim.fn.cursor(want, 1)
+        if kept.curswant == vim.v.maxcol then vim.cmd('normal! $')
+        elseif kept.curswant > 0 then vim.cmd('normal! ' .. (kept.curswant + 1) .. '|') end
+      end
+    end
+    local c = vim.fn.winsaveview()
+    G._wheel[win] = { line = kept.line, curswant = kept.curswant, lnum = c.lnum, col = c.col }
   end)
   return changed and 1 or 0
 end

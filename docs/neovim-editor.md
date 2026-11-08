@@ -252,7 +252,13 @@ layout Lua reports. A Neovim stopped at a prompt is let out of it first.
   while Neovim answers (the round trip is measured), less than a window at
   a time: in Normal mode exactly that many lines (`<C-e>`/`<C-y>` with `normal!`
   in the window under the pointer, current window unchanged, unless the
-  person mapped the wheel); in any other mode Neovim's own wheel. At rest
+  person mapped the wheel); in any other mode Neovim's own wheel. The
+  cursor ends where Neovim's own wheel would leave it: Neovim's lead pushes
+  it further than the display went, so `SCROLL_LUA` keeps the cursor the
+  wheel alone would leave — pushed only by the furthest the display went
+  each way in the gesture (`reach`), `scrolloff` kept, and staying pushed
+  when the gesture turns back — and puts it back when Neovim is brought to
+  rest. At rest
   Neovim is brought back to the nearest line and the display eases onto
   it, so what is shown is Neovim's grid again, exactly. A scroll Neovim
   makes itself (`<C-d>`, `<C-f>`, `zz`, `j` past the edge, a search) eases

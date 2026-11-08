@@ -454,7 +454,16 @@ export class NeovimEditor {
       this.wheelAt?.grid === grid ? this.wheelAt : { grid, row: 0, col: 0 };
     ask("nvim_exec_lua", [
       SCROLL_LUA,
-      [win, request.lines, grid, at.row, at.col, request.exact],
+      [
+        win,
+        request.lines,
+        grid,
+        at.row,
+        at.col,
+        request.exact,
+        view.reach.lo / this.painter.cell().height,
+        view.reach.hi / this.painter.cell().height,
+      ],
     ]).then(
       (answer) => {
         if (answer === 0) answered(view, false);
