@@ -17,7 +17,7 @@ and which come next.
 | Process                                                     | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **main** (Electron's browser process, VS Code's main in it) | the window, its child views, menus, focus (`shell/`); the chord layer, a `before-input-event` handler on every web contents (`shell/keyboard.ts`); the terminal ledger: which marked session a surface attaches to, the attach permits and who owns which client, told only when a client starts or ends (`terminal/service.ts`, `surfaces.ts`, `attachments.ts`); tmux control and polling: the agent round and the terminal activity round (`terminal/tmux.ts`, `shell/agentWiring.ts`); every managed Neovim's lifecycle connection (`editor/managedNeovim.ts`: start, adopt, file jumps, theme) and the Neovim editors' attaches, ports and clipboard (`editor/neovimEditors.ts`); a proxy per GUI Agent's conversation (`agent/conversation/handle.ts`, `agentEngine/client.ts`): the facts the engine pushes, the requests, the host of an Agent on another machine; `state.json` (`shell/saveCoalescer.ts`); the Orchestrator (invariant, events, timers, GitHub polling); repository status (git), usage readers, Task Manager sampling, the `devhub` CLI's control socket, voice |
-| **process host** (utility process, new)                     | starts every bounded command main runs — tmux, git, ssh, the GUI Agents' host scripts — and reports how each ended (`main/processHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **process host** (utility process, new)                     | starts every child main runs: each bounded command — tmux, git, ssh, the GUI Agents' host scripts — and each long-lived stream (a remote Agent's journal over `ssh -T`), its bytes sent to the process that reads them over a port of their own (`main/processHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **pty host** (utility process, new)                         | every terminal surface's tmux client (node-pty), its output coalesced and framed, its acks, input and resizes, directly with the page over the page's `MessagePort` (`main/ptyHost/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **Neovim host** (utility process, new)                      | every Neovim editor's UI: its own connection to the Neovim's socket, the msgpack decoding, the attach, the GUI windows, each redraw sent to the page over the page's `MessagePort` and the page's calls back on it (`main/neovimHost/`, `editor/neovimUiSessions.ts`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | **conversation engine** (utility process, new)              | every GUI Agent's `AgentConversation`: the journal followed (an Agent on this machine), the protocol adapter, the fold, the held messages, the usage-limit and cache keepers; the Agents page's snapshot and events over a `MessagePort` (`main/agentEngine/`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
@@ -52,8 +52,16 @@ and which come next.
   over its port → folded a third time there → React. Main is told the
   conversation's facts (status, activity, session, MCP servers) when they
   change. DevHub's replies and the person's words: page → main (`invoke`) →
-  engine → `sh` host script → the FIFO. (An Agent on another machine: its
-  journal and writes go through main's runtime, as before.)
+  engine → `sh` host script → the FIFO.
+- **A GUI Agent on another machine.** CLI → `out` → `tail` → `sshd` →
+  `ssh -T` (a child of the process host) → the process host reads its
+  stdout → the stream's port → the conversation engine splits the lines
+  (`HostLink`, as for an Agent here) → the same adapter and fold. Main
+  composed the `ssh -T` (its runtime of that host: the login environment,
+  the master's session slot) and is told how it ended, which is where a
+  refusal is decided, but none of its bytes. Its writes are still main's
+  (`ssh` commands, through the process host). Until phase 5d main read the
+  stream, split it and sent the lines on to the engine.
 - **State.** every model change asks for a save; a save serialises the
   whole model and fsyncs on main.
 
@@ -200,6 +208,8 @@ whose four cores were saturated by tmux and the streams.
 | 5a    | Children start with nothing of their parent's open but stdio (finding 9)                    | `188b316b` |
 | 5b    | The pty host: every terminal surface's tmux client in a utility process, pages over ports   | `f529a3b7` |
 | 5c    | The Neovim host: every Neovim editor's UI connection in a utility process, pages over ports | `b4015c4f` |
+| 5d    | SSH hosts' commands reach the process host at all (an environment it can clone)             | `273547ea` |
+| 5d    | Byte streams in the process host; a remote Agent's journal read by the engine, over a port  | `f8793ba3` |
 
 **Phase 1.** `useConversation` keeps folding every event of a hidden pane
 (so a bad event is still refused where it arrives) and publishes nothing;
@@ -352,6 +362,102 @@ UI was main's and the same checks passed. An SSH-forwarded Neovim takes the
 same path (a second connection through the same `ssh -O forward` socket) but
 was not run against a real host here.
 
+**Phase 5d.** Two things, the first found while setting up the second.
+Every command for an SSH host had failed since phase 2 — opening a
+Workspace there said "[object Object] could not be cloned": a host's
+commands defaulted to main's own `process.env`, which in Electron's
+browser process is a host object a utility process's `postMessage` cannot
+clone (it can in plain Node, so no test saw it). `SshRuntime` now copies
+it once, and the process host's client posts every environment as a plain
+object. (Copying `process.env` per command instead was 2.6% of main with
+two remote Agents streaming: reading it whole is slow too.)
+
+Then the long-lived streams (`runtime/byteStream.ts`). Their child is now
+`terminal/streamRun.ts`, the same code wherever it runs, as `childRun.ts`
+is for the bounded commands; `openByteStream` keeps what an ending means
+(the refusal, the session slot released, the cancellation) and starts the
+child through the installed `StreamRunner`: in main, the process host
+(`setStreamRunner`, `main.ts`). A `StreamRequest` can name a sink (`to`):
+one end of a `MessagePort`, which goes to the process host with the
+stream, so the bytes go from the child's pipe straight to whoever holds
+the other end; without one they come back to main as before, for a reader
+in main. A remote Agent's journal is the stream that matters: the
+conversation engine now follows it itself, with the same `HostLink` an
+Agent on this machine has, on main's runtime of that machine at one remove
+(`agentEngine/brokeredRuntime.ts`): a stream is a `stream-open` main
+answers with the port and starts with its runtime (`ssh -T` composed,
+login environment, session slot) in the process host, and then a
+`stream-end` with how it ended; the end of the journal of a host that is
+over is an `exec` main runs and answers as data. Main splits no lines and
+forwards none (until now `#follow` did, in `agentEngine/client.ts`;
+deleted). Its writes stay main's.
+
+Why the process host and not a host of its own, or the pty host: what is
+moved is exactly what the process host already does — start a child
+through `cleanSpawn`, hold its pipes and its process group, send back
+what it printed — for a child that lives longer; the target already says
+"process host: every child process". Its thread does little per chunk
+(read, copy, post): two remote journals at 1 MB/s each took it from 17–20%
+of a core to 21–26% (below); the pty host's thread is the terminals' 5 ms
+coalescing and their keys, which a 40 000-line burst should not share; and
+a separate host would be a fourth restart policy and switch for the same
+children. What a stream shares with the commands is a failure domain, and
+the recovery is the same for both: a process host that ends fails what it
+held — a command fails, a stream's `ended` rejects (`failed`), the engine
+sees its port close — the next one starts a new host, and the
+conversation, `lost`, is followed again from its offset by the next round's
+`reattach`. Three ends in a minute and streams start in main again, with
+the commands; `DEVHUB_BYTESTREAMS_IN_MAIN=1` starts them in main from the
+start (the bytes then pass main's thread on their way to the port, but
+are still split by the engine). With the conversations in main
+(`DEVHUB_CONVERSATIONS_IN_MAIN=1`, or the engine given up on) the journal
+is read in main and its stream still runs in the process host, its bytes
+coming back to main.
+
+Not moved: the dev-container relay (`container.ts`'s `spawnRelay`, a
+`docker exec -i` whose stdio is piped to a socket of VS Code's in main),
+which is the editor's remote traffic for a container on a host, not a
+stream DevHub reads, and the whisper server, which is started once.
+
+### After phase 5d
+
+**r stream**: two GUI Claude Agents on an SSH host (`ssh:bsh`: OpenSSH
+9.6 on 127.0.0.1, its own user and home, the stand-in CLI of c replay
+there), each started at once with a 40 000-line burst and then 3 000
+lines/s (about 1 MB/s of journal each), the Agents page not showing them.
+"burst" is the 20 s from their start, "steady" the 20 s after. "before" is
+origin/main with the SSH fix only (`273547ea`), "after" phase 5d, "in
+main" phase 5d with `DEVHUB_BYTESTREAMS_IN_MAIN=1`. Main's process CPU is
+all its threads.
+
+| scenario | main thread CPU                       | main JS busy                         | main process CPU     | lag p99 / max (ms)                         | conversation engine | process host    |
+| -------- | ------------------------------------- | ------------------------------------ | -------------------- | ------------------------------------------ | ------------------- | --------------- |
+| r idle   | 7%, 7% → 10%, 8% (in main 7%)         | 0.3%, 0.3% → 0.4%, 0.3% (0.3%)       | 19, 20 → 24, 19 (19) | 1.4 / 24, 1 / 27 → 2.1 / 56, 3.3 / 29      | —                   | <5%             |
+| r burst  | 21%, 21% → **16%, 15%** (in main 19%) | 10.2%, 10.7% → **6.8%, 6.1%** (9.0%) | 35, 35 → 31, 27 (34) | 3.8 / 28, 4.5 / 39 → 6.9 / 182, 4.3 / 41   | 48–52% → 21–27%     | 18–19% → 21–25% |
+| r steady | 18%, 21% → **15%, 15%** (in main 18%) | 8.4%, 9.6% → **6.1%, 6.1%** (7.3%)   | 30, 35 → 29, 29 (32) | 3.8 / 122, 4.2 / 127 → 4.1 / 179, 4.4 / 56 | 33–43% → 23–27%     | 17–20% → 22–26% |
+
+- Main's JavaScript with two remote Agents streaming: **8.4–10.7% → 6.1–6.8%**
+  busy, its thread **18–21% → 15–16%**. `#follow`, `HostLink.lines`, the
+  stream's `readable` and most of `postMessage` (2.7% → 1.1%) are gone
+  from its profile. What is left is the remote machine's commands, which
+  main still composes and schedules — the rounds' `tmux` over `ssh`, the
+  writes — `ssh.js` and `command.js` at about 2% each, and Chromium's
+  UI thread itself (idle is 7–10%).
+- The conversation engine got cheaper too, **33–52% → 21–27%**: it takes
+  bytes off a port where it took arrays of line objects structured-cloned
+  through main.
+- In main (`DEVHUB_BYTESTREAMS_IN_MAIN=1`) sits between: main reads the
+  pipes and posts the chunks, the engine still splits them.
+- Killed with `kill -9` while both streamed: the streams were on a new
+  process host within a second (the conversations' next round) and the
+  transcripts went on growing; after the third kill in a minute the `ssh -T`
+  streams were main's children and went on the same way. Killing the
+  conversation engine instead: main cancelled its streams, and the new
+  engine opened new ones as it replayed. With the conversations in main
+  (`DEVHUB_CONVERSATIONS_IN_MAIN=1`) the streams ran in the process host
+  with their bytes coming back to main, and came back the same way after a
+  kill.
+
 ### After phase 5c
 
 **n scroll**: Scratch's Neovim (0.12.6, no config, a 260 000-line
@@ -469,14 +575,12 @@ complete.
 
 4. **Done** (phase 4 above). Left of it: the engine's own cost under a fast
    stream (the Claude adapter compares its MCP state as JSON for each event
-   it emits and rebuilds `working` from every server), and a remote Agent's
-   journal, which still passes main's runtime until phase 5 gives SSH and
-   containers a home outside main too.
-5. **Done for terminals and the Neovim editors** (phases 5b and 5c above).
-   Left of it: the long-lived streams
-   (`runtime/byteStream.ts`: a remote Agent's journal `tail`, `ssh -T`), with
-   SSH and containers given a home outside main. The other `child_process`
-   callers in main could go through `cleanSpawn` too.
+   it emits and rebuilds `working` from every server).
+5. **Done** (phases 5b, 5c and 5d above). Left of it: a remote Agent's
+   writes (an `ssh` command each, scheduled by main), the dev-container
+   relay, and the other `child_process` callers in main (the GitHub CLI,
+   usage readers, the login shell probe), which could go through
+   `cleanSpawn` and the process host too.
 6. **The Agents page split**: terminal Agents and GUI conversations in
    different renderers, so a visible conversation's rendering cannot hold a
    terminal's keys either (phase 1 covers only hidden ones). Before it, the
