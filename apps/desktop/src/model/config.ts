@@ -426,6 +426,14 @@ export interface GeneralConfig {
    * `docs/neovim-editor.md`.
    */
   readonly editor: EditorKind;
+  /**
+   * `nvim` typed in an Agent's terminal (or run by `git commit`, `$EDITOR`)
+   * is the person's Neovim drawn by DevHub's GUI over that pane, instead of
+   * its TUI: DevHub's `nvim` goes in front of the terminals' PATH. Default
+   * `false`. Independent of `editor`. See `docs/neovim-editor.md`, "Neovim
+   * in a terminal".
+   */
+  readonly neovim_terminal_overlay: boolean;
 }
 
 /** The kinds of editor area there are, and the only values `general.editor` takes. */
@@ -814,6 +822,7 @@ export function defaultConfig(): Config {
       workbench_discard_minutes: DEFAULT_WORKBENCH_DISCARD_MINUTES,
       workbench_freeze: true,
       editor: DEFAULT_EDITOR,
+      neovim_terminal_overlay: false,
     },
     runtimes: defaultRuntimes(),
     appearance: defaultAppearance(),
@@ -2145,6 +2154,7 @@ export function interpretConfig(document: unknown): Config {
       "workbench_discard_minutes",
       "workbench_freeze",
       "editor",
+      "neovim_terminal_overlay",
     ],
     "general",
   );
@@ -2278,6 +2288,12 @@ export function interpretConfig(document: unknown): Config {
         "general",
         DEFAULT_EDITOR,
       ) as EditorKind,
+      neovim_terminal_overlay: optionalBoolean(
+        generalTable,
+        "neovim_terminal_overlay",
+        "general",
+        false,
+      ),
     },
     runtimes: {
       shell: optionalString(runtimesTable, "shell", "runtimes", DEFAULT_SHELL),
@@ -2536,6 +2552,7 @@ export function configDocument(config: Config): Record<string, TomlValue> {
       workbench_discard_minutes: config.general.workbench_discard_minutes,
       workbench_freeze: config.general.workbench_freeze,
       editor: config.general.editor,
+      neovim_terminal_overlay: config.general.neovim_terminal_overlay,
     },
     runtimes: {
       shell: config.runtimes.shell,

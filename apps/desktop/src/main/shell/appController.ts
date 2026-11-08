@@ -655,6 +655,11 @@ import {
 import type { Landing } from "./chords.js";
 import { ManagedNeovims, socketDirectoryFor } from "../editor/managedNeovim.js";
 import { NeovimEditors } from "../editor/neovimEditors.js";
+import type { TerminalNeovims } from "../editor/terminalNeovims.js";
+import {
+	overlayTerminals,
+	wireTerminalNeovims,
+} from "../editor/terminalNeovimWiring.js";
 import { editorForOpen, neovimOpenOf } from "../editor/neovimOpen.js";
 import {
 	neovimMissingMessage,
@@ -1053,6 +1058,12 @@ export class AppController {
 	private managedNeovims: ManagedNeovims | undefined;
 	/** The Neovim editor's UIs, over the managed Neovims (`neovimEditors.ts`). */
 	private neovimEditors: NeovimEditors | undefined;
+	/** Neovims run in Agent terminals, drawn over their panes (`terminalNeovims.ts`). */
+	private terminalNeovims: TerminalNeovims | undefined;
+	/** `general.neovim_terminal_overlay` as the overlays were last told it. */
+	private terminalNeovimsOn = false;
+	/** Where a host's Neovim socket is forwarded to, here. */
+	private neovimForwards = "";
 	/**
 	 * The Workspaces whose Neovim page has been shown since the editor became
 	 * Neovim: each keeps its page, hidden, while another is on screen.
@@ -1564,7 +1575,21 @@ export class AppController {
 						launch: electronNeovimHostLauncher,
 						clipboard,
 					});
+		this.terminalNeovims = wireTerminalNeovims({
+			tmuxOf: async (machine) => {
+				const runtime = await terminalRuntimes.for(runtimeById(machine));
+				if (!runtime.adapterAvailable) {
+					throw new Error(runtime.unavailableReason ?? "no tmux");
+				}
+				return runtime;
+			},
+			runtimeById,
+			forwardDirectory: this.neovimForwards,
+			shell: () => shellWindowIfCreated(),
+			theme: () => themePublicationIfInstalled()?.current(),
+		});
 		this.neovimEditors = new NeovimEditors({
+			overlays: this.terminalNeovims,
 			neovims: this.managedNeovims,
 			target: (workspaceId) => this.neovimTarget(workspaceId),
 			clipboard,
@@ -1870,6 +1895,7 @@ export class AppController {
 			socketProblem = failureText(error);
 		}
 		const forwards = join(socketDirectory, "forwarded");
+		this.neovimForwards = forwards;
 		return new ManagedNeovims({
 			panes: {
 				open: async (target, argv) =>
@@ -4244,6 +4270,39 @@ export class AppController {
 
 	//#endregion
 
+	/**
+	 * Tell the Neovims over terminal panes which terminals there are and
+	 * which one is on screen, and the setting as it is now. Turned off, the
+	 * overlays there are stay until their Neovims exit, and each machine's
+	 * server is told, so a `nvim` started from then on is the TUI.
+	 */
+	private syncTerminalNeovims(
+		shell: ReturnType<typeof shellWindow>,
+		onScreen: string | undefined,
+	): void {
+		const overlays = this.terminalNeovims;
+		if (overlays === undefined) return;
+		shell.setTerminalNeovimHooks(overlays);
+		const on = this.config.general.neovim_terminal_overlay;
+		if (this.terminalNeovimsOn && !on) {
+			void this.terminalsWiring?.runtimes
+				.live()
+				.then((adapters) =>
+					Promise.allSettled(
+						adapters.map((adapter) => adapter.clearNeovimOverlay()),
+					),
+				);
+		}
+		this.terminalNeovimsOn = on;
+		overlays.setEnabled(on);
+		overlays.setTerminals(
+			overlayTerminals(this.coordinator.model.agentTerminals(), (one) =>
+				this.machineOfAgent(one.agentId),
+			),
+			new Set(onScreen === undefined ? [] : [onScreen]),
+		);
+	}
+
 	/** The machine one Agent runs on: its Workspace's. */
 	private machineOfAgent(
 		agentId: ReturnType<typeof parseAgentId>,
@@ -4470,6 +4529,7 @@ export class AppController {
 		// The managed Neovims too: they run on in tmux, and the next DevHub
 		// adopts them by their sockets. Their UIs' connections go first.
 		this.neovimEditors?.dispose();
+		this.terminalNeovims?.dispose();
 		this.neovimHost?.dispose();
 		this.managedNeovims?.dispose();
 		// The conversations stop being followed; their hosts run on in tmux,
@@ -4980,6 +5040,7 @@ export class AppController {
 		shell.syncTerminalViews(
 			model.agentTerminals().map((one) => one.terminalId),
 		);
+		this.syncTerminalNeovims(shell, terminal?.terminalId);
 		// A GUI Agent on screen is drawn by the Conversations view, the rest
 		// by the Agents view (`LayoutState.conversation`); the Orchestrator's
 		// board stays the Agents view's, left of its GUI Agent's conversation.
@@ -11635,6 +11696,28 @@ export class AppController {
 		receive(NEOVIM_CHANNELS.call, (_event, call: NeovimCall) => {
 			this.neovimEditors?.call(call);
 		});
+		// An Agent terminal's page, saying where its emulator draws: what a
+		// Neovim over one of its panes is placed from.
+		receive(
+			CHANNELS.reportTerminalScreen,
+			(event, terminalId: unknown, screen: unknown) => {
+				if (typeof terminalId !== "string") return;
+				const rect = screen as Partial<Record<string, unknown>> | null;
+				const numbers = ["x", "y", "width", "height"].map((field) =>
+					rect === null || typeof rect !== "object" ? NaN : rect[field],
+				);
+				if (!numbers.every((n) => typeof n === "number" && Number.isFinite(n)))
+					return;
+				const [x, y, width, height] = numbers as number[];
+				this.terminalNeovims?.screen(terminalId, {
+					x: x ?? 0,
+					y: y ?? 0,
+					width: width ?? 0,
+					height: height ?? 0,
+					zoom: event.sender.getZoomFactor(),
+				});
+			},
+		);
 		handle(
 			NEOVIM_CHANNELS.request,
 			(_event, call: NeovimCall) =>

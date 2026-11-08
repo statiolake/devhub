@@ -98,6 +98,17 @@ import { requiredTerminalSet, workspaceTarget } from "./ports.js";
 import type { PaneSample } from "./paneActivity.js";
 import { failureText } from "../../model/wire.js";
 import { agentTerminalSessionName } from "../../model/agentTerminal.js";
+import {
+	NVIM_OVERLAY_OPTION,
+	NVIM_SOCKET_OPTION,
+	NVIM_UI_OPTION,
+	neovimShimScript,
+} from "../editor/terminalNeovimShim.js";
+import {
+	CLIENT_FORMAT as NEOVIM_CLIENT_FORMAT,
+	CLIENT_LINE_MARK,
+	PANE_FORMAT as NEOVIM_PANE_FORMAT,
+} from "../editor/terminalNeovims.js";
 
 const PROTOCOL_OPTION = "@devhub-protocol";
 const PROTOCOL_VALUE = "1";
@@ -561,6 +572,15 @@ export function agentSessionName(agentId: string): string {
 /** An Agent terminal's session is named by its id, like an Agent's. */
 export const terminalSessionName = agentTerminalSessionName;
 
+/**
+ * A pane's foreground command, as DevHub reads it: `nvim` while DevHub's
+ * `nvim` runs there (`@devhub-nvim`, `editor/terminalNeovimShim.ts`). That
+ * script is a `sh` waiting on Neovim, and `sh` would read as an idle shell —
+ * to the Sidebar's activity, and to a close that asks before it kills a pane
+ * with work in it.
+ */
+const PANE_COMMAND = `#{?${NVIM_SOCKET_OPTION},nvim,#{pane_current_command}}`;
+
 export function workspaceDigest(root: string): string {
 	return createHash("sha256").update(root, "utf8").digest("hex");
 }
@@ -743,7 +763,7 @@ const PANE_ACTIVITY_FIELDS = [
 	"#{window_activity}",
 	"#{pane_dead}",
 	"#{history_size}:#{cursor_x}:#{cursor_y}",
-	"#{pane_current_command}",
+	PANE_COMMAND,
 	// Last, as in `SESSION_FIELDS`: the one value that may hold a newline.
 	`#{${ROOT_OPTION}}`,
 ];
@@ -1026,7 +1046,7 @@ const TERMINAL_PANE_FIELDS = [
 	"#{pane_index}",
 	"#{pane_active}",
 	"#{window_active}",
-	"#{pane_current_command}",
+	PANE_COMMAND,
 	"#{pane_title}",
 	"#{pane_dead}",
 	"#{socket_path}",
@@ -1373,6 +1393,16 @@ export interface TmuxTerminalRuntimeOptions {
 	 * be stated before the file it names has been written.
 	 */
 	readonly paneBinDirectory?: string;
+	/**
+	 * Where DevHub's `nvim` goes on this machine (`terminalNeovimShim.ts`),
+	 * and whether it is wanted now (`[general] neovim_terminal_overlay`).
+	 * While it is, and once it has been written, its directory goes in front
+	 * of every pane's PATH, before `paneBinDirectory`.
+	 */
+	readonly neovimShim?: {
+		readonly directory: string;
+		readonly wanted: () => boolean;
+	};
 	readonly timeoutMs?: number;
 	/** Where the one-shot bootstrap config is written. */
 	readonly bootstrapDirectory?: string;
@@ -1629,6 +1659,10 @@ export class TmuxTerminalRuntime {
 	private readonly userTmuxConfigSource: string;
 	private readonly host: Runtime;
 	private readonly paneBinDirectory: string | undefined;
+	private readonly neovimShim: TmuxTerminalRuntimeOptions["neovimShim"];
+	/** DevHub's `nvim` written on this machine, once (`ensureNeovimShim`). */
+	private neovimShimWritten: Promise<boolean> | undefined;
+	private neovimShimReady = false;
 	/** One in-flight bring-up per socket, shared by concurrent callers. */
 	private readonly serverBootstraps = new Map<SocketName, Promise<void>>();
 	/**
@@ -1668,6 +1702,7 @@ export class TmuxTerminalRuntime {
 		this.userTmuxConfigSource = options.userTmuxConfigSource ?? "/dev/null";
 		this.host = options.host ?? localRuntime();
 		this.paneBinDirectory = options.paneBinDirectory;
+		this.neovimShim = options.neovimShim;
 		this.themeEnvironment = options.themeEnvironment ?? (() => ({}));
 	}
 
@@ -2140,6 +2175,8 @@ export class TmuxTerminalRuntime {
 		} = {},
 		cancel = new CancellationToken(),
 	): Promise<PaneTerminalPane> {
+		// Before the session: its PATH is stated as it is created.
+		await this.ensureNeovimShim();
 		const release = await this.gate.acquireOperation(cancel);
 		try {
 			const socket = this.socket();
@@ -3815,10 +3852,147 @@ export class TmuxTerminalRuntime {
 	 * this one there is nothing to put in front, so nothing is.
 	 */
 	private panePath(base: string | undefined): string | undefined {
-		const directory = this.paneBinDirectory;
-		if (directory === undefined) return undefined;
+		const directories = [
+			this.neovimShimReady && this.neovimShim?.wanted() === true
+				? this.neovimShim.directory
+				: undefined,
+			this.paneBinDirectory,
+		].filter((directory) => directory !== undefined);
+		if (directories.length === 0) return undefined;
 		if (base === undefined || base.length === 0) return undefined;
-		return `${directory}:${base}`;
+		return `${directories.join(":")}:${base}`;
+	}
+
+	/**
+	 * Write DevHub's `nvim` on this machine, if it is wanted and not written
+	 * yet; whether it is there. A machine that refuses the file is logged once
+	 * and its panes get no `nvim` of DevHub's — they run the person's own.
+	 */
+	async ensureNeovimShim(): Promise<boolean> {
+		const shim = this.neovimShim;
+		if (shim === undefined || !shim.wanted()) return false;
+		this.neovimShimWritten ??= (async () => {
+			try {
+				await this.host.makeDirectory(shim.directory);
+				await this.host.writeTextFile(
+					join(shim.directory, "nvim"),
+					neovimShimScript({
+						directory: shim.directory,
+						tmux: this.tmuxPath(),
+						sessionPrefix: terminalSessionName(""),
+					}),
+					0o755,
+				);
+				this.neovimShimReady = true;
+				return true;
+			} catch (failure: unknown) {
+				console.error(
+					`[devhub] DevHub's nvim could not be written${this.where}: ${failureText(failure)}`,
+				);
+				return false;
+			}
+		})();
+		return this.neovimShimWritten;
+	}
+
+	/**
+	 * One reading of an Agent terminal's session for the Neovims drawn over
+	 * its panes (`editor/terminalNeovims.ts`): every pane, then DevHub's
+	 * client, marked. The overlay's server option is stated in the same
+	 * queue, so a server started since is told too. `undefined`: no such
+	 * session (yet, or any more).
+	 */
+	async terminalNeovimReading(
+		terminalId: string,
+		announce: boolean,
+		cancel = new CancellationToken(),
+	): Promise<string | undefined> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const socket = this.socket();
+			const deadline = OperationDeadline.in(this.timeoutMs);
+			const session = `=${terminalSessionName(terminalId)}`;
+			const output = await this.runTmux(
+				socket,
+				[
+					...(announce
+						? ["set-option", "-g", NVIM_OVERLAY_OPTION, "1", ";"]
+						: []),
+					"list-panes",
+					"-s",
+					"-t",
+					session,
+					"-F",
+					NEOVIM_PANE_FORMAT,
+					";",
+					"list-clients",
+					"-t",
+					session,
+					"-F",
+					`${CLIENT_LINE_MARK}${NEOVIM_CLIENT_FORMAT}`,
+				],
+				this.contextHome,
+				cancel,
+				deadline,
+			);
+			if (!output.success) return undefined;
+			return output.stdout.toString("utf8");
+		} finally {
+			release();
+		}
+	}
+
+	/** The overlay is off: a `nvim` started from now on is the person's TUI. */
+	async clearNeovimOverlay(cancel = new CancellationToken()): Promise<void> {
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			await this.runTmux(
+				this.socket(),
+				["set-option", "-gu", NVIM_OVERLAY_OPTION],
+				this.contextHome,
+				cancel,
+				OperationDeadline.in(this.timeoutMs),
+			);
+		} finally {
+			release();
+		}
+	}
+
+	/**
+	 * What the overlays ask of tmux: tell a pane's `nvim` its UI is attached,
+	 * make a pane the active one, put DevHub's client in the prefix table.
+	 * Every target is a pane id or a client name a reading just gave.
+	 */
+	async terminalNeovimCommand(
+		command:
+			| { readonly kind: "claim"; readonly paneId: string }
+			| { readonly kind: "select"; readonly paneId: string }
+			| { readonly kind: "prefix"; readonly client: string },
+		cancel = new CancellationToken(),
+	): Promise<void> {
+		const target = command.kind === "prefix" ? command.client : command.paneId;
+		if (command.kind !== "prefix" && !PANE_ID.test(target)) {
+			throw portFailure("failed");
+		}
+		const args =
+			command.kind === "claim"
+				? ["set-option", "-p", "-t", target, NVIM_UI_OPTION, "1"]
+				: command.kind === "select"
+					? ["select-pane", "-t", target]
+					: ["switch-client", "-c", target, "-T", "prefix"];
+		const release = await this.gate.acquireOperation(cancel);
+		try {
+			const output = await this.runTmux(
+				this.socket(),
+				args,
+				this.contextHome,
+				cancel,
+				OperationDeadline.in(this.timeoutMs),
+			);
+			if (!output.success) throw output.refusal();
+		} finally {
+			release();
+		}
 	}
 
 	private async createSession(
@@ -4161,7 +4335,7 @@ export class TmuxTerminalRuntime {
 				"-t",
 				session,
 				"-F",
-				`${PANE_RECORD}${FIELD_SEPARATOR}#{pane_current_command}${RECORD_SEPARATOR}`,
+				`${PANE_RECORD}${FIELD_SEPARATOR}${PANE_COMMAND}${RECORD_SEPARATOR}`,
 			],
 			this.contextHome,
 			cancel,

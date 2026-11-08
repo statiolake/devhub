@@ -33,6 +33,7 @@ import {
 	type NeovimRequestResult,
 } from "../../ipc/neovim.js";
 import { NeovimClient, type NeovimRpc } from "./neovimRpc.js";
+import { isOverlayKey, type TerminalNeovims } from "./terminalNeovims.js";
 import { NeovimUiSessions } from "./neovimUiSessions.js";
 import {
 	NeovimHostRestarted,
@@ -56,11 +57,21 @@ export interface NeovimEditorsOptions {
 	readonly log?: (line: string) => void;
 	/** A Workspace's current buffer changed (`bufferName`). */
 	readonly onBuffer?: (workspaceId: string) => void;
+	/**
+	 * The Neovims drawn over terminal panes (`terminalNeovims.ts`): a page
+	 * whose id is an overlay's key attaches to that pane's Neovim, and its
+	 * end is the overlay's.
+	 */
+	readonly overlays?: Pick<
+		TerminalNeovims,
+		"connection" | "attached" | "ended"
+	>;
 }
 
 interface Attached {
 	page: NeovimPage;
-	readonly target: WorkspaceTerminalTarget;
+	/** Absent for a terminal's Neovim: its end is the overlay's. */
+	readonly target: WorkspaceTerminalTarget | undefined;
 	/** The host generation the UI is in; absent: main's. */
 	readonly hosted: number | undefined;
 }
@@ -140,6 +151,10 @@ export class NeovimEditors {
 		const entry = this.attached.get(workspaceId);
 		if (entry === undefined || entry.hosted !== hosted) return;
 		this.attached.delete(workspaceId);
+		if (entry.target === undefined) {
+			this.options.overlays?.ended(workspaceId);
+			return;
+		}
 		void this.ended(entry.target, entry);
 	}
 
@@ -175,11 +190,43 @@ export class NeovimEditors {
 		page: NeovimPage,
 		request: NeovimAttachRequest,
 	): Promise<NeovimAttachReply> {
+		const overlays = this.options.overlays;
+		if (isOverlayKey(request.workspaceId) && overlays !== undefined) {
+			const reply = await this.attachTo(page, request, undefined, () =>
+				overlays.connection(request.workspaceId),
+			);
+			if (reply.ok) overlays.attached(request.workspaceId);
+			else overlays.ended(request.workspaceId);
+			return reply;
+		}
+		return this.attachTo(
+			page,
+			request,
+			() => this.options.target(request.workspaceId),
+			async (target) => {
+				if (target === undefined) throw new Error("no Workspace");
+				return {
+					...(await this.options.neovims.connection(target)),
+					machine: target.machine,
+				};
+			},
+		);
+	}
+
+	private async attachTo(
+		page: NeovimPage,
+		request: NeovimAttachRequest,
+		targetOf: (() => WorkspaceTerminalTarget) | undefined,
+		connection: (target: WorkspaceTerminalTarget | undefined) => Promise<{
+			readonly socketPath: string;
+			readonly server: number;
+			readonly machine: string;
+		}>,
+	): Promise<NeovimAttachReply> {
 		try {
-			const target = this.options.target(request.workspaceId);
+			const target = targetOf?.();
 			const workspaceId = request.workspaceId;
-			const { socketPath, server } =
-				await this.options.neovims.connection(target);
+			const { socketPath, server, machine } = await connection(target);
 			const ui = {
 				workspaceId,
 				socketPath,
@@ -187,7 +234,7 @@ export class NeovimEditors {
 				cols: request.cols,
 				rows: request.rows,
 			};
-			const where = target.machine === "local" ? "" : target.machine;
+			const where = machine === "local" ? "" : machine;
 			const host = this.options.host;
 			// A host that ends during the attach is replaced, and the attach
 			// goes to the next one; a host given up on leaves it to main.

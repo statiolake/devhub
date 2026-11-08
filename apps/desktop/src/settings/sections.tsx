@@ -271,6 +271,17 @@ export function GeneralSection({
           />
         </Row>
         <SwitchRow
+          label="Neovim over terminals"
+          help="nvim in an Agent's terminal — typed, or run by git commit and $EDITOR — opens your Neovim in DevHub's GUI over that pane instead of its TUI, and the command waits for it as an editor does. Terminals opened after this is turned on get it. Default off."
+          checked={config.general.neovimTerminalOverlay}
+          onChange={(neovimTerminalOverlay) => {
+            update({
+              ...config,
+              general: { ...config.general, neovimTerminalOverlay },
+            });
+          }}
+        />
+        <SwitchRow
           label="Freeze hidden editors"
           help="Off, no editor is ever frozen — not when hidden, not by the Task Manager's Sleep — so none is discarded either, and one frozen now resumes at once. Editors then keep using CPU and memory while hidden. Default on."
           checked={config.general.workbenchFreeze}

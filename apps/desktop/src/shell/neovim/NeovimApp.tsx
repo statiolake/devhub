@@ -107,12 +107,15 @@ export function NeovimApp({ workspaceId }: { readonly workspaceId: string }) {
     state.status === "ready"
       ? state.snapshot.workspaces.find((one) => one.id === workspaceId)
       : undefined;
-  if (state.status !== "ready" || !workspace) return null;
+  // A Neovim run in a terminal pane is no Workspace's: its id is its
+  // overlay's (`main/editor/terminalNeovims.ts`).
+  const inTerminal = workspaceId.startsWith("tnv:");
+  if (state.status !== "ready" || (!workspace && !inTerminal)) return null;
   return (
     <div className="app-shell neovim-page">
       <NeovimSurface
         workspaceId={workspaceId}
-        label={workspace.label}
+        label={workspace?.label ?? "Neovim"}
         appearance={appearance}
       />
     </div>

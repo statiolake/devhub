@@ -7,8 +7,8 @@
  * `shell/pane/PaneApp.tsx`.
  */
 
-import { contextBridge } from "electron";
-import type { PaneBridge } from "../ipc/contract.js";
+import { contextBridge, ipcRenderer } from "electron";
+import { CHANNELS, type PaneBridge } from "../ipc/contract.js";
 import {
 	appearanceBridge,
 	openExternalUrl,
@@ -26,6 +26,9 @@ const api: PaneBridge = {
 	openExternalUrl,
 	writeClipboard,
 	terminal: terminalApi,
+	reportTerminalScreen(terminalId, screen) {
+		ipcRenderer.send(CHANNELS.reportTerminalScreen, terminalId, screen);
+	},
 };
 
 contextBridge.exposeInMainWorld("devhub", api);

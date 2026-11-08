@@ -23,7 +23,7 @@
  * DevHub draws one terminal pane.
  */
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { devhub } from "./client";
 import {
   useAppearance,
@@ -37,6 +37,8 @@ import type {
   AppSnapshot,
 } from "../../ipc/appShell";
 import { paneTerminalSurfaceKey } from "../../ipc/terminal";
+import type { TerminalScreenWire } from "../../ipc/contract";
+import { useTerminalScreenReport } from "./screenReport";
 
 export function PaneApp({ terminalId }: { readonly terminalId: string }) {
   const bridge = useMemo(() => devhub(), []);
@@ -45,6 +47,14 @@ export function PaneApp({ terminalId }: { readonly terminalId: string }) {
   // from a dispatch here, is the picker's to draw.
   const { state, attempt } = useProjection(bridge, reportFailure, () => {});
   const appearance = useAppearance(bridge, reportFailure, attempt);
+  useTerminalScreenReport(
+    useCallback(
+      (screen: TerminalScreenWire) => {
+        bridge.reportTerminalScreen(terminalId, screen);
+      },
+      [bridge, terminalId],
+    ),
+  );
   if (state.status !== "ready") return null;
   const found = findTerminal(state.snapshot, terminalId);
   // The pane outlives its terminal by at most one projection: main takes the

@@ -588,6 +588,15 @@ export function openXtermSession(
           remeasure();
         });
   observer?.observe(host);
+  // A web font that finishes loading after the fit (the terminal font, the
+  // bundled symbols) changes the cell without moving the host, so nothing
+  // above asks again: xterm then draws fewer columns than the pty was told,
+  // and every full-width line (tmux's status line) wraps and pushes the
+  // screen up a row. Measured again when any font arrives.
+  const onFontsLoaded = (): void => {
+    remeasure();
+  };
+  host.ownerDocument.fonts?.addEventListener("loadingdone", onFontsLoaded);
   // The first measurement is taken without reporting: the surface has not
   // attached to anything yet, and it is the attach request that carries it. It
   // still counts as said — the other end has it — so it is what a later
@@ -634,6 +643,10 @@ export function openXtermSession(
         host.removeEventListener(type, onMetaComposition, true);
       }
       observer?.disconnect();
+      host.ownerDocument.fonts?.removeEventListener(
+        "loadingdone",
+        onFontsLoaded,
+      );
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
       terminal.dispose();

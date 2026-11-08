@@ -85,6 +85,22 @@ describe("parsing", () => {
     ).toBe("general.workbench_freeze");
   });
 
+  it("draws no Neovim over terminals unless told to, and only takes a boolean", () => {
+    expect(parseConfig(MINIMAL).general.neovim_terminal_overlay).toBe(false);
+    const on = parseConfig(
+      "version = 1\n[general]\nneovim_terminal_overlay = true\n",
+    );
+    expect(on.general.neovim_terminal_overlay).toBe(true);
+    expect(parseConfig(configToToml(on)).general.neovim_terminal_overlay).toBe(
+      true,
+    );
+    expect(
+      pathOf(() =>
+        parseConfig("version = 1\n[general]\nneovim_terminal_overlay = 1\n"),
+      ),
+    ).toBe("general.neovim_terminal_overlay");
+  });
+
   it("has VS Code as the editor unless told Neovim, and refuses anything else", () => {
     expect(parseConfig(MINIMAL).general.editor).toBe("vscode");
     const neovim = parseConfig('version = 1\n[general]\neditor = "neovim"\n');

@@ -1900,7 +1900,22 @@ export interface PaneBridge
 	extends PageBridge,
 		ProjectionBridge,
 		AppearanceBridge,
-		TerminalSurfaceBridge {}
+		TerminalSurfaceBridge {
+	/**
+	 * Where the terminal's emulator draws its cells, in the page's CSS
+	 * pixels: what a Neovim drawn over one of its panes is placed from
+	 * (`main/editor/terminalNeovims.ts`).
+	 */
+	reportTerminalScreen(terminalId: string, screen: TerminalScreenWire): void;
+}
+
+/** `PaneBridge.reportTerminalScreen`'s rectangle. */
+export interface TerminalScreenWire {
+	readonly x: number;
+	readonly y: number;
+	readonly width: number;
+	readonly height: number;
+}
 
 /**
  * The Neovim editor — `neovim.html`, one view per Workspace whose editor
@@ -2370,6 +2385,7 @@ export const CHANNELS = {
 	openSettings: "devhub:open-settings",
 	openMicrophoneSettings: "devhub:open-microphone-settings",
 	openExternalUrl: "devhub:open-external-url",
+	reportTerminalScreen: "devhub:report-terminal-screen",
 	writeClipboard: "devhub:write-clipboard",
 	writeClipboardImage: "devhub:write-clipboard-image",
 	writeClipboardRich: "devhub:write-clipboard-rich",

@@ -24,7 +24,12 @@
  */
 
 import { TmuxTerminalRuntime } from "../terminal/tmux.js";
-import { remoteCliBinDirectory } from "../terminal/launcher.js";
+import { dirname, join, posix } from "node:path";
+import {
+	REMOTE_DEVHUB_DIRECTORY,
+	remoteCliBinDirectory,
+	remoteProfileTag,
+} from "../terminal/launcher.js";
 import type { Runtime, RuntimeId } from "../runtime/runtime.js";
 import type { SettingsReader } from "./runningSettings.js";
 import type { SocketName } from "../terminal/ports.js";
@@ -199,6 +204,20 @@ export class TerminalRuntimes {
 							this.#options.controlSocketPath,
 						),
 					}),
+			// DevHub's `nvim` (`editor/terminalNeovimShim.ts`): beside the
+			// control socket here, beside the `devhub` command on a host.
+			neovimShim: {
+				directory:
+					host.id === "local"
+						? join(dirname(this.#options.controlSocketPath), "nvim-bin")
+						: posix.join(
+								home,
+								REMOTE_DEVHUB_DIRECTORY,
+								`nvim-${remoteProfileTag(this.#options.controlSocketPath)}`,
+							),
+				wanted: () =>
+					this.#options.settings.config.general.neovim_terminal_overlay,
+			},
 			host,
 			// Asked each time it is stated, so a server started after a theme
 			// change is started in the new one.

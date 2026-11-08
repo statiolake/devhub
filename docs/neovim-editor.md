@@ -568,6 +568,87 @@ following its event stream. See devhub.nvim's README.
 - Closing a Workspace kills its Neovim. Quitting DevHub does not: it is
   adopted next time.
 
+## Neovim in a terminal
+
+```toml
+[general]
+neovim_terminal_overlay = true   # default false; independent of `editor`
+```
+
+Settings > General > Editors > "Neovim over terminals" is the same switch.
+With it on, `nvim [args]` in an Agent's terminal — typed, or run by
+`git commit`, `crontab -e`, `$EDITOR` — is the person's own Neovim drawn by
+DevHub's GUI exactly over that tmux pane, in place of its TUI. The command
+blocks like any editor and returns Neovim's exit status (`:cq` fails a
+commit). It works the same in a terminal on an SSH host.
+
+**The shim** (`main/editor/terminalNeovimShim.ts`). DevHub writes a POSIX
+`sh` script named `nvim` on each machine — `<DevHub's data>/devhub/nvim-bin/`
+here, `~/.devhub/terminal/nvim-<tag>/` on a host — and puts its directory in
+front of the PATH of every pane it creates while the setting is on (the way a
+host's `devhub` is). PATH and not `EDITOR`/`VISUAL`: it catches `nvim` typed
+at a prompt and run by other programs alike, and a dotfile's
+`EDITOR=nvim` still reaches it. The script finds the next `nvim` on the PATH
+and runs it with the person's arguments, in the pane, as `nvim --embed
+--listen <socket> args…`: the pane's environment (`GIT_*`), cwd, exit status
+and life are a TUI's; only who draws it changes. `--embed` waits for the UI
+before reading the config or a file, so a swap-file question or a config
+error is shown, not answered blind. It runs the real `nvim` untouched
+outside a DevHub Agent terminal (no `$TMUX_PANE`, another session), with the
+overlay off, inside a DevHub GUI Neovim (`$DEVHUB_NEOVIM_GUI`), with stdin
+or stdout not a terminal, for non-editing arguments (`--headless`, `-es`,
+`--remote*`, `--version`, `-`…), and when no UI attached within ten seconds
+(the terminal is not on screen): then the waiting Neovim is ended and the TUI
+runs with the same arguments.
+
+**How DevHub learns of it: tmux, not a socket of its own.** The script names
+its socket in a pane option of DevHub's own tmux server (`@devhub-nvim`) and
+waits for `@devhub-nvim-ui = 1`, which DevHub sets once its UI is attached.
+That channel is the same here and on a host and needs no Node, no `devhub`
+command and no forwarded control socket over there; the socket itself is
+forwarded like the managed Neovim's (`ssh -O forward`). The server option
+`@devhub-nvim-overlay` says the setting is on, so turning it off reaches
+panes that already have the shim. While the script waits, tmux's
+`pane_current_command` would say `sh`, which DevHub counts as an idle shell;
+every pane reading DevHub makes says `nvim` for a pane with `@devhub-nvim`
+instead, so closing the terminal still asks first.
+
+**Where the overlay goes** (`main/editor/terminalNeovims.ts`). While an Agent
+terminal is on screen, its session is read every 150 ms (400 ms on a host):
+each pane's cells, which window and pane are active, zoom, modes, the socket
+option, and DevHub's client's size, key table, prefix and status line. tmux
+pushes none of a window switch, a zoom, `swap-pane` or a resize to anyone
+but the client, and one `list-panes` and one `list-clients` read all of it.
+The terminal page reports where xterm's screen is (`shell/pane/screenReport.ts`);
+the client's size in cells divides it, so the overlay is the pane's exact
+rectangle in the terminal view, a `neovim.html#tnv:<n>` view placed right
+above it (`ShellWindow.syncTerminalNeovims`). It is hidden while tmux does
+not show the pane: another window, a zoomed sibling, copy mode or a chooser.
+A terminal not on screen is not read; its overlays keep their pages, hidden.
+Each Neovim is its own: never the Workspace's managed Neovim, never reused —
+`devhub <file>`, a conversation's file link and Send to Agent still go to the
+Workspace's `devhub-nvim` window, and a `git commit` waiting on a terminal's
+Neovim gets no other file.
+
+**The keyboard.** The overlay has the keys whenever its terminal would and
+its pane is tmux's active pane, shown. DevHub's chords are caught first, as on
+every page. The tmux prefix typed in it is tmux's: DevHub puts its client in
+the prefix table (`switch-client -T prefix`) and the terminal takes the next
+key; once that binding ran (a zoom, a pane switch, a window switch), the keys
+come back if the overlaid pane is still the active one. A binding that opens
+a prompt or a chooser (`:`, `[`, `w`, `s`, `,`…) keeps them in the terminal
+until Enter or Escape. A click beside the overlay gives the keys to the
+terminal; a key typed there that tmux would only hand to the pane under the
+overlay (whose Neovim does not read its tty) moves them to the overlay, that
+key included. Moving into the pane by tmux brings them back; `:q` ends the
+overlay and the keys are the shell's again.
+
+Limits: Agent terminals only (an Agent's own pane, `ag-`, gets the TUI);
+nothing drawn by tmux over a pane (`display-popup`, `display-menu`) shows
+over an overlay; a binding of the person's own that opens a prompt is not
+known as one; the shim must come first on the PATH, so a shell startup file
+that puts another `nvim`'s directory in front (Homebrew's, say) shadows it.
+
 ## What works
 
 Verified against Neovim 0.9.5, 0.11.5 and 0.12.6 (`neovimUi.real.test.ts`, and a

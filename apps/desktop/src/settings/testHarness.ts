@@ -49,6 +49,7 @@ export function testConfig(
       workbenchDiscardMinutes: 60,
       workbenchFreeze: true,
       editor: "vscode",
+      neovimTerminalOverlay: false,
     },
     scratch: { daily: "~/junk/YYYYMMDD" },
     projects: { directory: undefined },
